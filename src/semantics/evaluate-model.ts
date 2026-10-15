@@ -37,8 +37,13 @@ import {
   enclosingAssertOn,
   hasUserBindings,
   instanceGroups,
+  lookupsHold,
+  lookupsOf,
   rebaseInstance,
+  recordingLookups,
+  spellsInstance,
   type InstanceGroup,
+  type InstanceLookup,
   hasStatedValue,
   isAsserted,
   isBindingConnector,
@@ -199,7 +204,7 @@ interface ScalarAnswer {
    * valued member that supplied the value. Propagated up a derivation, so the
    * relation's own answer carries the source its value came from.
    */
-  via?: { bindingIds: ElementId[]; source: string; sourceSymbol: string; root: ElementId };
+  via?: { bindingIds: readonly ElementId[]; source: string; sourceSymbol: string; root: ElementId };
 }
 
 const NO_ANSWER: ScalarAnswer = { value: undefined, depth: 0 };
@@ -214,7 +219,7 @@ interface ScalarReads {
   cause?: Contact;
   deep?: boolean;
   abstention?: { kind: InstanceAbstention; sentence: string };
-  via?: { bindingIds: ElementId[]; source: string; sourceSymbol: string; root: ElementId };
+  via?: { bindingIds: readonly ElementId[]; source: string; sourceSymbol: string; root: ElementId };
 }
 
 function note(reads: ScalarReads, a: ScalarAnswer): void {
@@ -968,6 +973,14 @@ export interface SpecialisationInstance {
   anchorId?: ElementId;
   /** Why the reading abstained, when it did (A.9). */
   abstention?: InstanceAbstention;
+  /**
+   * Why an `unknown` reading has no verdict (A.9), whichever step abstained:
+   * the reading itself ({@link abstention}), or a name it read through a
+   * binding and found no value for (`defaults-differ`, `free`, …). Each row's
+   * sentence names its own instance; the kind is what the rows of one relation
+   * share, and what the app's Solve producer folds them by (C.2).
+   */
+  cause?: InstanceAbstention;
   /** The values the row read, for the value-source message and the witness (F5). */
   reads?: InstanceRead[];
 }
@@ -1426,6 +1439,7 @@ function readInContexts(
           message: `Could not evaluate: ${group.refusal!.sentence}`,
           detail: `Could not evaluate: ${group.refusal!.sentence}`,
           abstention: group.refusal!.kind,
+          cause: group.refusal!.kind,
         });
       }
       continue;
@@ -1489,6 +1503,7 @@ function readInContexts(
       detail: judged.message,
       ...(via ? { via: true as const, readAs: pass.definitions.instanceNameOf(x.id) } : {}),
       ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
+      ...(causeOf(judged) !== undefined ? { cause: causeOf(judged) } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
     });
   }
@@ -1506,6 +1521,14 @@ function readInContexts(
  * `part :>> p : P2`) is judged in that element, at the instance; one the
  * coverage guard lists (`group.otherwise`) is not judged: its row abstains in
  * the guard's sentence.
+ *
+ * Instances read alike are judged once ({@link readAlike}): tree10's 3,070
+ * instances read L from eleven components, and each of the 512 under `top`
+ * reads top's. A decided reading is kept with the questions it asked of its
+ * instance's spelling ({@link InstanceLookup}); another instance whose
+ * questions get the same answers ({@link lookupsHold}) takes the same path, so
+ * its row is that reading — the verdict, the values and their sources — with
+ * the symbols that extend the instance spelled for its own.
  */
 function groupInstanceRows(
   model: Model,
@@ -1520,7 +1543,8 @@ function groupInstanceRows(
   if (!usage) return [];
   const reading: ElementRecord = { ...el, ownerId: usage.id };
   const ids = definitions.scope(usage.id, 'all');
-  const shown: SpecialisationBinding[] = namesIn(expr).map((n) => {
+  const names = namesIn(expr);
+  const shown: SpecialisationBinding[] = names.map((n) => {
     const featureId = ids.get(n);
     return {
       name: n,
@@ -1529,25 +1553,33 @@ function groupInstanceRows(
     };
   });
   const contextName = definitions.contextName(usage.id);
+  const featureId = shown[0]?.featureId ?? usage.id;
+  const qualifiedName = effectiveQualifiedName(model, featureId);
   const rows: SpecialisationInstance[] = [];
+  // One row per instance, thousands to a group: its fields set in the order they print.
   const push = (inst: string | undefined, judged: Judgement, readIn?: ElementId): void => {
-    const element = inst !== undefined ? group.standsFor?.get(inst) : undefined;
-    rows.push({
+    const row: SpecialisationInstance = {
       contextId: readIn ?? usage.id,
       context: contextName,
-      featureId: shown[0]?.featureId ?? usage.id,
-      qualifiedName: effectiveQualifiedName(model, shown[0]?.featureId ?? usage.id),
+      featureId,
+      qualifiedName,
       bindings: shown,
       result: judged.result,
       message: judged.message,
       detail: judged.message,
-      ...(inst === undefined ? { generic: true as const } : { instance: inst }),
-      ...(element !== undefined ? { elementId: element } : {}),
-      ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
-      ...(judged.reads ? { reads: judged.reads } : {}),
-    });
+    };
+    if (inst === undefined) row.generic = true;
+    else row.instance = inst;
+    const element = inst !== undefined ? group.standsFor?.get(inst) : undefined;
+    if (element !== undefined) row.elementId = element;
+    if (judged.abstention !== undefined) row.abstention = judged.abstention;
+    const cause = causeOf(judged);
+    if (cause !== undefined) row.cause = cause;
+    if (judged.reads) row.reads = judged.reads;
+    rows.push(row);
   };
   if (withGeneric) push(undefined, judgeConstraint(model, reading, expr, pass));
+  const alike = shareReadings ? readAlike(model, reading, expr, names, pass) : undefined;
   for (const inst of group.instances.slice(1)) {
     const otherwise = group.otherwise?.get(inst);
     const readIn = group.readIn?.get(inst);
@@ -1561,11 +1593,134 @@ function groupInstanceRows(
       });
     } else if (readIn !== undefined) {
       push(inst, judgeConstraint(model, { ...el, ownerId: readIn }, expr, pass, undefined, inst), readIn);
-    } else {
+    } else if (alike === undefined) {
       push(inst, judgeConstraint(model, reading, expr, pass, undefined, inst));
+    } else {
+      push(inst, alike(inst));
     }
   }
   return rows;
+}
+
+/**
+ * Off only while {@link withEveryInstanceJudged} runs: then no instance of a
+ * group takes its row from another read alike ({@link readAlike}).
+ */
+let shareReadings = true;
+
+/**
+ * Run `run` with every instance of every group judged by the whole pipeline,
+ * none taking its row from another instance read alike ({@link readAlike}) —
+ * the reading the shared rows are held to, row for row.
+ */
+export function withEveryInstanceJudged<T>(run: () => T): T {
+  const before = shareReadings;
+  shareReadings = false;
+  try {
+    return run();
+  } finally {
+    shareReadings = before;
+  }
+}
+
+/** How many decided readings {@link readAlike} keeps to try, the latest used first. */
+const MAX_READ_ALIKE = 8;
+
+/** A decided reading {@link readAlike} keeps, with what it asked of its instance's spelling. */
+interface ReadAlike {
+  inst: string;
+  result: 'satisfied' | 'violated';
+  lookups: InstanceLookup[];
+  /** The reads, each with the part of its symbol after the instance where the symbol extends it. */
+  reads?: Array<{ read: InstanceRead; suffix?: string }>;
+}
+
+/**
+ * The judge of a group's instances that shares one reading among instances
+ * read alike ({@link groupInstanceRows}): each instance is judged by the whole
+ * pipeline ({@link judgeConstraint}) unless a decided reading of another one
+ * kept here asked questions of its spelling that get the same answers for
+ * this one ({@link lookupsHold}). Then the row is that reading's verdict and
+ * reads, its symbols that extend the other instance spelled for this one, and
+ * its message said again over them — the only places the instance's spelling
+ * enters a decided row (`Constraint satisfied (load = 50 in {I}, …)`).
+ *
+ * A reading is kept only where the spelling enters nothing else. Not kept: a
+ * reading whose message is more than the verdict over its reads (an equation
+ * that defines, a tie, an abstention), and one whose read symbol or value
+ * source spells the instance other than by extending it. A read is left out
+ * where its symbol is the qualified name of the feature it denotes ({@link
+ * DefiningEquations.instanceReadings}); an instance that one of those names
+ * spells is neither kept nor shared, so no read is left out for one instance
+ * and kept for another.
+ */
+function readAlike(
+  model: Model,
+  reading: ElementRecord,
+  expr: string,
+  names: readonly string[],
+  pass: ScalarPass,
+): (inst: string) => Judgement {
+  const definitions = pass.definitions;
+  const usage = reading.ownerId!;
+  const denoted = definitions.denote(usage);
+  const qualified: string[] = [];
+  for (const root of [usage, reading.id]) {
+    for (const n of names) {
+      const d = definitions.denote(root).get(n);
+      if (d) qualified.push(definitions.qualifiedNameOf(definitions.carrier(d.reader, d.feature).id));
+    }
+  }
+  const spells = spellsInstance;
+  const unspelled = (inst: string): boolean => !qualified.some((q) => spells(q, inst));
+  const kept: ReadAlike[] = [];
+  const message = (result: 'satisfied' | 'violated', reads: InstanceRead[] | undefined): string =>
+    result === 'satisfied' ? `Constraint satisfied${readsClause(reads)}` : `Constraint violated: ${expr}${readsClause(reads)}`;
+  const keep = (inst: string, judged: Judgement, lookups: readonly InstanceLookup[]): ReadAlike | undefined => {
+    if (judged.result === 'unknown' || judged.tie || judged.abstention !== undefined || judged.cause !== undefined) return undefined;
+    if (judged.message !== message(judged.result, judged.reads)) return undefined;
+    const reads: Array<{ read: InstanceRead; suffix?: string }> = [];
+    for (const read of judged.reads ?? []) {
+      if (read.via !== undefined && spells(read.via.sourceSymbol, inst)) return undefined;
+      const d = denoted.get(read.path);
+      const own = d ? definitions.symbolOf(d) : undefined;
+      // A value source is the same object in every row that shares the reading: frozen.
+      if (read.via !== undefined) Object.freeze(read.via);
+      if (spells(read.symbol, inst)) {
+        if (read.symbol === own) return undefined;
+        reads.push({ read, suffix: read.symbol.slice(inst.length) });
+      } else {
+        reads.push({ read });
+      }
+    }
+    return { inst, result: judged.result, lookups: lookupsOf(lookups, inst), ...(judged.reads ? { reads } : {}) };
+  };
+  return (inst: string): Judgement => {
+    const fits = unspelled(inst);
+    for (let k = 0; fits && k < kept.length; k++) {
+      const alike = kept[k]!;
+      if (!lookupsHold(model, alike.lookups, alike.inst, inst)) continue;
+      if (k > 0) kept.unshift(...kept.splice(k, 1));
+      if (alike.reads === undefined) return { result: alike.result, message: message(alike.result, undefined), gap: false };
+      const reads: InstanceRead[] = [];
+      for (const { read, suffix } of alike.reads) {
+        reads.push(suffix === undefined ? { ...read } : { ...read, symbol: `${inst}${suffix}` });
+      }
+      return { result: alike.result, message: message(alike.result, reads), gap: false, reads };
+    }
+    const { value: judged, lookups } = recordingLookups(() => judgeConstraint(model, reading, expr, pass, undefined, inst));
+    const alike = fits ? keep(inst, judged, lookups) : undefined;
+    if (alike !== undefined) {
+      kept.unshift(alike);
+      if (kept.length > MAX_READ_ALIKE) kept.pop();
+    }
+    return judged;
+  };
+}
+
+/** The {@link SpecialisationInstance.cause} of a judged row: set on an `unknown` that abstained (A.9). */
+function causeOf(judged: Judgement): InstanceAbstention | undefined {
+  return judged.result === 'unknown' ? (judged.abstention ?? judged.cause) : undefined;
 }
 
 /** A name a target is read through: the specialiser standing for a measure. */
@@ -1600,8 +1755,14 @@ interface Judgement {
   reads?: InstanceRead[];
   /** Why a per-instance reading abstained (A.9), for the context row's sentence. */
   abstention?: InstanceAbstention;
-  /** The A.9 sentence, when {@link abstention} is set. */
+  /** The A.9 sentence, when {@link abstention} or {@link cause} is set. */
   abstentionSentence?: string;
+  /**
+   * The A.9 kind of an `unknown` whose body read a name a per-instance read
+   * found no value for ({@link namedAbstention}): the row's
+   * {@link SpecialisationInstance.cause}.
+   */
+  cause?: InstanceAbstention;
 }
 
 /**
@@ -1812,12 +1973,12 @@ function judgeBound(
     const deep = tooDeep(node, scope, own);
     if (deep) return { result: 'unknown', message: `Could not evaluate: ${deep}`, gap: false };
     const abstain = namedAbstention(own, referencedNames(node));
-    const message = `Could not evaluate: ${abstain ?? unknownCause(model, el, referencedNames(node), scope, pass)}`;
+    const message = `Could not evaluate: ${abstain?.sentence ?? unknownCause(model, el, referencedNames(node), scope, pass)}`;
     return {
       result: 'unknown',
       message,
       gap: true,
-      ...(abstain ? { abstentionSentence: abstain } : {}),
+      ...(abstain ? { abstentionSentence: abstain.sentence, cause: abstain.kind } : {}),
     };
   }
   const reads = collectReads(model, el, pass, referencedNames(node), own, at);
@@ -1878,11 +2039,14 @@ function unitReads(
   return out.length > 0 ? out : undefined;
 }
 
-/** The first A.9 abstention among the answers the body read, or `undefined` (F5). */
-function namedAbstention(answer: (name: string) => ScalarAnswer | undefined, names: readonly string[]): string | undefined {
+/** The first A.9 abstention among the answers the body read — its kind and sentence — or `undefined` (F5). */
+function namedAbstention(
+  answer: (name: string) => ScalarAnswer | undefined,
+  names: readonly string[],
+): { kind: InstanceAbstention; sentence: string } | undefined {
   for (const n of names) {
     const a = answer(n);
-    if (a?.abstention !== undefined) return a.abstention.sentence;
+    if (a?.abstention !== undefined) return a.abstention;
   }
   return undefined;
 }

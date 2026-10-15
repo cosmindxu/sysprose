@@ -1539,6 +1539,44 @@ describe('store — per-instance Check and Solve rows (F6)', () => {
     expect(foldedFree).toBeDefined();
     expect(foldedFree!.message).toMatch(/\d+ instances/);
   });
+
+  // A-H2 (O2 S5): perf9b's Solve listed 1,568 rows, 1,533 of them one unjudged
+  // instance each — every instance's A.9 sentence names that instance and its
+  // own member paths, and the fold keyed on the sentence. It keys on the cause
+  // (defaults-differ here) now, as C.2 folds per (relation, result, reason).
+  it('folds the unjudged instance rows of one relation by their cause, each row in its own words', () => {
+    const levels = (top: string, depth: number) => {
+      const out = [
+        'part def N0 { attribute x : ScalarValues::Real default = 1.0; assert constraint lo { x >= 0.0 } constraint hi { x <= 10.0 } }',
+        'part def N1 { attribute L : ScalarValues::Real default = 2.0; part a : N0; part b : N0; bind a.x = L; }',
+      ];
+      for (let i = 2; i <= depth; i++) out.push(`part def N${i} { part a : N${i - 1}; part b : N${i - 1}; }`);
+      return `package F {\n${out.join('\n')}\n${top}\n}`;
+    };
+    const unjudged = (expr: string) =>
+      st().diagnostics.filter((d) => d.id.startsWith('solve#unknown#') && d.message.startsWith(`unjudged inequality: ${expr} in `));
+    // Ten unjudged instances of each relation (a's x, whose default and L's differ, everywhere but top's a's a's).
+    load(levels('part top : N3 { part :>> a { part :>> a { attribute :>> L = 50.0; } } }', 3));
+    st().solveParametric();
+    for (const expr of ['x >= 0.0', 'x <= 10.0']) {
+      const rows = unjudged(expr);
+      expect(rows.map((d) => d.message.replace(/ — .*/, ''))).toEqual([
+        `unjudged inequality: ${expr} in F::N1::a, F::N2::a::a, F::N2::b::a, F::N3::a::a::a, F::N3::b::a::a, … and 5 more (10 contexts)`,
+      ]);
+      // The folded row's sentence is its first context's.
+      expect(rows[0]!.message).toContain(' — x has no value in F::N1::a: `bind a.x = L` of F::N1 joins defaults that differ');
+    }
+    // Five or fewer are listed one by one, each with the sentence of the instance it names.
+    load(levels('part top : N2 { part :>> a { attribute :>> L = 50.0; } }', 2));
+    st().solveParametric();
+    const rows = unjudged('x <= 10.0');
+    expect(rows.map((d) => /^unjudged inequality: x <= 10\.0 in (\S+) — x has no value in (\S+):/.exec(d.message)!.slice(1))).toEqual([
+      ['F::N1::a', 'F::N1::a'],
+      ['F::N2::a::a', 'F::N2::a::a'],
+      ['F::N2::b::a', 'F::N2::b::a'],
+      ['F::top::b::a', 'F::top::b::a'],
+    ]);
+  });
 });
 
 /**

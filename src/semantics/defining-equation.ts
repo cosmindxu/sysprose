@@ -291,6 +291,10 @@ export class DefiningEquations {
   private readonly above = new Map<string, readonly InstanceFrame[] | null>();
   /** The asserted relations each reader holds, with the names each reads ({@link assertsOf}). */
   private readonly asserted = new Map<ElementId, ReadonlyArray<{ expr: string; names: readonly string[] }>>();
+  /** {@link anyAsserted}, once asked. */
+  private anyAsserts?: boolean;
+  /** {@link boundAbove} per context and names (`null`: none above) — every instance row of a group asks it of the usage. */
+  private readonly aboveBound = new Map<string, BoundAbove | null>();
 
   constructor(readonly model: Model) {
     this.rev = model.rev;
@@ -820,6 +824,24 @@ export class DefiningEquations {
     }
     this.above.set(inst, found);
     return found ?? undefined;
+  }
+
+  /**
+   * Does any user element own an asserted relation ({@link assertsOf})? Where
+   * none does, no frame constrains a read ({@link enclosingAssertOn}). Once per
+   * revision.
+   */
+  anyAsserted(): boolean {
+    this.anyAsserts ??= this.model
+      .ofKind('ConstraintUsage')
+      .some(
+        (c) =>
+          c.attrs.isLibrary !== true &&
+          isAsserted(c) &&
+          typeof c.attrs.expression === 'string' &&
+          c.attrs.expression.trim() !== '',
+      );
+    return this.anyAsserts;
   }
 
   /**
@@ -1725,6 +1747,17 @@ export class DefiningEquations {
    */
   boundAbove(contextId: ElementId, names: readonly string[]): BoundAbove | undefined {
     if (!hasUserBindings(this.model)) return undefined;
+    const key = `${contextId} ${names.join('\u0000')}`;
+    let hit = this.aboveBound.get(key);
+    if (hit === undefined) {
+      hit = this.boundAboveOf(contextId, names) ?? null;
+      this.aboveBound.set(key, hit);
+    }
+    return hit ?? undefined;
+  }
+
+  /** {@link boundAbove}, worked out. */
+  private boundAboveOf(contextId: ElementId, names: readonly string[]): BoundAbove | undefined {
     const reads = this.boundReads(contextId, names);
     if (reads.size === 0) return undefined;
     const { overCap, unread } = bindingEnds(this.model);
@@ -2105,10 +2138,42 @@ interface BindingEnds {
   edges: ReadonlyArray<readonly [ElementId, ElementId]>;
   /** Each of them by the element it is written in, with its ends ({@link bindingsIntoRedefiners}). */
   written: ReadonlyArray<{ holder: ElementId; ends: readonly ElementId[] }>;
+  /** Each of them, in the model's order ({@link componentConnectors}). */
+  connectors: readonly ElementRecord[];
   /** Lazy indexes over `readings`, built when first asked ({@link indexOf}). */
   index?: BindingIndex;
   /** {@link bindingsIntoRedefiners}, built when first asked. */
   into?: ReadonlyMap<ElementId, ReadonlyArray<{ end: ElementId; holder: ElementId }>>;
+  /**
+   * The context roots of `readings` by the instance each reads its own
+   * features in, each with its place in `readings` ({@link outermostReading}),
+   * built when first asked.
+   */
+  byInstance?: ReadonlyMap<string, ReadonlyArray<{ root: ElementId; order: number }>>;
+  /** What one component read in one root states and joins, per `${root} ${component}` ({@link componentFacts}). */
+  components?: Map<string, ComponentFacts>;
+  /** {@link boundSourceIn} per instance symbol, once per revision. */
+  sources?: Map<string, BoundSource | undefined>;
+  /** {@link boundPartnerSafe} per `${contextId} ${name} ${featureId}`, once per revision. */
+  partnerSafe?: Map<string, boolean>;
+}
+
+/**
+ * What the component `component` read in the context `root` states and joins,
+ * each worked out once per revision when first asked ({@link componentFacts}):
+ * its member paths in reading order, the connectors that join it, what its
+ * members state ({@link classified}), whether one of them is a feature of an
+ * enclosing instance ({@link BindingEnds.enclosed}), and the member whose
+ * default stands there ({@link standingDefaultPath}).
+ */
+interface ComponentFacts {
+  paths: readonly string[];
+  connectors?: readonly ElementRecord[];
+  /** The ids of {@link connectors}. */
+  bindingIds?: readonly ElementId[];
+  classified?: ComponentClass;
+  enclosed?: boolean;
+  standing?: { path: string; source: ElementRecord } | null;
 }
 
 /**
@@ -2168,6 +2233,7 @@ function bindingEnds(model: Model): BindingEnds {
     userBindings: bindings.length,
     edges,
     written: bindings.map((b) => ({ holder: b.ownerId!, ends: [...(b.source ?? []), ...(b.target ?? [])] })),
+    connectors: bindings,
   };
   BINDING_ENDS.set(model, fresh);
   return fresh;
@@ -2483,6 +2549,20 @@ function uniformlyRead(model: Model, featureId: ElementId): boolean {
 export function boundPartnerSafe(model: Model, contextId: ElementId, name: string, featureId: ElementId): boolean {
   const ends = bindingEnds(model);
   if (ends.userBindings === 0) return true;
+  // Once per revision: every instance row of a group reads the usage's names
+  // through the usage, and asks the same question of it.
+  const memo = (ends.partnerSafe ??= new Map());
+  const key = `${contextId} ${name} ${featureId}`;
+  let safe = memo.get(key);
+  if (safe === undefined) {
+    safe = partnerSafeOf(model, ends, contextId, name, featureId);
+    memo.set(key, safe);
+  }
+  return safe;
+}
+
+/** {@link boundPartnerSafe}, worked out. */
+function partnerSafeOf(model: Model, ends: BindingEnds, contextId: ElementId, name: string, featureId: ElementId): boolean {
   const f = model.get(featureId);
   if (!f) return true;
   const definitions = sharedDefinitions(model);
@@ -2995,9 +3075,13 @@ export function defaultGivesWayIn(model: Model, f: ElementRecord, inst: string |
   const ends = bindingEnds(model);
   if (ends.held.has(f.id)) return true;
   if (inst === undefined) return false;
-  if (ends.heldIn.has(inst)) return true;
-  const name = effectiveNameOf(model, f);
-  return name !== undefined && ends.heldIn.has(`${inst}::${name}`);
+  let answer = ends.heldIn.has(inst);
+  if (!answer) {
+    const name = effectiveNameOf(model, f);
+    answer = name !== undefined && ends.heldIn.has(`${inst}::${name}`);
+  }
+  recording?.push({ kind: 'gives-way', feature: f, inst, answer });
+  return answer;
 }
 
 /**
@@ -3308,11 +3392,11 @@ export interface BindingFrame {
 /** What a binding component's members state, classified by path ({@link classified}). */
 export interface ComponentClass {
   /** Members that state a value — `=`, or an asserted equation. */
-  valued: string[];
+  readonly valued: readonly string[];
   /** Members whose `default` stands — not held by the binding. */
-  readable: string[];
+  readonly readable: readonly string[];
   /** Members whose `default` gives way to the binding. */
-  heldDefaults: string[];
+  readonly heldDefaults: readonly string[];
 }
 
 /**
@@ -3325,9 +3409,9 @@ export interface ComponentClass {
 export type BoundSource =
   | {
       root: ElementId;
-      paths: string[];
+      paths: readonly string[];
       component: string;
-      via: { bindingIds: ElementId[]; source: string };
+      via: { bindingIds: readonly ElementId[]; source: string };
     }
   | { abstain: InstanceAbstention; sentence: string };
 
@@ -3337,7 +3421,7 @@ export interface InstanceGroup {
   usageId: ElementId;
   definitionId: ElementId;
   /** The instances the usage is read in, its own (generic) first. */
-  instances: string[];
+  instances: readonly string[];
   /** Whether the group was expanded — every instance read — or kept as today's single refusal. */
   expanded: boolean;
   refusal?: { kind: InstanceAbstention; sentence: string };
@@ -3445,60 +3529,165 @@ export function rebaseInstance(
 }
 
 /**
+ * The {@link ComponentFacts} record of the component `component` read in
+ * `root`, made when first asked with the member paths alone — in reading
+ * order, from the `members` index ({@link indexOf}) rather than a scan of the
+ * whole reading per ask — and filled in by each fact's own reader. Thousands
+ * of instance symbols read through one root (big-bind's q's, perf9b's 767
+ * N0s) ask the same component.
+ */
+function componentFacts(model: Model, root: ElementId, component: string): ComponentFacts {
+  const ends = bindingEnds(model);
+  const memo = (ends.components ??= new Map());
+  const key = `${root} ${component}`;
+  let facts = memo.get(key);
+  if (!facts) {
+    facts = { paths: Object.freeze(indexOf(model).members.get(root)?.get(component) ?? []) };
+    memo.set(key, facts);
+  }
+  return facts;
+}
+
+/**
  * What the members of a binding component state, classified by path (A.3):
  * `valued` (a value of its own), `readable` (a `default` the binding does not
  * hold), and `heldDefaults` (a `default` it holds, {@link heldDefaults}).
+ * Once per (root, component) and revision; the record is shared — read it,
+ * never change it.
  */
 export function classified(model: Model, root: ElementId, component: string): ComponentClass {
+  const facts = componentFacts(model, root, component);
+  if (facts.classified) return facts.classified;
   const { readings, held } = bindingEnds(model);
   const valued: string[] = [];
   const readable: string[] = [];
   const heldDefaults: string[] = [];
   const reading = readings.get(root);
   const rootEl = model.get(root);
-  if (!reading || !rootEl) return { valued, readable, heldDefaults };
-  for (const [path, r] of reading) {
-    if (r.component !== component) continue;
-    const f = model.get(r.feature);
-    if (!f) continue;
-    const v = endValue(model, f, rootEl, path);
-    if (v.kind === 'value') valued.push(path);
-    else if (v.kind === 'default') (held.has(f.id) ? heldDefaults : readable).push(path);
+  if (reading && rootEl) {
+    for (const path of facts.paths) {
+      const r = reading.get(path);
+      const f = r ? model.get(r.feature) : undefined;
+      if (!f) continue;
+      const v = endValue(model, f, rootEl, path);
+      if (v.kind === 'value') valued.push(path);
+      else if (v.kind === 'default') (held.has(f.id) ? heldDefaults : readable).push(path);
+    }
   }
-  return { valued, readable, heldDefaults };
+  facts.classified = Object.freeze({
+    valued: Object.freeze(valued),
+    readable: Object.freeze(readable),
+    heldDefaults: Object.freeze(heldDefaults),
+  });
+  return facts.classified;
 }
 
-/** Every member path of `component` read in `root`. */
-function componentPaths(model: Model, root: ElementId, component: string): string[] {
-  const reading = bindingEnds(model).readings.get(root);
-  if (!reading) return [];
-  return [...reading].filter(([, r]) => r.component === component).map(([path]) => path);
+/** Every member path of `component` read in `root`, in reading order — the component's own list, frozen. */
+function componentPaths(model: Model, root: ElementId, component: string): readonly string[] {
+  return componentFacts(model, root, component).paths;
+}
+
+/** The ids of the {@link componentConnectors} of `component` read in `root` — the component's own list, frozen. */
+function componentBindingIds(model: Model, root: ElementId, component: string): readonly ElementId[] {
+  const facts = componentFacts(model, root, component);
+  facts.bindingIds ??= Object.freeze(componentConnectors(model, root, component).map((c) => c.id));
+  return facts.bindingIds;
 }
 
 /**
  * The binding connectors that join the component read in `root` — the
  * connectors whose two ends are the features the component's members read,
  * each member matched through what it redefines (an implicit connector-end
- * copy of the end). Best-effort: the per-instance reading (F5) is what
- * consumes this, and it reads the member it names rather than these ids.
+ * copy of the end) — in the model's order. Best-effort: the per-instance
+ * reading (F5) is what consumes this, and it reads the member it names rather
+ * than these ids. Once per (root, component) and revision, over the user's
+ * binding connectors ({@link BindingEnds.connectors}), never the whole model.
  */
-function componentConnectors(model: Model, root: ElementId, component: string): ElementRecord[] {
-  const reading = bindingEnds(model).readings.get(root);
-  if (!reading) return [];
+function componentConnectors(model: Model, root: ElementId, component: string): readonly ElementRecord[] {
+  const facts = componentFacts(model, root, component);
+  if (facts.connectors) return facts.connectors;
+  const ends = bindingEnds(model);
+  const reading = ends.readings.get(root);
   const origins = new Set<ElementId>();
-  for (const [, r] of reading) {
-    if (r.component !== component) continue;
+  for (const path of facts.paths) {
+    const r = reading?.get(path);
+    if (!r) continue;
     origins.add(r.feature);
     const f = model.get(r.feature);
     if (f) for (const g of redefinedClosure(model, f)) origins.add(g.id);
   }
-  const out: ElementRecord[] = [];
-  for (const el of model.all()) {
-    if (el.attrs.isLibrary === true || el.ownerId == null || !isBindingConnector(el)) continue;
-    const [s, t] = [el.source?.[0], el.target?.[0]];
-    if (s !== undefined && t !== undefined && origins.has(s) && origins.has(t)) out.push(el);
+  facts.connectors =
+    origins.size === 0
+      ? []
+      : ends.connectors.filter((el) => {
+          const [s, t] = [el.source?.[0], el.target?.[0]];
+          return s !== undefined && t !== undefined && origins.has(s) && origins.has(t);
+        });
+  return facts.connectors;
+}
+
+/**
+ * The context roots of the binding readings by the instance each reads its
+ * own features in ({@link DefiningEquations.instanceNameOf}), in reading
+ * order — so a symbol's frame roots are found by its own prefixes, not by
+ * spelling every root's instance per symbol. Once per revision.
+ */
+function readingsByInstance(model: Model): ReadonlyMap<string, ReadonlyArray<{ root: ElementId; order: number }>> {
+  const ends = bindingEnds(model);
+  if (ends.byInstance) return ends.byInstance;
+  const definitions = sharedDefinitions(model);
+  const byInstance = new Map<string, Array<{ root: ElementId; order: number }>>();
+  let order = 0;
+  for (const root of ends.readings.keys()) {
+    const inst = definitions.instanceNameOf(root);
+    const list = byInstance.get(inst);
+    if (list) list.push({ root, order });
+    else byInstance.set(inst, [{ root, order }]);
+    order += 1;
   }
-  return out;
+  ends.byInstance = byInstance;
+  return byInstance;
+}
+
+/**
+ * The OUTERMOST frame root whose instance prefixes the instance `symbol` —
+ * the symbol itself, or a prefix of it up to a `::` — and whose binding
+ * reading holds the rest of the path, with the component and the feature at
+ * that path: the one with the fewest `::` segments, the first in reading
+ * order among equals. Each prefix of the symbol is looked up in
+ * {@link readingsByInstance}; the answer is the one a scan of every root
+ * would give. `undefined` where no binding reading holds the symbol.
+ */
+function outermostReading(
+  model: Model,
+  symbol: string,
+): { root: ElementId; component: string; feature: ElementId } | undefined {
+  const { readings } = bindingEnds(model);
+  const byInstance = readingsByInstance(model);
+  let best: { root: ElementId; component: string; feature: ElementId } | undefined;
+  let bestSegments = Number.POSITIVE_INFINITY;
+  let bestOrder = Number.POSITIVE_INFINITY;
+  const consider = (inst: string): void => {
+    const roots = byInstance.get(inst);
+    if (!roots) return;
+    const rest = symbol === inst ? '' : symbol.slice(inst.length + 2);
+    const path = rest.split('::').join('.');
+    const segments = inst.split('::').length;
+    for (const { root, order } of roots) {
+      const r = readings.get(root)?.get(path);
+      if (!r) continue;
+      // The roots of one instance are in reading order: the first that holds the path is this prefix's answer.
+      if (segments < bestSegments || (segments === bestSegments && order < bestOrder)) {
+        best = { root, component: r.component, feature: r.feature };
+        bestSegments = segments;
+        bestOrder = order;
+      }
+      return;
+    }
+  };
+  consider(symbol);
+  for (let i = symbol.indexOf('::'); i >= 0; i = symbol.indexOf('::', i + 1)) consider(symbol.slice(0, i));
+  return best;
 }
 
 /** The instance of the feature the member `path` of `root` names, for {@link boundSourceIn}'s own-path check. */
@@ -3547,32 +3736,169 @@ function abstentionSentence(
 }
 
 /**
+ * One question a per-instance reading asked of an instance's SPELLING, with
+ * the answer it got: where a binding carries a value into it ({@link
+ * boundSourceIn}), whether a held default stands there ({@link
+ * defaultStandsIn}) or gives way ({@link defaultGivesWayIn}), and whether an
+ * enclosing assert constrains a read there ({@link enclosingAssertOn}). These
+ * are the only places a reading decides anything by an instance's spelling;
+ * everywhere else it passes the spelling on, extends it (`${inst}::x`, {@link
+ * rebaseInstance}), keys a memo with it, or prints it. So two instances whose
+ * questions get the same answers are read alike ({@link lookupsHold}).
+ */
+export type InstanceLookup =
+  | { kind: 'source'; symbol: string; answer: BoundSource | undefined }
+  | { kind: 'stands'; symbol: string; answer: ElementRecord | undefined }
+  | { kind: 'gives-way'; feature: ElementRecord; inst: string; answer: boolean }
+  | {
+      kind: 'enclosing';
+      contextId: ElementId;
+      enclosing: readonly InstanceFrame[];
+      name: string;
+      inst: string;
+      answer: { frame: ElementId; expr: string } | undefined;
+    };
+
+/** The lookups of the reading {@link recordingLookups} is recording, while it runs. */
+let recording: InstanceLookup[] | undefined;
+
+/**
+ * Run `read`, and return what it gave with every {@link InstanceLookup} it
+ * made, in order. A reading recorded inside another's is recorded in both.
+ */
+export function recordingLookups<T>(read: () => T): { value: T; lookups: InstanceLookup[] } {
+  const outer = recording;
+  const lookups: InstanceLookup[] = [];
+  recording = lookups;
+  try {
+    return { value: read(), lookups };
+  } finally {
+    recording = outer;
+    if (outer) for (const l of lookups) outer.push(l);
+  }
+}
+
+/**
+ * The lookups among `lookups` (recorded reading the instance `inst`) whose
+ * question spells `inst` — the rest ask the same of every instance — each
+ * once, in order: what {@link lookupsHold} asks again of another instance.
+ */
+export function lookupsOf(lookups: readonly InstanceLookup[], inst: string): InstanceLookup[] {
+  const spells = (s: string): boolean => spellsInstance(s, inst);
+  const seen = new Set<string>();
+  const out: InstanceLookup[] = [];
+  for (const l of lookups) {
+    let key: string;
+    if (l.kind === 'source' || l.kind === 'stands') {
+      if (!spells(l.symbol)) continue;
+      key = `${l.kind} ${l.symbol}`;
+    } else if (l.kind === 'gives-way') {
+      if (!spells(l.inst)) continue;
+      key = `${l.kind} ${l.feature.id} ${l.inst}`;
+    } else {
+      if (!spells(l.inst) && !l.enclosing.some((f) => spells(f.instance))) continue;
+      key = `${l.kind} ${l.contextId} ${l.name} ${l.inst} ${l.enclosing.map((f) => `${f.reader}@${f.instance}`).join(' ')}`;
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(l);
+  }
+  return out;
+}
+
+/**
+ * Would a reading for the instance `to` get the answers `lookups` record for
+ * `from` ({@link lookupsOf})? Each question is asked again, `from`'s spelling
+ * replaced by `to`'s where it begins one. Where every answer is the same, a
+ * reading for `to` takes the path the reading for `from` took — it reads the
+ * same values from the same sources and comes to the same verdict — and only
+ * the spellings that extend `from` change (tree10: the 512 instances of
+ * `T1::a` under `top` each read top's L through one component). An answer
+ * that abstains is never the same: its sentence names its instance.
+ */
+export function lookupsHold(model: Model, lookups: readonly InstanceLookup[], from: string, to: string): boolean {
+  const outer = recording;
+  recording = undefined;
+  try {
+    for (const l of lookups) {
+      if (l.kind === 'source') {
+        if (!sameSource(l.answer, boundSourceIn(model, respell(l.symbol, from, to)))) return false;
+      } else if (l.kind === 'stands') {
+        if (defaultStandsIn(model, respell(l.symbol, from, to)) !== l.answer) return false;
+      } else if (l.kind === 'gives-way') {
+        if (defaultGivesWayIn(model, l.feature, respell(l.inst, from, to)) !== l.answer) return false;
+      } else {
+        const enclosing = l.enclosing.some((f) => respell(f.instance, from, to) !== f.instance)
+          ? l.enclosing.map((f) => ({ instance: respell(f.instance, from, to), reader: f.reader }))
+          : l.enclosing;
+        const a = enclosingAssertOn(model, l.contextId, enclosing, l.name, respell(l.inst, from, to));
+        if (a?.frame !== l.answer?.frame || a?.expr !== l.answer?.expr) return false;
+      }
+    }
+    return true;
+  } finally {
+    recording = outer;
+  }
+}
+
+/** `s`, the instance `from` it begins with (or is) spelled `to` instead; any other spelling as it is. */
+function respell(s: string, from: string, to: string): string {
+  if (s === from) return to;
+  return spellsInstance(s, from) ? `${to}${s.slice(from.length)}` : s;
+}
+
+/** Is `s` the instance `inst`, or a spelling below it (`${inst}::…`)? */
+export function spellsInstance(s: string, inst: string): boolean {
+  return s === inst || (s.length >= inst.length + 2 && s.startsWith(inst) && s.startsWith('::', inst.length));
+}
+
+/**
+ * Do two {@link boundSourceIn} answers read the same member of the same
+ * component in the same root — so the same paths, through the same
+ * connectors, which are the component's own ({@link componentFacts})? Never
+ * an abstention.
+ */
+function sameSource(a: BoundSource | undefined, b: BoundSource | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if ('abstain' in a || 'abstain' in b) return false;
+  return a.root === b.root && a.component === b.component && a.via.source === b.via.source;
+}
+
+/**
  * The source of the value a name read at the instance `symbol` gets through a
  * binding (A.2.2): the OUTERMOST frame root whose generic instance prefixes
  * `symbol` and whose readings hold the rest of the path, its component
  * classified ({@link classified}) and resolved as A.3 does — one valued member
  * (read, unless it is the name's own path), else one readable `default`, else
  * `two-values`, `defaults-differ` or `free`. `undefined` where no binding
- * holds `symbol`.
+ * holds `symbol`. Once per symbol and revision: every instance reading of a
+ * sweep asks it per name, and the check, the numeric lane and the unit-aware
+ * twin ask the same symbols again. The answer is shared, and frozen with its
+ * lists — read it, never change it.
  */
 export function boundSourceIn(model: Model, symbol: string): BoundSource | undefined {
+  const source = boundSourceMemo(model, symbol);
+  recording?.push({ kind: 'source', symbol, answer: source });
+  return source;
+}
+
+/** {@link boundSourceIn}, once per symbol and revision. */
+function boundSourceMemo(model: Model, symbol: string): BoundSource | undefined {
   if (!hasUserBindings(model)) return undefined;
+  const ends = bindingEnds(model);
+  const memo = (ends.sources ??= new Map());
+  const hit = memo.get(symbol);
+  if (hit !== undefined || memo.has(symbol)) return hit;
+  const source = boundSourceOf(model, symbol);
+  if (source !== undefined && !('abstain' in source)) Object.freeze(source.via);
+  memo.set(symbol, source === undefined ? undefined : Object.freeze(source));
+  return source;
+}
+
+/** {@link boundSourceIn}, worked out. */
+function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   const definitions = sharedDefinitions(model);
-  const { readings } = bindingEnds(model);
-  let best: { root: ElementId; component: string; feature: ElementId } | undefined;
-  let bestSegments = Number.POSITIVE_INFINITY;
-  for (const [root, reading] of readings) {
-    const inst = definitions.instanceNameOf(root);
-    if (symbol !== inst && !symbol.startsWith(`${inst}::`)) continue;
-    const rest = symbol === inst ? '' : symbol.slice(inst.length + 2);
-    const r = reading.get(rest.split('::').join('.'));
-    if (!r) continue;
-    const segments = inst.split('::').length;
-    if (best === undefined || segments < bestSegments) {
-      best = { root, component: r.component, feature: r.feature };
-      bestSegments = segments;
-    }
-  }
+  const best = outermostReading(model, symbol);
   if (!best) return undefined;
   // A name defined by an asserted equation in a general definition — the G340
   // family, where the binding's implicit end copy masks the assert: the value
@@ -3604,16 +3930,15 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
   // feature's own id, for every such instance alike ({@link
   // BindingEnds.enclosed}) — not per instance. No per-instance value is read
   // here (A.3's F1 conditions; encl-W1/W3/W5 stay abstaining).
-  const { readings: rds, enclosed } = bindingEnds(model);
-  if ([...componentPaths(model, best.root, best.component)].some((p) => enclosed.has(rds.get(best.root)?.get(p)?.feature ?? ('' as ElementId)))) {
-    return undefined;
-  }
+  if (componentEnclosed(model, best.root, best.component)) return undefined;
   const cls = classified(model, best.root, best.component);
+  // The member paths and the connectors are the component's own: one list each
+  // for every symbol read through it ({@link componentFacts}), never copied.
   const source = (valuePath: string): BoundSource => ({
     root: best!.root,
     paths: componentPaths(model, best!.root, best!.component),
     component: best!.component,
-    via: { bindingIds: componentConnectors(model, best!.root, best!.component).map((c) => c.id), source: valuePath },
+    via: { bindingIds: componentBindingIds(model, best!.root, best!.component), source: valuePath },
   });
   if (cls.valued.length > 1) {
     return { abstain: 'two-values', sentence: abstentionSentence(model, symbol, best.root, best.component, 'two-values') };
@@ -3640,6 +3965,21 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
 }
 
 /**
+ * Does a member of the component read in `root` read a feature of an instance
+ * ENCLOSING where its binding is written ({@link BindingEnds.enclosed})?
+ * Once per (root, component) and revision ({@link componentFacts}).
+ */
+function componentEnclosed(model: Model, root: ElementId, component: string): boolean {
+  const facts = componentFacts(model, root, component);
+  if (facts.enclosed === undefined) {
+    const { readings, enclosed } = bindingEnds(model);
+    const reading = readings.get(root);
+    facts.enclosed = facts.paths.some((p) => enclosed.has(reading?.get(p)?.feature ?? ('' as ElementId)));
+  }
+  return facts.enclosed;
+}
+
+/**
  * The member of the component at `root` whose `default` STANDS for the
  * instance that root's reading serves (F8, A.4 Part 2) — its path and the
  * feature that writes it — or `undefined`. A `default` a binding holds only
@@ -3649,12 +3989,24 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
  * (P's `load default = 5.0` beside Q's `bind p.load = L`: q1 sets L, q2 leaves
  * it, and q2's load is 5.0). A component with a stated member has a value the
  * binding gives; a default that reads a name, or two that do not compare the
- * same exactly, may be another value in each instance and gives way.
+ * same exactly, may be another value in each instance and gives way. Once per
+ * (root, component) and revision ({@link componentFacts}).
  */
 function standingDefaultPath(
   model: Model,
   root: ElementId,
   component: string,
+): { path: string; source: ElementRecord } | undefined {
+  const facts = componentFacts(model, root, component);
+  if (facts.standing === undefined) facts.standing = standingDefaultOf(model, root, facts.paths) ?? null;
+  return facts.standing ?? undefined;
+}
+
+/** {@link standingDefaultPath}, worked out over the component's member `paths`, in reading order. */
+function standingDefaultOf(
+  model: Model,
+  root: ElementId,
+  paths: readonly string[],
 ): { path: string; source: ElementRecord } | undefined {
   const { readings } = bindingEnds(model);
   const rootEl = model.get(root);
@@ -3673,9 +4025,9 @@ function standingDefaultPath(
     return false;
   };
   let first: { path: string; source: ElementRecord } | undefined;
-  for (const [path, r] of reading) {
-    if (r.component !== component) continue;
-    const f = model.get(r.feature);
+  for (const path of paths) {
+    const r = reading.get(path);
+    const f = r ? model.get(r.feature) : undefined;
     if (!f) continue;
     const name = effectiveNameOf(model, f);
     if (asserted(f.ownerId, name) || asserted(root, path)) return undefined;
@@ -3704,23 +4056,16 @@ function standingDefaultPath(
  * instance the literal value the check reads there.
  */
 export function defaultStandsIn(model: Model, symbol: string): ElementRecord | undefined {
+  const answer = standingDefaultIn(model, symbol);
+  recording?.push({ kind: 'stands', symbol, answer });
+  return answer;
+}
+
+/** {@link defaultStandsIn}, worked out. */
+function standingDefaultIn(model: Model, symbol: string): ElementRecord | undefined {
   if (!hasUserBindings(model)) return undefined;
   const definitions = sharedDefinitions(model);
-  const { readings } = bindingEnds(model);
-  let best: { root: ElementId; component: string; feature: ElementId } | undefined;
-  let bestSegments = Number.POSITIVE_INFINITY;
-  for (const [root, reading] of readings) {
-    const inst = definitions.instanceNameOf(root);
-    if (symbol !== inst && !symbol.startsWith(`${inst}::`)) continue;
-    const rest = symbol === inst ? '' : symbol.slice(inst.length + 2);
-    const r = reading.get(rest.split('::').join('.'));
-    if (!r) continue;
-    const segments = inst.split('::').length;
-    if (best === undefined || segments < bestSegments) {
-      best = { root, component: r.component, feature: r.feature };
-      bestSegments = segments;
-    }
-  }
+  const best = outermostReading(model, symbol);
   if (!best) return undefined;
   const member = model.get(best.feature);
   const { unread, overCap } = bindingEnds(model);
@@ -3740,6 +4085,43 @@ export function defaultStandsIn(model: Model, symbol: string): ElementRecord | u
 /** The user packages of a model — `package` elements, nested ones included. */
 function userPackages(model: Model): ElementRecord[] {
   return model.all().filter((e) => e.eClass === 'Package' && e.attrs.isLibrary !== true);
+}
+
+/**
+ * One entry of a user package's {@link DefiningEquations.denote} walk, with
+ * its place in the walk over every user package in turn (`order`).
+ */
+interface PackageDenotation {
+  order: number;
+  pkg: ElementId;
+  path: string;
+  denoted: Denotation;
+}
+
+/**
+ * Every entry of every user package's {@link DefiningEquations.denote} walk,
+ * by the feature it denotes — {@link instanceSitesOf}'s union half, built once
+ * per {@link DefiningEquations} (one per revision, {@link sharedDefinitions})
+ * rather than walked again for each definition a group is read for.
+ */
+const PACKAGE_DENOTE = new WeakMap<DefiningEquations, ReadonlyMap<ElementId, readonly PackageDenotation[]>>();
+
+/** {@link PACKAGE_DENOTE} of `definitions`, built when first asked. */
+function packageDenotations(definitions: DefiningEquations): ReadonlyMap<ElementId, readonly PackageDenotation[]> {
+  const hit = PACKAGE_DENOTE.get(definitions);
+  if (hit) return hit;
+  const byFeature = new Map<ElementId, PackageDenotation[]>();
+  let order = 0;
+  for (const pkg of userPackages(definitions.model)) {
+    for (const [path, denoted] of definitions.denote(pkg.id)) {
+      const entry = { order: order++, pkg: pkg.id, path, denoted };
+      const list = byFeature.get(denoted.feature.id);
+      if (list) list.push(entry);
+      else byFeature.set(denoted.feature.id, [entry]);
+    }
+  }
+  PACKAGE_DENOTE.set(definitions, byFeature);
+  return byFeature;
 }
 
 /**
@@ -3800,14 +4182,16 @@ function instanceSitesOf(
     const d = definitions.denote(root.id).get(prefix);
     if (d) add(`${d.instance}::${definitions.nameOf(d.feature) ?? ''}`, { root: root.id, path: prefix });
   }
-  for (const pkg of userPackages(definitions.model)) {
-    for (const [path, d] of definitions.denote(pkg.id)) {
-      if (d.feature.id === definition.id || definitions.specialisersOf(definition.id).some((s) => s.id === d.feature.id)) {
-        const name = definitions.nameOf(d.feature) ?? '';
-        const walked = path.slice(path.lastIndexOf('.') + 1) === name && (path.includes('.') || d.reader === pkg.id);
-        add(`${d.instance}::${name}`, walked ? { root: pkg.id, path } : undefined);
-      }
-    }
+  // The package entries that denote the definition or a specialiser, in the
+  // order the walk over every user package meets them ({@link packageDenotations}).
+  const byFeature = packageDenotations(definitions);
+  const entries = [...new Set([definition.id, ...definitions.specialisersOf(definition.id).map((s) => s.id)])]
+    .flatMap((id) => byFeature.get(id) ?? [])
+    .sort((a, b) => a.order - b.order);
+  for (const { pkg, path, denoted: d } of entries) {
+    const name = definitions.nameOf(d.feature) ?? '';
+    const walked = path.slice(path.lastIndexOf('.') + 1) === name && (path.includes('.') || d.reader === pkg);
+    add(`${d.instance}::${name}`, walked ? { root: pkg, path } : undefined);
   }
   return { sites, truncated };
 }
@@ -4067,29 +4451,79 @@ function inheritedTwice(
 }
 
 /**
+ * What one sweep of {@link groupsOf} works out once and asks again for each
+ * instance — the instances of one tree share their sites' prefixes, and the
+ * guard asks each instance's sites more than once.
+ */
+interface PathCaches {
+  /** {@link inheritedTwice} per owner and name. */
+  twice: Map<string, readonly ElementRecord[] | undefined>;
+  /** {@link siteWalk} per site root and path. */
+  walks: Map<string, SiteWalk>;
+  /** {@link instanceElementOf} per instance, by its sites (`null`: none). */
+  elements: Map<readonly InstanceSite[], ElementRecord | null>;
+}
+
+/** A path name inherited twice: the element, the name, and the features ({@link inheritedTwice}). */
+type PathDiamond = { owner: ElementRecord; name: string; features: readonly ElementRecord[] };
+
+/**
+ * The {@link DefiningEquations.denote} walk along a site's path, so far: the
+ * first diamond on it, else the element it has reached (`undefined` where it
+ * reaches none, and stops).
+ */
+type SiteWalk = { diamond: PathDiamond } | { owner: ElementRecord | undefined };
+
+/**
+ * {@link diamondOnPath} for one site, and the element its walk reaches: the
+ * walk to the path's last segment ({@link PathCaches.walks}), then that
+ * segment — read in what the walk reached, then the element it denotes. Once
+ * per site root and path; every path extends a shorter one's walk.
+ */
+function siteWalk(definitions: DefiningEquations, root: ElementId, path: string, caches: PathCaches): SiteWalk {
+  const key = `${root} ${path}`;
+  const hit = caches.walks.get(key);
+  if (hit) return hit;
+  let walk: SiteWalk;
+  if (path === '') {
+    walk = { owner: definitions.model.get(root) };
+  } else {
+    const sep = path.lastIndexOf('.');
+    const before = siteWalk(definitions, root, sep < 0 ? '' : path.slice(0, sep), caches);
+    const step = path.slice(sep + 1);
+    if ('diamond' in before || before.owner === undefined) {
+      walk = 'diamond' in before ? before : { owner: undefined };
+    } else {
+      const features = inheritedTwice(definitions.model, before.owner.id, step, caches.twice);
+      if (features !== undefined) {
+        walk = { diamond: { owner: before.owner, name: step, features } };
+      } else {
+        const d = definitions.denote(root).get(path);
+        walk = { owner: d ? (definitions.subjectOf(d.reader, d.feature) ?? d.feature) : undefined };
+      }
+    }
+  }
+  caches.walks.set(key, walk);
+  return walk;
+}
+
+/**
  * The first segment of an instance's path, spelled from a site ({@link
  * instanceSitesOf}), that the element it is read in inherits twice ({@link
  * inheritedTwice}): the element, the name, and the features. Each segment is
  * read in the site's root, then in what the {@link DefiningEquations.denote}
- * walk reaches along the path before it. `undefined` where none is.
+ * walk reaches along the path before it ({@link siteWalk}). `undefined` where
+ * none is.
  */
 function diamondOnPath(
   definitions: DefiningEquations,
   sites: readonly InstanceSite[],
-  cache: Map<string, readonly ElementRecord[] | undefined>,
-): { owner: ElementRecord; name: string; features: readonly ElementRecord[] } | undefined {
-  const model = definitions.model;
+  caches: PathCaches,
+): PathDiamond | undefined {
   for (const { root, path } of sites) {
     if (path === '') continue;
-    const steps = path.split('.');
-    const denoted = definitions.denote(root);
-    let owner = model.get(root);
-    for (let k = 0; k < steps.length && owner !== undefined; k++) {
-      const features = inheritedTwice(model, owner.id, steps[k]!, cache);
-      if (features !== undefined) return { owner, name: steps[k]!, features };
-      const d = denoted.get(steps.slice(0, k + 1).join('.'));
-      owner = d ? (definitions.subjectOf(d.reader, d.feature) ?? d.feature) : undefined;
-    }
+    const walk = siteWalk(definitions, root, path, caches);
+    if ('diamond' in walk) return walk.diamond;
   }
   return undefined;
 }
@@ -4101,25 +4535,31 @@ function diamondOnPath(
  * reference there stands for, else the feature itself — or `undefined` where
  * it is spelled at no site, at sites that reach different elements, or along
  * a path that inherits a name twice ({@link diamondOnPath}): no one element
- * stands for an instance of Q3's p, which is Q2's p and Q4's p at once.
+ * stands for an instance of Q3's p, which is Q2's p and Q4's p at once. Once
+ * per instance ({@link PathCaches.elements}).
  */
 function instanceElementOf(
   definitions: DefiningEquations,
   sites: readonly InstanceSite[],
-  cache: Map<string, readonly ElementRecord[] | undefined>,
+  caches: PathCaches,
 ): ElementRecord | undefined {
-  if (diamondOnPath(definitions, sites, cache) !== undefined) return undefined;
-  const elements = new Set<ElementRecord | undefined>();
-  for (const { root, path } of sites) {
-    if (path === '') {
-      elements.add(definitions.model.get(root));
-      continue;
+  const hit = caches.elements.get(sites);
+  if (hit !== undefined) return hit ?? undefined;
+  let element: ElementRecord | undefined;
+  if (diamondOnPath(definitions, sites, caches) === undefined) {
+    const elements = new Set<ElementRecord | undefined>();
+    for (const { root, path } of sites) {
+      if (path === '') {
+        elements.add(definitions.model.get(root));
+        continue;
+      }
+      const d = definitions.denote(root).get(path);
+      elements.add(d ? (definitions.subjectOf(d.reader, d.feature) ?? d.feature) : undefined);
     }
-    const d = definitions.denote(root).get(path);
-    elements.add(d ? (definitions.subjectOf(d.reader, d.feature) ?? d.feature) : undefined);
+    if (elements.size === 1) [element] = elements;
   }
-  const [element] = elements;
-  return elements.size === 1 ? element : undefined;
+  caches.elements.set(sites, element ?? null);
+  return element;
 }
 
 /**
@@ -4164,7 +4604,8 @@ type GuardVerdict = { element: ElementRecord } | { kind: InstanceAbstention; sen
  * its own constrains (H5: which of the two stands is not decided here); and
  * one an asserted relation of an instance ENCLOSING the element constrains
  * ({@link assertAbove}, A.2.4: `enclosing-assert`).
- * `cache` holds {@link readFeatures} per context and relation, for one sweep.
+ * `cache` holds {@link readFeatures} per context and relation, and `caches`
+ * the path walks ({@link PathCaches}), for one sweep.
  */
 function instanceReadsOtherwise(
   definitions: DefiningEquations,
@@ -4174,13 +4615,13 @@ function instanceReadsOtherwise(
   sites: readonly InstanceSite[],
   names: readonly string[],
   cache: Map<string, GuardReading | undefined>,
-  twice: Map<string, readonly ElementRecord[] | undefined>,
+  caches: PathCaches,
 ): GuardVerdict | undefined {
   const model = definitions.model;
   const head = `${effectiveQualifiedName(model, relation.id)} is not read in ${instance}`;
   const named = (f: ElementRecord | undefined) => (f ? definitions.qualifiedNameOf(f.id) : 'nothing this tool resolves');
   const abstain = (sentence: string): GuardVerdict => ({ kind: 'not-enumerated', sentence });
-  const diamond = diamondOnPath(definitions, sites, twice);
+  const diamond = diamondOnPath(definitions, sites, caches);
   if (diamond !== undefined) {
     const features = diamond.features.map((f) => named(f));
     const listed = `${features.slice(0, -1).join(', ')} and ${features[features.length - 1]}`;
@@ -4190,7 +4631,7 @@ function instanceReadsOtherwise(
         'so this tool cannot tell which element stands for it there',
     );
   }
-  const element = instanceElementOf(definitions, sites, twice);
+  const element = instanceElementOf(definitions, sites, caches);
   if (element === undefined) {
     return abstain(`${head}: this tool cannot tell which element stands for it there`);
   }
@@ -4335,6 +4776,9 @@ function boundPartPhrase(bound: NonNullable<GuardReading['bound']>, where: strin
   return `it reads ${bound.path} through ${through}, which a binding joins to another feature, and this tool reads no feature through a bound part`;
 }
 
+/** {@link instanceGroups} per model, keyed on its revision (B.5): nothing survives an edit. */
+const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly InstanceGroup[] }>();
+
 /**
  * The groups a relation is read per instance in, one per (relation, shared
  * usage) — a usage whose reading `boundAbove` reports otherwise. Each group is
@@ -4352,13 +4796,34 @@ function boundPartPhrase(bound: NonNullable<GuardReading['bound']>, where: strin
  * that is an element's own instance is that element's reading (`standsFor`),
  * and one that a group of a more specific usage lists is that group's: every
  * instance is one row.
+ *
+ * Once per model revision ({@link INSTANCE_GROUPS}, B.5): the check, the
+ * obligations lane and the numeric lane each ask it, and the app's validation
+ * sweep, Check and Solve ask it again of the same revision. The list, its
+ * groups and their instance lists are shared, and frozen, and the maps are
+ * read-only — read them, never change them.
  */
-export function instanceGroups(model: Model): InstanceGroup[] {
+export function instanceGroups(model: Model): readonly InstanceGroup[] {
+  const hit = INSTANCE_GROUPS.get(model);
+  if (hit && hit.rev === model.rev) return hit.groups;
+  const groups = Object.freeze(
+    groupsOf(model).map((g) => {
+      Object.freeze(g.instances);
+      if (g.refusal) Object.freeze(g.refusal);
+      return Object.freeze(g);
+    }),
+  );
+  INSTANCE_GROUPS.set(model, { rev: model.rev, groups });
+  return groups;
+}
+
+/** {@link instanceGroups}, worked out. */
+function groupsOf(model: Model): InstanceGroup[] {
   const definitions = sharedDefinitions(model);
   if (!hasUserBindings(model)) return [];
   const out: InstanceGroup[] = [];
   const read = new Map<string, GuardReading | undefined>();
-  const twice = new Map<string, readonly ElementRecord[] | undefined>();
+  const caches: PathCaches = { twice: new Map(), walks: new Map(), elements: new Map() };
   let budget = MAX_INSTANCE_RELATIONS;
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     if (el.ownerId == null) continue;
@@ -4421,14 +4886,14 @@ export function instanceGroups(model: Model): InstanceGroup[] {
           const crossed = new Set<string>();
           for (const instance of instances.slice(1)) {
             const own = sites.get(instance) ?? [];
-            if (diamondOnPath(definitions, own, twice) !== undefined) crossed.add(instance);
+            if (diamondOnPath(definitions, own, caches) !== undefined) crossed.add(instance);
             // The element whose own instance this is: the group's row reads the
             // relation there, so that element's context row is this row.
-            const element = instanceElementOf(definitions, own, twice);
+            const element = instanceElementOf(definitions, own, caches);
             if (element !== undefined && element.id !== usage.id && definitions.instanceNameOf(element.id) === instance) {
               standsFor.set(instance, element.id);
             }
-            const verdict = instanceReadsOtherwise(definitions, el, usage, instance, own, names, read, twice);
+            const verdict = instanceReadsOtherwise(definitions, el, usage, instance, own, names, read, caches);
             if (verdict === undefined) continue;
             if ('element' in verdict) readIn.set(instance, verdict.element.id);
             else otherwise.set(instance, verdict);
@@ -4530,7 +4995,24 @@ export function enclosingAssertOn(
   name: string,
   inst?: string,
 ): { frame: ElementId; expr: string } | undefined {
+  const answer = assertEnclosing(model, contextId, enclosing, name, inst);
+  // Where nothing is asserted, the answer is the same for every instance: no question of its spelling.
+  if (inst !== undefined && recording !== undefined && sharedDefinitions(model).anyAsserted()) {
+    recording.push({ kind: 'enclosing', contextId, enclosing, name, inst, answer });
+  }
+  return answer;
+}
+
+/** {@link enclosingAssertOn}, worked out: only a frame whose reader asserts something is spelled out. */
+function assertEnclosing(
+  model: Model,
+  contextId: ElementId,
+  enclosing: readonly InstanceFrame[],
+  name: string,
+  inst?: string,
+): { frame: ElementId; expr: string } | undefined {
   const definitions = sharedDefinitions(model);
+  if (!definitions.anyAsserted()) return undefined;
   const root = definitions.instanceNameOf(contextId);
   const segments = name.split('.');
   const constrains = (reader: ElementRecord, remaining: string): { frame: ElementId; expr: string } | undefined => {
@@ -4545,6 +5027,7 @@ export function enclosingAssertOn(
   };
   if (inst !== undefined && inst !== root) {
     for (const frame of definitions.framesAbove(inst) ?? []) {
+      if (definitions.assertsOf(frame.reader).length === 0) continue;
       const reader = model.get(frame.reader);
       if (!reader || reader.attrs.isLibrary === true) continue;
       // A type definition's own frame reads as before; a package's is the instance's outermost frame (its
@@ -4557,6 +5040,7 @@ export function enclosingAssertOn(
     }
   }
   for (const frame of enclosing) {
+    if (definitions.assertsOf(frame.reader).length === 0) continue;
     const reader = model.get(frame.reader);
     if (!reader || reader.attrs.isLibrary === true) continue;
     const rel =

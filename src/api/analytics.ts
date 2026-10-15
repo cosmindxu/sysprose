@@ -41,6 +41,7 @@ import {
   statementKindOf,
   type ConstraintCheck,
   type MeasureResult,
+  type NumericConstraintResult,
   type SimStep,
   type SimTrace,
 } from '../semantics/index';
@@ -2385,6 +2386,12 @@ export interface AnalysisUnknown {
   context?: { baseId: ElementId; contextId?: ElementId; path?: string };
   /** The element the anchor rule re-anchored the row to, when it did. */
   anchorId?: ElementId;
+  /**
+   * On a context/instance reading that abstained: why, as a kind
+   * (`NumericConstraintResult.cause`) — one for every instance a relation
+   * abstains in for one reason, where each {@link reason} names its instance.
+   */
+  cause?: NumericConstraintResult['cause'];
 }
 
 export interface AnalysisReport {
@@ -2464,6 +2471,7 @@ export function analysisReport(model: Model): AnalysisReport {
         ...(c.reason ? { reason: c.reason } : {}),
         ...(c.context ? { context: c.context } : {}),
         ...(c.anchorId !== undefined ? { anchorId: c.anchorId } : {}),
+        ...(c.cause !== undefined ? { cause: c.cause } : {}),
       });
     }
   }

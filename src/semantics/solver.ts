@@ -94,6 +94,7 @@ import {
   sharedDefinitions,
   statedValueOf,
   usageOwnedRefusal,
+  type InstanceAbstention,
   type InstanceReading,
 } from './defining-equation';
 import { effectiveNameOf, generalizationsOf } from './inheritance';
@@ -471,6 +472,13 @@ export interface NumericConstraintResult {
    * back to `context.baseId`.
    */
   anchorId?: ElementId;
+  /**
+   * On an `unknown` {@link context} row that abstained (A.9): why, as a kind
+   * (`SpecialisationInstance.cause` of ./evaluate-model) — the same for every
+   * instance of a relation that abstains for one reason, where each row's
+   * {@link reason} names its own instance. The app's Solve rows fold by it.
+   */
+  cause?: InstanceAbstention;
   /**
    * Set on a row that is a value the model states twice, not a relation
    * (`ConstraintCheck.conflict` of ./evaluate-model) — a binding connector's
@@ -4825,6 +4833,7 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
         context: { baseId: c.id, contextId: i.contextId, ...(i.instance !== undefined ? { path: i.instance } : {}) },
         ...(i.instance !== undefined ? { anchorId: anchorFor(model, c, i) } : {}),
         ...(i.result !== 'satisfied' ? { reason: reason(i.detail ?? i.message) } : {}),
+        ...(i.result === 'unknown' && i.cause !== undefined ? { cause: i.cause } : {}),
       });
     }
   }

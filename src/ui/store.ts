@@ -1182,13 +1182,13 @@ function solveViolations(model: Model, violations: AnalysisViolation[]): Diagnos
   return out;
 }
 
-/** The unknown rows: a context row says where it stood, the rest the reason (C.3). */
+/** The unknown rows: a context row says where it stood, the rest the reason (C.3); context rows fold by relation and cause (C.2). */
 function solveUnknowns(model: Model, unknowns: AnalysisUnknown[]): Diagnostic[] {
   const out: Diagnostic[] = [];
   const groups = new Map<string, AnalysisUnknown[]>();
   for (const u of unknowns) {
     if (u.context) {
-      const key = `${u.context.baseId}\u0000${u.reason ?? ''}`;
+      const key = `${u.context.baseId}\u0000${u.cause ?? `\u0000${u.reason ?? ''}`}`;
       const list = groups.get(key);
       if (list) list.push(u);
       else groups.set(key, [u]);
@@ -1210,7 +1210,7 @@ function solveUnknowns(model: Model, unknowns: AnalysisUnknown[]): Diagnostic[] 
           id: `solve#unknown#${out.length}`,
           ruleId: 'solve',
           severity: 'info',
-          message: `unjudged ${u.kind}: ${u.expression} in ${solveContextLabel(model, u.context!)}${reason}`,
+          message: `unjudged ${u.kind}: ${u.expression} in ${solveContextLabel(model, u.context!)}${u.reason ? ` — ${u.reason}` : ''}`,
           elementId: u.anchorId ?? u.context!.baseId,
         });
       }

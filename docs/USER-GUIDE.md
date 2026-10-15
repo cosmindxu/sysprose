@@ -892,7 +892,12 @@ that breaks the relation is reported against that instance, and the check rolls
 two or more of them up into one finding; a relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
 has no roll-up, and a violation there is that instance's finding alone — one the
-check could not read there, an info finding of its own. An
+check could not read there, an info finding of its own. Solve lists an
+instance as a row of its own (`violated inequality: load <= 10.0 in
+R::q1::p`); past five rows of one relation, the violated ones fold into one
+row, and so do the unjudged ones that give one reason or abstain for one cause
+(defaults that differ, no value, a cap) — the first five instances, the count,
+and the first one's sentence, which names that instance. An
 instance whose own element — the most specific one that denotes it — reads a
 name of the relation, or a name that name's value reads, through another feature
 is read in that element, at the instance's own

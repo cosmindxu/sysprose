@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
 import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, anchorFor } from '../../src/semantics/index';
-import { featureIdsFor, valueAtPath } from '../../src/semantics/evaluate-model';
+import { featureIdsFor, valueAtPath, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
   bindingCapOf,
@@ -26,8 +26,11 @@ import {
   instanceGroups,
   instancesOfDefinition,
   isBindingConnector,
+  lookupsHold,
+  lookupsOf,
   pastCapEnd,
   readsOtherwise,
+  recordingLookups,
   shadowedNamesOf,
   sharedDefinitions,
 } from '../../src/semantics/defining-equation';
@@ -2719,6 +2722,105 @@ describe('the instance index — frames, components, and bound sources', () => {
       'A7N::q4::p satisfied',
       'A7N::q5::p violated',
     ]);
+  });
+
+  // A-H2 (O2 S5): the groups were worked out again by every caller — the check, the obligations lane, the
+  // numeric lane, and the app's validation sweep, Check and Solve, all of one revision (8.4 s of big-bind-600's
+  // check). They are worked out once per model revision now (B.5's INSTANCE_GROUPS), and so is each bound
+  // source under them; an edit is a new revision, read anew.
+  it('works the groups and bound sources out once per model revision, and anew after an edit (B.5)', async () => {
+    const { model: m } = await loadModelText(`package C5 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 50.0; }
+      part q2 : Q;
+    }`);
+    const qn = (id: string) => m!.qualifiedName(id);
+    const rows = () =>
+      (checkConstraints(m!).find((c) => qn(c.id) === 'C5::P::c')!.instances ?? []).map(
+        (i) => `${i.instance ?? (i.generic ? 'generic' : qn(i.contextId))} ${i.result}`,
+      );
+    const groups = instanceGroups(m!);
+    expect(groups.map((g) => g.instances)).toEqual([['C5::Q::p', 'C5::q1::p', 'C5::q2::p']]);
+    const source = boundSourceIn(m!, 'C5::q1::p::load');
+    expect(source && !('abstain' in source) && source.via.source).toBe('q1.L');
+    expect(rows()).toEqual(['generic satisfied', 'C5::q1::p violated', 'C5::q2::p satisfied']);
+    obligationsOf(m!);
+    checkConstraintsNumeric(m!);
+    // Every surface asked the same revision: the same list and the same source, never worked out again — and
+    // the list is frozen, so no caller changes what the next one reads.
+    expect(instanceGroups(m!)).toBe(groups);
+    expect(boundSourceIn(m!, 'C5::q1::p::load')).toBe(source);
+    expect(Object.isFrozen(groups) && groups.every((g) => Object.isFrozen(g) && Object.isFrozen(g.instances))).toBe(true);
+    expect(() => (groups[0]!.instances as string[]).sort()).toThrow(TypeError);
+    // So is the memoised source, with its lists: one caller's in-place sort would change what every lane reads.
+    if (!source || 'abstain' in source) throw new Error('no source');
+    expect([source, source.paths, source.via, source.via.bindingIds].every((x) => Object.isFrozen(x))).toBe(true);
+    const cls = classified(m!, source.root, source.component);
+    expect([cls, cls.valued, cls.readable, cls.heldDefaults].every((x) => Object.isFrozen(x))).toBe(true);
+    // An edit is a new revision: everything is read anew, the edit included.
+    const L = m!.children(named(m!, 'C5::q1').id).find((e) => e.eClass === 'AttributeUsage')!;
+    m!.setAttrs(L.id, { value: 5.0 });
+    expect(instanceGroups(m!)).not.toBe(groups);
+    expect(boundSourceIn(m!, 'C5::q1::p::load')).not.toBe(source);
+    expect(rows()).toEqual(['generic satisfied', 'C5::q1::p satisfied', 'C5::q2::p satisfied']);
+    m!.remove(named(m!, 'C5::q2').id);
+    expect(instanceGroups(m!).map((g) => g.instances)).toEqual([['C5::Q::p', 'C5::q1::p']]);
+  });
+
+  // A-H2 (O2 S5), the E target tree10 ≤ 2× main: tree10's 3,070 instances read L from eleven components, and
+  // each was judged by the whole pipeline (115 ms against 8). A decided reading is now kept with the questions
+  // it asked of its instance's spelling — where a binding carries a value in, whether a default stands or gives
+  // way there, whether an enclosing assert constrains a read — and an instance whose questions get the same
+  // answers takes that reading, its own symbols spelled for it. Every row must be the row its own reading gives.
+  const TREE = `package T {
+    part def T0 {
+      attribute load : ScalarValues::Real default = 1.0;
+      attribute m2 : ScalarValues::Real = 10.0 - load;
+      constraint c { load <= 10.0 }
+      constraint d { m2 >= 0.0 }
+    }
+    part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; part b : T0; bind a.load = L; bind b.load = L; }
+    part def T2 { attribute L : ScalarValues::Real default = 1.0; part a : T1; part b : T1; bind a.L = L; bind b.L = L; }
+    part def T3 { attribute L : ScalarValues::Real default = 1.0; part a : T2; part b : T2; bind a.L = L; bind b.L = L; }
+    part top : T3 { attribute :>> L = 50.0; }
+    part mid : T3 { attribute :>> L = 7.0; }
+  }`;
+
+  it('shares one reading among instances read alike, each row the one its own reading gives (E, tree10)', async () => {
+    const { model: m } = await loadModelText(TREE);
+    const shared = checkConstraints(m!);
+    expect(shared).toEqual(withEveryInstanceJudged(() => checkConstraints(m!)));
+    const rows = (relation: string) =>
+      (shared.find((c) => m!.qualifiedName(c.id) === relation)!.instances ?? []).filter((i) => i.instance !== undefined);
+    const c = rows('T::T0::c');
+    const d = rows('T::T0::d');
+    // T1's a, read in T2 (2), T3 (4), top (4) and mid (4); so is T1's b.
+    expect(c.length).toBe(28);
+    const verdict = (list: typeof c, inst: string) => list.find((i) => i.instance === inst)?.result;
+    expect(verdict(c, 'T::top::b::a::a')).toBe('violated');
+    expect(verdict(c, 'T::mid::b::a::a')).toBe('satisfied');
+    expect(verdict(c, 'T::T3::b::a::a')).toBe('satisfied');
+    expect(verdict(d, 'T::top::a::b::b')).toBe('violated');
+    expect(verdict(d, 'T::mid::a::b::b')).toBe('satisfied');
+    // Each row names its own instance and the source it read, never the one it shares a reading with.
+    const row = c.find((i) => i.instance === 'T::top::b::a::b')!;
+    expect(row.reads?.map((r) => [r.symbol, r.value, r.via?.sourceSymbol])).toEqual([['T::top::b::a::b::load', 50, 'T::top::L']]);
+    expect(row.message).toBe('Constraint violated: load <= 10.0 (load = 50 in T::top::b::a::b, its L T::top::L through T::top\'s `bind`)');
+  });
+
+  it('asks a kept reading\'s questions again of another instance, and takes it only where every answer is the same', async () => {
+    const { model: m } = await loadModelText(TREE);
+    const { value, lookups } = recordingLookups(() => boundSourceIn(m!, 'T::top::a::a::a::load'));
+    const asked = lookupsOf(lookups, 'T::top::a::a::a');
+    expect(asked).toEqual([{ kind: 'source', symbol: 'T::top::a::a::a::load', answer: value }]);
+    // Another instance under top: the same member (top's L) of the same component.
+    expect(lookupsHold(m!, asked, 'T::top::a::a::a', 'T::top::b::b::a')).toBe(true);
+    // Under mid, or in T3's own instance: another component, another L.
+    expect(lookupsHold(m!, asked, 'T::top::a::a::a', 'T::mid::b::b::a')).toBe(false);
+    expect(lookupsHold(m!, asked, 'T::top::a::a::a', 'T::T3::a::a::a')).toBe(false);
+    // A question that does not spell the instance asks the same of every instance: not asked again.
+    expect(lookupsOf(lookups, 'T::mid::a::a::a')).toEqual([]);
   });
 
   // The coverage guard (A.7; the 2026-10-14 review's A-C1). A group reads every instance of its shared usage
