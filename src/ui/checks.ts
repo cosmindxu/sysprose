@@ -29,11 +29,9 @@
  * element and what it contains; run here they narrow to the selection the same
  * way, so a result and its copied command cover the same elements, and where
  * the selection cannot scope them ({@link checkScope}) both cover the whole
- * model and the summary says so. Not yet the same: `check-behaviour` here
- * checks the selected machine or else the model's first, where its command
- * takes the one machine inside the selection or is refused; and `reach` covers
- * the whole model, as its command does, although that subcommand takes an
- * optional `--element` too.
+ * model and the summary says so. Not yet the same: `reach` covers the whole
+ * model, as its command does, although that subcommand takes an optional
+ * `--element` too.
  *
  * Every row carries a stable `code`, like every other finding in this project,
  * so automation branches on the code and never on the prose.

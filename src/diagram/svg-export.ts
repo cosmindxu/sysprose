@@ -371,14 +371,17 @@ export function svgFromDiagram(graph: DiagramGraph, opts: SvgExportOptions = {})
   /* ── column headers: the package over each column of a layered view ── */
   const columnSvg: string[] = [];
   for (const c of columns) {
+    // The screen draws the band with a bottom rule only (0.08em, inside the box), so the file does too.
+    const size = columnLabelSizeFor(c.label, c.w, c.fontSize);
+    const rule = size * 0.08;
     columnSvg.push(
       `<g data-column-id="${escapeXml(c.id)}" data-elementid="${escapeXml(c.elementId)}">` +
-        `<rect x="${num(c.x)}" y="${num(c.y)}" width="${num(c.w)}" height="${num(c.h)}" ` +
-        `fill="${COLUMN_FILL}" stroke="${COLUMN_RULE}" stroke-width="${num(c.h * 0.04)}" />`,
+        `<rect x="${num(c.x)}" y="${num(c.y)}" width="${num(c.w)}" height="${num(c.h)}" fill="${COLUMN_FILL}" />` +
+        `<line x1="${num(c.x)}" y1="${num(c.y + c.h - rule / 2)}" x2="${num(c.x + c.w)}" y2="${num(c.y + c.h - rule / 2)}" ` +
+        `stroke="${COLUMN_RULE}" stroke-width="${num(rule)}" />`,
     );
     if (withLabels) {
       // A name wider than its column is shrunk to fit, then cut: a file cannot clip by CSS.
-      const size = columnLabelSizeFor(c.label, c.w, c.fontSize);
       const label = fitColumnLabel(c.label, c.w - 2 * COLUMN_LABEL_PAD_EM * size, size);
       columnSvg.push(
         `<text x="${num(c.x + c.w / 2)}" y="${num(c.y + c.h / 2 + size * 0.35)}" text-anchor="middle" ` +

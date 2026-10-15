@@ -5,9 +5,9 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
 
 Entries tagged `[review 2026-10-14 …]` come from the read-only review of Sysprose 5943654 on that
 date, and each id is the finding's own in the review's plan: `A-…` is from the per-instance
-soundness review (A), `C1`, `C3`, `H1`, `H2`, `M1`, `M2`, `M3` and `L1` from the behaviour review
-(B), `C-F…` from the speed review (C), `D-…` from the app and merges review (D), and `LH-`, `PI-`,
-`EV-` and `CK-` from the decisions batch and per-instance reporting review (E). The `E<n>` ids and
+soundness review (A), `C1`, `C3`, `H1`, `H2`, `M1`, `M2` and `M3` from the behaviour review
+(B), `C-F…` from the speed review (C), `D-…` from the app and merges review (D), and `PI-` and
+`EV-` from the decisions batch and per-instance reporting review (E). The `E<n>` ids and
 `X2` are rows of the open-items inventory (F), not of reviewer E; its two further rows are written
 `F-U1` and `F-C2` here, so that they do not read as a decision or as another reviewer's id. A model an entry writes
 out as `package … { … }` is complete and loads as written; the review file an entry names
@@ -778,16 +778,6 @@ merge removes what it closes.
       clause failed, without the raise-the-bound advice (a catalogue entry and `npm run codes`).
       Done when the non-bound case prints its own code with no `--max-configs` advice and v9's two
       rows read PASS again. [review 2026-10-14 M2]
-- [ ] **Correct the checks lane's comment that the code contradicts.** `src/ui/checks.ts:26-36`
-      says "Not yet the same: `check-behaviour` here checks the selected machine or else the model's
-      first"; that has been false since 2add5b3 (`pickBehaviourMachine`,
-      `src/ui/behaviour-checks.ts:199`, calls the CLI's own `behaviourMachineFor`), while its remark
-      about `reach` stays true. Done when the comment says what the code does. [review 2026-10-14
-      D-8]
-- [ ] **Stroke the SVG export's column-header band as the screen does.** The export
-      (`src/diagram/svg-export.ts`) strokes all four sides of the band where the screen draws only a
-      bottom rule. Cosmetic. Done when the export's band matches the screen's.
-      [review 2026-10-14 D-12]
 
 ## Solver and speed — review 2026-10-14
 

@@ -218,6 +218,14 @@ describe('svgFromDiagram — column headers', () => {
     expect(svg).not.toContain('OA & <SA>');
   });
 
+  it('strokes only the bottom rule of a band, as the screen does', () => {
+    const svg = svgFromDiagram(withColumns());
+    const band = svg.match(/<g data-column-id="c1"[^>]*><rect [^>]*\/>/)![0];
+    expect(band).not.toContain('stroke');
+    // 18px label in a 360px column: the rule is 0.08em = 1.44px, inside the band's bottom edge (y -40 + 32).
+    expect(svg).toMatch(/<line x1="0" y1="-8\.72" x2="360" y2="-8\.72" stroke="#2563eb" stroke-width="1\.44" \/>/);
+  });
+
   it('widens the viewBox to the headers above the boxes', () => {
     // Boxes span y:[0,250]; the headers start at y:-40.
     expect(svgFromDiagram(withColumns())).toContain('viewBox="-24 -64 496 338"');
