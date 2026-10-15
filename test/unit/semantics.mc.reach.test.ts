@@ -48,6 +48,7 @@ import {
   BEHAVIOUR_CODES,
   BOUND_EXHAUSTED_CODE,
   BEHAVIOUR_UNSUPPORTED_CODE,
+  COMPLETION_LIVELOCK_CODE,
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
   GUARD_UNDETERMINED_CODE,
@@ -57,6 +58,7 @@ import {
   UNRECOVERABLE_MODE_CODE,
   edgeCensus,
   exploreMachine,
+  livelockWithheldSentence,
   reachReport,
   stateMachinesIn,
   walkableTransitions,
@@ -960,13 +962,16 @@ describe('the semantic profile is data, and its provenance is real', () => {
     }
   });
 
-  it('names the eight codes this engine can raise', () => {
+  it('names the nine codes this engine can raise', () => {
     // Eight since the trap row: `verification/unrecoverable-mode` is a set of
-    // configurations nothing leaves, and it is the one code of the eight that
-    // is gated on the exactness gate rather than on the decreasing conjunction.
+    // configurations nothing leaves, and it is the one code of them that is
+    // gated on the exactness gate rather than on the decreasing conjunction.
+    // Nine since U1 (plan O1 S4): `verification/completion-livelock`, a cycle
+    // the interpreter's chase goes round, gated on neither.
     expect([...BEHAVIOUR_CODES].sort()).toEqual([
       'verification/behaviour-unsupported-construct',
       'verification/bound-exhausted',
+      'verification/completion-livelock',
       'verification/dead-transition',
       'verification/deadlock',
       'verification/guard-undetermined',
@@ -1897,6 +1902,469 @@ describe('the chase budget, followed the way the interpreter follows it', () => 
   });
 });
 
+/**
+ * THE COMPLETION LIVELOCK (U1; plan O1 S4; `docs/06` §8.8). A reachable cycle
+ * the interpreter's completion chase goes round without coming to rest, decided
+ * over CONFIGURATIONS and over the chase the interpreter runs — the first
+ * enabled trigger-less transition at the innermost level, by declaration order —
+ * withheld where a step of it is not decided, and checked on every probe against
+ * the interpreter itself: it spends its chase budget there, and an event is what
+ * moves it on. Review B's four probes (`livelock-self`, `livelock-two`,
+ * `undet-completion`, `nested-completion`) are inline, without their properties.
+ */
+describe('a completion livelock: a cycle the interpreter’s chase goes round without coming to rest', () => {
+  async function load(text: string): Promise<{ model: Model; machineId: ElementId; id: (n: string) => ElementId }> {
+    const model = (await loadModelText(text, { fileName: 'livelock.sysml', library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const id = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+    return { model, machineId, id };
+  }
+  const names = (refs: readonly { name: string }[]) => refs.map((r) => r.name);
+  const livelockCodes = (r: ReturnType<typeof reachReport>) =>
+    r.diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_CODE);
+
+  const LIVE_SELF = `package LiveSelf { state def M {
+    state a; state b;
+    transition spin first a then a;
+    transition leave first a accept e then b;
+  } }`;
+  const LIVE_TWO = `package LiveTwo { state def M {
+    state s0; state a; state b; state c;
+    transition go first s0 accept go then a;
+    transition ab first a then b;
+    transition ba first b then a;
+    transition ac first a accept e then c;
+  } }`;
+  const UNDET_COMPLETION = `package UndetCompletion { part def P {
+    attribute x : Integer;
+    state def M {
+      state a; state b; state c;
+      transition ab first a if x > 0 then b;
+      transition ac first a accept e then c;
+    }
+  } }`;
+  const NESTED_COMPLETION = `package NestedCompletion { state def M {
+    state s0;
+    state comp { state i1; state i2; transition i12 first i1 then i2; }
+    state z;
+    transition s0c first s0 accept go then comp;
+    transition cz first comp accept e then z;
+  } }`;
+  /** v9's `PA::SwarmMember::SwarmMemberModes`, transition for transition. */
+  const PA_SWARM_MODES = `package Modes { state def SwarmMemberModes {
+    initial start;
+    state Nominal; state NavigationDegraded; state SensingDegraded; state Isolated; state Quarantined; state Readmitted;
+    transition start -> Nominal;
+    transition Nominal -> NavigationDegraded;
+    transition NavigationDegraded -> Nominal;
+    transition Nominal -> SensingDegraded;
+    transition SensingDegraded -> Nominal;
+    transition Nominal -> Isolated;
+    transition NavigationDegraded -> Isolated;
+    transition SensingDegraded -> Isolated;
+    transition admissionFails first Nominal accept peerVerdict then Quarantined;
+    transition readmissionPasses first Quarantined accept readmitVerdict then Readmitted;
+    transition Isolated -> Readmitted;
+    transition Isolated -> Quarantined;
+    transition Readmitted -> Nominal;
+  } }`;
+
+  it('livelock-self: the self-loop is the cycle, the interpreter spends its whole budget on it, and the row says so once', async () => {
+    const { model, machineId, id } = await load(LIVE_SELF);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.finalState).toBe(id('a'));
+
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.livelocks).toHaveLength(1);
+    const [l] = m.livelocks;
+    expect(names(l.states)).toEqual(['a']);
+    expect(l.configs).toBe(1);
+    expect(names(l.transitions)).toEqual(['spin']);
+    expect(l.choices).toEqual([]);
+    expect(names(l.entry)).toEqual(['a']);
+    expect(l.steps).toBe(0);
+    expect(m.livelocksWithheld).toEqual([]);
+    expect(r.totals.livelocks).toBe(1);
+    const found = livelockCodes(r);
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe('warning');
+    expect(found[0].elementId).toBe(id('a'));
+    expect(found[0].message).toContain('completion livelock — the interpreter\'s chase goes round {a} without coming to rest');
+    expect(found[0].message).toContain('64-step chase budget');
+    // The line, with the code and the element the page selects on.
+    const lines = reachMachineLines(m, 1).filter((ln) => ln.kind === 'livelock');
+    expect(lines.map((ln) => [ln.text, ln.code, ln.elementId, ln.withholds])).toEqual([
+      [
+        '    livelock     {a} — the chase goes round 1 configuration(s) on trigger-less transitions and moves on only on an event; entered in 0 step(s) from a',
+        COMPLETION_LIVELOCK_CODE,
+        id('a'),
+        false,
+      ],
+    ]);
+    // Only an event moves it on: `e` leaves.
+    expect(runStateMachine(model, machineId, ['e']).finalState).toBe(id('b'));
+  });
+
+  it('livelock-two: the cycle `a ⇄ b`, entered in one step on `go` — the exit on `e` does not end it, since it takes an event', async () => {
+    const { model, machineId, id } = await load(LIVE_TWO);
+    const run = runStateMachine(model, machineId, ['go']);
+    expect(run.completionBudgetHit).toBe(true);
+    expect([id('a'), id('b')]).toContain(run.finalState);
+    expect(runStateMachine(model, machineId, ['go', 'e']).finalState).toBe(id('c'));
+
+    const m = reachReport(model).machines[0];
+    expect(m.livelocks.map((l) => [names(l.states), names(l.transitions), names(l.entry), l.steps, l.entryBy, l.cycles])).toEqual([
+      [['a', 'b'], ['ab', 'ba'], ['s0', 'a'], 1, 'simulator', 1],
+    ]);
+    expect(m.livelocksWithheld).toEqual([]);
+  });
+
+  it('undet-completion: no cycle at all — a guard nothing decided leaves no livelock row and no withheld line', async () => {
+    const { model, machineId } = await load(UNDET_COMPLETION);
+    expect(runStateMachine(model, machineId, ['e']).completionBudgetHit).toBe(false);
+    const r = reachReport(model);
+    expect(r.machines[0].undeterminedGuards).toHaveLength(1);
+    expect(r.machines[0].livelocks).toEqual([]);
+    expect(r.machines[0].livelocksWithheld).toEqual([]);
+    expect(livelockCodes(r)).toEqual([]);
+  });
+
+  it('nested-completion: a chase that rests inside a composite is no cycle', async () => {
+    const { model, machineId } = await load(NESTED_COMPLETION);
+    expect(runStateMachine(model, machineId, ['go']).completionBudgetHit).toBe(false);
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks).toEqual([]);
+    expect(r.machines[0].livelocksWithheld).toEqual([]);
+    expect(livelockCodes(r)).toEqual([]);
+  });
+
+  it('v9’s PA SwarmMemberModes: the chase goes round `Nominal ⇄ NavigationDegraded` though another branch leaves, and the row names where', async () => {
+    // The shape a bottom-component reading misses: `Nominal -> Isolated ->
+    // Quarantined` is a trigger-less way out to a state that rests, so the
+    // relation's component is not inescapable — and the interpreter still
+    // goes round on every run, because declaration order keeps it there.
+    const { model, machineId, id } = await load(PA_SWARM_MODES);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect([id('Nominal'), id('NavigationDegraded')]).toContain(run.finalState);
+    // A run that takes the other branch leaves and comes to rest.
+    const toIsolated = model.all().find((e) => e.eClass === 'TransitionUsage' && e.source?.[0] === id('Nominal') && e.target?.[0] === id('Isolated'))!;
+    const toQuarantined = model.all().find((e) => e.eClass === 'TransitionUsage' && e.source?.[0] === id('Isolated') && e.target?.[0] === id('Quarantined'))!;
+    const other = runStateMachine(model, machineId, [], { follow: [toIsolated.id, toQuarantined.id] });
+    expect(other.completionBudgetHit).toBe(false);
+    expect(other.finalState).toBe(id('Quarantined'));
+
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.livelocks.map((l) => [names(l.states), names(l.choices), l.steps])).toEqual([
+      [['Nominal', 'NavigationDegraded'], ['Nominal', 'NavigationDegraded'], 0],
+    ]);
+    const [finding] = livelockCodes(r);
+    expect(finding.message).toContain(
+      'At `Modes::SwarmMemberModes::Nominal`, `Modes::SwarmMemberModes::NavigationDegraded` another trigger-less transition is enabled beside the one the chase fires, and the simulator never takes it: declaration order decides there, and keeps the chase on the cycle.',
+    );
+    // The choice rows it refers to are beside it.
+    expect(m.nondeterminism.map((n) => n.state.name)).toEqual(expect.arrayContaining(['Nominal', 'NavigationDegraded']));
+    // And the way in is the simulator's own run — the opening — so the row is
+    // not hedged although the machine has a choice: the hedge is per row, read
+    // off this row's way in, never off the machine's choice rows.
+    expect(m.livelocks[0].entryBy).toBe('simulator');
+    expect(m.livelocks[0].branchAt).toBeNull();
+    expect(finding.message).not.toContain('The way in is a run of the walk');
+  });
+
+  it('a guard the walk can show leaves the loop: the chase leaves on its own, so the state-level cycle is no livelock', () => {
+    // `a -> b` counts, `b -> a` while `n < 3`, `b -> c` once `n >= 3`: the
+    // states cycle, the configurations do not, and the interpreter rests in c.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Count');
+    f.attribute('n', sm.id, { type: 'Integer', value: 0 });
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    const c = f.state('c', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, effect: 'n = n + 1' });
+    f.transition(b.id, a.id, { ownerId: sm.id, guard: 'n < 3' });
+    f.transition(b.id, c.id, { ownerId: sm.id, guard: 'n >= 3' });
+    const run = runStateMachine(m, sm.id, []);
+    expect(run.completionBudgetHit).toBe(false);
+    expect(run.finalState).toBe(c.id);
+    const r = reachReport(m);
+    expect(r.machines[0].undeterminedGuards).toEqual([]);
+    expect(r.machines[0].livelocks).toEqual([]);
+    expect(r.machines[0].livelocksWithheld).toEqual([]);
+    // The same states without the counter do go round, and are reported.
+    const g = new Model();
+    const h = new ModelFactory(g);
+    const sm2 = h.stateDef('Loop');
+    const a2 = h.state('a', sm2.id);
+    const b2 = h.state('b', sm2.id);
+    h.transition(a2.id, b2.id, { ownerId: sm2.id });
+    h.transition(b2.id, a2.id, { ownerId: sm2.id });
+    expect(reachReport(g).machines[0].livelocks.map((l) => names(l.states))).toEqual([['a', 'b']]);
+  });
+
+  it('a guard nothing decided on a trigger-less way out of the cycle withholds the row, with a withheld line in its place', async () => {
+    const { model } = await load(`package UndetLoop { part def P {
+      attribute x : Integer;
+      state def M {
+        state a; state b; state c;
+        transition ab first a then b;
+        transition bc first b if x > 0 then c;
+        transition ba first b then a;
+      }
+    } }`);
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.livelocks).toEqual([]);
+    expect(m.livelocksWithheld.map((l) => [names(l.states), l.clause])).toEqual([[['a', 'b'], 'store']]);
+    expect(livelockCodes(r)).toEqual([]);
+    expect(r.diagnostics.map((d) => d.code)).toContain(GUARD_UNDETERMINED_CODE);
+    const withheld = reachMachineLines(m, 1).filter((ln) => ln.kind === 'withheld');
+    expect(withheld.map((ln) => [ln.text, ln.withholds, ln.code])).toEqual([
+      [`    withheld     {a, b} — ${livelockWithheldSentence('store')}`, true, null],
+    ]);
+  });
+
+  it('a dwell as the chase’s step withholds it on the time clause — the interpreter may wait there', () => {
+    // A numeric `attrs.after` arrives through the API only (`accept after(n)`
+    // does not parse), and the walk takes it as a completion step.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Dwell');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id });
+    m.create('TransitionUsage', { ownerId: sm.id, attrs: { after: 5 }, source: [b.id], target: [a.id] });
+    const row = reachReport(m).machines[0];
+    expect(row.livelocks).toEqual([]);
+    expect(row.livelocksWithheld.map((l) => [names(l.states), l.clause])).toEqual([[['a', 'b'], 'time']]);
+  });
+
+  it('a bound elsewhere takes nothing from it, and a cycle a bound cut through is not found at all', async () => {
+    // Every step the row stands on is one the walk took: livelock-self under a
+    // configuration bound of 2 still holds `a`'s step, and publishes the row
+    // the whole walk does — on a walk that says it is partial.
+    const self = await load(LIVE_SELF);
+    const whole = reachReport(self.model).machines[0];
+    const cut = reachReport(self.model, { maxConfigs: 2 }).machines[0];
+    expect(cut.boundHit).toBe('configs');
+    expect(cut.livelocks.map((l) => names(l.states))).toEqual(whole.livelocks.map((l) => names(l.states)));
+    // livelock-two under the same bound never takes `a -> b`, so no cycle is
+    // seen whole, and nothing — not even a withheld line — is said about one.
+    const two = await load(LIVE_TWO);
+    const short = reachReport(two.model, { maxConfigs: 2 }).machines[0];
+    expect(short.boundHit).toBe('configs');
+    expect(short.livelocks).toEqual([]);
+    expect(short.livelocksWithheld).toEqual([]);
+  });
+
+  it('a cycle the chase cannot go all the way round inside its budget is no reachable cycle, and is not reported', async () => {
+    // `go` starts a 60-step chain into a ten-state cycle: the chase stops at
+    // the cycle's fifth state, the interpreter never enters the other five,
+    // and `reach` says they are unreachable — so the reachable part is a path.
+    const states = ['s0', ...Array.from({ length: 60 }, (_, i) => `c${i + 1}`), ...Array.from({ length: 10 }, (_, i) => `m${i}`)];
+    const lines = states.map((s) => `state ${s};`);
+    lines.push('transition go first s0 accept go then c1;');
+    for (let i = 1; i < 60; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+    lines.push('transition c60 -> m0;');
+    for (let i = 0; i < 10; i++) lines.push(`transition m${i} -> m${(i + 1) % 10};`);
+    const { model, machineId, id } = await load(`package Late { state def M { ${lines.join(' ')} } }`);
+    const run = runStateMachine(model, machineId, ['go']);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.finalState).toBe(id('m4'));
+    const m = reachReport(model).machines[0];
+    expect(names(m.states.unreachable)).toEqual(['m5', 'm6', 'm7', 'm8', 'm9']);
+    expect(m.livelocks).toEqual([]);
+    expect(m.livelocksWithheld).toEqual([]);
+  });
+
+  it('a way in through a branch the simulator never takes is hedged on the row, though the walk withheld the choice row', async () => {
+    // Review S5's must-fix probe. `comp` holds `i1`, whose self-loop is guarded
+    // over an unvalued `x`; out of `comp`, `c1` to `good` is declared before
+    // `c2` into `a ⇄ b`. The undecided guard sits strictly inside the level the
+    // choice is at, so the walk withholds the choice row — and still takes
+    // both branches. The interpreter on its own store takes `c1` every time.
+    const { model, machineId, id } = await load(`package WI { part def P {
+      attribute x : Integer;
+      state def M {
+        state s0;
+        state comp { state i1; transition i1self first i1 if x > 0 then i1; }
+        state good; state a; state b;
+        transition go first s0 accept go then comp;
+        transition c1 first comp then good;
+        transition c2 first comp then a;
+        transition ab first a then b;
+        transition ba first b then a;
+        transition gs first good accept e then s0;
+      }
+    } }`);
+    for (const events of [['go'], ['go', 'e', 'go']]) {
+      const run = runStateMachine(model, machineId, events);
+      expect(run.finalState, events.join(',')).toBe(id('good'));
+      expect(run.visited).not.toContain(id('a'));
+    }
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.nondeterminism).toEqual([]);
+    expect(m.livelocks.map((l) => [names(l.states), names(l.entry), l.entryBy, l.branchAt?.name ?? null])).toEqual([
+      [['a', 'b'], ['s0', 'i1', 'a'], 'walk', 'i1'],
+    ]);
+    const [finding] = livelockCodes(r);
+    expect(finding.message).toContain(
+      'The way in is a run of the walk, not one `simulate` makes: at `WI::P::M::comp::i1` it takes a step the simulator does not take there, and the walk holds no run the simulator makes that goes round the cycle, so `simulate` may never enter it.',
+    );
+    expect(reachMachineLines(m, 1).filter((ln) => ln.kind === 'livelock').map((ln) => ln.text)).toEqual([
+      '    livelock     {a, b} — the chase goes round 2 configuration(s) on trigger-less transitions and moves on only on an event; entered in 2 step(s) from s0, on a run of the walk, not of the simulator',
+    ]);
+  });
+
+  it('one row for one cycle of states, however many stores the walk met it under — and its finding says how many', () => {
+    // Review S5's duplicate probe: `tick` counts `n` up to 5 before `go`
+    // starts the `a ⇄ b` chase, so the walk meets the same cycle of states
+    // under six stores — six cycles of configurations, one row, one warning.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Retry');
+    f.attribute('n', sm.id, { type: 'Integer', value: 0 });
+    const idle = f.state('idle', sm.id);
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(idle.id, idle.id, { ownerId: sm.id, trigger: 'tick', guard: 'n < 5', effect: 'n = n + 1' });
+    f.transition(idle.id, a.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(a.id, b.id, { ownerId: sm.id });
+    f.transition(b.id, a.id, { ownerId: sm.id });
+    f.transition(a.id, idle.id, { ownerId: sm.id, trigger: 'stop' });
+    for (let k = 0; k <= 5; k++) {
+      expect(runStateMachine(m, sm.id, [...Array<string>(k).fill('tick'), 'go']).completionBudgetHit).toBe(true);
+    }
+    const r = reachReport(m);
+    const row = r.machines[0];
+    expect(row.livelocks.map((l) => [names(l.states), l.cycles, l.steps, l.entryBy])).toEqual([[['a', 'b'], 6, 1, 'simulator']]);
+    expect(r.totals.livelocks).toBe(1);
+    const found = livelockCodes(r);
+    expect(found).toHaveLength(1);
+    expect(found[0].message).toContain(
+      'The same states are gone round in 6 cycles of configurations, which differ only in the store or history they carry; this one row stands for all of them.',
+    );
+    expect(reachMachineLines(row, 1).filter((ln) => ln.kind === 'livelock').map((ln) => ln.text)).toEqual([
+      '    livelock     {a, b} — the chase goes round 2 configuration(s) on trigger-less transitions and moves on only on an event; entered in 1 step(s) from idle; one row for 6 cycles of configurations over these states',
+    ]);
+    // And `check-behaviour` files the one row too.
+    expect(behaviourReport(m, { machineId: sm.id }).diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_CODE)).toHaveLength(1);
+  });
+
+  it('a chain that reaches a back-edge on the budget’s last step is no livelock — one state shorter, it is', async () => {
+    // Review S5's edge chains, no trigger anywhere: `c0 → … → c(n+1)` and a
+    // back-edge `c(n+1) → cn`. At n = 62 the chase fires its 64th step into
+    // c63 ⇄ c62's second state and comes back once, so it goes round; at n = 63
+    // its 64th step lands on c64 and the back-edge out of it is a step the
+    // interpreter never fires — the walk without the chase position used to
+    // record it and close a cycle no run goes round.
+    const chain = async (n: number) => {
+      const lines: string[] = [];
+      for (let i = 0; i <= n + 1; i++) lines.push(`state c${i};`);
+      for (let i = 0; i <= n; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+      lines.push(`transition back first c${n + 1} then c${n};`);
+      return load(`package Edge${n} { state def M { ${lines.join(' ')} } }`);
+    };
+    const short = await chain(62);
+    const goesRound = runStateMachine(short.model, short.machineId, []);
+    expect(goesRound.fired.map((f) => f.transitionId)).toContain(short.id('back'));
+    expect(reachReport(short.model).machines[0].livelocks.map((l) => [names(l.states), l.steps, l.entryBy])).toEqual([
+      [['c62', 'c63'], 62, 'simulator'],
+    ]);
+    for (const n of [63, 64]) {
+      const long = await chain(n);
+      const run = runStateMachine(long.model, long.machineId, []);
+      expect(run.completionBudgetHit, `${n}`).toBe(true);
+      expect(run.fired.map((f) => f.transitionId), `${n}`).not.toContain(long.id('back'));
+      const m = reachReport(long.model).machines[0];
+      expect(m.livelocks, `${n}`).toEqual([]);
+      expect(m.livelocksWithheld, `${n}`).toEqual([]);
+    }
+  }, 60_000);
+
+  it('the hedge is per row: on the trap probe one cycle is the simulator’s and the other is entered only by a branch it never takes', async () => {
+    // No trigger is named, so the one run is the chase from `standby`, which
+    // takes `beta -> alpha` every time: it goes round `alpha ⇄ beta` and never
+    // enters `failsafe`. The second row says so, and names where its way in
+    // parts from the simulator's; the first says nothing of the kind.
+    const file = 'test/fixtures/verification/models/trap-probe.sysml';
+    const model = (await loadModelText(read(file), { fileName: file, library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const run = runStateMachine(model, machineId, []);
+    expect(run.visited.map((v) => model.get(v)!.declaredName)).not.toContain('failsafe');
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks.map((l) => [names(l.states), l.entryBy, l.branchAt?.name ?? null])).toEqual([
+      [['alpha', 'beta'], 'simulator', null],
+      [['failsafe', 'failsafeHold'], 'walk', 'beta'],
+    ]);
+    const [first, second] = livelockCodes(r).map((d) => d.message);
+    expect(first).not.toContain('The way in is a run of the walk');
+    expect(second).toContain('at `TrapProbe::Probe::Modes::beta` it takes a step the simulator does not take there');
+    // A machine that names no trigger: the run ENDS where the budget stops it,
+    // and neither the finding nor the line says an event moves it on.
+    for (const message of [first, second]) {
+      expect(message).toContain('is spent and ends there: the machine names no trigger, so no event moves it on.');
+      expect(message).not.toContain('moves on only on an event');
+    }
+    expect(reachMachineLines(r.machines[0], 1).filter((ln) => ln.kind === 'livelock').map((ln) => ln.text)).toEqual([
+      '    livelock     {alpha, beta} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby',
+      '    livelock     {failsafe, failsafeHold} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 3 step(s) from standby, on a run of the walk, not of the simulator',
+    ]);
+  }, 60_000);
+
+  it('a choice whose other branch comes back round is named without saying it leaves', async () => {
+    // Review S5's h3: `a -> b` is declared before `a -> c`, and `c -> a` comes
+    // back — so taking the other branch leaves `{a, b}` only to come round
+    // again. The row names `a` as where declaration order decides, and says
+    // nothing about leaving.
+    const { model } = await load(`package H3 { state def M {
+      state s0; state a; state b; state c;
+      transition go first s0 accept go then a;
+      transition ab first a then b;
+      transition ac first a then c;
+      transition ba first b then a;
+      transition ca first c then a;
+      transition stop first a accept e then s0;
+    } }`);
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks.map((l) => [names(l.states), names(l.choices), l.entryBy])).toEqual([
+      [['a', 'b'], ['a'], 'simulator'],
+    ]);
+    const [finding] = livelockCodes(r);
+    expect(finding.message).toContain('At `H3::M::a` another trigger-less transition is enabled beside the one the chase fires');
+    expect(finding.message).not.toMatch(/could leave|leave by/);
+  });
+
+  it('two cycles are two rows, once each and in discovery order — the chase is a function, so they share no configuration', async () => {
+    const file = 'test/fixtures/verification/models/trap-probe.sysml';
+    const model = (await loadModelText(read(file), { fileName: file, library: 'none' })).model!;
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks.map((l) => [names(l.states), l.steps])).toEqual([
+      [['alpha', 'beta'], 1],
+      [['failsafe', 'failsafeHold'], 3],
+    ]);
+    expect(livelockCodes(r)).toHaveLength(2);
+    expect(r.totals.livelocks).toBe(2);
+    // And through the command, text and `--json`, in the same words.
+    const text = await reachCli(['reach', file, '--no-library']);
+    expect(text.stdout).toContain('    livelock     {alpha, beta} — the chase goes round 2 configuration(s)');
+    expect(text.stdout).toContain('  verification/completion-livelock  `TrapProbe::Probe::Modes`: completion livelock');
+    const json = JSON.parse((await reachCli(['reach', file, '--no-library', '--json'])).stdout) as {
+      reach: { machines: Array<{ livelocks: Array<{ states: { name: string }[] }> }>; totals: { livelocks: number } };
+    };
+    expect(json.reach.machines[0].livelocks.map((l) => names(l.states))).toEqual([
+      ['alpha', 'beta'],
+      ['failsafe', 'failsafeHold'],
+    ]);
+    expect(json.reach.totals.livelocks).toBe(2);
+  }, 60_000);
+});
+
 /* ─────────── an edge kind the walk skips is not an edge it may ignore ────── */
 
 /**
@@ -2544,9 +3012,15 @@ describe('what a line says about itself', () => {
           unreachable: m.states.unreachable.map((s): [string, string] => [s.id, UNREACHABLE_STATE_CODE]),
           dead: m.transitions.dead.map((t): [string, string] => [t.id, DEAD_TRANSITION_CODE]),
           'no-way-out': m.deadlocks.map((d): [string, string] => [d.leaf.id, DEADLOCK_CODE]),
-          withheld: m.deadlocksWithheld.map((d): [string, null] => [d.leaf.id, null]),
+          // A withheld no-way-out row names its leaf; a withheld livelock, the
+          // first state of its cycle — in the order the block prints them.
+          withheld: [
+            ...m.deadlocksWithheld.map((d): [string, null] => [d.leaf.id, null]),
+            ...m.livelocksWithheld.map((l): [string, null] => [l.states[0].id, null]),
+          ],
           trap: m.traps.map((t): [string, string] => [t.entry[0].id, UNRECOVERABLE_MODE_CODE]),
           'trap-refused': gate ? [[id, null]] : [],
+          livelock: m.livelocks.map((l): [string, string] => [l.states[0].id, COMPLETION_LIVELOCK_CODE]),
           choice: m.nondeterminism.map((n): [string, string] => [n.state.id, NONDETERMINISTIC_CHOICE_CODE]),
           suppressed: m.suppressed ? [[id, null]] : [],
         };
@@ -2577,6 +3051,7 @@ describe('what a line says about itself', () => {
         'counts',
         'dead',
         'figures',
+        'livelock',
         'machine',
         'no-way-out',
         'suppressed',

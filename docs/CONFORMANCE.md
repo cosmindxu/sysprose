@@ -1330,6 +1330,31 @@ and on a two-state sink beside that sink's deadlock row, and that sentence is
 never a text row. What the row never says: that the machine can recover, that it
 livelocks, or anything about the system the machine models.
 
+**A cycle the interpreter's chase goes round is a finding of its own (U1,
+2026-10-14).** `reach` reports a reachable set of configurations where a
+trigger-less transition is due at every one and the transition the interpreter
+fires at each — the first enabled at the innermost level, by declaration order —
+leads to the next, round and back, as `verification/completion-livelock`: a
+warning at exit 0, once per cycle of states, naming the states in the order the
+chase goes round them and the shortest way in — a run the simulator makes
+wherever the walk holds one, and said to be the walk's own, with the state where
+it parts from the simulator, where it does not. Such a run spends its 64-step
+chase budget there and moves on only on an event (on a machine that names no
+trigger, it ends there). It is decided over configurations and over
+the interpreter's own chase, so a loop whose guard or store takes the chase out
+on its own is not reported, and a cycle only another branch of a choice could
+leave is — with the state where declaration order keeps the chase on it named in
+the row. It stands on steps the walk took, so a bound does not withhold it; a
+guard the walk could not evaluate on a trigger-less way out of the cycle, or a
+dwell as the chase's step, does, and a `withheld` line says so in its place.
+`check-behaviour` files the same published rows beside its verdicts and moves
+none of them.
+On v9 it is ten rows, one on each of the ten machines whose interpreter run
+spends the budget, and on the shipped examples it moved the campaign's exact
+diagnostics array over `examples/uav-isr.sysml` by one row: `FlightModes`'
+chase goes round `manual ⇄ autonomous`. The trap row still never says the word
+(`docs/06` §8.8).
+
 **One row did move, and it moved towards saying more rather than less.** A
 `verification/deadlock` row — *this configuration has no enabled way out* — used
 to be withheld across a whole machine whenever any guard anywhere in it was left

@@ -150,7 +150,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **114 catalogue codes** in
+`npm run check` is what raises it — beside **115 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **27 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3952,7 +3952,10 @@ suppressed, and a cycle with a way out on an event is walked through that way
 out — see docs/06 §8.5. `FlightModes`, which names no trigger, walks as it did,
 and is still the exhaustive demonstration; what changed on it is the two answers
 about where a run ends, `recoverable` and `every run? guaranteed`, which are now
-checked against where the budget stops its one chase.)
+checked against where the budget stops its one chase. And since U1, docs/06 §8.8,
+a cycle the chase never settles on is a finding of its own: `FlightModes`'
+`manual ⇄ autonomous` is `verification/completion-livelock`, beside the choice
+row, and the campaign's diagnostics array over `uav-isr` names it first.)
 The walk is deliberately loose in the other direction,
 in exactly one place: it offers each `after(n)` label as a named event instead of
 advancing a clock, so a state behind a dwell is treated as reachable — an
@@ -5050,7 +5053,10 @@ simulator sentence of plan §2.4(d) prints beside the row wherever the machine
 has a choice point, and the three standing sentences of §2.4 now exist as one
 constant each beside `CLAUSE_SENTENCE`. What the row never says, and the suite
 greps every output for: that the machine can recover, that it livelocks, that
-anything is free of deadlocks. `deadlock-guarded.sysml` is the file where the
+anything is free of deadlocks. *[Since U1, docs/06 §8.8: `livelock` is the name
+of a finding of its own, `verification/completion-livelock`, and the suite now
+greps that the word stands on that row, its finding and its `withheld` line and
+on no other — the trap row still never says it.]* `deadlock-guarded.sysml` is the file where the
 deadlock row's per-configuration gate and this feature's walk-wise gate answer
 differently — `Ctrl`'s decided sink keeps its row while the trap field is refused
 on the store clause — and they never contradict each other on it.

@@ -4324,9 +4324,19 @@ package P {
       'deferred events',
       'time',
     ]);
+    // FlightModes runs on trigger-less transitions alone, and the chase the
+    // interpreter runs goes round `manual ⇄ autonomous` (declaration order beats
+    // `autonomous -> failsafe` every time): a completion livelock, the one row
+    // U1 added (plan O1 S4), filed before the choice row that keeps it going.
     expect(body.reach.diagnostics.map((d) => d.code)).toEqual([
+      'verification/completion-livelock',
       'verification/nondeterministic-choice',
     ]);
+    expect(
+      (fm as unknown as { livelocks: Array<{ states: Array<{ name: string }>; choices: Array<{ name: string }> }> }).livelocks.map(
+        (l) => [l.states.map((s) => s.name), l.choices.map((s) => s.name)],
+      ),
+    ).toEqual([[['manual', 'autonomous'], ['autonomous']]]);
     // The exactness census, published beside the figures and printed in none of
     // them. `acyclic` is FALSE here and not `null`: this walk saw the whole
     // graph its step relation admits, and that graph cycles. The four clause
@@ -4413,10 +4423,21 @@ package P {
       refusedByGate: null,
       sentence: null,
     });
+    // And the two cycles the interpreter's chase goes round, `alpha ⇄ beta` and
+    // `failsafe ⇄ failsafeHold`, each a completion livelock (U1, plan O1 S4):
+    // the second is the trap's set seen from the chase, two facts and two codes.
+    // Its way in takes `beta -> failsafe`, which the simulator never takes, so
+    // the line says the way in is the walk's; and the machine names no trigger,
+    // so it says the run ends where the budget stops it.
     expect(body.reach.diagnostics.map((d) => [d.code, d.severity])).toEqual([
       ['verification/unrecoverable-mode', 'warning'],
+      ['verification/completion-livelock', 'warning'],
+      ['verification/completion-livelock', 'warning'],
       ['verification/nondeterministic-choice', 'warning'],
     ]);
+    expect(r.stdout).toContain(
+      'livelock     {failsafe, failsafeHold} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 3 step(s) from standby, on a run of the walk, not of the simulator',
+    );
 
     const latch = resolve(process.cwd(), `${FIXV}/models/latch.sysml`);
     const l = await run(['reach', latch]);

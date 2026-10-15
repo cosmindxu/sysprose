@@ -1463,7 +1463,42 @@ const MOVED_BY_THE_CENSUS = {
     before: 'so every configuration standing there offers it',
     after: 'so the walk tries it wherever a configuration standing there is offered its input',
   },
+  /**
+   * O1 S5's movement (U1): the completion livelock — two machine fields, one
+   * total and one finding per cycle. Read OUT of the table above rather than
+   * re-pasted into it, and pinned here whole instead: the three shipped
+   * machines whose trigger-less transitions cycle each gain exactly the row
+   * naming the cycle the interpreter's chase goes round, and nothing else on
+   * any of the six files moves.
+   */
+  livelock: {
+    machineFields: ['livelocks', 'livelocksWithheld'],
+    totalsField: 'livelocks',
+    code: 'verification/completion-livelock',
+    rows: {
+      'examples/uav-isr.sysml': [['manual', 'autonomous']],
+      'examples/vehicle.sysml': [['idling', 'moving']],
+      'examples/views-tour.sysml': [['standby', 'flying']],
+    } as Record<string, string[][]>,
+  },
 } as const;
+
+/** The report with S5's livelock movement taken out, as `MOVED_BY_THE_CENSUS.livelock` names it. */
+function withoutLivelocks(report: { machines: unknown; totals: unknown; diagnostics: unknown }): {
+  machines: unknown;
+  totals: unknown;
+  diagnostics: unknown;
+} {
+  const { machineFields, totalsField, code } = MOVED_BY_THE_CENSUS.livelock;
+  const machines = (report.machines as Record<string, unknown>[]).map((m) =>
+    Object.fromEntries(Object.entries(m).filter(([k]) => !(machineFields as readonly string[]).includes(k))),
+  );
+  const totals = Object.fromEntries(
+    Object.entries(report.totals as Record<string, unknown>).filter(([k]) => k !== totalsField),
+  );
+  const diagnostics = (report.diagnostics as { code?: string }[]).filter((d) => d.code !== code);
+  return { machines, totals, diagnostics };
+}
 
 describe("the differential: `reach`'s published output moved only in the ways `MOVED_BY_THE_CENSUS` names", () => {
   const files = Object.keys(REACH_BEFORE);
@@ -1480,15 +1515,23 @@ describe("the differential: `reach`'s published output moved only in the ways `M
       // The profile is a module constant and is compared to the constant itself
       // rather than to 2 kB of it repeated six times.
       expect(report.profile).toEqual(JSON.parse(JSON.stringify(SEMANTIC_PROFILE)));
-      expect(
-        withoutIds({
-          machines: report.machines,
-          totals: report.totals,
-          diagnostics: report.diagnostics,
-        }),
-      ).toEqual(REACH_BEFORE[file]);
+      expect(withoutIds(withoutLivelocks(report))).toEqual(REACH_BEFORE[file]);
     }, 120_000);
   }
+
+  it('the completion livelock moved exactly the rows `MOVED_BY_THE_CENSUS.livelock` names, and one finding per row', async () => {
+    const { machineFields, totalsField, code, rows } = MOVED_BY_THE_CENSUS.livelock;
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), { fileName: file });
+      const report = reachReport(loaded.model!);
+      const want = rows[file] ?? [];
+      for (const m of report.machines) for (const f of machineFields) expect(m, file).toHaveProperty(f);
+      expect(report.machines.flatMap((m) => m.livelocks.map((l) => l.states.map((s) => s.name))), file).toEqual(want);
+      expect(report.machines.flatMap((m) => m.livelocksWithheld), file).toEqual([]);
+      expect(report.totals[totalsField], file).toBe(want.length);
+      expect(report.diagnostics.filter((d) => d.code === code), file).toHaveLength(want.length);
+    }
+  }, 120_000);
 
   it('the four fields that arrived are the only keys a machine row did not have', async () => {
     // The table above pins every row whole; this reads the same rows for the

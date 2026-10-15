@@ -119,6 +119,8 @@ import {
   boundsSentence,
   classifyBottoms,
   exploreMachine,
+  livelockFinding,
+  livelocksOf,
   machineAlphabet,
   machineStates,
   ownsMachine,
@@ -2943,6 +2945,23 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
               ? 'Nothing is claimed about this property, and nothing here is a defect in the model: the search and the interpreter disagree about one run, which is a defect in this engine. The row names the step where the two parted; drive the machine with the same events in the Simulation tab to see what the interpreter does there, and report the model.'
               : 'Nothing is claimed about this property. A row that says what was not decided is the one thing a silence could never say.',
     });
+  }
+  // THE MACHINE'S COMPLETION LIVELOCKS, filed beside the properties — once per
+  // cycle, in `reach`'s words (`livelockFinding`), and AFTER every property's
+  // finding so each of those keeps its position. A warning about the machine
+  // and not a verdict on any property: it moves no count and no exit code, so
+  // a property that passes over a machine that never comes to rest still
+  // passes, and the run says beside it that the machine never comes to rest.
+  // One more walk of the machine, the one `reach` takes. The PUBLISHED rows
+  // only: a withheld one is a `withheld` line of `reach`'s report and has no
+  // code to be filed under here, so the catalogue entry, the user guide and
+  // `docs/06` §8.8 say that this command carries none and send a reader to
+  // `reach` for it.
+  if (machine !== null) {
+    const walk = exploreMachine(model, machineId, explore);
+    for (const l of livelocksOf(model, walk).livelocks) {
+      findings.push(livelockFinding(machine, l, walk.bounds));
+    }
   }
 
   return {

@@ -372,6 +372,9 @@ export {
   BEHAVIOUR_CODES,
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
+  // A cycle the interpreter's completion chase goes round without coming to
+  // rest (`MachineReach.livelocks`), so a caller branches on it by name.
+  COMPLETION_LIVELOCK_CODE,
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
   // What prints where a deadlock row was withheld, so an API caller composing
@@ -396,6 +399,7 @@ export {
 } from '../semantics/mc/explore';
 export type {
   BoundHit,
+  ChaseCycle,
   DeadlockRow,
   EdgeAccount,
   EdgeCensus,
@@ -404,6 +408,8 @@ export type {
   ExploreBounds,
   ExploreOptions,
   ExploreResult,
+  LivelockRow,
+  LivelockWithheldRow,
   MachineReach,
   NondeterministicChoice,
   ReachOptions,

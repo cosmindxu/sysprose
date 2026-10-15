@@ -628,8 +628,32 @@ describe('the edge kind a differential alone cannot see', () => {
 describe('the interpreter never does what the checker calls impossible, and every witness replays', () => {
   const DEPTH = 3;
   const RUN_CAP = 1500;
-  /** Review B's probe shapes, so the oracle holds where the corpus has no such machine. */
+  /**
+   * Review B's probe shapes, so the oracle holds where the corpus has no such
+   * machine — and two of review S5's: a way into a completion cycle only a
+   * branch the simulator never takes leads to, on a machine whose choice row
+   * the walk withholds (`wi-hidden-choice`), and a chain whose back-edge the
+   * chase reaches only on the budget's last step (`edge-chain62`).
+   */
   const PROBES: Record<string, string> = {
+    'wi-hidden-choice.sysml': `package WI { part def P {
+      attribute x : Integer;
+      state def M {
+        state s0;
+        state comp { state i1; transition i1self first i1 if x > 0 then i1; }
+        state good; state a; state b;
+        transition go first s0 accept go then comp;
+        transition c1 first comp then good;
+        transition c2 first comp then a;
+        transition ab first a then b;
+        transition ba first b then a;
+        transition gs first good accept e then s0;
+      }
+    } }`,
+    'edge-chain62.sysml': `package Edge62 { state def M { ${Array.from({ length: 65 }, (_, i) => `state c${i};`).join(' ')} ${Array.from(
+      { length: 64 },
+      (_, i) => `transition t${i} first c${i} then c${i + 1};`,
+    ).join(' ')} transition back first c64 then c63; } }`,
     'livelock-two.sysml': `package LiveTwo { state def M {
       state s0; state a; state b; state c;
       transition go first s0 accept go then a;
@@ -758,6 +782,89 @@ describe('the interpreter never does what the checker calls impossible, and ever
         }
       }
     }
+    expect(problems).toEqual([]);
+  }, 300_000);
+
+  /**
+   * The states a run's LAST chase went round, read over configurations: the
+   * run's fires re-stepped through `./mc/config.ts` from the opening the walk
+   * starts from, the last chase cut out (everything after the last fire on an
+   * event), and — where that chase spent the whole budget and came back to a
+   * configuration it had been at — the union of the active stacks over one
+   * period. `null` for a chase that rested, a chain longer than the budget
+   * (no configuration repeats), or a run this re-stepping cannot follow.
+   */
+  function lastChaseCycle(model: Model, machineId: ElementId, run: StateRunResult, maxCompletion: number): ElementId[] | null {
+    const store = new Map<string, unknown>();
+    seedStore(model, model.get(machineId)!, store);
+    let cfg: MachineConfig = initialConfig(model, machineId, { store }).config;
+    let chase: MachineConfig[] = [cfg];
+    for (const f of run.fired) {
+      const input: StepInput = f.trigger === '' ? COMPLETION : { kind: 'trigger', trigger: f.trigger };
+      const choice = enabledTransitions(model, cfg, input).find((e) => e.transition.id === f.transitionId);
+      if (choice === undefined) return null;
+      cfg = stepConfig(model, cfg, choice).config;
+      if (f.trigger !== '') chase = [];
+      chase.push(cfg);
+    }
+    if (chase.length - 1 < maxCompletion) return null;
+    const firstAt = new Map<string, number>();
+    for (let i = 0; i < chase.length; i++) {
+      const h = hashConfig(chase[i]);
+      const j = firstAt.get(h);
+      if (j !== undefined) return [...new Set(chase.slice(j, i).flatMap((c) => c.stack))];
+      firstAt.set(h, i);
+    }
+    return null;
+  }
+
+  it('the livelock oracle: a run whose last chase the budget stops going round a cycle names a row’s states, and a row the simulator enters is one some run goes round', () => {
+    // U1 (plan O1 S4). The row says the interpreter's chase goes round a cycle
+    // and never rests there; the interpreter is asked both ways, over
+    // CONFIGURATIONS as the row is decided (`lastChaseCycle`). Completeness:
+    // every driven run whose last chase spent the whole budget and came back
+    // to a configuration — a chase stopped going round, not a chain longer
+    // than the budget — went round the states of a livelock row, published or
+    // withheld. Soundness, per ROW and not per machine: a published row whose
+    // way in is the simulator's own run (`entryBy: 'simulator'`) is one some
+    // driven run goes round. A row whose way in is the walk's says in its
+    // finding that `simulate` may never enter it, and is not held to that —
+    // which is the line a machine-wide test (skip a machine with a choice row)
+    // drew in the wrong place: the walk withholds a choice row over an
+    // undecided guard inside its level and still takes both branches.
+    const problems: string[] = [];
+    let rows = 0;
+    let simulated = 0;
+    const key = (ids: Iterable<ElementId>) => [...new Set(ids)].sort().join(' ');
+    for (const { name, model } of corpus) {
+      for (const m of reachReport(model).machines) {
+        const where = `${name} ${m.machine.qualifiedName}`;
+        const named = new Set([...m.livelocks, ...m.livelocksWithheld].map((l) => key(l.states.map((s) => s.id))));
+        rows += m.livelocks.length;
+        const goneRound = new Set<string>();
+        for (const events of sequences(m.bounds.alphabet)) {
+          const run = runStateMachine(model, m.machine.id, events);
+          if (!run.completionBudgetHit) continue;
+          const cycle = lastChaseCycle(model, m.machine.id, run, m.bounds.maxCompletion);
+          if (cycle === null) continue;
+          goneRound.add(key(cycle));
+          if (!named.has(key(cycle))) {
+            problems.push(
+              `${where}: [${events.join(',')}] goes round {${cycle.map((s) => model.get(s)?.declaredName).join(', ')}} in its last chase, which no livelock row names`,
+            );
+          }
+        }
+        for (const l of m.livelocks) {
+          if (l.entryBy !== 'simulator') continue;
+          simulated++;
+          if (!goneRound.has(key(l.states.map((s) => s.id)))) {
+            problems.push(`${where}: livelock {${l.states.map((s) => s.name).join(', ')}} says the simulator enters it, and no run goes round it`);
+          }
+        }
+      }
+    }
+    expect(rows, 'no corpus machine carries a livelock row, so the oracle checked nothing').toBeGreaterThanOrEqual(4);
+    expect(simulated, 'no row was held to the soundness half').toBeGreaterThanOrEqual(4);
     expect(problems).toEqual([]);
   }, 300_000);
 

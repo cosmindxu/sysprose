@@ -2230,9 +2230,11 @@ examples/uav-isr.sysml: 1 state machine(s), 1 walked to exhaustion; 4 configurat
   UAVSurveillanceSystem::FlightModes [StateDefinition]
     4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
     4 of 4 state(s) reachable; 5 of 5 transition(s) fired, 0 dead
+    livelock     {manual, autonomous} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
     choice       UAVSurveillanceSystem::FlightModes::autonomous: 2 enabled as completion transitions (no trigger); the simulator takes autonomous -> manual, never autonomous -> failsafe
   semantic profile (the reading every figure above holds under):
     ...
+  verification/completion-livelock  `UAVSurveillanceSystem::FlightModes`: completion livelock — the interpreter's chase goes round {manual, autonomous} without coming to rest: …
   verification/nondeterministic-choice  `…::autonomous`: 2 transitions are enabled at once …
 ```
 
@@ -2290,6 +2292,33 @@ from the opening, stopped after 64 steps wherever it is — so the two answers
 that are about where runs end are checked against those stopping points:
 `check-behaviour`'s `recoverable` (below) and the `every run? guaranteed` line.
 Each is withheld where the run the budget stops would read differently.
+
+**A cycle the chase never leaves is a finding of its own.** On `FlightModes` the
+simulator's chase goes `standby -> manual -> autonomous -> manual -> …` for its
+whole 64-step budget on every run — `autonomous -> manual` is declared first, so
+the chase never takes `autonomous -> failsafe` — and the machine never comes to
+rest. `reach` reports that as `verification/completion-livelock`, a warning,
+once per cycle of states: the `livelock` line above names the states the chase
+goes round, in order, and the shortest way in, and the finding says where
+declaration order decides (`autonomous` here, the choice row below it). It is
+decided over configurations and over the transition the interpreter fires at
+each one, not over states: a loop whose guard or whose store takes the chase out
+of it on its own is not reported, and a cycle that only another branch of a
+choice could leave is. Cycles that go round the same states under different
+values of the store are one row, and the row says how many it stands for. The
+way in is the simulator's own run wherever the walk holds one — here
+`standby -> manual`, the step `simulate` takes. Where only the walk's way in
+reaches the cycle, through a branch the simulator never takes, the line ends
+`on a run of the walk, not of the simulator` and the finding names the state
+where the two part: run `simulate` and it may never get there. On a machine
+that names a trigger only an event moves such a run on; `FlightModes` names
+none, so the run ends where the budget stops it, and the line says that
+instead. A trigger on one transition of the cycle, or a guard that is false
+where the machine should wait, is the fix. A guard on a trigger-less way out of
+the cycle that the walk could not evaluate withholds the row — a `withheld` line
+says so in its place — and `check-behaviour` files the same warning beside its
+verdicts on the machine it checks, without changing a verdict or the exit code.
+It files the published rows only: read a withheld one in `reach`.
 
 The other direction is deliberately loose, in one place: the walk offers each
 `after(n)` label as a named event rather than advancing a clock, so a state
@@ -2378,10 +2407,14 @@ test/fixtures/verification/models/trap-probe.sysml: 1 state machine(s), 1 walked
     5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
     5 of 5 state(s) reachable; 6 of 6 transition(s) fired, 0 dead
     trap         {failsafe, failsafeHold} — 2 configuration(s) nothing leaves; entered in 3 step(s) from standby
+    livelock     {alpha, beta} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
+    livelock     {failsafe, failsafeHold} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 3 step(s) from standby, on a run of the walk, not of the simulator
     choice       TrapProbe::Probe::Modes::beta: 2 enabled as completion transitions (no trigger); the simulator takes beta -> alpha, never beta -> failsafe
   semantic profile (the reading every figure above holds under):
     ...
   verification/unrecoverable-mode  trap — 2 configuration(s) form a set nothing leaves: {failsafe, failsafeHold}. Entered in 3 step(s) from `standby`. every claim above is about this MACHINE's semantics — …
+  verification/completion-livelock  `TrapProbe::Probe::Modes`: completion livelock — the interpreter's chase goes round {alpha, beta} without coming to rest: …
+  verification/completion-livelock  `TrapProbe::Probe::Modes`: completion livelock — the interpreter's chase goes round {failsafe, failsafeHold} without coming to rest: …
   verification/nondeterministic-choice  `TrapProbe::Probe::Modes::beta`: 2 transitions are enabled at once …
 ```
 
@@ -2391,7 +2424,11 @@ stacks, so a composite state is named as itself and never only by the leaf insid
 it — and `entered in 3 step(s) from standby` is the shortest way in. It does NOT
 say the machine cannot recover: escaping the set might need a trigger the real
 environment never offers, and this tool has no carrier for what an environment
-supplies. It does not say `livelock`, and it does not say the machine is free of
+supplies. It does not say `livelock` — that the chase goes round
+`{failsafe, failsafeHold}` without coming to rest is the separate
+`verification/completion-livelock` row beside it, a claim about the chase rather
+than about the set, whose line ends `on a run of the walk, not of the simulator`
+for the reason the next sentence gives — and it does not say the machine is free of
 anything. And the sentence beside the finding is there because `beta` is a
 choice point: the walk explored both branches, `simulate` takes `beta -> alpha`
 every time, and a reader who tries to reproduce the trap with the simulator may
@@ -2556,7 +2593,9 @@ withheld no-way-out row), `no way out` (a published deadlock), `trap` (a member
 of a published trap), and `choice` (a published choice). A status panel in the
 canvas's top-left corner (`behaviour-marks`) says which, and the legend gains a
 Marks section (`legend-marks`) listing the words present. Every mark names a row
-in the Checks tab except `not decided` and `not walked`.
+in the Checks tab except `not decided` and `not walked`. A completion livelock is
+a Checks-tab row and a `livelock` line of the report, and puts no badge on the
+states it names.
 
 **In the app, the edge marks.** A dead transition and a guard the walk could not
 decide are marked on the transition itself, not only as a Checks-tab row: the
@@ -2737,6 +2776,8 @@ test/fixtures/verification/models/trap-probe.sysml: TrapProbe::Probe::Modes — 
   semantic profile (the reading every verdict above holds under):
     ...
   error verification/refuted  `TrapProbe::Probe::Modes`: `state standby` is reachable from every reachable configuration, over the whole run — not recoverable: 4 configuration(s) cannot reach `state standby`: …
+  warning verification/completion-livelock  `TrapProbe::Probe::Modes`: completion livelock — the interpreter's chase goes round {alpha, beta} without coming to rest: …
+  warning verification/completion-livelock  `TrapProbe::Probe::Modes`: completion livelock — the interpreter's chase goes round {failsafe, failsafeHold} without coming to rest: …
 ```
 
 Read the two numbers for the two questions they answer. **Four** configurations
@@ -2747,7 +2788,9 @@ are the set `reach` reports as a trap: `{failsafe, failsafeHold}` is the part
 nothing leaves at all, while `alpha` and `beta` cycle between themselves with a
 way out that leads only deeper. The trap row and this row are the same machine
 seen from two sides, and neither number is ever printed under the other's
-question. Note what the row is *not*: it is a `fail` — an assertion you wrote
+question. The two warnings after the error are not about this property: they are
+the machine's completion livelocks, filed after every property's finding in
+`reach`'s words, and they move no count — the exit code stays 1. Note what the row is *not*: it is a `fail` — an assertion you wrote
 that the design does not meet, `verification/refuted`, exit 1 — but there is
 no witness trace under it, because a set is not a run; the count beside the
 bounds line is the machine's own configurations, not product states, because

@@ -1164,6 +1164,9 @@ const SPURIOUS = 'package P { state def M { state a; state b; state c; state d; 
 const GUARD_TRANSIENT = 'package P { state def M { state a; state b; state c; transition a_b first a then b; transition a_c first a accept e if x > 0 then c; transition b_a first b accept back then a; } }';
 const LONELY = 'package Q { state def Lonely { state a; state b; } state def M { state x; state y; transition first x then y; transition first y then x; } part def Drone { exhibit state modes : M; } }';
 const EXHIBIT_BODY = 'package Q { state def M { state x; state y; transition first x then y; transition first y then x; } part def Drone { exhibit state run : M { state extra; } } }';
+/** `LONELY`'s and `EXHIBIT_BODY`'s `M`, which never comes to rest, and one that does. */
+const RESTLESS_M = 'state x; state y; transition first x then y; transition first y then x;';
+const RESTING_M = 'state x; state final; transition first x then final;';
 const TYPO_TRANS = 'package Q { state def M { state a; state b; transiton a then b; transiton b then a; } }';
 
 const carrier = (pattern: string, p: string): string =>
@@ -1196,15 +1199,22 @@ describe('the reach verdict table', () => {
     expect(reachOf(inline(ACCEPT_CYCLE), healthy).verdict).toBe('undecided');
   });
 
-  it('reads holds only on a terminating machine the walk finished', () => {
+  it('reads holds only on a terminating machine the walk finished — a completion cycle is a finding', () => {
     expect(reachOf(inline(TERM), healthy).verdict).toBe('holds');
-    // A completion livelock is not a bound hit, so the cycle still holds.
-    expect(reachOf(inline(COMPLETION_CYCLE), healthy).verdict).toBe('holds');
+    // A completion cycle is not a bound hit, so nothing is withheld over it —
+    // and since U1 (plan O1 S4) it is a finding of its own: the interpreter's
+    // chase goes round it and never comes to rest, `verification/completion-livelock`.
+    const cycle = reachOf(inline(COMPLETION_CYCLE), healthy);
+    expect(cycle.verdict).toBe('issues');
+    expect(cycle.rows.map((r) => [r.code, r.severity])).toEqual([['verification/completion-livelock', 'warning']]);
   });
 
-  it('reads holds on the views-tour completion livelock', async () => {
+  it('reads issues on the views-tour completion livelock, with that one finding and nothing withheld', async () => {
     const model = await load('examples/views-tour.sysml');
-    expect(reachOf(model, healthy).verdict).toBe('holds');
+    const result = reachOf(model, healthy);
+    expect(result.verdict).toBe('issues');
+    expect(result.rows.map((r) => r.code)).toEqual(['verification/completion-livelock']);
+    expect(result.summary).not.toContain('withheld');
   });
 
   it('lists exactly the trap-probe findings, in the terminal\u2019s order', async () => {
@@ -1213,6 +1223,8 @@ describe('the reach verdict table', () => {
     expect(result.verdict).toBe('issues');
     expect(result.rows.map((r) => [r.code, r.severity])).toEqual([
       ['verification/unrecoverable-mode', 'warning'],
+      ['verification/completion-livelock', 'warning'],
+      ['verification/completion-livelock', 'warning'],
       ['verification/nondeterministic-choice', 'warning'],
     ]);
   });
@@ -1265,15 +1277,26 @@ describe('the reach verdict table', () => {
   });
 
   it('marks states under no walked machine (lonely) as not-walked', () => {
+    // `M` is a completion cycle, a finding of its own since U1, so the verdict
+    // is `issues` and the not-walked clause stands in its summary; with an `M`
+    // that comes to rest the not-walked states alone make it `undecided`.
     const result = reachOf(inline(LONELY), healthy);
-    expect(result.verdict).toBe('undecided');
+    expect(result.verdict).toBe('issues');
+    expect(result.summary).toContain('3 state(s) in no walked machine');
     expect(result.rows.filter((r) => r.code === 'checks/not-walked').map((r) => r.elementId)).toHaveLength(3);
+    const resting = reachOf(inline(LONELY.replace(RESTLESS_M, RESTING_M)), healthy);
+    expect(resting.verdict).toBe('undecided');
+    expect(resting.rows.filter((r) => r.code === 'checks/not-walked')).toHaveLength(3);
   });
 
   it('marks an exhibit body and its extra state (exhibitBody) as not-walked', () => {
     const result = reachOf(inline(EXHIBIT_BODY), healthy);
-    expect(result.verdict).toBe('undecided');
+    expect(result.verdict).toBe('issues');
+    expect(result.summary).toContain('2 state(s) in no walked machine');
     expect(result.rows.filter((r) => r.code === 'checks/not-walked')).toHaveLength(2);
+    const resting = reachOf(inline(EXHIBIT_BODY.replace(RESTLESS_M, RESTING_M)), healthy);
+    expect(resting.verdict).toBe('undecided');
+    expect(resting.rows.filter((r) => r.code === 'checks/not-walked')).toHaveLength(2);
   });
 
   it('reads not-run, with not-walked rows, for a file that owns no transition (succession-only)', async () => {
@@ -1792,6 +1815,22 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
       expect.arrayContaining(['findings']),
     );
     expect(machine.getAttribute('data-status')).not.toContain('holds');
+  });
+
+  it('counts a completion livelock as a finding in the machine block, and its line selects the cycle', () => {
+    // U1 (plan O1 S4): a machine whose only finding is the cycle its chase goes
+    // round reads `findings`, never `nothing-to-report`.
+    const model = inline(COMPLETION_CYCLE);
+    const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
+    const { view, onSelect } = mount('reach', result, model);
+    const machine = view.container.querySelector('.checks-report-machine')!;
+    expect(machine.getAttribute('data-status')).toBe('findings');
+    const line = view.container.querySelector('.checks-report-line[data-kind="livelock"]')!;
+    expect(line.getAttribute('data-code')).toBe('verification/completion-livelock');
+    expect(line.getAttribute('data-withholds')).toBe('false');
+    expect(line.textContent).toContain('livelock     {a, b} \u2014 the chase goes round 2 configuration(s)');
+    fireEvent.click(line.querySelector('button')!);
+    expect(onSelect).toHaveBeenCalledWith(idOf(model, 'Q::Cyc::a'));
   });
 
   it('shows an inconclusive block\u2019s detail and never reads PASS or holds', () => {

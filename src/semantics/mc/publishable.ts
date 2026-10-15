@@ -1041,6 +1041,50 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
       'inconclusive; A13’s gate holds the whole report first, so in practice no cut set is published and no `no cut set` is printed',
     producedBy: null,
   },
+  {
+    id: 'W7',
+    claim: 'a completion livelock: the interpreter’s chase goes round this cycle, entered by this `entry` path',
+    feature: 'reach and check-behaviour — `verification/completion-livelock` (U1; docs/06 §8.8)',
+    kind: 'existential',
+    polarity: 'mixed',
+    polarityNote:
+      'the cycle and its way in are exhibited (increasing: a bound can hide them and never invent them), but that the chase stays on the cycle is the absence of another way off — an undecided guard on a trigger-less transition out of it invents that, and a dwell the walk takes without waiting invents a step',
+    // THE PER-STEP ALTERNATIVE IS WHAT THE PRODUCER APPLIES, ALWAYS, and in
+    // place of the relation gate rather than beside it. Every step the row
+    // stands on is one the walk took, so a bound takes nothing from it (the
+    // CLI reference's `--max-configs` cell says so), and the claim is decided
+    // per configuration of the cycle — no trigger-less transition out of one of
+    // them has a guard the walk could not evaluate (`store`), and no step of the
+    // chase round it is a dwell (`time`) — which is stricter on the cycle than
+    // the walk-wise gate and needs none of its clauses elsewhere. The gate's
+    // `environment` clause refuses two of v9's ten (the PA SwarmMember
+    // machines name `peerVerdict` and four more), and the claim that only an
+    // event moves the run on holds whatever events an environment sends; its
+    // `budget` clause refuses a walk that followed a chase the budget stops,
+    // and that stop is the very fact the row reports. Where a step fails the
+    // per-step check, the row is WITHHELD with a `withheld` line naming the
+    // clause — never dropped.
+    //
+    // THE WAY IN, per step too. `entry` is a run the SIMULATOR makes — each
+    // step the transition `runStateMachine` takes for its input (the first
+    // enabled, never a dwell), reaching the cycle with the budget to go once
+    // round — wherever the walk holds one; else the walk's own shortest path,
+    // printed with the walk-only wording and the state where it first parts
+    // from the simulator. The finding's hedge is read off THIS row's way in,
+    // never off the machine's choice rows: the walk withholds a choice row over
+    // an undecided guard inside the choice's level and still takes both
+    // branches, which published a way in no `simulate` run takes, unhedged.
+    walkRequires: 'relationIsTheMachines',
+    perStepAlternative: true,
+    ridesOn: null,
+    alsoRequires: [
+      'per step of the cycle, always in place of the relation gate: no trigger-less transition out of one of its configurations is in `walk.undeterminedGuards` (`store`), and no chase step round it is in `timedTransitions` (`time`)',
+      'the `entry` path is the simulator’s own run with the budget to go once round, or the finding says the way in is a run of the walk and where it parts from the simulator',
+    ],
+    otherwise:
+      'the row is withheld and a `withheld` line naming the clause (`store` or `time`) prints in its place; an `entry` the simulator does not make prints with the walk-only wording',
+    producedBy: { file: 'src/semantics/mc/explore.ts', symbol: 'livelocksOf' },
+  },
 ];
 
 /**

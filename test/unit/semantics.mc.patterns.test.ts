@@ -67,9 +67,11 @@ import {
 import {
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
+  COMPLETION_LIVELOCK_CODE,
   GUARD_UNDETERMINED_CODE,
   exploreMachine,
   machineAlphabet,
+  reachReport,
   stateMachinesIn,
 } from '../../src/semantics/mc/explore';
 import { MAX_COMPLETION } from '../../src/semantics/mc/config';
@@ -820,6 +822,59 @@ describe('the chase budget, in the search, and every witness replayed through th
     expect(deep.detail).toContain('No flag raises the depth bound');
     expect(deep.detail).not.toContain('--max-configs');
   });
+
+  it('files the machine’s completion livelock once per cycle, in reach’s words, and moves no claim, count or exit code (U1)', async () => {
+    // Review B's livelock-two probe, its two carriers included: two
+    // properties, one cycle, so one warning — after both property findings.
+    const text = `package LiveTwo {
+      state def M {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state c"; }
+        @SysproseVerification::PropertyPattern { attribute pattern = "cover"; attribute scope = "globally"; attribute p = "state c"; }
+        state s0; state a; state b; state c;
+        transition go first s0 accept go then a;
+        transition ab first a then b;
+        transition ba first b then a;
+        transition ac first a accept e then c;
+      }
+    }`;
+    const model = (await loadModelText(text, { fileName: 'livelock-two.sysml' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const r = behaviourReport(model, { machineId });
+    expect(r.properties.map((p) => p.claim)).toEqual(['fail', 'covered']);
+    expect(r.exitCode).toBe(1);
+    expect(r.diagnostics.map((d) => [d.severity, d.code])).toEqual([
+      ['error', 'verification/refuted'],
+      ['warning', COMPLETION_LIVELOCK_CODE],
+    ]);
+    const reach = reachReport(model).diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_CODE);
+    expect(r.diagnostics[1].message).toBe(reach[0].message);
+    expect(r.diagnostics[1].elementId).toBe(reach[0].elementId);
+    // In the text, as the tail's diagnostic line.
+    const lines = behaviourLines(r, { name: 'livelock-two.sysml', machineName: 'LiveTwo::M' });
+    expect(lines.filter((l) => l.code === COMPLETION_LIVELOCK_CODE).map((l) => [l.kind, l.text])).toEqual([
+      ['diagnostic', `  warning verification/completion-livelock  ${reach[0].message}`],
+    ]);
+
+    // A property that passes over a machine that never comes to rest still
+    // passes, exit 0, with the warning beside it.
+    const { model: cyc, machineId: cycId } = await load(
+      'package Cyc { state def M { state a; state b; state z; transition ab first a then b; transition ba first b then a; } }',
+    );
+    const pass = behaviourReport(cyc, { machineId: cycId, pattern: 'pattern=absence, scope=globally, p=state z' });
+    expect(pass.properties[0].claim).toBe('pass');
+    expect(pass.exitCode).toBe(0);
+    expect(pass.diagnostics.map((d) => [d.severity, d.code])).toEqual([['warning', COMPLETION_LIVELOCK_CODE]]);
+
+    // Review B's undet-completion and nested-completion: no cycle, no warning.
+    for (const probe of [
+      'package UndetCompletion { part def P { attribute x : Integer; state def M { state a; state b; state c; transition ab first a if x > 0 then b; transition ac first a accept e then c; } } }',
+      'package NestedCompletion { state def M { state s0; state comp { state i1; state i2; transition i12 first i1 then i2; } state z; transition s0c first s0 accept go then comp; transition cz first comp accept e then z; } }',
+    ]) {
+      const { model: pm, machineId: pid } = await load(probe);
+      const b = behaviourReport(pm, { machineId: pid, pattern: 'pattern=absence, scope=globally, p=state c' });
+      expect(b.diagnostics.map((d) => d.code)).not.toContain(COMPLETION_LIVELOCK_CODE);
+    }
+  }, 120_000);
 
   it('every `fail` and `covered` row goes through the replay before it stands on its witness', () => {
     // The two returns that publish a witness, read off the producer: the

@@ -616,7 +616,7 @@ const MECHANISMS: Array<{ note: RegExp; conjunct: RegExp }> = [
 const ALL_ROWS: readonly AbsenceClaim[] = [...ABSENCE_CLAIMS, ...WITNESS_CLAIMS];
 
 describe('the registers are data, and every column is asserted', () => {
-  it('registers sixteen absence claims and six positive witnesses', () => {
+  it('registers sixteen absence claims and seven positive witnesses', () => {
     expect(ABSENCE_CLAIMS.map((r) => r.id)).toEqual([
       'A0',
       'A1',
@@ -635,7 +635,9 @@ describe('the registers are data, and every column is asserted', () => {
       'A14',
       'A15',
     ]);
-    expect(WITNESS_CLAIMS.map((r) => r.id)).toEqual(['W1', 'W2', 'W3', 'W4', 'W5', 'W6']);
+    // W7 since U1 (plan O1 S4): the completion livelock, whose way in is a
+    // positive witness and whose cycle stands per step.
+    expect(WITNESS_CLAIMS.map((r) => r.id)).toEqual(['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']);
     expect(new Set(ALL_ROWS.map((r) => r.id)).size).toBe(ALL_ROWS.length);
   });
 
@@ -722,7 +724,8 @@ describe('the registers are data, and every column is asserted', () => {
     // together and by one predicate" means when it is data rather than prose.
     // A7 joined it with `recovery` (§3.2b): one producer for both directions
     // of a branching-time claim, and no witness row beside it — a set is not
-    // a run.
+    // a run. W7 joined it with the completion livelock (U1), produced by
+    // `livelocksOf`, the one function both `reach` and `check-behaviour` read.
     expect(ALL_ROWS.filter((r) => r.producedBy !== null).map((r) => r.id)).toEqual([
       'A0',
       'A1',
@@ -738,6 +741,7 @@ describe('the registers are data, and every column is asserted', () => {
       'W1',
       'W2',
       'W3',
+      'W7',
     ]);
   });
 
@@ -923,7 +927,7 @@ describe('the registers are data, and every column is asserted', () => {
 
   it('every existential witness reads the relation half and names no bound', () => {
     const existential = WITNESS_CLAIMS.filter((w) => w.kind === 'existential');
-    expect(existential.map((w) => w.id)).toEqual(['W1', 'W2', 'W5', 'W6']);
+    expect(existential.map((w) => w.id)).toEqual(['W1', 'W2', 'W5', 'W6', 'W7']);
     for (const w of existential) {
       // A bound can HIDE a witness and can never INVENT one, so a witness row
       // that read the bound family would make a bounded `covered` and this

@@ -878,7 +878,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         kind: 'value',
         metavar: 'N',
         fallback: `${DEFAULT_MAX_CONFIGS} configurations`,
-        doc: 'Configurations to explore before the walk gives up. A walk that hits it is PARTIAL: the unreachable and dead lists are emptied rather than shortened, the report says the bound was hit, and no absence is claimed from a walk that did not finish',
+        doc: 'Configurations to explore before the walk gives up. A walk that hits it is PARTIAL: the unreachable and dead lists are emptied rather than shortened, the report says the bound was hit, and no absence is claimed from a walk that did not finish. A completion livelock (verification/completion-livelock: a cycle the interpreter’s chase goes round without coming to rest, once per cycle of states) stands on the steps the walk took inside the cycle, so the bound neither withholds one it saw whole nor reports one it cut through',
       },
     ],
   },

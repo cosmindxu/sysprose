@@ -23,6 +23,7 @@
 
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import {
+  COMPLETION_LIVELOCK_CODE,
   DEADLOCK_WITHHELD_SENTENCE,
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
@@ -31,6 +32,7 @@ import {
   TRAP_REFUSAL_SENTENCE,
   UNREACHABLE_STATE_CODE,
   UNRECOVERABLE_MODE_CODE,
+  livelockWithheldSentence,
   stateMachinesIn,
   transitionLabel,
   type MachineReach,
@@ -66,6 +68,7 @@ export type ReportLineKind =
   | 'withheld'
   | 'trap'
   | 'trap-refused'
+  | 'livelock'
   | 'choice'
   | 'suppressed'
   | 'property'
@@ -308,6 +311,41 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
       break;
     default:
       break;
+  }
+  // A cycle the interpreter's chase goes round, once per cycle, named by the
+  // states it goes round in chase order and by the way in. Gated on neither
+  // gate (`livelocksOf`, `./explore`): each row stands on steps the walk took.
+  // A cycle a guard nobody decided or a dwell withheld leaves a `withheld`
+  // line in its place, as a withheld no-way-out row does. The line says the
+  // three things the finding says about its own reading: what moves the run on
+  // (an event, or on a machine that names none, nothing), whose run the way in
+  // is (`entryBy`), and how many cycles of configurations it stands for.
+  for (const l of m.livelocks) {
+    const after =
+      m.bounds.alphabet.length === 0
+        ? 'the run ends where the budget stops it (no trigger is named)'
+        : 'moves on only on an event';
+    out.push(
+      line(
+        'livelock',
+        `    livelock     {${l.states.map((s) => s.name).join(', ')}} — the chase goes round ${l.configs} ` +
+          `configuration(s) on trigger-less transitions and ${after}; entered in ` +
+          `${l.steps} step(s) from ${l.entry[0].name}` +
+          (l.entryBy === 'walk' ? ', on a run of the walk, not of the simulator' : '') +
+          (l.cycles > 1 ? `; one row for ${l.cycles} cycles of configurations over these states` : ''),
+        { code: COMPLETION_LIVELOCK_CODE, elementId: l.states[0].id },
+      ),
+    );
+  }
+  for (const l of m.livelocksWithheld) {
+    out.push(
+      line(
+        'withheld',
+        `    withheld     {${l.states.map((s) => s.name).join(', ')}} — ${livelockWithheldSentence(l.clause)}` +
+          (l.cycles > 1 ? ` (one line for ${l.cycles} cycles of configurations over these states)` : ''),
+        { elementId: l.states[0].id, withholds: true },
+      ),
+    );
   }
   for (const n of m.nondeterminism) {
     const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;

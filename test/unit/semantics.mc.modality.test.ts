@@ -39,7 +39,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { loadModelText } from '@text/load';
-import { exploreMachine, stateMachinesIn } from '../../src/semantics/mc/explore';
+import { COMPLETION_LIVELOCK_CODE, exploreMachine, stateMachinesIn } from '../../src/semantics/mc/explore';
 import {
   behaviourReport,
   checkProperty,
@@ -1114,7 +1114,13 @@ describe('the annotation moved nothing on the row', () => {
           witness: v.witness.map((s) => [s.leaf?.name ?? null, s.holds]),
           exitCode: report.exitCode,
           counts: report.counts,
-          diagnostics: report.diagnostics.map((d) => [d.severity, d.code]),
+          // The machine's completion livelocks (U1, plan O1 S4) are filed after
+          // every property finding and are a finding about the MACHINE, not
+          // about this row: what the annotation moved is read without them,
+          // and `semantics.mc.patterns.test.ts` pins them on their own.
+          diagnostics: report.diagnostics
+            .filter((d) => d.code !== COMPLETION_LIVELOCK_CODE)
+            .map((d) => [d.severity, d.code]),
         },
         want.id,
       ).toEqual({

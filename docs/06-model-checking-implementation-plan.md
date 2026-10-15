@@ -833,7 +833,7 @@ The genuinely new information over shipped `reach` is therefore: **non-trivial b
 **MUST NEVER print, and why.**
 
 - **"the system can always recover"** — escaping a trap may need a trigger the real environment never offers.
-- **"livelock"**, **"deadlock-free"** — the second is a bare-word ban with no allowance.
+- **"livelock"**, **"deadlock-free"** — the second is a bare-word ban with no allowance. *(Since U1, 2026-10-14, the first is the name of a finding of its own — a cycle the interpreter's chase goes round, `verification/completion-livelock`, §8.8 — and stands on that row and nowhere else; the trap row still never says it.)*
 - **A trap row on a non-exhaustive walk** — A6.
 - **Any trap row, and any "nothing is inescapable" sentence, on a machine `walkIsExact` refuses** — A6, all four clauses, and this is where the collapse earns its keep. Four separate measured shapes reach this section and the draft's single time condition caught exactly one of them — and then only in the spelling it was written for. (i) **Time:** `failsafe` with `after(5) → failsafeHold` declared before `after(60) → standby` — **built through `ModelFactory`, since `accept after(n)` is a parse error (correction 22)** — is a genuine inescapable trap that the walk sees an escape from, on a walk that is exhaustive, alphabet-offered and fully supported, with no `verification/nondeterministic-choice` row to hint at it. (ii) **The environment:** the latch machine, an ordinary `.sysml` file, is one whole-graph SCC only because the walk supplies `unlatch`; without clause (c) exemption 3 fires and the no-trap sentence publishes. (iii) **The store:** the trapguard machine, also an ordinary `.sysml` file, publishes a `trap` row naming a component the model states an escape from. (iv) **Time again, in a second spelling:** the numeric-`attrs.after` machine of §2.3, whose three dwells contribute no alphabet member at all, so an alphabet-scoped clause (b) reads clean and this section publishes *"no component of this walk is inescapable beyond its endings"* about a machine whose `{failsafe, failsafeHold}` no run leaves. Enumerating one condition per shape is what failed twice, and scoping a clause to the producer that happened to be measured is what failed the third time; the gate plus a producer defined over the **transitions** is what stops a fifth shape needing a fifth MUST-NEVER bullet.
 - **A trap `entry` witness whose path crossed a dwell transition, stated as a run the semantics admits.** The entry path is a positive claim and takes §3.1's re-wording: `Entered in 3 step(s) from \`standby\` — on a run this WALK admits: step 2 fires \`after(10)\` …`. In practice A6's gate already suppresses the whole row, so this clause exists for the day the gate is relaxed per-claim rather than per-walk, and the sentence is written now so that relaxation cannot be made silently.
@@ -2185,3 +2185,147 @@ transition is due.
   exit 2, naming the definition and what to do. A nested definition that IS a
   machine keeps its carriers. No model of the 857-file survey holds such a
   carrier, so no output there moves.
+
+### 8.8 The completion livelock — O1 `behaviour-sound`, 2026-10-15
+
+U1 (the user, 2026-10-14; `close-open-items.md` §1.1 and O1 S4): ten of v9's
+seventeen machines spend the interpreter's 64-step chase budget on every run,
+because their trigger-less transitions go round a cycle and under
+run-to-completion the machine never comes to rest. `reach` now says so, as
+`verification/completion-livelock` (warning), once per cycle of states, and
+`check-behaviour` files the same published rows on the machine it checks.
+
+- **What a row claims, decided precisely.** A set of configurations the walk
+  reached where a trigger-less transition is due at every one, and where the
+  transition the INTERPRETER fires — the first enabled at the innermost level,
+  by declaration order, the one `runStateMachine`'s chase takes — leads to the
+  next of them, round and back. A run that gets there goes round until its
+  budget is spent, stops with a trigger-less transition still due, and moves on
+  only on an event. The producer is `chaseCycles` (`explore.ts`): during the
+  walk, at each configuration, the chase's own step and the configuration it
+  leads to, recorded per CONFIGURATION (the keyed walk numbers one
+  configuration once per chase position, and the chase's step is the same at
+  every one); that is a function, so its cycles are disjoint and each is found
+  once. Cycles of configurations that go round the same transitions and differ
+  only in the store or history they carry are ONE row (`cycles` counts them):
+  an event that counts before the chase starts makes one cycle per count, and
+  review S5 measured 61 identical rows and warnings for a counter to 60, and a
+  reach six times slower for two such counters — the cycles are now indexed in
+  one pass and every way in read off one breadth-first pass, and the probe's
+  245,586 configurations take about what they took before the livelock
+  existed (2.3 s, against 2.0–3.6 s at S4; 29 s before the fix). The
+  row names the machine, the states of the cycle's configurations in the order
+  the chase goes round them from where the way in arrives (the union of their
+  active stacks, as a trap names its set), the transition fired at each, and
+  the way in.
+- **Over configurations, not states; over the chase, not every branch.** This
+  is the line U1's text asked to be drawn and documented. A cycle of STATES whose
+  chase leaves on its own is no livelock: a guard that holds somewhere on the way
+  round, or an effect that walks the store out of the loop (`a -> b` counting,
+  `b -> a` while `n < 3`, `b -> c` once `n >= 3`), is a sequence of distinct
+  configurations ending where the chase rests, and nothing is reported. A cycle
+  that some OTHER enabled trigger-less transition could leave is still reported
+  when declaration order keeps the chase on it — and the row names each state of
+  the cycle where that is so (`choices`), so the `verification/nondeterministic-choice`
+  row beside it reads as the reason the chase stays. That is the case v9 turns
+  on: `PA::SwarmMember::SwarmMemberModes` loops `Nominal ⇄ NavigationDegraded`
+  on every run although `Nominal -> Isolated -> Quarantined` is a trigger-less
+  way to a configuration that rests. A reading over the walk's relation alone
+  (a bottom strongly-connected component of the trigger-less edges, every branch
+  taken) misses it — that component is not inescapable — and so publishes nine
+  of v9's ten; it would also be a claim about runs the simulator never makes. The
+  reading here is a claim about the run the interpreter does make, and the choice
+  row says what another tie-break would do.
+- **What withholds it, and what does not.** Every step a row stands on is one
+  the walk TOOK, from a configuration it dequeued, so neither gate applies: a
+  bound elsewhere takes nothing from it (livelock-self under `--max-configs 2`
+  publishes the row the whole walk does, on a walk that says it is partial), a
+  named trigger is beside the point (the claim is that only an event moves the
+  run on), and a cycle the walk did not see whole is not found at all — through
+  a configuration whose step a bound refused, or one reached only where the
+  budget stops a chase (`go` into a 60-step chain ending in a ten-state cycle:
+  the chase stops at the cycle's fifth state, `reach` reports the other five
+  unreachable, and the reachable part is a path, not a cycle). In the walk
+  without the chase position, which a machine that names no trigger keeps, a
+  configuration first reached with the budget already spent records no chase
+  step either: review S5's 64-state chain whose last state steps back to the one
+  before it (`c0 → … → c64 → c63`) closed a cycle on a step the interpreter
+  never fires — its chase lands on `c64` with its 64th step and stops — and one
+  state shorter the chase does come back once, and the row stands. It is WITHHELD,
+  with a `withheld` line naming the clause in place of the row, where the step
+  may not be the interpreter's: a guard the walk could not evaluate among the
+  trigger-less transitions out of one of the cycle's configurations (`store` —
+  whether the chase fires it and leaves was never decided; `trapguard`'s
+  `{degradedA, degradedB}`), or a chase step that is an `after(n)` dwell, which
+  the walk takes without waiting it out (`time`). No new exactness clause was
+  needed: a machine with either already fails the gate on that clause.
+- **The way in, per row.** `entry` is a run the SIMULATOR makes wherever the
+  walk holds one (`entryBy: 'simulator'`): every step the transition
+  `runStateMachine` takes for its input — the first enabled, never a dwell —
+  and the chase still has the budget to go once round when it gets there (the
+  node's own chase position in the keyed walk; the number of steps in the walk a
+  machine that names no trigger keeps, whose every run is one chase). The walk
+  records which of its edges are such steps as it takes them. Where it holds no
+  such run, `entry` is its own shortest path (`entryBy: 'walk'`), and the finding
+  says so and names the state where the path first parts from the simulator
+  (*the way in is a run of the walk, not one `simulate` makes: at `beta` it
+  takes a step the simulator does not take there … so `simulate` may never
+  enter it*). The hedge used to be printed wherever the machine had a published
+  choice row, and review S5 found both halves of that wrong: the walk withholds
+  a choice row over an undecided guard strictly inside the choice's level and
+  still takes both branches, so a way in only the other branch leads to was
+  published unhedged on a machine with no choice row (`wi-hidden-choice`); and
+  six of v9's ten rows carried the hedge although every one of the ten is
+  entered by the simulator's own run. On v9 none is hedged now; on the trap
+  probe `{alpha, beta}` is the simulator's and `{failsafe, failsafeHold}` is
+  entered only through `beta -> failsafe`, and says so. The way in is register
+  row W7 (`publishable.ts`): an existential witness whose cycle stands per step
+  — the per-step alternative, applied always, in place of the relation gate —
+  and whose `entry` is the simulator's or worded as the walk's. The trap row's
+  re-wording constant (`TRAP_ENTRY_WALK_ADMITS`, printed nowhere) is not used
+  for it. A known effect of T80 (history in the configuration key): a cycle of
+  substates is first a cycle of CONFIGURATIONS once the composite has recorded
+  its history, so `{comp, i1, i2}` entered at step 1 reads `entered in 2
+  step(s)`.
+- **What the finding says moves the run on.** On a machine that names a
+  trigger, only an event (*moves on only on an event*); on one that names none,
+  nothing does, and the finding and the line say the run ends where the budget
+  stops it — `FlightModes`, the trap probe and v9's eight machines without a
+  trigger. Where declaration order decides at a state of the cycle, the finding
+  names the state and says the simulator never takes the other transition; it
+  no longer says a run that took it *could leave*, which is false where the
+  other branch comes back round (`a -> b` before `a -> c`, and `c -> a`).
+- **On `check-behaviour`.** The machine's published rows are filed after every
+  property's finding, in `reach`'s words (`livelockFinding`, one composer), and
+  move no claim, no count and no exit code: a property that passes over a
+  machine that never comes to rest still passes, with the warning beside it. One
+  more walk of the machine, the one `reach` takes. A WITHHELD row is not filed
+  there — it is a `withheld` line of `reach`'s report, with no code to file it
+  under — so `reach` is where a withheld cycle is read. This is a scope beyond
+  U1's wording (*reach reports it*), taken so a reader of `check-behaviour` is
+  not told a property holds over a machine whose chase never rests without
+  being told that too; on v9 it is ten more warnings (`check-behaviour
+  --element` on each of the ten machines) and no exit code moves.
+- **What moved.** On v9, exactly the ten machines of `close-open-items.md` §1.1
+  gain one row each — the ten whose interpreter run on no event at all spends
+  the budget, and no other: LA `FleetConfiguration {MeshIntact, MeshDegraded}`,
+  `SwarmMember::SwarmMemberModes {Nominal, NavigationDegraded}`,
+  `SwarmMember::SwarmMemberStates {Landed, Transiting, Watching, Returning}`,
+  `GroundStation::GroundStationModes {LinkUp, LinkDown}`,
+  `GroundStation::GroundStationStates {Supervising, Recalling}`, and PA's five of
+  the same shapes (`GroundStationNode` for `GroundStation`). In the tree, the
+  three shipped machines whose trigger-less transitions cycle (`FlightModes
+  {manual, autonomous}`, `vehicle`'s `{idling, moving}`, `views-tour`'s
+  `{standby, flying}`) and the fixtures with such a cycle gain their rows, and
+  the app's Reachability verdict on a machine whose only finding is a livelock
+  reads `issues` where it read `holds`. §3.2a's MUST-NEVER *"livelock"* was about
+  the trap row and still holds of it: `semantics.mc.traps.test.ts` now asserts
+  the word stands on the livelock row, its finding and its withheld line, and on
+  no other. The interpreter is the oracle: `semantics.mc.differential.test.ts`
+  drives every corpus machine over every event sequence up to length three,
+  re-steps each run's last chase through `config.ts`, and requires every chase
+  the budget stopped going round a cycle of CONFIGURATIONS to have gone round a
+  row's states, and every published row whose way in is the simulator's to be
+  one some run goes round — per row, not per machine (it used to skip a machine
+  with a choice row, which is the line the hedge was drawn on, in the same wrong
+  place).
