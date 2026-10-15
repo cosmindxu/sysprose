@@ -62,7 +62,14 @@ import {
   verifyModel,
   type ObligationVerdict,
 } from '@api/index';
-import { anchorFor, checkConstraints, checksByRow, type ConstraintCheck, type SpecialisationInstance } from '@semantics/evaluate-model';
+import {
+  anchorFor,
+  checkConstraints,
+  checksByRow,
+  withEveryInstanceJudged,
+  type ConstraintCheck,
+  type SpecialisationInstance,
+} from '@semantics/evaluate-model';
 import { effectiveQualifiedName } from '@semantics/inheritance';
 import { obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, solveFeasible } from '@semantics/solver';
@@ -3259,6 +3266,16 @@ describe('a redefinition is the feature in its context, and a value written with
  *      as the check and the numeric surface key them, and this invariant reads the names as printed;
  *  I9  no engine files two rows under one name at all: an instance that is an element's own is that
  *      element's reading, and one a group of a more specific usage reads is that group's (O2 S2).
+ *  I10 check ≡ verify: `sysml-check --strict` is never silent on a row literal or SMT refutes (PI-1).
+ *  I11 the rows the check shares among instances read alike are the rows each instance's own reading
+ *      gives (`withEveryInstanceJudged`), row for row, message and witness included (O2 S5's sharing);
+ *  I12 a relation and its verbatim copy (`c` and `c__dup`, the same body beside it) give the same rows,
+ *      per context and instance: verdict, abstention and the values read — so no reading of one relation
+ *      takes what another worked out before it (Sh1's `m <= 10.0` read q2's p at q1's m, worked out for
+ *      `m <= 1000.0`);
+ *  I13 an instance row the SMT engine refutes with nothing freed, and the check decides otherwise — the
+ *      witness the same-point gate demotes to `inconclusive` — only where listed, with the reason: both
+ *      read the model's own point, so one of them is wrong (it was the signature of Sh1's false T).
  *
  * Letters, in the order check / literal / numeric / SMT: T holds (the literal engine's
  * `holds-at-values`), F violated or refuted, ? abstains, X inconsistent axioms, V vacuous, U a construct
@@ -3308,6 +3325,54 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   const twice = new Map<string, string[]>();
   /** I10: per probe, each row literal or SMT refutes that `sysml-check --strict` names in no warning. */
   const unreported = new Map<string, string[]>();
+  /** I11: per probe, each check row the shared reading gives otherwise than the instance's own reading. */
+  const unshared = new Map<string, string[]>();
+  /** I12: per probe, each row of a relation's verbatim copy that differs from the relation's own. */
+  const copied = new Map<string, string[]>();
+  /** I12: the relations each probe's copy run compared, so the invariant is not vacuous. */
+  let copiedRelations = 0;
+
+  /**
+   * I12: `text` with every one-line relation `constraint c { … }` (not an `assert`, `assume` or `require`)
+   * followed by its verbatim copy `constraint c__dup { … }`, checked: each copy's rows must be its
+   * relation's — the verdict, the abstention and the values read, per context and instance.
+   */
+  async function copiedRows(text: string, pkg: string): Promise<void> {
+    let any = false;
+    const copy = text.replace(
+      /(^|[^\w])(constraint\s+)([A-Za-z_]\w*)(\s*\{)([^{}\n]*)(\})/g,
+      (all, before: string, kw: string, name: string, open: string, body: string, close: string, at: number, whole: string) => {
+        if (/\b(?:assert|assume|require)\s*$/.test(whole.slice(Math.max(0, at - 12), at + before.length))) return all;
+        // One the model names elsewhere (a redefinition `constraint :>> c2 { … }` in q2) is read otherwise there.
+        if ((whole.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length > 1) return all;
+        any = true;
+        return `${all} ${kw}${name}__dup${open}${body}${close}`;
+      },
+    );
+    if (!any) return;
+    const { model: m } = await loadModelText(copy, { fileName: `${pkg}-copy.sysml` });
+    if (!m) throw new Error(`${pkg}'s copy produced no model`);
+    const qn = (id: string) => m.qualifiedName(id as ElementId) || id;
+    const checks = checkConstraints(m);
+    const byName = new Map(checks.map((c) => [qn(c.id), c]));
+    const where = (i: SpecialisationInstance) => `${i.generic ? 'own ' : ''}${(i as { instance?: string }).instance ?? qn(i.contextId)}`;
+    const sig = (i: SpecialisationInstance) =>
+      `${i.result} ${i.abstention ?? ''} ${JSON.stringify((i.reads ?? []).map((r) => [r.path, r.value]))}`;
+    const out: string[] = [];
+    for (const [name, c] of byName) {
+      const d = byName.get(`${name}__dup`);
+      if (name.endsWith('__dup') || d === undefined) continue;
+      copiedRelations++;
+      if (c.result !== d.result) out.push(`${name}: ${c.result}, its copy ${d.result}`);
+      const theirs = new Map((d.instances ?? []).map((i) => [where(i), i]));
+      for (const i of c.instances ?? []) {
+        const j = theirs.get(where(i));
+        if (j === undefined) out.push(`${name} in ${where(i)}: no row of the copy`);
+        else if (sig(i) !== sig(j)) out.push(`${name} in ${where(i)}: ${sig(i)}, its copy ${sig(j)}`);
+      }
+    }
+    if (out.length > 0) copied.set(pkg, out);
+  }
 
   /** Every row of a model on the four surfaces, by qualified name (`R in C` for a context's reading). */
   async function fourSurfaces(text: string, pkg: string): Promise<Map<string, SurfaceRow>> {
@@ -3337,7 +3402,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     };
     // I10: each per-instance row the check files, by its id, with the check it belongs to.
     const filedBy = new Map<string, { check: ConstraintCheck; inst: SpecialisationInstance }>();
-    for (const c of checkConstraints(m)) {
+    const checks = checkConstraints(m);
+    // I11: every row as each instance's own reading gives it, none taken from another read alike.
+    const rowsOf = (list: ConstraintCheck[]) =>
+      list.flatMap((c) => [
+        `${key(c.id)}: ${c.result} | ${c.message}`,
+        ...(c.instances ?? []).map(
+          (i) =>
+            `${key(c.id)} in ${(i as { instance?: string }).instance ?? qn(i.contextId)}: ${i.result} ${i.abstention ?? ''} ${i.cause ?? ''} | ` +
+            `${i.message} | ${JSON.stringify(i.reads ?? null)}`,
+        ),
+      ]);
+    const shared = rowsOf(checks);
+    const full = rowsOf(withEveryInstanceJudged(() => checkConstraints(m)));
+    const differ = shared.flatMap((row, k) => (row === full[k] ? [] : [`shared ${row} ≠ own ${full[k] ?? 'no row'}`]));
+    if (differ.length > 0 || shared.length !== full.length) unshared.set(pkg, differ.length > 0 ? differ : ['a different number of rows']);
+    // I12: the same model with each relation's body copied beside it under another name.
+    await copiedRows(text, pkg);
+    for (const c of checks) {
       put(c.conflict ? `${key(c.id)}#${c.conflict}` : key(c.id), 0, POINT[c.result]!, c.id, c.message);
       for (const i of c.instances ?? []) {
         // An instance row (plan F7: `instance`, its path as the solver spells it) is keyed and filed by
@@ -5948,6 +6030,130 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'C1::wF': ['F/F/F/F', 'F'],
       'C1::wT': ['T/T/T/T', 'T'],
     }),
+    // The branch review of O2: a reading shared among instances read alike (O2 S5) took a value the memo had
+    // worked out for another relation without the questions it was worked out with, so it recorded none, and
+    // every other instance took its verdict. Sh1: `m <= 1000.0` works q1's m (4) out first; `m <= 10.0` then
+    // read q2's p at that 4 and held, on all four surfaces bar SMT, whose refutation at 100 the same-point gate
+    // demoted (I13). Sh4b: the same through Q's own relation over `p.m`, declared first. TREE+e: tree10's tree
+    // (the unit test's TREE) with `e`, a copy of `d`: e read m2 = 9 at every instance where d read −40 (I12).
+    'sh1-memo-two-relations': probe(`package Sh1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m : ScalarValues::Real = load * 2.0;
+          constraint c1 { m <= 1000.0 }
+          constraint c2 { m <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 50.0; }
+      }`, {
+      'Sh1::P::c1': ['T/T/T/T', 'T'],
+      'Sh1::P::c1 in Sh1::Q::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c1 in Sh1::q1::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c1 in Sh1::q2::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c2': ['T/T/T/T', 'T'],
+      'Sh1::P::c2 in Sh1::Q::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c2 in Sh1::q1::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c2 in Sh1::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'sh4b-owned-reader-first': probe(`package Sh4b {
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P;
+          bind p.load = L;
+          constraint cq { p.m <= 1000.0 }
+        }
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m : ScalarValues::Real = load * 2.0;
+          constraint c2 { m <= 10.0 }
+        }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 50.0; }
+      }`, {
+      'Sh4b::Q::cq': ['T/T/T/T', 'T'],
+      'Sh4b::Q::cq in Sh4b::q1': ['T/T/T/T', 'T'],
+      'Sh4b::Q::cq in Sh4b::q2': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2 in Sh4b::Q::p': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2 in Sh4b::q1::p': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2 in Sh4b::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'tree-e': probe(
+      `package T {
+        part def T0 {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          constraint c { load <= 10.0 }
+          constraint d { m2 >= 0.0 }
+          constraint e { m2 >= 0.0 }
+        }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; part b : T0; bind a.load = L; bind b.load = L; }
+        part def T2 { attribute L : ScalarValues::Real default = 1.0; part a : T1; part b : T1; bind a.L = L; bind b.L = L; }
+        part def T3 { attribute L : ScalarValues::Real default = 1.0; part a : T2; part b : T2; bind a.L = L; bind b.L = L; }
+        part top : T3 { attribute :>> L = 50.0; }
+        part mid : T3 { attribute :>> L = 7.0; }
+      }`,
+      // Each instance of T1's a and b reads the L of the root it is in: T2's and T3's own default 1, top's 50,
+      // mid's 7. Under top, load is 50 (> 10) and m2 is −40 (< 0): c, d and e are violated there, and hold
+      // everywhere else (load 1 or 7, m2 9 or 3).
+      Object.fromEntries(
+        ['c', 'd', 'e'].flatMap((rel) => [
+          [`T::T0::${rel}`, ['T/T/T/T', 'T']],
+          ...['a', 'b'].flatMap((g) => [
+            [`T::T0::${rel} in T::T1::${g}`, ['T/T/T/T', 'T']],
+            ...['T2', 'T3', 'top', 'mid'].flatMap((root) =>
+              (root === 'T2' ? ['a', 'b'] : ['a::a', 'a::b', 'b::a', 'b::b']).map((path) => [
+                `T::T0::${rel} in T::${root}::${path}::${g}`,
+                root === 'top' ? ['F/F/F/F', 'F'] : ['T/T/T/T', 'T'],
+              ]),
+            ),
+          ]),
+        ]),
+      ) as Record<string, [string, Ref]>,
+    ),
+    // A-H1 through a DERIVED value (the branch review of O2): the unit-aware reading, which judges a body before
+    // the scalar one, has no rule for an enclosing assert, and derived R1D's `s = load + x` in q1's p at x's
+    // default, past q1's `assert constraint tie { p.x == 50.0 }` — `cd in q1::p` held at s = 5 where `c` over
+    // `load + x` abstains (refute-r1), and so did the package's `topd` over `q1.p.s`. Every reading of it
+    // abstains now, as A.2.4 has it. Sh7: the same in a tree, the assert in top's `part :>> b`, over `m = load *
+    // k`. The SMT `inconsistent-axioms` is refute-r1's (I7): one variable for x, with no instance split (H5).
+    'refute-r1d': probe(`package R1D {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          attribute s : ScalarValues::Real = load + x;
+          constraint cd { s <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.x == 50.0 } }
+        part q2 : Q;
+        constraint topd { q1.p.s <= 10.0 }
+      }`, {
+      'R1D::P::cd': ['T/T/T/X', 'T'],
+      'R1D::P::cd in R1D::Q::p': ['T/T/T/X', 'T'],
+      'R1D::P::cd in R1D::q1::p': ['?/?/?/X', null],
+      'R1D::P::cd in R1D::q2::p': ['T/T/T/X', 'T'],
+      'R1D::q1::tie': ['F/-/F/-', null],
+      'R1D::topd': ['?/?/T/X', null],
+    }),
+    'sh7-tree-assert-derived': probe(`package Sh7 {
+        part def T0 {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute k : ScalarValues::Real default = 1.0;
+          attribute m : ScalarValues::Real = load * k;
+          constraint c { m <= 10.0 }
+        }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part def T2 { attribute L : ScalarValues::Real default = 1.0; part b : T1; bind b.L = L; }
+        part top : T2 { attribute :>> L = 5.0; part :>> b { assert constraint { a.k == 50.0 } } }
+      }`, {
+      'Sh7::T0::c': ['T/T/T/X', 'T'],
+      'Sh7::T0::c in Sh7::T1::a': ['T/T/T/X', 'T'],
+      'Sh7::T0::c in Sh7::T2::b::a': ['T/T/T/X', 'T'],
+      'Sh7::T0::c in Sh7::top::b::a': ['?/?/?/X', null],
+      'Sh7::top::«PartUsage»::«ConstraintUsage»': ['F/-/F/-', null],
+    }),
   };
 
   /**
@@ -6024,6 +6230,14 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['refute-r1 | R1::top1', 'the same; the check abstains (an enclosing assert, F5)'],
     ['refute-r1 | R1::P::c in R1::Q::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
     ['refute-r1 | R1::P::c in R1::q2::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
+    // refute-r1's clash, read through a derived value (the branch review of O2): each of these rows is T under
+    // either reading of H5 — none is q1's p, nor top's b's a — and each will leave with refute-r1's (O5 S3).
+    ...['R1D::P::cd', 'R1D::P::cd in R1D::Q::p', 'R1D::P::cd in R1D::q2::p', 'R1D::topd'].map(
+      (row) => [`refute-r1d | ${row}`, 'refute-r1’s clash: q1’s asserted `p.x == 50.0` against x’s default, one SMT variable for x (H5)'] as const,
+    ),
+    ...['Sh7::T0::c', 'Sh7::T0::c in Sh7::T1::a', 'Sh7::T0::c in Sh7::T2::b::a'].map(
+      (row) => [`sh7-tree-assert-derived | ${row}`, 'refute-r1’s clash in a tree: top’s b’s asserted `a.k == 50.0` against k’s default (H5)'] as const,
+    ),
     ...['D1P::at30', 'D1P::atL'].map(
       (row) =>
         [
@@ -6131,6 +6345,36 @@ describe('per-instance readings: four surfaces, one verdict', () => {
 
   withZ3('I9: no engine files one name twice', () => {
     expect([...twice].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+  });
+
+  withZ3('I11: a row shared among instances read alike is the row the instance’s own reading gives', () => {
+    expect([...unshared].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+  });
+
+  withZ3('I12: a relation and its verbatim copy give the same rows', () => {
+    expect([...copied].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+    // Not vacuous: the copies of every probe's own one-line relations were compared.
+    expect(copiedRelations).toBeGreaterThan(150);
+  });
+
+  /**
+   * I13's exceptions, `probe | row` → reason: an instance row the SMT engine refutes with nothing freed — the
+   * witness must then be the model's own point — while the check reads that point otherwise; the same-point
+   * gate demotes the SMT row to `inconclusive` ("witness not confirmed: with nothing freed …"). Listed exactly.
+   */
+  const SAME_POINT_DEMOTED = new Map<string, string>();
+  withZ3('I13: an SMT refutation with nothing freed against the check’s verdict only where listed', () => {
+    const demoted = each().filter(
+      (r) =>
+        r.got !== undefined &&
+        r.row.includes(' in ') &&
+        decided(r.got.verdicts[0]) &&
+        r.got.verdicts[3] === '?' &&
+        r.got.why[3].includes('witness not confirmed: with nothing freed'),
+    );
+    const keys = demoted.map((r) => `${r.name} | ${r.row}`);
+    expect(keys.filter((k) => !SAME_POINT_DEMOTED.has(k))).toEqual([]);
+    expect([...SAME_POINT_DEMOTED.keys()].filter((k) => !keys.includes(k))).toEqual([]);
   });
 
   // PI-1: a usage-owned relation's one other instance (pi1-r17's q1::p) was refuted by verify while

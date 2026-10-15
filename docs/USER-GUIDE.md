@@ -853,10 +853,11 @@ bindings that differ are a contradiction reported at C.
 `part def Q`, over P's `attribute m default = 18.5 [kg]`, makes p's m Q's M in
 every Q — wherever M has a value of its own: written with `=`, set in a
 context (`part q : Q { attribute :>> M = 20.0 [kg]; }`), or fixed by an
-asserted equation. The numeric surface and the solver lane read `q.p.m` as
-20 kg, and no surface reads the 18.5 kg; the check and the literal engine read
-it as they read any feature a binding holds — with no value of its own, so a
-relation over it is *could not be evaluated* there. The same holds for a
+asserted equation. Every surface reads `q.p.m` as 20 kg, and no surface
+reads the 18.5 kg: the numeric surface and the solver lane at the path `q.p.m`,
+the check and the literal engine in q's p, the instance the binding carries q's
+M into, in a sentence that names the binding the value came through (`q.p.m =
+20 in …::q::p, its M …::q::M through …::q's bind`). The same holds for a
 `default` on a feature the binding names directly (`bind m = M`), for one a
 context writes on the bound end (`part q : Q { part :>> p { attribute :>> m
 default = 30.0 [kg]; } }` against Q's `M = 20.0 [kg]`), and along a chain of
@@ -923,9 +924,12 @@ it constrains, the package's included, is *could not be evaluated* too, read
 in its own element (`part q2 : Q { part :>> p { … } assert constraint { p.load
 >= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x ==
 50.0 } }`, or the package's `assert constraint { q1.p.x == 50.0 }`, for q1's
-p's x): neither reading of the instance reads the asserts around it. A relation
-outside the instance's rows that reads `q1.p.x` (a package constraint) can
-still read x's `default` past such an assert. A relation read through a part a
+p's x): neither reading of the instance reads the asserts around it. So is
+one that reads such a value through a value derived from it (P's `s = load +
+x` in `s <= 10.0`), in units or not, and so is a check or literal row of a
+relation outside the instance's rows that reads it there (a package
+constraint over `q1.p.x` or `q1.p.s`); the numeric surface can still read x's
+`default` past such an assert in that one. A relation read through a part a
 binding joins to another (`bind p.r = s`, the relation reading `r.x`) is read
 per instance nowhere, the usage's own row included: that row is *could not be
 evaluated*, as it was before any instance was read. A relation written in such

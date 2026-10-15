@@ -37,11 +37,15 @@ import {
   enclosingAssertOn,
   failedReadingSentence,
   hasUserBindings,
+  heldPastCapSentence,
   instanceGroups,
   lookupsHold,
   lookupsOf,
+  lookupsWhile,
+  pastCapOf,
   rebaseInstance,
   recordingLookups,
+  replayLookups,
   spellsInstance,
   type InstanceGroup,
   type InstanceLookup,
@@ -150,6 +154,12 @@ interface ScalarPass {
   model: Model;
   /** Settled answers: a value expression's by its feature id, a definition's by {@link definitionKey}. */
   answers: Map<string, ScalarAnswer>;
+  /**
+   * The lookups each settled answer keyed on an instance was worked out with
+   * ({@link lookupsWhile}), said again where the answer is taken from
+   * {@link answers} ({@link replayLookups}).
+   */
+  asked: Map<string, readonly InstanceLookup[]>;
   inFlight: InFlight;
   /** The defining equations and the names of every scope the pass reads ({@link DefiningEquations.scope}). */
   definitions: DefiningEquations;
@@ -165,6 +175,7 @@ function newPass(model: Model): ScalarPass {
   return {
     model,
     answers: new Map(),
+    asked: new Map(),
     inFlight: new Map(),
     definitions: sharedDefinitions(model),
     memo: new Map(),
@@ -724,7 +735,31 @@ function valueOfFeature(
   const key = inst !== undefined ? `${id}@${inst}` : at !== undefined ? instanceKey(id, at) : id;
   if (pass.inFlight.has(key)) return cameBackTo(returnTo(pass.inFlight, key));
   const hit = pass.answers.get(key);
-  if (hit) return hit;
+  if (hit) {
+    if (inst !== undefined) replayLookups(pass.asked.get(key));
+    return hit;
+  }
+  if (inst === undefined) return expressionAnswer(model, feat, s, key, pass, at);
+  // Read for an instance: the questions the reading asks of its spelling are
+  // kept with the answer, and asked again wherever it is taken from the memo.
+  const { value: answer, lookups } = lookupsWhile(() => expressionAnswer(model, feat, s, key, pass, at, inst));
+  if (lookups.length > 0 && pass.answers.get(key) === answer) pass.asked.set(key, lookups);
+  return answer;
+}
+
+/**
+ * {@link valueOfFeature} of a feature whose stated value is the expression
+ * `s`, worked out and, where it is a fact about the model, settled under `key`.
+ */
+function expressionAnswer(
+  model: Model,
+  feat: ElementRecord,
+  s: string,
+  key: string,
+  pass: ScalarPass,
+  at?: ElementId,
+  inst?: string,
+): ScalarAnswer {
   let node: ExprNode | undefined;
   try {
     node = parseExpr(s);
@@ -1395,10 +1430,12 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
   if (only !== undefined && only.result === 'unknown') {
     const unread = only.abstention === 'past-cap' || only.abstention === 'not-enumerated';
     const why = (only.detail ?? only.message).replace(/^Could not evaluate: /, '');
+    // A row sentence that already says the relation is not read there (C.3) is said once.
+    const head = `${relation} is not read in ${instanceLabel(only)}: `;
     out.push({
       elementId: anchorFor(model, check, only),
       severity: 'info',
-      message: `${relation} (${check.expression}) ${unread ? 'is not read' : 'could not be read'} in ${instanceLabel(only)}: ${why}`,
+      message: `${relation} (${check.expression}) ${unread ? 'is not read' : 'could not be read'} in ${instanceLabel(only)}: ${why.startsWith(head) ? why.slice(head.length) : why}`,
       instance: instanceLabel(only),
       relation,
     });
@@ -2047,7 +2084,8 @@ function judgeBound(
     if ('gap' in ua) {
       const lowered = parseRelationBody(expr);
       const unread = lowered?.resolved && unreadRefusal(model, el, lowered.node, pass, bindings, lowered.literals);
-      return unread ? { result: 'unknown', message: unread, gap: false } : ua;
+      if (unread) return { result: 'unknown', message: unread, gap: false };
+      return abstainedRead(model, el, pass, bindings, namesIn(expr), at) ?? ua;
     }
     // A value a binding carries into the instance, as the quantity it is
     // ({@link carriedVerdict}): the body has no scalar reading to fall back on.
@@ -2114,7 +2152,8 @@ function judgeBound(
   const ua = unitAwareVerdict(model, el, expr, uaOpts);
   if ('gap' in ua) {
     const unread = unreadRefusal(model, el, node, pass, bindings);
-    return unread ? { result: 'unknown', message: unread, gap: false } : ua;
+    if (unread) return { result: 'unknown', message: unread, gap: false };
+    return abstainedRead(model, el, pass, bindings, referencedNames(node), at) ?? ua;
   }
   // A reasoned refusal is not a gap the scalar path may fill: arithmetic on
   // an offset scale (`dT == t2 - t1` in °C), a derived feature whose
@@ -2208,6 +2247,40 @@ function judgeBound(
     return { result: 'violated', message: `Constraint violated: ${expr}${readsClause(reads)}`, gap: false, ...(reads ? { reads } : {}) };
   }
   return { result: 'unknown', message: 'Expression did not evaluate to a boolean', gap: false };
+}
+
+/**
+ * The abstention of a body the unit-aware reading decided, read at the
+ * instance `at`, one of whose names the per-instance reading reads no value
+ * of and abstains on (A.9) — an enclosing assert, a cap, two values: no
+ * surface reads that name, so the verdict is the scalar reading's abstention,
+ * in its sentence. The unit-aware reading has no rule for an enclosing
+ * assert: a body that reads a DERIVED value (R1D's `s = load + x`, `cd { s <=
+ * 10.0 }`) had it derived at the instance, x read at P's default past q1's
+ * `assert constraint { p.x == 50.0 }`, and held at s = 5 in q1's p, where
+ * the same quantity read directly (`c { load + x <= 10.0 }`) abstained, as
+ * A.2.4 has every reading of it abstain (A-H1). `undefined` where every name
+ * is read, or abstains for a reason the verdict does not stand on (a name a
+ * specialiser stands for, or one read all the same).
+ */
+function abstainedRead(
+  model: Model,
+  el: ElementRecord,
+  pass: ScalarPass,
+  bindings: ReadonlyMap<string, Bound> | undefined,
+  names: readonly string[],
+  at: string | undefined,
+): Judgement | undefined {
+  if (at === undefined) return undefined;
+  const own = combinedAnswer(model, el, pass, at);
+  for (const name of new Set(names)) {
+    if (bindings?.has(name)) continue;
+    const a = own(name);
+    if (a?.abstention === undefined || a.value !== undefined) continue;
+    const { kind, sentence } = a.abstention;
+    return { result: 'unknown', message: `Could not evaluate: ${sentence}`, gap: true, abstentionSentence: sentence, cause: kind };
+  }
+  return undefined;
 }
 
 /**
@@ -3076,6 +3149,10 @@ function chainCause(model: Model, el: ElementRecord, chain: string, pass: Scalar
   const end = chainEnd(model, el, chain, pass);
   if (!end) return undefined;
   const { feature, name, sites, asserted, read } = end;
+  // A feature a binding past a cap holds: its value is there, and unread —
+  // never `declared without one` (XO2's R::L, which states `default = 1.0`).
+  const cap = pastCapOf(model, feature.id);
+  if (cap !== undefined) return `${chain} has no value: ${heldPastCapSentence(shortName(model, feature), cap)}`;
   const checked = !asserted && sites.some((c) => hasUnassertedEquation(model, c, name));
   const specialisers = [...specialisersOf(model, feature).byContext.values()].flat();
   const clauses = [

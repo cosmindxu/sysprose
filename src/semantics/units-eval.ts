@@ -54,6 +54,7 @@ import {
   instanceKey,
   isAsserted,
   hasStatedValue,
+  lookupsWhile,
   mergeContact,
   contradictionSentence,
   defaultGivesWayIn,
@@ -61,6 +62,7 @@ import {
   failedReadingSentence,
   namesDefinedBy,
   rebaseInstance,
+  replayLookups,
   returnTo,
   shadowedEquation,
   shadowedNamesOf,
@@ -71,6 +73,7 @@ import {
   type Contact,
   type DefiningEquation,
   type InFlight,
+  type InstanceLookup,
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
@@ -1631,6 +1634,12 @@ export type DerivationMemo = Map<ElementId, FeatureDerivation> & {
   dimensions?: true;
   /** The dimension memo of this pass, made on first use. */
   dimensionsMemo?: DerivationMemo;
+  /**
+   * The lookups each derivation keyed on an instance was worked out with
+   * ({@link lookupsWhile}), said again where it is taken from the memo
+   * ({@link replayLookups}).
+   */
+  asked?: Map<string, readonly InstanceLookup[]>;
 };
 
 /** What one pass reads of the model once: the defining equations of each context, and its scope's names. */
@@ -1812,9 +1821,23 @@ function deriveFeature(
 ): FeatureDerivation {
   const key = inst !== undefined ? `${id}@${inst}` : at !== undefined ? instanceKey(id, at) : id;
   const hit = memo.get(key);
-  if (hit) return hit;
-  const d = deriveFeatureUncached(model, id, inFlight, memo, at, inst);
-  if (!d.contact) memo.set(key, d);
+  if (hit) {
+    if (inst !== undefined) replayLookups(memo.asked?.get(key));
+    return hit;
+  }
+  if (inst === undefined) {
+    const d = deriveFeatureUncached(model, id, inFlight, memo, at);
+    if (!d.contact) memo.set(key, d);
+    return d;
+  }
+  // Derived for an instance: the questions the derivation asks of its
+  // spelling are kept with it, and asked again wherever it is taken from the
+  // memo, as the scalar scope's are.
+  const { value: d, lookups } = lookupsWhile(() => deriveFeatureUncached(model, id, inFlight, memo, at, inst));
+  if (!d.contact) {
+    memo.set(key, d);
+    if (lookups.length > 0) (memo.asked ??= new Map()).set(key, lookups);
+  }
   return d;
 }
 

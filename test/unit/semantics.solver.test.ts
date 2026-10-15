@@ -563,6 +563,15 @@ describe('solve — a value a binding past a cap holds is no design freedom', ()
     // refuted, and the feasibility search met c6 by moving r2's L, which only c6 reads.
     expect([row('c3').result, row('c5').result, row('c6').result]).toEqual(['unknown', 'unknown', 'unknown']);
     expect(row('c3').imposed).toBeUndefined();
+    // Each says what is not read, and why — on the check and here alike. R's L states `default = 1.0`: it was
+    // "declared without one" on both (the branch review of O2).
+    const outside =
+      'is held by a binding that joins a feature outside where it is written, which this tool finds no instance of in a ' +
+      'context the binding holds in, so no value the binding gives it is read for any one instance';
+    expect(row('c6').reason).toBe(`r2.L has no value: R::L ${outside}`);
+    expect(row('c3').reason).toBe(`r2.q.p.load has no value: p::load ${outside}`);
+    const check = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'XO2::c6')!;
+    expect(check.message).toBe(`Could not evaluate: ${row('c6').reason}`);
     const feasibility = solveFeasible(m!);
     expect([feasibility.decided, feasibility.free]).toEqual([false, []]);
   });

@@ -3335,12 +3335,40 @@ export function hasPastCapBindings(model: Model): boolean {
  * bindings fix it from values the model states (CAP1's Y, 50 from X).
  */
 export function pastCapEnd(model: Model, featureId: ElementId): boolean {
+  return pastCapOf(model, featureId) !== undefined;
+}
+
+/** The cap a {@link pastCapEnd} feature's binding met — the first of it and the features it redefines — or `undefined`. */
+export function pastCapOf(model: Model, featureId: ElementId): BindingCap | undefined {
   const { overCap, unread } = bindingEnds(model);
-  if (overCap.size === 0 && unread.size === 0) return false;
-  const capped = (id: ElementId): boolean => overCap.has(id) || unread.has(id);
-  if (capped(featureId)) return true;
+  if (overCap.size === 0 && unread.size === 0) return undefined;
+  const capOf = (id: ElementId): BindingCap | undefined => overCap.get(id) ?? (unread.has(id) ? 'outside' : undefined);
+  const own = capOf(featureId);
+  if (own !== undefined) return own;
   const f = model.get(featureId);
-  return f !== undefined && redefinedClosure(model, f).some((g) => capped(g.id));
+  if (f === undefined) return undefined;
+  for (const g of redefinedClosure(model, f)) {
+    const cap = capOf(g.id);
+    if (cap !== undefined) return cap;
+  }
+  return undefined;
+}
+
+/**
+ * Why a {@link pastCapEnd} feature has no value read for an instance — what
+ * is not read, and the cap: `R::L is held by a binding that joins a feature
+ * outside where it is written, … so no value the binding gives it is read for
+ * any one instance`. Its `default`, where it states one, was held for the cap,
+ * and is no value of its own here either: never `declared without one`.
+ */
+export function heldPastCapSentence(name: string, cap: BindingCap): string {
+  const held =
+    cap === 'outside'
+      ? 'a binding that joins a feature outside where it is written, which this tool finds no instance of in a context the binding holds in'
+      : cap === 'frames'
+        ? `a binding that holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
+        : `a binding read deeper than ${MAX_BINDING_SEGMENTS} usages`;
+  return `${name} is held by ${held}, so no value the binding gives it is read for any one instance`;
 }
 
 /**
@@ -3756,8 +3784,12 @@ function abstentionSentence(
  * enclosing assert constrains a read there ({@link enclosingAssertOn}). These
  * are the only places a reading decides anything by an instance's spelling;
  * everywhere else it passes the spelling on, extends it (`${inst}::x`, {@link
- * rebaseInstance}), keys a memo with it, or prints it. So two instances whose
- * questions get the same answers are read alike ({@link lookupsHold}).
+ * rebaseInstance}), keys a memo with it, or prints it. A memo keyed with it
+ * keeps the lookups each entry was worked out with ({@link lookupsWhile}) and
+ * records them again at every hit ({@link replayLookups}), so a reading asked
+ * them whether it worked a value out or took it from the memo. So two
+ * instances whose questions get the same answers are read alike ({@link
+ * lookupsHold}).
  */
 export type InstanceLookup =
   | { kind: 'source'; symbol: string; answer: BoundSource | undefined }
@@ -3792,6 +3824,63 @@ export function recordingLookups<T>(read: () => T): { value: T; lookups: Instanc
 }
 
 /**
+ * Work out a memo entry keyed on an instance — `read` — and return its value
+ * with the lookups it made, each question once ({@link lookupKey}), to be kept
+ * beside the entry and said again at every hit ({@link replayLookups}). They
+ * are recorded for the reading the entry is worked out in too, as {@link
+ * recordingLookups} records them.
+ */
+export function lookupsWhile<T>(read: () => T): { value: T; lookups: readonly InstanceLookup[] } {
+  const outer = recording;
+  const lookups: InstanceLookup[] = [];
+  recording = lookups;
+  let asked: readonly InstanceLookup[] = lookups;
+  try {
+    const value = read();
+    asked = distinctLookups(lookups);
+    return { value, lookups: asked };
+  } finally {
+    recording = outer;
+    if (outer) for (const l of asked) outer.push(l);
+  }
+}
+
+/**
+ * Record `lookups` — the questions a memo entry keyed on an instance was
+ * worked out with ({@link lookupsWhile}) — for the reading being recorded, if
+ * any. A memo hit gives the entry's value without asking them again, and the
+ * reading that takes it reads that value all the same: a reading whose every
+ * value came from the memo recorded no question of its instance, and every
+ * other instance of the group took its verdict ({@link lookupsHold}) — Sh1's
+ * `m <= 10.0` read q2's p at q1's m of 4, worked out for `m <= 1000.0` just
+ * before, and held where q2's m is 100.
+ */
+export function replayLookups(lookups: readonly InstanceLookup[] | undefined): void {
+  if (recording !== undefined && lookups !== undefined) for (const l of lookups) recording.push(l);
+}
+
+/** `lookups`, each question once, in order: a memo entry's replayed list stays as long as the questions it asks. */
+function distinctLookups(lookups: readonly InstanceLookup[]): readonly InstanceLookup[] {
+  if (lookups.length < 2) return lookups;
+  const seen = new Set<string>();
+  const out: InstanceLookup[] = [];
+  for (const l of lookups) {
+    const key = lookupKey(l);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(l);
+  }
+  return out;
+}
+
+/** The question a lookup asks, as a key: two lookups with one key asked the same, and were answered the same. */
+function lookupKey(l: InstanceLookup): string {
+  if (l.kind === 'source' || l.kind === 'stands') return `${l.kind} ${l.symbol}`;
+  if (l.kind === 'gives-way') return `${l.kind} ${l.feature.id} ${l.inst}`;
+  return `${l.kind} ${l.contextId} ${l.name} ${l.inst} ${l.enclosing.map((f) => `${f.reader}@${f.instance}`).join(' ')}`;
+}
+
+/**
  * The lookups among `lookups` (recorded reading the instance `inst`) whose
  * question spells `inst` — the rest ask the same of every instance — each
  * once, in order: what {@link lookupsHold} asks again of another instance.
@@ -3801,17 +3890,14 @@ export function lookupsOf(lookups: readonly InstanceLookup[], inst: string): Ins
   const seen = new Set<string>();
   const out: InstanceLookup[] = [];
   for (const l of lookups) {
-    let key: string;
     if (l.kind === 'source' || l.kind === 'stands') {
       if (!spells(l.symbol)) continue;
-      key = `${l.kind} ${l.symbol}`;
     } else if (l.kind === 'gives-way') {
       if (!spells(l.inst)) continue;
-      key = `${l.kind} ${l.feature.id} ${l.inst}`;
-    } else {
-      if (!spells(l.inst) && !l.enclosing.some((f) => spells(f.instance))) continue;
-      key = `${l.kind} ${l.contextId} ${l.name} ${l.inst} ${l.enclosing.map((f) => `${f.reader}@${f.instance}`).join(' ')}`;
+    } else if (!spells(l.inst) && !l.enclosing.some((f) => spells(f.instance))) {
+      continue;
     }
+    const key = lookupKey(l);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(l);

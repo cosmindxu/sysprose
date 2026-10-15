@@ -1329,8 +1329,8 @@ function solveFree(model: Model, free: ElementRef[]): Diagnostic[] {
  * navigable to its underlying feature element).
  *
  * Rows a binding or context reads once per instance (`<id>@<instance>`, C.2)
- * fold: a relation's violations/unknowns fold per (base relation, reason) past
- * five, and an instance's values/freedoms fold per feature past five. v9 has no
+ * fold past five: a relation's violations per relation, its unknowns per (relation,
+ * cause, else reason), an instance's values/freedoms per feature. v9 has no
  * such rows, so its Solve view is byte-identical.
  */
 function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[] {

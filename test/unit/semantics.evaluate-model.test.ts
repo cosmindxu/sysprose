@@ -28,9 +28,11 @@ import {
   isBindingConnector,
   lookupsHold,
   lookupsOf,
+  lookupsWhile,
   pastCapEnd,
   readsOtherwise,
   recordingLookups,
+  replayLookups,
   shadowedNamesOf,
   sharedDefinitions,
 } from '../../src/semantics/defining-equation';
@@ -2847,6 +2849,54 @@ describe('the instance index — frames, components, and bound sources', () => {
     expect(lookupsOf(lookups, 'T::mid::a::a::a')).toEqual([]);
   });
 
+  // The branch review of O2 S5: a reading took a value the pass's memo had worked out for another relation,
+  // and recorded none of the questions it was worked out with — so it asked nothing of its instance, and every
+  // other instance took its verdict. TREE with `e`, a copy of `d`, read after it: e read m2 = 9 at every
+  // instance where d read −40, and held there. A memo entry keyed on an instance keeps its questions, and a
+  // hit asks them again, in the scalar scope and the unit-aware derivation alike.
+  it('asks again the questions of a value taken from the memo: a relation and its copy read alike (Sh1, TREE+e)', async () => {
+    const { model: m } = await loadModelText(TREE.replace('constraint d { m2 >= 0.0 }', 'constraint d { m2 >= 0.0 }\n      constraint e { m2 >= 0.0 }'));
+    const shared = checkConstraints(m!);
+    expect(shared).toEqual(withEveryInstanceJudged(() => checkConstraints(m!)));
+    const rows = (relation: string) =>
+      (shared.find((c) => m!.qualifiedName(c.id) === relation)!.instances ?? []).map((i) => [i.instance ?? 'own', i.result, i.reads?.map((r) => r.value)]);
+    expect(rows('T::T0::e')).toEqual(rows('T::T0::d'));
+    // Under top, m2 is 10 − 50: e is violated at every one of the eight instances, as d is.
+    const underTop = rows('T::T0::e').filter(([inst]) => String(inst).startsWith('T::top::'));
+    expect(underTop.map(([, result, reads]) => [result, reads])).toEqual(Array.from({ length: 8 }, () => ['violated', [-40]]));
+    // In units too (the unit-aware derivation's memo): Sh2's `m <= 10.0 [kg]` after `m <= 1000.0 [kg]`.
+    for (const unit of ['', ' [SI::kg]']) {
+      const { model: s1 } = await loadModelText(`package Sh1 {
+        part def P {
+          attribute load : ${unit ? 'ISQ::MassValue' : 'ScalarValues::Real'} default = 1.0${unit};
+          attribute m : ${unit ? 'ISQ::MassValue' : 'ScalarValues::Real'} = load * 2.0;
+          constraint c1 { m <= 1000.0${unit} }
+          constraint c2 { m <= 10.0${unit} }
+        }
+        part def Q { attribute L : ${unit ? 'ISQ::MassValue' : 'ScalarValues::Real'} default = 1.0${unit}; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0${unit}; }
+        part q2 : Q { attribute :>> L = 50.0${unit}; }
+      }`);
+      const checks = checkConstraints(s1!);
+      expect(checks, unit).toEqual(withEveryInstanceJudged(() => checkConstraints(s1!)));
+      const q2 = checks.find((c) => s1!.qualifiedName(c.id) === 'Sh1::P::c2')!.instances!.find((i) => i.instance === 'Sh1::q2::p')!;
+      expect([q2.result, q2.reads?.map((r) => [r.symbol, r.value])], unit).toEqual(['violated', [['Sh1::q2::p::m', 100]]]);
+    }
+  });
+
+  it('keeps the questions a memo entry keyed on an instance was worked out with, each once, and asks them at a hit', async () => {
+    const { model: m } = await loadModelText(TREE);
+    // Worked out inside a reading: its questions are that reading's too, and kept for the entry.
+    const { value, lookups } = recordingLookups(() =>
+      lookupsWhile(() => [boundSourceIn(m!, 'T::top::a::a::a::load'), boundSourceIn(m!, 'T::top::a::a::a::load')]),
+    );
+    expect(value.lookups).toEqual([{ kind: 'source', symbol: 'T::top::a::a::a::load', answer: value.value[0] }]);
+    expect(lookups).toEqual(value.lookups);
+    // A hit: the kept questions, asked of the reading being recorded — and of none where nothing records.
+    expect(recordingLookups(() => replayLookups(value.lookups)).lookups).toEqual(value.lookups);
+    expect(() => replayLookups(value.lookups)).not.toThrow();
+  });
+
   // The coverage guard (A.7; the 2026-10-14 review's A-C1). A group reads every instance of its shared usage
   // through the usage's own features; an instance whose element reads a name of the relation — or a name such a
   // name's value reads — through another feature was read so all the same, and published the usage's value as
@@ -3394,6 +3444,57 @@ describe('a value a binding carries is read in the unit its feature declares (A.
     }
   });
 
+  // The branch review of O2: the unit-aware reading judges a body first, and for a body over a DERIVED value
+  // it derived that value at the instance, x read at P's default past q1's assert: `s <= 10.0` held at s = 5
+  // in q1's p where `load + x <= 10.0`, the same quantity, abstained — and so did a package relation over
+  // `q1.p.s` beside top1's abstention over `q1.p.x`. A name the per-instance reading abstains on is read by no
+  // surface, through a derivation too: the row is that abstention, in its sentence.
+  it('decides nothing past an enclosing assert through a value derived from it either (R1D)', async () => {
+    for (const [type, unit] of [
+      ['ScalarValues::Real', ''],
+      ['ISQ::MassValue', ' [SI::kg]'],
+    ]) {
+      const { model: m } = await loadModelText(`package R1D {
+        part def P {
+          attribute load : ${type} default = 1.0${unit};
+          attribute x : ${type} default = 2.0${unit};
+          attribute s : ${type} = load + x;
+          constraint cd { s <= 10.0${unit} }
+        }
+        part def Q { attribute L : ${type} default = 1.0${unit}; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0${unit}; assert constraint tie { p.x == 50.0${unit} } }
+        part q2 : Q;
+        constraint topd { q1.p.s <= 10.0${unit} }
+      }`);
+      const checks = checkConstraints(m!);
+      expect(instanceRows(m!, checks, 'R1D::P::cd'), unit).toEqual({ 'R1D::q1::p': 'unknown', 'R1D::q2::p': 'satisfied' });
+      const q1 = checks.find((c) => m!.qualifiedName(c.id) === 'R1D::P::cd')!.instances!.find((i) => i.instance === 'R1D::q1::p')!;
+      expect([q1.cause, q1.message], unit).toEqual([
+        'enclosing-assert',
+        `Could not evaluate: x is not read in R1D::q1::p: R1D::q1's asserted \`p.x == 50.0${unit}\` constrains it there, ` +
+          'and this tool does not read a value an enclosing assert constrains',
+      ]);
+      const topd = checks.find((c) => m!.qualifiedName(c.id) === 'R1D::topd')!;
+      expect([topd.result, topd.message], unit).toEqual([q1.result, q1.message]);
+      // The numeric surface reads the instance rows the check gives (`contextRows`).
+      const numeric = checkConstraintsNumeric(m!).find((r) => r.id.endsWith(`@R1D::q1::p`) && m!.qualifiedName(r.id.split('@')[0]!) === 'R1D::P::cd');
+      expect(numeric?.result, unit).toBe('unknown');
+    }
+    // In a tree: top's `part :>> b` asserts its a's k, and m = load * k is read for top's b's a.
+    const { model: t } = await loadModelText(`package Sh7 {
+      part def T0 {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute k : ScalarValues::Real default = 1.0;
+        attribute m : ScalarValues::Real = load * k;
+        constraint c { m <= 10.0 }
+      }
+      part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+      part def T2 { attribute L : ScalarValues::Real default = 1.0; part b : T1; bind b.L = L; }
+      part top : T2 { attribute :>> L = 5.0; part :>> b { assert constraint { a.k == 50.0 } } }
+    }`);
+    expect(instanceRows(t!, checkConstraints(t!), 'Sh7::T0::c')).toEqual({ 'Sh7::T2::b::a': 'satisfied', 'Sh7::top::b::a': 'unknown' });
+  });
+
   it('reads no value of another dimension: both comparisons abstain, in their own sentences', async () => {
     const { model: m } = await loadModelText(`package UD {
       part def P {
@@ -3503,13 +3604,18 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     // No roll-up counts it, so it is a finding of its own, in the row's own
     // sentence: `could not be read` for an unknown, `is not read` for one the
     // tool did not read (a cap, the coverage guard) — the roll-up's two words.
+    // A row sentence that already begins `{relation} is not read in {instance}:`
+    // says it once (it said it twice: `… is not read in R::q1: R::P::c is not read in R::q1: why`).
     const unknown = { ...groupRow(1, 'unknown'), message: 'Could not evaluate: load has no value in R::q1: defaults differ' };
     const notRead = { ...groupRow(1, 'unknown'), abstention: 'not-enumerated' as const, message: 'Could not evaluate: R::P::c is not read in R::q1: why' };
     expect(instanceRollup(m, check([unknown])).map((r) => [r.severity, r.instance, r.relation, r.instances, r.message])).toEqual([
       ['info', 'R::q1', 'R::P::c', undefined, 'R::P::c (load <= 10.0) could not be read in R::q1: load has no value in R::q1: defaults differ'],
     ]);
-    expect(instanceRollup(m, check([notRead]))[0]!.message).toBe(
-      'R::P::c (load <= 10.0) is not read in R::q1: R::P::c is not read in R::q1: why',
+    expect(instanceRollup(m, check([notRead]))[0]!.message).toBe('R::P::c (load <= 10.0) is not read in R::q1: why');
+    // Only that head: a sentence naming another relation or instance is kept whole.
+    const other = { ...notRead, message: 'Could not evaluate: R::P::d is not read in R::q1: why' };
+    expect(instanceRollup(m, check([other]))[0]!.message).toBe(
+      'R::P::c (load <= 10.0) is not read in R::q1: R::P::d is not read in R::q1: why',
     );
     // In a group of two or more, the roll-up counts it, and no row of its own is added.
     const two = instanceRollup(m, check([groupRow(0, 'satisfied', true), unknown]));
@@ -3658,13 +3764,17 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     // The value the source names, read at the binding's root (the package): q's L, at q — failing there
     // only, inside the scalar read through the binding (a throw from every read of q's L is no per-instance
     // failure: the binding's own `#bind` row reads it too). loadT reads q's p's load directly, outside any
-    // value's stack guard; m2NegT's verdict is its unit-aware reading's, which did not fail.
+    // value's stack guard. m2NegT's unit-aware reading did not fail, but the scalar reading of the m2 it
+    // reads did: a verdict over a name the per-instance reading abstains on is that abstention (the branch
+    // review of O2, A-H1 through a derived value), so the failure is reported there too, never dropped
+    // beside the twin's verdict.
     const inside = (fn: string) => new Error().stack!.includes(fn);
     thrower.armed = (fn, args) => fn === 'defaultGivesWayIn' && args[2] === 'T1::q' && inside('valueBoundInInstance');
     checks = checkConstraints(m!);
     expect(rowOf(m!, checks, 'T1::loadT').result).toBe('unknown');
     expect(rowOf(m!, checks, 'T1::loadT').message).toContain(failed('load', 'T1::q::p'));
-    expect(rowOf(m!, checks, 'T1::m2NegT').result).toBe('satisfied');
+    expect(rowOf(m!, checks, 'T1::m2NegT').result).toBe('unknown');
+    expect(rowOf(m!, checks, 'T1::m2NegT').message).toContain(failed('load', 'T1::q::p'));
     expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
     // The same, inside its unit-aware twin only (m2's derivation, which decides m2NegT): its failure is
     // that reading's `internal` refusal, never a value read unit-blind past it — the scalar read, which
