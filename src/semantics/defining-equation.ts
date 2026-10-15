@@ -3383,6 +3383,19 @@ export type InstanceAbstention =
   | 'not-enumerated'
   | 'internal';
 
+/**
+ * The A.9 `internal` sentence (A.2.9): a per-instance reading of `name` in
+ * `instance` threw, and says so, naming the error's class. It is reported,
+ * never dropped and never thrown on: a throw out of the sweep made `validate()`
+ * throw, and the app's Problems view (`safeValidate`) then showed nothing at
+ * all, every other rule's findings included. One sentence for the scalar
+ * reading and its unit-aware twin.
+ */
+export function failedReadingSentence(name: string, instance: string, e: unknown): string {
+  return `${name} is not read in ${instance}: the per-instance reading failed ` +
+    `(${e instanceof Error ? e.constructor.name : 'error'}); reported, not dropped`;
+}
+
 /** One context a definition is read in, with the dotted path to it from that context's root ({@link bindingFrames}). */
 export interface BindingFrame {
   root: ElementRecord;

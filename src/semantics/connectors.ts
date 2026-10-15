@@ -26,7 +26,7 @@
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { defaultGivesWay } from './defining-equation';
 import { parseExpr, evaluate } from './expr';
-import { dimensionalFacets } from './units-eval';
+import { declaredFacetsOf } from './units-eval';
 import { DIMENSIONLESS, dimEqual, resolveUnit, type Dimension } from './units';
 
 /* ─────────────────────────── connector ends ──────────────────────────── */
@@ -332,7 +332,10 @@ function storageOf(
   model: Model,
   id: ElementId,
 ): { factor: number; offset: number; dimension: Dimension } | undefined {
-  const facets = dimensionalFacets(model, id);
+  // The unit the value is declared in — a binding's implicit end copy is
+  // stored in the unit of the feature it redefines (`storageScaleOf` of
+  // ./relations, whose reading this must be).
+  const facets = declaredFacetsOf(model, id);
   if (facets.unit !== undefined) {
     const u = resolveUnit(facets.unit);
     if (!u) return undefined;

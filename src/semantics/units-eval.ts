@@ -44,6 +44,7 @@ import {
   GUARD_CONTACT,
   MAX_DERIVATION_DEPTH,
   baseIdOf,
+  bindingEndsOf,
   boundPartnerSafe,
   boundSourceIn,
   chooseDefinition,
@@ -57,6 +58,7 @@ import {
   contradictionSentence,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
+  failedReadingSentence,
   namesDefinedBy,
   rebaseInstance,
   returnTo,
@@ -71,6 +73,7 @@ import {
   type InFlight,
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
+import { redefinedClosure } from './inheritance';
 import { DOUBLE_DIGITS, significantDigitsOf } from './expr';
 import {
   addRationals,
@@ -190,6 +193,37 @@ export function siValue(q: Quantity): number | undefined {
   const u = resolveUnit(q.unit);
   if (!u) return undefined;
   return q.magnitude * u.factorToSI + (u.offsetSI ?? 0);
+}
+
+/**
+ * `q` as a magnitude in `unit` — coherent SI where `unit` is `undefined` — with
+ * its exact reading there when `q` has one; or `undefined` where a unit does
+ * not resolve. In the unit `q` is written in, its own magnitude: a value read
+ * back into the unit it states is the number it states, not a double that went
+ * through SI and back (`5000.0 [g]` is 5000, not 5000.000000000001).
+ */
+export function quantityIn(q: Quantity, unit: string | undefined): { magnitude: number; exact?: Rational } | undefined {
+  const target = unit === undefined ? undefined : resolveUnit(unit);
+  if (unit !== undefined && !target) return undefined;
+  const written = q.unit === undefined ? undefined : resolveUnit(q.unit);
+  if (q.unit !== undefined && !written) return undefined;
+  const same = (a: typeof target, b: typeof target): boolean =>
+    a === undefined || b === undefined
+      ? a === b
+      : a.factorToSI === b.factorToSI && (a.offsetSI ?? 0) === (b.offsetSI ?? 0) && dimEqual(a.dimension, b.dimension);
+  if (same(written, target)) return { magnitude: q.magnitude, ...(q.exact !== undefined ? { exact: q.exact } : {}) };
+  const si = siValue(q);
+  if (si === undefined) return undefined;
+  const siEx = siExact(q);
+  if (unit === undefined) return { magnitude: si, ...(siEx !== undefined ? { exact: siEx } : {}) };
+  const zero = siRational({ num: 0n, den: 1n }, unit);
+  const one = siRational({ num: 1n, den: 1n }, unit);
+  const factor = zero && one ? subtractRationals(one, zero) : undefined;
+  const shifted = siEx !== undefined && zero ? subtractRationals(siEx, zero) : undefined;
+  const exact = factor && shifted ? divideRationals(shifted, factor) : undefined;
+  return exact !== undefined
+    ? { magnitude: Number(exact.num) / Number(exact.den), exact }
+    : { magnitude: (si - (target!.offsetSI ?? 0)) / target!.factorToSI };
 }
 
 /* ─────────────────────── Feature → Quantity extraction ───────────────────── */
@@ -454,6 +488,30 @@ export function dimensionalFacets(
   if (qk.dimension) out.kindDimension = qk.dimension;
   if (qk.name) out.kindName = qk.name;
   return out;
+}
+
+/**
+ * {@link dimensionalFacets} of the feature a value is DECLARED in: `featureId`'s
+ * own — or, for the implicit connector-end copy a user's binding ends at (the
+ * `:>> load` the mapper writes under `part p : P` for `bind p.load = L`), which
+ * declares no unit and no kind, those of the nearest feature it redefines that
+ * declares either. The copy is P's `load` at that end: the value the binding
+ * carries into it is P's `load`'s value there, in P's `load`'s unit — where the
+ * solver lane stores it (`storageScaleOf` of ./relations) and the check reads
+ * it (A.2.2). Declared as a plain number before, it was compared as one: L =
+ * 20 [kg] read as 20 against P's `cap = 10000.0 [g]`, read as 10000, held on
+ * all four surfaces. Any other feature's own facets.
+ */
+export function declaredFacetsOf(model: Model, featureId: ElementId): ReturnType<typeof dimensionalFacets> {
+  const own = dimensionalFacets(model, featureId);
+  if (own.unit !== undefined || own.kindDimension !== undefined) return own;
+  const el = model.get(featureId);
+  if (!el || el.attrs.implicit !== true || !hasUserBindings(model) || !bindingEndsOf(model).has(featureId)) return own;
+  for (const g of redefinedClosure(model, el)) {
+    const declared = dimensionalFacets(model, g.id);
+    if (declared.unit !== undefined || declared.kindDimension !== undefined) return declared;
+  }
+  return own;
 }
 
 /* ────────────────────── Unit-aware expression evaluator ──────────────────── */
@@ -829,7 +887,12 @@ class QParser {
  *  - `tie` — a REFUSAL: the two sides of a comparison are equal within the
  *    tolerance and no exact reading decides them (`decideComparison` of
  *    ./exact); `detail` is the pair. The scalar path could only read the
- *    same tie unit-blind, so nothing fills it.
+ *    same tie unit-blind, so nothing fills it;
+ *  - `internal` — a REFUSAL: a per-instance read through a binding threw
+ *    inside the tool (A.2.9, `boundInInstanceQ`); `detail` is the A.9
+ *    sentence naming the error. The scalar twin reads the same binding on its
+ *    own path, and where only this one failed it read a value nobody checked
+ *    in units: the failure is the answer, reported, never filled.
  */
 export type QReason =
   | 'unresolved'
@@ -848,7 +911,8 @@ export type QReason =
   | 'empty'
   | 'contradiction'
   | 'shadowed'
-  | 'tie';
+  | 'tie'
+  | 'internal';
 
 /** A one-line, author-facing rendering of a {@link QReason}. */
 export function describeReason(reason: QReason, detail?: string): string {
@@ -891,6 +955,8 @@ export function describeReason(reason: QReason, detail?: string): string {
       const [x, y] = (detail ?? '? vs ?').split(' vs ');
       return tieSentence({ x: Number(x), y: Number(y) });
     }
+    case 'internal':
+      return detail ?? 'a per-instance reading failed inside the tool; reported, not dropped';
   }
 }
 
@@ -919,7 +985,8 @@ export function isRefusalReason(reason: QReason | undefined): boolean {
     reason === 'depth' ||
     reason === 'contradiction' ||
     reason === 'shadowed' ||
-    reason === 'tie'
+    reason === 'tie' ||
+    reason === 'internal'
   );
 }
 
@@ -2200,8 +2267,12 @@ function definedQuantity(
  * The quantity a name no stated reading answers gets through a BINDING, read in
  * one instance (A.2) — the unit-aware twin of `valueBoundInInstance` of
  * ./evaluate-model: the OUTERMOST frame root whose component joins the name's
- * instance symbol, read at its valued member in the root's generic instance.
- * `undefined` where no binding holds the symbol or its component abstains.
+ * instance symbol, read at its valued member in the root's generic instance
+ * ({@link boundSourceQuantity}). `undefined` where no binding holds the symbol
+ * or its component abstains. Where either step throws (A.2.9), the `internal`
+ * refusal, in the A.9 sentence: the scalar twin reads the binding on its own
+ * path, and where only this read failed, the derivation it fed was decided
+ * unit-blind with the failure dropped.
  */
 function boundInInstanceQ(
   model: Model,
@@ -2216,14 +2287,33 @@ function boundInInstanceQ(
   const ownName = sep >= 0 ? name.slice(sep + 1) : name;
   const child = d ? rebaseInstance(definitions, contextId, inst, d.instance) : `${inst}::${ownName}`;
   const symbol = `${child}::${ownName}`;
-  let src: BoundSource | undefined;
   try {
-    src = boundSourceIn(model, symbol);
-  } catch {
-    return undefined;
+    const src: BoundSource | undefined = boundSourceIn(model, symbol);
+    if (!src || 'abstain' in src) return undefined;
+    return sourceScope(model, src.root, memo)(src.via.source);
+  } catch (e) {
+    const sentence = failedReadingSentence(ownName, child, e);
+    return unknownQ('internal', sentence, sentence);
   }
-  if (!src || 'abstain' in src) return undefined;
-  return quantityScopeFor(model, src.root, new Map(), memo, undefined, definitions.instanceNameOf(src.root))(src.via.source);
+}
+
+/** The quantity scope a binding's valued members are read in: their frame root's, in its generic instance (A.2.3). */
+function sourceScope(model: Model, root: ElementId, memo: DerivationMemo): QScope {
+  return quantityScopeFor(model, root, new Map(), memo, undefined, passOf(model, memo).definitions.instanceNameOf(root));
+}
+
+/**
+ * The quantity the valued member `source` of a binding component has, read
+ * where the scalar twin reads it (`valueBoundInInstance` of ./evaluate-model):
+ * in its frame root `root`, at the root's generic instance (A.2.3) — or
+ * `undefined` where this reader has no quantity for it (a boolean, a name it
+ * cannot read). The scalar reading is unit-blind: this is the unit its number
+ * is in, so the value a binding carries is read in the unit of the feature it
+ * fills (A.2.2), and compared as the quantity it is.
+ */
+export function boundSourceQuantity(model: Model, root: ElementId, source: string, memo: DerivationMemo): Quantity | undefined {
+  const r = sourceScope(model, root, memo)(source);
+  return r !== undefined && !isQUnknown(r) && 'q' in r ? r.q : undefined;
 }
 
 /**

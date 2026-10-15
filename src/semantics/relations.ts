@@ -32,6 +32,7 @@ import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf } from './defining-equation';
 import { type ExprNode } from './expr';
 import {
+  declaredFacetsOf,
   derivationOf,
   derivedDimensionOf,
   dimensionClaim,
@@ -122,9 +123,16 @@ function isAbsoluteScale(s: UnitScale | undefined): boolean {
  * plain number.
  * An unresolvable unit is a refusal, never a silent factor of 1 (the
  * `unknown-unit` rule warns about exactly that spelling).
+ *
+ * The facets are those the value is DECLARED in ({@link declaredFacetsOf}):
+ * the implicit copy a binding ends at (`bind p.load = L`) is P's `load` at
+ * that end, and stored in P's `load`'s unit. Stored as a plain number, it read
+ * a bound 20 [kg] as 20 against P's `cap = 10000.0 [g]` as 10000 — gate (c)
+ * kept both raw — and proved `load <= cap`; and it stored q's `L = 5000.0 [g]`
+ * as 5000, so `load <= cap` against 10 [kg] was refuted.
  */
 export function storageScaleOf(model: Model, id: ElementId, memo: DerivationMemo): UnitScale | undefined {
-  const facets = dimensionalFacets(model, id);
+  const facets = declaredFacetsOf(model, id);
   if (facets.unit !== undefined) {
     const u = resolveUnit(facets.unit);
     if (!u) return undefined; // gate (a): a unit nothing can convert

@@ -120,6 +120,7 @@ import {
   featuresDefinedBy,
   derivationOf,
   derivedDimensionOf,
+  declaredFacetsOf,
   dimensionalFacets,
   evaluateConstraintQuantityDetailed,
   evaluateQuantity,
@@ -497,7 +498,7 @@ export interface FeasibilityOptions extends SolveOptions {
 
 /** The dimension a feature's magnitude is expressed in, when it has one. */
 function featureDimension(model: Model, id: ElementId, memo: DerivationMemo): Dimension | undefined {
-  const facets = dimensionalFacets(model, id);
+  const facets = declaredFacetsOf(model, id);
   return facets.unitDimension ?? facets.kindDimension ?? derivedDimensionOf(model, id, memo);
 }
 
@@ -3455,7 +3456,7 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
     // from the seed/expression fallbacks below, in whatever unit the author
     // wrote, and a 20 °C magnitude was published as `20 [K]`. So a value the
     // solver did not itself produce is never labelled either.
-    const facets = dimensionalFacets(model, el.id);
+    const facets = declaredFacetsOf(model, el.id);
     const dimension = q?.dimension ?? facets.unitDimension ?? facets.kindDimension;
     const inSI = !unitBlind.has(el.id) && (fromSolver || value === undefined);
     const unit =
@@ -5053,7 +5054,8 @@ function solvedQuantityScope(
     const v = values.get(key);
     if (v === undefined || !Number.isFinite(v)) return undefined;
     const id = baseIdOf(key);
-    const facets = dimensionalFacets(model, id);
+    // The unit the solved magnitude is stored in ({@link storageScaleOf}).
+    const facets = declaredFacetsOf(model, id);
     const derived = derivationOf(model, id, memo);
     const dimension = facets.unitDimension ?? facets.kindDimension ?? derived?.derived ?? DIMENSIONLESS;
     const q: Quantity = { magnitude: v, dimension };

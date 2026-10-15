@@ -75,6 +75,45 @@ describe('semantics — dimensionalFacets', () => {
     const facets = dimensionalFacets(m, 'nonexistent');
     expect(facets).toEqual({});
   });
+
+  // A.2.2 (the review of O2 S6): the implicit copy a user's binding ends at is the feature it redefines, so
+  // its value is declared in that feature's unit (the check reads, and the solver lane stores, a bound value
+  // there) — a copy no binding ends at, and any feature that declares its own, keeps its own facets.
+  it('reads a binding’s end copy in the unit of the feature it redefines (declaredFacetsOf)', async () => {
+    const m = await bound(`package DF {
+      part def P { attribute load : ISQ::MassValue default = 1000.0 [SI::g]; attribute n : Real default = 1.0; }
+      part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; attribute N : Real = 2.0; part p : P; bind p.load = L; bind p.n = N; }
+    }`);
+    const copy = (name: string) => m.all().find((e) => e.attrs.implicit === true && e.declaredName === name)!;
+    expect(dimensionalFacets(m, copy('load').id)).toEqual({});
+    expect(declaredFacetsOf(m, copy('load').id)).toMatchObject({ unit: 'SI::g', kindName: 'ISQ::MassValue' });
+    expect(storageScaleOf(m, copy('load').id, new Map())).toMatchObject({ factor: 0.001, offset: 0, dimension: { M: 1 } });
+    // Nothing declared above it: its own (a plain number), as before.
+    expect(declaredFacetsOf(m, copy('n').id)).toEqual({});
+    expect(declaredFacetsOf(m, byName(m, 'L').id)).toEqual(dimensionalFacets(m, byName(m, 'L').id));
+  });
+});
+
+/* A quantity read back in a unit (A.2.2): exactly where it has an exact reading, and as written in its own. */
+describe('semantics — quantityIn', () => {
+  const r = (num: number, den = 1) => ({ num: BigInt(num), den: BigInt(den) });
+  const mass = { M: 1, L: 0, T: 0, I: 0, Th: 0, N: 0, J: 0 };
+  it('converts through SI, exactly', () => {
+    expect(quantityIn({ magnitude: 5000, unit: 'g', dimension: mass, exact: r(5000) }, 'kg')).toEqual({ magnitude: 5, exact: r(5) });
+    expect(quantityIn({ magnitude: 20, unit: 'kg', dimension: mass, exact: r(20) }, 'g')).toEqual({ magnitude: 20000, exact: r(20000) });
+    expect(quantityIn({ magnitude: 5000, unit: 'g', dimension: mass, exact: r(5000) }, undefined)).toEqual({ magnitude: 5, exact: r(5) });
+    // An offset scale converts affinely: 20 °C is 293.15 K.
+    expect(quantityIn({ magnitude: 20, unit: '°C', dimension: dim({ Th: 1 }), exact: r(20) }, 'K')).toEqual({
+      magnitude: 293.15,
+      exact: r(5863, 20),
+    });
+  });
+  it('keeps the magnitude written in the unit it is read in, and refuses a unit nothing resolves', () => {
+    const q = { magnitude: 0.1, unit: 'g', dimension: mass, exact: r(1, 10) };
+    expect(quantityIn(q, 'g')).toEqual({ magnitude: 0.1, exact: r(1, 10) });
+    expect(quantityIn({ magnitude: 3, dimension: mass }, undefined)).toEqual({ magnitude: 3 });
+    expect(quantityIn(q, 'no-such-unit')).toBeUndefined();
+  });
 });
 
 /* ───────────── I1 semantics: derived features, tolerance, offset units ───────────── */
@@ -86,11 +125,13 @@ import { validate } from '@validation/index';
 import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/full-library';
 import { resolveTypeReferences } from '../../src/library/resolve';
 import {
+  declaredFacetsOf,
   dimensionClaim,
   dimensionClaimDetail,
   evaluateConstraintQuantity,
   evaluateConstraintQuantityDetailed,
   isRefusalReason,
+  quantityIn,
   resolveUnitRef,
   siValue,
   UNIT_AWARE_OPERATORS,
@@ -98,6 +139,7 @@ import {
   valueUnitRefusal,
 } from '../../src/semantics/units-eval';
 import { dim, dimensionOneKindsOf } from '../../src/semantics/units';
+import { storageScaleOf } from '../../src/semantics/relations';
 import { evaluate, parseExpr } from '../../src/semantics/expr';
 
 async function bound(src: string): Promise<Model> {

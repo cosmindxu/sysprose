@@ -4844,6 +4844,77 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'A9::Q::p::c2 in A9::q2::p': ['F/F/F/F', 'F'],
       'A9::top': ['F/F/F/F', 'F'],
     }),
+    // Found by the review of O2 S6 (its U5, U8, U9, V1, V4): a value a binding carries into an instance, with a
+    // unit, was read as the number its source writes and compared as one — q1's `L = 20.0 [kg]` against P's `cap
+    // = 10000.0 [g]` as 20 <= 10000, held on all four surfaces (U8; the same in a usage's own relation, U9, and
+    // through a package binding, V1/V4, where the check and the literal engine abstained at 7277a97); q1's `L =
+    // 5000.0 [g]` against 10 [kg] as 5000, violated where it holds (U5). The value is now read in the unit the
+    // feature it fills declares (P's `load`, kg, the binding's end copy included), the body in units with it, and
+    // the solver lane stores the end copy in that unit. U1 is the bare-literal contract over such a value: the
+    // literal is read in `load`'s declared unit, as for every value of it (5000 g is 5 kg <= 10).
+    'U5-bound-unit-two-features': probe(`package U5 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10.0 [SI::kg]; constraint c { load <= cap } }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 5000.0 [SI::g]; }
+        part q2 : Q { attribute :>> L = 50000.0 [SI::g]; }
+      }`, {
+      'U5::P::c': ['T/T/T/T', 'T'],
+      'U5::P::c in U5::Q::p': ['T/T/T/T', 'T'],
+      'U5::P::c in U5::q1::p': ['T/T/T/T', 'T'],
+      'U5::P::c in U5::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'U8-bound-unit-false-T': probe(`package U8 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; constraint c { load <= cap } }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 20.0 [SI::kg]; }
+        part q2 : Q { attribute :>> L = 5.0 [SI::kg]; }
+        constraint top1 { q1.p.load <= q1.p.cap }
+      }`, {
+      'U8::P::c': ['T/T/T/T', 'T'],
+      'U8::P::c in U8::Q::p': ['T/T/T/T', 'T'],
+      'U8::P::c in U8::q1::p': ['F/F/F/F', 'F'],
+      'U8::P::c in U8::q2::p': ['T/T/T/T', 'T'],
+      'U8::top1': ['F/F/F/F', 'F'],
+    }),
+    'U9-bound-unit-single': probe(`package U9 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P { constraint c2 { load <= cap } } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 20.0 [SI::kg]; }
+      }`, {
+      'U9::Q::p::c2': ['T/T/T/T', 'T'],
+      'U9::Q::p::c2 in U9::q1::p': ['F/F/F/F', 'F'],
+    }),
+    'V1-bound-unit-package': probe(`package V1 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; }
+        part p1 : P;
+        attribute L : ISQ::MassValue = 20.0 [SI::kg];
+        bind p1.load = L;
+        constraint top1 { p1.load <= p1.cap }
+      }`, {
+      'V1::top1': ['F/F/F/F', 'F'],
+    }),
+    'V4-bound-unit-valueless': probe(`package V4 {
+        part def P { attribute load : ISQ::MassValue; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; }
+        part p1 : P;
+        attribute L : ISQ::MassValue = 20.0 [SI::kg];
+        bind p1.load = L;
+        constraint top1 { p1.load <= p1.cap }
+      }`, {
+      'V4::top1': ['F/F/F/F', 'F'],
+    }),
+    'U1-bound-unit-bare-literal': probe(`package U1 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; constraint c { load <= 10.0 } }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 5000.0 [SI::g]; }
+        part q2 : Q { attribute :>> L = 50000.0 [SI::g]; }
+        part q3 : Q { attribute :>> L = 5.0 [SI::kg]; }
+      }`, {
+      'U1::P::c': ['T/T/T/T', 'T'],
+      'U1::P::c in U1::Q::p': ['T/T/T/T', 'T'],
+      'U1::P::c in U1::q1::p': ['T/T/T/T', 'T'],
+      'U1::P::c in U1::q2::p': ['F/F/F/F', 'F'],
+      'U1::P::c in U1::q3::p': ['T/T/T/T', 'T'],
+    }),
     // Found by the review of O2 S2. DM1–DM4, DN1, DN2 (the review's M1, M2, N1, N2, and two more): an instance on
     // whose path a name is inherited twice, neither feature redefining the other — `part def Q3 :> Q2, Q4` over
     // Q2's `part :>> p : P2` and Q4's `part :>> p : P4` (DM1; DM2 with bodies; DM3 where Q3's own `part :>> p;`

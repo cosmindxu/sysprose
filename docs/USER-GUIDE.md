@@ -952,7 +952,18 @@ never solved as a design equation (`s.a.load == 9.0` for a shallow `part s :
 T1` beside the capped chain), and the feasibility search does not move it.
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
-listed, and decided by no surface yet. Against a value
+listed, and decided by no surface yet. A per-instance reading that fails
+inside the tool makes the row it was read for *could not be evaluated*, in a
+sentence naming the failure (`… the per-instance reading failed (RangeError);
+reported, not dropped`; a group's roll-up counts it *not read*), and every
+other row and finding stands. A value a binding carries is read in the unit
+the feature it fills declares — the copy `bind p.load = L` makes of P's `load`
+included — and compared as the quantity it is: q1's `L = 20.0 [kg]` is 20 kg
+against P's `cap = 10000.0 [g]` (violated, on every surface), q2's `L = 5000.0
+[g]` is 5 kg (`load = 5` in the row's sentence), and a bare literal beside it
+is read in `load`'s unit (`load <= 10.0` holds for q2). A value of another
+dimension carried into it (a length into a mass) is compared by no surface.
+Against a value
 written with `=`, a binding is a **contradiction**, as a redefinition is:
 `bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20 kg is reported
 violated at the binding (in a context that specialises the binding's owner, at

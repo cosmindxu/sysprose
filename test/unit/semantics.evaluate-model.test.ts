@@ -4,7 +4,7 @@
  * by semantics.constraints.test.ts; this file adds edge-case coverage.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
@@ -37,11 +37,35 @@ import {
 import { obligationsOf } from '../../src/semantics/obligations';
 import { checkConstraintsNumeric, solveFeasible } from '../../src/semantics/solver';
 import { DIMENSIONLESS } from '../../src/semantics/units';
-import { equationDerivation } from '../../src/semantics/units-eval';
+import { equationDerivation, evaluateConstraintQuantityDetailed } from '../../src/semantics/units-eval';
 import { parseModel } from '../../src/text/index';
 import { validate } from '../../src/validation/index';
 import { loadModelText } from '@text/load';
 import type { ConstraintCheck } from '../../src/semantics/evaluate-model';
+
+/**
+ * The throwing stub (A.2.9, planted bug P17): four functions of the instance
+ * index a per-instance reading calls, wrapped — every answer is the real one —
+ * unless a test arms the stub to throw for the arguments it names. Only the
+ * containment tests at the end of this file arm it.
+ */
+const thrower = vi.hoisted(() => ({ armed: undefined as undefined | ((fn: string, args: readonly unknown[]) => boolean) }));
+vi.mock('../../src/semantics/defining-equation', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/semantics/defining-equation')>();
+  const stub =
+    <A extends unknown[], R>(fn: string, f: (...args: A) => R) =>
+    (...args: A): R => {
+      if (thrower.armed?.(fn, args) === true) throw new RangeError(`${fn}, planted to throw`);
+      return f(...args);
+    };
+  return {
+    ...real,
+    boundSourceIn: stub('boundSourceIn', real.boundSourceIn),
+    defaultGivesWayIn: stub('defaultGivesWayIn', real.defaultGivesWayIn),
+    defaultStandsIn: stub('defaultStandsIn', real.defaultStandsIn),
+    enclosingAssertOn: stub('enclosingAssertOn', real.enclosingAssertOn),
+  };
+});
 
 describe('semantics — scopeFor edge cases', () => {
   it('returns undefined for an unresolvable name on a constraint', () => {
@@ -3266,6 +3290,130 @@ describe('the instance index — frames, components, and bound sources', () => {
       ['X::Q::p', 'unknown', 'not-enumerated', `Could not evaluate: ${sentence}`],
     ]);
   });
+
+  // A.2.7 (planted bug P6): the unit-aware reading reads per instance only where a caller asks
+  // (`instances`) — the check's judgeBound and the literal and SMT quantities. The numeric lane and an
+  // equation's own quantity check ask for the per-FEATURE reading, which refuses a default a binding holds
+  // somewhere ("the unit-aware lane cannot key it per instance"): q1's binding gives P's load 50 at q1's p, so
+  // P's default 5 is no value of the feature's, while at P's own instance it stands. With `instances` on by
+  // default (P6) no verdict moved on the D.3 corpus, the M-generator or the 637-model differential (one
+  // numeric unknown named another name as its reason): only this contract tells the two readings apart.
+  it('reads per instance in the unit-aware path only where the caller asks (A.2.7)', async () => {
+    const { model: m } = await loadModelText(`package C6B {
+      part def P { attribute load : ScalarValues::Real default = 5.0; constraint c { load <= 5.0 } }
+      part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 50.0; }
+      part q2 : Q;
+    }`);
+    const c = named(m!, 'C6B::P::c');
+    expect(evaluateConstraintQuantityDetailed(m!, c)).toMatchObject({ verdict: 'unknown', reason: 'unresolved' });
+    expect(evaluateConstraintQuantityDetailed(m!, c, { instances: true }).verdict).toBe('satisfied');
+    expect(evaluateConstraintQuantityDetailed(m!, c, { instances: false }).verdict).toBe('unknown');
+    // The check reads the model's bindings per instance: P's own row is read at P's own instance.
+    expect(checkConstraints(m!).find((x) => x.id === c.id)!.result).toBe('satisfied');
+  });
+});
+
+/*
+ * A.2.2 (the review of O2 S6: U5, U8, U1, V5): a value a binding carries into one instance is read in the unit
+ * the feature it fills declares — P's `load`, the binding's implicit end copy included — and the body in units
+ * with it. Read as the number its source writes, q1's `L = 20.0 [kg]` was 20 against P's `cap = 10000.0 [g]`
+ * as 10000, and held on all four surfaces; q2's `L = 5000.0 [g]` was 5000 against 10 kg, violated.
+ */
+describe('a value a binding carries is read in the unit its feature declares (A.2.2)', () => {
+  const instanceRows = (m: Model, checks: ConstraintCheck[], qualified: string) =>
+    Object.fromEntries(
+      checks
+        .find((x) => m.qualifiedName(x.id) === qualified)!
+        .instances!.filter((i) => i.instance !== undefined)
+        .map((i) => [i.instance!, i.result]),
+    );
+  const MODEL = `package UC {
+    part def P {
+      attribute load : ISQ::MassValue default = 1.0 [SI::kg];
+      attribute cap : ISQ::MassValue = 10000.0 [SI::g];
+      constraint c { load <= cap }
+      constraint lit { load <= 10.0 }
+    }
+    part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+    part q1 : Q { attribute :>> L = 20.0 [SI::kg]; }
+    part q2 : Q { attribute :>> L = 5000.0 [SI::g]; }
+    constraint top { q1.p.load <= q1.p.cap }
+  }`;
+
+  it('compares it as the quantity it is, and prints it in the declared unit (U5, U8)', async () => {
+    const { model: m } = await loadModelText(MODEL);
+    const checks = checkConstraints(m!);
+    expect(instanceRows(m!, checks, 'UC::P::c')).toEqual({ 'UC::q1::p': 'violated', 'UC::q2::p': 'satisfied' });
+    expect(checks.find((x) => m!.qualifiedName(x.id) === 'UC::top')!.result).toBe('violated');
+    // The witness is the value in `load`'s unit (kg), exactly: the point the solver lane stores.
+    const q2 = checks.find((x) => m!.qualifiedName(x.id) === 'UC::P::c')!.instances!.find((i) => i.instance === 'UC::q2::p')!;
+    expect(q2.message).toBe("Constraint satisfied (load = 5 in UC::q2::p, its L UC::q2::L through UC::q2's `bind`)");
+    expect(q2.reads).toEqual([expect.objectContaining({ path: 'load', symbol: 'UC::q2::p::load', value: 5, exact: '5/1' })]);
+  });
+
+  it('reads a bare literal beside it in the declared unit, as for every value of the feature (U1)', async () => {
+    const { model: m } = await loadModelText(MODEL);
+    // 20 kg > 10; 5000 g is 5 kg <= 10 — not 5000.
+    expect(instanceRows(m!, checkConstraints(m!), 'UC::P::lit')).toEqual({ 'UC::q1::p': 'violated', 'UC::q2::p': 'satisfied' });
+  });
+
+  it('stores the end copy in that unit on the solver lane: a feature declared in grams holds 20 kg as 20000 (V5)', async () => {
+    const { model: m } = await loadModelText(`package V5 {
+      part def P { attribute load : ISQ::MassValue default = 1000.0 [SI::g]; attribute cap : ISQ::MassValue = 10.0 [SI::kg]; }
+      part p1 : P;
+      attribute L : ISQ::MassValue = 20.0 [SI::kg];
+      bind p1.load = L;
+      constraint top1 { p1.load <= p1.cap }
+      constraint top2 { p1.load >= 15.0 [SI::kg] }
+    }`);
+    const verdict = (rows: readonly { id: string; result: string }[], name: string) =>
+      rows.find((r) => m!.qualifiedName(r.id) === name)!.result;
+    for (const rows of [checkConstraints(m!), checkConstraintsNumeric(m!)]) {
+      expect([verdict(rows, 'V5::top1'), verdict(rows, 'V5::top2')]).toEqual(['violated', 'satisfied']);
+    }
+  });
+
+  it('decides nothing past an enclosing assert in units either (A-H1, the units twin of R1)', async () => {
+    // q1's assert constrains x at q1's p: the per-instance reading abstains on x, and the unit-aware reading
+    // of the body, given load's quantity, would read P's default x past it (3 + 2 <= 10, T).
+    const { model: m } = await loadModelText(`package R1U {
+      part def P {
+        attribute load : ISQ::MassValue default = 1.0 [SI::kg];
+        attribute x : ISQ::MassValue default = 2.0 [SI::kg];
+        constraint c { load + x <= 10.0 [SI::kg] }
+        constraint b { load + x <= 10.0 }
+      }
+      part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 3.0 [SI::kg]; assert constraint tie { p.x == 50.0 [SI::kg] } }
+      part q2 : Q;
+    }`);
+    const checks = checkConstraints(m!);
+    for (const rel of ['R1U::P::c', 'R1U::P::b']) {
+      expect(instanceRows(m!, checks, rel)).toEqual({ 'R1U::q1::p': 'unknown', 'R1U::q2::p': 'satisfied' });
+    }
+  });
+
+  it('reads no value of another dimension: both comparisons abstain, in their own sentences', async () => {
+    const { model: m } = await loadModelText(`package UD {
+      part def P {
+        attribute load : ISQ::MassValue default = 1.0 [SI::kg];
+        attribute cap : ISQ::MassValue = 10.0 [SI::kg];
+        constraint lit { load <= 10.0 }
+        constraint c { load <= cap }
+      }
+      part def Q { attribute L : ISQ::LengthValue default = 1.0 [SI::m]; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 5.0 [SI::m]; }
+    }`);
+    const checks = checkConstraints(m!);
+    const row = (rel: string) => checks.find((x) => m!.qualifiedName(x.id) === rel)!.instances!.find((i) => i.instance === 'UD::q1::p')!;
+    expect([row('UD::P::lit').result, row('UD::P::c').result]).toEqual(['unknown', 'unknown']);
+    expect(row('UD::P::lit').message).toBe(
+      'Could not evaluate: load is not read in UD::q1::p: the binding carries 5 [SI::m] into it, a quantity of L ' +
+        'where it declares M, so no comparison is made on it',
+    );
+    expect(row('UD::P::c').message).toContain('L and M are different physical dimensions');
+  });
 });
 
 describe('instanceRollup — the reporting formatter (F4)', () => {
@@ -3444,5 +3592,170 @@ describe('anchorFor — the anchor rule (F4)', () => {
     expect(anchorFor(m, check, inst('missing', q.id))).toBe(q.id);
     // Nothing at all: the relation itself.
     expect(anchorFor(m, check, inst('missing', 'missing'))).toBe(rel.id);
+  });
+});
+
+/*
+ * A.2.9: a per-instance reading that throws is that reading's `internal` abstention, in the A.9 sentence
+ * naming the error's class — never a throw out of the sweep. `validate()` threw with it, and the app's
+ * Problems view (`safeValidate`) then showed nothing: every other relation's verdict and every other rule's
+ * finding went with it. Each case arms the stub above for one read, so the rest of the model reads as it
+ * does unarmed; each fails with its containment removed (planted bug P17 and its siblings).
+ */
+describe('a per-instance reading that throws is reported, never thrown (A.2.9)', () => {
+  afterEach(() => {
+    thrower.armed = undefined;
+  });
+  const rowOf = (m: Model, checks: ConstraintCheck[], qualified: string) => checks.find((x) => m.qualifiedName(x.id) === qualified)!;
+  const instanceRow = (m: Model, checks: ConstraintCheck[], qualified: string, at: string) =>
+    rowOf(m, checks, qualified).instances!.find((i) => i.instance === at)!;
+  /** What survives a throw: `other`'s violation (another relation) and the unresolved import (another rule). */
+  const survivors = (m: Model) => {
+    const other = m.all().find((e) => e.declaredName === 'other')!.id;
+    return validate(m)
+      .filter((d) => d.ruleId === 'unresolved-import' || (d.ruleId === 'constraint-violation' && d.elementId === other))
+      .map((d) => d.ruleId)
+      .sort();
+  };
+  const failed = (name: string, instance: string) =>
+    `${name} is not read in ${instance}: the per-instance reading failed (RangeError); reported, not dropped`;
+
+  // Two instances of one shared usage Q's p (F7): q1's p holds (2 + 3 <= 10), q2's p does not (20 + 3).
+  const GROUP = `package T2 {
+    import Missing::*;
+    part def P { attribute x : ScalarValues::Real default = 3.0; attribute load : ScalarValues::Real default = 1.0; constraint c { load + x <= 10.0 } }
+    part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+    part q1 : Q { attribute :>> L = 2.0; }
+    part q2 : Q { attribute :>> L = 20.0; }
+    constraint other { q1.L >= 100.0 }
+  }`;
+
+  it('a bound read that throws is the read’s abstention, not a depth limit (valueBoundInInstance, P17)', async () => {
+    // q's p's load is read through the binding (A.2.2), inside m2's value: the engine's own stack guard
+    // around a value expression swallowed any throw there as a depth limit, so P17 left the row unknown in
+    // the wrong sentence, and every unit suite green.
+    const { model: m } = await loadModelText(`package T1 {
+      import Missing::*;
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> L = 50.0; }
+      attribute z : ScalarValues::Real = 1.0;
+      constraint m2NegT { q.p.m2 <= 0.0 }
+      constraint loadT { q.p.load <= 100.0 }
+      constraint other { z >= 100.0 }
+    }`);
+    expect([rowOf(m!, checkConstraints(m!), 'T1::m2NegT').result, rowOf(m!, checkConstraints(m!), 'T1::loadT').result]).toEqual([
+      'satisfied',
+      'satisfied',
+    ]);
+    // The binding's source, looked up for q's p's load.
+    thrower.armed = (fn, args) => fn === 'boundSourceIn' && args[1] === 'T1::q::p::load';
+    let checks = checkConstraints(m!);
+    expect(rowOf(m!, checks, 'T1::m2NegT').result).toBe('unknown');
+    expect(rowOf(m!, checks, 'T1::m2NegT').message).toContain(failed('load', 'T1::q::p'));
+    expect(rowOf(m!, checks, 'T1::other').result).toBe('violated');
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+    // The value the source names, read at the binding's root (the package): q's L, at q — failing there
+    // only, inside the scalar read through the binding (a throw from every read of q's L is no per-instance
+    // failure: the binding's own `#bind` row reads it too). loadT reads q's p's load directly, outside any
+    // value's stack guard; m2NegT's verdict is its unit-aware reading's, which did not fail.
+    const inside = (fn: string) => new Error().stack!.includes(fn);
+    thrower.armed = (fn, args) => fn === 'defaultGivesWayIn' && args[2] === 'T1::q' && inside('valueBoundInInstance');
+    checks = checkConstraints(m!);
+    expect(rowOf(m!, checks, 'T1::loadT').result).toBe('unknown');
+    expect(rowOf(m!, checks, 'T1::loadT').message).toContain(failed('load', 'T1::q::p'));
+    expect(rowOf(m!, checks, 'T1::m2NegT').result).toBe('satisfied');
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+    // The same, inside its unit-aware twin only (m2's derivation, which decides m2NegT): its failure is
+    // that reading's `internal` refusal, never a value read unit-blind past it — the scalar read, which
+    // succeeds, does not fill it. loadT reads no derivation, and stands.
+    thrower.armed = (fn, args) => fn === 'defaultGivesWayIn' && args[2] === 'T1::q' && inside('boundInInstanceQ');
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+    checks = checkConstraints(m!);
+    expect([rowOf(m!, checks, 'T1::m2NegT').result, rowOf(m!, checks, 'T1::loadT').result]).toEqual(['unknown', 'satisfied']);
+    expect(rowOf(m!, checks, 'T1::m2NegT').message).toContain(failed('load', 'T1::q::p'));
+  });
+
+  it('a default standing that throws is the read’s abstention (valueBoundInInstance, F8)', async () => {
+    // W2's q2: Q's L is valueless, so P's default 5 is q2's p's load, read where the binding holds it per
+    // feature (defaultStandsIn) — inside m2's value, where a throw passed for a depth limit.
+    const { model: m } = await loadModelText(`package W2 {
+      import Missing::*;
+      part def P { attribute load : ScalarValues::Real default = 5.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 50.0; }
+      part q2 : Q;
+      constraint c2 { q2.p.m2 >= 0.0 }
+      constraint other { q1.L >= 100.0 }
+    }`);
+    expect(rowOf(m!, checkConstraints(m!), 'W2::c2').result).toBe('satisfied');
+    thrower.armed = (fn, args) => fn === 'defaultStandsIn' && args[1] === 'W2::q2::p::load';
+    const checks = checkConstraints(m!);
+    expect(rowOf(m!, checks, 'W2::c2').result).toBe('unknown');
+    expect(rowOf(m!, checks, 'W2::c2').message).toContain(failed('load', 'W2::q2::p'));
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+  });
+
+  it('an enclosing-assert walk that throws is the read’s abstention (enclosingAssertOn)', async () => {
+    const { model: m } = await loadModelText(GROUP);
+    thrower.armed = (fn, args) => fn === 'enclosingAssertOn' && args[4] === 'T2::q1::p';
+    const checks = checkConstraints(m!);
+    // q1's p read for its group row: the walk threw for the name it read, which abstains in the read's sentence.
+    const q1 = instanceRow(m!, checks, 'T2::P::c', 'T2::q1::p');
+    expect([q1.result, q1.cause]).toEqual(['unknown', 'internal']);
+    expect(q1.message).toContain(failed('load', 'T2::q1::p'));
+    // The group's other rows read as unarmed.
+    expect(instanceRow(m!, checks, 'T2::P::c', 'T2::q2::p').result).toBe('violated');
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+    // Thrown at every read, own rows' included (`other` reads q1.L at the package's instance), where no group
+    // row is around it: the sweep still stands.
+    thrower.armed = (fn) => fn === 'enclosingAssertOn';
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+    expect(instanceRow(m!, checkConstraints(m!), 'T2::P::c', 'T2::q1::p').message).toContain(failed('load', 'T2::q1::p'));
+  });
+
+  it('a binding’s own reading that throws is its row, reported, and the sweep stands (bindingConflicts)', async () => {
+    const { model: m } = await loadModelText(GROUP);
+    // The binding's reading sits deeper below the sweep than a stack trace's default ten frames.
+    const inside = (fn: string) => {
+      const limit = Error.stackTraceLimit;
+      Error.stackTraceLimit = 200;
+      try {
+        return new Error().stack!.includes(fn);
+      } finally {
+        Error.stackTraceLimit = limit;
+      }
+    };
+    // The `#bind` reading of Q's `bind p.load = L` (in Q, and in q1 and q2, where L is another value), which
+    // asks whether the two ends' values differ there: nothing contained it, and validate() threw.
+    thrower.armed = (fn) => fn === 'defaultGivesWayIn' && inside('bindingConflicts');
+    const checks = checkConstraints(m!);
+    const bound = checks.filter((c) => c.conflict === 'bind');
+    expect(bound.length).toBeGreaterThan(0);
+    for (const c of bound) {
+      expect(c.result).toBe('unknown');
+      expect(c.message).toMatch(/^Could not evaluate: `bind p\.load = L` is not read in .*: the per-instance reading failed \(RangeError\); reported, not dropped$/);
+    }
+    expect(instanceRow(m!, checks, 'T2::P::c', 'T2::q2::p').result).toBe('violated');
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+  });
+
+  it('a group row whose reading throws is that row’s abstention, and the group’s others stand (F7)', async () => {
+    const { model: m } = await loadModelText(GROUP);
+    // q2's p's own default, asked at q2's p only: nothing contains the throw but the group's expansion.
+    thrower.armed = (fn, args) => fn === 'defaultGivesWayIn' && args[2] === 'T2::q2::p';
+    const checks = checkConstraints(m!);
+    const q2 = instanceRow(m!, checks, 'T2::P::c', 'T2::q2::p');
+    expect([q2.result, q2.abstention, q2.cause]).toEqual(['unknown', 'internal', 'internal']);
+    expect(q2.message).toBe(`Could not evaluate: ${failed('T2::P::c', 'T2::q2::p')}`);
+    expect(instanceRow(m!, checks, 'T2::P::c', 'T2::q1::p').result).toBe('satisfied');
+    expect(rowOf(m!, checks, 'T2::other').result).toBe('violated');
+    // The roll-up counts the row as not read (it names no unknown's cause yet: PI-6, N3); the other rule's
+    // finding stands.
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+    const rollup = validate(m!).filter((d) => d.ruleId === 'constraint-by-instance' && d.instances !== undefined);
+    expect(rollup.map((d) => d.message)).toEqual([
+      "T2::P::c (load + x <= 10.0) read in each of 3 instances of T2::Q::p: holds in 2, could not be read in 1 — 1 of them generic (T2::Q's own)",
+    ]);
   });
 });
