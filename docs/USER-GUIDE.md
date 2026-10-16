@@ -867,7 +867,23 @@ M into, in a sentence that names the binding the value came through (`q.p.m =
 context writes on the bound end (`part q : Q { part :>> p { attribute :>> m
 default = 30.0 [kg]; } }` against Q's `M = 20.0 [kg]`), and along a chain of
 bindings: `bind B = A; bind C = B;` reads C as A, and R's `bind q.M = N` over
-Q's `bind p.m = M` reads `r.q.p.m` as r's N. Bindings are read in every context
+Q's `bind p.m = M` reads `r.q.p.m` as r's N. A redefinition that renames the
+bound usage (`part q : Q { part pp :>> p; }`) is the slot the binding fills:
+q's pp's m is q's M. A package's binding on a definition's feature (`bind
+P::m = M` beside `part def P`) holds in every instance of P — `part p2 : P`,
+Q's `part p : P` and each q's — and over a redefinition's own `default` there
+(`part p3 : P { attribute :>> m default = 30.0 [kg]; }` reads M too). Where
+one instance's m gets a value outside that binding — its own `:>> m = 25.0
+[kg]`, another binding (Q's `bind p.m = N`), or an asserted equation (`p2.m ==
+25.0 [kg]`) — that value is M's and every instance's, which the check and the
+literal engine do not read: no `default` the binding joins stands, and they
+name what fixes it (*could not be evaluated*). One that joins two features of
+a definition (`bind P::m = P::cap`) joins them in each instance at that
+instance's values: the check and the literal engine do not read it, the
+numeric surface solves it, and the solver lane proves what holds there but
+abstains on a refutation the check cannot confirm. An instance of P written
+in another package is not read through the binding by the check and the
+literal engine (*could not be evaluated*). Bindings are read in every context
 they hold in, each end the feature at its path there, and a `default` gives
 way where the bindings joined to it reach a value of its own — in that
 context. Whether it gives way is decided for each instance: a LITERAL default

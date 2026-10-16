@@ -2948,6 +2948,124 @@ describe('checkConstraints — an enclosing asserted equation defines a default 
   });
 });
 
+describe('a binding reads through a renamed redefinition and a package’s definition-feature bind (H5 S4)', () => {
+  const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+  const result = (m: Model, rel: string) => checkConstraints(m).find((k) => m.qualifiedName(k.id) === rel)!.result;
+  const numeric = (m: Model, rel: string) => checkConstraintsNumeric(m).find((r) => m.qualifiedName(r.id) === rel)!.result;
+  const axioms = (m: Model, element: string) =>
+    obligationsOf(m)
+      .filter((o) => o.role === 'axiom' && o.element.qualifiedName === element)
+      .map((o) => `${o.expression} [${o.encodable === true ? 'ok' : o.encodable.reason}] ${o.vars.map((v) => v.qualifiedName).join(' ')}`);
+  const source = (m: Model, symbol: string) => {
+    const s = boundSourceIn(m, symbol);
+    return s === undefined ? undefined : 'abstain' in s ? s.abstain : s.via.source;
+  };
+
+  it('reads the slot a renamed redefinition fills (`part pp :>> p`) on every surface, never a sibling (R13)', async () => {
+    const { model: m } = await loadModelText(`package R13s {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; part p3 : P; bind p.load = L; }
+      part q : Q { attribute :>> L = 50.0; part pp :>> p; }
+      constraint m2PosF { q.pp.m2 >= 0.0 }
+      constraint sibT { q.p3.m2 >= 0.0 }
+    }`);
+    expect([source(m!, 'R13s::q::pp::load'), source(m!, 'R13s::q::p3::load')]).toEqual(['q.L', undefined]);
+    expect([result(m!, 'R13s::m2PosF'), numeric(m!, 'R13s::m2PosF')]).toEqual(['violated', 'violated']);
+    expect([result(m!, 'R13s::sibT'), numeric(m!, 'R13s::sibT')]).toEqual(['satisfied', 'satisfied']);
+    // The SMT lane reads Q's binding in q at q's own spelling: one symbol with the relation's, not an unresolved `p.load`.
+    expect(axioms(m!, 'R13s::Q::«BindingConnectorAsUsage» in R13s::q')).toEqual(['pp.load == L [ok] R13s::q::pp::load R13s::q::L']);
+  });
+
+  it('reads a package’s `bind P::load = L` in every instance of P, a redefined default giving way (w4)', async () => {
+    const { model: m } = await loadModelText(`package W4 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q { part p : P; }
+      attribute L : ScalarValues::Real = 50.0;
+      bind P::load = L;
+      part p2 : P;
+      part p3 : P { attribute :>> load default = 7.0; }
+      part q : Q;
+      constraint c2 { p2.m2 >= 0.0 }
+      constraint c3 { p3.m2 >= 0.0 }
+      constraint cq { q.p.m2 >= 0.0 }
+    }`);
+    expect(['W4::p2::load', 'W4::p3::load', 'W4::q::p::load', 'W4::Q::p::load'].map((s) => source(m!, s))).toEqual(['L', 'L', 'L', 'L']);
+    // p3's `:>> load default = 7.0` gives way to the binding as P's own does.
+    const redefined = m!.children(named(m!, 'W4::p3').id).find((c) => c.eClass === 'AttributeUsage')!;
+    expect([defaultGivesWay(m!, redefined), defaultGivesWay(m!, named(m!, 'W4::P::load'))]).toEqual([true, true]);
+    for (const rel of ['W4::c2', 'W4::c3', 'W4::cq']) expect([rel, result(m!, rel), numeric(m!, rel)]).toEqual([rel, 'violated', 'violated']);
+    // The SMT lane holds the binding in each instance, over the instance's load and the package's one L.
+    expect(axioms(m!, 'W4::«BindingConnectorAsUsage» in W4::p3')).toEqual(['load == W4::L [ok] W4::p3::load W4::L']);
+    expect(axioms(m!, 'W4::P::load in W4::p3')).toEqual([]);
+    // (i) Read once per revision, and again after an edit: L at 5 makes every m2 5.
+    m!.setAttrs(named(m!, 'W4::L').id, { value: 5.0 });
+    for (const rel of ['W4::c2', 'W4::c3', 'W4::cq']) expect([rel, result(m!, rel)]).toEqual([rel, 'satisfied']);
+  });
+
+  it('reads no value per instance for a package’s binding between two features of a definition (W4d)', async () => {
+    const { model: m } = await loadModelText(`package W4d {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute cap : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      bind P::load = P::cap;
+      part p2 : P { attribute :>> cap = 50.0; }
+      constraint c2F { p2.m2 >= 0.0 }
+    }`);
+    // P's load default of 1 was read at p2 on every surface, where p2's cap makes it 50.
+    expect([source(m!, 'W4d::p2::load'), defaultGivesWay(m!, named(m!, 'W4d::P::load'))]).toEqual(['free', true]);
+    expect([result(m!, 'W4d::c2F'), numeric(m!, 'W4d::c2F')]).toEqual(['unknown', 'violated']);
+    expect(axioms(m!, 'W4d::«BindingConnectorAsUsage» in W4d::p2')).toEqual(['load == cap [ok] W4d::p2::load W4d::p2::cap']);
+  });
+
+  it('stands no default where an instance carries a value of its own into a valueless partner (W4v)', async () => {
+    const { model: m } = await loadModelText(`package W4v {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      attribute L : ScalarValues::Real;
+      bind P::load = L;
+      part p2 : P;
+      part p4 : P { attribute :>> load = 7.0; }
+      constraint c2 { p2.m2 <= 5.0 }
+    }`);
+    // p4's 7 is L's, and p2's: P's default 1 stood for p2 and for L on the check, the literal and numeric surfaces.
+    expect([source(m!, 'W4v::p2::load'), defaultStandsIn(m!, 'W4v::p2::load'), defaultStandsIn(m!, 'W4v::L')]).toEqual([
+      'defaults-differ',
+      undefined,
+      undefined,
+    ]);
+    expect([result(m!, 'W4v::c2'), numeric(m!, 'W4v::c2')]).toEqual(['unknown', 'unknown']);
+  });
+
+  it('stands no default where an instance’s slot is fixed outside the binding — another binding, an assert (W4X)', async () => {
+    const { model: m } = await loadModelText(`package W4X {
+      part def P { attribute load : ScalarValues::Real default = 50.0; }
+      attribute L : ScalarValues::Real;
+      bind P::load = L;
+      part def Q { attribute M : ScalarValues::Real = 7.0; part p : P; bind p.load = M; }
+      part q : Q;
+      part p2 : P;
+      constraint cqT { q.p.load <= 10.0 }
+      constraint c2T { p2.load <= 10.0 }
+    }`);
+    // Q's binding makes q's p's load 7, so L and p2's load are 7: P's default 50 stood for p2 on all four
+    // surfaces, and the SMT lane kept its axiom beside q's 7 (inconsistent-axioms on a consistent model).
+    expect([defaultGivesWay(m!, named(m!, 'W4X::P::load')), defaultStandsIn(m!, 'W4X::p2::load')]).toEqual([true, undefined]);
+    expect(checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'W4X::c2T')!.message).toContain(
+      'a binding read in W4X at q.p.load gives P.load a value in one of them',
+    );
+    expect([result(m!, 'W4X::c2T'), numeric(m!, 'W4X::c2T'), result(m!, 'W4X::cqT')]).toEqual(['unknown', 'satisfied', 'satisfied']);
+    const { model: a } = await loadModelText(`package W4A {
+      part def P { attribute load : ScalarValues::Real; }
+      attribute M : ScalarValues::Real default = 9.0;
+      bind P::load = M;
+      part p2 : P;
+      assert constraint fix { p2.load == 5.0 }
+      part p3 : P;
+      constraint c3T { p3.load <= 6.0 }
+    }`);
+    // p2's asserted 5 is M's and p3's: M's default 9 stood for p3 (F on all four surfaces).
+    expect([defaultGivesWay(a!, named(a!, 'W4A::M')), source(a!, 'W4A::p3::load')]).toEqual([true, 'defaults-differ']);
+    expect([result(a!, 'W4A::c3T'), numeric(a!, 'W4A::c3T')]).toEqual(['unknown', 'satisfied']);
+  });
+});
+
 describe('valueAtPath — a path has the value the relation reads it at', () => {
   const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
   const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }';

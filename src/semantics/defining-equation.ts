@@ -2262,6 +2262,10 @@ interface BindingEnds {
   components?: Map<string, ComponentFacts>;
   /** {@link boundSourceIn} per instance symbol, once per revision. */
   sources?: Map<string, BoundSource | undefined>;
+  /** The {@link DefinitionHead} members of each package's binding reading, by root ({@link heldDefaults}). */
+  heads: ReadonlyMap<ElementId, readonly DefinitionHead[]>;
+  /** {@link outsideBindingsOf}, built when first asked. */
+  outside?: ReadonlyMap<ElementId, readonly OutsideBinding[]>;
   /** {@link boundPartnerSafe} per `${contextId} ${name} ${featureId}`, once per revision. */
   partnerSafe?: Map<string, boolean>;
 }
@@ -2329,10 +2333,10 @@ function bindingEnds(model: Model): BindingEnds {
     const [s, t] = [el.source?.[0], el.target?.[0]];
     if (s !== undefined && t !== undefined && s !== t) edges.push([s, t]);
   }
-  const read: Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap'> =
+  const read: Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap' | 'heads'> =
     bindings.length > 0
       ? heldDefaults(model, bindings)
-      : { held: new Set<ElementId>(), readings: new Map(), unread: new Set<ElementId>(), enclosed: new Set<ElementId>(), heldIn: new Set<string>(), heldSomewhere: new Set<ElementId>(), overCap: new Map() };
+      : { held: new Set<ElementId>(), readings: new Map(), unread: new Set<ElementId>(), enclosed: new Set<ElementId>(), heldIn: new Set<string>(), heldSomewhere: new Set<ElementId>(), overCap: new Map(), heads: new Map() };
   const fresh: BindingEnds = {
     rev: model.rev,
     ends,
@@ -2843,7 +2847,7 @@ type EndValue = { kind: 'value' } | { kind: 'default'; source: ElementRecord } |
 function heldDefaults(
   model: Model,
   bindings: readonly ElementRecord[],
-): Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap'> {
+): Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap' | 'heads'> {
   const definitions = sharedDefinitions(model);
   // Per context: the paths its bindings join, and the feature at each.
   const contexts = new Map<ElementId, { parent: Map<string, string>; at: Map<string, ElementRecord> }>();
@@ -2861,15 +2865,21 @@ function heldDefaults(
       if (f && endValue(model, f, holder, '').kind === 'default') holdDefault(model, held, heldIn, heldSomewhere, f);
     }
   };
-  const resolve = (root: ElementId, path: string): ElementRecord | undefined => {
+  // The feature at `path` in `root`, and the path as `root` spells it: a
+  // segment a renamed redefinition answers to (`part pp :>> p` in `part q :
+  // Q`, under Q's `bind p.load = L`) by that redefinition's own name — q's
+  // `pp.load`, the instance every surface reads (H5, E8: R13).
+  const resolve = (root: ElementId, path: string): { f: ElementRecord; path: string } | undefined => {
     let owner = root;
     let f: ElementRecord | undefined;
+    const spelled: string[] = [];
     for (const seg of path.split('.')) {
       f = definitions.byName(owner).get(seg);
       if (!f) return undefined;
+      spelled.push(definitions.nameOf(f) ?? seg);
       owner = f.id;
     }
-    return f;
+    return f ? { f, path: spelled.join('.') } : undefined;
   };
   const find = (parent: Map<string, string>, a: string): string => {
     let root = a;
@@ -2964,8 +2974,8 @@ function heldDefaults(
         if (place.kind === 'below') full = prefix === '' ? place.path : `${prefix}.${place.path}`;
         else if (outer[k] === undefined) return 'pending';
         else full = outer[k] === '' ? place.path : `${outer[k]}.${place.path}`;
-        const f = resolve(root.id, full);
-        return f ? [full, f] : undefined;
+        const hit = resolve(root.id, full);
+        return hit ? [hit.path, hit.f] : undefined;
       };
       const l = at(0);
       const r = at(1);
@@ -3010,6 +3020,7 @@ function heldDefaults(
   }
   if (overCap.size > 0) pastCapComponents(model, bindings, overCap, holdEnds);
   const readings = new Map<ElementId, Map<string, { feature: ElementId; component: string }>>();
+  const { heads, byRedefined } = headsOfReadings(model, definitions, contexts, (rootId, path) => find(contexts.get(rootId)!.parent, path));
   // The names an owner's asserted equations define, once per owner ({@link fallsToDefault}).
   const asserted = new Map<ElementId, ReadonlySet<string>>();
   for (const [rootId, ctx] of contexts) {
@@ -3024,13 +3035,27 @@ function heldDefaults(
       reading.set(path, { feature: f.id, component: key });
     }
     readings.set(rootId, reading);
-    for (const members of components.values()) {
+    for (const [key, members] of components) {
+      // A package's binding on a DEFINITION's feature (w4, {@link
+      // definitionHeadMatch}) holds in every instance of the definition, and
+      // so over every feature that redefines that one with a value of its own
+      // (`part p3 : P { attribute :>> load default = 7.0; }` under `bind
+      // P::load = L`): each is a member's value too. Two such members (`bind
+      // P::load = P::cap`) are read per instance, and no default of theirs is
+      // the component's one value; nor is any where an instance's slot is
+      // fixed outside the component ({@link DefinitionHead.fixed}).
+      const mine = (heads.get(rootId) ?? []).filter((h) => h.component === key);
+      const redefiners = mine.length > 0 ? [...new Set(mine.flatMap((h) => byRedefined?.get(h.feature) ?? []))] : [];
       // One default per MEMBER, not per source: R3a's `A::v` read at a1.v and
       // at a2.v is two readings of `2.0 * K`, one per instance.
-      const defaults = members.flatMap((m) => (m.value.kind === 'default' ? [m.value.source] : []));
+      const defaults = [
+        ...members.flatMap((m) => (m.value.kind === 'default' ? [m.value.source] : [])),
+        ...redefiners.filter((r) => r.attrs.defaultValue === true),
+      ];
       if (defaults.length === 0) continue;
-      const stated = members.some((m) => m.value.kind === 'value');
-      if (stated || !defaultsAgree(defaults))
+      const stated = members.some((m) => m.value.kind === 'value') || mine.some((h) => h.fixed !== undefined);
+      if (stated || mine.length > 1 || !defaultsAgree(defaults)) {
+        for (const r of redefiners) if (r.attrs.defaultValue === true) holdDefault(model, held, heldIn, heldSomewhere, r);
         for (const m of members)
           if (m.value.kind === 'default')
             holdDefault(
@@ -3042,9 +3067,10 @@ function heldDefaults(
               heldInstance(definitions, rootId, m.path),
               fallsToDefault(model, m.f, root, m.path, asserted),
             );
+      }
     }
   }
-  return { held, readings, unread, enclosed, heldIn, heldSomewhere, overCap, ...(cap !== undefined ? { cap } : {}) };
+  return { held, readings, unread, enclosed, heldIn, heldSomewhere, overCap, heads, ...(cap !== undefined ? { cap } : {}) };
 }
 
 /**
@@ -4133,6 +4159,27 @@ export function rebaseInstance(
 }
 
 /**
+ * `path`, a member path written in a general type of `contextId` (an end of
+ * Q's `bind p.load = L`), as `contextId` spells it: a segment a renamed
+ * redefinition answers to (`part pp :>> p` in `part q : Q`) by that
+ * redefinition's own name — q's `pp.load`, the symbol every relation over
+ * q's pp reads (H5, E8: R13). `path` itself where the scope names it, or
+ * where a segment resolves to nothing there.
+ */
+export function spelledIn(definitions: DefiningEquations, contextId: ElementId, path: string): string {
+  const denoted = definitions.denote(contextId);
+  if (denoted.has(path)) return path;
+  let spelled = '';
+  for (const seg of path.split('.')) {
+    const d = denoted.get(spelled === '' ? seg : `${spelled}.${seg}`);
+    const name = d ? definitions.nameOf(d.feature) : undefined;
+    if (name === undefined) return path;
+    spelled = spelled === '' ? name : `${spelled}.${name}`;
+  }
+  return spelled;
+}
+
+/**
  * The {@link ComponentFacts} record of the component `component` read in
  * `root`, made when first asked with the member paths alone — in reading
  * order, from the `members` index ({@link indexOf}) rather than a scan of the
@@ -4253,6 +4300,252 @@ function readingsByInstance(model: Model): ReadonlyMap<string, ReadonlyArray<{ r
   return byInstance;
 }
 
+/** Is `e` a package — a namespace, which {@link isDefinition} counts among the definitions? */
+function isPackage(e: ElementRecord): boolean {
+  return e.eClass === 'Package' || e.eClass === 'LibraryPackage';
+}
+
+/**
+ * The DEFINITION the member path `path` of `rootId`'s reading is written below
+ * — the last one the path names, P for `P.load` or `Pkg.P.sub.load` below a
+ * package — with the features from it down to the member ({@link
+ * featuresAtPath}); `undefined` for a path through usages alone (`q1.p.load`,
+ * though P owns that load).
+ */
+function definitionHeadOf(
+  model: Model,
+  definitions: DefiningEquations,
+  rootId: ElementId,
+  path: string,
+): { definition: ElementRecord; tail: ElementRecord[] } | undefined {
+  const chain = featuresAtPath(model, definitions, rootId, path);
+  if (!chain) return undefined;
+  for (let at = chain.length - 2; at >= 0; at--) {
+    const e = chain[at]!;
+    if (isDefinition(e.eClass) && !isPackage(e)) return { definition: e, tail: chain.slice(at + 1) };
+  }
+  return undefined;
+}
+
+/**
+ * A member of a binding reading written on a DEFINITION's feature from outside
+ * it — a package's `bind P::load = L` (w4), at `P.load` in the package's
+ * reading — with the definition (`P`) and the features from it down to the
+ * member (`[P::load]`): the binding holds in every instance of P, read at the
+ * instance's own path ({@link definitionHeadMatch}).
+ */
+interface DefinitionHead {
+  path: string;
+  component: string;
+  feature: ElementId;
+  definition: ElementRecord;
+  tail: readonly ElementRecord[];
+  /** Does a feature with a value of its own redefine the member — an instance's `:>> load default = 7.0`? */
+  redefined: boolean;
+  /**
+   * What gives the member's slot a value in some instance of the definition
+   * OUTSIDE the component — and so gives the component's one-instance end
+   * (the package's `L`) that value, which this tool does not read into the
+   * other instances: a redefinition's own `=` (`part p4 : P { attribute :>>
+   * load = 7.0; }`), a member of another binding reading at an instance's
+   * path (Q's `bind p.load = M` for `part p : P`, the package's own `bind
+   * p2.load = K`), or an asserted equation that defines an instance's slot
+   * (`assert constraint { p2.load == 5.0 }`). No `default` in such a
+   * component is its value ({@link heldDefaults}, {@link standingDefaultIn}).
+   */
+  fixed?: string;
+}
+
+/**
+ * The {@link DefinitionHead} members of each binding reading in `contexts`,
+ * by root — only a package's reading has any, the one a binding written there
+ * reads its ends in — and the user's features with a value of their own
+ * (`=` or `default`) by each feature they redefine, built only where a head
+ * exists. A head's slot is `fixed` where a redefinition states it with `=`,
+ * or where a member of another component read in any root ({@link
+ * heldDefaults}' `contexts`), or a path an asserted equation defines, is the
+ * slot at an instance of the head's definition: the instance the path's
+ * prefix names (a usage or definition that specialises it, or the root
+ * itself), and below it the head's features, each the feature or one that
+ * redefines it. Once per revision, inside {@link heldDefaults}.
+ */
+function headsOfReadings(
+  model: Model,
+  definitions: DefiningEquations,
+  contexts: ReadonlyMap<ElementId, { at: ReadonlyMap<string, ElementRecord> }>,
+  componentOf: (rootId: ElementId, path: string) => string,
+): { heads: Map<ElementId, DefinitionHead[]>; byRedefined?: ReadonlyMap<ElementId, readonly ElementRecord[]> } {
+  const heads = new Map<ElementId, DefinitionHead[]>();
+  const all: Array<{ rootId: ElementId; head: DefinitionHead }> = [];
+  for (const [rootId, ctx] of contexts) {
+    const root = model.get(rootId);
+    if (!root || !isPackage(root)) continue;
+    for (const [path, f] of ctx.at) {
+      const head = definitionHeadOf(model, definitions, rootId, path);
+      if (!head) continue;
+      const entry: DefinitionHead = { path, component: componentOf(rootId, path), feature: f.id, ...head, redefined: false };
+      const list = heads.get(rootId) ?? [];
+      list.push(entry);
+      heads.set(rootId, list);
+      all.push({ rootId, head: entry });
+    }
+  }
+  if (all.length === 0) return { heads };
+  const byRedefined = new Map<ElementId, ElementRecord[]>();
+  for (const x of model.all()) {
+    if (x.attrs.isLibrary === true || !isUsage(x.eClass) || x.attrs.value === undefined || x.attrs.value === null) continue;
+    for (const g of redefinedClosure(model, x)) {
+      const list = byRedefined.get(g.id);
+      if (list) list.push(x);
+      else byRedefined.set(g.id, [x]);
+    }
+  }
+  for (const { head } of all) {
+    const redefiners = byRedefined.get(head.feature) ?? [];
+    head.redefined = redefiners.length > 0;
+    const plain = redefiners.find((r) => r.attrs.defaultValue !== true);
+    if (plain) head.fixed = `the value ${effectiveQualifiedName(model, plain.id)} states`;
+  }
+  // Is `path` read in `rootId` the slot `head` names at an instance of its definition?
+  const chains = new Map<string, ElementRecord[] | undefined>();
+  const slotOf = (rootId: ElementId, path: string, head: DefinitionHead): boolean => {
+    const key = `${rootId} ${path}`;
+    if (!chains.has(key)) chains.set(key, featuresAtPath(model, definitions, rootId, path));
+    const chain = chains.get(key);
+    if (!chain) return false;
+    const at = chain.length - head.tail.length - 1;
+    const instance = at >= 0 ? chain[at] : at === -1 ? model.get(rootId) : undefined;
+    if (!instance || isPackage(instance)) return false;
+    if (instance.id !== head.definition.id && !generalizationsOf(model, instance.id).some((g) => g.id === head.definition.id)) return false;
+    return head.tail.every((g, k) => {
+      const mine = chain[at + 1 + k]!;
+      return mine.id === g.id || redefinedClosure(model, mine).some((x) => x.id === g.id);
+    });
+  };
+  for (const [rootId, ctx] of contexts) {
+    for (const path of ctx.at.keys()) {
+      for (const { rootId: headRoot, head } of all) {
+        if (head.fixed !== undefined || (rootId === headRoot && componentOf(rootId, path) === head.component)) continue;
+        if (slotOf(rootId, path, head)) head.fixed = `a binding read in ${effectiveQualifiedName(model, rootId)} at ${path}`;
+      }
+    }
+  }
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true || el.ownerId == null || !isAsserted(el)) continue;
+    const eq = equationOf(el);
+    if (!eq) continue;
+    const paths = [definedName(eq.node.left, eq.literals), definedName(eq.node.right, eq.literals)];
+    for (const { head } of all) {
+      if (head.fixed !== undefined) continue;
+      if (paths.some((p) => p !== undefined && slotOf(el.ownerId!, p, head))) {
+        head.fixed = `the asserted equation ${effectiveQualifiedName(model, el.id)}`;
+      }
+    }
+  }
+  return { heads, byRedefined };
+}
+
+/**
+ * The element at each segment of the dotted `path` below `root` (075b306's
+ * `featureAtPath`), resolved through the model's ownership by effective name
+ * — a definition and its features included (`Q.p.load` below a package, Q's
+ * own p's load), which a scope's {@link DefiningEquations.denote} walk leaves
+ * out — then through each element's effective features. `undefined` where a
+ * segment resolves to nothing.
+ */
+function featuresAtPath(model: Model, definitions: DefiningEquations, root: ElementId, path: string): ElementRecord[] | undefined {
+  const out: ElementRecord[] = [];
+  let owner = root;
+  for (const seg of path.split('.')) {
+    const f =
+      model.children(owner).find((c) => definitions.nameOf(c) === seg) ??
+      definitions.byName(owner).get(seg) ??
+      definitions.features(owner).find((c) => definitions.nameOf(c) === seg);
+    if (!f) return undefined;
+    out.push(f);
+    owner = f.id;
+  }
+  return out;
+}
+
+/**
+ * The {@link DefinitionHead} member of `root`'s reading that the path `path`
+ * of `root` reads (H5, w4): an instance of the head's definition at a prefix
+ * of the path — a usage it types or specialises, `p2` for P — and below it the
+ * head's features, each segment the feature itself or one that redefines it.
+ * A package's `bind P::load = L` is read at `p2.load` for `part p2 : P`, and at
+ * `q.p.load` for a `part def Q { part p : P; }` and `part q : Q`. `undefined`
+ * where none matches, or where two in different components do (that instance
+ * is read through neither).
+ */
+function definitionHeadMatch(model: Model, root: ElementId, path: string): DefinitionHead | undefined {
+  const heads = bindingEnds(model).heads.get(root);
+  if (!heads || path === '') return undefined;
+  const slots = featuresAtPath(model, sharedDefinitions(model), root, path);
+  if (!slots) return undefined;
+  const same = (mine: ElementRecord, g: ElementRecord): boolean =>
+    mine.id === g.id || redefinedClosure(model, mine).some((x) => x.id === g.id);
+  let match: DefinitionHead | undefined;
+  for (const head of heads) {
+    const at = slots.length - head.tail.length - 1;
+    if (at < 0) continue;
+    const instance = slots[at]!;
+    if (!isUsage(instance.eClass)) continue;
+    if (!generalizationsOf(model, instance.id).some((g) => g.id === head.definition.id)) continue;
+    if (!head.tail.every((g, k) => same(slots[at + 1 + k]!, g))) continue;
+    if (match && match.component !== head.component) return undefined;
+    match ??= head;
+  }
+  return match;
+}
+
+/**
+ * A binding a package writes on a definition's features ({@link
+ * outsideBindingsOf}), with each end's path below the definition — or
+ * `undefined` for an end that is one instance wherever it is read.
+ */
+export interface OutsideBinding {
+  binding: ElementRecord;
+  ends: readonly [string | undefined, string | undefined];
+}
+
+/**
+ * The bindings a package writes on the features of the definition
+ * `definitionId` (w4: `bind P::load = L`), each with its ends: the path below
+ * the definition of an end that is one of its features (`load`), `undefined`
+ * for an end of no definition — the package's `L`, one instance wherever it is
+ * read. Such a binding holds in every instance of the definition, as one the
+ * definition writes does: the numeric and SMT lanes read it for each instance
+ * they read, over that instance's own symbols, as the check reads it
+ * ({@link definitionHeadMatch}). One whose other end is a feature of another
+ * definition is not listed. Once per revision.
+ */
+export function outsideBindingsOf(model: Model, definitionId: ElementId): readonly OutsideBinding[] {
+  if (!hasUserBindings(model)) return [];
+  const ends = bindingEnds(model);
+  if (!ends.outside) {
+    const outside = new Map<ElementId, OutsideBinding[]>();
+    const definitions = sharedDefinitions(model);
+    for (const b of ends.connectors) {
+      const holder = b.ownerId != null ? model.get(b.ownerId) : undefined;
+      if (!holder || !isPackage(holder)) continue;
+      // Each end at its path in the package, as the package's reading spells it.
+      const paths = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, holder.id) : undefined));
+      if (paths[0] === undefined || paths[1] === undefined) continue;
+      const heads = paths.map((p) => definitionHeadOf(model, definitions, holder.id, p!));
+      const definition = (heads[0] ?? heads[1])?.definition;
+      if (!definition || heads.some((h) => h !== undefined && h.definition.id !== definition.id)) continue;
+      // An end of no definition is a feature of the package: one instance (`undefined`).
+      const below = heads.map((h) => (h ? h.tail.map((f) => definitions.nameOf(f) ?? '').join('.') : undefined));
+      const list = outside.get(definition.id) ?? [];
+      list.push({ binding: b, ends: [below[0], below[1]] });
+      outside.set(definition.id, list);
+    }
+    ends.outside = outside;
+  }
+  return ends.outside.get(definitionId) ?? [];
+}
+
 /**
  * The OUTERMOST frame root whose instance prefixes the instance `symbol` —
  * the symbol itself, or a prefix of it up to a `::` — and whose binding
@@ -4260,15 +4553,18 @@ function readingsByInstance(model: Model): ReadonlyMap<string, ReadonlyArray<{ r
  * that path: the one with the fewest `::` segments, the first in reading
  * order among equals. Each prefix of the symbol is looked up in
  * {@link readingsByInstance}; the answer is the one a scan of every root
- * would give. `undefined` where no binding reading holds the symbol.
+ * would give. A path a package's reading does not hold is read through a
+ * binding written there on a definition's feature ({@link
+ * definitionHeadMatch}: `head`). `undefined` where no binding reading holds
+ * the symbol.
  */
 function outermostReading(
   model: Model,
   symbol: string,
-): { root: ElementId; component: string; feature: ElementId } | undefined {
+): { root: ElementId; component: string; feature: ElementId; head?: DefinitionHead } | undefined {
   const { readings } = bindingEnds(model);
   const byInstance = readingsByInstance(model);
-  let best: { root: ElementId; component: string; feature: ElementId } | undefined;
+  let best: { root: ElementId; component: string; feature: ElementId; head?: DefinitionHead } | undefined;
   let bestSegments = Number.POSITIVE_INFINITY;
   let bestOrder = Number.POSITIVE_INFINITY;
   const consider = (inst: string): void => {
@@ -4278,11 +4574,12 @@ function outermostReading(
     const path = rest.split('::').join('.');
     const segments = inst.split('::').length;
     for (const { root, order } of roots) {
-      const r = readings.get(root)?.get(path);
+      const head = readings.get(root)?.has(path) ? undefined : definitionHeadMatch(model, root, path);
+      const r = head ?? readings.get(root)?.get(path);
       if (!r) continue;
       // The roots of one instance are in reading order: the first that holds the path is this prefix's answer.
       if (segments < bestSegments || (segments === bestSegments && order < bestOrder)) {
-        best = { root, component: r.component, feature: r.feature };
+        best = { root, component: r.component, feature: r.feature, ...(head ? { head } : {}) };
         bestSegments = segments;
         bestOrder = order;
       }
@@ -4592,6 +4889,12 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // capped binding gives 50); a cap no binding of it reaches never abstains it.
   const capped = member ? (overCap.get(member.id) ?? (carried !== undefined ? overCap.get(carried) : undefined)) : undefined;
   if (capped !== undefined) return { abstain: 'past-cap', sentence: bindingCapSentence(capped) };
+  // A package's binding between two features of definitions (`bind P::load =
+  // P::cap`) joins them in every instance, each at its own value there: read
+  // in the package, the component holds P's own — no value for any instance.
+  if (best.head && pairedHeads(model, best.root, best.component)) {
+    return { abstain: 'free', sentence: pairedHeadsSentence(model, symbol, best.root, best.component) };
+  }
   // A binding whose end is a feature of an instance ENCLOSING where it is
   // written (R's `L` in `part q : Q { bind p.load = L; }`) is read by that
   // feature's own id, for every such instance alike ({@link
@@ -4622,13 +4925,24 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // the binding gives it — the partner supplies none either (the G340 family).
   const readable = cls.readable.find((p) => memberInstance(definitions, best.root, p) !== symbol);
   if (readable !== undefined) return source(readable);
+  // A package's binding on a definition's feature whose slot an instance
+  // fixes outside the component ({@link DefinitionHead.fixed}) says so, not
+  // that no member states a value.
+  const fixed = bindingEnds(model).heads.get(best.root)?.find((h) => h.component === best.component && h.fixed !== undefined);
   if (cls.heldDefaults.length > 0) {
     return {
       abstain: 'defaults-differ',
-      sentence: abstentionSentence(model, symbol, best.root, best.component, 'defaults-differ'),
+      sentence: fixed
+        ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
+        : abstentionSentence(model, symbol, best.root, best.component, 'defaults-differ'),
     };
   }
-  return { abstain: 'free', sentence: abstentionSentence(model, symbol, best.root, best.component, 'free') };
+  return {
+    abstain: 'free',
+    sentence: fixed
+      ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
+      : abstentionSentence(model, symbol, best.root, best.component, 'free'),
+  };
 }
 
 /**
@@ -4746,7 +5060,53 @@ function standingDefaultIn(model: Model, symbol: string): ElementRecord | undefi
   ) {
     return undefined;
   }
+  // A definition's feature joined so carries every instance's value into the
+  // component: where one redefines it with a value of its own (`part p4 : P {
+  // attribute :>> load = 7.0; }` under `bind P::load = L`, L valueless), P's
+  // default is no value of the component's (L is 7) — none stands.
+  if (pairedHeads(model, best.root, best.component, true)) return undefined;
   return standingDefaultPath(model, best.root, best.component)?.source;
+}
+
+/**
+ * Does the component read in the package `root` join two or more features of
+ * definitions ({@link DefinitionHead}) — `bind P::load = P::cap` — which each
+ * instance of the definition reads at values of its own? With `orRedefined`,
+ * or one a feature with a value of its own redefines in some instance.
+ */
+function pairedHeads(model: Model, root: ElementId, component: string, orRedefined = false): boolean {
+  const heads = (bindingEnds(model).heads.get(root) ?? []).filter((h) => h.component === component);
+  return heads.length > 1 || (orRedefined && heads.some((h) => h.redefined || h.fixed !== undefined));
+}
+
+/** Why a package's binding between features of definitions gives an instance no value ({@link pairedHeads}). */
+function pairedHeadsSentence(model: Model, symbol: string, root: ElementId, component: string): string {
+  const sep = symbol.lastIndexOf('::');
+  const name = sep >= 0 ? symbol.slice(sep + 2) : symbol;
+  const instance = sep >= 0 ? symbol.slice(0, sep) : '';
+  const members = componentPaths(model, root, component);
+  return (
+    `${name} has no value in ${instance}: a binding of ${effectiveQualifiedName(model, root)} joins features of a ` +
+    `definition (${members.join(', ')}), each at its own value in every instance, and this tool reads none of them there`
+  );
+}
+
+/**
+ * Why a package's binding on a definition's feature gives an instance no
+ * value where some instance fixes that feature outside it ({@link
+ * DefinitionHead.fixed}): the binding carries that value into its other
+ * ends, and so into every instance, which this tool does not read.
+ */
+function fixedHeadSentence(model: Model, symbol: string, root: ElementId, component: string, head: DefinitionHead): string {
+  const sep = symbol.lastIndexOf('::');
+  const name = sep >= 0 ? symbol.slice(sep + 2) : symbol;
+  const instance = sep >= 0 ? symbol.slice(0, sep) : '';
+  const members = componentPaths(model, root, component);
+  return (
+    `${name} has no value in ${instance}: a binding of ${effectiveQualifiedName(model, root)} joins ${members.join(', ')} ` +
+    `in every instance of ${effectiveQualifiedName(model, head.definition.id)}, and ${head.fixed} gives ${head.path} a value ` +
+    'in one of them, which this tool does not read into the others'
+  );
 }
 
 /** The user packages of a model — `package` elements, nested ones included. */
