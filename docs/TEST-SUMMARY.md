@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4648 total — 4648 passed, 0 failed, 0 skipped
+- **Tests:** 4653 total — 4653 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -38,7 +38,7 @@
 | test/integration/smt-z3.integration.test.ts | 33 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
-| test/integration/verification.differential.test.ts | 199 | 0 | 0 |
+| test/integration/verification.differential.test.ts | 200 | 0 | 0 |
 | test/interop/self-roundtrip.test.ts | 10 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
@@ -112,7 +112,7 @@
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 170 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 173 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
@@ -147,7 +147,7 @@
 | test/unit/store.reducers.test.ts | 257 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
-| test/unit/text.connectors.test.ts | 12 | 0 | 0 |
+| test/unit/text.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/text.export-fidelity.test.ts | 3 | 0 | 0 |
 | test/unit/text.grammar2.test.ts | 14 | 0 | 0 |
 | test/unit/text.lexer.test.ts | 6 | 0 | 0 |
