@@ -5,12 +5,12 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4619 total — 4619 passed, 0 failed, 0 skipped
+- **Tests:** 4625 total — 4625 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 117 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 118 | 0 | 0 |
 | test/campaign/cli.test.ts | 13 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
 | test/campaign/verification.test.ts | 181 | 0 | 0 |
@@ -48,7 +48,7 @@
 | test/server/oslc-rdf.test.ts | 11 | 0 | 0 |
 | test/server/oslc-shapes.test.ts | 11 | 0 | 0 |
 | test/unit/api.analytics.test.ts | 67 | 0 | 0 |
-| test/unit/api.evidence.test.ts | 46 | 0 | 0 |
+| test/unit/api.evidence.test.ts | 49 | 0 | 0 |
 | test/unit/api.oslc.test.ts | 10 | 0 | 0 |
 | test/unit/api.prompts.test.ts | 14 | 0 | 0 |
 | test/unit/api.query.test.ts | 18 | 0 | 0 |
@@ -112,7 +112,7 @@
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 146 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 148 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
