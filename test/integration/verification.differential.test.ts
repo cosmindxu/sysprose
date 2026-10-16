@@ -2980,6 +2980,20 @@ describe('a redefinition is the feature in its context, and a value written with
     expect(contradiction).toHaveLength(3);
   });
 
+  withZ3('keeps a binding’s context row over such a contradiction refused: E9 spares it gate (e) only', async () => {
+    // q9's L = 50 contradicts q's L = 2: q9's `p.load == L` stays refused, and no bound on q's p's load is decided.
+    const text = `package E1 {
+    part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+    part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+    part q : Q { attribute :>> L = 2.0; }
+    part q9 :> q { attribute :>> L = 50.0; } }`;
+    const m = await contextModel(text, 'E1');
+    const c = await consistencyReport(m, { sourceText: text });
+    expect([c.refused, c.exitCode]).toEqual([1, 2]);
+    const b = await boundsReport(m, { measure: 'q.p.load', sense: 'both', sourceText: text });
+    expect([b.bounds.map((x) => x.outcome), b.exitCode]).toEqual([['inconclusive', 'inconclusive'], 2]);
+  });
+
   withZ3('reads two unnamed redefinitions of one usage as two symbols', async () => {
     const text = `package R18 {
     part def P { attribute a : ScalarValues::Real default = 1.0; attribute b : ScalarValues::Real default = 2.0; }
@@ -5640,6 +5654,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'G340::negT': ['T/T/T/T', 'T'],
       'G340::posF': ['F/F/F/F', 'F'],
     }),
+    // E9: q's binding `p.load == L` is read as a binding there, not refused by gate (e) as a bare copy against
+    // the derived mass L, so SMT reads q's p's m2 at −40 [kg] and its witness is the model's point.
     'u-m2': probe(`package UM2 {
         part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute m2 : ISQ::MassValue = 10.0 [SI::kg] - load; }
         part def Q {
@@ -5652,8 +5668,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 [SI::kg] }
         constraint m2PosF { q.p.m2 >= 0.0 [SI::kg] }
       }`, {
-      'UM2::m2NegT': ['T/T/T/?', 'T'],
-      'UM2::m2PosF': ['F/F/F/?', 'F'],
+      'UM2::m2NegT': ['T/T/T/T', 'T'],
+      'UM2::m2PosF': ['F/F/F/F', 'F'],
     }),
     // I6 on quantities: p's witness 2000 [g] IS the compared 2 kg; p2's k prints its own 10 (unit-less), as
     // the row compared 10 kg — not P's 4000 (grams, F2).
@@ -6377,6 +6393,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'N4::xl': ['?/?/?/X', null],
       'N4::zl': ['?/?/F/X', null],
     }),
+    // E9: `bind w = q.s` gives q an implicit copy of P's s (D1::q::s); SMT reads `q.s` by that copy and the numeric
+    // surface by P's s read in q — one feature, so its `violated` confirms gDerF's witness (C1's gF the same).
     'xtrack-d1-dec-inst': probe(`package D1 {
           part def P {
               attribute a : ScalarValues::Real default = 0.5;
@@ -6393,7 +6411,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           constraint gBindF { w > 0.3 }
       }`, {
       'D1::gBindF': ['F/F/?/F', 'F'],
-      'D1::gDerF': ['F/F/F/?', 'F'],
+      'D1::gDerF': ['F/F/F/F', 'F'],
       'D1::gDerT': ['T/T/T/T', 'T'],
       'D1::gSumF': ['F/F/F/F', 'F'],
       'D1::gSumT': ['T/T/T/T', 'T'],
@@ -6430,6 +6448,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'N2::c': ['?/?/?/X', null],
       'N2::lim': ['F/F/?/X', null],
     }),
+    // E9, open: `%` has no encoding yet, so z's axiom is refused and SMT's witness is not the model's point.
     fx4: probe(`package Fx4 {
           attribute x = 9.0;
           attribute z = x % 4.0;
@@ -6453,7 +6472,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           constraint wT { w == -80.0 }
           constraint wF { w == 18.0 }
       }`, {
-      'C1::gF': ['F/F/F/?', 'F'],
+      'C1::gF': ['F/F/F/F', 'F'],
       'C1::gT': ['T/T/T/T', 'T'],
       'C1::wF': ['F/F/F/F', 'F'],
       'C1::wT': ['T/T/T/T', 'T'],
@@ -7342,8 +7361,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   /**
    * I6's rows whose witness prints NO value for the compared path (`value: null`), on both engines, in
    * the row and in its record — recorded, not compared, and listed exactly as the false ones are.
-   * u-m2's (a derived quantity, `q.p.m2` in kg, left empty beside the compared 9) left with F1, which
-   * decides those rows no longer where the witness was printed; G271's control r0's `q.p.m2` (kg) is
+   * u-m2's (a derived quantity, `q.p.m2` in kg, left empty beside the compared 9) left with F1; since E9
+   * its SMT rows decide again and print the compared −40. G271's control r0's `q.p.m2` (kg) is
    * such a quantity too, beside its correct refutation. W4N's P's own `m2`, derived from the load a package's
    * `bind P::load = L` gives, is K5's shape: a derived value over a bound default.
    */

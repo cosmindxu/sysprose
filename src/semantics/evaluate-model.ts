@@ -3346,6 +3346,13 @@ export interface ReadOptions {
   identity?: boolean;
   /** The names it reads that this surface reads no value for, when the caller has them. */
   unread?: readonly string[];
+  /**
+   * The relation is a binding's equality read in a context: an identity, as
+   * the binding's own row reads it, so gate (e) is not asked of it, even where
+   * one end declares no unit (u-m2's `p.load == L`, a bound copy against a
+   * derived mass). An operand's own value fault is left to that operand's row.
+   */
+  binding?: boolean;
 }
 
 /**
@@ -3395,7 +3402,9 @@ export function readRefusalOf(
   // converts across the scale as a binding does ({@link relationRefused}).
   const offset = identity ? undefined : absoluteOperandFault(model, node, nameToId, markers, memo, skip);
   if (offset) return { reason: 'offset', detail: describeReason('offset', offset) };
-  const bare = derivedBareLiteral(model, node, relationVarsOf(node, nameToId), nameToId, markers, memo, skip, chains);
+  const bare = opts.binding
+    ? undefined
+    : derivedBareLiteral(model, node, relationVarsOf(node, nameToId), nameToId, markers, memo, skip, chains);
   if (bare) return { reason: 'derived-bare-literal', detail: bare };
   return undefined;
 }
