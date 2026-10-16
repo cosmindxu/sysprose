@@ -272,18 +272,6 @@ headings.
       of the default's owner and a per-type orientation (`rh`, `rh2`) read as before. X11's
       value-source clause still names `through X11::Q's bind` (`readsClause`). [O5, review]
 
-- [ ] **Resolve a name through the writing element's lexical scope (`h2p0`, `h2c0`, EnclW rows).** A
-      name not found in the feature scope reads unknown: in `package Lex { attribute K = 7.0; part
-      def A { attribute x = K; constraint c { x == 7.0 } } }` `verify --engine literal` says `c` is
-      not evaluable, and so is the qualified `x = Lex2::K` and a nested definition reading its
-      enclosing definition's `y`. The two per-instance probes `h2p0` and `h2c0` and the
-      enclosing-definition control rows (EnclW1 ×3, EnclW3 ×3, EnclW5 `ctlA`, EnclW4 `rc`) abstain
-      for this reason. Fix: resolve a name not found in the context's feature scope through the
-      writing element's owning namespaces; a package feature is one instance, an enclosing
-      definition's feature is read in the enclosing instance, and a generic read abstains where a
-      specialiser changes the value; handle both `= L` and `assert { p.x == L }`. Done when those
-      ten rows decide on all four surfaces. [review 2026-10-14 E3] Builds on the H5 rule (merged; the
-      instance machinery).
 - [ ] **Decide the nonlinear and implicit shapes (classes D and E).** `b4c`, `n4`–`n6` and
       `s2-usage-assert-leak` abstain because their value is nonlinear or implicit (n4's
       `x * x == -1.0` admits no model), and the inequality-only asserts (B2 `g1`, S2 `y1`) leave no
@@ -292,48 +280,32 @@ headings.
       would break soundness decision 3. Done when the maintainer has chosen and the rows are pinned
       with that reason. [review 2026-10-14 E4] Awaits user decision U8 (keep classes D and E
       abstaining for good and drop the item, or schedule an NRA solve).
-- [ ] **Make the implicit end copy of a usage-body binding redefine the most specific inherited
-      feature (`h2-bodyspec`).** Four rows are false on all four surfaces and pinned `KNOWN_FALSE`
-      (`verification.differential.test.ts:5015`): `h2-bodyspec-plain` m2NegT and m2PosF,
-      `h2-bodyspec-rev` lT and lF. Probe (`h2-bodyspec-plain`): `package H2BP { part def P {
-      attribute load default = 1.0; attribute m2 = 10.0 - load; } part def Q { attribute L :
-      ScalarValues::Real; part p : P; } part def Q2 :> Q { attribute :>> L = 50.0; } part q : Q2 {
-      bind p.load = L; } constraint m2NegT { q.p.m2 <= 0.0 } constraint m2PosF { q.p.m2 >= 0.0 }
-      }` (re-run at 5943654: `verify` refutes `m2NegT` at 9 on the literal and SMT engines): the
-      copy `q::L` redefines `Q::L`, not `Q2::L` (`ensureImplicitFeature`,
-      `src/text/langium/map-to-model.ts:440-476`, handed the declaring feature by the head-name loop
-      at `:562-576`), so every surface reads the general value or none and P's default stands
-      (m2NegT reads F/F/F/F where it is T). Fix: make the copy redefine the most specific inherited
-      feature (compare `findTypeFeature`, `:423`, which does this for the segments of a chain), or
-      refuse such a binding on every surface. Done when the four rows leave `KNOWN_FALSE`.
-      [review 2026-10-14 E5] Awaits user decision U10 (fix the mapper, or refuse the binding on all
-      four surfaces).
-- [ ] **Settle `d1plain`: a plain value against a bound end.** Two rows, `D1P::at30` and `D1P::atL`,
-      are pinned `KNOWN_FALSE` and `I7_ALLOWED`. Probe: `package D1P { part def P { attribute load
-      default = 1.0; attribute m2 = 10.0 - load; } part def Q { attribute L = 50.0; part p : P; bind
-      p.load = L; } part q : Q { part :>> p { attribute :>> load = 30.0; } } constraint at30 {
-      q.p.m2 >= -20.0 } constraint atL { q.p.m2 <= -40.0 } }`: `q` states `load` twice (30 against
-      the bound 50), the check, literal and numeric surfaces decide T/F where the ref is `?` (re-run
-      at 5943654: the literal engine holds `at30` and refutes `atL`), and SMT reports
-      `inconsistent-axioms`. Either all three abstain
-      (`two-values`, both rows leave `KNOWN_FALSE` and `I7_ALLOWED`), or today's reading stays and
-      the ref becomes decided. Done when the rows leave both lists. [review 2026-10-14 E6] Awaits
-      user decision U11 (abstain, or keep today's reading and decide the ref).
-- [ ] **Read a context row whose bound partner is a derived value that differs per context.** Three
-      rows are refused by the "reads it alike" guard and abstain (?/?/?/?, ref F):
-      `M7::Q::c in M7::q2`, `FanS2::QB::cq in FanS2::Q2` and `EnclW4::R::rc in EnclW4::r`. Fix: read
-      the context row at the context's own instance (`instanceNameOf(context)`) through the
-      per-instance read (rebase, then the binding's value in that instance) instead of refusing.
-      Done when the three rows read F on all four surfaces. [review 2026-10-14 E7]
-- [ ] **Let SMT confirm the witness of the ten rows it abstains on beside a decided verdict.** SMT
-      answers "witness not confirmed" (the same-point gate,
-      `src/semantics/engines/smt.ts:1785-1812`) on u-m2 (`m2NegT`, `m2PosF`: T/T/T/? and F/F/F/?),
-      EnclW5 (`negT`, `posF`), GlobW10 ×2, fx4 ×2, D1 `gDerF` and C1 `gF`. Fix: instance value rows
-      for unit-typed derived values (u-m2), usage-body frames (EnclW5) and package-derived G
-      (GlobW10) in `instanceValueRow` (`src/semantics/obligations.ts:1881`); make the confirm step
-      compare the same feature (`q::s`, not `P::s`; D1, C1); encode `%` over a constant divisor as
-      `x = d·k + r` with integer k in QF_LIRA (fx4). Done when those ten rows read the decided
-      verdict on SMT too. [review 2026-10-14 E9]
+- [ ] **Finish what `table-rows` left of E3, E6 and E9.** The branch (merged by `0a69bcf`) closed E5
+      (the mapper's end copy) and E7 (the context row at its own instance), made `d1plain` abstain
+      (A.5), and moved eight of E3's ten rows and eight of E9's ten. Still open, pinned in
+      `KNOWN_FALSE` / `I7_ALLOWED` as "no step yet": (1) E3 `h2p0` (`P::c in Q::p`) and `h2c0`
+      (`Q::c`) read ?/?/?/? beside ref T: they need a per-instance read of a non-uniform enclosing
+      attribute, plus the new `in q::p` and `in q` rows (F); (2) E6 `D1E`, the expression-valued
+      pair (`load = 30.0` against `L = 2.0 * K`), and `m7y`, read as before; (3) E9 `Fx4` `c` and
+      `c2` (`%` over a constant divisor) stay T/T/T/?: encoding `%` in QF_LIRA means a new
+      standard-refused construct across about twelve differential tests, `smt-encode`, the campaign,
+      five fixtures, the unsupported-construct catalogue and the docs; and `P5G` stays in
+      `SAME_POINT_DEMOTED`; (4) the E9 entry's diagnosis of `u-m2` was wrong (gate (e) refused the
+      binding's context row); and gate (e) does not see the dimension a binding gives an untyped
+      feature, so the check reads it unit-blind (50000 g) where numeric, SMT and bounds read SI (50)
+      (`UB6 q::big`, `UB4 cX/dX`: I1 clashes since before the branch, not pinned). [O6]
+- [ ] **Read a name by the scope the surfaces use, and the shapes the lexical rule leaves.** Pinned
+      "no step yet": (1) a bare name is read as the one feature nested below the context that
+      answers it before the lexical name (`NX1`, `NX3`, `NX4`); (2) a body inherited from a general
+      type is read in the context's own scope (`DY1`: q's own `L` answers the `load = L` Q's p
+      writes; false on three surfaces since before the branch); (3) an end copy under two general
+      types that each redefine its head (`MI1`, `MI2`); (4) an enclosed binding has no `#bind` row
+      and no SMT axiom where its usage is redefined (`EB4`, `EB5`); (5) a context that sets the
+      bound partner's input by an asserted equation, or redefines the bound feature under a new
+      name, gets no `c in q2` row on any surface (`R22B`, `R27F`, `R38`); (6) the SMT engine does not
+      read a unit-typed package binding (`W4u`); (7) a name reached through an import or alias, a
+      qualified `Lex::K` and a non-attribute lexical feature are left unread; (8) typed asserts are
+      ignored by the engines (`CD1`). [O6 S1-S4, reviews]
 - [ ] **Read bindings deeper than 32 usages (optional).** A context more than `MAX_BINDING_SEGMENTS`
       (32, `src/semantics/defining-equation.ts:2001`) usages below where its binding is written is
       not read, so the check and the literal engine abstain on `chain33` and `chainPkg33` (four
