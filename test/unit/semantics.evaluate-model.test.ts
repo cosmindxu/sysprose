@@ -2227,6 +2227,22 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(ce.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
       ['q', 'satisfied', 'q::load = 3 meets Q::c (load <= 5.0)'],
     ]);
+    // A binding whose end is outside the element that writes it (R's L in q's body, EB4) files no row of its
+    // own, so the sentence points at none.
+    const { model: eb } = await loadModelText(`package EB4 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+      part def Q { part p : P; }
+      part def R { attribute L : ScalarValues::Real default = 5.0; part q : Q { bind p.load = L; } }
+      part r2 : R { attribute :>> L = 50.0; part :>> q { part :>> p { attribute :>> load = 3.0; } } }
+    }`);
+    const ceb = checkConstraints(eb!).find((x) => eb!.qualifiedName(x.id) === 'EB4::P::c')!;
+    const r2 = ceb.instances!.find((i) => i.instance === 'EB4::r2::q::p')!;
+    expect([r2.result, r2.message.includes('joins two values the model states'), r2.message.includes('own finding')]).toEqual([
+      'unknown',
+      true,
+      false,
+    ]);
+    expect(checkConstraints(eb!).filter((x) => x.conflict === 'bind')).toEqual([]);
   });
 
   it('reports a binding violated only where its own two ends state different values with `=` (A.5)', async () => {

@@ -5558,6 +5558,26 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'UB2::at30': ['?/?/?/X', '?'],
       'UB2::atL': ['?/?/?/X', '?'],
     }),
+    // Two general types that each redefine the end's head (Q2's `L = 50.0`, Q3's `L = 60.0`) leave no one
+    // most specific (O6's branch review): the copy redefines Q's declared L as at 755352c — the first cut took
+    // whichever came first, and read 50 (or 60 for `:> Q3, Q2`) beside the `#clash` that says neither is read.
+    // The copy then reads P's default 1 (KNOWN_FALSE, no step yet).
+    'mapper-mi1': probe(`package MI1 {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part def Q3 :> Q { attribute :>> L = 60.0; }
+        part def Q23 :> Q2, Q3;
+        part q : Q23 { bind p.load = L; }
+        constraint t50 { q.p.load == 50.0 }
+        constraint t60 { q.p.load == 60.0 }
+        constraint u50 { q.L == 50.0 }
+      }`, {
+      'MI1::Q3::«AttributeUsage» in MI1::Q23#clash': ['F/-/F/-', 'F'],
+      'MI1::t50': ['F/F/F/X', '?'],
+      'MI1::t60': ['F/F/F/X', '?'],
+      'MI1::u50': ['F/F/F/X', '?'],
+    }),
     // Found by F2's review (identical before F1): a bound partner's default RESTATED, equal to the partner
     // definition's own, in a redefinition (`part :>> p { attribute :>> a default = 50.0; }`). The restated
     // default is held, so q4's p.a reads nothing, but p.b is read at P::b over P::a's own default — and the
@@ -5820,6 +5840,45 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       // r's K reaches the bound L: r's own reading of rc, at r's instance since O6 S4 (E7).
       'EnclW4::R::rc in EnclW4::r': ['F/F/F/F', 'F'],
     }),
+    // Such a binding against a value written with `=` in the enclosing instance (O6's branch review): r2's q's
+    // p's own `load = 3.0` beside r2's L of 50 (EB4), or R2's beside R's `L = 50.0` (EB5). The check, the
+    // literal engine and the numeric surface read neither (A.5), and their sentence points at no finding: the
+    // binding files no `#bind` row there, and the SMT engine no axiom where q is redefined, so it proves the
+    // rows at 3 (KNOWN_FALSE, no step yet; T on all four surfaces at 755352c).
+    'encl-eb4': probe(`package EB4 {
+        part def P { attribute load default = 1.0; constraint c { load <= 10.0 } }
+        part def Q { part p : P; }
+        part def R {
+          attribute L default = 5.0;
+          part q : Q { bind p.load = L; }
+        }
+        part r2 : R { attribute :>> L = 50.0; part :>> q { part :>> p { attribute :>> load = 3.0; } } }
+        constraint t2 { r2.q.p.load <= 10.0 }
+      }`, {
+      'EB4::P::c': ['T/T/T/T', 'T'],
+      'EB4::P::c in EB4::Q::p': ['T/T/T/T', 'T'],
+      'EB4::P::c in EB4::R::q::p': ['?/?/?/?', '?'],
+      'EB4::P::c in EB4::r2::q::p': ['?/?/?/T', '?'],
+      'EB4::t2': ['?/?/?/T', '?'],
+    }),
+    'encl-eb5': probe(`package EB5 {
+        part def P { attribute load default = 1.0; constraint c { load <= 10.0 } }
+        part def Q { part p : P; }
+        part def R {
+          attribute L = 50.0;
+          part q : Q { bind p.load = L; }
+        }
+        part def R2 :> R { part :>> q { part :>> p { attribute :>> load = 3.0; } } }
+        part r2 : R2;
+        constraint t2 { r2.q.p.load <= 10.0 }
+      }`, {
+      'EB5::P::c': ['T/T/T/T', 'T'],
+      'EB5::P::c in EB5::Q::p': ['T/T/T/T', 'T'],
+      'EB5::P::c in EB5::R2::q::p': ['?/?/?/T', '?'],
+      'EB5::P::c in EB5::R::q::p': ['F/F/F/F', 'F'],
+      'EB5::P::c in EB5::r2::q::p': ['?/?/?/T', '?'],
+      'EB5::t2': ['?/?/?/T', '?'],
+    }),
     // A package's own partner is one instance wherever it is read: still read (a control). Since O6 S1 the
     // SMT engine reads the binding in the package for q's p (`q.p.load == G`), and confirms both rows.
     'global-W10': probe(`package GlobW10 {
@@ -5980,15 +6039,34 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // A plain `=` on a redefinition the package's binding fills is the contradiction of decision 1: d1plain's
     // shape, which U11 decided (A.5, `two-values`: ref ?). Only p4's own 7 is read by no surface but SMT's
     // axioms, which find them inconsistent: the package's L, one instance, is still read at 50 on the check
-    // and the literal engine (and by another instance through it), and on the numeric surface nowhere.
+    // and the literal engine (and by another instance through it: p5's load), and on the numeric surface,
+    // which reads P's `load` once for every instance, nowhere (O6's branch review: p5's c5 read 50 there at
+    // 755352c).
     'w4-plain': probe(`package W4o {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         attribute L : ScalarValues::Real = 50.0;
         bind P::load = L;
         part p4 : P { attribute :>> load = 7.0; }
+        part p5 : P;
         constraint c4 { p4.m2 >= 0.0 }
+        constraint c5 { p5.load >= 40.0 }
       }`, {
       'W4o::c4': ['?/?/?/X', '?'],
+      'W4o::c5': ['T/T/?/X', 'T'],
+    }),
+    // The same pair in units (O6's branch review): the check, the literal engine and the numeric surface read
+    // neither value, but the SMT engine encodes no binding axiom for p4 here and proves c4lo at p4's 7 kg,
+    // where the plain-number model above is inconsistent (KNOWN_FALSE, no step yet; T/T/T/T at 755352c).
+    'w4-unit': probe(`package W4u {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; }
+        attribute L : ISQ::MassValue = 50.0 [kg];
+        bind P::load = L;
+        part p4 : P { attribute :>> load = 7.0 [kg]; }
+        constraint c4lo { p4.load <= 10.0 [kg] }
+        constraint c4hi { p4.load >= 40.0 [kg] }
+      }`, {
+      'W4u::c4hi': ['?/?/?/?', '?'],
+      'W4u::c4lo': ['?/?/?/T', '?'],
     }),
     // The package's binding makes L one value with every instance's load, so a slot an instance fixes OUTSIDE the
     // binding fixes L and every other instance: Q's `bind p.load = M` (W4X1, W4X6), the package's own `bind p2.load
@@ -6302,6 +6380,45 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'LR1::Q::p::t': ['?/-/?/-', null],
       'LR1::topF': ['?/?/?/?', 'F'],
       'LR1::topT': ['?/?/?/?', 'T'],
+    }),
+    // A bare name that one feature nested below the context answers (`part p : P` with P's `K = 7.0`) is read
+    // as that feature before the name its owners declare (the package's `K = 50.0`, which KerML resolves): A's
+    // `x = K` reads 7 (NX3). The H5 rules read the other side of an assert by the same scope (O6's branch
+    // review): the first cut took the package's K as `x == K`'s value of its own, x's default gave way, and
+    // every surface then read p's 7 — `defines x = 7` and four T rows, where 755352c's check flagged the
+    // assert. They are back to 755352c's rows (KNOWN_FALSE, no step yet: KerML gives x = 50).
+    'lex-nx1': probe(`package NX1 {
+        attribute K = 50.0;
+        part def P { attribute K = 7.0; }
+        part def A { attribute x default = 1.0; part p : P; assert constraint t { x == K } constraint c { x <= 10.0 } }
+        part a : A;
+        constraint top { a.x <= 10.0 }
+      }`, {
+      'NX1::A::c': ['T/T/T/X', 'F'],
+      'NX1::A::t': ['F/-/F/-', 'T'],
+      'NX1::top': ['T/T/T/X', 'F'],
+    }),
+    'lex-nx3': probe(`package NX3 {
+        attribute K = 50.0;
+        part def P { attribute K = 7.0; }
+        part def A { attribute x = K; part p : P; constraint c { x <= 10.0 } }
+        part a : A;
+        constraint top { a.x <= 10.0 }
+      }`, {
+      'NX3::A::c': ['T/T/T/T', 'F'],
+      'NX3::top': ['T/T/T/T', 'F'],
+    }),
+    'lex-nx4': probe(`package NX4 {
+        attribute K = 50.0;
+        part def P { attribute x default = 1.0; constraint c { x <= 10.0 } }
+        part def R { attribute K = 7.0; }
+        part def Q { part p : P; part r : R; }
+        part q1 : Q { assert constraint tie { p.x == K } }
+        constraint top { q1.p.x <= 10.0 }
+      }`, {
+      'NX4::P::c': ['T/T/T/X', 'T'],
+      'NX4::q1::tie': ['F/-/F/-', 'T'],
+      'NX4::top': ['T/T/T/X', 'F'],
     }),
     'mapper-s4': probe(`package S4 {
         part def P { attribute x : ScalarValues::Real; constraint c { x <= 10.0 } }
@@ -7294,6 +7411,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * or a part redefined with a value (RF, RF2, fail-closed to the reading before H5), an equation whose
    * other side is valued only in usages (PIN2), and S5's residue (V8R, R8A).
    *
+   * O6's branch review added rows false as at 755352c, each with no step yet: a bare name read as the one
+   * feature nested below the context that answers it, before the name KerML resolves (NX1, NX3, NX4); an end
+   * copy under two general types that each redefine its head (MI1); and two pairs A.5 leaves unread that the
+   * SMT engine still proves, a binding to a feature of the enclosing instance (EB4, EB5) and a package's
+   * binding in units (W4u).
+   *
    * F1b corrected the rows where two defaults a binding joins were agreed by their TEXT (`2.0 * K` read in
    * two instances, R3a–c) though their values differ (2 vs 10; 2 vs 50): no value exists, and no
    * contradiction (their `#bind`); every surface now abstains on them.
@@ -7341,6 +7464,38 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           'Found by the O6 S1 review, as at 755352c, no step yet: a body a general type writes is read in the context’s scope, so q’s p’s own `L = 50.0` answers the `load = L` Q’s p writes, where KerML resolves it to Q’s L (1); the SMT engine refuses the name (`unresolved-name`)',
         ] as const,
     ),
+    ...['lex-nx1 | NX1::A::c', 'lex-nx1 | NX1::A::t', 'lex-nx1 | NX1::top', 'lex-nx3 | NX3::A::c', 'lex-nx3 | NX3::top'].map(
+      (key) =>
+        [
+          key,
+          'Found by O6’s branch review, as at 755352c, no step yet: a bare name one feature nested below the context answers (p’s K, 7) is read as that feature before the package’s K (50) that KerML resolves it to',
+        ] as const,
+    ),
+    ...['lex-nx4 | NX4::q1::tie', 'lex-nx4 | NX4::top'].map(
+      (key) =>
+        [
+          key,
+          'Found by O6’s branch review, as at 755352c, no step yet: q1’s `p.x == K` reads K as r’s (7), the one feature nested below q1 of that name, not the package’s 50 that KerML resolves it to; so the enclosing rule gives p.x no value of its own and x’s default stands',
+        ] as const,
+    ),
+    ...['MI1::t50', 'MI1::t60', 'MI1::u50'].map(
+      (row) =>
+        [
+          `mapper-mi1 | ${row}`,
+          'Found by O6’s branch review, as at 755352c, no step yet: Q2’s and Q3’s `L` both reach q through Q23 (the `#clash`: neither is read), but q’s end copy redefines Q’s valueless L, so P’s default 1 is read for q.p.load',
+        ] as const,
+    ),
+    ...['encl-eb4 | EB4::P::c in EB4::r2::q::p', 'encl-eb4 | EB4::t2', 'encl-eb5 | EB5::P::c in EB5::R2::q::p', 'encl-eb5 | EB5::P::c in EB5::r2::q::p', 'encl-eb5 | EB5::t2'].map(
+      (key) =>
+        [
+          key,
+          'NO STEP yet (found by O6’s branch review; T on all four surfaces at 755352c): a binding to a feature of the enclosing instance joins q’s p’s own `load = 3.0` to the 50 that instance’s L states (A.5: no value); the SMT engine has no axiom of that binding where q is redefined, and proves the row at 3',
+        ] as const,
+    ),
+    [
+      'w4-unit | W4u::c4lo',
+      'NO STEP yet (found by O6’s branch review; T on all four surfaces at 755352c): a package’s `bind P::load = L` in units against p4’s own `load = 7.0 [kg]` (A.5: no value); the SMT engine encodes no binding axiom for p4 there, and proves the row at 7 kg',
+    ],
     ...['V8R::W::pT in V8R::w', 'V8R::W::pF in V8R::w', 'R8A::qT', 'R8A::qF'].map(
       (row) =>
         [
@@ -7412,6 +7567,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       (row) => [`h5-pin2 | ${row}`, 'P’s asserted `L == M` against L’s default where p and p2 value M: the default stands and contradicts it (H5, open; see KNOWN_FALSE)'] as const,
     ),
     ['h5-hi | HI::top', 'an inequality defines nothing (U5): x’s default stands and q1’s asserted `p.x >= 5.0` contradicts it; the check reads the default'],
+    ['w4-plain | W4o::c5', 'p4’s own `load = 7.0` against the package’s bound L (50): the contradiction of decision 1 the SMT engine reports; p5’s load, which the binding makes L, is read at 50 by the check and the literal engine'],
+    ...['lex-nx1 | NX1::A::c', 'lex-nx1 | NX1::top', 'lex-nx4 | NX4::P::c', 'lex-nx4 | NX4::top'].map(
+      (key) =>
+        [
+          key,
+          'the assert’s other side K is read as the feature nested below its context (7), so no H5 rule takes it as a value of its own: x’s default stands, and the SMT engine finds it contradicts the assert (see KNOWN_FALSE)',
+        ] as const,
+    ),
+    ...['MI1::t50', 'MI1::t60', 'MI1::u50'].map(
+      (row) => [`mapper-mi1 | ${row}`, 'Q2’s `L = 50.0` and Q3’s `L = 60.0` both reach q (the `#clash`): a contradictory model the SMT engine reports; the check reads P’s default (see KNOWN_FALSE)'] as const,
+    ),
     ...['BND::P::c', 'BND::P::c in BND::Q::p', 'BND::P::c in BND::q1::p', 'BND::P::c in BND::q2::p', 'BND::top1', 'BND::top2'].map(
       (row) =>
         [

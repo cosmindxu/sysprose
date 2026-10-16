@@ -793,10 +793,10 @@ export class DefiningEquations {
       if (!agree || !target || target.feature.eClass !== 'AttributeUsage') continue;
       const { owner: o, feature: f } = target;
       if (this.specialisersOf(contextId).some((s) => (this.byName(s.id).get(n) ?? f) !== f)) continue;
-      // A package's `default` an assert elsewhere names may give way there
+      // A package's `default` an assert other than its own names (one nested in it too) may give way there
       // with the default it is set equal to (U7): not one value either.
       const elsewhere = isPackage(o) && f.attrs.defaultValue === true && [...(this.assertedNames().get(n) ?? [])].some((x) => x !== o.id);
-      const why = elsewhere ? `an asserted relation outside it names ${n}` : isPackage(o) ? undefined : this.lexicallyUniform(o.id, f, n);
+      const why = elsewhere ? `an asserted relation other than its own names ${n}` : isPackage(o) ? undefined : this.lexicallyUniform(o.id, f, n);
       if (why !== undefined) {
         refused.set(n, `${n} is read through ${this.qualifiedNameOf(o.id)}, which declares it, and is not one value in every instance of it: ${why}`);
         continue;
@@ -4037,8 +4037,12 @@ function assertHeld(model: Model): ReadonlySet<ElementId> {
  * package `L = 50.0` for p's `x == L`. `undefined` for any other name.
  */
 function lexicalConstant(model: Model, contextId: ElementId, n: string): ElementRecord | undefined {
-  const f = sharedDefinitions(model).lexicalFeature(contextId, n);
+  const definitions = sharedDefinitions(model);
+  const f = definitions.lexicalFeature(contextId, n);
   if (!f || f.attrs.defaultValue === true) return undefined;
+  // Only where the context's own scope reads the name as that feature: a unique feature nested below the
+  // context answers it first (`part p : P` with P's `K`, beside the package's `K`: NX1), and that is read.
+  if (definitions.denote(contextId).get(n)?.feature.id !== f.id) return undefined;
   const v = f.attrs.value;
   if (typeof v === 'number' || typeof v === 'boolean') return f;
   return typeof v === 'string' && !isQuoted(v.trim()) && parseRelationBody(v.trim()) && namesOfValue(v).length === 0 ? f : undefined;
@@ -4158,7 +4162,11 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
       const known = seen.get(n);
       if (known !== undefined) return known;
       seen.set(n, false);
-      if (n !== path && !n.includes('.') && !featuresOf(ownerId).has(n)) {
+      // Not a name the owner's scope reads as a feature nested below it (`part r : R` with R's `K`, beside
+      // the package's `K`: NX4): it gives the path no value of its own.
+      const scoped = !n.includes('.') ? sharedDefinitions(model).denote(ownerId).get(n) : undefined;
+      const lexical = scoped === undefined || scoped.feature.id === sharedDefinitions(model).lexicalFeature(ownerId, n)?.id;
+      if (n !== path && !n.includes('.') && !featuresOf(ownerId).has(n) && lexical) {
         const outer = lexicalConstant(model, ownerId, n) !== undefined || resolveFullName(model, n, ownerId) !== undefined;
         if (outer && lexicalConstant(model, ownerId, n) === undefined) unread.set(eq, [...(unread.get(eq) ?? []), n]);
         seen.set(n, outer);
@@ -5516,7 +5524,9 @@ function memberInstance(definitions: DefiningEquations, root: ElementId, path: s
 /**
  * Why a binding component gives no value, in the A.9 sentence — `two-values`
  * pointing at the binding's own finding, which a package's binding on a
- * definition's feature does not file (`finding` false).
+ * definition's feature does not file (`finding` false), nor one whose end is
+ * outside the element that writes it (R's `L` in `part q : Q { bind p.load =
+ * L; }`: no end path, EB4).
  */
 function abstentionSentence(
   model: Model,
@@ -5541,7 +5551,7 @@ function abstentionSentence(
     return (
       `${name} is not read in ${instance}: ${bind}${of} joins two values the model states (${members.join(', ')}), ` +
       'and a binding holds in every instance' +
-      (finding ? ' (see the binding\u2019s own finding)' : '')
+      (finding && l !== undefined && r !== undefined ? ' (see the binding\u2019s own finding)' : '')
     );
   }
   if (kind === 'defaults-differ') {
