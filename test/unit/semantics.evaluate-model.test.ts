@@ -3729,6 +3729,22 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
       ['PC::q1::p', 5, 'attribute :>> L = 50.0'],
       ['PC::q2::p', 8, 'attribute :>> L = 60.0'],
     ]);
+    // A specialised definition's own instance (Q2's p) is read in Q2: its finding points at Q2's `:>> L`,
+    // not at Q's `part p : P`, which Q's own p and q3's p share.
+    expect(
+      await anchored(
+        [
+          'package R3 {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }',
+          '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+          '  part def Q2 :> Q {',
+          '    attribute :>> L = 50.0;',
+          '  }',
+          '  part q3 : Q;',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([['R3::Q2::p', 5, 'attribute :>> L = 50.0']]);
   });
 
   it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {

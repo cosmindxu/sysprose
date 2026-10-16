@@ -13,7 +13,7 @@
  *    measure through the features that specialise it, once per context.
  */
 
-import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/index';
+import { type ElementId, type ElementRecord, type Model, isDefinition, isUsage } from '@core/index';
 import {
   DefiningEquations,
   GUARD_CONTACT,
@@ -1339,17 +1339,19 @@ export function anchorFor(model: Model, check: ConstraintCheck, inst: Specialisa
 /**
  * The anchor an instance's row sets (C.1's anchor rule, PI-2), so its finding
  * points at the line that makes the instance differ, never at the usage every
- * instance shares. The instance's own usages are the user usages on its path
- * whose own instance is that step of it (q1 for `q1::p`; `own`, the instance's
- * own element, where it has one). The anchor is (1) the member of one of them
- * stating the value a binding carries into the instance — the value source
+ * instance shares. The instance's own elements are the user usages and
+ * definitions on its path whose own instance is that step of it (q1 for
+ * `q1::p`, Q2 for Q2's own `Q2::p`; `own`, the instance's own element, where
+ * it has one); never a package, which every instance in it shares. The
+ * anchor is (1) the member of one of them stating the value a binding
+ * carries into the instance — the value source
  * a read names (q1's `attribute :>> L = 50.0` for `P::c in q1::p`), where
  * that member's own value is the one read, or else the component's single
  * stated member written in one of them ({@link DefiningEquations.statedMember}:
  * where the relation reads a value derived from the bound one, h2c's `p.m2 =
  * 10.0 - load`, or one the instance's own binding holds, A4's q2's `E`); else
  * (2) the element the instance is read in (`readIn`: q2's `part :>> p { … }`,
- * Q2's `part :>> p : P2`); else (3) the innermost of its own usages (r1, where r1 sets the K a bound L derives from;
+ * Q2's `part :>> p : P2`); else (3) the innermost of its own elements (r1, where r1 sets the K a bound L derives from;
  * `sys::r1`'s r1, not the `sys` its siblings share); else (4) `own` itself, a
  * context that is no usage (`part def Q2 :> Q`). Never an implicit or a library
  * element; `undefined` where none is found, or where working it out throws
@@ -1371,7 +1373,8 @@ function instanceAnchor(
     const frames = [...(definitions.framesAbove(inst) ?? []), ...(own !== undefined ? [{ instance: inst, reader: own }] : [])];
     const mine = frames.filter(({ instance, reader }) => {
       const el = model.get(reader);
-      return user(el) && isUsage(el.eClass) && definitions.instanceNameOf(el.id) === instance;
+      const owns = el !== undefined && (isUsage(el.eClass) || (isDefinition(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage'));
+      return user(el) && owns && definitions.instanceNameOf(el.id) === instance;
     });
     const sources = (reads ?? []).flatMap((r) => (r.via !== undefined ? [r.via.sourceSymbol] : []));
     for (const source of sources) {
