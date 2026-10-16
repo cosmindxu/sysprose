@@ -969,7 +969,14 @@ port bound to two inner ports), a row that may read a value the binding
 carries is *could not be evaluated*, in a sentence that names the binding: one
 that reads through either end or a usage above one, or through a feature a
 binding, a value or an `assert` ties to one, and one read for an instance at
-or below one. Every other row of the model reads as before. A
+or below one. Every other row of the model reads as before. A part, port or
+item valued with another (`part pp : T0 = top.a`, `part :>> p = other`)
+equates the two the same way, and is never read through: such rows are *could
+not be evaluated*, in a sentence that names the value. A reference valued so
+is read as what it names (`ref part pp : T0 = top.a`: top's a's load), but one
+written in a definition reads the definition's own `top`, not each instance's
+(W's, read in w whose top differs), and an attribute a binding equates with
+another attribute (`bind q = top.pos`) reads its own default: known gaps. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A binding written in a usage's body to a feature of
@@ -1028,7 +1035,11 @@ and an equation that contradicts it is reported violated. An equation that
 names a feature by its path, `assert constraint { p.x == 3.0 }` over `part p :
 P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
-against it) or two such asserts give it two (it is read as no value). An assert
+against it) or two such asserts give it two (it is read as no value). Where
+that binding's value is a `default` (`bind p.x = L` with `L default = 4.0`),
+the assert should stand over it. This is a known gap: the check, the literal
+engine and the numeric surface read the 4 and report the assert violated, and
+the solver lane finds the axioms inconsistent. An assert
 written in an instance around the feature, over a `default` (`part q1 : Q {
 assert constraint { p.x == 50.0 } }`), defines it in that instance alone: q1's
 p's x is 50 on every surface, while P's own x, Q's p's and every other
@@ -1040,10 +1051,19 @@ for the package's `assert constraint { q1.p.x == 50.0 }`, for an assert of
 q1's type (`part def Q2 :> Q { assert constraint { p.x == 50.0 } }`, with `part
 q1 : Q2`), in every instance of that type, and for a bare `L == 5.0` in a
 definition that specialises L's owner; q1's own `part :>> p { attribute :>> x
-default = 9.0; }` under such an assert reads 50 too, its 9 read nowhere. A
-binding into the instance is read over the assert (`bind p.x = K` in q1 under
-Q's `p.x == 50.0`): q1's p reads K, and the assert is reported violated
-against it. An equation over names, `p.x == M`, is read over q1's own M — it
+default = 9.0; }` under such an assert reads 50 too, its 9 read nowhere. So
+does a redefinition that renames p (`part pp :>> p`), at `pp.x`, on every
+surface but the SMT engine, which cannot read the assert's `p.x` in that
+instance and leaves its rows undecided. A path
+through a reference or a subject, or through a part some usage redefines as
+one or with a value (`ref part :>> r = p1`, `part :>> p = other`), is not
+read so: the instance there may be another one, so the default stands, the
+assert is reported violated against it, and the solver lane finds the axioms
+inconsistent. A binding into the instance whose value is written with `=` is
+read over the assert (`bind p.x = K` in q1, K = 7.0, under Q's `p.x ==
+50.0`): q1's p reads K, and the assert is reported violated against it. One
+whose value is a `default` is read the same way, the known gap above. An
+equation over names, `p.x == M`, is read over q1's own M — it
 is *could not be evaluated* where it is written in an element that is not the
 instance's own (an assert in a usage nested in a definition) or beside a
 `[unit]` literal. Two such equations that give the value two values, or two

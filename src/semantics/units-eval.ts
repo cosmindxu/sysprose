@@ -71,6 +71,7 @@ import {
   shadowedSentence,
   sharedDefinitions,
   statedValueOf,
+  undecidedPartnerOf,
   type BoundSource,
   type Contact,
   type DefiningEquation,
@@ -1874,9 +1875,13 @@ function deriveFeatureUncached(
   // An asserted equation of an element enclosing the instance defines it there
   // (H5's enclosing rule): its derivation, where the equation is a constant
   // (`assertDefinitionIn`; the scalar reading reads one over names too).
+  // Where they give it no value there — two values, or another `default` (U7)
+  // — it has none, before any equation of its own type is read (LE: P's `x ==
+  // 3.0` beside q1's `p.x == 50.0`); the scalar reading says why.
   if (givesWay && inst !== undefined) {
     const defined = assertDefinitionIn(model, feat, inst);
-    if (defined !== undefined && !('abstain' in defined) && defined.constant) {
+    if (defined !== undefined && 'abstain' in defined) return claimOnly('unknown', 'unresolved');
+    if (defined !== undefined && defined.constant) {
       return equationDerivation(model, id, String(defined.equation.constraint.attrs.expression), memo, defined.frame.reader, defined.path);
     }
   }
@@ -2154,6 +2159,10 @@ function definitionOf(
   inFlight: InFlight,
   instance = false,
 ): FeatureDerivation {
+  // A `default` an asserted equation sets equal to another `default` gives way
+  // with it (U7): that equation derives it no value (`undecidedPartnerOf`).
+  const feat = model.get(featureId);
+  if (feat && undecidedPartnerOf(model, feat) !== undefined) return claimOnly('unknown', 'unresolved');
   // A definition written elsewhere and read here, for this context's own
   // value, is in flight under a key of its own (`instanceKey`).
   const flight = instance ? instanceKey(featureId, context) : featureId;

@@ -2497,6 +2497,9 @@ const EQUATED_PARTS = new WeakMap<
   }
 >();
 
+/** The usages whose value naming another equates the two ({@link equatedParts}). */
+const VALUED_PART_KINDS: ReadonlySet<string> = new Set(['PartUsage', 'PortUsage', 'ItemUsage']);
+
 function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS.get>> {
   const hit = EQUATED_PARTS.get(model);
   if (hit && hit.rev === model.rev) return hit;
@@ -2576,6 +2579,17 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
       unreadEnds.add(f.id).add(g.id);
     }
   }
+  // A part, port or item whose value names another (`part pp : T0 = top.a`)
+  // equates the two as a binding does, and no surface reads through it: an
+  // unread pair of its own, so no row that may read through it is read.
+  for (const e of model.all()) {
+    if (e.attrs.isLibrary === true || !VALUED_PART_KINDS.has(e.eClass) || e.attrs.isRef === true) continue;
+    const v = e.attrs.value;
+    if (e.ownerId == null || e.attrs.requirementRole === 'subject' || typeof v !== 'string' || isQuoted(v.trim())) continue;
+    if (namesOfValue(v).length === 0) continue;
+    unread.push(e);
+    unreadEnds.add(e.id);
+  }
   const fresh = { rev: model.rev, standsFor, unread, unreadEnds };
   EQUATED_PARTS.set(model, fresh);
   return fresh;
@@ -2618,6 +2632,7 @@ function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
   const asserted = users.filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string');
   const narrowing = [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')];
   for (const b of parts.unread) {
+    if (!isBindingConnector(b)) add(b, b);
     for (const id of [b.source?.[0], b.target?.[0]]) {
       const end = id !== undefined ? model.get(id) : undefined;
       if (end) add(end, b, b.ownerId!);
@@ -2754,6 +2769,13 @@ export function equatedPartsRefusal(
     b = frames === undefined ? unread[0] : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
   }
   if (!b) return undefined;
+  if (!isBindingConnector(b)) {
+    return (
+      `\`${effectiveNameOf(model, b) ?? b.id} = ${String(b.attrs.value).trim()}\` in ${effectiveQualifiedName(model, b.ownerId!)} ` +
+      'values a part, port or item with another, which equates the two as a binding does; this tool does not read ' +
+      'through such a value, so no relation that may read a value it carries is read'
+    );
+  }
   const [l, r] = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, b.ownerId!) : undefined));
   const ends = l !== undefined && r !== undefined ? `\`bind ${l} = ${r}\`` : 'a binding';
   return (
@@ -3649,22 +3671,31 @@ function assertHeld(model: Model): ReadonlySet<ElementId> {
  * (`undecided`, U7) — L's is filed under its own name. Never a dotted name on
  * the other side. Not past a feature a binding joins or a part a value
  * equates (`part r = s`), nor onto an end a binding joins: the binding's
- * value is read there, and the assert is checked against it (RB). A bare
+ * value is read there, and the assert is checked against it (RB). Not past a
+ * reference or a subject, nor past a part some usage redefines as one or with
+ * a value (`ref part :>> r = p1`, `part :>> p = other`): the instance there
+ * may be another one altogether, which no path below the frame reads, so the
+ * default stands, as before H5. A bare
  * equation over a default the local rule already holds ({@link assertHeld})
  * is filed, for two values, but splits no instance.
  */
 interface EnclosingAsserts {
   byOwner: ReadonlyMap<ElementId, ReadonlyMap<string, readonly DefiningEquation[]>>;
+  /** Per owner and path, the feature each segment names — matched by identity where an instance renames one ({@link assertDefinitionsAt}). */
+  chains: ReadonlyMap<ElementId, ReadonlyMap<string, readonly ElementId[]>>;
   features: ReadonlySet<ElementId>;
   /**
    * The asserted relations among them whose other side reads a `default`, with the names that read one:
    * where such a name still reads a `default` in the frame, they give no value ({@link assertDefinitionIn}).
    */
   undecided: ReadonlyMap<ElementId, readonly string[]>;
+  /** The `default`s such a relation sets equal to the path's (q1's L, with what each redefines), by the element that writes it. */
+  partners: ReadonlyMap<ElementId, ElementId>;
   /**
    * Each such path read from the element that writes it: the features it
-   * passes through (`through`, with what each redefines) and the one it ends
-   * at (`end`, likewise) — the usages whose instances it reads otherwise.
+   * passes through (`through`, with what each redefines and what redefines
+   * it — q's `part pp :>> p`) and the one it ends at (`end`, likewise) — the
+   * usages whose instances it reads otherwise.
    */
   paths: ReadonlyArray<{ owner: ElementId; through: ReadonlySet<ElementId>; end: ReadonlySet<ElementId> }>;
   /** {@link assertHeldEverywhere} per feature, when first asked. */
@@ -3677,8 +3708,10 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
   const hit = ENCLOSING_ASSERTS.get(model);
   if (hit && hit.rev === model.rev) return hit.index;
   const byOwner = new Map<ElementId, Map<string, DefiningEquation[]>>();
+  const chains = new Map<ElementId, Map<string, ElementId[]>>();
   const features = new Set<ElementId>();
   const undecided = new Map<ElementId, string[]>();
+  const partnerOf = new Map<ElementId, ElementId>();
   const paths: Array<{ owner: ElementId; through: Set<ElementId>; end: Set<ElementId> }> = [];
   const owners = new Set<ElementId>();
   const ends = new Set<ElementId>();
@@ -3686,6 +3719,26 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
     if (isBindingConnector(el)) for (const id of [...(el.source ?? []), ...(el.target ?? [])]) ends.add(id);
     else if (el.attrs.isLibrary !== true && isAsserted(el) && el.ownerId != null) owners.add(el.ownerId);
   }
+  // The user's usages by each feature they redefine, through any number of redefinitions — built when first asked.
+  let redefining: Map<ElementId, ElementRecord[]> | undefined;
+  const redefinersOf = (id: ElementId): readonly ElementRecord[] => {
+    if (!redefining) {
+      redefining = new Map();
+      for (const x of model.all()) {
+        if (x.attrs.isLibrary === true || !isUsage(x.eClass)) continue;
+        for (const g of redefinedClosure(model, x)) {
+          const list = redefining.get(g.id);
+          if (list) list.push(x);
+          else redefining.set(g.id, [x]);
+        }
+      }
+    }
+    return redefining.get(id) ?? [];
+  };
+  // A reference, a subject, or a part some usage redefines as one or with a value: another instance may stand there.
+  const elsewhere = (h: ElementRecord): boolean =>
+    [h, ...redefinedClosure(model, h)].some((g) => g.attrs.isRef === true || g.attrs.requirementRole === 'subject') ||
+    redefinersOf(h.id).some((x) => x.attrs.isRef === true || (x.attrs.value !== undefined && x.attrs.value !== null));
   const named = new Map<ElementId, ReadonlyMap<string, ElementRecord>>();
   const featuresOf = (ownerId: ElementId): ReadonlyMap<string, ElementRecord> => {
     let m = named.get(ownerId);
@@ -3724,17 +3777,31 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
     };
     return refsIn(eq.definition, eq.literals).every(independent) ? defaults : undefined;
   };
-  const file = (o: ElementId, path: string, equations: readonly DefiningEquation[], end: ElementRecord, through: Set<ElementId>): void => {
+  const file = (
+    o: ElementId,
+    path: string,
+    equations: readonly DefiningEquation[],
+    end: ElementRecord,
+    through: Set<ElementId>,
+    chain: readonly ElementId[],
+  ): void => {
     let m = byOwner.get(o);
     if (!m) byOwner.set(o, (m = new Map()));
     const list = m.get(path);
     if (list) list.push(...equations.filter((eq) => !list.includes(eq)));
     else m.set(path, [...equations]);
+    let c = chains.get(o);
+    if (!c) chains.set(o, (c = new Map()));
+    c.set(path, [...chain]);
     // A bare name the local rule holds already is read by its equation everywhere: no instance of its own.
     if (!path.includes('.') && local.has(valueOf(end)!.id)) return;
     const closure = new Set([end, ...redefinedClosure(model, end)].map((g) => g.id));
     for (const id of closure) features.add(id);
-    paths.push({ owner: o, through, end: closure });
+    // What redefines the path's own features — never a sibling's redefinition of what they redefine.
+    const read = new Set(closure);
+    for (const x of redefinersOf(end.id)) read.add(x.id);
+    for (const id of chain.slice(0, -1)) for (const x of redefinersOf(id)) through.add(x.id);
+    paths.push({ owner: o, through, end: read });
   };
   for (const o of owners) {
     const byName = equationsByName(model, o);
@@ -3745,12 +3812,14 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
       let end: ElementRecord | undefined;
       let cur: ElementId = o;
       const through = new Set<ElementId>();
+      const chain: ElementId[] = [];
       const segments = path.split('.');
       for (const [i, segment] of segments.entries()) {
         const h = featuresOf(cur).get(segment);
         if (!h || bound(h)) break;
+        chain.push(h.id);
         if (i === segments.length - 1) end = h;
-        else if (valueOf(h) !== undefined) break;
+        else if (valueOf(h) !== undefined || elsewhere(h)) break;
         else for (const g of [h, ...redefinedClosure(model, h)]) through.add(g.id);
         cur = h.id;
       }
@@ -3772,16 +3841,17 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
         }
         undecided.set(r.eq.constraint.id, names);
       }
-      file(o, path, read.map((r) => r.eq), end!, through);
+      file(o, path, read.map((r) => r.eq), end!, through, chain);
       for (const h of partners) {
         const n = effectiveNameOf(model, h);
         if (n === undefined) continue;
         const own = (byName.get(n) ?? []).filter((eq) => undecided.has(eq.constraint.id));
-        file(o, n, own.length > 0 ? own : read.filter((r) => r.defaults!.includes(h)).map((r) => r.eq), h, new Set());
+        file(o, n, own.length > 0 ? own : read.filter((r) => r.defaults!.includes(h)).map((r) => r.eq), h, new Set(), [h.id]);
+        for (const g of [h, ...redefinedClosure(model, h)]) if (!partnerOf.has(g.id)) partnerOf.set(g.id, o);
       }
     }
   }
-  const index: EnclosingAsserts = { byOwner, features, undecided, paths, everywhere: new Map() };
+  const index: EnclosingAsserts = { byOwner, chains, features, undecided, partners: partnerOf, paths, everywhere: new Map() };
   ENCLOSING_ASSERTS.set(model, { rev: model.rev, index });
   return index;
 }
@@ -3828,6 +3898,34 @@ function assertHeldEverywhere(model: Model, f: ElementRecord): boolean {
   }
   index.everywhere.set(f.id, answer);
   return answer;
+}
+
+/** Does an asserted equation of the model set one `default` equal to another, both giving way (U7, {@link undecidedPartnerOf})? */
+export function hasUndecidedPartners(model: Model): boolean {
+  return enclosingAsserts(model).partners.size > 0;
+}
+
+/**
+ * The element whose asserted equation sets `f`'s `default` equal to another
+ * `default` (U7 Q4: q1's `p.x == L` over q1's `L default = 9.0` and P's `x
+ * default = 2.0`), where `f`'s value is still such a default and gives way
+ * wherever `f` is read ({@link assertHeldEverywhere}): both give way, so `f`
+ * has no value, and that equation derives none for it either — it would read
+ * the other side's default, the very one that gave way. `undefined` for any
+ * other feature, and for one that states a plain value (H2E's q's `:>> L =
+ * 50.0`), which is its own.
+ */
+export function undecidedPartnerOf(model: Model, f: ElementRecord): ElementId | undefined {
+  const { partners } = enclosingAsserts(model);
+  if (partners.size === 0) return undefined;
+  const chain = [f, ...redefinedClosure(model, f)];
+  if (chain.find((g) => g.attrs.value !== undefined && g.attrs.value !== null)?.attrs.defaultValue !== true) return undefined;
+  if (!assertHeldEverywhere(model, f)) return undefined;
+  for (const g of chain) {
+    const o = partners.get(g.id);
+    if (o !== undefined) return o;
+  }
+  return undefined;
 }
 
 /**
@@ -3889,22 +3987,30 @@ export function assertDefinitionsAt(model: Model, f: ElementRecord, symbol: stri
   // Only a `default` gives way: a plain value read there (q's `:>> L = 50.0`) is its own (decision 1).
   const holder = [f, ...redefinedClosure(model, f)].find((g) => g.attrs.value !== undefined && g.attrs.value !== null);
   if (holder?.attrs.defaultValue !== true) return [];
-  const { byOwner } = enclosingAsserts(model);
+  const { byOwner, chains } = enclosingAsserts(model);
   const definitions = sharedDefinitions(model);
   const { ends } = bindingEnds(model);
   const out: AssertDefinition[] = [];
   for (const frame of definitions.framesAbove(symbol) ?? []) {
     if (!symbol.startsWith(`${frame.instance}::`)) continue;
-    const path = symbol.slice(frame.instance.length + 2).split('::').join('.');
+    const spelled = symbol.slice(frame.instance.length + 2).split('::').join('.');
     let cur: ElementId | undefined = frame.reader;
-    for (const segment of path.split('.')) {
+    const read: ElementRecord[] = [];
+    for (const segment of spelled.split('.')) {
       const h: ElementRecord | undefined = cur === undefined ? undefined : definitions.byName(cur).get(segment);
       cur = h && ![h, ...redefinedClosure(model, h)].some((g) => ends.has(g.id)) ? h.id : undefined;
+      if (h) read.push(h);
     }
     if (cur === undefined) continue;
+    // The path the owner writes as the instance spells it, or whose every segment is the feature the
+    // instance reads there or one it redefines: q's `part pp :>> p` reads Q's `p.x == 50.0` at `pp.x`.
+    const names = (id: ElementId, h: ElementRecord): boolean => h.id === id || redefinedClosure(model, h).some((g) => g.id === id);
     for (const owner of [frame.reader, ...generalizationsOf(model, frame.reader).map((t) => t.id)]) {
-      const equations = byOwner.get(owner)?.get(path);
-      if (equations) out.push({ owner, path, equations, frame });
+      for (const [path, chain] of chains.get(owner) ?? []) {
+        if (path !== spelled && (chain.length !== read.length || !chain.every((id, k) => names(id, read[k]!)))) continue;
+        const equations = byOwner.get(owner)?.get(path);
+        if (equations) out.push({ owner, path, equations, frame });
+      }
     }
   }
   return out;
@@ -4805,7 +4911,7 @@ function featuresAtPath(model: Model, definitions: DefiningEquations, root: Elem
   let owner = root;
   for (const seg of path.split('.')) {
     const f =
-      model.children(owner).find((c) => definitions.nameOf(c) === seg) ??
+      childNamed(model, definitions, owner, seg) ??
       definitions.byName(owner).get(seg) ??
       definitions.features(owner).find((c) => definitions.nameOf(c) === seg);
     if (!f) return undefined;
@@ -4813,6 +4919,29 @@ function featuresAtPath(model: Model, definitions: DefiningEquations, root: Elem
     owner = f.id;
   }
   return out;
+}
+
+/** Each owner's children by name, the first of each name, once per {@link DefiningEquations} (one revision). */
+const CHILDREN_BY_NAME = new WeakMap<DefiningEquations, Map<ElementId, ReadonlyMap<string, ElementRecord>>>();
+
+/**
+ * The first child of `owner` whose name is `name` ({@link featuresAtPath}):
+ * indexed per owner, so a package's reading of many paths scans its children
+ * once, not once per path.
+ */
+function childNamed(model: Model, definitions: DefiningEquations, owner: ElementId, name: string): ElementRecord | undefined {
+  let byOwner = CHILDREN_BY_NAME.get(definitions);
+  if (!byOwner) CHILDREN_BY_NAME.set(definitions, (byOwner = new Map()));
+  let named = byOwner.get(owner);
+  if (!named) {
+    const m = new Map<string, ElementRecord>();
+    for (const c of model.children(owner)) {
+      const n = definitions.nameOf(c);
+      if (n !== undefined && !m.has(n)) m.set(n, c);
+    }
+    byOwner.set(owner, (named = m));
+  }
+  return named.get(name);
 }
 
 /**
@@ -6048,8 +6177,9 @@ function instanceReadsOtherwise(
   // A value of the element's own that states a `default` and that an asserted
   // equation the usage does not read constrains (H5B: q2's `part :>> p {
   // assert constraint { extra == 20.0 } }` over P's `extra default = 0.0`):
-  // which of the two stands is not decided here (H5), and a reading in the
-  // element would read the default.
+  // under decision 14 the equation stands, but this reading does not read an
+  // assert of the element's own yet, and a reading in the element would read
+  // the default — so it abstains.
   for (const [path, mine] of own.paths) {
     if (mine.assertedDefault === undefined || mine.assertedDefault === shared.paths.get(path)?.assertedDefault) continue;
     return abstain(

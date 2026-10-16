@@ -38,6 +38,7 @@ import {
   enclosingAssertOn,
   equatedPartsRefusal,
   failedReadingSentence,
+  hasUndecidedPartners,
   hasUserBindings,
   readsPerInstance,
   heldPastCapSentence,
@@ -50,6 +51,7 @@ import {
   recordingLookups,
   replayLookups,
   spellsInstance,
+  undecidedPartnerOf,
   type InstanceGroup,
   type InstanceLookup,
   hasStatedValue,
@@ -624,6 +626,10 @@ function defineIn(
   instance = false,
 ): ScalarAnswer {
   if (candidates.length === 0) return NO_ANSWER;
+  // A `default` an asserted equation sets equal to another `default` gives way
+  // with it (U7): it has no value, and that equation derives it none.
+  const partner = undecidedPartnerOf(model, feature);
+  if (partner !== undefined) return partnerAnswer(model, feature, partner, pass);
   const flight = instance ? instanceKey(feature.id, contextId) : feature.id;
   if (pass.inFlight.has(flight)) return cameBackTo(returnTo(pass.inFlight, flight));
   const key = definitionKey(feature.id, contextId);
@@ -632,6 +638,20 @@ function defineIn(
   const answer = defineScalar(model, contextId, feature, name, candidates, pass, flight);
   if (!answer.contact) pass.answers.set(key, answer);
   return answer;
+}
+
+/** {@link undecidedPartnerOf}'s abstention, in {@link assertedAnswer}'s words for the other side. */
+function partnerAnswer(model: Model, feature: ElementRecord, owner: ElementId, pass: ScalarPass): ScalarAnswer {
+  return {
+    value: undefined,
+    depth: 0,
+    abstention: {
+      kind: 'enclosing-assert',
+      sentence:
+        `${pass.definitions.nameOf(feature) ?? feature.id} is not read: ${effectiveQualifiedName(model, owner)}'s asserted equation ` +
+        'sets it equal to another `default`: both give way, so it has no value',
+    },
+  };
 }
 
 function defineScalar(
@@ -2126,7 +2146,7 @@ function judgeConstraint(
   if (shadowed.length > 0) {
     return { result: 'unknown', message: `Could not evaluate: ${shadowedSentence(model, el, shadowed)}`, gap: false };
   }
-  const local = equationBindings(model, el, expr, pass, bindings);
+  const local = equationBindings(model, el, expr, pass, bindings, inst);
   if ('reason' in local) return { result: 'unknown', message: `Could not evaluate: ${local.reason}`, gap: false };
   // The equation a feature is bound FROM is judged against that binding too,
   // as every other check is. A kind relabels a dimensionless derivation
@@ -2654,11 +2674,20 @@ function equationBindings(
   expr: string,
   pass: ScalarPass,
   taken?: ReadonlyMap<string, Bound>,
+  inst?: string,
 ): { bindings: Map<string, Bound> } | { reason: string } {
   const bindings = new Map<string, Bound>();
   for (const name of bareNamesIn(expr)) {
     if (taken?.has(name)) continue;
     const site = equationSiteOf(model, el, name, pass);
+    // Read in an instance whose enclosing asserts give the feature no value —
+    // two values, or another `default` (U7) — the equation beside it is not
+    // its value there either (LE: P's `x == 3.0` and q1's `p.x == 50.0`): the
+    // instance's own reading abstains on it.
+    if (site && inst !== undefined) {
+      const defined = assertDefinitionIn(model, site.feature, inst);
+      if (defined !== undefined && 'abstain' in defined) continue;
+    }
     if (!site) {
       // No equation: a binding may hold it to a derived value, read the same way.
       const held = boundSiteOf(model, el, name, pass);
@@ -2854,6 +2883,36 @@ export function unreadValuesOf(
       continue;
     }
     if (derivedElsewhere(model, el, name, pass)) out.push(name);
+  }
+  return out;
+}
+
+/**
+ * The names a relation reads, where `el` reads them, that denote a `default`
+ * an asserted equation sets equal to another `default` (U7): q1's L ({@link
+ * undecidedPartnerOf}), or q1's p's x where that equation defines it
+ * ({@link assertDefinitionIn}'s `defaults`) — or `[]`. Both give way, so
+ * neither has a value, and the solver lane takes nothing from such a name: it
+ * would solve it freely, as a design freedom, and judge the relation there.
+ * The validation surface reads no value of either and says why; the
+ * verification lane confirms nothing against it.
+ */
+export function undecidedPartnersRead(model: Model, el: ElementRecord, names: readonly string[], memo?: DerivationMemo): string[] {
+  if (el.ownerId == null || !hasUndecidedPartners(model)) return [];
+  const pass = passFor(model, memo);
+  const contexts = [el.ownerId, el.id];
+  const out: string[] = [];
+  for (const name of new Set(names)) {
+    const feature = name.includes('.')
+      ? pass.definitions.chain(contexts, name)?.feature
+      : contexts.map((c) => pass.definitions.byName(c).get(name)).find((f) => f !== undefined);
+    if (feature !== undefined && undecidedPartnerOf(model, feature) !== undefined) {
+      out.push(name);
+      continue;
+    }
+    const den = pass.definitions.denote(el.ownerId).get(name);
+    const defined = den ? assertDefinitionIn(model, den.feature, den.instance) : undefined;
+    if (defined !== undefined && 'abstain' in defined && defined.abstain === 'defaults') out.push(name);
   }
   return out;
 }

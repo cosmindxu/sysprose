@@ -72,6 +72,7 @@ import {
   checksByRow,
   evaluateFeatureValue,
   readRefusalOf,
+  undecidedPartnersRead,
   unreadValuesOf,
   type ConstraintCheck,
 } from './evaluate-model';
@@ -4761,6 +4762,21 @@ function numericRows(
     r.slack = null;
     r.amount = 0;
     r.reason = equated;
+    delete r.cause;
+  }
+  // A relation over a `default` an asserted equation sets equal to another
+  // (undecidedPartnersRead, U7): neither has a value, so the point the solve
+  // chose for it judges nothing, as the validation surface judges nothing.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown' || r.imposed === true || r.context !== undefined) continue;
+    const el = model.get(r.id);
+    if (!el || undecidedPartnersRead(model, el, relationNamesOf(r.raw), memo).length === 0) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason =
+      (checkVerdictOf(r.id)?.result === 'unknown' ? checkSentence(r.id) : undefined) ??
+      'it reads a `default` an asserted equation sets equal to another: both give way, so it has no value';
     delete r.cause;
   }
   return out;
