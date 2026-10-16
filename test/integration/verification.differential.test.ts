@@ -5512,8 +5512,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'H2BP::m2NegT': ['F/F/F/F', 'T'],
-      'H2BP::m2PosF': ['T/T/T/T', 'F'],
+      'H2BP::m2NegT': ['T/T/T/T', 'T'],
+      'H2BP::m2PosF': ['F/F/F/F', 'F'],
     }),
     'h2-bodyspec-rev': probe(`package H2BR {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -5523,8 +5523,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint lT { q.L >= 40.0 }
         constraint lF { q.L <= 2.0 }
       }`, {
-      'H2BR::lF': ['T/T/T/T', 'F'],
-      'H2BR::lT': ['F/F/F/F', 'T'],
+      'H2BR::lF': ['F/F/F/F', 'F'],
+      'H2BR::lT': ['T/T/T/T', 'T'],
+    }),
+    // h2-bodyspec over d1plain (found by O6 S2's review): q's end copy now redefines Q3's `:>> load = 30.0`,
+    // which the binding joins to Q's `L = 50.0` — two values written with `=` (A.5). The copy states no value
+    // of its own, so the binding's row compares what its ends redefine: it was no row, and `sysml-check` was
+    // silent while SMT found the axioms inconsistent.
+    'h2-bodyspec-d1': probe(`package UB2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; }
+        part def Q3 :> Q { part :>> p { attribute :>> load = 30.0; } }
+        part q : Q3 { bind p.load = L; }
+        constraint at30 { q.p.m2 >= -20.0 }
+        constraint atL { q.p.m2 <= -40.0 }
+      }`, {
+      'UB2::q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'UB2::at30': ['?/?/?/X', '?'],
+      'UB2::atL': ['?/?/?/X', '?'],
     }),
     // Found by F2's review (identical before F1): a bound partner's default RESTATED, equal to the partner
     // definition's own, in a redefinition (`part :>> p { attribute :>> a default = 50.0; }`). The restated
@@ -5690,8 +5706,21 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint atL { q.p.m2 <= -40.0 }
       }`, {
       'D1P::Q::«BindingConnectorAsUsage» in D1P::q#bind': ['F/-/F/-', 'F'],
-      'D1P::at30': ['T/T/T/X', '?'],
-      'D1P::atL': ['F/F/F/X', '?'],
+      'D1P::at30': ['?/?/?/X', '?'],
+      'D1P::atL': ['?/?/?/X', '?'],
+    }),
+    // d1plain with the bound value an expression (`L = 2.0 * K`): the two values written compare only by
+    // evaluation, so A.5 leaves them read as at 755352c (see KNOWN_FALSE); the binding's row judges them.
+    'd1plain-expr': probe(`package D1E {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute K : ScalarValues::Real = 25.0; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
+        part q : Q { part :>> p { attribute :>> load = 30.0; } }
+        constraint at30 { q.p.m2 >= -20.0 }
+        constraint atL { q.p.m2 <= -40.0 }
+      }`, {
+      'D1E::Q::«BindingConnectorAsUsage» in D1E::q#bind': ['F/-/F/-', 'F'],
+      'D1E::at30': ['T/T/T/X', '?'],
+      'D1E::atL': ['F/F/F/X', '?'],
     }),
     // Found by the F1 reviews. A binding in a usage body whose partner is a feature of the ENCLOSING
     // definition (R's L): read only where it is written, its partner was R's own 1 for r's q, whose K
@@ -5930,7 +5959,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'W4d::c2T': ['?/?/T/T', 'T'],
     }),
     // A plain `=` on a redefinition the package's binding fills is the contradiction of decision 1: d1plain's
-    // shape, which U11 decided (A.5, `two-values`: ref ?, see KNOWN_FALSE).
+    // shape, which U11 decided (A.5, `two-values`: ref ?). Only p4's own 7 is read by no surface but SMT's
+    // axioms, which find them inconsistent: the package's L, one instance, is still read at 50 on the check
+    // and the literal engine (and by another instance through it), and on the numeric surface nowhere.
     'w4-plain': probe(`package W4o {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         attribute L : ScalarValues::Real = 50.0;
@@ -5938,7 +5969,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p4 : P { attribute :>> load = 7.0; }
         constraint c4 { p4.m2 >= 0.0 }
       }`, {
-      'W4o::c4': ['T/T/T/X', '?'],
+      'W4o::c4': ['?/?/?/X', '?'],
     }),
     // The package's binding makes L one value with every instance's load, so a slot an instance fixes OUTSIDE the
     // binding fixes L and every other instance: Q's `bind p.load = M` (W4X1, W4X6), the package's own `bind p2.load
@@ -7227,11 +7258,14 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * standing: the check and the literal engine now abstain on them.
    *
    * The table's own review added rows false on ALL FOUR surfaces — no clash, so only a `ref` sees them:
-   * a usage-body binding whose type redefines a bound end (h2-bodyspec-*; U10 decided: fix the mapper, O6
-   * S2) — an assert inherited through the end copy (assert-min, G340; FanS2's `#bind`), a bound
-   * redefinition's fall-through (held-redef*) and a binding through a reference feature (ref-W9): those
-   * four are now corrected on every surface. d1plain is A.5 (U11 decided: O6 S3); w4-plain is its shape
-   * through a package's binding on a definition's feature (H5 S4), with no `#bind` row on the check.
+   * a usage-body binding whose type redefines a bound end (h2-bodyspec-*), an assert inherited through
+   * the end copy (assert-min, G340; FanS2's `#bind`), a bound redefinition's fall-through (held-redef*)
+   * and a binding through a reference feature (ref-W9): all are now corrected on every surface — the
+   * first by the mapper, whose end copy redefines the most specific inherited feature (U10, O6 S2).
+   * d1plain and w4-plain, a value written with `=` against a bound one, are A.5 (U11, O6 S2): their rows
+   * read nothing on the check, literal and numeric surfaces, beside SMT's inconsistent axioms — where the
+   * two differ as written (w4-plain's package L is still read on the check and the literal engine); and
+   * d1plain-expr, whose bound value is an expression, is still read (no step yet).
    *
    * O5's branch review added the H5 rows it leaves open, each with no step yet (for the coordinator to
    * assign): an enclosing equation over a default a binding carries (RB3, SF), a path through a reference
@@ -7243,29 +7277,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * contradiction (their `#bind`); every surface now abstains on them.
    */
   const KNOWN_FALSE = new Map<string, string>([
-    ...[
-      ['h2-bodyspec-plain', 'H2BP::m2NegT'],
-      ['h2-bodyspec-plain', 'H2BP::m2PosF'],
-      ['h2-bodyspec-rev', 'H2BR::lT'],
-      ['h2-bodyspec-rev', 'H2BR::lF'],
-    ].map(
-      ([p, row]) =>
-        [
-          `${p} | ${row}`,
-          'U10 decided, O6 S2 (fix the mapper): the implicit end copy of a usage-body binding redefines the DECLARING feature (`H2BP::q::L` redefines Q::L, not Q2::L), so every surface reads the general value or none, and P’s default stands; the copy is to redefine the most specific inherited feature',
-        ] as const,
-    ),
-    ...['D1P::at30', 'D1P::atL'].map(
-      (row) =>
-        [
-          `d1plain | ${row}`,
-          'U11 decided A.5, O6 S3: q’s plain `load = 30.0` against the bound L = 50.0 is two values (decision 1), and A.5 has both read nothing (the conflict row reports it); today’s reading still decides them',
-        ] as const,
-    ),
-    [
-      'w4-plain | W4o::c4',
-      'd1plain’s shape through a package’s `bind P::load = L` (E6, U11 decided A.5: O6 S3): p4’s plain `:>> load = 7.0` against L = 50.0 is two values (decision 1), and A.5 has both read nothing; unlike d1plain, the check and the numeric surface file no per-instance `#bind` row for a package’s binding on a definition’s feature, so `sysml-check` is silent where SMT reports inconsistent-axioms',
-    ] as const,
     ...['RB3::tie', 'RB3::top', 'RB3::top2'].map(
       (row) =>
         [
@@ -7292,6 +7303,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         [
           `h5-pin2 | ${row}`,
           'H5, open, no step yet: P’s asserted `L == M`, M valued only in p and p2, leaves L’s default standing (the local rule reads P’s own valueless M); under invariant (e) p’s L is 7 and p2’s is 5',
+        ] as const,
+    ),
+    ...['D1E::at30', 'D1E::atL'].map(
+      (row) =>
+        [
+          `d1plain-expr | ${row}`,
+          'Found by O6 S2, as at 755352c, no step yet: A.5 compares the two values a binding joins as written, and `30.0` against `2.0 * K` compares only by evaluation, so q’s 30 is read where the model states 30 and 50 (the binding’s row reports them)',
         ] as const,
     ),
     ...['DY1::topF', 'DY1::topT'].map(
@@ -7340,7 +7358,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['n2 | N2::lim', 'two asserts give x two values; the check reads one'],
     ['h5-hp | HP::c', 'L’s plain `= 2.0` against the asserted `L == 5.0`: the strict-KerML contradiction (decision 1); the check reads L’s value'],
     ['h5-rbind | RB::top', 'q’s plain `L = 4.0`, bound to q.p.x, against the asserted `q.p.x == 3.0`: the contradiction of decision 1'],
-    ['w4-plain | W4o::c4', 'p4’s plain `:>> load = 7.0` against the package’s bound L = 50.0: the strict-KerML contradiction (decision 1) the SMT engine reports; the other surfaces read p4’s value (see KNOWN_FALSE)'],
     // Not decision 1: under H5 the assert would stand over L's default through the binding (open: binding-component reads).
     ...['RB3::top', 'RB3::top2'].map(
       (row) => [`h5-rb3 | ${row}`, 'the asserted `q.p.x == 3.0` against L’s default 4.0, bound to q.p.x: the enclosing equation is not read through a binding’s end yet (H5, open; see KNOWN_FALSE)'] as const,
@@ -7353,6 +7370,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         [
           `h5-${row.startsWith('RF2') ? 'rf2' : 'rf'} | ${row}`,
           'Q’s asserted equation over x’s default, through a reference or a part redefined with a value: not filed (fail-closed), so the default stands and contradicts it, as before H5 (open; see KNOWN_FALSE)',
+        ] as const,
+    ),
+    ...['D1E::at30', 'D1E::atL'].map(
+      (row) =>
+        [
+          `d1plain-expr | ${row}`,
+          'q’s plain `load = 30.0` against the bound `L = 2.0 * K` (50): the contradiction of decision 1 the SMT engine reports; the other surfaces read q’s value (see KNOWN_FALSE)',
         ] as const,
     ),
     ...['LE::P::c', 'LE::P::c in LE::Q::p', 'LE::top'].map(
@@ -7371,13 +7395,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         [
           `h5-bnd | ${row}`,
           'q1’s plain `K = 7.0`, bound to q1.p.x, against Q’s asserted `p.x == 50.0`: the contradiction of decision 1; q1’s p reads the binding’s 7 (RB)',
-        ] as const,
-    ),
-    ...['D1P::at30', 'D1P::atL'].map(
-      (row) =>
-        [
-          `d1plain | ${row}`,
-          'q’s plain `load = 30.0` against the bound L = 50.0: the strict-KerML contradiction (decision 1) the SMT engine reports; the other surfaces read q’s value (A.5 against A.2.1, see KNOWN_FALSE)',
         ] as const,
     ),
   ]);

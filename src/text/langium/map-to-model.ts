@@ -457,10 +457,13 @@ function ensureImplicitFeature(
   // children), so the id is collision-safe.
   const ownerQName = model.qualifiedName(owner.id);
   const fid = implicitId('impl', ownerQName, name);
+  // A copy of an unnamed redefinition takes the name it is found by: unnamed, two sibling copies
+  // (`part :>> a; part :>> b;`) shared one qualified name, and their own copies' ids collided.
+  const unnamed = proto.declaredName === undefined && proto.declaredShortName === undefined;
   const created = model.create(proto.eClass, {
     id: model.has(fid) ? undefined : fid,
     ownerId: owner.id,
-    declaredName: proto.declaredName,
+    declaredName: unnamed && name !== '' ? name : proto.declaredName,
     declaredShortName: proto.declaredShortName,
     attrs,
   });
@@ -570,8 +573,14 @@ function resolveChainEnd(
       if (end) return end;
       continue;
     }
-    if (!walkChain(model, hit, rest, false)) continue; // dry run before materializing
-    const anchor = ensureImplicitFeature(model, scopeEl, hit);
+    // The copy mirrors the MOST SPECIFIC inherited feature, as {@link findTypeFeature} picks a later
+    // segment's: in `part q : Q2 { bind p.load = L; }` the name finds Q's declared `L`, but Q2's
+    // `attribute :>> L = 50.0` redefines it, and a copy redefining Q's L read the general value (or
+    // none) in q — every surface then let P's default stand where the binding gives 50.
+    const special = findTypeFeature(model, scopeEl, head);
+    const proto = special && special !== hit && redefinedClosure(model, special).includes(hit) ? special : hit;
+    if (!walkChain(model, proto, rest, false)) continue; // dry run before materializing
+    const anchor = ensureImplicitFeature(model, scopeEl, proto);
     const end = walkChain(model, anchor, rest, true);
     if (end) return end;
   }

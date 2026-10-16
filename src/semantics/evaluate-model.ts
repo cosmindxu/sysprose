@@ -33,6 +33,8 @@ import {
   boundSourceIn,
   defaultGivesWay,
   defaultGivesWayIn,
+  statedAgainstBoundIn,
+  bindsDifferingWrittenValues,
   defaultStandsIn,
   assertDefinitionIn,
   enclosingAssertOn,
@@ -819,6 +821,11 @@ function valueOfFeature(
   // A value that contradicts a binding it redefines is not the feature's: the
   // model states both, and neither is read (the unit-aware path refuses it).
   if (pass.definitions.contradiction(feat)) return NO_ANSWER;
+  // So too a value written with `=` that a binding joins, in this instance, to
+  // another written with `=` that differs (A.5, d1plain): the binding's
+  // finding reports the two, and neither is read.
+  const against = inst !== undefined ? statedAgainstBoundIn(model, feat, inst) : undefined;
+  if (against !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: against } };
   // A `default` a binding overrides gives way — per feature, or at the one
   // instance where a held redefinition of it falls through (`held-redef`).
   const raw = defaultGivesWayIn(model, feat, inst) ? undefined : statedValueOf(model, feat);
@@ -1762,7 +1769,12 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
       const where = pass.definitions.contextName(x.id);
       let result: ConstraintCheck['result'];
       try {
-        result = judgeConstraint(model, reading, expr, pass).result;
+        // Two ends whose values are written with `=` and differ as written
+        // (A.5) read nothing, so the pair is this binding's to report — only
+        // its own pair: another binding of the component reports its own.
+        const [l, r] = [left, right].map((end) => pass.definitions.denote(x.id).get(end)?.feature);
+        const against = l !== undefined && r !== undefined && bindsDifferingWrittenValues(model, l, r);
+        result = against ? 'violated' : judgeConstraint(model, reading, expr, pass).result;
       } catch (e) {
         // A.2.9: a reading that throws is this row's, reported — never a throw
         // out of the sweep, which emptied the Problems view.

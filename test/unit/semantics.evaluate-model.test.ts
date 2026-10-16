@@ -2199,16 +2199,74 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(hasUserBindings(b!)).toBe(true);
   });
 
-  it('names what a context reads where a binding alone makes it read the body otherwise', async () => {
+  it('reads neither of two values written with `=` a binding joins in a context, and says why (A.5)', async () => {
     // q joins Q's `load = 3.0` to its own L of 50 (a contradiction the binding's own row reports):
-    // no name of the body is another feature in q, so the finding names what q reads.
+    // no name of the body is another feature in q, so the finding names what q reads — neither of the
+    // two values written with `=` (A.5, U11: d1plain's shape), and why.
     const { model: m } = await loadModelText(`package LF {
       part def Q { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real = 3.0; bind load = L; constraint c { load <= 5.0 } }
       part q : Q { attribute :>> L = 50.0; }
     }`);
     const c = checkConstraints(m!).find((x) => m!.qualifiedName(x.id) === 'LF::Q::c')!;
     expect(c.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
+      [
+        'q',
+        'unknown',
+        'Q::c (load <= 5.0) could not be evaluated for q: "load" cannot be derived: load is not read in LF::q: ' +
+          '`bind load = L` of LF::Q joins two values the model states (q.load, q.L), and a binding holds in every ' +
+          'instance (see the binding\u2019s own finding)',
+      ],
+    ]);
+    expect(checkConstraints(m!).filter((x) => x.conflict === 'bind').map((x) => x.result)).toEqual(['violated']);
+    // A pair only an evaluation compares (q's `L = 2.0 * K`) is read as before: the finding names what q reads.
+    const { model: e } = await loadModelText(`package LF {
+      part def Q { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real = 3.0; bind load = L; constraint c { load <= 5.0 } }
+      part q : Q { attribute K : ScalarValues::Real = 25.0; attribute :>> L = 2.0 * K; }
+    }`);
+    const ce = checkConstraints(e!).find((x) => e!.qualifiedName(x.id) === 'LF::Q::c')!;
+    expect(ce.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
       ['q', 'satisfied', 'q::load = 3 meets Q::c (load <= 5.0)'],
+    ]);
+  });
+
+  it('reports a binding violated only where its own two ends state different values with `=` (A.5)', async () => {
+    // A.5 reads no value its component joins against a differing one, so the `#bind` row is decided from the
+    // binding's own pair, never from the component. BC1C's `bind K = L` joins 30 to 30 and FAN's `bind
+    // r.load = L` joins r's default (which gives way) to L: each was reported "different values" beside the
+    // binding that states them.
+    const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; }';
+    for (const [text, expr] of [
+      [
+        `package BC1C { ${P} part def Q { attribute L : ScalarValues::Real = 30.0; attribute K : ScalarValues::Real = 30.0;
+          attribute M : ScalarValues::Real = 50.0; bind K = L; bind L = M; } part q : Q; }`,
+        'L == M',
+      ],
+      [
+        `package FAN { ${P} part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; part r : P; bind p.load = L; bind r.load = L; }
+          part q : Q { part :>> p { attribute :>> load = 30.0; } } }`,
+        'p.load == L',
+      ],
+    ] as const) {
+      const { model: m } = await loadModelText(text);
+      const bind = checkConstraints(m!).filter((c) => c.conflict === 'bind');
+      expect(bind.map((c) => [c.expression, c.result]), expr).toEqual([[expr, 'violated']]);
+      expect(checkConstraintsNumeric(m!).filter((r) => r.conflict === 'bind').map((r) => r.result), expr).toEqual(['violated']);
+    }
+    // A usage body's binding (h2-bodyspec over d1plain): its ends are implicit copies that state no value of
+    // their own, so the pair is what they redefine — q's p.load 30 (Q3's) against L 50. `sysml-check
+    // --strict` reported nothing while SMT found the axioms inconsistent.
+    const { report } = await loadModelText(
+      `package UB2 { ${P} part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; }
+        part def Q3 :> Q { part :>> p { attribute :>> load = 30.0; } } part q : Q3 { bind p.load = L; } }`,
+      { fileName: 'ub2.sysml', strict: true },
+    );
+    expect(report.ok).toBe(false);
+    expect(report.diagnostics.filter((d) => d.severity === 'warning').map((d) => [d.code, d.message])).toEqual([
+      [
+        'validation/constraint-violation',
+        'Constraint violated: UB2::q binds p.load to L (`bind p.load = L`), and the model states different values for ' +
+          'the two there — a binding holds in every instance, as a value written with `=` does, so the model states both values',
+      ],
     ]);
   });
 

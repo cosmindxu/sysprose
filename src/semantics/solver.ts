@@ -81,6 +81,7 @@ import {
   defaultGivesWay,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
+  statedAgainstBoundSomewhere,
   defaultStandsIn,
   enclosedBindingFrame,
   equatedPartsRefusal,
@@ -602,8 +603,10 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
     // (2) Feature-value expression assignments (only genuine expressions).
     if (isUsage(el.eClass)) {
       // A value that conflicts with a binding it overrides is read by no
-      // surface: no seed, no equation, nothing solved for it.
-      if (el.attrs.value !== undefined && sharedDefinitions(model).contradiction(el)) {
+      // surface: no seed, no equation, nothing solved for it — nor one a
+      // binding joins somewhere to another value written with `=` (A.5).
+      const definitions = sharedDefinitions(model);
+      if (el.attrs.value !== undefined && (definitions.contradiction(el) || statedAgainstBoundSomewhere(model, el))) {
         unreadable.add(el.id);
         continue;
       }
@@ -1741,7 +1744,9 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   const definitions = sharedDefinitions(model);
   for (const id of propagated.keys()) {
     const el = model.get(id);
-    if (el && el.attrs.value !== undefined && definitions.contradiction(el)) propagated.delete(id);
+    if (el && el.attrs.value !== undefined && (definitions.contradiction(el) || statedAgainstBoundSomewhere(model, el))) {
+      propagated.delete(id);
+    }
   }
   // The equations the solve fixed a value from — for which plain constraints
   // it IMPOSED rather than judged.
@@ -3356,8 +3361,10 @@ function solveLinear(A: number[][], b: number[]): number[] | undefined {
  */
 function numericSeedOf(model: Model, feat: ElementRecord, memo: DerivationMemo = new Map()): number | undefined {
   // A value that contradicts a binding it overrides is not the feature's: the
-  // model states both, and the solve reads neither.
+  // model states both, and the solve reads neither — so too one a binding
+  // joins somewhere to another value written with `=` (A.5, d1plain).
   if (feat.attrs.value !== undefined && sharedDefinitions(model).contradiction(feat)) return undefined;
+  if (statedAgainstBoundSomewhere(model, feat)) return undefined;
   // Nor is a `default` a binding overrides: the binding gives it its value
   // (per feature, or perchance a held redefinition falls through somewhere).
   if (defaultGivesWaySomewhere(model, feat)) return undefined;

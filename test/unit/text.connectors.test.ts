@@ -182,6 +182,27 @@ describe('connector feature-chain endpoints (types-first models)', () => {
     expect(scopeFor(specialised, specialised.all().find((e) => e.declaredName === 'M6')!.id)('s.load')).toBe(5);
   });
 
+  // The FIRST segment of a usage-body binding mirrors the most specific inherited feature too (U10,
+  // h2-bodyspec): the name finds Q's declared `L`, but Q2's `:>> L = 50.0` redefines it, and a copy that
+  // redefined Q's L read no value in q — P's default stood where the binding gives 50.
+  it('mirrors the most specific inherited feature for the head of a usage-body binding', () => {
+    const { model } = parseModel(`package H2BP {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part q : Q2 { bind p.load = L; }
+    }`);
+    const q2 = model.all().find((e) => e.declaredName === 'Q2')!;
+    const q2L = model.children(q2.id).find((c) => c.eClass === 'AttributeUsage')!;
+    const copy = model
+      .children(model.all().find((e) => e.declaredName === 'q')!.id)
+      .find((c) => c.eClass === 'AttributeUsage' && c.attrs.implicit === true)!;
+    expect(redefinedBy(model, copy).map((g) => g.id)).toEqual([q2L.id]);
+    // Named as the binding names it, though Q2's `:>> L` it redefines is unnamed.
+    expect(model.qualifiedName(copy.id)).toBe('H2BP::q::L');
+    expect(scopeFor(model, model.all().find((e) => e.declaredName === 'H2BP')!.id)('q.L')).toBe(50);
+  });
+
   it('produces ZERO false connection-end warnings when chains resolve', () => {
     const a = parseModel(TYPES_FIRST);
     expect(a.diagnostics.filter((d) => d.message.includes('connection end'))).toHaveLength(0);
@@ -226,11 +247,22 @@ describe('connector feature-chain endpoints (types-first models)', () => {
         .filter((e) => e.attrs.implicit === true)
         .map((e) => e.id)
         .sort();
-    const a = idsOf(parseModel(TYPES_FIRST).model);
-    const b = idsOf(parseModel(TYPES_FIRST).model);
-    expect(a.length).toBeGreaterThan(0);
-    expect(a).toEqual(b);
-    expect(a.every((id) => id.startsWith('impl-'))).toBe(true);
+    // U3: two sibling copies of unnamed redefinitions (`part :>> a; part :>> b;`) once shared one qualified
+    // name, so their own copies' ids collided and fell back to random ones.
+    const U3 = `package U3 {
+        part def P { attribute load default = 1.0; }
+        part def S { part p : P; }
+        part def Q { attribute L = 50.0; attribute K = 5.0; part a : S; part b : S; }
+        part def Q2 :> Q { part :>> a; part :>> b; }
+        part q : Q2 { bind a.p.load = L; bind b.p.load = K; }
+    }`;
+    for (const text of [TYPES_FIRST, U3]) {
+      const a = idsOf(parseModel(text).model);
+      const b = idsOf(parseModel(text).model);
+      expect(a.length).toBeGreaterThan(0);
+      expect(a).toEqual(b);
+      expect(a.every((id) => id.startsWith('impl-'))).toBe(true);
+    }
   });
 
   it('re-running the post-type-binding pass is idempotent', () => {

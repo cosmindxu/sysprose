@@ -1019,16 +1019,35 @@ against P's `cap = 10000.0 [g]` (violated, on every surface), q2's `L = 5000.0
 [g]` is 5 kg (`load = 5` in the row's sentence), and a bare literal beside it
 is read in `load`'s unit (`load <= 10.0` holds for q2). A value of another
 dimension carried into it (a length into a mass) is compared by no surface.
-Against a value
-written with `=`, a binding is a **contradiction**, as a redefinition is:
-`bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20 kg is reported
-violated at the binding (in a context that specialises the binding's owner, at
-that context) by the check and the numeric surface, `solveFeasible` decides
-the model infeasible, and the solver lane finds the axioms inconsistent. Only a
-pair the check decides to differ is reported so; a pair it cannot compare is
-left to the solver lane. The literal engine reads each relation alone, never
-the model's facts against each other: over such a model it reads the
-relations at P's `m`, as it reads them beside a contradicted `assert`.
+Against a value written with `=`, a binding is a **contradiction**, as a
+redefinition is: `bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20
+kg is reported violated at the binding (in a context that specialises the
+binding's owner, at that context) by the check and the numeric surface,
+`solveFeasible` decides the model infeasible, and the solver lane finds the
+axioms inconsistent. Neither value is read where the binding joins them: a
+relation reading `q.p.m` or `q.M` is *could not be evaluated* on the check, the
+literal engine and the numeric surface; the check and the literal engine say
+why in a sentence that names the binding and the two features it joins, and
+the numeric surface reports that the feature has no value in scope. A relation
+written in P itself is still judged on P's own row at 18.5 kg by the check and
+the literal engine, even where q's p is the only P. The two are compared as
+written, as a redefinition's value is against the one it redefines: a pair
+written the same (`1000.0 [g]` and `1.0 [kg]`) is one value, and is read. A
+pair only an evaluation could compare (a value expression that reads a name) is
+still read, each value where it is stated; the binding is reported violated
+where the check finds the two differ, and a pair it cannot compare is left to
+the solver lane.
+Only a binding whose own two ends state the differing values is reported: a
+binding beside it in the same chain (`bind K = L` with both 30, next to `bind L
+= M` with M 50) is not. An instance the binding does not join (`part p0 : P`
+outside any Q) still reads P's 18.5 kg on the check and the literal engine; the
+numeric surface, which reads P's `m` once for every instance, reads it nowhere.
+For a package's binding on a definition's feature (`bind P::m = M`, M written
+with `=`) against an instance's own `:>> m = 25.0 [kg]`, only that instance's
+own value goes unread: M, a package's feature and so one instance, is still read
+on the check and the literal engine, though not on the numeric surface; another
+instance's `m`, which the binding makes M, is still read on all three; and no
+binding finding reports the pair.
 
 **An asserted equation overrides a `default` too.** `attribute L default =
 2.0;` beside `assert constraint qa { L == 5.0 }` is L = 5 on every surface: the
