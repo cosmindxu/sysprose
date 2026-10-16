@@ -4112,7 +4112,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q2 : Q { attribute :>> K = 25.0; }
       }`, {
       'M7::Q::c': ['T/T/T/T', 'T'],
-      'M7::Q::c in M7::q2': ['?/?/?/?', 'F'],
+      // q2's K reaches the bound L: q2 is listed only because a member reads its own value there, and is
+      // read at its own instance since O6 S4 (E7): q2's load is 50.
+      'M7::Q::c in M7::q2': ['F/F/F/F', 'F'],
     }),
     M8: probe(`package M8 {
         part def P {
@@ -5799,8 +5801,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'EnclW4::P::c in EnclW4::r::q::p': ['F/F/F/F', 'F'],
       'EnclW4::P::c in EnclW4::r0::q::p': ['T/T/T/T', 'T'],
       'EnclW4::R::rc': ['T/T/T/T', 'T'],
-      // The "reads it alike" guard: O6 S4's (E7).
-      'EnclW4::R::rc in EnclW4::r': ['?/?/?/?', 'F'],
+      // r's K reaches the bound L: r's own reading of rc, at r's instance since O6 S4 (E7).
+      'EnclW4::R::rc in EnclW4::r': ['F/F/F/F', 'F'],
     }),
     // A package's own partner is one instance wherever it is read: still read (a control). Since O6 S1 the
     // SMT engine reads the binding in the package for q's p (`q.p.load == G`), and confirms both rows.
@@ -5819,7 +5821,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // An asserted partner a specialised definition's usages share: q0 and q1 change nothing Q2 does not,
     // so they read QB's binding as Q2 does and add no row (each added one; FanA1000's thousand made 2,003
     // findings). Q2's own row read P's default through the end copy (the G340 defect) and published a
-    // false T; a context listed only because a member reads its own value there decides nothing yet.
+    // false T; a context listed only because a member reads its own value there is read at its own
+    // instance since O6 S4 (E7): Q2's p's load is Q2's asserted L of 50.
     FanS2: probe(`package FanS2 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
@@ -5832,7 +5835,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'FanS2::Q::defL in FanS2::Q2': ['T/-/T/-', 'T'],
       'FanS2::Q::defL in FanS2::QB': ['T/-/T/-', 'T'],
       'FanS2::QB::cq': ['T/T/T/T', 'T'],
-      'FanS2::QB::cq in FanS2::Q2': ['?/?/?/?', 'F'],
+      'FanS2::QB::cq in FanS2::Q2': ['F/F/F/F', 'F'],
     }),
     // The M-generator's bind2 family in a usage body, in kg (G271): the guard on a bound partner's VALUE
     // withheld its kilograms from the unit gates too, which refused `L == 2.0 * K` and `P::m2 in r::q::p`

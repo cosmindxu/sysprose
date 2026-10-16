@@ -1757,8 +1757,9 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
     if (!owner || left === undefined || right === undefined || left === right) continue;
     const expr = `${left} == ${right}`;
     for (const x of [owner, ...pass.definitions.changingContexts(b, [left, right])]) {
-      // A context listed only because a member reads its own value there reads
-      // no bound value yet: nothing to contradict.
+      // A context listed only because a member reads its own value there: its
+      // relations are read at its instance (E7), but the binding's own row is
+      // not filed there yet — sound, only weaker.
       if (x.id !== owner.id && pass.definitions.readsBoundOnly(b, [left, right], x.id)) continue;
       const reading: ElementRecord = {
         ...b,
@@ -1869,10 +1870,11 @@ function readInContexts(
       continue;
     }
     const reading: ElementRecord = { ...el, ownerId: x.id };
-    // A context whose reading met a binding above it (F5) is read per instance
-    // — at the context's own instance — instead of being refused. Past a cap, or
-    // a context listed only because a member reads its own value there (the
-    // G340 family, M7's `Q::c in q2`), the refusal is kept in its sentence.
+    // A context whose reading met a binding above it (F5), or one listed only
+    // because a member reads its own value there (M7's `Q::c in q2`, E7), is
+    // read per instance — at the context's own instance — instead of being
+    // refused. Past a cap, or over a member the model states twice there
+    // (`boundStatedTwiceIn`), the refusal is kept in its sentence.
     const above = pass.definitions.boundAbove(x.id, bodyNames);
     const cap = above !== undefined && 'pastCap' in above;
     const via = !cap && above !== undefined;
@@ -1883,11 +1885,15 @@ function readInContexts(
     // bound L). It is `constraint-by-instance`'s, at the instance's own line.
     const carried = above !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
     const readAs = carried ? pass.definitions.instanceNameOf(x.id) : undefined;
+    const here =
+      !cap && !via && pass.definitions.readsBoundOnly(el, names, x.id)
+        ? pass.definitions.boundStatedTwiceIn(el, names, x.id)
+        : undefined;
     const why =
       cap
         ? boundAboveSentence(pass.definitions, x.id, above!)
-        : !via && pass.definitions.readsBoundOnly(el, names, x.id)
-          ? boundHereSentence(pass.definitions, x.id)
+        : here !== undefined
+          ? boundHereSentence(pass.definitions, x.id, here)
           : undefined;
     const judged: Judgement = why !== undefined
       ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false, ...(cap ? { abstention: 'past-cap' as const } : {}) }

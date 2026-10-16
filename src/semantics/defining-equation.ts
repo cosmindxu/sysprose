@@ -1953,12 +1953,13 @@ export class DefiningEquations {
    * written ({@link readsOtherwise}) — a context the binding's reading by
    * feature alone does not list? M7's `q2 : Q { :>> K = 25.0; }` reads Q's `L =
    * 2.0 * K`, which Q's `bind p.load = L` gives p's load, as its own 50: Q's `c
-   * { p.load <= 5.0 }` is q2's own there, and no surface reads a bound value
-   * for one instance yet — so every surface leaves that reading undecided
-   * ({@link boundHereSentence}). Read as the context reads its names, it
-   * published a value the binding does not give: over an asserted partner
-   * (`assert constraint { L == 2.0 * K }`), P's default through the end copy,
-   * as Q2's `p.load` beside Q2's L of 50.
+   * { p.load <= 5.0 }` is q2's own there. Every surface reads it at the
+   * context's own instance (E7), as it reads one a binding above lists (F5) —
+   * q2's load of 50 — except over a member stated twice there, or a binding
+   * not read there ({@link boundStatedTwiceIn}). Read as the context reads its
+   * names, not at its instance, it published a value the binding does not
+   * give: over an asserted partner (`assert constraint { L == 2.0 * K }`), P's
+   * default through the end copy, as Q2's `p.load` beside Q2's L of 50 (G340).
    */
   readsBoundOnly(el: ElementRecord, names: readonly string[], contextId: ElementId): boolean {
     const role = el.attrs.requirementRole;
@@ -1972,6 +1973,33 @@ export class DefiningEquations {
       if (body && this.contextsOf(c, refsIn(body.node, body.literals)).plain.has(contextId)) return false;
     }
     return true;
+  }
+
+  /**
+   * Why a context {@link readsBoundOnly} lists is not read at its instance, or
+   * `undefined` where it is. `'two-values'`: a binding of `el`'s owner joins
+   * what `names` read, in the context `contextId`, to a component two of whose
+   * members state a value there (A.3's `valued`, {@link classified}) — Q's `load
+   * = 1.0` beside the bound `L = 2.0 * K`, read in `q2 : Q { :>> K = 25.0; }`:
+   * the model states 1 and 50 for q2's load, and its instance reading reads the
+   * first alone. `'unread'`: fail closed, where that binding is not read in the
+   * context. Every surface leaves such a reading undecided ({@link
+   * boundHereSentence}).
+   */
+  boundStatedTwiceIn(el: ElementRecord, names: readonly string[], contextId: ElementId): BoundHere | undefined {
+    if (el.ownerId == null) return 'unread';
+    const { readings } = bindingEnds(this.model);
+    const own = readings.get(el.ownerId);
+    const there = readings.get(contextId);
+    if (!own || !there) return 'unread';
+    const reads = this.boundReads(el.ownerId, names);
+    for (const [path, r] of own) {
+      if (!reads.has(r.feature)) continue;
+      const x = there.get(path);
+      if (!x) return 'unread';
+      if (classified(this.model, contextId, x.component).valued.length > 1) return 'two-values';
+    }
+    return undefined;
   }
 
   /**
@@ -3453,18 +3481,24 @@ export function boundAboveSentence(definitions: DefiningEquations, contextId: El
   );
 }
 
+/** Why a context listed only for a binding member's own value there is not read at its instance. */
+export type BoundHere = 'two-values' | 'unread';
+
 /**
  * Why a relation is not read in the context `contextId`, which reads it
  * otherwise only because a binding member's value is its own there ({@link
- * DefiningEquations.readsBoundOnly}) — the sentence every surface leaves that
- * reading undecided with.
+ * DefiningEquations.readsBoundOnly}): beside another member that states a
+ * value there, or over a binding not read there ({@link
+ * DefiningEquations.boundStatedTwiceIn}) — the sentence every surface leaves
+ * that reading undecided with.
  */
-export function boundHereSentence(definitions: DefiningEquations, contextId: ElementId): string {
+export function boundHereSentence(definitions: DefiningEquations, contextId: ElementId, why: BoundHere): string {
   const where = definitions.contextName(contextId);
-  return (
-    `the relation is read in ${where}, and a binding joins what it reads to a value ${where} reads as its own: ` +
-    'this tool reads a bound value for one instance only where every instance reads it alike, so it is not carried'
-  );
+  return why === 'two-values'
+    ? `the relation is read in ${where}, and a binding joins what it reads to a value ${where} reads as its own ` +
+        'and to another value the model states there: this tool reads neither of two values, so it is not carried'
+    : `the relation is read in ${where}, and a binding joins what it reads to a value ${where} reads as its own: ` +
+        `this tool reads that binding in no instance of ${where}, so it is not carried`;
 }
 
 /**

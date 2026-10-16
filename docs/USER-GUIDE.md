@@ -982,9 +982,19 @@ written in a definition reads the definition's own `top`, not each instance's
 another attribute (`bind q = top.pos`) reads its own default: known gaps. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
-for q's p, whose K q sets. A binding written in a usage's body to a feature of
-the definition around it (`part q : Q { bind p.load = L; }` in R, over R's L) is
-read in the instance of that definition around each reading, on every
+for q's p, whose K q sets. A relation of Q read in a usage or a specialisation
+that redefines such an input (Q's `c { load <= 5.0 }` over `bind load = L`,
+read in `q2 : Q { attribute :>> K = 25.0; }`) is read at that context's own
+instance, on every surface: q2's load is 50. Where another member the binding
+joins states a value of its own there (`load = 1.0` beside it), q2's load would
+be 1 and 50, and that reading is *could not be evaluated*. A context that sets
+the input by an asserted equation instead (`q2 : Q { assert constraint { K ==
+25.0 } }`, or a package's `assert constraint { q2.K == 25.0 }`), or that also
+redefines the bound feature under a name of its own (`attribute ld :>> load`),
+lists no such reading on any surface: known gaps. A binding written in a
+usage's body to a feature of the definition around it (`part q : Q { bind
+p.load = L; }` in R, over R's L) is read in the instance of that definition
+around each reading, on every
 surface: r's q reads r's L (50 where `r : R` sets K), and r0's q r0's. No value
 is read through a binding for any one instance where it holds in more than
 4,096 contexts or more than 32 usages deep, nor through a binding
@@ -1002,7 +1012,7 @@ never solved as a design equation (`s.a.load == 9.0` for a shallow `part s :
 T1` beside the capped chain), and the feasibility search does not move it.
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
-listed, and decided by no surface yet. Such a context, and one whose own value a
+listed and read at its own instance, as above. Such a context, and one whose own value a
 binding of the definition carries into what the relation reads (`q : Q {
 attribute :>> L = 50.0; }` over Q's `bind p.load = L`, for Q's `constraint c {
 p.m2 >= 0.0 }`), is that instance's reading: a `validation/constraint-by-instance`
