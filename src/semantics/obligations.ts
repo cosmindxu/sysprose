@@ -92,7 +92,9 @@ import {
   defaultGivesWay,
   defaultGivesWayIn,
   defaultStandsIn,
+  enclosedBindingFrame,
   equatedPartsRefusal,
+  hasEnclosedBindings,
   hasStatedValue,
   isAsserted,
   instanceGroups,
@@ -978,10 +980,12 @@ function instanceRows(
       continue;
     }
     // A context listed only because a binding member reads its own value there
-    // (M7's q2) is read by no surface yet: its goal is refused in the sentence
-    // the check gives it, and an assert adds no axiom there.
+    // (M7's q2) has its goal read at its own instance, as the check reads it
+    // (E7) — refused in the check's sentence over a member stated twice there —
+    // and an assert adds no axiom there.
     const boundOnly = !only && definitions.readsBoundOnly(el, names, context.id);
     if (boundOnly && filed.role === 'axiom') continue;
+    const here = boundOnly ? definitions.boundStatedTwiceIn(el, names, context.id) : undefined;
     // Read for the context's own instance: a feature the relation owns (a
     // constraint's `attribute k`) is the context's, one per context, and not
     // the symbol the relation's own reading and every other context share.
@@ -992,9 +996,9 @@ function instanceRows(
     if (shared.length > 0) sharedOut.push({ context, vars: shared });
     const encodable: Encodable = group?.refusal
       ? { reason: 'unread-definition', detail: group.refusal.sentence }
-      : boundOnly
+      : here !== undefined
         ? reading.encodable === true
-          ? { reason: 'unread-definition', detail: boundHereSentence(definitions, context.id) }
+          ? { reason: 'unread-definition', detail: boundHereSentence(definitions, context.id, here) }
           : reading.encodable
         : boundAbove(
             model,
@@ -1744,7 +1748,9 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
   const definitions = sharedDefinitions(model);
   const out: Obligation[] = [];
   for (const context of definitions.changingContexts(el, [left, right])) {
-    // Listed only because a member reads its own value there: no axiom yet.
+    // Listed only because a member reads its own value there: the context's
+    // relations are read at its instance (E7), but no bind axiom is filed there
+    // yet — sound, only weaker.
     if (definitions.readsBoundOnly(el, [left, right], context.id)) continue;
     // Each end as the context spells it: q's `pp.load` where `part pp :>> p` renames Q's p (H5, E8).
     const reading = readRelation(
@@ -1915,8 +1921,11 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
     // The instances that enclose it hold what THEIR types state of it too:
     // Sys's `bind p.load = q.load` of `s.q.load`, P's `assert sub.x <= 10.0`
     // of `p.sub.x`. Read for the instance alone, it was a value nothing
-    // constrained.
-    for (const e of enclosing) hold(e.instance, e.reader);
+    // constrained. One read through a usage's own walk (a group's row) has
+    // none of the frames above that usage; where a binding joins a feature of
+    // an enclosing instance, those are its frames ({@link hasEnclosedBindings}).
+    const frames = enclosing.length === 0 && hasEnclosedBindings(model) ? (definitions.framesAbove(path) ?? []) : enclosing;
+    for (const e of frames) hold(e.instance, e.reader);
     hold(path, reader);
   }
   if (pending.length > 0) {
@@ -2050,7 +2059,9 @@ function instanceAssertRow(
  * not features below `holder`. A package's binding on `holder`'s features
  * comes with its `ends` ({@link outsideBindingsOf}): an end of no definition
  * — the package's `L` — is read by its own symbol, one instance beside the
- * instance's (`p2.load == W4::L`).
+ * instance's (`p2.load == W4::L`). One whose end is a feature of an instance
+ * enclosing `holder` is read in that instance ({@link enclosedBindingFrame}):
+ * `q.p.load == L` in r, for r's q.
  */
 function instanceBindRow(
   model: Model,
@@ -2063,8 +2074,14 @@ function instanceBindRow(
 ): Obligation | undefined {
   const [left, right] = ends ?? [pathBelow(model, el.source?.[0], holder.id), pathBelow(model, el.target?.[0], holder.id)];
   const definitions = sharedDefinitions(model);
+  // An end of an instance enclosing the holder (R's `L` for r's q): the
+  // binding is read in that instance, over its own names (E3).
+  const up = ends === undefined && (left === undefined) !== (right === undefined) ? enclosedBindingFrame(model, el, holder, path) : undefined;
   let reading: RelationReading;
-  if (left !== undefined && right !== undefined) {
+  if (up !== undefined) {
+    const text = `${spelledIn(definitions, up.reader, up.ends[0])} == ${spelledIn(definitions, up.reader, up.ends[1])}`;
+    reading = readRelation(model, { ...el, ownerId: up.reader }, text, memo, undefined, undefined, up.instance);
+  } else if (left !== undefined && right !== undefined) {
     // Each end as the context spells it: q's `pp.load` where `part pp :>> p` renames Q's p (H5, E8).
     const text = `${spelledIn(definitions, context.id, left)} == ${spelledIn(definitions, context.id, right)}`;
     reading = readRelation(model, { ...el, ownerId: context.id }, text, memo, undefined, undefined, path);

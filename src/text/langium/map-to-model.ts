@@ -420,13 +420,16 @@ function typeClosure(model: Model, el: ElementRecord): ElementRecord[] {
  * walk took P's by declared name, and the implicit copy it materialised for
  * `bind w = s.load` redefined P's `load` — masking S's 5 in `s` itself.
  */
-function findTypeFeature(model: Model, el: ElementRecord, seg: string): ElementRecord | undefined {
+function findTypeFeature(model: Model, el: ElementRecord, seg: string, unique = false): ElementRecord | undefined {
   const hits: ElementRecord[] = [];
   for (const t of typeClosure(model, el)) {
     const hit = childNamed(model, t.id, seg);
     if (hit && !hits.includes(hit)) hits.push(hit);
   }
-  return hits.find((h) => !hits.some((o) => o !== h && redefinedClosure(model, o).includes(h))) ?? hits[0];
+  const most = hits.filter((h) => !hits.some((o) => o !== h && redefinedClosure(model, o).includes(h)));
+  // `unique`: none where two types each redefine it and neither the other (Q2's and Q3's `:>> L`, both general to Q23).
+  if (unique) return most.length === 1 ? most[0] : undefined;
+  return most[0] ?? hits[0];
 }
 
 /**
@@ -457,10 +460,13 @@ function ensureImplicitFeature(
   // children), so the id is collision-safe.
   const ownerQName = model.qualifiedName(owner.id);
   const fid = implicitId('impl', ownerQName, name);
+  // A copy of an unnamed redefinition takes the name it is found by: unnamed, two sibling copies
+  // (`part :>> a; part :>> b;`) shared one qualified name, and their own copies' ids collided.
+  const unnamed = proto.declaredName === undefined && proto.declaredShortName === undefined;
   const created = model.create(proto.eClass, {
     id: model.has(fid) ? undefined : fid,
     ownerId: owner.id,
-    declaredName: proto.declaredName,
+    declaredName: unnamed && name !== '' ? name : proto.declaredName,
     declaredShortName: proto.declaredShortName,
     attrs,
   });
@@ -570,8 +576,15 @@ function resolveChainEnd(
       if (end) return end;
       continue;
     }
-    if (!walkChain(model, hit, rest, false)) continue; // dry run before materializing
-    const anchor = ensureImplicitFeature(model, scopeEl, hit);
+    // The copy mirrors the MOST SPECIFIC inherited feature, as {@link findTypeFeature} picks a later
+    // segment's: in `part q : Q2 { bind p.load = L; }` the name finds Q's declared `L`, but Q2's
+    // `attribute :>> L = 50.0` redefines it, and a copy redefining Q's L read the general value (or
+    // none) in q — every surface then let P's default stand where the binding gives 50. Only the ONE
+    // most specific: where two general types each redefine it (MI1's Q2 and Q3, a clash), neither is.
+    const special = findTypeFeature(model, scopeEl, head, true);
+    const proto = special && special !== hit && redefinedClosure(model, special).includes(hit) ? special : hit;
+    if (!walkChain(model, proto, rest, false)) continue; // dry run before materializing
+    const anchor = ensureImplicitFeature(model, scopeEl, proto);
     const end = walkChain(model, anchor, rest, true);
     if (end) return end;
   }

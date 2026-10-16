@@ -982,52 +982,87 @@ written in a definition reads the definition's own `top`, not each instance's
 another attribute (`bind q = top.pos`) reads its own default: known gaps. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
-for q's p, whose K q sets. A binding written in a usage's body to a feature of
-the definition around it (`part q : Q { bind p.load = L; }` in R, over R's L) is
-read in every instance of that definition, so not for r's q where `r : R` sets
-K. No value is read through a binding for any one instance where it holds in
-more than 4,096 contexts or more than 32 usages deep, nor through a binding
-joined to such a one, end to end or through a feature an end redefines (a
-package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33 usages
-down that gives that load its value: Y's `default` gives way, and the check
-reads no value for Y), nor through one whose end has no instance in a context
-it holds in (R's nested Q used outside any R). A binding joins such a one
-through a feature an end redefines only where that feature is itself another
+for q's p, whose K q sets. A relation of Q read in a usage or a specialisation
+that redefines such an input (Q's `c { load <= 5.0 }` over `bind load = L`,
+read in `q2 : Q { attribute :>> K = 25.0; }`) is read at that context's own
+instance, on every surface: q2's load is 50. Where another member the binding
+joins states a value of its own there (`load = 1.0` beside it), q2's load would
+be 1 and 50, and that reading is *could not be evaluated*. A context that sets
+the input by an asserted equation instead (`q2 : Q { assert constraint { K ==
+25.0 } }`, or a package's `assert constraint { q2.K == 25.0 }`), or that also
+redefines the bound feature under a name of its own (`attribute ld :>> load`),
+lists no such reading on any surface: known gaps. A binding written in a
+usage's body to a feature of the definition around it (`part q : Q { bind
+p.load = L; }` in R, over R's L) is read in the instance of that definition
+around each reading, on every surface: r's q reads r's L (50 where `r : R` sets
+K), and r0's q r0's. No value is read through a binding for any one instance
+where it holds in more than 4,096 contexts or more than 32 usages deep, nor
+through a binding joined to such a one, end to end or through a feature an end
+redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33
+usages down that gives that load its value: Y's `default` gives way, and the
+check reads no value for Y), nor through one whose end has no instance in a
+context it holds in (R's nested Q used outside any R). A binding joins such a
+one through a feature an end redefines only where that feature is itself another
 binding's end: U's `bind a.load = M` on its own `part a : T0` is not joined to
 T1's capped binding by the T0 `load` both redefine. A value held so, which no
-binding carries from a stated value, is no design freedom to the numeric
-surface either: a relation reading it is *could not be evaluated* there too,
-never solved as a design equation (`s.a.load == 9.0` for a shallow `part s :
-T1` beside the capped chain), and the feasibility search does not move it.
+binding carries from a stated value, is no design freedom to the numeric surface
+either: a relation reading it is *could not be evaluated* there too, never
+solved as a design equation (`s.a.load == 9.0` for a shallow `part s : T1`
+beside the capped chain), and the feasibility search does not move it.
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
-listed, and decided by no surface yet. Such a context, and one whose own value a
-binding of the definition carries into what the relation reads (`q : Q {
+listed and read at its own instance, as above. Such a context, and one whose own
+value a binding of the definition carries into what the relation reads (`q : Q {
 attribute :>> L = 50.0; }` over Q's `bind p.load = L`, for Q's `constraint c {
-p.m2 >= 0.0 }`), is that instance's reading: a `validation/constraint-by-instance`
-finding at the member of the context stating the carried value (q's `:>> L`),
-else at the context itself, never a target's
+p.m2 >= 0.0 }`), is that instance's reading: a
+`validation/constraint-by-instance` finding at the member of the context stating
+the carried value (q's `:>> L`), else at the context itself, never a target's
 `validation/target-by-specialisation` verdict. A per-instance reading that fails
 inside the tool makes the row it was read for *could not be evaluated*, in a
 sentence naming the failure (`… the per-instance reading failed (RangeError);
-reported, not dropped`; a group's roll-up counts it *not read*), and every
-other row and finding stands. A value a binding carries is read in the unit
+reported, not dropped`; a group's roll-up counts it *not read*), and every other
+row and finding stands. A value a binding carries is read in the unit
 the feature it fills declares — the copy `bind p.load = L` makes of P's `load`
 included — and compared as the quantity it is: q1's `L = 20.0 [kg]` is 20 kg
 against P's `cap = 10000.0 [g]` (violated, on every surface), q2's `L = 5000.0
 [g]` is 5 kg (`load = 5` in the row's sentence), and a bare literal beside it
 is read in `load`'s unit (`load <= 10.0` holds for q2). A value of another
 dimension carried into it (a length into a mass) is compared by no surface.
-Against a value
-written with `=`, a binding is a **contradiction**, as a redefinition is:
-`bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20 kg is reported
-violated at the binding (in a context that specialises the binding's owner, at
-that context) by the check and the numeric surface, `solveFeasible` decides
-the model infeasible, and the solver lane finds the axioms inconsistent. Only a
-pair the check decides to differ is reported so; a pair it cannot compare is
-left to the solver lane. The literal engine reads each relation alone, never
-the model's facts against each other: over such a model it reads the
-relations at P's `m`, as it reads them beside a contradicted `assert`.
+Against a value written with `=`, a binding is a **contradiction**, as a
+redefinition is: `bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20
+kg is reported violated at the binding (in a context that specialises the
+binding's owner, at that context) by the check and the numeric surface,
+`solveFeasible` decides the model infeasible, and the solver lane finds the
+axioms inconsistent. Neither value is read where the binding joins them: a
+relation reading `q.p.m` or `q.M` is *could not be evaluated* on the check, the
+literal engine and the numeric surface; the check and the literal engine say
+why in a sentence that names the binding and the two features it joins, and
+the numeric surface reports that the feature has no value in scope. A relation
+written in P itself is still judged on P's own row at 18.5 kg by the check and
+the literal engine, even where q's p is the only P. The two are compared as
+written, as a redefinition's value is against the one it redefines: a pair
+written the same (`1000.0 [g]` and `1.0 [kg]`) is one value, and is read. A
+pair only an evaluation could compare (a value expression that reads a name) is
+still read, each value where it is stated, where neither should be: a known
+gap. The binding is reported violated where the check finds the two differ, and
+a pair it cannot compare is left to the solver lane. A binding to a feature of
+the instance around the usage it is written in (R's `L` in `part q : Q { bind
+p.load = L; }`, against r2's own `:>> load = 3.0` in its q's p) files no such
+row, and the solver lane, which has no axiom of it where that usage is
+redefined, decides the relation at the value written there: a known gap.
+Only a binding whose own two ends state the differing values is reported: a
+binding beside it in the same chain (`bind K = L` with both 30, next to `bind L
+= M` with M 50) is not. An instance the binding does not join (`part p0 : P`
+outside any Q) still reads P's 18.5 kg on the check and the literal engine; the
+numeric surface, which reads P's `m` once for every instance, reads it nowhere.
+For a package's binding on a definition's feature (`bind P::m = M`, M written
+with `=`) against an instance's own `:>> m = 25.0 [kg]`, only that instance's
+own value goes unread: M, a package's feature and so one instance, and another
+instance's `m`, which the binding makes M, are still read on the check and the
+literal engine, though not on the numeric surface, which reads P's `m` once for
+every instance; and no binding finding reports the pair. Where the two values
+carry units, as here, the solver lane encodes no binding for that instance, and
+decides its rows at the instance's own 25 kg: a known gap.
 
 **An asserted equation overrides a `default` too.** `attribute L default =
 2.0;` beside `assert constraint qa { L == 5.0 }` is L = 5 on every surface: the
@@ -1119,6 +1154,37 @@ of its type (the requirement is about any one); reached through a usage
 and a subject that says something of its own (`subject s : P { assert
 constraint … }`) is an instance of its own. `--free` and `bounds --measure`
 take an instance's symbol, or its dotted path.
+
+A name the element it is written in does not declare is read as KerML resolves
+it there: through the namespaces that own that element, nearest first. `part def
+A { attribute x = K; }` in `package Lex { attribute K = 7.0; … }` reads Lex's K,
+on every surface — except where one feature nested below the element reading it
+is the only one of that name (A's `part p : P` with P's own `K`): that feature
+is read first, as before, where KerML reads Lex's K, and an asserted equation
+(below) takes no value from the name there: a known gap. Only an attribute is
+read so, and only by its bare name: a qualified `Lex::K` or a dotted name is
+not. A body is read as it is written, wherever it is read: A's `x = K`, read for
+`part def H { attribute K = 70.0; part a : A; }`'s a, reads no K where A sees
+none, nor where an import or an alias answers the name first (`import
+Consts::*;`, `alias K for Consts::K;` — such a name is not read), nor where
+something that specialises the element reading it declares a K of its own. A
+package's attribute is one value wherever it is read, unless it is a `default`
+that an `assert` other than the package's own names. An attribute of an
+enclosing definition or usage is read where it is declared only where it is one
+value in every instance of that owner: nothing that specialises the owner
+declares the name anew, no binding joins it, no `assert` names it where it is a
+`default`, and what its value reads is such a value too (R's `y = 3.0` read by
+its nested `part def Q { attribute z = y + K; }`). Elsewhere a row that reads it
+is *could not be evaluated*, in a sentence naming the element that changes it —
+Q's p `:>> load = L` beside `part q : Q { attribute :>> L = 50.0; }` reads
+neither Q's 1 nor q's 50, for Q's own p or for q's. An asserted equation over a
+`default` reads such a name on its other side as a value of its own where it is
+a constant written with `=`: `part p : P { assert constraint { x == L } }`
+beside the package's `L = 50.0` makes p's x 50 on every surface, and so does Q's
+`assert constraint { p.x == L }`. Where an assert in an instance around the
+feature names one that is not read so (an import answers it, or an instance
+gives it another value), the default gives way there and the feature is read as
+no value.
 
 A requirement is read where its subject is bound. `satisfy R by p` and
 `requirement r : R { subject s = p; }` read R's clauses at p — `s.m` is p's

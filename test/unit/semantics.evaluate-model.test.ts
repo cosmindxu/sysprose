@@ -120,6 +120,45 @@ describe('semantics — the one walk, and the bare-name rule', () => {
     for (const c of checkConstraints(m)) expect(c.result, c.expression).toBe('unknown');
   });
 
+  it('reads a name the context does not declare through its owners, where it is one value in every instance (E3)', () => {
+    const m = parseModel(`package LX {
+      attribute K = 7.0;
+      part def Q { attribute L default = 1.0; part p { attribute x = K + L; } }
+      part q : Q;
+      part def R { attribute M default = 1.0; part s { attribute y = M; } constraint c { s.y <= 5.0 } }
+      part r : R { attribute :>> M = 50.0; }
+    }`).model;
+    // The package's K is one value; Q's L is 1 in every Q, q declaring nothing anew.
+    expect(scopeFor(m, named(m, 'LX::Q::p').id)('K')).toBe(7);
+    expect(scopeFor(m, named(m, 'LX::Q::p').id)('x')).toBe(8);
+    // R's M is 50 in r: read where it is declared, R's s would read R's 1 for r's s too — so it is read nowhere,
+    // and the check names the element that changes it.
+    expect(scopeFor(m, named(m, 'LX::R::s').id)('y')).toBeUndefined();
+    const c = checkConstraints(m).find((x) => m.qualifiedName(x.id) === 'LX::R::c')!;
+    expect([c.result, c.message]).toEqual([
+      'unknown',
+      'Could not evaluate: M is read through LX::R, which declares it, and is not one value in every instance of it: LX::r declares M anew',
+    ]);
+    // Read where the body is written, as KerML resolves it there: an import on the way answers K first (C's 9),
+    // so the outer 3 is not read; nor is a K the writer cannot see (H's, for A declared outside H).
+    const w = parseModel(`package LW {
+      attribute K = 3.0;
+      package C { attribute K = 9.0; }
+      package U { import C::*; part def B { attribute x = K; } }
+      part def A { attribute y = J; }
+      part def H { attribute J = 70.0; part a : A; }
+    }`).model;
+    expect(scopeFor(w, named(w, 'LW::U::B').id)('x')).toBeUndefined();
+    expect(scopeFor(w, named(w, 'LW::H::a').id)('y')).toBeUndefined();
+    // An assert typed by a constraint definition names what it gives its parameters (`in a = L`): L, a default
+    // it sets in every Q, is not read for Q's p.
+    const t = parseModel(`package LT {
+      constraint def Eq { in a; a == 50.0 }
+      part def Q { attribute L default = 1.0; assert constraint e : Eq { in a = L; } part p { attribute y = L; } }
+    }`).model;
+    expect(scopeFor(t, named(t, 'LT::Q::p').id)('y')).toBeUndefined();
+  });
+
   it('offers a nested bare name only when exactly one feature below has it (xb1)', () => {
     const m = parseModel(`package XB1 {
       part def P { attribute y = 4.0; }
@@ -2160,16 +2199,90 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(hasUserBindings(b!)).toBe(true);
   });
 
-  it('names what a context reads where a binding alone makes it read the body otherwise', async () => {
+  it('reads neither of two values written with `=` a binding joins in a context, and says why (A.5)', async () => {
     // q joins Q's `load = 3.0` to its own L of 50 (a contradiction the binding's own row reports):
-    // no name of the body is another feature in q, so the finding names what q reads.
+    // no name of the body is another feature in q, so the finding names what q reads — neither of the
+    // two values written with `=` (A.5, U11: d1plain's shape), and why.
     const { model: m } = await loadModelText(`package LF {
       part def Q { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real = 3.0; bind load = L; constraint c { load <= 5.0 } }
       part q : Q { attribute :>> L = 50.0; }
     }`);
     const c = checkConstraints(m!).find((x) => m!.qualifiedName(x.id) === 'LF::Q::c')!;
     expect(c.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
+      [
+        'q',
+        'unknown',
+        'Q::c (load <= 5.0) could not be evaluated for q: "load" cannot be derived: load is not read in LF::q: ' +
+          '`bind load = L` of LF::Q joins two values the model states (q.load, q.L), and a binding holds in every ' +
+          'instance (see the binding\u2019s own finding)',
+      ],
+    ]);
+    expect(checkConstraints(m!).filter((x) => x.conflict === 'bind').map((x) => x.result)).toEqual(['violated']);
+    // A pair only an evaluation compares (q's `L = 2.0 * K`) is read as before: the finding names what q reads.
+    const { model: e } = await loadModelText(`package LF {
+      part def Q { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real = 3.0; bind load = L; constraint c { load <= 5.0 } }
+      part q : Q { attribute K : ScalarValues::Real = 25.0; attribute :>> L = 2.0 * K; }
+    }`);
+    const ce = checkConstraints(e!).find((x) => e!.qualifiedName(x.id) === 'LF::Q::c')!;
+    expect(ce.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
       ['q', 'satisfied', 'q::load = 3 meets Q::c (load <= 5.0)'],
+    ]);
+    // A binding whose end is outside the element that writes it (R's L in q's body, EB4) files no row of its
+    // own, so the sentence points at none.
+    const { model: eb } = await loadModelText(`package EB4 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+      part def Q { part p : P; }
+      part def R { attribute L : ScalarValues::Real default = 5.0; part q : Q { bind p.load = L; } }
+      part r2 : R { attribute :>> L = 50.0; part :>> q { part :>> p { attribute :>> load = 3.0; } } }
+    }`);
+    const ceb = checkConstraints(eb!).find((x) => eb!.qualifiedName(x.id) === 'EB4::P::c')!;
+    const r2 = ceb.instances!.find((i) => i.instance === 'EB4::r2::q::p')!;
+    expect([r2.result, r2.message.includes('joins two values the model states'), r2.message.includes('own finding')]).toEqual([
+      'unknown',
+      true,
+      false,
+    ]);
+    expect(checkConstraints(eb!).filter((x) => x.conflict === 'bind')).toEqual([]);
+  });
+
+  it('reports a binding violated only where its own two ends state different values with `=` (A.5)', async () => {
+    // A.5 reads no value its component joins against a differing one, so the `#bind` row is decided from the
+    // binding's own pair, never from the component. BC1C's `bind K = L` joins 30 to 30 and FAN's `bind
+    // r.load = L` joins r's default (which gives way) to L: each was reported "different values" beside the
+    // binding that states them.
+    const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; }';
+    for (const [text, expr] of [
+      [
+        `package BC1C { ${P} part def Q { attribute L : ScalarValues::Real = 30.0; attribute K : ScalarValues::Real = 30.0;
+          attribute M : ScalarValues::Real = 50.0; bind K = L; bind L = M; } part q : Q; }`,
+        'L == M',
+      ],
+      [
+        `package FAN { ${P} part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; part r : P; bind p.load = L; bind r.load = L; }
+          part q : Q { part :>> p { attribute :>> load = 30.0; } } }`,
+        'p.load == L',
+      ],
+    ] as const) {
+      const { model: m } = await loadModelText(text);
+      const bind = checkConstraints(m!).filter((c) => c.conflict === 'bind');
+      expect(bind.map((c) => [c.expression, c.result]), expr).toEqual([[expr, 'violated']]);
+      expect(checkConstraintsNumeric(m!).filter((r) => r.conflict === 'bind').map((r) => r.result), expr).toEqual(['violated']);
+    }
+    // A usage body's binding (h2-bodyspec over d1plain): its ends are implicit copies that state no value of
+    // their own, so the pair is what they redefine — q's p.load 30 (Q3's) against L 50. `sysml-check
+    // --strict` reported nothing while SMT found the axioms inconsistent.
+    const { report } = await loadModelText(
+      `package UB2 { ${P} part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; }
+        part def Q3 :> Q { part :>> p { attribute :>> load = 30.0; } } part q : Q3 { bind p.load = L; } }`,
+      { fileName: 'ub2.sysml', strict: true },
+    );
+    expect(report.ok).toBe(false);
+    expect(report.diagnostics.filter((d) => d.severity === 'warning').map((d) => [d.code, d.message])).toEqual([
+      [
+        'validation/constraint-violation',
+        'Constraint violated: UB2::q binds p.load to L (`bind p.load = L`), and the model states different values for ' +
+          'the two there — a binding holds in every instance, as a value written with `=` does, so the model states both values',
+      ],
     ]);
   });
 
@@ -2188,12 +2301,13 @@ describe('checkConstraints — a bound partner is read only where every instance
     constraint ctlA { r0.q.p.m2 >= 8.5 }
   }`;
 
-  it('reads a partner of an enclosing instance in every instance of it, and so not where they differ (W1, W3)', async () => {
+  it('reads a partner of an enclosing instance in the instance around each reading (W1, W3)', async () => {
     for (const nested of [false, true]) {
-      // r's K makes R's L r's 50: r's q's m2 is −40, never the 9 R's own L of 1 gave (a false refutation).
+      // r's K makes R's L r's 50: r's q's m2 is −40, never the 9 R's own L of 1 gave (a false refutation),
+      // and r0's q reads r0's L of 1 (O6 S1, E3: both abstained before).
       const { model: m } = await loadModelText(enclosed('E', nested, true));
       const checks = checkConstraints(m!);
-      expect([resultOf(checks, m!, 'E::negT'), resultOf(checks, m!, 'E::ctlA')], String(nested)).toEqual(['unknown', 'unknown']);
+      expect([resultOf(checks, m!, 'E::negT'), resultOf(checks, m!, 'E::ctlA')], String(nested)).toEqual(['satisfied', 'satisfied']);
       // Where every R reads it alike, it is read as before.
       const { model: u } = await loadModelText(enclosed('U', nested, false));
       const alike = checkConstraints(u!);
@@ -2237,9 +2351,9 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(resultOf(checkConstraints(m!), m!, 'X::z1')).toBe('unknown');
   });
 
-  it('lists one context for usages that change nothing a bound member reads, and decides none it lists for that alone', async () => {
+  it('lists one context for usages that change nothing a bound member reads, and reads each it lists for that alone at its instance', async () => {
     // Q2's K makes Q's asserted L Q2's own 50 — and every `qi : Q2` reads it as Q2 does: one context row,
-    // not one per usage (a thousand usages made 2,003 findings), and it decides nothing yet.
+    // not one per usage (a thousand usages made 2,003 findings), read at Q2's own instance (E7): load 50.
     const { model: m } = await loadModelText(
       [
         'package FanA {',
@@ -2257,9 +2371,8 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(definitions.readsBoundOnly(cq, ['p.load'], Q2.id)).toBe(true);
     const checks = checkConstraints(m!);
     const row = checks.find((c) => c.id === cq.id)!;
-    expect(row.instances!.map((i) => [i.context, i.result, i.detail])).toEqual([
-      ['Q2', 'unknown', `Could not evaluate: ${boundHereSentence(definitions, Q2.id)}`],
-    ]);
+    expect(definitions.boundStatedTwiceIn(cq, ['p.load'], Q2.id)).toBeUndefined();
+    expect(row.instances!.map((i) => [i.context, i.result])).toEqual([['Q2', 'violated']]);
     expect(checks.reduce((n, c) => n + 1 + (c.instances?.length ?? 0), 0)).toBe(4);
     // Usages whose own values sign the member apart are each listed: q's K of 25, q2's of 0.1.
     const { model: t } = await loadModelText(`package M7T {
@@ -2270,14 +2383,49 @@ describe('checkConstraints — a bound partner is read only where every instance
     }`);
     const c = checkConstraints(t!).find((x) => t!.qualifiedName(x.id) === 'M7T::Q::c')!;
     expect(c.instances!.map((i) => [i.context, i.result])).toEqual([
-      ['q', 'unknown'],
-      ['q2', 'unknown'],
+      ['q', 'violated'],
+      ['q2', 'satisfied'],
     ]);
   });
 
-  it('reads no context listed by a member’s own value alone as a contradiction or a verdict (FanS)', async () => {
+  it('reads no context listed by a member’s own value alone where the model states a second value of the member there', async () => {
+    // load's own `= 1.0` beside the bound `L = 2.0 * K`: q2's load is 1 and 50. Its instance reading reads
+    // the 1 alone, a false T; every surface leaves q2's reading undecided, in one sentence. q2's L is read.
+    const { model: m } = await loadModelText(`package M7S {
+      part def Q {
+        attribute K : ScalarValues::Real default = 0.5;
+        attribute L : ScalarValues::Real = 2.0 * K;
+        attribute load : ScalarValues::Real = 1.0;
+        bind load = L;
+        constraint c { load <= 5.0 }
+        constraint d { L <= 5.0 }
+      }
+      part q2 : Q { attribute :>> K = 25.0; }
+    }`);
+    const definitions = sharedDefinitions(m!);
+    const c = named(m!, 'M7S::Q::c');
+    const q2 = named(m!, 'M7S::q2');
+    expect(definitions.readsBoundOnly(c, ['load'], q2.id)).toBe(true);
+    expect(definitions.boundStatedTwiceIn(c, ['load'], q2.id)).toBe('two-values');
+    const sentence = boundHereSentence(definitions, q2.id, 'two-values');
+    expect(sentence).toBe(
+      'the relation is read in M7S::q2, and a binding joins what it reads to a value M7S::q2 reads as its own and to ' +
+        'another value the model states there: this tool reads neither of two values, so it is not carried',
+    );
+    const checks = checkConstraints(m!);
+    const rows = (q: string) => checks.find((x) => m!.qualifiedName(x.id) === q)!.instances!.map((i) => [i.context, i.result, i.detail]);
+    expect(rows('M7S::Q::c')).toEqual([['q2', 'unknown', `Could not evaluate: ${sentence}`]]);
+    expect(rows('M7S::Q::d').map(([ctx, result]) => [ctx, result])).toEqual([['q2', 'violated']]);
+    const goal = obligationsOf(m!).find((o) => o.element.qualifiedName === 'M7S::Q::c in M7S::q2')!;
+    expect(goal.encodable).toEqual({ reason: 'unread-definition', detail: sentence });
+    const numeric = checkConstraintsNumeric(m!).find((r) => r.id === `${c.id}@${q2.id}`)!;
+    expect([numeric.result, numeric.reason]).toEqual(['unknown', sentence]);
+  });
+
+  it('reads a context listed by a member’s own value alone at its instance, and as no contradiction (FanS)', async () => {
     // P's default read through QB's end copy (the G340 defect) met Q2's asserted L of 50: Q2's row
-    // published p.load = 1 against a load of 50, and every usage of Q2 repeated it.
+    // published p.load = 1 against a load of 50, and every usage of Q2 repeated it. Read at Q2's own
+    // instance (E7), p's load is the binding's 50.
     const { model: m } = await loadModelText(`package FanS {
       ${P}
       part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
@@ -2288,7 +2436,7 @@ describe('checkConstraints — a bound partner is read only where every instance
     }`);
     const checks = checkConstraints(m!);
     const cq = checks.find((c) => m!.qualifiedName(c.id) === 'FanS::QB::cq')!;
-    expect(cq.instances!.map((i) => [i.context, i.result])).toEqual([['Q2', 'unknown']]);
+    expect(cq.instances!.map((i) => [i.context, i.result])).toEqual([['Q2', 'violated']]);
     // QB's binding reads QB::L, which Q's own assert defines (2.0 * K in Q2), so the ends state no
     // conflicting value: the false `#bind` the implicit end copy's missed assert filed is gone, and
     // none is added for q0 or q1.
@@ -4409,6 +4557,8 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         '}',
       ]),
     ).toEqual([['constraint-by-instance', 'warning', 'K2::q', 5, 'attribute :>> L = 50.0']]);
+    // M7's q2 is read at its own instance (E7): its load of 50 breaks c, at q2's own usage (the K it sets
+    // reaches the load through Q's own `L = 2.0 * K`, which no member of q2 states).
     expect(
       await findings([
         'package M7 {',
@@ -4423,7 +4573,7 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         '  part q2 : Q { attribute :>> K = 25.0; }',
         '}',
       ]),
-    ).toEqual([['constraint-by-instance', 'info', 'M7::q2', 10, 'part q2 : Q']]);
+    ).toEqual([['constraint-by-instance', 'warning', 'M7::q2', 10, 'part q2 : Q']]);
     // No binding carries the reading: a target over L that q redefines reads q's own L, and Q's asserted
     // `defL` read in Q2 reads L, the binding's source, not a value carried in. Both stay a target's.
     expect(
@@ -4445,7 +4595,8 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         '}',
       ]),
     ).toEqual([
-      ['constraint-by-instance', 'info', 'FanA::Q2', 4, 'part def Q2 :> Q'],
+      // Q2's own reading of cq, at Q2's instance (E7): its p's load is Q2's asserted L of 50.
+      ['constraint-by-instance', 'warning', 'FanA::Q2', 4, 'part def Q2 :> Q'],
       ['target-by-specialisation', 'info', undefined, 4, 'attribute :>> K = 25.0'],
     ]);
   });

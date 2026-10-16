@@ -81,8 +81,11 @@ import {
   defaultGivesWay,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
+  statedAgainstBoundSomewhere,
   defaultStandsIn,
+  enclosedBindingFrame,
   equatedPartsRefusal,
+  hasEnclosedBindings,
   hasPastCapBindings,
   hasStatedValue,
   instanceGroups,
@@ -600,8 +603,10 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
     // (2) Feature-value expression assignments (only genuine expressions).
     if (isUsage(el.eClass)) {
       // A value that conflicts with a binding it overrides is read by no
-      // surface: no seed, no equation, nothing solved for it.
-      if (el.attrs.value !== undefined && sharedDefinitions(model).contradiction(el)) {
+      // surface: no seed, no equation, nothing solved for it — nor one a
+      // binding joins somewhere to another value written with `=` (A.5).
+      const definitions = sharedDefinitions(model);
+      if (el.attrs.value !== undefined && (definitions.contradiction(el) || statedAgainstBoundSomewhere(model, el))) {
         unreadable.add(el.id);
         continue;
       }
@@ -1338,8 +1343,12 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       }
     }
     // The instances that enclose it hold what their types state of it too
-    // (Sys's `bind p.load = q.load` of `s.q.load`).
-    for (const e of reading.enclosing) hold(e.instance, e.reader);
+    // (Sys's `bind p.load = q.load` of `s.q.load`) — the frames above a usage
+    // whose own walk read it, where a binding joins a feature of an enclosing
+    // instance (E3, {@link hasEnclosedBindings}).
+    const frames =
+      reading.enclosing.length === 0 && hasEnclosedBindings(model) ? (definitions.framesAbove(reading.instance) ?? []) : reading.enclosing;
+    for (const e of frames) hold(e.instance, e.reader);
     hold(reading.instance, reader.id);
   }
   // Past the budget, an instance variable left unread is solved from nothing.
@@ -1354,7 +1363,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
  * converts one. `undefined` for an edge whose ends are not below `holder`.
  * A package's binding on `holder`'s features comes with its `ends`
  * ({@link outsideBindingsOf}): an end of no definition — the package's `L` —
- * is its own variable, one instance beside the instance's.
+ * is its own variable, one instance beside the instance's. One whose end is a
+ * feature of an instance enclosing `holder` is read in that instance
+ * ({@link enclosedBindingFrame}): `q.p.load = L` in r, for r's q.
  */
 function instanceBindingEquation(
   model: Model,
@@ -1367,16 +1378,22 @@ function instanceBindingEquation(
   ends?: readonly [string | undefined, string | undefined],
 ): Equation | undefined {
   const definitions = sharedDefinitions(model);
-  const below = ends ?? [pathBelow(model, edge.source?.[0], holder.id), pathBelow(model, edge.target?.[0], holder.id)];
+  const plain = ends ?? [pathBelow(model, edge.source?.[0], holder.id), pathBelow(model, edge.target?.[0], holder.id)];
+  // An end of an instance enclosing the holder (R's `L` for r's q): the
+  // binding is read in that instance, over its own names (E3).
+  const up = ends === undefined && (plain[0] === undefined) !== (plain[1] === undefined) ? enclosedBindingFrame(model, edge, holder, instance) : undefined;
+  const at = (up !== undefined ? model.get(up.reader) : undefined) ?? reader;
+  const inst = up !== undefined ? up.instance : instance;
+  const below = up?.ends ?? plain;
   if (below[0] === undefined && below[1] === undefined) return undefined;
   if ((below[0] === undefined || below[1] === undefined) && ends === undefined) return undefined;
   // Read, never changed: the shared scope itself, not a copy of it.
-  const scope = definitions.scope(reader.id, 'all');
+  const scope = definitions.scope(at.id, 'all');
   // Each end as the reader spells it: q's `pp.load` where `part pp :>> p` renames Q's p (H5, E8).
   const end = (k: 0 | 1): [string, ElementId | undefined] => {
     const path = below[k];
     if (path !== undefined) {
-      const spelled = spelledIn(definitions, reader.id, path);
+      const spelled = spelledIn(definitions, at.id, path);
       return [spelled, scope.get(spelled)];
     }
     return [`__${k === 0 ? 'l' : 'r'}`, carriedEnd(model, (k === 0 ? edge.source : edge.target)?.[0])];
@@ -1391,10 +1408,10 @@ function instanceBindingEquation(
   const lhs: ExprNode = { kind: 'ref', path: left.split('.') };
   const rhs: ExprNode = { kind: 'ref', path: right.split('.') };
   const expr: ExprNode = { kind: 'binary', op: '-', left: lhs, right: rhs };
-  const keyed = keyedNames(model, { ...edge, ownerId: reader.id }, { kind: 'binary', op: '==', left: lhs, right: rhs }, nameToId, instance);
+  const keyed = keyedNames(model, { ...edge, ownerId: at.id }, { kind: 'binary', op: '==', left: lhs, right: rhs }, nameToId, inst);
   const names = keyed?.nameToId ?? nameToId;
   const vars = [...new Set([names.get(left)!, names.get(right)!])];
-  const eq: Equation = { vars, lhs, rhs, expr, raw: `${left} = ${right} (${edge.id} in ${instance})`, nameToId: names };
+  const eq: Equation = { vars, lhs, rhs, expr, raw: `${left} = ${right} (${edge.id} in ${inst})`, nameToId: names };
   const scale = scaleOfRelation(model, a === b ? [a] : [a, b], [expr], nameToId, false, NO_MARKERS, memo);
   const scaled = keyed ? rekeyed(scale, nameToId, names) : scale;
   if (scaled) eq.scale = scaled;
@@ -1727,7 +1744,9 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   const definitions = sharedDefinitions(model);
   for (const id of propagated.keys()) {
     const el = model.get(id);
-    if (el && el.attrs.value !== undefined && definitions.contradiction(el)) propagated.delete(id);
+    if (el && el.attrs.value !== undefined && (definitions.contradiction(el) || statedAgainstBoundSomewhere(model, el))) {
+      propagated.delete(id);
+    }
   }
   // The equations the solve fixed a value from — for which plain constraints
   // it IMPOSED rather than judged.
@@ -3342,8 +3361,10 @@ function solveLinear(A: number[][], b: number[]): number[] | undefined {
  */
 function numericSeedOf(model: Model, feat: ElementRecord, memo: DerivationMemo = new Map()): number | undefined {
   // A value that contradicts a binding it overrides is not the feature's: the
-  // model states both, and the solve reads neither.
+  // model states both, and the solve reads neither — so too one a binding
+  // joins somewhere to another value written with `=` (A.5, d1plain).
   if (feat.attrs.value !== undefined && sharedDefinitions(model).contradiction(feat)) return undefined;
+  if (statedAgainstBoundSomewhere(model, feat)) return undefined;
   // Nor is a `default` a binding overrides: the binding gives it its value
   // (per feature, or perchance a held redefinition falls through somewhere).
   if (defaultGivesWaySomewhere(model, feat)) return undefined;

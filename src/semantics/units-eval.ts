@@ -60,6 +60,8 @@ import {
   assertDefinitionIn,
   assertHeldInSome,
   defaultGivesWayIn,
+  statedAgainstBoundIn,
+  statedAgainstBoundSomewhere,
   defaultGivesWaySomewhere,
   failedReadingSentence,
   namesDefinedBy,
@@ -1859,6 +1861,13 @@ function deriveFeatureUncached(
   // feature's: the model states both, and no surface reads either.
   const binding = passOf(model, memo).definitions.contradiction(feat);
   if (binding) return claimOnly('unknown', 'contradiction', contradictionSentence(model, feat, binding));
+  // Nor one a binding joins, in this instance, to another value written with
+  // `=` that differs (A.5, d1plain): the model states both there. A generic
+  // reading leaves one joined so in some instance to the check, which reads
+  // per instance.
+  const against = inst !== undefined ? statedAgainstBoundIn(model, feat, inst) : undefined;
+  if (against !== undefined) return claimOnly('unknown', 'contradiction', against);
+  if (inst === undefined && statedAgainstBoundSomewhere(model, feat)) return claimOnly('unknown', 'unresolved');
 
   // A `default` a binding overrides is no value of the feature's: the binding
   // gives it one (statedValueOf), and the literal written is not read.

@@ -1843,11 +1843,25 @@ function readElsewhere(
   for (const v of row.vars) {
     if (v.symbol !== undefined) continue;
     const id = names.get(v.path);
-    if (id !== undefined && id !== v.featureId) {
+    if (id !== undefined && id !== v.featureId && !copyReadIn(model, v, id)) {
       return { path: v.path, encoder: v.qualifiedName, check: model.qualifiedName(id) };
     }
   }
   return undefined;
+}
+
+/**
+ * Is the encoder's feature for the dotted path `v` a redefinition that states
+ * nothing — the implicit end copy `bind w = q.s` makes of P's `s` — whose
+ * value is `id`'s, read in the copy's own owner? Then the two read one
+ * feature: the surface reads `q.s` as P's `s` in q, and the encoder by the
+ * copy's own symbol, `D1::q::s` (E9: D1 `gDerF`, C1 `gF`).
+ */
+function copyReadIn(model: Model, v: ContractVariable, id: ElementId): boolean {
+  const copy = model.get(v.featureId);
+  if (!copy || copy.ownerId == null || !v.path.includes('.')) return false;
+  const read = sharedDefinitions(model).redefinedValueOf(copy);
+  return read !== undefined && read.target.id === id && read.at === copy.ownerId;
 }
 
 /** The two SI magnitudes and the dimension, when the unit-aware evaluator has them. */

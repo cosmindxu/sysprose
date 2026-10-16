@@ -3086,11 +3086,12 @@ sentence that says why; the USER-GUIDE's binding section lists each case.
 differ.** A binding against a value written with `=` (P's `load = 1.0` beside
 `bind p.load = L` with q's L of 50) is a violated row at the binding on the
 check and the numeric surface, infeasible, and `inconsistent-axioms` on the
-SMT engine. A pair the check cannot compare is no row, left to the SMT engine.
-The literal engine reads each relation alone and never the model's facts
-against each other: over such a model it reads `q.p.m2 >= 0.0` at P's 1.0 and
-says *holds at the model's values* (exit 0), as it does beside a contradicted
-`assert`, and the readings over the contradicted feature are not withdrawn.
+SMT engine. Neither value is read where the binding joins them (A.5): `q.p.m2
+>= 0.0` is *could not be evaluated* on the check, the literal engine and the
+numeric surface, never at P's 1.0. The two are compared as written; a pair
+only an evaluation could compare is read as before (a known gap: neither should
+be read), and the binding's row is judged at the two values read. A pair the
+check cannot compare is no row, left to the SMT engine.
 
 **Feasibility REPAIR at extreme scales is still absolute.** The gate that judges
 an inequality is relative to its SI magnitude, but the penalty descent that

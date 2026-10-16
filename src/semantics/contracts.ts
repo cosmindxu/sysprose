@@ -50,6 +50,7 @@ import {
   type ElementRecord,
   type Model,
 } from '@core/index';
+import { isBindingEdge } from './connectors';
 import { readRefusalOf, unreadDependenciesOf, unreadValuesOf, type ReadRefusal } from './evaluate-model';
 import { defaultGivesWay, sharedDefinitions, shadowedNamesOf, shadowedSentence } from './defining-equation';
 import { evaluate, type ExprNode } from './expr';
@@ -801,6 +802,13 @@ function readRelationAsWritten(
   const shadowed = shadowedNamesOf(model, el, pathsOf(body.node).filter((p) => !body.literals.has(p)));
   const nameToId = relationScope(model, el);
   let node = body.node;
+  // A binding's equality read in a context (`p.load == L` for q, E9) is an
+  // identity, as the binding's own row (`bindAxiom` of ./obligations) reads
+  // it, so gate (e) is not asked of it (`derivedBareLiteral` of ./relations),
+  // even where one end declares no unit — it refused u-m2's `p.load == L`, a
+  // bound copy against a derived mass. The operand and offset refusals still
+  // apply, and an operand's own value fault is left to that operand's row.
+  const binding = assignTo === undefined && isBindingEdge(el);
   let identity = false;
   if (assignTo !== undefined) {
     nameToId.set(assignTo, el.id);
@@ -811,7 +819,7 @@ function readRelationAsWritten(
     identity = body.node.kind === 'ref' && !body.hadUnit;
   }
   // A calculation's value body is a value, read as a feature's value is.
-  const readBy = { el, operands: assignTo === undefined };
+  const readBy = { el, operands: assignTo === undefined, binding };
   const reading = gateRelation(model, node, nameToId, body.literals, body.hadUnit, memo, identity, shown, readBy);
   // A body that reads a name its own element declares is read by no surface
   // (shadowedNamesOf). Refused whatever the gates said, it keeps the variables
@@ -857,7 +865,8 @@ function readRelationAsWritten(
  * derivation the validation surface refuses, gate (e), a feature chain it
  * reads no value through) come next, for the relation `readBy` names, in the
  * numeric surface's order — and not for a binding, a connector or a literal
- * value, which name no relation of an author's to read them by.
+ * value, which name no relation of an author's to read them by (a binding read
+ * in a context, `readBy.binding`, is asked all but gate (e)).
  */
 export function gateRelation(
   model: Model,
@@ -868,7 +877,7 @@ export function gateRelation(
   memo: DerivationMemo,
   identity: boolean,
   expression: string,
-  readBy?: { el: ElementRecord; operands: boolean },
+  readBy?: { el: ElementRecord; operands: boolean; binding?: boolean },
 ): RelationReading {
   const varIds = relationVarsOf(node, nameToId);
   const unread = readBy ? unreadValuesOf(model, readBy.el, pathsOf(node).filter((p) => !markers.has(p)), memo) : [];
@@ -933,7 +942,12 @@ export function gateRelation(
     );
   }
   const read = readBy
-    ? readRefusalOf(model, readBy.el, node, nameToId, markers, memo, { operands: readBy.operands, identity, unread })
+    ? readRefusalOf(model, readBy.el, node, nameToId, markers, memo, {
+        operands: readBy.operands,
+        identity,
+        unread,
+        binding: readBy.binding === true,
+      })
     : undefined;
   if (read) {
     return refused(expression, { reason: READ_REFUSALS[read.reason], detail: read.detail }, null, variables, sortPerVar);

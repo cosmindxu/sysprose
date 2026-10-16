@@ -33,6 +33,8 @@ import {
   boundSourceIn,
   defaultGivesWay,
   defaultGivesWayIn,
+  statedAgainstBoundIn,
+  bindsDifferingWrittenValues,
   defaultStandsIn,
   assertDefinitionIn,
   enclosingAssertOn,
@@ -425,6 +427,13 @@ function answerFor(
       valueDefinedByEquation(model, contextId, name, pass) ??
       valueBoundTo(model, contextId, name, pass) ??
       valueThroughChain(model, contextId, name, pass);
+    // A name only an OWNING namespace of the context declares is read where it
+    // is declared only when it is one value in every instance of that owner
+    // (E3, {@link DefiningEquations.lexicalRefusal}): where an instance gives
+    // it another, the read abstains, saying which — a value that differs per
+    // instance (`two-values`), not an instance left unread.
+    const lexical = answer === undefined ? pass.definitions.lexicalRefusal(contextId, name) : undefined;
+    if (lexical !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: lexical } };
   }
   // A decided answer is never replaced. Only a valueless one is read through
   // the binding the name meets in the instance (A.2.1) — never one two values
@@ -812,6 +821,11 @@ function valueOfFeature(
   // A value that contradicts a binding it redefines is not the feature's: the
   // model states both, and neither is read (the unit-aware path refuses it).
   if (pass.definitions.contradiction(feat)) return NO_ANSWER;
+  // So too a value written with `=` that a binding joins, in this instance, to
+  // another written with `=` that differs (A.5, d1plain): the binding's
+  // finding reports the two, and neither is read.
+  const against = inst !== undefined ? statedAgainstBoundIn(model, feat, inst) : undefined;
+  if (against !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: against } };
   // A `default` a binding overrides gives way — per feature, or at the one
   // instance where a held redefinition of it falls through (`held-redef`).
   const raw = defaultGivesWayIn(model, feat, inst) ? undefined : statedValueOf(model, feat);
@@ -1743,8 +1757,9 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
     if (!owner || left === undefined || right === undefined || left === right) continue;
     const expr = `${left} == ${right}`;
     for (const x of [owner, ...pass.definitions.changingContexts(b, [left, right])]) {
-      // A context listed only because a member reads its own value there reads
-      // no bound value yet: nothing to contradict.
+      // A context listed only because a member reads its own value there: its
+      // relations are read at its instance (E7), but the binding's own row is
+      // not filed there yet — sound, only weaker.
       if (x.id !== owner.id && pass.definitions.readsBoundOnly(b, [left, right], x.id)) continue;
       const reading: ElementRecord = {
         ...b,
@@ -1755,7 +1770,12 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
       const where = pass.definitions.contextName(x.id);
       let result: ConstraintCheck['result'];
       try {
-        result = judgeConstraint(model, reading, expr, pass).result;
+        // Two ends whose values are written with `=` and differ as written
+        // (A.5) read nothing, so the pair is this binding's to report — only
+        // its own pair: another binding of the component reports its own.
+        const [l, r] = [left, right].map((end) => pass.definitions.denote(x.id).get(end)?.feature);
+        const against = l !== undefined && r !== undefined && bindsDifferingWrittenValues(model, l, r);
+        result = against ? 'violated' : judgeConstraint(model, reading, expr, pass).result;
       } catch (e) {
         // A.2.9: a reading that throws is this row's, reported — never a throw
         // out of the sweep, which emptied the Problems view.
@@ -1850,10 +1870,11 @@ function readInContexts(
       continue;
     }
     const reading: ElementRecord = { ...el, ownerId: x.id };
-    // A context whose reading met a binding above it (F5) is read per instance
-    // — at the context's own instance — instead of being refused. Past a cap, or
-    // a context listed only because a member reads its own value there (the
-    // G340 family, M7's `Q::c in q2`), the refusal is kept in its sentence.
+    // A context whose reading met a binding above it (F5), or one listed only
+    // because a member reads its own value there (M7's `Q::c in q2`, E7), is
+    // read per instance — at the context's own instance — instead of being
+    // refused. Past a cap, or over a member the model states twice there
+    // (`boundStatedTwiceIn`), the refusal is kept in its sentence.
     const above = pass.definitions.boundAbove(x.id, bodyNames);
     const cap = above !== undefined && 'pastCap' in above;
     const via = !cap && above !== undefined;
@@ -1864,11 +1885,15 @@ function readInContexts(
     // bound L). It is `constraint-by-instance`'s, at the instance's own line.
     const carried = above !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
     const readAs = carried ? pass.definitions.instanceNameOf(x.id) : undefined;
+    const here =
+      !cap && !via && pass.definitions.readsBoundOnly(el, names, x.id)
+        ? pass.definitions.boundStatedTwiceIn(el, names, x.id)
+        : undefined;
     const why =
       cap
         ? boundAboveSentence(pass.definitions, x.id, above!)
-        : !via && pass.definitions.readsBoundOnly(el, names, x.id)
-          ? boundHereSentence(pass.definitions, x.id)
+        : here !== undefined
+          ? boundHereSentence(pass.definitions, x.id, here)
           : undefined;
     const judged: Judgement = why !== undefined
       ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false, ...(cap ? { abstention: 'past-cap' as const } : {}) }
@@ -3321,6 +3346,13 @@ export interface ReadOptions {
   identity?: boolean;
   /** The names it reads that this surface reads no value for, when the caller has them. */
   unread?: readonly string[];
+  /**
+   * The relation is a binding's equality read in a context: an identity, as
+   * the binding's own row reads it, so gate (e) is not asked of it, even where
+   * one end declares no unit (u-m2's `p.load == L`, a bound copy against a
+   * derived mass). An operand's own value fault is left to that operand's row.
+   */
+  binding?: boolean;
 }
 
 /**
@@ -3370,7 +3402,9 @@ export function readRefusalOf(
   // converts across the scale as a binding does ({@link relationRefused}).
   const offset = identity ? undefined : absoluteOperandFault(model, node, nameToId, markers, memo, skip);
   if (offset) return { reason: 'offset', detail: describeReason('offset', offset) };
-  const bare = derivedBareLiteral(model, node, relationVarsOf(node, nameToId), nameToId, markers, memo, skip, chains);
+  const bare = opts.binding
+    ? undefined
+    : derivedBareLiteral(model, node, relationVarsOf(node, nameToId), nameToId, markers, memo, skip, chains);
   if (bare) return { reason: 'derived-bare-literal', detail: bare };
   return undefined;
 }
