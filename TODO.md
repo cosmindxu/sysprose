@@ -229,56 +229,49 @@ maintainer says `awaits user decision U<n>` and names the question.
 Opened by the per-instance readings feature (ROADMAP item removed at step F9). What follows is what
 its four surfaces (the check, the literal engine, the numeric surface and the SMT engine) still
 abstain on or read false in the four-surface table
-(`test/integration/verification.differential.test.ts`): six rows pinned `KNOWN_FALSE`, seventeen
-`I7_ALLOWED` entries (the per-instance branch removed one and added seven for its refute-r1d and
-sh7 probes), and the abstentions the entries below name. The false verdicts the review of
-2026-10-14 found in the per-instance code itself follow under their own headings.
+(`test/integration/verification.differential.test.ts`). The branch `h5` (merged by `755352c`) made
+an asserted equation override a `default` on every surface, read definition-feature and part-valued
+bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open:
+`KNOWN_FALSE` and `I7_ALLOWED` entries tagged `no step yet` are the residuals below. The false
+verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
+headings.
 
-- [ ] **Let an asserted equation override a `default`, on every surface (H5).** Every surface treats
-      an assert over a default as a contradiction today. For `package HL { attribute L :
-      ScalarValues::Real default = 2.0; assert constraint qa { L == 5.0 } constraint c { L <= 3.0 }
-      }` the check reports `Constraint violated: L == 5.0`, the literal engine decides `c` at 2
-      and SMT reports the axioms unsatisfiable; an enclosing assert (`package HE { part def P {
-      attribute x : ScalarValues::Real default = 2.0; constraint c { x <= 10.0 } } part def Q {
-      part p : P; } part q1 : Q { assert constraint tie { p.x == 50.0 } } constraint top {
-      q1.p.x <= 10.0 } }`) does the same, and the enclosing-assert abstention (`enclosingAssertOn`,
-      `src/semantics/evaluate-model.ts:318`) keeps the per-instance read of it from deciding. The
-      decision of 2026-10-12 is that an asserted equation that defines a feature stands over its
-      `default`, local and enclosing, as a binding does; it is recorded only in the workflow repo's
-      session handoff, while the per-instance plan still says the opposite. The first attempt
-      (075b306, reverted by ab965c7) broke the solver-units chain cases because of one block in
-      `quantityScopeFor` (`src/semantics/units-eval.ts`) that derived inside a constraint body scope
-      and for value-less features, so a 70-long chain went past `MAX_DERIVATION_DEPTH` (64) and read
-      `unknown`; without its `|| !hasStatedValue(…)` clause solver-units was 131/131 and the
-      differential stayed green except eight I3 rows, each back at its earlier value. The redo, one
-      gated step each, solver and SMT changed in the same step as the check: (1) a cached
-      `assertHeld` index on `model.rev` feeds `defaultGivesWay`, `defaultGivesWayIn` and
-      `defaultGivesWaySomewhere` (`src/semantics/defining-equation.ts:2710`), looked up through the
-      owner's type closure and the redefinition closure so an inherited assert counts, with no
-      `quantityScopeFor` block; (2) dotted defined names (`p.x == 3.0`), including the caller-side
-      "names an equation fixes"; (3) an `assertHeldIn` instance set so an enclosing override splits
-      the instance on the solver (`solver.ts:1184`, `:1262`), in SMT's instance value row
-      (`obligations.ts:1881`) and in the frame walk (SMT's clash is structural: `x` is one variable
-      with no instance), narrowing `enclosingAssertOn` to inequality-only asserts, undecided
-      partners and two values. Done when R1 `P::c in q1::p` reads F/F/F/F (ref F, now T), `top1`
-      F/F/F/F, `q1::tie` T/-/T/-, and `P::c`, `in Q::p`, `in q2::p` T/T/T/T; the eleven
-      `I7_ALLOWED` entries that name refute-r1, refute-r1d or sh7 are deleted; a 70-long
-      chain of defaults each overridden by a local assert is green beside the three solver-units
-      chain cases; and no row of a self-contradictory model (N2, R8, GA5B, GA6) is newly decided.
-      [review 2026-10-14 E1] Awaits user decisions U4 (is the 2026-10-12 decision binding), U5 (an
-      inequality assert over a default: does the default stand?), U6 (the ref changes above) and U7
-      (a usage's `:>> L default = 9` under an inherited `assert L == 5` reads 5; `assert p.x == L`
-      with defaults on both sides abstains).
-- [ ] **Read a package-level or definition-feature binding, and a redefined bound usage (`w4`, R13,
-      R13b).** A `bind` written at package level or between two definition features (probe `w4`) is
-      left unread per instance, so the value it carries never decides a row (`W4::c2` reads ?/?/?/?
-      with no ref; the intended ref is F), and the connector is outside the per-instance frame walk.
-      The same family: `part pp :>> p` redefining a bound usage (`R13` and `R13b`, ?/?/?/? beside
-      refs T and F). 075b306 (reverted by ab965c7) had `featureAtPath` and `boundSourceIn` read it
-      and reached R13/R13b T/T/T/? and F/F/F/? and W4 `c2` F/F/F/?, missing the SMT row. Reuse those
-      two and add the SMT side. Done when `W4::c2` reads F/F/F/F and R13/R13b read T/T/T/T and
-      F/F/F/F. [review 2026-10-14 E2, E8] Builds on the H5 entry above; awaits user decision U6 for
-      W4's ref.
+- [ ] **Read an enclosing equation through a binding or a reference.** Five shapes of the H5 rule fail
+      closed to the reading before it, or still read false, and are pinned (`KNOWN_FALSE`, "no step
+      yet"): (1) RB3 and SF: an enclosing assert over a default that a binding carries is not read
+      through the binding's end (RB3: q's `L default = 4.0` bound to `q.p.x`, the package asserts
+      `q.p.x == 3.0`; `top` and `top2` read F/F/F/X where they are T); (2) RF and RF2: an assert
+      through a reference, or through a part redefined with a value, reads as before the rule
+      (`top` T/T/T/X where decision 14 gives F); (3) LE: `P::c`, `P::c in Q::p` and `top` read T
+      beside SMT's X on a self-contradictory model; (4) PIN2: an equation whose other side is valued
+      only in usages (`assert L == M`, M valued in a usage) reads T where `p.L` is 7; (5) H5B: an
+      assert in an instance's own element over an inherited default still abstains as
+      `not-enumerated`. Done when each pinned row reads its true value on all four surfaces or
+      abstains with its own sentence, and the `no step yet` entries are gone. [O5 S2, review]
+- [ ] **Finish the part-valued and attribute-valued bindings.** The part-valued binding
+      (`bind pp = top.a`) is read, but: `ppval` (`part pp : T0 = top.a`, a value on a composite
+      part) reads F/T on all four surfaces; `v8ref` (`ref part pp : T0 = top.a` in a definition) is
+      resolved in the definition, not the instance; `r8attr` (`bind q = top.pos` between structured
+      attributes) reads `qT` F and `qF` T; a ref, subject or satisfy that lands on an equated part
+      makes the binding unread, so rows abstain where following it would decide; and `bounds
+      --measure pp.load` (`boundsReport`, `src/api/verification.ts`) prints a decided bound through
+      an unread part binding (3 `exactly`, the truth is 50). The refusal sentence says "a defect in
+      the relation" and `verify` exits 2 on what is a tool limit: give it its own reason. All pinned
+      in `KNOWN_FALSE`. [O5 S4, review]
+- [ ] **Close the rows F's section 2.8 listed and the abstentions it did not.** GA7 `pl` reads
+      F/F/?/F (the numeric `?` comes from `derivedElsewhere` / `derivedValueBehind` reading P's
+      derived default behind the end copy; target F/F/F/F); GA6 `qa` reads T/-/?/- (target
+      T/-/T/-); GA6 `pa` and GA12 `pa`/`qa` moved from a numeric T to `?` and gained or lost rows
+      (invariant (h) against F's section 2.8: needs the maintainer's ruling); a package-level
+      definition-feature bind files no per-instance `#bind` row on the check and the numeric
+      surface, so `sysml-check` abstains where SMT decides (`W4o::c4`); under a fixed slot the
+      check and literal engine abstain where the true answer is decided (X3, X6, X10, W4d); the
+      numeric surface still imposes the first equation over a free partner (Q4, decision 7); SMT
+      abstains on renamed paths (`q.pp.x`); the bare-name analogue of the RB clash (the assert in
+      p's own body, `rbloc2`) reads T/T/F/X with no allowlist entry; an assert in a specialisation
+      of the default's owner and a per-type orientation (`rh`, `rh2`) read as before. X11's
+      value-source clause still names `through X11::Q's bind` (`readsClause`). [O5, review]
+
 - [ ] **Resolve a name through the writing element's lexical scope (`h2p0`, `h2c0`, EnclW rows).** A
       name not found in the feature scope reads unknown: in `package Lex { attribute K = 7.0; part
       def A { attribute x = K; constraint c { x == 7.0 } } }` `verify --engine literal` says `c` is
@@ -289,7 +282,7 @@ sh7 probes), and the abstentions the entries below name. The false verdicts the 
       writing element's owning namespaces; a package feature is one instance, an enclosing
       definition's feature is read in the enclosing instance, and a generic read abstains where a
       specialiser changes the value; handle both `= L` and `assert { p.x == L }`. Done when those
-      ten rows decide on all four surfaces. [review 2026-10-14 E3] Builds on the H5 entry (the
+      ten rows decide on all four surfaces. [review 2026-10-14 E3] Builds on the H5 rule (merged; the
       instance machinery).
 - [ ] **Decide the nonlinear and implicit shapes (classes D and E).** `b4c`, `n4`–`n6` and
       `s2-usage-assert-leak` abstain because their value is nonlinear or implicit (n4's
@@ -362,26 +355,6 @@ they cannot, and the four-surface table pins A1–A9, A4, CAP1, X-shapes and the
 true values. What follows is what that branch and the review of it left open; entries tagged
 `[O2 …]` come from its steps and reviews.
 
-- [ ] **Read through a part-valued binding.** `bind pp = top.a`, where `a` is a part, equates the
-      two parts, so `pp.load` is what `top.a.load` is. No surface reads through it, and all four
-      agree on the wrong value (since 5943654; found by the review of the O2 S3 step). Probe
-      (`ppshallow`): `package PPS { part def T0 { attribute load : ScalarValues::Real default =
-      1.0; } part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind
-      a.load = L; } part top : T1 { attribute :>> L = 50.0; } part pp : T0; bind pp = top.a;
-      constraint pT { pp.load >= 40.0 } constraint pF { pp.load <= 5.0 } }`: `sysml-check` and
-      `verify` read `pT` violated (1 vs 40) and `pF` held, where `pp.load` is 50, so `pT` holds and
-      `pF` is violated; `capp` is the same shape past the 32-usage cap. Fix: follow a part-valued
-      binding in `boundSourceIn` and the connector components, or abstain on it on every surface,
-      and pin both probes in the four-surface table. Done when `pT` reads T and `pF` F on all four
-      surfaces (or both abstain with a stated reason), and `sysml-check --strict` agrees with
-      `verify`. [O2 S3]
-- [ ] **Read an own row and an inherited assert past an enclosing assert.** Two shapes of the H5
-      entry above stay open after the per-instance branch: (1) an own row on the unit-aware path
-      (`R1M` `top2`/`top4`, `R1B6` `top4`/`top6`) and `H1C` `top1` past the package's assert are
-      decided from the default where the enclosing assert fixes the value; (2) an assert inherited
-      from the instance's type (`h1f`, `h1f2`: `Q2 :> Q { assert constraint ... }`) is not seen by
-      `enclosingAssertOn`, because the type definition's own frame is read as before. Both are
-      pre-existing and part of the enclosing rule (`h5`, step 3). [O2 S3]
 - [ ] **Say what a capped binding does to "did not converge".** A model with a binding past the
       32-usage or 4,096-context cap (`cap1`, `cap2`, `m5`) now reads `did not converge` in the
       app's Solve header (it read `converged` before, beside a false verdict), because the values
