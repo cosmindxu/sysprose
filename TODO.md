@@ -441,35 +441,6 @@ From the review of the decisions batch and the per-instance reporting (Sysprose 
 7277a97). `validation/constraint-by-instance` is the finding an instance group's violated reading
 becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
 
-- [ ] **Anchor a violated-instance finding at the line that differs.**
-      `SpecialisationInstance.anchorId` (`src/semantics/evaluate-model.ts`) is read by
-      `anchorFor` (`:1102`), which the Solve row calls (`src/semantics/solver.ts:4780`), but nothing
-      in `src/` assigns it, so a finding points at the shared usage's feature instead of the
-      instance's differing redefinition, while the hint says "the line the finding points at". Probe
-      (m1, the review's `E/pi/m1.sysml`): `package H { part def P { attribute load default = 1.0;
-      constraint c { load <= 10.0 } } part def Q { attribute L default = 1.0; part p : P; bind
-      p.load = L; } }` and eight usages `part qN : Q { attribute :>> L = 50.0; }` (N = 1 to 8): all
-      the violated-instance findings sit at `part p : P` in `Q` (`3:64` when the package, `P` and
-      `Q` each take a line), none at a `:>> L` (re-run at 5943654; the single-instance finding of
-      `4ac2fff` anchors the same way). Fix: set `anchorId` to the differing redefinition or stated
-      member when the group row is built. Done when m1's findings anchor at each usage's `:>> L`
-      line. [review 2026-10-14 PI-2]
-- [ ] **Route a binding-carried context read to `constraint-by-instance`.** The per-instance plan
-      sends a context read that goes through a binding (h2c, k2, M7) to
-      `validation/constraint-by-instance`. Those reads do not get the `via` flag (`via` is set only
-      where `boundAbove` finds a binding above the context, `src/semantics/evaluate-model.ts:1397`),
-      so they pass the filter of `target-by-specialisation` (`src/validation/rules.ts:1028`:
-      `via !== true && instance === undefined`) and are reported with that code, anchored at the
-      definition feature. mbse-workflow treats `target-by-specialisation` as REPORTED_ONLY ("do not
-      change an estimate to meet it"), the guidance the plan's H3 rejected. Probe (h2c, the
-      review's `E/pi/h2c.sysml` without its second usage): `package H2C { part def P { attribute
-      load default = 1.0; attribute m2 = 10.0 - load; } part def Q { attribute L default = 1.0; part
-      p : P; bind p.load = L; constraint c { p.m2 >= 0.0 } } part q : Q { attribute :>> L = 50.0; }
-      }`: `sysml-check` prints `validation/target-by-specialisation q::p.m2 = -40 misses Q::c` and
-      no `constraint-by-instance` (re-run at 5943654). Fix: mark any
-      binding-carried context read as an instance reading, and re-check mbse-workflow's code notes
-      against the new routing. Done when h2c, k2 and M7 emit `constraint-by-instance`.
-      [review 2026-10-14 PI-3]
 - [ ] **Roll up per (relation, usage), fold past twenty, and skip the generic row.**
       `instanceRollup` makes one roll-up per relation, so "50 instances of Big::Q0::p" spans 25
       usages and the more-than-20-usage fold never happens [PI-4]; `target-by-specialisation` also
@@ -505,33 +476,6 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
       the dead branch (the chips stay). Done when the label either shows on a model with both or is
       gone. [review 2026-10-14 PI-10] Awaits user decision U13 (count every row, or remove the
       label).
-- [ ] **Take the minimum over a requirement's per-reading records when writing its case verdict.**
-      `evidence-attach` writes the case verdict after attaching (`scripts/sysprose.ts:3347`,
-      `writeCaseVerdicts`), but `judgedFromRecords` (`:3203`) looks the requirement up by name and
-      cannot find the `R in X` name a per-instance relation carries, and `writeVerdict`
-      (`src/semantics/verify.ts:864`) takes the case's verdict from the records it does find. Probe
-      (h5): a requirement `LoadReq` verified by `VC` over two readings, p1 with load 50 (refuted)
-      and p2 proved: `verify --engine smt --record`, then `evidence-attach` prints
-      `H::LoadReq — verdict fail → pass from H::VC` and writes `verdict = "pass"` over a live
-      refuted v2 carrier; every re-attach flips it again (`evidence-status` flags it as
-      `verdict-overstates-evidence`). Fix: map `instance.requirement` back and take the minimum over
-      the per-reading records, or have `writeVerdict` take the worse of the two. Done when the h5
-      probe ends `fail` after attach and stays `fail` on every re-attach, with v9's records, attach
-      output and status unchanged (83 records, 49 attached, 34 skipped). [review 2026-10-14 EV-1]
-- [ ] **Write `instance` into `verify --record` and stop splitting names at the last ` in `.**
-      `verify --record` never writes `sysprose-evidence/2` (the branch at `src/api/evidence.ts:1356`
-      is dead; all three records on h5 are `…/1`), so v2 exists only after `evidence-attach`
-      upgrades a record [EV-5]. Attach then recovers the reading by splitting
-      `requirement in reading` at the last ` in ` (`targetOfRecord`, `evidence.ts:1889-1912`):
-      `H::p in 1` is skipped with the false reason "record was produced against a different file"
-      and the facet reads `pass` with the refuted reading left out of the minimum [EV-2]; and the
-      split accepts any element and any reading, so a v1 `H::P in H::p1` attaches to the part def
-      `H::P` and `LoadReq in H::nowhere` attaches and fails `LoadReq`, clearable only by detach
-      [EV-3]. Fix: pass `instance` from the `verifyModel` rows into the record
-      (`src/api/verification.ts:1446`), stop splitting for v2 records, and for v1 records require
-      `isRequirement(target)` and a reading that resolves. Done when `verify --record` writes `…/2`
-      with the facet, `H::p in 1` attaches to its requirement, and a v1 record on a part def is
-      skipped with its reason. [review 2026-10-14 EV-2, EV-3, EV-5]
 - [ ] **Attach a refuted reading of `massR : LoadReq` to the requirement the `satisfy` names.** A
       refuted reading of a requirement usage typed by a requirement definition lands on the
       definition `LoadReq`, while `massR` gets nothing (`src/semantics/obligations.ts:390-397`,
@@ -545,6 +489,32 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
       (`obligations.ts:1063`) [EV-7]. Add `minLength: 1`, cross-check the two fields and record the
       instance path. Done when an empty reading fails the schema and a mismatched pair is refused.
       [review 2026-10-14 EV-6, EV-7]
+
+- [ ] **Anchor at the value that breaks the relation, and once per cause.** Since `f27d99b` a
+      violated-instance finding is anchored at the instance's own differing line, but (1) when a
+      binding carries two values into an instance the anchor follows the first read's source, not
+      the one that breaks the relation (`q2 : Q { attribute :>> L = 2.0; attribute E = 20.0; bind
+      p.extra = E; }` under `load + extra <= 10.0` points at `:>> L = 2.0`, where `E = 20.0` causes
+      the miss), so the hint "change the value the binding carries" sends an agent to a line that
+      cannot clear it; (2) a violation inherited from a definition's usage (`part def R { part q :
+      Q { attribute :>> L = 50.0; } } part r1 : R; part r2 : R;`) is one finding at `R::q::p` and
+      one at each `part rN : R`, for one cause; (3) an anchor at an unnamed redefinition (`attribute
+      :>> L = 50.0`) has no `elementName`, because `src/text/load.ts` takes `declaredName` only.
+      Pick the source whose value is the difference, fold the per-`rN` findings into the one at the
+      stated member, and name the redefinition. [O4 S2, review] See also the A-M2 entry (per-instance soundness section).
+- [ ] **Hold a `…/2` evidence record to the check a `…/1` record gets.** A `sysprose-evidence/1`
+      record `<case> in <X>` is skipped on attach ("is a VerificationCaseUsage, not a requirement"),
+      while a `…/2` record of the same reading attaches wherever `instance.requirement` resolves,
+      with no `isRequirement` or reading cross-check. Apply both checks to `…/2` facets, with the
+      EV-4 and EV-6 entries above. When a `--from` file holds a legacy v1 `R in X` record,
+      `evidence-attach` also builds `obligationsOf` twice (time only). [O4 S1, review EV-7]
+- [ ] **Fold binding-carried context findings past twenty.** `via` context rows leave the target
+      fold (`TARGET_CONTEXT_FOLD = 20`, `src/validation/rules.ts`) when O4 routes them to
+      `constraint-by-instance`, and the `via` path never folds, so a relation with more than twenty
+      binding-carried contexts now lists one finding each where it gave one to three. Fold them with
+      the roll-up entry above (PI-4). Also: the `under` filter misses renamed redefinitions (probe
+      `e5`), and `big-bind-600`'s cold check is 17% slower than before the routing change (577 to
+      675 ms). [O4 S2, review]
 
 ## Load health and the model the checks read — review 2026-10-14
 
