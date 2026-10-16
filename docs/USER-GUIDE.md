@@ -927,14 +927,15 @@ own element states a `default` that an asserted equation of its own constrains
 0.0`). An instance row that reads a value an `assert` of an instance around
 it constrains, the package's included, is *could not be evaluated* too, read
 in its own element (`part q2 : Q { part :>> p { … } assert constraint { p.load
->= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x ==
-50.0 } }`, or the package's `assert constraint { q1.p.x == 50.0 }`, for q1's
-p's x): neither reading of the instance reads the asserts around it. So is
-one that reads such a value through a value derived from it (P's `s = load +
-x` in `s <= 10.0`), in units or not, and so is a check or literal row of a
-relation outside the instance's rows that reads it there (a package
-constraint over `q1.p.x` or `q1.p.s`); the numeric surface can still read x's
-`default` past such an assert in that one. A relation read through a part a
+>= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x >=
+5.0 } }`, or the package's `assert constraint { q1.p.x >= 5.0 }`, for q1's
+p's x) — unless the assert is an equation that gives a `default` there a value
+of its own, which is read as that value (below). So is one that reads such a
+value through a value derived from it (P's `s = load + x` in `s <= 10.0`), in
+units or not, and so is a check or literal row of a relation outside the
+instance's rows that reads it there (a package constraint over `q1.p.x` or
+`q1.p.s`); the numeric surface reads x's `default` past an inequality, which
+leaves it standing. A relation read through a part a
 binding joins to another (`bind p.r = s`, the relation reading `r.x`) is read
 per instance nowhere, the usage's own row included: that row is *could not be
 evaluated*, as it was before any instance was read. A relation written in such
@@ -1000,11 +1001,33 @@ P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
 against it) or two such asserts give it two (it is read as no value). An assert
 written in an instance around the feature, over a `default` (`part q1 : Q {
-assert constraint { p.x == 50.0 } }`), is not read this way yet: the default
-still stands there, so the assert is reported violated against it, a relation
-over `q1.p.x` reads the default, and the solver lane finds the axioms
-inconsistent; where a binding makes q1's p an instance of its own, its rows are
-*could not be evaluated*, as described above.
+assert constraint { p.x == 50.0 } }`), defines it in that instance alone: q1's
+p's x is 50 on every surface, while P's own x, Q's p's and every other
+instance's keep the default 2. P's relations are then read per instance — `c in
+q1::p` is a row of its own, read at 50, whether or not the model writes a
+binding — as is Q's `c { p.x <= 10.0 }` in q1 (*Q::c in q1*), a package
+constraint over `q1.p.x`, and the assert's own row, which holds. The same goes
+for the package's `assert constraint { q1.p.x == 50.0 }`, for an assert of
+q1's type (`part def Q2 :> Q { assert constraint { p.x == 50.0 } }`, with `part
+q1 : Q2`), in every instance of that type, and for a bare `L == 5.0` in a
+definition that specialises L's owner; q1's own `part :>> p { attribute :>> x
+default = 9.0; }` under such an assert reads 50 too, its 9 read nowhere. A
+binding into the instance is read over the assert (`bind p.x = K` in q1 under
+Q's `p.x == 50.0`): q1's p reads K, and the assert is reported violated
+against it. An equation over names, `p.x == M`, is read over q1's own M — it
+is *could not be evaluated* where it is written in an element that is not the
+instance's own (an assert in a usage nested in a definition) or beside a
+`[unit]` literal. Two such equations that give the value two values, or two
+over names written in two places, are read as no value; so is one that sets
+the default equal to another `default` (`p.x == L` with q1's `L default =
+9.0`, or an M whose `=` reads one): both defaults give way in q1, and every
+constraint over q1's p's x or L is *could not be evaluated*, on the solver
+lane too — but in an instance that states that name with `=` (`part q : Q {
+attribute :>> L = 50.0; }` under Q's `p.load == L`), the equation reads it, and
+q's p's load is 50.
+An inequality (`p.x >= 5.0`) defines nothing: the default stands, the assert
+is reported violated against it, and the solver lane finds the axioms
+inconsistent.
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
 part1.m`, a calculation's body, an asserted equation, a value read through

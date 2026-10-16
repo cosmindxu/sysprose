@@ -57,6 +57,8 @@ import {
   lookupsWhile,
   mergeContact,
   contradictionSentence,
+  assertDefinitionIn,
+  assertHeldInSome,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
   failedReadingSentence,
@@ -1863,7 +1865,21 @@ function deriveFeatureUncached(
   // unit-aware lane cannot key it per instance, so it leaves the row to the
   // check, which can (`held-redef`). An instance reading refuses only where
   // the binding reaches it.
-  const givesWay = inst !== undefined ? defaultGivesWayIn(model, feat, inst) : defaultGivesWaySomewhere(model, feat);
+  // So does a generic reading of a default an enclosing asserted equation
+  // defines in some instance (H5, `assertHeldInSome`).
+  const givesWay =
+    inst !== undefined
+      ? defaultGivesWayIn(model, feat, inst)
+      : defaultGivesWaySomewhere(model, feat) || assertHeldInSome(model, feat);
+  // An asserted equation of an element enclosing the instance defines it there
+  // (H5's enclosing rule): its derivation, where the equation is a constant
+  // (`assertDefinitionIn`; the scalar reading reads one over names too).
+  if (givesWay && inst !== undefined) {
+    const defined = assertDefinitionIn(model, feat, inst);
+    if (defined !== undefined && !('abstain' in defined) && defined.constant) {
+      return equationDerivation(model, id, String(defined.equation.constraint.attrs.expression), memo, defined.frame.reader, defined.path);
+    }
+  }
   const literal = givesWay ? undefined : evaluateQuantity(model, id);
   if (literal) return { claim: 'literal', q: literal };
 

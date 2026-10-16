@@ -34,9 +34,11 @@ import {
   defaultGivesWay,
   defaultGivesWayIn,
   defaultStandsIn,
+  assertDefinitionIn,
   enclosingAssertOn,
   failedReadingSentence,
   hasUserBindings,
+  readsPerInstance,
   heldPastCapSentence,
   instanceGroups,
   lookupsHold,
@@ -359,23 +361,27 @@ function answerFor(
   pass: ScalarPass,
   inst?: string,
 ): ScalarAnswer | undefined {
-  // An enclosing assert constrains the value (A.2.4): abstain, never read it —
-  // one of an instance enclosing `inst` too, where the context is read for an
-  // instance not its own (a group row, A-H1).
+  // An asserted equation of an element enclosing the instance defines the
+  // value there (H5's enclosing rule): read it. Any other enclosing assert
+  // constrains the value (A.2.4): abstain, never read it — one of an instance
+  // enclosing `inst` too, where the context is read for an instance not its
+  // own (a group row, A-H1).
   if (inst !== undefined) {
     const den = pass.definitions.denote(contextId).get(name);
     if (den) {
       const ownName = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
+      const instance = rebaseInstance(pass.definitions, contextId, inst, den.instance);
       let ea: ReturnType<typeof enclosingAssertOn>;
       try {
+        const defined = assertDefinitionIn(model, den.feature, instance);
+        if (defined !== undefined) return assertedAnswer(model, contextId, den.feature, ownName, instance, defined, pass);
         ea = enclosingAssertOn(model, contextId, den.enclosing, name, inst);
       } catch (e) {
         // A.2.9: the walk's throw is this read's abstention, never the check's.
-        return failedReading(ownName, rebaseInstance(pass.definitions, contextId, inst, den.instance), e);
+        return failedReading(ownName, instance, e);
       }
       if (ea) {
         const where = effectiveQualifiedName(model, ea.frame);
-        const instance = rebaseInstance(pass.definitions, contextId, inst, den.instance);
         return {
           value: undefined,
           depth: 0,
@@ -427,6 +433,66 @@ function answerFor(
   if (answer?.value !== undefined || inst === undefined) return answer;
   if (pass.definitions.clashedIn(contextId, name)) return answer;
   return valueBoundInInstance(model, contextId, name, pass, inst) ?? answer;
+}
+
+/**
+ * The value an asserted equation of an element enclosing `instance` gives the
+ * feature read there ({@link assertDefinitionIn}): q1's `assert constraint {
+ * p.x == 50.0 }` makes q1's p's x 50 over P's `x default = 2.0`, as a binding
+ * would (H5, plan J decision 14) — a definition read in the frame, over the
+ * frame's own names: `p.x == M` is q1's M there, read as q1's own relations
+ * read it. A constant is read as a definition is, under a key of the
+ * instance's own. Abstains where the equations give two values, where one
+ * sets it equal to another `default` (both give way, U7), and where an
+ * equation over names is written in a frame whose element is not the
+ * instance's own (it would read that element's names, not the instance's), or
+ * reads a `[unit]` literal beside them.
+ */
+function assertedAnswer(
+  model: Model,
+  contextId: ElementId,
+  feature: ElementRecord,
+  name: string,
+  instance: string,
+  defined: NonNullable<ReturnType<typeof assertDefinitionIn>>,
+  pass: ScalarPass,
+): ScalarAnswer {
+  const abstain = (kind: 'two-values' | 'enclosing-assert', sentence: string): ScalarAnswer => ({
+    value: undefined,
+    depth: 0,
+    abstention: { kind, sentence: `${name} is not read in ${instance}: ${sentence}` },
+  });
+  if ('abstain' in defined) {
+    return defined.abstain === 'two-values'
+      ? abstain('two-values', 'the asserted equations of the elements enclosing it give it two values')
+      : abstain(
+          'enclosing-assert',
+          `${effectiveQualifiedName(model, defined.owner)}'s asserted equation sets it equal to another \`default\`: both give way, so it has no value`,
+        );
+  }
+  const flight = instanceKey(feature.id, instance);
+  if (defined.constant) return defineScalar(model, contextId, feature, defined.path, [defined.equation], pass, flight);
+  const { frame, equation } = defined;
+  if (equation.literals.size > 0 || pass.definitions.instanceNameOf(frame.reader) !== frame.instance) {
+    return abstain(
+      'enclosing-assert',
+      `${effectiveQualifiedName(model, defined.owner)}'s asserted equation defines it there from other values, ` +
+        `and this tool reads them only in ${effectiveQualifiedName(model, frame.reader)}'s own instance, without a unit literal`,
+    );
+  }
+  if (pass.inFlight.has(flight)) return cameBackTo(returnTo(pass.inFlight, flight));
+  const reads: ScalarReads = { depth: 0 };
+  pass.inFlight.set(flight, undefined);
+  try {
+    const scope = decidedScopeWith(model, frame.reader, pass, reads, frame.instance);
+    const r = evaluateDecided(equation.definition, scope.value, scope.exact);
+    const value = 'value' in r && (typeof r.value === 'number' || typeof r.value === 'boolean') ? r.value : undefined;
+    return settled(value, reads, 'value' in r && typeof value === 'number' ? r.exact : undefined);
+  } catch {
+    return { ...NO_ANSWER, contact: mergeContact(reads.contact, GUARD_CONTACT) };
+  } finally {
+    pass.inFlight.delete(flight);
+  }
 }
 
 /**
@@ -2077,7 +2143,7 @@ function judgeBound(
   // model writes bindings — or the instance a group row names (F7). The
   // unit-aware path reads per instance only then (`instances`), as the scalar
   // scope does ({@link combinedAnswer}).
-  const at = inst ?? (hasUserBindings(model) && el.ownerId != null ? pass.definitions.instanceNameOf(el.ownerId) : undefined);
+  const at = inst ?? (readsPerInstance(model) && el.ownerId != null ? pass.definitions.instanceNameOf(el.ownerId) : undefined);
   const uaOpts: ConstraintQuantityOptions = {
     memo,
     ...(bindings ? { bind: (name: string) => bindings.get(name)?.quantity } : {}),
@@ -2438,7 +2504,7 @@ function collectReads(
 ): InstanceRead[] | undefined {
   const definitions = pass.definitions;
   const root = el.ownerId ?? el.id;
-  const at = inst ?? (hasUserBindings(model) && el.ownerId != null ? definitions.instanceNameOf(el.ownerId) : undefined);
+  const at = inst ?? (readsPerInstance(model) && el.ownerId != null ? definitions.instanceNameOf(el.ownerId) : undefined);
   // The symbol a name is read by at the instance: the same rebase the
   // obligation's vars take ({@link DefiningEquations.instanceReadings}), so the
   // SMT same-point gate compares one spelling, not the owner's generic one.
@@ -3907,7 +3973,7 @@ function combinedAnswer(
   pass: ScalarPass,
   inst?: string,
 ): (name: string) => ScalarAnswer | undefined {
-  const at = inst ?? (hasUserBindings(model) && el.ownerId != null ? pass.definitions.instanceNameOf(el.ownerId) : undefined);
+  const at = inst ?? (readsPerInstance(model) && el.ownerId != null ? pass.definitions.instanceNameOf(el.ownerId) : undefined);
   return (name: string) => {
     const fromOwner = el.ownerId != null ? answerFor(model, el.ownerId, name, pass, at) : undefined;
     if (fromOwner?.value !== undefined) return fromOwner;
