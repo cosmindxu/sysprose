@@ -383,25 +383,48 @@ export class DefiningEquations {
     f: ElementRecord,
   ): { feature: ElementRecord; scope?: ElementId; path?: string } | undefined {
     const subject = f.attrs.requirementRole === 'subject';
+    // A part a part-valued binding equates with another, saying nothing of its
+    // own (`bind pp = top.a`), stands for it as a reference does: its path is
+    // resolved in the instance read, of the element the binding is written in
+    // (w's own top for `part w : W { part :>> top { … } }`), and there alone.
+    const equated = subject ? undefined : this.equatedPart(f, contextId);
     // A REFERENCE feature (`ref part :>> r = r1`) stands for the feature its
     // value names, exactly as a bound subject does: every chain through it
     // reads the referenced feature, so `q.r.L` is r1's 50, not R's own 1.
-    if (!subject && f.attrs.isRef !== true) return undefined;
+    if (!subject && f.attrs.isRef !== true && !equated) return undefined;
     if (subject) {
       const satisfied = this.satisfaction(contextId);
       if (satisfied) return { feature: satisfied.satisfier };
     }
-    const v = f.attrs.value;
+    const v = equated ? equated.path : f.attrs.value;
     if (typeof v !== 'string') return undefined;
     const path = v.trim();
     if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(path)) return undefined;
     const seen = new Set<ElementId>();
-    for (let cur = f.ownerId; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+    for (
+      let cur = equated ? equated.from : f.ownerId;
+      cur != null && !seen.has(cur);
+      cur = equated ? null : (this.model.get(cur)?.ownerId ?? null)
+    ) {
       seen.add(cur);
       const end = this.chain([cur], path)?.feature;
       if (end && end !== f) return { feature: end, scope: cur, path };
     }
     return undefined;
+  }
+
+  /**
+   * The partner a part-valued binding has `f` stand for ({@link equatedParts})
+   * when read in `contextId`: its path, and where it is resolved — the
+   * context, when `f` is a feature of the element the binding is written in
+   * and the context has it among its own (that element, a usage it types, one
+   * that specialises it: an instance reads its own partner), else that
+   * element. `undefined` for any other feature.
+   */
+  equatedPart(f: ElementRecord, contextId: ElementId): { path: string; from: ElementId } | undefined {
+    const hit = equatedParts(this.model).standsFor.get(f.id);
+    if (!hit || contextId === hit.from || f.ownerId !== hit.from || !this.features(contextId).includes(f)) return hit;
+    return { path: hit.path, from: contextId };
   }
 
   /**
@@ -672,7 +695,7 @@ export class DefiningEquations {
         // A subject something binds is read through what it stands for, in
         // the instance it stands for.
         const into = this.subjectOf(ownerId, feat) ?? feat;
-        const bound = into !== feat ? this.boundInstance(ownerId, feat, into) : undefined;
+        const bound = into !== feat ? this.boundInstance(ownerId, feat, into, { instance, enclosing }) : undefined;
         visit(
           into.id,
           prefix ? `${prefix}.${name}` : name,
@@ -738,20 +761,30 @@ export class DefiningEquations {
     contextId: ElementId,
     f: ElementRecord,
     into: ElementRecord,
+    at?: { instance: string; enclosing: readonly InstanceFrame[] },
   ): { instance: string; enclosing: readonly InstanceFrame[] } {
     const fallback = { instance: this.qualifiedNameOf(into.id), enclosing: [] };
-    const satisfied = this.satisfaction(contextId);
+    // A part a binding equates is read where the binding is written ({@link
+    // equatedPart}): read in the walk's instance of that element (`at`), the
+    // partner is that instance's own — s's w's top's a for W's `bind pp =
+    // top.a` reached as `s.w.pp`, never the a of Sys's own w.
+    const equated = this.equatedPart(f, contextId);
+    if (equated && at && equated.from === contextId) {
+      const end = this.chainFrom(at.instance, at.enclosing, contextId, equated.path, false);
+      return end && end.feature.id === into.id ? { instance: end.instance, enclosing: end.enclosing } : fallback;
+    }
+    const satisfied = equated ? undefined : this.satisfaction(contextId);
     const written = satisfied ? this.model.get(contextId) : undefined;
-    const ref = satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
+    const ref = equated ? equated.path : satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
     if (typeof ref !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(ref.trim())) {
       return fallback;
     }
     const path = ref.trim();
     const seen = new Set<ElementId>();
     for (
-      let cur = satisfied ? (written?.ownerId ?? null) : f.ownerId;
+      let cur = equated ? equated.from : satisfied ? (written?.ownerId ?? null) : f.ownerId;
       cur != null && !seen.has(cur);
-      cur = satisfied ? null : (this.model.get(cur)?.ownerId ?? null)
+      cur = satisfied || equated ? null : (this.model.get(cur)?.ownerId ?? null)
     ) {
       seen.add(cur);
       const end = this.chainInstance(cur, path);
@@ -774,10 +807,24 @@ export class DefiningEquations {
     contextId: ElementId,
     path: string,
   ): { feature: ElementRecord; instance: string; enclosing: InstanceFrame[] } | undefined {
+    return this.chainFrom(this.instanceNameOf(contextId), [], contextId, path, true);
+  }
+
+  /**
+   * {@link chainInstance} from `instance`, the instance of `contextId` the
+   * caller is in, below the instances `above` (`atRoot`: `contextId` is the
+   * scope's root).
+   */
+  private chainFrom(
+    instance: string,
+    above: readonly InstanceFrame[],
+    contextId: ElementId,
+    path: string,
+    atRoot: boolean,
+  ): { feature: ElementRecord; instance: string; enclosing: InstanceFrame[] } | undefined {
     const segments = path.split('.');
     let owner = contextId;
-    let instance = this.instanceNameOf(contextId);
-    const enclosing: InstanceFrame[] = [];
+    const enclosing: InstanceFrame[] = [...above];
     for (let i = 0; i < segments.length; i++) {
       const feature = this.byName(owner).get(segments[i]!);
       const name = feature ? this.nameOf(feature) : undefined;
@@ -785,7 +832,7 @@ export class DefiningEquations {
       enclosing.push({ instance, reader: owner });
       if (i === segments.length - 1) return { feature, instance: `${instance}::${name}`, enclosing };
       if (this.subjectOf(owner, feature)) return undefined;
-      instance = this.instanceBelow(instance, feature, name, i === 0);
+      instance = this.instanceBelow(instance, feature, name, atRoot && i === 0);
       owner = feature.id;
     }
     return undefined;
@@ -2414,6 +2461,306 @@ export function hasUserBindings(model: Model): boolean {
  */
 export function bindingCapOf(model: Model): BindingCap | undefined {
   return bindingEnds(model).cap;
+}
+
+/**
+ * The model's PART-VALUED bindings (`bind pp = top.a`, both ends parts,
+ * items, ports — any usage but an attribute), once per revision. Such a
+ * binding equates the two: `pp.load` IS `top.a.load`, where every surface
+ * read pp's own `default` (a false verdict on all four, O5 S5). An end that
+ * says nothing of its own — no feature, binding end, value or redefinition
+ * below it or below what it redefines, no other feature redefining it, no
+ * asserted relation reading through its name, one such binding only, no type
+ * its partner lacks, and a feature of the element the binding is written in
+ * unless that is a package — STANDS FOR its partner (`standsFor`: the
+ * partner's path below the binding's owner, where it is resolved), when the
+ * partner itself stands for nothing else: every chain through it reads the
+ * partner, as a reference's value is read ({@link
+ * DefiningEquations.subjectScope}). The partner then has everything both say.
+ * Where neither end is so plain, each says something the other's reading
+ * would miss (`unread`, the binding; `unreadEnds`, its ends): no relation row
+ * that may read a value either carries is read ({@link equatedPartsRefusal}).
+ * Nor is an end a reference's or a bound subject's value, or a `satisfy`,
+ * lands on (`ref part r = pp`) plain: the walk reads such an end's own
+ * features there, never through its binding. The sweep reads the model alone
+ * — no binding reading and no scope — since the walk asks it.
+ */
+const EQUATED_PARTS = new WeakMap<
+  Model,
+  {
+    rev: number;
+    standsFor: ReadonlyMap<ElementId, { path: string; from: ElementId }>;
+    unread: readonly ElementRecord[];
+    unreadEnds: ReadonlySet<ElementId>;
+    /** {@link equatedTaint}, built on first ask. */
+    taint?: ReadonlyMap<ElementId, ElementRecord>;
+  }
+>();
+
+function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS.get>> {
+  const hit = EQUATED_PARTS.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const standsFor = new Map<ElementId, { path: string; from: ElementId }>();
+  const unread: ElementRecord[] = [];
+  const unreadEnds = new Set<ElementId>();
+  const partLike = (e: ElementRecord | undefined): e is ElementRecord =>
+    e !== undefined && isUsage(e.eClass) && e.eClass !== 'AttributeUsage';
+  const pairs: Array<{ b: ElementRecord; f: ElementRecord; g: ElementRecord }> = [];
+  const count = new Map<ElementId, number>();
+  for (const b of model.all()) {
+    if (!isBindingConnector(b) || b.attrs.isLibrary === true || b.ownerId == null) continue;
+    const f = b.source?.[0] !== undefined ? model.get(b.source[0]) : undefined;
+    const g = b.target?.[0] !== undefined ? model.get(b.target[0]) : undefined;
+    if (!partLike(f) || !partLike(g) || f.id === g.id) continue;
+    pairs.push({ b, f, g });
+    for (const e of [f, g]) count.set(e.id, (count.get(e.id) ?? 0) + 1);
+  }
+  if (pairs.length > 0) {
+    const redefined = new Set(
+      [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')].flatMap((r) => r.target ?? []),
+    );
+    // The names a reference's or a bound subject's value, or a `satisfy`, lands on.
+    const aimed = new Set<string>();
+    for (const e of model.all()) {
+      if (e.attrs.isLibrary === true || typeof e.attrs.value !== 'string') continue;
+      if (e.attrs.isRef === true || e.attrs.requirementRole === 'subject') aimed.add(e.attrs.value.trim().split('.').pop()!);
+    }
+    for (const rel of model.ofKind('Satisfy')) {
+      const s = rel.source?.[0] !== undefined ? model.get(rel.source[0]) : undefined;
+      const n = s ? effectiveNameOf(model, s) : undefined;
+      if (n !== undefined) aimed.add(n);
+    }
+    // The names an asserted relation reads a feature THROUGH (`pp` of `pp.load
+    // == 3.0`): such a relation says something of the part.
+    const through = new Set<string>();
+    for (const c of model.all()) {
+      if (c.attrs.isLibrary === true || !isAsserted(c) || typeof c.attrs.expression !== 'string') continue;
+      for (const n of relationNamesOf(c.attrs.expression)) n.split('.').slice(0, -1).forEach((s) => through.add(s));
+    }
+    const kinds = (e: ElementRecord): Set<ElementId> =>
+      new Set(generalizationsOf(model, e.id).filter((t) => isDefinition(t.eClass)).map((t) => t.id));
+    // Each owner of `e` up to `holder` reads its features as written: no
+    // reference or subject, no end of a part-valued binding.
+    const cleanTo = (e: ElementRecord, holder: ElementId): boolean => {
+      for (let o = e.ownerId != null ? model.get(e.ownerId) : undefined; o && o.id !== holder; o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
+        if (o.attrs.isRef === true || o.attrs.requirementRole === 'subject' || count.has(o.id)) return false;
+      }
+      return true;
+    };
+    const plain = (f: ElementRecord, g: ElementRecord, holder: ElementId): boolean => {
+      if (count.get(f.id) !== 1 || count.get(g.id) !== 1 || redefined.has(f.id)) return false;
+      const name = effectiveNameOf(model, f);
+      if (name === undefined || through.has(name) || aimed.has(name)) return false;
+      // Read below the binding's owner, the partner is resolved in that owner's
+      // instance, which only a package has one of ({@link
+      // DefiningEquations.equatedPart}).
+      const owner = model.get(holder);
+      if (f.ownerId !== holder && (!owner || isUsage(owner.eClass) || isDefinition(owner.eClass))) return false;
+      for (const h of [f, ...redefinedClosure(model, f)]) {
+        if (h.attrs.value !== undefined || h.attrs.requirementRole === 'subject') return false;
+        if (model.children(h.id).some((c) => isUsage(c.eClass))) return false;
+      }
+      if (g.attrs.value !== undefined || g.attrs.requirementRole === 'subject') return false;
+      const theirs = kinds(g);
+      if ([...kinds(f)].some((t) => !theirs.has(t))) return false;
+      return cleanTo(f, holder) && cleanTo(g, holder) && bindingEndPath(model, g.id, holder) !== undefined;
+    };
+    for (const { b, f, g } of pairs) {
+      const holder = b.ownerId!;
+      const [from, to] = plain(f, g, holder) ? [f, g] : plain(g, f, holder) ? [g, f] : [undefined, undefined];
+      if (from && to) {
+        standsFor.set(from.id, { path: bindingEndPath(model, to.id, holder)!, from: holder });
+        continue;
+      }
+      unread.push(b);
+      unreadEnds.add(f.id).add(g.id);
+    }
+  }
+  const fresh = { rev: model.rev, standsFor, unread, unreadEnds };
+  EQUATED_PARTS.set(model, fresh);
+  return fresh;
+}
+
+/**
+ * What an unread part-valued binding ({@link equatedParts}) may carry a value
+ * to, each with the binding, once per revision: its two ends and each usage
+ * above an end up to where the binding is written; then, to a fixpoint, the
+ * ends of every binding one end of which is, or is read through, one of them
+ * (and each usage above such an end); every feature whose value reads
+ * through one; the first link of each name an asserted relation reads beside
+ * one; what redefines or subsets one; an equated part whose partner is one
+ * ({@link DefiningEquations.equatedPart}); and a `satisfy` of one. A relation
+ * read through none of them, for an instance below none of them, reads what
+ * the binding carries nowhere ({@link equatedPartsRefusal}).
+ */
+function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
+  const parts = equatedParts(model);
+  if (parts.taint) return parts.taint;
+  const taint = new Map<ElementId, ElementRecord>();
+  if (parts.unread.length === 0) return (parts.taint = taint);
+  const defs = sharedDefinitions(model);
+  const ownerOf = (e: ElementRecord): ElementRecord | undefined => (e.ownerId != null ? model.get(e.ownerId) : undefined);
+  let grew = true;
+  // `e`, and with `holder` each usage above it up to `holder`.
+  const add = (e: ElementRecord, b: ElementRecord, holder?: ElementId): void => {
+    for (let cur: ElementRecord | undefined = e; cur && cur.id !== holder; cur = ownerOf(cur)) {
+      if (cur !== e && !isUsage(cur.eClass)) break;
+      if (!taint.has(cur.id)) {
+        taint.set(cur.id, b);
+        grew = true;
+      }
+      if (holder === undefined) break;
+    }
+  };
+  const users = model.all().filter((el) => el.attrs.isLibrary !== true);
+  const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
+  const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string');
+  const asserted = users.filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string');
+  const narrowing = [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')];
+  for (const b of parts.unread) {
+    for (const id of [b.source?.[0], b.target?.[0]]) {
+      const end = id !== undefined ? model.get(id) : undefined;
+      if (end) add(end, b, b.ownerId!);
+    }
+  }
+  const endsOf = (b: ElementRecord): ElementRecord[] =>
+    [b.source?.[0], b.target?.[0]].flatMap((id) => (id !== undefined ? (model.get(id) ?? []) : []));
+  while (grew) {
+    grew = false;
+    for (const b of bindings) {
+      const ends = endsOf(b);
+      const hit = ends
+        .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
+        .find((x) => x !== undefined);
+      if (hit) for (const e of ends) add(e, hit, b.ownerId!);
+    }
+    for (const f of valued) {
+      const hit = namesOfValue(f.attrs.value as string)
+        .map((n) => readsTainted(model, taint, [f.ownerId!], n))
+        .find((x) => x !== undefined);
+      if (hit) add(f, hit);
+    }
+    for (const a of asserted) {
+      const roots = [a.ownerId, a.id].filter((x): x is ElementId => x != null);
+      const names = relationNamesOf(a.attrs.expression as string);
+      const hit = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
+      if (!hit) continue;
+      for (const n of names) {
+        const head = n.split('.')[0]!;
+        for (const r of roots) {
+          const d = defs.denote(r).get(head);
+          if (d) add(d.feature, hit);
+        }
+      }
+    }
+    for (const r of narrowing) {
+      const target = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+      const source = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+      const hit = target ? taintedAt(model, taint, target) : undefined;
+      if (hit && source) add(source, hit);
+    }
+    for (const [id, { path, from }] of parts.standsFor) {
+      const end = model.get(id);
+      const hit = readsTainted(model, taint, [from], path);
+      if (end && hit) add(end, hit);
+    }
+    for (const rel of model.ofKind('Satisfy')) {
+      const s = rel.source?.[0] !== undefined ? model.get(rel.source[0]) : undefined;
+      const hit = s ? taintedAt(model, taint, s) : undefined;
+      if (hit) add(rel, hit);
+    }
+  }
+  parts.taint = taint;
+  return taint;
+}
+
+/** The binding whose value `e`, or a usage above it, may carry ({@link equatedTaint}). */
+function taintedAt(model: Model, taint: ReadonlyMap<ElementId, ElementRecord>, e: ElementRecord | undefined): ElementRecord | undefined {
+  const seen = new Set<ElementId>();
+  for (let cur = e; cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    seen.add(cur.id);
+    const hit = taint.get(cur.id);
+    if (hit) return hit;
+    if (!isUsage(cur.eClass)) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The binding a dotted `name` read in `roots` (the first that resolves its
+ * first link, else each namespace enclosing the first root) carries a value
+ * through: a link that denotes a feature of {@link equatedTaint}, or is read
+ * in one (a reference's `r.load` read in the `pp` it names).
+ */
+function readsTainted(
+  model: Model,
+  taint: ReadonlyMap<ElementId, ElementRecord>,
+  roots: readonly ElementId[],
+  name: string | undefined,
+): ElementRecord | undefined {
+  if (name === undefined || roots.length === 0) return undefined;
+  const defs = sharedDefinitions(model);
+  const segments = name.split('.');
+  let scopes = roots.filter((r) => defs.denote(r).has(segments[0]!));
+  if (scopes.length === 0) {
+    scopes = [];
+    const seen = new Set<ElementId>();
+    for (let o = model.get(roots[0]!)?.ownerId ?? null; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? null) {
+      seen.add(o);
+      scopes.push(o);
+    }
+  }
+  for (const r of scopes) {
+    const denoted = defs.denote(r);
+    for (let k = 1; k <= segments.length; k++) {
+      const d = denoted.get(segments.slice(0, k).join('.'));
+      const hit = d ? (taintedAt(model, taint, d.feature) ?? taintedAt(model, taint, model.get(d.reader))) : undefined;
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Why a relation row of `model` is not read ({@link equatedParts}), or
+ * `undefined`: the row may read a value a part-valued binding neither end of
+ * which stands for the other carries ({@link equatedTaint}) — a name of
+ * `expression` read in its context (`at.contextId`; for its own row, where
+ * the relation is written) through such a feature, or the instance it is read
+ * for (that context, or `at.path`) at or below one. Each part says something
+ * of its own that the other's reading would miss. Every surface leaves such a
+ * row undecided in this sentence (`checkConstraints` of ./evaluate-model,
+ * `numericRows` of ./solver, `obligationsOf` of ./obligations); any other row
+ * reads as before.
+ */
+export function equatedPartsRefusal(
+  model: Model,
+  relationId: ElementId,
+  expression: string,
+  at?: { contextId: ElementId; path?: string },
+): string | undefined {
+  const { unread } = equatedParts(model);
+  if (unread.length === 0) return undefined;
+  const names = relationNamesOf(expression);
+  if (names.length === 0) return undefined;
+  const taint = equatedTaint(model);
+  const rel = model.get(relationId);
+  const context = at ? model.get(at.contextId) : rel;
+  const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
+  let b = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
+  b ??= taintedAt(model, taint, context);
+  if (!b && at?.path !== undefined) {
+    const frames = sharedDefinitions(model).framesAbove(at.path);
+    b = frames === undefined ? unread[0] : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
+  }
+  if (!b) return undefined;
+  const [l, r] = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, b.ownerId!) : undefined));
+  const ends = l !== undefined && r !== undefined ? `\`bind ${l} = ${r}\`` : 'a binding';
+  return (
+    `${ends} in ${effectiveQualifiedName(model, b.ownerId!)} equates two parts, ports or items; this tool reads ` +
+    'such a binding only where one says nothing of its own and is bound once, as the other, and neither is ' +
+    'here, so no relation that may read a value it carries is read'
+  );
 }
 
 /** The indexes over the model's binding readings ({@link BindingIndex}), built once per revision. */

@@ -6657,6 +6657,153 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'H2E::m2NegT': ['T/T/T/T', 'T'],
       'H2E::m2PosF': ['F/F/F/F', 'F'],
     }),
+    // A part-valued binding (O5 S5, O2's S3 review): `bind pp = top.a` equates the two parts, so pp's load IS
+    // top's a's — L's 50 through T1's binding (PPS), or X's through the package's (PPS2). Every surface read
+    // pp's own default 1 (pT F/F/F/F, pF T/T/T/T). pp says nothing of its own, so it stands for top.a.
+    'h5-pp': probe(`package PPS {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part top : T1 { attribute :>> L = 50.0; }
+        part pp : T0;
+        bind pp = top.a;
+        constraint pT { pp.load >= 40.0 }
+        constraint pF { pp.load <= 5.0 }
+      }`, {
+      'PPS::pT': ['T/T/T/T', 'T'],
+      'PPS::pF': ['F/F/F/F', 'F'],
+    }),
+    'h5-pp2': probe(`package PPS2 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part top : T1;
+        attribute X : ScalarValues::Real = 50.0;
+        bind top.L = X;
+        part pp : T0;
+        bind pp = top.a;
+        constraint pT { pp.load >= 40.0 }
+        constraint pF { pp.load <= 5.0 }
+      }`, {
+      'PPS2::pT': ['T/T/T/T', 'T'],
+      'PPS2::pF': ['F/F/F/F', 'F'],
+    }),
+    // The same past the 32-usage cap (CAPP): pp reads the capped load, as chainPkg33 does — the check and the
+    // literal engine abstain, the numeric and SMT lanes solve it; never the shared default 1.
+    'h5-capp': probe(
+      bindingChainPkg(33)
+        .replace('package DP33 {', 'package CAPP {')
+        .replace(
+          /\n}$/,
+          [
+            '',
+            '  part pp : T0;',
+            `  bind pp = top.${Array.from({ length: 33 }, () => 'a').join('.')};`,
+            '  constraint pT { pp.load >= 40.0 }',
+            '  constraint pF { pp.load <= 5.0 }',
+            '}',
+          ].join('\n'),
+        ),
+      {
+        'CAPP::negT': ['?/?/T/T', 'T'],
+        'CAPP::posF': ['?/?/F/?', 'F'],
+        'CAPP::pT': ['?/?/T/T', 'T'],
+        'CAPP::pF': ['?/?/F/?', 'F'],
+      },
+    ),
+    // Written in a definition, the partner is the instance's own: w's pp is w's top's a, whose L w sets to 50,
+    // while W's own reads T1's default.
+    'h5-ppdef': probe(`package PPW {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part def W { part top : T1; part pp : T0; bind pp = top.a; constraint pT { pp.load >= 40.0 } constraint pF { pp.load <= 5.0 } }
+        part w : W { part :>> top { attribute :>> L = 50.0; } }
+      }`, {
+      'PPW::W::pT': ['F/F/F/F', 'F'],
+      'PPW::W::pF': ['T/T/T/T', 'T'],
+      'PPW::W::pT in PPW::w': ['T/T/T/T', 'T'],
+      'PPW::W::pF in PPW::w': ['F/F/F/F', 'F'],
+    }),
+    // Where both parts say something (pp's own `default`, beside T1's binding on top's a), neither stands for
+    // the other, and a value either says may reach any feature: every surface abstains on every relation that
+    // reads a value. pp's load is the binding's 50 (its default gives way); top's a's is too.
+    'h5-ppbody': probe(`package PPB {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part top : T1 { attribute :>> L = 50.0; }
+        part pp : T0 { attribute :>> load default = 3.0; }
+        bind pp = top.a;
+        constraint pT { pp.load >= 40.0 }
+        constraint aT { top.a.load >= 40.0 }
+        constraint pF { pp.load <= 5.0 }
+      }`, {
+      'PPB::pT': ['?/?/?/?', 'T'],
+      'PPB::aT': ['?/?/?/?', 'T'],
+      'PPB::pF': ['?/?/?/?', 'F'],
+    }),
+    // Reached as an inherited feature of an instance around it (s's w), the partner is THAT instance's: s's
+    // w's top's a, whose L s's SL sets to 50 — not Sys's own w's (S5 review: Sys::cT in s read 1, F/F/F/F).
+    'h5-ppenc': probe(`package PPE {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part def W { attribute WL : ScalarValues::Real default = 1.0; part top : T1; bind top.L = WL; part pp : T0; bind pp = top.a; }
+        part def Sys {
+          attribute SL : ScalarValues::Real default = 1.0;
+          part w : W;
+          bind w.WL = SL;
+          constraint cT { w.pp.load >= 40.0 }
+          constraint cF { w.pp.load <= 5.0 }
+        }
+        part s : Sys { attribute :>> SL = 50.0; }
+        constraint kT { s.w.pp.load >= 40.0 }
+        constraint kF { s.w.pp.load <= 5.0 }
+      }`, {
+      'PPE::Sys::cT': ['F/F/F/F', 'F'],
+      'PPE::Sys::cF': ['T/T/T/T', 'T'],
+      'PPE::Sys::cT in PPE::s': ['T/T/T/T', 'T'],
+      'PPE::Sys::cF in PPE::s': ['F/F/F/F', 'F'],
+      'PPE::kT': ['T/T/T/T', 'T'],
+      'PPE::kF': ['F/F/F/F', 'F'],
+    }),
+    // A reference, or a `satisfy`, that lands on pp reads pp's own features there, never through its binding:
+    // pp stands for nothing, and every row that reads a value through it abstains (r's load read 1, F/F/F/F;
+    // RF in pp was proved by SMT).
+    'h5-ppref': probe(`package PPR {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part top : T1 { attribute :>> L = 50.0; }
+        part pp : T0;
+        bind pp = top.a;
+        ref part r : T0 = pp;
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        satisfy RF by pp;
+        constraint pT { pp.load >= 40.0 }
+        constraint rT { r.load >= 40.0 }
+        constraint rF { r.load <= 5.0 }
+      }`, {
+      'PPR::pT': ['?/?/?/?', 'T'],
+      'PPR::rT': ['?/?/?/?', 'T'],
+      'PPR::rF': ['?/?/?/?', 'F'],
+      'PPR::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'PPR::RF::«ConstraintUsage» in PPR::pp': ['-/?/-/?', 'F'],
+    }),
+    // A port bound to two inner ports is no plain binding, and v's e's fin's rate abstains (it read FP's
+    // default 2, F/F/F/F). A row that reads nothing the binding carries keeps its verdict (it read ? on all four
+    // while the refusal held for the whole model).
+    'h5-ppport': probe(`package PPP {
+        port def FP { attribute rate : ScalarValues::Real default = 2.0; }
+        part def Eng { in port fin : FP; }
+        part def Veh { in port fin : FP { attribute :>> rate = 4.0; } part e : Eng; bind e.fin = fin; part e2 : Eng; bind e2.fin = fin; }
+        part v : Veh;
+        part def Other { attribute z : ScalarValues::Real default = 1.0; constraint zc { z >= 0.5 } }
+        part o : Other;
+        constraint oc { o.z >= 0.5 }
+        constraint ocF { o.z >= 5.0 }
+        constraint rT { v.e.fin.rate >= 3.0 }
+      }`, {
+      'PPP::Other::zc': ['T/T/T/T', 'T'],
+      'PPP::oc': ['T/T/T/T', 'T'],
+      'PPP::ocF': ['F/F/F/F', 'F'],
+      'PPP::rT': ['?/?/?/?', 'T'],
+    }),
   };
 
   /**

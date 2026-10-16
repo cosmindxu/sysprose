@@ -36,6 +36,7 @@ import {
   defaultStandsIn,
   assertDefinitionIn,
   enclosingAssertOn,
+  equatedPartsRefusal,
   failedReadingSentence,
   hasUserBindings,
   readsPerInstance,
@@ -1356,6 +1357,29 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       check.instances = rows;
     }
     out.push(check);
+  }
+  // A part-valued binding no end of which stands for the other may carry a
+  // value (equatedPartsRefusal): no row that may read one is decided, on any
+  // surface. A row that abstains already keeps its sentence.
+  for (const c of out) {
+    const own = c.result === 'unknown' ? undefined : equatedPartsRefusal(model, c.id, c.expression);
+    if (own !== undefined) {
+      c.result = 'unknown';
+      c.message = `Could not evaluate: ${own}`;
+      delete c.tie;
+      delete c.reads;
+    }
+    for (const i of c.instances ?? []) {
+      if (i.result === 'unknown') continue;
+      const each = equatedPartsRefusal(model, c.id, c.expression, { contextId: i.contextId, path: i.instance });
+      if (each === undefined) continue;
+      i.result = 'unknown';
+      i.message = `Could not evaluate: ${each}`;
+      i.detail = i.message;
+      delete i.abstention;
+      delete i.cause;
+      delete i.reads;
+    }
   }
   out.push(...contradictions(model, pass));
   out.push(...bindingConflicts(model, pass));

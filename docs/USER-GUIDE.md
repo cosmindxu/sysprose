@@ -957,6 +957,19 @@ per instance nowhere, the usage's own row included: that row is *could not be
 evaluated*, as it was before any instance was read. A relation written in such
 a usage (`part p : P { constraint c2 { load <= 10.0 } }` in Q) is read the same
 way; an `assert` there stays an axiom, read for the usage's own instance. A
+part, port or item a binding equates with another (`bind pp = top.a`) is read
+as that other where it says nothing of its own — no feature, value or binding
+below it, one such binding, no type the other lacks, no reference, subject or
+`satisfy` that names it, and a feature of the element the binding is written
+in or of a package: `pp.load` is top's a's load on every surface, and in each
+instance of that element the instance's own (W's `bind pp = top.a` read as
+`s.w.pp`, for `part s : Sys` whose w is a W, is s's w's top's a). Where
+neither is so plain (`part pp : T0 { attribute :>> load default = 3.0; }`, a
+port bound to two inner ports), a row that may read a value the binding
+carries is *could not be evaluated*, in a sentence that names the binding: one
+that reads through either end or a usage above one, or through a feature a
+binding, a value or an `assert` ties to one, and one read for an instance at
+or below one. Every other row of the model reads as before. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A binding written in a usage's body to a feature of

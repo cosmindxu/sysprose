@@ -81,6 +81,7 @@ import {
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
   defaultStandsIn,
+  equatedPartsRefusal,
   hasPastCapBindings,
   hasStatedValue,
   instanceGroups,
@@ -4748,6 +4749,19 @@ function numericRows(
       }
       out.push(r);
     }
+  }
+  // A part-valued binding no end of which stands for the other may carry a
+  // value (equatedPartsRefusal): no row that may read one is judged, as the
+  // validation surface judges none.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const equated = equatedPartsRefusal(model, r.context?.baseId ?? r.id, r.raw, r.context);
+    if (equated === undefined) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason = equated;
+    delete r.cause;
   }
   return out;
 }
