@@ -501,7 +501,8 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
       one at each `part rN : R`, for one cause; (3) an anchor at an unnamed redefinition (`attribute
       :>> L = 50.0`) has no `elementName`, because `src/text/load.ts` takes `declaredName` only.
       Pick the source whose value is the difference, fold the per-`rN` findings into the one at the
-      stated member, and name the redefinition. [O4 S2, review] See also the A-M2 entry (per-instance soundness section).
+      stated member, and name the redefinition. [O4 S2, review] See also the A-M2 entry (per-instance
+      soundness section).
 - [ ] **Hold a `…/2` evidence record to the check a `…/1` record gets.** A `sysprose-evidence/1`
       record `<case> in <X>` is skipped on attach ("is a VerificationCaseUsage, not a requirement"),
       while a `…/2` record of the same reading attaches wherever `instance.requirement` resolves,
