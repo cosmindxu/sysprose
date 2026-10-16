@@ -75,6 +75,7 @@ import {
   gateRelation,
   isUserModelElement,
   readRelation,
+  withInstances,
   type Contract,
   type ContractRef,
   type ContractSubject,
@@ -91,6 +92,7 @@ import {
   defaultGivesWay,
   defaultGivesWayIn,
   defaultStandsIn,
+  equatedPartsRefusal,
   hasStatedValue,
   isAsserted,
   instanceGroups,
@@ -98,7 +100,9 @@ import {
   MAX_INSTANCE_GOALS,
   MAX_INSTANCE_RELATIONS,
   relationNamesOf,
+  outsideBindingsOf,
   sharedDefinitions,
+  spelledIn,
   statedValueOf,
   usageOwnedRefusal,
   type InstanceGroup,
@@ -748,6 +752,16 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     });
   }
 
+  // A part-valued binding no end of which stands for the other may carry a
+  // value (equatedPartsRefusal): no goal that may read one is encoded, as the
+  // validation surface judges none. Axioms stay facts.
+  for (const o of out) {
+    if (o.role === 'axiom' || o.encodable !== true) continue;
+    const equated = equatedPartsRefusal(model, o.instance?.baseId ?? o.element.id, o.expression, o.instance);
+    if (equated === undefined) continue;
+    o.encodable = { reason: 'unread-definition', detail: equated };
+    o.status = statusOf(o.encodable);
+  }
   return opts.missing
     ? out.filter((o) => o.status === 'no-formal-clause' || o.status === 'not-encodable')
     : out;
@@ -1732,10 +1746,11 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
   for (const context of definitions.changingContexts(el, [left, right])) {
     // Listed only because a member reads its own value there: no axiom yet.
     if (definitions.readsBoundOnly(el, [left, right], context.id)) continue;
+    // Each end as the context spells it: q's `pp.load` where `part pp :>> p` renames Q's p (H5, E8).
     const reading = readRelation(
       model,
       { ...el, ownerId: context.id },
-      `${left} == ${right}`,
+      `${spelledIn(definitions, context.id, left)} == ${spelledIn(definitions, context.id, right)}`,
       memo,
       undefined,
       undefined,
@@ -1876,6 +1891,13 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
           done.add(key);
           file(instanceBindRow(model, c, holder, context, path, memo));
         }
+      }
+      // A package's binding on the holder's features holds in each of its instances too (w4).
+      for (const { binding, ends } of outsideBindingsOf(model, holder.id)) {
+        const key = `${binding.id} ${path}`;
+        if (done.has(key)) continue;
+        done.add(key);
+        file(instanceBindRow(model, binding, holder, context, path, memo, ends));
       }
     }
   };
@@ -2025,7 +2047,10 @@ function instanceAssertRow(
  * A binding edge `holder` (one of `context`'s types) owns, read for the
  * instance `path` of `context`: its two ends named as `holder` names them,
  * and read where `context` reads them. `undefined` for an edge whose ends are
- * not features below `holder`.
+ * not features below `holder`. A package's binding on `holder`'s features
+ * comes with its `ends` ({@link outsideBindingsOf}): an end of no definition
+ * — the package's `L` — is read by its own symbol, one instance beside the
+ * instance's (`p2.load == W4::L`).
  */
 function instanceBindRow(
   model: Model,
@@ -2034,11 +2059,36 @@ function instanceBindRow(
   context: ElementRecord,
   path: string,
   memo: DerivationMemo,
+  ends?: readonly [string | undefined, string | undefined],
 ): Obligation | undefined {
-  const left = pathBelow(model, el.source?.[0], holder.id);
-  const right = pathBelow(model, el.target?.[0], holder.id);
-  if (left === undefined || right === undefined) return undefined;
-  const reading = readRelation(model, { ...el, ownerId: context.id }, `${left} == ${right}`, memo, undefined, undefined, path);
+  const [left, right] = ends ?? [pathBelow(model, el.source?.[0], holder.id), pathBelow(model, el.target?.[0], holder.id)];
+  const definitions = sharedDefinitions(model);
+  let reading: RelationReading;
+  if (left !== undefined && right !== undefined) {
+    // Each end as the context spells it: q's `pp.load` where `part pp :>> p` renames Q's p (H5, E8).
+    const text = `${spelledIn(definitions, context.id, left)} == ${spelledIn(definitions, context.id, right)}`;
+    reading = readRelation(model, { ...el, ownerId: context.id }, text, memo, undefined, undefined, path);
+  } else {
+    const own = left ?? right;
+    const one = carriedEnd(model, (left === undefined ? el.source : el.target)?.[0]);
+    if (ends === undefined || own === undefined || one === undefined) return undefined;
+    const spelled = spelledIn(definitions, context.id, own);
+    const id = definitions.scope(context.id, 'all').get(spelled);
+    if (id === undefined) return undefined;
+    const nameToId = new Map<string, ElementId>([
+      [spelled, id],
+      ['__r', one],
+    ]);
+    const node: ExprNode = {
+      kind: 'binary',
+      op: '==',
+      left: { kind: 'ref', path: spelled.split('.') },
+      right: { kind: 'ref', path: ['__r'] },
+    };
+    const expression = `${spelled} == ${model.qualifiedName(one)}`;
+    const read = { ...el, ownerId: context.id };
+    reading = withInstances(model, read, gateRelation(model, node, nameToId, NO_MARKERS, false, memo, true, expression), path);
+  }
   return {
     requirement: null,
     shortId: '',

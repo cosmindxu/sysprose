@@ -121,8 +121,10 @@ function equationsByName(model: Model, ownerId: ElementId): Map<string, Defining
     const eq = equationOf(c);
     if (!eq) continue;
     const { node, literals } = eq;
-    const l = bareName(node.left, literals);
-    const r = bareName(node.right, literals);
+    // A DOTTED defined name (`assert constraint { p.x == 3.0 }`) indexes under
+    // the whole path; a single-segment ref is the bare name it always was.
+    const l = definedName(node.left, literals);
+    const r = definedName(node.right, literals);
     if (l !== undefined) add(left, l, { constraint: c, definition: node.right, left: true, literals });
     if (r !== undefined && r !== l) add(right, r, { constraint: c, definition: node.left, left: false, literals });
   }
@@ -293,6 +295,8 @@ export class DefiningEquations {
   private readonly asserted = new Map<ElementId, ReadonlyArray<{ expr: string; names: readonly string[] }>>();
   /** {@link anyAsserted}, once asked. */
   private anyAsserts?: boolean;
+  /** {@link reachingAssert} per `${contextId} ${name}` (`null`: none). */
+  private readonly reaching = new Map<string, { site: ElementId; path: string; equations: readonly DefiningEquation[] } | null>();
   /** {@link boundAbove} per context and names (`null`: none above) — every instance row of a group asks it of the usage. */
   private readonly aboveBound = new Map<string, BoundAbove | null>();
 
@@ -379,25 +383,48 @@ export class DefiningEquations {
     f: ElementRecord,
   ): { feature: ElementRecord; scope?: ElementId; path?: string } | undefined {
     const subject = f.attrs.requirementRole === 'subject';
+    // A part a part-valued binding equates with another, saying nothing of its
+    // own (`bind pp = top.a`), stands for it as a reference does: its path is
+    // resolved in the instance read, of the element the binding is written in
+    // (w's own top for `part w : W { part :>> top { … } }`), and there alone.
+    const equated = subject ? undefined : this.equatedPart(f, contextId);
     // A REFERENCE feature (`ref part :>> r = r1`) stands for the feature its
     // value names, exactly as a bound subject does: every chain through it
     // reads the referenced feature, so `q.r.L` is r1's 50, not R's own 1.
-    if (!subject && f.attrs.isRef !== true) return undefined;
+    if (!subject && f.attrs.isRef !== true && !equated) return undefined;
     if (subject) {
       const satisfied = this.satisfaction(contextId);
       if (satisfied) return { feature: satisfied.satisfier };
     }
-    const v = f.attrs.value;
+    const v = equated ? equated.path : f.attrs.value;
     if (typeof v !== 'string') return undefined;
     const path = v.trim();
     if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(path)) return undefined;
     const seen = new Set<ElementId>();
-    for (let cur = f.ownerId; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+    for (
+      let cur = equated ? equated.from : f.ownerId;
+      cur != null && !seen.has(cur);
+      cur = equated ? null : (this.model.get(cur)?.ownerId ?? null)
+    ) {
       seen.add(cur);
       const end = this.chain([cur], path)?.feature;
       if (end && end !== f) return { feature: end, scope: cur, path };
     }
     return undefined;
+  }
+
+  /**
+   * The partner a part-valued binding has `f` stand for ({@link equatedParts})
+   * when read in `contextId`: its path, and where it is resolved — the
+   * context, when `f` is a feature of the element the binding is written in
+   * and the context has it among its own (that element, a usage it types, one
+   * that specialises it: an instance reads its own partner), else that
+   * element. `undefined` for any other feature.
+   */
+  equatedPart(f: ElementRecord, contextId: ElementId): { path: string; from: ElementId } | undefined {
+    const hit = equatedParts(this.model).standsFor.get(f.id);
+    if (!hit || contextId === hit.from || f.ownerId !== hit.from || !this.features(contextId).includes(f)) return hit;
+    return { path: hit.path, from: contextId };
   }
 
   /**
@@ -580,7 +607,9 @@ export class DefiningEquations {
     const target = this.carrier(d.reader, d.feature);
     if (target !== d.feature) return { target };
     if (this.statedValue(target) !== undefined) {
-      return target.ownerId === d.reader || this.sameIn(d.reader, target) ? { target } : { target, at: d.reader };
+      return target.ownerId === d.reader || (this.sameIn(d.reader, target) && !this.changedByAssert(d.reader, target))
+        ? { target }
+        : { target, at: d.reader };
     }
     // An asserted equation that defines it answers it, not a value it redefines.
     if (this.statesOrDefines(d.reader, target)) return undefined;
@@ -666,7 +695,7 @@ export class DefiningEquations {
         // A subject something binds is read through what it stands for, in
         // the instance it stands for.
         const into = this.subjectOf(ownerId, feat) ?? feat;
-        const bound = into !== feat ? this.boundInstance(ownerId, feat, into) : undefined;
+        const bound = into !== feat ? this.boundInstance(ownerId, feat, into, { instance, enclosing }) : undefined;
         visit(
           into.id,
           prefix ? `${prefix}.${name}` : name,
@@ -732,20 +761,30 @@ export class DefiningEquations {
     contextId: ElementId,
     f: ElementRecord,
     into: ElementRecord,
+    at?: { instance: string; enclosing: readonly InstanceFrame[] },
   ): { instance: string; enclosing: readonly InstanceFrame[] } {
     const fallback = { instance: this.qualifiedNameOf(into.id), enclosing: [] };
-    const satisfied = this.satisfaction(contextId);
+    // A part a binding equates is read where the binding is written ({@link
+    // equatedPart}): read in the walk's instance of that element (`at`), the
+    // partner is that instance's own — s's w's top's a for W's `bind pp =
+    // top.a` reached as `s.w.pp`, never the a of Sys's own w.
+    const equated = this.equatedPart(f, contextId);
+    if (equated && at && equated.from === contextId) {
+      const end = this.chainFrom(at.instance, at.enclosing, contextId, equated.path, false);
+      return end && end.feature.id === into.id ? { instance: end.instance, enclosing: end.enclosing } : fallback;
+    }
+    const satisfied = equated ? undefined : this.satisfaction(contextId);
     const written = satisfied ? this.model.get(contextId) : undefined;
-    const ref = satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
+    const ref = equated ? equated.path : satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
     if (typeof ref !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(ref.trim())) {
       return fallback;
     }
     const path = ref.trim();
     const seen = new Set<ElementId>();
     for (
-      let cur = satisfied ? (written?.ownerId ?? null) : f.ownerId;
+      let cur = equated ? equated.from : satisfied ? (written?.ownerId ?? null) : f.ownerId;
       cur != null && !seen.has(cur);
-      cur = satisfied ? null : (this.model.get(cur)?.ownerId ?? null)
+      cur = satisfied || equated ? null : (this.model.get(cur)?.ownerId ?? null)
     ) {
       seen.add(cur);
       const end = this.chainInstance(cur, path);
@@ -768,10 +807,24 @@ export class DefiningEquations {
     contextId: ElementId,
     path: string,
   ): { feature: ElementRecord; instance: string; enclosing: InstanceFrame[] } | undefined {
+    return this.chainFrom(this.instanceNameOf(contextId), [], contextId, path, true);
+  }
+
+  /**
+   * {@link chainInstance} from `instance`, the instance of `contextId` the
+   * caller is in, below the instances `above` (`atRoot`: `contextId` is the
+   * scope's root).
+   */
+  private chainFrom(
+    instance: string,
+    above: readonly InstanceFrame[],
+    contextId: ElementId,
+    path: string,
+    atRoot: boolean,
+  ): { feature: ElementRecord; instance: string; enclosing: InstanceFrame[] } | undefined {
     const segments = path.split('.');
     let owner = contextId;
-    let instance = this.instanceNameOf(contextId);
-    const enclosing: InstanceFrame[] = [];
+    const enclosing: InstanceFrame[] = [...above];
     for (let i = 0; i < segments.length; i++) {
       const feature = this.byName(owner).get(segments[i]!);
       const name = feature ? this.nameOf(feature) : undefined;
@@ -779,7 +832,7 @@ export class DefiningEquations {
       enclosing.push({ instance, reader: owner });
       if (i === segments.length - 1) return { feature, instance: `${instance}::${name}`, enclosing };
       if (this.subjectOf(owner, feature)) return undefined;
-      instance = this.instanceBelow(instance, feature, name, i === 0);
+      instance = this.instanceBelow(instance, feature, name, atRoot && i === 0);
       owner = feature.id;
     }
     return undefined;
@@ -1034,6 +1087,9 @@ export class DefiningEquations {
     // BindingEnds.heldSomewhere}), is another value in each instance it reads
     // (F8, `held-redef`): its symbol is the instance's own.
     if (defaultGivesWaySomewhere(this.model, f)) return false;
+    // So is one an asserted equation of an enclosing element defines in some
+    // instance (H5, {@link assertHeldInSome}): q1's p's x is 50, every other P's 2.
+    if (assertHeldInSome(this.model, f)) return false;
     // A literal is the one value in every instance — one a binding it
     // contradicts contradicts in every instance too.
     const v = this.statedValue(f);
@@ -1080,6 +1136,80 @@ export class DefiningEquations {
     const site = this.definitionOwner(feature);
     if (site === undefined || site === contextId) return undefined;
     return { site, at: this.sameIn(contextId, feature, site) ? site : contextId };
+  }
+
+  /**
+   * Does `contextId` read `feature`'s stated value otherwise than where it is
+   * written because an asserted equation of an enclosing context defines a
+   * name the value reads there, by its dotted path ({@link reachingAssert})?
+   * B1's `p.y`, over P's `y = x * 2.0` and the package's `assert constraint {
+   * p.x == 3.0 }`, is p's own: 6, where P's x has no value.
+   */
+  private changedByAssert(contextId: ElementId, feature: ElementRecord): boolean {
+    if (!this.anyAsserted()) return false;
+    const stated = this.statedOf(feature);
+    if (typeof stated.value !== 'string') return false;
+    stated.names ??= namesOfValue(stated.value);
+    return stated.names.some((n) => this.reachingAssert(contextId, n) !== undefined);
+  }
+
+  /**
+   * The asserted equation of an ENCLOSING context that defines, by its DOTTED
+   * path, the valueless feature a bare `name` denotes in `contextId` — `assert
+   * constraint { p.x == 3.0 }` in the package, read at `part p : P` whose P
+   * declares `x` with no value: p's x is 3 (class C). The
+   * path is the chain of usages that own one another from that context down
+   * to `contextId`, then `name`; `site` writes the equations. Only one that
+   * reads no name defines here — the same value in every instance the context
+   * stands for; one over names is read per instance (H5's enclosing rule).
+   * Nor a feature that writes a value, or a `default`: an equation against a
+   * value is checked against it, and one over a default is that enclosing
+   * rule's too. Nor one a binding gives a value, nor one two asserts give
+   * different values. `undefined` when none does.
+   */
+  reachingAssert(
+    contextId: ElementId,
+    name: string,
+  ): { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined {
+    if (name.includes('.') || !this.anyAsserted()) return undefined;
+    const key = `${contextId} ${name}`;
+    if (!this.reaching.has(key)) this.reaching.set(key, this.reachingUncached(contextId, name) ?? null);
+    return this.reaching.get(key) ?? undefined;
+  }
+
+  private reachingUncached(
+    contextId: ElementId,
+    name: string,
+  ): { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined {
+    const f = this.feature(contextId, name);
+    if (!f) return undefined;
+    // A binding that joins the feature — its own end (the implicit end copy
+    // `bind p.x = L` makes), or one it redefines — gives it the binding's
+    // value, against which the assert is checked, not read (RB). So does a
+    // binding, or a value, that equates a part on the path with another part
+    // (`bind r = s`: q's r is s, whose x the assert does not define).
+    const ends = bindingEndsOf(this.model);
+    const fixed = (g: ElementRecord): boolean => ends.has(g.id) || (g.attrs.value !== undefined && g.attrs.value !== null);
+    if ([f, ...redefinedClosure(this.model, f)].some(fixed)) return undefined;
+    const path = [name];
+    for (let cur = this.model.get(contextId); cur && isUsage(cur.eClass) && cur.ownerId != null; ) {
+      const owner = this.model.get(cur.ownerId);
+      const n = this.nameOf(cur);
+      if (!owner || owner.attrs.isLibrary === true || n === undefined || fixed(cur)) return undefined;
+      path.unshift(n);
+      const equations = this.of(owner.id, path.join('.'));
+      if (equations.length > 0) {
+        // Two asserts that give it different values leave it undecided (`two-values`).
+        const first = JSON.stringify([equations[0]!.definition, [...equations[0]!.literals]]);
+        return equations.every(
+          (eq) => refsIn(eq.definition, eq.literals).length === 0 && JSON.stringify([eq.definition, [...eq.literals]]) === first,
+        )
+          ? { site: owner.id, path: path.join('.'), equations }
+          : undefined;
+      }
+      cur = owner;
+    }
+    return undefined;
   }
 
   /** Where `f`'s asserted definitions are written: its owner, else the owner of the nearest feature it redefines that has one. */
@@ -1756,6 +1886,17 @@ export class DefiningEquations {
         readings.add(key);
         listed = true;
       }
+      // A context in whose instances an asserted equation — its own, or of an
+      // element above it — defines what the relation reads (H5's enclosing
+      // rule): its reading is its own.
+      if (!listed && !plain.has(x.id) && reads.size > 0) {
+        const asserting = assertedThrough(this.model, x.id, reads, true);
+        if (asserting !== undefined && !readings.has(`${key} ${asserting.id}`)) {
+          readings.add(`${key} ${asserting.id}`);
+          plain.add(x.id);
+          listed = true;
+        }
+      }
       // A usage one instance of which a binding written in its own element
       // reads otherwise (A7's q2: `bind p.extra = E` makes q2's p a copy of
       // Q's p): nothing it reads is another feature, and no binding of an
@@ -1821,7 +1962,7 @@ export class DefiningEquations {
    * and every other Q's — reads P's default.
    */
   boundAbove(contextId: ElementId, names: readonly string[]): BoundAbove | undefined {
-    if (!hasUserBindings(this.model)) return undefined;
+    if (!readsPerInstance(this.model)) return undefined;
     const key = `${contextId} ${names.join('\u0000')}`;
     let hit = this.aboveBound.get(key);
     if (hit === undefined) {
@@ -1856,7 +1997,10 @@ export class DefiningEquations {
       }
       cur = owner;
     }
-    return this.boundInRedefiner(contextId, reads);
+    // An asserted equation of an element above the usage that defines what it
+    // reads in that element's instances (H5's enclosing rule): each instance
+    // reads it otherwise, as under a binding.
+    return this.boundInRedefiner(contextId, reads) ?? assertedThrough(this.model, contextId, reads);
   }
 
   /**
@@ -1889,7 +2033,7 @@ export class DefiningEquations {
    */
   private boundReads(contextId: ElementId, names: readonly string[]): Set<ElementId> {
     const out = new Set<ElementId>();
-    if (!hasUserBindings(this.model)) return out;
+    if (!readsPerInstance(this.model)) return out;
     const denoted = this.denote(contextId);
     for (const n of names) {
       const d = denoted.get(n);
@@ -2093,6 +2237,16 @@ function equationOf(
   return { node, literals: body.literals.size > 0 ? body.literals : NO_MARKERS };
 }
 
+/**
+ * The name a side of an equation DEFINES — its bare name, or its whole dotted
+ * path (`p.x` in `assert constraint { p.x == 3.0 }`) — a lowered `[unit]`
+ * literal's marker excluded, or `undefined` for anything that is no reference.
+ */
+function definedName(n: ExprNode, literals: MarkerDimensions = NO_MARKERS): string | undefined {
+  if (n.kind !== 'ref' || n.path.length === 0) return undefined;
+  return n.path.some((s) => literals.has(s)) ? undefined : n.path.join('.');
+}
+
 /** The bare name a side of an equation is, a lowered `[unit]` literal's marker excluded. */
 function bareName(n: ExprNode, literals: MarkerDimensions = NO_MARKERS): string | undefined {
   return n.kind === 'ref' && n.path.length === 1 && !literals.has(n.path[0]!) ? n.path[0] : undefined;
@@ -2119,8 +2273,9 @@ function bareName(n: ExprNode, literals: MarkerDimensions = NO_MARKERS): string 
  * literal gate. Such a calculation states no value this tool reads, as before
  * calculation bodies were read ({@link isParameterisedCalculation}).
  *
- * Nor a `default` a binding holds ({@link defaultGivesWay}): the default gives
- * way to the binding, and the feature states no value of its own.
+ * Nor a `default` a binding, or an asserted equation, overrides ({@link
+ * defaultGivesWay}): the default gives way, and the feature states no value of
+ * its own.
  */
 export function statedValueOf(model: Model, el: ElementRecord): AttrValue | undefined {
   const v = el.attrs.value;
@@ -2229,6 +2384,10 @@ interface BindingEnds {
   components?: Map<string, ComponentFacts>;
   /** {@link boundSourceIn} per instance symbol, once per revision. */
   sources?: Map<string, BoundSource | undefined>;
+  /** The {@link DefinitionHead} members of each package's binding reading, by root ({@link heldDefaults}). */
+  heads: ReadonlyMap<ElementId, readonly DefinitionHead[]>;
+  /** {@link outsideBindingsOf}, built when first asked. */
+  outside?: ReadonlyMap<ElementId, readonly OutsideBinding[]>;
   /** {@link boundPartnerSafe} per `${contextId} ${name} ${featureId}`, once per revision. */
   partnerSafe?: Map<string, boolean>;
 }
@@ -2296,10 +2455,10 @@ function bindingEnds(model: Model): BindingEnds {
     const [s, t] = [el.source?.[0], el.target?.[0]];
     if (s !== undefined && t !== undefined && s !== t) edges.push([s, t]);
   }
-  const read: Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap'> =
+  const read: Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap' | 'heads'> =
     bindings.length > 0
       ? heldDefaults(model, bindings)
-      : { held: new Set<ElementId>(), readings: new Map(), unread: new Set<ElementId>(), enclosed: new Set<ElementId>(), heldIn: new Set<string>(), heldSomewhere: new Set<ElementId>(), overCap: new Map() };
+      : { held: new Set<ElementId>(), readings: new Map(), unread: new Set<ElementId>(), enclosed: new Set<ElementId>(), heldIn: new Set<string>(), heldSomewhere: new Set<ElementId>(), overCap: new Map(), heads: new Map() };
   const fresh: BindingEnds = {
     rev: model.rev,
     ends,
@@ -2379,6 +2538,328 @@ export function bindingCapOf(model: Model): BindingCap | undefined {
   return bindingEnds(model).cap;
 }
 
+/**
+ * The model's PART-VALUED bindings (`bind pp = top.a`, both ends parts,
+ * items, ports — any usage but an attribute), once per revision. Such a
+ * binding equates the two: `pp.load` IS `top.a.load`, where every surface
+ * read pp's own `default` (a false verdict on all four, O5 S5). An end that
+ * says nothing of its own — no feature, binding end, value or redefinition
+ * below it or below what it redefines, no other feature redefining it, no
+ * asserted relation reading through its name, one such binding only, no type
+ * its partner lacks, and a feature of the element the binding is written in
+ * unless that is a package — STANDS FOR its partner (`standsFor`: the
+ * partner's path below the binding's owner, where it is resolved), when the
+ * partner itself stands for nothing else: every chain through it reads the
+ * partner, as a reference's value is read ({@link
+ * DefiningEquations.subjectScope}). The partner then has everything both say.
+ * Where neither end is so plain, each says something the other's reading
+ * would miss (`unread`, the binding; `unreadEnds`, its ends): no relation row
+ * that may read a value either carries is read ({@link equatedPartsRefusal}).
+ * Nor is an end a reference's or a bound subject's value, or a `satisfy`,
+ * lands on (`ref part r = pp`) plain: the walk reads such an end's own
+ * features there, never through its binding. The sweep reads the model alone
+ * — no binding reading and no scope — since the walk asks it.
+ */
+const EQUATED_PARTS = new WeakMap<
+  Model,
+  {
+    rev: number;
+    standsFor: ReadonlyMap<ElementId, { path: string; from: ElementId }>;
+    unread: readonly ElementRecord[];
+    unreadEnds: ReadonlySet<ElementId>;
+    /** {@link equatedTaint}, built on first ask. */
+    taint?: ReadonlyMap<ElementId, ElementRecord>;
+  }
+>();
+
+/** The usages whose value naming another equates the two ({@link equatedParts}). */
+const VALUED_PART_KINDS: ReadonlySet<string> = new Set(['PartUsage', 'PortUsage', 'ItemUsage']);
+
+function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS.get>> {
+  const hit = EQUATED_PARTS.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const standsFor = new Map<ElementId, { path: string; from: ElementId }>();
+  const unread: ElementRecord[] = [];
+  const unreadEnds = new Set<ElementId>();
+  const partLike = (e: ElementRecord | undefined): e is ElementRecord =>
+    e !== undefined && isUsage(e.eClass) && e.eClass !== 'AttributeUsage';
+  const pairs: Array<{ b: ElementRecord; f: ElementRecord; g: ElementRecord }> = [];
+  const count = new Map<ElementId, number>();
+  for (const b of model.all()) {
+    if (!isBindingConnector(b) || b.attrs.isLibrary === true || b.ownerId == null) continue;
+    const f = b.source?.[0] !== undefined ? model.get(b.source[0]) : undefined;
+    const g = b.target?.[0] !== undefined ? model.get(b.target[0]) : undefined;
+    if (!partLike(f) || !partLike(g) || f.id === g.id) continue;
+    pairs.push({ b, f, g });
+    for (const e of [f, g]) count.set(e.id, (count.get(e.id) ?? 0) + 1);
+  }
+  if (pairs.length > 0) {
+    const redefined = new Set(
+      [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')].flatMap((r) => r.target ?? []),
+    );
+    // The names a reference's or a bound subject's value, or a `satisfy`, lands on.
+    const aimed = new Set<string>();
+    for (const e of model.all()) {
+      if (e.attrs.isLibrary === true || typeof e.attrs.value !== 'string') continue;
+      if (e.attrs.isRef === true || e.attrs.requirementRole === 'subject') aimed.add(e.attrs.value.trim().split('.').pop()!);
+    }
+    for (const rel of model.ofKind('Satisfy')) {
+      const s = rel.source?.[0] !== undefined ? model.get(rel.source[0]) : undefined;
+      const n = s ? effectiveNameOf(model, s) : undefined;
+      if (n !== undefined) aimed.add(n);
+    }
+    // The names an asserted relation reads a feature THROUGH (`pp` of `pp.load
+    // == 3.0`): such a relation says something of the part.
+    const through = new Set<string>();
+    for (const c of model.all()) {
+      if (c.attrs.isLibrary === true || !isAsserted(c) || typeof c.attrs.expression !== 'string') continue;
+      for (const n of relationNamesOf(c.attrs.expression)) n.split('.').slice(0, -1).forEach((s) => through.add(s));
+    }
+    const kinds = (e: ElementRecord): Set<ElementId> =>
+      new Set(generalizationsOf(model, e.id).filter((t) => isDefinition(t.eClass)).map((t) => t.id));
+    // Each owner of `e` up to `holder` reads its features as written: no
+    // reference or subject, no end of a part-valued binding.
+    const cleanTo = (e: ElementRecord, holder: ElementId): boolean => {
+      for (let o = e.ownerId != null ? model.get(e.ownerId) : undefined; o && o.id !== holder; o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
+        if (o.attrs.isRef === true || o.attrs.requirementRole === 'subject' || count.has(o.id)) return false;
+      }
+      return true;
+    };
+    const plain = (f: ElementRecord, g: ElementRecord, holder: ElementId): boolean => {
+      if (count.get(f.id) !== 1 || count.get(g.id) !== 1 || redefined.has(f.id)) return false;
+      const name = effectiveNameOf(model, f);
+      if (name === undefined || through.has(name) || aimed.has(name)) return false;
+      // Read below the binding's owner, the partner is resolved in that owner's
+      // instance, which only a package has one of ({@link
+      // DefiningEquations.equatedPart}).
+      const owner = model.get(holder);
+      if (f.ownerId !== holder && (!owner || isUsage(owner.eClass) || isDefinition(owner.eClass))) return false;
+      for (const h of [f, ...redefinedClosure(model, f)]) {
+        if (h.attrs.value !== undefined || h.attrs.requirementRole === 'subject') return false;
+        if (model.children(h.id).some((c) => isUsage(c.eClass))) return false;
+      }
+      if (g.attrs.value !== undefined || g.attrs.requirementRole === 'subject') return false;
+      const theirs = kinds(g);
+      if ([...kinds(f)].some((t) => !theirs.has(t))) return false;
+      return cleanTo(f, holder) && cleanTo(g, holder) && bindingEndPath(model, g.id, holder) !== undefined;
+    };
+    for (const { b, f, g } of pairs) {
+      const holder = b.ownerId!;
+      const [from, to] = plain(f, g, holder) ? [f, g] : plain(g, f, holder) ? [g, f] : [undefined, undefined];
+      if (from && to) {
+        standsFor.set(from.id, { path: bindingEndPath(model, to.id, holder)!, from: holder });
+        continue;
+      }
+      unread.push(b);
+      unreadEnds.add(f.id).add(g.id);
+    }
+  }
+  // A part, port or item whose value names another (`part pp : T0 = top.a`)
+  // equates the two as a binding does, and no surface reads through it: an
+  // unread pair of its own, so no row that may read through it is read.
+  for (const e of model.all()) {
+    if (e.attrs.isLibrary === true || !VALUED_PART_KINDS.has(e.eClass) || e.attrs.isRef === true) continue;
+    const v = e.attrs.value;
+    if (e.ownerId == null || e.attrs.requirementRole === 'subject' || typeof v !== 'string' || isQuoted(v.trim())) continue;
+    if (namesOfValue(v).length === 0) continue;
+    unread.push(e);
+    unreadEnds.add(e.id);
+  }
+  const fresh = { rev: model.rev, standsFor, unread, unreadEnds };
+  EQUATED_PARTS.set(model, fresh);
+  return fresh;
+}
+
+/**
+ * What an unread part-valued binding ({@link equatedParts}) may carry a value
+ * to, each with the binding, once per revision: its two ends and each usage
+ * above an end up to where the binding is written; then, to a fixpoint, the
+ * ends of every binding one end of which is, or is read through, one of them
+ * (and each usage above such an end); every feature whose value reads
+ * through one; the first link of each name an asserted relation reads beside
+ * one; what redefines or subsets one; an equated part whose partner is one
+ * ({@link DefiningEquations.equatedPart}); and a `satisfy` of one. A relation
+ * read through none of them, for an instance below none of them, reads what
+ * the binding carries nowhere ({@link equatedPartsRefusal}).
+ */
+function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
+  const parts = equatedParts(model);
+  if (parts.taint) return parts.taint;
+  const taint = new Map<ElementId, ElementRecord>();
+  if (parts.unread.length === 0) return (parts.taint = taint);
+  const defs = sharedDefinitions(model);
+  const ownerOf = (e: ElementRecord): ElementRecord | undefined => (e.ownerId != null ? model.get(e.ownerId) : undefined);
+  let grew = true;
+  // `e`, and with `holder` each usage above it up to `holder`.
+  const add = (e: ElementRecord, b: ElementRecord, holder?: ElementId): void => {
+    for (let cur: ElementRecord | undefined = e; cur && cur.id !== holder; cur = ownerOf(cur)) {
+      if (cur !== e && !isUsage(cur.eClass)) break;
+      if (!taint.has(cur.id)) {
+        taint.set(cur.id, b);
+        grew = true;
+      }
+      if (holder === undefined) break;
+    }
+  };
+  const users = model.all().filter((el) => el.attrs.isLibrary !== true);
+  const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
+  const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string');
+  const asserted = users.filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string');
+  const narrowing = [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')];
+  for (const b of parts.unread) {
+    if (!isBindingConnector(b)) add(b, b);
+    for (const id of [b.source?.[0], b.target?.[0]]) {
+      const end = id !== undefined ? model.get(id) : undefined;
+      if (end) add(end, b, b.ownerId!);
+    }
+  }
+  const endsOf = (b: ElementRecord): ElementRecord[] =>
+    [b.source?.[0], b.target?.[0]].flatMap((id) => (id !== undefined ? (model.get(id) ?? []) : []));
+  while (grew) {
+    grew = false;
+    for (const b of bindings) {
+      const ends = endsOf(b);
+      const hit = ends
+        .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
+        .find((x) => x !== undefined);
+      if (hit) for (const e of ends) add(e, hit, b.ownerId!);
+    }
+    for (const f of valued) {
+      const hit = namesOfValue(f.attrs.value as string)
+        .map((n) => readsTainted(model, taint, [f.ownerId!], n))
+        .find((x) => x !== undefined);
+      if (hit) add(f, hit);
+    }
+    for (const a of asserted) {
+      const roots = [a.ownerId, a.id].filter((x): x is ElementId => x != null);
+      const names = relationNamesOf(a.attrs.expression as string);
+      const hit = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
+      if (!hit) continue;
+      for (const n of names) {
+        const head = n.split('.')[0]!;
+        for (const r of roots) {
+          const d = defs.denote(r).get(head);
+          if (d) add(d.feature, hit);
+        }
+      }
+    }
+    for (const r of narrowing) {
+      const target = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+      const source = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+      const hit = target ? taintedAt(model, taint, target) : undefined;
+      if (hit && source) add(source, hit);
+    }
+    for (const [id, { path, from }] of parts.standsFor) {
+      const end = model.get(id);
+      const hit = readsTainted(model, taint, [from], path);
+      if (end && hit) add(end, hit);
+    }
+    for (const rel of model.ofKind('Satisfy')) {
+      const s = rel.source?.[0] !== undefined ? model.get(rel.source[0]) : undefined;
+      const hit = s ? taintedAt(model, taint, s) : undefined;
+      if (hit) add(rel, hit);
+    }
+  }
+  parts.taint = taint;
+  return taint;
+}
+
+/** The binding whose value `e`, or a usage above it, may carry ({@link equatedTaint}). */
+function taintedAt(model: Model, taint: ReadonlyMap<ElementId, ElementRecord>, e: ElementRecord | undefined): ElementRecord | undefined {
+  const seen = new Set<ElementId>();
+  for (let cur = e; cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    seen.add(cur.id);
+    const hit = taint.get(cur.id);
+    if (hit) return hit;
+    if (!isUsage(cur.eClass)) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The binding a dotted `name` read in `roots` (the first that resolves its
+ * first link, else each namespace enclosing the first root) carries a value
+ * through: a link that denotes a feature of {@link equatedTaint}, or is read
+ * in one (a reference's `r.load` read in the `pp` it names).
+ */
+function readsTainted(
+  model: Model,
+  taint: ReadonlyMap<ElementId, ElementRecord>,
+  roots: readonly ElementId[],
+  name: string | undefined,
+): ElementRecord | undefined {
+  if (name === undefined || roots.length === 0) return undefined;
+  const defs = sharedDefinitions(model);
+  const segments = name.split('.');
+  let scopes = roots.filter((r) => defs.denote(r).has(segments[0]!));
+  if (scopes.length === 0) {
+    scopes = [];
+    const seen = new Set<ElementId>();
+    for (let o = model.get(roots[0]!)?.ownerId ?? null; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? null) {
+      seen.add(o);
+      scopes.push(o);
+    }
+  }
+  for (const r of scopes) {
+    const denoted = defs.denote(r);
+    for (let k = 1; k <= segments.length; k++) {
+      const d = denoted.get(segments.slice(0, k).join('.'));
+      const hit = d ? (taintedAt(model, taint, d.feature) ?? taintedAt(model, taint, model.get(d.reader))) : undefined;
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Why a relation row of `model` is not read ({@link equatedParts}), or
+ * `undefined`: the row may read a value a part-valued binding neither end of
+ * which stands for the other carries ({@link equatedTaint}) — a name of
+ * `expression` read in its context (`at.contextId`; for its own row, where
+ * the relation is written) through such a feature, or the instance it is read
+ * for (that context, or `at.path`) at or below one. Each part says something
+ * of its own that the other's reading would miss. Every surface leaves such a
+ * row undecided in this sentence (`checkConstraints` of ./evaluate-model,
+ * `numericRows` of ./solver, `obligationsOf` of ./obligations); any other row
+ * reads as before.
+ */
+export function equatedPartsRefusal(
+  model: Model,
+  relationId: ElementId,
+  expression: string,
+  at?: { contextId: ElementId; path?: string },
+): string | undefined {
+  const { unread } = equatedParts(model);
+  if (unread.length === 0) return undefined;
+  const names = relationNamesOf(expression);
+  if (names.length === 0) return undefined;
+  const taint = equatedTaint(model);
+  const rel = model.get(relationId);
+  const context = at ? model.get(at.contextId) : rel;
+  const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
+  let b = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
+  b ??= taintedAt(model, taint, context);
+  if (!b && at?.path !== undefined) {
+    const frames = sharedDefinitions(model).framesAbove(at.path);
+    b = frames === undefined ? unread[0] : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
+  }
+  if (!b) return undefined;
+  if (!isBindingConnector(b)) {
+    return (
+      `\`${effectiveNameOf(model, b) ?? b.id} = ${String(b.attrs.value).trim()}\` in ${effectiveQualifiedName(model, b.ownerId!)} ` +
+      'values a part, port or item with another, which equates the two as a binding does; this tool does not read ' +
+      'through such a value, so no relation that may read a value it carries is read'
+    );
+  }
+  const [l, r] = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, b.ownerId!) : undefined));
+  const ends = l !== undefined && r !== undefined ? `\`bind ${l} = ${r}\`` : 'a binding';
+  return (
+    `${ends} in ${effectiveQualifiedName(model, b.ownerId!)} equates two parts, ports or items; this tool reads ` +
+    'such a binding only where one says nothing of its own and is bound once, as the other, and neither is ' +
+    'here, so no relation that may read a value it carries is read'
+  );
+}
+
 /** The indexes over the model's binding readings ({@link BindingIndex}), built once per revision. */
 function indexOf(model: Model): BindingIndex {
   const ends = bindingEnds(model);
@@ -2454,7 +2935,10 @@ function readSignature(model: Model, at: ElementId, f: ElementRecord): string {
  * defines, read where the context changes what it reads ({@link
  * DefiningEquations.definitionReadIn}, {@link
  * DefiningEquations.chainDefinition}). A literal never is: it is one value in
- * every instance.
+ * every instance — but a literal `default` an asserted equation overrides (H5)
+ * is the equation's value, read where the context changes what it reads: Q's
+ * `L default = 7.0` under Q's `assert { L == 2.0 * K }` is q1's 50 where q1's K
+ * is 25 (P5H).
  *
  * Where its own reading reads it already is no other context: a redefinition
  * that states nothing reads the value it redefines in its own usage ({@link
@@ -2470,7 +2954,7 @@ function readSignature(model: Model, at: ElementId, f: ElementRecord): string {
  */
 export function readsOtherwise(model: Model, contextId: ElementId, path: string, f: ElementRecord): ElementId | undefined {
   const v = f.attrs.value;
-  if (typeof v === 'number' || typeof v === 'boolean') return undefined;
+  if ((typeof v === 'number' || typeof v === 'boolean') && !assertHeld(model).has(f.id)) return undefined;
   if (path.startsWith('#')) return undefined;
   const definitions = sharedDefinitions(model);
   const at = definitions.readAt(contextId, path);
@@ -2695,6 +3179,12 @@ export function boundAboveSentence(definitions: DefiningEquations, contextId: El
       'reads no bound value for any one instance, so it is not carried'
     );
   }
+  if (assertFrameOnly(definitions.model, above)) {
+    return (
+      `the relation is read in ${where}, and an asserted equation of ${definitions.contextName(above.id)} above it ` +
+      'defines what it reads there: each instance reads it otherwise, and this tool reads it for one alone, so it is not carried'
+    );
+  }
   return (
     `the relation is read in ${where}, and a binding above it joins what it reads to another value in ` +
     `${definitions.contextName(above.id)}: each instance reads it otherwise, and this tool reads it for one ` +
@@ -2728,7 +3218,7 @@ export function boundHereSentence(definitions: DefiningEquations, contextId: Ele
  * `names` are the names its body reads.
  */
 export function usageOwnedRefusal(model: Model, el: ElementRecord, names: readonly string[]): string | undefined {
-  if (el.ownerId == null || !hasUserBindings(model)) return undefined;
+  if (el.ownerId == null || !readsPerInstance(model)) return undefined;
   const owner = model.get(el.ownerId);
   if (!owner || !isUsage(owner.eClass)) return undefined;
   const definitions = sharedDefinitions(model);
@@ -2801,7 +3291,7 @@ type EndValue = { kind: 'value' } | { kind: 'default'; source: ElementRecord } |
 function heldDefaults(
   model: Model,
   bindings: readonly ElementRecord[],
-): Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap'> {
+): Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap' | 'heads'> {
   const definitions = sharedDefinitions(model);
   // Per context: the paths its bindings join, and the feature at each.
   const contexts = new Map<ElementId, { parent: Map<string, string>; at: Map<string, ElementRecord> }>();
@@ -2819,15 +3309,21 @@ function heldDefaults(
       if (f && endValue(model, f, holder, '').kind === 'default') holdDefault(model, held, heldIn, heldSomewhere, f);
     }
   };
-  const resolve = (root: ElementId, path: string): ElementRecord | undefined => {
+  // The feature at `path` in `root`, and the path as `root` spells it: a
+  // segment a renamed redefinition answers to (`part pp :>> p` in `part q :
+  // Q`, under Q's `bind p.load = L`) by that redefinition's own name — q's
+  // `pp.load`, the instance every surface reads (H5, E8: R13).
+  const resolve = (root: ElementId, path: string): { f: ElementRecord; path: string } | undefined => {
     let owner = root;
     let f: ElementRecord | undefined;
+    const spelled: string[] = [];
     for (const seg of path.split('.')) {
       f = definitions.byName(owner).get(seg);
       if (!f) return undefined;
+      spelled.push(definitions.nameOf(f) ?? seg);
       owner = f.id;
     }
-    return f;
+    return f ? { f, path: spelled.join('.') } : undefined;
   };
   const find = (parent: Map<string, string>, a: string): string => {
     let root = a;
@@ -2922,8 +3418,8 @@ function heldDefaults(
         if (place.kind === 'below') full = prefix === '' ? place.path : `${prefix}.${place.path}`;
         else if (outer[k] === undefined) return 'pending';
         else full = outer[k] === '' ? place.path : `${outer[k]}.${place.path}`;
-        const f = resolve(root.id, full);
-        return f ? [full, f] : undefined;
+        const hit = resolve(root.id, full);
+        return hit ? [hit.path, hit.f] : undefined;
       };
       const l = at(0);
       const r = at(1);
@@ -2968,6 +3464,7 @@ function heldDefaults(
   }
   if (overCap.size > 0) pastCapComponents(model, bindings, overCap, holdEnds);
   const readings = new Map<ElementId, Map<string, { feature: ElementId; component: string }>>();
+  const { heads, byRedefined } = headsOfReadings(model, definitions, contexts, (rootId, path) => find(contexts.get(rootId)!.parent, path));
   // The names an owner's asserted equations define, once per owner ({@link fallsToDefault}).
   const asserted = new Map<ElementId, ReadonlySet<string>>();
   for (const [rootId, ctx] of contexts) {
@@ -2982,13 +3479,27 @@ function heldDefaults(
       reading.set(path, { feature: f.id, component: key });
     }
     readings.set(rootId, reading);
-    for (const members of components.values()) {
+    for (const [key, members] of components) {
+      // A package's binding on a DEFINITION's feature (w4, {@link
+      // definitionHeadMatch}) holds in every instance of the definition, and
+      // so over every feature that redefines that one with a value of its own
+      // (`part p3 : P { attribute :>> load default = 7.0; }` under `bind
+      // P::load = L`): each is a member's value too. Two such members (`bind
+      // P::load = P::cap`) are read per instance, and no default of theirs is
+      // the component's one value; nor is any where an instance's slot is
+      // fixed outside the component ({@link DefinitionHead.fixed}).
+      const mine = (heads.get(rootId) ?? []).filter((h) => h.component === key);
+      const redefiners = mine.length > 0 ? [...new Set(mine.flatMap((h) => byRedefined?.get(h.feature) ?? []))] : [];
       // One default per MEMBER, not per source: R3a's `A::v` read at a1.v and
       // at a2.v is two readings of `2.0 * K`, one per instance.
-      const defaults = members.flatMap((m) => (m.value.kind === 'default' ? [m.value.source] : []));
+      const defaults = [
+        ...members.flatMap((m) => (m.value.kind === 'default' ? [m.value.source] : [])),
+        ...redefiners.filter((r) => r.attrs.defaultValue === true),
+      ];
       if (defaults.length === 0) continue;
-      const stated = members.some((m) => m.value.kind === 'value');
-      if (stated || !defaultsAgree(defaults))
+      const stated = members.some((m) => m.value.kind === 'value') || mine.some((h) => h.fixed !== undefined);
+      if (stated || mine.length > 1 || !defaultsAgree(defaults)) {
+        for (const r of redefiners) if (r.attrs.defaultValue === true) holdDefault(model, held, heldIn, heldSomewhere, r);
         for (const m of members)
           if (m.value.kind === 'default')
             holdDefault(
@@ -3000,9 +3511,10 @@ function heldDefaults(
               heldInstance(definitions, rootId, m.path),
               fallsToDefault(model, m.f, root, m.path, asserted),
             );
+      }
     }
   }
-  return { held, readings, unread, enclosed, heldIn, heldSomewhere, overCap, ...(cap !== undefined ? { cap } : {}) };
+  return { held, readings, unread, enclosed, heldIn, heldSomewhere, overCap, heads, ...(cap !== undefined ? { cap } : {}) };
 }
 
 /**
@@ -3127,6 +3639,458 @@ function heldInstance(definitions: DefiningEquations, rootId: ElementId, path: s
   return `${definitions.instanceNameOf(rootId)}::${path.split('.').join('::')}`;
 }
 
+const ASSERT_HELD = new WeakMap<Model, { rev: number; held: ReadonlySet<ElementId> }>();
+
+/**
+ * The features whose `default` an asserted EQUATION overrides (H5, plan J
+ * decision 14), once per revision: `attribute L default = 2.0` beside `assert
+ * constraint { L == 5.0 }` is L = 5 on every surface, exactly as a binding
+ * overrides a default (decision 10). A feature is held when an asserted
+ * equation of its owner, or of a general type of its owner, defines its
+ * effective name — or one of a feature it redefines, under that feature's
+ * name: Q's `assert { L == 5.0 }` holds q's `:>> L default = 9.0` too (HR).
+ * The equation is the LOCAL rule only; one written in an enclosing context
+ * (`part q1 : Q { assert { p.x == 50.0 } }`) is read per instance (S3).
+ *
+ * The equation defines the default's feature only where its other side has
+ * a value of its own that does not read that feature back: a name-free side,
+ * or one whose every name is a feature with a value (`=`, or a `default`),
+ * not the feature itself, and whose value reads none of it in turn. Where the other side reads a feature with no value,
+ * the equation defines THAT feature from the default, as it always did (`L
+ * == M`, M valueless: M = L's default). Two defaults an equation sets equal
+ * (`L == K`) each give way, so neither is read: the value is undecided (U7).
+ * An inequality defines nothing, and the default stands (U5): the assert is
+ * checked against it. A plain `=` value never gives way: against an assert
+ * that contradicts it, it is the strict-KerML contradiction (decision 1).
+ */
+function assertHeld(model: Model): ReadonlySet<ElementId> {
+  const hit = ASSERT_HELD.get(model);
+  if (hit && hit.rev === model.rev) return hit.held;
+  const held = new Set<ElementId>();
+  const owners = new Set<ElementId>();
+  const defaults: ElementRecord[] = [];
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true) continue;
+    if (isAsserted(el) && el.ownerId != null) owners.add(el.ownerId);
+    else if (el.attrs.defaultValue === true && el.attrs.value !== undefined && el.attrs.value !== null) defaults.push(el);
+  }
+  if (owners.size > 0) {
+    const named = new Map<ElementId, ReadonlyMap<string, ElementRecord>>();
+    const parsed = new Map<ElementId, Map<string, DefiningEquation[]>>();
+    const equationsOf = (ownerId: ElementId): Map<string, DefiningEquation[]> => {
+      let m = parsed.get(ownerId);
+      if (!m) parsed.set(ownerId, (m = equationsByName(model, ownerId)));
+      return m;
+    };
+    const featuresOf = (ownerId: ElementId): ReadonlyMap<string, ElementRecord> => {
+      let m = named.get(ownerId);
+      if (!m) {
+        const byName = new Map<string, ElementRecord>();
+        for (const h of [...ownFeatures(model, ownerId), ...effectiveFeatures(model, ownerId)]) {
+          const n = effectiveNameOf(model, h);
+          if (n !== undefined && !byName.has(n)) byName.set(n, h);
+        }
+        named.set(ownerId, (m = byName));
+      }
+      return m;
+    };
+    // The other side has a value of its own that does not read `name` back,
+    // through the values it reads in turn (`K = L; M = K * 2.0` beside `L ==
+    // M` reads L back: the default stands, IND). A name with no value, a
+    // dotted one, or a cycle is no value of its own.
+    const valued = (ownerId: ElementId, eq: DefiningEquation, name: string): boolean => {
+      const seen = new Map<string, boolean>();
+      const independent = (n: string): boolean => {
+        const hit = seen.get(n);
+        if (hit !== undefined) return hit;
+        seen.set(n, false);
+        let answer = false;
+        if (n !== name && !n.includes('.')) {
+          const h = featuresOf(ownerId).get(n);
+          const g = h && [h, ...redefinedClosure(model, h)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
+          const v = g?.attrs.value;
+          answer = v !== undefined && v !== null && (typeof v !== 'string' || namesOfValue(v).every(independent));
+        }
+        seen.set(n, answer);
+        return answer;
+      };
+      return refsIn(eq.definition, eq.literals).every(independent);
+    };
+    for (const f of defaults) {
+      const hit = [f, ...redefinedClosure(model, f)].some((g) => {
+        const name = effectiveNameOf(model, g);
+        if (name === undefined || g.ownerId == null) return false;
+        return [g.ownerId, ...generalizationsOf(model, g.ownerId).map((t) => t.id)].some(
+          (o) => owners.has(o) && (equationsOf(o).get(name) ?? []).some((eq) => valued(o, eq, name)),
+        );
+      });
+      if (hit) held.add(f.id);
+    }
+  }
+  ASSERT_HELD.set(model, { rev: model.rev, held });
+  return held;
+}
+
+/**
+ * The asserted equations that define a `default` in the INSTANCES an element
+ * stands for (H5's enclosing rule, plan J decision 14), once per revision:
+ * per element that writes them, by the path — dotted or bare — each defines,
+ * and the defaulted features those paths end at. `part q1 : Q { assert
+ * constraint { p.x == 50.0 } }` over P's `x default = 2.0` makes q1's p's x
+ * 50, while every other P keeps 2; so does the package's `assert constraint {
+ * q1.p.x == 50.0 }`, and Q2's `p.x == 50.0` in every Q2 (`q1 : Q2`). An
+ * equation whose other side is a value of its own — name-free, or over names
+ * written with `=` that do not read the path back — gives it that value. One
+ * whose other side reads a `default` (q1's `p.x == L` over q1's `L default =
+ * 9.0`) gives it none: both defaults give way there and neither is read
+ * (`undecided`, U7) — L's is filed under its own name. Never a dotted name on
+ * the other side. Not past a feature a binding joins or a part a value
+ * equates (`part r = s`), nor onto an end a binding joins: the binding's
+ * value is read there, and the assert is checked against it (RB). Not past a
+ * reference or a subject, nor past a part some usage redefines as one or with
+ * a value (`ref part :>> r = p1`, `part :>> p = other`): the instance there
+ * may be another one altogether, which no path below the frame reads, so the
+ * default stands, as before H5. A bare
+ * equation over a default the local rule already holds ({@link assertHeld})
+ * is filed, for two values, but splits no instance.
+ */
+interface EnclosingAsserts {
+  byOwner: ReadonlyMap<ElementId, ReadonlyMap<string, readonly DefiningEquation[]>>;
+  /** Per owner and path, the feature each segment names — matched by identity where an instance renames one ({@link assertDefinitionsAt}). */
+  chains: ReadonlyMap<ElementId, ReadonlyMap<string, readonly ElementId[]>>;
+  features: ReadonlySet<ElementId>;
+  /**
+   * The asserted relations among them whose other side reads a `default`, with the names that read one:
+   * where such a name still reads a `default` in the frame, they give no value ({@link assertDefinitionIn}).
+   */
+  undecided: ReadonlyMap<ElementId, readonly string[]>;
+  /** The `default`s such a relation sets equal to the path's (q1's L, with what each redefines), by the element that writes it. */
+  partners: ReadonlyMap<ElementId, ElementId>;
+  /**
+   * Each such path read from the element that writes it: the features it
+   * passes through (`through`, with what each redefines and what redefines
+   * it — q's `part pp :>> p`) and the one it ends at (`end`, likewise) — the
+   * usages whose instances it reads otherwise.
+   */
+  paths: ReadonlyArray<{ owner: ElementId; through: ReadonlySet<ElementId>; end: ReadonlySet<ElementId> }>;
+  /** {@link assertHeldEverywhere} per feature, when first asked. */
+  everywhere: Map<ElementId, boolean>;
+}
+
+const ENCLOSING_ASSERTS = new WeakMap<Model, { rev: number; index: EnclosingAsserts }>();
+
+function enclosingAsserts(model: Model): EnclosingAsserts {
+  const hit = ENCLOSING_ASSERTS.get(model);
+  if (hit && hit.rev === model.rev) return hit.index;
+  const byOwner = new Map<ElementId, Map<string, DefiningEquation[]>>();
+  const chains = new Map<ElementId, Map<string, ElementId[]>>();
+  const features = new Set<ElementId>();
+  const undecided = new Map<ElementId, string[]>();
+  const partnerOf = new Map<ElementId, ElementId>();
+  const paths: Array<{ owner: ElementId; through: Set<ElementId>; end: Set<ElementId> }> = [];
+  const owners = new Set<ElementId>();
+  const ends = new Set<ElementId>();
+  for (const el of model.all()) {
+    if (isBindingConnector(el)) for (const id of [...(el.source ?? []), ...(el.target ?? [])]) ends.add(id);
+    else if (el.attrs.isLibrary !== true && isAsserted(el) && el.ownerId != null) owners.add(el.ownerId);
+  }
+  // The user's usages by each feature they redefine, through any number of redefinitions — built when first asked.
+  let redefining: Map<ElementId, ElementRecord[]> | undefined;
+  const redefinersOf = (id: ElementId): readonly ElementRecord[] => {
+    if (!redefining) {
+      redefining = new Map();
+      for (const x of model.all()) {
+        if (x.attrs.isLibrary === true || !isUsage(x.eClass)) continue;
+        for (const g of redefinedClosure(model, x)) {
+          const list = redefining.get(g.id);
+          if (list) list.push(x);
+          else redefining.set(g.id, [x]);
+        }
+      }
+    }
+    return redefining.get(id) ?? [];
+  };
+  // A reference, a subject, or a part some usage redefines as one or with a value: another instance may stand there.
+  const elsewhere = (h: ElementRecord): boolean =>
+    [h, ...redefinedClosure(model, h)].some((g) => g.attrs.isRef === true || g.attrs.requirementRole === 'subject') ||
+    redefinersOf(h.id).some((x) => x.attrs.isRef === true || (x.attrs.value !== undefined && x.attrs.value !== null));
+  const named = new Map<ElementId, ReadonlyMap<string, ElementRecord>>();
+  const featuresOf = (ownerId: ElementId): ReadonlyMap<string, ElementRecord> => {
+    let m = named.get(ownerId);
+    if (!m) {
+      const byName = new Map<string, ElementRecord>();
+      for (const h of [...ownFeatures(model, ownerId), ...effectiveFeatures(model, ownerId)]) {
+        const n = effectiveNameOf(model, h);
+        if (n !== undefined && !byName.has(n)) byName.set(n, h);
+      }
+      named.set(ownerId, (m = byName));
+    }
+    return m;
+  };
+  const valueOf = (h: ElementRecord): ElementRecord | undefined =>
+    [h, ...redefinedClosure(model, h)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
+  const bound = (h: ElementRecord): boolean => [h, ...redefinedClosure(model, h)].some((g) => ends.has(g.id));
+  const local = assertHeld(model);
+  // The other side's names, each a value written in `ownerId` (a `default` too) that reads `path` back
+  // through no name it reads in turn — and the defaulted features among them, through `=` values too, but
+  // for one the local rule holds (its equation's value). `undefined` where one is not (a dotted name, a
+  // name with no value, a cycle).
+  const valued = (ownerId: ElementId, eq: DefiningEquation, path: string): ElementRecord[] | undefined => {
+    const seen = new Map<string, boolean>();
+    const defaults: ElementRecord[] = [];
+    const independent = (n: string): boolean => {
+      const known = seen.get(n);
+      if (known !== undefined) return known;
+      seen.set(n, false);
+      const h = n !== path && !n.includes('.') ? featuresOf(ownerId).get(n) : undefined;
+      const g = h && valueOf(h);
+      const v = g?.attrs.value;
+      const answer = g !== undefined && v !== undefined && v !== null && (typeof v !== 'string' || namesOfValue(v).every(independent));
+      if (answer && g.attrs.defaultValue === true && !local.has(g.id)) defaults.push(h!);
+      seen.set(n, answer);
+      return answer;
+    };
+    return refsIn(eq.definition, eq.literals).every(independent) ? defaults : undefined;
+  };
+  const file = (
+    o: ElementId,
+    path: string,
+    equations: readonly DefiningEquation[],
+    end: ElementRecord,
+    through: Set<ElementId>,
+    chain: readonly ElementId[],
+  ): void => {
+    let m = byOwner.get(o);
+    if (!m) byOwner.set(o, (m = new Map()));
+    const list = m.get(path);
+    if (list) list.push(...equations.filter((eq) => !list.includes(eq)));
+    else m.set(path, [...equations]);
+    let c = chains.get(o);
+    if (!c) chains.set(o, (c = new Map()));
+    c.set(path, [...chain]);
+    // A bare name the local rule holds already is read by its equation everywhere: no instance of its own.
+    if (!path.includes('.') && local.has(valueOf(end)!.id)) return;
+    const closure = new Set([end, ...redefinedClosure(model, end)].map((g) => g.id));
+    for (const id of closure) features.add(id);
+    // What redefines the path's own features — never a sibling's redefinition of what they redefine.
+    const read = new Set(closure);
+    for (const x of redefinersOf(end.id)) read.add(x.id);
+    for (const id of chain.slice(0, -1)) for (const x of redefinersOf(id)) through.add(x.id);
+    paths.push({ owner: o, through, end: read });
+  };
+  for (const o of owners) {
+    const byName = equationsByName(model, o);
+    for (const [path, equations] of byName) {
+      let read = equations.map((eq) => ({ eq, defaults: valued(o, eq, path) })).filter((r) => r.defaults !== undefined);
+      if (read.length === 0) continue;
+      // The feature the path ends at, read from `o` segment by segment.
+      let end: ElementRecord | undefined;
+      let cur: ElementId = o;
+      const through = new Set<ElementId>();
+      const chain: ElementId[] = [];
+      const segments = path.split('.');
+      for (const [i, segment] of segments.entries()) {
+        const h = featuresOf(cur).get(segment);
+        if (!h || bound(h)) break;
+        chain.push(h.id);
+        if (i === segments.length - 1) end = h;
+        else if (valueOf(h) !== undefined || elsewhere(h)) break;
+        else for (const g of [h, ...redefinedClosure(model, h)]) through.add(g.id);
+        cur = h.id;
+      }
+      const holder = end && valueOf(end);
+      if (!holder || holder.attrs.defaultValue !== true) continue;
+      // Over a `default` the other side reads, the equation gives no value (U7): that default gives way
+      // with this one — unless a binding joins it, whose value is read (the equation then stays unread).
+      // A bare name the local rule holds keeps its reading (`L == 2.0 * K`: L is twice K's default).
+      if (!path.includes('.') && local.has(holder.id)) read = read.filter((r) => r.defaults!.length === 0);
+      if (read.length === 0) continue;
+      const partners = read.flatMap((r) => r.defaults!);
+      if (partners.some(bound)) continue;
+      for (const r of read) {
+        if (r.defaults!.length === 0) continue;
+        const names = undecided.get(r.eq.constraint.id) ?? [];
+        for (const h of r.defaults!) {
+          const n = effectiveNameOf(model, h);
+          if (n !== undefined && !names.includes(n)) names.push(n);
+        }
+        undecided.set(r.eq.constraint.id, names);
+      }
+      file(o, path, read.map((r) => r.eq), end!, through, chain);
+      for (const h of partners) {
+        const n = effectiveNameOf(model, h);
+        if (n === undefined) continue;
+        const own = (byName.get(n) ?? []).filter((eq) => undecided.has(eq.constraint.id));
+        file(o, n, own.length > 0 ? own : read.filter((r) => r.defaults!.includes(h)).map((r) => r.eq), h, new Set(), [h.id]);
+        for (const g of [h, ...redefinedClosure(model, h)]) if (!partnerOf.has(g.id)) partnerOf.set(g.id, o);
+      }
+    }
+  }
+  const index: EnclosingAsserts = { byOwner, chains, features, undecided, partners: partnerOf, paths, everywhere: new Map() };
+  ENCLOSING_ASSERTS.set(model, { rev: model.rev, index });
+  return index;
+}
+
+/**
+ * Does an asserted equation of an enclosing element define `f`'s `default` in
+ * SOME instance ({@link enclosingAsserts})? Its value is then the instance's
+ * own wherever it is read through one (its symbol is, {@link
+ * DefiningEquations.pinnedIn}), and a generic reading that cannot key it per
+ * instance reads no default there.
+ */
+export function assertHeldInSome(model: Model, f: ElementRecord): boolean {
+  const { features } = enclosingAsserts(model);
+  return features.size > 0 && [f, ...redefinedClosure(model, f)].some((g) => features.has(g.id));
+}
+
+/**
+ * Does an asserted equation of an element enclosing `f`'s OWN declaration —
+ * an owner up its containment, or a general type of one — define `f` there
+ * ({@link enclosingAsserts})? Every instance `f` stands for is then such an
+ * element's, and its `default` gives way in each — the feature's own reading
+ * included ({@link defaultGivesWay}): q1's `part :>> p { attribute :>> x
+ * default = 9.0; }` under q1's, or q1's type's, `p.x == 50.0` is 50 wherever
+ * it is read, and no surface reads its 9 (U7's Q3). P's own x is no such
+ * feature: P's own instance has no frame that asserts it.
+ */
+function assertHeldEverywhere(model: Model, f: ElementRecord): boolean {
+  if (!assertHeldInSome(model, f)) return false;
+  const index = enclosingAsserts(model);
+  const hit = index.everywhere.get(f.id);
+  if (hit !== undefined) return hit;
+  let answer = false;
+  let path = effectiveNameOf(model, f);
+  const seen = new Set<ElementId>();
+  for (let cur: ElementRecord | undefined = f; path !== undefined && cur?.ownerId != null && !answer; ) {
+    const owner = model.get(cur.ownerId);
+    if (!owner || owner.attrs.isLibrary === true || seen.has(owner.id)) break;
+    seen.add(owner.id);
+    const at = path;
+    answer = [owner.id, ...generalizationsOf(model, owner.id).map((t) => t.id)].some((o) => index.byOwner.get(o)?.has(at) === true);
+    const n = effectiveNameOf(model, owner);
+    path = n === undefined ? undefined : `${n}.${path}`;
+    cur = owner;
+  }
+  index.everywhere.set(f.id, answer);
+  return answer;
+}
+
+/** Does an asserted equation of the model set one `default` equal to another, both giving way (U7, {@link undecidedPartnerOf})? */
+export function hasUndecidedPartners(model: Model): boolean {
+  return enclosingAsserts(model).partners.size > 0;
+}
+
+/**
+ * The element whose asserted equation sets `f`'s `default` equal to another
+ * `default` (U7 Q4: q1's `p.x == L` over q1's `L default = 9.0` and P's `x
+ * default = 2.0`), where `f`'s value is still such a default and gives way
+ * wherever `f` is read ({@link assertHeldEverywhere}): both give way, so `f`
+ * has no value, and that equation derives none for it either — it would read
+ * the other side's default, the very one that gave way. `undefined` for any
+ * other feature, and for one that states a plain value (H2E's q's `:>> L =
+ * 50.0`), which is its own.
+ */
+export function undecidedPartnerOf(model: Model, f: ElementRecord): ElementId | undefined {
+  const { partners } = enclosingAsserts(model);
+  if (partners.size === 0) return undefined;
+  const chain = [f, ...redefinedClosure(model, f)];
+  if (chain.find((g) => g.attrs.value !== undefined && g.attrs.value !== null)?.attrs.defaultValue !== true) return undefined;
+  if (!assertHeldEverywhere(model, f)) return undefined;
+  for (const g of chain) {
+    const o = partners.get(g.id);
+    if (o !== undefined) return o;
+  }
+  return undefined;
+}
+
+/**
+ * Does a model read a value per instance — a binding of the user's own
+ * ({@link hasUserBindings}), or an asserted equation of an enclosing element
+ * that defines a `default` in some instance ({@link enclosingAsserts})?
+ */
+export function readsPerInstance(model: Model): boolean {
+  return hasUserBindings(model) || enclosingAsserts(model).features.size > 0;
+}
+
+/**
+ * The element whose asserted equation defines, in some instance of the usage
+ * `contextId`, a feature among `reads` — the path it defines passes through
+ * the usage ({@link enclosingAsserts}): HE's q1, whose `p.x == 50.0` makes
+ * q1's p read otherwise than Q's p does. `undefined` where none does. With
+ * `own`, the usage may write the equation itself (a context whose own assert
+ * changes what a relation of its type reads).
+ */
+function assertedThrough(model: Model, contextId: ElementId, reads: ReadonlySet<ElementId>, own = false): ElementRecord | undefined {
+  const { paths } = enclosingAsserts(model);
+  for (const p of paths) {
+    if (!(p.through.has(contextId) || (own && p.owner === contextId))) continue;
+    for (const id of p.end) if (reads.has(id)) return model.get(p.owner);
+  }
+  return undefined;
+}
+
+/** Is `el` an element whose asserted equation defines a `default` below it ({@link enclosingAsserts}), and that writes no binding? */
+function assertFrameOnly(model: Model, el: ElementRecord): boolean {
+  return enclosingAsserts(model).byOwner.has(el.id) && !bindingEnds(model).written.some((w) => w.holder === el.id);
+}
+
+/** One asserted equation an enclosing element writes that defines a value at an instance ({@link assertDefinitionsAt}). */
+export interface AssertDefinition {
+  /** The element that writes it: the frame's own, or a general type of it. */
+  owner: ElementId;
+  /** The path it defines, spelled below that frame. */
+  path: string;
+  equations: readonly DefiningEquation[];
+  /** The frame it is read in: the instance enclosing the value, and the element read there. */
+  frame: InstanceFrame;
+}
+
+/**
+ * The asserted equations of the elements ENCLOSING the instance `symbol` —
+ * each frame above it ({@link DefiningEquations.framesAbove}), its reader and
+ * every general type of the reader — that define `symbol`'s path below that
+ * frame, where `f` (the feature read there) states a `default` some such
+ * equation overrides ({@link enclosingAsserts}): R1's `R1::q1::p::x` is
+ * defined by q1's `assert constraint { p.x == 50.0 }`. `[]` where none does,
+ * where `f` reads a plain value, and where a binding carries a value into the instance ({@link
+ * boundSourceIn}), or one of its end copies lies on the path below a frame
+ * (`part q1 : Q { bind p.x = K; }` under Q's `p.x == 50.0`): the binding's
+ * value is read there, and the assert is checked against it (RB).
+ */
+export function assertDefinitionsAt(model: Model, f: ElementRecord, symbol: string): readonly AssertDefinition[] {
+  if (!assertHeldInSome(model, f) || boundSourceMemo(model, symbol) !== undefined) return [];
+  // Only a `default` gives way: a plain value read there (q's `:>> L = 50.0`) is its own (decision 1).
+  const holder = [f, ...redefinedClosure(model, f)].find((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+  if (holder?.attrs.defaultValue !== true) return [];
+  const { byOwner, chains } = enclosingAsserts(model);
+  const definitions = sharedDefinitions(model);
+  const { ends } = bindingEnds(model);
+  const out: AssertDefinition[] = [];
+  for (const frame of definitions.framesAbove(symbol) ?? []) {
+    if (!symbol.startsWith(`${frame.instance}::`)) continue;
+    const spelled = symbol.slice(frame.instance.length + 2).split('::').join('.');
+    let cur: ElementId | undefined = frame.reader;
+    const read: ElementRecord[] = [];
+    for (const segment of spelled.split('.')) {
+      const h: ElementRecord | undefined = cur === undefined ? undefined : definitions.byName(cur).get(segment);
+      cur = h && ![h, ...redefinedClosure(model, h)].some((g) => ends.has(g.id)) ? h.id : undefined;
+      if (h) read.push(h);
+    }
+    if (cur === undefined) continue;
+    // The path the owner writes as the instance spells it, or whose every segment is the feature the
+    // instance reads there or one it redefines: q's `part pp :>> p` reads Q's `p.x == 50.0` at `pp.x`.
+    const names = (id: ElementId, h: ElementRecord): boolean => h.id === id || redefinedClosure(model, h).some((g) => g.id === id);
+    for (const owner of [frame.reader, ...generalizationsOf(model, frame.reader).map((t) => t.id)]) {
+      for (const [path, chain] of chains.get(owner) ?? []) {
+        if (path !== spelled && (chain.length !== read.length || !chain.every((id, k) => names(id, read[k]!)))) continue;
+        const equations = byOwner.get(owner)?.get(path);
+        if (equations) out.push({ owner, path, equations, frame });
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * The default a feature's own `default` gives way to a binding ({@link
  * defaultGivesWay}) — or gives way AT the instance `inst` because a held
@@ -3136,7 +4100,7 @@ function heldInstance(definitions: DefiningEquations, rootId: ElementId, path: s
 export function defaultGivesWaySomewhere(model: Model, f: ElementRecord): boolean {
   if (f.attrs.defaultValue !== true) return false;
   const ends = bindingEnds(model);
-  return ends.held.has(f.id) || ends.heldSomewhere.has(f.id);
+  return ends.held.has(f.id) || ends.heldSomewhere.has(f.id) || assertHeld(model).has(f.id) || assertHeldEverywhere(model, f);
 }
 
 /**
@@ -3148,15 +4112,89 @@ export function defaultGivesWaySomewhere(model: Model, f: ElementRecord): boolea
 export function defaultGivesWayIn(model: Model, f: ElementRecord, inst: string | undefined): boolean {
   if (f.attrs.defaultValue !== true) return false;
   const ends = bindingEnds(model);
-  if (ends.held.has(f.id)) return true;
+  if (ends.held.has(f.id) || assertHeld(model).has(f.id) || assertHeldEverywhere(model, f)) return true;
   if (inst === undefined) return false;
   let answer = ends.heldIn.has(inst);
   if (!answer) {
     const name = effectiveNameOf(model, f);
     answer = name !== undefined && ends.heldIn.has(`${inst}::${name}`);
   }
+  // An asserted equation of an element enclosing the instance defines it there (H5's enclosing rule).
+  if (!answer) answer = assertDefinitionsIn(model, f, inst).length > 0;
   recording?.push({ kind: 'gives-way', feature: f, inst, answer });
   return answer;
+}
+
+/**
+ * {@link assertDefinitionsAt} for `f` read at `inst` — the instance of its
+ * owner (`R1::q1::p`) or its own (`R1::q1::p::x`), as {@link
+ * defaultGivesWayIn} is asked either.
+ */
+export function assertDefinitionsIn(model: Model, f: ElementRecord, inst: string): readonly AssertDefinition[] {
+  const name = effectiveNameOf(model, f);
+  if (name === undefined || !assertHeldInSome(model, f)) return [];
+  const below = assertDefinitionsAt(model, f, `${inst}::${name}`);
+  return below.length > 0 || !inst.endsWith(`::${name}`) ? below : assertDefinitionsAt(model, f, inst);
+}
+
+/**
+ * The ONE asserted equation of the elements enclosing the instance `inst`
+ * that defines `f` there ({@link assertDefinitionsIn}): the equation, the
+ * path it defines, the element that writes it and the frame it is read in —
+ * a definition read in that frame, over the frame's own names. `{ abstain:
+ * 'two-values' }` where such equations give it two values — two over names
+ * read in two frames, or written by two elements, are two whatever their text
+ * (q1's `p.x == M` reads q1's M, the package's `q1.p.x == M` the package's);
+ * `{ abstain: 'defaults' }` where one sets it equal to another `default` and
+ * both give way (U7); `undefined` where none defines it. A question of the
+ * instance's spelling, recorded as one ({@link InstanceLookup}).
+ */
+export function assertDefinitionIn(
+  model: Model,
+  f: ElementRecord,
+  inst: string,
+):
+  | { owner: ElementId; path: string; equation: DefiningEquation; frame: InstanceFrame; constant: boolean }
+  | { abstain: 'two-values' | 'defaults'; owner: ElementId }
+  | undefined {
+  const defs = assertDefinitionsIn(model, f, inst);
+  let answer: ReturnType<typeof assertDefinitionIn>;
+  if (defs.length > 0) {
+    const all = defs.flatMap((d) => d.equations.map((equation) => ({ owner: d.owner, path: d.path, equation, frame: d.frame })));
+    const constant = (eq: DefiningEquation): boolean => refsIn(eq.definition, eq.literals).length === 0;
+    const text = (d: (typeof all)[number]): string =>
+      JSON.stringify([d.equation.definition, [...d.equation.literals], constant(d.equation) ? '' : `${d.owner} ${d.frame.instance}`]);
+    const first = all[0]!;
+    // One over a `default` gives no value where a name it reads still reads one in the frame — not in q,
+    // whose `:>> L = 50.0` is read where Q's `p.load == L` meets Q's `L default = 1.0` (H2E).
+    const { undecided } = enclosingAsserts(model);
+    const definitions = sharedDefinitions(model);
+    const open = all.find((d) =>
+      (undecided.get(d.equation.constraint.id) ?? []).some((n) => {
+        const h = definitions.byName(d.frame.reader).get(n);
+        const g = h && [h, ...redefinedClosure(model, h)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
+        return g === undefined || (g.attrs.defaultValue === true && !assertHeld(model).has(g.id));
+      }),
+    );
+    answer = open
+      ? { abstain: 'defaults', owner: open.owner }
+      : all.some((d) => text(d) !== text(first))
+        ? { abstain: 'two-values', owner: first.owner }
+        : { ...first, constant: constant(first.equation) };
+  }
+  recording?.push({ kind: 'asserted', feature: f, inst, answer: assertedKey(answer) });
+  return answer;
+}
+
+/**
+ * {@link assertDefinitionIn}'s answer as a key: two answers with one key read
+ * one value, or abstain alike — the frame's instance included, whose names an
+ * equation over names reads.
+ */
+function assertedKey(answer: ReturnType<typeof assertDefinitionIn>): string {
+  if (answer === undefined) return '';
+  if ('abstain' in answer) return `${answer.abstain} ${answer.owner}`;
+  return `${answer.owner} ${answer.path} ${answer.equation.constraint.id} ${answer.frame.instance}`;
 }
 
 /**
@@ -3307,7 +4345,9 @@ export function bindingReadingIn(
 function endValue(model: Model, f: ElementRecord, root: ElementRecord, path: string): EndValue {
   for (const g of [f, ...redefinedClosure(model, f)]) {
     if (g.attrs.value === undefined || g.attrs.value === null) continue;
-    return g.attrs.defaultValue === true ? { kind: 'default', source: g } : { kind: 'value' };
+    // A `default` an asserted equation overrides (H5, {@link assertHeld}) is
+    // the equation's value, and a default in the component gives way to it.
+    return g.attrs.defaultValue === true && !assertHeld(model).has(g.id) ? { kind: 'default', source: g } : { kind: 'value' };
   }
   // No value of its own: an asserted equation that defines the feature — its
   // own, or one it redefines, an assert inherited from a general definition
@@ -3353,7 +4393,7 @@ function assertDefinesEnd(
  * 0.0` does: read at q2's p, through the copy, the redefined default is what
  * the reading meets, and it is not q2's p's value (A4). Not where an asserted
  * equation defines the end (GA6's `p.load`, whose P asserts `load == 7.0`):
- * which of an assert and a default stands is not decided here (H5), and the
+ * the assert stands over a default (H5, {@link assertHeld}), and the
  * fall-through reads the assert.
  */
 function fallsToDefault(
@@ -3374,14 +4414,16 @@ function fallsToDefault(
  * value the binding gives it — on every surface — and no surface reads the
  * default (`bind load = L` with `L` set to 50 in `q` is q's load of 50, never
  * the 1.0 that, read beside the binding, made the model contradict itself in
- * q). A value written with `=` is a binding of its own and gives way to
+ * q). So does a `default` an asserted equation defines (H5, {@link
+ * assertHeld}), one of an enclosing element's in every instance the feature
+ * stands for included ({@link assertHeldEverywhere}). A value written with `=` is a binding of its own and gives way to
  * nothing: against another binding it is a contradiction (strict KerML). A
  * redefinition that states nothing over a default — the implicit
  * connector-end copy `bind p.load = L` creates of P's `load` — reads no
  * default either ({@link DefiningEquations.carrier}).
  */
 export function defaultGivesWay(model: Model, f: ElementRecord): boolean {
-  return f.attrs.defaultValue === true && bindingEnds(model).held.has(f.id);
+  return f.attrs.defaultValue === true && (bindingEnds(model).held.has(f.id) || assertHeld(model).has(f.id) || assertHeldEverywhere(model, f));
 }
 
 /**
@@ -3645,6 +4687,27 @@ export function rebaseInstance(
 }
 
 /**
+ * `path`, a member path written in a general type of `contextId` (an end of
+ * Q's `bind p.load = L`), as `contextId` spells it: a segment a renamed
+ * redefinition answers to (`part pp :>> p` in `part q : Q`) by that
+ * redefinition's own name — q's `pp.load`, the symbol every relation over
+ * q's pp reads (H5, E8: R13). `path` itself where the scope names it, or
+ * where a segment resolves to nothing there.
+ */
+export function spelledIn(definitions: DefiningEquations, contextId: ElementId, path: string): string {
+  const denoted = definitions.denote(contextId);
+  if (denoted.has(path)) return path;
+  let spelled = '';
+  for (const seg of path.split('.')) {
+    const d = denoted.get(spelled === '' ? seg : `${spelled}.${seg}`);
+    const name = d ? definitions.nameOf(d.feature) : undefined;
+    if (name === undefined) return path;
+    spelled = spelled === '' ? name : `${spelled}.${name}`;
+  }
+  return spelled;
+}
+
+/**
  * The {@link ComponentFacts} record of the component `component` read in
  * `root`, made when first asked with the member paths alone — in reading
  * order, from the `members` index ({@link indexOf}) rather than a scan of the
@@ -3765,6 +4828,275 @@ function readingsByInstance(model: Model): ReadonlyMap<string, ReadonlyArray<{ r
   return byInstance;
 }
 
+/** Is `e` a package — a namespace, which {@link isDefinition} counts among the definitions? */
+function isPackage(e: ElementRecord): boolean {
+  return e.eClass === 'Package' || e.eClass === 'LibraryPackage';
+}
+
+/**
+ * The DEFINITION the member path `path` of `rootId`'s reading is written below
+ * — the last one the path names, P for `P.load` or `Pkg.P.sub.load` below a
+ * package — with the features from it down to the member ({@link
+ * featuresAtPath}); `undefined` for a path through usages alone (`q1.p.load`,
+ * though P owns that load).
+ */
+function definitionHeadOf(
+  model: Model,
+  definitions: DefiningEquations,
+  rootId: ElementId,
+  path: string,
+): { definition: ElementRecord; tail: ElementRecord[] } | undefined {
+  const chain = featuresAtPath(model, definitions, rootId, path);
+  if (!chain) return undefined;
+  for (let at = chain.length - 2; at >= 0; at--) {
+    const e = chain[at]!;
+    if (isDefinition(e.eClass) && !isPackage(e)) return { definition: e, tail: chain.slice(at + 1) };
+  }
+  return undefined;
+}
+
+/**
+ * A member of a binding reading written on a DEFINITION's feature from outside
+ * it — a package's `bind P::load = L` (w4), at `P.load` in the package's
+ * reading — with the definition (`P`) and the features from it down to the
+ * member (`[P::load]`): the binding holds in every instance of P, read at the
+ * instance's own path ({@link definitionHeadMatch}).
+ */
+interface DefinitionHead {
+  path: string;
+  component: string;
+  feature: ElementId;
+  definition: ElementRecord;
+  tail: readonly ElementRecord[];
+  /** Does a feature with a value of its own redefine the member — an instance's `:>> load default = 7.0`? */
+  redefined: boolean;
+  /**
+   * What gives the member's slot a value in some instance of the definition
+   * OUTSIDE the component — and so gives the component's one-instance end
+   * (the package's `L`) that value, which this tool does not read into the
+   * other instances: a redefinition's own `=` (`part p4 : P { attribute :>>
+   * load = 7.0; }`), a member of another binding reading at an instance's
+   * path (Q's `bind p.load = M` for `part p : P`, the package's own `bind
+   * p2.load = K`), or an asserted equation that defines an instance's slot
+   * (`assert constraint { p2.load == 5.0 }`). No `default` in such a
+   * component is its value ({@link heldDefaults}, {@link standingDefaultIn}).
+   */
+  fixed?: string;
+}
+
+/**
+ * The {@link DefinitionHead} members of each binding reading in `contexts`,
+ * by root — only a package's reading has any, the one a binding written there
+ * reads its ends in — and the user's features with a value of their own
+ * (`=` or `default`) by each feature they redefine, built only where a head
+ * exists. A head's slot is `fixed` where a redefinition states it with `=`,
+ * or where a member of another component read in any root ({@link
+ * heldDefaults}' `contexts`), or a path an asserted equation defines, is the
+ * slot at an instance of the head's definition: the instance the path's
+ * prefix names (a usage or definition that specialises it, or the root
+ * itself), and below it the head's features, each the feature or one that
+ * redefines it. Once per revision, inside {@link heldDefaults}.
+ */
+function headsOfReadings(
+  model: Model,
+  definitions: DefiningEquations,
+  contexts: ReadonlyMap<ElementId, { at: ReadonlyMap<string, ElementRecord> }>,
+  componentOf: (rootId: ElementId, path: string) => string,
+): { heads: Map<ElementId, DefinitionHead[]>; byRedefined?: ReadonlyMap<ElementId, readonly ElementRecord[]> } {
+  const heads = new Map<ElementId, DefinitionHead[]>();
+  const all: Array<{ rootId: ElementId; head: DefinitionHead }> = [];
+  for (const [rootId, ctx] of contexts) {
+    const root = model.get(rootId);
+    if (!root || !isPackage(root)) continue;
+    for (const [path, f] of ctx.at) {
+      const head = definitionHeadOf(model, definitions, rootId, path);
+      if (!head) continue;
+      const entry: DefinitionHead = { path, component: componentOf(rootId, path), feature: f.id, ...head, redefined: false };
+      const list = heads.get(rootId) ?? [];
+      list.push(entry);
+      heads.set(rootId, list);
+      all.push({ rootId, head: entry });
+    }
+  }
+  if (all.length === 0) return { heads };
+  const byRedefined = new Map<ElementId, ElementRecord[]>();
+  for (const x of model.all()) {
+    if (x.attrs.isLibrary === true || !isUsage(x.eClass) || x.attrs.value === undefined || x.attrs.value === null) continue;
+    for (const g of redefinedClosure(model, x)) {
+      const list = byRedefined.get(g.id);
+      if (list) list.push(x);
+      else byRedefined.set(g.id, [x]);
+    }
+  }
+  for (const { head } of all) {
+    const redefiners = byRedefined.get(head.feature) ?? [];
+    head.redefined = redefiners.length > 0;
+    const plain = redefiners.find((r) => r.attrs.defaultValue !== true);
+    if (plain) head.fixed = `the value ${effectiveQualifiedName(model, plain.id)} states`;
+  }
+  // Is `path` read in `rootId` the slot `head` names at an instance of its definition?
+  const chains = new Map<string, ElementRecord[] | undefined>();
+  const slotOf = (rootId: ElementId, path: string, head: DefinitionHead): boolean => {
+    const key = `${rootId} ${path}`;
+    if (!chains.has(key)) chains.set(key, featuresAtPath(model, definitions, rootId, path));
+    const chain = chains.get(key);
+    if (!chain) return false;
+    const at = chain.length - head.tail.length - 1;
+    const instance = at >= 0 ? chain[at] : at === -1 ? model.get(rootId) : undefined;
+    if (!instance || isPackage(instance)) return false;
+    if (instance.id !== head.definition.id && !generalizationsOf(model, instance.id).some((g) => g.id === head.definition.id)) return false;
+    return head.tail.every((g, k) => {
+      const mine = chain[at + 1 + k]!;
+      return mine.id === g.id || redefinedClosure(model, mine).some((x) => x.id === g.id);
+    });
+  };
+  for (const [rootId, ctx] of contexts) {
+    for (const path of ctx.at.keys()) {
+      for (const { rootId: headRoot, head } of all) {
+        if (head.fixed !== undefined || (rootId === headRoot && componentOf(rootId, path) === head.component)) continue;
+        if (slotOf(rootId, path, head)) head.fixed = `a binding read in ${effectiveQualifiedName(model, rootId)} at ${path}`;
+      }
+    }
+  }
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true || el.ownerId == null || !isAsserted(el)) continue;
+    const eq = equationOf(el);
+    if (!eq) continue;
+    const paths = [definedName(eq.node.left, eq.literals), definedName(eq.node.right, eq.literals)];
+    for (const { head } of all) {
+      if (head.fixed !== undefined) continue;
+      if (paths.some((p) => p !== undefined && slotOf(el.ownerId!, p, head))) {
+        head.fixed = `the asserted equation ${effectiveQualifiedName(model, el.id)}`;
+      }
+    }
+  }
+  return { heads, byRedefined };
+}
+
+/**
+ * The element at each segment of the dotted `path` below `root` (075b306's
+ * `featureAtPath`), resolved through the model's ownership by effective name
+ * — a definition and its features included (`Q.p.load` below a package, Q's
+ * own p's load), which a scope's {@link DefiningEquations.denote} walk leaves
+ * out — then through each element's effective features. `undefined` where a
+ * segment resolves to nothing.
+ */
+function featuresAtPath(model: Model, definitions: DefiningEquations, root: ElementId, path: string): ElementRecord[] | undefined {
+  const out: ElementRecord[] = [];
+  let owner = root;
+  for (const seg of path.split('.')) {
+    const f =
+      childNamed(model, definitions, owner, seg) ??
+      definitions.byName(owner).get(seg) ??
+      definitions.features(owner).find((c) => definitions.nameOf(c) === seg);
+    if (!f) return undefined;
+    out.push(f);
+    owner = f.id;
+  }
+  return out;
+}
+
+/** Each owner's children by name, the first of each name, once per {@link DefiningEquations} (one revision). */
+const CHILDREN_BY_NAME = new WeakMap<DefiningEquations, Map<ElementId, ReadonlyMap<string, ElementRecord>>>();
+
+/**
+ * The first child of `owner` whose name is `name` ({@link featuresAtPath}):
+ * indexed per owner, so a package's reading of many paths scans its children
+ * once, not once per path.
+ */
+function childNamed(model: Model, definitions: DefiningEquations, owner: ElementId, name: string): ElementRecord | undefined {
+  let byOwner = CHILDREN_BY_NAME.get(definitions);
+  if (!byOwner) CHILDREN_BY_NAME.set(definitions, (byOwner = new Map()));
+  let named = byOwner.get(owner);
+  if (!named) {
+    const m = new Map<string, ElementRecord>();
+    for (const c of model.children(owner)) {
+      const n = definitions.nameOf(c);
+      if (n !== undefined && !m.has(n)) m.set(n, c);
+    }
+    byOwner.set(owner, (named = m));
+  }
+  return named.get(name);
+}
+
+/**
+ * The {@link DefinitionHead} member of `root`'s reading that the path `path`
+ * of `root` reads (H5, w4): an instance of the head's definition at a prefix
+ * of the path — a usage it types or specialises, `p2` for P — and below it the
+ * head's features, each segment the feature itself or one that redefines it.
+ * A package's `bind P::load = L` is read at `p2.load` for `part p2 : P`, and at
+ * `q.p.load` for a `part def Q { part p : P; }` and `part q : Q`. `undefined`
+ * where none matches, or where two in different components do (that instance
+ * is read through neither).
+ */
+function definitionHeadMatch(model: Model, root: ElementId, path: string): DefinitionHead | undefined {
+  const heads = bindingEnds(model).heads.get(root);
+  if (!heads || path === '') return undefined;
+  const slots = featuresAtPath(model, sharedDefinitions(model), root, path);
+  if (!slots) return undefined;
+  const same = (mine: ElementRecord, g: ElementRecord): boolean =>
+    mine.id === g.id || redefinedClosure(model, mine).some((x) => x.id === g.id);
+  let match: DefinitionHead | undefined;
+  for (const head of heads) {
+    const at = slots.length - head.tail.length - 1;
+    if (at < 0) continue;
+    const instance = slots[at]!;
+    if (!isUsage(instance.eClass)) continue;
+    if (!generalizationsOf(model, instance.id).some((g) => g.id === head.definition.id)) continue;
+    if (!head.tail.every((g, k) => same(slots[at + 1 + k]!, g))) continue;
+    if (match && match.component !== head.component) return undefined;
+    match ??= head;
+  }
+  return match;
+}
+
+/**
+ * A binding a package writes on a definition's features ({@link
+ * outsideBindingsOf}), with each end's path below the definition — or
+ * `undefined` for an end that is one instance wherever it is read.
+ */
+export interface OutsideBinding {
+  binding: ElementRecord;
+  ends: readonly [string | undefined, string | undefined];
+}
+
+/**
+ * The bindings a package writes on the features of the definition
+ * `definitionId` (w4: `bind P::load = L`), each with its ends: the path below
+ * the definition of an end that is one of its features (`load`), `undefined`
+ * for an end of no definition — the package's `L`, one instance wherever it is
+ * read. Such a binding holds in every instance of the definition, as one the
+ * definition writes does: the numeric and SMT lanes read it for each instance
+ * they read, over that instance's own symbols, as the check reads it
+ * ({@link definitionHeadMatch}). One whose other end is a feature of another
+ * definition is not listed. Once per revision.
+ */
+export function outsideBindingsOf(model: Model, definitionId: ElementId): readonly OutsideBinding[] {
+  if (!hasUserBindings(model)) return [];
+  const ends = bindingEnds(model);
+  if (!ends.outside) {
+    const outside = new Map<ElementId, OutsideBinding[]>();
+    const definitions = sharedDefinitions(model);
+    for (const b of ends.connectors) {
+      const holder = b.ownerId != null ? model.get(b.ownerId) : undefined;
+      if (!holder || !isPackage(holder)) continue;
+      // Each end at its path in the package, as the package's reading spells it.
+      const paths = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, holder.id) : undefined));
+      if (paths[0] === undefined || paths[1] === undefined) continue;
+      const heads = paths.map((p) => definitionHeadOf(model, definitions, holder.id, p!));
+      const definition = (heads[0] ?? heads[1])?.definition;
+      if (!definition || heads.some((h) => h !== undefined && h.definition.id !== definition.id)) continue;
+      // An end of no definition is a feature of the package: one instance (`undefined`).
+      const below = heads.map((h) => (h ? h.tail.map((f) => definitions.nameOf(f) ?? '').join('.') : undefined));
+      const list = outside.get(definition.id) ?? [];
+      list.push({ binding: b, ends: [below[0], below[1]] });
+      outside.set(definition.id, list);
+    }
+    ends.outside = outside;
+  }
+  return ends.outside.get(definitionId) ?? [];
+}
+
 /**
  * The OUTERMOST frame root whose instance prefixes the instance `symbol` —
  * the symbol itself, or a prefix of it up to a `::` — and whose binding
@@ -3772,15 +5104,18 @@ function readingsByInstance(model: Model): ReadonlyMap<string, ReadonlyArray<{ r
  * that path: the one with the fewest `::` segments, the first in reading
  * order among equals. Each prefix of the symbol is looked up in
  * {@link readingsByInstance}; the answer is the one a scan of every root
- * would give. `undefined` where no binding reading holds the symbol.
+ * would give. A path a package's reading does not hold is read through a
+ * binding written there on a definition's feature ({@link
+ * definitionHeadMatch}: `head`). `undefined` where no binding reading holds
+ * the symbol.
  */
 function outermostReading(
   model: Model,
   symbol: string,
-): { root: ElementId; component: string; feature: ElementId } | undefined {
+): { root: ElementId; component: string; feature: ElementId; head?: DefinitionHead } | undefined {
   const { readings } = bindingEnds(model);
   const byInstance = readingsByInstance(model);
-  let best: { root: ElementId; component: string; feature: ElementId } | undefined;
+  let best: { root: ElementId; component: string; feature: ElementId; head?: DefinitionHead } | undefined;
   let bestSegments = Number.POSITIVE_INFINITY;
   let bestOrder = Number.POSITIVE_INFINITY;
   const consider = (inst: string): void => {
@@ -3790,11 +5125,12 @@ function outermostReading(
     const path = rest.split('::').join('.');
     const segments = inst.split('::').length;
     for (const { root, order } of roots) {
-      const r = readings.get(root)?.get(path);
+      const head = readings.get(root)?.has(path) ? undefined : definitionHeadMatch(model, root, path);
+      const r = head ?? readings.get(root)?.get(path);
       if (!r) continue;
       // The roots of one instance are in reading order: the first that holds the path is this prefix's answer.
       if (segments < bestSegments || (segments === bestSegments && order < bestOrder)) {
-        best = { root, component: r.component, feature: r.feature };
+        best = { root, component: r.component, feature: r.feature, ...(head ? { head } : {}) };
         bestSegments = segments;
         bestOrder = order;
       }
@@ -3855,9 +5191,11 @@ function abstentionSentence(
  * One question a per-instance reading asked of an instance's SPELLING, with
  * the answer it got: where a binding carries a value into it ({@link
  * boundSourceIn}), whether a held default stands there ({@link
- * defaultStandsIn}) or gives way ({@link defaultGivesWayIn}), and whether an
- * enclosing assert constrains a read there ({@link enclosingAssertOn}). These
- * are the only places a reading decides anything by an instance's spelling;
+ * defaultStandsIn}) or gives way ({@link defaultGivesWayIn}), what an
+ * enclosing asserted equation defines there ({@link assertDefinitionIn}), and
+ * whether an enclosing assert constrains a read there ({@link
+ * enclosingAssertOn}). These are the only places a reading decides anything
+ * by an instance's spelling;
  * everywhere else it passes the spelling on, extends it (`${inst}::x`, {@link
  * rebaseInstance}), keys a memo with it, or prints it. A memo keyed with it
  * keeps the lookups each entry was worked out with ({@link lookupsWhile}) and
@@ -3870,6 +5208,7 @@ export type InstanceLookup =
   | { kind: 'source'; symbol: string; answer: BoundSource | undefined }
   | { kind: 'stands'; symbol: string; answer: ElementRecord | undefined }
   | { kind: 'gives-way'; feature: ElementRecord; inst: string; answer: boolean }
+  | { kind: 'asserted'; feature: ElementRecord; inst: string; answer: string }
   | {
       kind: 'enclosing';
       contextId: ElementId;
@@ -3951,7 +5290,7 @@ function distinctLookups(lookups: readonly InstanceLookup[]): readonly InstanceL
 /** The question a lookup asks, as a key: two lookups with one key asked the same, and were answered the same. */
 function lookupKey(l: InstanceLookup): string {
   if (l.kind === 'source' || l.kind === 'stands') return `${l.kind} ${l.symbol}`;
-  if (l.kind === 'gives-way') return `${l.kind} ${l.feature.id} ${l.inst}`;
+  if (l.kind === 'gives-way' || l.kind === 'asserted') return `${l.kind} ${l.feature.id} ${l.inst}`;
   return `${l.kind} ${l.contextId} ${l.name} ${l.inst} ${l.enclosing.map((f) => `${f.reader}@${f.instance}`).join(' ')}`;
 }
 
@@ -3967,7 +5306,7 @@ export function lookupsOf(lookups: readonly InstanceLookup[], inst: string): Ins
   for (const l of lookups) {
     if (l.kind === 'source' || l.kind === 'stands') {
       if (!spells(l.symbol)) continue;
-    } else if (l.kind === 'gives-way') {
+    } else if (l.kind === 'gives-way' || l.kind === 'asserted') {
       if (!spells(l.inst)) continue;
     } else if (!spells(l.inst) && !l.enclosing.some((f) => spells(f.instance))) {
       continue;
@@ -4001,6 +5340,8 @@ export function lookupsHold(model: Model, lookups: readonly InstanceLookup[], fr
         if (defaultStandsIn(model, respell(l.symbol, from, to)) !== l.answer) return false;
       } else if (l.kind === 'gives-way') {
         if (defaultGivesWayIn(model, l.feature, respell(l.inst, from, to)) !== l.answer) return false;
+      } else if (l.kind === 'asserted') {
+        if (assertedKey(assertDefinitionIn(model, l.feature, respell(l.inst, from, to))) !== l.answer) return false;
       } else {
         const enclosing = l.enclosing.some((f) => respell(f.instance, from, to) !== f.instance)
           ? l.enclosing.map((f) => ({ instance: respell(f.instance, from, to), reader: f.reader }))
@@ -4099,6 +5440,12 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // capped binding gives 50); a cap no binding of it reaches never abstains it.
   const capped = member ? (overCap.get(member.id) ?? (carried !== undefined ? overCap.get(carried) : undefined)) : undefined;
   if (capped !== undefined) return { abstain: 'past-cap', sentence: bindingCapSentence(capped) };
+  // A package's binding between two features of definitions (`bind P::load =
+  // P::cap`) joins them in every instance, each at its own value there: read
+  // in the package, the component holds P's own — no value for any instance.
+  if (best.head && pairedHeads(model, best.root, best.component)) {
+    return { abstain: 'free', sentence: pairedHeadsSentence(model, symbol, best.root, best.component) };
+  }
   // A binding whose end is a feature of an instance ENCLOSING where it is
   // written (R's `L` in `part q : Q { bind p.load = L; }`) is read by that
   // feature's own id, for every such instance alike ({@link
@@ -4129,13 +5476,24 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // the binding gives it — the partner supplies none either (the G340 family).
   const readable = cls.readable.find((p) => memberInstance(definitions, best.root, p) !== symbol);
   if (readable !== undefined) return source(readable);
+  // A package's binding on a definition's feature whose slot an instance
+  // fixes outside the component ({@link DefinitionHead.fixed}) says so, not
+  // that no member states a value.
+  const fixed = bindingEnds(model).heads.get(best.root)?.find((h) => h.component === best.component && h.fixed !== undefined);
   if (cls.heldDefaults.length > 0) {
     return {
       abstain: 'defaults-differ',
-      sentence: abstentionSentence(model, symbol, best.root, best.component, 'defaults-differ'),
+      sentence: fixed
+        ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
+        : abstentionSentence(model, symbol, best.root, best.component, 'defaults-differ'),
     };
   }
-  return { abstain: 'free', sentence: abstentionSentence(model, symbol, best.root, best.component, 'free') };
+  return {
+    abstain: 'free',
+    sentence: fixed
+      ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
+      : abstentionSentence(model, symbol, best.root, best.component, 'free'),
+  };
 }
 
 /**
@@ -4189,8 +5547,8 @@ function standingDefaultOf(
   const definitions = sharedDefinitions(model);
   // A member DEFINED by an asserted equation — its own, or one inherited from
   // a general definition, which {@link endValue} does not see — is a stated
-  // value: the default does not stand (the open default-vs-assert semantics,
-  // H5). `equationsByName` is direct, so the generalisations are walked.
+  // value: the default does not stand (H5: an asserted equation stands over a
+  // default). `equationsByName` is direct, so the generalisations are walked.
   const asserted = (ownerId: ElementId | null | undefined, name: string | undefined): boolean => {
     if (name === undefined || ownerId == null) return false;
     for (const o of [model.get(ownerId), ...generalizationsOf(model, ownerId)]) {
@@ -4253,7 +5611,53 @@ function standingDefaultIn(model: Model, symbol: string): ElementRecord | undefi
   ) {
     return undefined;
   }
+  // A definition's feature joined so carries every instance's value into the
+  // component: where one redefines it with a value of its own (`part p4 : P {
+  // attribute :>> load = 7.0; }` under `bind P::load = L`, L valueless), P's
+  // default is no value of the component's (L is 7) — none stands.
+  if (pairedHeads(model, best.root, best.component, true)) return undefined;
   return standingDefaultPath(model, best.root, best.component)?.source;
+}
+
+/**
+ * Does the component read in the package `root` join two or more features of
+ * definitions ({@link DefinitionHead}) — `bind P::load = P::cap` — which each
+ * instance of the definition reads at values of its own? With `orRedefined`,
+ * or one a feature with a value of its own redefines in some instance.
+ */
+function pairedHeads(model: Model, root: ElementId, component: string, orRedefined = false): boolean {
+  const heads = (bindingEnds(model).heads.get(root) ?? []).filter((h) => h.component === component);
+  return heads.length > 1 || (orRedefined && heads.some((h) => h.redefined || h.fixed !== undefined));
+}
+
+/** Why a package's binding between features of definitions gives an instance no value ({@link pairedHeads}). */
+function pairedHeadsSentence(model: Model, symbol: string, root: ElementId, component: string): string {
+  const sep = symbol.lastIndexOf('::');
+  const name = sep >= 0 ? symbol.slice(sep + 2) : symbol;
+  const instance = sep >= 0 ? symbol.slice(0, sep) : '';
+  const members = componentPaths(model, root, component);
+  return (
+    `${name} has no value in ${instance}: a binding of ${effectiveQualifiedName(model, root)} joins features of a ` +
+    `definition (${members.join(', ')}), each at its own value in every instance, and this tool reads none of them there`
+  );
+}
+
+/**
+ * Why a package's binding on a definition's feature gives an instance no
+ * value where some instance fixes that feature outside it ({@link
+ * DefinitionHead.fixed}): the binding carries that value into its other
+ * ends, and so into every instance, which this tool does not read.
+ */
+function fixedHeadSentence(model: Model, symbol: string, root: ElementId, component: string, head: DefinitionHead): string {
+  const sep = symbol.lastIndexOf('::');
+  const name = sep >= 0 ? symbol.slice(sep + 2) : symbol;
+  const instance = sep >= 0 ? symbol.slice(0, sep) : '';
+  const members = componentPaths(model, root, component);
+  return (
+    `${name} has no value in ${instance}: a binding of ${effectiveQualifiedName(model, root)} joins ${members.join(', ')} ` +
+    `in every instance of ${effectiveQualifiedName(model, head.definition.id)}, and ${head.fixed} gives ${head.path} a value ` +
+    'in one of them, which this tool does not read into the others'
+  );
 }
 
 /** The user packages of a model — `package` elements, nested ones included. */
@@ -4848,8 +6252,9 @@ function instanceReadsOtherwise(
   // A value of the element's own that states a `default` and that an asserted
   // equation the usage does not read constrains (H5B: q2's `part :>> p {
   // assert constraint { extra == 20.0 } }` over P's `extra default = 0.0`):
-  // which of the two stands is not decided here (H5), and a reading in the
-  // element would read the default.
+  // under decision 14 the equation stands, but this reading does not read an
+  // assert of the element's own yet, and a reading in the element would read
+  // the default — so it abstains.
   for (const [path, mine] of own.paths) {
     if (mine.assertedDefault === undefined || mine.assertedDefault === shared.paths.get(path)?.assertedDefault) continue;
     return abstain(
@@ -4875,10 +6280,11 @@ function instanceReadsOtherwise(
  * instanceSitesOf}), every usage on the path between, and each one's types
  * and the features it redefines, user-written — that references a path
  * `element` reads (`paths`, as {@link readFeatures} lists them), spelled
- * below that instance: q2's `assert constraint { p.load == 5.0 }` over q2's
+ * below that instance: q2's `assert constraint { p.load >= 0.5 }` over q2's
  * `part :>> p { … }` reading `load`. A.2.4: an enclosing assert constrains
- * the value, and a reading in `element` reads none of it. `undefined` where
- * none does.
+ * the value, and a reading in `element` reads none of it — save an asserted
+ * equation that defines a `default` there, which the reading reads at the
+ * instance (H5, {@link enclosingAsserts}). `undefined` where none does.
  */
 function assertAbove(
   definitions: DefiningEquations,
@@ -4909,6 +6315,9 @@ function assertAbove(
       }
       for (const holder of holders) {
         if (holder.attrs.isLibrary === true) continue;
+        // An equation that defines a `default` the element reads is read at the instance, as a binding is (H5's
+        // enclosing rule, {@link assertDefinitionIn}): no reason to abstain.
+        const defining = enclosingAsserts(model).byOwner.get(holder.id);
         for (const child of model.children(holder.id)) {
           if (child.attrs.isLibrary === true || !isAsserted(child)) continue;
           const expr = child.attrs.expression;
@@ -4916,6 +6325,7 @@ function assertAbove(
           for (const n of relationNamesOf(expr)) {
             for (const p of paths) {
               const remaining = `${below}.${p}`;
+              if (n === remaining && defining?.get(n)?.some((eq) => eq.constraint.id === child.id)) continue;
               if (n === remaining || n.startsWith(`${remaining}.`) || remaining.startsWith(`${n}.`)) {
                 return { frame: holder.id, expr };
               }
@@ -4994,7 +6404,7 @@ export function instanceGroups(model: Model): readonly InstanceGroup[] {
 /** {@link instanceGroups}, worked out. */
 function groupsOf(model: Model): InstanceGroup[] {
   const definitions = sharedDefinitions(model);
-  if (!hasUserBindings(model)) return [];
+  if (!readsPerInstance(model)) return [];
   const out: InstanceGroup[] = [];
   const read = new Map<string, GuardReading | undefined>();
   const caches: PathCaches = { twice: new Map(), walks: new Map(), elements: new Map() };

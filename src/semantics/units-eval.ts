@@ -57,6 +57,8 @@ import {
   lookupsWhile,
   mergeContact,
   contradictionSentence,
+  assertDefinitionIn,
+  assertHeldInSome,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
   failedReadingSentence,
@@ -69,6 +71,7 @@ import {
   shadowedSentence,
   sharedDefinitions,
   statedValueOf,
+  undecidedPartnerOf,
   type BoundSource,
   type Contact,
   type DefiningEquation,
@@ -1863,7 +1866,25 @@ function deriveFeatureUncached(
   // unit-aware lane cannot key it per instance, so it leaves the row to the
   // check, which can (`held-redef`). An instance reading refuses only where
   // the binding reaches it.
-  const givesWay = inst !== undefined ? defaultGivesWayIn(model, feat, inst) : defaultGivesWaySomewhere(model, feat);
+  // So does a generic reading of a default an enclosing asserted equation
+  // defines in some instance (H5, `assertHeldInSome`).
+  const givesWay =
+    inst !== undefined
+      ? defaultGivesWayIn(model, feat, inst)
+      : defaultGivesWaySomewhere(model, feat) || assertHeldInSome(model, feat);
+  // An asserted equation of an element enclosing the instance defines it there
+  // (H5's enclosing rule): its derivation, where the equation is a constant
+  // (`assertDefinitionIn`; the scalar reading reads one over names too).
+  // Where they give it no value there — two values, or another `default` (U7)
+  // — it has none, before any equation of its own type is read (LE: P's `x ==
+  // 3.0` beside q1's `p.x == 50.0`); the scalar reading says why.
+  if (givesWay && inst !== undefined) {
+    const defined = assertDefinitionIn(model, feat, inst);
+    if (defined !== undefined && 'abstain' in defined) return claimOnly('unknown', 'unresolved');
+    if (defined !== undefined && defined.constant) {
+      return equationDerivation(model, id, String(defined.equation.constraint.attrs.expression), memo, defined.frame.reader, defined.path);
+    }
+  }
   const literal = givesWay ? undefined : evaluateQuantity(model, id);
   if (literal) return { claim: 'literal', q: literal };
 
@@ -1986,9 +2007,11 @@ export function equationDerivation(
   equation: string,
   memo: DerivationMemo = new Map(),
   contextId?: ElementId,
+  path?: string,
 ): FeatureDerivation {
   const feat = model.get(featureId);
-  const name = feat ? passOf(model, memo).definitions.nameOf(feat) : undefined;
+  // An enclosing context's equation writes the feature by its dotted `path` (`p.x`).
+  const name = path ?? (feat ? passOf(model, memo).definitions.nameOf(feat) : undefined);
   const context = contextId ?? feat?.ownerId;
   if (!feat || !name || context == null) return claimOnly('unknown', 'unresolved');
   // Through the asserted equation of that body, when it is one: reading it
@@ -2019,8 +2042,13 @@ export function definitionDerivation(
   const name = feat ? passOf(model, memo).definitions.nameOf(feat) : undefined;
   const context = contextId ?? feat?.ownerId;
   if (!feat || !name || context == null) return undefined;
-  const candidates = passOf(model, memo).definitions.of(site ?? context, name);
-  if (candidates.length === 0) return undefined;
+  const { definitions } = passOf(model, memo);
+  const candidates = definitions.of(site ?? context, name);
+  if (candidates.length === 0) {
+    // One an enclosing context asserts by the dotted path ({@link definedQuantity}).
+    const reaching = site === undefined ? definitions.reachingAssert(context, name) : undefined;
+    return reaching && definitionOf(model, featureId, reaching.path, reaching.equations, memo, context, new Map(), true);
+  }
   return definitionOf(model, featureId, name, candidates, memo, context, new Map());
 }
 
@@ -2131,6 +2159,10 @@ function definitionOf(
   inFlight: InFlight,
   instance = false,
 ): FeatureDerivation {
+  // A `default` an asserted equation sets equal to another `default` gives way
+  // with it (U7): that equation derives it no value (`undecidedPartnerOf`).
+  const feat = model.get(featureId);
+  if (feat && undecidedPartnerOf(model, feat) !== undefined) return claimOnly('unknown', 'unresolved');
   // A definition written elsewhere and read here, for this context's own
   // value, is in flight under a key of its own (`instanceKey`).
   const flight = instance ? instanceKey(featureId, context) : featureId;
@@ -2264,6 +2296,14 @@ function definedQuantity(
   if (candidates.length === 0) {
     const inherited = definitions.definitionReadIn(contextId, name);
     if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
+    // An enclosing context's asserted equation that defines it by its dotted
+    // path (`assert constraint { p.x == 3.0 }` over `part p : P`), read here.
+    const reaching = definitions.reachingAssert(contextId, name);
+    if (reaching !== undefined) {
+      const d = definitionOf(model, feature.id, reaching.path, reaching.equations, memo, contextId, inFlight, true);
+      note(reads, d);
+      return derivationEval(d, name);
+    }
     // Read per instance (A.2): the value a binding carries into `inst`, the
     // unit-aware twin of `valueBoundInInstance` of ./evaluate-model — never
     // for a name two inherited values leave valueless there.

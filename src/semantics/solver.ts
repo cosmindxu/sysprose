@@ -72,6 +72,7 @@ import {
   checksByRow,
   evaluateFeatureValue,
   readRefusalOf,
+  undecidedPartnersRead,
   unreadValuesOf,
   type ConstraintCheck,
 } from './evaluate-model';
@@ -81,17 +82,20 @@ import {
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
   defaultStandsIn,
+  equatedPartsRefusal,
   hasPastCapBindings,
   hasStatedValue,
   instanceGroups,
   isAsserted,
   isParameterisedCalculation,
   MAX_INSTANCE_RELATIONS,
+  outsideBindingsOf,
   pastCapEnd,
   relationNamesOf,
   shadowedNamesOf,
   shadowedSentence,
   sharedDefinitions,
+  spelledIn,
   statedValueOf,
   usageOwnedRefusal,
   type InstanceAbstention,
@@ -1293,6 +1297,10 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           enqueue(instanceBindingEquation(model, c, holder, reader, instance, memo, system));
         }
       }
+      // A package's binding on the holder's features holds in each of its instances too (w4).
+      for (const { binding, ends } of outsideBindingsOf(model, holder.id)) {
+        enqueue(instanceBindingEquation(model, binding, holder, reader, instance, memo, system, ends));
+      }
     }
   };
   while (pending.length > 0 && budget > 0) {
@@ -1344,6 +1352,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
  * instance `instance` of `reader`: `a = b` over the two ends' instance
  * variables, converted across an affine map as {@link bindingEquation}
  * converts one. `undefined` for an edge whose ends are not below `holder`.
+ * A package's binding on `holder`'s features comes with its `ends`
+ * ({@link outsideBindingsOf}): an end of no definition — the package's `L` —
+ * is its own variable, one instance beside the instance's.
  */
 function instanceBindingEquation(
   model: Model,
@@ -1353,14 +1364,25 @@ function instanceBindingEquation(
   instance: string,
   memo: DerivationMemo,
   system: InstanceSystem,
+  ends?: readonly [string | undefined, string | undefined],
 ): Equation | undefined {
-  const left = pathBelow(model, edge.source?.[0], holder.id);
-  const right = pathBelow(model, edge.target?.[0], holder.id);
-  if (left === undefined || right === undefined) return undefined;
+  const definitions = sharedDefinitions(model);
+  const below = ends ?? [pathBelow(model, edge.source?.[0], holder.id), pathBelow(model, edge.target?.[0], holder.id)];
+  if (below[0] === undefined && below[1] === undefined) return undefined;
+  if ((below[0] === undefined || below[1] === undefined) && ends === undefined) return undefined;
   // Read, never changed: the shared scope itself, not a copy of it.
-  const scope = sharedDefinitions(model).scope(reader.id, 'all');
-  const a = scope.get(left);
-  const b = scope.get(right);
+  const scope = definitions.scope(reader.id, 'all');
+  // Each end as the reader spells it: q's `pp.load` where `part pp :>> p` renames Q's p (H5, E8).
+  const end = (k: 0 | 1): [string, ElementId | undefined] => {
+    const path = below[k];
+    if (path !== undefined) {
+      const spelled = spelledIn(definitions, reader.id, path);
+      return [spelled, scope.get(spelled)];
+    }
+    return [`__${k === 0 ? 'l' : 'r'}`, carriedEnd(model, (k === 0 ? edge.source : edge.target)?.[0])];
+  };
+  const [left, a] = end(0);
+  const [right, b] = end(1);
   if (a === undefined || b === undefined) return undefined;
   const nameToId = new Map<string, ElementId>([
     [left, a],
@@ -4728,6 +4750,34 @@ function numericRows(
       }
       out.push(r);
     }
+  }
+  // A part-valued binding no end of which stands for the other may carry a
+  // value (equatedPartsRefusal): no row that may read one is judged, as the
+  // validation surface judges none.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const equated = equatedPartsRefusal(model, r.context?.baseId ?? r.id, r.raw, r.context);
+    if (equated === undefined) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason = equated;
+    delete r.cause;
+  }
+  // A relation over a `default` an asserted equation sets equal to another
+  // (undecidedPartnersRead, U7): neither has a value, so the point the solve
+  // chose for it judges nothing, as the validation surface judges nothing.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown' || r.imposed === true || r.context !== undefined) continue;
+    const el = model.get(r.id);
+    if (!el || undecidedPartnersRead(model, el, relationNamesOf(r.raw), memo).length === 0) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason =
+      (checkVerdictOf(r.id)?.result === 'unknown' ? checkSentence(r.id) : undefined) ??
+      'it reads a `default` an asserted equation sets equal to another: both give way, so it has no value';
+    delete r.cause;
   }
   return out;
 }
