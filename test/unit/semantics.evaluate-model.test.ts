@@ -120,6 +120,45 @@ describe('semantics — the one walk, and the bare-name rule', () => {
     for (const c of checkConstraints(m)) expect(c.result, c.expression).toBe('unknown');
   });
 
+  it('reads a name the context does not declare through its owners, where it is one value in every instance (E3)', () => {
+    const m = parseModel(`package LX {
+      attribute K = 7.0;
+      part def Q { attribute L default = 1.0; part p { attribute x = K + L; } }
+      part q : Q;
+      part def R { attribute M default = 1.0; part s { attribute y = M; } constraint c { s.y <= 5.0 } }
+      part r : R { attribute :>> M = 50.0; }
+    }`).model;
+    // The package's K is one value; Q's L is 1 in every Q, q declaring nothing anew.
+    expect(scopeFor(m, named(m, 'LX::Q::p').id)('K')).toBe(7);
+    expect(scopeFor(m, named(m, 'LX::Q::p').id)('x')).toBe(8);
+    // R's M is 50 in r: read where it is declared, R's s would read R's 1 for r's s too — so it is read nowhere,
+    // and the check names the element that changes it.
+    expect(scopeFor(m, named(m, 'LX::R::s').id)('y')).toBeUndefined();
+    const c = checkConstraints(m).find((x) => m.qualifiedName(x.id) === 'LX::R::c')!;
+    expect([c.result, c.message]).toEqual([
+      'unknown',
+      'Could not evaluate: M is read through LX::R, which declares it, and is not one value in every instance of it: LX::r declares M anew',
+    ]);
+    // Read where the body is written, as KerML resolves it there: an import on the way answers K first (C's 9),
+    // so the outer 3 is not read; nor is a K the writer cannot see (H's, for A declared outside H).
+    const w = parseModel(`package LW {
+      attribute K = 3.0;
+      package C { attribute K = 9.0; }
+      package U { import C::*; part def B { attribute x = K; } }
+      part def A { attribute y = J; }
+      part def H { attribute J = 70.0; part a : A; }
+    }`).model;
+    expect(scopeFor(w, named(w, 'LW::U::B').id)('x')).toBeUndefined();
+    expect(scopeFor(w, named(w, 'LW::H::a').id)('y')).toBeUndefined();
+    // An assert typed by a constraint definition names what it gives its parameters (`in a = L`): L, a default
+    // it sets in every Q, is not read for Q's p.
+    const t = parseModel(`package LT {
+      constraint def Eq { in a; a == 50.0 }
+      part def Q { attribute L default = 1.0; assert constraint e : Eq { in a = L; } part p { attribute y = L; } }
+    }`).model;
+    expect(scopeFor(t, named(t, 'LT::Q::p').id)('y')).toBeUndefined();
+  });
+
   it('offers a nested bare name only when exactly one feature below has it (xb1)', () => {
     const m = parseModel(`package XB1 {
       part def P { attribute y = 4.0; }
@@ -2188,12 +2227,13 @@ describe('checkConstraints — a bound partner is read only where every instance
     constraint ctlA { r0.q.p.m2 >= 8.5 }
   }`;
 
-  it('reads a partner of an enclosing instance in every instance of it, and so not where they differ (W1, W3)', async () => {
+  it('reads a partner of an enclosing instance in the instance around each reading (W1, W3)', async () => {
     for (const nested of [false, true]) {
-      // r's K makes R's L r's 50: r's q's m2 is −40, never the 9 R's own L of 1 gave (a false refutation).
+      // r's K makes R's L r's 50: r's q's m2 is −40, never the 9 R's own L of 1 gave (a false refutation),
+      // and r0's q reads r0's L of 1 (O6 S1, E3: both abstained before).
       const { model: m } = await loadModelText(enclosed('E', nested, true));
       const checks = checkConstraints(m!);
-      expect([resultOf(checks, m!, 'E::negT'), resultOf(checks, m!, 'E::ctlA')], String(nested)).toEqual(['unknown', 'unknown']);
+      expect([resultOf(checks, m!, 'E::negT'), resultOf(checks, m!, 'E::ctlA')], String(nested)).toEqual(['satisfied', 'satisfied']);
       // Where every R reads it alike, it is read as before.
       const { model: u } = await loadModelText(enclosed('U', nested, false));
       const alike = checkConstraints(u!);

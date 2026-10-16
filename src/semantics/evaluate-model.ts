@@ -425,6 +425,13 @@ function answerFor(
       valueDefinedByEquation(model, contextId, name, pass) ??
       valueBoundTo(model, contextId, name, pass) ??
       valueThroughChain(model, contextId, name, pass);
+    // A name only an OWNING namespace of the context declares is read where it
+    // is declared only when it is one value in every instance of that owner
+    // (E3, {@link DefiningEquations.lexicalRefusal}): where an instance gives
+    // it another, the read abstains, saying which — a value that differs per
+    // instance (`two-values`), not an instance left unread.
+    const lexical = answer === undefined ? pass.definitions.lexicalRefusal(contextId, name) : undefined;
+    if (lexical !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: lexical } };
   }
   // A decided answer is never replaced. Only a valueless one is read through
   // the binding the name meets in the instance (A.2.1) — never one two values

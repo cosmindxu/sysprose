@@ -42,6 +42,7 @@ import {
   ownFeatures,
   redefinedClosure,
 } from './inheritance';
+import { resolveFullName } from './bind';
 import { type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
@@ -299,6 +300,16 @@ export class DefiningEquations {
   private readonly reaching = new Map<string, { site: ElementId; path: string; equations: readonly DefiningEquation[] } | null>();
   /** {@link boundAbove} per context and names (`null`: none above) — every instance row of a group asks it of the usage. */
   private readonly aboveBound = new Map<string, BoundAbove | null>();
+  /** {@link lexicalNames} per context. */
+  private readonly lexical = new Map<ElementId, { admitted: ReadonlyMap<string, Denotation>; refused: ReadonlyMap<string, string> }>();
+  /** The ends of the user's binding connectors and what each redefines, for {@link lexicallyUniform}. */
+  private joined?: ReadonlySet<ElementId>;
+  /** The implicit contexts (connector-end copies) that specialise each element, for {@link lexicallyUniform}. */
+  private implicitlySpecialised?: ReadonlyMap<ElementId, readonly ElementRecord[]>;
+  /** {@link assertedNames}, once asked. */
+  private assertNames?: ReadonlyMap<string, ReadonlySet<ElementId>>;
+  /** {@link namesWritten} per element. */
+  private readonly writtenNames = new Map<ElementId, ReadonlyMap<string, readonly ElementRecord[]>>();
 
   constructor(readonly model: Model) {
     this.rev = model.rev;
@@ -712,7 +723,245 @@ export class DefiningEquations {
       if (direct.has(n) || ids.has(n) || seen.count !== 1) continue;
       ids.set(n, seen.denoted);
     }
+    // Last, a name nothing below the context answers: the attribute its
+    // owning namespaces declare ({@link lexicalNames}).
+    for (const [n, denoted] of this.lexicalNames(contextId).admitted) if (!ids.has(n)) ids.set(n, denoted);
     return ids;
+  }
+
+  /**
+   * The names `contextId` reads through the OWNING namespaces of the elements
+   * that write its bodies (E3, KerML's lexical scope): `K` in `package Lex {
+   * attribute K = 7.0; part def A { attribute x = K; } }` is Lex's K, which
+   * A's own features do not answer. The bodies read in a context are its own
+   * and its general types' ({@link namesWritten}); each names `n` as KerML
+   * resolves it where it is written ({@link resolveFullName}: its owners
+   * outward, with their imports and aliases), and `n` is read here only where
+   * every one of them resolves it to one attribute, which the nearest owner
+   * of each declaring a feature by that name declares. So an import or an
+   * alias on the way (`import Consts::*;`) leaves the name unread, as does a
+   * name a writer does not see (H's K for A's `x = K`, where A is declared
+   * outside H), and one a specialiser of the context declares itself (q's
+   * `part :>> p { attribute L … }` beside Q's p reading Q's L: there that
+   * body would read q's p's L). Each is read where it is declared, as one
+   * value:
+   *  - a package's attribute is one instance wherever it is read;
+   *  - an enclosing definition's or usage's attribute is read in the instance
+   *    that encloses the reading, so it is read here only where that is the
+   *    same value in EVERY instance of its owner ({@link lexicallyUniform}):
+   *    none specialises the owner and declares it anew, no binding joins it,
+   *    no asserted relation names it where it is a `default`, and what its
+   *    value reads is the same too. Where one is not (h2c0's `q : Q { :>> L =
+   *    50.0; }` beside Q's p `:>> load = L`), the name is left unread — the
+   *    generic read abstains where a specialiser changes the value — and the
+   *    reason is kept (`refused`, {@link lexicalRefusal}).
+   * Once per context; it reads no {@link denote} walk, and no value a binding
+   * or an assert decides ({@link lexicallyUniform}).
+   */
+  private lexicalNames(contextId: ElementId): {
+    admitted: ReadonlyMap<string, Denotation>;
+    refused: ReadonlyMap<string, string>;
+  } {
+    const hit = this.lexical.get(contextId);
+    if (hit) return hit;
+    const admitted = new Map<string, Denotation>();
+    const refused = new Map<string, string>();
+    const out = { admitted, refused };
+    this.lexical.set(contextId, out);
+    // A relation's body is read with the context it is read in around it,
+    // whose own owners answer such a name: the relation itself offers none (P's
+    // `c` read in Q2's p reads no attribute of P as an owner's).
+    const context = this.model.get(contextId);
+    if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
+    const own = this.byName(contextId);
+    const writers = [context, ...generalizationsOf(this.model, contextId).filter((t) => t.attrs.isLibrary !== true)];
+    const written = new Map<string, ElementRecord[]>();
+    for (const w of writers) {
+      for (const [n, at] of this.namesWritten(w.id)) if (!own.has(n)) written.set(n, [...(written.get(n) ?? []), ...at]);
+    }
+    for (const [n, at] of written) {
+      // Each element that writes it: the nearest of its owners that declares
+      // the name answers it, and KerML's resolution agrees — no import, alias
+      // or member of its own answers it first.
+      let target: { owner: ElementRecord; feature: ElementRecord } | undefined;
+      const agree = at.every((x) => {
+        const t = this.lexicalTarget(x.id, n);
+        if (!t || (target !== undefined && (t.feature !== target.feature || t.owner !== target.owner))) return false;
+        target = t;
+        return resolveFullName(this.model, n, x.id)?.id === t.feature.id;
+      });
+      if (!agree || !target || target.feature.eClass !== 'AttributeUsage') continue;
+      const { owner: o, feature: f } = target;
+      if (this.specialisersOf(contextId).some((s) => (this.byName(s.id).get(n) ?? f) !== f)) continue;
+      // A package's `default` an assert elsewhere names may give way there
+      // with the default it is set equal to (U7): not one value either.
+      const elsewhere = isPackage(o) && f.attrs.defaultValue === true && [...(this.assertedNames().get(n) ?? [])].some((x) => x !== o.id);
+      const why = elsewhere ? `an asserted relation outside it names ${n}` : isPackage(o) ? undefined : this.lexicallyUniform(o.id, f, n);
+      if (why !== undefined) {
+        refused.set(n, `${n} is read through ${this.qualifiedNameOf(o.id)}, which declares it, and is not one value in every instance of it: ${why}`);
+        continue;
+      }
+      admitted.set(n, { feature: f, reader: o.id, inCall: false, instance: this.instanceNameOf(o.id), enclosing: [] });
+    }
+    return out;
+  }
+
+  /**
+   * The bare names the bodies `id` owns read — its features' values and its
+   * relations' expressions, by the first segment of each — with the elements
+   * that write them ({@link lexicalNames}). Once per element.
+   */
+  private namesWritten(id: ElementId): ReadonlyMap<string, readonly ElementRecord[]> {
+    let hit = this.writtenNames.get(id);
+    if (!hit) {
+      const out = new Map<string, ElementRecord[]>();
+      const add = (names: readonly string[], x: ElementRecord): void => {
+        for (const n of names) {
+          const head = n.split('.')[0]!;
+          const list = out.get(head);
+          if (!list) out.set(head, [x]);
+          else if (!list.includes(x)) list.push(x);
+        }
+      };
+      for (const x of this.model.children(id)) {
+        if (typeof x.attrs.value === 'string') add(namesOfValue(x.attrs.value), x);
+        if (typeof x.attrs.expression === 'string') add(relationNamesOf(x.attrs.expression), x);
+      }
+      this.writtenNames.set(id, (hit = out));
+    }
+    return hit;
+  }
+
+  /**
+   * The attribute a body read in `contextId` reads `name` as through the
+   * owners of the element that writes it ({@link lexicalNames}) — `undefined`
+   * where it reads none so: a feature of the context, or a name left unread.
+   */
+  lexicalFeature(contextId: ElementId, name: string): ElementRecord | undefined {
+    return this.byName(contextId).has(name) ? undefined : this.lexicalNames(contextId).admitted.get(name)?.feature;
+  }
+
+  /**
+   * Why a name a body reads through its owners ({@link lexicalNames}) is left
+   * unread in `contextId` — the sentence naming what makes it another value in
+   * some instance — or `undefined`.
+   */
+  lexicalRefusal(contextId: ElementId, name: string): string | undefined {
+    return this.byName(contextId).has(name) ? undefined : this.lexicalNames(contextId).refused.get(name);
+  }
+
+  /** The feature the nearest owner of `fromId` that declares `name` declares under it, with that owner. */
+  private lexicalTarget(fromId: ElementId, name: string): { owner: ElementRecord; feature: ElementRecord } | undefined {
+    const seen = new Set<ElementId>([fromId]);
+    for (let id = this.model.get(fromId)?.ownerId ?? null; id != null && !seen.has(id); ) {
+      seen.add(id);
+      const o = this.model.get(id);
+      if (!o || o.attrs.isLibrary === true) return undefined;
+      const feature = this.byName(id).get(name);
+      if (feature) return { owner: o, feature };
+      id = o.ownerId;
+    }
+    return undefined;
+  }
+
+  /**
+   * Is the attribute `f`, declared as `name` in (or inherited by) the
+   * definition or usage `ownerId`, one value in EVERY instance of it — so that
+   * reading it where it is declared is reading it in whichever instance
+   * encloses the reading ({@link lexicalNames})? `undefined` when it is; else
+   * why not. No context that specialises the owner answers the name with
+   * another feature; no binding joins it, and no asserted relation names it
+   * where it is a `default` (a value given per instance); it states a literal,
+   * or an expression whose every name is such a value where it is read, as
+   * KerML resolves it there. Conservative: a value it cannot follow so is not
+   * one.
+   */
+  private lexicallyUniform(ownerId: ElementId, f: ElementRecord, name: string, seen = new Set<ElementId>()): string | undefined {
+    if (seen.has(f.id)) return `${name}'s value reads itself`;
+    seen.add(f.id);
+    // Every context that specialises the owner — an implicit connector-end
+    // copy included, which redefines what a binding reaches into.
+    if (!this.implicitlySpecialised) {
+      const out = new Map<ElementId, ElementRecord[]>();
+      for (const x of this.model.all()) {
+        if (x.attrs.isLibrary === true || x.attrs.implicit !== true || (!isUsage(x.eClass) && !isDefinition(x.eClass))) continue;
+        for (const g of generalizationsOf(this.model, x.id)) out.set(g.id, [...(out.get(g.id) ?? []), x]);
+      }
+      this.implicitlySpecialised = out;
+    }
+    const changed = [...this.specialisersOf(ownerId), ...(this.implicitlySpecialised.get(ownerId) ?? [])].find(
+      (s) => this.byName(s.id).get(name) !== f,
+    );
+    if (changed) return `${this.qualifiedNameOf(changed.id)} declares ${name} anew`;
+    // A binding end, or a feature one redefines: a value given per instance.
+    if (!this.joined) {
+      const joined = new Set<ElementId>();
+      for (const e of this.model.all()) {
+        if (e.attrs.isLibrary === true || !isBindingConnector(e)) continue;
+        for (const id of [...(e.source ?? []), ...(e.target ?? [])]) {
+          joined.add(id);
+          const end = this.model.get(id);
+          if (end) for (const g of redefinedClosure(this.model, end)) joined.add(g.id);
+        }
+      }
+      this.joined = joined;
+    }
+    if (this.joined.has(f.id)) return `a binding joins ${name}`;
+    // An assert overrides a `default` (H5), never a value written with `=`:
+    // against one, it is checked.
+    if (f.attrs.defaultValue === true && this.assertedNames().has(name)) return `an asserted relation names ${name}`;
+    // The value as written: whether a `default` gives way is a binding's or an
+    // assert's question, both answered above — and asking it here would read
+    // the walk this one is part of.
+    const v = f.attrs.value;
+    if (typeof v === 'number' || typeof v === 'boolean') return undefined;
+    if (typeof v !== 'string') return `${name} states no value`;
+    if (isQuoted(v.trim())) return undefined;
+    for (const m of namesOfValue(v)) {
+      if (m.includes('.')) return `${name}'s value reads ${m} through another feature`;
+      const g = this.byName(ownerId).get(m);
+      if (g) {
+        const why = this.lexicallyUniform(ownerId, g, m, seen);
+        if (why !== undefined) return why;
+        continue;
+      }
+      const t = f.ownerId != null ? this.lexicalTarget(f.ownerId, m) : undefined;
+      if (!t) return `${name}'s value reads ${m}, which nothing declares`;
+      if (resolveFullName(this.model, m, f.id)?.id !== t.feature.id) return `${name}'s value reads ${m}, which an import or an alias answers`;
+      if (isPackage(t.owner)) continue;
+      const why = this.lexicallyUniform(t.owner.id, t.feature, m, seen);
+      if (why !== undefined) return why;
+    }
+    return undefined;
+  }
+
+  /**
+   * Every name the user's asserted relations read, by each segment, with the
+   * owners of the relations that read it — once per revision. An assert typed
+   * by a constraint definition reads its type's expression and the values its
+   * parameters are given (`assert constraint e : Eq { in a = L; }`), so both
+   * count, the type's own parameter values too.
+   */
+  private assertedNames(): ReadonlyMap<string, ReadonlySet<ElementId>> {
+    if (!this.assertNames) {
+      const out = new Map<string, Set<ElementId>>();
+      const add = (seg: string, owner: ElementId): void => {
+        const owners = out.get(seg);
+        if (owners) owners.add(owner);
+        else out.set(seg, new Set([owner]));
+      };
+      for (const c of this.model.ofKind('ConstraintUsage')) {
+        if (c.attrs.isLibrary === true || !isAsserted(c) || c.ownerId == null) continue;
+        for (const x of [c, ...generalizationsOf(this.model, c.id).filter((t) => t.attrs.isLibrary !== true)]) {
+          if (typeof x.attrs.expression === 'string') {
+            for (const n of relationNamesOf(x.attrs.expression)) for (const seg of n.split('.')) add(seg, c.ownerId);
+          }
+          for (const [n] of this.namesWritten(x.id)) add(n, c.ownerId);
+        }
+      }
+      this.assertNames = out;
+    }
+    return this.assertNames;
   }
 
   /**
@@ -2396,9 +2645,8 @@ interface BindingEnds {
  * What the component `component` read in the context `root` states and joins,
  * each worked out once per revision when first asked ({@link componentFacts}):
  * its member paths in reading order, the connectors that join it, what its
- * members state ({@link classified}), whether one of them is a feature of an
- * enclosing instance ({@link BindingEnds.enclosed}), and the member whose
- * default stands there ({@link standingDefaultPath}).
+ * members state ({@link classified}), and the member whose default stands
+ * there ({@link standingDefaultPath}).
  */
 interface ComponentFacts {
   paths: readonly string[];
@@ -2406,7 +2654,6 @@ interface ComponentFacts {
   /** The ids of {@link connectors}. */
   bindingIds?: readonly ElementId[];
   classified?: ComponentClass;
-  enclosed?: boolean;
   standing?: { path: string; source: ElementRecord } | null;
 }
 
@@ -2518,6 +2765,18 @@ function bindingsIntoRedefiners(model: Model): ReadonlyMap<ElementId, ReadonlyAr
 /** Every feature a binding connector touches ({@link isBindingConnector}), once per model revision. */
 export function bindingEndsOf(model: Model): ReadonlySet<ElementId> {
   return bindingEnds(model).ends;
+}
+
+/**
+ * Does a binding of the user's join a feature of an instance enclosing where
+ * it is written ({@link BindingEnds.enclosed}: R's `L` in `part q : Q { bind
+ * p.load = L; }`)? Such a binding holds of every instance below that one —
+ * r0's q, read through Q's p's own walk as `r0::q::p`, as much as r's — so the
+ * engines that hold an instance's frames hold those above it too
+ * ({@link enclosedBindingFrame}). Once per revision.
+ */
+export function hasEnclosedBindings(model: Model): boolean {
+  return bindingEnds(model).enclosed.size > 0;
 }
 
 /**
@@ -3710,6 +3969,8 @@ function assertHeld(model: Model): ReadonlySet<ElementId> {
           const g = h && [h, ...redefinedClosure(model, h)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
           const v = g?.attrs.value;
           answer = v !== undefined && v !== null && (typeof v !== 'string' || namesOfValue(v).every(independent));
+          // A name the owner's owners declare (E3): a constant written with `=` is a value of its own.
+          if (!h) answer = lexicalConstant(model, ownerId, n) !== undefined;
         }
         seen.set(n, answer);
         return answer;
@@ -3729,6 +3990,22 @@ function assertHeld(model: Model): ReadonlySet<ElementId> {
   }
   ASSERT_HELD.set(model, { rev: model.rev, held });
   return held;
+}
+
+/**
+ * The attribute a bare name `n` reads in `contextId` through the owners of the
+ * element that writes it (E3, {@link DefiningEquations.lexicalFeature}), where
+ * it is a CONSTANT written with `=` — a number, a boolean, or an expression
+ * that parses and reads no name: a value of its own for an asserted equation
+ * over a `default` ({@link assertHeld}, {@link enclosingAsserts}), LA4's
+ * package `L = 50.0` for p's `x == L`. `undefined` for any other name.
+ */
+function lexicalConstant(model: Model, contextId: ElementId, n: string): ElementRecord | undefined {
+  const f = sharedDefinitions(model).lexicalFeature(contextId, n);
+  if (!f || f.attrs.defaultValue === true) return undefined;
+  const v = f.attrs.value;
+  if (typeof v === 'number' || typeof v === 'boolean') return f;
+  return typeof v === 'string' && !isQuoted(v.trim()) && parseRelationBody(v.trim()) && namesOfValue(v).length === 0 ? f : undefined;
 }
 
 /**
@@ -3834,7 +4111,10 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
   // The other side's names, each a value written in `ownerId` (a `default` too) that reads `path` back
   // through no name it reads in turn — and the defaulted features among them, through `=` values too, but
   // for one the local rule holds (its equation's value). `undefined` where one is not (a dotted name, a
-  // name with no value, a cycle).
+  // name with no value, a cycle). A bare name the owner's owners declare (E3) is a value of its own where
+  // it is read there as a constant written with `=` ({@link lexicalConstant}); one they declare that is not
+  // read so gives the path no value either (`unread`, filed as undecided: it abstains, LA1).
+  const unread = new Map<DefiningEquation, string[]>();
   const valued = (ownerId: ElementId, eq: DefiningEquation, path: string): ElementRecord[] | undefined => {
     const seen = new Map<string, boolean>();
     const defaults: ElementRecord[] = [];
@@ -3842,6 +4122,12 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
       const known = seen.get(n);
       if (known !== undefined) return known;
       seen.set(n, false);
+      if (n !== path && !n.includes('.') && !featuresOf(ownerId).has(n)) {
+        const outer = lexicalConstant(model, ownerId, n) !== undefined || resolveFullName(model, n, ownerId) !== undefined;
+        if (outer && lexicalConstant(model, ownerId, n) === undefined) unread.set(eq, [...(unread.get(eq) ?? []), n]);
+        seen.set(n, outer);
+        return outer;
+      }
       const h = n !== path && !n.includes('.') ? featuresOf(ownerId).get(n) : undefined;
       const g = h && valueOf(h);
       const v = g?.attrs.value;
@@ -3903,13 +4189,15 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
       // Over a `default` the other side reads, the equation gives no value (U7): that default gives way
       // with this one — unless a binding joins it, whose value is read (the equation then stays unread).
       // A bare name the local rule holds keeps its reading (`L == 2.0 * K`: L is twice K's default).
-      if (!path.includes('.') && local.has(holder.id)) read = read.filter((r) => r.defaults!.length === 0);
+      if (!path.includes('.') && local.has(holder.id)) read = read.filter((r) => r.defaults!.length === 0 && !unread.has(r.eq));
       if (read.length === 0) continue;
       const partners = read.flatMap((r) => r.defaults!);
       if (partners.some(bound)) continue;
       for (const r of read) {
-        if (r.defaults!.length === 0) continue;
         const names = undecided.get(r.eq.constraint.id) ?? [];
+        for (const n of unread.get(r.eq) ?? []) if (!names.includes(n)) names.push(n);
+        if (names.length > 0) undecided.set(r.eq.constraint.id, names);
+        if (r.defaults!.length === 0) continue;
         for (const h of r.defaults!) {
           const n = effectiveNameOf(model, h);
           if (n !== undefined && !names.includes(n)) names.push(n);
@@ -4171,6 +4459,8 @@ export function assertDefinitionIn(
     const definitions = sharedDefinitions(model);
     const open = all.find((d) =>
       (undecided.get(d.equation.constraint.id) ?? []).some((n) => {
+        // A name the writer's owners declare, read as no constant (E3): no value, whatever the frame has.
+        if (!definitions.byName(d.owner).has(n)) return true;
         const h = definitions.byName(d.frame.reader).get(n);
         const g = h && [h, ...redefinedClosure(model, h)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
         return g === undefined || (g.attrs.defaultValue === true && !assertHeld(model).has(g.id));
@@ -4274,6 +4564,40 @@ function endPlace(model: Model, end: ElementId, holder: ElementRecord): EndPlace
     cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined;
   }
   return { kind: 'nowhere' };
+}
+
+/**
+ * A binding `edge` written in `holder`, read for `instance` (an instance of
+ * `holder` or of what it is a type of), whose one end is a feature of an
+ * instance ENCLOSING `holder` ({@link endPlace}'s `enclosed`: R's `L` in `part
+ * q : Q { bind p.load = L; }`): the enclosing instance it is read in — the
+ * nearest frame above `instance` whose reader is that owner or specialises it
+ * ({@link DefiningEquations.framesAbove}) — with each end, in the edge's
+ * order, as a path below that frame's reader: `q.p.load` and `L` in r, for
+ * r's q (E3). `undefined` for any other binding, or where no frame above
+ * `instance` is such an instance (the end has no instance there).
+ */
+export function enclosedBindingFrame(
+  model: Model,
+  edge: ElementRecord,
+  holder: ElementRecord,
+  instance: string,
+): { reader: ElementId; instance: string; ends: readonly [string, string] } | undefined {
+  const pair = [edge.source?.[0], edge.target?.[0]] as const;
+  if (pair[0] === undefined || pair[1] === undefined) return undefined;
+  const places = [endPlace(model, pair[0], holder), endPlace(model, pair[1], holder)] as const;
+  const k = places[0].kind === 'enclosed' ? 0 : 1;
+  const up = places[k];
+  const down = places[1 - k]!;
+  if (up.kind !== 'enclosed' || down.kind !== 'below') return undefined;
+  const frames = sharedDefinitions(model).framesAbove(instance) ?? [];
+  for (let i = frames.length - 1; i >= 0; i--) {
+    const frame = frames[i]!;
+    if (!up.within.has(frame.reader) || !instance.startsWith(`${frame.instance}::`)) continue;
+    const below = `${instance.slice(frame.instance.length + 2).split('::').join('.')}.${down.path}`;
+    return { reader: frame.reader, instance: frame.instance, ends: k === 0 ? [up.path, below] : [below, up.path] };
+  }
+  return undefined;
 }
 
 /**
@@ -5447,11 +5771,10 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
     return { abstain: 'free', sentence: pairedHeadsSentence(model, symbol, best.root, best.component) };
   }
   // A binding whose end is a feature of an instance ENCLOSING where it is
-  // written (R's `L` in `part q : Q { bind p.load = L; }`) is read by that
-  // feature's own id, for every such instance alike ({@link
-  // BindingEnds.enclosed}) — not per instance. No per-instance value is read
-  // here (A.3's F1 conditions; encl-W1/W3/W5 stay abstaining).
-  if (componentEnclosed(model, best.root, best.component)) return undefined;
+  // written (R's `L` in `part q : Q { bind p.load = L; }`) is read in that
+  // enclosing instance (E3): the outermost root's reading holds the end at
+  // the path its climb reached it by (`r.L` for r's q), so r's q reads r's L,
+  // and r0's q r0's.
   const cls = classified(model, best.root, best.component);
   // The member paths and the connectors are the component's own: one list each
   // for every symbol read through it ({@link componentFacts}), never copied.
@@ -5494,21 +5817,6 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
       ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
       : abstentionSentence(model, symbol, best.root, best.component, 'free'),
   };
-}
-
-/**
- * Does a member of the component read in `root` read a feature of an instance
- * ENCLOSING where its binding is written ({@link BindingEnds.enclosed})?
- * Once per (root, component) and revision ({@link componentFacts}).
- */
-function componentEnclosed(model: Model, root: ElementId, component: string): boolean {
-  const facts = componentFacts(model, root, component);
-  if (facts.enclosed === undefined) {
-    const { readings, enclosed } = bindingEnds(model);
-    const reading = readings.get(root);
-    facts.enclosed = facts.paths.some((p) => enclosed.has(reading?.get(p)?.feature ?? ('' as ElementId)));
-  }
-  return facts.enclosed;
 }
 
 /**

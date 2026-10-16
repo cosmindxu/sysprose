@@ -984,9 +984,10 @@ value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A binding written in a usage's body to a feature of
 the definition around it (`part q : Q { bind p.load = L; }` in R, over R's L) is
-read in every instance of that definition, so not for r's q where `r : R` sets
-K. No value is read through a binding for any one instance where it holds in
-more than 4,096 contexts or more than 32 usages deep, nor through a binding
+read in the instance of that definition around each reading, on every
+surface: r's q reads r's L (50 where `r : R` sets K), and r0's q r0's. No value
+is read through a binding for any one instance where it holds in more than
+4,096 contexts or more than 32 usages deep, nor through a binding
 joined to such a one, end to end or through a feature an end redefines (a
 package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33 usages
 down that gives that load its value: Y's `default` gives way, and the check
@@ -1119,6 +1120,33 @@ of its type (the requirement is about any one); reached through a usage
 and a subject that says something of its own (`subject s : P { assert
 constraint … }`) is an instance of its own. `--free` and `bounds --measure`
 take an instance's symbol, or its dotted path.
+
+A name the element it is written in does not declare is read as KerML resolves
+it there: through the namespaces that own that element, nearest first. `part def
+A { attribute x = K; }` in `package Lex { attribute K = 7.0; … }` reads Lex's K,
+on every surface. Only an attribute is read so, and only by its bare name: a
+qualified `Lex::K` or a dotted name is not. A body is read as it is written,
+wherever it is read: A's `x = K`, read for `part def H { attribute K = 70.0;
+part a : A; }`'s a, reads no K where A sees none, nor where an import or an
+alias answers the name first (`import Consts::*;`, `alias K for Consts::K;` —
+such a name is not read), nor where something that specialises the element
+reading it declares a K of its own. A package's attribute is one value wherever
+it is read, unless it is a `default` an `assert` outside the package names. An
+attribute of an enclosing definition or usage is read where it is declared only
+where it is one value in every instance of that owner: nothing that specialises
+the owner declares the name anew, no binding joins it, no `assert` names it
+where it is a `default`, and what its value reads is such a value too (R's `y =
+3.0` read by its nested `part def Q { attribute z = y + K; }`). Elsewhere a row
+that reads it is *could not be evaluated*, in a sentence naming the element that
+changes it — Q's p `:>> load = L` beside `part q : Q { attribute :>> L = 50.0;
+}` reads neither Q's 1 nor q's 50, for Q's own p or for q's. An asserted
+equation over a `default` reads such a name on its other side as a value of its
+own where it is a constant written with `=`: `part p : P { assert constraint { x
+== L } }` beside the package's `L = 50.0` makes p's x 50 on every surface, and
+so does Q's `assert constraint { p.x == L }`. Where an assert in an instance
+around the feature names one that is not read so (an import answers it, or an
+instance gives it another value), the default gives way there and the feature is
+read as no value.
 
 A requirement is read where its subject is bound. `satisfy R by p` and
 `requirement r : R { subject s = p; }` read R's clauses at p — `s.m` is p's
