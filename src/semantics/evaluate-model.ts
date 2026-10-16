@@ -13,7 +13,7 @@
  *    measure through the features that specialise it, once per context.
  */
 
-import { type ElementId, type ElementRecord, type Model } from '@core/index';
+import { type ElementId, type ElementRecord, type Model, isDefinition, isUsage } from '@core/index';
 import {
   DefiningEquations,
   GUARD_CONTACT,
@@ -1318,7 +1318,8 @@ export function checksByRow(checks: readonly ConstraintCheck[]): Map<ElementId, 
 
 /**
  * The element a per-instance finding is anchored at (C.1's anchor rule; H6a):
- * the instance's own anchor when F7 set one, else its feature when that is
+ * the instance's own anchor where its row set one ({@link instanceAnchor}: a
+ * group's instance, a context a binding carries), else its feature when that is
  * user-written and not implicit, else the outermost non-generic user usage on
  * the feature's owner chain, else the relation itself. Never an implicit
  * element (validate.ts drops them) and never a library one (load.ts drops
@@ -1333,6 +1334,73 @@ export function anchorFor(model: Model, check: ConstraintCheck, inst: Specialisa
     cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined;
   }
   return cur ? cur.id : check.id;
+}
+
+/**
+ * The anchor an instance's row sets (C.1's anchor rule, PI-2), so its finding
+ * points at the line that makes the instance differ, never at the usage every
+ * instance shares. The instance's own elements are the user usages and
+ * definitions on its path whose own instance is that step of it (q1 for
+ * `q1::p`, Q2 for Q2's own `Q2::p`; `own`, the instance's own element, where
+ * it has one); never a package, which every instance in it shares. The
+ * anchor is (1) the member of one of them stating the value a binding
+ * carries into the instance — the value source
+ * a read names (q1's `attribute :>> L = 50.0` for `P::c in q1::p`), where
+ * that member's own value is the one read, or else the component's single
+ * stated member written in one of them ({@link DefiningEquations.statedMember}:
+ * where the relation reads a value derived from the bound one, h2c's `p.m2 =
+ * 10.0 - load`, or one the instance's own binding holds, A4's q2's `E`); else
+ * (2) the element the instance is read in (`readIn`: q2's `part :>> p { … }`,
+ * Q2's `part :>> p : P2`); else (3) the innermost of its own elements (r1, where r1 sets the K a bound L derives from;
+ * `sys::r1`'s r1, not the `sys` its siblings share); else (4) `own` itself, a
+ * context that is no usage (`part def Q2 :> Q`). Never an implicit or a library
+ * element; `undefined` where none is found, or where working it out throws
+ * (A.2.9: the anchor never costs the row), and {@link anchorFor} takes its
+ * later steps.
+ */
+function instanceAnchor(
+  model: Model,
+  definitions: DefiningEquations,
+  inst: string,
+  names: readonly string[],
+  reads: readonly InstanceRead[] | undefined,
+  readIn: ElementId | undefined,
+  own: ElementId | undefined,
+): ElementId | undefined {
+  try {
+    const user = (el: ElementRecord | undefined): el is ElementRecord =>
+      el !== undefined && el.attrs.isLibrary !== true && el.attrs.implicit !== true;
+    const frames = [...(definitions.framesAbove(inst) ?? []), ...(own !== undefined ? [{ instance: inst, reader: own }] : [])];
+    const mine = frames.filter(({ instance, reader }) => {
+      const el = model.get(reader);
+      const owns = el !== undefined && (isUsage(el.eClass) || (isDefinition(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage'));
+      return user(el) && owns && definitions.instanceNameOf(el.id) === instance;
+    });
+    const sources = (reads ?? []).flatMap((r) => (r.via !== undefined ? [r.via.sourceSymbol] : []));
+    for (const source of sources) {
+      // The member the source symbol names, from the innermost own usage it is spelled under.
+      for (let k = mine.length - 1; k >= 0; k--) {
+        const { instance, reader } = mine[k]!;
+        if (source === instance || !spellsInstance(source, instance)) continue;
+        const d = definitions.denote(reader).get(source.slice(instance.length + 2).split('::').join('.'));
+        const stated = d ? definitions.carrier(d.reader, d.feature) : undefined;
+        if (user(stated) && definitions.qualifiedNameOf(stated.id) === source) return stated.id;
+      }
+    }
+    // No read names a source of its own: the stated member, from the innermost own element, the names
+    // spelled from it and only its own paths read.
+    for (let k = frames.length - 1; k >= 0; k--) {
+      const frame = frames[k]!;
+      if ((frame.reader !== own && !mine.includes(frame)) || !spellsInstance(inst, frame.instance)) continue;
+      const at = frame.instance === inst ? '' : `${inst.slice(frame.instance.length + 2).split('::').join('.')}.`;
+      const stated = definitions.statedMember(frame.reader, names.map((n) => at + n), at);
+      if (user(stated)) return stated.id;
+    }
+    if (readIn !== undefined && user(model.get(readIn))) return readIn;
+    return mine[mine.length - 1]?.reader ?? (own !== undefined && user(model.get(own)) ? own : undefined);
+  } catch {
+    return undefined;
+  }
 }
 
 /** One row of {@link instanceRollup}: a finding the rule and the app's Check format identically. */
@@ -1660,13 +1728,20 @@ function readInContexts(
       continue;
     }
     const reading: ElementRecord = { ...el, ownerId: x.id };
-    // A context whose reading met a binding (F5) is read per instance — at the
-    // context's own instance — instead of being refused: h2c's `Q::c in q`, M7's
-    // `Q::c in q2`. Past a cap, or a context listed only because a member reads
-    // its own value there (the G340 family), the refusal is kept in its sentence.
+    // A context whose reading met a binding above it (F5) is read per instance
+    // — at the context's own instance — instead of being refused. Past a cap, or
+    // a context listed only because a member reads its own value there (the
+    // G340 family, M7's `Q::c in q2`), the refusal is kept in its sentence.
     const above = pass.definitions.boundAbove(x.id, bodyNames);
     const cap = above !== undefined && 'pastCap' in above;
     const via = !cap && above !== undefined;
+    // Every reading a binding carries is an instance's reading (`via`, PI-3),
+    // decided or refused: that one, and one whose values reach what the
+    // relation reads through a binding of its owner — h2c's and k2's `Q::c in
+    // q` (q's L, Q's `bind p.load = L`), M7's `Q::c in q2` (q2's K, through the
+    // bound L). It is `constraint-by-instance`'s, at the instance's own line.
+    const carried = above !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
+    const readAs = carried ? pass.definitions.instanceNameOf(x.id) : undefined;
     const why =
       cap
         ? boundAboveSentence(pass.definitions, x.id, above!)
@@ -1706,6 +1781,7 @@ function readInContexts(
     });
     const satisfied = pass.definitions.satisfaction(x.id);
     const contextName = effectiveNameOf(model, satisfied?.satisfier ?? x) ?? nameOf(satisfied?.satisfier ?? x);
+    const anchor = readAs !== undefined ? instanceAnchor(model, pass.definitions, readAs, names, judged.reads, undefined, x.id) : undefined;
     instances.push({
       contextId: x.id,
       context: contextName,
@@ -1716,7 +1792,8 @@ function readInContexts(
       result: judged.result,
       message: instanceMessage(model, judged, shown, contextName, target, expr, scope),
       detail: judged.message,
-      ...(via ? { via: true as const, readAs: pass.definitions.instanceNameOf(x.id) } : {}),
+      ...(readAs !== undefined ? { via: true as const, readAs } : {}),
+      ...(anchor !== undefined ? { anchorId: anchor } : {}),
       ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
       ...(causeOf(judged) !== undefined ? { cause: causeOf(judged) } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
@@ -1792,6 +1869,9 @@ function groupInstanceRows(
     else row.instance = inst;
     const element = inst !== undefined ? group.standsFor?.get(inst) : undefined;
     if (element !== undefined) row.elementId = element;
+    // Where the instance's finding points (PI-2): its own line, not the shared usage.
+    const anchor = inst !== undefined ? instanceAnchor(model, definitions, inst, names, judged.reads, readIn, readIn ?? element) : undefined;
+    if (anchor !== undefined) row.anchorId = anchor;
     if (judged.abstention !== undefined) row.abstention = judged.abstention;
     const cause = causeOf(judged);
     if (cause !== undefined) row.cause = cause;

@@ -894,7 +894,10 @@ binding of Q tells the instances apart (`part q2 : Q { attribute E = 20.0; bind
 p.extra = E; }`, or the package's `bind q2.p.extra = E`: q2's p is read in its
 own element, at q2's extra of 20). The
 rows are read apart, each at the value of the instance it names, so an instance
-that breaks the relation is reported against that instance, and the check rolls
+that breaks the relation is reported against that instance — at the line that
+makes it differ: the member of its own stating the value the binding carries in
+(q's `attribute :>> L = 50.0`), else the element the instance is read in, else
+its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never the usage the instances share — and the check rolls
 two or more of them up into one finding; a relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
 has no roll-up, and a violation there is that instance's finding alone — one the
@@ -961,7 +964,13 @@ never solved as a design equation (`s.a.load == 9.0` for a shallow `part s :
 T1` beside the capped chain), and the feasibility search does not move it.
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
-listed, and decided by no surface yet. A per-instance reading that fails
+listed, and decided by no surface yet. Such a context, and one whose own value a
+binding of the definition carries into what the relation reads (`q : Q {
+attribute :>> L = 50.0; }` over Q's `bind p.load = L`, for Q's `constraint c {
+p.m2 >= 0.0 }`), is that instance's reading: a `validation/constraint-by-instance`
+finding at the member of the context stating the carried value (q's `:>> L`),
+else at the context itself, never a target's
+`validation/target-by-specialisation` verdict. A per-instance reading that fails
 inside the tool makes the row it was read for *could not be evaluated*, in a
 sentence naming the failure (`… the per-instance reading failed (RangeError);
 reported, not dropped`; a group's roll-up counts it *not read*), and every
@@ -2123,6 +2132,19 @@ supersedes that obligation and nothing else — the pair `clause` +
 `obligationDigest` is what identifies one — so a requirement whose second clause
 was just discharged still reads `fail` while its first clause stands refuted, and
 the answer does not change if you swap the two clauses in the source.
+
+**A reading in a context or an instance is one of those obligations.** `satisfy
+LoadReq by p1;` makes `verify` read `LoadReq` in `p1` as well as on its own row,
+and `verify --record` writes that reading as a `sysprose-evidence/2` record naming
+the requirement and the reading (`"instance": { "requirement": "H::LoadReq",
+"reading": "H::p1" }`). The facet is the worst over the readings too, and so is the
+verdict of a verification case that verifies the requirement: a requirement
+refuted in one part makes the case `fail` in `verify`'s report, with or without
+`--case` (which records the readings with the own row), and is written `fail` by
+the record and by the case, on every attach. A record from an older build names a reading only as `<requirement> in
+<reading>`; it is carried the same way when the first half is a requirement of
+this model and the model reads it in the second, and is otherwise skipped with
+the half that does not match named.
 
 **Evidence accumulates.** A second run **appends** a carrier; nothing is
 overwritten and no earlier verdict is deleted, so the file keeps the history of

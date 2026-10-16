@@ -548,7 +548,9 @@ property; a record carrying no per-instance facet keeps `schema =
 "sysprose-evidence/1"`, so every record written before this build still validates
 and `recordOfCarrier` still reads every carrier in the wild. (A later change adds
 `sysprose-evidence/2`, which carries an optional per-instance facet and nothing
-else; both versions are read side by side, and the schema discriminates them.)
+else; both versions are read side by side, and the schema discriminates them.
+`verify --record` writes a requirement's clause read in a context or an instance
+as `…/2`, so a record file holding one is refused whole by a build before it.)
 The other direction does not hold: the schema is compiled with
 `additionalProperties: false` at every level in two places — the corpus test and
 `loadRecords` in `scripts/sysprose.ts`, which refuses the **whole** attach if any

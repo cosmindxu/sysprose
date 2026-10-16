@@ -113,6 +113,7 @@ import {
   noMachineRefusal,
   obligationsReport,
   orphanReport,
+  perInstanceReadings,
   refinementReport,
   promptsFor,
   propertyCheck,
@@ -3189,6 +3190,16 @@ interface CaseVerdictWrite {
  * claim AND the engine that made it, because the two disagree on one word:
  * `holds-at-values` is a discharge under `--engine literal`, which was asked for
  * by name, and is not one under `--engine smt`.
+ *
+ * A PER-INSTANCE READING IS A ROW OF ITS REQUIREMENT. Its name,
+ * `<requirement> in <reading>`, is no element, so it used to be dropped here,
+ * and a case verifying a requirement refuted in one instance was judged on the
+ * requirement's own row alone: `evidence-attach` wrote `pass` over the `fail`
+ * the evidence had just written, and again on every re-attach. Each reading is
+ * filed under the requirement it reads ({@link perInstanceReadings}), so the
+ * case verdict is the minimum over the readings; its clause is named by the
+ * record, since a reading's clause is no element either, and the roll-up never
+ * reads a clause id.
  */
 function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): JudgedObligation[] {
   const byName = new Map<string, ElementRecord>();
@@ -3196,17 +3207,19 @@ function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): Ju
     const qn = qname(model, el.id);
     if (qn !== '' && !byName.has(qn)) byName.set(qn, el);
   }
+  const readings = perInstanceReadings(model, records);
   const rows: JudgedObligation[] = [];
-  for (const record of records) {
+  for (const [i, record] of records.entries()) {
     const requirement = record.obligation.requirement;
     if (requirement === null || requirement === '') continue;
-    const req = byName.get(requirement);
+    const reading = readings[i];
+    const req = reading?.requirement ?? byName.get(requirement);
     const clause = byName.get(record.obligation.clause);
-    if (!req || !clause) continue;
+    if (!req || (!clause && !reading)) continue;
     rows.push({
-      requirement: { id: req.id, qualifiedName: requirement },
+      requirement: { id: req.id, qualifiedName: reading?.facet.requirement ?? requirement },
       shortId: record.obligation.shortId,
-      clause: { id: clause.id, qualifiedName: record.obligation.clause },
+      clause: { id: clause?.id ?? record.obligation.clause, qualifiedName: record.obligation.clause },
       expression: record.obligation.expression,
       claim: record.claim,
       discharged:

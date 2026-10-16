@@ -1238,12 +1238,15 @@ export type EvidenceSchemaVersion = 'sysprose-evidence/1' | 'sysprose-evidence/2
  * once each reading is a record of its own. This facet is what makes the record
  * attachable and each reading distinct:
  *
- *  - `requirement` — the element that carries the facet, i.e. the part of
- *    `obligation.requirement` before the last ` in `. This is the attach target.
- *  - `reading` — the context or instance the relation was read in, i.e. the part
- *    after the last ` in `. It enters {@link obligationKey}, so two readings of
- *    one clause are two live obligations rather than one that supersedes the
- *    other.
+ *  - `requirement` — the element that carries the facet: the requirement the
+ *    row was read for. This is the attach target.
+ *  - `reading` — the context or instance the relation was read in: what follows
+ *    the requirement's name and ` in ` in `obligation.requirement`. It enters
+ *    {@link obligationKey}, so two readings of one clause are two live
+ *    obligations rather than one that supersedes the other.
+ *
+ * `verify --record` writes both from the obligation row ({@link instanceFacetOf}),
+ * never by splitting the name: a reading may itself contain ` in `.
  */
 export interface EvidenceInstanceFacet {
   /** The requirement element's qualified name — what the facet is written on. */
@@ -1366,6 +1369,32 @@ export function recordEvidence(input: {
     producedBy: input.producedBy,
     flags: input.flags,
   }));
+}
+
+/**
+ * The per-instance facet of one obligation row, or `undefined` for a row read
+ * where it is written.
+ *
+ * A requirement's clause read in a context or an instance is a row whose
+ * `requirement` is the requirement AS READ THERE — `<requirement> in <reading>`
+ * — and whose `instance.requirementId` is the requirement element itself. The
+ * facet is taken from the two: the requirement's own name is known, so the
+ * reading is exactly what follows it and ` in `, whatever the reading contains.
+ * A row whose name does not start with its requirement's name gets no facet and
+ * stays the `…/1` record it always was.
+ */
+export function instanceFacetOf(
+  model: Model,
+  row: Pick<Obligation, 'requirement' | 'instance'>,
+): EvidenceInstanceFacet | undefined {
+  const requirementId = row.instance?.requirementId;
+  if (requirementId === undefined || row.requirement === null) return undefined;
+  if (row.requirement.id === requirementId) return undefined;
+  const requirement = model.qualifiedName(requirementId);
+  const prefix = `${requirement} in `;
+  if (requirement === '' || !row.requirement.qualifiedName.startsWith(prefix)) return undefined;
+  const reading = row.requirement.qualifiedName.slice(prefix.length);
+  return reading !== '' ? { requirement, reading } : undefined;
 }
 
 /** `proved` ⇒ pass, `refuted` ⇒ fail, everything else ⇒ inconclusive. */
@@ -1730,9 +1759,11 @@ export interface AttachReport {
  * record names the requirement it belongs to and the instance it was read in,
  * so a requirement whose relation holds in every instance but one carries the
  * one refutation's `fail` rather than a `pass` taken from the requirement's own
- * row. A `…/1` record of such a reading — the shape `verify --record` writes
- * today — is upgraded to `…/2` here; only a name that resolves to nothing is
- * skipped (see {@link targetOfRecord}).
+ * row. `verify --record` writes such a reading as `…/2`. A `…/1` record of one,
+ * named `<requirement> in <reading>` by an older build, is upgraded to `…/2`
+ * here only when the requirement is a requirement of this model and this model
+ * reads it in that reading; anything else is skipped with the reason (see
+ * {@link targetOfRecord}).
  *
  * NOTHING IS WRITTEN UNTIL EVERY TARGET HAS BEEN CHECKED. The two refusals
  * below are raised in a pass of their own, before the first carrier goes in,
@@ -1761,6 +1792,7 @@ export function attachEvidence(
   // may legitimately appear twice in one `--from` file, and a Map would silently
   // collapse the duplicate instead of counting it as `unchanged`.
   const targets: Array<[EvidenceRecord, ElementRecord]> = [];
+  const readings = readingsOnce(model);
   for (const record of records) {
     const qn = record.obligation.requirement;
     if (qn === null || qn === '') {
@@ -1772,17 +1804,13 @@ export function attachEvidence(
       });
       continue;
     }
-    const resolved = targetOfRecord(model, record);
-    if (resolved === undefined) {
+    const resolved = targetOfRecord(model, record, readings);
+    if ('skip' in resolved) {
       // WHAT IS STILL SKIPPED, now that a per-instance or per-context claim is
-      // not: a name that resolves to nothing at all. `R in X` whose `R` is a
-      // requirement of this model is carried (as `…/2`); `R in X` whose `R`
-      // names nothing here is a record of a different file, and the model-level
-      // case is skipped above. Nothing else reaches this branch.
-      report.skipped.push({
-        clause: record.obligation.clause,
-        reason: `no element of this model is called \`${qn}\` — the record was produced against a different file`,
-      });
+      // not: a name that resolves to nothing at all (a record of a different
+      // file), and an old `R in X` whose `R` is no requirement or whose `X` is
+      // no reading of it here. The model-level case is skipped above.
+      report.skipped.push({ clause: record.obligation.clause, reason: resolved.skip });
       continue;
     }
     const [stored, target] = resolved;
@@ -1874,40 +1902,130 @@ export function attachEvidence(
  * The element a record annotates, and the record as it will be stored.
  *
  * THREE SHAPES, one job. A `sysprose-evidence/2` record carries its target in
- * {@link EvidenceInstanceFacet.requirement}. A `sysprose-evidence/1` record
- * whose `obligation.requirement` is an element's qualified name attaches there
- * directly. And a `…/1` record of a relation read in one instance or context —
- * `verify --record` names it `<requirement> in <reading>` — is UPGRADED to
- * `…/2` here rather than skipped: the split names the requirement that carries
- * the facet and the reading the record was taken in, which is the whole of what
- * `…/2` adds, and the requirement's facet must take the MINIMUM over those
- * readings rather than never see them.
+ * {@link EvidenceInstanceFacet.requirement}, and the name is never split. A
+ * `sysprose-evidence/1` record whose `obligation.requirement` is an element's
+ * qualified name attaches there directly. And a `…/1` record of a relation read
+ * in one instance or context — an older `verify --record` named it
+ * `<requirement> in <reading>` — is UPGRADED to `…/2` here rather than skipped,
+ * so the requirement's facet takes the MINIMUM over its readings rather than
+ * never seeing them.
  *
- * `undefined` back means no element of this model is named: the record is about
- * a different file. That is the only skip left on this path.
+ * THAT UPGRADE IS A GUESS AT A NAME, so it is checked rather than trusted. The
+ * name is tried at EVERY ` in ` (a reading may contain one), and a split is
+ * taken only when its left half is a requirement of this model and its right
+ * half is a reading this model reads that requirement in ({@link readingsOnce}).
+ * `H::P in H::p1` over a `part def P` and `H::LoadReq in H::nowhere` are
+ * skipped with the half that is wrong named, never attached to a part
+ * definition or failed on a requirement over a context the model does not have.
  */
 function targetOfRecord(
   model: Model,
   record: EvidenceRecord,
-): [EvidenceRecord, ElementRecord] | undefined {
+  readings: () => ReadonlyMap<ElementId, ReadonlySet<string>>,
+): [EvidenceRecord, ElementRecord] | { skip: string } {
+  const elsewhere = (qn: string): { skip: string } => ({
+    skip: `no element of this model is called \`${qn}\` — the record was produced against a different file`,
+  });
   if (record.instance !== undefined) {
     const target = resolveByQualifiedName(model, record.instance.requirement);
-    return target !== undefined ? [record, target] : undefined;
+    return target !== undefined ? [record, target] : elsewhere(record.instance.requirement);
   }
   const qn = record.obligation.requirement;
-  if (typeof qn !== 'string' || qn === '') return undefined;
+  if (typeof qn !== 'string' || qn === '') return elsewhere(String(qn));
   const direct = resolveByQualifiedName(model, qn);
   if (direct !== undefined) return [record, direct];
-  const sep = qn.lastIndexOf(' in ');
-  if (sep <= 0) return undefined;
-  const requirement = qn.slice(0, sep);
-  const reading = qn.slice(sep + 4);
-  const target = resolveByQualifiedName(model, requirement);
-  if (target === undefined || reading === '') return undefined;
-  return [
-    { ...record, schema: 'sysprose-evidence/2', instance: { requirement, reading } },
-    target,
-  ];
+  // The most specific reason over every split: a requirement read nowhere by
+  // that name beats an element that is no requirement, which beats nothing.
+  let skip = elsewhere(qn);
+  let rank = 0;
+  for (let sep = qn.indexOf(' in '); sep !== -1; sep = qn.indexOf(' in ', sep + 1)) {
+    const requirement = qn.slice(0, sep);
+    const reading = qn.slice(sep + 4);
+    const target = requirement !== '' && reading !== '' ? resolveByQualifiedName(model, requirement) : undefined;
+    if (target === undefined) continue;
+    if (!isRequirement(target.eClass)) {
+      if (rank < 1) {
+        rank = 1;
+        skip = {
+          skip:
+            `\`${requirement}\` is a ${target.eClass}, not a requirement — a reading \`<requirement> in ` +
+            '<reading>` is carried by the requirement it reads, and evidence written anywhere else would ' +
+            'be evidence about something else',
+        };
+      }
+      continue;
+    }
+    if (readings().get(target.id)?.has(reading) !== true) {
+      if (rank < 2) {
+        rank = 2;
+        skip = {
+          skip:
+            `this model never reads \`${requirement}\` in \`${reading}\` — the record was produced ` +
+            'against a different file, or before the model changed',
+        };
+      }
+      continue;
+    }
+    return [
+      { ...record, schema: 'sysprose-evidence/2', instance: { requirement, reading } },
+      target,
+    ];
+  }
+  return skip;
+}
+
+/**
+ * Every reading this model reads each requirement in, by requirement id — the
+ * facets `verify --record` would write ({@link instanceFacetOf}) — computed on
+ * first use and kept for one pass. Only an old `…/1` `R in X` record asks, so a
+ * file without one never pays for the obligation rows.
+ */
+function readingsOnce(model: Model): () => ReadonlyMap<ElementId, ReadonlySet<string>> {
+  let byRequirement: Map<ElementId, Set<string>> | undefined;
+  return () => {
+    if (byRequirement === undefined) {
+      byRequirement = new Map();
+      for (const row of obligationsOf(model)) {
+        const facet = instanceFacetOf(model, row);
+        const id = row.instance?.requirementId;
+        if (facet === undefined || id === undefined) continue;
+        const known = byRequirement.get(id);
+        if (known) known.add(facet.reading);
+        else byRequirement.set(id, new Set([facet.reading]));
+      }
+    }
+    return byRequirement;
+  };
+}
+
+/**
+ * The requirement each record is a per-instance reading of, as
+ * {@link attachEvidence} carries it — `undefined` for a record that is not one,
+ * or that attach skips, or whose reading is carried by an element that is not
+ * a requirement.
+ *
+ * For the case layer of `evidence-attach` (`scripts/sysprose.ts`): a case that
+ * verifies a requirement is judged over every reading of it, so a requirement
+ * refuted in one instance is not written `pass` by the case over the `fail` its
+ * evidence carries. One answer per record, in order.
+ */
+export function perInstanceReadings(
+  model: Model,
+  records: readonly EvidenceRecord[],
+): Array<{ requirement: ElementRecord; facet: EvidenceInstanceFacet } | undefined> {
+  const readings = readingsOnce(model);
+  return records.map((record) => {
+    const qn = record.obligation.requirement;
+    if (qn === null || qn === '') return undefined;
+    // Only a `…/2` record, or a `…/1` one named `R in X`, can be a reading.
+    if (record.instance === undefined && !qn.includes(' in ')) return undefined;
+    const resolved = targetOfRecord(model, record, readings);
+    if ('skip' in resolved) return undefined;
+    const [stored, target] = resolved;
+    return stored.instance !== undefined && isRequirement(target.eClass)
+      ? { requirement: target, facet: stored.instance }
+      : undefined;
+  });
 }
 
 /** One carrier, written in the shape the notation reads back unchanged. */
