@@ -540,6 +540,17 @@ describe('solve — a value a binding past a cap holds is no design freedom', ()
     expect(free).not.toContain('CAPU4::T1::L');
   });
 
+  it('reports a model with a capped binding as not converged, and its rows name the cap', async () => {
+    // Fail closed: the values held past the cap are not read, so the solve counts them undetermined and says
+    // `did not converge`; the rows over them say why. The user guide says so beside the cap.
+    const { model: m } = await loadModelText(CAPU4);
+    const report = solve(m!);
+    expect(report.converged).toBe(false);
+    const numeric = checkConstraintsNumeric(m!);
+    const row = numeric.find((r) => m!.qualifiedName(r.id) === 'CAPU4::c1')!;
+    expect(row.reason).toContain('deeper than 32 usages');
+  });
+
   it('leaves an instance whose binding has an end outside it unjudged (R’s nested Q)', async () => {
     const { model: m } = await loadModelText(`package XO2 {
       part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }

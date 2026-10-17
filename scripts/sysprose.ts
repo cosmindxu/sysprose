@@ -113,6 +113,8 @@ import {
   noMachineRefusal,
   obligationsReport,
   orphanReport,
+  modelReadings,
+  type ModelReadings,
   perInstanceReadings,
   refinementReport,
   promptsFor,
@@ -158,6 +160,7 @@ import {
 } from '../src/api/index';
 import {
   isStatementKind,
+  quotePath,
   resolveFullName,
   runVerificationCases,
   statementKindOf,
@@ -497,6 +500,11 @@ function listOrNone(heading: string, items: string[], none: string, indent = '  
   return [`${indent}${heading}`, ...items.map((i) => `${indent}  ${i}`)];
 }
 
+/** A row or element id without its `@instance` marker (`<id>@<instance>`). */
+function baseIdOf(id: string | undefined): string {
+  return (id ?? '').split('@')[0];
+}
+
 /**
  * A command footer's diagnostics, folded (R2-M3): rows sharing a relation (the
  * element id before any `@` instance marker) and a code print the first five,
@@ -504,11 +512,11 @@ function listOrNone(heading: string, items: string[], none: string, indent = '  
  * folded; only this text rendering is. v9's footers carry no `@`, so each row
  * is its own relation and nothing folds.
  */
-function foldedDiagnostics(diags: readonly Diagnostic[]): string[] {
+function foldedDiagnostics(model: Model, diags: readonly Diagnostic[]): string[] {
   const order: string[] = [];
   const groups = new Map<string, Diagnostic[]>();
   for (const d of diags) {
-    const key = `${(d.elementId ?? '').split('@')[0]}\u0000${d.code ?? ''}`;
+    const key = `${baseIdOf(d.elementId)}\u0000${d.code ?? ''}`;
     const list = groups.get(key);
     if (list) list.push(d);
     else {
@@ -521,7 +529,12 @@ function foldedDiagnostics(diags: readonly Diagnostic[]): string[] {
     const group = groups.get(key)!;
     for (const d of group.slice(0, 5)) out.push(`  ${d.code}  ${d.message}`);
     if (group.length > 5) {
-      const rel = group[0].elementName ?? group[0].elementId ?? '';
+      // The relation, not the instance the first row happens to name (PI-9).
+      // Named through the model by its base id, quoted as the sentences quote it
+      // (PI-11): cutting a row name at ` in ` would split a relation whose own
+      // name holds one.
+      const id = baseIdOf(group[0].elementId);
+      const rel = id ? quotePath(qname(model, id)) : (group[0].elementName ?? '');
       out.push(`  \u2026 and ${group.length - 5} more ${group[0].code} on ${rel}`);
     }
   }
@@ -1455,7 +1468,7 @@ function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
       `${r.libraryExcluded} bundled library requirement(s) and ` +
       `${r.implicitExcluded} re-derived copy/copies excluded`,
     ...(r.keywordsAsked ? keywordBlock(r.keywords) : []),
-    ...foldedDiagnostics(r.diagnostics),
+    ...foldedDiagnostics(model, r.diagnostics),
   ].join('\n');
   return { json: r, text };
 }
@@ -1544,7 +1557,7 @@ function reportObligations(model: Model, name: string, args: ParsedArgs): Report
     ...(noFormalClause > 0
       ? [`  ${noFormalClause} requirement(s) carry no formal clause — no gate refused them`]
       : []),
-    ...foldedDiagnostics(r.diagnostics),
+    ...foldedDiagnostics(model, r.diagnostics),
   ].join('\n');
   return { json: r, text };
 }
@@ -1987,15 +2000,16 @@ function verdictLines(v: ObligationVerdict, why: boolean): string[] {
 /**
  * {@link verdictLines} over the whole run, folded (C.3): more than five rows
  * sharing a relation and a claim print five, then one line counting the rest.
- * The relation is the row's canonical digest — one instance row of a shared
- * relation shares its digest, so a model read per instance prints one short
- * block, never one per instance. v9 has one row per relation, so it never
- * folds.
+ * The relation is the row's element id before any `@instance` marker (and the
+ * requirement's, where a requirement carries it): an instance row of a shared
+ * relation shares it, so a model read per instance prints one short block,
+ * never one per instance (the digest is unique per row and cannot key this,
+ * PI-8). v9 has one row per relation, so it never folds.
  */
-function verdictResultLines(results: readonly ObligationVerdict[], why: boolean): string[] {
+function verdictResultLines(model: Model, results: readonly ObligationVerdict[], why: boolean): string[] {
   const groups = new Map<string, ObligationVerdict[]>();
   for (const v of results) {
-    const key = `${v.obligationDigest}\u0000${v.claim}`;
+    const key = `${baseIdOf(v.clause.id)}\u0000${baseIdOf(v.requirement?.id)}\u0000${v.claim}`;
     const list = groups.get(key);
     if (list) list.push(v);
     else groups.set(key, [v]);
@@ -2004,7 +2018,7 @@ function verdictResultLines(results: readonly ObligationVerdict[], why: boolean)
   for (const group of groups.values()) {
     out.push(...group.slice(0, 5).flatMap((v) => verdictLines(v, why)));
     if (group.length > 5) {
-      const where = group[0].requirement?.qualifiedName ?? group[0].clause.qualifiedName;
+      const where = quotePath(qname(model, baseIdOf(group[0].requirement?.id ?? group[0].clause.id)));
       out.push(`    \u2026 and ${group.length - 5} more rows of ${where}: ${group[0].claim} in ${group.length}`);
     }
   }
@@ -2171,7 +2185,7 @@ async function reportVerify(
             : '  this model states no obligation at all — there was nothing to verify, ' +
               'which is exit 2: exit 0 means every obligation was discharged, and none was',
         ]
-      : verdictResultLines(r.results, why)),
+      : verdictResultLines(model, r.results, why)),
     // The cases LAST, under the obligations they stand on, because a case
     // verdict is a roll-up of rows the reader has just read. A model that
     // declares none prints nothing here rather than a zero: "0 verification
@@ -2192,7 +2206,7 @@ async function reportVerify(
       `${r.modelVersion.sysprose.git ? ` (git ${r.modelVersion.sysprose.git.slice(0, 12)})` : ' (no git commit — none was found, and none is invented)'}` +
       ` · standard library ${r.modelVersion.library} element(s)`,
     ...(record !== undefined ? [`  ${r.records.length} evidence record(s) written to ${record}`] : []),
-    ...foldedDiagnostics(r.diagnostics),
+    ...foldedDiagnostics(model, r.diagnostics),
   ].join('\n');
   return { json: r, text: rendered, verify: r };
 }
@@ -3201,13 +3215,17 @@ interface CaseVerdictWrite {
  * record, since a reading's clause is no element either, and the roll-up never
  * reads a clause id.
  */
-function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): JudgedObligation[] {
+function judgedFromRecords(
+  model: Model,
+  records: readonly EvidenceRecord[],
+  modelRead: ModelReadings,
+): JudgedObligation[] {
   const byName = new Map<string, ElementRecord>();
   for (const el of model.all()) {
     const qn = qname(model, el.id);
     if (qn !== '' && !byName.has(qn)) byName.set(qn, el);
   }
-  const readings = perInstanceReadings(model, records);
+  const readings = perInstanceReadings(model, records, modelRead);
   const rows: JudgedObligation[] = [];
   for (const [i, record] of records.entries()) {
     const requirement = record.obligation.requirement;
@@ -3216,8 +3234,7 @@ function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): Ju
     const req = reading?.requirement ?? byName.get(requirement);
     const clause = byName.get(record.obligation.clause);
     if (!req || (!clause && !reading)) continue;
-    rows.push({
-      requirement: { id: req.id, qualifiedName: reading?.facet.requirement ?? requirement },
+    const row = {
       shortId: record.obligation.shortId,
       clause: { id: clause?.id ?? record.obligation.clause, qualifiedName: record.obligation.clause },
       expression: record.obligation.expression,
@@ -3227,7 +3244,17 @@ function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): Ju
         (record.engine === 'literal' && record.claim === 'holds-at-values'),
       code: record.code ?? null,
       detail: record.detail,
-    });
+    };
+    const read = reading ? { reading: reading.facet.reading } : {};
+    rows.push({ ...row, ...read, requirement: { id: req.id, qualifiedName: reading?.facet.requirement ?? requirement } });
+    // A reading filed on a requirement usage (EV-4) is also a row of the definition it reads.
+    if (reading?.definition) {
+      rows.push({
+        ...row,
+        ...read,
+        requirement: { id: reading.definition.id, qualifiedName: qname(model, reading.definition.id) },
+      });
+    }
   }
   return rows;
 }
@@ -3255,9 +3282,13 @@ function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): Ju
  * attach moved: a verdict that changes silently is the one thing this lane may
  * never do.
  */
-function writeCaseVerdicts(model: Model, records: readonly EvidenceRecord[]): CaseVerdictWrite[] {
+function writeCaseVerdicts(
+  model: Model,
+  records: readonly EvidenceRecord[],
+  modelRead: ModelReadings,
+): CaseVerdictWrite[] {
   const out: CaseVerdictWrite[] = [];
-  const judged = judgedFromRecords(model, records);
+  const judged = judgedFromRecords(model, records, modelRead);
   if (judged.length === 0) return out;
   for (const c of runVerificationCases(model, { judged }).cases) {
     if (!c.judged || c.code !== null) continue;
@@ -3328,9 +3359,11 @@ function reportEvidenceAttach(
   refuseDegradedWrite('evidence-attach', name, degraded);
   const from = attachFrom(args);
   const records = loadRecords(from);
+  // The model's readings are built once for the attach and for the case layer after it.
+  const modelRead = modelReadings(model);
   let r: AttachReport;
   try {
-    r = attachEvidence(model, records);
+    r = attachEvidence(model, records, modelRead);
   } catch (err) {
     // A library element, or a faulted declaration. Both are answers about what
     // was ASKED — the record names an element evidence cannot live on — and
@@ -3357,7 +3390,7 @@ function reportEvidenceAttach(
   // AFTER the records are in, because the case verdict is a roll-up of the rows
   // they state and a model that declares no verification case is left exactly
   // as `attachEvidence` left it.
-  const caseVerdicts = writeCaseVerdicts(model, records);
+  const caseVerdicts = writeCaseVerdicts(model, records, modelRead);
   // THE PAYLOAD SAYS WHAT THE FILE SAYS. `attachEvidence`'s own report knows
   // nothing about cases, so a `--json` body carrying it alone would state a
   // verdict the artefact beside it does not contain — and would report an empty

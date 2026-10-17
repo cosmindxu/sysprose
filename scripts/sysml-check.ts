@@ -91,8 +91,9 @@ function renderText(report: CheckReport): string {
     lines.push(`${name}:${at}: ${d.severity} ${d.code ?? d.ruleId}  ${d.message}`);
     if (d.instances) {
       const { total, satisfied, violated, unknown, unread, listed } = d.instances;
+      const atLeast = d.instances.atLeast === true ? 'at least ' : '';
       lines.push(
-        `    instances: ${total} (${satisfied} hold \u00b7 ${violated} violated \u00b7 ${unknown} unknown \u00b7 ${unread} unread); listed: ${listed.join(', ')}`,
+        `    instances: ${total} (${satisfied} hold \u00b7 ${violated} violated \u00b7 ${unknown} unknown \u00b7 ${atLeast}${unread} unread)${listed.length > 0 ? `; listed: ${listed.join(', ')}` : ''}`,
       );
     }
     if (d.expected && d.expected.length > 0) {

@@ -2171,6 +2171,58 @@ package P {
   }, 300_000);
 
   /**
+   * A model read per instance prints one short block (PI-8, PI-9). The fold keys
+   * on the relation (the element id before `@`), not on the row's digest, which
+   * is unique per row and so never folded: eight refuted instance rows of one
+   * relation print five and one line counting the rest, and the footer's
+   * fold names the relation, not the instance its first row happens to be.
+   */
+  it('verify folds the instance rows of one relation and names the relation in the footer', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-fold-'));
+    try {
+      const file = join(dir, 'fold.sysml');
+      const parts = Array.from({ length: 8 }, (_, i) => `  part q${i + 1} : Q { attribute :>> L = 50.0; }`);
+      writeFileSync(
+        file,
+        [
+          'package H {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }',
+          '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+          ...parts,
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const r = spawnCli(['verify', file, '--engine', 'literal']);
+      const rows = r.stdout.split('\n').filter((l) => /^ {2}H::P::c in H::q\d::p {2}/.test(l));
+      expect(rows, 'five refuted rows printed, not eight').toHaveLength(5);
+      expect(r.stdout).toContain('\u2026 and 3 more rows of H::P::c: refuted in 8');
+      // The footer counts the rest against the relation, not against `H::P::c in H::q1::p`.
+      expect(r.stdout).toContain('\u2026 and 3 more verification/refuted on H::P::c\n');
+
+      // A name that holds ` in ` is still one name: the fold names the relation
+      // through the model, never by cutting a row name at its first ` in `.
+      const quoted = join(dir, 'quoted.sysml');
+      writeFileSync(
+        quoted,
+        [
+          'package H {',
+          "  part def 'P in X' { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }",
+          "  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : 'P in X'; bind p.load = L; }",
+          ...Array.from({ length: 7 }, (_, i) => `  part 'q in ${i + 1}' : Q { attribute :>> L = 50.0; }`),
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const q = spawnCli(['verify', quoted, '--engine', 'literal']);
+      expect(q.stdout).toContain("\u2026 and 2 more rows of H::'P in X'::c: refuted in 7");
+      expect(q.stdout).toContain("\u2026 and 2 more verification/refuted on H::'P in X'::c\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  /**
    * The two flags this commit adds, asserted on what the command prints.
    *
    * Both are pinned for what they DO NOT do as much as for what they do:
@@ -3941,6 +3993,79 @@ package P {
       expect(status.stdout).toContain('the weakest of 3 obligations');
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+
+    // EV-4, in the same test so the L7 case count stays: the reading moves to the usage a
+    // `satisfy` names (`massR : LoadReq`), and the definition's case keeps it.
+    const dir4 = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model4 = join(dir4, 'ev4.sysml');
+      writeFileSync(
+        model4,
+        [
+          'package H {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+          '  requirement def LoadReq { subject s : P; require constraint { s.load <= 10.0 } }',
+          '  requirement massR : LoadReq { subject s : P; }',
+          '  part p1 : P { attribute :>> load = 50.0; }',
+          '  part p2 : P { attribute :>> load = 2.0; }',
+          '  satisfy massR by p1;',
+          '  satisfy massR by p2;',
+          '  verification def VC; verify LoadReq by VC;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const records4 = join(dir4, 'ev4.json');
+      const verified = await run(['verify', model4, '--engine', 'literal', '--record', records4]);
+      expect(verified.code).toBe(1);
+      expect(verified.stdout).toContain('H::VC  verdict fail');
+      const attached = await run(['evidence-attach', model4, '--from', records4, '--out', model4]);
+      expect(attached.code).toBe(0);
+      expect(attached.stderr).toContain('H::LoadReq — verdict fail written from H::VC');
+      expect(attached.stderr).toContain('H::VC verdict fail');
+      // The definition's facet answers for the reading moved off it, so the record
+      // layer writes `fail` too: an attach of the same file again moves nothing.
+      const again = await run(['evidence-attach', model4, '--from', records4, '--out', model4]);
+      expect(again.stderr, 'a re-attach moved the definition’s verdict').not.toContain('→');
+      const status4 = await run(['evidence-status', model4]);
+      expect(status4.stdout).toMatch(/H::LoadReq\s+current\s+current[^\n]*claim `refuted`, verdict `fail`/);
+      // And a case that verifies both counts the one moved reading once.
+      const massShape = (verifies: string): string =>
+        [
+          'package H {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+          '  requirement def LoadReq { subject s : P; require constraint { s.load <= 10.0 } }',
+          '  requirement massR : LoadReq { subject s : P; }',
+          '  part p1 : P { attribute :>> load = 50.0; }',
+          '  part p2 : P { attribute :>> load = 2.0; }',
+          '  satisfy massR by p1;',
+          '  satisfy massR by p2;',
+          `  verification def VC; ${verifies}`,
+          '}',
+          '',
+        ].join('\n');
+      const both = join(dir4, 'both.sysml');
+      writeFileSync(both, massShape('verify LoadReq by VC; verify massR by VC;'));
+      const counted = await run(['verify', both, '--engine', 'literal']);
+      expect(counted.stdout).toContain('fail: 1 of 3 obligation(s) refuted');
+      const recordsBoth = join(dir4, 'both.json');
+      await run(['verify', both, '--engine', 'literal', '--record', recordsBoth]);
+      const attachedBoth = await run(['evidence-attach', both, '--from', recordsBoth, '--out', both]);
+      expect(attachedBoth.stderr).toContain('H::LoadReq — verdict fail written from H::VC');
+      expect(attachedBoth.stderr).toContain('H::massR — verdict fail written from H::VC');
+      expect(attachedBoth.stderr).not.toContain('→');
+      // `verify massR by VC` alone: the definition is still written `fail`, as before the move.
+      const usageOnly = join(dir4, 'usage.sysml');
+      writeFileSync(usageOnly, massShape('verify massR by VC;'));
+      const recordsUsage = join(dir4, 'usage.json');
+      await run(['verify', usageOnly, '--engine', 'literal', '--record', recordsUsage]);
+      await run(['evidence-attach', usageOnly, '--from', recordsUsage, '--out', usageOnly]);
+      expect(
+        readFileSync(usageOnly, 'utf8').match(/metadata RequirementMetadata \{\s*attribute verdict = "fail"/g),
+      ).toHaveLength(2);
+    } finally {
+      rmSync(dir4, { recursive: true, force: true });
     }
   }, 300_000);
 

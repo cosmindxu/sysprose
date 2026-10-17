@@ -40,6 +40,8 @@ import { PRODUCT_SLUG, PRODUCT_VERSION } from '../branding';
 import { FULL_LIBRARY_MANIFEST_COUNT } from '../library/full-library';
 import { type ExprNode } from '../semantics/expr';
 import { type ContractRef, type ContractVariable } from '../semantics/contracts';
+import { sharedDefinitions } from '../semantics/defining-equation';
+import { generalizationsOf } from '../semantics/inheritance';
 import {
   axiomsOf,
   footprintOf,
@@ -1382,11 +1384,29 @@ export function recordEvidence(input: {
  * reading is exactly what follows it and ` in `, whatever the reading contains.
  * A row whose name does not start with its requirement's name gets no facet and
  * stays the `…/1` record it always was.
+ *
+ * WHICH ELEMENT CARRIES IT. The requirement the clause is written in, except
+ * where the reading is a `satisfy U by x` that names a requirement USAGE typed
+ * by that requirement: `requirement massR : LoadReq; satisfy massR by p1;` reads
+ * `LoadReq`'s clause at p1 (a usage does not own its definition's clauses, so
+ * the row is filed on `LoadReq`), and the reading is `massR`'s, the requirement
+ * the `satisfy` names and `verify massR by VC` verifies. The facet then names
+ * `massR`, with the same reading, so the record and its facet are `massR`'s
+ * (EV-4); `LoadReq` keeps the reading in the case roll-up only. A
+ * `satisfy LoadReq by p1` names the definition itself and keeps it.
  */
 export function instanceFacetOf(
   model: Model,
   row: Pick<Obligation, 'requirement' | 'instance'>,
 ): EvidenceInstanceFacet | undefined {
+  return instanceReadingOf(model, row)?.facet;
+}
+
+/** {@link instanceFacetOf}, with the id of the requirement element that carries the facet. */
+export function instanceReadingOf(
+  model: Model,
+  row: Pick<Obligation, 'requirement' | 'instance'>,
+): InstanceReading | undefined {
   const requirementId = row.instance?.requirementId;
   if (requirementId === undefined || row.requirement === null) return undefined;
   if (row.requirement.id === requirementId) return undefined;
@@ -1394,7 +1414,37 @@ export function instanceFacetOf(
   const prefix = `${requirement} in `;
   if (requirement === '' || !row.requirement.qualifiedName.startsWith(prefix)) return undefined;
   const reading = row.requirement.qualifiedName.slice(prefix.length);
-  return reading !== '' ? { requirement, reading } : undefined;
+  if (reading === '') return undefined;
+  const named = sharedDefinitions(model).satisfaction(row.instance!.contextId)?.requirement;
+  if (
+    named !== undefined &&
+    named.id !== requirementId &&
+    isRequirement(named.eClass) &&
+    // A USAGE only: `requirement def HeavyReq :> LoadReq; satisfy HeavyReq by p1` owns
+    // nothing of LoadReq's clause either, but it is a definition and keeps its reading.
+    named.eClass.endsWith('Usage') &&
+    generalizationsOf(model, named.id).some((g) => g.id === requirementId)
+  ) {
+    return {
+      requirementId: named.id,
+      facet: { requirement: model.qualifiedName(named.id), reading },
+      definition: { requirementId, requirement },
+    };
+  }
+  return { requirementId, facet: { requirement, reading } };
+}
+
+/**
+ * A reading's carrier and facet. `definition` is set when the reading is
+ * re-targeted to a requirement usage ({@link instanceFacetOf}): the definition
+ * whose clause was read keeps the reading in the CASE roll-up, so
+ * `verify LoadReq by VC` is judged over what `satisfy massR by p1` refutes in
+ * `LoadReq`'s clause, exactly as it was before the reading moved to `massR`.
+ */
+export interface InstanceReading {
+  requirementId: ElementId;
+  facet: EvidenceInstanceFacet;
+  definition?: { requirementId: ElementId; requirement: string };
 }
 
 /** `proved` ⇒ pass, `refuted` ⇒ fail, everything else ⇒ inconclusive. */
@@ -1598,8 +1648,11 @@ function obligationKey(record: EvidenceRecord, index = 0): string {
   if (typeof ob?.clause !== 'string' || typeof ob.obligationDigest !== 'string') {
     return `unkeyed record ${index}`;
   }
-  const reading = typeof record.instance?.reading === 'string' ? record.instance.reading : '';
-  return `${ob.clause} :: ${ob.obligationDigest}${reading !== '' ? ` @ ${reading}` : ''}`;
+  // A `…/2` record is keyed by its reading even when it is EMPTY (a hand-written
+  // carrier the schema refuses): keyed like the requirement's own row it would
+  // supersede that row, and a refutation could then be shown as `pass` (EV-6).
+  const reading = typeof record.instance?.reading === 'string' ? ` @ ${record.instance.reading}` : '';
+  return `${ob.clause} :: ${ob.obligationDigest}${reading}`;
 }
 
 /**
@@ -1629,6 +1682,38 @@ export function liveEvidence(records: readonly EvidenceRecord[]): EvidenceRecord
  * file carries has to be the worst of them.
  */
 const VERDICT_RANK: Record<EvidenceVerdict, number> = { fail: 2, inconclusive: 1, pass: 0 };
+
+/**
+ * The records a requirement DEFINITION answers for beyond its own carriers: the
+ * readings moved off it onto a requirement usage typed by it ({@link instanceReadingOf},
+ * EV-4). Such a record is carried by the usage and its clause is the definition's
+ * (`<definition>::…`), so the definition's verdict is the worst over its own
+ * carriers AND these, exactly as it was when the definition carried the reading —
+ * otherwise `evidence-attach` writes the definition `inconclusive` and the case
+ * moves it to `fail` again on every run. By definition id, with the carriers
+ * the records came from.
+ */
+function movedReadings(
+  model: Model,
+  holders: Iterable<{ id: ElementId; records: readonly EvidenceRecord[] }>,
+): Map<ElementId, { records: EvidenceRecord[]; from: Set<ElementId> }> {
+  const out = new Map<ElementId, { records: EvidenceRecord[]; from: Set<ElementId> }>();
+  for (const holder of holders) {
+    const el = model.get(holder.id);
+    if (!el || !isRequirement(el.eClass)) continue;
+    for (const g of generalizationsOf(model, holder.id)) {
+      if (!isRequirement(g.eClass)) continue;
+      const prefix = `${model.qualifiedName(g.id)}::`;
+      const moved = holder.records.filter((r) => r.obligation.clause.startsWith(prefix));
+      if (moved.length === 0) continue;
+      const known = out.get(g.id) ?? { records: [], from: new Set<ElementId>() };
+      known.records.push(...moved);
+      known.from.add(holder.id);
+      out.set(g.id, known);
+    }
+  }
+  return out;
+}
 
 /** One requirement's evidence, reduced to the one thing a facet can hold. */
 export interface EvidenceSummary {
@@ -1777,6 +1862,7 @@ export interface AttachReport {
 export function attachEvidence(
   model: Model,
   records: readonly EvidenceRecord[],
+  readings: ModelReadings = modelReadings(model),
 ): AttachReport {
   const report: AttachReport = {
     attached: 0,
@@ -1792,7 +1878,6 @@ export function attachEvidence(
   // may legitimately appear twice in one `--from` file, and a Map would silently
   // collapse the duplicate instead of counting it as `unchanged`.
   const targets: Array<[EvidenceRecord, ElementRecord]> = [];
-  const readings = readingsOnce(model);
   for (const record of records) {
     const qn = record.obligation.requirement;
     if (qn === null || qn === '') {
@@ -1883,8 +1968,14 @@ export function attachEvidence(
   // The facet last, once per element, from the WORST live obligation under it —
   // so a requirement whose obligations disagree carries the verdict of the one
   // that is not discharged, whichever order the clauses were written in.
+  // A definition whose reading moved onto a usage this attach touched is a
+  // target too, and answers for the moved records as well (movedReadings).
+  const moved = movedReadings(model, evidenceHolders(model));
+  for (const [definition, { from }] of moved) {
+    if ([...from].some((id) => facetTargets.has(id))) facetTargets.add(definition);
+  }
   for (const id of facetTargets) {
-    const summary = summariseEvidence(evidenceOf(model, id));
+    const summary = summariseEvidence([...evidenceOf(model, id), ...(moved.get(id)?.records ?? [])]);
     if (!summary) continue;
     const el = model.get(id);
     if (!el || !isRequirement(el.eClass)) continue;
@@ -1913,7 +2004,7 @@ export function attachEvidence(
  * THAT UPGRADE IS A GUESS AT A NAME, so it is checked rather than trusted. The
  * name is tried at EVERY ` in ` (a reading may contain one), and a split is
  * taken only when its left half is a requirement of this model and its right
- * half is a reading this model reads that requirement in ({@link readingsOnce}).
+ * half is a reading this model reads that requirement in ({@link modelReadings}).
  * `H::P in H::p1` over a `part def P` and `H::LoadReq in H::nowhere` are
  * skipped with the half that is wrong named, never attached to a part
  * definition or failed on a requirement over a context the model does not have.
@@ -1921,14 +2012,31 @@ export function attachEvidence(
 function targetOfRecord(
   model: Model,
   record: EvidenceRecord,
-  readings: () => ReadonlyMap<ElementId, ReadonlySet<string>>,
+  readings: ModelReadings,
 ): [EvidenceRecord, ElementRecord] | { skip: string } {
   const elsewhere = (qn: string): { skip: string } => ({
     skip: `no element of this model is called \`${qn}\` — the record was produced against a different file`,
   });
   if (record.instance !== undefined) {
-    const target = resolveByQualifiedName(model, record.instance.requirement);
-    return target !== undefined ? [record, target] : elsewhere(record.instance.requirement);
+    const { requirement, reading } = record.instance;
+    const target = resolveByQualifiedName(model, requirement);
+    if (target === undefined) return elsewhere(requirement);
+    // THE TWO NAMES AGREE. A `…/2` record states its target twice, in the facet
+    // and in `obligation.requirement`, and `verify --record` writes the second
+    // from the first; a hand-edited or merged file can say two things, and the
+    // carrier would then be filed under the facet's name beside an obligation
+    // that names another.
+    const named = record.obligation.requirement;
+    if (named !== `${requirement} in ${reading}`) {
+      return {
+        skip:
+          `the record names \`${String(named)}\` as its requirement and \`${requirement}\` read in ` +
+          `\`${reading}\` as its per-instance facet — a \`…/2\` record's two names must agree`,
+      };
+    }
+    // AND HELD TO THE CHECK A `…/1` RECORD GETS: a requirement, read in that reading.
+    const refused = readingRefusal(model, target, requirement, reading, readings);
+    return refused === undefined ? [record, target] : { skip: refused.skip };
   }
   const qn = record.obligation.requirement;
   if (typeof qn !== 'string' || qn === '') return elsewhere(String(qn));
@@ -1943,26 +2051,11 @@ function targetOfRecord(
     const reading = qn.slice(sep + 4);
     const target = requirement !== '' && reading !== '' ? resolveByQualifiedName(model, requirement) : undefined;
     if (target === undefined) continue;
-    if (!isRequirement(target.eClass)) {
-      if (rank < 1) {
-        rank = 1;
-        skip = {
-          skip:
-            `\`${requirement}\` is a ${target.eClass}, not a requirement — a reading \`<requirement> in ` +
-            '<reading>` is carried by the requirement it reads, and evidence written anywhere else would ' +
-            'be evidence about something else',
-        };
-      }
-      continue;
-    }
-    if (readings().get(target.id)?.has(reading) !== true) {
-      if (rank < 2) {
-        rank = 2;
-        skip = {
-          skip:
-            `this model never reads \`${requirement}\` in \`${reading}\` — the record was produced ` +
-            'against a different file, or before the model changed',
-        };
+    const refused = readingRefusal(model, target, requirement, reading, readings);
+    if (refused !== undefined) {
+      if (rank < refused.rank) {
+        rank = refused.rank;
+        skip = { skip: refused.skip };
       }
       continue;
     }
@@ -1975,23 +2068,78 @@ function targetOfRecord(
 }
 
 /**
- * Every reading this model reads each requirement in, by requirement id — the
- * facets `verify --record` would write ({@link instanceFacetOf}) — computed on
- * first use and kept for one pass. Only an old `…/1` `R in X` record asks, so a
- * file without one never pays for the obligation rows.
+ * The refusal of a reading `<requirement> in <reading>` that names no
+ * requirement of this model read in that reading, or `undefined` when it does —
+ * the one check a `…/1` record's guessed split and a `…/2` record's facet are
+ * both held to. `rank` orders the reasons across the splits of a `…/1` name:
+ * an element that is no requirement beats nothing, a reading never read beats
+ * both.
  */
-function readingsOnce(model: Model): () => ReadonlyMap<ElementId, ReadonlySet<string>> {
+function readingRefusal(
+  model: Model,
+  target: ElementRecord,
+  requirement: string,
+  reading: string,
+  readings: ModelReadings,
+): { rank: number; skip: string } | undefined {
+  if (!isRequirement(target.eClass)) {
+    return {
+      rank: 1,
+      skip:
+        `\`${requirement}\` is a ${target.eClass}, not a requirement — a reading \`<requirement> in ` +
+        '<reading>` is carried by the requirement it reads, and evidence written anywhere else would ' +
+        'be evidence about something else',
+    };
+  }
+  if (readings().get(target.id)?.has(reading) !== true) {
+    // A reading an earlier build filed on the definition is filed on the usage
+    // typed by it now (EV-4): say where it went, not that the model never reads it.
+    const movedTo = [...readings()].find(
+      ([id, known]) =>
+        known.has(reading) &&
+        isRequirement(model.get(id)?.eClass ?? '') &&
+        generalizationsOf(model, id).some((g) => g.id === target.id),
+    );
+    if (movedTo)
+      return {
+        rank: 2,
+        skip:
+          `the model files the reading of \`${requirement}\` in \`${reading}\` on ` +
+          `\`${model.qualifiedName(movedTo[0])}\`, the requirement the \`satisfy\` names — ` +
+          're-run `verify --record` to get the record it carries now',
+      };
+    return {
+      rank: 2,
+      skip:
+        `this model never reads \`${requirement}\` in \`${reading}\` — the record was produced ` +
+        'against a different file, or before the model changed',
+    };
+  }
+  return undefined;
+}
+
+/** The readings of a model, by the requirement that carries each ({@link modelReadings}). */
+export type ModelReadings = () => ReadonlyMap<ElementId, ReadonlySet<string>>;
+
+/**
+ * Every reading this model reads each requirement in, by requirement id — the
+ * facets `verify --record` would write ({@link instanceReadingOf}) — computed on
+ * first use and kept. Any per-instance record asks, so a file without one never
+ * pays for the obligation rows; a caller that attaches and then judges the same
+ * records ({@link perInstanceReadings}) passes the one to both, so the rows are
+ * built once.
+ */
+export function modelReadings(model: Model): ModelReadings {
   let byRequirement: Map<ElementId, Set<string>> | undefined;
   return () => {
     if (byRequirement === undefined) {
       byRequirement = new Map();
       for (const row of obligationsOf(model)) {
-        const facet = instanceFacetOf(model, row);
-        const id = row.instance?.requirementId;
-        if (facet === undefined || id === undefined) continue;
-        const known = byRequirement.get(id);
-        if (known) known.add(facet.reading);
-        else byRequirement.set(id, new Set([facet.reading]));
+        const found = instanceReadingOf(model, row);
+        if (found === undefined) continue;
+        const known = byRequirement.get(found.requirementId);
+        if (known) known.add(found.facet.reading);
+        else byRequirement.set(found.requirementId, new Set([found.facet.reading]));
       }
     }
     return byRequirement;
@@ -2012,8 +2160,10 @@ function readingsOnce(model: Model): () => ReadonlyMap<ElementId, ReadonlySet<st
 export function perInstanceReadings(
   model: Model,
   records: readonly EvidenceRecord[],
-): Array<{ requirement: ElementRecord; facet: EvidenceInstanceFacet } | undefined> {
-  const readings = readingsOnce(model);
+  readings: ModelReadings = modelReadings(model),
+): Array<
+  { requirement: ElementRecord; facet: EvidenceInstanceFacet; definition?: ElementRecord } | undefined
+> {
   return records.map((record) => {
     const qn = record.obligation.requirement;
     if (qn === null || qn === '') return undefined;
@@ -2022,9 +2172,13 @@ export function perInstanceReadings(
     const resolved = targetOfRecord(model, record, readings);
     if ('skip' in resolved) return undefined;
     const [stored, target] = resolved;
-    return stored.instance !== undefined && isRequirement(target.eClass)
-      ? { requirement: target, facet: stored.instance }
-      : undefined;
+    if (stored.instance === undefined || !isRequirement(target.eClass)) return undefined;
+    // A reading re-targeted to a usage (EV-4) also stays a row of the definition
+    // whose clause it reads: the clause name starts with that definition's.
+    const definition = generalizationsOf(model, target.id).find(
+      (g) => isRequirement(g.eClass) && stored.obligation.clause.startsWith(`${model.qualifiedName(g.id)}::`),
+    );
+    return { requirement: target, facet: stored.instance, ...(definition ? { definition } : {}) };
   });
 }
 
@@ -2140,7 +2294,10 @@ export function detachEvidence(model: Model, scopeId?: ElementId): DetachReport 
     return model.descendants(scopeId).some((d) => d.id === id);
   };
   model.transaction(() => {
-    for (const holder of evidenceHolders(model)) {
+    const removedFrom = new Set<ElementId>();
+    const holders = evidenceHolders(model);
+    for (const g of movedReadings(model, holders.filter((h) => inScope(h.id))).keys()) removedFrom.add(g);
+    for (const holder of holders) {
       if (!inScope(holder.id)) continue;
       const carriers = evidenceCarriers(model, holder.id);
       if (carriers.length === 0) continue;
@@ -2154,6 +2311,15 @@ export function detachEvidence(model: Model, scopeId?: ElementId): DetachReport 
       }
     }
     if (report.removed === 0) return;
+    // A definition that answered only for readings moved off it, and has none
+    // left, loses the facet they wrote.
+    const left = movedReadings(model, evidenceHolders(model));
+    for (const g of removedFrom) {
+      if (left.has(g) || evidenceOf(model, g).length > 0) continue;
+      if (getRequirementAttr(model, g, 'verdict') === undefined) continue;
+      setRequirementAttr(model, g, 'verdict', null);
+      report.verdictsCleared.push(model.qualifiedName(g));
+    }
     for (const el of model.all()) {
       if (!VERIFICATION_CASE_KINDS.has(el.eClass)) continue;
       if (!isUserElement(model, el) || !inScope(el.id)) continue;
@@ -2273,17 +2439,20 @@ export function evidenceStatus(model: Model): EvidenceStatusReport {
   const graph = modelVersionOf(model).graph;
   const holders = new Map(evidenceHolders(model).map((h) => [h.id, h]));
   const rows: EvidenceStatusRow[] = [];
+  const moved = movedReadings(model, holders.values());
 
   for (const el of model.all()) {
     if (!isUserElement(model, el)) continue;
     const holder = holders.get(el.id);
     const isReq = isRequirement(el.eClass);
     const claimed = isReq ? getRequirementAttr(model, el.id, 'verdict') : undefined;
-    if (!holder && claimed === undefined) continue;
+    const movedHere = moved.get(el.id)?.records ?? [];
+    if (!holder && claimed === undefined && movedHere.length === 0) continue;
 
     const qualifiedName = model.qualifiedName(el.id);
     const shortId = isReq ? requirementShortId(model, el.id) : '';
-    const records = holder?.records ?? [];
+    // A definition answers for the readings moved onto a usage typed by it too.
+    const records = [...(holder?.records ?? []), ...movedHere];
     const summary = summariseEvidence(records);
     // STALE IF ANY LIVE OBLIGATION IS. One re-recorded clause does not make the
     // requirement current again while another clause's record still names an

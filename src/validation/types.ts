@@ -101,7 +101,7 @@ export interface Diagnostic {
    * Which Problems-tab producer filed this row: the Check button
    * (`constraint-check`, the validator's constraint rules via
    * {@link useAppStore.runConstraintCheck}) or the Solve button (`solve`,
-   * {@link useAppStore.solve}). The Problems tab labels rows by it (H6b).
+   * {@link useAppStore.solve}). The Problems tab shows it as a chip on each row.
    */
   producer?: 'check' | 'solve';
 

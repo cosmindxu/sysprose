@@ -3139,7 +3139,7 @@ export const useAppStore = create<AppState>((set, get) => {
         // leaves a row with no source span to point at (H6a).
         const instances = c.instances ?? [];
         instances.forEach((inst, j) => {
-          if (inst.via === true || inst.instance !== undefined || inst.generic === true) return;
+          if (inst.via === true || inst.instance !== undefined || inst.generic === true || inst.unread !== undefined) return;
           rows.push({
             id: `constraint-check#${i}.${j}`,
             ruleId: 'constraint-check',

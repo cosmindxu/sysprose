@@ -38,6 +38,11 @@ import {
   NOTE_BODY_TERMINATOR,
   anchorFor,
   instanceRollup,
+  sourceOrder,
+  quotePath,
+  foldVerdictWords,
+  foldByVerdictAndCause,
+  TARGET_CONTEXT_FOLD,
   type SpecialisationInstance,
 } from '../semantics/index';
 import { dimEqual, dimToString } from '../semantics/units';
@@ -1023,9 +1028,11 @@ const targetBySpecialisation: ValidationRule = {
       const el = model.get(check.id);
       if (!el || isLibraryElement(el)) continue;
       if (isNonNormativeStatement(model, el.id)) continue;
-      // Only the non-binding context rows: a reading that met a binding (`via`)
-      // or an expanded group row (`instance`) is constraint-by-instance's.
-      const rows = check.instances.filter((i) => i.via !== true && i.instance === undefined);
+      // Only the non-binding context rows: a reading that met a binding (`via`),
+      // an expanded group row (`instance`), the group's generic row (the
+      // definition's own, PI-5) or a group left unread past a cap (PI-7) is
+      // constraint-by-instance's.
+      const rows = check.instances.filter((i) => i.via !== true && i.instance === undefined && i.generic !== true && i.unread === undefined);
       if (rows.length === 0) continue;
       if (rows.length <= TARGET_CONTEXT_FOLD) {
         for (const inst of rows) {
@@ -1039,36 +1046,18 @@ const targetBySpecialisation: ValidationRule = {
   },
 };
 
-/** Past this many non-binding context rows of one relation, they fold into one finding per result. */
-const TARGET_CONTEXT_FOLD = 20;
-
-/** The source order of an element — its index in the model's parse-order walk. */
-function sourceOrder(model: Model): Map<ElementId, number> {
-  const order = new Map<ElementId, number>();
-  let i = 0;
-  for (const el of model.all()) order.set(el.id, i++);
-  return order;
-}
-
-/** One `target-by-specialisation` finding per result, counting the rest (C.2). */
+/** One `target-by-specialisation` finding per verdict and cause, counting the rest (C.2). */
 function foldTargetRows(model: Model, check: ReturnType<typeof checkConstraints>[number], rows: readonly SpecialisationInstance[]): Diagnostic[] {
   const mk = diagBuilder('target-by-specialisation', 'warning');
   const order = sourceOrder(model);
-  const byResult = new Map<'satisfied' | 'violated' | 'unknown', SpecialisationInstance[]>();
-  for (const r of rows) {
-    const list = byResult.get(r.result);
-    if (list) list.push(r);
-    else byResult.set(r.result, [r]);
-  }
   const out: Diagnostic[] = [];
-  for (const [result, group] of byResult) {
+  for (const { result, cause, rows: group } of foldByVerdictAndCause(rows)) {
     const first = group.reduce((a, b) => ((order.get(a.featureId) ?? Infinity) <= (order.get(b.featureId) ?? Infinity) ? a : b));
-    const listed = group.slice(0, 5).map((i) => i.context);
-    const word = result === 'violated' ? 'miss the target' : result === 'satisfied' ? 'meet the target' : 'could not be read';
+    const listed = group.slice(0, 5).map((i) => quotePath(i.context));
     const more = group.length > 5 ? `, \u2026 and ${group.length - 5} more` : '';
     out.push(
       mk(
-        `${check.expression}: ${group.length} of ${rows.length} contexts ${word} (${listed.join(', ')}${more})`,
+        `${check.expression}: ${group.length} of ${rows.length} contexts ${foldVerdictWords(result, cause)} (${listed.join(', ')}${more})`,
         anchorFor(model, check, first),
         result === 'violated' ? 'warning' : 'info',
       ),
@@ -1082,10 +1071,12 @@ function foldTargetRows(model: Model, check: ReturnType<typeof checkConstraints>
  * instance through the 27th rule, `validation/constraint-by-instance` (R2-S2).
  *
  * Element-context rows that met a binding (`via`, F5: h2c `Q::c in q`, M7
- * `Q::c in q2`) are one finding each, in the pipeline's own words. An expanded
+ * `Q::c in q2`) are one finding each, in the pipeline's own words, and fold
+ * into one finding per result past `TARGET_CONTEXT_FOLD` contexts. An expanded
  * group (F7: h2p, S1, big-bind) of two or more instances is one roll-up finding
- * — a warning when any instance is violated, else info — and every group, one
- * of a single instance too (PI-1: r17's q1::p), gives at most five
+ * per usage — a warning when any instance is violated, else info — folded into
+ * one finding for the relation past twenty usages; and every group, one of a
+ * single instance too (PI-1: r17's q1::p), gives at most five
  * violated-instance findings, in instance order, at the value that makes each
  * differ; a group of one whose instance could not be read is one info finding,
  * in that row's sentence. Satisfied instances are counted, never listed, so

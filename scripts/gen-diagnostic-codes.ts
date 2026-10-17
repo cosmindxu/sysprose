@@ -75,7 +75,7 @@ that uses it is in [\`AGENT-AUTHORING-CAMPAIGN.md\`](AGENT-AUTHORING-CAMPAIGN.md
   "elementName": "Vehicle",
   "instances": {                       // per-instance roll-up findings: the counts
     "total": 12, "generic": 1, "satisfied": 10, "violated": 1, "unknown": 0, "unread": 0,
-    "listed": ["H2P::q::p"]
+    "listed": ["H2P::q::p"]            // "atLeast": true beside a count that is a lower bound
   },
   "instance": "H2P::q::p",             // a single-instance finding names its instance
   "relation": "H2P::P::c"              // and the relation it is about

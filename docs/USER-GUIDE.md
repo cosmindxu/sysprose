@@ -652,7 +652,10 @@ Two names worth separating:
   them is *unjudged* with the reason *the solve did not converge*: never
   violated at a point the model does not sit at. `solveFeasible` does not hold
   them there either: it searches them as freedoms, and a violation over them
-  is unresolved, never decided.
+  is unresolved, never decided. A model with a binding past a cap (below) reads
+  so too: the values that binding holds are not read, the solve counts them
+  undetermined and reports *did not converge*, and the rows over them name the
+  cap.
 
 **A target on a measure with no value of its own is read where the values
 are.** A brief often states its targets once, on abstract measures that carry
@@ -914,7 +917,22 @@ that breaks the relation is reported against that instance — at the line that
 makes it differ: the member of its own stating the value the binding carries in
 (q's `attribute :>> L = 50.0`), else the element the instance is read in, else
 its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never the usage the instances share — and the check rolls
-two or more of them up into one finding; a relation written in the usage itself
+two or more of them up into one finding for each usage (past twenty usages of one
+relation, into one finding for the relation, counting every instance and naming
+its first five usages, with at most five violated instances after it; and past
+twenty contexts a binding carries a value into, one finding per verdict and cause).
+The roll-up counts the instances that hold, those it is violated in (the first
+five named, then an ellipsis), those it could not be read in — with the cause of
+each kind, up to three, and the first instance of each (*defaults differ:
+R::q1::p*) — and those it did not read, with the cap (*not read in 2,001 (more
+than 16,384 instance readings in this model)*, counts printed with thousands separators); a group of more instances than the
+tool reads is one info finding that counts them all unread (where a binding holds
+in more than 4,096 contexts, *not read in at least* the instances found, and the `instances`
+payload then carries `atLeast: true`). A violated instance
+names the value it reads, the value the binding carries in and the binding
+(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``), and a path with a
+segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; the `instance` and
+`instances.listed` fields keep the names as written). A relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
 has no roll-up, and a violation there is that instance's finding alone — one the
 check could not read there, an info finding of its own. Solve lists an
@@ -922,7 +940,12 @@ instance as a row of its own (`violated inequality: load <= 10.0 in
 R::q1::p`); past five rows of one relation, the violated ones fold into one
 row, and so do the unjudged ones that give one reason or abstain for one cause
 (defaults that differ, no value, a cap) — the first five instances, the count,
-and the first one's sentence, which names that instance. An
+and the first one's sentence, which names that instance. In a terminal,
+`verify` text folds the same way: past five rows of one relation and one claim
+it prints five and one line counting the rest (`… and 3 more rows of R::c:
+refuted in 8`; the rows of one relation and one claim print together), and the footer's findings fold by relation and code, counted
+against the relation (`… and 3 more verification/refuted on R::c`), not against
+the instance of its first row; `--json` keeps every row. An
 instance whose own element — the most specific one that denotes it — reads a
 name of the relation, or a name that name's value reads, through another feature
 is read in that element, at the instance's own
@@ -1008,7 +1031,10 @@ T1's capped binding by the T0 `load` both redefine. A value held so, which no
 binding carries from a stated value, is no design freedom to the numeric surface
 either: a relation reading it is *could not be evaluated* there too, never
 solved as a design equation (`s.a.load == 9.0` for a shallow `part s : T1`
-beside the capped chain), and the feasibility search does not move it.
+beside the capped chain), and the feasibility search does not move it. A model
+with such a capped binding reports *did not converge* in the Solve header — the
+check keeps its fail-closed reading, and the rows over a value the binding
+holds name the cap (*a binding of this model is read deeper than 32 usages*).
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
 listed and read at its own instance, as above. Such a context, and one whose own
@@ -2302,10 +2328,34 @@ the requirement and the reading (`"instance": { "requirement": "H::LoadReq",
 verdict of a verification case that verifies the requirement: a requirement
 refuted in one part makes the case `fail` in `verify`'s report, with or without
 `--case` (which records the readings with the own row), and is written `fail` by
-the record and by the case, on every attach. A record from an older build names a reading only as `<requirement> in
-<reading>`; it is carried the same way when the first half is a requirement of
-this model and the model reads it in the second, and is otherwise skipped with
-the half that does not match named.
+the record and by the case, on every attach. A requirement usage typed by the
+definition (`requirement massR : LoadReq; satisfy massR by p1;`) owns none of the
+definition's clauses, so the clause is read once, on `LoadReq`'s own row, and read
+again at each satisfier; the reading at `p1` is written for the requirement the
+`satisfy` names, `massR` (`"requirement": "H::massR"`, and the record's
+`obligation.requirement` reads `H::massR in H::p1`), and `verify massR by VC`
+judges it. The case over the definition keeps it too: `verify LoadReq by VC` is
+still judged over the reading `satisfy massR by p1` refutes in `LoadReq`'s clause,
+and `evidence-attach` writes that case's verdict the same way. The definition's
+own `verdict` facet is the worst over its carriers and over the readings moved
+onto the usages typed by it, so it stays `fail`, an attach of the same record again
+reports no verdict change, and `evidence-status` and `evidence-detach` read it the
+same way. A case that verifies both `LoadReq` and `massR` counts that reading
+once. `verify`'s own report still prints the row as `H::LoadReq in H::p1`, and a
+`satisfy LoadReq by p1` that names the definition (or a requirement definition that
+specializes it) keeps the record on `LoadReq`; only a requirement usage takes it. A record from an
+older build names a reading only as `<requirement> in <reading>`. `evidence-attach`
+refuses the whole `--from` file, with exit 2 and nothing written, when a
+`sysprose-evidence/2` record has an empty `instance.reading` or
+`instance.requirement` (the schema requires at least one character). A record that
+passes the schema is held to the same checks in both versions before anything is
+written: the requirement must be a requirement of this model, the model must read
+it in that reading, and (for a `sysprose-evidence/2` record) the facet and
+`obligation.requirement` must say the same thing; a record that fails one is
+skipped with the half that does not match named. A record written by an earlier
+build for such a usage, `LoadReq in p1` in either version, is skipped, and the
+reason names the usage that carries the reading now (the model files `LoadReq` in
+`p1` on `H::massR`); running `verify --record` again writes it there.
 
 **Evidence accumulates.** A second run **appends** a carrier; nothing is
 overwritten and no earlier verdict is deleted, so the file keeps the history of
@@ -3624,7 +3674,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:557-574`, `969-992` (the two rules that ask),
+`src/validation/rules.ts:562-579`, `974-997` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

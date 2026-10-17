@@ -162,6 +162,13 @@ test('Validate populates Problems and Check surfaces constraint-check results', 
   await expect(
     page.getByTestId('problem-row').filter({ hasText: 'constraint-check' }).first(),
   ).toBeVisible();
+  await expect(
+    page
+      .getByTestId('problem-row')
+      .filter({ hasText: 'constraint-check' })
+      .first()
+      .getByTestId('problem-producer'),
+  ).toHaveText('check');
   await shot(page, 'lifecycle-d-check');
 
   expect(errors, `console/page errors: ${errors.join(' | ')}`).toHaveLength(0);
