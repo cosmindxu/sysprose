@@ -28,7 +28,7 @@
  * provenance that compiles is not the same as a reading that holds, and the
  * profile is printed under every verdict this command reaches.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -43,6 +43,8 @@ import {
   NOT_COVERED_CODE,
   PATTERNS,
   PROPERTY_PATTERN_CODES,
+  RECOVERY_BUDGET_CODE,
+  TRIGGER_NOT_OFFERED_CODE,
   WITNESS_NOT_REPLAYED_CODE,
   replayWitness,
   SCOPES,
@@ -74,6 +76,7 @@ import {
   reachReport,
   stateMachinesIn,
 } from '../../src/semantics/mc/explore';
+import * as exploreModule from '../../src/semantics/mc/explore';
 import { MAX_COMPLETION } from '../../src/semantics/mc/config';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
 import {
@@ -790,8 +793,9 @@ describe('the chase budget, in the search, and every witness replayed through th
     // the run above is stopped on before it gets round it.
     const recovery = checkProperty(model, machineId, prop({ pattern: 'recovery', scope: 'globally', p: 'state z' }));
     expect(recovery.claim).toBe('inconclusive');
-    expect(recovery.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(recovery.code).toBe(RECOVERY_BUDGET_CODE);
     expect(recovery.recovery?.refusedByGate).toBe('budget');
+    expect(recovery.detail, 'a budget no flag raises was advised as a bound').not.toContain('max-configs');
     expect(recovery.detail).not.toContain('recoverable:');
   });
 
@@ -1509,6 +1513,60 @@ describe('the semantic profile is a description of what the interpreter does', (
     expect(
       checkProperty(m, sm.id, prop({ pattern: 'absence', scope: 'globally', p: 'state B' })).claim,
     ).toBe('fail');
+  });
+});
+
+describe('a search the walk cut short with no bound hit has its own code (M2)', () => {
+  // THE CLAUSE NO REAL MODEL FALSIFIES: `exploreMachine` offers the whole
+  // alphabet wherever it can decide that the interpreter takes its next event,
+  // so on a finished walk `offered` is the alphabet. The walk is therefore
+  // made to forget one trigger, which is what the clause is defensive against.
+  function forgetful(): { model: Model; machineId: ElementId } {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Modes');
+    const idle = f.state('idle', sm.id);
+    const hazard = f.state('hazard', sm.id);
+    f.transition(hazard.id, idle.id, { ownerId: sm.id, trigger: 'go' });
+    return { model: m, machineId: sm.id };
+  }
+
+  it('files `trigger-not-offered`, names the trigger, and advises no bound', () => {
+    const { model, machineId } = forgetful();
+    const real = exploreMachine;
+    const spy = vi
+      .spyOn(exploreModule, 'exploreMachine')
+      .mockImplementation((...args) => ({ ...real(...args), offered: new Set<string>() }));
+    try {
+      for (const pattern of ['absence', 'cover']) {
+        const row = checkProperty(model, machineId, prop({ pattern, scope: 'globally', p: 'state hazard' }));
+        expect(row.claim, pattern).toBe('inconclusive');
+        expect(row.code, pattern).toBe(TRIGGER_NOT_OFFERED_CODE);
+        expect(row.boundHit, pattern).toBe('none');
+        expect(row.detail, pattern).toContain('never offered `go`');
+        expect(row.detail, pattern).not.toContain('max-configs');
+        expect(row.detail, pattern).not.toContain('bound exhausted');
+        expect(row.witness, pattern).toEqual([]);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    // The control: the same machine, un-mocked, is decided.
+    expect(checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state hazard' })).code).not.toBe(
+      TRIGGER_NOT_OFFERED_CODE,
+    );
+  });
+
+  it('leaves a bound hit on its own code, with the bound advice', () => {
+    const { model, machineId } = buildChain();
+    const row = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state D' }), { maxConfigs: 1 });
+    expect(row.code).toBe(BOUND_EXHAUSTED_CODE);
+    expect(row.detail).toContain('max-configs');
+  });
+
+  it('lists both codes among the ones this command can raise', () => {
+    expect(PROPERTY_PATTERN_CODES.has(TRIGGER_NOT_OFFERED_CODE)).toBe(true);
+    expect(PROPERTY_PATTERN_CODES.has(RECOVERY_BUDGET_CODE)).toBe(true);
   });
 });
 

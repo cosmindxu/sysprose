@@ -2529,6 +2529,14 @@ $ npm run sysprose -- reach examples/uav-isr.sysml --max-configs 2
     partial under {maxConfigs 2, …} — the configuration bound was reached; the unreachable and dead lists are lower bounds and are NOT reported as findings
 ```
 
+A `check-behaviour` search can also come back short with no bound hit at all:
+the walk finished, but never offered a trigger the machine names, so a run that
+takes it was not searched. That is `verification/trigger-not-offered`, not
+`bound-exhausted`: the row names the triggers, exits 2, and says that no flag
+decides it, so `--max-configs` is not advised. The walk offers the whole alphabet
+wherever it can decide that the interpreter takes its next event, so a row under
+this code is a gap in the engine and not in the model.
+
 **The 64-step chase budget is not a bound: the walk follows it.** The
 interpreter fires trigger-less transitions for at most 64 steps after each
 event, and then takes the next event wherever the chase stopped — so on a
@@ -3094,6 +3102,10 @@ printed `recoverable` about it), an `after(n)` dwell the walk takes without
 advancing a clock, a run the interpreter's chase budget stops away from `p` —
 the walk follows the budget there, or, on a machine that names no trigger,
 the relation follows the chase past where the run ends (the flagship above).
+That last refusal is filed under its own code, `verification/recovery-budget-withheld`
+(exit 2): the walk finished and no construct is outside the fragment, so it is
+neither a bound nor an unsupported construct, and no flag decides it — raising
+`--max-configs` is no advice for it.
 `not recoverable` gets easier as edges are *removed*, which is
 the opposite direction — and a guard over something the walk could not decide
 removes exactly one: on the trapguard fixture the escape `degradedA if resetOk

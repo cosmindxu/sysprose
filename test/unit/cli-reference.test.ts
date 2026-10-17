@@ -211,6 +211,9 @@ describe('the generated command reference', () => {
     expect(BEHAVIOUR_EXIT_CODES).toContain('vacuous');
     expect(BEHAVIOUR_EXIT_CODES).toContain('liveness');
     expect(BEHAVIOUR_EXIT_CODES).toContain('a bound the walk hit');
+    // M2: the two undecided rows that are not a bound, each under its own code.
+    expect(BEHAVIOUR_EXIT_CODES).toContain('`verification/trigger-not-offered`');
+    expect(BEHAVIOUR_EXIT_CODES).toContain('`verification/recovery-budget-withheld`');
     // THE TWO DISCHARGE SHAPES OF THE 0 ROW, named separately (§2.1): `covered`
     // is existential and stands on a partial walk, so "held on every reachable
     // configuration over a graph seen whole" is false of it twice over — and

@@ -4973,7 +4973,8 @@ package P {
     expect(withheld.stdout).toContain('0 pass, 0 fail, 0 vacuous, 1 inconclusive, 0 covered, 0 not covered');
     expect(withheld.stdout).toContain('INCONCLUSIVE `state standby` is reachable from every reachable configuration, over the whole run');
     expect(withheld.stdout).toContain('the interpreter\u2019s chase budget');
-    expect(withheld.stdout).toContain('verification/behaviour-unsupported-construct');
+    expect(withheld.stdout).toContain('verification/recovery-budget-withheld');
+    expect(withheld.stdout).not.toContain('max-configs');
     expect(withheld.stdout).not.toContain('recoverable: `state standby`');
 
     // The census, on `--json`, inside the existing payload: the top-level
