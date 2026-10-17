@@ -265,6 +265,8 @@ export {
   evidenceStatus,
   isEvidenceCarrier,
   liveEvidence,
+  modelReadings,
+  type ModelReadings,
   // The requirement each per-instance record reads, for the case layer of
   // `evidence-attach`: a case is judged over every reading of what it verifies.
   perInstanceReadings,

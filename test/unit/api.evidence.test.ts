@@ -23,11 +23,15 @@ import { readFileSync } from 'node:fs';
 import Ajv from 'ajv';
 import {
   attachEvidence,
+  modelReadings,
+  perInstanceReadings,
   canonicalElements,
   detachEvidence,
   evidenceHolders,
   evidenceOf,
   evidenceStatus,
+  liveEvidence,
+  summariseEvidence,
   axiomsOf,
   isEvidenceArtefact,
   isEvidenceCarrier,
@@ -179,6 +183,16 @@ describe('the evidence schema discriminates v1 from v2 and still accepts old rec
     // facet would be indistinguishable from a v1 record that had merely been
     // relabelled.
     expect(validate(minimal({ schema: 'sysprose-evidence/2' }))).toBe(false);
+  });
+
+  it('refuses a v2 record whose reading or requirement is empty (EV-6)', () => {
+    // An empty reading keys like the requirement's own row, so a refuted
+    // reading and the own row replaced each other ("fail → pass").
+    const v2 = (instance: Record<string, unknown>): Record<string, unknown> =>
+      minimal({ schema: 'sysprose-evidence/2', instance });
+    expect(validate(v2({ requirement: 'P::massLimit', reading: 'Q::p' }))).toBe(true);
+    expect(validate(v2({ requirement: 'P::massLimit', reading: '' }))).toBe(false);
+    expect(validate(v2({ requirement: '', reading: 'Q::p' }))).toBe(false);
   });
 
   it('refuses a v1 record that carries the v2 facet', () => {
@@ -521,6 +535,114 @@ describe('attachEvidence — what goes into the file comes back out of it', () =
     ]);
     expect(evidenceHolders(model)).toEqual([]);
     expect(getRequirementAttr(model, loadReq(model), 'verdict')).toBeUndefined();
+  }, 60_000);
+
+  it('holds a …/2 record to the check a …/1 record gets, in both directions (EV-7)', async () => {
+    // A `…/2` facet used to attach wherever `instance.requirement` resolved: to a
+    // part definition, over a reading the model never takes, beside an
+    // `obligation.requirement` that named another. The same three refusals as a
+    // `…/1` `R in X`, and the two names must agree.
+    const model = await parse(PER_INSTANCE);
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    const refuted = records.find((r) => r.claim === 'refuted')!;
+    const aimed = (requirement: string, reading: string, named?: string): EvidenceRecord => ({
+      ...refuted,
+      obligation: { ...refuted.obligation, requirement: named ?? `${requirement} in ${reading}` },
+      instance: { requirement, reading },
+    });
+    const report = attachEvidence(model, [
+      aimed('H::P', 'H::p1'),
+      aimed('H::LoadReq', 'H::nowhere'),
+      aimed('H::LoadReq', 'H::p1', 'H::LoadReq in H::p2'),
+    ]);
+    expect(report.attached).toBe(0);
+    expect(report.skipped.map((s) => s.reason)).toEqual([
+      expect.stringMatching(/^`H::P` is a PartDefinition, not a requirement/),
+      expect.stringMatching(/^this model never reads `H::LoadReq` in `H::nowhere`/),
+      expect.stringMatching(/^the record names `H::LoadReq in H::p2` as its requirement and `H::LoadReq` read in `H::p1`/),
+    ]);
+    expect(evidenceHolders(model)).toEqual([]);
+
+    // The honest record still lands.
+    expect(attachEvidence(model, [aimed('H::LoadReq', 'H::p1')])).toMatchObject({ attached: 1, skipped: [] });
+  }, 60_000);
+
+  it('keeps a carrier with an empty reading apart from the own row (EV-6)', async () => {
+    // A hand-written `…/2` carrier the schema refuses still reads back; keyed
+    // like the own row it replaced that row ("fail → pass").
+    const model = await parse(PER_INSTANCE);
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    const [own, refuted] = records;
+    const empty: EvidenceRecord = {
+      ...refuted,
+      obligation: { ...refuted.obligation, clause: own.obligation.clause, obligationDigest: own.obligation.obligationDigest },
+      instance: { requirement: 'H::LoadReq', reading: '' },
+    };
+    expect(liveEvidence([own, empty]).map((r) => r.claim)).toEqual(['holds-at-values', 'refuted']);
+    expect(summariseEvidence([own, empty])?.verdict).toBe('fail');
+  }, 60_000);
+
+  it('serves an attach and the case layer after it from one set of readings (EV-7)', async () => {
+    const model = await parse(PER_INSTANCE);
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    const readings = modelReadings(model);
+    attachEvidence(model, records, readings);
+    expect(readings(), 'kept after the attach').toBe(readings());
+    expect(perInstanceReadings(model, records, readings).map((r) => r?.facet.reading)).toEqual([
+      undefined,
+      'H::p1',
+      'H::p2',
+    ]);
+  }, 60_000);
+
+  it('files a refuted reading on the requirement usage a `satisfy` names (EV-4)', async () => {
+    // `massR : LoadReq` owns none of `LoadReq`'s clauses, so the row of `LoadReq`
+    // read at p1 was filed on the definition and `massR` — the requirement the
+    // `satisfy` names and `verify massR by VC` verifies — got nothing, its case
+    // `no-property`. The facet names `massR`; `LoadReq` keeps its own row.
+    const model = await parse(
+      PER_INSTANCE.replace(
+        '    satisfy LoadReq by p1;\n    satisfy LoadReq by p2;',
+        '    requirement massR : LoadReq;\n    satisfy massR by p1;\n    satisfy massR by p2;',
+      ),
+    );
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    expect(records.map((r) => [r.schema, r.claim, r.instance, r.obligation.requirement])).toEqual([
+      ['sysprose-evidence/1', 'holds-at-values', undefined, 'H::LoadReq'],
+      [
+        'sysprose-evidence/2',
+        'refuted',
+        { requirement: 'H::massR', reading: 'H::p1' },
+        'H::massR in H::p1',
+      ],
+      [
+        'sysprose-evidence/2',
+        'holds-at-values',
+        { requirement: 'H::massR', reading: 'H::p2' },
+        'H::massR in H::p2',
+      ],
+    ]);
+    expect(attachEvidence(model, records)).toMatchObject({ attached: 3, skipped: [] });
+    const massR = model.all().find((e) => e.declaredName === 'massR')!.id;
+    expect(evidenceOf(model, massR).map((r) => r.instance?.reading)).toEqual(['H::p1', 'H::p2']);
+    expect(getRequirementAttr(model, massR, 'verdict')).toBe('fail');
+    expect(evidenceOf(model, loadReq(model)).map((r) => r.instance)).toEqual([undefined]);
+    // THE DEFINITION'S CASE KEEPS THE READING: `verify LoadReq by VC` is judged over
+    // what `satisfy massR by p1` refutes in LoadReq's clause, as before the move.
+    const withCase = (verifies: string): string =>
+      PER_INSTANCE.replace(
+        '    satisfy LoadReq by p1;\n    satisfy LoadReq by p2;',
+        '    requirement massR : LoadReq;\n    satisfy massR by p1;\n    satisfy massR by p2;\n' +
+          `    verification def VC; verify ${verifies} by VC;`,
+      );
+    for (const verifies of ['LoadReq', 'massR']) {
+      const run = await verifyModel(await parse(withCase(verifies)), { engine: 'literal' });
+      expect(run.cases.cases.map((c) => c.facet), `verify ${verifies} by VC`).toEqual(['fail']);
+    }
+    // A `satisfy` that names the definition itself keeps the reading on it (E's h5).
+    const named = await parse(PER_INSTANCE);
+    const own = (await verifyModel(named, { engine: 'literal' })).records;
+    expect(own.find((r) => r.claim === 'refuted')?.instance?.requirement).toBe('H::LoadReq');
   }, 60_000);
 
   it('still skips a name that resolves to nothing, with the true wrong-file reason', async () => {

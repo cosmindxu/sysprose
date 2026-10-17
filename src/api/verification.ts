@@ -140,7 +140,8 @@ import {
 import {
   CLAIMED_WITHOUT_EVIDENCE_CODE,
   VERDICT_OVERSTATES_EVIDENCE_CODE,
-  instanceFacetOf,
+  instanceReadingOf,
+  type InstanceReading,
   modelVersionOf,
   obligationDigest,
   proofScopeOf,
@@ -149,7 +150,6 @@ import {
   verdictFor,
   type EvidenceBound,
   type EvidenceClaim,
-  type EvidenceInstanceFacet,
   type EvidenceRecord,
   type EvidenceVerdict,
   type ModelVersion,
@@ -1414,18 +1414,20 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
   // `results` and the records keep the reading's own name.
   const instances = instanceFacets(model, rows);
   const cases = runVerificationCases(model, {
-    judged: judged.map((r) => {
+    judged: judged.flatMap((r) => {
       const reading = instances.get(r.clause.id);
-      return reading === undefined || r.requirement === null
-        ? r
-        : {
-            ...r,
-            requirement: {
-              ...r.requirement,
-              id: reading.requirementId,
-              qualifiedName: reading.facet.requirement,
-            },
-          };
+      if (reading === undefined || r.requirement === null) return [r];
+      const filed = (requirementId: ElementId, qualifiedName: string): ObligationVerdict => ({
+        ...r,
+        requirement: { ...r.requirement!, id: requirementId, qualifiedName },
+      });
+      // A reading re-targeted to a usage is also a row of the definition it reads.
+      return [
+        filed(reading.requirementId, reading.facet.requirement),
+        ...(reading.definition
+          ? [filed(reading.definition.requirementId, reading.definition.requirement)]
+          : []),
+      ];
     }),
     ...(opts.caseId !== undefined ? { caseId: opts.caseId } : {}),
     toolAbsent,
@@ -1481,7 +1483,12 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
           ? scopeFor(model, rows, r.clause.id, freed?.qualifiedNames, scopePass)
           : {}),
         obligation: {
-          requirement: r.requirement?.qualifiedName ?? null,
+          // A reading's name is the carrier's and its reading, as the facet
+          // beside it says (the requirement a `satisfy` names, not the
+          // definition whose clause was read, EV-4).
+          requirement: instances.has(r.clause.id)
+            ? `${instances.get(r.clause.id)!.facet.requirement} in ${instances.get(r.clause.id)!.facet.reading}`
+            : (r.requirement?.qualifiedName ?? null),
           shortId: r.shortId,
           clause: r.clause.qualifiedName,
           obligationDigest: r.obligationDigest,
@@ -1717,12 +1724,11 @@ function scopeFor(
 function instanceFacets(
   model: Model,
   rows: readonly Obligation[],
-): ReadonlyMap<ElementId, { requirementId: ElementId; facet: EvidenceInstanceFacet }> {
-  const out = new Map<ElementId, { requirementId: ElementId; facet: EvidenceInstanceFacet }>();
+): ReadonlyMap<ElementId, InstanceReading> {
+  const out = new Map<ElementId, InstanceReading>();
   for (const row of rows) {
-    const facet = instanceFacetOf(model, row);
-    const requirementId = row.instance?.requirementId;
-    if (facet !== undefined && requirementId !== undefined) out.set(row.element.id, { requirementId, facet });
+    const reading = instanceReadingOf(model, row);
+    if (reading !== undefined) out.set(row.element.id, reading);
   }
   return out;
 }

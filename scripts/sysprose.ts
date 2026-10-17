@@ -113,6 +113,8 @@ import {
   noMachineRefusal,
   obligationsReport,
   orphanReport,
+  modelReadings,
+  type ModelReadings,
   perInstanceReadings,
   refinementReport,
   promptsFor,
@@ -3211,13 +3213,17 @@ interface CaseVerdictWrite {
  * record, since a reading's clause is no element either, and the roll-up never
  * reads a clause id.
  */
-function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): JudgedObligation[] {
+function judgedFromRecords(
+  model: Model,
+  records: readonly EvidenceRecord[],
+  modelRead: ModelReadings,
+): JudgedObligation[] {
   const byName = new Map<string, ElementRecord>();
   for (const el of model.all()) {
     const qn = qname(model, el.id);
     if (qn !== '' && !byName.has(qn)) byName.set(qn, el);
   }
-  const readings = perInstanceReadings(model, records);
+  const readings = perInstanceReadings(model, records, modelRead);
   const rows: JudgedObligation[] = [];
   for (const [i, record] of records.entries()) {
     const requirement = record.obligation.requirement;
@@ -3226,8 +3232,7 @@ function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): Ju
     const req = reading?.requirement ?? byName.get(requirement);
     const clause = byName.get(record.obligation.clause);
     if (!req || (!clause && !reading)) continue;
-    rows.push({
-      requirement: { id: req.id, qualifiedName: reading?.facet.requirement ?? requirement },
+    const row = {
       shortId: record.obligation.shortId,
       clause: { id: clause?.id ?? record.obligation.clause, qualifiedName: record.obligation.clause },
       expression: record.obligation.expression,
@@ -3237,7 +3242,15 @@ function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): Ju
         (record.engine === 'literal' && record.claim === 'holds-at-values'),
       code: record.code ?? null,
       detail: record.detail,
-    });
+    };
+    rows.push({ ...row, requirement: { id: req.id, qualifiedName: reading?.facet.requirement ?? requirement } });
+    // A reading filed on a requirement usage (EV-4) is also a row of the definition it reads.
+    if (reading?.definition) {
+      rows.push({
+        ...row,
+        requirement: { id: reading.definition.id, qualifiedName: qname(model, reading.definition.id) },
+      });
+    }
   }
   return rows;
 }
@@ -3265,9 +3278,13 @@ function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): Ju
  * attach moved: a verdict that changes silently is the one thing this lane may
  * never do.
  */
-function writeCaseVerdicts(model: Model, records: readonly EvidenceRecord[]): CaseVerdictWrite[] {
+function writeCaseVerdicts(
+  model: Model,
+  records: readonly EvidenceRecord[],
+  modelRead: ModelReadings,
+): CaseVerdictWrite[] {
   const out: CaseVerdictWrite[] = [];
-  const judged = judgedFromRecords(model, records);
+  const judged = judgedFromRecords(model, records, modelRead);
   if (judged.length === 0) return out;
   for (const c of runVerificationCases(model, { judged }).cases) {
     if (!c.judged || c.code !== null) continue;
@@ -3338,9 +3355,11 @@ function reportEvidenceAttach(
   refuseDegradedWrite('evidence-attach', name, degraded);
   const from = attachFrom(args);
   const records = loadRecords(from);
+  // The model's readings are built once for the attach and for the case layer after it.
+  const modelRead = modelReadings(model);
   let r: AttachReport;
   try {
-    r = attachEvidence(model, records);
+    r = attachEvidence(model, records, modelRead);
   } catch (err) {
     // A library element, or a faulted declaration. Both are answers about what
     // was ASKED — the record names an element evidence cannot live on — and
@@ -3367,7 +3386,7 @@ function reportEvidenceAttach(
   // AFTER the records are in, because the case verdict is a roll-up of the rows
   // they state and a model that declares no verification case is left exactly
   // as `attachEvidence` left it.
-  const caseVerdicts = writeCaseVerdicts(model, records);
+  const caseVerdicts = writeCaseVerdicts(model, records, modelRead);
   // THE PAYLOAD SAYS WHAT THE FILE SAYS. `attachEvidence`'s own report knows
   // nothing about cases, so a `--json` body carrying it alone would state a
   // verdict the artefact beside it does not contain — and would report an empty

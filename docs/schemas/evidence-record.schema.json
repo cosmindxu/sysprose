@@ -202,10 +202,12 @@
       "properties": {
         "requirement": {
           "type": "string",
-          "description": "Qualified name of the requirement element whose facet this reading contributes to: the requirement the row was read for (the obligation row's `instance.requirementId`), written by `verify --record` from the row, never by splitting the name."
+          "minLength": 1,
+          "description": "Qualified name of the requirement element whose facet this reading contributes to: the requirement the row was read for (the obligation row's `instance.requirementId`), or the requirement usage a `satisfy` names when that usage is typed by the requirement whose clause was read, written by `verify --record` from the row, never by splitting the name. `obligation.requirement` is `<requirement> in <reading>`; `evidence-attach` skips a record whose two names disagree, whose requirement is no requirement, or which the model does not read in that reading."
         },
         "reading": {
           "type": "string",
+          "minLength": 1,
           "description": "The context or instance the relation was read in: what follows the requirement's name and ` in ` in `obligation.requirement`. It may itself contain ` in `. It is part of the obligation's identity, so two readings of one clause are two live obligations and neither supersedes the other."
         }
       }

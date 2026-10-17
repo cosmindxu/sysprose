@@ -2327,10 +2327,29 @@ the requirement and the reading (`"instance": { "requirement": "H::LoadReq",
 verdict of a verification case that verifies the requirement: a requirement
 refuted in one part makes the case `fail` in `verify`'s report, with or without
 `--case` (which records the readings with the own row), and is written `fail` by
-the record and by the case, on every attach. A record from an older build names a reading only as `<requirement> in
-<reading>`; it is carried the same way when the first half is a requirement of
-this model and the model reads it in the second, and is otherwise skipped with
-the half that does not match named.
+the record and by the case, on every attach. A requirement usage typed by the
+definition (`requirement massR : LoadReq; satisfy massR by p1;`) owns none of the
+definition's clauses, so the clause is read once, on `LoadReq`'s own row, and read
+again at each satisfier; the reading at `p1` is written for the requirement the
+`satisfy` names, `massR` (`"requirement": "H::massR"`, and the record's
+`obligation.requirement` reads `H::massR in H::p1`), and `verify massR by VC`
+judges it. The case over the definition keeps it too: `verify LoadReq by VC` is
+still judged over the reading `satisfy massR by p1` refutes in `LoadReq`'s clause,
+and `evidence-attach` writes that case's verdict the same way. `verify`'s own
+report still prints the row as `H::LoadReq in H::p1`, and a `satisfy LoadReq by
+p1` that names the definition keeps the record on `LoadReq`. A record from an
+older build names a reading only as `<requirement> in <reading>`. `evidence-attach`
+refuses the whole `--from` file, with exit 2 and nothing written, when a
+`sysprose-evidence/2` record has an empty `instance.reading` or
+`instance.requirement` (the schema requires at least one character). A record that
+passes the schema is held to the same checks in both versions before anything is
+written: the requirement must be a requirement of this model, the model must read
+it in that reading, and (for a `sysprose-evidence/2` record) the facet and
+`obligation.requirement` must say the same thing; a record that fails one is
+skipped with the half that does not match named. A record written by an earlier
+build for such a usage, `LoadReq in p1` in either version, is skipped for the same
+reason, since the model now reads that clause in `p1` for `massR`; running
+`verify --record` again writes the reading on the usage.
 
 **Evidence accumulates.** A second run **appends** a carrier; nothing is
 overwritten and no earlier verdict is deleted, so the file keeps the history of

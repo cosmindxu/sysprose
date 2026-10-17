@@ -3994,6 +3994,39 @@ package P {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+
+    // EV-4, in the same test so the L7 case count stays: the reading moves to the usage a
+    // `satisfy` names (`massR : LoadReq`), and the definition's case keeps it.
+    const dir4 = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model4 = join(dir4, 'ev4.sysml');
+      writeFileSync(
+        model4,
+        [
+          'package H {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+          '  requirement def LoadReq { subject s : P; require constraint { s.load <= 10.0 } }',
+          '  requirement massR : LoadReq { subject s : P; }',
+          '  part p1 : P { attribute :>> load = 50.0; }',
+          '  part p2 : P { attribute :>> load = 2.0; }',
+          '  satisfy massR by p1;',
+          '  satisfy massR by p2;',
+          '  verification def VC; verify LoadReq by VC;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const records4 = join(dir4, 'ev4.json');
+      const verified = await run(['verify', model4, '--engine', 'literal', '--record', records4]);
+      expect(verified.code).toBe(1);
+      expect(verified.stdout).toContain('H::VC  verdict fail');
+      const attached = await run(['evidence-attach', model4, '--from', records4, '--out', model4]);
+      expect(attached.code).toBe(0);
+      expect(attached.stderr).toContain('H::LoadReq — verdict fail written from H::VC');
+      expect(attached.stderr).toContain('H::VC verdict fail');
+    } finally {
+      rmSync(dir4, { recursive: true, force: true });
+    }
   }, 300_000);
 
   it('evidence-attach refuses a record whose stated verdict does not follow from its claim', async () => {
