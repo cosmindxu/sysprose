@@ -150,7 +150,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **115 catalogue codes** in
+`npm run check` is what raises it — beside **117 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **27 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -5307,7 +5307,7 @@ of them given less than 40 s, the budget plus the margin plus 5 s (a case that
 began while one vitest had stopped was still running is named beside that one
 instead, since the counter cannot tell their checks apart); the `withZ3`
 wrappers of `smt-z3.integration` and `verification.differential` refuse such a
-timeout when a case is declared. The campaign file's **77 `withZ3`
+timeout when a case is declared. The campaign file's **78 `withZ3`
 cases** and the plain cases that also drive the solver used to share one
 context from the first block to the last; each of its **12 solver blocks** now
 starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per

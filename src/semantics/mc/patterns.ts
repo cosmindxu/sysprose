@@ -1885,6 +1885,24 @@ export function checkProperty(
       witness: [],
     };
   }
+  // NO BOUND WAS HIT, so the one clause left is the alphabet's: a trigger the
+  // machine names that the walk never offered. That is not an exhausted bound
+  // and no flag decides it, so it has its own code and a sentence that names
+  // the triggers — `--max-configs` advice here sends a reader round a loop.
+  if (!exhaustive && boundHit === 'none') {
+    const unoffered = bounds.alphabet.filter((t) => !walk.offered.has(t));
+    const names = unoffered.map((t) => `\`${t}\``).join(', ');
+    return {
+      ...base,
+      claim: 'inconclusive',
+      code: TRIGGER_NOT_OFFERED_CODE,
+      detail:
+        `inconclusive: no bound was hit, but the walk never offered ${names || 'a trigger the machine names'} at any configuration, ` +
+        `so a run that takes it was not searched${isCover ? ' and the not-covered claim is not made' : ', and no bad prefix having been found is not the absence of one'}. ` +
+        'No flag decides this: a re-run with larger bounds walks the same graph and comes back the same.',
+      witness: [],
+    };
+  }
   if (!exhaustive) {
     return {
       ...base,
@@ -2555,8 +2573,11 @@ function recoveryRow(
       return refused(GUARD_UNDETERMINED_CODE, RECOVERY_REFUSED.store, gate.sentence, withheld);
     // A question this engine cannot decide HERE, like a trigger or a dwell:
     // the relation is the interpreter's, and the resting point is its budget's.
+    // Its own code, and not the unsupported-construct one the other two
+    // share: there is no construct here the engine does not explore, and the
+    // catalogue's entry for that code would say the machine was not walked.
     case 'budget':
-      return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.budget, gate.sentence, withheld);
+      return refused(RECOVERY_BUDGET_CODE, RECOVERY_REFUSED.budget, gate.sentence, withheld);
     default:
       break;
   }
@@ -2623,7 +2644,7 @@ function recoveryRow(
     // printed `recoverable` for a state the interpreter's run never enters.
     const targetSet = new Set(targets);
     if (walk.budgetStops.some((i) => !targetSet.has(i))) {
-      return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.budget, CLAUSE_SENTENCE.budget, {
+      return refused(RECOVERY_BUDGET_CODE, RECOVERY_REFUSED.budget, CLAUSE_SENTENCE.budget, {
         targetConfigs: targets.length,
         cannotReach: null,
         bottomSccOverlap: null,
@@ -2806,8 +2827,23 @@ export const NOT_COVERED_CODE = 'verification/not-covered';
 /** The error `--cover-required` ADDS beside {@link NOT_COVERED_CODE} — never in place of it. */
 export const COVER_REQUIRED_CODE = 'verification/cover-required';
 
+/**
+ * A search that found nothing over a walk no bound stopped, in which a trigger
+ * the machine names was never offered (M2). Not `bound-exhausted`: no bound was
+ * hit, and no flag decides it. Info, exit 2 like every undecided property.
+ */
+export const TRIGGER_NOT_OFFERED_CODE = 'verification/trigger-not-offered';
+/**
+ * A `recovery` the interpreter's chase budget withholds (M2): a run comes to
+ * rest where the budget stops it and gets back to nothing from there. Not an
+ * unsupported construct, and not a bound a flag raises. Info, exit 2.
+ */
+export const RECOVERY_BUDGET_CODE = 'verification/recovery-budget-withheld';
+
 /** The codes this command can raise that no other part of the lane declares. */
 export const PROPERTY_PATTERN_CODES: ReadonlySet<string> = new Set([
+  TRIGGER_NOT_OFFERED_CODE,
+  RECOVERY_BUDGET_CODE,
   MALFORMED_PROPERTY_CODE,
   UNKNOWN_ATOM_CODE,
   NOT_COVERED_CODE,

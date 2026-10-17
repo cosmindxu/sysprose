@@ -27,12 +27,14 @@
  *  - **Byte-stability.** Element ids are fresh UUIDs on every load, so two
  *    encodes of one file must be the same bytes and no id may appear in them.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Model, ElementRecord } from '@core/index';
 import { readRelation, type RelationReading } from '@semantics/index';
 import { parseExpr } from '@semantics/expr';
+import { cacheReadings } from '@semantics/contracts';
+import * as unitLiterals from '@semantics/unit-literals';
 import {
   decimalRational,
   encodeRelation,
@@ -1120,5 +1122,46 @@ describe('the point evaluators read a numeral, a unit and a witness as the encod
     // With only the doubles, the tie is nobody's to decide.
     expect(rereadRelation(node, vars, new Map([['P::x', 3]]))).toMatchObject({ unknown: true });
     expect(rereadRelation(parseExpr('x > 0.9'), vars, new Map([['P::x', 3]]))).toMatchObject({ value: true });
+  });
+});
+
+describe('the readings cache of one pass keeps a reading from its second read on', () => {
+  const SRC = `package P { part def A { attribute x : Real = 1.0; constraint c { x > 0.5 } } part a : A; }`;
+
+  it('reads a key once for a pass that reads it once, twice for one that repeats it, and never again', async () => {
+    const model = await load(SRC);
+    const el = model.all().find((e) => e.eClass === 'ConstraintUsage')!;
+    const raw = String(el.attrs.expression).trim();
+    const parse = vi.spyOn(unitLiterals, 'parseRelationBody');
+    try {
+      const kept = new Map();
+      cacheReadings(kept);
+      const first = readRelation(model, el, raw, kept);
+      expect(parse).toHaveBeenCalledTimes(1);
+      const second = readRelation(model, el, raw, kept);
+      expect(parse).toHaveBeenCalledTimes(2);
+      expect(second).toEqual(first);
+      // The kept reading is a copy taken before the caller writes into the one it was handed.
+      second.variables[0]!.qualifiedName = 'leaked';
+      second.variables.length = 0;
+      // From the second read on the reading is kept: a recompute here is the regression.
+      const third = readRelation(model, el, raw, kept);
+      const fourth = readRelation(model, el, raw, kept);
+      expect(parse).toHaveBeenCalledTimes(2);
+      // The same reading each time, and a copy of its own for every caller.
+      expect(third).toEqual(first);
+      expect(fourth).toEqual(first);
+      expect(third).not.toBe(fourth);
+      expect(third.variables).not.toBe(fourth.variables);
+      third.variables.length = 0;
+      expect(readRelation(model, el, raw, kept)).toEqual(first);
+      // A pass that does not cache reads every time.
+      parse.mockClear();
+      readRelation(model, el, raw, new Map());
+      readRelation(model, el, raw, new Map());
+      expect(parse).toHaveBeenCalledTimes(2);
+    } finally {
+      parse.mockRestore();
+    }
   });
 });

@@ -249,6 +249,8 @@ interface ScalarAnswer {
 /** {@link ScalarAnswer.carried}: the quantity a binding carries into one instance, and where. */
 interface Carried {
   quantity: Quantity;
+  /** Set where the scalar value is the quantity read in the unit the filled feature declares: that unit. */
+  unit?: string;
   /** The name read, as the body wrote it, and the instance it was read in. */
   name: string;
   instance: string;
@@ -800,6 +802,16 @@ function literalAnswer(value: number, f: ElementRecord): ScalarAnswer {
 }
 
 /**
+ * The memo key of a feature's value: the feature, the instance it is read in and the
+ * context that changes what it reads ({@link DefiningEquations.readAt}). One feature
+ * read in one instance from two contexts has two values, so neither is dropped.
+ */
+export function valueKey(id: ElementId, inst?: string, at?: ElementId): string {
+  if (inst !== undefined) return at !== undefined ? `${instanceKey(id, inst)}@${at}` : instanceKey(id, inst);
+  return at !== undefined ? instanceKey(id, at) : id;
+}
+
+/**
  * The value of one feature: a literal directly, an expression through the
  * feature's owner scope — or, given `at`, through the scope of the context
  * that changes what it reads, as that context's own value
@@ -845,7 +857,7 @@ function valueOfFeature(
   ) {
     return { value: s.slice(1, -1), depth: 0 };
   }
-  const key = inst !== undefined ? `${id}@${inst}` : at !== undefined ? instanceKey(id, at) : id;
+  const key = valueKey(id, inst, at);
   if (pass.inFlight.has(key)) return cameBackTo(returnTo(pass.inFlight, key));
   const hit = pass.answers.get(key);
   if (hit) {
@@ -1085,7 +1097,11 @@ function carriedInto(
   }
   const into = quantityIn(q, declared.unit);
   if (!into) return { carried, unconverted: unread(`the binding carries ${shown} into it, and no conversion reads that in ${declared.unit ?? 'SI'}`) };
-  return { value: into.magnitude, ...(into.exact !== undefined ? { exact: into.exact } : {}), carried };
+  return {
+    value: into.magnitude,
+    ...(into.exact !== undefined ? { exact: into.exact } : {}),
+    carried: declared.unit !== undefined ? { ...carried, unit: declared.unit } : carried,
+  };
 }
 
 /** What {@link carriedInto} makes of a value a binding carries: the number in the declared unit, the quantity, the caveat. */
@@ -1212,6 +1228,22 @@ export interface ConstraintCheck {
    * per instance. `path` is the path the relation writes it as.
    */
   reads?: InstanceRead[];
+  /**
+   * The two sides of the comparison in SI and their dimension, where the check
+   * read a value a binding carries in as the quantity it is: the literal and
+   * SMT notes print `(x vs y in M, coherent SI)` from them, as for any other
+   * row the unit-aware reading compared.
+   */
+  sides?: ConstraintSides;
+  /** On a worklist row's check ({@link checksByRow}) only: why the row abstains (A.9). */
+  cause?: InstanceAbstention;
+}
+
+/** The two sides of a comparison in SI, and the dimension it was made in ({@link ConstraintCheck.sides}). */
+export interface ConstraintSides {
+  lhsSI: number;
+  rhsSI: number;
+  dimension: string;
 }
 
 /**
@@ -1290,6 +1322,8 @@ export interface SpecialisationInstance {
   cause?: InstanceAbstention;
   /** The values the row read, for the value-source message and the witness (F5). */
   reads?: InstanceRead[];
+  /** The two sides in SI where the row read a carried value as a quantity ({@link ConstraintCheck.sides}). */
+  sides?: ConstraintSides;
 }
 
 /** One measure of a {@link SpecialisationInstance}, bound to its specialiser. */
@@ -1314,6 +1348,10 @@ export interface InstanceRead {
   symbol: string;
   value?: number | boolean | string;
   exact?: string;
+  /** The unit `value` is read in, where a binding carried it into the unit the filled feature declares. */
+  unit?: string;
+  /** `exact` is SI, read the way the encoder reads the feature — set on the unit-aware reads alone; every other read's `exact` is in the stored magnitude or the declared `unit`. */
+  si?: true;
   via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string };
 }
 
@@ -1380,6 +1418,7 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       message: judged.message,
       ...(judged.tie ? { tie: true as const } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
+      ...(judged.sides ? { sides: judged.sides } : {}),
     };
     if (judged.gap) readThroughSpecialisers(model, el, expr, check, pass);
     readInContexts(model, el, expr, check, pass, groups);
@@ -1402,6 +1441,7 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       c.message = `Could not evaluate: ${own}`;
       delete c.tie;
       delete c.reads;
+      delete c.sides;
     }
     for (const i of c.instances ?? []) {
       if (i.result === 'unknown') continue;
@@ -1413,6 +1453,7 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       delete i.abstention;
       delete i.cause;
       delete i.reads;
+      delete i.sides;
     }
   }
   out.push(...contradictions(model, pass));
@@ -1444,6 +1485,8 @@ export function checksByRow(checks: readonly ConstraintCheck[]): Map<ElementId, 
         result: i.result,
         message: i.detail ?? i.message,
         ...(i.reads ? { reads: i.reads } : {}),
+        ...(i.sides ? { sides: i.sides } : {}),
+        ...(i.cause !== undefined ? { cause: i.cause } : {}),
       };
       out.set(`${c.id}@${at}`, row);
       if (i.elementId !== undefined && !out.has(`${c.id}@${i.elementId}`)) out.set(`${c.id}@${i.elementId}`, row);
@@ -1669,7 +1712,7 @@ function rollupMessage(
 /** The C.3 violated-instance sentence; F5 appends the value-source clause from {@link InstanceRead}. */
 function violatedInstanceMessage(relation: string, expr: string, inst: SpecialisationInstance): string {
   const read = inst.reads?.find((r) => r.via !== undefined);
-  const detail = read?.via ? `: ${read.path} = ${String(read.value)} — ${read.via.sourcePath} through a \`bind\`` : '';
+  const detail = read?.via ? `: ${read.path} = ${String(read.value)}${unitSuffix(read)} — ${read.via.sourcePath} through a \`bind\`` : '';
   return `${relation} (${expr}) is violated in ${instanceLabel(inst)}${detail}`;
 }
 
@@ -1944,6 +1987,7 @@ function readInContexts(
       ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
       ...(causeOf(judged) !== undefined ? { cause: causeOf(judged) } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
+      ...(judged.sides ? { sides: judged.sides } : {}),
     });
   }
   if (instances.length > 0) check.instances = instances;
@@ -2023,6 +2067,7 @@ function groupInstanceRows(
     const cause = causeOf(judged);
     if (cause !== undefined) row.cause = cause;
     if (judged.reads) row.reads = judged.reads;
+    if (judged.sides) row.sides = judged.sides;
     rows.push(row);
   };
   // One row's judgement, contained (A.2.9): a throw is that row's abstention.
@@ -2211,6 +2256,8 @@ interface Judgement {
   tie?: true;
   /** The values the reading read through a binding (F5), for the witness and the value-source clause. */
   reads?: InstanceRead[];
+  /** The two sides in SI, where the unit-aware reading of a carried value compared them ({@link ConstraintCheck.sides}). */
+  sides?: ConstraintSides;
   /** Why a per-instance reading abstained (A.9), for the context row's sentence. */
   abstention?: InstanceAbstention;
   /** The A.9 sentence, when {@link abstention} or {@link cause} is set. */
@@ -2266,8 +2313,11 @@ function judgeConstraint(
   // The scalar path above records the values it read per instance; a body the
   // unit-aware reader alone decides (a unit literal applied to a computed
   // operand) has none, so the witness is filled from the unit-aware reading.
-  const ur = judged.reads === undefined ? unitReads(model, el, pass, namesIn(expr), inst) : undefined;
-  const withReads = ur !== undefined ? { ...judged, reads: ur } : judged;
+  // A read of a feature by its own symbol (the end copy of a binding) is no instance read: a body
+  // with those alone is filled from the unit-aware reading too.
+  const ownOnly = judged.reads?.every((r) => r.symbol === pass.definitions.qualifiedNameOf(r.featureId)) ?? true;
+  const ur = ownOnly ? unitReads(model, el, pass, namesIn(expr), inst) : undefined;
+  const withReads = ur !== undefined ? { ...judged, reads: [...(judged.reads ?? []), ...ur] } : judged;
   // An equation that fixes a valueless feature is not a check that passed
   // but a definition that was read: say what it fixed the feature to — as
   // the quantity the equation derives, so `640 [Wh] / 650 [W]` reads 3544.62 s,
@@ -2556,13 +2606,13 @@ function carriedVerdict(
   const ua = unitAwareVerdict(model, el, expr, {
     ...uaOpts,
     bind: (name) => (bindings?.has(name) ? bindings.get(name)!.quantity : carried.get(name)?.quantity),
-  });
+  }, true);
   if ('gap' in ua) {
     const refused = unread();
     if (refused) return { result: 'unknown', message: refused, gap: false };
     const reads = collectReads(model, el, pass, names, own, at);
     const message = ua.result === 'satisfied' ? `Constraint satisfied${readsClause(reads)}` : `Constraint violated: ${expr}${readsClause(reads)}`;
-    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}) };
+    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}) };
   }
   if (isRefusalReason(ua.reason)) {
     return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: false, ...(ua.reason === 'tie' ? { tie: true as const } : {}) };
@@ -2619,7 +2669,7 @@ function unitReads(
       featureId: target.id,
       symbol,
       value: q.magnitude,
-      ...(exact !== undefined ? { exact: rationalText(exact) } : {}),
+      ...(exact !== undefined ? { exact: rationalText(exact), si: true as const } : {}),
     });
   }
   return out.length > 0 ? out : undefined;
@@ -2664,8 +2714,23 @@ function collectReads(
     if (!d) continue;
     const target = definitions.carrier(d.reader, d.feature);
     const symbol = rebased?.get(name)?.symbol ?? definitions.symbolOf(d);
-    if (symbol === definitions.qualifiedNameOf(target.id)) continue;
     const a = answer(name);
+    if (symbol === definitions.qualifiedNameOf(target.id)) {
+      // A feature read by its own symbol is no per-instance read. Where a binding supplies its value
+      // (the end copy of `bind p.load = L`) the witness prints it all the same, but as a value alone:
+      // the source clause and the anchor name the reads that differ by instance.
+      if (a?.via !== undefined && a.value !== undefined && typeof a.value !== 'object') {
+        out.push({
+          path: name,
+          featureId: target.id,
+          symbol,
+          value: a.value as number | boolean | string,
+          ...(a.exact !== undefined ? { exact: rationalText(a.exact) } : {}),
+          ...(a.carried?.unit !== undefined ? { unit: a.carried.unit } : {}),
+        });
+      }
+      continue;
+    }
     if (a && a.value === undefined && a.via === undefined && at !== undefined) {
       // A value the scalar reader cannot read but the unit-aware reader can
       // (a unit literal applied to a computed operand): the witness's point.
@@ -2678,7 +2743,7 @@ function collectReads(
           featureId: target.id,
           symbol,
           value: q.magnitude,
-          ...(exact !== undefined ? { exact: rationalText(exact) } : {}),
+          ...(exact !== undefined ? { exact: rationalText(exact), si: true as const } : {}),
         });
         continue;
       }
@@ -2690,12 +2755,18 @@ function collectReads(
       symbol,
       ...(typeof a.value === 'number' || typeof a.value === 'boolean' || typeof a.value === 'string' ? { value: a.value } : {}),
       ...(a.exact !== undefined ? { exact: rationalText(a.exact) } : {}),
+      ...(a.carried?.unit !== undefined ? { unit: a.carried.unit } : {}),
       ...(a.via !== undefined
         ? { via: { bindingId: a.via.bindingIds[0]!, sourcePath: a.via.source, sourceSymbol: a.via.sourceSymbol } }
         : {}),
     });
   }
   return out.length > 0 ? out : undefined;
+}
+
+/** ` [kg]`, the unit a read's value is in where a binding carried it into the filled feature's declared unit. */
+function unitSuffix(r: InstanceRead): string {
+  return r.unit !== undefined ? ` [${r.unit}]` : '';
 }
 
 /**
@@ -2710,7 +2781,7 @@ function readsClause(reads: InstanceRead[] | undefined): string {
   const instance = r.symbol.slice(0, r.symbol.lastIndexOf('::'));
   const sourceName = r.via.sourcePath.slice(r.via.sourcePath.lastIndexOf('.') + 1);
   const holder = r.via.sourceSymbol.slice(0, r.via.sourceSymbol.lastIndexOf('::'));
-  return ` (${r.path} = ${String(r.value)} in ${instance}, its ${sourceName} ${r.via.sourceSymbol} through ${holder}'s \`bind\`)`;
+  return ` (${r.path} = ${String(r.value)}${unitSuffix(r)} in ${instance}, its ${sourceName} ${r.via.sourceSymbol} through ${holder}'s \`bind\`)`;
 }
 
 /**
@@ -3518,10 +3589,15 @@ function unitAwareVerdict(
   el: ElementRecord,
   expr: string,
   opts: ConstraintQuantityOptions,
+  withSides = false,
 ): Judgement | ConstraintQuantityResult {
   const ua = evaluateConstraintQuantityDetailed(model, el, opts);
-  if (ua.verdict === 'satisfied') return { result: 'satisfied', message: 'Constraint satisfied', gap: false };
-  if (ua.verdict === 'violated') return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false };
+  const sides: Pick<Judgement, 'sides'> =
+    withSides && ua.lhsSI !== undefined && ua.rhsSI !== undefined && ua.dimension !== undefined
+      ? { sides: { lhsSI: ua.lhsSI, rhsSI: ua.rhsSI, dimension: dimToString(ua.dimension) } }
+      : {};
+  if (ua.verdict === 'satisfied') return { result: 'satisfied', message: 'Constraint satisfied', gap: false, ...sides };
+  if (ua.verdict === 'violated') return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false, ...sides };
   return ua;
 }
 

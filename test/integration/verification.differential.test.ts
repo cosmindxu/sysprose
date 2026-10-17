@@ -7816,6 +7816,7 @@ describe('a witness is the value at the path the row read, not the feature’s o
       }
       part r : P { attribute :>> k = cap / 1.0 [GiB]; }
       constraint rT { r.total == 4.0 [GiB] }
+      constraint rF { r.total == 5.0 [GiB] }
     }`;
 
   it('literal: a decided row whose value is a unit-literal expression prints it (F5): r.total = 4 GiB', async () => {
@@ -7831,6 +7832,140 @@ describe('a witness is the value at the path the row read, not the feature’s o
     expect(p.row).toEqual({ 'r.total': 4 });
     expect(p.record).toEqual({ 'r.total': 4 });
   });
+
+  // A-M1: the same-point gate compares the witness in SI, as the check's `read.exact` is: a witness in
+  // GiB (4) against 4 GiB in bytes (34359738368) was "not the model's point" and rF went F -> ?.
+  withZ3('smt: a refutation of a value in a unit stays refuted (A-M1): rF', async () => {
+    const p = await printed(IU1, 'IU1', 'smt', 'IU1::rF');
+    expect(p.claim).toBe('refuted');
+  });
+
+  // A-M1 gate scope: only a unit-aware read (`read.si`) is SI. A scalar read, a derived per-instance 4 g beside a
+  // carried 3 g, is in the stored magnitude: converting the witness to SI withheld both refutations (4 g + 3 g > 5 g).
+  const X1 = `package X1 {
+      part def P {
+        attribute k : ScalarValues::Real default = 1.0;
+        attribute total : ISQ::MassValue = (k * 2.0) [SI::g];
+        attribute load : ISQ::MassValue default = 1.0 [SI::g];
+        constraint c { total + load <= 5.0 [SI::g] }
+      }
+      part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::g]; part p : P; bind p.load = L; }
+      part q1 : Q { part :>> p { attribute :>> k = 2.0; } }
+      part q2 : Q { attribute :>> L = 3.0 [SI::g]; part :>> p { attribute :>> k = 2.0; } }
+      constraint top { q2.p.total + q2.p.load <= 5.0 [SI::g] }
+    }`;
+  withZ3('smt: a derived per-instance value beside a carried one stays refuted (A-M1 scope): P::c in q2::p and top', async () => {
+    expect((await printed(X1, 'X1', 'smt', 'X1::top')).claim).toBe('refuted');
+    expect((await printed(X1, 'X1', 'smt', 'X1::P::c in X1::q2::p')).claim).toBe('refuted');
+  });
+
+  // A-M2: a decided group row prints the value it was decided on (A2's generic row, A7 `top`, A9's generic row), an
+  // abstaining one prints none (the diamond's Q3 rows read nothing there), and a carried value prints in the unit the
+  // feature it fills declares, with the comparison's clause on both lanes.
+  const A2 = `package A2 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; constraint c { load + extra <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q { part :>> p { attribute :>> extra = 20.0; } }
+    }`;
+  const A7 = `package A7 {
+      part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+      part def Q { part p : P; }
+      part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      constraint top { q2.p.extra <= 10.0 }
+    }`;
+  const A9 = `package A9 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+      part def Q {
+        attribute L : ScalarValues::Real default = 1.0;
+        part p : P { constraint c2 { load + extra <= 10.0 } }
+        bind p.load = L;
+      }
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q { part :>> p { attribute :>> extra = 20.0; } }
+    }`;
+  const DM1 = `package DM1 {
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute extra : ScalarValues::Real default = 0.0;
+        attribute extra2 : ScalarValues::Real default = 0.0;
+        constraint c { load + extra + extra2 <= 10.0 }
+      }
+      part def P2 :> P { attribute :>> extra = 0.5; }
+      part def P4 :> P { attribute :>> extra2 = 20.0; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part def Q2 :> Q { part :>> p : P2; }
+      part def Q4 :> Q { part :>> p : P4; }
+      part def Q3 :> Q2, Q4;
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q3 : Q3;
+    }`;
+  const U8 = `package U8 {
+      part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; constraint c { load <= cap } }
+      part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 20.0 [SI::kg]; }
+      part q2 : Q { attribute :>> L = 5000.0 [SI::g]; }
+    }`;
+  async function shown(text: string, pkg: string, engine: 'literal' | 'smt', clause: string) {
+    const m = await contextModel(text, pkg);
+    const row = (await verifyModel(m, { engine, sourceText: text })).results.find((r) => r.clause.qualifiedName === clause)!;
+    return {
+      claim: row.claim,
+      values: Object.fromEntries(row.bindings.map((b) => [b.path, b.value ?? null])),
+      units: Object.fromEntries(row.bindings.map((b) => [b.path, b.unit ?? null])),
+      detail: row.detail,
+      bound: row.bound.detail,
+    };
+  }
+
+  for (const engine of ['literal', 'smt'] as const) {
+    const t = engine === 'smt' ? withZ3 : it;
+    t(`${engine}: a decided group row prints its values (A-M2): A2's generic row, A7's top and its q2 row, A9's generic row`, async () => {
+      expect((await shown(A2, 'A2', engine, "A2::P::c in A2::Q::p (A2::Q's own)")).values).toEqual({ load: 1, extra: 0 });
+      expect((await shown(A7, 'A7', engine, 'A7::top')).values).toEqual({ 'q2.p.extra': 20 });
+      expect((await shown(A7, 'A7', engine, 'A7::P::c in A7::q2::p')).values).toEqual({ extra: 20 });
+      expect((await shown(A9, 'A9', engine, 'A9::Q::p::c2')).values).toEqual({ load: 1, extra: 0 });
+    });
+
+    t(`${engine}: an abstaining group row prints no value of the usage's (A-M2): the diamond's Q3 rows`, async () => {
+      const p = await shown(DM1, 'DM1', engine, 'DM1::P::c in DM1::q3::p');
+      expect(p.claim).toBe('inconclusive');
+      expect(p.values).toEqual({ load: null, extra: null, extra2: null });
+    });
+
+    t(`${engine}: a carried value prints in the unit its feature declares, with the comparison's clause (A-M2): U8`, async () => {
+      const q1 = await shown(U8, 'U8', engine, 'U8::P::c in U8::q1::p');
+      expect(q1.claim).toBe('refuted');
+      expect([q1.values.load, q1.units.load]).toEqual([20, 'SI::kg']);
+      expect(q1.detail).toContain('(20 vs 10 in M, coherent SI)');
+      expect(q1.bound).toContain('compared as 20 vs 10 in M, coherent SI');
+      // 5000 g is 5 kg, printed as the 5 kg it is compared as.
+      const q2 = await shown(U8, 'U8', engine, 'U8::P::c in U8::q2::p');
+      expect([q2.values.load, q2.units.load]).toEqual([5, 'SI::kg']);
+      expect(q2.bound).toContain('compared as 5 vs 10 in M, coherent SI');
+    });
+
+    // A carried value is the witness in the unit its feature declares (mm, g), not in SI: the same-point gate
+    // reads it there, so a unit that is not coherent SI still confirms (A-M1 must not refuse it).
+    t(`${engine}: a violated row filled through a bind into a non-SI feature stays refuted (A-M1): mm and g`, async () => {
+      const G3 = `package G3 {
+        part def Bolt { attribute len : ISQ::LengthValue default = 10.0 [SI::mm]; constraint fits { len <= 50.0 [SI::mm] } }
+        part def Joint { attribute L : ISQ::LengthValue default = 10.0 [SI::mm]; part b : Bolt; bind b.len = L; }
+        part j1 : Joint { attribute :>> L = 80.0 [SI::mm]; }
+        part j2 : Joint { attribute :>> L = 30.0 [SI::mm]; }
+      }`;
+      expect((await shown(G3, 'G3', engine, 'G3::Bolt::fits in G3::j1::b')).claim).toBe('refuted');
+      expect((await shown(G3, 'G3', engine, 'G3::Bolt::fits in G3::j2::b')).claim).not.toBe('refuted');
+      const G2 = `package G2 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::g]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; constraint c { load <= cap } }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 20.0 [SI::kg]; }
+        constraint top { q1.p.load <= 15000.0 [SI::g] }
+      }`;
+      expect((await shown(G2, 'G2', engine, 'G2::P::c in G2::q1::p')).claim).toBe('refuted');
+      expect((await shown(G2, 'G2', engine, 'G2::top')).claim).toBe('refuted');
+    });
+  }
 
   it('keeps the feature’s own value, in its declared unit, for a path read through no instance of its own', async () => {
     const text = `package W4 {

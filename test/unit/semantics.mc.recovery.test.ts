@@ -57,6 +57,7 @@ import {
 } from '../../src/semantics/mc/explore';
 import {
   PATTERNS,
+  RECOVERY_BUDGET_CODE,
   STEP_ATOM_REASON,
   STORE_ATOM_REASON,
   behaviourReport,
@@ -360,7 +361,7 @@ describe('the trap probe: four configurations cannot reach `standby`, and two of
       const v = r.properties[0];
       expectArmShape(v, configs);
       expect(v.claim, machine).toBe('inconclusive');
-      expect(v.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+      expect(v.code).toBe(RECOVERY_BUDGET_CODE);
       expect(r.exitCode).toBe(2);
       expect(v.detail).toContain('the interpreter\u2019s chase budget');
       expect(v.detail).toContain('neither direction of this claim is made');
@@ -907,7 +908,7 @@ describe('the exactness gate refuses BOTH directions, one fixture per mechanism'
     expect(t.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: null, bottomSccOverlap: null, refusedByGate: 'budget' });
   });
 
-  it('budget: a trigger-less chain of 70, whose walk follows the budget, is `inconclusive` under `behaviour-unsupported-construct` with the budget sentence', () => {
+  it('budget: a trigger-less chain of 70, whose walk follows the budget, is `inconclusive` under `verification/recovery-budget-withheld` with the budget sentence', () => {
     // The first walk has to cut the chain, so the walk carries the chase
     // position and stops at `s64` with a completion still due — clause (e),
     // and nothing before it. `recoverable` and `not recoverable` would both be
@@ -923,7 +924,7 @@ describe('the exactness gate refuses BOTH directions, one fixture per mechanism'
     const v = checkProperty(m, sm.id, recovery('state s64'));
     expectArmShape(v, walk.configs);
     expect(v.claim).toBe('inconclusive');
-    expect(v.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(v.code).toBe(RECOVERY_BUDGET_CODE);
     expect(v.detail).toMatch(/^inconclusive: a run of this machine comes to rest where the interpreter\u2019s chase budget stops it/);
     expect(v.detail).toContain(CLAUSE_SENTENCE.budget);
     expect(v.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: null, bottomSccOverlap: null, refusedByGate: 'budget' });

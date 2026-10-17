@@ -958,8 +958,10 @@ describe('the variables a clause reads, named one per path', () => {
     const rev = model.rev;
     const before = terms(prepareBounds(model, { measureId: y.id }));
     expect(terms(prepareBounds(model, { measureId: y.id, rows, rowsRev: rev }))).toEqual(before);
-    // At its revision the worklist given IS the one read: an empty one asserts nothing.
-    expect(prepareBounds(model, { measureId: y.id, rows: [], rowsRev: rev }).assertions).toEqual([]);
+    // At its revision the worklist given IS the one read: an emptied one asserts nothing.
+    const emptied = obligationsOf(model);
+    emptied.length = 0;
+    expect(prepareBounds(model, { measureId: y.id, rows: emptied, rowsRev: rev }).assertions).toEqual([]);
 
     const x = model.all().find((el) => model.qualifiedName(el.id) === 'B::P::x')!;
     model.setAttrs(x.id, { value: 4, valueText: '4.0' });
@@ -967,7 +969,39 @@ describe('the variables a clause reads, named one per path', () => {
     expect(after).not.toEqual(before);
     // Past it, the stale worklist is read afresh, the empty one with it.
     expect(terms(prepareBounds(model, { measureId: y.id, rows, rowsRev: rev }))).toEqual(after);
-    expect(terms(prepareBounds(model, { measureId: y.id, rows: [], rowsRev: rev }))).toEqual(after);
+    expect(terms(prepareBounds(model, { measureId: y.id, rows: emptied, rowsRev: rev }))).toEqual(after);
+  }, 60_000);
+
+  /**
+   * C-F4: the rows are trusted only if they are THIS model's default
+   * worklist. A scoped read, another model's list at an equal revision and a
+   * hand-built list each get a recompute, not a bound over the wrong axioms.
+   */
+  it('the bound recomputes rows that are not the model’s own default worklist', async () => {
+    const text = `package B {
+  part def P { attribute x : Real = 3.0; attribute y : Real = x * 2.0; }
+  part def Q { attribute z : Real = 7.0; }
+  part p : P;
+}`;
+    const model = await load(text);
+    // Same revision, other values: trusting its rows would give other terms.
+    const other = await load(text.replace('x : Real = 3.0', 'x : Real = 5.0'));
+    const y = model.all().find((el) => model.qualifiedName(el.id) === 'B::P::y')!;
+    const terms = (prepared: ReturnType<typeof prepareBounds>) => prepared.assertions.map((a) => a.assertion.term);
+    const own = terms(prepareBounds(model, { measureId: y.id }));
+    expect(own.length).toBeGreaterThan(0);
+    expect(model.rev).toBe(other.rev);
+    const scopeId = model.all().find((el) => model.qualifiedName(el.id) === 'B::Q')!.id;
+    const strangers: Array<readonly ReturnType<typeof obligationsOf>[number][]> = [
+      obligationsOf(model, { scopeId }),
+      obligationsOf(other),
+      // An emptied copy: trusted it asserts nothing, recomputed it gives `own`.
+      Object.assign(obligationsOf(model).slice(), { length: 0 }),
+      [],
+    ];
+    for (const rows of strangers) {
+      expect(terms(prepareBounds(model, { measureId: y.id, rows, rowsRev: model.rev }))).toEqual(own);
+    }
   }, 60_000);
 
   /**

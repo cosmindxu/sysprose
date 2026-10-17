@@ -90,6 +90,7 @@ import {
 import { isLiteralValueAxiom } from './consistency';
 import { rereadRelation, tieSentence, type PointValues } from './exact';
 import {
+  isCurrentWorklist,
   isFreedValueAxiom,
   obligationsOf,
   reachOfRow,
@@ -110,6 +111,7 @@ import {
 } from './smt/encode';
 import {
   rereadPoint,
+  sortedCore,
   type ObjectiveBound,
   type OptimizeSense,
   type WitnessValue,
@@ -186,9 +188,11 @@ export interface BoundsOptions {
   /** The per-check budget in ms. Every check in this lane is bounded. */
   timeoutMs?: number;
   /**
-   * The model's worklist (`obligationsOf(model)`) where the caller already
-   * read it, at the model's revision `rowsRev`: used only while the model is
-   * still at that revision, and read afresh otherwise.
+   * The model's worklist (`obligationsOf(model)`, default options) where the
+   * caller already read it, at the model's revision `rowsRev`: used only while
+   * the model is still at that revision, and only if it is that very list
+   * (recorded by `obligationsOf`); read afresh otherwise, as for a list from
+   * another model, a `scopeId` or `--missing` read, or one built by hand.
    */
   rows?: readonly Obligation[];
   rowsRev?: number;
@@ -514,7 +518,12 @@ export function prepareBounds(
     rowsRev?: number;
   },
 ): Prepared {
-  const rows = opts.rows !== undefined && opts.rowsRev === model.rev ? opts.rows : obligationsOf(model);
+  // A caller's rows are used only if they are this model's own default worklist
+  // at its current revision; any others are read afresh (C-F4).
+  const rows =
+    opts.rows !== undefined && opts.rowsRev === model.rev && isCurrentWorklist(model, opts.rows)
+      ? opts.rows
+      : obligationsOf(model);
   const measureName = opts.measureSymbol ?? model.qualifiedName(opts.measureId);
 
   // THE RELEASE. `--free F` drops the axiom that PINS F, exactly as it does in
@@ -870,6 +879,7 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
     witness: false,
   });
   checks += 1;
+  const vacuityCore = consistency.status === 'unsat' ? sortedCore(consistency.core) : [];
 
   const bounds: Bound[] = [];
   for (const sense of sensesOf(opts.sense)) {
@@ -880,7 +890,7 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
         code: 'verification/inconsistent-axioms',
         detail:
           `the assertions this bound would stand on cannot hold together ` +
-          `(core ${consistency.core.length > 0 ? consistency.core.join(', ') : 'the solver named none'}), ` +
+          `(core ${vacuityCore.length > 0 ? vacuityCore.join(', ') : 'the solver named none'}), ` +
           `so every bound over them is entailed by a contradiction and none is claimed. ${census}`,
         value: null,
         siValue: null,
@@ -905,7 +915,7 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
     bounds,
     fragment: script.fragment,
     logic: script.logic,
-    vacuityCore: consistency.status === 'unsat' ? [...consistency.core] : [],
+    vacuityCore,
     checks,
   };
 }

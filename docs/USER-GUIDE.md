@@ -1145,9 +1145,9 @@ q.load`, holds Sys's binding as well as P's asserts. A value the same in every
 instance — a literal, or arithmetic over literals the instance changes nothing
 of — keeps the feature's own name. A verify row prints a path read through
 an instance at that instance's value (`bindings`, and the evidence record's
-`witness`): `q.m2` is −40 where Q's own `m2` is 9, and no value where the
-scalar reading finds none there (a value a binding carries into the
-instance, or an expression with a unit literal). A requirement's subject
+`witness`): `q.m2` is −40 where Q's own `m2` is 9; a value a binding carries into the instance
+prints in the unit the feature it fills declares (5000 g into a kg feature is `5 [SI::kg]`), and no value
+stands where the reading finds none there (an expression with a unit literal) or where the row abstains. A requirement's subject
 that nothing binds, read in the requirement itself, is the generic instance
 of its type (the requirement is about any one); reached through a usage
 (`r1.s`, `sys.ra.s`, a nested requirement's `r2.t`) it is that usage's own,
@@ -2529,6 +2529,14 @@ $ npm run sysprose -- reach examples/uav-isr.sysml --max-configs 2
     partial under {maxConfigs 2, …} — the configuration bound was reached; the unreachable and dead lists are lower bounds and are NOT reported as findings
 ```
 
+A `check-behaviour` search can also come back short with no bound hit at all:
+the walk finished, but never offered a trigger the machine names, so a run that
+takes it was not searched. That is `verification/trigger-not-offered`, not
+`bound-exhausted`: the row names the triggers, exits 2, and says that no flag
+decides it, so `--max-configs` is not advised. The walk offers the whole alphabet
+wherever it can decide that the interpreter takes its next event, so a row under
+this code is a gap in the engine and not in the model.
+
 **The 64-step chase budget is not a bound: the walk follows it.** The
 interpreter fires trigger-less transitions for at most 64 steps after each
 event, and then takes the next event wherever the chase stopped — so on a
@@ -3094,6 +3102,10 @@ printed `recoverable` about it), an `after(n)` dwell the walk takes without
 advancing a clock, a run the interpreter's chase budget stops away from `p` —
 the walk follows the budget there, or, on a machine that names no trigger,
 the relation follows the chase past where the run ends (the flagship above).
+That last refusal is filed under its own code, `verification/recovery-budget-withheld`
+(exit 2): the walk finished and no construct is outside the fragment, so it is
+neither a bound nor an unsupported construct, and no flag decides it — raising
+`--max-configs` is no advice for it.
 `not recoverable` gets easier as edges are *removed*, which is
 the opposite direction — and a guard over something the walk could not decide
 removes exactly one: on the trapguard fixture the escape `degradedA if resetOk
