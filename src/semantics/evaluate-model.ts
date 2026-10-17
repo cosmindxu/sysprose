@@ -1394,6 +1394,8 @@ export interface InstanceCounts {
   violated: number;
   unknown: number;
   unread: number;
+  /** On a group left unexpanded at a cap that stopped the count: `unread` is a lower bound. */
+  atLeast?: true;
 }
 
 /**
@@ -1723,14 +1725,17 @@ function capClause(rows: readonly SpecialisationInstance[]): string {
   return shown.join('; ');
 }
 
+/** A count as the cap sentences beside it print theirs (`4,096`). */
+const num = (n: number): string => n.toLocaleString('en');
+
 /** The counts of a roll-up as C.3 words them, after the head: `violated in v (…), holds in s, could not be read in u (…); not read in r (…)`. */
 function countsSentence(counts: InstanceCounts, listed: readonly string[], rows: readonly SpecialisationInstance[], atLeast = false): string {
   const parts: string[] = [];
-  if (counts.violated > 0) parts.push(`violated in ${counts.violated} (${listed.map(quotePath).join(', ')}${counts.violated > listed.length ? ', \u2026' : ''})`);
-  if (counts.satisfied > 0) parts.push(`holds in ${counts.satisfied}`);
-  if (counts.unknown > 0) parts.push(`could not be read in ${counts.unknown} (${unknownClause(rows)})`);
+  if (counts.violated > 0) parts.push(`violated in ${num(counts.violated)} (${listed.map(quotePath).join(', ')}${counts.violated > listed.length ? ', \u2026' : ''})`);
+  if (counts.satisfied > 0) parts.push(`holds in ${num(counts.satisfied)}`);
+  if (counts.unknown > 0) parts.push(`could not be read in ${num(counts.unknown)} (${unknownClause(rows)})`);
   const body = parts.join(', ');
-  return counts.unread > 0 ? `${body}${body ? '; ' : ''}not read in ${atLeast ? 'at least ' : ''}${counts.unread} (${capClause(rows)})` : body;
+  return counts.unread > 0 ? `${body}${body ? '; ' : ''}not read in ${atLeast ? 'at least ' : ''}${num(counts.unread)} (${capClause(rows)})` : body;
 }
 
 /** Past this many contexts (or usages) of one relation, its findings fold into one per result (C.2). */
@@ -1769,7 +1774,10 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
   // A group left unexpanded past an instance cap: its instances are all `unread` (PI-7).
   for (const inst of insts) {
     if (inst.unread === undefined) continue;
-    const counts: InstanceCounts = { total: inst.unread.count, generic: 0, satisfied: 0, violated: 0, unknown: 0, unread: inst.unread.count };
+    const counts: InstanceCounts = {
+      total: inst.unread.count, generic: 0, satisfied: 0, violated: 0, unknown: 0, unread: inst.unread.count,
+      ...(inst.unread.atLeast === true ? { atLeast: true as const } : {}),
+    };
     out.push({
       elementId: check.id,
       severity: 'info',
@@ -1897,7 +1905,7 @@ function foldViaRows(model: Model, check: ConstraintCheck, rows: readonly Specia
   const out: InstanceRollupRow[] = [];
   for (const { result, cause, rows: list } of foldByVerdictAndCause(rows)) {
     const first = list.reduce((a, b) => ((order.get(a.featureId) ?? Infinity) <= (order.get(b.featureId) ?? Infinity) ? a : b));
-    const more = list.length > 5 ? `, \u2026 and ${list.length - 5} more` : '';
+    const more = list.length > 5 ? `, \u2026 and ${num(list.length - 5)} more` : '';
     out.push({
       elementId: anchorFor(model, check, first),
       severity: result === 'violated' ? 'warning' : 'info',
@@ -1918,8 +1926,8 @@ function foldedRollupMessage(
   rows: readonly SpecialisationInstance[],
 ): string {
   const shown = usages.slice(0, 5).map(quotePath).join(', ');
-  const more = usages.length > 5 ? `, \u2026 and ${usages.length - 5} more` : '';
-  const head = `${relation} (${expr}) read per instance in ${usages.length} usages (${counts.total} instances; first ${shown}${more})`;
+  const more = usages.length > 5 ? `, \u2026 and ${num(usages.length - 5)} more` : '';
+  const head = `${relation} (${expr}) read per instance in ${num(usages.length)} usages (${num(counts.total)} instances; first ${shown}${more})`;
   return `${head}: ${countsSentence(counts, listed, rows)}`;
 }
 
@@ -1933,8 +1941,8 @@ function rollupMessage(
   listed: string[],
   rows: readonly SpecialisationInstance[],
 ): string {
-  const head = `${relation} (${expr}) read in each of ${counts.total} instances${usage ? ` of ${quotePath(usage)}` : ''}`;
-  const tail = counts.generic > 0 ? ` \u2014 ${counts.generic} of them generic (${quotePath(definition)}'s own)` : '';
+  const head = `${relation} (${expr}) read in each of ${num(counts.total)} instances${usage ? ` of ${quotePath(usage)}` : ''}`;
+  const tail = counts.generic > 0 ? ` \u2014 ${num(counts.generic)} of them generic (${quotePath(definition)}'s own)` : '';
   return `${head}: ${countsSentence(counts, listed, rows)}${tail}`;
 }
 

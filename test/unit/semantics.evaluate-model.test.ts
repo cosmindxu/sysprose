@@ -4631,7 +4631,7 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(capped.map((x) => [x.severity, x.message, x.instances])).toEqual([
       [
         'info',
-        'CapN::P::c8 (load <= 18.0) read per instance in CapN::Q::p: not read in 2001 (more than 16,384 instance readings in this model)',
+        'CapN::P::c8 (load <= 18.0) read per instance in CapN::Q::p: not read in 2,001 (more than 16,384 instance readings in this model)',
         { total: 2001, generic: 0, satisfied: 0, violated: 0, unknown: 0, unread: 2001, listed: [] },
       ],
     ]);
@@ -4648,8 +4648,10 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     const { model: fm } = await loadModelText(frames);
     const fd = validate(fm!);
     expect(fd.filter((x) => x.ruleId === 'constraint-by-instance').map((x) => [x.severity, x.message])).toEqual([
-      ['info', 'CapF::P::c (load <= 10.0) read per instance in CapF::Q::p: not read in at least 2101 (a binding of this model holds in more than 4,096 contexts)'],
+      ['info', 'CapF::P::c (load <= 10.0) read per instance in CapF::Q::p: not read in at least 2,101 (a binding of this model holds in more than 4,096 contexts)'],
     ]);
+    // The structured count is a lower bound too (the `instances` payload says so).
+    expect(fd.find((x) => x.ruleId === 'constraint-by-instance')?.instances).toMatchObject({ unread: 2101, atLeast: true });
     expect(fd.filter((x) => x.ruleId === 'target-by-specialisation')).toEqual([]);
   }, 120000);
 

@@ -152,6 +152,12 @@ export interface JudgedObligation {
   code: string | null;
   /** The sentence the row printed. */
   detail: string;
+  /**
+   * The reading (instance or context) the clause was read in, for a row filed on
+   * more than one requirement (a reading moved onto a usage is also a row of its
+   * definition): a case that verifies both counts that one reading once.
+   */
+  reading?: string;
 }
 
 /** How a case run is narrowed, and what it is judged from. */
@@ -668,7 +674,12 @@ export function runVerificationCases(
     const caseIds = caseChain(model, caseEl).map((g) => g.id);
     const ownRows = caseIds.flatMap((id) => byRequirement.get(id) ?? []);
     const verifiedRows = verifies.flatMap((v) => byRequirement.get(v.requirement.id) ?? []);
-    const rows = [...ownRows, ...verifiedRows];
+    const seen = new Set<string>();
+    const rows = [...ownRows, ...verifiedRows].filter((r) => {
+      if (r.reading === undefined) return true;
+      const key = `${r.clause.id}\0${r.reading}`;
+      return !seen.has(key) && seen.add(key);
+    });
 
     // THE GATE COMES FIRST, before anything about the obligations is read. A
     // case whose method this tool does not perform has no verdict at all, and

@@ -160,6 +160,7 @@ import {
 } from '../src/api/index';
 import {
   isStatementKind,
+  quotePath,
   resolveFullName,
   runVerificationCases,
   statementKindOf,
@@ -529,10 +530,11 @@ function foldedDiagnostics(model: Model, diags: readonly Diagnostic[]): string[]
     for (const d of group.slice(0, 5)) out.push(`  ${d.code}  ${d.message}`);
     if (group.length > 5) {
       // The relation, not the instance the first row happens to name (PI-9).
-      // Named through the model by its base id: a row name is never quoted, so
-      // cutting it at ` in ` would split a relation whose own name holds one.
+      // Named through the model by its base id, quoted as the sentences quote it
+      // (PI-11): cutting a row name at ` in ` would split a relation whose own
+      // name holds one.
       const id = baseIdOf(group[0].elementId);
-      const rel = id ? qname(model, id) : (group[0].elementName ?? '');
+      const rel = id ? quotePath(qname(model, id)) : (group[0].elementName ?? '');
       out.push(`  \u2026 and ${group.length - 5} more ${group[0].code} on ${rel}`);
     }
   }
@@ -2016,7 +2018,7 @@ function verdictResultLines(model: Model, results: readonly ObligationVerdict[],
   for (const group of groups.values()) {
     out.push(...group.slice(0, 5).flatMap((v) => verdictLines(v, why)));
     if (group.length > 5) {
-      const where = qname(model, baseIdOf(group[0].requirement?.id ?? group[0].clause.id));
+      const where = quotePath(qname(model, baseIdOf(group[0].requirement?.id ?? group[0].clause.id)));
       out.push(`    \u2026 and ${group.length - 5} more rows of ${where}: ${group[0].claim} in ${group.length}`);
     }
   }
@@ -3243,11 +3245,13 @@ function judgedFromRecords(
       code: record.code ?? null,
       detail: record.detail,
     };
-    rows.push({ ...row, requirement: { id: req.id, qualifiedName: reading?.facet.requirement ?? requirement } });
+    const read = reading ? { reading: reading.facet.reading } : {};
+    rows.push({ ...row, ...read, requirement: { id: req.id, qualifiedName: reading?.facet.requirement ?? requirement } });
     // A reading filed on a requirement usage (EV-4) is also a row of the definition it reads.
     if (reading?.definition) {
       rows.push({
         ...row,
+        ...read,
         requirement: { id: reading.definition.id, qualifiedName: qname(model, reading.definition.id) },
       });
     }

@@ -1420,6 +1420,9 @@ export function instanceReadingOf(
     named !== undefined &&
     named.id !== requirementId &&
     isRequirement(named.eClass) &&
+    // A USAGE only: `requirement def HeavyReq :> LoadReq; satisfy HeavyReq by p1` owns
+    // nothing of LoadReq's clause either, but it is a definition and keeps its reading.
+    named.eClass.endsWith('Usage') &&
     generalizationsOf(model, named.id).some((g) => g.id === requirementId)
   ) {
     return {
@@ -1680,6 +1683,38 @@ export function liveEvidence(records: readonly EvidenceRecord[]): EvidenceRecord
  */
 const VERDICT_RANK: Record<EvidenceVerdict, number> = { fail: 2, inconclusive: 1, pass: 0 };
 
+/**
+ * The records a requirement DEFINITION answers for beyond its own carriers: the
+ * readings moved off it onto a requirement usage typed by it ({@link instanceReadingOf},
+ * EV-4). Such a record is carried by the usage and its clause is the definition's
+ * (`<definition>::…`), so the definition's verdict is the worst over its own
+ * carriers AND these, exactly as it was when the definition carried the reading —
+ * otherwise `evidence-attach` writes the definition `inconclusive` and the case
+ * moves it to `fail` again on every run. By definition id, with the carriers
+ * the records came from.
+ */
+function movedReadings(
+  model: Model,
+  holders: Iterable<{ id: ElementId; records: readonly EvidenceRecord[] }>,
+): Map<ElementId, { records: EvidenceRecord[]; from: Set<ElementId> }> {
+  const out = new Map<ElementId, { records: EvidenceRecord[]; from: Set<ElementId> }>();
+  for (const holder of holders) {
+    const el = model.get(holder.id);
+    if (!el || !isRequirement(el.eClass)) continue;
+    for (const g of generalizationsOf(model, holder.id)) {
+      if (!isRequirement(g.eClass)) continue;
+      const prefix = `${model.qualifiedName(g.id)}::`;
+      const moved = holder.records.filter((r) => r.obligation.clause.startsWith(prefix));
+      if (moved.length === 0) continue;
+      const known = out.get(g.id) ?? { records: [], from: new Set<ElementId>() };
+      known.records.push(...moved);
+      known.from.add(holder.id);
+      out.set(g.id, known);
+    }
+  }
+  return out;
+}
+
 /** One requirement's evidence, reduced to the one thing a facet can hold. */
 export interface EvidenceSummary {
   /** The worst live verdict — derived from a claim, never read off a record. */
@@ -1933,8 +1968,14 @@ export function attachEvidence(
   // The facet last, once per element, from the WORST live obligation under it —
   // so a requirement whose obligations disagree carries the verdict of the one
   // that is not discharged, whichever order the clauses were written in.
+  // A definition whose reading moved onto a usage this attach touched is a
+  // target too, and answers for the moved records as well (movedReadings).
+  const moved = movedReadings(model, evidenceHolders(model));
+  for (const [definition, { from }] of moved) {
+    if ([...from].some((id) => facetTargets.has(id))) facetTargets.add(definition);
+  }
   for (const id of facetTargets) {
-    const summary = summariseEvidence(evidenceOf(model, id));
+    const summary = summariseEvidence([...evidenceOf(model, id), ...(moved.get(id)?.records ?? [])]);
     if (!summary) continue;
     const el = model.get(id);
     if (!el || !isRequirement(el.eClass)) continue;
@@ -2051,6 +2092,22 @@ function readingRefusal(
     };
   }
   if (readings().get(target.id)?.has(reading) !== true) {
+    // A reading an earlier build filed on the definition is filed on the usage
+    // typed by it now (EV-4): say where it went, not that the model never reads it.
+    const movedTo = [...readings()].find(
+      ([id, known]) =>
+        known.has(reading) &&
+        isRequirement(model.get(id)?.eClass ?? '') &&
+        generalizationsOf(model, id).some((g) => g.id === target.id),
+    );
+    if (movedTo)
+      return {
+        rank: 2,
+        skip:
+          `the model files the reading of \`${requirement}\` in \`${reading}\` on ` +
+          `\`${model.qualifiedName(movedTo[0])}\`, the requirement the \`satisfy\` names — ` +
+          're-run `verify --record` to get the record it carries now',
+      };
     return {
       rank: 2,
       skip:
@@ -2237,7 +2294,10 @@ export function detachEvidence(model: Model, scopeId?: ElementId): DetachReport 
     return model.descendants(scopeId).some((d) => d.id === id);
   };
   model.transaction(() => {
-    for (const holder of evidenceHolders(model)) {
+    const removedFrom = new Set<ElementId>();
+    const holders = evidenceHolders(model);
+    for (const g of movedReadings(model, holders.filter((h) => inScope(h.id))).keys()) removedFrom.add(g);
+    for (const holder of holders) {
       if (!inScope(holder.id)) continue;
       const carriers = evidenceCarriers(model, holder.id);
       if (carriers.length === 0) continue;
@@ -2251,6 +2311,15 @@ export function detachEvidence(model: Model, scopeId?: ElementId): DetachReport 
       }
     }
     if (report.removed === 0) return;
+    // A definition that answered only for readings moved off it, and has none
+    // left, loses the facet they wrote.
+    const left = movedReadings(model, evidenceHolders(model));
+    for (const g of removedFrom) {
+      if (left.has(g) || evidenceOf(model, g).length > 0) continue;
+      if (getRequirementAttr(model, g, 'verdict') === undefined) continue;
+      setRequirementAttr(model, g, 'verdict', null);
+      report.verdictsCleared.push(model.qualifiedName(g));
+    }
     for (const el of model.all()) {
       if (!VERIFICATION_CASE_KINDS.has(el.eClass)) continue;
       if (!isUserElement(model, el) || !inScope(el.id)) continue;
@@ -2370,17 +2439,20 @@ export function evidenceStatus(model: Model): EvidenceStatusReport {
   const graph = modelVersionOf(model).graph;
   const holders = new Map(evidenceHolders(model).map((h) => [h.id, h]));
   const rows: EvidenceStatusRow[] = [];
+  const moved = movedReadings(model, holders.values());
 
   for (const el of model.all()) {
     if (!isUserElement(model, el)) continue;
     const holder = holders.get(el.id);
     const isReq = isRequirement(el.eClass);
     const claimed = isReq ? getRequirementAttr(model, el.id, 'verdict') : undefined;
-    if (!holder && claimed === undefined) continue;
+    const movedHere = moved.get(el.id)?.records ?? [];
+    if (!holder && claimed === undefined && movedHere.length === 0) continue;
 
     const qualifiedName = model.qualifiedName(el.id);
     const shortId = isReq ? requirementShortId(model, el.id) : '';
-    const records = holder?.records ?? [];
+    // A definition answers for the readings moved onto a usage typed by it too.
+    const records = [...(holder?.records ?? []), ...movedHere];
     const summary = summariseEvidence(records);
     // STALE IF ANY LIVE OBLIGATION IS. One re-recorded clause does not make the
     // requirement current again while another clause's record still names an

@@ -627,6 +627,29 @@ describe('attachEvidence — what goes into the file comes back out of it', () =
     expect(evidenceOf(model, massR).map((r) => r.instance?.reading)).toEqual(['H::p1', 'H::p2']);
     expect(getRequirementAttr(model, massR, 'verdict')).toBe('fail');
     expect(evidenceOf(model, loadReq(model)).map((r) => r.instance)).toEqual([undefined]);
+    // The definition answers for the reading moved off it: `fail`, as before the move.
+    expect(getRequirementAttr(model, loadReq(model), 'verdict')).toBe('fail');
+    // A record an earlier build filed on the definition is skipped with where it went.
+    const fresh = await parse(
+      PER_INSTANCE.replace(
+        '    satisfy LoadReq by p1;\n    satisfy LoadReq by p2;',
+        '    requirement massR : LoadReq;\n    satisfy massR by p1;\n    satisfy massR by p2;',
+      ),
+    );
+    const { instance: _moved, ...old } = records[1];
+    const legacy = attachEvidence(fresh, [
+      { ...old, obligation: { ...old.obligation, requirement: 'H::LoadReq in H::p1' } },
+    ]);
+    expect(legacy.skipped[0]?.reason).toMatch(/files the reading of `H::LoadReq` in `H::p1` on `H::massR`/);
+    // Only a requirement USAGE takes the reading: a `satisfy` of a specializing definition keeps it.
+    const heavy = await parse(
+      PER_INSTANCE.replace(
+        '    satisfy LoadReq by p1;\n    satisfy LoadReq by p2;',
+        '    requirement def HeavyReq :> LoadReq;\n    satisfy HeavyReq by p1;\n    satisfy HeavyReq by p2;',
+      ),
+    );
+    const kept = (await verifyModel(heavy, { engine: 'literal' })).records;
+    expect(kept.find((r) => r.claim === 'refuted')?.instance?.requirement).toBe('H::LoadReq');
     // THE DEFINITION'S CASE KEEPS THE READING: `verify LoadReq by VC` is judged over
     // what `satisfy massR by p1` refutes in LoadReq's clause, as before the move.
     const withCase = (verifies: string): string =>

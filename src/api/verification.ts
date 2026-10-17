@@ -1417,9 +1417,10 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
     judged: judged.flatMap((r) => {
       const reading = instances.get(r.clause.id);
       if (reading === undefined || r.requirement === null) return [r];
-      const filed = (requirementId: ElementId, qualifiedName: string): ObligationVerdict => ({
+      const filed = (requirementId: ElementId, qualifiedName: string): ObligationVerdict & { reading: string } => ({
         ...r,
         requirement: { ...r.requirement!, id: requirementId, qualifiedName },
+        reading: reading.facet.reading,
       });
       // A reading re-targeted to a usage is also a row of the definition it reads.
       return [

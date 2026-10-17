@@ -924,10 +924,11 @@ twenty contexts a binding carries a value into, one finding per verdict and caus
 The roll-up counts the instances that hold, those it is violated in (the first
 five named, then an ellipsis), those it could not be read in — with the cause of
 each kind, up to three, and the first instance of each (*defaults differ:
-R::q1::p*) — and those it did not read, with the cap (*not read in 2001 (more
-than 16,384 instance readings in this model)*); a group of more instances than the
+R::q1::p*) — and those it did not read, with the cap (*not read in 2,001 (more
+than 16,384 instance readings in this model)*, counts printed with thousands separators); a group of more instances than the
 tool reads is one info finding that counts them all unread (where a binding holds
-in more than 4,096 contexts, *not read in at least* the instances found). A violated instance
+in more than 4,096 contexts, *not read in at least* the instances found, and the `instances`
+payload then carries `atLeast: true`). A violated instance
 names the value it reads, the value the binding carries in and the binding
 (``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``), and a path with a
 segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; the `instance` and
@@ -2335,9 +2336,14 @@ again at each satisfier; the reading at `p1` is written for the requirement the
 `obligation.requirement` reads `H::massR in H::p1`), and `verify massR by VC`
 judges it. The case over the definition keeps it too: `verify LoadReq by VC` is
 still judged over the reading `satisfy massR by p1` refutes in `LoadReq`'s clause,
-and `evidence-attach` writes that case's verdict the same way. `verify`'s own
-report still prints the row as `H::LoadReq in H::p1`, and a `satisfy LoadReq by
-p1` that names the definition keeps the record on `LoadReq`. A record from an
+and `evidence-attach` writes that case's verdict the same way. The definition's
+own `verdict` facet is the worst over its carriers and over the readings moved
+onto the usages typed by it, so it stays `fail`, an attach of the same record again
+reports no verdict change, and `evidence-status` and `evidence-detach` read it the
+same way. A case that verifies both `LoadReq` and `massR` counts that reading
+once. `verify`'s own report still prints the row as `H::LoadReq in H::p1`, and a
+`satisfy LoadReq by p1` that names the definition (or a requirement definition that
+specializes it) keeps the record on `LoadReq`; only a requirement usage takes it. A record from an
 older build names a reading only as `<requirement> in <reading>`. `evidence-attach`
 refuses the whole `--from` file, with exit 2 and nothing written, when a
 `sysprose-evidence/2` record has an empty `instance.reading` or
@@ -2347,9 +2353,9 @@ written: the requirement must be a requirement of this model, the model must rea
 it in that reading, and (for a `sysprose-evidence/2` record) the facet and
 `obligation.requirement` must say the same thing; a record that fails one is
 skipped with the half that does not match named. A record written by an earlier
-build for such a usage, `LoadReq in p1` in either version, is skipped for the same
-reason, since the model now reads that clause in `p1` for `massR`; running
-`verify --record` again writes the reading on the usage.
+build for such a usage, `LoadReq in p1` in either version, is skipped, and the
+reason names the usage that carries the reading now (the model files `LoadReq` in
+`p1` on `H::massR`); running `verify --record` again writes it there.
 
 **Evidence accumulates.** A second run **appends** a carrier; nothing is
 overwritten and no earlier verdict is deleted, so the file keeps the history of
