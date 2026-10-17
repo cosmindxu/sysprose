@@ -1803,13 +1803,13 @@ function confirm(
         };
       }
       if (read.exact !== undefined) {
-        // The check's value is SI (`read.exact`), except a value a binding carried in: that one is
-        // in the unit the filled feature declares (`read.unit`), which is the unit the witness is in.
-        // Every other read is compared in SI, the witness read the way the encoder reads it.
+        // A unit-aware read (`read.si`) is SI: the witness is read the way the encoder reads it. Every
+        // other read is in the stored magnitude, or in the unit the filled feature declares (`read.unit`,
+        // a value a binding carried in), which is the unit the witness is in: compared as it is.
         const stored = values.exact?.get(v.qualifiedName);
         const scale = row.vars.find((x) => x.qualifiedName === v.qualifiedName);
         const witness =
-          stored === undefined ? undefined : read.unit !== undefined ? stored : scale !== undefined ? affineRational(stored, scale) : undefined;
+          stored === undefined || !read.si ? stored : scale !== undefined ? affineRational(stored, scale) : undefined;
         const witnessText = witness !== undefined ? `${witness.num}/${witness.den}` : undefined;
         if (witnessText !== read.exact) {
           return {

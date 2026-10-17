@@ -7840,6 +7840,25 @@ describe('a witness is the value at the path the row read, not the feature’s o
     expect(p.claim).toBe('refuted');
   });
 
+  // A-M1 gate scope: only a unit-aware read (`read.si`) is SI. A scalar read, a derived per-instance 4 g beside a
+  // carried 3 g, is in the stored magnitude: converting the witness to SI withheld both refutations (4 g + 3 g > 5 g).
+  const X1 = `package X1 {
+      part def P {
+        attribute k : ScalarValues::Real default = 1.0;
+        attribute total : ISQ::MassValue = (k * 2.0) [SI::g];
+        attribute load : ISQ::MassValue default = 1.0 [SI::g];
+        constraint c { total + load <= 5.0 [SI::g] }
+      }
+      part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::g]; part p : P; bind p.load = L; }
+      part q1 : Q { part :>> p { attribute :>> k = 2.0; } }
+      part q2 : Q { attribute :>> L = 3.0 [SI::g]; part :>> p { attribute :>> k = 2.0; } }
+      constraint top { q2.p.total + q2.p.load <= 5.0 [SI::g] }
+    }`;
+  withZ3('smt: a derived per-instance value beside a carried one stays refuted (A-M1 scope): P::c in q2::p and top', async () => {
+    expect((await printed(X1, 'X1', 'smt', 'X1::top')).claim).toBe('refuted');
+    expect((await printed(X1, 'X1', 'smt', 'X1::P::c in X1::q2::p')).claim).toBe('refuted');
+  });
+
   // A-M2: a decided group row prints the value it was decided on (A2's generic row, A7 `top`, A9's generic row), an
   // abstaining one prints none (the diamond's Q3 rows read nothing there), and a carried value prints in the unit the
   // feature it fills declares, with the comparison's clause on both lanes.

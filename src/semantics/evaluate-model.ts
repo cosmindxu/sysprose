@@ -1350,6 +1350,8 @@ export interface InstanceRead {
   exact?: string;
   /** The unit `value` is read in, where a binding carried it into the unit the filled feature declares. */
   unit?: string;
+  /** `exact` is SI, read the way the encoder reads the feature — set on the unit-aware reads alone; every other read's `exact` is in the stored magnitude or the declared `unit`. */
+  si?: true;
   via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string };
 }
 
@@ -2311,8 +2313,11 @@ function judgeConstraint(
   // The scalar path above records the values it read per instance; a body the
   // unit-aware reader alone decides (a unit literal applied to a computed
   // operand) has none, so the witness is filled from the unit-aware reading.
-  const ur = judged.reads === undefined ? unitReads(model, el, pass, namesIn(expr), inst) : undefined;
-  const withReads = ur !== undefined ? { ...judged, reads: ur } : judged;
+  // A read of a feature by its own symbol (the end copy of a binding) is no instance read: a body
+  // with those alone is filled from the unit-aware reading too.
+  const ownOnly = judged.reads?.every((r) => r.symbol === pass.definitions.qualifiedNameOf(r.featureId)) ?? true;
+  const ur = ownOnly ? unitReads(model, el, pass, namesIn(expr), inst) : undefined;
+  const withReads = ur !== undefined ? { ...judged, reads: [...(judged.reads ?? []), ...ur] } : judged;
   // An equation that fixes a valueless feature is not a check that passed
   // but a definition that was read: say what it fixed the feature to — as
   // the quantity the equation derives, so `640 [Wh] / 650 [W]` reads 3544.62 s,
@@ -2664,7 +2669,7 @@ function unitReads(
       featureId: target.id,
       symbol,
       value: q.magnitude,
-      ...(exact !== undefined ? { exact: rationalText(exact) } : {}),
+      ...(exact !== undefined ? { exact: rationalText(exact), si: true as const } : {}),
     });
   }
   return out.length > 0 ? out : undefined;
@@ -2738,7 +2743,7 @@ function collectReads(
           featureId: target.id,
           symbol,
           value: q.magnitude,
-          ...(exact !== undefined ? { exact: rationalText(exact) } : {}),
+          ...(exact !== undefined ? { exact: rationalText(exact), si: true as const } : {}),
         });
         continue;
       }
