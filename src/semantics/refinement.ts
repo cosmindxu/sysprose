@@ -123,7 +123,13 @@ import {
   type EncodedRelation,
   type ScriptAssertion,
 } from './smt/encode';
-import { rereadPoint, type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
+import {
+  rereadPoint,
+  sortedCore,
+  type CheckOutcome,
+  type WitnessValue,
+  type Z3Backend,
+} from './smt/z3-bridge';
 import { type DerivationMemo } from './units-eval';
 
 /* ─────────────────────────────── the codes ───────────────────────────────── */
@@ -1387,6 +1393,7 @@ async function judgeDerivation(input: {
     ...gammaAssertions,
   ]);
   if (zero.status === 'unsat') {
+    const core = sortedCore(zero.core);
     return {
       ...base,
       checks,
@@ -1394,10 +1401,10 @@ async function judgeDerivation(input: {
       fragment,
       outcome: 'vacuous',
       code: CONTRACT_SET_VACUOUS_CODE,
-      vacuityCore: [...zero.core],
+      vacuityCore: core,
       detail:
         `vacuous: \`${derivation.parent.qualifiedName}\`’s assumption and the ${word} requirement(s) ` +
-        `cannot hold together (core ${zero.core.length > 0 ? zero.core.join(', ') : 'the solver named none'}) — ` +
+        `cannot hold together (core ${core.length > 0 ? core.join(', ') : 'the solver named none'}) — ` +
         `every obligation over them holds for nothing, so none is claimed. ${census}`,
     };
   }
@@ -2193,6 +2200,7 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
     ...gammaAssertions,
   ]);
   if (zero.status === 'unsat') {
+    const core = sortedCore(zero.core);
     return {
       ...base,
       checks,
@@ -2200,10 +2208,10 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
       fragment,
       outcome: 'vacuous',
       code: CONTRACT_SET_VACUOUS_CODE,
-      vacuityCore: [...zero.core],
+      vacuityCore: core,
       detail:
         `vacuous: the sub-contracts, the connections and the system assumption cannot hold together ` +
-        `(core ${zero.core.length > 0 ? zero.core.join(', ') : 'the solver named none'}) — every ` +
+        `(core ${core.length > 0 ? core.join(', ') : 'the solver named none'}) — every ` +
         `refinement obligation over them holds for nothing, so none is claimed. ${census}`,
     };
   }

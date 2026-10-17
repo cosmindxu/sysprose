@@ -1474,6 +1474,17 @@ function coreOf(solver: Z3Solver): string[] {
   }
 }
 
+/**
+ * A core as the SET it is, sorted. z3 returns the labels in an order that
+ * flips between runs on the same tree (finalizer and GC timing), so a core
+ * that is printed or stored goes through here first: the same model then
+ * prints the same sentence on every run. (`engines/smt.ts` keeps its own
+ * private copy of this one-liner.)
+ */
+export function sortedCore(core: readonly string[]): string[] {
+  return [...core].sort();
+}
+
 /** `|a::b|` → `a::b`. A quoted SMT symbol is the same symbol. */
 function stripPipes(s: string): string {
   return s.startsWith('|') && s.endsWith('|') ? s.slice(1, -1) : s;

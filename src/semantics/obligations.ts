@@ -764,9 +764,26 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     o.encodable = { reason: 'unread-definition', detail: equated };
     o.status = statusOf(o.encodable);
   }
-  return opts.missing
-    ? out.filter((o) => o.status === 'no-formal-clause' || o.status === 'not-encodable')
-    : out;
+  if (opts.missing) return out.filter((o) => o.status === 'no-formal-clause' || o.status === 'not-encodable');
+  if (opts.scopeId === undefined && !opts.fromKeywords && opts.maxInstanceGoals === undefined) {
+    DEFAULT_WORKLISTS.set(out, { model, rev: model.rev });
+  }
+  return out;
+}
+
+/**
+ * The worklists {@link obligationsOf} returned with its DEFAULT options, and
+ * the model and revision each was read from. A caller that hands such a list
+ * back (`checkBounds`' `rows`) is trusted only if the list is one of these:
+ * rows from `obligationsOf(m, { scopeId })`, from another model, or built by
+ * hand would otherwise give a bound over the wrong axiom set without a word.
+ */
+const DEFAULT_WORKLISTS = new WeakMap<readonly Obligation[], { model: Model; rev: number }>();
+
+/** True when `rows` is the default worklist of `model` as it stands now. */
+export function isCurrentWorklist(model: Model, rows: readonly Obligation[]): boolean {
+  const from = DEFAULT_WORKLISTS.get(rows);
+  return from !== undefined && from.model === model && from.rev === model.rev;
 }
 
 /** A contract, as the reference every row carries. */

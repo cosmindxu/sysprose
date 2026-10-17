@@ -113,6 +113,7 @@ import {
   writeVerdict,
 } from '@semantics/index';
 import { obligationsOf } from '@semantics/obligations';
+import { checkRefinement } from '@semantics/refinement';
 import {
   DEAD_MODULE_MARGIN_MS,
   DEFAULT_TIMEOUT_MS,
@@ -3586,6 +3587,65 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
     expect(r.bounds[0].code).toBe('verification/inconsistent-axioms');
     expect(r.vacuityCore.length, 'a vacuity with no core names nothing').toBeGreaterThan(0);
     expect(r.exitCode).toBe(2);
+  });
+
+  withZ3('a vacuity core is printed and stored sorted, whatever order the solver returns it in', async () => {
+    // C-F3. z3 returns a core in an order that flips between runs on the same
+    // tree (finalizer timing), and `smt.ts` sorts the cores it prints. Here the
+    // order is forced: every unsat answer of the real solver comes back with
+    // two sentinel labels around its core, deliberately out of order, so the
+    // sentence is sorted or it is not.
+    const real = await loadZ3();
+    if (real.absent) throw new Error('the solver is required for this case');
+    const scrambled: Z3Backend = {
+      ...real,
+      check: async (script, opts) => {
+        const out = await real.check(script, opts);
+        return out.status === 'unsat' ? { ...out, core: ['zz:last', ...out.core, 'aa:first'] } : out;
+      },
+    };
+    const check = (core: readonly string[]) => {
+      expect(core.length).toBeGreaterThan(2);
+      expect(core, 'a printed core is not in sorted order').toEqual([...core].sort());
+      return core.join(', ');
+    };
+
+    // bounds (bounds.ts)
+    const uav = read(UAV).replace(
+      'assert constraint payloadRange { payload >= 2.0 [kg] and payload <= 6.0 [kg] }',
+      'assert constraint payloadRange { payload >= 8.0 [kg] and payload <= 6.0 [kg] }',
+    );
+    expect(uav, 'the mutation matched nothing').not.toBe(read(UAV));
+    const { model: uavModel } = await loadModelText(uav, { fileName: UAV });
+    if (!uavModel) throw new Error('the probe produced no model');
+    const measureId = uavModel.all().find((e) => uavModel.qualifiedName(e.id) === 'BoundsUav::AirVehicle::mtow')!.id;
+    const bounded = await checkBounds(uavModel, {
+      backend: scrambled,
+      measureId,
+      sense: 'max',
+      free: new Set(['BoundsUav::AirVehicle::payload']),
+    });
+    expect(bounded.bounds[0].outcome).toBe('vacuous');
+    expect(bounded.bounds[0].detail).toContain(`(core ${check(bounded.vacuityCore)})`);
+
+    // refine, composition and derivation (refinement.ts), and the fault tree
+    // (fault-tree.ts), over the vacuous fixtures the cases above use.
+    const SIBLINGS = 'test/fixtures/verification/models/refinement-contradictory-siblings.sysml';
+    const VACUOUS = 'test/fixtures/verification/models/derivation-vacuous.sysml';
+    const load = async (path: string) => {
+      const { model } = await loadModelText(read(path), { fileName: path });
+      if (!model) throw new Error(`${path} produced no model`);
+      return model;
+    };
+    const sibling = (await checkRefinement(await load(SIBLINGS), { backend: scrambled })).groups[0];
+    expect(sibling.outcome).toBe('vacuous');
+    expect(sibling.detail).toContain(`(core ${check(sibling.vacuityCore)})`);
+    const derived = (await checkRefinement(await load(VACUOUS), { backend: scrambled, via: 'derive' })).groups[0];
+    expect(derived.outcome).toBe('vacuous');
+    expect(derived.detail).toContain(`(core ${check(derived.vacuityCore)})`);
+    const tree = (await computeFaultTree(await load(SIBLINGS), { backend: scrambled })).groups[0];
+    expect(tree.outcome).toBe('vacuous');
+    expect(tree.detail).toContain(`(core ${check(tree.vacuityCore)})`);
   });
 
   it('decides nothing with no solver, and still names the measure', async () => {

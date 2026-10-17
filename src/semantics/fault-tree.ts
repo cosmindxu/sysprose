@@ -67,7 +67,7 @@ import {
   type RefusedClause,
   type UnencodedConnection,
 } from './refinement';
-import { type WitnessValue, type Z3Backend } from './smt/z3-bridge';
+import { sortedCore, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
 import {
   EXCEPTIONAL_DEFINITION,
   FAULT_HYPOTHESIS_DEFINITION,
@@ -838,16 +838,17 @@ async function judgeTarget(
   // at order 0.
   const doubt = target.zeroDoubt(zero);
   if (zero.status === 'unsat') {
+    const core = sortedCore(zero.core);
     return {
       ...base,
       checks,
       outcome: 'vacuous',
       code: CONTRACT_SET_VACUOUS_CODE,
-      vacuityCore: [...zero.core],
+      vacuityCore: core,
       detail:
         'inconclusive: contract set vacuous — the sub-contracts, the connections and the top ' +
         'requirement’s assumption cannot hold together ' +
-        `(core ${zero.core.length > 0 ? zero.core.join(', ') : 'the solver named none'}), so ` +
+        `(core ${core.length > 0 ? core.join(', ') : 'the solver named none'}), so ` +
         'obligation (3) can never FAIL and no fault set could be a cut set. This is not "no cut ' +
         `set": nothing was enumerated. ${target.census}`,
     };

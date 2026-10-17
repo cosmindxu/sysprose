@@ -5307,7 +5307,7 @@ of them given less than 40 s, the budget plus the margin plus 5 s (a case that
 began while one vitest had stopped was still running is named beside that one
 instead, since the counter cannot tell their checks apart); the `withZ3`
 wrappers of `smt-z3.integration` and `verification.differential` refuse such a
-timeout when a case is declared. The campaign file's **77 `withZ3`
+timeout when a case is declared. The campaign file's **78 `withZ3`
 cases** and the plain cases that also drive the solver used to share one
 context from the first block to the last; each of its **12 solver blocks** now
 starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per
