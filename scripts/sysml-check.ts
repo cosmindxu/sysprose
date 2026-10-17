@@ -92,7 +92,7 @@ function renderText(report: CheckReport): string {
     if (d.instances) {
       const { total, satisfied, violated, unknown, unread, listed } = d.instances;
       lines.push(
-        `    instances: ${total} (${satisfied} hold \u00b7 ${violated} violated \u00b7 ${unknown} unknown \u00b7 ${unread} unread); listed: ${listed.join(', ')}`,
+        `    instances: ${total} (${satisfied} hold \u00b7 ${violated} violated \u00b7 ${unknown} unknown \u00b7 ${unread} unread)${listed.length > 0 ? `; listed: ${listed.join(', ')}` : ''}`,
       );
     }
     if (d.expected && d.expected.length > 0) {

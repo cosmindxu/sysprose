@@ -8,7 +8,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
-import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, anchorFor } from '../../src/semantics/index';
+import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, anchorFor, quotePath, foldByVerdictAndCause } from '../../src/semantics/index';
 import { featureIdsFor, valueAtPath, valueKey, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
@@ -4461,7 +4461,7 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(range?.start.line).toBe(4);
     expect(text.slice(range!.start.offset, range!.start.offset + 'attribute :>> L = 50.0'.length)).toBe('attribute :>> L = 50.0');
     expect(report.diagnostics[0]!.message).toBe(
-      'R17::Q::p::c2 (load <= 10.0) is violated in R17::q1::p: load = 50 — q1.L through a `bind`',
+      'R17::Q::p::c2 (load <= 10.0) is violated in R17::q1::p: load = 50 — q1.L = 50 through R17::Q\'s `bind p.load = L`',
     );
   });
 
@@ -4519,6 +4519,139 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(all.filter((d) => d.ruleId === 'target-by-specialisation')).toEqual([]);
     expect(all.filter((d) => d.ruleId === 'constraint-violation')).toHaveLength(5);
   });
+
+  it('names an unknown’s cause and the cap an unread instance met, and ends a long violated list with an ellipsis (PI-6, C.3)', () => {
+    const cap = 'Could not evaluate: load is not read in R::q4: a binding of this model holds in more than 4,096 contexts';
+    const rows = [
+      groupRow(0, 'satisfied', true),
+      { ...groupRow(1, 'unknown'), cause: 'defaults-differ' as const },
+      { ...groupRow(2, 'unknown'), cause: 'defaults-differ' as const },
+      { ...groupRow(3, 'unknown'), cause: 'free' as const },
+      { ...groupRow(4, 'unknown'), abstention: 'past-cap' as const, cause: 'past-cap' as const, detail: cap },
+      ...[5, 6, 7, 8, 9, 10].map((i) => groupRow(i, 'violated')),
+    ];
+    const rollup = instanceRollup(m, check(rows)).find((r) => r.instances)!;
+    // Unknown instances by cause, each with its first path; the unread ones by the cap; `, …` for the sixth violated.
+    expect(rollup.message).toBe(
+      "R::P::c (load <= 10.0) read in each of 11 instances of R::q: violated in 6 (R::q5, R::q6, R::q7, R::q8, R::q9, …), " +
+        'holds in 1, could not be read in 3 (defaults differ: R::q1; no bound feature has a value: R::q3); ' +
+        "not read in 1 (a binding of this model holds in more than 4,096 contexts) — 1 of them generic (R::P's own)",
+    );
+    expect(rollup.instances).toMatchObject({ total: 11, violated: 6, unknown: 3, unread: 1 });
+    // An unknown row with no kind gives the cause in its own sentence, not "for another reason".
+    const bare = instanceRollup(m, check([groupRow(0, 'satisfied', true), { ...groupRow(1, 'unknown'), detail: 'Could not evaluate: a referenced value is unknown' }]));
+    expect(bare.find((r) => r.instances)!.message).toContain('could not be read in 1 (a referenced value is unknown: R::q1)');
+  });
+
+  it('quotes a path segment holding " in " or "@", in the relation, the usage and the instance (PI-11)', () => {
+    expect(quotePath('R::q1::p')).toBe('R::q1::p');
+    expect(quotePath('R::q in 1::p')).toBe("R::'q in 1'::p");
+    expect(quotePath('A@B::x')).toBe("'A@B'::x");
+    expect(quotePath("R::'q in 1'::p")).toBe("R::'q in 1'::p");
+    const quoted = instanceRollup(m, check([groupRow(0, 'satisfied', true), { ...groupRow(1, 'violated'), instance: 'R::q in 1' }]));
+    expect(quoted.map((r) => r.message)).toEqual([
+      "R::P::c (load <= 10.0) read in each of 2 instances of R::q: violated in 1 (R::'q in 1'), holds in 1 — 1 of them generic (R::P's own)",
+      "R::P::c (load <= 10.0) is violated in R::'q in 1'",
+    ]);
+    // The row's own fields stay the raw path: they are data, not text.
+    expect(quoted[1]!.instance).toBe('R::q in 1');
+    expect(quoted[0]!.instances!.listed).toEqual(['R::q in 1']);
+  });
+
+  it('folds context rows by verdict and cause, past twenty (PI-12)', () => {
+    const via = (k: number, cause: 'free' | 'defaults-differ') => ({
+      ...groupRow(0, 'unknown'),
+      instance: undefined,
+      via: true as const,
+      context: `R::c${k}`,
+      cause,
+      message: `row ${k}`,
+    });
+    const rows = Array.from({ length: 22 }, (_, k) => via(k, k < 12 ? 'free' : 'defaults-differ'));
+    expect(instanceRollup(m, check(rows)).map((r) => r.message)).toEqual([
+      'R::P::c (load <= 10.0): 12 of 22 contexts a binding carries a value into could not be read, no bound feature has a value (R::c0, R::c1, R::c2, R::c3, R::c4, … and 7 more)',
+      'R::P::c (load <= 10.0): 10 of 22 contexts a binding carries a value into could not be read, defaults differ (R::c12, R::c13, R::c14, R::c15, R::c16, … and 5 more)',
+    ]);
+    // The target rule folds with the same helper: two verdicts and two causes are four findings.
+    expect(foldByVerdictAndCause(rows).map((g) => [g.result, g.cause, g.rows.length])).toEqual([
+      ['unknown', 'free', 12],
+      ['unknown', 'defaults-differ', 10],
+    ]);
+  });
+
+  it('puts the source value and the binding in a violated instance’s sentence (PI-11, C.3)', async () => {
+    const { model: um } = await loadModelText(`package UV {
+      part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; constraint c { load <= 10.0 [kg] } }
+      part def Q { attribute L : ISQ::MassValue default = 1.0 [kg]; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 50000.0 [g]; }
+      part q2 : Q { attribute :>> L = 5.0 [kg]; }
+    }`);
+    const violated = validate(um!).filter((d) => d.ruleId === 'constraint-by-instance' && d.instance !== undefined);
+    expect(violated.map((d) => d.message)).toEqual([
+      "UV::P::c (load <= 10.0 [kg]) is violated in UV::q1::p: load = 50 [kg] — q1.L = 50000 [g] through UV::Q's `bind p.load = L`",
+    ]);
+    // A source path and a holder holding " in " or "@" are quoted, in the message only (the listed names stay raw).
+    const { model: qm } = await loadModelText(`package UQ {
+      part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+      part def 'Q in R' { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part 'q in 1' : 'Q in R' { attribute :>> L = 50.0; }
+      part 'A@B' : 'Q in R' { attribute :>> L = 60.0; }
+    }`);
+    const quoted = validate(qm!).filter((d) => d.ruleId === 'constraint-by-instance');
+    expect(quoted.filter((d) => d.instance !== undefined).map((d) => d.message).sort()).toEqual([
+      "UQ::P::c (load <= 10.0) is violated in UQ::'A@B'::p: load = 60 — 'A@B'.L = 60 through the `bind p.load = L` of UQ::'Q in R'",
+      "UQ::P::c (load <= 10.0) is violated in UQ::'q in 1'::p: load = 50 — 'q in 1'.L = 50 through the `bind p.load = L` of UQ::'Q in R'",
+    ]);
+    expect(quoted.find((d) => d.instances !== undefined)!.instances!.listed.slice().sort()).toEqual(['UQ::A@B::p', 'UQ::q in 1::p']);
+    // A derived source in another unit prints no figure of the wrong unit: the converted reading stands alone.
+    const { model: dm } = await loadModelText(`package UD {
+      part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; constraint c { load <= 10.0 [kg] } }
+      part def Q { attribute L : ISQ::MassValue default = 1.0 [kg]; attribute M : ISQ::MassValue default = 1.0 [kg]; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> M = 25000.0 [g]; attribute :>> L = M * 2; }
+    }`);
+    const derived = validate(dm!).filter((d) => d.ruleId === 'constraint-by-instance' && d.instance !== undefined);
+    expect(derived.map((d) => d.message)).toEqual([
+      "UD::P::c (load <= 10.0 [kg]) is violated in UD::q1::p: load = 50 [kg] — q1.L through UD::Q's `bind p.load = L`",
+    ]);
+  });
+
+  it('counts a group of more instances than the tool reads as unread, naming the cap (PI-7)', async () => {
+    // Nine relations over 2,001 instances each: the ninth would take the sweep past 16,384 instance readings,
+    // so its group is left unexpanded. It was one target-by-specialisation sentence with no count.
+    const text = [
+      'package CapN {',
+      `  part def P { attribute load : ScalarValues::Real default = 1.0; ${Array.from({ length: 9 }, (_, k) => `constraint c${k} { load <= ${10 + k}.0 }`).join(' ')} }`,
+      '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+      ...Array.from({ length: 2000 }, (_, k) => `  part q${k} : Q { attribute :>> L = ${k % 7}.0; }`),
+      '}',
+    ].join('\n');
+    const { model: cm } = await loadModelText(text);
+    const d = validate(cm!);
+    const capped = d.filter((x) => x.ruleId === 'constraint-by-instance' && x.instances !== undefined && x.instances.unread > 0);
+    expect(capped.map((x) => [x.severity, x.message, x.instances])).toEqual([
+      [
+        'info',
+        'CapN::P::c8 (load <= 18.0) read per instance in CapN::Q::p: not read in 2001 (more than 16,384 instance readings in this model)',
+        { total: 2001, generic: 0, satisfied: 0, violated: 0, unknown: 0, unread: 2001, listed: [] },
+      ],
+    ]);
+    // The unread group is the roll-up's now, not target-by-specialisation's sentence beside it.
+    expect(d.filter((x) => x.ruleId === 'target-by-specialisation')).toEqual([]);
+    // The frame cap (a binding held in more than 4,096 contexts) leaves a group unread too: a lower bound of its instances.
+    const frames = [
+      'package CapF {',
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }',
+      '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+      ...Array.from({ length: 2100 }, (_, k) => `  part q${k} : Q { attribute :>> L = ${k % 7}.0; }`),
+      '}',
+    ].join('\n');
+    const { model: fm } = await loadModelText(frames);
+    const fd = validate(fm!);
+    expect(fd.filter((x) => x.ruleId === 'constraint-by-instance').map((x) => [x.severity, x.message])).toEqual([
+      ['info', 'CapF::P::c (load <= 10.0) read per instance in CapF::Q::p: not read in at least 2101 (a binding of this model holds in more than 4,096 contexts)'],
+    ]);
+    expect(fd.filter((x) => x.ruleId === 'target-by-specialisation')).toEqual([]);
+  }, 120000);
 
   it('leaves a definition’s own (generic) row to the roll-up, not to target-by-specialisation (PI-5)', async () => {
     // E's m1: the generic row used to be reported twice, once by each rule, and the app listed only one.
@@ -4906,7 +5039,7 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
     const rollup = validate(m!).filter((d) => d.ruleId === 'constraint-by-instance' && d.instances !== undefined);
     expect(rollup.map((d) => d.message)).toEqual([
-      "T2::P::c (load + x <= 10.0) read in each of 3 instances of T2::Q::p: holds in 2, could not be read in 1 — 1 of them generic (T2::Q's own)",
+      "T2::P::c (load + x <= 10.0) read in each of 3 instances of T2::Q::p: holds in 2, could not be read in 1 (the reading failed: T2::q2::p) — 1 of them generic (T2::Q's own)",
     ]);
   });
 });

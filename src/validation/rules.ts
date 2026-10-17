@@ -39,6 +39,9 @@ import {
   anchorFor,
   instanceRollup,
   sourceOrder,
+  quotePath,
+  foldVerdictWords,
+  foldByVerdictAndCause,
   TARGET_CONTEXT_FOLD,
   type SpecialisationInstance,
 } from '../semantics/index';
@@ -1026,9 +1029,10 @@ const targetBySpecialisation: ValidationRule = {
       if (!el || isLibraryElement(el)) continue;
       if (isNonNormativeStatement(model, el.id)) continue;
       // Only the non-binding context rows: a reading that met a binding (`via`),
-      // an expanded group row (`instance`) or the group's generic row (the
-      // definition's own, PI-5) is constraint-by-instance's.
-      const rows = check.instances.filter((i) => i.via !== true && i.instance === undefined && i.generic !== true);
+      // an expanded group row (`instance`), the group's generic row (the
+      // definition's own, PI-5) or a group left unread past a cap (PI-7) is
+      // constraint-by-instance's.
+      const rows = check.instances.filter((i) => i.via !== true && i.instance === undefined && i.generic !== true && i.unread === undefined);
       if (rows.length === 0) continue;
       if (rows.length <= TARGET_CONTEXT_FOLD) {
         for (const inst of rows) {
@@ -1042,25 +1046,18 @@ const targetBySpecialisation: ValidationRule = {
   },
 };
 
-/** One `target-by-specialisation` finding per result, counting the rest (C.2). */
+/** One `target-by-specialisation` finding per verdict and cause, counting the rest (C.2). */
 function foldTargetRows(model: Model, check: ReturnType<typeof checkConstraints>[number], rows: readonly SpecialisationInstance[]): Diagnostic[] {
   const mk = diagBuilder('target-by-specialisation', 'warning');
   const order = sourceOrder(model);
-  const byResult = new Map<'satisfied' | 'violated' | 'unknown', SpecialisationInstance[]>();
-  for (const r of rows) {
-    const list = byResult.get(r.result);
-    if (list) list.push(r);
-    else byResult.set(r.result, [r]);
-  }
   const out: Diagnostic[] = [];
-  for (const [result, group] of byResult) {
+  for (const { result, cause, rows: group } of foldByVerdictAndCause(rows)) {
     const first = group.reduce((a, b) => ((order.get(a.featureId) ?? Infinity) <= (order.get(b.featureId) ?? Infinity) ? a : b));
-    const listed = group.slice(0, 5).map((i) => i.context);
-    const word = result === 'violated' ? 'miss the target' : result === 'satisfied' ? 'meet the target' : 'could not be read';
+    const listed = group.slice(0, 5).map((i) => quotePath(i.context));
     const more = group.length > 5 ? `, \u2026 and ${group.length - 5} more` : '';
     out.push(
       mk(
-        `${check.expression}: ${group.length} of ${rows.length} contexts ${word} (${listed.join(', ')}${more})`,
+        `${check.expression}: ${group.length} of ${rows.length} contexts ${foldVerdictWords(result, cause)} (${listed.join(', ')}${more})`,
         anchorFor(model, check, first),
         result === 'violated' ? 'warning' : 'info',
       ),

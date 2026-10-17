@@ -652,7 +652,10 @@ Two names worth separating:
   them is *unjudged* with the reason *the solve did not converge*: never
   violated at a point the model does not sit at. `solveFeasible` does not hold
   them there either: it searches them as freedoms, and a violation over them
-  is unresolved, never decided.
+  is unresolved, never decided. A model with a binding past a cap (below) reads
+  so too: the values that binding holds are not read, the solve counts them
+  undetermined and reports *did not converge*, and the rows over them name the
+  cap.
 
 **A target on a measure with no value of its own is read where the values
 are.** A brief often states its targets once, on abstract measures that carry
@@ -917,7 +920,18 @@ its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never
 two or more of them up into one finding for each usage (past twenty usages of one
 relation, into one finding for the relation, counting every instance and naming
 its first five usages, with at most five violated instances after it; and past
-twenty contexts a binding carries a value into, one finding per verdict); a relation written in the usage itself
+twenty contexts a binding carries a value into, one finding per verdict and cause).
+The roll-up counts the instances that hold, those it is violated in (the first
+five named, then an ellipsis), those it could not be read in — with the cause of
+each kind, up to three, and the first instance of each (*defaults differ:
+R::q1::p*) — and those it did not read, with the cap (*not read in 2001 (more
+than 16,384 instance readings in this model)*); a group of more instances than the
+tool reads is one info finding that counts them all unread (where a binding holds
+in more than 4,096 contexts, *not read in at least* the instances found). A violated instance
+names the value it reads, the value the binding carries in and the binding
+(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``), and a path with a
+segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; the `instance` and
+`instances.listed` fields keep the names as written). A relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
 has no roll-up, and a violation there is that instance's finding alone — one the
 check could not read there, an info finding of its own. Solve lists an
@@ -1011,7 +1025,10 @@ T1's capped binding by the T0 `load` both redefine. A value held so, which no
 binding carries from a stated value, is no design freedom to the numeric surface
 either: a relation reading it is *could not be evaluated* there too, never
 solved as a design equation (`s.a.load == 9.0` for a shallow `part s : T1`
-beside the capped chain), and the feasibility search does not move it.
+beside the capped chain), and the feasibility search does not move it. A model
+with such a capped binding reports *did not converge* in the Solve header — the
+check keeps its fail-closed reading, and the rows over a value the binding
+holds name the cap (*a binding of this model is read deeper than 32 usages*).
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
 listed and read at its own instance, as above. Such a context, and one whose own
@@ -3627,7 +3644,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:559-576`, `971-994` (the two rules that ask),
+`src/validation/rules.ts:562-579`, `974-997` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

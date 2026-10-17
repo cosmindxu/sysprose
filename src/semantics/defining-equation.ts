@@ -4950,7 +4950,12 @@ export interface InstanceGroup {
   instances: readonly string[];
   /** Whether the group was expanded — every instance read — or kept as today's single refusal. */
   expanded: boolean;
-  refusal?: { kind: InstanceAbstention; sentence: string };
+  refusal?: {
+    kind: InstanceAbstention;
+    sentence: string;
+    /** On a group left unexpanded past an instance cap: the instances it holds, none read, and the cap (C.3's `not read in {r} ({cap})`). */
+    unread?: { count: number; cap: string; atLeast?: true };
+  };
   /**
    * The instances of an expanded group its rows do NOT read (A.7's coverage
    * guard), each with the kind and the sentence every surface abstains on it
@@ -6913,16 +6918,20 @@ function groupsOf(model: Model): InstanceGroup[] {
         group.refusal = {
           kind: 'past-cap',
           sentence: `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`,
+          // The sites found before the frame cap tripped: a lower bound of the group's instances.
+          unread: { count: instances.length, cap: `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`, atLeast: true },
         };
       } else if (instances.length > MAX_INSTANCE_READS) {
         group.refusal = {
           kind: 'past-cap',
           sentence: `${effectiveQualifiedName(model, el.id)} is read in more than ${MAX_INSTANCE_READS.toLocaleString('en')} instances of ${definitions.contextName(usage.id)}; this tool reads none of them per instance`,
+          unread: { count: instances.length, cap: `more than ${MAX_INSTANCE_READS.toLocaleString('en')} instances` },
         };
       } else if (budget - instances.length < 0) {
         group.refusal = {
           kind: 'past-cap',
           sentence: `more than ${MAX_INSTANCE_RELATIONS.toLocaleString('en')} instance readings in this model`,
+          unread: { count: instances.length, cap: `more than ${MAX_INSTANCE_RELATIONS.toLocaleString('en')} instance readings in this model` },
         };
       } else {
         // The usage's own reading first: through a bound part (or past the

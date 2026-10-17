@@ -227,7 +227,7 @@ interface ScalarAnswer {
    * valued member that supplied the value. Propagated up a derivation, so the
    * relation's own answer carries the source its value came from.
    */
-  via?: { bindingIds: readonly ElementId[]; source: string; sourceSymbol: string; root: ElementId };
+  via?: { bindingIds: readonly ElementId[]; source: string; sourceSymbol: string; root: ElementId; sourceValue?: number | boolean | string; sourceUnit?: string };
   /**
    * The value {@link valueBoundInInstance} read through a binding, as the
    * quantity it is, where its source carries a unit (A.2.2) — for the
@@ -268,7 +268,7 @@ interface ScalarReads {
   cause?: Contact;
   deep?: boolean;
   abstention?: { kind: InstanceAbstention; sentence: string };
-  via?: { bindingIds: readonly ElementId[]; source: string; sourceSymbol: string; root: ElementId };
+  via?: { bindingIds: readonly ElementId[]; source: string; sourceSymbol: string; root: ElementId; sourceValue?: number | boolean | string; sourceUnit?: string };
   unconverted?: string;
 }
 
@@ -1011,16 +1011,37 @@ function valueBoundInInstance(
   const sourceSymbol = sd ? definitions.symbolOf(sd) : src.via.source;
   const { root, via } = src;
   let read: ScalarAnswer;
+  let sourceUnit: string | undefined;
   try {
     const source = sd ? definitions.carrier(sd.reader, sd.feature) : undefined;
+    sourceUnit = source ? declaredFacetsOf(model, source.id).unit : undefined;
     read = inDeclaredUnit(answer, carriedInto(model, target, source, () => boundSourceQuantity(model, root, via.source, pass.memo), answer, name, child));
   } catch (e) {
     return failedReading(ownName, child, e);
   }
+  // The source's value as the sentence prints it, in the unit it was computed
+  // in: the quantity the binding carried, else the number as written in the
+  // source's declared unit. A quantity in no known unit, read into a feature
+  // that reads in one, has no figure to print (the converted one is the reading).
+  const sourceReading: { sourceValue?: number | boolean | string; sourceUnit?: string } = {};
+  const carriedQuantity = read.carried?.quantity;
+  if (carriedQuantity !== undefined) {
+    if (carriedQuantity.unit !== undefined) Object.assign(sourceReading, { sourceValue: carriedQuantity.magnitude, sourceUnit: carriedQuantity.unit });
+    else if (read.carried?.unit === undefined) sourceReading.sourceValue = carriedQuantity.magnitude;
+  } else if (typeof answer.value === 'number' || typeof answer.value === 'boolean' || typeof answer.value === 'string') {
+    sourceReading.sourceValue = answer.value;
+    if (sourceUnit !== undefined) sourceReading.sourceUnit = sourceUnit;
+  }
   return {
     ...read,
     depth: answer.depth + 1,
-    via: { bindingIds: via.bindingIds, source: via.source, sourceSymbol, root },
+    via: {
+      bindingIds: via.bindingIds,
+      source: via.source,
+      sourceSymbol,
+      root,
+      ...sourceReading,
+    },
   };
 }
 
@@ -1308,6 +1329,12 @@ export interface SpecialisationInstance {
   generic?: true;
   /** Set when the reading met a binding ({@link readInContexts}, F5). */
   via?: true;
+  /**
+   * On the one row of a group left unexpanded past an instance cap
+   * ({@link InstanceGroup.refusal}): how many instances it holds, none of them
+   * read, and the cap — the roll-up counts them `unread` (PI-7).
+   */
+  unread?: { count: number; cap: string; atLeast?: true };
   /** The element the anchor rule re-anchored this row to (H6a). */
   anchorId?: ElementId;
   /** Why the reading abstained, when it did (A.9). */
@@ -1352,7 +1379,7 @@ export interface InstanceRead {
   unit?: string;
   /** `exact` is SI, read the way the encoder reads the feature — set on the unit-aware reads alone; every other read's `exact` is in the stored magnitude or the declared `unit`. */
   si?: true;
-  via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string };
+  via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string; sourceValue?: number | boolean | string; sourceUnit?: string };
 }
 
 /**
@@ -1614,6 +1641,98 @@ function instanceLabel(inst: SpecialisationInstance): string {
   return inst.instance ?? inst.readAs ?? inst.context;
 }
 
+/**
+ * A path as a sentence prints it: a segment holding ` in ` or `@` is quoted
+ * (`A::'x in y'::p`), since the sentences join a relation and an instance with
+ * ` in ` and the row ids join them with `@` (PI-11).
+ */
+export function quotePath(path: string): string {
+  return path
+    .split('::')
+    .map((seg) => (/ in |@/.test(seg) && !/^'.*'$/.test(seg) ? `'${seg.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'` : seg))
+    .join('::');
+}
+
+/** A dot-joined source path (`q1.L`) as a sentence prints it: each segment quoted as {@link quotePath} does. */
+function quoteSourcePath(path: string): string {
+  return path.split('.').map(quotePath).join('.');
+}
+
+/** The cause of an `unknown` reading in a sentence (A.9): the words a finding gives for `cause` (PI-6, PI-12). */
+export function causeWords(cause: InstanceAbstention | undefined): string {
+  switch (cause) {
+    case 'free':
+      return 'no bound feature has a value';
+    case 'defaults-differ':
+      return 'defaults differ';
+    case 'held-elsewhere':
+      return 'held by a binding elsewhere';
+    case 'two-values':
+      return 'enclosing asserted equations give it two values';
+    case 'enclosing-assert':
+      return 'an enclosing assert constrains it';
+    case 'past-cap':
+      return 'more instances than the tool reads';
+    case 'not-enumerated':
+      return 'the tool cannot enumerate it per instance';
+    case 'internal':
+      return 'the reading failed';
+    default:
+      return 'for another reason';
+  }
+}
+
+/** Whether a row is counted `unread` (a cap or the coverage guard) rather than `unknown`. */
+function isUnread(i: SpecialisationInstance): boolean {
+  return i.result === 'unknown' && (i.abstention === 'past-cap' || i.abstention === 'not-enumerated');
+}
+
+/**
+ * C.3's `({cause}: {path})` of a roll-up's `could not be read in {u}`: the
+ * unknown instances by cause, at most three causes, each with its first path.
+ */
+function unknownClause(rows: readonly SpecialisationInstance[]): string {
+  const first = new Map<string, string>();
+  for (const i of rows) {
+    if (i.result !== 'unknown' || isUnread(i)) continue;
+    const kind = i.cause ?? i.abstention;
+    // A row with no kind gives the cause in its own sentence.
+    const words = kind !== undefined ? causeWords(kind) : (i.detail ?? i.message).replace(/^Could not evaluate: /, '');
+    if (!first.has(words)) first.set(words, quotePath(instanceLabel(i)));
+  }
+  const shown = [...first].slice(0, 3).map(([words, path]) => `${words}: ${path}`);
+  if (first.size > 3) shown.push('\u2026');
+  return shown.join('; ');
+}
+
+/** C.3's `({cap})` of a roll-up's `not read in {r}`: the caps the unread instances met, at most three. */
+function capClause(rows: readonly SpecialisationInstance[]): string {
+  const caps = new Set<string>();
+  for (const i of rows) {
+    if (!isUnread(i)) continue;
+    if (i.unread) caps.add(i.unread.cap);
+    else if (i.abstention === 'past-cap') {
+      // The cap's own sentence ends the row's (`… is not read in {I}: a binding of this model holds in more than 4,096 contexts`).
+      const why = (i.detail ?? i.message).replace(/^Could not evaluate: /, '');
+      const at = why.lastIndexOf(': ');
+      caps.add(at >= 0 ? why.slice(at + 2) : why);
+    } else caps.add(causeWords(i.abstention));
+  }
+  const shown = [...caps].slice(0, 3);
+  if (caps.size > 3) shown.push('\u2026');
+  return shown.join('; ');
+}
+
+/** The counts of a roll-up as C.3 words them, after the head: `violated in v (…), holds in s, could not be read in u (…); not read in r (…)`. */
+function countsSentence(counts: InstanceCounts, listed: readonly string[], rows: readonly SpecialisationInstance[], atLeast = false): string {
+  const parts: string[] = [];
+  if (counts.violated > 0) parts.push(`violated in ${counts.violated} (${listed.map(quotePath).join(', ')}${counts.violated > listed.length ? ', \u2026' : ''})`);
+  if (counts.satisfied > 0) parts.push(`holds in ${counts.satisfied}`);
+  if (counts.unknown > 0) parts.push(`could not be read in ${counts.unknown} (${unknownClause(rows)})`);
+  const body = parts.join(', ');
+  return counts.unread > 0 ? `${body}${body ? '; ' : ''}not read in ${atLeast ? 'at least ' : ''}${counts.unread} (${capClause(rows)})` : body;
+}
+
 /** Past this many contexts (or usages) of one relation, its findings fold into one per result (C.2). */
 export const TARGET_CONTEXT_FOLD = 20;
 
@@ -1643,9 +1762,22 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
   const insts = check.instances ?? [];
   if (insts.length === 0) return [];
   const relation = effectiveQualifiedName(model, check.id);
+  const rel = quotePath(relation);
   const via = insts.filter((i) => i.via === true && i.instance === undefined);
   const group = insts.filter((i) => i.instance !== undefined || i.generic === true);
   const out: InstanceRollupRow[] = [];
+  // A group left unexpanded past an instance cap: its instances are all `unread` (PI-7).
+  for (const inst of insts) {
+    if (inst.unread === undefined) continue;
+    const counts: InstanceCounts = { total: inst.unread.count, generic: 0, satisfied: 0, violated: 0, unknown: 0, unread: inst.unread.count };
+    out.push({
+      elementId: check.id,
+      severity: 'info',
+      message: `${rel} (${check.expression}) read per instance in ${quotePath(inst.qualifiedName)}: ${countsSentence(counts, [], [inst], inst.unread.atLeast === true)}`,
+      instances: { ...counts, listed: [] },
+      relation,
+    });
+  }
   if (via.length <= TARGET_CONTEXT_FOLD) {
     for (const inst of via) {
       out.push({
@@ -1676,7 +1808,7 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
     out.push({
       elementId: check.id,
       severity: counts.violated > 0 ? 'warning' : 'info',
-      message: foldedRollupMessage(relation, check.expression, [...byUsage.keys()], counts, listed),
+      message: foldedRollupMessage(rel, check.expression, [...byUsage.keys()], counts, listed, group),
       instances: { ...counts, listed },
       relation,
     });
@@ -1696,7 +1828,7 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
       out.push({
         elementId: check.id,
         severity: counts.violated > 0 ? 'warning' : 'info',
-        message: rollupMessage(relation, check.expression, rows[0]!.context, definition, counts, listed),
+        message: rollupMessage(rel, check.expression, rows[0]!.context, definition, counts, listed, rows),
         instances: { ...counts, listed },
         relation,
       });
@@ -1717,7 +1849,7 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
       out.push({
         elementId: anchorFor(model, check, only),
         severity: 'info',
-        message: `${relation} (${check.expression}) ${unread ? 'is not read' : 'could not be read'} in ${instanceLabel(only)}: ${why.startsWith(head) ? why.slice(head.length) : why}`,
+        message: `${rel} (${check.expression}) ${unread ? 'is not read' : 'could not be read'} in ${quotePath(instanceLabel(only))}: ${why.startsWith(head) ? why.slice(head.length) : why}`,
         instance: instanceLabel(only),
         relation,
       });
@@ -1731,30 +1863,45 @@ function violatedInstanceRow(model: Model, check: ConstraintCheck, relation: str
   return {
     elementId: anchorFor(model, check, inst),
     severity: 'warning',
-    message: violatedInstanceMessage(relation, check.expression, inst),
+    message: violatedInstanceMessage(model, quotePath(relation), check.expression, inst),
     instance: instanceLabel(inst),
     relation,
   };
 }
 
-/** Binding-carried context rows past {@link TARGET_CONTEXT_FOLD}: one finding per result, counting the rest (C.2). */
+/** The words of a folded finding for a verdict (and, for an unknown one, its cause): `contexts … miss the target`. */
+export function foldVerdictWords(result: SpecialisationInstance['result'], cause: InstanceAbstention | undefined): string {
+  if (result === 'violated') return 'miss the target';
+  if (result === 'satisfied') return 'meet the target';
+  return cause === undefined ? 'could not be read' : `could not be read, ${causeWords(cause)}`;
+}
+
+/** Context rows folded by (verdict, cause), in the order the first of each is met (PI-12). */
+export function foldByVerdictAndCause<T extends { result: SpecialisationInstance['result']; cause?: InstanceAbstention }>(
+  rows: readonly T[],
+): Array<{ result: SpecialisationInstance['result']; cause: InstanceAbstention | undefined; rows: T[] }> {
+  const groups = new Map<string, { result: SpecialisationInstance['result']; cause: InstanceAbstention | undefined; rows: T[] }>();
+  for (const r of rows) {
+    const cause = r.result === 'unknown' ? r.cause : undefined;
+    const key = `${r.result}\u0000${cause ?? ''}`;
+    const group = groups.get(key);
+    if (group) group.rows.push(r);
+    else groups.set(key, { result: r.result, cause, rows: [r] });
+  }
+  return [...groups.values()];
+}
+
+/** Binding-carried context rows past {@link TARGET_CONTEXT_FOLD}: one finding per verdict and cause, counting the rest (C.2). */
 function foldViaRows(model: Model, check: ConstraintCheck, rows: readonly SpecialisationInstance[], relation: string): InstanceRollupRow[] {
   const order = sourceOrder(model);
-  const byResult = new Map<SpecialisationInstance['result'], SpecialisationInstance[]>();
-  for (const r of rows) {
-    const list = byResult.get(r.result);
-    if (list) list.push(r);
-    else byResult.set(r.result, [r]);
-  }
   const out: InstanceRollupRow[] = [];
-  for (const [result, list] of byResult) {
+  for (const { result, cause, rows: list } of foldByVerdictAndCause(rows)) {
     const first = list.reduce((a, b) => ((order.get(a.featureId) ?? Infinity) <= (order.get(b.featureId) ?? Infinity) ? a : b));
-    const word = result === 'violated' ? 'miss the target' : result === 'satisfied' ? 'meet the target' : 'could not be read';
     const more = list.length > 5 ? `, \u2026 and ${list.length - 5} more` : '';
     out.push({
       elementId: anchorFor(model, check, first),
       severity: result === 'violated' ? 'warning' : 'info',
-      message: `${relation} (${check.expression}): ${list.length} of ${rows.length} contexts a binding carries a value into ${word} (${list.slice(0, 5).map((i) => i.context).join(', ')}${more})`,
+      message: `${quotePath(relation)} (${check.expression}): ${list.length} of ${rows.length} contexts a binding carries a value into ${foldVerdictWords(result, cause)} (${list.slice(0, 5).map((i) => quotePath(i.context)).join(', ')}${more})`,
       relation,
     });
   }
@@ -1762,16 +1909,18 @@ function foldViaRows(model: Model, check: ConstraintCheck, rows: readonly Specia
 }
 
 /** The roll-up of a relation over more than {@link TARGET_CONTEXT_FOLD} usages: counts, the first five usages. */
-function foldedRollupMessage(relation: string, expr: string, usages: readonly string[], counts: InstanceCounts, listed: string[]): string {
-  const shown = usages.slice(0, 5).join(', ');
+function foldedRollupMessage(
+  relation: string,
+  expr: string,
+  usages: readonly string[],
+  counts: InstanceCounts,
+  listed: string[],
+  rows: readonly SpecialisationInstance[],
+): string {
+  const shown = usages.slice(0, 5).map(quotePath).join(', ');
   const more = usages.length > 5 ? `, \u2026 and ${usages.length - 5} more` : '';
   const head = `${relation} (${expr}) read per instance in ${usages.length} usages (${counts.total} instances; first ${shown}${more})`;
-  const parts: string[] = [];
-  if (counts.violated > 0) parts.push(`violated in ${counts.violated} (${listed.join(', ')})`);
-  if (counts.satisfied > 0) parts.push(`holds in ${counts.satisfied}`);
-  if (counts.unknown > 0) parts.push(`could not be read in ${counts.unknown}`);
-  if (counts.unread > 0) parts.push(`not read in ${counts.unread}`);
-  return `${head}: ${parts.join(', ')}`;
+  return `${head}: ${countsSentence(counts, listed, rows)}`;
 }
 
 /** The C.3 roll-up sentence: one finding counting a relation's instances. */
@@ -1782,22 +1931,39 @@ function rollupMessage(
   definition: string,
   counts: InstanceCounts,
   listed: string[],
+  rows: readonly SpecialisationInstance[],
 ): string {
-  const head = `${relation} (${expr}) read in each of ${counts.total} instances${usage ? ` of ${usage}` : ''}`;
-  const parts: string[] = [];
-  if (counts.violated > 0) parts.push(`violated in ${counts.violated} (${listed.join(', ')})`);
-  if (counts.satisfied > 0) parts.push(`holds in ${counts.satisfied}`);
-  if (counts.unknown > 0) parts.push(`could not be read in ${counts.unknown}`);
-  if (counts.unread > 0) parts.push(`not read in ${counts.unread}`);
-  const tail = counts.generic > 0 ? ` — ${counts.generic} of them generic (${definition}'s own)` : '';
-  return `${head}: ${parts.join(', ')}${tail}`;
+  const head = `${relation} (${expr}) read in each of ${counts.total} instances${usage ? ` of ${quotePath(usage)}` : ''}`;
+  const tail = counts.generic > 0 ? ` \u2014 ${counts.generic} of them generic (${quotePath(definition)}'s own)` : '';
+  return `${head}: ${countsSentence(counts, listed, rows)}${tail}`;
 }
 
-/** The C.3 violated-instance sentence; F5 appends the value-source clause from {@link InstanceRead}. */
-function violatedInstanceMessage(relation: string, expr: string, inst: SpecialisationInstance): string {
+/**
+ * The C.3 violated-instance sentence, with the value-source clause: the value
+ * the instance reads, the value it comes from, and the binding that carries it
+ * (`load = 50 \u2014 q1.L = 50 through R17::Q's \`bind p.load = L\``).
+ */
+function violatedInstanceMessage(model: Model, relation: string, expr: string, inst: SpecialisationInstance): string {
   const read = inst.reads?.find((r) => r.via !== undefined);
-  const detail = read?.via ? `: ${read.path} = ${String(read.value)}${unitSuffix(read)} — ${read.via.sourcePath} through a \`bind\`` : '';
-  return `${relation} (${expr}) is violated in ${instanceLabel(inst)}${detail}`;
+  let detail = '';
+  if (read?.via) {
+    const v = read.via;
+    const source = v.sourceValue !== undefined ? ` = ${String(v.sourceValue)}${v.sourceUnit !== undefined ? ` [${v.sourceUnit}]` : ''}` : '';
+    detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)} \u2014 ${quoteSourcePath(v.sourcePath)}${source} through ${bindingText(model, v.bindingId)}`;
+  }
+  return `${relation} (${expr}) is violated in ${quotePath(instanceLabel(inst))}${detail}`;
+}
+
+/** `{holder}'s \`bind {l} = {r}\`` for a binding connector, or `a \`bind\`` where its ends cannot be spelled from its owner. */
+function bindingText(model: Model, bindingId: ElementId): string {
+  const b = model.get(bindingId);
+  const owner = b?.ownerId != null ? b.ownerId : undefined;
+  const l = b && owner !== undefined ? bindingEndPath(model, b.source?.[0], owner) : undefined;
+  const r = b && owner !== undefined ? bindingEndPath(model, b.target?.[0], owner) : undefined;
+  if (owner === undefined || l === undefined || r === undefined) return 'a `bind`';
+  const holder = quotePath(effectiveQualifiedName(model, owner));
+  // A quoted holder would end `''s`, which reads as an escaped quote.
+  return holder.endsWith("'") ? `the \`bind ${l} = ${r}\` of ${holder}` : `${holder}'s \`bind ${l} = ${r}\``;
 }
 
 /**
@@ -1992,6 +2158,7 @@ function readInContexts(
           detail: `Could not evaluate: ${group.refusal!.sentence}`,
           abstention: group.refusal!.kind,
           cause: group.refusal!.kind,
+          ...(group.refusal!.unread ? { unread: group.refusal!.unread } : {}),
         });
       }
       continue;
@@ -2841,7 +3008,15 @@ function collectReads(
       ...(a.exact !== undefined ? { exact: rationalText(a.exact) } : {}),
       ...(a.carried?.unit !== undefined ? { unit: a.carried.unit } : {}),
       ...(a.via !== undefined
-        ? { via: { bindingId: a.via.bindingIds[0]!, sourcePath: a.via.source, sourceSymbol: a.via.sourceSymbol } }
+        ? {
+            via: {
+              bindingId: a.via.bindingIds[0]!,
+              sourcePath: a.via.source,
+              sourceSymbol: a.via.sourceSymbol,
+              ...(a.via.sourceValue !== undefined ? { sourceValue: a.via.sourceValue } : {}),
+              ...(a.via.sourceUnit !== undefined ? { sourceUnit: a.via.sourceUnit } : {}),
+            },
+          }
         : {}),
     });
   }

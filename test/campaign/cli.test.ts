@@ -163,6 +163,23 @@ package Use {
     }
   }, 90_000);
 
+  it('prints a roll-up\'s `listed:` only when it lists a path (PI-11)', () => {
+    // Both instances hold: the roll-up counts them and lists none (it printed `; listed: ` with nothing after it).
+    const r = run(
+      ['-'],
+      [
+        'package H {',
+        '  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }',
+        '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+        '  part q1 : Q { attribute :>> L = 5.0; }',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.stdout).toContain('instances: 2 (2 hold');
+    expect(r.stdout).not.toContain('listed:');
+  }, 60_000);
+
   it('rejects an unknown option rather than ignoring it', () => {
     const r = run([`${FIX}/L0-empty-file/fixed.sysml`, '--wat']);
     expect(r.code).toBe(2);
