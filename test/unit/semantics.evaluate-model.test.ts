@@ -4394,6 +4394,29 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(instanceRollup(m, check([groupRow(1, 'satisfied')]))).toEqual([]);
   });
 
+  it('folds binding-carried context rows past twenty, one finding per result (via)', () => {
+    const via = (k: number, result: 'satisfied' | 'violated') => ({
+      ...groupRow(0, result),
+      instance: undefined,
+      via: true as const,
+      context: `R::c${k}`,
+      featureId: rel.id,
+      message: `row ${k}`,
+    });
+    const rows = (n: number) => Array.from({ length: n }, (_, k) => via(k, k < 3 ? 'violated' : 'satisfied'));
+    // Twenty: one finding each, in the pipeline's own words.
+    expect(instanceRollup(m, check(rows(20))).map((r) => r.message)).toEqual(rows(20).map((r) => r.message));
+    // Twenty-one: one per result, counting the rest.
+    const folded = instanceRollup(m, check(rows(21)));
+    expect(folded.map((r) => [r.severity, r.message])).toEqual([
+      ['warning', 'R::P::c (load <= 10.0): 3 of 21 contexts a binding carries a value into miss the target (R::c0, R::c1, R::c2)'],
+      [
+        'info',
+        'R::P::c (load <= 10.0): 18 of 21 contexts a binding carries a value into meet the target (R::c3, R::c4, R::c5, R::c6, R::c7, \u2026 and 13 more)',
+      ],
+    ]);
+  });
+
   it('reports a group of one whose instance could not be read, as the verify lane does (info)', () => {
     // No roll-up counts it, so it is a finding of its own, in the row's own
     // sentence: `could not be read` for an unknown, `is not read` for one the
@@ -4458,6 +4481,60 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
       ['validation/constraint-by-instance', 'info', 'SLD::q1::p', 'SLD::Q::p::c2'],
     ]);
     expect(report.diagnostics[0]!.message).toMatch(/^SLD::Q::p::c2 \(load <= 10\.0\) could not be read in SLD::q1::p: load has no value in SLD::q1::p: /);
+  });
+
+  it('rolls up per usage, and folds the roll-ups of one relation past twenty usages (PI-4, A-L1)', async () => {
+    // big-bind-N: N definitions Qk binding their p's load to their L, qk setting L to k: N usages of P,
+    // two instances each. Five relations k0..k4 are violated (constraint-violation's); the shared `c` holds.
+    const bigBind = (n: number): string =>
+      [
+        'package Big {',
+        '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; constraint c { m2 <= 100.0 } }',
+        ...Array.from({ length: n }, (_, k) => [
+          `  part def Q${k} { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }`,
+          `  part q${k} : Q${k} { attribute :>> L = ${k}.0; }`,
+          ...(k < 5 ? [`  constraint k${k} { q${k}.p.m2 <= 5.0 }`] : []),
+        ]).flat(),
+        '}',
+      ].join('\n');
+    const findings = (text: string) => loadModelText(text, { fileName: 'bb.sysml' }).then(({ model: m }) => validate(m!));
+    const at20 = (await findings(bigBind(20))).filter((d) => d.ruleId === 'constraint-by-instance');
+    // Twenty usages: one roll-up each, not folded.
+    expect(at20.map((d) => d.instances?.total)).toEqual(Array.from({ length: 20 }, () => 2));
+    expect(at20[0]!.message).toBe(
+      "Big::P::c (m2 <= 100.0) read in each of 2 instances of Big::Q0::p: holds in 2 — 1 of them generic (Big::Q0's own)",
+    );
+    const all = await findings(bigBind(21));
+    const rollups = all.filter((d) => d.ruleId === 'constraint-by-instance');
+    // Twenty-one: one finding for the relation, counting every instance and listing the first five usages.
+    expect(rollups.map((d) => [d.severity, d.message, d.instances?.total, d.instances?.satisfied])).toEqual([
+      [
+        'info',
+        'Big::P::c (m2 <= 100.0) read per instance in 21 usages (42 instances; first Big::Q0::p, Big::Q1::p, Big::Q2::p, Big::Q3::p, Big::Q4::p, \u2026 and 16 more): holds in 42',
+        42,
+        42,
+      ],
+    ]);
+    // The generic rows are the roll-up's, not the target rule's (PI-5), and k0..k4 stand: 5 + 1 findings.
+    expect(all.filter((d) => d.ruleId === 'target-by-specialisation')).toEqual([]);
+    expect(all.filter((d) => d.ruleId === 'constraint-violation')).toHaveLength(5);
+  });
+
+  it('leaves a definition’s own (generic) row to the roll-up, not to target-by-specialisation (PI-5)', async () => {
+    // E's m1: the generic row used to be reported twice, once by each rule, and the app listed only one.
+    const { model: m } = await loadModelText(
+      [
+        'package H {',
+        '  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }',
+        '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+        '  part q1 : Q { attribute :>> L = 50.0; }',
+        '  part q2 : Q { attribute :>> L = 5.0; }',
+        '}',
+      ].join('\n'),
+    );
+    const d = validate(m!);
+    expect(d.filter((x) => x.ruleId === 'target-by-specialisation')).toEqual([]);
+    expect(d.filter((x) => x.ruleId === 'constraint-by-instance').map((x) => x.instances?.total).sort()).toEqual([3, undefined]);
   });
 
   it('points a violated instance at the line that makes it differ, never at the usage they share (PI-2)', async () => {

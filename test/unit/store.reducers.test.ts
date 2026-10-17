@@ -1590,6 +1590,28 @@ describe('store — Check lists one row per specialisation of a target', () => {
     expect(st().diagnostics.filter((d) => d.ruleId === 'constraint-violation')).toEqual([]);
   });
 
+  it('lists the same per-instance findings as the validator, and the generic row once (PI-5)', () => {
+    // E's m1 shape: Q's p is read for Q's own instance (the generic row) and for each q's. The validator
+    // reported the generic row a second time as a target-by-specialisation; the app never did.
+    const model = parseModel(
+      [
+        'package H {',
+        '  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }',
+        '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+        '  part q1 : Q { attribute :>> L = 50.0; }',
+        '  part q2 : Q { attribute :>> L = 5.0; }',
+        '}',
+      ].join('\n'),
+    ).model;
+    useAppStore.setState({ model });
+    st().runConstraintCheck();
+    const cli = validationApi.validate(model).filter((d) => d.ruleId === 'constraint-by-instance' || d.ruleId === 'target-by-specialisation');
+    expect(cli.filter((d) => d.ruleId === 'target-by-specialisation')).toEqual([]);
+    const app = st().diagnostics.filter((d) => d.ruleId === 'constraint-check' && (d.instance !== undefined || d.instances !== undefined));
+    const texts = (rows: Array<{ severity: string; message: string }>) => rows.map((d) => `${d.severity}: ${d.message}`).sort();
+    expect(texts(app)).toEqual(texts(cli));
+  });
+
   it('still says what an equation defines', () => {
     const model = parseModel(BRIEF_TARGETS).model;
     useAppStore.setState({ model });

@@ -914,7 +914,10 @@ that breaks the relation is reported against that instance — at the line that
 makes it differ: the member of its own stating the value the binding carries in
 (q's `attribute :>> L = 50.0`), else the element the instance is read in, else
 its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never the usage the instances share — and the check rolls
-two or more of them up into one finding; a relation written in the usage itself
+two or more of them up into one finding for each usage (past twenty usages of one
+relation, into one finding for the relation, counting every instance and naming
+its first five usages, with at most five violated instances after it; and past
+twenty contexts a binding carries a value into, one finding per verdict); a relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
 has no roll-up, and a violation there is that instance's finding alone — one the
 check could not read there, an info finding of its own. Solve lists an
@@ -3624,7 +3627,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:557-574`, `969-992` (the two rules that ask),
+`src/validation/rules.ts:559-576`, `971-994` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

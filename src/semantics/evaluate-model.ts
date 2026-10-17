@@ -1614,15 +1614,30 @@ function instanceLabel(inst: SpecialisationInstance): string {
   return inst.instance ?? inst.readAs ?? inst.context;
 }
 
+/** Past this many contexts (or usages) of one relation, its findings fold into one per result (C.2). */
+export const TARGET_CONTEXT_FOLD = 20;
+
+/** The source order of an element — its index in the model's parse-order walk. */
+export function sourceOrder(model: Model): Map<ElementId, number> {
+  const order = new Map<ElementId, number>();
+  let i = 0;
+  for (const el of model.all()) order.set(el.id, i++);
+  return order;
+}
+
 /**
  * The per-instance findings of one check (C.2/C.3), shared by the 27th rule
  * and the app's Check (F6): element-context rows read through a binding
- * (`via`) are one finding each in their own words; an expanded group (F7) of
- * two or more instances is one roll-up finding — a warning when any instance
- * is violated, else info — and every group, one of a single instance too
- * (PI-1), gives at most five violated-instance findings, in instance order.
- * Satisfied instances are counted, never listed; a group of one whose instance
- * could not be read is one info finding, in that row's sentence.
+ * (`via`) are one finding each in their own words, past
+ * {@link TARGET_CONTEXT_FOLD} of them one per result; an expanded group (F7)
+ * of two or more instances is one roll-up finding per usage — a warning when
+ * any instance is violated, else info — and past {@link TARGET_CONTEXT_FOLD}
+ * usages of one relation the roll-ups fold into one (PI-4). Every group, one
+ * of a single instance too (PI-1), gives at most five violated-instance
+ * findings, in instance order. Satisfied instances are counted, never listed;
+ * a group of one whose instance could not be read is one info finding, in that
+ * row's sentence. The generic rows are the groups' own (PI-5): the target rule
+ * leaves them to this one.
  */
 export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRollupRow[] {
   const insts = check.instances ?? [];
@@ -1631,63 +1646,132 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
   const via = insts.filter((i) => i.via === true && i.instance === undefined);
   const group = insts.filter((i) => i.instance !== undefined || i.generic === true);
   const out: InstanceRollupRow[] = [];
-  for (const inst of via) {
-    out.push({
-      elementId: anchorFor(model, check, inst),
-      severity: inst.result === 'violated' ? 'warning' : 'info',
-      message: inst.message,
-      instance: instanceLabel(inst),
-      relation,
-    });
+  if (via.length <= TARGET_CONTEXT_FOLD) {
+    for (const inst of via) {
+      out.push({
+        elementId: anchorFor(model, check, inst),
+        severity: inst.result === 'violated' ? 'warning' : 'info',
+        message: inst.message,
+        instance: instanceLabel(inst),
+        relation,
+      });
+    }
+  } else {
+    out.push(...foldViaRows(model, check, via, relation));
   }
-  const violated = group.filter((i) => i.result === 'violated');
-  if (group.length >= 2) {
+  // One group per usage: its rows share the usage's name (`context`).
+  const byUsage = new Map<string, SpecialisationInstance[]>();
+  for (const i of group) {
+    const list = byUsage.get(i.context);
+    if (list) list.push(i);
+    else byUsage.set(i.context, [i]);
+  }
+  const usages = [...byUsage.values()];
+  if (usages.length > TARGET_CONTEXT_FOLD) {
+    // Past twenty usages the relation is one finding, listing the first five
+    // usages and the first five violated instances (PI-4).
     const counts = countInstances(group);
+    const violated = group.filter((i) => i.result === 'violated');
     const listed = violated.slice(0, 5).map(instanceLabel);
-    const generic = group.find((i) => i.generic === true);
-    const usage = generic?.context ?? '';
-    // The generic row is the usage's own instance: `({D}'s own)` names the
-    // element that OWNS the usage (Q, not its part p), so "Q's own p".
-    const genericOwner = generic ? model.get(generic.contextId)?.ownerId : undefined;
-    const definition = genericOwner != null ? effectiveQualifiedName(model, genericOwner) : '';
     out.push({
       elementId: check.id,
       severity: counts.violated > 0 ? 'warning' : 'info',
-      message: rollupMessage(relation, check.expression, usage, definition, counts, listed),
+      message: foldedRollupMessage(relation, check.expression, [...byUsage.keys()], counts, listed),
       instances: { ...counts, listed },
       relation,
     });
+    for (const inst of violated.slice(0, 5)) out.push(violatedInstanceRow(model, check, relation, inst));
+    return out;
   }
-  // Whatever the group's size: a usage-owned relation's one other instance
-  // (`part q1 : Q` over Q's `part p : P { constraint c2 … }`, whose own row is
-  // the check itself) is a group of one, and its violation is still a finding.
-  for (const inst of violated.slice(0, 5)) {
-    out.push({
-      elementId: anchorFor(model, check, inst),
-      severity: 'warning',
-      message: violatedInstanceMessage(relation, check.expression, inst),
-      instance: instanceLabel(inst),
-      relation,
-    });
+  for (const rows of usages) {
+    const violated = rows.filter((i) => i.result === 'violated');
+    if (rows.length >= 2) {
+      const counts = countInstances(rows);
+      const listed = violated.slice(0, 5).map(instanceLabel);
+      const generic = rows.find((i) => i.generic === true);
+      // The generic row is the usage's own instance: `({D}'s own)` names the
+      // element that OWNS the usage (Q, not its part p), so "Q's own p".
+      const genericOwner = generic ? model.get(generic.contextId)?.ownerId : undefined;
+      const definition = genericOwner != null ? effectiveQualifiedName(model, genericOwner) : '';
+      out.push({
+        elementId: check.id,
+        severity: counts.violated > 0 ? 'warning' : 'info',
+        message: rollupMessage(relation, check.expression, rows[0]!.context, definition, counts, listed),
+        instances: { ...counts, listed },
+        relation,
+      });
+    }
+    // Whatever the group's size: a usage-owned relation's one other instance
+    // (`part q1 : Q` over Q's `part p : P { constraint c2 … }`, whose own row is
+    // the check itself) is a group of one, and its violation is still a finding.
+    for (const inst of violated.slice(0, 5)) out.push(violatedInstanceRow(model, check, relation, inst));
+    // A group of one whose instance could not be read has no roll-up to count
+    // it: it is a finding of its own, info, in the row's own sentence — as the
+    // verify lane reports that row inconclusive.
+    const only = rows.length === 1 ? rows[0]! : undefined;
+    if (only !== undefined && only.result === 'unknown') {
+      const unread = only.abstention === 'past-cap' || only.abstention === 'not-enumerated';
+      const why = (only.detail ?? only.message).replace(/^Could not evaluate: /, '');
+      // A row sentence that already says the relation is not read there (C.3) is said once.
+      const head = `${relation} is not read in ${instanceLabel(only)}: `;
+      out.push({
+        elementId: anchorFor(model, check, only),
+        severity: 'info',
+        message: `${relation} (${check.expression}) ${unread ? 'is not read' : 'could not be read'} in ${instanceLabel(only)}: ${why.startsWith(head) ? why.slice(head.length) : why}`,
+        instance: instanceLabel(only),
+        relation,
+      });
+    }
   }
-  // A group of one whose instance could not be read has no roll-up to count
-  // it: it is a finding of its own, info, in the row's own sentence — as the
-  // verify lane reports that row inconclusive.
-  const only = group.length === 1 ? group[0]! : undefined;
-  if (only !== undefined && only.result === 'unknown') {
-    const unread = only.abstention === 'past-cap' || only.abstention === 'not-enumerated';
-    const why = (only.detail ?? only.message).replace(/^Could not evaluate: /, '');
-    // A row sentence that already says the relation is not read there (C.3) is said once.
-    const head = `${relation} is not read in ${instanceLabel(only)}: `;
+  return out;
+}
+
+/** One violated-instance finding, at the line that makes the instance differ. */
+function violatedInstanceRow(model: Model, check: ConstraintCheck, relation: string, inst: SpecialisationInstance): InstanceRollupRow {
+  return {
+    elementId: anchorFor(model, check, inst),
+    severity: 'warning',
+    message: violatedInstanceMessage(relation, check.expression, inst),
+    instance: instanceLabel(inst),
+    relation,
+  };
+}
+
+/** Binding-carried context rows past {@link TARGET_CONTEXT_FOLD}: one finding per result, counting the rest (C.2). */
+function foldViaRows(model: Model, check: ConstraintCheck, rows: readonly SpecialisationInstance[], relation: string): InstanceRollupRow[] {
+  const order = sourceOrder(model);
+  const byResult = new Map<SpecialisationInstance['result'], SpecialisationInstance[]>();
+  for (const r of rows) {
+    const list = byResult.get(r.result);
+    if (list) list.push(r);
+    else byResult.set(r.result, [r]);
+  }
+  const out: InstanceRollupRow[] = [];
+  for (const [result, list] of byResult) {
+    const first = list.reduce((a, b) => ((order.get(a.featureId) ?? Infinity) <= (order.get(b.featureId) ?? Infinity) ? a : b));
+    const word = result === 'violated' ? 'miss the target' : result === 'satisfied' ? 'meet the target' : 'could not be read';
+    const more = list.length > 5 ? `, \u2026 and ${list.length - 5} more` : '';
     out.push({
-      elementId: anchorFor(model, check, only),
-      severity: 'info',
-      message: `${relation} (${check.expression}) ${unread ? 'is not read' : 'could not be read'} in ${instanceLabel(only)}: ${why.startsWith(head) ? why.slice(head.length) : why}`,
-      instance: instanceLabel(only),
+      elementId: anchorFor(model, check, first),
+      severity: result === 'violated' ? 'warning' : 'info',
+      message: `${relation} (${check.expression}): ${list.length} of ${rows.length} contexts a binding carries a value into ${word} (${list.slice(0, 5).map((i) => i.context).join(', ')}${more})`,
       relation,
     });
   }
   return out;
+}
+
+/** The roll-up of a relation over more than {@link TARGET_CONTEXT_FOLD} usages: counts, the first five usages. */
+function foldedRollupMessage(relation: string, expr: string, usages: readonly string[], counts: InstanceCounts, listed: string[]): string {
+  const shown = usages.slice(0, 5).join(', ');
+  const more = usages.length > 5 ? `, \u2026 and ${usages.length - 5} more` : '';
+  const head = `${relation} (${expr}) read per instance in ${usages.length} usages (${counts.total} instances; first ${shown}${more})`;
+  const parts: string[] = [];
+  if (counts.violated > 0) parts.push(`violated in ${counts.violated} (${listed.join(', ')})`);
+  if (counts.satisfied > 0) parts.push(`holds in ${counts.satisfied}`);
+  if (counts.unknown > 0) parts.push(`could not be read in ${counts.unknown}`);
+  if (counts.unread > 0) parts.push(`not read in ${counts.unread}`);
+  return `${head}: ${parts.join(', ')}`;
 }
 
 /** The C.3 roll-up sentence: one finding counting a relation's instances. */

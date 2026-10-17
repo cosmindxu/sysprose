@@ -65,6 +65,8 @@ export {
   evaluateFeatureValue,
   checkConstraints,
   instanceRollup,
+  sourceOrder,
+  TARGET_CONTEXT_FOLD,
   anchorFor,
   type Scope,
   type ConstraintCheck,

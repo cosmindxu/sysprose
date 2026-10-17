@@ -1454,7 +1454,9 @@ describe('validation — target-by-specialisation', () => {
       part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
       part q : Q { attribute :>> L = 50.0; }
     }`);
-    const diags = runRule(m, 'target-by-specialisation');
+    // The generic row is constraint-by-instance's (PI-5): this rule leaves the group's rows to it.
+    expect(runRule(m, 'target-by-specialisation')).toEqual([]);
+    const diags = runRule(m, 'constraint-by-instance');
     expect(diags.length).toBeGreaterThan(0);
     for (const d of diags) {
       expect(d.elementId, d.message).toBeDefined();
