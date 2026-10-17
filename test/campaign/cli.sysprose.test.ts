@@ -2171,6 +2171,58 @@ package P {
   }, 300_000);
 
   /**
+   * A model read per instance prints one short block (PI-8, PI-9). The fold keys
+   * on the relation (the element id before `@`), not on the row's digest, which
+   * is unique per row and so never folded: eight refuted instance rows of one
+   * relation print five and one line counting the rest, and the footer's
+   * fold names the relation, not the instance its first row happens to be.
+   */
+  it('verify folds the instance rows of one relation and names the relation in the footer', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-fold-'));
+    try {
+      const file = join(dir, 'fold.sysml');
+      const parts = Array.from({ length: 8 }, (_, i) => `  part q${i + 1} : Q { attribute :>> L = 50.0; }`);
+      writeFileSync(
+        file,
+        [
+          'package H {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }',
+          '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+          ...parts,
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const r = spawnCli(['verify', file, '--engine', 'literal']);
+      const rows = r.stdout.split('\n').filter((l) => /^ {2}H::P::c in H::q\d::p {2}/.test(l));
+      expect(rows, 'five refuted rows printed, not eight').toHaveLength(5);
+      expect(r.stdout).toContain('\u2026 and 3 more rows of H::P::c: refuted in 8');
+      // The footer counts the rest against the relation, not against `H::P::c in H::q1::p`.
+      expect(r.stdout).toContain('\u2026 and 3 more verification/refuted on H::P::c\n');
+
+      // A name that holds ` in ` is still one name: the fold names the relation
+      // through the model, never by cutting a row name at its first ` in `.
+      const quoted = join(dir, 'quoted.sysml');
+      writeFileSync(
+        quoted,
+        [
+          'package H {',
+          "  part def 'P in X' { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }",
+          "  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : 'P in X'; bind p.load = L; }",
+          ...Array.from({ length: 7 }, (_, i) => `  part 'q in ${i + 1}' : Q { attribute :>> L = 50.0; }`),
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const q = spawnCli(['verify', quoted, '--engine', 'literal']);
+      expect(q.stdout).toContain('\u2026 and 2 more rows of H::P in X::c: refuted in 7');
+      expect(q.stdout).toContain('\u2026 and 2 more verification/refuted on H::P in X::c\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  /**
    * The two flags this commit adds, asserted on what the command prints.
    *
    * Both are pinned for what they DO NOT do as much as for what they do:

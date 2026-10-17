@@ -939,7 +939,12 @@ instance as a row of its own (`violated inequality: load <= 10.0 in
 R::q1::p`); past five rows of one relation, the violated ones fold into one
 row, and so do the unjudged ones that give one reason or abstain for one cause
 (defaults that differ, no value, a cap) — the first five instances, the count,
-and the first one's sentence, which names that instance. An
+and the first one's sentence, which names that instance. In a terminal,
+`verify` text folds the same way: past five rows of one relation and one claim
+it prints five and one line counting the rest (`… and 3 more rows of R::c:
+refuted in 8`; the rows of one relation and one claim print together), and the footer's findings fold by relation and code, counted
+against the relation (`… and 3 more verification/refuted on R::c`), not against
+the instance of its first row; `--json` keeps every row. An
 instance whose own element — the most specific one that denotes it — reads a
 name of the relation, or a name that name's value reads, through another feature
 is read in that element, at the instance's own

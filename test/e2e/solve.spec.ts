@@ -47,6 +47,18 @@ test('Solve computes parametric values + MoEs and lists them in Problems', async
     page.getByTestId('problem-row').filter({ hasText: 'Solve:' }).first(),
   ).toBeVisible();
 
+  // Each row names the producer that filed it (a chip), and the tab label is
+  // the plain count: the lists of Check and Solve replace one another, so a
+  // `N check · M solve` split never shows (H6b, U13).
+  await expect(
+    page
+      .getByTestId('problem-row')
+      .filter({ hasText: 'Solve:' })
+      .first()
+      .getByTestId('problem-producer'),
+  ).toHaveText('solve');
+  await expect(page.getByTestId('tab-problems')).toHaveText(/^Problems \(\d+\)$/);
+
   // A solved value row for the computed force (= 3000).
   await expect(
     page.getByTestId('problem-row').filter({ hasText: 'forceMoE = 3000' }).first(),

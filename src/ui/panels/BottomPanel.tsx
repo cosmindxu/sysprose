@@ -628,16 +628,10 @@ export function BottomPanel(props: { collapsed?: boolean; onToggleCollapsed?: ()
   const [tab, setTab] = useState<Tab>('problems');
   const diagnostics = useAppStore((s) => s.diagnostics);
   const problemCount = diagnostics.length;
-  // The Problems tab lists the Check and the Solve rows together; label the
-  // counts by which producer filed them (H6b).
-  const checkProblems = diagnostics.filter((d) => d.producer === 'check').length;
-  const solveProblems = diagnostics.filter((d) => d.producer === 'solve').length;
-  const problemsLabel =
-    problemCount === 0
-      ? 'Problems'
-      : checkProblems > 0 && solveProblems > 0
-        ? `Problems (${checkProblems} check · ${solveProblems} solve)`
-        : `Problems (${problemCount})`;
+  // Check and Solve each replace the list wholesale, so the tab never holds
+  // both producers' rows: the label is the plain count, and each row carries
+  // its producer as a chip.
+  const problemsLabel = problemCount === 0 ? 'Problems' : `Problems (${problemCount})`;
 
   const checkRuns = useChecksStore((s) => s.runs);
   const checkCount = useChecksStore((s) => Object.keys(s.results).length);

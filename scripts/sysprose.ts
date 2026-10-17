@@ -497,6 +497,11 @@ function listOrNone(heading: string, items: string[], none: string, indent = '  
   return [`${indent}${heading}`, ...items.map((i) => `${indent}  ${i}`)];
 }
 
+/** A row or element id without its `@instance` marker (`<id>@<instance>`). */
+function baseIdOf(id: string | undefined): string {
+  return (id ?? '').split('@')[0];
+}
+
 /**
  * A command footer's diagnostics, folded (R2-M3): rows sharing a relation (the
  * element id before any `@` instance marker) and a code print the first five,
@@ -504,11 +509,11 @@ function listOrNone(heading: string, items: string[], none: string, indent = '  
  * folded; only this text rendering is. v9's footers carry no `@`, so each row
  * is its own relation and nothing folds.
  */
-function foldedDiagnostics(diags: readonly Diagnostic[]): string[] {
+function foldedDiagnostics(model: Model, diags: readonly Diagnostic[]): string[] {
   const order: string[] = [];
   const groups = new Map<string, Diagnostic[]>();
   for (const d of diags) {
-    const key = `${(d.elementId ?? '').split('@')[0]}\u0000${d.code ?? ''}`;
+    const key = `${baseIdOf(d.elementId)}\u0000${d.code ?? ''}`;
     const list = groups.get(key);
     if (list) list.push(d);
     else {
@@ -521,7 +526,11 @@ function foldedDiagnostics(diags: readonly Diagnostic[]): string[] {
     const group = groups.get(key)!;
     for (const d of group.slice(0, 5)) out.push(`  ${d.code}  ${d.message}`);
     if (group.length > 5) {
-      const rel = group[0].elementName ?? group[0].elementId ?? '';
+      // The relation, not the instance the first row happens to name (PI-9).
+      // Named through the model by its base id: a row name is never quoted, so
+      // cutting it at ` in ` would split a relation whose own name holds one.
+      const id = baseIdOf(group[0].elementId);
+      const rel = id ? qname(model, id) : (group[0].elementName ?? '');
       out.push(`  \u2026 and ${group.length - 5} more ${group[0].code} on ${rel}`);
     }
   }
@@ -1455,7 +1464,7 @@ function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
       `${r.libraryExcluded} bundled library requirement(s) and ` +
       `${r.implicitExcluded} re-derived copy/copies excluded`,
     ...(r.keywordsAsked ? keywordBlock(r.keywords) : []),
-    ...foldedDiagnostics(r.diagnostics),
+    ...foldedDiagnostics(model, r.diagnostics),
   ].join('\n');
   return { json: r, text };
 }
@@ -1544,7 +1553,7 @@ function reportObligations(model: Model, name: string, args: ParsedArgs): Report
     ...(noFormalClause > 0
       ? [`  ${noFormalClause} requirement(s) carry no formal clause — no gate refused them`]
       : []),
-    ...foldedDiagnostics(r.diagnostics),
+    ...foldedDiagnostics(model, r.diagnostics),
   ].join('\n');
   return { json: r, text };
 }
@@ -1987,15 +1996,16 @@ function verdictLines(v: ObligationVerdict, why: boolean): string[] {
 /**
  * {@link verdictLines} over the whole run, folded (C.3): more than five rows
  * sharing a relation and a claim print five, then one line counting the rest.
- * The relation is the row's canonical digest — one instance row of a shared
- * relation shares its digest, so a model read per instance prints one short
- * block, never one per instance. v9 has one row per relation, so it never
- * folds.
+ * The relation is the row's element id before any `@instance` marker (and the
+ * requirement's, where a requirement carries it): an instance row of a shared
+ * relation shares it, so a model read per instance prints one short block,
+ * never one per instance (the digest is unique per row and cannot key this,
+ * PI-8). v9 has one row per relation, so it never folds.
  */
-function verdictResultLines(results: readonly ObligationVerdict[], why: boolean): string[] {
+function verdictResultLines(model: Model, results: readonly ObligationVerdict[], why: boolean): string[] {
   const groups = new Map<string, ObligationVerdict[]>();
   for (const v of results) {
-    const key = `${v.obligationDigest}\u0000${v.claim}`;
+    const key = `${baseIdOf(v.clause.id)}\u0000${baseIdOf(v.requirement?.id)}\u0000${v.claim}`;
     const list = groups.get(key);
     if (list) list.push(v);
     else groups.set(key, [v]);
@@ -2004,7 +2014,7 @@ function verdictResultLines(results: readonly ObligationVerdict[], why: boolean)
   for (const group of groups.values()) {
     out.push(...group.slice(0, 5).flatMap((v) => verdictLines(v, why)));
     if (group.length > 5) {
-      const where = group[0].requirement?.qualifiedName ?? group[0].clause.qualifiedName;
+      const where = qname(model, baseIdOf(group[0].requirement?.id ?? group[0].clause.id));
       out.push(`    \u2026 and ${group.length - 5} more rows of ${where}: ${group[0].claim} in ${group.length}`);
     }
   }
@@ -2171,7 +2181,7 @@ async function reportVerify(
             : '  this model states no obligation at all — there was nothing to verify, ' +
               'which is exit 2: exit 0 means every obligation was discharged, and none was',
         ]
-      : verdictResultLines(r.results, why)),
+      : verdictResultLines(model, r.results, why)),
     // The cases LAST, under the obligations they stand on, because a case
     // verdict is a roll-up of rows the reader has just read. A model that
     // declares none prints nothing here rather than a zero: "0 verification
@@ -2192,7 +2202,7 @@ async function reportVerify(
       `${r.modelVersion.sysprose.git ? ` (git ${r.modelVersion.sysprose.git.slice(0, 12)})` : ' (no git commit — none was found, and none is invented)'}` +
       ` · standard library ${r.modelVersion.library} element(s)`,
     ...(record !== undefined ? [`  ${r.records.length} evidence record(s) written to ${record}`] : []),
-    ...foldedDiagnostics(r.diagnostics),
+    ...foldedDiagnostics(model, r.diagnostics),
   ].join('\n');
   return { json: r, text: rendered, verify: r };
 }
