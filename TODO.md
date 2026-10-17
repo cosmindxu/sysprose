@@ -361,31 +361,11 @@ true values. What follows is what that branch and the review of it left open; en
 - [ ] **Read per-instance bindings by path, not by feature.** The detection of a binding into a
       redefiner matches by feature, so a binding into another part typed alike can form an extra
       group. The extra group's rows are read correctly, so this costs rows, not verdicts. [O2 S4]
-- [ ] **Compare the SMT same-point gate in SI.** The gate (`src/semantics/engines/smt.ts:1785-1812`)
-      compares the witness in its own unit with the check's SI value (`read.exact`), so IU1 `rF` (in
-      the out-of-tree corpus; the `IU1` model of `verification.differential.test.ts:5246` has `rT`
-      only, `r.total` = 4 GiB) fails with "not the model's point (4/1 vs 34359738368/1)" and SMT
-      goes F → ?: a weakening the corpus gate never named. Compare in SI. Done when IU1 `rF` reads F
-      on SMT again. [review 2026-10-14 A-M1]
-- [ ] **Print the value beside a decided group verdict.** Witnesses carry no value next to a decided
-      verdict: the A2 group rows print `load=null`, A9 the same, and A7 `top` prints
-      `q2.p.extra=null` (`modelBindings`, `src/semantics/engines/literal.ts:460`; `collectReads`,
-      `evaluate-model.ts:1832`), though the F2 addendum required them; abstaining group rows print
-      the usage's generic witness values, and the violated-instance finding's anchor and value clause
-      sit at the shared usage (`cr-s4/gap/g-a4r2`, `cr-s4/single/s-calcF`, `cr-s4/own/o-refF`,
-      A7 `s-a4`, which names `load = 1` where the differing value is `extra = 20`). Fill them from
-      `check.reads`. Done when A2, A9 and A7 print their values. [review 2026-10-14 A-M2; O2 S3, S4]
-- [ ] **Key the per-instance memo on the instance and the position.** The memo key at
-      `src/semantics/evaluate-model.ts:673` drops `at` when `inst` is set. No collision was found,
-      so it is latent. Key on (id, inst, at). Done when a test reads two names that differ only in
-      `at` under one `inst`. [review 2026-10-14 A-L2]
-
-## Per-instance reporting and evidence — review 2026-10-14
-
-From the review of the decisions batch and the per-instance reporting (Sysprose 5943654 against
-7277a97). `validation/constraint-by-instance` is the finding an instance group's violated reading
-becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
-
+- [ ] **Name the differing value in a violated-instance finding.** Witnesses now carry their values
+      (`engine-small`, merged by `318283c`), but the finding's value clause still names the first
+      bound read: `g-a4r2` prints `load = 2` where `extra = 20` differs, and `s-a4` names no value.
+      Pick the read whose value breaks the relation (with the anchor entry above). Narrow the `U3`
+      note entry above to its note half: the carried-value clauses are done. [N1 S2, review]
 - [ ] **Roll up per (relation, usage), fold past twenty, and skip the generic row.**
       `instanceRollup` makes one roll-up per relation, so "50 instances of Big::Q0::p" spans 25
       usages and the more-than-20-usage fold never happens [PI-4]; `target-by-specialisation` also
@@ -531,16 +511,6 @@ merge. The branch `behaviour-sound` (merged by `e0d8040`) closed the completion 
 `state def`, the method text and the completion livelock (C1, H2, C3, H1, M3, M1, U1); the entries
 tagged `[O1 …]` are what its steps and reviews left open.
 
-- [ ] **Give "no trigger is ever offered" and the budget-withheld `recovery` their own codes.** Since
-      `e0d8040` v9's `PA::SwarmMember::SwarmMemberStates` rows read PASS and the `--max-configs`
-      advice is gone (`docs/06-model-checking-implementation-plan.md` §8.5), but the codes are still
-      borrowed: where only the "alphabet not offered" clause fails, the search files
-      `verification/bound-exhausted` although no bound was hit, and a `recovery` the chase budget
-      withholds (`check-behaviour examples/uav-isr.sysml --element FlightModes --pattern
-      'pattern=recovery, scope=globally, p=state standby'`, exit 2) is filed under
-      `verification/behaviour-unsupported-construct`, which the catalogue describes as a construct
-      the engine does not explore. Fix: a code and sentence of its own for each (catalogue entries
-      and `npm run codes`). Done when both print their own code. [review 2026-10-14 M2; O1 S2]
 - [ ] **Count what fires in reach's "N of M transition(s) fired".** The count includes a completion
       transition that is enabled only where the chase budget stops a chase (`chain65`'s edge into
       `c66`, printed beside `unreachable c66`), as it already includes transitions beaten by
@@ -585,28 +555,14 @@ tagged `[O1 …]` are what its steps and reviews left open.
 From the review of the speed2 branch (66704a8, 79f7350, merged by 607e783): no verdict, code, exit
 code or value changed, and the claimed gains reproduce. These three are what it left.
 
-- [ ] **Sort the unsat core before printing it in `bounds` and `refine`.**
-      `src/semantics/bounds.ts:883` (and the stored `vacuityCore`, `:908`) and
-      `src/semantics/refinement.ts:1400`, `:2206` print z3's core in the order z3 returns it, which
-      flips between runs on the same tree (z3 GC timing); `smt.ts` sorts its cores (`sortedCore`).
-      `src/semantics/fault-tree.ts:850` prints its core the same way (whether those cores arrive
-      sorted was not checked). Probe: `r15-renamed-redef` printed one order in one differential run
-      and the other in 3 of 3 reruns. Done when it prints the same core on 5 reruns.
-      [review 2026-10-14 C-F3]
-- [ ] **Record the provenance of reused `bounds` rows, or keep the option internal.** `checkBounds`
-      and `prepareBounds` (exported at `src/semantics/index.ts:277-278`) reuse a caller's `rows`
-      when `rowsRev === model.rev` (`src/semantics/bounds.ts:517`) and check nothing else, so rows
-      from `obligationsOf(m, { scopeId })`, or from another model at an equal revision, give a bound
-      over the wrong axiom set without a word. The JSDoc states the contract and the one internal
-      caller (`boundsReport`) is correct. Record the model and options in a WeakMap keyed by the
-      rows array, or keep the option internal. Done when a test passing mismatched rows gets a
-      refusal or a recompute. [review 2026-10-14 C-F4]
 - [ ] **Cache `READINGS` from the second read on (optional).** The readings cache (`READINGS`,
       `src/semantics/contracts.ts:663-691`) builds a JSON key and `structuredClone`s on every read,
       so v9 `obligationsOf` is 1.039× slower than at 3ab826a (paired range 1.008–1.070 over 7 pairs,
       about +2 ms) and `refineAll` 1.023×. Cache from the second read of a key on, or use a cheaper
-      clone. Done when v9 `obligationsOf` is no slower than at 3ab826a, paired.
-      [review 2026-10-14 C-F5]
+      clone. Done when v9 `obligationsOf` is no slower than at 3ab826a, paired. `engine-small` cached
+      from the second read of a key on and is faster than `98d3595`, but measures 1.08× `3ab826a`
+      paired (the cache costs about 1 ms; the rest comes from other merged changes): keep open, or
+      accept as a residual. [review 2026-10-14 C-F5; N1 S4]
 
 ## Docs, tutorials and what waits on others — review 2026-10-14
 
