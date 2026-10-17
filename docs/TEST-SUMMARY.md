@@ -5,13 +5,13 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4671 total — 4671 passed, 0 failed, 0 skipped
+- **Tests:** 4688 total — 4688 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 118 | 0 | 0 |
-| test/campaign/cli.test.ts | 13 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 119 | 0 | 0 |
+| test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
 | test/campaign/verification.test.ts | 182 | 0 | 0 |
 | test/conformance/api-contract.test.ts | 22 | 0 | 0 |
@@ -48,7 +48,7 @@
 | test/server/oslc-rdf.test.ts | 11 | 0 | 0 |
 | test/server/oslc-shapes.test.ts | 11 | 0 | 0 |
 | test/unit/api.analytics.test.ts | 67 | 0 | 0 |
-| test/unit/api.evidence.test.ts | 49 | 0 | 0 |
+| test/unit/api.evidence.test.ts | 54 | 0 | 0 |
 | test/unit/api.oslc.test.ts | 10 | 0 | 0 |
 | test/unit/api.prompts.test.ts | 14 | 0 | 0 |
 | test/unit/api.query.test.ts | 18 | 0 | 0 |
@@ -112,7 +112,7 @@
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 175 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 183 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
@@ -137,14 +137,14 @@
 | test/unit/semantics.smt-encode.test.ts | 61 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 132 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 28 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 29 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 257 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 258 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
