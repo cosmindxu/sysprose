@@ -327,14 +327,6 @@ they cannot, and the four-surface table pins A1–A9, A4, CAP1, X-shapes and the
 true values. What follows is what that branch and the review of it left open; entries tagged
 `[O2 …]` come from its steps and reviews.
 
-- [ ] **Say what a capped binding does to "did not converge".** A model with a binding past the
-      32-usage or 4,096-context cap (`cap1`, `cap2`, `m5`) now reads `did not converge` in the
-      app's Solve header (it read `converged` before, beside a false verdict), because the values
-      held past the cap are not read and the solve counts them as undetermined; the rows themselves
-      carry the cap sentence. The user guide's convergence bullet says relations over unread
-      values are unjudged "with the reason *the solve did not converge*". Either stop counting
-      held-past-cap values against convergence or say in the guide that a capped binding reports it
-      and its rows name the cap. [O2 S3]
 - [ ] **Meet the per-instance targets on a cold check.** After an edit, `big-bind-1200`'s check takes
       1.3 s against the 1 s target (`7277a97`: 0.73 s), `tree10`'s warm check is about twice
       `7277a97`'s (16 against 7–8 ms) and `big-bind-600` is 560 ms cold; the warm figures meet every
@@ -366,55 +358,22 @@ true values. What follows is what that branch and the review of it left open; en
       bound read: `g-a4r2` prints `load = 2` where `extra = 20` differs, and `s-a4` names no value.
       Pick the read whose value breaks the relation (with the anchor entry above). Narrow the `U3`
       note entry above to its note half: the carried-value clauses are done. [N1 S2, review]
-- [ ] **Roll up per (relation, usage), fold past twenty, and skip the generic row.**
-      `instanceRollup` makes one roll-up per relation, so "50 instances of Big::Q0::p" spans 25
-      usages and the more-than-20-usage fold never happens [PI-4]; `target-by-specialisation` also
-      fires on the generic (definition's own) rows (`src/validation/rules.ts:1028` filters `via` and
-      `instance` but not `generic`), so findings are duplicated and the CLI disagrees with the app,
-      which filters them [PI-5]; big-bind-600 gets 7 findings where 6 are expected [A-L1]. Fix:
-      group by usage, then fold, and add `&& i.generic !== true`. Done when big-bind-600 gives 6
-      findings and `m1` the same findings from the CLI and the app.
-      [review 2026-10-14 PI-4, PI-5, A-L1]
-- [ ] **State an unknown's cause and the cap, match the message texts, and quote paths.** The
-      roll-up never says why an instance could not be read, though its hint promises it (no bound
-      feature has a value, defaults differ, an enclosing assert constrains it, too many instances)
-      [PI-6]; a group over `MAX_INSTANCE_READS` (4096, `defining-equation.ts:2984`) gets no finding
-      and no `unread` count [PI-7]; the texts drift from the plan's wording: no source value or
-      bind, an empty `listed: ` (A2's `sysml-check` prints `…; listed: `), and unquoted paths that
-      clash with ` in ` or `@` (`A@B::x`) [PI-11]; and the fold in `foldTargetRows`
-      (`src/validation/rules.ts:1057`) groups by result only, not by result and cause [PI-12]. Done
-      when a finding names its cause, an over-cap group reports it in `unread`, the texts match the
-      catalogue word for word, and a path holding ` in ` or `@` is quoted.
-      [review 2026-10-14 PI-6, PI-7, PI-11, PI-12]
-- [ ] **Fold the `verify` text and name the relation in its footer.** `verdictResultLines`
-      (`scripts/sysprose.ts:1997`) keys its fold on `obligationDigest`, which is unique per row, so
-      it never folds: `verify --engine literal` on m1 prints all 8 refuted rows (re-run at 5943654)
-      [PI-8]. The footer fold (`:523`) names an instance where it should name the relation [PI-9].
-      Key on the base id (before `@`) and name the relation. Done when m1 prints five rows and one
-      line counting the rest, and the footer names the relation. [review 2026-10-14 PI-8, PI-9]
-- [ ] **Make the Problems tab label's producer split show, or remove it (H6b).**
-      `src/ui/panels/BottomPanel.tsx:632-639` labels the Problems tab `Problems (N check · M solve)`
-      when both producers filed rows, but Check and Solve each replace `diagnostics` wholesale
-      (`src/ui/store.ts:3169`, `:3257`) and validation rows carry no `producer`, so the label can
-      never show. The per-instance plan deferred H6b because of the tutorial videos; 3e3b0ff shipped
-      it with a per-row producer chip on v9's screen. Either count every row by producer, or remove
-      the dead branch (the chips stay). Done when the label either shows on a model with both or is
-      gone. [review 2026-10-14 PI-10] Awaits user decision U13 (count every row, or remove the
-      label).
-- [ ] **Attach a refuted reading of `massR : LoadReq` to the requirement the `satisfy` names.** A
-      refuted reading of a requirement usage typed by a requirement definition lands on the
-      definition `LoadReq`, while `massR` gets nothing (`src/semantics/obligations.ts:390-397`,
-      `:968`). Attach it to the requirement the `satisfy` names, or document the fold. Done when the
-      refuted reading of `massR : LoadReq` is attached to `massR`. [review 2026-10-14 EV-4]
-- [ ] **Close the evidence record's loose ends: an empty reading, an unchecked requirement, a
-      usage.** The schema accepts `instance.reading: ""`
-      (`docs/schemas/evidence-record.schema.json`, the `instance` facet), and an empty key collides
-      with the own row ("fail → pass") [EV-6]; nothing cross-checks `instance.requirement` against
-      `obligation.requirement`, and a shared-usage reading records the usage, not the instance
-      (`obligations.ts:1063`) [EV-7]. Add `minLength: 1`, cross-check the two fields and record the
-      instance path. Done when an empty reading fails the schema and a mismatched pair is refused.
-      [review 2026-10-14 EV-6, EV-7]
-
+- [ ] **Finish the wording and evidence residuals of `reporting-small`.** The branch (merged by
+      `794c038`) rolled findings up and folded them, stated causes and the cap, folded and named the
+      `verify` text and footer, removed the dead H6b label, and closed EV-4, EV-6 and EV-7's
+      cross-checks. Left: (1) the `under` filter misses renamed redefinitions (probe `e5`), and
+      `big-bind-600`'s cold check is 17% slower than before the routing change (577 to 675 ms);
+      (2) the evidence record does not record the instance path of a shared-usage reading
+      (`satisfy LoadReq by Sys::p` records only the own row); `verify` prints a moved reading as
+      `H::LoadReq in H::p1` where the record says `H::massR in H::p1`; a case that verifies both
+      the definition and the usage counts the one moved reading twice; the move fires for a
+      requirement-def specialisation too; an earlier build's `LoadReq in p1` record is skipped with
+      a sentence that says the model never reads it, which is not quite true; (3) paths in the
+      binding-carried context rows and the unfolded `target-by-specialisation` rows are still
+      unquoted (the witness tests pin the text), the fold lines name the relation unquoted, the
+      frame-cap count is a lower bound ("at least N") and counts print raw beside the capped
+      sentences, and a footer fold over a requirement's per-subject rows names the clause's
+      synthetic name, not the requirement. [N3 S1-S4, reviews]
 - [ ] **Anchor at the value that breaks the relation, and once per cause.** Since `f27d99b` a
       violated-instance finding is anchored at the instance's own differing line, but (1) when a
       binding carries two values into an instance the anchor follows the first read's source, not
@@ -428,33 +387,6 @@ true values. What follows is what that branch and the review of it left open; en
       Pick the source whose value is the difference, fold the per-`rN` findings into the one at the
       stated member, and name the redefinition. [O4 S2, review] See also the A-M2 entry (per-instance
       soundness section).
-- [ ] **Hold a `…/2` evidence record to the check a `…/1` record gets.** A `sysprose-evidence/1`
-      record `<case> in <X>` is skipped on attach ("is a VerificationCaseUsage, not a requirement"),
-      while a `…/2` record of the same reading attaches wherever `instance.requirement` resolves,
-      with no `isRequirement` or reading cross-check. Apply both checks to `…/2` facets, with the
-      EV-4 and EV-6 entries above. When a `--from` file holds a legacy v1 `R in X` record,
-      `evidence-attach` also builds `obligationsOf` twice (time only). [O4 S1, review EV-7]
-- [ ] **Fold binding-carried context findings past twenty.** `via` context rows leave the target
-      fold (`TARGET_CONTEXT_FOLD = 20`, `src/validation/rules.ts`) when O4 routes them to
-      `constraint-by-instance`, and the `via` path never folds, so a relation with more than twenty
-      binding-carried contexts now lists one finding each where it gave one to three. Fold them with
-      the roll-up entry above (PI-4). Also: the `under` filter misses renamed redefinitions (probe
-      `e5`), and `big-bind-600`'s cold check is 17% slower than before the routing change (577 to
-      675 ms). [O4 S2, review]
-
-## Load health and the model the checks read — review 2026-10-14
-
-From the review of the load-health certificate (679a5e5) and of the checks worker (the ux merge).
-The load health no longer vouches for a text it has not parsed (branch `load-health` S1: each
-text is parsed, validated and written back in the checks worker, so a text that parses to
-another model is told apart too), and the worker rebuilds the page's model after a reparent
-(S2: Save, Undo and Redo, the Model JSON and OMG API JSON exports, a push to an OMG API server
-and the worker's copy list each owner's children in the order the model holds them, and a drag
-lists the page's own model in that order). A check's click no longer holds the page for work
-that grows with the model (S3, guarded on the drone-swarm v9 model). What remains is the cost of
-an edit itself on v9, which S3 measured, the order between elements of different owners, and a
-collaboration room's child order.
-
 - [ ] **Cut what an edit costs the page on the drone-swarm v9 model.** Each edit's recompute
       (`recomputeNow`, `src/ui/store.ts`) validates the whole model and writes its text on the
       page's thread before the diagram is rebuilt: one task, after every edit, whether or not a
