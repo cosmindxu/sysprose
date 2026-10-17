@@ -331,7 +331,7 @@ function judgeOne(
   }
 
   const detailed =
-    row.node !== null ? quantities(model, row, memo) : {};
+    row.node !== null ? quantities(model, row, memo, check) : {};
 
   // A relation the SMT gates refused may still evaluate perfectly well HERE —
   // `%` is the plain case: the numeric surface computes `12 % 2 == 0` and the
@@ -418,7 +418,10 @@ function quantities(
   model: Model,
   row: Obligation,
   memo: DerivationMemo = new Map(),
+  check?: ConstraintCheck,
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
+  // A value a binding carried in was compared as the quantity it is: those are the sides.
+  if (check?.sides) return check.sides;
   const el = rowElement(model, row);
   if (!el) return {};
   const q = evaluateConstraintQuantityDetailed(model, el, {
@@ -460,17 +463,23 @@ function quantities(
 export function modelBindings(model: Model, row: Obligation, check?: ConstraintCheck): ValueBinding[] {
   const out: ValueBinding[] = [];
   const el = rowElement(model, row);
+  // A group's instance row that abstains reads none of its names there: the usage's generic values
+  // (the definition's `extra` of 0 for an instance that states another) are no point of its.
+  const abstains = row.instance?.path !== undefined && (check?.cause !== undefined || check?.result === 'unknown');
   for (const v of row.vars) {
     // A path read through an instance of its own (`q.m2`, ContractVariable.instance) is THAT instance's
     // value, read where the relation reads it — the check's own reading (`check.reads`, F5), else the
     // feature's own value is the definition's (9 beside the −40 the row compared). Every other path is
-    // its feature's, the same wherever it is read.
+    // its feature's, the same wherever it is read; where the feature states none, the value a binding
+    // carries into it, as the check read it.
+    const read = check?.reads?.find((x) => x.path === v.path);
     let raw: unknown = null;
-    if (!v.instance) {
+    if (abstains) {
+      raw = null;
+    } else if (!v.instance) {
       const r = evaluateFeatureValue(model, v.featureId);
-      raw = 'value' in r ? r.value : null;
+      raw = 'value' in r ? r.value : (read?.value ?? null);
     } else {
-      const read = check?.reads?.find((x) => x.path === v.path);
       raw = read !== undefined && read.value !== undefined ? read.value : el ? valueAtPath(model, el, v.path) : null;
     }
     out.push({
@@ -478,7 +487,7 @@ export function modelBindings(model: Model, row: Obligation, check?: ConstraintC
       qualifiedName: v.qualifiedName,
       value:
         typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'string' ? raw : null,
-      unit: v.unit,
+      unit: read?.unit !== undefined && raw === read.value ? read.unit : v.unit,
       role: v.role,
     });
   }

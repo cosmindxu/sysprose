@@ -69,7 +69,7 @@ import {
   featureIdsFor,
   type ConstraintCheck,
 } from '../evaluate-model';
-import { rereadRelation, tieSentence, type PointValues } from '../exact';
+import { affineRational, rereadRelation, tieSentence, type PointValues } from '../exact';
 import {
   axiomsOf,
   reachOfRow,
@@ -742,7 +742,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     // it is one on its own variables — which is what `rowFreed` answers.
     // The unit-aware pair, on the same precondition the literal engine reads it
     // under: a row with no readable body has no comparison to print.
-    const refusedSI = row.row.node !== null ? quantities(model, row.row, input.memo) : {};
+    const refusedSI = row.row.node !== null ? quantities(model, row.row, input.memo, input.checks.get(row.row.element.id)) : {};
     const refusedPoint = rowFreed ? {} : { bindings: modelBindings(model, row.row, input.checks.get(row.row.element.id)), ...refusedSI };
     if (row.row.status === 'no-formal-clause') {
       return {
@@ -877,7 +877,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   // reporting that it fails. Where the context released anything, there is no
   // single point to name and none is offered.
   const si: { lhsSI?: number; rhsSI?: number; dimension?: string } =
-    countFree(variables) === 0 ? quantities(model, row.row, input.memo) : {};
+    countFree(variables) === 0 ? quantities(model, row.row, input.memo, input.checks.get(row.row.element.id)) : {};
   const point = countFree(variables) === 0 ? { bindings: modelBindings(model, row.row, input.checks.get(row.row.element.id)), ...si } : {};
   const axiomAssertions = assertionsOf(axioms, 'axiom');
   const premiseAssertions = assertionsOf(input.premises, 'premise');
@@ -1803,7 +1803,13 @@ function confirm(
         };
       }
       if (read.exact !== undefined) {
-        const witness = values.exact?.get(v.qualifiedName);
+        // The check's value is SI (`read.exact`), except a value a binding carried in: that one is
+        // in the unit the filled feature declares (`read.unit`), which is the unit the witness is in.
+        // Every other read is compared in SI, the witness read the way the encoder reads it.
+        const stored = values.exact?.get(v.qualifiedName);
+        const scale = row.vars.find((x) => x.qualifiedName === v.qualifiedName);
+        const witness =
+          stored === undefined ? undefined : read.unit !== undefined ? stored : scale !== undefined ? affineRational(stored, scale) : undefined;
         const witnessText = witness !== undefined ? `${witness.num}/${witness.den}` : undefined;
         if (witnessText !== read.exact) {
           return {
@@ -1869,7 +1875,10 @@ function quantities(
   model: Model,
   row: Obligation,
   memo: DerivationMemo = new Map(),
+  check?: ConstraintCheck,
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
+  // A value a binding carried in was compared as the quantity it is: those are the sides.
+  if (check?.sides) return check.sides;
   const el = rowElement(model, row);
   if (!el) return {};
   const q = evaluateConstraintQuantityDetailed(model, el, {

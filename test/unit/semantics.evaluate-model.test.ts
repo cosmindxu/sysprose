@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
 import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, anchorFor } from '../../src/semantics/index';
-import { featureIdsFor, valueAtPath, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
+import { featureIdsFor, valueAtPath, valueKey, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
   assertDefinitionsIn,
@@ -4173,8 +4173,33 @@ describe('a value a binding carries is read in the unit its feature declares (A.
     expect(checks.find((x) => m!.qualifiedName(x.id) === 'UC::top')!.result).toBe('violated');
     // The witness is the value in `load`'s unit (kg), exactly: the point the solver lane stores.
     const q2 = checks.find((x) => m!.qualifiedName(x.id) === 'UC::P::c')!.instances!.find((i) => i.instance === 'UC::q2::p')!;
-    expect(q2.message).toBe("Constraint satisfied (load = 5 in UC::q2::p, its L UC::q2::L through UC::q2's `bind`)");
-    expect(q2.reads).toEqual([expect.objectContaining({ path: 'load', symbol: 'UC::q2::p::load', value: 5, exact: '5/1' })]);
+    expect(q2.message).toBe("Constraint satisfied (load = 5 [SI::kg] in UC::q2::p, its L UC::q2::L through UC::q2's `bind`)");
+    expect(q2.reads).toEqual([
+      expect.objectContaining({ path: 'load', symbol: 'UC::q2::p::load', value: 5, exact: '5/1', unit: 'SI::kg' }),
+    ]);
+    // …and the two sides of its comparison in SI, for the literal and SMT notes (A-M2).
+    expect(q2.sides).toEqual({ lhsSI: 5, rhsSI: 10, dimension: 'M' });
+  });
+
+  it('prints the value beside a decided group row (A-M2)', async () => {
+    const { model: m } = await loadModelText(`package AM {
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute extra : ScalarValues::Real default = 0.0;
+        constraint c { load + extra <= 10.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+    }`);
+    const rows = checkConstraints(m!).find((x) => m!.qualifiedName(x.id) === 'AM::P::c')!.instances!;
+    const row = (inst?: string) => rows.find((i) => (inst === undefined ? i.generic === true : i.instance === inst))!;
+    const read = (inst: string | undefined, path: string) => row(inst).reads!.find((r) => r.path === path)!;
+    // The generic row's load comes through Q's `bind p.load = L`: a value alone, no source clause for it.
+    expect([read(undefined, 'load').value, read(undefined, 'load').via]).toEqual([1, undefined]);
+    // q2's extra, 20, comes through q2's own binding: a read of the row, with no source clause of its own.
+    expect([read('AM::q2::p', 'extra').value, read('AM::q2::p', 'extra').via]).toEqual([20, undefined]);
+    expect(read('AM::q1::p', 'load')).toEqual(expect.objectContaining({ value: 2, via: expect.anything() }));
   });
 
   it('reads a bare literal beside it in the declared unit, as for every value of the feature (U1)', async () => {
@@ -4806,5 +4831,18 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     expect(rollup.map((d) => d.message)).toEqual([
       "T2::P::c (load + x <= 10.0) read in each of 3 instances of T2::Q::p: holds in 2, could not be read in 1 — 1 of them generic (T2::Q's own)",
     ]);
+  });
+});
+
+describe('the per-instance memo key (A-L2)', () => {
+  it('keys a value on the feature, the instance and the context it is read in', () => {
+    // Two names that differ only in `at`, under one `inst`, are two values: neither answers for the other.
+    expect(valueKey('f', 'M::q::p', 'ctx1')).not.toBe(valueKey('f', 'M::q::p', 'ctx2'));
+    expect(valueKey('f', 'M::q::p', 'ctx1')).not.toBe(valueKey('f', 'M::q::p'));
+    expect(valueKey('f', 'M::q::p', 'ctx1')).not.toBe(valueKey('f', 'M::q2::p', 'ctx1'));
+    // Read where it is written, and not in an instance, the key is what it was.
+    expect(valueKey('f')).toBe('f');
+    expect(valueKey('f', undefined, 'ctx1')).toBe('f@ctx1');
+    expect(valueKey('f', 'M::q::p')).toBe('f@M::q::p');
   });
 });

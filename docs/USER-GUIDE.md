@@ -1145,9 +1145,9 @@ q.load`, holds Sys's binding as well as P's asserts. A value the same in every
 instance — a literal, or arithmetic over literals the instance changes nothing
 of — keeps the feature's own name. A verify row prints a path read through
 an instance at that instance's value (`bindings`, and the evidence record's
-`witness`): `q.m2` is −40 where Q's own `m2` is 9, and no value where the
-scalar reading finds none there (a value a binding carries into the
-instance, or an expression with a unit literal). A requirement's subject
+`witness`): `q.m2` is −40 where Q's own `m2` is 9; a value a binding carries into the instance
+prints in the unit the feature it fills declares (5000 g into a kg feature is `5 [SI::kg]`), and no value
+stands where the reading finds none there (an expression with a unit literal) or where the row abstains. A requirement's subject
 that nothing binds, read in the requirement itself, is the generic instance
 of its type (the requirement is about any one); reached through a usage
 (`r1.s`, `sys.ra.s`, a nested requirement's `r2.t`) it is that usage's own,
