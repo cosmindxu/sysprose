@@ -579,7 +579,7 @@ function statusOf(encodable: Encodable): ObligationStatus {
 export function obligationsOf(model: Model, opts: ObligationOptions = {}): Obligation[] {
   const inScope = scopeFilter(model, opts.scopeId);
   const memo: DerivationMemo = new Map();
-  // Every relation read for an instance is read once, and copied per instance.
+  // A relation read for several instances is kept from its second read on, and copied per instance.
   cacheReadings(memo);
   const contracts = contractsOf(model);
   const byId = new Map<ElementId, Contract>(contracts.map((c) => [c.id, c]));

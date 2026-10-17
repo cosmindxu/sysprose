@@ -667,34 +667,42 @@ export function readRelation(
   const cache = READINGS.get(memo);
   if (cache === undefined) return withInstances(model, el, readRelationAsWritten(model, el, raw, memo, assignTo, valueOf), instance);
   const key = cache.keyOf(el, raw, assignTo, valueOf);
-  let kept = cache.readings.get(key);
-  if (kept === undefined) {
-    kept = readRelationAsWritten(model, el, raw, memo, assignTo, valueOf);
-    cache.readings.set(key, kept);
+  const kept = cache.readings.get(key);
+  if (kept !== undefined && kept !== null) {
+    // A fresh copy for every caller, as every read made one: `withInstances`
+    // writes into the variables, and the rows filed from them are the caller's.
+    return withInstances(model, el, structuredClone(kept), instance);
   }
-  // A fresh copy for every caller, as every read made one: `withInstances`
-  // writes into the variables, and the rows filed from them are the caller's.
-  return withInstances(model, el, structuredClone(kept), instance);
+  const reading = readRelationAsWritten(model, el, raw, memo, assignTo, valueOf);
+  // A key read once costs its key alone (a model whose relations are each
+  // read once, as the v9 model's, pays no copy for a cache it never uses):
+  // the copy is kept from the SECOND read of the key on, taken before the
+  // caller has written into the reading it is handed.
+  cache.readings.set(key, kept === null ? structuredClone(reading) : null);
+  return withInstances(model, el, reading, instance);
 }
 
 /**
  * The readings {@link readRelation} kept for ONE pass, by the memo of that
  * pass ({@link cacheReadings}). The same relation is read once per instance
  * it holds of — 6131 reads of 37 relations in a model of 4098 instance rows —
- * and everything but the instance it is re-rooted for ({@link withInstances})
+ * and a key is kept from its second read on, so a key read once costs its key
+ * alone. Everything but the instance it is re-rooted for ({@link withInstances})
  * is the same each time.
  */
 interface ReadingCache {
-  readings: Map<string, RelationReading>;
+  /** `null`: the key has been read once; the reading is kept from the second read. */
+  readings: Map<string, RelationReading | null>;
   keyOf: (el: ElementRecord, raw: string, assignTo?: string, valueOf?: ElementRecord) => string;
 }
 
 const READINGS = new WeakMap<DerivationMemo, ReadingCache>();
 
 /**
- * Keep every reading {@link readRelation} makes with `memo` for the rest of
- * the pass that owns it, and hand each later caller of the same reading a
- * copy. A pass-scoped memo is already the pass's reading of ONE model state —
+ * Keep the readings {@link readRelation} makes with `memo` for the rest of
+ * the pass that owns it: a reading is kept from the SECOND read of its key on
+ * (a key read once keeps nothing; the second read computes again), and the
+ * third and later callers of it are each handed a copy. A pass-scoped memo is already the pass's reading of ONE model state —
  * the derivations it holds are — so the cache is exactly as long-lived as the
  * memo, which the pass drops when it returns, and needs no invalidation of
  * its own: the model must not change while the pass runs, as for the
