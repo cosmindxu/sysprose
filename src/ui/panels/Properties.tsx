@@ -408,7 +408,9 @@ export function Properties(): JSX.Element {
         }
         if (!value) return;
         // Lazily create a Documentation child, then restore selection to this el.
-        const docId = createElement('Documentation', id);
+        // A field's change: over text typed in the Text view, the store applies
+        // that text first, and hands back the doc it gives this element if any.
+        const docId = createElement('Documentation', id, undefined, { field: true });
         setAttr(docId, 'body', value);
         select(id);
       },

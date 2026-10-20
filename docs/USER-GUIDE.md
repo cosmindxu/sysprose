@@ -454,10 +454,10 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
 (the grouping); `src/ui/store.ts:320-333` (`diagramRootId`, the diagram
-scope), `1512-1620` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2340-2357` (`pinNodePositions`: the move itself), `3393-3445`
-(`applyText`: an apply of text carries them over by qualified name),
-`4074-4115` (`openText`: a file opened as text starts afresh).
+scope), `1516-1671` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2491-2508` (`pinNodePositions`: the move itself), `2117-2174`
+(`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
+`4228-4269` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -532,13 +532,29 @@ recompute — so the keyboard is never kept waiting.
 ### The Text tab, in both directions
 
 - **Model → text** happens by itself. The buffer is re-serialised after every
-  edit, and the indicator under the editor reads *in sync with model*. An edit
+  edit — at once when you click into the editor, so what you type there starts
+  from the model as it stands — and the indicator under the editor reads *in
+  sync with model*. An edit
   made through the SDK on `window.sysml` ([§6](#scripting-it)) is re-serialised
   too — except over text typed here and not yet applied: an SDK edit, like a
   collaborator's, never replaces that. The text stays, reading *modified — not
   yet applied*; applying it — or saving it, or exporting it with **Export ▾ →
   SysML**, outside a collaboration room — puts it over the SDK's edit, which
   one Undo brings back.
+- **A field's change over typed text.** A change applied from a field — a
+  Properties box, the Documentation box included, a rename, a Requirements
+  table cell — while the Text view holds text typed there and not applied
+  applies that text first, as **Apply text → model** does, and then goes in
+  over it: the Text view shows both, and two Undo steps take them back, the
+  change first. The elements keep their ids, so Properties stays on the
+  element, and the project keeps its name; a running simulation stops, as at
+  any apply. When that text gives the element documentation, the
+  Documentation box writes over that one. A box or a cell left as it was is
+  no change, and applies nothing. Where the text cannot go first,
+  it stays, reading *modified — not yet applied*, as over an SDK edit: when
+  it has a syntax error, in a collaboration room, when the element the
+  field changes is not in it under the same qualified name and kind, or
+  when the model has changed since you began typing it.
 - **Text → model** happens when you press **Apply text → model** — or **Save**
   / `Ctrl/⌘ + S` or **Export ▾ → SysML**, which apply it first unless it has a
   syntax error or a collaboration room is connected
@@ -563,8 +579,10 @@ recompute — so the keyboard is never kept waiting.
 >    and that is the whole safety net. A second edit and it is gone.
 > 3. **Editing the model discards unapplied text edits.** A local model edit
 >    force-overwrites the buffer. If you typed into the Text tab and then
->    clicked something in the tree, your typing is gone. (An edit made through
->    `window.sysml` does not overwrite it; see above.)
+>    created, deleted, duplicated, pasted, connected, re-parented, regrouped
+>    or imported something — in the diagram, the tree or a table — or pressed
+>    Undo or Redo, your typing is gone. (A change applied from a field does not
+>    overwrite it, nor does an edit made through `window.sysml`; see above.)
 >
 > After an apply, the standard library is re-merged asynchronously, which is why
 > Problems and the text buffer visibly refresh a second time a few hundred
@@ -580,13 +598,14 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1682-1777` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `1900-1983` (`recomputeNow`), `1985-2065`
-(`afterSdkEdit`: an SDK edit), `868-915` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2656-2676`
-(`createElement`: a new element), `2934-3001` (`reparent`, `reparentMany`: a
-move), `4724-4769` (`libraryNote`: the note that says so), `3393-3445`
-(`applyText`), `3877-3923` (`undo`, `redo`), `4811-4869`
+**Source of truth:** `src/ui/store.ts:1733-1829` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `1952-2037` (`recomputeNow`), `2039-2216`
+(`afterSdkEdit`: an SDK edit; `typedTextFirst`, `applyParsed`: a field's change over
+typed text), `872-919` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2807-2838`
+(`createElement`: a new element), `3127-3194` (`reparent`, `reparentMany`: a
+move), `4878-4923` (`libraryNote`: the note that says so), `3586-3599`
+(`applyText`), `4031-4077` (`undo`, `redo`), `4965-5023`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
@@ -3432,8 +3451,8 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:3076-3258` (`runValidation`,
-`solveParametric`: the four buttons), `1985-2065` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3269-3451` (`runValidation`,
+`solveParametric`: the four buttons), `2039-2216` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -3776,11 +3795,11 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:786-804` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3449-3541` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `3783-3848` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4601-4611` (`mergeLoads`: a merge that loads),
-`4613-4722` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+`src/ui/store.ts:790-808` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3603-3695` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `3937-4002` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4755-4765` (`mergeLoads`: a merge that loads),
+`4767-4876` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:422-434` (what reads unsaved), `1333-1398` (the
@@ -4032,8 +4051,8 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:232`
-(`UNDO_LIMIT`: undo is bounded), `1682-1712` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `4871-4989` (`mergeLibrary`, `loadStandardLibraryAsync`:
+(`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `5025-5143` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 
@@ -4210,9 +4229,10 @@ text has a syntax error, or a collaboration room is connected: then the
 browser keeps the model as it stood and the editor still reads *modified — not
 yet applied*; with no Drive file attached the strip under the toolbar says so,
 and an attached Drive file gets a faulted text as typed. A change applied from
-a field is an edit, though, and an edit replaces text typed in the Text view
-and not yet applied ([§5](#the-text-tab-in-both-directions)): the save holds
-the field's change, not that text.
+a field — the box the key is typed in, too — applies that text first and goes
+in over it, so the save holds both ([§5](#the-text-tab-in-both-directions)).
+Where the text could not go first it stands, and the save applies it as above:
+over the field's change, which one Undo brings back.
 
 | Key | What it does |
 |---|---|
@@ -4221,7 +4241,7 @@ the field's change, not that text.
 | `Delete` / `Backspace` | Delete the selection (ignored while a button has focus) |
 | `Ctrl/⌘ + Z` | Undo |
 | `Ctrl/⌘ + Shift + Z`, `Ctrl/⌘ + Y` | Redo |
-| `Ctrl/⌘ + S` | Save the project in this browser, from a field too (what you typed there applied first), text typed in the Text view applied first (not over a syntax error, nor in a collaboration room, nor once a change applied from a field has replaced it) — and, when the attached Google Drive file has unsaved changes, to that file too |
+| `Ctrl/⌘ + S` | Save the project in this browser, from a field too (what you typed there applied first), text typed in the Text view applied first (not over a syntax error, nor in a collaboration room) — and, when the attached Google Drive file has unsaved changes, to that file too |
 | `Ctrl/⌘ + Shift + S` | Save to Drive, when the deployment has Google Drive (nothing is sent while the Drive file has no unsaved changes); with no Drive file attached it opens *Save to Drive as…* |
 | `Ctrl/⌘ + D` | Duplicate the selection |
 | `Ctrl/⌘ + C` | Copy the selected subtrees (defers to native copy when text is selected) |

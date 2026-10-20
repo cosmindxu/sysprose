@@ -45,20 +45,20 @@ and stored queries (`src/api/rest.ts:113,292,429`). Payload
 `aaa…!` names blocks the event loop. CVSS-ish 7.5.
 
 ### C4. Main-thread ELK layout on every mutation, no debounce `[PROVEN]` · Performance
-`src/ui/store.ts:1980-1983`, `src/diagram/layout.ts:33,207` — `afterMutation()` calls
+`src/ui/store.ts:2034-2037`, `src/diagram/layout.ts:33,207` — `afterMutation()` calls
 `void rebuildDiagram()` on every `createElement/updateElement/setAttr/reparent/
 connect/deleteElement`, including remote CRDT applies. `layout.ts` imports the
 **synchronous bundled** `elkjs/lib/elk.bundled.js`; the `await` only defers a
 microtask. Breaks down: visible jank > ~100 nodes, multi-second freezes > ~1 k.
 
 ### C5. `afterMutation` runs full validation (18 rules) + full serialize + diagram rebuild on every edit `[PROVEN]` · Performance
-`src/ui/store.ts:1974-1983` — three model-wide passes per keystroke-equivalent
+`src/ui/store.ts:2026-2037` — three model-wide passes per keystroke-equivalent
 edit. The `constraint-violation` and `dimensional-consistency` rules
 (`validation/rules.ts:571,600`) nest full semantics-engine work inside the
 per-element loop → effectively O(n²) on every mutation.
 
 ### C6. `pushUndo` retains up to 50 full deep clones of the model `[PROVEN]` · Performance
-`src/ui/store.ts:1880-1898`, `src/core/model.ts:464` (`structuredCloneSafe`) —
+`src/ui/store.ts:1932-1950`, `src/core/model.ts:464` (`structuredCloneSafe`) —
 `UNDO_LIMIT = 50`. With the ~38 k-element library loaded, every mutation
 retains a full snapshot; a session can hold **>500 MB** of retained JS
 objects.
