@@ -29,6 +29,7 @@
  * while loading.
  */
 import type { StoreApi } from 'zustand';
+import { modelFileName } from './linked-model';
 import {
   DRIVE_UPLOAD_MAX_BYTES,
   DriveAuthError,
@@ -475,9 +476,22 @@ export function driveLink(s: Pick<AppState, 'drive'>, pageHref?: string): string
   return href === undefined ? null : driveDeepLink(refOf(file), href);
 }
 
-/** The file name the Check panel's terminal commands name: the attached Drive file's, else the project's. */
-export function checkFileName(s: { drive: { file: { name: string } | null }; projectName: string }): string {
-  return s.drive.file?.name ?? `${s.projectName || 'model'}.sysml`;
+/**
+ * The file name the Check panel's terminal commands name: the attached Drive
+ * file's, else the loaded `?model=` link's (its URL's file name, as the banner
+ * names it: the project name comes from the model's first root, which is an
+ * unnamed header comment in a file that starts with one) while the project
+ * still has the name it had when the link loaded (New, Open and Import
+ * rename it), else the project's.
+ */
+export function checkFileName(s: {
+  drive: { file: { name: string } | null };
+  projectName: string;
+  linkedModel?: { url: string; status: string; projectName?: string } | null;
+}): string {
+  if (s.drive.file !== null) return s.drive.file.name;
+  if (s.linkedModel?.status === 'loaded' && s.linkedModel.projectName === s.projectName) return modelFileName(s.linkedModel.url);
+  return `${s.projectName || 'model'}.sysml`;
 }
 
 /** The attached file as `window.sysprose.drive.file()` shows it: Drive's metadata and where it came from. */

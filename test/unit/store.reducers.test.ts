@@ -3901,6 +3901,18 @@ describe('google drive', () => {
       expect(checkFileName(st())).toBe('Fleet plan.sysml');
     });
 
+    it('the Check panel’s commands name a linked model by its URL’s file name, the Drive file first', async () => {
+      const linkedModel = { url: 'https://example.org/models/views-tour.sysml', source: null, status: 'loaded' as const, projectName: 'Untitled' };
+      expect(checkFileName({ drive: { file: null }, projectName: 'Untitled', linkedModel })).toBe('views-tour.sysml');
+      expect(checkFileName({ drive: { file: null }, projectName: 'Untitled', linkedModel: { ...linkedModel, status: 'failed' } })).toBe('Untitled.sysml');
+      expect(checkFileName({ drive: { file: { name: 'Fleet.sysml' } }, projectName: 'Untitled', linkedModel })).toBe('Fleet.sysml');
+      // Another model replaced the linked one (New renames the project): its name, not the link's.
+      useAppStore.setState({ linkedModel: { ...linkedModel, projectName: st().projectName } });
+      expect(checkFileName(st())).toBe('views-tour.sysml');
+      st().newProject('Other');
+      expect(checkFileName(st())).toBe('Other.sysml');
+    });
+
     it('asks before leaving exactly while the attached file has unsaved changes', async () => {
       const leaving = () => new Event('beforeunload', { cancelable: true });
       let e = leaving();

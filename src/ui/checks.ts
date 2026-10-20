@@ -29,9 +29,9 @@
  * element and what it contains; run here they narrow to the selection the same
  * way, so a result and its copied command cover the same elements, and where
  * the selection cannot scope them ({@link checkScope}) both cover the whole
- * model and the summary says so. Not yet the same: `reach` covers the whole
- * model, as its command does, although that subcommand takes an optional
- * `--element` too.
+ * model and the summary says so. `reach` narrows the same way, to a selection
+ * that holds a state machine, as its command's `--element` does
+ * ({@link CheckSpec.scopeNeeds}).
  *
  * Every row carries a stable `code`, like every other finding in this project,
  * so automation branches on the code and never on the prose.
@@ -118,6 +118,13 @@ export interface CheckSpec {
    * says so — when there is no selection to narrow to ({@link checkScope}).
    */
   scopedBySelection?: boolean;
+  /**
+   * What else a {@link CheckSpec.scopedBySelection} selection must hold to be a
+   * scope. `machine`: a state machine, as `reach`'s `--element` refuses one that
+   * holds none (`reachScope`, `scripts/sysprose.ts`); a selection that holds
+   * none is no scope here, and the check covers the whole model and says why.
+   */
+  scopeNeeds?: 'machine';
   /**
    * True when the check walks a state machine's configuration graph, whose cost
    * grows with the machine and not with the model: the palette runs it in a
@@ -220,7 +227,7 @@ export type CheckScope = { kind: 'element'; id: string; name: string } | { kind:
  *    starts with a header comment or an import that root is one of these.
  *    Scoped to it, a Run nobody narrowed would report zero of everything.
  */
-export function checkScope(ctx: CheckContext): CheckScope {
+export function checkScope(ctx: CheckContext, needs?: 'machine'): CheckScope {
   const el = ctx.selectionId !== null ? ctx.model.get(ctx.selectionId) : undefined;
   if (el === undefined) return { kind: 'model', why: 'nothing is selected' };
   const name = ctx.selectionName || el.id;
@@ -230,8 +237,14 @@ export function checkScope(ctx: CheckContext): CheckScope {
   if (isAnnotation(el.eClass) || isRelationship(el.eClass) || isControlNode(el.eClass)) {
     return { kind: 'model', why: `${name} contains no contract or obligation` };
   }
+  if (needs === 'machine' && stateMachinesIn(ctx.model, el.id).length === 0) {
+    return { kind: 'model', why: `${name} holds no state machine` };
+  }
   return { kind: 'element', id: el.id, name };
 }
+
+/** The scope the selection gives `spec`: {@link checkScope}, with what `spec` needs of it. */
+const scopeOf = (spec: CheckSpec, ctx: CheckContext): CheckScope => checkScope(ctx, spec.scopeNeeds);
 
 /**
  * What of the selection a check's result depends on: the scope a
@@ -247,7 +260,7 @@ export function checkScope(ctx: CheckContext): CheckScope {
  */
 export function selectionKey(spec: CheckSpec, ctx: CheckContext): string | undefined {
   if (spec.scopedBySelection === true) {
-    const scope = checkScope(ctx);
+    const scope = scopeOf(spec, ctx);
     return scope.kind === 'element' ? `element ${scope.id}` : 'model';
   }
   if (spec.needsSelection === true) return ctx.selectionId ?? '';
@@ -255,7 +268,7 @@ export function selectionKey(spec: CheckSpec, ctx: CheckContext): string | undef
 }
 
 /** `--element` when the selection scopes the check; nothing — the terminal's whole-model default — when it does not. */
-const scopeFlag = (ctx: CheckContext): string => (checkScope(ctx).kind === 'element' ? element(ctx) : '');
+const scopeFlag = (ctx: CheckContext, needs?: 'machine'): string => (checkScope(ctx, needs).kind === 'element' ? element(ctx) : '');
 
 /** The words a scoped check's summary ends on: what it covered, so a result never reads wider or narrower than it is. */
 const scopeWords = (scope: CheckScope): string =>
@@ -394,8 +407,17 @@ export const CHECKS: readonly CheckSpec[] = [
     offThread: true,
     views: ['state', 'action', 'general'],
     readsLoadHealth: true,
-    command: (ctx) => cli('reach', ctx),
-    run: (ctx) => reachCheck(ctx, ctx.fileName),
+    scopedBySelection: true,
+    scopeNeeds: 'machine',
+    command: (ctx) => cli('reach', ctx, scopeFlag(ctx, 'machine')),
+    run: (ctx) => {
+      // The scope row goes last: the load's `checks/degraded` row is the first thing a degraded result says.
+      const scope = checkScope(ctx, 'machine');
+      const r = reachCheck(ctx, ctx.fileName, scope.kind === 'element' ? scope.id : undefined);
+      // A model with no state machine has nothing to scope: its answer is that there is nothing to walk.
+      if (!hasStateMachine(ctx.model)) return r;
+      return { ...r, summary: `${r.summary} — ${scopeWords(scope)}`, rows: [...r.rows, scopeRow(scope)] };
+    },
   },
   {
     id: 'check-behaviour',
@@ -510,7 +532,7 @@ export function commandNote(spec: CheckSpec, ctx: CheckContext): string | null {
       `${QUALIFIED_NAME_PLACEHOLDER} stands for the element this check reads, and nothing is selected: select it, or type its qualified name in.`,
     );
   }
-  const namesSelection = spec.needsSelection === true || (spec.scopedBySelection === true && checkScope(ctx).kind === 'element');
+  const namesSelection = spec.needsSelection === true || (spec.scopedBySelection === true && scopeOf(spec, ctx).kind === 'element');
   if (namesSelection && ctx.selectionName && !plainQualifiedName(ctx.selectionName)) {
     notes.push(
       `${QUALIFIED_NAME_PLACEHOLDER} stands for ${ctx.selectionName}, which has characters a terminal could read as commands: type it in, quoted the way your terminal quotes.`,

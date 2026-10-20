@@ -451,9 +451,11 @@ export interface AppState extends DriveActions {
    * The model named by the page's `?model=` link, or null when the session was
    * not opened from one. While `status` is 'loading' the App keeps its loading
    * gate up, so a linked visit never shows the sample model first. See
-   * `src/ui/linked-model.ts`.
+   * `src/ui/linked-model.ts`. `projectName` is the project's name when the
+   * link finished loading: the Check panel names the linked file only while
+   * the project still has it, i.e. until another model replaces the linked one.
    */
-  linkedModel: (LinkedModel & { status: 'loading' | 'loaded' | 'failed'; error?: string }) | null;
+  linkedModel: (LinkedModel & { status: 'loading' | 'loaded' | 'failed'; error?: string; projectName?: string }) | null;
 
   // ── Real-time collaboration (Yjs CRDT + presence) ────────────────────────
   /** Live collaboration status, room, transport URL, self identity + remote peers. */
@@ -4068,7 +4070,7 @@ if (
         useAppStore.setState({
           undoStack: [],
           redoStack: [],
-          linkedModel: { ...linked, status: 'loaded' },
+          linkedModel: { ...linked, status: 'loaded', projectName: useAppStore.getState().projectName },
           savedText: savedTextNow(),
           savedPins: pinsMark(useAppStore.getState().diagramPins),
         });

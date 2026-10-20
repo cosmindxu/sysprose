@@ -317,6 +317,55 @@ describe('the checks registry', () => {
   });
 
   /**
+   * `reach` takes the same optional `--element`, and refuses one that holds no
+   * state machine. The palette narrows to a selection that holds a machine, and
+   * covers the whole model, saying why, where the terminal would refuse.
+   */
+  it('scopes reach to the selection as --element does, and covers the whole model where the terminal would refuse', async () => {
+    const text = [
+      'package P {',
+      '  state def M1 { state a; state b; state dead1; transition t1 first a then b; }',
+      '  state def M2 { state x; state y; state dead2; transition t2 first x then y; }',
+      '}',
+      '',
+    ].join('\n');
+    const model = (await loadModelText(text, { fileName: 'm.sysml' })).model!;
+    const reach = CHECKS.find((c) => c.id === 'reach')!;
+    const by = (name: string): ElementId => model.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+    const on = (id: ElementId | null) => ctx({ model, selectionId: id, selectionName: id ? model.qualifiedName(id) : null });
+
+    // Whole model: both machines, the terminal's command, a row that says so.
+    const whole = runCheck(reach, on(null));
+    expect(reach.command(on(null))).toBe('npm run sysprose -- reach model.sysml');
+    expect(whole.summary).toMatch(/ — covers the whole model: nothing is selected$/);
+    expect(whole.rows.at(-1)).toMatchObject({ code: 'checks/whole-model' });
+    expect(whole.lines![0].text).toContain('2 state machine(s)');
+
+    // A machine: only it is walked, its command names it, and the report prints the terminal's `scoped to` line.
+    const m1 = by('M1');
+    const one = runCheck(reach, on(m1));
+    expect(reach.command(on(m1))).toBe('npm run sysprose -- reach model.sysml --element P::M1');
+    expect(one.lines![0].text).toContain('1 state machine(s)');
+    expect(one.lines!.some((l) => l.text.includes('scoped to P::M1'))).toBe(true);
+    expect(one.summary).toMatch(/ — scoped to P::M1$/);
+    expect(one.rows.at(-1)).toMatchObject({ code: 'checks/scoped', elementId: m1 });
+    expect(one.marks![by('dead1')]).toBe('unreachable');
+    expect(one.marks![by('dead2')], 'a state outside the scope is not marked').toBeUndefined();
+    expect(one.rows.some((r) => r.code === 'checks/not-walked'), 'nor called unwalked').toBe(false);
+
+    // A state holds no machine (the terminal: "holds no state machine"): the whole model, with the reason.
+    const a = by('a');
+    expect(reach.command(on(a))).toBe('npm run sysprose -- reach model.sysml');
+    expect(runCheck(reach, on(a)).summary).toMatch(/ — covers the whole model: P::M1::a holds no state machine$/);
+    expect(runCheck(reach, on(a)).lines![0].text).toContain('2 state machine(s)');
+
+    // The same keys as contracts: a scope per element, one key for every whole-model reason.
+    expect(selectionKey(reach, on(m1))).toBe(`element ${m1}`);
+    expect(selectionKey(reach, on(a))).toBe('model');
+    expect(selectionKey(reach, on(null))).toBe('model');
+  });
+
+  /**
    * The promise itself, held against the terminal: the command the palette
    * prints, run by the CLI over the same file, reports the same contracts and
    * the same obligations the palette's run found — scoped, and whole.
@@ -785,8 +834,10 @@ describe('the checks that run in a worker', () => {
       const terminal = await cli(['reach', file]);
       const walked = /\d+ configuration\(s\) explored/;
       expect(terminal.stdout.match(walked)?.[0], `${what}: reach`).toBe(reach.summary.match(walked)?.[0]);
-      expect(reach.rows.length, what).toBeGreaterThan(0);
-      const at = reach.rows.map((row) => terminal.stdout.indexOf(`${row.code}  ${row.message}`));
+      // The scope row is the palette's: the terminal prints a scope as its `scoped to` line.
+      const terminalRows = reach.rows.filter((row) => row.code !== 'checks/scoped' && row.code !== 'checks/whole-model');
+      expect(terminalRows.length, what).toBeGreaterThan(0);
+      const at = terminalRows.map((row) => terminal.stdout.indexOf(`${row.code}  ${row.message}`));
       expect(at.every((i) => i >= 0), `${what}: every row of reach in the terminal's`).toBe(true);
       expect(at, `${what}: in the same order`).toEqual([...at].sort((a, b) => a - b));
     };
