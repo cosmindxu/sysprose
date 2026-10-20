@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4688 total — 4688 passed, 0 failed, 0 skipped
+- **Tests:** 4696 total — 4696 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -124,7 +124,7 @@
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 81 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 110 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 112 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 33 | 0 | 0 |
@@ -144,7 +144,7 @@
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 258 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 263 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
@@ -162,7 +162,7 @@
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 22 | 0 | 0 |
-| test/unit/ui.text-editor.test.ts | 4 | 0 | 0 |
+| test/unit/ui.text-editor.test.ts | 5 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 87 | 0 | 0 |
