@@ -4737,6 +4737,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'BBK::P::c in BBK::Q::p': ['T/T/T/T', 'T'],
       'BBK::P::c in BBK::q2::p': ['F/F/F/F', 'F'],
     }),
+    // The parameterised calculation `Twice(K)` is refused on every surface (permanent, soundness decision 8):
+    // L has no value anywhere, so q's p's m2 has none and every surface abstains. The refs are null, not T
+    // and F: the decisions settle no value for a refused calculation.
     'refute-r18': probe(`package R18 {
         calc def Twice { in x : ScalarValues::Real; return r : ScalarValues::Real = 2.0 * x; }
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4750,8 +4753,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'R18::m2NegT': ['?/?/?/?', 'T'],
-      'R18::m2PosF': ['?/?/?/?', 'F'],
+      'R18::m2NegT': ['?/?/?/?', null],
+      'R18::m2PosF': ['?/?/?/?', null],
     }),
     'refute-r19': probe(`package R19 {
         part def P {
