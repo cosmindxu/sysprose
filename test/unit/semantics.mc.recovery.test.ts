@@ -78,6 +78,7 @@ import { MALFORMED_PROPERTY_CODE, atomHolds, readAtom } from '../../src/semantic
 import {
   hashConfig,
   initialConfig,
+  resumesHistory,
   seedStore,
   stepCandidates,
   stepConfig,
@@ -410,7 +411,8 @@ function configsOf(model: Model, machineId: ElementId): MachineConfig[] {
     { kind: 'completion' as const },
     ...machineAlphabet(model, machineId).map((trigger) => ({ kind: 'trigger' as const, trigger })),
   ];
-  const seen = new Set<string>([hashConfig(opening.config)]);
+  const history = resumesHistory(model, machineId);
+  const seen = new Set<string>([hashConfig(opening.config, history)]);
   const out: MachineConfig[] = [opening.config];
   for (let head = 0; head < out.length; head++) {
     for (const input of inputs) {
@@ -420,7 +422,7 @@ function configsOf(model: Model, machineId: ElementId): MachineConfig[] {
       for (const choice of enabled) {
         if (choice.level !== innermost) continue;
         const next = stepConfig(model, out[head], choice);
-        const key = hashConfig(next.config);
+        const key = hashConfig(next.config, history);
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(next.config);
@@ -548,7 +550,7 @@ function twoIdleMachine(): { model: Model; machineId: ElementId; idles: ElementI
   return { model: m, machineId: sm.id, idles: [idleA.id, idleB.id] };
 }
 
-/** A composite re-entered from outside: `standby -> p1 -> outer{x -> y}`, `outer -> p2 -> outer`. */
+/** A composite re-entered from outside: `standby -> p1 -> outer{x -> y}` with `n = 1`, `outer -> p2 -> outer` with `n = 2`. */
 function reenteredMachine(): { model: Model; machineId: ElementId } {
   const m = new Model();
   const f = new ModelFactory(m);
@@ -559,10 +561,11 @@ function reenteredMachine(): { model: Model; machineId: ElementId } {
   const x = f.state('x', outer.id);
   const y = f.state('y', outer.id);
   const p2 = f.state('p2', sm.id);
+  f.attribute('n', sm.id, { type: 'Integer', value: 0 });
   f.transition(x.id, y.id, { ownerId: outer.id });
   f.transition(standby.id, p1.id, { ownerId: sm.id });
-  f.transition(p1.id, outer.id, { ownerId: sm.id });
-  f.transition(outer.id, p2.id, { ownerId: sm.id });
+  f.transition(p1.id, outer.id, { ownerId: sm.id, effect: 'n = 1' });
+  f.transition(outer.id, p2.id, { ownerId: sm.id, effect: 'n = 2' });
   f.transition(p2.id, outer.id, { ownerId: sm.id });
   return { model: m, machineId: sm.id };
 }
@@ -644,19 +647,21 @@ describe('the empty-target row says which of two things it is, and the set can b
     expect(r.detail).not.toContain('{idle}');
 
     const re = reenteredMachine();
-    // Six configurations: the opening and five that cannot return to it —
-    // `outer/x` is reached twice, once from `p1` and once re-entered from
-    // `p2`, so five configurations rest in four states.
+    // Seven configurations: the opening and six that cannot return to it —
+    // `outer/x` and `outer/y` are reached twice, once from `p1` with `n = 1`
+    // and once re-entered from `p2` with `n = 2`, so six configurations rest
+    // in four states. The store splits them: what `outer` was left in does
+    // not, since no composite here resumes it (`hashConfig`).
     const walk = exploreMachine(re.model, re.machineId);
-    expect(walk.configs).toBe(6);
+    expect(walk.configs).toBe(7);
     const v = behaviourReport(re.model, { machineId: re.machineId, pattern: `${RECOVERY}state standby` }).properties[0];
     expect(v.claim).toBe('fail');
-    expect(v.recovery!.cannotReach).toBe(5);
-    // Four states rest the five configurations; the row says so beside the
+    expect(v.recovery!.cannotReach).toBe(6);
+    // Four states rest the six configurations; the row says so beside the
     // set, so its cardinality can be read against the count that introduces
     // it — the shipped row printed "5 configuration(s) … {p1, x, y, p2}"
     // with nothing to explain the gap.
-    expect(v.detail).toContain('5 configuration(s) cannot reach `state standby`: {p1, x, y, p2} (4 state(s), holding the 5 configurations between them); the nearest is entered in 1 step(s) from `standby`.');
+    expect(v.detail).toContain('6 configuration(s) cannot reach `state standby`: {p1, x, y, p2} (4 state(s), holding the 6 configurations between them); the nearest is entered in 1 step(s) from `standby`.');
     // And where the two agree — the trap probe, four configurations in four
     // states — no such clause is printed, so the byte-pinned sentence stands.
     const t = await reportOf(FILES.probe, 'TrapProbe::Probe::Modes', `${RECOVERY}state standby`);

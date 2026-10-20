@@ -7,7 +7,7 @@ package CompositeTrap {
      * nothing leaves `degraded` itself. The walk's bottom component is the
      * `sub1 -> sub2 -> sub1` cycle — two configurations — and the active stack
      * of each is `degraded / subN`, so the trap's `states` is the union of the
-     * STACKS, `{degraded, sub2, sub1}` in node order, entered in two steps
+     * STACKS, `{degraded, sub1, sub2}` in node order, entered in one step
      * from `nominal`. A reading that named the trap by its leaves alone would
      * print `{sub1, sub2}` and never mention the composite the run is stuck
      * in. On every flat fixture the two readings coincide; this file is where

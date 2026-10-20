@@ -105,6 +105,7 @@ import {
   leafOf,
   regionDescendants,
   regionTransitions,
+  resumesHistory,
   seedStore,
   stepCandidates,
   stepConfig,
@@ -1810,7 +1811,9 @@ function walkConfigurations(
   if (machineEl) seedStore(model, machineEl, seeded);
   const opening = initialConfig(model, machineId, { store: seeded });
   for (const v of opening.effects.visited) reachable.add(v);
-  const openingHash = hashConfig(opening.config);
+  // The history map is in the key only where a composite resumes from it.
+  const history = resumesHistory(model, machineId);
+  const openingHash = hashConfig(opening.config, history);
   // A MAP, not a set: the value is the configuration's node number, which is
   // what interns the hash away. `Map.size` is `Set.size`, so the configuration
   // bound below reads exactly as it did.
@@ -1951,7 +1954,7 @@ function walkConfigurations(
         if (choice.level !== innermost) continue;
         const next = stepConfig(model, here.config, choice);
         for (const v of next.effects.visited) reachable.add(v);
-        const hash = hashConfig(next.config);
+        const hash = hashConfig(next.config, history);
         const { key, run } = keyOf(next.config, hash, input.kind === 'completion' ? here.completionRun + 1 : 0);
         // THE REVISIT EDGE IS RECORDED HERE, BEFORE THE PRUNE, and then the
         // prune happens exactly as it always did. The admission point below

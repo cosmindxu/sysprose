@@ -545,21 +545,25 @@ package Reqs {
  *
  * `reach` and `check-behaviour` walk configuration graphs, and a walk is bounded
  * by configurations, not by time. A two-dozen-state machine with five composites
- * among them reaches the 10,000-configuration bound — measured in the built app
- * at a fifth of a second for `reach` and half a second for `check-behaviour` with
- * three properties (`docs/TEST-REPORT.md` §2.15) — so the palette runs those two
- * in a worker. These
+ * among them reached the 10,000-configuration bound while the walk kept where
+ * each composite was left — measured in the built app at a fifth of a second for
+ * `reach` and half a second for `check-behaviour` with three properties
+ * (`docs/TEST-REPORT.md` §2.15) — and one whose every substate also leaves for a
+ * top state still does — so the palette runs those two in a worker. These
  * tests pin the two halves of that: the worker's answer is the page's answer, and
  * the run around it (busy, Cancel, stale, fallback) does what a person is told.
  */
 
 /**
  * A machine with `composites` composite states of `children` substates each,
- * driven by events — the shape of a flight controller's modes. The walk keeps
- * where each composite was left, so the configurations multiply with the
- * composites: two are a few hundred, five reach the walk's bound.
+ * driven by events — the shape of a flight controller's modes. No composite
+ * resumes, so the walk does not keep where each was left (`hashConfig`): five
+ * composites of four are 21 configurations. With `exits`, every substate also
+ * leaves for `Idle`; the step exits the substate alone and enters `Idle` under
+ * the composite, so each round trip stacks one more state and five composites
+ * reach the walk's bound.
  */
-function hierarchical(pkg: string, composites: number, children: number, withProperties: boolean): string {
+function hierarchical(pkg: string, composites: number, children: number, withProperties: boolean, exits = false): string {
   const L = [`package ${pkg} {`, '  item def Cmd { attribute id; }', '  part def Machine {', '    state def Modes {'];
   if (withProperties) {
     L.push(
@@ -582,6 +586,7 @@ function hierarchical(pkg: string, composites: number, children: number, withPro
     for (let k = 0; k + 1 < children; k++) {
       L.push(`        transition c${c}_${k} first C${c}_${k} accept step${c}_${k} : Cmd then C${c}_${k + 1};`);
     }
+    if (exits) for (let k = 0; k < children; k++) L.push(`        transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} : Cmd then Idle;`);
     L.push('      }');
   }
   for (let c = 0; c < composites; c++) {
@@ -657,7 +662,12 @@ describe('the checks that run in a worker', () => {
   });
 
   it('give a machine at the walk\'s bound the same undecided answer, and take the time it takes', { timeout: 120_000 }, async () => {
-    const loaded = await loadModelText(hierarchical('Big', 5, 4, true), { fileName: 'big.sysml' });
+    const loaded = await loadModelText(hierarchical('Big', 5, 4, true, true), { fileName: 'big.sysml' });
+    // At the bound, not decided short of it: the same five composites without
+    // the exits are 21 configurations and a walk to exhaustion.
+    expect(reachReport(loaded.model!).machines[0]).toMatchObject({ configs: 10_000, boundHit: 'configs', exhaustive: false });
+    const flat = (await loadModelText(hierarchical('Big', 5, 4, true), { fileName: 'big.sysml' })).model!;
+    expect(reachReport(flat).machines[0]).toMatchObject({ configs: 21, boundHit: 'none', exhaustive: true });
     const c = ctx({ model: loaded.model! });
     const host = new CheckHost(mergeLibrary);
     for (const spec of WALKERS) {

@@ -334,7 +334,7 @@ describe('exemption 1: a configuration with no successor is already `verificatio
 describe('the states of a trap: the active stacks, never the leaves alone', () => {
   const file = `${FIX}/composite-trap.sysml`;
 
-  it('a cycle inside a composite names the composite — `{degraded, sub2, sub1}`, not `{sub1, sub2}`', async () => {
+  it('a cycle inside a composite names the composite — `{degraded, sub1, sub2}`, not `{sub1, sub2}`', async () => {
     const r = reachReport(await load(file));
     const m = r.machines[0];
     expect(m.exactness.walkIsExact).toBe(true);
@@ -343,14 +343,16 @@ describe('the states of a trap: the active stacks, never the leaves alone', () =
     expect(t.configs).toBe(2);
     // The wrong answer: `['sub1', 'sub2']`, the leaves — a reader told the run
     // is stuck in `{sub1, sub2}` is never told it is stuck in `degraded`. The
-    // order is node order, and `sub2`'s configuration is discovered first
-    // inside the component.
-    expect(names(t.states)).toEqual(['degraded', 'sub2', 'sub1']);
+    // order is node order. While the history map was in the key (`hashConfig`)
+    // the cycle was `sub2` then `sub1` re-entered with `degraded` remembering
+    // `sub2`, entered in 2 steps; no composite here resumes, so the cycle is
+    // the first two configurations inside `degraded`, entered in 1.
+    expect(names(t.states)).toEqual(['degraded', 'sub1', 'sub2']);
     expect(names(t.states)).not.toEqual(['sub1', 'sub2']);
-    expect(names(t.entry)).toEqual(['nominal', 'sub1', 'sub2']);
-    expect(t.steps).toBe(2);
+    expect(names(t.entry)).toEqual(['nominal', 'sub1']);
+    expect(t.steps).toBe(1);
     expect(trapCodes(r)[0].message).toContain(
-      'trap — 2 configuration(s) form a set nothing leaves: {degraded, sub2, sub1}. Entered in 2 step(s) from `nominal`.',
+      'trap — 2 configuration(s) form a set nothing leaves: {degraded, sub1, sub2}. Entered in 1 step(s) from `nominal`.',
     );
   }, 60_000);
 
@@ -358,7 +360,7 @@ describe('the states of a trap: the active stacks, never the leaves alone', () =
     const r = await cli(['reach', root(file)]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain(
-      '    trap         {degraded, sub2, sub1} — 2 configuration(s) nothing leaves; entered in 2 step(s) from nominal',
+      '    trap         {degraded, sub1, sub2} — 2 configuration(s) nothing leaves; entered in 1 step(s) from nominal',
     );
     expect(r.stdout).not.toContain('{sub1, sub2}');
   }, 60_000);
