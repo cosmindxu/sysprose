@@ -73,6 +73,7 @@ import {
   SUCCESSION_KINDS,
   hashConfig,
   initialConfig,
+  resumesHistory,
   stepCandidates,
 } from '../../src/semantics/mc/config';
 
@@ -1701,6 +1702,63 @@ describe('the configuration key is what the next step depends on', () => {
     const at9 = initialConfig(m, sm.id, { clock: 9 }).config;
     expect(at0.clock).not.toBe(at9.clock);
     expect(hashConfig(at0)).toBe(hashConfig(at9));
+  });
+
+  it('leaves out where each composite was left, unless a composite in the machine resumes it', async () => {
+    // Five composites of four substates, entered and left on events: the
+    // shape of a flight controller's modes. With the history map in the key,
+    // every composite a run had left split each configuration by its
+    // last-active child, and the walk stopped at the 10,000-configuration
+    // bound with nothing published. Nothing reads the map here, so the walk is
+    // one configuration per state stack.
+    const L = ['package Modes5 { state def Modes {', '  state Idle;'];
+    for (let c = 0; c < 5; c++) {
+      L.push(`  state C${c} { ${[0, 1, 2, 3].map((k) => `state C${c}_${k};`).join(' ')}`);
+      for (let k = 0; k < 3; k++) L.push(`    transition c${c}_${k} first C${c}_${k} accept step${c}_${k} then C${c}_${k + 1};`);
+      L.push('  }', `  transition in${c} first Idle accept enter${c} then C${c};`, `  transition out${c} first C${c} accept leave${c} then Idle;`);
+    }
+    L.push('} }');
+    const five = (await loadModelText(L.join('\n'), { fileName: 'modes5.sysml' })).model!;
+    const [machine] = stateMachinesIn(five);
+    expect(resumesHistory(five, machine.id)).toBe(false);
+    const m = reachReport(five).machines[0];
+    expect(m).toMatchObject({ configs: 21, boundHit: 'none', exhaustive: true });
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+
+    // The two keys, stated directly: one configuration remembering `C0_3`
+    // and one remembering nothing are one where nothing resumes, two where
+    // something does.
+    const open = initialConfig(five, machine.id).config;
+    const c0 = five.children(machine.id).find((e) => e.declaredName === 'C0')!;
+    const left = { ...open, history: new Map([[c0.id, five.children(c0.id).find((e) => e.declaredName === 'C0_3')!.id]]) };
+    expect(hashConfig(open, false)).toBe(hashConfig(left, false));
+    expect(hashConfig(open)).not.toBe(hashConfig(left));
+
+    // A composite that resumes is what puts the map back in the key — and is
+    // refused by the walk (`history-state`), so no walk reads the merged key.
+    const h = new Model();
+    const f = new ModelFactory(h);
+    const sm = f.stateDef('H');
+    const active = h.create('StateUsage', { declaredName: 'Active', ownerId: sm.id, attrs: { history: true } });
+    f.state('s1', active.id);
+    expect(resumesHistory(h, sm.id)).toBe(true);
+  });
+
+  it('a cycle of substates is a cycle from the first entry: `{comp, i1, i2}` is entered in 1 step', async () => {
+    // docs/06 §8.8: while the history map was in the key, the cycle closed
+    // only once `comp` had recorded a last-active child, so the way in read
+    // `{comp, i2, i1}` entered in 2 step(s) from `s0`.
+    const loaded = await loadModelText(
+      'package LL { state def M { state s0;\n' +
+        '  state comp { state i1; state i2; transition i12 first i1 then i2; transition i21 first i2 then i1; }\n' +
+        '  transition go first s0 accept go then comp; } }',
+      { fileName: 'll.sysml' },
+    );
+    const [l] = reachReport(loaded.model!).machines[0].livelocks;
+    expect(l.states.map((x) => x.name)).toEqual(['comp', 'i1', 'i2']);
+    expect(l.entry.map((x) => x.name)).toEqual(['s0', 'i1']);
+    expect(l.steps).toBe(1);
   });
 });
 

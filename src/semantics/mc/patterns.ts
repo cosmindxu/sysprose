@@ -94,6 +94,7 @@ import {
   directStates,
   leafOf,
   regionDescendants,
+  resumesHistory,
   seedStore,
   stepCandidates,
   stepConfig,
@@ -1189,6 +1190,8 @@ function search(
   const machineEl = model.get(machineId);
   if (machineEl) seedStore(model, machineEl, seeded);
   const opening = initialConfig(model, machineId, { store: seeded });
+  // The walk's key: the history map only where a composite resumes from it.
+  const history = resumesHistory(model, machineId);
   const first = valuationOf(model, property, {
     config: opening.config,
     input: null,
@@ -1206,7 +1209,7 @@ function search(
   }
   const root: ProductNode = {
     config: opening.config,
-    hash: hashConfig(opening.config),
+    hash: hashConfig(opening.config, history),
     monitor: monitorStep(property, OPENING, first.value),
     depth: 0,
     completionRun: 0,
@@ -1291,7 +1294,7 @@ function search(
         const monitor = monitorStep(property, here.monitor, valued.value);
         activated = activated || monitor.activated;
         pSeen = pSeen || monitor.pSeen;
-        const hash = hashConfig(next.config);
+        const hash = hashConfig(next.config, history);
         const key = keyOf(next.config, hash, monitor, run);
         // A key already seen is never a violation: the monitor is in the key,
         // `violated` is in the monitor, and a violated node returns below the

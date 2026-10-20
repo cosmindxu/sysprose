@@ -2316,10 +2316,11 @@ run-to-completion the machine never comes to rest. `reach` now says so, as
   — the per-step alternative, applied always, in place of the relation gate —
   and whose `entry` is the simulator's or worded as the walk's. The trap row's
   re-wording constant (`TRAP_ENTRY_WALK_ADMITS`, printed nowhere) is not used
-  for it. A known effect of T80 (history in the configuration key): a cycle of
-  substates is first a cycle of CONFIGURATIONS once the composite has recorded
-  its history, so `{comp, i1, i2}` entered at step 1 reads `entered in 2
-  step(s)`.
+  for it. While the history map was in the configuration key (T80, §8.9), a
+  cycle of substates was first a cycle of CONFIGURATIONS once the composite had
+  recorded its history, so `{comp, i1, i2}`, entered at step 1, read `{comp,
+  i2, i1}` and `entered in 2 step(s)`; it now reads `{comp, i1, i2}` and
+  `entered in 1 step(s)`.
 - **What the finding says moves the run on.** On a machine that names a
   trigger, only an event (*moves on only on an event*); on one that names none,
   nothing does, and the finding and the line say the run ends where the budget
@@ -2372,3 +2373,71 @@ run-to-completion the machine never comes to rest. `reach` now says so, as
   one some run goes round — per row, not per machine (it used to skip a machine
   with a choice row, which is the line the hedge was drawn on, in the same wrong
   place).
+
+### 8.9 The history map out of the key — O7 `complex-backlog`, 2026-10-20
+
+TODO T80 (`close-open-items.md` §2.2, O7): `hashConfig` (`config.ts`) put the
+history map, each composite's last-active child as `exitTo` records it on every
+exit, into the key the walk and the product search visit configurations under.
+Only a composite that resumes reads the map (`enterCascade`), and
+`exploreMachine` refuses every machine that holds one (`history-state`), so on
+every machine it walked the map was state no successor depends on. It split each
+configuration by where every composite a run had left was left, and the
+configurations multiplied with the composites.
+
+- **What changed.** The map is in the key only where `resumesHistory`
+  (`config.ts`) finds a composite that resumes, or a history pseudostate, in the
+  machine's region: the test `enterCascade` applies. The walk
+  (`walkConfigurations`) and the search (`patterns.ts`) ask once per machine.
+  Such a machine is refused before any walk, so no walk keys on the map today;
+  the condition keeps the key exact if that refusal is ever lifted.
+  `hashConfig`'s default keeps the map, the over-fine key, for a caller that
+  does not know the machine.
+- **What moved.** Only how many configurations a walk keeps, and what is read
+  off that number: `configs`, `depth`, and the length and node order of a way
+  in. Five composites of four substates entered and left on events walk 21
+  configurations to exhaustion and publish their lists; they stopped at the
+  10,000-configuration bound and published nothing
+  (`semantics.mc.reach.test.ts`). `composite-trap.sysml`'s trap reads
+  `{degraded, sub1, sub2}`, entered in 1 step from `nominal` (it read
+  `{degraded, sub2, sub1}`, in 2), and the livelock way in of §8.8 moves the same
+  way. Over the 54 state-bearing models of the gate corpus and v9 (`reach`, and
+  `check-behaviour --element` on each of their 79 machines, JSON and text),
+  `composite-trap.sysml` is the only model whose output moves from `38c8d0b`,
+  and only in those figures: no verdict, code or exit code moves.
+- **The second multiplier: a step out of a composite stacks.** The TODO's trial
+  found that a generated machine whose every substate also leaves for a top state
+  still reaches the bound without the map. The cause is the step itself:
+  `stepConfig` exits from the leaf down to the SOURCE's level only
+  (`exitTo(choice.level)`) and enters the target on top of what is left, as
+  `runStateMachine` does. So `first C0_2 then Idle` leaves `C0` on the stack and
+  enters `Idle` under it (`[C0, Idle]`), and `first Idle then C1` from there
+  gives `[C0, C1, C1_0]`. Each such round trip adds a level: one composite of two
+  substates reaches the depth bound (200), five of four the configuration
+  bound. At `[C0, Idle]`, `C0`'s own transitions are still enabled, beaten only
+  where `Idle`'s accept the same input, and a `state C0` atom holds. The walk is
+  faithful to the interpreter here, but the step is a defect of the semantics
+  both share, and it gives false verdicts, not only slow walks: on four states
+  (`Idle -go-> C0`, `C0 { a -x-> b; b -back-> Idle }`), `check-behaviour
+  --pattern 'pattern=absence, scope=after, p=state C0, q=trigger back'` prints
+  FAIL (`verification/refuted`, exit 1) with a witness that ends `on back … →
+  Idle [holds p, q]`: `state C0` holds at `Idle` only because `C0` was never
+  exited, and under UML's reading the property holds. `reach` on the same
+  machine stops at the depth bound (201 configurations) and withholds every
+  list. `38c8d0b` does the same. Exiting to
+  the least common ancestor of source and target, as UML reads a transition,
+  would change what `simulate` does and every verdict on such a machine, so it
+  is left open. T80 moves no verdict in the gate corpus or v9: there only
+  `nest2-into` holds such a step, and that machine is refused
+  (`machine-boundary`). A machine T80 brings under the bound now publishes its
+  lists, and where it holds such a step, the lists inherit that step's false
+  readings. Five composites of four substates entered and left on events,
+  where `C0_3` also leaves for a top state (`first C0_3 then Done`), reached the
+  configuration bound at `38c8d0b` and withheld every list; they now walk 22
+  configurations to the end and print 0 dead and no `no way out` row, because
+  `C0`'s own transitions still leave `[C0, Done]`. With the step leaving `C0`
+  itself (`first C0 then Done`), as UML reads it, the same machine prints
+  `no way out … Done — reached in 2 step(s), not marked final`
+  (`verification/deadlock`). The E2E machine `heavyMachine(6, 4)`
+  (`palette-checks.spec.ts`) and the bound fixture of `checks-registry.test.ts`
+  reach the bound through it.

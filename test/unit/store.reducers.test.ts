@@ -122,6 +122,7 @@ import { commandById, handlePageKey, handleShortcut, runExportSysml, runSave } f
 import { CHECKS, runCheck } from '../../src/ui/checks';
 import { degradedRow } from '../../src/ui/behaviour-checks';
 import { TextEditor } from '../../src/ui/panels/TextEditor';
+import { Properties } from '../../src/ui/panels/Properties';
 
 /** The Drive slice as the module left it on import, before any test touched it. */
 const driveOnImport = useAppStore.getState().drive;
@@ -5636,6 +5637,244 @@ describe('edits through the SDK on window.sysml — the Text view, and what read
       st().disconnectCollab();
       useAppStore.setState({ rebuildDiagram: rebuild });
     }
+  });
+});
+
+/**
+ * A field's change — a Properties box, a rename, a Requirements table cell —
+ * made while the Text view holds text typed there and not applied. It used to
+ * re-serialise the Text view over that text, with no note and no Undo. The
+ * typed text is applied first when the elements the change names survive it,
+ * under the ids they had, and the change goes in over it; otherwise it stays,
+ * reading "not yet applied", as over an SDK edit.
+ */
+describe('a field’s change over text typed in the Text view and not applied', () => {
+  const sdk = () => st().api;
+  const named = (name: string) => st().model.all().some((e) => e.declaredName === name);
+  const rootId = () => st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+
+  /** A Swarm package holding `part def Relay`, its text in the Text view; Relay's id. */
+  async function relayModel(): Promise<string> {
+    await whenLibrarySettled();
+    lib.merge = null;
+    reset();
+    useAppStore.setState({ model: sdk().model, textBuffer: '', textDirty: false, diagnostics: [], serializeError: null });
+    st().newProject('Swarm');
+    const relay = sdk().create('PartDefinition', { declaredName: 'Relay', ownerId: rootId() });
+    flushRecompute();
+    return relay.id;
+  }
+
+  afterEach(() => {
+    useAppStore.setState({ drive: initialDriveState });
+  });
+
+  it('applies the typed text first when the element survives it — under its id — and the change goes in over it: both stand, two Undo steps', async () => {
+    const relay = await relayModel();
+    // With nothing typed, a box's keystrokes stay one coalesced recompute.
+    const rebuild = st().rebuildDiagram;
+    const rebuilt = vi.fn(async () => {});
+    useAppStore.setState({ rebuildDiagram: rebuilt });
+    try {
+      for (const name of ['R', 'Re', 'Relay']) st().updateElement(relay, { declaredName: name });
+      expect(rebuilt, 'no keystroke ran the last one’s recompute').not.toHaveBeenCalled();
+    } finally {
+      useAppStore.setState({ rebuildDiagram: rebuild });
+    }
+    flushRecompute();
+
+    st().select(relay);
+    st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;'));
+    expect(st().textDirty).toBe(true);
+
+    st().updateElement(relay, { declaredName: 'Kite' });
+    expect(named('Typed'), 'the typed text is the model').toBe(true);
+    expect(st().model.get(relay)?.declaredName, 'the change, on the element of the same id').toBe('Kite');
+    expect(st().selectionId, 'Properties stays on it').toBe(relay);
+    expect(st().projectName).toBe('Swarm');
+    flushRecompute();
+    expect(st().textDirty).toBe(false);
+    expect(st().textBuffer).toMatch(/part def Kite;\s*part def Typed;/);
+
+    st().undo();
+    expect(named('Relay') && named('Typed'), 'the change’s step').toBe(true);
+    st().undo();
+    expect(named('Typed'), 'the apply’s step').toBe(false);
+    st().redo();
+    st().redo();
+
+    // Ctrl/Cmd+S typed in a field: the box's change, then the save — which holds both.
+    st().setTextBuffer(st().textBuffer.replace('part def Typed;', 'part def Typed;\n    part def Saved;'));
+    st().updateElement(relay, { declaredName: 'Kite2' });
+    await runSave();
+    await st().loadProject('Swarm');
+    expect(['Kite2', 'Typed', 'Saved'].every(named), 'the save holds the typed text and the change').toBe(true);
+  });
+
+  it('makes the Documentation box’s first keystroke a change over the typed text too', async () => {
+    const relay = await relayModel();
+    st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;'));
+    const doc = st().createElement('Documentation', relay, undefined, { field: true });
+    st().setAttr(doc, 'body', 'Relays the link.');
+    expect(named('Typed')).toBe(true);
+    expect(st().model.get(doc)?.ownerId).toBe(relay);
+    flushRecompute();
+    expect(st().textDirty).toBe(false);
+    expect(st().textBuffer).toContain('Relays the link.');
+    expect(st().textBuffer).toContain('part def Typed;');
+
+    // The typed text gives the element its doc, which the live model has not:
+    // the box, empty until its first keystroke, then shows that doc — no
+    // second doc — and the keystroke is not written over the typed body.
+    const typedDef = st().model.all().find((e) => e.declaredName === 'Typed')!.id;
+    st().setTextBuffer(st().textBuffer.replace('part def Typed;', 'part def Typed {\n        doc /* typed */\n    }'));
+    st().select(typedDef);
+    const view = render(React.createElement(Properties));
+    try {
+      const box = () => view.getByTestId('prop-doc') as HTMLTextAreaElement;
+      expect(box().value).toBe('');
+      fireEvent.change(box(), { target: { value: 'N' } });
+      await act(() => whenLibrarySettled());
+      const docs = () => st().model.children(typedDef).filter((c) => c.eClass === 'Documentation');
+      expect(named('Typed') && docs().map((d) => String(d.attrs.body).trim()), 'the typed body stands').toEqual(['typed']);
+      expect(box().value.trim(), 'the box shows it').toBe('typed');
+      fireEvent.change(box(), { target: { value: 'typed, then N' } });
+      expect(docs().map((d) => d.attrs.body), 'the next keystroke edits that doc').toEqual(['typed, then N']);
+      act(() => st().undo());
+      expect(docs().map((d) => String(d.attrs.body).trim())).toEqual(['typed']);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  /**
+   * The change runs again on the model the typed text made, so a name typed in
+   * the field resolves there: a type only the typed text declares, and one of
+   * the standard library, which that apply keeps standing (Apply's own merge of
+   * it comes later, off the click).
+   */
+  it('resolves a name typed in the field on the model the typed text made — its own types and the library’s', async () => {
+    await relayModel();
+    const real = st().model.create('AttributeDefinition', { declaredName: 'Real', attrs: { isLibrary: true } });
+    const r = sdk().create('PartUsage', { declaredName: 'r', ownerId: rootId() });
+    const mass = sdk().create('AttributeUsage', { declaredName: 'mass', ownerId: rootId() });
+    flushRecompute();
+    st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;'));
+    // The Type box: its keystrokes write the name, its Enter binds it.
+    st().setAttr(r.id, 'type', 'Typed');
+    st().bindType(r.id, 'Typed');
+    expect(st().model.typesOf(r.id).map((t) => t.declaredName), 'typed by the typed text’s own type').toEqual(['Typed']);
+
+    flushRecompute(); // as focusing the Text view does
+    st().setTextBuffer(st().textBuffer.replace('part def Typed;', 'part def Typed;\n    part def More;'));
+    st().setAttr(mass.id, 'type', 'Real');
+    st().bindType(mass.id, 'Real');
+    expect(named('More')).toBe(true);
+    expect(st().model.typesOf(mass.id).map((t) => t.id), 'typed by the library’s').toEqual([real.id]);
+
+    // The Subject box commits once, on leaving it: its type may be one only the typed text declares.
+    const req = sdk().create('RequirementDefinition', { declaredName: 'Req', ownerId: rootId() });
+    flushRecompute();
+    st().setTextBuffer(st().textBuffer.replace('part def More;', 'part def More;\n    part def Craft;'));
+    st().setSubject(req.id, 'c : Craft');
+    const subject = st().model.children(req.id).find((c) => c.attrs.requirementRole === 'subject')!;
+    expect(st().model.typesOf(subject.id).map((t) => t.declaredName)).toEqual(['Craft']);
+  });
+
+  /**
+   * The library merge an apply starts lands after the typing began: it adds
+   * the library and binds references, and the model is still the text the
+   * typing began over — so a field's change still applies the typed text first.
+   */
+  it('applies the typed text first across a library merge that landed after the typing began', async () => {
+    await relayModel();
+    await whenLibrarySettled();
+    let release = (): void => {};
+    lib.holds.push(new Promise<void>((r) => (release = r)));
+    st().applyText();
+    await vi.waitFor(() => expect(lib.holds).toHaveLength(0));
+    lib.merge = (m) => {
+      if (!m.all().some((e) => e.attrs.isLibrary === true)) {
+        m.create('Package', { declaredName: 'Lib', attrs: { isLibrary: true } });
+      }
+    };
+    st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;'));
+    const rev = st().model.rev;
+    release();
+    await whenLibrarySettled();
+    expect(st().model.rev, 'the merge changed the model').toBeGreaterThan(rev);
+    expect(st().textDirty, 'the typing stands').toBe(true);
+    const relay = st().model.all().find((e) => e.declaredName === 'Relay')!.id;
+    st().updateElement(relay, { declaredName: 'Kite' });
+    expect(named('Typed') && named('Kite'), 'the typed text, then the change').toBe(true);
+  });
+
+  it('leaves the typed text standing when it cannot go first — a syntax error, an element it lacks, a model changed since the typing, a room', async () => {
+    const cases: Array<[string, (text: string) => string]> = [
+      ['a syntax error', (t) => t.replace('part def Relay;', 'part def Relay;\n    blok bad;')],
+      ['Relay is not in it', (t) => t.replace('part def Relay;', 'part def Other;')],
+    ];
+    for (const [why, type] of cases) {
+      const relay = await relayModel();
+      const typed = type(st().textBuffer);
+      st().setTextBuffer(typed);
+      st().updateElement(relay, { declaredName: 'Kite' });
+      expect(named('Kite'), `${why}: the change is in the model`).toBe(true);
+      expect(forcedRecomputePending(), why).toBe(false);
+      flushRecompute();
+      expect(st().textBuffer, `${why}: the typed text stays`).toBe(typed);
+      expect(st().textDirty, why).toBe(true);
+
+      // The model has changed since the typing: applying the text now would put
+      // it over that change — though the package the next one names is in it.
+      st().updateElement(rootId(), { declaredShortName: 'S' });
+      flushRecompute();
+      expect(st().textBuffer, `${why}: the next change keeps it too`).toBe(typed);
+      expect(named('Kite'), why).toBe(true);
+    }
+
+    // A field's change, then typing before its recompute ran: the typing is over the
+    // text without the change, so the next change keeps the text rather than apply it.
+    const relay = await relayModel();
+    st().updateElement(relay, { declaredName: 'Kite' });
+    const typed = st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;');
+    st().setTextBuffer(typed);
+    st().updateElement(rootId(), { declaredName: 'Fleet' });
+    flushRecompute();
+    expect(st().textBuffer).toBe(typed);
+    expect(named('Kite') && named('Fleet'), 'both changes stand').toBe(true);
+
+    // In a collaboration room an apply would reset the room's model for every peer.
+    const kite = await relayModel();
+    st().connectCollab('field-room');
+    try {
+      const inRoom = st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;');
+      st().setTextBuffer(inRoom);
+      st().updateElement(kite, { declaredName: 'Kite' });
+      flushRecompute();
+      expect(st().textBuffer, 'in a room').toBe(inRoom);
+      expect(named('Typed')).toBe(false);
+      expect(named('Kite')).toBe(true);
+    } finally {
+      st().disconnectCollab();
+    }
+
+    // A box or a cell left as it was is no change: nothing applied, and no Undo step.
+    const same = await relayModel();
+    const req = sdk().create('RequirementDefinition', { declaredName: 'Req', ownerId: rootId() });
+    st().setAttr(req.id, 'text', 'Relays.');
+    st().setSubject(req.id, 'r : Relay');
+    flushRecompute();
+    const untouched = st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;');
+    st().setTextBuffer(untouched);
+    const steps = st().undoStack.length;
+    st().updateElement(same, { declaredName: 'Relay' });
+    st().setAttr(req.id, 'text', 'Relays.');
+    st().setSubject(req.id, 'r : Relay');
+    flushRecompute();
+    expect(st().textBuffer, 'left as it was').toBe(untouched);
+    expect(st().textDirty).toBe(true);
+    expect(st().undoStack.length, 'no Undo step').toBe(steps);
   });
 });
 

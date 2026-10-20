@@ -267,17 +267,19 @@ test('Edit acts on the selection, and is disabled without one', async ({ page })
 /*
  * The checks that walk a state machine run in a worker. A walk is bounded by
  * configurations, not by time: a machine of a few composite states, each with a
- * few substates, reaches the 10,000-configuration bound and holds a page for a
- * good part of a second if it runs there. These tests use such a machine and
- * check what a person is promised: the check says it is running, the page stays
- * usable, Cancel ends it, and an answer that arrives after the model changed is
- * not passed off as current.
+ * few substates that also leave for a top state, reaches the 10,000-configuration
+ * bound and holds a page for a good part of a second if it runs there. These
+ * tests use such a machine and check what a person is promised: the check says
+ * it is running, the page stays usable, Cancel ends it, and an answer that
+ * arrives after the model changed is not passed off as current.
  */
 
 /**
  * `composites` composite states of `children` substates each, driven by events,
- * with every composite reachable from every other: the walk keeps where each
- * composite was left, so its configurations multiply until the bound.
+ * with every composite reachable from every other, and every substate leaving
+ * for `Idle`: that step exits the substate alone and enters `Idle` under the
+ * composite, as the interpreter does, so each round trip stacks one more state
+ * and the configurations multiply until the bound.
  */
 function heavyMachine(composites: number, children: number): string {
   const L = ['package Heavy {', '  item def Cmd { attribute id; }', '  part def Machine {', '    state def Modes {', '      initial start;', '      transition start -> Idle;', '      state Idle;'];

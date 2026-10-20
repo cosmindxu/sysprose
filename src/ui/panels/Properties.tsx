@@ -408,8 +408,13 @@ export function Properties(): JSX.Element {
         }
         if (!value) return;
         // Lazily create a Documentation child, then restore selection to this el.
-        const docId = createElement('Documentation', id);
-        setAttr(docId, 'body', value);
+        // A field's change: over text typed in the Text view, the store applies
+        // that text first, and hands back the doc it gives this element if any.
+        const docId = createElement('Documentation', id, undefined, { field: true });
+        // That doc has a body the typed text gave it: the user's too, and the
+        // box now shows it. The keystroke is not written over it.
+        const made = useAppStore.getState().model.get(docId);
+        if (!made || attrString(made, 'body').trim() === '') setAttr(docId, 'body', value);
         select(id);
       },
       value,

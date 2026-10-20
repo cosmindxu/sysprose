@@ -996,19 +996,28 @@ export function stepConfig(
  * runs millions of times and a qualified-name lookup per state per step is the
  * explorer's whole budget.
  *
- * The history map is part of the key even though most machines never read it:
- * merging two configurations that resume DIFFERENT substates would under-report
- * what is reachable, and an over-fine key only costs configurations.
+ * The history map is in the key only where something reads it (`history`,
+ * which the walks set from {@link resumesHistory}): merging two configurations
+ * that resume DIFFERENT substates would under-report what is reachable. Where
+ * no composite resumes, {@link enterCascade} never reads the map, so two
+ * configurations that differ only in it have the same successors — and keeping
+ * it split them by the last-active child of every composite a run had left,
+ * multiplying a machine's configurations with its composites (five composites
+ * of four substates, entered and left on events, reached the 10,000-configuration
+ * bound; they are 21 configurations without it). The default keeps it, the
+ * over-fine key, for a caller that does not know the machine.
  */
-export function hashConfig(cfg: MachineConfig): string {
+export function hashConfig(cfg: MachineConfig, history = true): string {
   const store = [...cfg.store.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(([k, v]) => `${k}=${JSON.stringify(v) ?? 'undefined'}`)
     .join(',');
-  const history = [...cfg.history.entries()]
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-    .map(([k, v]) => `${k}>${v}`)
-    .join(',');
+  const resumed = history
+    ? [...cfg.history.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        .map(([k, v]) => `${k}>${v}`)
+        .join(',')
+    : '';
   // Dwell rather than absolute entry time, and the absolute clock is NOT in the
   // key: what an `after(n)` transition reads is `clock - entryTime`, and no
   // guard can read the clock at all, so two configurations that differ only in
@@ -1018,7 +1027,21 @@ export function hashConfig(cfg: MachineConfig): string {
   // over-fine, and the walk non-terminating, for the first caller that advances
   // it, which is what a timed `check-behaviour` is.
   const dwell = cfg.stack.map((s) => `${s}@${cfg.clock - (cfg.entryTime.get(s) ?? 0)}`).join('/');
-  return `${cfg.regionId}|${cfg.stack.join('/')}|${dwell}|${store}|${history}`;
+  return `${cfg.regionId}|${cfg.stack.join('/')}|${dwell}|${store}|${resumed}`;
+}
+
+/**
+ * Does a run of this region ever read the history map — does a composite in it
+ * resume its last-active substate? The test {@link enterCascade} applies, over
+ * the region, plus a history pseudostate anywhere in it; `exploreMachine`
+ * refuses such a machine (`history-state`), so for every machine it walks this
+ * is false and {@link hashConfig} leaves the map out of the key.
+ */
+export function resumesHistory(model: Model, regionId: ElementId): boolean {
+  const root = model.get(regionId);
+  return [...(root ? [root] : []), ...regionDescendants(model, regionId)].some(
+    (el) => isHistoryPseudostate(el) || (el.eClass === 'StateUsage' && isHistoryComposite(model, el.id)),
+  );
 }
 
 /** The active leaf of a configuration, or `null` for an empty region. */

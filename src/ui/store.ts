@@ -45,7 +45,7 @@
  * Commands (all keep model + diagram + text + diagnostics consistent and push
  * undo snapshots where they mutate):
  *   select(id) · toggleExpand(id) · expand(id, open?) · setActiveView(v)
- *   rebuildDiagram() · createElement(eClass, ownerId?, name?) → id
+ *   rebuildDiagram() · createElement(eClass, ownerId?, name?, opts?) → id
  *   updateElement(id, patch) · setAttr(id, k, v) · deleteElement(id)
  *   setRequirementShortId(id, value) · setRequirementAttr(id, key, value)
  *   setStatementKind(id, kind|null)
@@ -551,8 +551,12 @@ export interface AppState extends DriveActions {
    * top level of the model when it is null or gone. Never inside the standard
    * library: the text leaves the library out, so an owner there is refused for
    * the top level of the model, and the strip says so. Selects the new element.
+   * `field`: made from a field — the Documentation box's first keystroke — it
+   * goes in as a field's change does, over text typed in the Text view and not
+   * applied ({@link typedTextFirst}); when that text, applied first, gives the
+   * owner its documentation, that one is returned, for the box to write over.
    */
-  createElement(eClass: string, ownerId?: ElementId | null, name?: string): ElementId;
+  createElement(eClass: string, ownerId?: ElementId | null, name?: string, opts?: { field?: boolean }): ElementId;
   updateElement(id: ElementId, patch: Partial<Omit<ElementRecord, 'id' | 'ownerId'>>): void;
   setAttr(id: ElementId, key: string, value: AttrValue): void;
   /**
@@ -1549,6 +1553,53 @@ function userElementsByName(model: Model): Map<string, ElementId> {
 }
 
 /**
+ * The ids a model rebuilt from text can keep: each user element of `parsed`
+ * that `live` has under the same qualified name — where that name is its
+ * alone in both ({@link userElementsByName}) — and of the same kind, mapped
+ * from its id in the parse to its id in the live model.
+ */
+function carriedIds(live: Model, parsed: Model): Map<ElementId, ElementId> {
+  const before = userElementsByName(live);
+  const carried = new Map<ElementId, ElementId>();
+  for (const [name, id] of userElementsByName(parsed)) {
+    const was = before.get(name);
+    if (was !== undefined && live.get(was)?.eClass === parsed.get(id)?.eClass) carried.set(id, was);
+  }
+  return carried;
+}
+
+/**
+ * A parse with the ids `carried` maps put in place of its own: the model data
+ * to reset to — every id is a whole string there, as an element's own or as a
+ * reference to it — and the parse result whose ranges and deferred warnings
+ * name the same ids, so the library merge's retraction still finds them.
+ */
+function withCarriedIds(
+  parsed: ParseResult,
+  carried: ReadonlyMap<ElementId, ElementId>,
+): { result: ParseResult; data: SerializedModel } {
+  const to = (id: ElementId): ElementId => carried.get(id) ?? id;
+  const swap = (value: unknown): unknown =>
+    typeof value === 'string'
+      ? to(value)
+      : Array.isArray(value)
+        ? value.map(swap)
+        : value !== null && typeof value === 'object'
+          ? Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, swap(inner)]))
+          : value;
+  const data = swap(parsed.model.toJSON()) as SerializedModel;
+  const result: ParseResult = {
+    ...parsed,
+    ranges: new Map([...parsed.ranges].map(([id, range]) => [to(id), range])),
+    deferredSpecializationWarnings: parsed.deferredSpecializationWarnings.map((w) => ({
+      ...w,
+      elementId: to(w.elementId),
+    })),
+  };
+  return { result, data };
+}
+
+/**
  * Hand-placed boxes carried over to a model rebuilt from text, where every
  * element came back under a new id: each box — and the scope root of each
  * diagram that has some — goes to the element of the same qualified name
@@ -1712,7 +1763,8 @@ let lastRecomputeMs = 0;
 let autoRecomputeSuppressed = false;
 // Whether any recompute coalesced into the current window must overwrite the
 // text buffer even if it is dirty (a local model mutation discards unapplied
-// text edits — the historical `afterMutation` behavior); remote CRDT applies
+// text edits — the historical `afterMutation` behavior, which a field's change
+// that leaves typed text standing opts out of); remote CRDT applies
 // pass `false` so they never clobber the user's in-progress text edits.
 let recomputePendingForce = false;
 
@@ -1975,11 +2027,13 @@ export const useAppStore = create<AppState>((set, get) => {
    * Re-run after any local model mutation: bump `rev` immediately so
    * model-backed panels refresh, then schedule the coalesced recompute
    * (diagnostics + text + diagram). The text buffer is force-refreshed,
-   * discarding any unapplied text edits (historical behavior).
+   * discarding any unapplied text edits (historical behavior) — but for
+   * `keepTyped`: a field's change that could not apply the text typed in the
+   * Text view first leaves it standing ({@link typedTextFirst}).
    */
-  function afterMutation(): void {
+  function afterMutation(keepTyped = false): void {
     set({ rev: get().rev + 1 });
-    scheduleRecompute(true);
+    scheduleRecompute(!keepTyped);
   }
 
   /**
@@ -1995,7 +2049,8 @@ export const useAppStore = create<AppState>((set, get) => {
    * view and not applied (`typed`, read before the edit — afterwards the model
    * is no longer the text it was applied from). That text stays, reading "not
    * yet applied", as it does when a collaborator edits the model; an edit in
-   * the app is the user's own, and replaces it. Applying the typed text — or
+   * the app is the user's own, and replaces it — but for a field's change,
+   * which applies it first or leaves it ({@link typedTextFirst}). Applying the typed text — or
    * saving it, outside a room — then makes it the model in place of the SDK's
    * edit, and one Undo brings the edit back (the apply's own step). Any other
    * text — the model's, or the one a faulted apply kept — is regenerated: it
@@ -2020,6 +2075,102 @@ export const useAppStore = create<AppState>((set, get) => {
         : { rev: s.rev + 1, ...validSelection(s, model) },
     );
     scheduleRecompute(!typed);
+  }
+
+  /**
+   * Before a field's change goes in — a Properties box, a rename, a
+   * Requirements table cell, the Documentation box's first keystroke — with
+   * text typed in the Text view and not applied: that text is the user's too,
+   * and the change must not replace it. It is applied first, as Apply text →
+   * model does, when the elements the change names (`ids`) survive it: the
+   * apply keeps the id of each element the text has under the same qualified
+   * name and kind ({@link carriedIds}), the change then goes in over the
+   * typed text — the caller runs again on the model it made — and the Text
+   * view shows both. Two Undo steps: the change's, then the apply's. The
+   * project's name stays, as a save's apply leaves it.
+   *
+   * Otherwise the typed text stays, reading "not yet applied", as over an
+   * SDK edit or a peer's (`'kept'`): when it has a syntax error, in a
+   * collaboration room, when an element named is not in it, or when the
+   * model has changed since the typing began — applying it then would put it
+   * over that change. A recompute an earlier edit in the app forced goes
+   * first, as before a save (`applyTypedTextToSave`). Null when no typed text
+   * stands.
+   */
+  function typedTextFirst(ids: ReadonlyArray<ElementId | null | undefined>): 'applied' | 'kept' | null {
+    // Only over typed text: a box's keystrokes must not run each other's recompute.
+    if (typedTextUnapplied() && forcedRecomputePending()) flushRecompute();
+    if (!typedTextUnapplied()) return null;
+    const { model, textBuffer, projectName, expandedIds } = get();
+    const over = typedFrom !== null && typedFrom.model === model && typedFrom.modelRev === model.rev;
+    if (!over || collabRuntime !== null) return 'kept';
+    const result = parseModel(textBuffer);
+    if (result.diagnostics.some((d) => d.severity === 'error')) return 'kept';
+    const carried = carriedIds(model, result.model);
+    const survivors = new Set(carried.values());
+    if (!ids.every((id) => id == null || survivors.has(id))) return 'kept';
+    applyParsed(result, carried);
+    set({ projectName, expandedIds: new Set([...expandedIds].filter((id) => model.has(id))) });
+    return 'applied';
+  }
+
+  /**
+   * The body of {@link AppState.applyText}: make `parsed`, the parse of the
+   * Text view's text, the live model. Every element comes back under a new
+   * id, but for those `carried` maps (the parse's id to the live model's).
+   */
+  function applyParsed(parsed: ParseResult, carried?: ReadonlyMap<ElementId, ElementId>): void {
+    if (get().simSession) get().simStop(); // replacing the model orphans the sim target
+    cancelRecompute();
+    const { model, textBuffer, diagramPins } = get();
+    const { result, data } = carried
+      ? withCarriedIds(parsed, carried)
+      : { result: parsed, data: parsed.model.toJSON() };
+    lastParse = result;
+    // The text's own parse, a terminal's count: its validation is the live model's
+    // for as long as the model stands as this text (see textHealthOf).
+    rememberText(textBuffer, { source: 'parse', parseErrors: errorsOf(result.diagnostics), validationErrors: null });
+    // The text makes every element anew, under a new id (a carried one keeps
+    // its own): the boxes moved by hand follow their elements by qualified
+    // name, and this step's Undo puts back the ones the old ids had.
+    pushUndo({ pins: true });
+    const pinnedBefore = Object.keys(diagramPins).length > 0 ? userElementsByName(model) : null;
+    // Replace the live model's contents in place (keeps api/server bound). A
+    // carried apply keeps the standard library standing and binds the text's
+    // references to it at once, as the merge below would: the field's change
+    // that goes in next may name a library type (`bindType`, `setSubject`).
+    withCommandMutation(() => {
+      if (!carried) return model.reset(data);
+      model.resetPreserving(data, isLibraryEl);
+      resolveTypeReferences(model);
+      resolveConnectorFeatureChains(model);
+    });
+    const pins = pinnedBefore ? carryPins(diagramPins, pinnedBefore, userElementsByName(model)) : {};
+    const parseDiags = result.diagnostics.map(parseDiagToDiagnostic);
+    const validationDiags = safeValidate(model);
+    set((s) => ({
+      diagnostics: [...parseDiags, ...validationDiags],
+      textDirty: false,
+      // The model now IS this text, so anything that could not be written
+      // before is gone with the model that held it: nothing the parser
+      // produces can carry a note body or a multiplicity that closes its own
+      // delimiter. Leaving the old reason standing would keep refusing the
+      // apply that just succeeded.
+      serializeError: null,
+      rev: s.rev + 1,
+      projectName: deriveProjectName(model),
+      ...validSelection(s, model),
+      expandedIds: new Set(userRootIds(model)),
+      diagramPins: pins,
+    }));
+    // The live model is now this text — until the model changes by any
+    // route other than the library merge (see lastAppliedText).
+    lastApplied = { text: textBuffer, model, modelRev: model.rev };
+    void get().rebuildDiagram();
+    // model.reset dropped the library (a carried apply kept it); re-merge it and
+    // bind type references asynchronously so the (potentially large) library
+    // never blocks the edit.
+    void loadStandardLibraryAsync();
   }
 
   // Every method of the SDK on `window.sysml` runs through a check of the
@@ -2653,13 +2804,24 @@ export const useAppStore = create<AppState>((set, get) => {
 
     /* ───────────────────────────── Mutations ──────────────────────────── */
 
-    createElement(eClass, ownerId, name) {
+    createElement(eClass, ownerId, name, opts) {
       const { model } = get();
       const owner = ownerId !== undefined ? ownerId : get().selectionId;
       // Guard: only nest under an existing owner; otherwise create at root.
       // Nor under one in the standard library, which the text leaves out.
       const placed = userOwner(model, owner && model.has(owner) ? owner : null);
       const ownerArg = placed.ownerId;
+      // The Documentation box in Properties makes an element's documentation
+      // on its first keystroke: a field's change. The box shows its element's
+      // first doc or comment, so one the typed text gave it is the one written.
+      const typed = opts?.field ? typedTextFirst([ownerArg]) : null;
+      if (typed === 'applied') {
+        const doc =
+          eClass === 'Documentation' && ownerArg
+            ? model.children(ownerArg).find((c) => c.eClass === 'Documentation' || c.eClass === 'Comment')
+            : undefined;
+        return doc?.id ?? get().createElement(eClass, ownerId, name, opts);
+      }
       pushUndo();
       const el = model.create(eClass, {
         declaredName: name,
@@ -2670,17 +2832,23 @@ export const useAppStore = create<AppState>((set, get) => {
         if (ownerArg) expandedIds.add(ownerArg);
         return { expandedIds, ...singleSel(el.id) };
       });
-      afterMutation();
+      afterMutation(typed === 'kept');
       if (placed.refused) sayNotIntoLibrary('new');
       return el.id;
     },
 
     updateElement(id, patch) {
       const { model } = get();
-      if (!model.has(id)) return;
+      const el = model.get(id);
+      if (!el) return;
+      // Not a change — a box or a cell left as it was: nothing to apply, nor to undo.
+      if ((Object.keys(patch) as Array<keyof typeof patch>).every((key) => el[key] === patch[key])) return;
+      // A field writes a name; a relationship's ends are the canvas's edit.
+      const typed = 'source' in patch || 'target' in patch ? null : typedTextFirst([id]);
+      if (typed === 'applied') return get().updateElement(id, patch);
       pushUndo();
       model.update(id, patch);
-      afterMutation();
+      afterMutation(typed === 'kept');
     },
 
     bindType(id, name) {
@@ -2698,6 +2866,8 @@ export const useAppStore = create<AppState>((set, get) => {
       } else if (typings.length === 0) {
         return;
       }
+      const typed = typedTextFirst([id]);
+      if (typed === 'applied') return get().bindType(id, name);
       pushUndo();
       withCommandMutation(() =>
         model.transaction(() => {
@@ -2705,7 +2875,7 @@ export const useAppStore = create<AppState>((set, get) => {
           if (targetId) model.create('FeatureTyping', { ownerId: id, source: [id], target: [targetId] });
         }),
       );
-      afterMutation();
+      afterMutation(typed === 'kept');
     },
 
     setAttr(id, key, value) {
@@ -2724,10 +2894,14 @@ export const useAppStore = create<AppState>((set, get) => {
         console.error('setAttr refused', UNWRITABLE_NOTE_BODY_REFUSAL);
         return;
       }
+      // Not a change (a value's source lexeme aside): nothing to apply, nor to undo.
+      if (el.attrs[key] === value && (key !== 'value' || el.attrs.valueText === undefined)) return;
+      const typed = typedTextFirst([id]);
+      if (typed === 'applied') return get().setAttr(id, key, value);
       pushUndo();
       // A hand-edited value invalidates the parser's source lexeme for it.
       model.setAttrs(id, key === 'value' ? { value, valueText: undefined } : { [key]: value });
-      afterMutation();
+      afterMutation(typed === 'kept');
     },
 
     setRequirementShortId(id, value) {
@@ -2747,11 +2921,13 @@ export const useAppStore = create<AppState>((set, get) => {
       // Properties box calls this on every keystroke, including the ones that
       // re-type the current value.
       if (requirementShortId(model, id) === (next ?? '')) return;
+      const typed = typedTextFirst([id]);
+      if (typed === 'applied') return get().setRequirementShortId(id, value);
       const redoBefore = get().redoStack;
       pushUndo();
       try {
         semSetRequirementShortId(model, id, next);
-        afterMutation();
+        afterMutation(typed === 'kept');
       } catch (err) {
         // The writer validates before it mutates (a non-requirement, or one
         // under a faulted declaration, is refused whole), so there is nothing
@@ -2776,13 +2952,15 @@ export const useAppStore = create<AppState>((set, get) => {
       // reparentMany make when there is nothing to do.
       const clearing = value === undefined || value === null || value === '';
       if (clearing && !hasRequirementAttr(model, id, key)) return;
+      const typed = typedTextFirst([id]);
+      if (typed === 'applied') return get().setRequirementAttr(id, key, value);
       // pushUndo clears redo; keep it so a REFUSED write doesn't destroy the
       // user's redo history — same shape as reparent().
       const redoBefore = get().redoStack;
       pushUndo();
       try {
         semSetRequirementAttr(model, id, key, value);
-        afterMutation();
+        afterMutation(typed === 'kept');
       } catch (err) {
         // The write validates before it mutates, so there is nothing to undo:
         // drop the snapshot and put the redo stack back. Surfacing the reason
@@ -2806,13 +2984,15 @@ export const useAppStore = create<AppState>((set, get) => {
       const kept = written.filter((w) => statementKindOfKeyword(w) !== undefined);
       const next = [...kept, ...tags.filter((t, i) => !kept.includes(t) && tags.indexOf(t) === i)];
       if (next.length === written.length && next.every((t, i) => t === written[i])) return;
+      const typed = typedTextFirst([id]);
+      if (typed === 'applied') return get().setTags(id, text);
       pushUndo();
       if (next.length > 0) model.setAttrs(id, { metadata: next });
       else {
         delete el.attrs.metadata;
         model.setAttrs(id, {});
       }
-      afterMutation();
+      afterMutation(typed === 'kept');
     },
 
     setSubject(id, text) {
@@ -2825,12 +3005,23 @@ export const useAppStore = create<AppState>((set, get) => {
       const typeName = rawType.trim();
       if (name === '' && typeName === '') {
         if (!current) return;
+        const typed = typedTextFirst([id]);
+        if (typed === 'applied') return get().setSubject(id, text);
         pushUndo();
         withCommandMutation(() => model.remove(current.id));
-        afterMutation();
+        afterMutation(typed === 'kept');
         return;
       }
       if (name !== '' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return;
+      // Not a change — the box left as it was: nothing to apply, nor to undo.
+      if (current && (name === '' || current.declaredName === name)) {
+        const typings = model.relationshipsFrom(current.id).filter((r) => r.eClass === 'FeatureTyping');
+        const now = typeName ? resolveDeclaredTypeName(model, typeName, id, current.id) : undefined;
+        if (typeName ? !!now && typings.length === 1 && typings[0]!.target?.[0] === now.id : typings.length === 0) return;
+      }
+      // Before the type is looked up: the typed text may declare it.
+      const typed = typedTextFirst([id]);
+      if (typed === 'applied') return get().setSubject(id, text);
       const type = typeName ? resolveDeclaredTypeName(model, typeName, id, current?.id ?? id) : undefined;
       if (typeName && !type) return; // a type that names nothing is not bound — and not half-written
       pushUndo();
@@ -2846,7 +3037,7 @@ export const useAppStore = create<AppState>((set, get) => {
           if (type) model.create('FeatureTyping', { ownerId: subject.id, source: [subject.id], target: [type.id] });
         }),
       );
-      afterMutation();
+      afterMutation(typed === 'kept');
     },
 
     setStatementKind(id, kind) {
@@ -2865,12 +3056,14 @@ export const useAppStore = create<AppState>((set, get) => {
       const tagged = hasRequirementAttr(model, id, 'statementKind');
       if (kind === null && !tagged) return;
       if (kind !== null && tagged && kind === statementKindOf(model, id)) return;
+      const typed = typedTextFirst([id]);
+      if (typed === 'applied') return get().setStatementKind(id, kind);
       const redoBefore = get().redoStack;
       pushUndo();
       try {
         if (kind === null) semClearStatementKind(model, id);
         else semSetStatementKind(model, id, kind);
-        afterMutation();
+        afterMutation(typed === 'kept');
       } catch (err) {
         // `setStatementKind` validates before it mutates (it refuses a notation
         // with nowhere to put the keyword), so there is nothing to undo.
@@ -3398,46 +3591,7 @@ export const useAppStore = create<AppState>((set, get) => {
       // explicit intent and it is the way out of the state, so the refusal is
       // only over the buffer nobody typed into.
       if (get().serializeError !== null && !get().textDirty) return;
-      if (get().simSession) get().simStop(); // replacing the model orphans the sim target
-      cancelRecompute();
-      const { model, textBuffer, diagramPins } = get();
-      const result = parseModel(textBuffer);
-      lastParse = result;
-      // The text's own parse, a terminal's count: its validation is the live model's
-      // for as long as the model stands as this text (see textHealthOf).
-      rememberText(textBuffer, { source: 'parse', parseErrors: errorsOf(result.diagnostics), validationErrors: null });
-      // The text makes every element anew, under a new id: the boxes moved by
-      // hand follow their elements by qualified name, and this step's Undo
-      // puts back the ones the old ids had.
-      pushUndo({ pins: true });
-      const pinnedBefore = Object.keys(diagramPins).length > 0 ? userElementsByName(model) : null;
-      // Replace the live model's contents in place (keeps api/server bound).
-      withCommandMutation(() => model.reset(result.model.toJSON()));
-      const pins = pinnedBefore ? carryPins(diagramPins, pinnedBefore, userElementsByName(model)) : {};
-      const parseDiags = result.diagnostics.map(parseDiagToDiagnostic);
-      const validationDiags = safeValidate(model);
-      set((s) => ({
-        diagnostics: [...parseDiags, ...validationDiags],
-        textDirty: false,
-        // The model now IS this text, so anything that could not be written
-        // before is gone with the model that held it: nothing the parser
-        // produces can carry a note body or a multiplicity that closes its own
-        // delimiter. Leaving the old reason standing would keep refusing the
-        // apply that just succeeded.
-        serializeError: null,
-        rev: s.rev + 1,
-        projectName: deriveProjectName(model),
-        ...validSelection(s, model),
-        expandedIds: new Set(userRootIds(model)),
-        diagramPins: pins,
-      }));
-      // The live model is now this text — until the model changes by any
-      // route other than the library merge (see lastAppliedText).
-      lastApplied = { text: textBuffer, model, modelRev: model.rev };
-      void get().rebuildDiagram();
-      // model.reset dropped the library; re-merge it and bind type references
-      // asynchronously so the (potentially large) library never blocks the edit.
-      void loadStandardLibraryAsync();
+      applyParsed(parseModel(get().textBuffer));
     },
 
     regenerateText() {
@@ -4156,8 +4310,9 @@ let lastApplied: { text: string; model: Model; modelRev: number } | null = null;
  * typed and deleted, the textarea's own Undo) holds nothing typed, as long as
  * the model has not changed since: `setTextBuffer` clears `textDirty`, so an
  * edit through the SDK, a peer's edit and Save treat it as the model's text,
- * not as text typed and not applied. Once the model has changed, the text it
- * was is no longer the model's, and it stays typed.
+ * not as text typed and not applied. Once the model has changed — by any
+ * route but the library merge, which it is carried across, as `lastApplied`
+ * is — the text it was is no longer the model's, and it stays typed.
  */
 let typedFrom: { text: string; model: Model; modelRev: number } | null = null;
 
@@ -4881,6 +5036,8 @@ function refreshAfterLibraryLoad(): void {
  *   The merge is synchronous, so nothing else can have changed the model in
  *   between; a merge that throws carries nothing (the conservative side: the
  *   next save re-applies).
+ * - So is the text typing began over ({@link typedFrom}): the model is still
+ *   that text, and a field's change can still apply the typed text first.
  */
 function mergeLibrary(model: Model, merge: () => void): void {
   const from = model.rev;
@@ -4893,6 +5050,9 @@ function mergeLibrary(model: Model, merge: () => void): void {
   }
   if (lastApplied !== null && lastApplied.model === model && lastApplied.modelRev === from) {
     lastApplied = { ...lastApplied, modelRev: model.rev };
+  }
+  if (typedFrom !== null && typedFrom.model === model && typedFrom.modelRev === from) {
+    typedFrom = { ...typedFrom, modelRev: model.rev };
   }
 }
 

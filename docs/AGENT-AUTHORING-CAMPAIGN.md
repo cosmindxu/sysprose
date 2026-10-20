@@ -5048,7 +5048,7 @@ deduped by leaf, so two configurations standing at one state with two stores are
 two exemptions beside one row, and a sentence that said "2 deadlock row(s)" there
 would name a figure the report does not show. The trap's `states` is the union of
 the active stacks, pinned on `composite-trap.sysml`, where a cycle inside a
-composite prints `{degraded, sub2, sub1}` and a leaf-only reading would print
+composite prints `{degraded, sub1, sub2}` and a leaf-only reading would print
 `{sub1, sub2}`. The plan's MUST NEVER — a trap row and a deadlock row about one
 configuration — is held at CONFIGURATION granularity: the census partitions the
 bottom components, and a state may appear in both rows when two stores put two

@@ -264,6 +264,7 @@ wired relationship.
 | Apply text edit → model+tree (`text-apply`) | `E panels-problems-text` (adds `Gearbox`); `E text-sync` | PASS | `panels-text-applied`, `05b-text-applied` |
 | Model mutation regenerates text (clears dirty) | `E panels-problems-text` (rename→`Transmission`); `E text-sync` | PASS | `panels-text-regenerated`, `05c-text-regenerated` |
 | An edit through the SDK (`window.sysml`: `create`, `update`, `delete`, `reparent`, `commit(fn)`) regenerates the text and reads unsaved — New asks, an attached Drive file is `dirty` and Ctrl/⌘+Shift+S sends it, Validate, Check, Simulate or Solve run before its refresh included — but never replaces text typed and not applied; one refresh in a collaboration room | `E toolbar-lifecycle`; `E drive` (*sign in, save as, edit and save…*); `U store.reducers` (`edits through the SDK on window.sysml`, `the keys, and Save with a Drive file attached`) | PASS | A faulted apply's text is regenerated |
+| A change applied from a field — a Properties box (the Documentation box too), a rename, a Requirements table cell — over text typed in the Text view and not applied applies that text first, the elements keeping their ids, and goes in over it (two Undo steps), the Documentation box's first keystroke not over a doc that text gives the element; a text with a syntax error, one in a collaboration room, one without the element, or one typed over an older model stays, reading *modified — not yet applied* | `E text-sync` (*a field’s change keeps text typed in the Text view…*); `U store.reducers` (`a field’s change over text typed in the Text view and not applied`); `U ui.text-editor` (`runs a waiting edit’s refresh first, unless text typed there stands`) | PASS | Focusing the Text view, with nothing typed there, runs a waiting edit's refresh first |
 
 ### 2.9 Validation, checking & simulation (behavior)
 
@@ -428,14 +429,25 @@ this model the worker only adds its round trip; the machines below are what it i
 The same two checks on a hand-written state machine, the shape of a flight
 controller's modes: 24 states, five of them composite with 3 to 4 substates each,
 33 transitions, three stated properties (`reach` and `check-behaviour` on its
-`Modes`). The walk keeps where each composite was left, so its configurations
-multiply with the composites — two composites are a few hundred, five reach the
-10,000-configuration bound — and it is bounded by configurations, not by time:
+`Modes`). When this was measured the walk kept where each composite was left, so
+its configurations multiplied with the composites — two composites were a few
+hundred, five reached the 10,000-configuration bound — and it is bounded by
+configurations, not by time:
 
 | Run | `reach` | `check-behaviour` |
 |---|---|---|
 | On the page's thread (a page with no worker) | held the page 187 ms (223 cold) | held the page 513 ms (526 cold) |
 | In the worker | held the page 1.5 ms; answer after 217 ms (486 first) | held the page 1.3 ms; answer after 582 ms (593 first) |
+
+**Since 2026-10-20 (T80, `docs/06` §8.9)** the walk keeps where a composite was
+left only on a machine where a composite resumes it, and it walks no such machine.
+A machine of this shape now walks one configuration per state stack: five
+generated composites of four substates, entered and left on events, walk 21
+configurations in about a millisecond (in process), where they reached the bound
+in about 0.6 s. The generated machines below still reach the bound, and their
+figures were measured before that change: each of their substates also leaves for
+a top state, and that step exits the substate alone and enters the top state under
+the composite, as the interpreter does, so every round trip stacks a state.
 
 Larger machines take longer: a generated one of 6 composites with 4 substates each
 held the page 490 ms (`reach`) and 485 ms (`check-behaviour`) on the page, and

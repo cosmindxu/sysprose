@@ -49,6 +49,7 @@ import {
   initialConfig,
   isCompletion,
   leafOf,
+  resumesHistory,
   seedStore,
   stepCandidates,
   stepConfig,
@@ -129,7 +130,8 @@ function bfsConfigs(model: Model, machineId: ElementId): MachineConfig[] {
   const machineEl = model.get(machineId);
   if (machineEl) seedStore(model, machineEl, seeded);
   const opening = initialConfig(model, machineId, { store: seeded });
-  const seen = new Set<string>([hashConfig(opening.config)]);
+  const history = resumesHistory(model, machineId);
+  const seen = new Set<string>([hashConfig(opening.config, history)]);
   const order: MachineConfig[] = [opening.config];
   const queue: MachineConfig[] = [opening.config];
   while (queue.length > 0) {
@@ -141,7 +143,7 @@ function bfsConfigs(model: Model, machineId: ElementId): MachineConfig[] {
       for (const choice of enabled) {
         if (choice.level !== innermost) continue;
         const next = stepConfig(model, here, choice);
-        const key = hashConfig(next.config);
+        const key = hashConfig(next.config, history);
         if (seen.has(key)) continue;
         seen.add(key);
         order.push(next.config);

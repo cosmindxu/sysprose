@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import React from 'react';
 import { Model } from '@core/index';
 
@@ -27,7 +27,7 @@ vi.mock('../../src/library/standard-library', () => ({
   loadCuratedLibrary: () => {},
 }));
 
-import { useAppStore } from '../../src/ui/store';
+import { flushRecompute, forcedRecomputePending, useAppStore } from '../../src/ui/store';
 import { TextEditor } from '../../src/ui/panels/TextEditor';
 
 beforeEach(() => {
@@ -83,5 +83,32 @@ describe('TextEditor — a model that cannot be written as text', () => {
     useAppStore.setState({ serializeError: 'nope' });
     const view = render(React.createElement(TextEditor));
     expect((view.getByTestId('text-editor') as HTMLTextAreaElement).value).toContain('part def A');
+  });
+});
+
+describe('TextEditor — focusing it', () => {
+  /**
+   * An edit made a moment ago shows before the first key, so typing begins over
+   * the model's text as it stands — but not over text typed and standing,
+   * which that edit's recompute replaces and a key typed first still keeps.
+   */
+  it('runs a waiting edit’s refresh first, unless text typed there stands', () => {
+    const view = render(React.createElement(TextEditor));
+    const editor = () => view.getByTestId('text-editor');
+    const st = () => useAppStore.getState();
+    st().createElement('PartDefinition', null, 'Kite');
+    expect(forcedRecomputePending()).toBe(true);
+    fireEvent.focus(editor());
+    expect(forcedRecomputePending()).toBe(false);
+    expect(st().textBuffer).toContain('part def Kite;');
+
+    st().setTextBuffer('package Typed;');
+    st().createElement('PartDefinition', null, 'Kite2');
+    expect(forcedRecomputePending()).toBe(true);
+    fireEvent.focus(editor());
+    expect(forcedRecomputePending()).toBe(true);
+    expect(st().textBuffer).toBe('package Typed;');
+    flushRecompute();
+    view.unmount();
   });
 });
