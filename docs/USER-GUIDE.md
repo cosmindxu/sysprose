@@ -392,12 +392,15 @@ brings the boxes back with the model. A file opened from Google Drive
 (**Browse Drive…**, **Recent**, a `?drive=` link) or from a `?model=` link
 starts from a fresh layout too, but Undo starts over there
 ([§8.1](#81-google-drive-optional)): an arrangement never saved with **Save**
-is gone for good, so press **Save** first. The boxes are not part of the
+is asked about first, as unsaved work, because it is gone for good once the file
+opens. The boxes are not part of the
 model's text: the Text view, the SysML and JSON exports and a Google Drive file
-never hold them. Moving a box is not an edit: it spends no Undo step, and the
-model does not read unsaved for it, so the question that guards a command
-which replaces the model ([§8](#8-what-is-kept-and-what-is-not)) is not asked
-for boxes. Press **Save** to keep an arrangement.
+never hold them. Moving a box is not an edit: it spends no Undo step. But the
+model does read unsaved for it, against the boxes **Save**, **Open ▾** or
+**New** left, so the question that guards a command which replaces the model
+([§8](#8-what-is-kept-and-what-is-not)) is asked for an arrangement too; moved
+back to where it was saved, it reads saved again. Press **Save** to keep an
+arrangement.
 
 ### Tables
 
@@ -418,6 +421,12 @@ the table it prints the exact command that does decide. A clause a unit or
 typing gate refused is shown with its reason rather than dropped, because a
 view that showed the clauses and hid the refusals would let you believe a
 requirement was fully encoded when half its body had been turned away.
+A clause a requirement inherits from a general type is shown too, body and all,
+in the **Assumes** or **Guarantees** cell after the ones it wrote, each marked
+`(inherited from <the element that holds it>)` — the terminal's `contracts`
+marks it `(inherited)` the same way. It is a disclosure and not a filing: the
+clause is still filed once, on the element whose body holds it, so the census
+under the table counts it there and nowhere else.
 
 The Requirements view edits the model directly: adding a chip creates the
 backing relationship, and ✕ deletes it. **+** on a chip cell opens a search box:
@@ -453,11 +462,11 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
-(the grouping); `src/ui/store.ts:320-333` (`diagramRootId`, the diagram
-scope), `1512-1620` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2340-2357` (`pinNodePositions`: the move itself), `3393-3445`
+(the grouping); `src/ui/store.ts:321-334` (`diagramRootId`, the diagram
+scope), `1520-1628` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2349-2366` (`pinNodePositions`: the move itself), `3402-3454`
 (`applyText`: an apply of text carries them over by qualified name),
-`4074-4115` (`openText`: a file opened as text starts afresh).
+`4085-4126` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -580,13 +589,13 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1682-1777` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `1900-1983` (`recomputeNow`), `1985-2065`
-(`afterSdkEdit`: an SDK edit), `868-915` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2656-2676`
-(`createElement`: a new element), `2934-3001` (`reparent`, `reparentMany`: a
-move), `4724-4769` (`libraryNote`: the note that says so), `3393-3445`
-(`applyText`), `3877-3923` (`undo`, `redo`), `4811-4869`
+**Source of truth:** `src/ui/store.ts:1690-1785` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `1908-1991` (`recomputeNow`), `1993-2073`
+(`afterSdkEdit`: an SDK edit), `876-923` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2665-2685`
+(`createElement`: a new element), `2943-3010` (`reparent`, `reparentMany`: a
+move), `4750-4804` (`libraryNote`: the note that says so), `3402-3454`
+(`applyText`), `3887-3933` (`undo`, `redo`), `4846-4904`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
@@ -3432,8 +3441,8 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:3076-3258` (`runValidation`,
-`solveParametric`: the four buttons), `1985-2065` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3085-3267` (`runValidation`,
+`solveParametric`: the four buttons), `1993-2073` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -3742,8 +3751,8 @@ commit in the Versions tab, or opened: a project from **Open ▾**, a `?model=`
 link, a Drive file, the branch the Versions tab loaded. **New** counts as
 saved, and so does the model the app starts with, so a first visit that
 touched nothing is never asked; Undo back to the saved model reads saved
-again. An import is not a save. A box moved by hand changes no text, so it is
-not asked about. A merge that meets conflicts (**manual**) loads nothing, and
+again. An import is not a save. Boxes moved by hand count too: they differ
+from the ones the last **Save**, **Open ▾** or **New** left; an apply of text renews every element, so after one the boxes read as moved until the next **Save** (Undo of the apply reads saved). A merge that meets conflicts (**manual**) loads nothing, and
 asks nothing. **Save and continue** is disabled while text
 typed in the Text view has a syntax error — this browser keeps models, not
 text: fix it, or discard it. A command given while the browser is still
@@ -3776,14 +3785,14 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:786-804` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3449-3541` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `3783-3848` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4601-4611` (`mergeLoads`: a merge that loads),
-`4613-4722` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+`src/ui/store.ts:794-812` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3458-3551` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `3793-3858` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4612-4622` (`mergeLoads`: a merge that loads),
+`4624-4742` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
 (Save, and Export ▾ →
-SysML), `src/ui/store.drive.ts:422-434` (what reads unsaved), `1333-1398` (the
+SysML), `src/ui/store.drive.ts:422-466` (what reads unsaved), `1364-1429` (the
 question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:96-103`,
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
@@ -3963,8 +3972,8 @@ first, as Save does — one Undo step — unless it has a syntax error or a
 collaboration room is connected ([§8](#8-what-is-kept-and-what-is-not)). It
 names the file after the project, so save it under the name the command uses.
 
-**Source of truth:** `src/ui/store.drive.ts:493-573` (every sentence the
-feature says), `1149-1163` (the content check), `src/persistence/drive/`,
+**Source of truth:** `src/ui/store.drive.ts:523-603` (every sentence the
+feature says), `1179-1193` (the content check), `src/persistence/drive/`,
 `src/ui/panels/DriveMenu.tsx`, `src/ui/panels/DriveStrip.tsx`,
 `test/e2e/drive.spec.ts` (against faked Google services).
 
@@ -4031,9 +4040,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:232`
-(`UNDO_LIMIT`: undo is bounded), `1682-1712` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `4871-4989` (`mergeLibrary`, `loadStandardLibraryAsync`:
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:233`
+(`UNDO_LIMIT`: undo is bounded), `1690-1720` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `4906-5024` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 
@@ -4133,9 +4142,9 @@ standard library: see the *Strip · error or note* row.)
 | Strip · guard | Before New, Open, Import, a branch switch or a merge that resolves, joining a room, Close Drive file, Sign out or a Drive open replaces a model with unsaved Drive changes, or lets go of its file: **Save to Drive and continue**, **Discard and continue**, **Keep editing**. Before a Drive open replaces work no save holds: **Open anyway**, **Keep editing** | `drive-guard-save`, `drive-guard-discard`, `drive-guard-keep`, `drive-guard-open-anyway` |
 | Strip · conflict | The file changed in Drive since you opened it: **Save as copy**, **Overwrite** (Drive keeps the other version for about 30 days, under Manage versions), **Reload from Drive** (one Undo step back to yours) | `drive-strip-copy-save`, `drive-strip-overwrite`, `drive-strip-reload` |
 | Strip · view access, or gone | **Save to Drive as…** writes your own copy | `drive-strip-save-as` |
-| Strip · offline | **Save** keeps the unsaved changes in this browser — text typed in the Text view applied first, unless it has a syntax error, when the strip says the typed text was kept back (**×** brings the offline row back); a browser that refuses the copy is said so | `drive-strip-save-local` |
+| Strip · offline | **Save** keeps the unsaved changes in this browser — text typed in the Text view applied first, unless it has a syntax error, when the strip says the typed text was kept back, on a line of its own under the offline row (**×** hides it); a browser that refuses the copy is said so | `drive-strip-save-local` |
 | Strip · sign-in expired | **Sign in and continue** finishes what Google's refusal of the sign-in interrupted | `drive-strip-signin` |
-| Strip · error or note | **Try again** where trying again can help; **Privacy & data ↗** beside every error; **×** hides the message. The note that a save in this browser, or **Export ▾ → SysML**, kept typed text back, and the note that an element went to the top level of your model rather than into the standard library (`info`), show on every deployment, Google Drive or not. The library note never covers another message: it waits until that one is hidden; Undo takes it down | `drive-strip-retry`, `drive-strip-privacy`, `drive-strip-dismiss` |
+| Strip · error or note | **Try again** where trying again can help; **Privacy & data ↗** beside every error; **×** hides the message. The note that a save in this browser, or **Export ▾ → SysML**, kept typed text back, and the note that an element went to the top level of your model rather than into the standard library (`info`), show on every deployment, Google Drive or not. The library note never covers another message: it waits until that one is hidden; Undo takes it down. An export's kept-back note waits behind an error or a *closed* message and goes up when it is hidden. With Drive on and a file attached (or a sign-in to renew), these notes stand on a line of their own under the file's row (*saved*, *unsaved changes*, *offline*, *view access*, *gone*, *sign-in expired*), never in place of it | `drive-strip-retry`, `drive-strip-privacy`, `drive-strip-dismiss`, `drive-strip-note` |
 | `?drive=` link gate | **Sign in and open** — disabled, reading *Loading Google sign-in…*, until Google's script has loaded — or **Skip** to the sample model. When Drive refuses a file not yet granted to this app: **Browse Drive…** (Google's picker, on that one file — choosing it there grants it; nothing else does; on a site without the picker, the gate says the file cannot be opened there), the file's Drive link pasted (which grants nothing, but carries the `resourcekey` some older link-shared files need), and which account is signed in (shared with another of yours? Skip, Sign out under Drive ▾, open the link again). Any other failure: **Try again**, and **Privacy & data ↗** — where a sign-in Google blocked for a school account is explained | `drive-link-gate`, `drive-link-signin`, `drive-link-skip`, `drive-link-denied`, `drive-link-browse`, `drive-link-id`, `drive-link-id-go`, `drive-link-retry`, `drive-link-privacy` |
 
 ### Panels

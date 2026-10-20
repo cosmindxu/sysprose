@@ -346,12 +346,16 @@ function focusSave(): void {
 /**
  * `Enter` in a rename box or a table cell commits it and closes it (a box that
  * stays, for a refusal, keeps its focus): the focus goes to Save, as after
- * Ctrl/⌘+S (`focusSave`). `commit` runs the commit and renders it at once
- * (`flushSync`), so the box is gone, or not, by the time the focus is placed.
+ * Ctrl/⌘+S (`focusSave`). The focus is placed once the commit has rendered (a
+ * timer), so the box is gone, or not, by then. The commit is not rendered
+ * synchronously (`flushSync`): inside a key handler that left a rename unseen
+ * as unsaved work.
  */
 export function commitAndFocusSave(box: Element, commit: () => void): void {
-  flushSync(commit);
-  if (!box.isConnected) focusSave();
+  commit();
+  setTimeout(() => {
+    if (!box.isConnected) focusSave();
+  }, 0);
 }
 
 /**

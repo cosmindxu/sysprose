@@ -4630,6 +4630,29 @@ describe('google drive', () => {
         st().setTextBuffer(BROKEN);
         runExportSysml();
         expect(drive().notice).toBe(refused);
+
+        // ...but the file lacks the typed text all the same: the export's note
+        // is held, and goes up once the strip is free.
+        st().driveDismiss();
+        expect(drive().notice, 'the held export note goes up when the strip is free').toEqual(exportNote);
+        st().driveDismiss();
+        expect(drive().notice).toBeNull();
+
+        // A held note is about the model exported: replacing it forgets the note.
+        useAppStore.setState((s) => ({ drive: { ...s.drive, notice: refused } }));
+        st().setTextBuffer(BROKEN);
+        runExportSysml();
+        st().newProject('Fresh');
+        st().driveDismiss();
+        expect(drive().notice, 'New forgot the held note').toBeNull();
+
+        // An export that holds the text in the meantime takes the held note down.
+        useAppStore.setState((s) => ({ drive: { ...s.drive, notice: refused } }));
+        runExportSysml();
+        st().setTextBuffer(SWARM.replace('Drone', 'Fin'));
+        runExportSysml();
+        st().driveDismiss();
+        expect(drive().notice, 'superseded: nothing to say').toBeNull();
       } finally {
         noDownload.mockRestore();
         exports.restore();
@@ -4854,6 +4877,36 @@ describe('unsaved work — what a command that replaces the model asks about', (
     expect(rootNames()).toEqual(['Swarm']);
     expect(named('Relay')).toBe(true);
     expect(unsaved(), 'Open').toBe(false);
+    await whenLibrarySettled();
+    expect(unsaved(), 'and still once its library merged').toBe(false);
+  });
+
+  it('counts a hand arrangement as unsaved work: New, Open and Import ask about it, Save and Open mark it, Undo back reads saved', async () => {
+    const box = (x: number) => ({ 'general|': { [rootId()]: { x, y: 20 } } });
+    expect(unsaved(), 'New').toBe(false);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(unsaved(), 'a box moved by hand, the text as saved').toBe(true);
+    const run = vi.fn();
+    st().driveGuard('New', 'dirty', run);
+    expect(run, 'New asks').not.toHaveBeenCalled();
+    expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    await st().driveRunPending('keep');
+
+    await st().saveProject('Swarm');
+    expect(unsaved(), 'Save marks the arrangement').toBe(false);
+    useAppStore.setState({ diagramPins: box(30) });
+    expect(unsaved(), 'moved again').toBe(true);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(unsaved(), 'moved back to where Save left it').toBe(false);
+    useAppStore.setState({ diagramPins: {} });
+    expect(unsaved(), 'auto-layout cleared the boxes Save held').toBe(true);
+
+    await st().loadProject('Swarm');
+    expect(st().diagramPins, 'Open brings the saved boxes').toEqual(box(10));
+    expect(unsaved(), 'Open marks them').toBe(false);
+    useAppStore.setState({ diagramPins: box(50) });
+    st().newProject('Fresh');
+    expect(unsaved(), 'New: nothing to lose').toBe(false);
     await whenLibrarySettled();
     expect(unsaved(), 'and still once its library merged').toBe(false);
   });

@@ -420,17 +420,47 @@ export function driveDirty(s: Pick<AppState, 'drive' | 'textBuffer' | 'serialize
 }
 
 /**
- * The model has work nothing holds: the Text view's text — typed and not
- * applied yet, or not — differs from the text the model had when it was last
- * saved, in this browser, to Google Drive or as a Versions commit, or opened
- * (`savedText`). What New, Open ▾, Import, a branch switch or merge, a room
- * join and a Drive open ask about when no Drive file holds the model. Derived
- * as {@link driveDirty} is, and for the same reasons; a model the serializer
- * refuses, or one last saved while it could not be written as text, cannot be
- * compared, and reads unsaved: asking is the side that loses nothing.
+ * The boxes moved by hand, as a string two states of them can be compared by:
+ * the diagrams in a fixed order, a diagram with no box moved left out. What
+ * Save, Open and New mark beside `savedText` (`savedPins`).
  */
-export function browserDirty(s: Pick<AppState, 'savedText' | 'textBuffer' | 'serializeError'>): boolean {
+export function pinsMark(pins: AppState['diagramPins']): string {
+  const kept = Object.keys(pins)
+    .filter((key) => Object.keys(pins[key]!).length > 0)
+    .sort()
+    .map((key) => [
+      key,
+      Object.keys(pins[key]!)
+        .sort()
+        .map((id) => [id, pins[key]![id]!.x, pins[key]![id]!.y]),
+    ]);
+  return JSON.stringify(kept);
+}
+
+/**
+ * The Text view's text — typed and not applied yet, or not — differs from the
+ * text the model had when it was last saved, in this browser, to Google Drive
+ * or as a Versions commit, or opened (`savedText`). The text alone: what the
+ * library merge carries `savedText` across by (`refreshAfterLibraryLoad`).
+ * A model the serializer refuses, or one last saved while it could not be
+ * written as text, cannot be compared, and reads unsaved.
+ */
+export function browserTextDirty(s: Pick<AppState, 'savedText' | 'textBuffer' | 'serializeError'>): boolean {
   return s.serializeError !== null || s.savedText === null || !equalsWithFinalNewline(s.textBuffer, s.savedText);
+}
+
+/**
+ * The model has work nothing holds: its text differs from the text it had when
+ * last saved or opened ({@link browserTextDirty}), or the boxes moved by hand
+ * differ from the ones Save, Open or New marked (`savedPins`). What New, Open ▾,
+ * Import, a branch switch or merge, a room join and a Drive open ask about when
+ * no Drive file holds the model. Derived as {@link driveDirty} is, and for the
+ * same reasons: asking is the side that loses nothing.
+ */
+export function browserDirty(
+  s: Pick<AppState, 'savedText' | 'textBuffer' | 'serializeError' | 'diagramPins' | 'savedPins'>,
+): boolean {
+  return browserTextDirty(s) || pinsMark(s.diagramPins) !== s.savedPins;
 }
 
 /**
@@ -1287,6 +1317,7 @@ export function createDriveActions(
         const opened = asOpened(text);
         set((s) => ({
           savedText: opened.savedText,
+          savedPins: pinsMark(s.diagramPins),
           drive: { ...s.drive, file: { ...withMeta(current, meta), ...opened }, conflict: null },
         }));
       },
@@ -1739,7 +1770,7 @@ export function createDriveActions(
             // Opened, not attached: saving JSON back would be another format.
             // Still, the model is the file Drive holds — unless it was edited
             // while the library settled over it.
-            if (untouched) set({ savedText: internals.savedTextNow() });
+            if (untouched) set((s) => ({ savedText: internals.savedTextNow(), savedPins: pinsMark(s.diagramPins) }));
             patch({
               notice: { kind: 'info', message: DRIVE_MESSAGES.openedJson(meta.name), retryable: false },
               ...(link ? { link: null } : {}),
@@ -1752,6 +1783,7 @@ export function createDriveActions(
           guarded = null;
           set((s) => ({
             savedText: opened.savedText,
+            savedPins: pinsMark(s.diagramPins),
             drive: {
               ...s.drive,
               file: {

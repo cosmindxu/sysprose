@@ -191,6 +191,39 @@ describe('ContractsTable — the states nothing else renders', () => {
     );
   });
 
+  /**
+   * The note says a clause is inherited; the terminal's `contracts` also prints
+   * its body, marked `(inherited)`. The app shows the body too, in the cell of
+   * its role, marked with the element that holds it, and the census does not
+   * count it a second time.
+   */
+  it('shows an inherited clause body in its cell, marked inherited', () => {
+    const { view } = mount(`package P {
+    part def Sys { attribute mass; attribute topSpeed; }
+    requirement def MassLimit {
+        subject u : Sys;
+        require constraint { u.mass <= 25.0 }
+    }
+    requirement def StrictMassLimit :> MassLimit {
+        require constraint { u.topSpeed <= 60.0 }
+    }
+}`);
+    const strict = view
+      .getAllByTestId('contract-row')
+      .find((r) => r.textContent!.includes('StrictMassLimit'))!;
+    const cell = strict.querySelector('[data-testid="contract-guarantees"]')!;
+    const lines = [...cell.querySelectorAll('[data-testid="contract-clause"]')];
+    expect(lines.map((l) => l.querySelector('code')!.textContent)).toEqual([
+      'u.topSpeed <= 60.0',
+      'u.mass <= 25.0',
+    ]);
+    expect(lines[0]!.getAttribute('data-inherited')).toBeNull();
+    expect(lines[1]!.getAttribute('data-inherited')).toBe('yes');
+    expect(lines[1]!.textContent).toContain('(inherited from P::MassLimit)');
+    // Disclosed, not filed: two require clauses in the model, not three.
+    expect(view.getByTestId('contracts-summary').textContent).toContain('2 guarantee(s)');
+  });
+
   it('shows the #keywords written on a contract', () => {
     const { view } = mount(`package P {
     metadata def <flag> Flag;

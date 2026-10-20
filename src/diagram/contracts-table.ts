@@ -78,6 +78,7 @@ function clauseCell(clause: ContractClause): ContractClauseCell {
     role: clause.role,
     expression: clause.expression,
     via: clause.via,
+    inheritedFrom: clause.inheritedFrom ? clause.inheritedFrom.qualifiedName : null,
     encodable: clause.encodable === true,
     reason: refusal ? refusal.reason : null,
     refusal: refusal ? refusal.detail : null,
@@ -113,6 +114,7 @@ export function buildContractsTable(model: Model): ContractsTableModel {
     guarantees: contract.guarantees.map(clauseCell),
     inheritedFrom: contract.clausesInheritedFrom.map((r) => r.qualifiedName),
     inheritedClauses: contract.inheritedClauses.length,
+    inheritedClauseCells: contract.inheritedClauses.map(clauseCell),
     refused: contract.unsupported.map((u) => ({
       expression: u.expression,
       reason: u.reason,

@@ -599,7 +599,7 @@ describe('Requirements panel — Ctrl/Cmd+S in a cell', () => {
     }
   });
 
-  it('Enter closes the cell as well and leaves the focus on Save', () => {
+  it('Enter closes the cell as well and leaves the focus on Save', async () => {
     const save = document.createElement('button');
     save.dataset.testid = 'tb-save';
     document.body.appendChild(save);
@@ -614,6 +614,7 @@ describe('Requirements panel — Ctrl/Cmd+S in a cell', () => {
 
       expect(view.queryByTestId('req-cell-input'), 'the cell closed').toBeNull();
       expect(st().model.require(id).declaredName).toBe('maxWeight');
+      await new Promise((r) => setTimeout(r, 0));
       expect(document.activeElement).toBe(save);
     } finally {
       save.remove();

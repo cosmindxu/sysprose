@@ -9,7 +9,10 @@
  * hand-written file, a guard before the model is replaced); then a conflict;
  * an action running; a notice; a sign-in to renew; then the attached file —
  * gone from Drive, view access only, unsaved changes while offline, unsaved
- * changes, saved. With nothing to say it renders nothing at all. On a
+ * changes, saved. An `info` note (a save or an export kept typed text back, an
+ * element went to the top level of the model) stands on a line of its own
+ * under the row for the file, not in its place; with no such row it is the
+ * row. With nothing to say it renders nothing at all. On a
  * deployment without Google Drive it has three rows: the question before a
  * command replaces work no save holds — asked on every deployment, in the
  * guard row — the notes that a save in this browser, or Export ▾ → SysML,
@@ -113,8 +116,17 @@ export function driveStripStatus(d: DriveState, dirty: boolean): DriveStripStatu
   if (d.busy === 'saving' || d.busy === 'opening') return d.busy;
   if (d.notice !== null) {
     if (d.notice.kind === 'error') return 'error';
-    return d.notice.message.endsWith(CLOSED_TAIL) ? 'closed' : 'info';
+    if (d.notice.message.endsWith(CLOSED_TAIL)) return 'closed';
   }
+  // An `info` note does not take the place of the row for the file: it is
+  // shown on a line of its own under it ({@link driveStripNote}), and stands
+  // alone only when there is no such row.
+  const row = driveFileRow(d, dirty);
+  return row ?? (d.notice !== null ? 'info' : null);
+}
+
+/** The row for a sign-in to renew or the attached file, or null for neither. */
+function driveFileRow(d: DriveState, dirty: boolean): DriveStripStatus | null {
   if (d.pending !== null) return 'expired';
   const file = d.file;
   if (file === null) return null;
@@ -122,6 +134,14 @@ export function driveStripStatus(d: DriveState, dirty: boolean): DriveStripStatu
   if (!file.canEdit) return 'readonly';
   if (dirty) return d.online ? 'dirty' : 'offline';
   return 'clean';
+}
+
+/** The rows an `info` note is shown under, rather than in place of. */
+const NOTE_UNDER: ReadonlySet<DriveStripStatus> = new Set(['expired', 'gone', 'readonly', 'offline', 'dirty', 'clean']);
+
+/** The `info` note to show under the row `status`, or null: it is the row's own text when `status` is `info`. */
+export function driveStripNote(d: DriveState, status: DriveStripStatus | null): string | null {
+  return status !== null && NOTE_UNDER.has(status) && d.notice?.kind === 'info' ? d.notice.message : null;
 }
 
 /** Whether a `?drive=` link holds the loading gate: until its file is open, or the user skips it. */
@@ -615,6 +635,7 @@ export function DriveStrip(): JSX.Element | null {
     }
   }
 
+  const note = driveStripNote(drive, status);
   const alert = status === 'conflict' || status === 'error' || status === 'guard';
   const tone = status === 'conflict' ? ' drive-strip-conflict' : status === 'error' ? ' drive-strip-error' : '';
   // A link the clipboard refused stays beside whatever row is showing — a
@@ -643,6 +664,12 @@ export function DriveStrip(): JSX.Element | null {
         />
       )}
       {actions !== null && <span className="drive-strip-actions">{actions}</span>}
+      {note !== null && (
+        <div className="drive-strip-note" data-testid="drive-strip-note">
+          <span className="drive-strip-text">{note}</span>
+          {dismiss}
+        </div>
+      )}
     </div>
   );
 }
