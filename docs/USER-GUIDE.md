@@ -463,10 +463,10 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
 (the grouping); `src/ui/store.ts:321-334` (`diagramRootId`, the diagram
-scope), `1520-1628` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2349-2366` (`pinNodePositions`: the move itself), `3402-3454`
+scope), `1530-1638` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2359-2376` (`pinNodePositions`: the move itself), `3440-3492`
 (`applyText`: an apply of text carries them over by qualified name),
-`4085-4126` (`openText`: a file opened as text starts afresh).
+`4123-4164` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -526,7 +526,11 @@ them — not the Text view, not **Export ▾ → SysML**, not a Google Drive fil
 an element added under a library element (its **+**, or a palette tool with one
 selected), dragged onto one, or pasted onto one (`Ctrl/⌘ + V`), goes to the top
 level of your model instead, and the strip under the toolbar says so. One Undo
-takes it back, as any edit, and the note with it. Replacing the model — New,
+takes it back, as any edit, and the note with it. So does a line drawn from a
+library box (the relationship goes to the top level of your model). The other
+way round, a library element stays in the library: dragged onto an element of
+yours it does not move, and the strip says so; and the **Type** field on a
+library usage does not type it (the typed text stays in the box, no typing is made), and the strip says so. Replacing the model — New,
 Open, Import, a file opened from Drive — takes the note down too: it names an
 element of the model that is gone. For the same reason the **Documentation** box
 in Properties is read-only on a library element: it shows the library's own
@@ -589,13 +593,13 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1692-1787` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `1908-1991` (`recomputeNow`), `1993-2073`
-(`afterSdkEdit`: an SDK edit), `876-923` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2665-2685`
-(`createElement`: a new element), `2943-3010` (`reparent`, `reparentMany`: a
-move), `4750-4804` (`libraryNote`: the note that says so), `3402-3454`
-(`applyText`), `3887-3933` (`undo`, `redo`), `4846-4904`
+**Source of truth:** `src/ui/store.ts:1702-1797` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `1918-2001` (`recomputeNow`), `2003-2083`
+(`afterSdkEdit`: an SDK edit), `876-933` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2675-2695`
+(`createElement`: a new element), `2961-3041` (`reparent`, `reparentMany`: a
+move), `4788-4851` (`libraryNote`: the note that says so), `3440-3492`
+(`applyText`), `3925-3971` (`undo`, `redo`), `4893-4951`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
@@ -3441,8 +3445,8 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:3087-3269` (`runValidation`,
-`solveParametric`: the four buttons), `1993-2073` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3125-3307` (`runValidation`,
+`solveParametric`: the four buttons), `2003-2083` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -3786,10 +3790,10 @@ carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
 `src/ui/store.ts:796-814` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3458-3551` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `3793-3858` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4612-4622` (`mergeLoads`: a merge that loads),
-`4624-4742` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+this browser), `3496-3589` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `3831-3896` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4650-4660` (`mergeLoads`: a merge that loads),
+`4662-4780` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `1378-1443` (the
@@ -4041,8 +4045,8 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:233`
-(`UNDO_LIMIT`: undo is bounded), `1690-1720` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `4906-5024` (`mergeLibrary`, `loadStandardLibraryAsync`:
+(`UNDO_LIMIT`: undo is bounded), `1700-1730` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `4953-5071` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 

@@ -901,6 +901,16 @@ function userOwner(model: Model, ownerId: ElementId | null): { ownerId: ElementI
 }
 
 /**
+ * A library element asked to move under an element outside the standard
+ * library: the Text view would write it into the user's package and the
+ * library would lose it. The top level is not outside: a library root is a
+ * root.
+ */
+function staysInLibrary(model: Model, el: ElementRecord, ownerId: ElementId | null): boolean {
+  return !isUserEl(el) && ownerId !== null && model.has(ownerId) && !inLibrary(model, ownerId);
+}
+
+/**
  * A call to the SDK on `window.sysml` that would put a user element inside the
  * standard library, where the store's commands put none: a `create` or a
  * `reparent` whose owner is in the library ({@link inLibrary}). Returns its
@@ -2709,6 +2719,14 @@ export const useAppStore = create<AppState>((set, get) => {
       } else if (typings.length === 0) {
         return;
       }
+      // An element in the standard library is not retyped: the typing would
+      // be a user element under it, left out of the text, and the old one is
+      // the library's, which Undo would not bring back. A change only; a blur
+      // that changes nothing returned above.
+      if (inLibrary(model, id)) {
+        sayLibraryNote(DRIVE_MESSAGES.notTypedInLibrary);
+        return;
+      }
       pushUndo();
       withCommandMutation(() =>
         model.transaction(() => {
@@ -2951,6 +2969,12 @@ export const useAppStore = create<AppState>((set, get) => {
       // nowhere to go, and spends no undo step. A library element moves
       // within the library as it always did.
       const placed = isUserEl(el) ? userOwner(model, ownerId) : { ownerId, refused: false };
+      // Nor does a library element move out of the library into the user's
+      // model, where the text would write it as the user's: nothing moves.
+      if (staysInLibrary(model, el, ownerId)) {
+        sayLibraryNote(DRIVE_MESSAGES.libraryStays(1));
+        return;
+      }
       if (placed.refused) sayNotIntoLibrary(1);
       if (placed.refused && el.ownerId === null) return;
       const to = placed.ownerId;
@@ -2978,7 +3002,14 @@ export const useAppStore = create<AppState>((set, get) => {
       // elements that exist and would actually change owner — where a user
       // element asked into the standard library goes to the top level of the
       // model instead, as in `reparent`, and the strip says how many did.
-      const roots = subtreeRoots(model, ids).filter((id) => model.has(id));
+      let roots = subtreeRoots(model, ids).filter((id) => model.has(id));
+      // A library element stays in the library, as in `reparent`: the rest of
+      // the selection still moves.
+      const staying = roots.filter((id) => staysInLibrary(model, model.get(id)!, ownerId));
+      if (staying.length > 0) {
+        roots = roots.filter((id) => !staying.includes(id));
+        sayLibraryNote(DRIVE_MESSAGES.libraryStays(staying.length));
+      }
       const intoLibrary = userOwner(model, ownerId).refused;
       const ownerFor = (id: ElementId): ElementId | null =>
         intoLibrary && isUserEl(model.get(id)!) ? null : ownerId;
@@ -3020,15 +3051,22 @@ export const useAppStore = create<AppState>((set, get) => {
       // A typing or specialization belongs to the element it types / the
       // specific element, as the parser makes it — so a line drawn with the
       // palette saves as `part x : T` / `part def S :> T`, not a separate
-      // statement. Every other relationship goes beside its source.
-      const ownerId = OWNED_BY_SOURCE.has(kind) ? sourceId : (model.get(sourceId)?.ownerId ?? null);
+      // statement. Every other relationship goes beside its source. Not
+      // inside the standard library, which the text leaves out: a line drawn
+      // from a library box goes to the top level of the model, as in
+      // `createElement`.
+      const placed = userOwner(
+        model,
+        OWNED_BY_SOURCE.has(kind) ? sourceId : (model.get(sourceId)?.ownerId ?? null),
+      );
       const edge = model.create(kind, {
-        ownerId,
+        ownerId: placed.ownerId,
         source: [sourceId],
         target: [targetId],
       });
       set(singleSel(edge.id));
       afterMutation();
+      if (placed.refused) sayNotIntoLibrary('new');
       return edge.id;
     },
 
@@ -4767,7 +4805,16 @@ let libraryNote: { notice: DriveNotice; held: boolean } | null = null;
  * until that one has gone, then goes up.
  */
 function sayNotIntoLibrary(what: 'new' | number): void {
-  const notice: DriveNotice = { kind: 'info', message: DRIVE_MESSAGES.notIntoLibrary(what), retryable: false };
+  sayLibraryNote(DRIVE_MESSAGES.notIntoLibrary(what));
+}
+
+/**
+ * The same note for the refusals that change nothing: a library element not
+ * moved into the user's model (`libraryStays`), a type not set on one
+ * (`notTypedInLibrary`). It stands as {@link sayNotIntoLibrary}'s does.
+ */
+function sayLibraryNote(message: string): void {
+  const notice: DriveNotice = { kind: 'info', message, retryable: false };
   const standing = useAppStore.getState().drive.notice;
   const replaces = standing === null || standing === libraryNote?.notice || standing === keptBackNote?.notice;
   libraryNote = { notice, held: !replaces };

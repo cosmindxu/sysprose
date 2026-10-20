@@ -602,6 +602,12 @@ export const DRIVE_MESSAGES = {
     `The standard library is not part of your model's text, so ${
       what === 'new' ? 'the new element is' : what === 1 ? 'the element is' : `the ${what} elements are`
     } at the top level of your model instead.`,
+  libraryStays: (count: number) =>
+    `The standard library stays where it is, so ${
+      count === 1 ? 'the library element was' : `the ${count} library elements were`
+    } not moved into your model.`,
+  notTypedInLibrary:
+    "The standard library is not part of your model's text, so a type set on one of its elements would not be in it: the Type was not changed.",
   otherAccount: (now: string, before: string) =>
     `Google's sign-in window came back signed in as ${now}, not ${before}, so nothing was done: the Drive file is closed and the Recent list cleared. To go on as ${before}, sign out under Drive ▾ and sign in again.`,
   linkUnsupported: 'This link names a Google Drive file, but this deployment has no Google Drive support.',

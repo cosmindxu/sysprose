@@ -172,8 +172,10 @@ test('pasting a subtree into one of its own members clones a snapshot, finitely'
  * the text never holds: with the Explorer's library toggle on, one added under
  * a library row, dragged onto one, or pasted onto one, goes to the top level of
  * the model instead — so the Text view holds it — and the strip under the
- * toolbar says so. One Undo takes the move back, and the note with it. Nor
- * does a library element's Documentation box write a doc: it is read-only.
+ * toolbar says so. One Undo takes the move back, and the note with it. A
+ * library row dragged onto one of the model's stays in the library, and the
+ * strip says so. Nor does a library element's Documentation box write a doc:
+ * it is read-only.
  */
 test('an element added under, dragged onto, or pasted onto a library row goes to the top level of the model', async ({
   page,
@@ -236,5 +238,11 @@ test('an element added under, dragged onto, or pasted onto a library row goes to
   await page.getByTestId('tb-undo').click();
   await expect.poll(() => exists(page, copyId)).toBe(false);
   await expect(strip).toHaveCount(0);
+
+  // ── The other way round: a library row dragged onto one of the model's stays put ──
+  const libOwner = await ownerOf(page, libId);
+  await dragRowOnto(page, libId, engineId);
+  await expect(strip).toContainText('The standard library stays where it is');
+  expect(await ownerOf(page, libId)).toBe(libOwner);
   expect(errors, `console errors:\n${errors.join('\n')}`).toEqual([]);
 });
