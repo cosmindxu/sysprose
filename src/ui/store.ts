@@ -4310,8 +4310,9 @@ let lastApplied: { text: string; model: Model; modelRev: number } | null = null;
  * typed and deleted, the textarea's own Undo) holds nothing typed, as long as
  * the model has not changed since: `setTextBuffer` clears `textDirty`, so an
  * edit through the SDK, a peer's edit and Save treat it as the model's text,
- * not as text typed and not applied. Once the model has changed, the text it
- * was is no longer the model's, and it stays typed.
+ * not as text typed and not applied. Once the model has changed — by any
+ * route but the library merge, which it is carried across, as `lastApplied`
+ * is — the text it was is no longer the model's, and it stays typed.
  */
 let typedFrom: { text: string; model: Model; modelRev: number } | null = null;
 
@@ -5035,6 +5036,8 @@ function refreshAfterLibraryLoad(): void {
  *   The merge is synchronous, so nothing else can have changed the model in
  *   between; a merge that throws carries nothing (the conservative side: the
  *   next save re-applies).
+ * - So is the text typing began over ({@link typedFrom}): the model is still
+ *   that text, and a field's change can still apply the typed text first.
  */
 function mergeLibrary(model: Model, merge: () => void): void {
   const from = model.rev;
@@ -5047,6 +5050,9 @@ function mergeLibrary(model: Model, merge: () => void): void {
   }
   if (lastApplied !== null && lastApplied.model === model && lastApplied.modelRev === from) {
     lastApplied = { ...lastApplied, modelRev: model.rev };
+  }
+  if (typedFrom !== null && typedFrom.model === model && typedFrom.modelRev === from) {
+    typedFrom = { ...typedFrom, modelRev: model.rev };
   }
 }
 

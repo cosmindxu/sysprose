@@ -122,6 +122,7 @@ import { commandById, handlePageKey, handleShortcut, runExportSysml, runSave } f
 import { CHECKS, runCheck } from '../../src/ui/checks';
 import { degradedRow } from '../../src/ui/behaviour-checks';
 import { TextEditor } from '../../src/ui/panels/TextEditor';
+import { Properties } from '../../src/ui/panels/Properties';
 
 /** The Drive slice as the module left it on import, before any test touched it. */
 const driveOnImport = useAppStore.getState().drive;
@@ -5722,16 +5723,28 @@ describe('a field’s change over text typed in the Text view and not applied', 
     expect(st().textBuffer).toContain('Relays the link.');
     expect(st().textBuffer).toContain('part def Typed;');
 
-    // The typed text gives the element its doc: the box shows that one, and the
-    // keystroke goes in over its body — no second doc.
+    // The typed text gives the element its doc, which the live model has not:
+    // the box, empty until its first keystroke, then shows that doc — no
+    // second doc — and the keystroke is not written over the typed body.
     const typedDef = st().model.all().find((e) => e.declaredName === 'Typed')!.id;
     st().setTextBuffer(st().textBuffer.replace('part def Typed;', 'part def Typed {\n        doc /* typed */\n    }'));
-    const over = st().createElement('Documentation', typedDef, undefined, { field: true });
-    st().setAttr(over, 'body', 'N');
-    const docs = () => st().model.children(typedDef).filter((c) => c.eClass === 'Documentation');
-    expect(docs().map((d) => d.attrs.body)).toEqual(['N']);
-    st().undo();
-    expect(docs().map((d) => String(d.attrs.body).trim()), 'the typed body, one Undo away').toEqual(['typed']);
+    st().select(typedDef);
+    const view = render(React.createElement(Properties));
+    try {
+      const box = () => view.getByTestId('prop-doc') as HTMLTextAreaElement;
+      expect(box().value).toBe('');
+      fireEvent.change(box(), { target: { value: 'N' } });
+      await act(() => whenLibrarySettled());
+      const docs = () => st().model.children(typedDef).filter((c) => c.eClass === 'Documentation');
+      expect(named('Typed') && docs().map((d) => String(d.attrs.body).trim()), 'the typed body stands').toEqual(['typed']);
+      expect(box().value.trim(), 'the box shows it').toBe('typed');
+      fireEvent.change(box(), { target: { value: 'typed, then N' } });
+      expect(docs().map((d) => d.attrs.body), 'the next keystroke edits that doc').toEqual(['typed, then N']);
+      act(() => st().undo());
+      expect(docs().map((d) => String(d.attrs.body).trim())).toEqual(['typed']);
+    } finally {
+      view.unmount();
+    }
   });
 
   /**
@@ -5766,6 +5779,34 @@ describe('a field’s change over text typed in the Text view and not applied', 
     st().setSubject(req.id, 'c : Craft');
     const subject = st().model.children(req.id).find((c) => c.attrs.requirementRole === 'subject')!;
     expect(st().model.typesOf(subject.id).map((t) => t.declaredName)).toEqual(['Craft']);
+  });
+
+  /**
+   * The library merge an apply starts lands after the typing began: it adds
+   * the library and binds references, and the model is still the text the
+   * typing began over — so a field's change still applies the typed text first.
+   */
+  it('applies the typed text first across a library merge that landed after the typing began', async () => {
+    await relayModel();
+    await whenLibrarySettled();
+    let release = (): void => {};
+    lib.holds.push(new Promise<void>((r) => (release = r)));
+    st().applyText();
+    await vi.waitFor(() => expect(lib.holds).toHaveLength(0));
+    lib.merge = (m) => {
+      if (!m.all().some((e) => e.attrs.isLibrary === true)) {
+        m.create('Package', { declaredName: 'Lib', attrs: { isLibrary: true } });
+      }
+    };
+    st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;'));
+    const rev = st().model.rev;
+    release();
+    await whenLibrarySettled();
+    expect(st().model.rev, 'the merge changed the model').toBeGreaterThan(rev);
+    expect(st().textDirty, 'the typing stands').toBe(true);
+    const relay = st().model.all().find((e) => e.declaredName === 'Relay')!.id;
+    st().updateElement(relay, { declaredName: 'Kite' });
+    expect(named('Typed') && named('Kite'), 'the typed text, then the change').toBe(true);
   });
 
   it('leaves the typed text standing when it cannot go first — a syntax error, an element it lacks, a model changed since the typing, a room', async () => {

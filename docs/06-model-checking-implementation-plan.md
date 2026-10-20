@@ -2427,8 +2427,17 @@ configurations multiplied with the composites.
   list. `38c8d0b` does the same. Exiting to
   the least common ancestor of source and target, as UML reads a transition,
   would change what `simulate` does and every verdict on such a machine, so it
-  is left open; T80 moves no verdict. In the gate corpus and v9 only
+  is left open. T80 moves no verdict in the gate corpus or v9: there only
   `nest2-into` holds such a step, and that machine is refused
-  (`machine-boundary`). The E2E machine `heavyMachine(6, 4)`
+  (`machine-boundary`). A machine T80 brings under the bound now publishes its
+  lists, and where it holds such a step, the lists inherit that step's false
+  readings. Five composites of four substates entered and left on events,
+  where `C0_3` also leaves for a top state (`first C0_3 then Done`), reached the
+  configuration bound at `38c8d0b` and withheld every list; they now walk 22
+  configurations to the end and print 0 dead and no `no way out` row, because
+  `C0`'s own transitions still leave `[C0, Done]`. With the step leaving `C0`
+  itself (`first C0 then Done`), as UML reads it, the same machine prints
+  `no way out … Done — reached in 2 step(s), not marked final`
+  (`verification/deadlock`). The E2E machine `heavyMachine(6, 4)`
   (`palette-checks.spec.ts`) and the bound fixture of `checks-registry.test.ts`
   reach the bound through it.

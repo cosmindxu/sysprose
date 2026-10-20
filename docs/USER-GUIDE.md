@@ -532,9 +532,9 @@ recompute — so the keyboard is never kept waiting.
 ### The Text tab, in both directions
 
 - **Model → text** happens by itself. The buffer is re-serialised after every
-  edit — at once when you click into the editor, so what you type there starts
-  from the model as it stands — and the indicator under the editor reads *in
-  sync with model*. An edit
+  edit — at once when you click into the editor with nothing typed there, so
+  what you type starts from the model as it stands — and the indicator under
+  the editor reads *in sync with model*. An edit
   made through the SDK on `window.sysml` ([§6](#scripting-it)) is re-serialised
   too — except over text typed here and not yet applied: an SDK edit, like a
   collaborator's, never replaces that. The text stays, reading *modified — not
@@ -549,8 +549,8 @@ recompute — so the keyboard is never kept waiting.
   change first. The elements keep their ids, so Properties stays on the
   element, and the project keeps its name; a running simulation stops, as at
   any apply. When that text gives the element documentation, the
-  Documentation box writes over that one. A box or a cell left as it was is
-  no change, and applies nothing. Where the text cannot go first,
+  Documentation box then shows that one, and its keystroke is not written
+  over it. A box or a cell left as it was is no change, and applies nothing. Where the text cannot go first,
   it stays, reading *modified — not yet applied*, as over an SDK edit: when
   it has a syntax error, in a collaboration room, when the element the
   field changes is not in it under the same qualified name and kind, or
@@ -604,8 +604,8 @@ hand on the model it restores (*Arranging by hand*,
 typed text), `872-919` (`inLibrary`, `userOwner`,
 `sdkIntoLibrary`: nothing added to the standard library), `2807-2838`
 (`createElement`: a new element), `3127-3194` (`reparent`, `reparentMany`: a
-move), `4878-4923` (`libraryNote`: the note that says so), `3586-3599`
-(`applyText`), `4031-4077` (`undo`, `redo`), `4965-5023`
+move), `4879-4924` (`libraryNote`: the note that says so), `3586-3599`
+(`applyText`), `4031-4077` (`undo`, `redo`), `4966-5024`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
@@ -3798,8 +3798,8 @@ carry the merged library too, as a saved project does.
 `src/ui/store.ts:790-808` (`persistScenarios`: the Regroup scenarios kept in
 this browser), `3603-3695` (`newProject`, `listProjects`: New, Save, Open and
 what they mark saved), `3937-4002` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4755-4765` (`mergeLoads`: a merge that loads),
-`4767-4876` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+and a branch head loaded), `4756-4766` (`mergeLoads`: a merge that loads),
+`4768-4877` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:422-434` (what reads unsaved), `1333-1398` (the
@@ -4052,7 +4052,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:232`
 (`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5025-5143` (`mergeLibrary`, `loadStandardLibraryAsync`:
+derived surfaces lag), `5026-5149` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 

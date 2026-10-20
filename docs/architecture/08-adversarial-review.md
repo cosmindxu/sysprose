@@ -274,7 +274,7 @@ reachable only via deep-import from one test.
 | L3 | Semantics | `expr.ts` lexer silently rewrites `=` → `==` (assignment-vs-equality footgun) | `src/semantics/expr.ts:151-156` |
 | L4 | Performance | `nextCursor` uses an O(n) `indexOf` per page request | `src/api/query.ts:316` |
 | L5 | Performance | `dist/assets/` retains ~50 stale chunks from prior builds (`emptyOutDir` not set) | `vite.config.ts:30` |
-| L6 | Performance | TextEditor auto-regenerates the whole buffer on every model mutation | `src/ui/panels/TextEditor.tsx:33-38` |
+| L6 | Performance | TextEditor auto-regenerates the whole buffer on every model mutation | `src/ui/panels/TextEditor.tsx:34-39` |
 | L7 | Performance | 2.6 MB main bundle: elkjs + React Flow + Yjs all in the entry chunk (no `manualChunks`) | `vite.config.ts:5-30` |
 | L8 | Security | `.gitignore` does not exclude `.env*`; future token-leak risk | `.gitignore:1-9` |
 | L9 | Security | Dev-only critical vitest advisory (CVSS 9.8) in `node_modules`; affects workstations running `vitest --ui` exposed to the network | `package.json:57` |

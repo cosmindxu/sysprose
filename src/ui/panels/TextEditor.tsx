@@ -10,8 +10,9 @@
  *   auto-regenerates the canonical text via `store.regenerateText`, keeping the
  *   text view in sync with diagram/tree edits (bidirectional sync, plan §5).
  * - Parse diagnostics are surfaced in an inline strip beneath the editor.
- * - Focusing it shows an edit whose recompute is still waiting (a field just
- *   left), so typing begins over the model's text as it stands.
+ * - Focusing it with nothing typed standing shows an edit whose recompute is
+ *   still waiting (a field just left), so typing begins over the model's text
+ *   as it stands.
  * - Ctrl/Cmd+S and Ctrl/Cmd+Shift+S typed here save, as in every field of the
  *   page (the page's listener, `handlePageKey`) — and Ctrl/Cmd+S applies the
  *   typed text first, so the save holds it (`runSave`); Ctrl/Cmd+Shift+S saves
@@ -109,9 +110,11 @@ export function TextEditor(): JSX.Element {
           // An edit made a moment ago — a field left to come here — shows
           // before the first key: typed over the text it replaces, the typing
           // would not hold it, and could not be applied first at the next
-          // field's change (`typedTextFirst` in the store).
+          // field's change (`typedTextFirst` in the store). Not over text
+          // typed and standing: that edit's recompute would replace it, and a
+          // key typed first still keeps it, as before.
           onFocus={() => {
-            if (forcedRecomputePending()) flushRecompute();
+            if (forcedRecomputePending() && !useAppStore.getState().textDirty) flushRecompute();
           }}
           onChange={(e) => setTextBuffer(e.target.value)}
           onScroll={(e) => {
