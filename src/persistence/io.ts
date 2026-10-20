@@ -27,6 +27,7 @@ import {
   type SerializedModel,
 } from '@core/index';
 import { parseModel, serializeElement, type ParseDiagnostic } from '@text/index';
+import { isKindOf } from '@semantics/metaclasses';
 import { GENERATOR_ID } from '../branding';
 
 /** Interchange formats understood by {@link exportModel}/{@link importModel}. */
@@ -216,12 +217,19 @@ const RESERVED_KEYS = new Set<string>([
 ]);
 
 /**
- * Membership metaclasses used to reify ownership on the wire. A plain
- * `Membership` is not one: it never owns its member (KerML), the export never
- * reifies ownership with one, and in a model it is an element of its own — an
- * `alias`.
+ * Membership metaclasses used to reify ownership on the wire: an
+ * `OwningMembership` or any subtype of it (`FeatureMembership`, and through it
+ * `ParameterMembership`, `ReturnParameterMembership`, `EndFeatureMembership`,
+ * `ResultExpressionMembership`, … as another tool writes them; the export only
+ * writes the first two). A plain `Membership` is not one: it never owns its
+ * member (KerML), the export never reifies ownership with one, and in a model it
+ * is an element of its own — an `alias`. The test also takes `FeatureValue`,
+ * `VariantMembership` and `ElementFilterMembership`; the export writes no
+ * `memberElement` on them, so only a foreign graph that names one is affected.
  */
-const OWNERSHIP_MEMBERSHIPS = new Set<string>(['OwningMembership', 'FeatureMembership']);
+function isOwnershipMembership(eClass: string): boolean {
+  return isKindOf(eClass, 'OwningMembership');
+}
 
 /** Deterministic id for the synthesised ownership membership of `childId`. */
 function membershipId(childId: ElementId): ElementId {
@@ -257,7 +265,7 @@ function reifiedOwnership(
   ae: ApiElement,
   owningOf: ReadonlyMap<ElementId, ElementId>,
 ): { child: ElementId; owner: ElementId } | null {
-  if (!OWNERSHIP_MEMBERSHIPS.has(ae['@type'])) return null;
+  if (!isOwnershipMembership(ae['@type'])) return null;
   const child = ae.memberElement?.['@id'] ?? ae.ownedMemberElement?.['@id'];
   const owner = ae.owningRelatedElement?.['@id'];
   if (!child || !owner) return null;

@@ -366,6 +366,49 @@ describe('exportModel / importModel — round-trips', () => {
     expect(model.size).toBe(5);
   });
 
+  /**
+   * Another tool owns a member through a subtype of `OwningMembership`
+   * (`ParameterMembership`, `ReturnParameterMembership`, `EndFeatureMembership`,
+   * `ResultExpressionMembership`, ...): that membership is the member's
+   * containment, not an element of the model, and the member sits in its owner.
+   */
+  it("'api-json' reads the subtypes of OwningMembership as containment", () => {
+    const ref = (id: string): { '@id': string } => ({ '@id': id });
+    const subtypes = [
+      'ParameterMembership',
+      'ReturnParameterMembership',
+      'EndFeatureMembership',
+      'ResultExpressionMembership',
+      'ObjectiveMembership',
+    ];
+    const own = (type: string, id: string, member: string, owner: string): Record<string, unknown> => ({
+      '@id': id,
+      '@type': type,
+      identifier: id,
+      memberElement: ref(member),
+      ownedMemberElement: ref(member),
+      owningRelatedElement: ref(owner),
+    });
+    const graph = {
+      elements: [
+        { '@id': 'd', '@type': 'ActionDefinition', identifier: 'd', declaredName: 'D' },
+        ...subtypes.flatMap((t, i) => [
+          own(t, `m${i}`, `f${i}`, 'd'),
+          { '@id': `f${i}`, '@type': 'PartUsage', identifier: `f${i}`, declaredName: `f${i}` },
+        ]),
+        { '@id': 'a', '@type': 'Membership', identifier: 'a', memberElement: ref('f0'), owningRelatedElement: ref('d') },
+      ],
+    };
+    const { model } = importModel(JSON.stringify(graph), 'api-json');
+    subtypes.forEach((_, i) => {
+      expect(model.get(`f${i}`)?.ownerId, `f${i} sits in d`).toBe('d');
+      expect(model.get(`m${i}`), `m${i} is consumed`).toBeUndefined();
+    });
+    expect(model.rootIds()).toEqual(['d']);
+    expect(model.get('a')?.ownerId, 'the alias stays an element of d').toBe('d');
+    expect(model.size).toBe(1 + subtypes.length + 1);
+  });
+
   it("'model-json' round-trips an empty model", () => {
     const empty = new Model();
     const { model } = importModel(exportModel(empty, 'model-json'), 'model-json');

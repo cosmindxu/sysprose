@@ -173,10 +173,10 @@ export function isFullLibraryBundleAvailable(): boolean {
  * Merge the FULL standard library into `model` (preserving all existing user
  * content). Every merged element keeps `attrs.isLibrary === true`.
  *
- * Idempotent: if the model already contains any library element the merge is
- * skipped and the ids of the existing library elements are returned, so calling
- * this repeatedly (bootstrap, after every apply/import) never duplicates the
- * library.
+ * Idempotent: a library element the model already holds is never added again
+ * (the merge adds only the bundle elements the model is missing, none when it
+ * is complete), so calling this repeatedly (bootstrap, after every
+ * apply/import) never duplicates the library.
  *
  * SYNCHRONOUS by design (unchanged public API). In Node the data is read on
  * demand; in the browser the caller must `await preloadFullLibrary()` first —
@@ -197,12 +197,19 @@ export function loadFullStandardLibrary(model: Model): ElementId[] {
   ensureLoadedSync();
   if (!Array.isArray(dataCache?.elements) || dataCache!.elements!.length === 0) return [];
 
-  // Already loaded? Return existing library ids without re-adding.
-  const existing = model.all().filter((e) => e.attrs.isLibrary === true);
-  if (existing.length > 0) return existing.map((e) => e.id);
-
   const libElements = dataCache!.elements as ElementRecord[];
   const byId = new Map<ElementId, ElementRecord>(libElements.map((e) => [e.id, e]));
+
+  // Already loaded? Add only the bundle elements the model is missing (a model
+  // an older api-json Import built lacks the library's 268 alias memberships),
+  // and return the ids of every library element now present. A library of
+  // another origin (the curated subset: other ids) is left as it is.
+  const existing = model.all().filter((e) => e.attrs.isLibrary === true);
+  if (existing.length > 0) {
+    if (existing.length >= libElements.length || !existing.some((e) => byId.has(e.id))) {
+      return existing.map((e) => e.id);
+    }
+  }
   const done = new Set<ElementId>();
 
   const insert = (el: ElementRecord): void => {
