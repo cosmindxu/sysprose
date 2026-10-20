@@ -524,6 +524,9 @@ export function Palette(): JSX.Element {
   const refocus = useRef(false);
   const toggleCollapsed = useCallback((e: ReactMouseEvent<HTMLButtonElement>) => {
     refocus.current = document.activeElement === e.currentTarget;
+    // Put away, the column no longer announces the armed tool ("Placing X"), so the
+    // next canvas click would place an element the screen does not name: disarm.
+    if (!collapsed) usePaletteStore.getState().reset();
     setCollapsed((c) => {
       try {
         localStorage.setItem(COLLAPSE_KEY, c ? '0' : '1');
@@ -532,7 +535,7 @@ export function Palette(): JSX.Element {
       }
       return !c;
     });
-  }, []);
+  }, [collapsed]);
   useEffect(() => {
     if (!refocus.current) return;
     refocus.current = false;

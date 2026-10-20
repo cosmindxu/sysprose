@@ -598,4 +598,25 @@ describe('Requirements panel — Ctrl/Cmd+S in a cell', () => {
       useAppStore.setState({ saveProject });
     }
   });
+
+  it('Enter closes the cell as well and leaves the focus on Save', () => {
+    const save = document.createElement('button');
+    save.dataset.testid = 'tb-save';
+    document.body.appendChild(save);
+    try {
+      const view = mount(SRC);
+      const id = idOf(view, 'maxMass');
+      fireEvent.click(view.getAllByTestId('req-row')[0]!.querySelector('[data-col-key="name"]')!);
+      const input = view.getByTestId('req-cell-input') as HTMLInputElement;
+      input.focus();
+      fireEvent.change(input, { target: { value: 'maxWeight' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(view.queryByTestId('req-cell-input'), 'the cell closed').toBeNull();
+      expect(st().model.require(id).declaredName).toBe('maxWeight');
+      expect(document.activeElement).toBe(save);
+    } finally {
+      save.remove();
+    }
+  });
 });
