@@ -61,29 +61,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       `fault-tree` answers `not here` with its command). The README's table was corrected in
       0475db6, so the two now disagree. Name the palette check in that column, add the
       `check-behaviour` row, and drop those names from the note.
-- [ ] **Stop a composite state's last-active child from multiplying the configurations a walk keeps.**
-      `hashConfig` (`src/semantics/mc/config.ts`) puts the history map into the visited-set key, and
-      `exitTo` records the last-active child of every composite it leaves, so the configurations of a
-      machine multiply with its composites: five composites of 3 to 4 substates (24 states) reach
-      `reach`'s 10,000-configuration bound (`docs/TEST-REPORT.md` §2.15), where a flat machine of 24
-      states has 24. Only a history composite ever reads the map (`enterCascade`), and `exploreMachine`
-      refuses those machines (`history-state`, unsupported), so for every machine it walks the map is
-      dead state in the key. Leave it out of the key when the machine has no history composite and see
-      what moves: every `configs` figure and `after N configuration(s)` sentence of a machine with
-      composites (goldens in `test/unit/semantics.mc.*` and `test/campaign`, the user guide's reach
-      sections), and the machines that now finish inside the bound and so publish their unreachable and
-      dead lists where they said *undecided*. Tried once, with the map left out of the key and nothing
-      else changed: the flight controller of §2.15 walks 19 configurations in 3 ms and `reach` decides;
-      a generated machine of five composites whose every substate also exits to a top state still
-      reaches the bound, so something else multiplies there and wants finding. The palette's worker
-      (`src/ui/checks-worker.ts`) already keeps such a walk off the page; this removes the walk.
-      Fixtures to re-make and figures to re-measure when it lands, since they rely on a machine that
-      still hits the bound: `test/unit/checks-registry.test.ts` (*give a machine at the walk's
-      bound…* asserts `reach` is `undecided` on five composites), `test/e2e/palette-checks.spec.ts`
-      (*a state-machine check runs in a worker…* waits for `undecided`, *hit a bound* and
-      `verification/bound-hit` on `heavyMachine(6, 4)`, and sets its longest frame gap against the
-      same walk on a page with no worker, which says something only while that walk holds the
-      page for a good fraction of a second), and the §2.15 timings of `docs/TEST-REPORT.md`.
 - [ ] **Decide what a palette put away does with an armed tool.** Collapsing the column hides the
       "Placing X" hint, but the tool stays armed until Escape or Cancel, so the next canvas click
       places an element the screen no longer announces. Either name the armed tool on the put-away
@@ -153,12 +130,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       `<name> closed`), so an export that kept typed text back leaves the file lacking it
       unsaid. Render the note on a line of its own under the row, and hold the export's until
       the strip is free.
-- [ ] **Keep text typed in the Text view when a field's change is applied.** An edit in the app
-      re-serialises the Text view over text typed there and not applied (`recomputeNow` with
-      `forceText`, `src/ui/store.ts`), so a Properties box left — or `Ctrl/⌘+S` typed in it —
-      while the Text view reads *modified — not yet applied* drops that text with no note and
-      no Undo. Appendix B says so. Apply the typed text first when the element ids survive it,
-      or leave it standing, as an SDK edit or a collaborator's does.
 - [ ] **Keep a layered General view's column headers on screen while panning down a column.** A
       header (`src/ui/panels/ColumnHeaders.tsx`) is drawn once, above the top of its piece, so in
       the drone-swarm model's whole General view (columns about 19,000 px tall) it is off screen
@@ -374,6 +345,26 @@ true values. What follows is what that branch and the review of it left open; en
       frame-cap count is a lower bound ("at least N") and counts print raw beside the capped
       sentences, and a footer fold over a requirement's per-subject rows names the clause's
       synthetic name, not the requirement. [N3 S1-S4, reviews]
+- [ ] **Exit a transition to the least common ancestor of its source and target.** `stepConfig`
+      (`src/semantics/mc/config.ts`) exits only to the source's level (`exitTo(choice.level)`) and
+      enters the target on top, as `runStateMachine` does, so a step from a substate to a state outside
+      its composite leaves the composite active (`[C0, Idle]`). A `state C0` atom then holds at
+      `Idle`, and a property can be refuted by a run that holds only because `C0` was never exited:
+      on `Idle -go-> C0`, `C0 { a -x-> b; b -back-> Idle }`, absence of `state C0` after `back` is
+      FAIL (`verification/refuted`, exit 1) at `Idle`, where UML's reading holds (`38c8d0b` does the
+      same). Each round trip also stacks one more state: one composite of two substates reaches the
+      depth bound and every reach list is withheld; five of four reach the configuration bound
+      (`docs/06` §8.9). UML exits to the least common ancestor. A fix changes `simulate` and every
+      verdict on such a machine; none in the gate corpus or v9 (`nest2-into` is refused). Fixtures
+      that rely on it: `heavyMachine` (`palette-checks.spec.ts`) and `hierarchical(…, exits)`
+      (`checks-registry.test.ts`). Opus class: it changes semantics and a false verdict exists now.
+      [O7 S1]
+- [ ] **Say when Save or Export drops field changes made over older typed text.** In the "kept" case of
+      `typedTextFirst` (the element is not in the typed text, or the model changed since the typing) a
+      later Save or Export applies the typed text over the newer model and so drops the field changes
+      made since, without a note. Give it an info note, or keep the text back; it needs a message
+      design, and the stale-`typedFrom` test would also fire on the SDK, peer and faulted-apply paths.
+      Also: a field's change over typed text parses on the page (P3). [O7 S2, review]
 - [ ] **Anchor at the value that breaks the relation, and once per cause.** Since `f27d99b` a
       violated-instance finding is anchored at the instance's own differing line, but (1) when a
       binding carries two values into an instance the anchor follows the first read's source, not
@@ -465,11 +456,8 @@ tagged `[O1 …]` are what its steps and reviews left open.
       no transition is checked by nothing and reported by nothing (a nested one is reported as not
       checked since `e0d8040`). [O1 S4]
 - [ ] **What the livelock rows still lack.** (1) `check-behaviour` files no row for a livelock it
-      withholds; a row needs a catalogue code of its own. (2) A cycle of substates is a cycle of
-      configurations only once the composite has recorded its history, so the way in of
-      `{comp, i1, i2}` reads "entered in 2 step(s)" although its states are entered at step 1; this
-      closes with the entry on the history map in `hashConfig`'s key (above). (3) Not probed: the
-      `covered`/`fail` witness note may key on the machine's published choice rows, so a witness
+      withholds; a row needs a catalogue code of its own. (2) Closed by `d1aa330` (the history map
+      left the key). (3) Not probed: the `covered`/`fail` witness note may key on the machine's published choice rows, so a witness
       through a branch whose choice row is withheld (the hidden-choice shape) may carry no simulator
       sentence; the witness still replays. (4) `reach` is about 20% slower than at `5943654` on a
       9,641-configuration machine (about 240 to 290 ms), from the livelock pass (`docs/06` §8.8).
