@@ -490,7 +490,7 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 scope), `1536-1691` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
 saved project keeps them), `2522-2539` (`pinNodePositions`: the move itself), `2127-2184`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4248-4289` (`openText`: a file opened as text starts afresh).
+`4300-4341` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -585,11 +585,14 @@ library's elements within the library included — and so does a peer that joins
 later; two members that two peers add to one element at the same moment come
 in one order on every peer. A member that one peer moves into an element
 another peer deletes at the same moment goes to the top level, on every peer.
-A typing or specialisation made in the app — the Type field, a line drawn with
-the palette — is taken after those the model had, wherever the text writes it,
-so a check that goes by them, such as `where-used` over a definition, can list
-its usages in another order than a terminal does, and, in a room, than another
-peer does.
+A typing, specialisation or redefinition keeps its place among the others,
+wherever the text writes it: one made in the app — the Type field, a line drawn
+with the palette — is taken after those the model had, and one of an element
+whose declaration a drag puts elsewhere in the text, or that a project you
+open, a model JSON you import or a branch you switch to stored in another
+order, stays where it was. So a check that goes by them, such as `where-used`
+over a definition, can list its usages in another order than a terminal does,
+and, in a room, than another peer does.
 
 ### The Text tab, in both directions
 
@@ -660,15 +663,15 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1733-1829` (`RECOMPUTE_DEBOUNCE_MS`,
+**Source of truth:** `src/ui/store.ts:1733-1849` (`RECOMPUTE_DEBOUNCE_MS`,
 `flushRecompute`: the recompute cycle), `1952-2037` (`recomputeNow`), `2039-2226`
 (`afterMutation`, `afterSdkEdit`: an edit, and an SDK edit, each listing the model
 in the order its text gives it; `typedTextFirst`, `applyParsed`: a field's change over
 typed text), `882-939` (`inLibrary`, `userOwner`,
 `sdkIntoLibrary`: nothing added to the standard library), `2817-2848`
 (`createElement`: a new element), `3137-3204` (`reparent`, `reparentMany`: a
-move), `4899-4944` (`libraryNote`: the note that says so), `3645-3658`
-(`applyText`), `4102-4148` (`undo`, `redo`), `4986-5044`
+move), `4966-5031` (`libraryNote`: the note that says so), `3645-3658`
+(`applyText`), `4102-4148` (`undo`, `redo`), `5073-5131`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/core/model.ts` (`adoptSerialOrder`: the order the text gives),
 `src/collab/model-doc.ts` (`bindModelToDoc`: a room, and a peer that joins it);
@@ -3581,7 +3584,9 @@ of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 Each call that adds or moves an element lists the model in the order its text
 gives it ([§5](#the-loop)): a pass over the whole model, about 15 ms on the
 drone-swarm model with its library, more on a busy machine. A script that
-makes many edits makes them in one `commit(fn)`, which lists the model once.
+makes many edits makes them in one `commit(fn)`, which lists the model once
+for the elements it adds; each `reparent` lists it at its own call, inside a
+`commit(fn)` too.
 
 **Source of truth:** `src/ui/store.ts:3328-3510` (`runValidation`,
 `solveParametric`: the four buttons), `2039-2226` (`afterSdkEdit`: an SDK edit),

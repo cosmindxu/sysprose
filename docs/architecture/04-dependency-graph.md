@@ -132,8 +132,8 @@ modules (no alias for `@semantics`, `@library`, `@collab`, `@interop`,
 | `src/server/app.ts:23` `from '@api/rest'` | `@api/index` barrel |
 | `src/server/app.ts:24` `from '@api/oslc'` | `@api/index` barrel |
 | `src/collab/provider.ts:18` `from '../core/metamodel'` | `@core/index` |
-| `src/collab/model-doc.ts:63` `from '../core/model'` | `@core/index` |
-| `src/collab/model-doc.ts:64` `from '../core/metamodel'` | `@core/index` |
+| `src/collab/model-doc.ts:64` `from '../core/model'` | `@core/index` |
+| `src/collab/model-doc.ts:65` `from '../core/metamodel'` | `@core/index` |
 | `src/api/sdk.ts:28-29` `from '../semantics/units'`, `'../semantics/units-eval'` | `../semantics/index` |
 | `src/api/analytics.ts:28-29` same pair | `../semantics/index` |
 | `src/semantics/featuring.ts:34` `from '../library/resolve'` | `../library/index` |

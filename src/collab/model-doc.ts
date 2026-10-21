@@ -43,11 +43,12 @@
  * change of kind or of library flag that moves an element between the two. So
  * an owner's children hold places all or none, and the order of their places
  * is the order the peer who made the edit holds them in. A peer holds the
- * children of every owner a doc transaction added to, moved into or re-placed
- * in the order of their places, two equal places by id, its declarations
- * seated as the edit seated them ({@link Model.orderChildren}); a peer that
- * joins loads every owner so. Two peers that add to one owner at once give
- * equal places, and every peer orders them alike.
+ * children of every owner a doc transaction added to, moved into, re-placed
+ * or changed the kind or library flag of a child of, in the order of their
+ * places, two equal places by id, its declarations seated as the edit seated
+ * them ({@link Model.orderChildren}); a peer that joins loads every owner so.
+ * Two peers that add to one owner at once give equal places, and every peer
+ * orders them alike, a member whose kind one changed at that moment too.
  *
  * Flow:
  *   local model change  → doc.transact(fn, ORIGIN_LOCAL)   (minimal ops)
@@ -462,9 +463,15 @@ function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeE
 }
 
 /**
- * The elements a doc transaction added, replaced, moved or re-placed: the
- * owners they stand in may hold their children in another order. A Y.Map made
- * in the transaction reports nothing of its own; its key in `elements` does.
+ * The elements a doc transaction added, replaced, moved or re-placed, or whose
+ * kind or library flag it changed: the owners they stand in may hold their
+ * children in another order. A Y.Map made in the transaction reports nothing
+ * of its own; its key in `elements` does. A kind or flag decides where an
+ * owner seats the element ({@link Model.orderChildren}), and the peer who
+ * changed it may send the places it gives in a doc transaction of their own,
+ * which this peer takes in under the old kind (`Model.update` and `setAttrs`
+ * announce the owner's `order` before the `update`): the owner is held again
+ * under the new one.
  */
 function placedBy(events: Y.YEvent<any>[], elements: Y.Map<ElementYMap>): Set<ElementId> {
   const ids = new Set<ElementId>();
@@ -473,7 +480,11 @@ function placedBy(events: Y.YEvent<any>[], elements: Y.Map<ElementYMap>): Set<El
     if (ev.target === elements) {
       for (const id of ev.keysChanged) ids.add(id);
     } else if (ev.target.parent === elements) {
-      if (ev.keysChanged.has('ownerId') || ev.keysChanged.has(PLACE_KEY)) ids.add(ev.path[0] as ElementId);
+      const keys = ev.keysChanged;
+      if (keys.has('ownerId') || keys.has(PLACE_KEY) || keys.has('eClass')) ids.add(ev.path[0] as ElementId);
+    } else if (ev.target.parent?.parent === elements) {
+      // An element's nested `attrs`: an implicit feature, or one of the library's, is seated after the declarations.
+      if (ev.keysChanged.has('implicit') || ev.keysChanged.has('isLibrary')) ids.add(ev.path[0] as ElementId);
     }
   }
   return ids;

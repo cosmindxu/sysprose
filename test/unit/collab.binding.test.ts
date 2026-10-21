@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
 import { Model } from '@core/index';
+import type { CreateElementOptions } from '@core/index';
 import { bindModelToDoc, ORIGIN_LOCAL } from '../../src/collab/model-doc';
 
 /** Canonical, order-independent snapshot of a model for equality assertions. */
@@ -717,6 +718,59 @@ describe('bindModelToDoc — CRDT convergence', () => {
       const own = (prefix: string) => m1.childIds('P').filter((id) => id.startsWith(prefix));
       expect(own('one-')).toEqual(['one-a', 'one-b']);
       expect(own('two-')).toEqual(['two-a', 'two-b']);
+    });
+
+    it("one peer changes a member's kind while another adds to its owner at once: every peer, and one that joins, hold them alike", () => {
+      // What seats a member after its owner's declarations (an implicit feature, one of the library's, a typing) made
+      // a declaration through the SDK's `setAttrs` or `update`. Its peer tells the room the place it gives in a doc
+      // transaction before the one that changes the kind, so a peer took that place in under the old kind, seated the
+      // owner by it, and kept that order until the owner was next edited (the branch review's flip race).
+      const flips: Array<[string, string, CreateElementOptions, (m: Model) => void]> = [
+        ['implicit', 'AttributeUsage', { attrs: { implicit: true } }, (m) => m.setAttrs('x', { implicit: undefined })],
+        ['library', 'DataType', { attrs: { isLibrary: true } }, (m) => m.setAttrs('x', { isLibrary: undefined })],
+        ['kind', 'FeatureTyping', { source: ['o'], target: ['P'] }, (m) => m.update('x', { eClass: 'PartUsage' })],
+      ];
+      for (const [what, eClass, x, flip] of flips) {
+        const m1 = new Model();
+        const m2 = new Model();
+        const d1 = new Y.Doc();
+        const d2 = new Y.Doc();
+        bindModelToDoc(m1, d1);
+        bindModelToDoc(m2, d2);
+        const a2b: Uint8Array[] = [];
+        const b2a: Uint8Array[] = [];
+        d1.on('update', (u: Uint8Array, o: unknown) => o !== 'remote' && a2b.push(u));
+        d2.on('update', (u: Uint8Array, o: unknown) => o !== 'remote' && b2a.push(u));
+        const exchange = () => {
+          for (let n = 0; n < 3; n++) {
+            a2b.splice(0).forEach((u) => Y.applyUpdate(d2, u, 'remote'));
+            b2a.splice(0).forEach((u) => Y.applyUpdate(d1, u, 'remote'));
+          }
+        };
+        // o { w, x }, x held after the declaration w; then w removed: x alone, at place 1.
+        m1.create('Package', { id: 'P', declaredName: 'P' });
+        m1.create('PartUsage', { id: 'o', declaredName: 'o', ownerId: 'P' });
+        m1.create('AttributeUsage', { id: 'w', declaredName: 'w', ownerId: 'o' });
+        m1.create(eClass, { ...x, id: 'x', declaredName: 'x', ownerId: 'o' });
+        m1.adoptSerialOrder();
+        exchange();
+        m1.remove('w');
+        m1.adoptSerialOrder();
+        exchange();
+        expect(d1.getMap<Y.Map<unknown>>('elements').get('x')!.get('order'), what).toBe(1);
+
+        // At once, before either hears of the other: the first makes x a declaration, the second adds y to o.
+        flip(m1);
+        m1.adoptSerialOrder();
+        m2.create('PartUsage', { id: 'y', declaredName: 'y', ownerId: 'o' });
+        m2.adoptSerialOrder();
+        exchange();
+
+        expect([...m1.childIds('o')].sort(), what).toEqual(['x', 'y']);
+        expect(m2.childIds('o'), what).toEqual(m1.childIds('o'));
+        expect(join(d1).childIds('o'), what).toEqual(m1.childIds('o'));
+        expect(join(d2).childIds('o'), what).toEqual(m1.childIds('o'));
+      }
     });
 
     it('a reset that swaps two elements\' nesting moves both on a peer', () => {

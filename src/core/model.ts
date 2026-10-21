@@ -28,7 +28,10 @@ export interface ChangeEvent {
   element?: ElementRecord;
   /** For reparent: the previous owner id. */
   previousOwnerId?: ElementId | null;
-  /** For order: the owner whose children are held in another order (`null`: the top level). */
+  /**
+   * For order: the owner whose children are held in another order (`null`: the
+   * top level). An `order` names no element: its `id` is undefined.
+   */
   ownerId?: ElementId | null;
 }
 
@@ -734,15 +737,15 @@ export class Model {
    *
    * CALLED ONCE PER EDIT, not by {@link reparent} or {@link create}: by the
    * store after each command and each call of the SDK on `window.sysml` that
-   * edits (a script batches its edits in one `commit` to pay once), by the
-   * store's drag commands and a regroup, the SDK's `reparent`, and a
-   * collaboration room after taking in a peer's edits. An edit that adds no
-   * element a load lists in place, moves nothing and changes no element's kind
-   * costs nothing ({@link _orderStale}); one that does costs a pass over the
-   * model (about 16 ms on the drone-swarm model and its library of 42,584
-   * elements, on a loaded machine). The parser reparents and adds while it
-   * loads, and the model a terminal reads keeps the order the parse listed it
-   * in.
+   * edits (a script adds its elements in one `commit` to pay once for them),
+   * by the store's drag commands and a regroup, the SDK's `reparent` at each
+   * call, in a `commit` too, and a collaboration room after taking in a peer's
+   * edits. An edit that adds no element a load lists in place, moves nothing
+   * and changes no element's kind costs nothing ({@link _orderStale}); one
+   * that does costs a pass over the model (about 16 ms on the drone-swarm
+   * model and its library of 42,584 elements, on a loaded machine). The parser
+   * reparents and adds while it loads, and the model a terminal reads keeps
+   * the order the parse listed it in.
    *
    * WHOLE: for a model reset from data this session did not list — a project
    * stored by an earlier build, a model JSON or an element graph imported or
@@ -751,13 +754,16 @@ export class Model {
    * user's is seated, and the model re-listed, whatever was edited. Undo and
    * Redo snapshots and a parse are listed already.
    *
-   * What it does not give: what a load lists after the declarations and an
-   * edit adds — a typing set with Properties' Type field, a specialisation
-   * drawn with the palette — is listed after those the model had, where a
-   * terminal over the saved text binds them in the order their declarations
-   * come; so `where-used` over a definition lists a usage typed in the app
-   * after one typed below it in the text, here and in every copy, and before
-   * it in a terminal (TODO.md).
+   * What it does not give: what a load lists after the declarations keeps
+   * its place among the others, where a terminal over the saved text binds
+   * them in the order their declarations come. One an edit adds — a typing
+   * set with Properties' Type field, a specialisation drawn with the palette
+   * — is listed after those the model had; one whose element a drag puts
+   * elsewhere in the text, or that a project, model JSON or branch stored in
+   * another order, stays where it was. So `where-used` over a definition
+   * lists a usage typed in the app after one typed below it in the text, and
+   * after a drag of their packages in the order they had, here and in every
+   * copy, and in the text's order in a terminal (TODO.md).
    */
   adoptSerialOrder(opts: { whole?: boolean } = {}): boolean {
     const whole = opts.whole === true;
