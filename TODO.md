@@ -107,28 +107,110 @@ bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned w
 verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
 headings.
 
-- [ ] **Read an enclosing equation through a binding or a reference.** Five shapes of the H5 rule fail
-      closed to the reading before it, or still read false, and are pinned (`KNOWN_FALSE`, "no step
-      yet"): (1) RB3 and SF: an enclosing assert over a default that a binding carries is not read
-      through the binding's end (RB3: q's `L default = 4.0` bound to `q.p.x`, the package asserts
-      `q.p.x == 3.0`; `top` and `top2` read F/F/F/X where they are T); (2) RF and RF2: an assert
-      through a reference, or through a part redefined with a value, reads as before the rule
-      (`top` T/T/T/X where decision 14 gives F); (3) LE: `P::c`, `P::c in Q::p` and `top` read T
-      beside SMT's X on a self-contradictory model; (4) PIN2: an equation whose other side is valued
-      only in usages (`assert L == M`, M valued in a usage) reads T where `p.L` is 7; (5) H5B: an
-      assert in an instance's own element over an inherited default still abstains as
-      `not-enumerated`. Done when each pinned row reads its true value on all four surfaces or
-      abstains with its own sentence, and the `no step yet` entries are gone. [O5 S2, review]
-- [ ] **Finish the part-valued and attribute-valued bindings.** The part-valued binding
-      (`bind pp = top.a`) is read, but: `ppval` (`part pp : T0 = top.a`, a value on a composite
-      part) reads F/T on all four surfaces; `v8ref` (`ref part pp : T0 = top.a` in a definition) is
-      resolved in the definition, not the instance; `r8attr` (`bind q = top.pos` between structured
-      attributes) reads `qT` F and `qF` T; a ref, subject or satisfy that lands on an equated part
-      makes the binding unread, so rows abstain where following it would decide; and `bounds
-      --measure pp.load` (`boundsReport`, `src/api/verification.ts`) prints a decided bound through
-      an unread part binding (3 `exactly`, the truth is 50). The refusal sentence says "a defect in
-      the relation" and `verify` exits 2 on what is a tool limit: give it its own reason. All pinned
-      in `KNOWN_FALSE`. [O5 S4, review]
+- [ ] **Read an asserted equation through a binding's end.** An equation that decision 14 makes stand
+      over a `default` carried by a binding component (only defaults) abstains on every surface with
+      `unread-binding`, wherever the binding or the assert is written (O9 S2). Probes: RB3 and RB4
+      (the package assert over Q's binding; RB4's q2 abstains too); RB5, RB5C, RB5D, RB5F (Q's
+      `p.x == 50.0` over a binding in q1, in q1's p, in the package, or in W; truth K = 50); RBS1,
+      RBS2, RBS5 (the assert in a specialisation, beside the binding in the package, or in a usage;
+      truth L = 3, top T); PJ (P's framed `L == M` over q's `bind p.L = K`; truth 7). Reading these
+      needs the component's value taken from the equation (`classified` / `endValue`), and the
+      numeric and SMT lanes dropping the component's default at that instance; the SMT still keeps
+      that default axiom, so PJ's `P::c` reads X (I7) and RB5 with a relation on P reads
+      inconsistent axioms. [O9 S2]
+- [ ] **Read an asserted equation through a reference or a valued part.** RF, RF2 and RF3: the rows
+      through Q's `r`, q's `r` and `p1` abstain; under decision 14, `p1.x` and `q.r.x` are 50. P's
+      own `c` (and RF3's `p0`) stays T beside the SMT's inconsistent axioms (I7), because the SMT
+      reads Q's `r.x` as P's generic x. Reading these needs the referenced instance's symbol filed
+      with q's frame, and an SMT instance split. [O9 S2]
+- [ ] **Read a local equation over usage values that read names or bindings.** P's `L == M` is read
+      per instance only where every usage that values M gives a literal (or a `default`, U7). Every
+      reading of L abstains, P's own and p's literal frame included, when a usage gives M an
+      expression over other names (PIN5's `:>> M = K`), or a binding joins M to a value (PA's `bind
+      p2.M = K`, PA4's `bind M = K` in p2, PA2, and PA0 with no literal frame); the binding's own
+      `#bind` row abstains too. Fix: an independence check of the frame's value, as `valued` does in
+      the owner, and a reading of the bound value per instance. [O9 S2]
+- [ ] **Read a framed equation in units.** P's `L == M` with P5's or p's `:>> M = 7.0 [kg]`: the check
+      and the literal engine abstain (`"L" has no value in scope`). `P::qa`'s generic row went from
+      T/-/T/- at aac38fd to ?/-/T/- since O9 S2; the context rows the review fixes add read ?/?/?/T
+      (cT) and ?/?/?/? (cF), and the package rows ?/?/T/T and ?/?/F/?. None is false; readings are
+      lost. Shapes: the M-generator files `dt_frame_{usage,spec,deep}_kg`. [O9 review]
+- [ ] **Taint the instance an unread asserted equation reaches, not the definition's feature.** Three
+      refusals (through a reference or valued part, the bound-partner refusal, and the unsure /
+      framed refusal) taint a definition's feature and its redefiners (`P::x`, `P::load`, `P::L`),
+      so true rows of every other instance abstain: h5bD and h5bL (`P::c`, `P::c in Q::p` and `in
+      q1::p` were T/T/T/X and are now ?/?/?/?; in h5bL, q2's L is a plain 5), RB4's q2, PIN5's
+      `P::c` and p's rows, PA's `P::c`. Sound, only weaker. An instance-only taint must still reach
+      the binding partners: q2's L through Q's `bind p.load = L`. [O9 S2, review]
+- [ ] **Contain the remaining new instance-index calls.** `equatedParts`'s call to `enclosingAsserts`
+      (`unreadAsserts`) and the `readAt` filter in `readFeatures` (`enclosingAsserts`,
+      `assertHeldInSome`) are not contained, so a throw there still ends the check (loudly) rather
+      than one row; it now drops the half-built `EQUATED_PARTS` entry first, so a later call at the
+      same revision rebuilds the index and abstains as a clean run does. The calls in
+      `contextsUncached` are contained. No throwing-stub test: the calls are internal to
+      `defining-equation.ts`, and the module-level `vi.mock` stub cannot reach them; a test needs an
+      injectable seam (A.2.9). [O9 S2, review]
+- [ ] **Finish H5B: an element's own equation over a default.** An element's own asserted equation
+      over a `default` still abstains as `not-enumerated` when the enclosing rule does not file it
+      because the other side has no value (`extra == M`), and when the default is also held by the
+      local rule (q7's `:>> extra default = 7.0` plus `extra == 2.0`, or the element's type's own
+      assert). The wording of those refusals is a separate entry. [O9 S2]
+- [ ] **File per-instance rows for a `satisfy` a definition writes.** `part def W { part p1 : T0;
+      satisfy RF by p1; } part w : W { part :>> p1 { attribute :>> load = 50.0; } }` files no row
+      for w, so `verify` exits 0 and `sysml-check --strict` passes while w breaks RF (sd0, sd1, g8
+      in `bindings-residual-scratch/rv/p`). The same holds for a requirement usage in a definition
+      whose subject is bound to a plain part (sbj0). A satisfier reached through a reference, an
+      equated part or a subject, and a valueless `ref` an instance rebinds (F1, F3), abstain
+      (`unread-binding`). File per-instance rows for a satisfaction, as for a constraint written in
+      a definition, or abstain on every satisfaction a specialised definition writes. A false pass.
+      [O9 S1, review]
+- [ ] **Read a definition's relation through a reference or a renamed redefinition an instance
+      rebinds.** `part def W { ref part top : T1; ref part pp : T0 = top.a; constraint pF { pp.load
+      <= 5.0 } } part w : W { ref part :>> top = t50; }` (v8x, v8x2), the direct `top.a.load` (v8xd)
+      and `part top2 redefines top {...}` (v8n) file no row for w: W's `pF` holds while w's 50 breaks
+      it. A part rebound by a value this tool does not read through (`part :>> top = t50`) files the
+      row and abstains (h5-valinst, h5-bndinst, h5-refinst). A false pass. [O9 S1, review]
+- [ ] **Name the instance a finding is about.** `p50::r2.load = 50 misses P::c` (rv/p/g7, where the
+      row is read for pb), `p1::r2.load` for q2's p (g3), and at aac38fd `p2::r1.load` (rr1): the
+      message names the target of the last link, not the instance the row is read for
+      (`pb::r2.load`, `q2::p::r2.load`), so an agent edits the wrong element (the PI-2 class).
+      [O9 S1, review]
+- [ ] **Say a tool limit is a tool limit.** `unread-definition` refusals print "This is a defect in
+      the relation", and verify files the per-instance `not-enumerated` abstention of H5Q7's shape
+      (`attribute :>> extra default = 7.0; assert constraint { extra == 20.0 }` in the instance's
+      own element) under `unread-definition`. A relation over a value the model states but this
+      tool does not read is a limit of the tool, as `unread-binding` is (`engines/literal.ts`, the
+      not-evaluable branch for gate refusals; `engines/smt.ts`, the refusal outcome): give it the
+      tool-limit sentence through `refusalTail`; the exit code stays 2. And where an unread valued
+      part's partner is read (sbv: `top.a.load` beside `part pp : T0 = top.a` and `bind pp.load =
+      seven`), the numeric surface abstains with `"top.a.load" has no value in scope`, not the
+      binding's sentence: its `equatedPartsRefusal` pass in `solver.ts` skips a row that is already
+      unknown. Wording only; every surface abstains. [O9 S1, review]
+- [ ] **Read what two steps of standing-for, a call, or a second subject would decide.** All sound,
+      all weaker: (1) a shared-usage (group) row read through two steps of standing-for (a reference
+      to a reference, or to an equated part, written in the usage's definition) abstains with "this
+      tool cannot tell what its ... stands for there" (`subjectScope` gives such a reading no
+      scope, and `crossingReadsOtherwise` cannot re-resolve it; one step is read, h5-refgrp); (2) a
+      part, or an attribute of a structured type, valued with an expression that is not a path (a
+      call: `part pp : T0 = Same(top.a)`, `attribute q : V = Same(top.pos)`) abstains on every row
+      that may read through it (h5-ppcall, h5-r8expr), which needs the calc's result evaluated as
+      a part or a structured value; (3) a `satisfy R by p1` beside `requirement r1 : R { subject s
+      = p1; }`, where both subjects stand for one instance: r1's literal and SMT rows abstain with
+      "the numeric surface never gathered this relation" (SAT2). [O9 S1]
+- [ ] **Abstain on a self-contradictory model, or keep the pin.** LE (`P::c` and `P::c in Q::p`) and
+      K1T (`P::c in K1T::q3::p`, which abstained at aac38fd and which `readAt` now decides) read
+      T/T/T/X: true where they are read (x is 3 there), beside a whole-model contradiction the SMT
+      reports. Ruled at the merge: a permanent `I7_ALLOWED` pin with the LE wording, as for R8. The
+      alternative is to abstain on every row of a model the enclosing rule finds contradictory (or
+      where an element's assert gives the feature two values anywhere in the group). Optional.
+      [O9 S2, ruling]
+- [ ] **Name an unnamed nested redefinition's context row alike on every surface.** A context that
+      is an unnamed redefinition is named `... in q::«PartUsage»` by the check and numeric surfaces
+      and `... in q::r` / `q::p` by the literal and SMT engines (RF, RF2, RF3, CI1; the new
+      `dt_*_deep` files), and a model like RB5 with a relation on P gets two check rows named `P::c
+      in q1::p` (a specialiser reading and the group's enclosing-assert row), which makes the
+      four-surface harness throw (pre-existing at aac38fd). Every such row abstains or agrees.
+      Low. [O9 S2, review]
 - [ ] **Close the rows F's section 2.8 listed and the abstentions it did not.** GA7 `pl` reads
       F/F/?/F (the numeric `?` comes from `derivedElsewhere` / `derivedValueBehind` reading P's
       derived default behind the end copy; target F/F/F/F); GA6 `qa` reads T/-/?/- (target
@@ -199,9 +281,6 @@ true values. What follows is what that branch and the review of it left open; en
       a throwing read there still ends the whole check (A.2.9). The planted bug P5 (literals counted
       in `readsOtherwise`) is an equivalent mutant: no test can turn red on it until H5 is decided,
       so give it a pin after `h5`. [O2 S6, review 2026-10-14 A-H4]
-- [ ] **Keep a definition-owned relation read through a binding from reading `OK`.** `n02` (a relation
-      owned by a definition and read through a binding) is silent where it should be read or
-      refused: `sysml-check --strict` says `OK` with no row for it. Pre-existing. [O2 S6]
 - [ ] **Say the same thing about a bare literal in the note and the row.** After a carried value is
       read in the filled feature's declared unit, the `U3` note still reads `refuted … (5 vs 10 in
       M, coherent SI)` beside a verdict the unit reading reached; the literal and SMT notes of a
