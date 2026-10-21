@@ -155,19 +155,20 @@ const APP_DOORS: ReadonlyArray<{
   { command: 'property-draft', controls: [] },
   { command: 'property-check', controls: [] },
   // `verify` carries no control for a second reason on top of that one: there
-  // is no solver in the browser in this plan at all (`SharedArrayBuffer` needs
-  // COOP/COEP headers GitHub Pages cannot set), so the app's job is to read
-  // evidence and print the terminal command, never to reach a verdict.
+  // is no solver on the hosted site in this plan (`SharedArrayBuffer` needs
+  // COOP/COEP headers GitHub Pages cannot set; the palette's Run reaches a
+  // verdict only on the local servers, which send them), and no view does, so
+  // the app's job is to read evidence and print the terminal command.
   { command: 'verify', controls: [] },
   // And `consistency` for the first reason and one of its own: satisfiability
-  // is a solver question, and there is no solver in the browser at all.
+  // is a solver question, and no view reaches a solver verdict.
   { command: 'consistency', controls: [] },
   // And `refine` for both of those reasons again. There is no architecture view
   // in this plan either: a contract decomposition is a terminal answer with a
   // witness in it, and the app's job in this lane stays reading evidence.
   { command: 'refine', controls: [] },
-  // And `bounds` for the same two reasons as `refine`: there is no solver in
-  // the browser, and no view in this plan shows what a measure's tightest value
+  // And `bounds` for the same two reasons as `refine`: no view reaches a
+  // solver verdict, and no view in this plan shows what a measure's tightest value
   // is. The answer is a number with an axiom set printed beside it, which is a
   // terminal answer.
   { command: 'bounds', controls: [] },

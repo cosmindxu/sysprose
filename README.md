@@ -190,10 +190,11 @@ revision and keeps the rows and the census it returns, where `contracts` also pr
 inventory, the exclusion counts and the `verification/*` reasons behind every refusal — and,
 unlike the view, can be asked about one element. `prompts`,
 `evidence-attach`, `evidence-detach` and the depth-walking `impactClosure` have no control in the
-app at all, and `verify` has only a palette row that gives its command to copy and answers
-`not here` — they are the terminal's and the SDK's alone. There is no solver in the browser
-(`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), so no view reaches a
-solver verdict; the behaviour lane needs none — **Reachability** and **Behaviour properties** run
+app at all, and `verify` has only a palette row (on the hosted site it gives its command to copy and answers
+`not here`; on the local dev and preview servers it runs z3 in the page) — on the hosted site they are
+the terminal's and the SDK's alone. There is no solver on the hosted site (`SharedArrayBuffer` needs
+COOP/COEP headers GitHub Pages cannot set; the local dev and preview servers send them, and the
+palette's five solver checks run there), so no view reaches a solver verdict; the behaviour lane needs none — **Reachability** and **Behaviour properties** run
 `reachReport` and `behaviourReport` in the page with the terminal's default bounds and print the
 terminal's lines. The two views that read the solver lane show what a run left behind and print the
 command that produces one.
@@ -281,7 +282,7 @@ Develop block below, and every flag is in
 - **A requirement discharged by a false assumption is `vacuous`, not a pass** — a declared
   deviation from the specification's own `RequirementCheck` semantics, recorded as one in
   [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md) §8.
-- **No liveness, no reactive synthesis, no in-browser solver, no kernel-checked proof.** z3 is trusted
+- **No liveness, no reactive synthesis, no in-browser solver on the hosted site (the local servers run one), no kernel-checked proof.** z3 is trusted
   as a solver; nothing here is machine-checked in a proof kernel. The limits are listed, each with
   what it costs you, in [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) §9 and
   [`docs/04-formal-verification-plan.md`](docs/04-formal-verification-plan.md) §6.

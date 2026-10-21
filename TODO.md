@@ -15,18 +15,15 @@ the review's artifact folder, which is not in this repository. Entries tagged `[
 merged branch `behaviour-sound` (the plan's O1) left open, by step. An entry that waits on the
 maintainer says `awaits user decision U<n>` and names the question.
 
-- [ ] **Run the palette's solver checks in the page, not only in a terminal.** `verify`,
-      `consistency`, `refine`, `bounds` and `fault-tree` are in the registry (`src/ui/checks.ts`)
-      but report `not here` with a copyable command, because z3 needs a cross-origin-isolated
-      page and this one is not. Decide how to get isolation (COOP/COEP headers from the dev and
-      preview servers, and whatever the static host allows), then let the registry's `solver`
-      entries run through `z3-bridge` when `crossOriginIsolated` is true. A check that cannot run
-      must keep saying so rather than passing. Isolation has a cost the decision must weigh:
-      `COOP: same-origin` + `COEP: require-corp` break the optional Google Drive feature's sign-in
-      popup and its `docs.google.com` Picker iframe, so in-browser z3 and Google sign-in constrain
-      each other.
-      Awaits user decision U14: whether in-page z3 is worth that cost, and which hosts get the
-      headers.
+- [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
+      the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
+      `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
+      local Google Drive testing), and the palette's five solver checks run z3 in the page there and
+      land in the Checks tab. The GitHub Pages site cannot send the headers and decision U14 ruled
+      out a service worker, so on it they keep `not here` with the copyable command. Done only by
+      moving the model site to a host that sends the headers, which would break the Google Drive
+      sign-in popup and Picker iframe there too. Awaits user decision U14 (host): whether in-page z3
+      on the hosted site is worth that cost. [N6 S4]
 - [ ] **Hold z3's timeout floor where the D5 guard cannot see.** The last case of
       `test/campaign/verification.test.ts` holds every case that hands z3 a check to 40 s: the death
       guard for the DEFAULT 5 s budget, plus 5 s. A check given a larger budget needs that budget plus
@@ -48,50 +45,55 @@ maintainer says `awaits user decision U<n>` and names the question.
       the next `Backspace` deletes the selection. Do the same refocus without the commit, or return
       it to the row, guarded. Done when `Escape` in each box leaves a following `Backspace` harmless,
       with a test beside the `Enter` one.
-- [ ] **Keep a layered General view's column headers on screen while panning down a column.** A
-      header (`src/ui/panels/ColumnHeaders.tsx`) is drawn once, above the top of its piece, so in
-      the drone-swarm model's whole General view (columns about 19,000 px tall) it is off screen
-      at every zoom where the boxes read. Pin it to the canvas's top edge while its piece runs
-      beneath it, clamped to the piece; decide how it then stays clear of the boxes under it. A box
-      moved by hand is not kept clear of a header either: it can be dropped into a band, and after
-      a re-layout its pin keeps its old coordinates (`applyPins`, `src/ui/store.ts`) while the
-      headers move with the new layout.
-      At the whole drone-swarm v9 Fit (1400×900, zoom about 0.021) the label text of the five main
-      headers is about 5.5 px on screen and that of the other sixteen about 1 px:
-      `src/diagram/column-headers.ts` sizes the band as the smaller of `COLUMN_HEADER_MAX_H` (640)
-      and 4% of the piece's width and the label at most 55% of the band, while
-      `docs/USER-GUIDE.md:349-351` says the label "still reads when the whole model is fitted".
-      Size the band and label from the fit zoom, or draw labels in screen space, or correct the
-      guide, and add a v9-sized guard (the E2E uses a 9-box model).
-      [review 2026-10-14 D-7] Awaits user decision U14: how a header clears the boxes under it, and
-      whether headers must read at Fit.
-- [ ] **Cut the crossings the hub-led layout leaves in the drone-swarm v9 `OA` General view.** The
-      view has 46 crossings in the layout's own count (`countCrossings`,
-      `src/diagram/layout.ts:531`), down from 88 before the hub-led layout; `memberA` and `memberB`
-      (14 allocations each) and `dutyController` (3) are drawn as hubs. d60cd5d measured 31
-      crossings, down from 71, in the app with real text widths; that figure was not re-measured at
-      5943654. Of the 46, re-counted at 5943654: 26 are two «allocate» lines crossing, 9 an
-      «allocate» and a «satisfy», 7 an «allocate» and a «typed-by», 4 two «typed-by» lines: the two
-      members' activities share one definition per step, so the two fans interleave. SA and LA are
-      at 0. Try ordering the activities of the two fans by their shared definition (barycentre), or
-      letting only one member lead. Done when the OA count is below 46 with no overlap or line
-      through a box introduced.
-- [ ] **Decide what the layout does with a piece that nests (P1).** `layoutOptionsFor(viewKind,
-      nested)` (`src/diagram/layout.ts:105`) sets `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` for a
-      piece that has a nested box and `SEPARATE_CHILDREN` for every other piece (`214b3c5`;
-      `toElkTree` computes `nested`, `:417`), so only the flat case was fixed. Through
-      `layoutDiagram` on the `interconnection` view, 30 parents of 10 children and two edges per
-      leaf (330 nodes) take 11 113 ms at 5943654 against 171 ms with `SEPARATE_CHILDREN` forced
-      (65x); a reviewer's run on a loaded machine read 26 924 ms against 299 ms. ELK runs in a Web
-      Worker (`src/ui/elk-worker.ts`), so the page does not freeze, but the diagram appears no
-      sooner. On the drone-swarm v9 the option is not the dominant cost (General 5 035 ms against
-      4 469 ms forced, `interconnection` 550 against 486, `tree` 44 184 against 42 411; one run
-      each). Either drop the option for nested pieces, which trades the layout of edges that cross a
-      parent's border for time, or bound the compound layout. Done when that case lays out within
-      a time the decision names, measured through `layoutDiagram` (`U diagram.layout2` asserts the
-      option for a flat and a nested call, not the time). `docs/UI-ROADMAP.md` P1 has the table.
-      Awaits a user decision, not yet numbered in the plan: drop the option for nested pieces, or
-      bound the compound layout.
+- [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
+      checks in the page behind a queue and a mutex. Left: Cancel drops the answer but cannot stop
+      z3, so the check ends at its own time budget and a Run started meanwhile queues behind it; a
+      model edit during a run can give a torn read across awaits (the result lands against the
+      click's revision and shows stale; documented, not snapshotted); a z3 module that dies in the
+      page (the finalizer race, or a hang) keeps the bundled async-mutex held until the page is
+      reloaded, because the mutex watcher is not wired into the esbuild-bundled entry; an in-page
+      check keeps no evidence record (`verify --record` is terminal-only); the encoding cost
+      (`obligationsOf`, script building, `resolveFreeFeatures`) runs on the page thread and is not
+      measured on v9, with no long-task guard over solver checks; the `bounds` check's degraded path
+      has no test of its own; and the isolated E2E fails if the run sets `SYSPROSE_NO_ISOLATION=1`.
+      [N6 S4, review]
+- [ ] **Move the first Apply's parse off the page (P3, the rest).** N6 S5 builds the Chevrotain
+      parser while the page is idle after the Text view opens, so the first Apply no longer pays the
+      ~1.3 s build; the parse itself is still on the page and synchronous (`applyText`,
+      `typedTextFirst`). Left: a worker parse needs an Apply that is in flight (the buffer edited
+      during the parse, Undo and carried ids across the wait, the `ParseResult` rebuilt on the page,
+      a page fallback); callers that parse before the Text view has been opened still pay the build
+      at their click (opening a `.sysml` file, and the Drive guard's `typedTextFault` before the
+      Text view mounted), and would need a second trigger such as the Open menu; and the warm-up is
+      best-effort, covered only by a unit test with injected dependencies, with no E2E that the
+      stall happens once. [N6 S5, `docs/UI-ROADMAP.md` P3]
+- [ ] **Make the frozen column-header strip read at the whole v9 Fit.** Since N6 S1 a layered
+      General view's column headers are a frozen strip along the canvas top, clipped to each column
+      and clamped to its piece, with the label at a legible size at any zoom, and Fit keeps the
+      first row of boxes clear of it. Left: at the whole drone-swarm v9 Fit (1400×900, zoom about
+      0.021) 16 of the 21 headers (those over the pieces below the first row) are not in the strip,
+      because their bands are about 1 px tall and their columns 8–17 px wide on screen, and a column
+      under 28 px wide has no strip label; the strip floats about 56 px below the canvas top (under
+      the toolbar), so on a deep pan boxes show above the header that names them; when two pieces
+      are closer than about 22 px minus the band and gap on screen, the next piece's cell can
+      overlap the leaving one for a few px of scroll; and the E2E uses a generated tall-column
+      model, not the v9-sized one. Done when every header of the v9 Fit is findable (a strip row per
+      piece, or a hover label) and a guard holds it. [review 2026-10-14 D-7, N6 S1]
+- [ ] **Decide what the layout does with a piece that nests (P1, U19).** `layoutOptionsFor(viewKind,
+      nested)` (`src/diagram/layout.ts`) sets `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` for a
+      piece that has a nested box and `SEPARATE_CHILDREN` for every other piece. N6 S2 measured both
+      through `layoutDiagram` at `aac38fd` (the table is in `docs/UI-ROADMAP.md` P1): the profile's
+      11 s reproduces on the entry's own 330-node graph (43–45 s shipped on a loaded machine,
+      0.6–1.4 s forced, 69×), so the time rule is met there, but forcing `SEPARATE_CHILDREN` lays
+      each parent's interior out alone and does not route an edge that crosses a parent's border
+      (576 of that graph's 600 edges are drawn as straight lines through boxes); on a structured
+      variant it is only 4.6–5.8× faster with 20% more crossings and 300 unrouted edges, and on the
+      real v9 views it changes nothing. So no layout code changed. What stays open is to bound the
+      compound layout: lay each parent's interior out on its own, then route the border-crossing
+      edges ourselves. Done when the 330-node case lays out within a time the decision names,
+      measured through `layoutDiagram`, with no unrouted edge and no more crossings than the shipped
+      option on the structured variant. Awaits a user decision, not yet numbered in the plan: bound
+      the compound layout, or accept the time. [N6 S2]
 
 ## Per-instance readings — follow-ups and known-false rows
 
