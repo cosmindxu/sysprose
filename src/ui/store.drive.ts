@@ -502,14 +502,28 @@ export function driveFileView(file: DriveFile | null): (DriveFileMeta & { opened
 }
 
 /**
- * The page's `beforeunload` handler: asks before leaving exactly while the
- * attached file has unsaved changes. Returns whether it asked.
+ * Closing or reloading the tab would lose work: the attached Drive file has
+ * unsaved changes ({@link driveDirty}), or the model has work nothing holds in
+ * this browser ({@link browserDirty}) — typed or applied text, or boxes moved
+ * by hand — or only a Versions commit does ({@link AppState.savedInVersions}):
+ * the commit and the repository go with the tab. Unlike the commands that
+ * replace a model, which let an attached file decide alone, the tab asks for
+ * the boxes of a Drive-attached model too: no Drive file holds them, and the
+ * browser keeps them only with Save.
  */
-export function driveBeforeUnload(
-  s: Pick<AppState, 'drive' | 'textBuffer' | 'serializeError'>,
-  e: Event,
+export function leaveUnsaved(
+  s: Pick<AppState, 'drive' | 'textBuffer' | 'serializeError' | 'savedText' | 'diagramPins' | 'savedPins' | 'savedInVersions'>,
 ): boolean {
-  if (!driveDirty(s)) return false;
+  return driveDirty(s) || browserDirty(s) || s.savedInVersions;
+}
+
+/**
+ * The page's `beforeunload` handler: asks before leaving exactly while
+ * {@link leaveUnsaved} or `editWaiting` (work the store does not show yet).
+ * Returns whether it asked.
+ */
+export function leaveBeforeUnload(s: Parameters<typeof leaveUnsaved>[0], e: Event, editWaiting = false): boolean {
+  if (!editWaiting && !leaveUnsaved(s)) return false;
   e.preventDefault();
   // Older browsers read the prompt from `returnValue`; any value asks.
   (e as BeforeUnloadEvent).returnValue = '';
@@ -1261,6 +1275,7 @@ export function createDriveActions(
       // Drive holds this text now: nothing a command would replace is lost.
       set((s) => ({
         savedText: payload,
+        savedInVersions: false,
         drive: { ...s.drive, file: { ...withMeta(file, meta), savedText: payload, rewrites: false }, conflict: null },
       }));
     } catch (err) {
@@ -1338,6 +1353,7 @@ export function createDriveActions(
         set((s) => ({
           savedText: opened.savedText,
           savedPins: pinsMark(s.diagramPins),
+          savedInVersions: false,
           drive: { ...s.drive, file: { ...withMeta(current, meta), ...opened }, conflict: null },
         }));
       },
@@ -1671,6 +1687,7 @@ export function createDriveActions(
           set((s) => ({
             linkedModel: null,
             savedText: payload,
+            savedInVersions: false,
             drive: {
               ...s.drive,
               file: { ...meta, savedText: payload, rewrites: false, rewriteAcknowledged: false, openedFrom: 'save-as' },
@@ -1790,7 +1807,7 @@ export function createDriveActions(
             // Opened, not attached: saving JSON back would be another format.
             // Still, the model is the file Drive holds — unless it was edited
             // while the library settled over it.
-            if (untouched) set((s) => ({ savedText: internals.savedTextNow(), savedPins: pinsMark(s.diagramPins) }));
+            if (untouched) set((s) => ({ savedText: internals.savedTextNow(), savedPins: pinsMark(s.diagramPins), savedInVersions: false }));
             patch({
               notice: { kind: 'info', message: DRIVE_MESSAGES.openedJson(meta.name), retryable: false },
               ...(link ? { link: null } : {}),
@@ -1804,6 +1821,7 @@ export function createDriveActions(
           set((s) => ({
             savedText: opened.savedText,
             savedPins: pinsMark(s.diagramPins),
+            savedInVersions: false,
             drive: {
               ...s.drive,
               file: {

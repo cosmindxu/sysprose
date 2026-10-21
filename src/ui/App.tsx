@@ -14,7 +14,7 @@ import '@xyflow/react/dist/style.css';
 import './layout.css';
 
 import {
-  driveBeforeUnload,
+  askBeforeLeaving,
   driveDirty,
   driveFileView,
   driveLink as driveLinkOf,
@@ -178,18 +178,17 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('keydown', handlePageKey);
   }, []);
 
-  // Leaving the page while the attached Drive file has unsaved changes asks
-  // first. The listener is installed only while that is so, so no other state
-  // of the page — and no test that never attaches a file — meets the prompt.
-  const driveUnsaved = useAppStore((s) => driveDirty(s));
+  // Leaving the page while the model has work nothing holds asks first: the
+  // attached Drive file's unsaved changes, or text and boxes nothing in this
+  // browser holds, or only a Versions commit does (`askBeforeLeaving`). The
+  // listener stays for the page's lifetime, not for a selector's say-so: an
+  // edit's text lags it by a recompute, and the question must not. It asks by
+  // preventing the leave, so a page that is saved — or a first visit that
+  // touched nothing — never meets the prompt.
   useEffect(() => {
-    if (!driveUnsaved) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      driveBeforeUnload(useAppStore.getState(), e);
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [driveUnsaved]);
+    window.addEventListener('beforeunload', askBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', askBeforeLeaving);
+  }, []);
 
   // Brief loading gate while the standard library merges. It intentionally does
   // NOT render the SDK-backed body (Explorer / diagram-canvas / Properties), so

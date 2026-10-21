@@ -63,10 +63,10 @@ const fetchSpy = vi.hoisted(() => vi.spyOn(globalThis, 'fetch'));
 
 import {
   DRIVE_MESSAGES,
+  askBeforeLeaving,
   bootDrive,
   browserDirty,
   checkFileName,
-  driveBeforeUnload,
   driveDirty,
   driveFileName,
   driveLink,
@@ -75,6 +75,7 @@ import {
   forcedRecomputePending,
   initialDriveState,
   lastAppliedText,
+  leaveBeforeUnload,
   loadHealth,
   loadHealthAtHand,
   loadHealthNow,
@@ -3335,7 +3336,7 @@ describe('google drive', () => {
       expect(file().id).toBe(remote.id);
       expect(st().textBuffer).toContain('part def Relay;');
       expect(driveDirty(st()), 'Drive does not hold the edit').toBe(true);
-      expect(driveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
+      expect(leaveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
       expect(st().undoStack, 'the edit’s step, nothing from before the open').toHaveLength(1);
       st().undo();
       expect(st().model.all().some((e) => e.declaredName === 'Relay')).toBe(false);
@@ -3363,7 +3364,7 @@ describe('google drive', () => {
       expect(file().savedText, 'Drive does not hold it').not.toContain('Kite');
       expect(driveDirty(st())).toBe(true);
       expect(browserDirty(st()), 'nor does this browser').toBe(true);
-      expect(driveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
+      expect(leaveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
       const run = vi.fn();
       st().driveGuard('New', 'dirty', run);
       expect(run).not.toHaveBeenCalled();
@@ -3998,19 +3999,21 @@ describe('google drive', () => {
       expect(checkFileName(st())).toBe('Other.sysml');
     });
 
-    it('asks before leaving exactly while the attached file has unsaved changes', async () => {
+    it('asks before leaving while the attached file has unsaved changes, and not once it is saved', async () => {
       const leaving = () => new Event('beforeunload', { cancelable: true });
       let e = leaving();
-      expect(driveBeforeUnload(st(), e)).toBe(false);
-      expect(e.defaultPrevented, 'no file').toBe(false);
+      expect(leaveBeforeUnload(st(), e)).toBe(false);
+      expect(e.defaultPrevented, 'no file, nothing edited').toBe(false);
       await attached();
       e = leaving();
-      expect(driveBeforeUnload(st(), e)).toBe(false);
+      expect(leaveBeforeUnload(st(), e)).toBe(false);
       expect(e.defaultPrevented, 'saved').toBe(false);
       edit();
       e = leaving();
-      expect(driveBeforeUnload(st(), e)).toBe(true);
+      expect(leaveBeforeUnload(st(), e)).toBe(true);
       expect(e.defaultPrevented, 'unsaved changes').toBe(true);
+      await st().driveSave();
+      expect(leaveBeforeUnload(st(), leaving()), 'saved to Drive').toBe(false);
     });
 
     it('names a Drive file as a .sysml file, without path or control characters, and not too long', () => {
@@ -5006,6 +5009,71 @@ describe('unsaved work — what a command that replaces the model asks about', (
     expect(unsaved(), 'New: nothing to lose').toBe(false);
     await whenLibrarySettled();
     expect(unsaved(), 'and still once its library merged').toBe(false);
+  });
+
+  it('asks before the tab closes over unsaved text or boxes, with no Drive file attached', async () => {
+    const leaving = () => new Event('beforeunload', { cancelable: true });
+    const asks = () => {
+      const e = leaving();
+      const asked = leaveBeforeUnload(st(), e);
+      expect(e.defaultPrevented, 'prevented exactly when it asked').toBe(asked);
+      return asked;
+    };
+    const box = (x: number) => ({ 'general|': { [rootId()]: { x, y: 20 } } });
+    expect(st().drive.file, 'no file').toBeNull();
+    expect(asks(), 'a first visit that touched nothing').toBe(false);
+    edit('Relay');
+    expect(asks(), 'an edit nothing holds').toBe(true);
+    st().undo();
+    expect(asks(), 'Undo back to the saved model').toBe(false);
+    st().setTextBuffer(st().textBuffer.replace('Swarm', 'Kite'));
+    expect(asks(), 'text typed and not applied').toBe(true);
+    st().setTextBuffer(st().textBuffer.replace('Kite', 'Swarm'));
+    expect(asks(), 'typed back as it was').toBe(false);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(asks(), 'a box moved by hand').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save holds the text and the boxes').toBe(false);
+    useAppStore.setState({ diagramPins: box(30) });
+    expect(asks(), 'moved again').toBe(true);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(asks(), 'moved back to where Save left it').toBe(false);
+    // A Versions commit holds the work for the session, not for the tab: the
+    // repository goes with it.
+    edit('Kite');
+    st().commitVersion('held in memory');
+    expect(unsaved(), 'a command that replaces the model: the commit holds it').toBe(false);
+    expect(asks(), 'but the tab: the commit goes with it').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save holds it').toBe(false);
+  });
+
+  it('asks before the tab closes over a branch switch or a merge no browser save holds', async () => {
+    const asks = () => askBeforeLeaving(new Event('beforeunload', { cancelable: true }));
+    st().refreshVersions();
+    st().commitVersion('first');
+    expect(asks(), 'a commit of the model as Save left it').toBe(false);
+    const main = st().currentBranchId;
+    st().createBranchCmd('side');
+    edit('Kite');
+    st().commitVersion('side work');
+    st().switchBranch(main);
+    expect(asks(), 'a branch head that only the repository holds').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save').toBe(false);
+  });
+
+  it('asks while an edit’s recompute is waiting, and while a save is being stored', async () => {
+    const asks = () => askBeforeLeaving(new Event('beforeunload', { cancelable: true }));
+    st().createElement('PartDefinition', rootId(), 'Relay');
+    expect(browserDirty(st()), 'the Text view does not show the edit yet').toBe(false);
+    expect(asks(), 'the edit is waiting').toBe(true);
+    flushRecompute();
+    expect(asks(), 'and once it has run').toBe(true);
+    const saving = st().saveProject('Swarm');
+    expect(asks(), 'the browser is still storing the save').toBe(true);
+    await saving;
+    expect(asks(), 'stored').toBe(false);
   });
 
   it('counts a save from the click: an edit made while the browser stores it reads unsaved, and a refused save is taken back', async () => {

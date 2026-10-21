@@ -222,6 +222,7 @@ import {
   browserTextDirty,
   createDriveActions,
   initialDriveState,
+  leaveBeforeUnload,
   pinsMark,
   withFinalNewline,
   type DriveActions,
@@ -264,7 +265,6 @@ export {
   browserDirty,
   checkFileName,
   createDriveServices,
-  driveBeforeUnload,
   driveConflictMessage,
   driveDirty,
   driveFileName,
@@ -273,6 +273,8 @@ export {
   driveMessage,
   driveTime,
   initialDriveState,
+  leaveBeforeUnload,
+  leaveUnsaved,
   setDriveServices,
   withFinalNewline,
 } from './store.drive';
@@ -434,6 +436,14 @@ export interface AppState extends DriveActions {
    * them too, so an arrangement nothing holds is asked about like unsaved text.
    */
   savedPins: string;
+  /**
+   * `savedText` was last set by a Versions-tab commit, branch switch or merge,
+   * which hold the model in memory alone: they go with the tab. Every save
+   * that persists (Save, Open ▾, New, a `?model=` link, a Drive open or save)
+   * clears it. `browserDirty` does not read it, for within the session a
+   * commit does hold the work; the tab's own question does (`leaveUnsaved`).
+   */
+  savedInVersions: boolean;
   projectName: string;
   queryResult: QueryResult | null;
   /** Bumps on every model mutation; selector hook for model-backed panels. */
@@ -2286,6 +2296,7 @@ export const useAppStore = create<AppState>((set, get) => {
         ? withFinalNewline(initialText.textBuffer)
         : null,
     savedPins: pinsMark({}),
+    savedInVersions: false,
     projectName: deriveProjectName(initialModel),
     queryResult: null,
     rev: 0,
@@ -3672,7 +3683,7 @@ export const useAppStore = create<AppState>((set, get) => {
       afterMutation();
       // A new, empty model has nothing to lose: the next New, Open or Import
       // does not ask about it.
-      set({ savedText: savedTextNow(), savedPins: pinsMark({}) });
+      set({ savedText: savedTextNow(), savedPins: pinsMark({}), savedInVersions: false });
     },
 
     async saveProject(name) {
@@ -3684,8 +3695,9 @@ export const useAppStore = create<AppState>((set, get) => {
       // (`browserSaving`).
       const before = get().savedText;
       const pinsBefore = get().savedPins;
+      const inVersionsBefore = get().savedInVersions;
       const mark = { saved: savedTextNow() };
-      set({ savedText: mark.saved, savedPins: pinsMark(get().diagramPins) });
+      set({ savedText: mark.saved, savedPins: pinsMark(get().diagramPins), savedInVersions: false });
       savesBeingStored.add(mark);
       const storing = (async (): Promise<void> => {
         try {
@@ -3694,7 +3706,7 @@ export const useAppStore = create<AppState>((set, get) => {
           await projectStore.saveProject(target, withPins(model.toJSON(), get().diagramPins));
         } catch (err) {
           // The browser refused to store it: it is not saved after all.
-          if (get().savedText === mark.saved) set({ savedText: before, savedPins: pinsBefore });
+          if (get().savedText === mark.saved) set({ savedText: before, savedPins: pinsBefore, savedInVersions: inVersionsBefore });
           throw err;
         } finally {
           savesBeingStored.delete(mark);
@@ -3733,7 +3745,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       afterMutation();
       // The project as stored: what this browser holds.
-      set((s) => ({ savedText: savedTextNow(), savedPins: pinsMark(s.diagramPins) }));
+      set((s) => ({ savedText: savedTextNow(), savedPins: pinsMark(s.diagramPins), savedInVersions: false }));
       // (Re)load the library when the saved project predates library support
       // (a no-op merge when it already carries one) and bind references — done
       // asynchronously so a large library never blocks the load.
@@ -3998,7 +4010,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().refreshVersions();
       // The commit holds the model for this session, as a save does: a branch
       // switch, or New, loses nothing switching back to this branch restores.
-      set({ savedText: savedTextNow() });
+      // Not the tab, though: the repository goes with it (`savedInVersions`).
+      versionsHold();
     },
 
     /**
@@ -4046,7 +4059,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       // The branch head holds the text it loaded: nothing unsaved there. The boxes
       // stay as they were, and unsaved: a branch head holds none.
-      set({ savedText: savedTextNow() });
+      versionsHold();
       void get().rebuildDiagram();
       get().refreshVersions();
       void loadStandardLibraryAsync();
@@ -4266,6 +4279,7 @@ if (
           linkedModel: { ...linked, status: 'loaded', projectName: useAppStore.getState().projectName },
           savedText: savedTextNow(),
           savedPins: pinsMark(useAppStore.getState().diagramPins),
+          savedInVersions: false,
         });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
@@ -4803,6 +4817,28 @@ function savedTextNow(): string | null {
     console.error('serialization failed', err);
     return null;
   }
+}
+
+/**
+ * The Versions tab's commit or branch head holds the model as it stands: it
+ * reads saved ({@link AppState.savedText}) — and not for the tab, whose
+ * repository is in memory ({@link AppState.savedInVersions}), unless the text
+ * it marks is the one that was saved already.
+ */
+function versionsHold(): void {
+  const saved = savedTextNow();
+  useAppStore.setState((s) => ({ savedText: saved, savedInVersions: s.savedInVersions || saved !== s.savedText }));
+}
+
+/**
+ * The page's `beforeunload` listener: asks (`leaveBeforeUnload`) before the
+ * tab closes or reloads over work nothing holds. It counts what the store does
+ * not show yet: an edit whose recompute is still waiting has not reached the
+ * text, and a browser save still being stored may yet be refused. Installed
+ * for the page's lifetime — it asks only by preventing the leave.
+ */
+export function askBeforeLeaving(e: Event): boolean {
+  return leaveBeforeUnload(useAppStore.getState(), e, forcedRecomputePending() || browserSaving !== null);
 }
 
 /**

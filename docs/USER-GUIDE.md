@@ -486,11 +486,11 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
-(the grouping); `src/ui/store.ts:321-334` (`diagramRootId`, the diagram
-scope), `1536-1691` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2512-2529` (`pinNodePositions`: the move itself), `2117-2174`
+(the grouping); `src/ui/store.ts:323-336` (`diagramRootId`, the diagram
+scope), `1546-1701` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2523-2540` (`pinNodePositions`: the move itself), `2127-2184`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4228-4269` (`openText`: a file opened as text starts afresh).
+`4241-4283` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -635,14 +635,14 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1733-1829` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `1952-2037` (`recomputeNow`), `2039-2216`
+**Source of truth:** `src/ui/store.ts:1743-1839` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `1962-2047` (`recomputeNow`), `2049-2226`
 (`afterSdkEdit`: an SDK edit; `typedTextFirst`, `applyParsed`: a field's change over
-typed text), `882-939` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2807-2838`
-(`createElement`: a new element), `3127-3194` (`reparent`, `reparentMany`: a
-move), `4879-4924` (`libraryNote`: the note that says so), `3635-3648`
-(`applyText`), `4082-4128` (`undo`, `redo`), `4966-5024`
+typed text), `892-949` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2818-2849`
+(`createElement`: a new element), `3138-3205` (`reparent`, `reparentMany`: a
+move), `4915-4960` (`libraryNote`: the note that says so), `3646-3659`
+(`applyText`), `4095-4141` (`undo`, `redo`), `5002-5060`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
@@ -3642,8 +3642,8 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:3318-3500` (`runValidation`,
-`solveParametric`: the four buttons), `2039-2216` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3329-3511` (`runValidation`,
+`solveParametric`: the four buttons), `2049-2226` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -3902,7 +3902,7 @@ automatically.
 | A project you pressed **Save** on | IndexedDB (`sysmlv2-modeler`), falling back to localStorage | **Yes** — reopen it with **Open ▾** |
 | Boxes you moved by hand on a diagram | with that project, beside the model — never in its text, a SysML or JSON export, or a Drive file | **Yes**, with the project — **Open ▾** puts them back |
 | A file you saved to Drive | your Google Drive (`drive.file` scope: only files made or chosen with this app) | **Yes** — Drive ▾ → Recent, Browse Drive…, or its link |
-| Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work |
+| Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work (closing or reloading the tab asks first) |
 | Versions-tab commits, branches, merges | memory | **No** |
 | Regroup scenarios | localStorage (`sysmlv2-scenarios`) | Yes |
 | Light/dark theme | localStorage (`theme`) | Yes |
@@ -3961,9 +3961,14 @@ storing a **Save** waits for it; if the browser refuses the save (its storage
 full, or blocked for the site), the command waits, and the question says so.
 With a Google Drive file attached, the question is about that file's unsaved
 changes instead ([§8.1](#81-google-drive-optional)). Closing or reloading the
-tab asks nothing about work unsaved in this browser, and the Versions tab's
-commits go with the tab; only an attached Drive file's unsaved changes raise
-the browser's question. Press **Save** before you leave.
+tab asks too, with the browser's own question whether to leave the page, while
+the model has work no save holds — the same text and boxes as above, an edit
+the Text view has not caught up with yet, and an attached Drive file's unsaved
+changes as well — and asks nothing once **Save** has kept them (a Drive file
+does not hold the boxes: with one attached, a box moved by hand still makes the
+tab ask). A commit, a branch switch or a merge in the Versions tab does not stop
+the tab asking: those are kept in memory and go with the tab, so only **Save**
+does. Press **Save** before you leave.
 
 If you want the model out of the browser, use **Export ▾**: SysML text, model
 JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
@@ -3986,15 +3991,15 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:800-818` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3652-3745` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `3987-4053` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4808-4818` (`mergeLoads`: a merge that loads),
-`4820-4938` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+`src/ui/store.ts:810-828` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3663-3757` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `3999-4066` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4844-4854` (`mergeLoads`: a merge that loads),
+`4856-4974` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
 (Save, and Export ▾ →
-SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `1378-1443` (the
-question), `src/api/versioning.ts:481-494`,
+SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
+`leaveBeforeUnload`: the tab's question), `1394-1459` (the question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:96-103`,
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
@@ -4046,7 +4051,8 @@ the parser's best guess at broken text is not what you see, so the browser keeps
 the model as it stood, while Drive gets your text as typed. Nothing goes to
 Drive by itself — there is no autosave — and closing or reloading the tab while
 a Drive file has unsaved changes raises the browser's own question whether to
-leave the page. Every row the strip can show, and every Drive control with its
+leave the page (as it does for work no save holds without a Drive file,
+[§8](#8-what-is-kept-and-what-is-not)). Every row the strip can show, and every Drive control with its
 test id, is in [Appendix A](#google-drive-panel-and-strip).
 
 **Opening.** Signed in, the panel's **Recent** lists the files this app saved or
@@ -4173,8 +4179,8 @@ first, as Save does — one Undo step — unless it has a syntax error or a
 collaboration room is connected ([§8](#8-what-is-kept-and-what-is-not)). It
 names the file after the project, so save it under the name the command uses.
 
-**Source of truth:** `src/ui/store.drive.ts:537-617` (every sentence the
-feature says), `1193-1207` (the content check), `src/persistence/drive/`,
+**Source of truth:** `src/ui/store.drive.ts:551-631` (every sentence the
+feature says), `1207-1221` (the content check), `src/persistence/drive/`,
 `src/ui/panels/DriveMenu.tsx`, `src/ui/panels/DriveStrip.tsx`,
 `test/e2e/drive.spec.ts` (against faked Google services).
 
@@ -4241,9 +4247,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:233`
-(`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5113-5236` (`mergeLibrary`, `loadStandardLibraryAsync`:
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:234`
+(`UNDO_LIMIT`: undo is bounded), `1743-1773` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `5149-5272` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 
