@@ -2062,6 +2062,7 @@ export const useAppStore = create<AppState>((set, get) => {
    * Text view first leaves it standing ({@link typedTextFirst}).
    */
   function afterMutation(keepTyped = false): void {
+    if (keepTyped) fieldOverTyped = true;
     set({ rev: get().rev + 1 });
     scheduleRecompute(!keepTyped);
   }
@@ -4383,6 +4384,17 @@ let lastApplied: { text: string; model: Model; modelRev: number } | null = null;
 let typedFrom: { text: string; model: Model; modelRev: number } | null = null;
 
 /**
+ * A field's change went into the model over text typed in the Text view and
+ * not applied, which stayed ({@link typedTextFirst}'s `'kept'`): applying that
+ * text later — a Save or an Export ▾ → SysML does — puts it over the change.
+ * It is read by {@link applyTypedTextToSave}, which says so, and it is forgotten
+ * as soon as no typed text stands (see below). Not set by an SDK edit, a peer's
+ * edit or a faulted apply: those never go through a field's change, and each
+ * has its own rule for the text ({@link afterSdkEdit}).
+ */
+let fieldOverTyped = false;
+
+/**
  * The text the live model was last applied from, or null once the model has
  * changed by any other route since.
  *
@@ -4760,6 +4772,13 @@ function typedTextUnapplied(): boolean {
   return textDirty && textBuffer !== lastAppliedText();
 }
 
+// The typed text a field's change went in over is gone — applied, replaced by
+// the model's own text, or the model replaced — so the next typed text is not
+// one a change was made over.
+useAppStore.subscribe(() => {
+  if (fieldOverTyped && !typedTextUnapplied()) fieldOverTyped = false;
+});
+
 /** Where the first syntax error of a text typed in the Text view is: what a save that kept the text back names. */
 export interface TypedTextFault {
   line: number;
@@ -4861,6 +4880,14 @@ export function mergeLoads(sourceBranchId: string, targetBranchId: string, strat
 export type TypedTextKept = TypedTextFault | 'room';
 
 /**
+ * What a save or an export has to say about the typed text it met: why it was
+ * kept back ({@link TypedTextKept}), or `'over-changes'`: it was applied, over
+ * field changes made in the app since the typing began, which the apply drops
+ * (see {@link applyTypedTextToSave}).
+ */
+export type TypedTextNote = TypedTextKept | 'over-changes';
+
+/**
  * Before a save in this browser — Save and Ctrl/Cmd+S (in the Text view's
  * editor too), the offline row's Save, the guard's Save — and before
  * Export ▾ → SysML: make text typed in the Text view the model, as Apply
@@ -4877,6 +4904,15 @@ export type TypedTextKept = TypedTextFault | 'room';
  *   the peers' edits for everyone. **Apply text → model** still does it, as
  *   a choice.
  *
+ * A field's change made while the text stood (a Properties box, a rename:
+ * {@link typedTextFirst} kept the text, as the element is not in it, or the
+ * model changed since the typing began) is in the model but not in the typed
+ * text, so the apply drops it: `'over-changes'` is returned, for the save to
+ * say so (the strip's info note, once per Save or Export). An SDK edit, a
+ * peer's edit and a faulted apply leave the text standing too, but they are no
+ * field's change, and say nothing. Nor does the guard's Save say it: the command it
+ * guards replaces the model right after.
+ *
  * The save writes the project that is open. An apply renames the project
  * after the model's first package (`deriveProjectName`), and the save after
  * it would then overwrite another saved project of that name, and leave the
@@ -4890,16 +4926,17 @@ export type TypedTextKept = TypedTextFault | 'room';
  * the force off, and the typed text wins. (A Drive save's upload does the
  * same, `payloadNow` in `./store.drive`.)
  */
-export function applyTypedTextToSave(opts: { replacing?: boolean } = {}): TypedTextKept | null {
+export function applyTypedTextToSave(opts: { replacing?: boolean } = {}): TypedTextNote | null {
   if (forcedRecomputePending()) flushRecompute();
   if (!typedTextUnapplied()) return null;
   const fault = typedTextFault();
   if (fault !== null) return fault;
   if (collabRuntime !== null && opts.replacing !== true) return 'room';
+  const over = fieldOverTyped;
   const { projectName, applyText } = useAppStore.getState();
   applyText();
   useAppStore.setState({ projectName });
-  return null;
+  return over ? 'over-changes' : null;
 }
 
 /**
@@ -4920,7 +4957,7 @@ let keptBackNote: { notice: DriveNotice; by: 'save' | 'export' } | null = null;
  * this browser. Another notice standing (the browser refused the save, say)
  * is left as it is.
  */
-export function sayWhatTheBrowserKept(kept: TypedTextKept | null): void {
+export function sayWhatTheBrowserKept(kept: TypedTextNote | null): void {
   sayWhatWasKept(kept, 'save');
 }
 
@@ -4930,16 +4967,26 @@ export function sayWhatTheBrowserKept(kept: TypedTextKept | null): void {
  * back takes down an earlier export's note, and leaves a save's: the copy in
  * this browser still lacks the text — as an export's stays after a save.
  */
-export function sayWhatTheExportKept(kept: TypedTextKept | null): void {
+export function sayWhatTheExportKept(kept: TypedTextNote | null): void {
   sayWhatWasKept(kept, 'export');
 }
 
+/** The sentence for `kept`, from a save or an export (`by`). */
+function keptBackMessage(kept: TypedTextNote, by: 'save' | 'export'): string {
+  if (kept === 'over-changes') {
+    return by === 'save' ? DRIVE_MESSAGES.typedTextOverChanges : DRIVE_MESSAGES.typedTextExportedOverChanges;
+  }
+  if (by === 'save') return kept === 'room' ? DRIVE_MESSAGES.typedTextInRoom : DRIVE_MESSAGES.typedTextKeptBack(kept.line);
+  return kept === 'room' ? DRIVE_MESSAGES.typedTextNotExportedInRoom : DRIVE_MESSAGES.typedTextNotExported(kept.line);
+}
+
 /**
- * Put up the note that a save or an export (`by`) kept typed text back — over
- * an earlier such note, or the library note ({@link sayNotIntoLibrary}) — or
- * take its own kind down.
+ * Put up the note that a save or an export (`by`) kept typed text back — or
+ * applied it over a field's change ({@link TypedTextNote}) — over an earlier
+ * such note, or the library note ({@link sayNotIntoLibrary}), or take its own
+ * kind down.
  */
-function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void {
+function sayWhatWasKept(kept: TypedTextNote | null, by: 'save' | 'export'): void {
   const { drive } = useAppStore.getState();
   // The last kept-back note, of either kind, when it is the notice up now.
   const standing = drive.notice !== null && drive.notice === keptBackNote?.notice ? keptBackNote : null;
@@ -4951,14 +4998,7 @@ function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void
   // of either kind, and by an export that holds the text.
   if (by === 'export') heldExportNote = null;
   if (kept !== null && (drive.notice === null || standing !== null || library)) {
-    const message =
-      by === 'save'
-        ? kept === 'room'
-          ? DRIVE_MESSAGES.typedTextInRoom
-          : DRIVE_MESSAGES.typedTextKeptBack(kept.line)
-        : kept === 'room'
-          ? DRIVE_MESSAGES.typedTextNotExportedInRoom
-          : DRIVE_MESSAGES.typedTextNotExported(kept.line);
+    const message = keptBackMessage(kept, by);
     const notice: DriveNotice = { kind: 'info', message, retryable: false };
     keptBackNote = { notice, by };
     heldExportNote = null;
@@ -4966,8 +5006,7 @@ function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void
   } else if (kept !== null && by === 'export') {
     // A notice of another kind stands (a Drive error, `<name> closed`): the
     // file lacks the typed text all the same, so the note waits for the strip.
-    const message = kept === 'room' ? DRIVE_MESSAGES.typedTextNotExportedInRoom : DRIVE_MESSAGES.typedTextNotExported(kept.line);
-    heldExportNote = { kind: 'info', message, retryable: false };
+    heldExportNote = { kind: 'info', message: keptBackMessage(kept, 'export'), retryable: false };
   } else if (kept === null && standing?.by === by) {
     useAppStore.setState((s) => ({ drive: { ...s.drive, notice: null } }));
   }

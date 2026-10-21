@@ -4624,11 +4624,14 @@ describe('google drive', () => {
 
         // The guard's Save applies typed text, in a room too, and New goes on.
         st().setTextBuffer(st().textBuffer.replace('part def Typed;', 'part def Typed;\n    part def Guarded;'));
+        // A peer's edit since the typing is no field's change: the apply drops it, and says nothing of it.
+        peer.create('PartDefinition', { declaredName: 'PeerLate', ownerId: peer.roots()[0].id });
         const run = vi.fn();
         st().driveGuard('New', 'dirty', run);
         expect(drive().prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
         await st().driveRunPending('save');
         expect(sorted(saved.at(-1)!)).toEqual(['Drone', 'Guarded', 'Typed']);
+        expect(drive().notice, 'a peer’s edit is not a field’s change').toBeNull();
         expect(run).toHaveBeenCalledTimes(1);
       } finally {
         st().disconnectCollab();
@@ -6092,6 +6095,101 @@ describe('a field’s change over text typed in the Text view and not applied', 
     expect(st().textBuffer, 'left as it was').toBe(untouched);
     expect(st().textDirty).toBe(true);
     expect(st().undoStack.length, 'no Undo step').toBe(steps);
+  });
+
+  /**
+   * The "kept" case above leaves the typed text over a model that has the
+   * change: a later Save or Export ▾ → SysML applies it, and drops the change.
+   * They say so — an info note, once; the text is not kept back for it — and
+   * only for a field's change: an SDK edit, a peer's edit (the room test in the
+   * Save block) and a faulted apply leave the text standing too, and say nothing.
+   */
+  describe('Save or Export applying it over the change', () => {
+    const OTHER = (t: string) => t.replace('part def Relay;', 'part def Other;');
+    const note = () => st().drive.notice;
+
+    it('Save says so once, and the next save that holds the model takes the note down', async () => {
+      const relay = await relayModel();
+      const typed = OTHER(st().textBuffer);
+      st().setTextBuffer(typed);
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      expect(st().textBuffer, 'the text stays over the change').toBe(typed);
+
+      await runSave();
+      expect(named('Other'), 'the typed text is applied').toBe(true);
+      expect(named('Kite'), 'the change is dropped').toBe(false);
+      expect(note()).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextOverChanges, retryable: false });
+      st().undo();
+      expect(named('Kite'), 'Undo brings the change back, as the note says').toBe(true);
+
+      await runSave();
+      expect(note(), 'the save that holds the change takes the note down').toBeNull();
+    });
+
+    it('Export ▾ → SysML says so too, in its own words', async () => {
+      const relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+
+      expect(runExportSysml()).toContain('part def Other;');
+      expect(note()).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextExportedOverChanges, retryable: false });
+      runExportSysml();
+      expect(note(), 'an export that holds the model takes it down').toBeNull();
+    });
+
+    it('the guard’s Save applies it over the change and says nothing: the command replaces the model next', async () => {
+      const relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      const run = vi.fn(() => st().newProject('NewModel'));
+      st().driveGuard('New', 'dirty', run);
+      await st().driveRunPending('save');
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(note(), 'a note about the model the command replaced would mislead').toBeNull();
+    });
+
+    it('says nothing over an SDK edit or a faulted apply, nor once the typed text was applied or replaced', async () => {
+      // An SDK edit: the text stays, and Save applies it over the edit (one Undo brings the edit back).
+      let relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      sdk().update(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      await runSave();
+      expect(named('Other') && !named('Kite'), 'applied over the edit').toBe(true);
+      expect(note(), 'an SDK edit is no field’s change').toBeNull();
+
+      // A faulted apply: its text is the model's, not typed.
+      await openText('package Swarm {\n    blok bad;\n}\n', 'sysml');
+      expect(st().textDirty).toBe(true);
+      await runSave();
+      expect(note(), 'a faulted apply').toBeNull();
+
+      // A change over typed text, then that text applied: the next typed text is not one a change was made over.
+      relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      st().applyText();
+      st().setTextBuffer(st().textBuffer.replace('part def Other;', 'part def Other;\n    part def Later;'));
+      await runSave();
+      expect(named('Later'), 'applied').toBe(true);
+      expect(note(), 'the earlier change was made over the text applied since').toBeNull();
+
+      // ...or replaced by the model's own text: an edit in the app forces the recompute.
+      relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      st().createElement('PartDefinition', rootId(), 'Edited');
+      flushRecompute();
+      expect(st().textDirty, 'the edit replaced the typed text').toBe(false);
+      st().setTextBuffer(st().textBuffer.replace('part def Edited;', 'part def Edited;\n    part def Later;'));
+      await runSave();
+      expect(named('Later'), 'applied').toBe(true);
+      expect(note()).toBeNull();
+    });
   });
 });
 
