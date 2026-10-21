@@ -42,6 +42,8 @@ import {
   SEMANTICS_ADMITS,
   WALK_ADMITS,
   coverRequiredRefusal,
+  isLoneDefinition,
+  propertiesOf,
   traceLine,
   type BehaviourReport,
   type PropertyVerdict,
@@ -484,6 +486,14 @@ function noMachine(model: Model, scopeId: ElementId): { message: string; holder:
   };
 }
 
+/**
+ * What a reference names for `check-behaviour`. `ok: true` carries a machine —
+ * or a LONE DEFINITION (`isLoneDefinition`, `./patterns`), a `state def` that
+ * owns no transition, sits in no machine and carries a property, which is NO
+ * machine: it is returned only so that `behaviourReport` reports what it
+ * carries as not checked. Never walk it — `exploreMachine` or `reachReport`
+ * scoped to it would answer about an element this engine says it never walks.
+ */
 export type MachineFor =
   | { ok: true; machine: ElementRecord }
   | { ok: false; message: string; holder: ElementId | null; candidates: ElementId[] };
@@ -505,18 +515,35 @@ export const NO_DEFAULT_MACHINE =
   'property in the file against every machine in it would report failures against machines ' +
   'the property was never about.';
 
-/** The machine to check, refused BY NAME when the reference holds none or several. */
+/**
+ * The machine to check, refused BY NAME when the reference holds none or
+ * several — or, for a reference that is a lone definition carrying a property,
+ * that definition, which is no machine and is not to be walked ({@link MachineFor}).
+ */
 export function behaviourMachineFor(model: Model, scopeId: ElementId): MachineFor {
   const machines = stateMachinesIn(model, scopeId);
-  if (machines.length === 0) {
-    return { ok: false, ...noMachine(model, scopeId), candidates: [] };
-  }
   // A reference that IS a machine names that machine, whatever it holds: a
   // `state def` written inside it is a machine of its own, so the outer one
   // holds two, and refusing it as "several" left it the one machine no
   // reference could name — the refusal's own pick row named it again.
   const named = machines.find((m) => m.id === scopeId);
   if (named !== undefined) return { ok: true, machine: named };
+  // AND A REFERENCE THAT IS A LONE DEFINITION CARRYING A PROPERTY NAMES IT. A
+  // top-level `state def` that owns no transition is no machine and sits in
+  // none, so no machine reports what it carries: refused here as holding no
+  // machine — or answered with the one machine written inside it — those
+  // carriers were reported by nothing. Named, every property about it is a
+  // `not checked` row (`checkProperty`, `./patterns`), as a nested
+  // definition's are on the machine that holds it, and each row names the
+  // machines written inside it, which their own names check. One that carries
+  // nothing resolves as before: there is nothing of its own to report.
+  const scope = model.get(scopeId);
+  if (scope !== undefined && isLoneDefinition(model, scope) && propertiesOf(model, scopeId).length > 0) {
+    return { ok: true, machine: scope };
+  }
+  if (machines.length === 0) {
+    return { ok: false, ...noMachine(model, scopeId), candidates: [] };
+  }
   if (machines.length > 1) {
     // Refused rather than answered over all of them, for `ELEMENT_REQUIRED_LEAD`'s
     // reason: a verdict is about one machine, and a `REF` that holds several is

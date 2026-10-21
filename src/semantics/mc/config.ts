@@ -721,15 +721,26 @@ function freeze(regionId: ElementId, d: Draft): StepResult {
 }
 
 /**
- * Enter a state, cascading into its initial (or history-resumed) substate;
- * entry/do phases fire outer→inner. The interpreter's `enterCascade`.
+ * Enter ONE state: push it, start its dwell, and fire its entry and do phases.
+ * No cascade — {@link enterCascade} adds that, and {@link stepConfig} enters a
+ * target's enclosing states with this alone, because a step into a nested
+ * state enters each of them on the way down to the state it names, not at
+ * their own initial substates.
  */
-function enterCascade(model: Model, d: Draft, scope: Scope, stateId: ElementId): void {
+function enterOne(model: Model, d: Draft, scope: Scope, stateId: ElementId): void {
   d.stack.push(stateId);
   d.entryTime.set(stateId, d.clock);
   d.visited.push(stateId);
   runStatePhase(model, stateId, 'entry', d.store, scope, d.performed);
   runStatePhase(model, stateId, 'do', d.store, scope, d.performed);
+}
+
+/**
+ * Enter a state, cascading into its initial (or history-resumed) substate;
+ * entry/do phases fire outer→inner. The interpreter's `enterCascade`.
+ */
+function enterCascade(model: Model, d: Draft, scope: Scope, stateId: ElementId): void {
+  enterOne(model, d, scope, stateId);
   const subs = directStates(model, stateId);
   if (subs.length === 0) return;
   let next: ElementId | null;
@@ -745,7 +756,9 @@ function enterCascade(model: Model, d: Draft, scope: Scope, stateId: ElementId):
 /**
  * Exit states from the leaf down to (but not below) `targetLen`; exit phases
  * fire inner→outer, and each composite parent records its last-active child.
- * The interpreter's `exitTo`.
+ * The interpreter's `exitTo`. {@link stepConfig} passes the depth of the least
+ * common ancestor of a transition's source and target, so a step out of a
+ * composite exits the composite too.
  */
 function exitTo(model: Model, d: Draft, scope: Scope, targetLen: number): void {
   while (d.stack.length > targetLen) {
@@ -947,14 +960,58 @@ function labelFor(tr: ElementRecord, input: StepInput): string {
 }
 
 /**
+ * The states a step stands in once it is in `id`, outermost first and ending
+ * with `id` itself: `[s0, …, sk = id]`, where `s0` is written directly in the
+ * region and each next one directly in the one before. It is the chain
+ * {@link stepConfig} enters on its way down to a target, and the bottom of the
+ * stack the step leaves behind.
+ *
+ * `null` where there is no such chain: `id` is the region itself, lies outside
+ * it, or sits under an element between it and the region that is not a
+ * `StateUsage` — a nested `state def`, which is a machine of its own
+ * ({@link regionDescendants}), or an action. A step into such a target has no
+ * least common ancestor to exit to; {@link stepConfig} reads it as it read
+ * every step before (`docs/06` §8.10), and the walk refuses a machine that
+ * holds one (`./explore.ts`, `unsupportedConstructs`).
+ */
+export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId): ElementId[] | null {
+  if (id === regionId) return null;
+  const path: ElementId[] = [id];
+  for (let p = model.get(id)?.ownerId ?? null; p !== regionId; p = model.get(p)?.ownerId ?? null) {
+    if (p == null || model.get(p)?.eClass !== 'StateUsage') return null;
+    path.push(p);
+  }
+  return path.reverse();
+}
+
+/**
  * Fire ONE transition and return the configuration it leads to, plus what the
  * firing appended to the run.
  *
+ * A STEP EXITS TO THE LEAST COMMON ANCESTOR of its source and its target, as
+ * UML reads a transition, and every transition is external: the states the
+ * source sits in that do not also hold the target are exited, innermost first
+ * from the active leaf; then the effect runs; then the target's enclosing
+ * states that are not active are entered, outermost first, and the target with
+ * its cascade into its initial substate. So a step out of a composite exits the
+ * composite, a step to an ancestor exits and re-enters it, and a self-transition
+ * exits and re-enters its state — a composite restarts at its initial
+ * substate. The step used to exit only down to the SOURCE's level and enter the
+ * target on top of what was left, so `first b then Idle` from inside `C0` left
+ * `[C0, Idle]`: `C0` still active, its transitions still enabled, a `state C0`
+ * atom still holding, and one more state stacked per round trip
+ * (`docs/06` §8.9, §8.10).
+ *
+ * A target with no chain of states ({@link hierarchyPath} is `null`) is stepped
+ * as before: exit down to the source's level, enter the target on top. That is
+ * a step across a machine's boundary, into the machine's own root, or into a
+ * node under an action; the walk refuses each, so no verdict stands on it.
+ *
  * `choice` must have come from {@link enabledTransitions} on THIS configuration:
- * the level it names is the stack index the exit cascade unwinds to, and a
- * choice from another configuration would exit the wrong states. A mismatch is
- * a programming error and is raised as one rather than silently firing
- * something else.
+ * the level it names is where the source sits on the stack, and a choice from
+ * another configuration would exit the wrong states. A mismatch is a
+ * programming error and is raised as one rather than silently firing something
+ * else.
  *
  * The argument is never mutated: the stack, the store, the entry-time table and
  * the history map are all copied first.
@@ -977,10 +1034,21 @@ export function stepConfig(
   }
   const scope = regionScope(model, cfg.regionId);
   const d = draftOf(cfg);
-  exitTo(model, d, scope, choice.level); // exit leaf..source inclusive (source sits at `level`)
-  applyTransitionEffect(choice.transition, d.store, scope);
   const to = choice.transition.target![0];
+  const path = hierarchyPath(model, cfg.regionId, to);
+  // How many states stay active: the states above the source on the stack that
+  // also hold the target. Never the source itself (`<= level`), nor the target
+  // (`< path.length`): every transition is external.
+  let keep = choice.level;
+  if (path !== null) {
+    keep = 0;
+    const shared = Math.min(choice.level, path.length - 1);
+    while (keep < shared && cfg.stack[keep] === path[keep]) keep++;
+  }
+  exitTo(model, d, scope, keep);
+  applyTransitionEffect(choice.transition, d.store, scope);
   d.fired.push({ transitionId: choice.transition.id, from, to, trigger: choice.label });
+  if (path !== null) for (let i = keep; i < path.length - 1; i++) enterOne(model, d, scope, path[i]);
   enterCascade(model, d, scope, to);
   return freeze(cfg.regionId, d);
 }

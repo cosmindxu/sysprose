@@ -266,20 +266,25 @@ test('Edit acts on the selection, and is disabled without one', async ({ page })
 
 /*
  * The checks that walk a state machine run in a worker. A walk is bounded by
- * configurations, not by time: a machine of a few composite states, each with a
- * few substates that also leave for a top state, reaches the 10,000-configuration
- * bound and holds a page for a good part of a second if it runs there. These
- * tests use such a machine and check what a person is promised: the check says
- * it is running, the page stays usable, Cancel ends it, and an answer that
- * arrives after the model changed is not passed off as current.
+ * configurations and by depth, not by time: a long procedure — a few composite
+ * stages of a few dozen substates each — ends further away than the 200-step
+ * depth bound and holds a page for the better part of a second if it runs
+ * there. These tests use such a machine and check what a person is promised:
+ * the check says it is running, the page stays usable, Cancel ends it, and an
+ * answer that arrives after the model changed is not passed off as current.
  */
 
 /**
- * `composites` composite states of `children` substates each, driven by events,
- * with every composite reachable from every other, and every substate leaving
- * for `Idle`: that step exits the substate alone and enters `Idle` under the
- * composite, as the interpreter does, so each round trip stacks one more state
- * and the configurations multiply until the bound.
+ * `composites` composite stages of `children` substates each, driven by events:
+ * `Idle` enters the first stage, the last substate of each steps into the first
+ * of the next, every substate but the first can step back to the one before,
+ * and each stage can be left for `Idle`. A step exits to the least common
+ * ancestor of its source and its target (`docs/06` §8.10), so the walk holds one
+ * configuration per state, and the procedure's end is `composites × children`
+ * steps from the opening. No substate leaves for `Idle` on its own: two hundred
+ * edges into one state cost the state view minutes of layout. (Such a step used
+ * to leave its composite stacked under `Idle`, which is how a few composites of
+ * four substates reached the configuration bound.)
  */
 function heavyMachine(composites: number, children: number): string {
   const L = ['package Heavy {', '  item def Cmd { attribute id; }', '  part def Machine {', '    state def Modes {', '      initial start;', '      transition start -> Idle;', '      state Idle;'];
@@ -287,13 +292,12 @@ function heavyMachine(composites: number, children: number): string {
     L.push(`      state C${c} {`, '        initial go;', `        transition go -> C${c}_0;`);
     for (let k = 0; k < children; k++) L.push(`        state C${c}_${k};`);
     for (let k = 0; k + 1 < children; k++) L.push(`        transition c${c}_${k} first C${c}_${k} accept step${c}_${k} : Cmd then C${c}_${k + 1};`);
-    for (let k = 0; k < children; k++) L.push(`        transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} : Cmd then Idle;`);
+    for (let k = 1; k < children; k++) L.push(`        transition u${c}_${k} first C${c}_${k} accept undo${c}_${k} : Cmd then C${c}_${k - 1};`);
+    if (c + 1 < composites) L.push(`        transition nx${c} first C${c}_${children - 1} accept next${c} : Cmd then C${c + 1}::C${c + 1}_0;`);
     L.push('      }');
+    L.push(`      transition out${c} first C${c} accept leave${c} : Cmd then Idle;`);
   }
-  for (let c = 0; c < composites; c++) {
-    L.push(`      transition in${c} first Idle accept enter${c} : Cmd then C${c};`, `      transition out${c} first C${c} accept leave${c} : Cmd then Idle;`);
-    for (let d = 0; d < composites; d++) if (c !== d) L.push(`      transition jump${c}_${d} first C${c} accept jump${c}_${d} : Cmd then C${d};`);
-  }
+  L.push('      transition in0 first Idle accept enter0 : Cmd then C0;');
   L.push('    }', '  }', '}');
   return `${L.join('\n')}\n`;
 }
@@ -367,10 +371,14 @@ const focusedTestId = (page: Page): Promise<string | null> =>
   page.evaluate(() => `${document.activeElement?.tagName}:${document.activeElement?.getAttribute('data-testid') ?? ''}`);
 
 test('a state-machine check runs in a worker: it says so, the page stays usable, and the answer lands', async ({ page, browser }) => {
+  // Two pages lay out a machine of some two hundred states before either walks it.
+  test.setTimeout(120_000);
   const errors = captureErrors(page);
   const workers: string[] = [];
   page.on('worker', (w) => workers.push(w.url()));
-  await openMachine(page, heavyMachine(6, 4));
+  await openMachine(page, heavyMachine(6, 35));
+  // Frames are watched over the check, not over the layout of the machine just opened.
+  await diagramSettled(page);
   const reach = checkRow(page, 'reach');
   await watchFrames(page);
 
@@ -384,7 +392,8 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
   // The Checks tab comes forward at the click, where the answer will be, and lists the check as under way.
   await expect(page.locator('.bottom-tab.is-active')).toContainText('Checks');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', /checking|running/);
-  await expect(reach).toHaveAttribute('data-verdict', 'running', { timeout: 60_000 });
+  // Polled finely: the walk runs for about a second, and the default polling backs off to a second.
+  await expect.poll(() => reach.getAttribute('data-verdict'), { intervals: [50], timeout: 60_000 }).toBe('running');
   await expect(reach.getByTestId('palette-check-verdict')).toHaveText('running…');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', 'running');
   // Another check, started while it runs, is answered on the spot.
@@ -418,7 +427,8 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
     await plain.addInitScript(() => {
       delete (window as unknown as { Worker?: unknown }).Worker;
     });
-    await openMachine(plain, heavyMachine(6, 4));
+    await openMachine(plain, heavyMachine(6, 35));
+    await diagramSettled(plain);
     await watchFrames(plain);
     const pageReach = checkRow(plain, 'reach');
     await pageReach.getByTestId('palette-check-run').click();

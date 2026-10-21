@@ -574,6 +574,40 @@ const STRANDED = `package Q4 {
 }
 `;
 
+/**
+ * The same carriers on a TOP-LEVEL `state def` that owns no transition: `Lone`
+ * steps by a succession alone, so it is no machine, and it is written inside
+ * none, so no machine's text holds its carriers either. `Deep` inside it is a
+ * machine with its own carrier; `Plain` carries nothing; `M` is a machine
+ * beside them.
+ */
+const TOP_STRANDED = `package T1 {
+    state def Lone {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state a"; }
+        }
+        first a then b;
+        state def Deep {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state q"; }
+            state q;
+            state r;
+            transition qr first q accept go then r;
+        }
+    }
+    state def Plain {
+        state p1;
+        state p2;
+    }
+    state def M {
+        state m1;
+        state m2;
+        transition t first m1 accept go then m2;
+    }
+}
+`;
+
 describe('a nested state def: the machine that holds it, and a transition across its boundary', () => {
   let dir: string;
   beforeAll(() => {
@@ -925,6 +959,84 @@ describe('a nested state def: the machine that holds it, and a transition across
     expect(outer.stdout).toContain('Q4::Outer — 3 properties: 1 pass, 0 fail, 0 vacuous, 2 inconclusive');
     expect(outer.stdout).toContain('INCONCLUSIVE absence — not checked');
     expect(outer.stdout).toContain('info verification/behaviour-unsupported-construct');
+  }, 60_000);
+
+  /*
+   * AND ON A TOP-LEVEL DEFINITION THAT OWNS NO TRANSITION. There is no machine
+   * whose text holds `Lone`'s carriers, so `--element T1::Lone` was refused as
+   * holding no state machine (or checked `Deep` alone, the one machine inside
+   * it) and the carriers were reported by nothing. A reference that IS such a
+   * definition and carries a property now names it, as a reference that is a
+   * machine names that machine: every property is `inconclusive`, `… — not
+   * checked`, exit 2, as the nested definition's are on `Outer`.
+   */
+  it('reports the carriers of a top-level definition that owns no transition, named by itself', async () => {
+    const model = await modelOf(TOP_STRANDED);
+    const loneId = idOf(model, 'T1::Lone');
+    expect(stateMachinesIn(model).map((m) => model.qualifiedName(m.id))).toEqual(['T1::Lone::Deep', 'T1::M']);
+    const found = behaviourMachineFor(model, loneId);
+    expect(found.ok && found.machine.id).toBe(loneId);
+    // Its own carriers, down to the machine inside it, whose carrier is its own.
+    expect(propertiesOf(model, loneId).map((p) => [p.p, p.carrier, p.stranded ?? null])).toEqual([
+      ['state b', 'T1::Lone', 'T1::Lone'],
+      ['state a', 'T1::Lone::b', 'T1::Lone'],
+    ]);
+    const report = behaviourReport(model, { machineId: loneId });
+    expect(report.properties.map((p) => [p.claim, p.code, p.sentence])).toEqual([
+      ['inconclusive', 'verification/behaviour-unsupported-construct', 'absence — not checked'],
+      ['inconclusive', 'verification/behaviour-unsupported-construct', 'absence — not checked'],
+    ]);
+    for (const row of report.properties) {
+      expect(row.detail).toContain('`T1::Lone` is a `state def` that owns no transition and is written inside no machine');
+      // `Deep`'s own FAIL is not on this run, so every row names it: the
+      // reference that decides it (the S2 review's `top3` probe).
+      expect(row.detail).toContain('The machine written inside it, `T1::Lone::Deep`, is checked when it is named itself.');
+      expect(row.configs).toBe(0);
+    }
+    expect(report.exitCode).toBe(2);
+    // A `--pattern` against it is refused the same way, never walked.
+    const flag = behaviourReport(model, { machineId: loneId, pattern: 'pattern=absence, scope=globally, p=state b' });
+    expect(flag.properties.map((p) => [p.property.source, p.claim, p.code])).toEqual([
+      ['model', 'inconclusive', 'verification/behaviour-unsupported-construct'],
+      ['model', 'inconclusive', 'verification/behaviour-unsupported-construct'],
+      ['flag', 'inconclusive', 'verification/behaviour-unsupported-construct'],
+    ]);
+    // `Deep` and `M` are checked as they were, and a definition that carries
+    // nothing is still no machine to name.
+    expect(behaviourReport(model, { machineId: idOf(model, 'T1::Lone::Deep') }).properties.map((p) => p.claim)).toEqual([
+      'fail',
+    ]);
+    expect(behaviourMachineFor(model, idOf(model, 'T1::Plain')).ok).toBe(false);
+
+    // A composite state that owns a transition is a machine of its own in a
+    // definition that is no machine, and is named beside a nested one.
+    const two = await modelOf(`package L2 {
+      state def Lone {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a { state x; state y; transition xy first x accept go then y; }
+        state b;
+        state def Deep { state q; state r; transition qr first q accept go then r; }
+      }
+    }`);
+    const twoLone = idOf(two, 'L2::Lone');
+    expect(behaviourMachineFor(two, twoLone)).toMatchObject({ ok: true, machine: { id: twoLone } });
+    expect(behaviourMachineFor(two, idOf(two, 'L2::Lone::a'))).toMatchObject({ ok: true, machine: { id: idOf(two, 'L2::Lone::a') } });
+    const twoRows = behaviourReport(two, { machineId: twoLone }).properties;
+    expect(twoRows.map((p) => [p.claim, p.code])).toEqual([['inconclusive', 'verification/behaviour-unsupported-construct']]);
+    expect(twoRows[0].detail).toContain(
+      'The machines written inside it — `L2::Lone::a`, `L2::Lone::Deep` — are each checked when named themselves.',
+    );
+
+    const file = fileOf('top-stranded.sysml', TOP_STRANDED);
+    const lone = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T1::Lone']);
+    expect(lone.code).toBe(2);
+    expect(lone.stdout).toContain('T1::Lone — 2 properties: 0 pass, 0 fail, 0 vacuous, 2 inconclusive');
+    expect(lone.stdout).toContain('INCONCLUSIVE absence — not checked');
+    expect(lone.stdout).toContain('The machine written inside it, `T1::Lone::Deep`, is checked when it is named itself.');
+    expect(lone.stdout).toContain('info verification/behaviour-unsupported-construct');
+    const plain = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T1::Plain']);
+    expect(plain.code).toBe(2);
+    expect(plain.stderr).toContain('`T1::Plain` holds no state machine');
   }, 60_000);
 
   /*
@@ -1762,6 +1874,134 @@ describe('the configuration key is what the next step depends on', () => {
   });
 });
 
+describe('a step exits to the least common ancestor of its source and its target (docs/06 §8.10)', () => {
+  /**
+   * Five composites of four substates, entered from `Idle` and left on events —
+   * the T80 shape above — with `exits` making every substate also leave for
+   * `Idle`, and `extra` lines added to the machine's body.
+   */
+  function modes5(pkg: string, exits: boolean, extra: string[] = []): string {
+    const L = [`package ${pkg} { state def Modes {`, '  state Idle;'];
+    for (let c = 0; c < 5; c++) {
+      L.push(`  state C${c} { ${[0, 1, 2, 3].map((k) => `state C${c}_${k};`).join(' ')}`);
+      for (let k = 0; k < 3; k++) L.push(`    transition c${c}_${k} first C${c}_${k} accept step${c}_${k} then C${c}_${k + 1};`);
+      if (exits) for (let k = 0; k < 4; k++) L.push(`    transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} then Idle;`);
+      L.push('  }', `  transition in${c} first Idle accept enter${c} then C${c};`, `  transition out${c} first C${c} accept leave${c} then Idle;`);
+    }
+    L.push(...extra, '} }');
+    return L.join('\n');
+  }
+
+  it('one composite of two substates, left from a substate, walks to the end', async () => {
+    // The step used to exit `b` alone and enter `Idle` under `C0`, so `go`
+    // stacked `C0` again on every round trip: the walk reached the depth bound
+    // (201 configurations) and withheld every list.
+    const loaded = await loadModelText(
+      'package Lca1 { state def M { state Idle;\n' +
+        '  state C0 { state a; state b; transition ab first a accept x then b; transition bk first b accept back then Idle; }\n' +
+        '  transition go first Idle accept go then C0; } }',
+      { fileName: 'lca1.sysml' },
+    );
+    const m = reachReport(loaded.model!).machines[0];
+    expect(m).toMatchObject({ configs: 3, boundHit: 'none', exhaustive: true });
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.deadlocks).toEqual([]);
+  });
+
+  it('five composites of four substates, every one of which also leaves for `Idle`, walk to the end', async () => {
+    // At `aac38fd` these reached the 10,000-configuration bound: every `back`
+    // left its composite on the stack under `Idle`.
+    const five = (await loadModelText(modes5('Exits5', true), { fileName: 'exits5.sysml' })).model!;
+    const m = reachReport(five).machines[0];
+    expect(m).toMatchObject({ configs: 21, boundHit: 'none', exhaustive: true });
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+  });
+
+  it('a state reached by leaving a composite from a substate is one nothing leaves when nothing leaves it', async () => {
+    // `first C0_3 then Done` used to leave `[C0, Done]`, and `C0`'s own `leave0`
+    // still left that: the walk printed no `no way out` row. Under the step that
+    // exits `C0`, `Done` is a state nothing leaves (docs/06 §8.9).
+    const done = (await loadModelText(modes5('Done5', false, ['  state Done;', '  transition dn first C0::C0_3 then Done;']), { fileName: 'done5.sysml' })).model!;
+    const m = reachReport(done).machines[0];
+    expect(m).toMatchObject({ configs: 22, boundHit: 'none', exhaustive: true });
+    expect(m.deadlocks.map((d) => [d.stack.map((s) => s.name), d.steps])).toEqual([[['Done'], 5]]);
+  });
+
+  it('a machine with no composite whose step targets a node inside a state: the walk and the interpreter agree', async () => {
+    // `then b::inner` into `state b { action inner; }` enters `b`, then `inner`.
+    // The interpreter's flat path entered `inner` alone and never offered `b`'s
+    // own `x`, while the walk stood at `[b, inner]` and took it: an exhaustive
+    // walk called `c` reached in 2 steps, and no run of the interpreter got
+    // there. Such a machine now runs on the path that drives the step relation.
+    const nd1 = (await loadModelText(
+      'package Nd1 { state def M { state a; state b { action inner; } state c;\n' +
+        '  transition t1 first a accept go then b::inner; transition t3 first b accept x then c; } }',
+      { fileName: 'nd1.sysml' },
+    )).model!;
+    const m = reachReport(nd1).machines[0];
+    expect(m).toMatchObject({ configs: 3, boundHit: 'none', exhaustive: true });
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.deadlocks.map((d) => [d.stack.map((s) => s.name), d.steps])).toEqual([[['c'], 2]]);
+    const run = runStateMachine(nd1, m.machine.id, ['go', 'x']);
+    expect(run.fired.map((f) => nd1.get(f.to)?.declaredName)).toEqual(['inner', 'c']);
+    // Timed or not, and beside an unrelated composite or not, the same run.
+    expect(nd1.get(runStateMachine(nd1, m.machine.id, ['go', { advance: 0 }, 'x']).finalState!)?.declaredName).toBe('c');
+
+    // With a trigger-less `first S then Idle`, the step into `S::work` settles
+    // back at `Idle`: `Z` is unreachable and `ez` dead, and no run of the
+    // interpreter enters `Z` (the flat path stayed at `work` and took `e`).
+    const flat = (await loadModelText(
+      'package FlatAct { state def M { state Idle; state S { action work; } state Z;\n' +
+        '  transition go first Idle accept go then S::work; transition settle first S then Idle;\n' +
+        '  transition ez first S::work accept e then Z; } }',
+      { fileName: 'flat-act.sysml' },
+    )).model!;
+    const f = reachReport(flat).machines[0];
+    expect(f).toMatchObject({ boundHit: 'none', exhaustive: true });
+    expect(f.states.unreachable.map((s) => s.name)).toEqual(['Z']);
+    expect(f.transitions.dead.map((t) => t.name)).toEqual(['ez']);
+    for (const events of [['go', 'e'], ['e', 'go', 'e'], ['go', 'go', 'e']]) {
+      expect(runStateMachine(flat, f.machine.id, events).visited.map((id) => flat.get(id)?.declaredName), events.join()).not.toContain('Z');
+    }
+  });
+
+  it('refuses a step whose target sits in no chain of the machine’s states, by name', async () => {
+    // A step into the machine's own root, and a step into a node under an
+    // action: neither has a least common ancestor to exit to, so the step
+    // relation reads them as every step was read before, and the walk refuses
+    // the machine rather than publish a walk over that reading.
+    const root = (await loadModelText(
+      'package Root1 { state def M { state a; state b;\n' +
+        '  transition t1 first a accept go then b; transition t2 first b accept back then M; } }',
+      { fileName: 'root1.sysml' },
+    )).model!;
+    const act = (await loadModelText(
+      'package Act1 { state def M { state a; state b; action act { action inner; }\n' +
+        '  transition t1 first a accept go then act::inner; transition t2 first a accept x then b; } }',
+      { fileName: 'act1.sysml' },
+    )).model!;
+    for (const [model, edge, where] of [
+      [root, 'Root1::M::t2', 'into `Root1::M`, the machine itself'],
+      [act, 'Act1::M::t1', 'to `Act1::M::act::inner`, which is written in `Act1::M::act` (`ActionUsage`), not in a state'],
+    ] as const) {
+      const r = reachReport(model);
+      const m = r.machines[0];
+      expect(m.exhaustive, edge).toBe(false);
+      expect(m.unsupported.map((u) => [u.construct, model.qualifiedName(u.elementId!)])).toEqual([['step-outside-states', edge]]);
+      expect(m.unsupported[0].detail).toContain(where);
+      expect(m.unsupported[0].detail).toContain('least common ancestor');
+      expect(m.deadlocks).toEqual([]);
+      const census = edgeCensus(model, stateMachinesIn(model)[0].id);
+      expect(census.unaccounted).toEqual([]);
+      expect(census.rows.find((row) => row.qualifiedName === edge)).toMatchObject({ account: 'refused' });
+      expect(r.diagnostics.filter((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE)).toHaveLength(1);
+    }
+  });
+});
+
 describe('a completion CYCLE, and the budget the interpreter spends on it', () => {
   /** `a` ⇄ `b` on completion transitions, plus an island nothing reaches. */
   function cycleWithIsland(): { model: Model; machineId: ElementId } {
@@ -1928,6 +2168,55 @@ describe('the chase budget, followed the way the interpreter follows it', () => 
     expect(m.states.unreachable.map((s) => s.name)).toEqual(['c66', 'c67', 'c68', 'c69', 'c70']);
     // `t65` (c65 -> c66) is enabled at the stop, so it is not dead; the four after it are.
     expect(m.transitions.dead.map((t) => t.name)).toEqual(['t66', 't67', 't68', 't69']);
+    // And no run FIRES `t65`, so the count that says `fired` leaves it out:
+    // `go` and `t1` … `t64`, 65 of the 70, beside the 4 dead — the 70th is the
+    // one enabled where the budget stops the chase.
+    expect(m.transitions.fired).toBe(65);
+    expect(textOf(reachMachineLines(m, 1))).toContain(
+      '66 of 71 state(s) reachable; 65 of 70 transition(s) fired, 4 dead',
+    );
+  });
+
+  it('a chain whose last state steps back: the step back is due only where the budget stops the one chase, so it is not fired', async () => {
+    // `s0 → … → s64` on completion, and `s64 → s63`. The machine names no
+    // trigger, so it keeps the walk without the position, and that walk
+    // follows the step back into a configuration it already knows — but the
+    // interpreter's chase reaches `s64` on its 64th step and stops there.
+    const { model, machineId } = completionChain(MAX_COMPLETION);
+    const f = new ModelFactory(model);
+    const named = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+    const back = f.transition(named(`s${MAX_COMPLETION}`), named(`s${MAX_COMPLETION - 1}`), { ownerId: machineId });
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.fired.map((x) => x.transitionId)).not.toContain(back.id);
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.transitions.total).toBe(MAX_COMPLETION + 1);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.transitions.fired).toBe(MAX_COMPLETION);
+  });
+
+  it('a transition the priority rule beats wherever it is enabled is counted neither fired nor dead', async () => {
+    // At `a::x` and at `a::y` the inner `go` wins, so `ab` is enabled at every
+    // configuration a run reaches and taken at none of them: `b` is unreachable,
+    // `ab` is not dead, and the count says 2 of the 3 fired.
+    const { model, machineId, id } = await load(`package Beat {
+      state def M {
+        state a { state x; state y; transition xy first x accept go then y; transition yx first y accept go then x; }
+        state b;
+        transition ab first a accept go then b;
+      }
+    }`);
+    const run = runStateMachine(model, machineId, ['go', 'go', 'go']);
+    expect(run.fired.map((x) => x.transitionId)).not.toContain(id('ab'));
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.unreachable.map((s) => s.name)).toEqual(['b']);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.transitions).toMatchObject({ total: 3, fired: 2 });
+    expect(textOf(reachMachineLines(m, 1))).toContain('2 of 3 transition(s) fired, 0 dead');
   });
 
   it('the v9 SwarmMemberModes shape: admissionFails fires — the run that takes it is the interpreter’s', async () => {

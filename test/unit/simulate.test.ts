@@ -365,6 +365,50 @@ describe('SimulationSession — completeness', () => {
   });
 });
 
+describe('SimulationSession — a step out of a composite exits it (docs/06 §8.10)', () => {
+  /** `Idle -go-> C0`, `C0 { a -x-> b; b -back-> Idle }`, and `C0 -abort-> Fault` on the composite itself. */
+  function leaving(): { model: Model; smId: string; ids: Record<string, string> } {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Leaving');
+    const idle = f.state('Idle', sm.id);
+    const c0 = f.state('C0', sm.id);
+    const a = f.state('a', c0.id);
+    const b = f.state('b', c0.id);
+    const fault = f.state('Fault', sm.id);
+    f.transition(idle.id, c0.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(a.id, b.id, { ownerId: c0.id, trigger: 'x' });
+    f.transition(b.id, idle.id, { ownerId: c0.id, trigger: 'back' });
+    f.transition(c0.id, fault.id, { ownerId: sm.id, trigger: 'abort' });
+    return { model: m, smId: sm.id, ids: { idle: idle.id, fault: fault.id } };
+  }
+
+  it('fires the composite’s own transition while the run is inside it', () => {
+    const { model, smId, ids } = leaving();
+    const s = new SimulationSession(model, smId);
+    s.inject('go');
+    const abort = s.inject('abort');
+    expect(abort.fired.map((x) => x.trigger)).toEqual(['abort']);
+    expect(abort.activeStates).toEqual([ids.fault]);
+  });
+
+  it('fires it no more once `back` has left the composite from a substate', () => {
+    // The step used to exit `b` alone and enter `Idle` under `C0`, so `C0`
+    // stayed active and `abort` took the run from `Idle` to `Fault`.
+    const { model, smId, ids } = leaving();
+    const s = new SimulationSession(model, smId);
+    s.inject('go');
+    s.inject('x');
+    expect(s.inject('back').activeStates).toEqual([ids.idle]);
+    const abort = s.inject('abort');
+    expect(abort.fired).toEqual([]);
+    expect(abort.activeStates).toEqual([ids.idle]);
+    // The batched run reads the same.
+    const t = simulateStateMachine(model, smId, ['go', 'x', 'back', 'abort'].map((event) => ({ event })));
+    expect(t.samples[t.samples.length - 1].activeStates).toEqual([ids.idle]);
+  });
+});
+
 describe('simulateStateMachine — batched runs', () => {
   it('produces one sample per step plus the initial, deterministically', () => {
     const { model, smId, ids } = vehicleSM();

@@ -576,6 +576,134 @@ describe('a witness is a run this semantics admits, and never one it does not', 
         .claim,
     ).toBe('fail');
   });
+
+  it('does not refute a property over a composite the run has left (docs/06 §8.10)', async () => {
+    // `Idle -go-> C0`, `C0 { a -x-> b; b -back-> Idle }`. The step out of `C0`
+    // used to exit `b` alone and leave `[C0, Idle]`, so `state C0` held at
+    // `Idle`: the absence of `C0` from `back` to the next `go` was refuted
+    // (`verification/refuted`, exit 1) by a run that ended at `Idle`, where the
+    // step that exits `C0` holds it.
+    const text =
+      'package Lca1 { state def M { state Idle;\n' +
+      '  state C0 { state a; state b; transition ab first a accept x then b; transition bk first b accept back then Idle; }\n' +
+      '  transition go first Idle accept go then C0; } }\n';
+    const model = (await loadModelText(text, { fileName: 'lca1.sysml', library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const until = checkProperty(
+      model,
+      machineId,
+      prop({ pattern: 'absence', scope: 'after-until', p: 'state C0', q: 'trigger back', r: 'trigger go' }),
+    );
+    expect(until.claim).toBe('pass');
+    expect(until.witness).toEqual([]);
+    // From `back` on with no end, `C0` does hold again — on the run that takes
+    // `go` back into it, and only there: the witness ends on that entry, and
+    // the interpreter takes it.
+    const after = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'after', p: 'state C0', q: 'trigger back' }));
+    expect(after.claim).toBe('fail');
+    expect(after.witness.map((s) => s.event)).toEqual(['-', 'go', 'x', 'back', 'go']);
+    expect(after.witness[3].stack.map((s) => s.name)).toEqual(['Idle']);
+    expect(replayWitness(model, machineId, after.witness, MAX_COMPLETION).replays).toBe(true);
+
+    // The terminal says the same, with the exit codes a pipeline branches on.
+    const dir = mkdtempSync(join(tmpdir(), 'lca1-'));
+    try {
+      const file = join(dir, 'lca1.sysml');
+      writeFileSync(file, text);
+      const cli = (pattern: string) => behaviourCli(['check-behaviour', '--element', 'Lca1::M', '--pattern', pattern, file]);
+      const held = await cli('pattern=absence, scope=after-until, p=state C0, q=trigger back, r=trigger go');
+      expect(held.code, held.stdout).toBe(0);
+      expect(held.stdout).toContain('PASS');
+      const refuted = await cli('pattern=absence, scope=after, p=state C0, q=trigger back');
+      expect(refuted.code, refuted.stdout).toBe(1);
+      expect(refuted.stdout).toMatch(/4 {2}on `go` go \(Idle -> C0\) on `go` → Lca1::M::C0::a {2}\[holds p\]/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('replays a witness through a step that enters the states holding its target (docs/06 §8.10)', async () => {
+    // A step into a nested state enters its composite first, so the
+    // interpreter's `visited` has the composite before the target. The replay
+    // took a fire's entries to start at its target, read the composite as a
+    // departure, and withheld every such witness as not replayed (exit 2),
+    // saying the interpreter entered no state: a correct FAIL or COVERED lost.
+    const machines: Array<{ text: string; el: string; p: string; events: string[] }> = [
+      {
+        // into a nested state from outside
+        text:
+          'package Dive1 { state def M { state Idle; state C1 { state p; state q; transition pq first p accept x then q; }\n' +
+          '  transition dive first Idle accept dive then C1::q; transition go first Idle accept go then C1; } }\n',
+        el: 'Dive1::M',
+        p: 'state q',
+        events: ['-', 'dive'],
+      },
+      {
+        // from a composite to its own substate
+        text: 'package Pick1 { state def M { state C0 { state a; state b; } transition pick first C0 accept pick then C0::b; } }\n',
+        el: 'Pick1::M',
+        p: 'state b',
+        events: ['-', 'pick'],
+      },
+      {
+        // from a substate of one composite to a substate of another
+        text:
+          'package Cz { state def M { state Idle;\n' +
+          '  state A { state a1; state a2; state a3; transition x first a1 accept x then a2; }\n' +
+          '  state B { state b1; state b2; }\n' +
+          '  transition go first Idle accept go then A; transition cross first A::a2 accept cross then B::b2; } }\n',
+        el: 'Cz::M',
+        p: 'state b2',
+        events: ['-', 'go', 'x', 'cross'],
+      },
+    ];
+    for (const c of machines) {
+      const model = (await loadModelText(c.text, { fileName: `${c.el}.sysml`, library: 'none' })).model!;
+      const machineId = stateMachinesIn(model)[0].id;
+      const absent = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: c.p }));
+      expect(absent.claim, c.el).toBe('fail');
+      expect(absent.code, c.el).not.toBe(WITNESS_NOT_REPLAYED_CODE);
+      expect(absent.witness.map((s) => s.event), c.el).toEqual(c.events);
+      expect(replayWitness(model, machineId, absent.witness, MAX_COMPLETION), c.el).toMatchObject({ replays: true });
+      const cover = checkProperty(model, machineId, prop({ pattern: 'cover', scope: 'globally', p: c.p }));
+      expect(cover.claim, c.el).toBe('covered');
+      expect(replayWitness(model, machineId, cover.witness, MAX_COMPLETION).replays, c.el).toBe(true);
+    }
+  });
+
+  it('decides a machine with no composite whose step targets a node written inside a state as the interpreter runs it', async () => {
+    // `then b::inner` into `state b { action inner; }`. The step enters `b`
+    // and then `inner`; the interpreter's flat path entered `inner` alone, so
+    // `b`'s own `x` was never offered there, while the walk stood at `[b,
+    // inner]` and took it: absence of `state c` was refuted by a witness the
+    // interpreter did not take. Such a machine now runs on the path that
+    // drives the step relation (`needsHierarchical`).
+    const nd1 =
+      'package Nd1 { state def M { state a; state b { action inner; } state c;\n' +
+      '  transition t1 first a accept go then b::inner; transition t3 first b accept x then c; } }\n';
+    const model = (await loadModelText(nd1, { fileName: 'nd1.sysml', library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    for (const p of ['state b', 'state c']) {
+      const v = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p }));
+      expect(v.claim, p).toBe('fail');
+      expect(replayWitness(model, machineId, v.witness, MAX_COMPLETION).replays, p).toBe(true);
+    }
+    expect(model.get(runStateMachine(model, machineId, ['go', 'x']).finalState!)?.declaredName).toBe('c');
+
+    // With a trigger-less `first S then Idle`, the step into `S::work` settles
+    // back at `Idle`, so `e` from `work` never fires and `Z` is never entered —
+    // the absence of `Z` holds, and the interpreter agrees with it.
+    const flat =
+      'package FlatAct { state def M { state Idle; state S { action work; } state Z;\n' +
+      '  transition go first Idle accept go then S::work; transition settle first S then Idle;\n' +
+      '  transition ez first S::work accept e then Z; } }\n';
+    const fm = (await loadModelText(flat, { fileName: 'flat-act.sysml', library: 'none' })).model!;
+    const fId = stateMachinesIn(fm)[0].id;
+    expect(checkProperty(fm, fId, prop({ pattern: 'absence', scope: 'globally', p: 'state Z' })).claim).toBe('pass');
+    const run = runStateMachine(fm, fId, ['go', 'e']);
+    expect(run.visited.map((id) => fm.get(id)?.declaredName)).toEqual(['Idle', 'S', 'work', 'Idle']);
+    expect(fm.get(run.finalState!)?.declaredName).toBe('Idle');
+  });
 });
 
 /**
