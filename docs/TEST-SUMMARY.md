@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4742 total — 4742 passed, 0 failed, 0 skipped
+- **Tests:** 4773 total — 4773 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -61,7 +61,7 @@
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 126 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 137 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 15 | 0 | 0 |
@@ -76,10 +76,10 @@
 | test/unit/diagram.geometry3d.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.grid.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.layout.test.ts | 4 | 0 | 0 |
-| test/unit/diagram.layout2.test.ts | 7 | 0 | 0 |
+| test/unit/diagram.layout2.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
 | test/unit/diagram.parametric.test.ts | 10 | 0 | 0 |
-| test/unit/diagram.readability.test.ts | 51 | 0 | 0 |
+| test/unit/diagram.readability.test.ts | 59 | 0 | 0 |
 | test/unit/diagram.sequence.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.svg-export.test.ts | 22 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
@@ -93,7 +93,7 @@
 | test/unit/graph-algorithms.test.ts | 19 | 0 | 0 |
 | test/unit/graph-analysis.test.ts | 19 | 0 | 0 |
 | test/unit/langium.direction.test.ts | 5 | 0 | 0 |
-| test/unit/langium.grammar.test.ts | 46 | 0 | 0 |
+| test/unit/langium.grammar.test.ts | 48 | 0 | 0 |
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
 | test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
@@ -137,7 +137,7 @@
 | test/unit/semantics.smt-encode.test.ts | 61 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 132 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 29 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 34 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
@@ -162,7 +162,7 @@
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 23 | 0 | 0 |
-| test/unit/ui.text-editor.test.ts | 5 | 0 | 0 |
+| test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 87 | 0 | 0 |
