@@ -369,6 +369,14 @@ export type {
 // `bounds.alphabet` does, and `bounds` is on the result already, which is the
 // whole point of the two fields being scoped differently.
 //
+// `ExploreResult.fired` no longer means what it did (`docs/06` §8.11): it holds
+// the transitions a step of some explored run takes, and `ExploreResult.enabled`
+// holds the old set, every transition enabled where a run reaches — the set
+// `dead` is read against. A caller deriving dead transitions reads `enabled`, or
+// `reachReport`'s `transitions.dead`: the walkable transitions less `fired` also
+// hold one the priority rule beats and a completion due where the chase budget
+// stops, and neither is dead.
+//
 // `MachineReach` now carries `ExactnessCensus` beside the edge census: the shape
 // of the walk as numbers, including the THREE-VALUED `acyclic`. A caller reading
 // that field is reading a fact about the machine only where `walkIsExact` holds,

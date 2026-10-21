@@ -2630,12 +2630,17 @@ a node written inside a state, such as `then S::work` into `state S { action
 work; }`, which enters `S` and then `work`. Every transition is external: a
 self-transition exits its state and enters it again, and a composite restarts at
 its initial substate. A composite marked as a history state is the exception to
-both restarts: entered again, it resumes the child it was just left from. The Simulation
-tab steps the same way on every machine. A step
-whose target sits in no chain of the machine's states — into the machine's own
-root, or into a node written under an action — has no such ancestor, and the
-machine is refused: `verification/behaviour-unsupported-construct` with the
-construct `step-outside-states`, naming the transition. Until 2026-10-21 a step
+both restarts: entered again, it resumes the child it was just left from. The
+Simulation tab steps the same way on every machine the walk takes. A step whose
+target sits in no chain of the machine's states — into the machine's own root,
+or into a node written under an action — has no such ancestor, and the machine
+is refused: `verification/behaviour-unsupported-construct` with the construct
+`step-outside-states`, naming the transition. A simulator run still takes such a
+step the old way: into a node under an action it stands at that node; into the
+machine's own root, on a machine with no composite it stands at the machine
+itself and nothing more is offered, and otherwise it restarts at the machine's
+initial state, with any composite the source sat in still active beneath it.
+That is what the Simulation tab shows, not a verdict. Until 2026-10-21 a step
 exited only down to its source's level and entered the target on top, so a
 composite stayed active after a step out of it, each round trip stacked one more
 state, and a property could be refuted on a composite the run had left.

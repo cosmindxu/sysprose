@@ -2469,8 +2469,12 @@ atom on it holding, and every round trip stacked one more state.
   walk and the property search step one way, and the witness replay of
   `check-behaviour` runs on the same step. The flat path (`runRegion`) enters a
   target alone, so it now takes only a machine with no composite whose every
-  target is written directly in its region: there the least common ancestor of
-  a step's two ends is the region, and its one exit is the same step. A machine
+  target is written directly in its region, or is in no chain of its states.
+  For the first the least common ancestor of a step's two ends is the region,
+  and its one exit is the same step. The second has no such ancestor, and the
+  walk refuses the machine ("What the step cannot read", below), so no verdict
+  rests on what the flat path does there: a step into the machine's own root
+  stands at the root, where nothing more is offered. A machine
   with no composite whose step targets a node written inside a state (`then
   S::work` into `state S { action work; }`) runs on the hierarchical path
   (`needsHierarchical`): on the flat one it stood at `work` with `S` never
@@ -2544,8 +2548,9 @@ atom on it holding, and every round trip stacked one more state.
   six stages of 35 substates end 210 steps from the opening, past the depth
   bound, and walk 201 configurations, in one to two seconds in process. In the
   first every substate can also abort to `Idle`; in the second, which the state
-  view lays out, every substate can step back to the one before instead, because
-  two hundred edges into `Idle` cost that layout minutes. The E2E test waits for
+  view lays out, every substate but the first can step back to the one before
+  instead (two hundred edges into `Idle` cost that layout minutes), and each
+  stage can be left for `Idle` from the composite. The E2E test waits for
   the layout before it watches frames, and polls the `running` state every 50 ms:
   the walk in the worker runs for about a second.
 - **No verdict in the gate corpus or v9 moves**, as the TODO said. Against
