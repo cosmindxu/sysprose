@@ -192,6 +192,44 @@ test('Enter in the Explorer rename box leaves the focus on Save, and the next Ba
   expect(await exists(page, id)).toBe(true);
 });
 
+/*
+ * Escape closes a rename box without writing, and the focus goes to Save as
+ * Enter leaves it: the box unmounts under the focus, and the next Backspace
+ * would delete the selected element.
+ */
+test('Escape in the Explorer rename box leaves the focus on Save, and the next Backspace deletes nothing', async ({ page }) => {
+  await gotoApp(page);
+  const id = await findElementId(page, 'PartDefinition', 'Vehicle');
+  await selectElementById(page, id);
+  await treeName(page.locator(`[data-elementid="${id}"]`).first()).dblclick();
+  await page.getByTestId('tree-rename').fill('VehicleEscaped');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('tree-rename')).toHaveCount(0);
+  await expect(page.getByTestId('tb-save')).toBeFocused();
+
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Delete');
+  expect(await nameOf(page, id)).toBe('Vehicle');
+  expect(await exists(page, id)).toBe(true);
+});
+
+// The menu's own rename box hands the focus back to its Rename item on Escape.
+test('Escape in the canvas context menu rename box leaves the focus on a button, and Backspace deletes nothing', async ({ page }) => {
+  await gotoApp(page);
+  const nodes = page.locator('.react-flow__node');
+  const before = await nodes.count();
+  await nodes.first().click({ button: 'right' });
+  await page.getByTestId('node-ctx-rename').click();
+  await page.getByTestId('node-ctx-rename-input').fill('NotKept');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('node-ctx-rename-input')).toHaveCount(0);
+  await expect(page.getByTestId('node-ctx-rename')).toBeFocused();
+
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Delete');
+  await expect(nodes).toHaveCount(before);
+});
+
 test('Enter in the canvas context menu rename box leaves the focus on Save', async ({ page }) => {
   await gotoApp(page);
   await page.locator('.react-flow__node').first().click({ button: 'right' });

@@ -25,7 +25,7 @@
 
 import { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
-import { commitAndFocusSave } from '../commands';
+import { cancelAndFocusSave, commitAndFocusSave } from '../commands';
 import { buildRequirementsTable } from '@diagram/index';
 import type { ReqAttrColumn, ReqReference, ReqRefColumn, ReqRow } from '@diagram/index';
 import { isAnnotation, isRelationship, type ElementId, type ElementRecord } from '@core/index';
@@ -201,8 +201,10 @@ export function RequirementsTable(): JSX.Element {
               commitAndFocusSave(box, () => box.blur());
             } else if (e.key === 'Escape') {
               e.stopPropagation();
-              setNoteRefusal(null); // the attempt was withdrawn, so its reason goes with it
-              setEditing(null);
+              cancelAndFocusSave(e.currentTarget, () => {
+                setNoteRefusal(null); // the attempt was withdrawn, so its reason goes with it
+                setEditing(null);
+              });
             }
           }}
         />
@@ -303,7 +305,7 @@ export function RequirementsTable(): JSX.Element {
               commitAndFocusSave(box, () => box.blur());
             } else if (e.key === 'Escape') {
               e.stopPropagation();
-              setEditingAttr(null);
+              cancelAndFocusSave(e.currentTarget, () => setEditingAttr(null));
             }
           }}
         />

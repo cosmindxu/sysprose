@@ -621,3 +621,45 @@ describe('Requirements panel — Ctrl/Cmd+S in a cell', () => {
     }
   });
 });
+
+/**
+ * Escape in a cell closes it without writing, and the focus goes to Save as
+ * Enter leaves it: a cell that unmounts under the focus drops it to the page,
+ * and the next Backspace would delete the selected requirement.
+ */
+describe('Requirements panel — Escape in a cell', () => {
+  const SRC = `package P {\n    requirement <R1> maxMass;\n}`;
+
+  it.each([
+    ['a name cell', (view: ReturnType<typeof mount>) =>
+      view.getAllByTestId('req-row')[0]!.querySelector('[data-col-key="name"]')!, 'req-cell-input'],
+    ['a facet cell', (view: ReturnType<typeof mount>) =>
+      cell(view, 'maxMass', 'owner').querySelector('.req-attr-text')!, 'req-attr-input'],
+  ])('%s closes without writing and leaves the focus on Save', async (_what, open, testid) => {
+    const save = document.createElement('button');
+    save.dataset.testid = 'tb-save';
+    document.body.appendChild(save);
+    window.addEventListener('keydown', handlePageKey);
+    try {
+      const view = mount(SRC);
+      const id = idOf(view, 'maxMass');
+      fireEvent.click(open(view));
+      const input = view.getByTestId(testid) as HTMLInputElement;
+      input.focus();
+      fireEvent.change(input, { target: { value: 'typedNotKept' } });
+      act(() => st().select(id));
+      fireEvent.keyDown(input, { key: 'Escape' });
+
+      expect(view.queryByTestId(testid), 'the cell closed').toBeNull();
+      expect(st().model.require(id).declaredName, 'nothing was written').toBe('maxMass');
+      expect(getRequirementAttr(st().model, id, 'owner'), 'no facet was written').toBeUndefined();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(document.activeElement).toBe(save);
+      expect(fireEvent.keyDown(document.activeElement!, { key: 'Backspace' }), 'the page did not take the key').toBe(true);
+      expect(st().model.has(id), 'the selected requirement is still there').toBe(true);
+    } finally {
+      window.removeEventListener('keydown', handlePageKey);
+      save.remove();
+    }
+  });
+});

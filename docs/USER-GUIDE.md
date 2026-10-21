@@ -4422,7 +4422,10 @@ table's reference picker, which leaving cancels, stays open with what you typed
 in it, and nothing is linked. Plain `Enter` does the same without the save: in
 an Explorer rename, the canvas context menu's rename box or a Requirements table
 cell it closes the box and leaves the focus on **Save**, so a `Backspace` after
-it deletes nothing. Every other key in a field stays the field's own.
+it deletes nothing. `Escape` closes the same boxes without writing what was
+typed, and the focus goes to **Save** as well (the context menu's rename box
+hands it back to its own *Rename* item). Every other key in a field stays the
+field's own.
 
 `Ctrl/⌘ + S` also first applies what you typed in the Text view, as
 **Apply text → model** does, so the save holds the text on screen — unless the
@@ -4451,5 +4454,5 @@ over the field's change, which one Undo brings back.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:39-104`, `198-422`, `src/ui/App.tsx:143-148`,
-`src/ui/panels/RequirementsTable.tsx:569-606` (the reference picker).
+**Source of truth:** `src/ui/commands.ts:39-104`, `198-433`, `src/ui/App.tsx:143-148`,
+`src/ui/panels/RequirementsTable.tsx:575-646` (the reference picker).

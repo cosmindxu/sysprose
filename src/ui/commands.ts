@@ -359,6 +359,17 @@ export function commitAndFocusSave(box: Element, commit: () => void): void {
 }
 
 /**
+ * `Escape` in a rename box or a table cell closes it without writing, and the
+ * focus goes to Save as `Enter` leaves it (`commitAndFocusSave`): a box that
+ * unmounts under the focus drops it to the page, and the next `Backspace` would
+ * delete the selection. The canvas context menu's rename box is not routed
+ * here: it hands the focus back to its own Rename item.
+ */
+export function cancelAndFocusSave(box: Element, cancel: () => void): void {
+  commitAndFocusSave(box, cancel);
+}
+
+/**
  * Commit what was typed into `field` and not written yet, as leaving the field
  * does, and give the field its focus back. Properties writes Subject, Tags,
  * Type and the requirement attributes on Enter or on leaving the box, not per
