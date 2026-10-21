@@ -319,6 +319,12 @@ describe('`openFrontier` is the negation of `exhaustive`, not a test on `boundHi
  * quoted in {@link MOVED_BY_THE_CENSUS} (`walkedReason`), the case beside it
  * asserts the movement on every machine, and no other field, row, count or
  * finding moved with it.
+ *
+ * `behaviour-rest` S2 (2026-10-21, `docs/06` §8.13) RE-RECORDED ONE FIELD:
+ * `transitions.enabledNeverFired`, the transitions enabled where a run reaches
+ * and fired by none, which is `[]` on all three shipped machines — every one of
+ * their transitions fires, as `fired` equal to `total` already said. No other
+ * field, row, count or finding moved with it.
  */
 const REACH_BEFORE: Record<string, unknown> = {
   "examples/contract-authoring-prompts.sysml": {
@@ -393,7 +399,8 @@ const REACH_BEFORE: Record<string, unknown> = {
         "transitions": {
           "total": 5,
           "fired": 5,
-          "dead": []
+          "dead": [],
+          "enabledNeverFired": []
         },
         "census": {
           "total": 5,
@@ -609,7 +616,8 @@ const REACH_BEFORE: Record<string, unknown> = {
         "transitions": {
           "total": 4,
           "fired": 4,
-          "dead": []
+          "dead": [],
+          "enabledNeverFired": []
         },
         "census": {
           "total": 4,
@@ -801,7 +809,8 @@ const REACH_BEFORE: Record<string, unknown> = {
         "transitions": {
           "total": 2,
           "fired": 2,
-          "dead": []
+          "dead": [],
+          "enabledNeverFired": []
         },
         "census": {
           "total": 2,

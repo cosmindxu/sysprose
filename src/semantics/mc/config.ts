@@ -970,9 +970,11 @@ function labelFor(tr: ElementRecord, input: StepInput): string {
  * it, or sits under an element between it and the region that is not a
  * `StateUsage` — a nested `state def`, which is a machine of its own
  * ({@link regionDescendants}), or an action. A step into such a target has no
- * least common ancestor to exit to; {@link stepConfig} reads it as it read
- * every step before (`docs/06` §8.10), and the walk refuses a machine that
- * holds one (`./explore.ts`, `unsupportedConstructs`).
+ * least common ancestor to exit to. Across the machine's boundary,
+ * {@link stepConfig} reads it as it read every step before (`docs/06` §8.10);
+ * into the machine's root or a node under an action, no reader takes it
+ * ({@link stepOutsideStates}). The walk refuses a machine that holds either
+ * (`./explore.ts`, `unsupportedConstructs`).
  */
 export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId): ElementId[] | null {
   if (id === regionId) return null;
@@ -985,27 +987,94 @@ export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId):
 }
 
 /**
+ * Is `id` one of the nodes a machine's region is made of: the machine itself,
+ * or an element of its region ({@link regionDescendants}) that is not a nested
+ * `state def`, which is a machine of its own or a definition no walk enters.
+ * An edge with an end that is not is a step across the machine's boundary
+ * (`boundaryCrossings`, `./explore.ts`).
+ */
+export function isRegionNode(model: Model, machineId: ElementId, id: ElementId): boolean {
+  if (id === machineId) return true;
+  if (model.get(id)?.eClass === 'StateDefinition') return false;
+  const seen = new Set<ElementId>([id]);
+  for (let p = model.get(id)?.ownerId ?? null; p !== machineId; p = model.get(p)?.ownerId ?? null) {
+    if (p == null || seen.has(p) || model.get(p)?.eClass === 'StateDefinition') return false;
+    seen.add(p);
+  }
+  return true;
+}
+
+/**
+ * Is `edge` a step whose target sits in no chain of the machine's states, short
+ * of a step across its boundary: a step into the machine's own root (`then M`
+ * written in `state def M`), or into a node written under an element of its
+ * region that is not a state (`then act::inner`, under an action)?
+ *
+ * Such a step has no least common ancestor to exit to ({@link hierarchyPath}
+ * is `null`), and neither UML nor this tool's profile says what it exits and
+ * enters: a UML transition targets a vertex of a region, and the machine
+ * itself and a node of an action are neither. So nothing here reads it. The
+ * walk refuses a machine that holds one (`step-outside-states`, `./explore.ts`)
+ * and the interpreter refuses to take one (`runStateMachine`'s `refused`,
+ * `../execute.ts`): ONE predicate, read by both, so the two refuse the same
+ * steps (`docs/06` §8.12).
+ */
+export function stepOutsideStates(model: Model, machineId: ElementId, edge: ElementRecord): boolean {
+  const from = edge.source?.[0];
+  const to = edge.target?.[0];
+  if (from === undefined || to === undefined) return false;
+  return (
+    isRegionNode(model, machineId, from) &&
+    isRegionNode(model, machineId, to) &&
+    hierarchyPath(model, machineId, to) === null
+  );
+}
+
+/**
+ * Where a {@link stepOutsideStates} edge leads, in the words both refusals
+ * print: the machine's own root, or the element above its target that is not a
+ * state.
+ */
+export function outsideStatesSentence(model: Model, machineId: ElementId, edge: ElementRecord): string {
+  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  const to = edge.target![0];
+  if (to === machineId) return `into ${qn(to)}, the machine itself`;
+  let above: ElementId | null = model.get(to)?.ownerId ?? null;
+  while (above != null && above !== machineId && model.get(above)?.eClass === 'StateUsage') {
+    above = model.get(above)?.ownerId ?? null;
+  }
+  const owner = above == null ? undefined : model.get(above);
+  return owner === undefined || above === machineId
+    ? `to ${qn(to)}`
+    : `to ${qn(to)}, which is written in ${qn(owner.id)} (\`${owner.eClass}\`), not in a state`;
+}
+
+/**
  * Fire ONE transition and return the configuration it leads to, plus what the
  * firing appended to the run.
  *
  * A STEP EXITS TO THE LEAST COMMON ANCESTOR of its source and its target, as
- * UML reads a transition, and every transition is external: the states the
- * source sits in that do not also hold the target are exited, innermost first
- * from the active leaf; then the effect runs; then the target's enclosing
- * states that are not active are entered, outermost first, and the target with
- * its cascade into its initial substate. So a step out of a composite exits the
- * composite, a step to an ancestor exits and re-enters it, and a self-transition
- * exits and re-enters its state — a composite restarts at its initial
- * substate. The step used to exit only down to the SOURCE's level and enter the
- * target on top of what was left, so `first b then Idle` from inside `C0` left
- * `[C0, Idle]`: `C0` still active, its transitions still enabled, a `state C0`
- * atom still holding, and one more state stacked per round trip
+ * UML reads a transition, and every transition is external: the source, the
+ * states below it and those above it that do not also hold the target are
+ * exited, innermost first from the active leaf; then the effect runs; then the
+ * target's enclosing states that are not active are entered, outermost first,
+ * and the target with its cascade into its initial substate. So a step out of a
+ * composite exits the composite; a step to an ancestor, or from a composite into
+ * one of its own substates, exits that state and re-enters it; and a
+ * self-transition exits and re-enters its state — a composite restarts at its
+ * initial substate. The step used to exit only down to the SOURCE's level and
+ * enter the target on top of what was left, so `first b then Idle` from inside
+ * `C0` left `[C0, Idle]`: `C0` still active, its transitions still enabled, a
+ * `state C0` atom still holding, and one more state stacked per round trip
  * (`docs/06` §8.9, §8.10).
  *
  * A target with no chain of states ({@link hierarchyPath} is `null`) is stepped
- * as before: exit down to the source's level, enter the target on top. That is
- * a step across a machine's boundary, into the machine's own root, or into a
- * node under an action; the walk refuses each, so no verdict stands on it.
+ * as before: exit down to the source's level, enter the target on top. The one
+ * such step a caller takes is a step across a machine's boundary, which the
+ * interpreter reads that way (`docs/06` §8.6) and the walk refuses, so no
+ * verdict stands on it. A step into the machine's own root or into a node under
+ * an action ({@link stepOutsideStates}) reaches no call here: the walk refuses
+ * the machine and the interpreter stops before it (`docs/06` §8.12).
  *
  * `choice` must have come from {@link enabledTransitions} on THIS configuration:
  * the level it names is where the source sits on the stack, and a choice from

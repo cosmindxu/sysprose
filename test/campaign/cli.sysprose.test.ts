@@ -4514,6 +4514,7 @@ package P {
     expect(body.reach.profile.map((f) => f.field)).toEqual([
       'run-to-completion',
       'priority',
+      'exits',
       'history',
       'regions',
       'deferred events',
@@ -5170,6 +5171,7 @@ package P {
     expect(body.behaviour.profile.map((f) => f.field)).toEqual([
       'run-to-completion',
       'priority',
+      'exits',
       'history',
       'regions',
       'deferred events',

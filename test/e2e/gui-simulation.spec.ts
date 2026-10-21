@@ -137,6 +137,61 @@ test('simulation tab: Solve parametrics surfaces a derived value series', async 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
+const ROOTED = `package Demo {
+  state def Loop {
+    state idle;
+    state busy;
+    transition start first idle accept go then busy;
+    transition again first busy accept back then Loop;
+    transition rest first busy accept done then idle;
+  }
+}
+`;
+
+test('simulation tab: a step into the machine itself is not taken, and the tab says why', async ({ page }) => {
+  // docs/06 §8.12: `again` targets the machine's own root, which sits in no
+  // chain of its states, so no reading of the step is defined. The run stops
+  // at `busy` without taking it, takes nothing after it, and says which step.
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await openTab(page, 'tab-text');
+  await page.getByTestId('text-editor').fill(ROOTED);
+  await page.getByTestId('text-apply').click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { sysml: { elementsOfType: (t: string) => unknown[] } }).sysml
+            .elementsOfType('StateDefinition').length,
+      ),
+    )
+    .toBeGreaterThan(0);
+
+  await openTab(page, 'tab-simulation');
+  await page.getByTestId('sim-start').click();
+  await expect(page.getByTestId('sim-active')).toContainText('idle');
+  await expect(page.getByTestId('sim-refused')).toHaveCount(0);
+  await page.getByTestId('sim-event').selectOption('go');
+  await page.getByTestId('sim-inject').click();
+  await expect(page.getByTestId('sim-active')).toContainText('busy');
+  await expect(page.getByTestId('sim-refused')).toHaveCount(0);
+
+  await page.getByTestId('sim-event').selectOption('back');
+  await page.getByTestId('sim-inject').click();
+  await expect(page.getByTestId('sim-refused')).toContainText('`Demo::Loop::again` leads from `Demo::Loop::busy` into `Demo::Loop`, the machine itself');
+  await expect(page.getByTestId('sim-active')).toContainText('busy');
+  await expect(page.getByTestId('sim-fired')).toHaveCount(0);
+
+  // `done` would take the run back to `idle`; a stopped run takes nothing.
+  await page.getByTestId('sim-event').selectOption('done');
+  await page.getByTestId('sim-inject').click();
+  await expect(page.getByTestId('sim-index')).toHaveText('3');
+  await expect(page.getByTestId('sim-active')).toContainText('busy');
+  await expect(page.getByTestId('sim-refused')).toBeVisible();
+
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 test('simulation tab: empty state when the model has no state machine', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page); // the sample model has parts/requirements but no state machine

@@ -904,7 +904,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         // No `fallback`, because there is no default: a property is a claim
         // about ONE machine, and a run that checked every machine in the file
         // against every property in it would answer a question nobody asked.
-        doc: 'The state machine to check: an id, a qualified name, or a name unique in the model. Required',
+        doc: 'The state machine to check: an id, a qualified name, or a name unique in the model. An element that holds exactly one machine names it, and one that holds several is refused with them listed. A `state def` that owns no transition, sits in no machine and carries a property is no machine but is named the same way, and counted beside the machines: named, each of its properties is reported as not checked (exit 2), with the machines written inside it named. Required',
       },
       {
         name: 'pattern',

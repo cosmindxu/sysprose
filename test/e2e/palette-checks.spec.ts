@@ -363,9 +363,14 @@ const checkRow = (page: Page, id: string): Locator => page.locator(`[data-testid
  * Keep the worker's replies from the page until {@link releaseWorker}: the worker
  * still walks, the answer waits. A person's next move is made while a check runs;
  * a test cannot rely on a walk being slow enough to make it in time.
+ *
+ * `results` holds only a check's result (a reply carrying `result`), and lets the
+ * load's measured texts through: the run then goes from `checking the load…` to
+ * `running` and stays there, its walk done in the worker, until the test
+ * releases the answer.
  */
-async function holdWorkerReplies(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function holdWorkerReplies(page: Page, only: 'all' | 'results' = 'all'): Promise<void> {
+  await page.addInitScript((which: 'all' | 'results') => {
     const w = window as unknown as { Worker: typeof Worker; __release?: () => void };
     const Real = w.Worker;
     const held: Array<() => void> = [];
@@ -374,15 +379,17 @@ async function holdWorkerReplies(page: Page): Promise<void> {
       open = true;
       for (const deliver of held.splice(0)) deliver();
     };
+    const holds = (e: MessageEvent): boolean =>
+      !open && (which === 'all' || (typeof e.data === 'object' && e.data !== null && 'result' in e.data));
     w.Worker = class extends Real {
       set onmessage(handler: ((e: MessageEvent) => unknown) | null) {
-        super.onmessage = handler === null ? null : (e: MessageEvent) => (open ? handler.call(this, e) : held.push(() => handler.call(this, e)));
+        super.onmessage = handler === null ? null : (e: MessageEvent) => (holds(e) ? held.push(() => handler.call(this, e)) : handler.call(this, e));
       }
       get onmessage(): ((e: MessageEvent) => unknown) | null {
         return super.onmessage as ((e: MessageEvent) => unknown) | null;
       }
     };
-  });
+  }, only);
 }
 const releaseWorker = (page: Page): Promise<void> => page.evaluate(() => (window as unknown as { __release(): void }).__release());
 
@@ -403,6 +410,8 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
   const errors = captureErrors(page);
   const workers: string[] = [];
   page.on('worker', (w) => workers.push(w.url()));
+  // The walk's answer waits for the test, so what is asserted while it runs does not race a one-second walk.
+  await holdWorkerReplies(page, 'results');
   await openMachine(page, heavyMachine(6, 35));
   // Frames are watched over the check, not over the layout of the machine just opened.
   await diagramSettled(page);
@@ -419,14 +428,15 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
   // The Checks tab comes forward at the click, where the answer will be, and lists the check as under way.
   await expect(page.locator('.bottom-tab.is-active')).toContainText('Checks');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', /checking|running/);
-  // Polled finely: the walk runs for about a second, and the default polling backs off to a second.
-  await expect.poll(() => reach.getAttribute('data-verdict'), { intervals: [50], timeout: 60_000 }).toBe('running');
+  // The load's texts come back and the walk starts; its answer is held, so the run stays `running`.
+  await expect(reach).toHaveAttribute('data-verdict', 'running', { timeout: 60_000 });
   await expect(reach.getByTestId('palette-check-verdict')).toHaveText('running…');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', 'running');
   // Another check, started while it runs, is answered on the spot.
   await checkRow(page, 'stats').getByTestId('palette-check-run').click();
   await expect(checkRow(page, 'stats')).toHaveAttribute('data-verdict', 'holds');
   await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await releaseWorker(page);
 
   // A walk to the bound says nothing about the machine it did not finish, and says so.
   await expect(reach).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
@@ -982,6 +992,37 @@ test('a pick row for a machine that holds a nested state def selects it, and the
     '`state b` never holds',
   );
   await expect(result.locator('[data-testid="checks-row"][data-code="checks/pick-machine"]')).toHaveCount(0);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+/** A `state def` that owns no transition and carries a property, beside a machine, with a machine inside it. */
+const LONE5 = `package T5 { state def Lone { ${carrier('absence', 'state b')} state a; state b; first a then b; state def Deep { state q; state r; transition qr first q accept go then r; } } state def M { state m1; state m2; transition t first m1 accept go then m2; } }`;
+
+test('a definition that is no machine and carries a property is offered by the pick rows, and its run offers the machine inside it', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await loadText(page, LONE5);
+  await page.getByTestId('tb-view-state').click();
+  await selectByQualifiedName(page, 'T5');
+  const run = page
+    .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
+    .getByTestId('palette-check-run');
+  await run.click();
+  // The package holds two machines and the definition: refused, with a pick row for each — the
+  // definition's among them, where it was left out and its property reported by nothing.
+  const result = page.locator('[data-testid="checks-result"][data-check="check-behaviour"]');
+  await expect(result).toHaveAttribute('data-verdict', 'not-run');
+  const picks = result.locator('[data-testid="checks-row"][data-code="checks/pick-machine"]');
+  await expect(picks).toHaveCount(3);
+  await expect(picks.nth(2)).toContainText('T5::Lone — 1 property in the file, on a `state def` that is no machine');
+  // Following it and running again reports its property as not checked, with a pick row for the machine inside it.
+  await picks.nth(2).getByTestId('checks-row-select').click();
+  await run.click();
+  await expect(result).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
+  await expect(result.locator('[data-testid="checks-report"] [data-claim="inconclusive"]')).toContainText('not checked');
+  const inside = result.locator('[data-testid="checks-row"][data-code="checks/pick-machine"]');
+  await expect(inside).toHaveCount(1);
+  await expect(inside).toContainText('T5::Lone::Deep —');
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 

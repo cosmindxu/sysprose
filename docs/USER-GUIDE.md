@@ -2718,31 +2718,47 @@ a trigger-less one due only where the 64-step chase budget stops a chase. On a
 machine that takes one event and then a chain of 69 trigger-less steps, the
 chase after the event takes 64 of them and stops at the 65th state of the chain,
 whose step out is enabled and never taken: `reach` prints `65 of 70
-transition(s) fired, 4 dead` — the event and the 64 steps fired, the four steps
-after the one never taken dead, and that one neither. `--json` carries the same
-count as `transitions.fired`.
+transition(s) fired, 4 dead, 1 enabled and never fired` — the event and the 64
+steps fired, the four steps after the one never taken dead, and that one
+neither. The line names the gap only where there is one, and a `never fired`
+row under the `dead` rows names each transition in it (`t65 (c65 -> c66) —
+enabled where a run reaches, and taken by no run: …`); the row has no code,
+since a step the budget or the priority rule keeps a run from taking is the
+interpreter doing what the profile says, not a defect. Both are withheld with
+the `dead` rows, over a walk that did not finish. `--json` carries the same
+count as `transitions.fired`, and the transitions in the gap as
+`transitions.enabledNeverFired`.
 
 **Every figure carries the reading it holds under.** The semantic profile
-printed under each machine names six things every published formalisation of
+printed under each machine names seven things every published formalisation of
 state machines disagrees about — run-to-completion (chasing is bounded at 64
-steps), priority (innermost substate first), history (shallow, by parent map),
-regions (the interpreter concatenates them; a parallel machine is not explored
-here at all), deferred events (none — there is no event pool), and time
-(discrete `after(n)`; the walk offers each `after(n)` label as an event rather
-than advancing a clock). A verdict about a machine is a verdict under a reading
-of those six, and one that does not say which reading is one you cannot check.
+steps), priority (innermost substate first), exits (a step exits to the least
+common ancestor of its source and its target, and every transition is external:
+the next paragraph), history (shallow, by parent map), regions (the interpreter
+concatenates them; a parallel machine is not explored here at all), deferred
+events (none — there is no event pool), and time (discrete `after(n)`; the walk
+offers each `after(n)` label as an event rather than advancing a clock). A
+verdict about a machine is a verdict under a reading of those seven, and one
+that does not say which reading is one you cannot check. `exits` is the newest:
+it was added on 2026-10-21, after the step's reading changed and moved verdicts
+that none of the other six showed, so a `reach` or `check-behaviour` report
+saved before then prints six.
 
 **A step out of a composite leaves it.** A transition exits to the least common
-ancestor of its source and its target: every active state that does not also
-hold the target is exited, innermost first with its exit actions, the
-transition's effect runs, and the states that hold the target are entered,
+ancestor of its source and its target: the source and every active state below
+it are exited, then each state above the source that does not also hold the
+target, innermost first with their exit actions; the transition's effect runs;
+then the states that hold the target and did not stay active are entered,
 outermost first, then the target and its initial substate. So `first b then
 Idle` written inside `state C0 { … }` exits `b` and then `C0`: at `Idle`, `C0`'s
 own transitions are not offered and a `state C0` atom does not hold. A step to
-an ancestor exits it and enters it again at its initial substate, and a step
-into a nested state from outside enters its composite first; so does a step into
-a node written inside a state, such as `then S::work` into `state S { action
-work; }`, which enters `S` and then `work`. Every transition is external: a
+an ancestor exits it and enters it again at its initial substate. A step from a
+composite into one of its own substates exits the composite too and enters it
+again: `C0` to `C0::b` runs the exit actions of `C0`'s active substate and of
+`C0`, then `C0`'s entry actions, then `b`'s. A step into a nested state from
+outside enters its composite first; so does a step into a node written inside a
+state, such as `then S::work` into `state S { action work; }`, which enters `S`
+and then `work`. Every transition is external: a
 self-transition exits its state and enters it again, and a composite restarts at
 its initial substate. A composite marked as a history state is the exception to
 both restarts: entered again, it resumes the child it was just left from. The
@@ -2750,12 +2766,30 @@ Simulation tab steps the same way on every machine the walk takes. A step whose
 target sits in no chain of the machine's states — into the machine's own root,
 or into a node written under an action — has no such ancestor, and the machine
 is refused: `verification/behaviour-unsupported-construct` with the construct
-`step-outside-states`, naming the transition. A simulator run still takes such a
-step the old way: into a node under an action it stands at that node; into the
-machine's own root, on a machine with no composite it stands at the machine
-itself and nothing more is offered, and otherwise it restarts at the machine's
-initial state, with any composite the source sat in still active beneath it.
-That is what the Simulation tab shows, not a verdict. Until 2026-10-21 a step
+`step-outside-states`, naming the transition. The simulator does not take such
+a step either: neither UML nor the semantic profile says what it exits and
+enters, so a run that comes to one stops where it stands, takes no step after
+it whatever it is driven with, and is not complete. The Simulation tab says so
+on a **Stopped** line (`sim-refused`) — *`` `Demo::Loop::again` leads from
+`Demo::Loop::busy` into `Demo::Loop`, the machine itself ``*, then why — and the
+Simulate button's trace ends its header line with the same sentence after
+`Stopped:`. The line keeps the words it was written with when the model is
+edited afterwards, and **Play** stops there, since no clock advance moves a
+stopped run on. Two runs are worded apart. A composite state that the Simulate
+button runs on its own (select it first) and that steps into itself stops the
+same way: in the machine that holds it, that step exits the composite and
+enters it again, but alone the composite has nothing above it to exit to, and
+the sentence names that machine rather than calling the composite the machine
+itself. That holds only where a machine holds the composite, as `reach` counts
+machines: a state or `state def` above it that owns a transition, with no other
+`state def` between the two. Where no machine holds it, as in
+`state S { state C { … } }` or with a lone `state def` around it, the composite
+is the machine itself, and the sentence is the plain one above, the one `reach`
+prints for the same step. On a parallel machine, which only the API makes, each
+region runs on its own over the whole script, so the step stops only its own
+region, the other regions run on, and the sentence says so. The simulator used
+to take it the old way, standing at the machine itself or at the node under the
+action, or restarting under the source's composite. Until 2026-10-21 a step
 exited only down to its source's level and entered the target on top, so a
 composite stayed active after a step out of it, each round trip stacked one more
 state, and a property could be refuted on a composite the run had left.
@@ -2772,6 +2806,16 @@ $ npm run sysprose -- reach examples/uav-isr.sysml --max-configs 2
 …
     partial under {maxConfigs 2, …} — the configuration bound was reached; the unreachable and dead lists are lower bounds and are NOT reported as findings
 ```
+
+**The depth bound counts events, not steps.** `maxDepth 200` bounds the events
+a run takes from the opening. The trigger-less steps of the chase after each
+event are not counted: the 64-step chase budget bounds those already. So four
+trigger-less cycles stacked one behind another, each left on an event, are
+walked to the end, though the fourth event's target is 260 steps out. The
+`depth` printed beside the configurations still counts every step, so it can be
+larger than the `maxDepth` printed in the bounds (`depth 260` beside `maxDepth
+200` there). Until 2026-10-21 the bound counted steps, and that machine stopped
+at depth 200 with every list withheld. No flag raises the depth bound.
 
 A `check-behaviour` search can also come back short with no bound hit at all:
 the walk finished, but never offered a trigger the machine names, so a run that
@@ -2802,7 +2846,16 @@ the budget does decide there is where a run *ends* — every run is the one chas
 from the opening, stopped after 64 steps wherever it is — so the two answers
 that are about where runs end are checked against those stopping points:
 `check-behaviour`'s `recoverable` (below) and the `every run? guaranteed` line.
-Each is withheld where the run the budget stops would read differently.
+Each is withheld where the run the budget stops would read differently. A
+`check-behaviour` search ends each run where the budget stops it, as the
+simulator does, so a count round such a cycle is decided: `bounded-existence`
+of `b` at most 40 times round `a ⇄ b`, which the run enters 32 times in its 64
+steps, is a `pass`, and at most 31 times a `fail` on the run itself. Until
+2026-10-21 the search refused the 65th step as a chase past the budget and
+printed `inconclusive`. A trigger-less transition that carries a dwell (an
+`attrs.after` set through the API) is the exception: a clock advance fires it
+where the chase stopped and the chase goes on, so the search still refuses that
+step there.
 
 **A cycle the chase never leaves is a finding of its own.** On `FlightModes` the
 simulator's chase goes `standby -> manual -> autonomous -> manual -> …` for its
@@ -3092,7 +3145,8 @@ checked by nothing, and said so rather than dropped — and a property of
 `Outer`'s that names one of the nested definition's states or
 transitions is refused as `verification/unknown-atom`, as one naming another
 machine's state is. A reference that only contains machines (the package, say) is still refused
-with the machines it holds, and a state is refused with the machine it belongs
+with the machines it holds (and with any definition that is no machine and
+carries a property, below), and a state is refused with the machine it belongs
 to — for a state of the nested definition, that definition, not the outer
 machine whose text holds it. In the app, the pick row such a refusal lists in
 the Checks tab (the machine's qualified name and its property count) selects
@@ -3100,19 +3154,46 @@ that machine, and the next Run checks it.
 
 A `state def` that owns no transition and is written inside **no** machine is
 no machine and sits in none, so no machine reports what it carries. When it
-carries a property, name it itself — `check-behaviour --element P::Lone` — and
-every property about it is `inconclusive`, `… — not checked`,
+carries a property, name it — `check-behaviour --element P::Lone` — and every
+property about it is `inconclusive`, `… — not checked`,
 `verification/behaviour-unsupported-construct`, exit 2, naming the definition:
 each carrier on it or inside it, and a `--pattern` given against it, which is
 never walked. A machine written inside it (a nested definition or a composite
 state that owns a transition) keeps its own carriers and is checked only by its
 own name, so this run says nothing of it, a failure there included; each row
-names it, and `--element P::Lone::Deep` checks it. A definition like this that
-carries no property resolves as before: refused as holding no state machine when
-none is written inside it, and otherwise the one machine inside it is checked or
-the several are listed. In the app, select the definition and run **Behaviour
-properties** for the same rows; the pick rows with nothing selected list
-machines only, so such a definition is not among them.
+names it, and `--element P::Lone::Deep` checks it. Such a definition counts
+beside the machines a reference holds, as one more thing a property can be
+about: `--element P`, for a package holding it beside one machine, is refused
+with both listed (*"`P` holds 1 state machine and 1 `state def` that is no
+machine and carries a property"*, then the definition's line, *"owns no
+transition and sits in no machine: named, its property is reported as not
+checked"*), where it used to check the machine and pass the definition's
+properties over, exiting 0 when the machine's own held; a package holding it and
+no machine names it. A state written in it is refused with the definition named
+(*"`P::Lone::b` holds no state machine — it is inside `P::Lone`, a `state def`
+that owns no transition and is written inside no machine, so no walk stands on
+its states; named itself, its property is reported as not checked"*). Where
+such definitions nest, it is the outermost that carries a property that counts
+and that a state inside them names, since naming it reports the carriers of
+every definition inside it. A state inside a machine written in it names that
+machine instead (*"… — it is inside `P::Lone::Mach`, which is one"*), a state of
+a definition that owns no transition inside the machine among them: the machine
+reports that definition's carriers, as not checked, and the outer definition
+only its own. A definition like this that carries no property
+resolves as before: refused as holding no state machine when none is written
+inside it, and otherwise the one machine inside it is checked or the several
+are listed; a state written in it is refused with the definition named, *"…, and
+it carries no property"*, and the machines written inside it named. In the app,
+select the definition and run **Behaviour properties** for the same rows, with
+a pick row for each machine written inside it. The pick rows with nothing
+selected list what carries a property — the machines that do, then such
+definitions (*"`P::Lone` — 1 property in the file, on a `state def` that is no
+machine: selected, it is reported as not checked"*) — and every machine only
+when nothing in the file carries one; the rows of a refused package list such a
+definition beside its machines; a state written in one that carries a property
+lists that definition, a state inside a machine written in it lists that
+machine, and a state written in one that carries nothing lists the machines
+written inside it, where it holds any.
 
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither
@@ -3644,7 +3725,7 @@ of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
 **Source of truth:** `src/ui/store.ts:3318-3500` (`runValidation`,
 `solveParametric`: the four buttons), `2039-2216` (`afterSdkEdit`: an SDK edit),
-`src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
+`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -4245,7 +4326,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 (`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
 derived surfaces lag), `5113-5236` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
+`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:198-310`.
 
 ---
 
@@ -4392,7 +4473,7 @@ The **▾** at the end of the tab strip folds the panel down to its tabs
 | Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A check scoped to the selection says so in its summary (*scoped to* its name, or *covers the whole model:* and why). A check running in the background is listed at once — as `checking the load…` while its model's text is parsed, then as `running…` — in place of what it said before, which comes back if the run is cancelled. A result from before the last edit is marked stale rather than shown as current. A reach or check-behaviour result also carries the terminal's own report under `checks-report`, the same lines the command prints, each one a `checks-report-line` with `data-kind`, `data-code` and `data-withholds`; reach groups them per `checks-report-machine` (`data-machine`, `data-status`), and check-behaviour per `checks-report-property` (`data-claim`). Every witness the run found is steppable on the diagram: each step is a `checks-witness-step` button, with **Prev** / **Next** / **Close** (`checks-witness-prev`, `checks-witness-next`, `checks-witness-close`) | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear`, `checks-report`, `checks-witness-step`, `checks-witness-prev`, `checks-witness-next`, `checks-witness-close` |
 | Text | The model as editable text, with **Apply text → model**; parse warnings fold to one line | `tab-text`, `text-editor`, `text-apply`, `text-editor-diags-toggle` |
 | API Console | A console over the live SDK: queries, metrics, requirement satisfaction, where-used, commit | `tab-api`, `api-query`, `api-run`, `api-metrics` |
-| Simulation | The interactive stepper: target, start, play, step, inject, scrub | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject` |
+| Simulation | The interactive stepper: target, start, play, step, inject, scrub; a run stopped at a step it does not take says which | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject`, `sim-refused` |
 | Versions | Commits, branches and a 3-way merge over the working model — in memory only. Switching to a branch, or a merge that resolves (it loads its result), asks first when the model has work no save holds — a commit holds it, as a save does — or unsaved changes to an attached Drive file; a merge that meets conflicts loads nothing and asks nothing | `tab-versions`, `version-commit-btn`, `version-branch-new`, `version-merge-btn` |
 
 ---

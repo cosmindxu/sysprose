@@ -6,10 +6,14 @@
  * differs on exactly these fields — when a completion transition fires, which
  * of two nested states wins, what history resumes, how regions interleave,
  * whether there is an event pool, what time is. A verdict about a machine is a
- * verdict UNDER a reading of those six, and a report that does not say which
- * reading it used is a verdict nobody can reproduce or contest.
+ * verdict UNDER a reading of those, and a report that does not say which
+ * reading it used is a verdict nobody can reproduce or contest. The seventh is
+ * what a step exits and enters (`exits`): UML gives a transition three kinds
+ * (internal, local, external) that read it three ways, this tool read it
+ * another way until 2026-10-21 (`docs/06` §8.10), and that change moved
+ * verdicts the other six fields did not show (`docs/06` §8.13).
  *
- * So the six fields are data rather than prose, each with the code that decides
+ * So the seven fields are data rather than prose, each with the code that decides
  * it, and `reach` prints them beside every figure it publishes. The provenance
  * is a SYMBOL in `src/semantics/execute.ts` (or `./config.ts`, where the
  * relation now lives) rather than a line number, because line numbers rot in a
@@ -34,9 +38,9 @@ export interface ProfileField {
 }
 
 /**
- * The six fields, in the order a reader needs them: what fires, which one wins,
- * what is remembered, how regions compose, what happens to an event nobody
- * wants, and what time is.
+ * The seven fields, in the order a reader needs them: what fires, which one
+ * wins, what a step leaves and enters, what is remembered, how regions compose,
+ * what happens to an event nobody wants, and what time is.
  */
 export const SEMANTIC_PROFILE: readonly ProfileField[] = [
   {
@@ -55,6 +59,23 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
       'branches only on the tie-break it does not decide: every transition enabled at that ' +
       'innermost level, never one an inner state beats.',
     provenance: 'src/semantics/mc/config.ts — enabledTransitions; src/semantics/mc/explore.ts — exploreMachine',
+  },
+  {
+    field: 'exits',
+    reading:
+      'to the least common ancestor of the source and the target, and every transition is external: ' +
+      'the source and every active state below it are exited, then each state above the source that ' +
+      'does not also hold the target, innermost first; the effect runs; then the states that hold the ' +
+      'target and did not stay active are entered, outermost first, down to the target and its ' +
+      'initial substate. So a step out of a composite leaves it, and a self-transition, a step to an ' +
+      'ancestor, or a step from a composite into one of its own substates exits that state and enters ' +
+      'it again. A step whose target sits in no chain ' +
+      "of the machine's states — its own root, or a node under an action — has no such ancestor and " +
+      'is taken by neither side: the explorer refuses the machine and the interpreter stops before ' +
+      "the step. A step across the machine's boundary, which the explorer refuses too, the " +
+      "interpreter still takes the old way: it exits down to the source's level and enters the " +
+      'target on top.',
+    provenance: 'src/semantics/mc/config.ts — stepConfig, hierarchyPath, stepOutsideStates',
   },
   {
     field: 'history',

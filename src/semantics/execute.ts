@@ -61,11 +61,13 @@ import {
   isTruthy,
   leafOf,
   literalValueOf,
+  outsideStatesSentence,
   regionDescendants,
   regionTransitions,
   runStatePhase,
   seedStore,
   stepConfig,
+  stepOutsideStates,
   strAttr,
   triggerEquals,
   triggerLabelOf,
@@ -74,6 +76,7 @@ import {
   type StepEffects,
   type StepInput,
 } from './mc/config';
+import { machineHolding } from './mc/explore';
 
 /* ───────────────────────────── action flow ───────────────────────────── */
 
@@ -906,6 +909,33 @@ export interface StateRunResult {
    * `undefined` only for a container that holds no machine at all.
    */
   completionBudgetHit?: boolean;
+  /**
+   * The step the run stopped at WITHOUT TAKING IT, where it stopped at one: the
+   * transition it would have fired next, from where it stood, under the label it
+   * would have fired under. Absent on a run that took every step it came to.
+   *
+   * A step whose target sits in no chain of the machine's states — into the
+   * machine's own root, or into a node written under an action
+   * (`stepOutsideStates`, `./mc/config.ts`) — has no least common ancestor to
+   * exit to, and neither UML nor the profile says what it exits and enters. So
+   * the interpreter does not take it, and does not guess at where the run would
+   * stand after it: the run stops where it stands, takes no step after it
+   * whatever it is driven with, and is not `complete`. `from` is the step's
+   * source, which is the state the run stands in or one that holds it. The walk refuses the
+   * machine for the same step (`step-outside-states`), so no verdict stands on
+   * either side of it (`docs/06` §8.12). It used to take the step the way every
+   * step was taken before `docs/06` §8.10 — standing at the root or at the node
+   * under the action, or restarting under the source's composite — a run the
+   * Simulation tab showed and nothing defined.
+   *
+   * ON A PARALLEL MACHINE ({@link runsParallel}, set only through the API) the
+   * stop is the REGION's: each region is driven on its own over the whole
+   * script, one after another, so the region the step came in stops and takes
+   * no step after it, and the other regions run on. The first region's refusal
+   * is the one named. The walk refuses every parallel machine
+   * (`parallel-regions`), so this too is a trace, never a verdict.
+   */
+  refused?: StateFire;
 }
 
 /**
@@ -942,7 +972,7 @@ export function runStateMachine(
   const performed: PerformedAction[] = [];
   const tie: TieBreak = { follow: opts.follow, at: 0 };
 
-  const parallel = isTruthy(container.attrs.parallel) || isTruthy(container.attrs.isParallel);
+  const parallel = runsParallel(model, container.id);
 
   // Route to the fuller HIERARCHICAL / TIMED interpreter when the machine has
   // nested composite states, a history pseudostate, an orthogonal join
@@ -961,17 +991,84 @@ export function runStateMachine(
   const fired: StateFire[] = [];
   const finals: (ElementId | null)[] = [];
   let completionBudgetHit = false;
+  let refused: StateFire | undefined;
   for (const region of regions) {
-    const res = runRegion(model, region.id, stringTriggers, valueStore, performed, maxCompletion, tie);
+    const res = runRegion(model, container.id, region.id, stringTriggers, valueStore, performed, maxCompletion, tie);
     visited.push(...res.visited);
     fired.push(...res.fired);
     finals.push(res.finalState);
     if (res.completionBudgetHit) completionBudgetHit = true;
+    refused ??= res.refused;
   }
 
   const activeStates = finals.filter((s): s is ElementId => s !== null);
   const finalState = parallel ? (finals[0] ?? null) : (finals[0] ?? null);
-  return { visited, fired, performed, valueStore, activeStates, finalState, completionBudgetHit };
+  // A refused run did not complete; every other flat run leaves `complete`
+  // untracked, as it always did.
+  const stopped = refused === undefined ? {} : { complete: false, refused };
+  return { visited, fired, performed, valueStore, activeStates, finalState, completionBudgetHit, ...stopped };
+}
+
+/**
+ * Is the machine rooted at `machineId` run as a parallel one (`attrs.parallel`,
+ * which only the API sets): each child region driven on its own over the whole
+ * script, one region after another? Then a step a region does not take
+ * ({@link StateRunResult.refused}) stops that region, not the run.
+ */
+export function runsParallel(model: Model, machineId: ElementId): boolean {
+  const el = model.get(machineId);
+  return el !== undefined && (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel));
+}
+
+/**
+ * The sentence a surface prints for a run that stopped at a step it does not
+ * take ({@link StateRunResult.refused}): which step, where it leads, and what
+ * stopped there. One composer, read by the Simulation tab (`SimSample.refused`,
+ * composed when the sample is captured, so an edit after it cannot reword a
+ * stop that already happened) and the Simulate trace (`executionReport`), with
+ * the walk's own words for where the step leads (`outsideStatesSentence`, which
+ * the walk's `step-outside-states` refusal prints too).
+ *
+ * TWO RUNS ARE WORDED APART, because the plain sentence would be false of them:
+ * - On a parallel machine ({@link runsParallel}) the step stops its own region,
+ *   and the other regions run on; the sentence says so, where "takes no step
+ *   after it" would be contradicted by the steps they fire.
+ * - A composite state run on its own — `executionReport` runs every element
+ *   that owns a transition, a state written inside a machine among them — that
+ *   steps into ITSELF is not stepping into a machine's root: in the machine
+ *   that holds it, a step to an ancestor exits it and enters it again
+ *   (`docs/06` §8.10). Run alone, the composite has nothing above it to exit
+ *   to, so the run stops there too, and the sentence names that machine rather
+ *   than calling the composite "the machine itself". ONLY WHERE A MACHINE
+ *   HOLDS IT: the holder is the machine whose region holds the composite, by
+ *   `stateMachinesIn`'s rule (`machineHolding`, `./mc/explore`), never just
+ *   the state above it. A composite whose enclosing states own no transition
+ *   — a `state S { state C { … } }`, or a lone `state def` holding it — is a
+ *   machine itself, and naming `S` as a machine that would exit and re-enter
+ *   it was false: the step is the plain one, into the machine itself, in the
+ *   words `reach` prints for the same step.
+ */
+export function refusedStepSentence(model: Model, machineId: ElementId, transitionId: ElementId): string {
+  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  const edge = model.get(transitionId);
+  if (!edge?.source?.[0] || !edge.target?.[0]) return `${qn(transitionId)} was not taken, and the run stopped there.`;
+  const stop = runsParallel(model, machineId)
+    ? 'its region stops where it stands without taking it and takes no step after it, while the machine’s ' +
+      'other regions, each run on its own over the whole script, run on'
+    : 'the run stops where it stands without taking it, and takes no step after it';
+  const held = edge.target[0] === machineId ? machineHolding(model, machineId) : null;
+  const holder = held !== null && held !== machineId ? held : undefined;
+  if (holder !== undefined) {
+    return (
+      `${qn(transitionId)} leads from ${qn(edge.source[0])} into ${qn(machineId)}, a composite state of ` +
+      `${qn(holder)} run on its own. In ${qn(holder)} a step to an ancestor exits it and enters it again; run on ` +
+      `its own, the composite has nothing above it to exit to, so ${stop}.`
+    );
+  }
+  return (
+    `${qn(transitionId)} leads from ${qn(edge.source[0])} ${outsideStatesSentence(model, machineId, edge)}. ` +
+    `Its target sits in no chain of the machine’s states, so what the step exits and enters is not defined here: ${stop}.`
+  );
 }
 
 /**
@@ -1009,16 +1106,28 @@ function tieBreak<T>(tie: TieBreak, candidates: readonly T[], idOf: (c: T) => El
   return (want !== undefined ? candidates.find((c) => idOf(c) === want) : undefined) ?? candidates[0];
 }
 
-/** Drive a single region against the trigger sequence, sharing the store. */
+/**
+ * Drive a single region against the trigger sequence, sharing the store.
+ * `machineId` is the machine the region belongs to — the region itself, or the
+ * parallel machine whose child it is — which is what a step into the machine's
+ * own root is read against ({@link StateRunResult.refused}).
+ */
 function runRegion(
   model: Model,
+  machineId: ElementId,
   regionId: ElementId,
   triggers: string[],
   store: Map<string, unknown>,
   performed: PerformedAction[],
   maxCompletion: number,
   tie: TieBreak,
-): { visited: ElementId[]; fired: StateFire[]; finalState: ElementId | null; completionBudgetHit: boolean } {
+): {
+  visited: ElementId[];
+  fired: StateFire[];
+  finalState: ElementId | null;
+  completionBudgetHit: boolean;
+  refused?: StateFire;
+} {
   const region = model.get(regionId)!;
   // THE SAME CONTAINMENT THE WALK READS: the region's descendants, stopping at a
   // nested `state def` (`regionDescendants`, `./mc/config.ts`). That definition
@@ -1053,11 +1162,15 @@ function runRegion(
   if (!current) return { visited, fired, finalState: null, completionBudgetHit };
   visited.push(current);
   enterState(model, current, store, scope, performed);
-  const opening = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion, tie);
+  const outside = (tr: ElementRecord): boolean => stepOutsideStates(model, machineId, tr);
+  const opening = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion, tie, outside);
   current = opening.current;
   if (opening.exhausted) completionBudgetHit = true;
+  let refused = opening.refused;
 
   for (const trigger of triggers) {
+    // A run stopped at a step it does not take takes none after it.
+    if (refused !== undefined) break;
     const cur = current!;
     const accepts = (tr: ElementRecord): boolean =>
       tr.source![0] === cur && triggerEquals(tr, trigger) && guardHoldsStore(tr, store, scope);
@@ -1067,24 +1180,32 @@ function runRegion(
     // simulator's own run pays for none; its head is `head`.
     const t = tie.follow === undefined ? head : tieBreak(tie, transitions.filter(accepts), (tr) => tr.id);
     const to = t.target![0];
+    // A target in no chain of the region's states — the machine's own root, a
+    // node under an action — is a step nothing here reads: the run stops at
+    // `cur` without taking it (`StateRunResult.refused`).
+    if (outside(t)) {
+      refused = { transitionId: t.id, from: cur, to, trigger };
+      break;
+    }
     // No composite on this path, and no step whose target is written below one
     // of the region's states (`needsHierarchical`): every target sits directly
     // in the region, so the least common ancestor of a step's two ends is the
-    // region, and `stepConfig`'s exit to it is this one exit. A target in no
-    // chain of the region's states — the region itself, a node under an action —
-    // is entered alone, as before `docs/06` §8.10; the walk refuses that machine.
+    // region, and `stepConfig`'s exit to it is this one exit. A step across the
+    // machine's boundary enters its target alone, as before `docs/06` §8.10
+    // (§8.6); the walk refuses that machine.
     exitState(model, cur, store, scope, performed);
     applyTransitionEffect(t, store, scope);
     fired.push({ transitionId: t.id, from: cur, to, trigger });
     current = to;
     visited.push(to);
     enterState(model, to, store, scope, performed);
-    const chased = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion, tie);
+    const chased = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion, tie, outside);
     current = chased.current;
     if (chased.exhausted) completionBudgetHit = true;
+    refused = chased.refused;
   }
 
-  return { visited, fired, finalState: current, completionBudgetHit };
+  return { visited, fired, finalState: current, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
 }
 
 /**
@@ -1095,7 +1216,8 @@ function runRegion(
  * The budget state is returned for the same reason its hierarchical sibling
  * returns one (plan §3.8): a chase cut off mid-run left the machine somewhere
  * it would not have stopped, and a run that could not tell a reader which of
- * the two happened was reporting a bound as a fact.
+ * the two happened was reporting a bound as a fact. A step the chase does not
+ * take (`outside`, {@link StateRunResult.refused}) stops it, and the run.
  */
 function chaseCompletion(
   model: Model,
@@ -1108,7 +1230,8 @@ function chaseCompletion(
   fired: StateFire[],
   budget: number,
   tie: TieBreak,
-): { current: ElementId; exhausted: boolean } {
+  outside: (tr: ElementRecord) => boolean,
+): { current: ElementId; exhausted: boolean; refused?: StateFire } {
   let current = start;
   const due = (tr: ElementRecord): boolean =>
     tr.source![0] === current && isCompletion(tr) && guardHoldsStore(tr, store, scope);
@@ -1119,6 +1242,7 @@ function chaseCompletion(
     // As at an event: the list only where a run asks for another branch.
     const t = tie.follow === undefined ? head : tieBreak(tie, transitions.filter(due), (tr) => tr.id);
     const to = t.target![0];
+    if (outside(t)) return { current, exhausted: false, refused: { transitionId: t.id, from: current, to, trigger: '' } };
     exitState(model, current, store, scope, performed);
     applyTransitionEffect(t, store, scope);
     fired.push({ transitionId: t.id, from: current, to, trigger: '' });
@@ -1194,7 +1318,9 @@ function isJoinTransition(tr: ElementRecord): boolean {
  * walk and the property search, which read `stepConfig`, stood at `[S, work]`
  * and published absences the simulator contradicted. Such a machine takes the
  * path that drives `stepConfig`. A target in no chain of states
- * (`hierarchyPath` is `null`) does not route: the walk refuses that machine.
+ * (`hierarchyPath` is `null`) does not route: the walk refuses that machine,
+ * and either path stops before a step into the root or a node under an action
+ * ({@link StateRunResult.refused}).
  */
 function needsHierarchical(model: Model, container: ElementRecord, parallel: boolean): boolean {
   const regionIds = new Set<ElementId>();
@@ -1251,11 +1377,14 @@ function runHierMachine(
   const leaves: (ElementId | null)[] = [];
   const completes: boolean[] = [];
   let completionBudgetHit = false;
+  let refused: StateFire | undefined;
   for (const rc of regionContainers) {
-    const r = runHierRegion(model, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion, tie);
+    const r = runHierRegion(model, container.id, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion, tie);
     leaves.push(r.leaf);
-    completes.push(r.complete);
+    // A region stopped at a step it does not take did not complete.
+    completes.push(r.complete && r.refused === undefined);
     if (r.completionBudgetHit) completionBudgetHit = true;
+    refused ??= r.refused;
   }
 
   const activeStates = leaves.filter((s): s is ElementId => s !== null);
@@ -1292,6 +1421,7 @@ function runHierMachine(
     clock: clockRef.clock,
     complete,
     completionBudgetHit,
+    ...(refused === undefined ? {} : { refused }),
   };
 }
 
@@ -1312,9 +1442,14 @@ function runHierMachine(
  * The run's arrays, store, clock and history map are still this function's to
  * append to: a configuration is a value, and what a step appended to the run
  * comes back beside it.
+ *
+ * A step into the machine's own root or into a node under an action
+ * (`stepOutsideStates`, read against `machineId`) is not taken: the run stops
+ * where it stands and takes no step after it ({@link StateRunResult.refused}).
  */
 function runHierRegion(
   model: Model,
+  machineId: ElementId,
   containerId: ElementId,
   steps: StateStep[],
   store: Map<string, unknown>,
@@ -1325,9 +1460,10 @@ function runHierRegion(
   clockRef: { clock: number },
   maxCompletion: number,
   tie: TieBreak,
-): { leaf: ElementId | null; complete: boolean; completionBudgetHit: boolean } {
+): { leaf: ElementId | null; complete: boolean; completionBudgetHit: boolean; refused?: StateFire } {
   const COMPLETION: StepInput = { kind: 'completion' };
   const TIMEOUT: StepInput = { kind: 'timeout' };
+  let refused: StateFire | undefined;
 
   // The region starts from the RUN's store, clock and history, because regions
   // share all three: region 2 sees what region 1 wrote (`runStateMachine`
@@ -1367,6 +1503,25 @@ function runHierRegion(
         );
 
   /**
+   * Take one chosen transition through `stepConfig` — unless it is a step into
+   * the machine's own root or a node under an action, which nothing here reads:
+   * then the run stops where it stands (`refused`), and `false` says so.
+   */
+  const stepOrStop = (choice: EnabledTransition): boolean => {
+    if (stepOutsideStates(model, machineId, choice.transition)) {
+      refused = {
+        transitionId: choice.transition.id,
+        from: choice.transition.source![0],
+        to: choice.transition.target![0],
+        trigger: choice.label,
+      };
+      return false;
+    }
+    apply(stepConfig(model, cfg, choice));
+    return true;
+  };
+
+  /**
    * Fire completion (trigger-less) transitions until none is enabled — and SAY
    * whether it stopped because none was enabled or because the budget ran out.
    *
@@ -1380,7 +1535,7 @@ function runHierRegion(
     while (fires < maxCompletion) {
       const enabled = enabledTransitions(model, cfg, COMPLETION);
       if (enabled.length === 0) return { fires, exhausted: false };
-      apply(stepConfig(model, cfg, take(enabled)));
+      if (!stepOrStop(take(enabled))) return { fires, exhausted: false };
       fires++;
     }
     // Budget spent. Exhausted only if something was still enabled: a chase that
@@ -1389,7 +1544,7 @@ function runHierRegion(
   };
 
   const fire = (choice: EnabledTransition): void => {
-    apply(stepConfig(model, cfg, choice));
+    if (!stepOrStop(choice)) return;
     if (chaseHierCompletion().exhausted) completionBudgetHit = true;
   };
 
@@ -1398,12 +1553,14 @@ function runHierRegion(
   if (chaseHierCompletion().exhausted) completionBudgetHit = true;
 
   for (const step of steps) {
+    // A run stopped at a step it does not take takes none after it.
+    if (refused !== undefined) break;
     if (isTimedStep(step)) {
       cfg = advanceClock(cfg, step.advance);
       clockRef.clock = cfg.clock;
       // Every `after(n)` whose dwell the advance met, innermost first, bounded
       // by the same budget the chase uses.
-      for (let k = 0; k < maxCompletion; k++) {
+      for (let k = 0; k < maxCompletion && refused === undefined; k++) {
         const enabled = enabledTransitions(model, cfg, TIMEOUT);
         if (enabled.length === 0) break;
         fire(take(enabled));
@@ -1416,7 +1573,7 @@ function runHierRegion(
 
   const leaf = leafOf(cfg);
   const complete = leaf !== null && isFinalState(model, leaf);
-  return { leaf, complete, completionBudgetHit };
+  return { leaf, complete, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
 }
 
 /* ─────────────────────────── binding propagation ─────────────────────── */

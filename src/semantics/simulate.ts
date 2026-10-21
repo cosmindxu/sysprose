@@ -24,7 +24,7 @@
  */
 
 import { type ElementId, type Model } from '@core/index';
-import { runStateMachine, type StateStep } from './execute';
+import { refusedStepSentence, runStateMachine, runsParallel, type StateStep } from './execute';
 import { evaluate, parseExpr } from './expr';
 import { scopeFor } from './evaluate-model';
 import {
@@ -59,6 +59,25 @@ export interface SimFire {
   trigger: string;
 }
 
+/**
+ * A step the run stopped at without taking it ({@link SimSample.refused}): the
+ * transition it would have fired next, from where it stood, under its label.
+ */
+export interface SimRefusal extends SimFire {
+  /**
+   * `refusedStepSentence`'s words for it, composed when the sample was
+   * captured: the sample is a snapshot, and an edit made after it (a rename or
+   * a delete in place, which does not stop the session) must not reword it.
+   */
+  sentence: string;
+  /**
+   * True when the whole run stopped there. False on a parallel machine (set
+   * only through the API), whose regions are each driven on their own: the
+   * region the step came in stopped, and the other regions run on.
+   */
+  stopsRun: boolean;
+}
+
 /** An immutable snapshot of the machine at one point on the simulation timeline. */
 export interface SimSample {
   /** 0-based sample index (0 = the initial sample before any driving step). */
@@ -89,6 +108,15 @@ export interface SimSample {
   solvedOk: boolean;
   /** True when every concurrent region has reached a final/complete state. */
   complete: boolean;
+  /**
+   * The step the run stopped at without taking it, from this sample on: a step
+   * into the machine's own root or into a node under an action, which the
+   * interpreter does not take (`StateRunResult.refused`). Absent while the run
+   * has taken every step it came to. Once set, no later step fires — on a
+   * parallel machine, no later step of the region it came in
+   * ({@link SimRefusal.stopsRun}).
+   */
+  refused?: SimRefusal;
 }
 
 /** One driving step: inject a named `event`, and/or `advance` the clock. */
@@ -275,6 +303,18 @@ export class SimulationSession {
       constraints: [],
       solved: {},
       solvedOk: true,
+      ...(res.refused === undefined
+        ? {}
+        : {
+            refused: {
+              id: res.refused.transitionId,
+              from: res.refused.from,
+              to: res.refused.to,
+              trigger: res.refused.trigger,
+              sentence: refusedStepSentence(this.model, this.behaviorId, res.refused.transitionId),
+              stopsRun: !runsParallel(this.model, this.behaviorId),
+            },
+          }),
     };
     if (this.withSolve) {
       const { solved, ok } = this.solveSample(res.valueStore);
@@ -332,6 +372,18 @@ export function simulateStateMachine(
   opts: SimOptions = {},
 ): SimTrace {
   return new SimulationSession(model, behaviorId, opts).run(script);
+}
+
+/**
+ * Has the run come to rest at `sample`: is it complete, or stopped at a step it
+ * does not take ({@link SimSample.refused}) with the whole run stopped? No clock
+ * advance moves such a run on, so the Simulation tab's Play stops there rather
+ * than re-run the interpreter over a growing script up to the sample cap. A
+ * parallel machine whose one region stopped is not at rest: its other regions
+ * run on ({@link SimRefusal.stopsRun}).
+ */
+export function simulationAtRest(sample: SimSample): boolean {
+  return sample.complete || sample.refused?.stopsRun === true;
 }
 
 /**

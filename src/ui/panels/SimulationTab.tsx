@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '../store';
-import { isSimulatable } from '@semantics/index';
+import { isSimulatable, simulationAtRest } from '@semantics/index';
 import { SimPlot } from './SimPlot';
 
 /** Play tick interval (ms). */
@@ -99,13 +99,15 @@ export function SimulationTab(): JSX.Element {
     );
   }, [allKeys]);
 
-  // Auto-play: tick advance(1) until complete or the sample cap stops growth.
+  // Auto-play: tick advance(1) until the run is at rest — complete, or stopped
+  // at a step it does not take — or the sample cap stops growth.
   useEffect(() => {
     if (!playing || !session) return;
     const timer = setInterval(() => {
       const st = useAppStore.getState();
       const before = st.simTrace.length;
-      if (st.simTrace[before - 1]?.complete) {
+      const last = st.simTrace[before - 1];
+      if (last && simulationAtRest(last)) {
         st.simSetPlaying(false);
         return;
       }
@@ -270,6 +272,17 @@ export function SimulationTab(): JSX.Element {
                 <span className="sim-k">Fired</span>
                 <span className="sim-v" data-testid="sim-fired">
                   {sample.fired.map((f) => f.trigger || '(completion)').join(', ')}
+                </span>
+              </div>
+            )}
+            {/* A step into the machine's own root or a node under an action is
+                not taken: the run stops there and says why (docs/06 §8.12), in
+                the words composed when the sample was captured. */}
+            {sample?.refused && (
+              <div className="sim-line">
+                <span className="sim-k">Stopped</span>
+                <span className="sim-v" data-testid="sim-refused">
+                  {sample.refused.sentence}
                 </span>
               </div>
             )}

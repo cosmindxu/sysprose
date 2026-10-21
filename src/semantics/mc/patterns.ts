@@ -720,6 +720,51 @@ export function isLoneDefinition(model: Model, el: ElementRecord): boolean {
 }
 
 /**
+ * The lone definitions ({@link isLoneDefinition}) at or under `scopeId`, or in
+ * the whole model when it is absent, that carry a property, in model order —
+ * the outermost of them only: one written inside another is left out, since
+ * the outer one's {@link propertiesOf} reads its carriers already.
+ *
+ * WHAT A REFERENCE CAN NAME BESIDE A MACHINE. Named, such a definition reports
+ * what it carries as not checked ({@link checkProperty}), and nothing else
+ * does. So a reference that holds one beside a machine is not answered with
+ * the machine alone, which checked that machine and passed the definition's
+ * properties over in silence (exit 0 when the machine's own held); it is
+ * refused with both listed (`behaviourMachineFor`, `./report-lines`). And the
+ * app's pick rows, which list what a person can select, list these beside the
+ * machines.
+ */
+export function loneCarriersIn(model: Model, scopeId?: ElementId): ElementRecord[] {
+  const pool =
+    scopeId === undefined
+      ? model.all()
+      : [model.get(scopeId), ...model.descendants(scopeId)].filter((el): el is ElementRecord => el !== undefined);
+  const carriers = pool.filter((el) => isLoneDefinition(model, el) && propertiesOf(model, el.id).length > 0);
+  const ids = new Set(carriers.map((el) => el.id));
+  return carriers.filter((el) => {
+    for (let p: ElementId | null = el.ownerId; p != null; p = model.get(p)?.ownerId ?? null) {
+      if (ids.has(p)) return false;
+    }
+    return true;
+  });
+}
+
+/**
+ * The sentence that names the machines written inside a lone definition, which
+ * are each checked by their own names and never by the definition's: `''` when
+ * there is none. Printed on every `not checked` row about the definition, and
+ * by the refusal of a state written in it, so a reader has the reference that
+ * decides each machine inside (the O8 S2 review's `top3` probe).
+ */
+export function machinesInsideSentence(model: Model, definitionId: ElementId): string {
+  const inside = stateMachinesIn(model, definitionId).map((m) => `\`${model.qualifiedName(m.id) || m.id}\``);
+  if (inside.length === 0) return '';
+  return inside.length === 1
+    ? `The machine written inside it, ${inside[0]}, is checked when it is named itself.`
+    : `The machines written inside it — ${inside.join(', ')} — are each checked when named themselves.`;
+}
+
+/**
  * Every property carried inside one machine, in model order.
  *
  * Read from the machine AND its region: the natural home for a property about
@@ -1151,6 +1196,8 @@ interface ProductNode {
   readonly hash: string;
   readonly monitor: Monitor;
   readonly depth: number;
+  /** Events taken from the opening: what the depth bound counts, as in `./explore`. */
+  readonly events: number;
   /**
    * Completion steps fired since the last event: how far into its chase the
    * interpreter is here. Kept at 0, in the keyed search, wherever no completion
@@ -1215,9 +1262,17 @@ function valuationOf(
  * chase position beside the configuration and the monitor, and at the budget
  * offers the alphabet and no completion — the interpreter's next event, taken
  * where its chase stopped. Where it does not, the search is the one it always
- * was, and a run it would have to chase past the budget is refused — on a
- * machine that names no trigger and cycles on completion, that is a monitor
- * that counts round the cycle.
+ * was, and a run it would have to chase past the budget is refused — unless
+ * `budgetEndsRun`: on a machine that names no trigger and has no dwell, every
+ * run is the one chase from the opening, the interpreter ends it where the
+ * budget stops it and nothing follows, so a completion step past the budget is
+ * one no run takes, and the search does not take it either. There the search
+ * without the position is exact: every step is a completion step, so a node's
+ * chase position is its depth, and the breadth-first order meets each node
+ * first at its smallest. It used to refuse that step, and a monitor counting
+ * round a completion cycle — `bounded-existence` of a state at most 40 times
+ * round a two-state cycle, which a run enters 32 times — came back
+ * inconclusive rather than decided (`docs/06` §8.12).
  */
 function search(
   model: Model,
@@ -1225,6 +1280,7 @@ function search(
   property: ResolvedProperty,
   bounds: ExploreBounds,
   chaseKeyed: boolean,
+  budgetEndsRun: boolean,
 ): SearchResult {
   const COMPLETION: StepInput = { kind: 'completion' };
   const triggers: StepInput[] = bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger }));
@@ -1255,6 +1311,7 @@ function search(
     hash: hashConfig(opening.config, history),
     monitor: monitorStep(property, OPENING, first.value),
     depth: 0,
+    events: 0,
     completionRun: 0,
     parent: null,
     input: null,
@@ -1335,8 +1392,6 @@ function search(
           };
         }
         const monitor = monitorStep(property, here.monitor, valued.value);
-        activated = activated || monitor.activated;
-        pSeen = pSeen || monitor.pSeen;
         const hash = hashConfig(next.config, history);
         const key = keyOf(next.config, hash, monitor, run);
         // A key already seen is never a violation: the monitor is in the key,
@@ -1356,16 +1411,38 @@ function search(
         // state c66` on a 70-step chain printed `covered` over a run the
         // interpreter stops at `c65` on, every time. `>`, not `>=`: a
         // configuration reached in exactly `maxCompletion` completion steps is
-        // one the interpreter reaches cleanly.
+        // one the interpreter reaches cleanly. Where nothing follows a stopped
+        // chase (`budgetEndsRun`), the step is not refused but not taken: the
+        // run ends where the budget stopped it, and that is no bound.
         if (!chaseKeyed && run > bounds.maxCompletion) {
-          boundHit = 'completion';
+          if (!budgetEndsRun) boundHit = 'completion';
           continue;
         }
+        // THE VACUITY FLAGS FOLD ONLY WHAT THE SEARCH ADMITS, so AFTER the gate
+        // above. A step the budget drops is one no run takes, and a scope it
+        // would open or close — or a P it would show — is one no run sees:
+        // folded before the gate, the `s0` one step past the budget on a
+        // trigger-less 65-state cycle closed `between s64 and s0` and turned
+        // the vacuous row into a `pass` with exit 0, while `reach` on the same
+        // machine said the step back to `s0` is taken by no run. Nothing is
+        // lost by folding after the `seen` test too: both flags are in the
+        // monitor, and the monitor is in the key, so a key met again carries
+        // the flags it was folded with the first time. (The valuation above
+        // still reads a step this gate drops. Where `budgetEndsRun` over a walk
+        // that finished, that cannot refuse a row: a node's chase position
+        // there is its depth, and the walk without the position met past the
+        // budget no configuration it had not admitted inside it, so this one
+        // was valued first, at a shallower node inside the budget. Over a walk
+        // that did not finish it can, and a refusal is the fail-closed answer
+        // there: no pass and no vacuity stands on such a walk.)
+        activated = activated || monitor.activated;
+        pSeen = pSeen || monitor.pSeen;
         const node: ProductNode = {
           config: next.config,
           hash,
           monitor,
           depth: here.depth + 1,
+          events: here.events + (input.kind === 'completion' ? 0 : 1),
           // The keyed search keeps the position only where it is in the key.
           completionRun: chaseKeyed && completionAt(next.config, hash).enabled.length === 0 ? 0 : run,
           parent: here,
@@ -1383,8 +1460,9 @@ function search(
             refusal: null,
           };
         }
-        // The two remaining bounds, in `exploreMachine`'s own order.
-        if (node.depth > bounds.maxDepth) {
+        // The two remaining bounds, in `exploreMachine`'s own order, the depth
+        // bound counting events as it does there.
+        if (node.events > bounds.maxDepth) {
           boundHit = 'depth';
           continue;
         }
@@ -1682,13 +1760,8 @@ export function checkProperty(
   // reaches — a FAIL — is not on this run; without their names the reader had
   // no pointer to the reference that decides it (the S2 review's `top3` probe).
   if (machineEl !== undefined && isLoneDefinition(model, machineEl)) {
-    const inside = stateMachinesIn(model, machineId).map((m) => `\`${model.qualifiedName(m.id) || m.id}\``);
-    const insideClause =
-      inside.length === 0
-        ? ''
-        : inside.length === 1
-          ? ` The machine written inside it, ${inside[0]}, is checked when it is named itself.`
-          : ` The machines written inside it — ${inside.join(', ')} — are each checked when named themselves.`;
+    const inside = machinesInsideSentence(model, machineId);
+    const insideClause = inside === '' ? '' : ` ${inside}`;
     const remedy =
       text.source === 'flag'
         ? 'Name the machine the property is about, or give the definition the transitions that make it a machine checked by itself.'
@@ -1828,7 +1901,14 @@ export function checkProperty(
   // search, which must never run for it. The walk exists here; two lines
   // higher it would not.
   if (property.pattern.kind === 'branching') return recoveryRow(model, walk, property, row, bounds);
-  const found = search(model, machineId, property, bounds, walk.chaseKeyed);
+  // NOTHING FOLLOWS A CHASE THE BUDGET STOPS on a machine that names no
+  // trigger and steps on no dwell: no event moves a stopped run on, and no
+  // clock advance enables a transition. A dwell is excluded even where it
+  // names no trigger (an `attrs.after` set through the API on a trigger-less
+  // transition): the interpreter fires it on a clock advance after the chase
+  // stopped, and the chase goes on from there. Read from the walk's own census.
+  const budgetEndsRun = bounds.alphabet.length === 0 && walk.timedTransitions.size === 0;
+  const found = search(model, machineId, property, bounds, walk.chaseKeyed, budgetEndsRun);
   // ONE DEFINITION, in `./publishable`, and this is the reader that adds the
   // product-search conjunct: `found.boundHit === 'none'` becomes
   // `Publishability.searchComplete`, which is a field only a claim that ran a

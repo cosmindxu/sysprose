@@ -828,8 +828,13 @@ describe('the chase budget, in the search, and every witness replayed through th
     // `a3` opens anything.
     const detour = runStateMachine(model, machineId, [], { maxCompletion: 5, follow: [id('t1')] });
     expect(detour.finalState).toBe(id('a5'));
-    expect(v.claim, 'a violation reported on a run the chase budget stops short of').toBe('inconclusive');
-    expect(v.boundHit).toBe('completion');
+    expect(v.claim, 'a violation reported on a run the chase budget stops short of').not.toBe('fail');
+    // And since docs/06 §8.12 it is decided: the machine names no trigger, so
+    // nothing follows the chase the budget stops at `a5` — that run ends there,
+    // the step to `x` is one no run takes, and the property holds of every run.
+    // It was refused as a chase past the budget (`completion`, inconclusive).
+    expect(v.claim).toBe('pass');
+    expect(v.boundHit).toBe('none');
     expect(v.witness).toEqual([]);
   });
 
@@ -972,17 +977,116 @@ describe('the chase budget, in the search, and every witness replayed through th
   });
 
   it('a refusal past the chase budget, or at the depth bound, never advises `--max-configs` — no N decides it', async () => {
-    // A counting monitor round a trigger-less cycle: the search does not carry
-    // the position on such a machine, and refuses the 65th chase step.
-    const { model, machineId } = await load('package TlCycle { state def M { state a; state b; transition ab first a then b; transition ba first b then a; } }');
-    const counted = checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }));
+    // A counting monitor round a trigger-less cycle whose step out of `a` is a
+    // dwell — `attrs.after`, set through the API, so the machine still names
+    // no trigger. A clock advance fires the dwell where the chase stopped, and
+    // the chase goes round again: the run does NOT end at the budget, so the
+    // search, which does not carry the position here, refuses the 65th step.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('TlDwell');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    m.create('TransitionUsage', { ownerId: sm.id, attrs: { after: 1 }, source: [a.id], target: [b.id] });
+    f.transition(b.id, a.id, { ownerId: sm.id });
+    const entries = (events: Parameters<typeof runStateMachine>[2]): number =>
+      runStateMachine(m, sm.id, events).visited.filter((s) => s === b.id).length;
+    expect(entries([])).toBe(32);
+    expect(entries([{ advance: 5 }]), 'a pass at 40 would be false here').toBeGreaterThan(40);
+    const counted = checkProperty(m, sm.id, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }));
     expect(counted.claim).toBe('inconclusive');
     expect(counted.boundHit).toBe('completion');
     expect(counted.detail).toContain('No flag decides it');
     expect(counted.detail).not.toContain('--max-configs');
-    expect(checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }), { maxConfigs: 100_000 }).detail).toBe(counted.detail);
-    // Four completion cycles, each left on an event: every stop costs the
-    // walk 65 steps of depth, so `z` is past the depth bound.
+    expect(checkProperty(m, sm.id, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }), { maxConfigs: 100_000 }).detail).toBe(counted.detail);
+    // A run of more than 200 events: `s202` is 202 events out, past the depth
+    // bound, which counts events (docs/06 §8.12). (The breach on the step that
+    // crosses the bound, at `s201`, is still found: the search reads a step's
+    // violation before it gates where the run goes next.)
+    const lines = Array.from({ length: 203 }, (_, i) => `state s${i};`);
+    for (let i = 0; i < 202; i++) lines.push(`transition t${i} first s${i} accept e then s${i + 1};`);
+    const long = await load(`package Events202 { state def M { ${lines.join(' ')} } }`);
+    const deep = checkProperty(long.model, long.machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state s202' }));
+    expect(deep.claim).toBe('inconclusive');
+    expect(deep.boundHit).toBe('depth');
+    expect(deep.detail).toContain('No flag raises the depth bound');
+    expect(deep.detail).not.toContain('--max-configs');
+  });
+
+  it('a counting monitor round a trigger-less cycle is decided: the run ends where the budget stops its chase (docs/06 §8.12)', async () => {
+    // The machine names no trigger and steps on no dwell, so nothing follows
+    // the chase the budget stops: its one run enters `b` 32 times in 64 steps
+    // and ends. The search used to refuse the 65th step as a chase past the
+    // budget and print `inconclusive` for every count it did not break inside
+    // the budget; it now ends the run there, as the interpreter does.
+    const { model, machineId, id } = await load('package TlCycle { state def M { state a; state b; transition ab first a then b; transition ba first b then a; } }');
+    expect(exploreMachine(model, machineId).chaseKeyed).toBe(false);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.visited.filter((s) => s === id('b'))).toHaveLength(32);
+    const at = (n: string) => checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n }));
+    for (const n of ['32', '40']) {
+      const v = at(n);
+      expect(v.claim, `at most ${n}`).toBe('pass');
+      expect(v.boundHit).toBe('none');
+      expect(v.exhaustive).toBe(true);
+    }
+    // One fewer than the run's count is broken, on the run itself.
+    const below = at('31');
+    expect(below.claim).toBe('fail');
+    expect(below.witness).toHaveLength(64);
+    expect(replaysIndependently(model, machineId, below.witness)).toBe(true);
+    expect(replayWitness(model, machineId, below.witness, MAX_COMPLETION).replays).toBe(true);
+  });
+
+  it('a scope only the step past the budget would close or show is vacuous, not a pass (docs/06 §8.12)', async () => {
+    // The whole-branch review's cyc65: a trigger-less cycle of 65 states. The
+    // one run is `s0 … s64` and the budget stops it there, so the step back to
+    // `s0` is taken by no run — reach says so — and no run closes a segment
+    // that opens at `s64`. The search folded the vacuity flags before it
+    // dropped that step, and all four rows below printed `pass` with exit 0.
+    const n = 65;
+    const states = Array.from({ length: n }, (_, i) => `state s${i};`).join(' ');
+    const steps = Array.from({ length: n }, (_, i) => `transition t${i} first s${i} then s${(i + 1) % n};`).join(' ');
+    const { model, machineId, id } = await load(`package Cyc { state def M { ${states} ${steps} } }`);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.visited).toHaveLength(n);
+    expect(run.visited.at(-1)).toBe(id('s64'));
+    const reach = reachReport(model).machines[0];
+    expect(reach.exhaustive).toBe(true);
+    expect(reach.transitions.dead).toEqual([]);
+    expect(reach.transitions.enabledNeverFired.map((t) => t.name)).toEqual(['t64']);
+    for (const p of [
+      { pattern: 'absence', scope: 'between', q: 'state s64', r: 'state s0', p: 'state s1' },
+      { pattern: 'universality', scope: 'between', q: 'state s64', r: 'state s0', p: 'state s64' },
+      { pattern: 'bounded-existence', scope: 'between', q: 'state s64', r: 'state s0', p: 'state s1', n: '0' },
+      // `after s64` opens on the run; `s0` after it is the step no run takes.
+      { pattern: 'precedence', scope: 'after', q: 'state s64', p: 'state s0', s: 'state s3' },
+    ]) {
+      const v = checkProperty(model, machineId, prop(p));
+      expect(v.claim, `${p.pattern} ${p.scope}`).toBe('vacuous');
+      expect(v.exhaustive).toBe(true);
+      expect(v.boundHit).toBe('none');
+    }
+    // One state shorter, the step back to `s0` is the 64th and the run takes
+    // it: the same rows are decided on it.
+    const short = Array.from({ length: n - 1 }, (_, i) => `transition t${i} first s${i} then s${(i + 1) % (n - 1)};`).join(' ');
+    const m64 = await load(`package Cyc { state def M { ${Array.from({ length: n - 1 }, (_, i) => `state s${i};`).join(' ')} ${short} } }`);
+    const closes = checkProperty(m64.model, m64.machineId, prop({ pattern: 'absence', scope: 'between', q: 'state s63', r: 'state s0', p: 'state s1' }));
+    expect(closes.claim).toBe('pass');
+    expect(closes.activated).toBe(true);
+    const shows = checkProperty(m64.model, m64.machineId, prop({ pattern: 'precedence', scope: 'after', q: 'state s63', p: 'state s0', s: 'state s3' }));
+    expect(shows.claim).toBe('fail');
+    expect(replayWitness(m64.model, m64.machineId, shows.witness, MAX_COMPLETION).replays).toBe(true);
+  });
+
+  it('four completion cycles stacked one behind another are decided: the depth bound counts events, not chase steps (docs/06 §8.12)', async () => {
+    // Each cycle is left on an event, and the budget stops the chase round each
+    // after 64 steps, so `z` is 260 steps out on four events. The depth bound
+    // counted steps, and `z` sat past it: `reach` stopped at depth 200 and
+    // `absence z` was refused. The printed `depth` is still steps, and here it
+    // is larger than the `maxDepth` printed beside it.
     const four = await load(`package Depth4 { state def M {
       state a; state b; state c; state d; state f; state g; state h; state i; state z;
       transition ab first a then b; transition ba first b then a;
@@ -992,11 +1096,16 @@ describe('the chase budget, in the search, and every witness replayed through th
       transition e1 first a accept e1 then c; transition e2 first c accept e2 then f;
       transition e3 first f accept e3 then h; transition e4 first h accept e4 then z;
     } }`);
+    expect(runStateMachine(four.model, four.machineId, ['e1', 'e2', 'e3', 'e4']).finalState).toBe(four.id('z'));
     const deep = checkProperty(four.model, four.machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state z' }));
-    expect(deep.claim).toBe('inconclusive');
-    expect(deep.boundHit).toBe('depth');
-    expect(deep.detail).toContain('No flag raises the depth bound');
-    expect(deep.detail).not.toContain('--max-configs');
+    expect(deep.claim).toBe('fail');
+    expect(deep.witness.filter((s) => s.event !== '' && s.event !== '-').map((s) => s.event)).toEqual(['e1', 'e2', 'e3', 'e4']);
+    expect(deep.witness).toHaveLength(261);
+    expect(replaysIndependently(four.model, four.machineId, deep.witness)).toBe(true);
+    const m = reachReport(four.model).machines[0];
+    expect(m).toMatchObject({ boundHit: 'none', exhaustive: true, depth: 260 });
+    expect(m.bounds.maxDepth).toBe(200);
+    expect(m.states.unreachable).toEqual([]);
   });
 
   it('files the machine’s completion livelock once per cycle, in reach’s words, and moves no claim, count or exit code (U1)', async () => {
@@ -1517,7 +1626,7 @@ describe('a property in the file, and a run with nothing to decide', () => {
 /**
  * The profile, field by field, against the interpreter it describes.
  *
- * Every verdict this command reaches is printed under these six sentences, so
+ * Every verdict this command reaches is printed under these seven sentences, so
  * each one is a claim about `execute.ts` that a reader is invited to rely on.
  * `andre-2023` §2.6's point is that every published formalisation differs on
  * exactly these, which is why a report that does not name its reading is a
@@ -1562,6 +1671,84 @@ describe('the semantic profile is a description of what the interpreter does', (
     f.transition(outer.id, ot.id, { ownerId: sm.id, trigger: 'go' });
     const run = runStateMachine(m, sm.id, ['go']);
     expect(m.get(run.finalState!)?.declaredName).toBe('innerTarget');
+  });
+
+  it('exits: to the least common ancestor, every transition external, and the walk steps the same way', () => {
+    // The field the TODO "Print the exits choice in the semantic profile" adds:
+    // the reading `docs/06` §8.10 moved verdicts with, printed nowhere until then.
+    expect(field('exits').reading).toContain('least common ancestor');
+    expect(field('exits').reading).toContain('every transition is external');
+    // `Idle -go-> C0`, `C0 { a -x-> b; b -back-> Idle }`, and `C0`'s own `C0 -esc-> Z`
+    // and `C0 -again-> C0`.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('X');
+    const idle = f.state('Idle', sm.id);
+    const c0 = f.state('C0', sm.id);
+    const a = f.state('a', c0.id);
+    const b = f.state('b', c0.id);
+    const z = f.state('Z', sm.id);
+    f.transition(idle.id, c0.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(a.id, b.id, { ownerId: c0.id, trigger: 'x' });
+    f.transition(b.id, idle.id, { ownerId: c0.id, trigger: 'back' });
+    f.transition(c0.id, z.id, { ownerId: sm.id, trigger: 'esc' });
+    f.transition(c0.id, c0.id, { ownerId: sm.id, trigger: 'again' });
+    const name = (id: ElementId | null) => (id === null ? null : m.get(id)?.declaredName);
+    // A step out of a composite leaves it: at `Idle`, `C0`'s own `esc` is not offered.
+    const out = runStateMachine(m, sm.id, ['go', 'x', 'back', 'esc']);
+    expect(name(out.finalState)).toBe('Idle');
+    expect(out.fired.map((x) => x.trigger)).toEqual(['go', 'x', 'back']);
+    // A self-transition on a composite exits it and enters it again, at its initial substate.
+    const again = runStateMachine(m, sm.id, ['go', 'x', 'again']);
+    expect(name(again.finalState)).toBe('a');
+    // The walk steps the same way: from `back` until the next `go`, no run is
+    // in `C0`, so neither `state C0` holds nor `esc` takes a run into `Z`. Under
+    // the old step, which left `[C0, Idle]`, both were FAIL.
+    for (const p of ['state C0', 'state Z']) {
+      const row = checkProperty(
+        m,
+        sm.id,
+        prop({ pattern: 'absence', scope: 'after-until', p, q: 'trigger back', r: 'trigger go' }),
+      );
+      expect(row.claim, p).toBe('pass');
+    }
+    // And a run does reach `Z`, through `C0`: the pass above is not a walk that never left `Idle`.
+    expect(checkProperty(m, sm.id, prop({ pattern: 'absence', scope: 'globally', p: 'state Z' })).claim).toBe('fail');
+
+    // A COMPOSITE'S STEP INTO ITS OWN SUBSTATE, the one shape where UML's local
+    // and external readings differ: `C` holds `b`, so a local step keeps `C`,
+    // and an external one exits it and enters it again. The field's first
+    // wording ("the active states that do not also hold the target are
+    // exited") read it as local; the step reads it as external, and so must the
+    // field.
+    expect(field('exits').reading).toContain('a step from a composite into one of its own substates exits that state and enters it again');
+    const k = new Model();
+    const g = new ModelFactory(k);
+    const ks = g.stateDef('X');
+    k.create('AttributeUsage', { ownerId: ks.id, declaredName: 'left', attrs: { value: '0' } });
+    const kIdle = g.state('Idle', ks.id);
+    const kc = g.state('C', ks.id);
+    g.state('a', kc.id);
+    const kb = g.state('b', kc.id);
+    g.transition(kIdle.id, kc.id, { ownerId: ks.id, trigger: 'go' });
+    g.transition(kc.id, kb.id, { ownerId: ks.id, trigger: 'jump' });
+    k.create('ActionUsage', { ownerId: kc.id, declaredName: 'enterC', attrs: { stateSubaction: 'entry' } });
+    k.create('ActionUsage', { ownerId: kc.id, declaredName: 'leaveC', attrs: { stateSubaction: 'exit', effect: 'left = 1' } });
+    const kName = (id: ElementId | null) => (id === null ? null : k.get(id)?.declaredName);
+    const sub = runStateMachine(k, ks.id, ['go', 'jump']);
+    expect(sub.visited.map(kName)).toEqual(['Idle', 'C', 'a', 'C', 'b']);
+    expect(sub.performed.map((x) => x.name)).toEqual(['enterC', 'leaveC', 'enterC']);
+    expect(sub.valueStore.get('left')).toBe(1);
+    // The walk agrees: `C`'s exit action runs on `jump`, the only step out of
+    // `C`, so a run reaches `left == 1`. Read as local, nothing ever exits `C`
+    // and the absence would pass.
+    const leftOnce = checkProperty(k, ks.id, prop({ pattern: 'absence', scope: 'globally', p: 'left == 1' }));
+    expect(leftOnce.claim).toBe('fail');
+    expect(leftOnce.witness.map((w) => [w.event, w.stack.map((x) => x.name)])).toEqual([
+      ['-', ['Idle']],
+      ['go', ['C', 'a']],
+      ['jump', ['C', 'b']],
+    ]);
   });
 
   it('history: shallow, and only where the composite is marked as one', () => {
