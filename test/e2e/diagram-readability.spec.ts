@@ -414,7 +414,9 @@ test('a column header stays on screen in a frozen strip, at Fit and while pannin
   await selectElementById(page, await findElementId(page, 'PartDefinition', 'Task50WithALongNameThatKeepsItsColumnWideEnoughToLabel'));
   await page.getByTestId('diagram-fit-selection').click();
   await viewportSettled(page);
-  expect(await zoom()).toBeGreaterThan(0.9);
+  // Zoomed in far enough that the column's own band is off screen. How far depends on the label's width in the machine's
+  // font (0.85 on the CI runner's, over 0.9 here), so the floor is not a tight one: the band assertion below is the claim.
+  expect(await zoom()).toBeGreaterThan(0.6);
   const own = (await page.getByTestId('column-header').first().boundingBox())!;
   expect(own.y + own.height, "the headers' own bands are above the canvas").toBeLessThan((await canvas.boundingBox())!.y);
   await expect.poll(async () => await cells.allTextContents()).toContain('PA');
