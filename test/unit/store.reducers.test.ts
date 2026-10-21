@@ -726,6 +726,62 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
   });
 
   /**
+   * In a collaboration room the page holds each element's members in the order
+   * the peer who made the edit holds them, and its Text view writes them so: a
+   * batch a peer makes in one transaction used to reach the page last to first,
+   * and a peer's Undo that only puts them back in their order did not reach it
+   * at all (review 2026-10-14 D-2, collab-order S2).
+   */
+  it('in a collaboration room, a peer\'s batch and a peer\'s Undo that only re-orders reach the Text view in that peer\'s order', async () => {
+    st().importModel('package X {\n    part def D;\n}\n', 'sysml');
+    await whenLibrarySettled();
+    flushRecompute();
+    const peerDoc = new Y.Doc();
+    st().connectCollab('order-room');
+    try {
+      // A peer, synced with the room through its document.
+      const roomDoc = relay.doc!;
+      Y.applyUpdate(peerDoc, Y.encodeStateAsUpdate(roomDoc));
+      roomDoc.on('update', (u: Uint8Array, origin: unknown) => {
+        if (origin !== 'peer') Y.applyUpdate(peerDoc, u, 'room');
+      });
+      peerDoc.on('update', (u: Uint8Array, origin: unknown) => {
+        if (origin !== 'room') Y.applyUpdate(roomDoc, u, 'peer');
+      });
+      const peer = new Model();
+      bindModelToDoc(peer, peerDoc);
+      const X = peer.all().find((e) => e.declaredName === 'X' && e.attrs.isLibrary !== true)!.id;
+      const written = (): string[] => [...st().textBuffer.matchAll(/part (\w+);/g)].map((m) => m[1]);
+
+      // The peer pastes three parts: one transaction.
+      peer.transaction(() => {
+        for (const name of ['a', 'b', 'c']) peer.create('PartUsage', { declaredName: name, ownerId: X });
+      });
+      peer.adoptSerialOrder();
+      flushRecompute();
+      expect(written()).toEqual(['a', 'b', 'c']);
+
+      // The peer drags a out of X and back in, then undoes it: no element changes owner, only the order does.
+      const before = peer.toJSON();
+      const a = peer.all().find((e) => e.declaredName === 'a')!.id;
+      peer.reparent(a, null);
+      peer.reparent(a, X);
+      peer.adoptSerialOrder();
+      flushRecompute();
+      expect(written()).toEqual(['b', 'c', 'a']);
+      const rev = st().rev;
+      peer.reset(before);
+      flushRecompute();
+      expect(st().rev, 'the page is told').toBeGreaterThan(rev);
+      expect(written()).toEqual(['a', 'b', 'c']);
+      expect(st().model.childIds(X)).toEqual(peer.childIds(X));
+    } finally {
+      st().disconnectCollab();
+      peerDoc.destroy();
+    }
+  });
+
+  /**
    * A load can reorder an owner's children itself: the parser puts a feature's
    * specialisations back in the order they were declared. Import keeps that
    * order now, so the Text view reads as the file, where it used to read

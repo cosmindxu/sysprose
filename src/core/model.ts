@@ -23,11 +23,13 @@ export const FORMAT_VERSION = '0.1.0';
 
 /** A description of a single change applied to the model. */
 export interface ChangeEvent {
-  type: 'add' | 'update' | 'remove' | 'reparent' | 'reset';
+  type: 'add' | 'update' | 'remove' | 'reparent' | 'reset' | 'order';
   id?: ElementId;
   element?: ElementRecord;
   /** For reparent: the previous owner id. */
   previousOwnerId?: ElementId | null;
+  /** For order: the owner whose children are held in another order (`null`: the top level). */
+  ownerId?: ElementId | null;
 }
 
 export type ChangeListener = (events: ChangeEvent[]) => void;
@@ -78,8 +80,9 @@ export class Model {
   /**
    * Whether the model may have left its text order ({@link adoptSerialOrder})
    * since it was last listed in it or reset: an element of the user's added
-   * that a load lists in place ({@link listedLater}), an element moved, or one
-   * whose kind or library flag changed. Nothing else can put a declaration
+   * that a load lists in place ({@link listedLater}), an element moved, one
+   * whose kind or library flag changed, or an owner's children held in another
+   * order ({@link orderChildren}). Nothing else can put a declaration
    * out of that order, or an owner's children out of the order the owner holds
    * them — a removal leaves the rest as they were, and an element a load lists
    * later is added at the end, where a load lists it — so an edit that did
@@ -87,8 +90,9 @@ export class Model {
    */
   private _orderStale = false;
   /**
-   * Whether an element was moved since then, or a declaration seated before
-   * its owner's typings ({@link seatDeclarations}): only these can leave an
+   * Whether an element was moved since then, a declaration seated before its
+   * owner's typings ({@link seatDeclarations}), or an owner's children held in
+   * another order ({@link orderChildren}): only these can leave an
    * owner's children listed out of the order the owner holds them, so only
    * then are the elements listed after the walk put back in that order (a pass
    * over every element and its owner, not only a filter).
@@ -96,13 +100,16 @@ export class Model {
   private _orderMoved = false;
   /**
    * The owners an edit gave a declaration below a child a load lists later
-   * ({@link listedLater}: a typing, a specialisation, an implicit feature)
-   * since the model was last listed: a terminal over the text Save writes holds
-   * that declaration before them, as a load holds every declaration before
-   * what it binds once every name is known, so {@link adoptSerialOrder} seats
-   * it there ({@link seatDeclarations}). A load holds none so (none of the 856
-   * models measured holds a child of those kinds ahead of a declared sibling),
-   * so seating leaves the parser's own models as it made them.
+   * ({@link listedLater}: a typing, a specialisation, an implicit feature) or
+   * one of the library's ({@link heldLater}), or a child whose kind or library
+   * flag moved it between those and the declarations ({@link notePlacing}),
+   * since the model was last listed: a terminal over the text Save writes
+   * holds that declaration before them, as a load holds every declaration
+   * before what it binds once every name is known, so {@link adoptSerialOrder}
+   * seats it there ({@link seatDeclarations}). A load holds none so (none of
+   * the 856 models measured holds a child of those kinds ahead of a declared
+   * sibling, and no text gives an owner of the user's a child of the
+   * library's), so seating leaves the parser's own models as it made them.
    */
   private _orderSeats = new Set<ElementId>();
   /** Lazy endpoint indices (source id → edges, target id → edges), keyed by rev. */
@@ -476,6 +483,39 @@ export class Model {
     return el;
   }
 
+  /**
+   * Hold `ownerId`'s children — the top level's with `null` — in the order
+   * `order` gives them: those it names, in its order, then those it does not
+   * name, in the order they were held. An id it names that is not one of them
+   * is passed over, and none is added or taken away.
+   *
+   * A collaboration room holds each owner's children by it in the order the
+   * peer who made an edit holds them (`src/collab/model-doc.ts`). That order is
+   * the one the edit left before the peer's model was listed in its text order
+   * ({@link adoptSerialOrder}), which seats an owner's declarations before the
+   * children a load lists later and the library's ({@link seatDeclarations});
+   * so an owner of the user's is seated here in the same way, and is held as
+   * that peer holds it.
+   *
+   * Announces an `order` change, and returns whether the order moved. The
+   * model is listed in its text order again by the next
+   * {@link adoptSerialOrder}.
+   */
+  orderChildren(ownerId: ElementId | null, order: readonly ElementId[]): boolean {
+    const held = this.childrenIndex.get(ownerId);
+    if (held === undefined || held.length === 0) return false;
+    const unnamed = new Set(held);
+    const named: ElementId[] = [];
+    for (const id of order) if (unnamed.delete(id)) named.push(id);
+    const next = this.seated(ownerId, [...named, ...held.filter((id) => unnamed.has(id))]);
+    if (next.every((id, i) => id === held[i])) return false;
+    this.childrenIndex.set(ownerId, next);
+    this._orderStale = true;
+    this._orderMoved = true;
+    this.emit({ type: 'order', ownerId });
+    return true;
+  }
+
   private isAncestorOf(ancestorId: ElementId, descendantId: ElementId): boolean {
     const visited = new Set<ElementId>();
     let cur = this.elements.get(descendantId);
@@ -538,19 +578,25 @@ export class Model {
     if (i >= 0) list.splice(i, 1);
   }
 
-  /** Before a declaration is added to `ownerId`'s children: note the owner when it would follow one a load lists later ({@link _orderSeats}). */
+  /** Before a declaration is added to `ownerId`'s children: note the owner when it would follow one held after them ({@link _orderSeats}, {@link heldLater}). */
   private noteSeat(ownerId: ElementId | null): void {
     if (ownerId === null) return;
     const list = this.childrenIndex.get(ownerId);
     const last = list === undefined || list.length === 0 ? undefined : this.elements.get(list[list.length - 1]);
-    if (last !== undefined && listedLater(last)) this._orderSeats.add(ownerId);
+    if (last !== undefined && heldLater(last)) this._orderSeats.add(ownerId);
   }
 
   /** An element's kind or flags moved it between the user's declarations, what a load lists later, and the library. */
   private notePlacing(el: ElementRecord): void {
     this._orderStale = true;
-    // A declaration now, among children of the kinds a load lists after them: seat it as an added one.
-    if (placingOf(el) === 'inPlace' && el.ownerId !== null) this._orderSeats.add(el.ownerId);
+    if (el.ownerId === null) return;
+    // A declaration now, among children held after the declarations ({@link heldLater}), or one of those among
+    // declarations: seat its owner, as a load holds that owner's declarations first. So every owner of the user's
+    // stays so held, on every peer of a collaboration room alike ({@link orderChildren}).
+    this._orderSeats.add(el.ownerId);
+    // Announced as an `order` change, as a seat is: how that owner's children are seated changed, so a collaboration
+    // room is told the order this model holds them in, and seats them as it does (`src/collab/model-doc.ts`).
+    this.emit({ type: 'order', ownerId: el.ownerId });
   }
 
   /* ──────────────────────────── Serialisation ─────────────────────────── */
@@ -630,9 +676,13 @@ export class Model {
    * machines in — follows that order, and every copy of this model is rebuilt
    * in it: the text order lists each owner's children in the order the owner
    * holds them, so {@link inSerialOrder} lists a model in it as it stands. The
-   * same records, re-listed: nothing is copied, and no change is announced,
-   * since no element changed; but the revision moves, so an index or a cache a
-   * listener of the edit built is built again. Returns whether anything moved.
+   * same records, re-listed: nothing is copied, and the re-listing is not
+   * announced, since no element changed; but the revision moves, so an index or
+   * a cache a listener of the edit built is built again. Returns whether
+   * anything moved. An owner whose declarations are seated (below) holds its
+   * children in another order, and that is announced, as an `order` change for
+   * that owner: a collaboration room holds them so on every peer
+   * (`src/collab/model-doc.ts`).
    *
    * THE TEXT ORDER. The user's elements a load lists in place, in containment
    * pre-order, from the user's roots down, each owner's children in the order
@@ -712,7 +762,7 @@ export class Model {
   adoptSerialOrder(opts: { whole?: boolean } = {}): boolean {
     const whole = opts.whole === true;
     if (!this._orderStale && !whole) return false;
-    this.seatDeclarations(whole);
+    const seated = this.seatDeclarations(whole);
     const listed = this.inTextOrder();
     this.keepListedOrder();
     let i = 0;
@@ -723,10 +773,18 @@ export class Model {
         break;
       }
     }
-    if (same) return false;
-    this.elements = new Map(listed.map((el) => [el.id, el]));
-    this._rev++;
-    return true;
+    if (!same) {
+      this.elements = new Map(listed.map((el) => [el.id, el]));
+      this._rev++;
+    }
+    // A seat holds an owner's children in another order: announced, as by `orderChildren`, so that a
+    // collaboration room holds them so on every peer (`src/collab/model-doc.ts`).
+    if (seated.length > 0) {
+      this.transaction(() => {
+        for (const ownerId of seated) this.emit({ type: 'order', ownerId });
+      });
+    }
+    return !same;
   }
 
   /** The order {@link adoptSerialOrder} lists the model in. */
@@ -762,35 +820,52 @@ export class Model {
   }
 
   /**
-   * Seat the declarations an edit added below children a load lists later —
-   * in every owner of the user's with `whole` — where a terminal over the text
-   * Save writes holds them: each such owner's declarations first, in the order
-   * it holds them, then its children of those kinds, in theirs. A typing stays
+   * Seat the declarations an edit added below children a load lists later or
+   * the library's ({@link heldLater}) — in every owner of the user's with
+   * `whole` — where a terminal over the text Save writes holds them: each such
+   * owner's declarations first, in the order it holds them, then its other
+   * children, in theirs ({@link seated}). A typing stays
    * its owner's last child, and so stays where a load listed it among the
-   * typings ({@link inTextOrder}).
+   * typings ({@link inTextOrder}). Returns the owners it seated.
    */
-  private seatDeclarations(whole: boolean): void {
+  private seatDeclarations(whole: boolean): ElementId[] {
     const owners = whole ? [...this.childrenIndex.keys()] : [...this._orderSeats];
+    const seated: ElementId[] = [];
     for (const ownerId of owners) {
-      if (ownerId === null) continue;
-      const owner = this.elements.get(ownerId);
       const ids = this.childrenIndex.get(ownerId);
-      if (owner === undefined || owner.attrs.isLibrary === true || ids === undefined) continue;
-      const declared: ElementId[] = [];
-      const later: ElementId[] = [];
-      let behind = false;
-      for (const id of ids) {
-        const el = this.elements.get(id);
-        if (el !== undefined && listedLater(el)) later.push(id);
-        else {
-          if (later.length > 0) behind = true;
-          declared.push(id);
-        }
-      }
-      if (!behind) continue;
-      this.childrenIndex.set(ownerId, [...declared, ...later]);
+      if (ownerId === null || ids === undefined) continue;
+      const next = this.seated(ownerId, ids);
+      if (next === ids) continue;
+      this.childrenIndex.set(ownerId, next);
       this._orderMoved = true;
+      seated.push(ownerId);
     }
+    return seated;
+  }
+
+  /**
+   * `ids`, children of `ownerId`, as {@link seatDeclarations} seats them: an
+   * owner of the user's holds its declarations first, then its children a
+   * load lists later and the library's ({@link heldLater}), each in the order
+   * `ids` gives them. `ids` itself when no declaration follows one of those,
+   * or when the owner is the top level, the library's, or gone.
+   */
+  private seated(ownerId: ElementId | null, ids: ElementId[]): ElementId[] {
+    if (ownerId === null) return ids;
+    const owner = this.elements.get(ownerId);
+    if (owner === undefined || owner.attrs.isLibrary === true) return ids;
+    const declared: ElementId[] = [];
+    const later: ElementId[] = [];
+    let behind = false;
+    for (const id of ids) {
+      const el = this.elements.get(id);
+      if (el !== undefined && heldLater(el)) later.push(id);
+      else {
+        if (later.length > 0) behind = true;
+        declared.push(id);
+      }
+    }
+    return behind ? [...declared, ...later] : ids;
   }
 
   /** The model is listed as it should stay until an edit adds or moves an element: a load's order, a snapshot's, or the text order. */
@@ -924,6 +999,16 @@ export class Model {
  */
 function listedLater(el: ElementRecord): boolean {
   return isSpecialization(el.eClass) || el.attrs.implicit === true;
+}
+
+/**
+ * Whether an owner of the user's holds `el` after its declarations
+ * ({@link Model.adoptSerialOrder}'s seat): what a load lists later
+ * ({@link listedLater}), and an element of the library's, which the user's
+ * text does not hold and which an edit adds without seating it.
+ */
+function heldLater(el: ElementRecord): boolean {
+  return listedLater(el) || el.attrs.isLibrary === true;
 }
 
 /** Where the text order places an element: as the user's, listed in place or later, or as the library's. */

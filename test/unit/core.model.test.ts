@@ -400,5 +400,96 @@ describe('Model core', () => {
       // The rest — the library, and the subsetting a load lists after every declaration — in the order it was given.
       expect(names(m).slice(-3)).toEqual(['Lib', 'Real', '«Subsetting»']);
     });
+
+    /**
+     * A collaboration room holds each owner's children in the order the peer
+     * who made an edit holds them (`src/collab/model-doc.ts`): `orderChildren`
+     * takes that order, seated as the edit's `adoptSerialOrder` seated it, and
+     * every change to how an owner's children are held — that, a seat, a kind
+     * changed — is announced, so the room is told (collab-order S2).
+     */
+    it('holds an owner\'s children in a given order, seated as an edit seats them, and announces every change to that order', () => {
+      const m = new Model();
+      const P = m.create('Package', { declaredName: 'P' });
+      const Q = m.create('Package', { declaredName: 'Q' });
+      const T = m.create('PartDefinition', { declaredName: 'T', ownerId: P.id });
+      const a = m.create('PartUsage', { declaredName: 'a', ownerId: P.id });
+      const b = m.create('PartUsage', { declaredName: 'b', ownerId: P.id });
+      const c = m.create('PartUsage', { declaredName: 'c', ownerId: P.id });
+      const tc = m.create('FeatureTyping', { ownerId: c.id, source: [c.id], target: [T.id] });
+      const lib = m.create('Package', { declaredName: 'Lib', attrs: { isLibrary: true } });
+      const real = m.create('DataType', { declaredName: 'Real', ownerId: lib.id, attrs: { isLibrary: true } });
+      const libTyping = m.create('FeatureTyping', { ownerId: lib.id, source: [lib.id], target: [real.id], attrs: { isLibrary: true } });
+      m.adoptSerialOrder({ whole: true });
+      const orders: Array<string | null | undefined> = [];
+      m.subscribe((evts) => {
+        for (const e of evts) if (e.type === 'order') orders.push(e.ownerId);
+      });
+
+      // Those named, in that order, then the rest as they were held; an id that is not a child is passed over.
+      expect(m.orderChildren(P.id, [c.id, 'nope', a.id])).toBe(true);
+      expect(m.childIds(P.id)).toEqual([c.id, a.id, T.id, b.id]);
+      expect(orders).toEqual([P.id]);
+      expect(m.orderChildren(P.id, [c.id, a.id, T.id, b.id]), 'as held already').toBe(false);
+      expect(orders, 'nothing to announce').toEqual([P.id]);
+      expect(m.adoptSerialOrder(), 're-listed in the order it now holds them').toBe(true);
+      expect(names(m).slice(0, 6)).toEqual(['P', 'c', 'a', 'T', 'b', 'Q']);
+      expect(m.all().every((el, i) => el === m.inSerialOrder()[i])).toBe(true);
+
+      // An owner of the user's is seated as an edit seats it: a doc given after c's typing goes before it.
+      const d = m.create('Documentation', { ownerId: c.id, attrs: { body: 'note' } });
+      m.adoptSerialOrder();
+      expect(m.childIds(c.id)).toEqual([d.id, tc.id]);
+      orders.length = 0;
+      expect(m.orderChildren(c.id, [tc.id, d.id]), 'the order a peer wrote before it seated it: held seated').toBe(false);
+      expect(m.childIds(c.id)).toEqual([d.id, tc.id]);
+      expect(orders).toEqual([]);
+      // The top level and the library's owners are not seated.
+      expect(m.orderChildren(null, [Q.id, lib.id, P.id])).toBe(true);
+      expect(m.rootIds()).toEqual([Q.id, lib.id, P.id]);
+      expect(m.orderChildren(lib.id, [libTyping.id, real.id])).toBe(true);
+      expect(m.childIds(lib.id)).toEqual([libTyping.id, real.id]);
+      expect(orders).toEqual([null, lib.id]);
+
+      // A seat that moves an owner's children is announced.
+      orders.length = 0;
+      const e = m.create('PartUsage', { declaredName: 'e', ownerId: c.id });
+      expect(m.childIds(c.id)).toEqual([d.id, tc.id, e.id]);
+      m.adoptSerialOrder();
+      expect(m.childIds(c.id)).toEqual([d.id, e.id, tc.id]);
+      expect(orders).toEqual([c.id]);
+
+      // So is a kind changed between a declaration and one a load lists later — and the owner is seated either way.
+      orders.length = 0;
+      m.setAttrs(a.id, { implicit: true });
+      expect(orders).toEqual([P.id]);
+      m.adoptSerialOrder();
+      expect(m.childIds(P.id), 'listed later now: after the declarations, as a load holds it').toEqual([c.id, T.id, b.id, a.id]);
+      m.setAttrs(a.id, { implicit: undefined });
+      m.adoptSerialOrder();
+      expect(m.childIds(P.id)).toEqual([c.id, T.id, b.id, a.id]);
+      expect(orders).toEqual([P.id, P.id, P.id]);
+      expect(m.all().every((el, i) => el === m.inSerialOrder()[i])).toBe(true);
+
+      // An element of the library's under an owner of the user's — the SDK puts one where it is asked — is held with
+      // what a load lists later, after the declarations: an edit adds it without a seat, a declaration added after it
+      // is seated before it, and a declaration given the library flag is seated after the others; `orderChildren`
+      // seats each as the edit did, so a peer holds them so.
+      orders.length = 0;
+      const libU = m.create('DataType', { declaredName: 'libU', ownerId: c.id, attrs: { isLibrary: true } });
+      m.adoptSerialOrder();
+      expect(m.childIds(c.id), 'added last, behind the typing').toEqual([d.id, e.id, tc.id, libU.id]);
+      expect(m.orderChildren(c.id, m.childIds(c.id)), 'held seated as the edit left it').toBe(false);
+      const f = m.create('PartUsage', { declaredName: 'f', ownerId: c.id });
+      m.adoptSerialOrder();
+      expect(m.childIds(c.id), 'a declaration after it: seated before it').toEqual([d.id, e.id, f.id, tc.id, libU.id]);
+      expect(orders).toEqual([c.id]);
+      m.setAttrs(e.id, { isLibrary: true });
+      m.adoptSerialOrder();
+      expect(m.childIds(c.id), 'the library flag set: after the declarations').toEqual([d.id, f.id, e.id, tc.id, libU.id]);
+      expect(orders).toEqual([c.id, c.id, c.id]);
+      expect(m.orderChildren(c.id, [d.id, e.id, f.id, tc.id, libU.id]), 'a peer that held it among them: seated so').toBe(false);
+      expect(m.all().every((el, i) => el === m.inSerialOrder()[i])).toBe(true);
+    });
   });
 });

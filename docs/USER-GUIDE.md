@@ -577,11 +577,19 @@ doc, an attribute or any other member added to a typed element goes before its
 typing, as the text writes it, and the typing keeps its place among the others.
 A project you open, a model JSON or element graph you import, a branch you
 switch to and a room you join are taken in the text's order too, whatever order
-the copy they came from listed the elements in. A typing or specialisation made
-in the app — the Type field, a line drawn with the palette — is taken after
-those the model had, wherever the text writes it, so a check that goes by them,
-such as `where-used` over a definition, can list its usages in another order
-than a terminal does.
+the copy they came from listed the elements in. In a collaboration room every
+peer holds each element's members in the order the peer who made the edit
+holds them — after an edit that adds several at once, such as a paste, after
+Apply, Import, Undo and Redo, and after a drag, a drag of one of the standard
+library's elements within the library included — and so does a peer that joins
+later; two members that two peers add to one element at the same moment come
+in one order on every peer. A member that one peer moves into an element
+another peer deletes at the same moment goes to the top level, on every peer.
+A typing or specialisation made in the app — the Type field, a line drawn with
+the palette — is taken after those the model had, wherever the text writes it,
+so a check that goes by them, such as `where-used` over a definition, can list
+its usages in another order than a terminal does, and, in a room, than another
+peer does.
 
 ### The Text tab, in both directions
 
@@ -4131,7 +4139,14 @@ Stated plainly, because finding these out by surprise is worse.
   graph view — the greyed control's tooltip says why.
 - **Collaboration needs a relay you start yourself** (`npm run collab`), rooms
   are open with no permissions layer, and your identity is a random per-session
-  name and colour.
+  name and colour. The relay takes at most 10 MiB in one message, and stops
+  — dropping every room on it — at a larger one; a peer's first message holds
+  the whole model with its standard library, about 10.8 MB for the drone-swarm
+  example, so a room over a model that size stops the relay. Two peers who each
+  drag one of two elements into the other at the same moment are left holding
+  the pair under different owners, and a page that joins then holds it as one
+  of the two does; moving either element again does not end it, but an Apply,
+  Import, Undo or Redo by any peer brings every peer to that peer's tree.
 - **Google Drive, where a site offers it**
   ([§8.1](#81-google-drive-optional)): a sign-in lasts about an hour, and
   renewing it opens a window the browser must allow — so allow pop-ups for the

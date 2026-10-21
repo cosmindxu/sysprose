@@ -13,6 +13,41 @@
  *     attrs              : Y.Map            — nested, for FIELD-LEVEL merge
  *     source             : ElementId[] (plain JSON array) | absent
  *     target             : ElementId[] (plain JSON array) | absent
+ *     order              : number | absent  — its place among its owner's children
+ *
+ * Child order. An owner holds its children in an order — the order the Text
+ * view writes them in, and the one a composite with no `initial` and the first
+ * of two transitions out of a state go by — but a Y.Map lists its keys in the
+ * order they first reached that copy of the doc: a key set again keeps its first
+ * place, so a reset that puts an owner's children in another order leaves them
+ * where they were, and a peer that joins receives them grouped by the peer that
+ * wrote them. So each element carries `order`, its place among its owner's
+ * children (the top level's, for a root). An owner of the standard library's
+ * gives its children none until one is moved into it, or added to it by other
+ * than the batch that made the owner: every peer loads the library in one
+ * order, one batch at a time, and places on all of it would add about 7% to a
+ * document that holds it (the relay takes one message of at most 10 MiB); a
+ * peer holds the children of such an owner in the order its copy of the doc
+ * lists them, the library's load order on every copy ({@link holdPlaces}). An
+ * edit that adds an element to an owner, or moves one into it, gives it the
+ * place after the highest its new siblings hold, as the model holds it last —
+ * once each of them holds a place: when one holds none (the library's, or one
+ * a doc an earlier build wrote holds), each first takes the place it holds in
+ * the model. The library loading — an element of the library's added to an
+ * owner of the library's the same batch made — takes none. A reset gives each
+ * owner's children the places 0, 1, 2… in the order the model holds them — an
+ * owner of the library's only when its children held places before, or the
+ * reset moves one into it ({@link libraryOwnersPlaced}) — and so does an
+ * `order` change of the model's: a seat of an owner's declarations before what
+ * a load lists later and the library's ({@link Model.adoptSerialOrder}), or a
+ * change of kind or of library flag that moves an element between the two. So
+ * an owner's children hold places all or none, and the order of their places
+ * is the order the peer who made the edit holds them in. A peer holds the
+ * children of every owner a doc transaction added to, moved into or re-placed
+ * in the order of their places, two equal places by id, its declarations
+ * seated as the edit seated them ({@link Model.orderChildren}); a peer that
+ * joins loads every owner so. Two peers that add to one owner at once give
+ * equal places, and every peer orders them alike.
  *
  * Flow:
  *   local model change  → doc.transact(fn, ORIGIN_LOCAL)   (minimal ops)
@@ -38,6 +73,72 @@ export interface ModelDocBinding {
 }
 
 const ELEMENTS_KEY = 'elements';
+/** The per-element key that holds its place among its owner's children (the header's "Child order"). */
+const PLACE_KEY = 'order';
+
+/**
+ * Whether a doc written whole — a seed, a reset — gives `el` a place: every
+ * element but one under an owner of the standard library's, unless `kept`
+ * names that owner ({@link libraryOwnersPlaced}).
+ */
+function carriesPlace(model: Model, el: ElementRecord, kept?: ReadonlySet<ElementId>): boolean {
+  if (el.ownerId === null || kept?.has(el.ownerId) === true) return true;
+  return model.get(el.ownerId)?.attrs.isLibrary !== true;
+}
+
+/**
+ * The owners of the library's a reset to `model` gives places to under
+ * ({@link carriesPlace}), read from the doc before the reset: one whose
+ * children held places; one the reset moves an element into, or puts back an
+ * element the doc held once — every copy of the doc lists a key it held where
+ * it first listed it; and one it gives a new child ahead of one it held. A
+ * peer present takes such a child in last, or where its copy of the doc
+ * lists it, which need not be where the model holds it. The children of any
+ * other owner of the library's — none new, or all new, which reach every copy
+ * of the doc in the order the model holds them — are held in the order the
+ * doc lists them, on every peer ({@link holdPlaces}).
+ */
+function libraryOwnersPlaced(model: Model, elements: Y.Map<ElementYMap>): Set<ElementId> {
+  const kept = new Set<ElementId>();
+  const ownerOf = new Map<ElementId, ElementId | null>();
+  for (const [id, ym] of elements.entries()) {
+    const ownerId = (ym.get('ownerId') as ElementId | null | undefined) ?? null;
+    ownerOf.set(id, ownerId);
+    if (ownerId !== null && typeof ym.get(PLACE_KEY) === 'number') kept.add(ownerId);
+  }
+  for (const owner of model.all()) {
+    if (owner.attrs.isLibrary !== true || kept.has(owner.id)) continue;
+    let added = false;
+    for (const id of model.childIds(owner.id)) {
+      const was = ownerOf.get(id);
+      // A key the doc holds no longer, but held once (a Y.Map keeps a removed key's last entry), counts as moved.
+      if (was === undefined && !elements._map.has(id)) added = true;
+      else if (was !== owner.id || added) {
+        kept.add(owner.id);
+        break;
+      }
+    }
+  }
+  return kept;
+}
+
+/** Each element's position in the order this copy of the doc lists its keys. */
+function keyOrder(elements: Y.Map<ElementYMap>): Map<ElementId, number> {
+  const at = new Map<ElementId, number>();
+  for (const id of elements.keys()) at.set(id, at.size);
+  return at;
+}
+
+/**
+ * What one batch of local changes has placed, per owner: the place the next
+ * child added to it takes, or that its children hold none and keep none (an
+ * owner of the library's, loading); and the elements it added.
+ */
+interface Placing {
+  next: Map<ElementId | null, number>;
+  bare: Set<ElementId | null>;
+  made: Set<ElementId>;
+}
 
 type ElementYMap = Y.Map<unknown>;
 
@@ -139,19 +240,24 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
 
   const unsubModel = model.subscribe((events: ChangeEvent[]) => {
     if (applyingRemote) return; // echo guard: don't write remote-applied changes back
+    const placing: Placing = { next: new Map(), bare: new Set(), made: new Set() };
     doc.transact(() => {
-      for (const ev of events) applyLocalEvent(model, elements, ev);
+      for (const ev of events) applyLocalEvent(model, elements, ev, placing);
     }, ORIGIN_LOCAL);
   });
 
   /* ─────────────────────── Y.Doc → local model (read) ──────────────────── */
 
-  const observer = (_events: Y.YEvent<any>[], txn: Y.Transaction) => {
+  const observer = (events: Y.YEvent<any>[], txn: Y.Transaction) => {
     if (txn.origin === ORIGIN_LOCAL) return; // our own write — ignore
+    const placed = placedBy(events, elements);
     applyingRemote = true;
     try {
       model.transaction(() => {
-        reconcileModelFromDoc(model, elements);
+        for (const id of reconcileModelFromDoc(model, elements)) placed.add(id);
+        // Each owner the peer's edit added to, moved into or re-placed holds its
+        // children as that peer holds them (the header's "Child order").
+        holdPlaces(model, elements, placed);
         // A peer's drag, or an element a peer added, lists this model in the
         // order its text gives it, as an edit made here does: as its Undo, Save
         // and checks worker rebuild it, and a terminal over the text it saves
@@ -175,30 +281,165 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
 
 /* ─────────────────────────────── Helpers ──────────────────────────────── */
 
-function seedDocFromModel(model: Model, elements: Y.Map<ElementYMap>): void {
+function seedDocFromModel(model: Model, elements: Y.Map<ElementYMap>, kept?: ReadonlySet<ElementId>): void {
+  const places = placesIn(model);
   for (const el of model.all()) {
     const ym = new Y.Map() as ElementYMap;
     elements.set(el.id, ym);
     writeRecordInto(ym, el);
+    const place = places.get(el.id);
+    if (place !== undefined && carriesPlace(model, el, kept)) ym.set(PLACE_KEY, place);
   }
+}
+
+/** Each element's place among its owner's children (the top level's, for a root), as the model holds them. */
+function placesIn(model: Model): Map<ElementId, number> {
+  const places = new Map<ElementId, number>();
+  model.rootIds().forEach((id, i) => places.set(id, i));
+  for (const el of model.all()) model.childIds(el.id).forEach((id, i) => places.set(id, i));
+  return places;
+}
+
+/** An element's place among its owner's children, or undefined when the doc gives it none (an owner of the library's, {@link carriesPlace}, or a doc an earlier build wrote). */
+function placeOf(elements: Y.Map<ElementYMap>, id: ElementId): number | undefined {
+  const ym = elements.get(id);
+  const place = ym instanceof Y.Map ? ym.get(PLACE_KEY) : undefined;
+  return typeof place === 'number' ? place : undefined;
+}
+
+/**
+ * `ids`, children of one owner, in the order of their places: ascending, two
+ * equal places — two peers that added at once — by id, so on every peer alike.
+ * One with no place goes after those with one — an owner's children hold
+ * places all or none, but where a peer of an earlier build, which writes none,
+ * added one last, or where the library loads into an owner of its own at the
+ * moment another peer moves an element into it — and two with none in the
+ * order `keyAt` gives them, or else where `ids` has them.
+ */
+function byPlace(elements: Y.Map<ElementYMap>, ids: readonly ElementId[], keyAt?: ReadonlyMap<ElementId, number>): ElementId[] {
+  const placed = ids.map((id) => ({ id, place: placeOf(elements, id) }));
+  placed.sort((a, b) => {
+    if (a.place === undefined || b.place === undefined) {
+      if (a.place !== b.place) return a.place === undefined ? 1 : -1;
+      return keyAt === undefined ? 0 : (keyAt.get(a.id) ?? 0) - (keyAt.get(b.id) ?? 0);
+    }
+    return a.place - b.place || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  });
+  return placed.map((p) => p.id);
+}
+
+/** Give each child of `ownerId` the doc holds the place it holds in the model. */
+function placeAll(model: Model, elements: Y.Map<ElementYMap>, ownerId: ElementId | null): void {
+  model.childIds(ownerId).forEach((id, place) => {
+    const ym = elements.get(id);
+    if (ym instanceof Y.Map && ym.get(PLACE_KEY) !== place) ym.set(PLACE_KEY, place);
+  });
+}
+
+/**
+ * Place `el`, just added to its owner or moved into it (`moved`), as the model
+ * holds it: last among its siblings (the header's "Child order"). The first
+ * time this batch places a child of that owner, a sibling the doc holds with
+ * no place — the library's, or one a doc an earlier build wrote holds — first
+ * has every child take the place it holds. But the library loading — an
+ * element of the library's added to an owner of the library's this batch made
+ * — takes none, and that owner's children stay so for the rest of the batch:
+ * one peer writes them all, in one batch, so every copy of the doc lists them
+ * in the order this model holds them, the order a peer that holds none of
+ * their places holds them in ({@link holdPlaces}).
+ */
+function placeIn(
+  model: Model,
+  elements: Y.Map<ElementYMap>,
+  el: ElementRecord,
+  ym: ElementYMap,
+  moved: boolean,
+  placing: Placing,
+): void {
+  const ownerId = el.ownerId;
+  const { next, bare } = placing;
+  let place = next.get(ownerId);
+  if (place === undefined && bare.has(ownerId) && (moved || el.attrs.isLibrary !== true)) bare.delete(ownerId);
+  else if (place === undefined && bare.has(ownerId)) {
+    if (ym.has(PLACE_KEY)) ym.delete(PLACE_KEY);
+    return;
+  }
+  if (place === undefined) {
+    place = 0;
+    let unplaced = false;
+    let held = false;
+    for (const id of model.childIds(ownerId)) {
+      if (id === el.id || !elements.has(id)) continue;
+      const at = placeOf(elements, id);
+      if (at === undefined) unplaced = true;
+      else {
+        held = true;
+        if (at >= place) place = at + 1;
+      }
+    }
+    const libraryOwner = ownerId !== null && model.get(ownerId)?.attrs.isLibrary === true;
+    if (libraryOwner && !held && !moved && el.attrs.isLibrary === true && placing.made.has(ownerId)) {
+      // The library loading into an owner of its own: no place, and none for the rest of the batch.
+      bare.add(ownerId);
+      if (ym.has(PLACE_KEY)) ym.delete(PLACE_KEY);
+      return;
+    }
+    if (unplaced || (libraryOwner && !held)) {
+      placeAll(model, elements, ownerId);
+      next.set(ownerId, model.childIds(ownerId).length);
+      return;
+    }
+  }
+  next.set(ownerId, place + 1);
+  ym.set(PLACE_KEY, place);
 }
 
 function serializeFromDoc(elements: Y.Map<ElementYMap>) {
   const records: ElementRecord[] = [];
-  for (const [id, ym] of elements.entries()) records.push(readRecord(id, ym));
+  // Where in `records` each owner's children are (the top level's under `null`), in the doc's order.
+  const at = new Map<ElementId | null, number[]>();
+  for (const [id, ym] of elements.entries()) {
+    const rec = readRecord(id, ym);
+    // An owner the doc lacks (one peer removed it while another added to it): at the top level, as a peer present holds it.
+    if (rec.ownerId !== null && !elements.has(rec.ownerId)) rec.ownerId = null;
+    const mine = at.get(rec.ownerId);
+    if (mine) mine.push(records.length);
+    else at.set(rec.ownerId, [records.length]);
+    records.push(rec);
+  }
+  // Each owner's children in the order of their places, among the places they hold in `records`:
+  // `Model.reset` holds an owner's children in the order the records list them.
+  for (const places of at.values()) {
+    if (places.length < 2) continue;
+    const byId = new Map(places.map((i) => [records[i].id, records[i]] as const));
+    byPlace(elements, [...byId.keys()]).forEach((id, n) => {
+      records[places[n]] = byId.get(id)!;
+    });
+  }
   const rootIds = records.filter((r) => r.ownerId === null).map((r) => r.id);
   return { formatVersion: '0.1.0', elements: records, rootIds };
 }
 
-function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeEvent): void {
+function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeEvent, placing: Placing): void {
   switch (ev.type) {
     case 'reset': {
+      const kept = libraryOwnersPlaced(model, elements);
       elements.clear();
-      seedDocFromModel(model, elements);
+      seedDocFromModel(model, elements, kept);
+      placing.next.clear();
+      placing.bare.clear();
       return;
     }
     case 'remove': {
       if (ev.id !== undefined && elements.has(ev.id)) elements.delete(ev.id);
+      return;
+    }
+    case 'order': {
+      // Held in another order: each child takes the place it now holds — an owner of the library's too.
+      const ownerId = ev.ownerId ?? null;
+      placeAll(model, elements, ownerId);
+      placing.next.delete(ownerId);
+      placing.bare.delete(ownerId);
       return;
     }
     case 'add':
@@ -212,35 +453,94 @@ function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeE
         elements.set(el.id, ym);
       }
       writeRecordInto(ym, el);
+      // Added to its owner, or moved into one: the model holds it last among the owner's children.
+      if (ev.type !== 'update') placeIn(model, elements, el, ym, ev.type === 'reparent', placing);
+      if (ev.type === 'add') placing.made.add(el.id);
       return;
     }
   }
 }
 
 /**
+ * The elements a doc transaction added, replaced, moved or re-placed: the
+ * owners they stand in may hold their children in another order. A Y.Map made
+ * in the transaction reports nothing of its own; its key in `elements` does.
+ */
+function placedBy(events: Y.YEvent<any>[], elements: Y.Map<ElementYMap>): Set<ElementId> {
+  const ids = new Set<ElementId>();
+  for (const ev of events) {
+    if (!(ev instanceof Y.YMapEvent)) continue;
+    if (ev.target === elements) {
+      for (const id of ev.keysChanged) ids.add(id);
+    } else if (ev.target.parent === elements) {
+      if (ev.keysChanged.has('ownerId') || ev.keysChanged.has(PLACE_KEY)) ids.add(ev.path[0] as ElementId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Hold the children of every owner one of `placed` stands in, in the order of
+ * their places. The children of an owner of the library's that hold none are
+ * held in the order this copy of the doc lists them — the library's load order
+ * on every peer, where every peer adds what the library loads later — not
+ * where this peer took in a move into it last: a reset that put a member back
+ * where it was, at the moment this peer moved it out, does so on every peer.
+ */
+function holdPlaces(model: Model, elements: Y.Map<ElementYMap>, placed: ReadonlySet<ElementId>): void {
+  const owners = new Set<ElementId | null>();
+  for (const id of placed) {
+    const el = model.get(id);
+    if (el !== undefined) owners.add(el.ownerId);
+  }
+  let keyAt: Map<ElementId, number> | undefined;
+  for (const ownerId of owners) {
+    const ids = model.childIds(ownerId);
+    if (ids.length < 2) continue;
+    const bare = ownerId !== null && model.get(ownerId)?.attrs.isLibrary === true && ids.some((id) => placeOf(elements, id) === undefined);
+    if (bare) keyAt ??= keyOrder(elements);
+    model.orderChildren(ownerId, byPlace(elements, ids, bare ? keyAt : undefined));
+  }
+}
+
+/**
  * Reconcile the model to match the doc's element set. Idempotent & deterministic:
  * removes elements gone from the doc, creates missing ones (owners first), and
- * patches changed fields / ownership on the rest.
+ * patches changed fields / ownership on the rest. Returns the elements it
+ * created or moved: the owners they stand in may now hold their children in
+ * another order.
  */
-function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void {
+function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): Set<ElementId> {
   const docIds = new Set<ElementId>(elements.keys());
+  const moved = new Set<ElementId>();
+  // An element whose owner the doc lacks — one peer removed the owner while
+  // another added to it or moved an element into it — stands at the top level,
+  // on every peer alike, and goes back under that owner should the doc hold it
+  // again (a third peer's reset).
+  const ownerIn = (rec: ElementRecord): ElementId | null =>
+    rec.ownerId !== null && !docIds.has(rec.ownerId) ? null : rec.ownerId;
 
-  // 1) Removals — anything in the model but no longer in the doc.
+  // 1) Removals — anything in the model but no longer in the doc. A child the
+  //    doc still holds goes to the top level in 3), its owner gone.
   for (const el of model.all()) {
     if (!docIds.has(el.id) && model.has(el.id)) model.remove(el.id, { cascade: false });
   }
 
-  // 2) Creations — owners before children (repeat until settled).
-  const pending: Array<[ElementId, ElementRecord]> = [];
+  // 2) Creations — owners before children (repeat until settled), each in the
+  //    doc's order: a peer's batch reaches it in the order the peer made it.
+  let pending: Array<[ElementId, ElementRecord]> = [];
   for (const [id, ym] of elements.entries()) {
     if (!model.has(id)) pending.push([id, readRecord(id, ym)]);
   }
   let progressed = true;
   while (pending.length && progressed) {
     progressed = false;
-    for (let i = pending.length - 1; i >= 0; i--) {
-      const [id, rec] = pending[i];
-      if (rec.ownerId !== null && !model.has(rec.ownerId)) continue; // owner not ready yet
+    const waiting: Array<[ElementId, ElementRecord]> = [];
+    for (const [id, rec] of pending) {
+      if (rec.ownerId !== null && !model.has(rec.ownerId)) {
+        waiting.push([id, rec]); // owner not ready yet
+        continue;
+      }
       model.create(rec.eClass, {
         id,
         declaredName: rec.declaredName,
@@ -250,11 +550,12 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void
         source: rec.source,
         target: rec.target,
       });
-      pending.splice(i, 1);
+      moved.add(id);
       progressed = true;
     }
+    pending = waiting;
   }
-  // Fallback for any orphans (missing owner in doc): create at root.
+  // Fallback for any orphans (missing owner in doc, or owners that hold each other): create at root.
   for (const [id, rec] of pending) {
     if (model.has(id)) continue;
     model.create(rec.eClass, {
@@ -266,19 +567,25 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void
       source: rec.source,
       target: rec.target,
     });
+    moved.add(id);
   }
 
-  // 3) Updates + reparents — patch existing elements to match the doc.
+  // 3) Updates + reparents — patch existing elements to match the doc. A move
+  //    the model refuses — one that would hold an element under its own
+  //    descendant — waits, and is tried again once the others have moved: a
+  //    reset that swaps two elements' nesting (an Undo of a drag) moves both.
+  let refused: ElementId[] = [];
   for (const [id, ym] of elements.entries()) {
     const cur = model.get(id);
     if (!cur) continue;
     const rec = readRecord(id, ym);
 
-    if (cur.ownerId !== rec.ownerId) {
+    if (cur.ownerId !== ownerIn(rec)) {
       try {
-        model.reparent(id, rec.ownerId);
+        model.reparent(id, ownerIn(rec));
+        moved.add(id);
       } catch {
-        /* ignore transient cycle/ordering during convergence */
+        refused.push(id);
       }
     }
 
@@ -312,4 +619,21 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void
       if (el) el.attrs = next;
     }
   }
+  for (let progressed = true; progressed && refused.length > 0; ) {
+    progressed = false;
+    const still: ElementId[] = [];
+    for (const id of refused) {
+      const ym = elements.get(id);
+      if (!(ym instanceof Y.Map)) continue;
+      try {
+        model.reparent(id, ownerIn(readRecord(id, ym)));
+        moved.add(id);
+        progressed = true;
+      } catch {
+        still.push(id); // a cycle the doc itself holds: two peers' moves at once
+      }
+    }
+    refused = still;
+  }
+  return moved;
 }
