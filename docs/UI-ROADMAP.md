@@ -11,13 +11,14 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 > **Status:** the feature items below are implemented. Canvas drag-to-reparent
 > (+ multi), per-element PageRank centrality, roving menu tab-order, and the shared
 > toolbar↔canvas menu behavior all shipped in `9ba0b62` (each Fable-reviewed with
-> all confirmed findings fixed). Still open: three measured performance items from
+> all confirmed findings fixed). Still open: two measured performance items from
 > the profiling round, **P1** for a piece with nested boxes (the compound-layout
-> option is now off for a flat piece, but a nested piece still pays for it), **P2**
-> (the solver clones its value map per probe) and **P3** (the first "Apply text →
-> model" click builds the parser on the page's thread), and **Electron/Tauri** (a
-> hard environmental blocker: no Windows cross-build here). Community-detection
-> **per element** stays deferred as low-value optional depth.
+> option is now off for a flat piece, but a nested piece still pays for it) and
+> **P3** (the first "Apply text → model" click builds the parser on the page's
+> thread), and **Electron/Tauri** (a hard environmental blocker: no Windows
+> cross-build here). **P2** (the solver's per-probe clone of its value map) is
+> fixed. Community-detection **per element** stays deferred as low-value optional
+> depth.
 
 ---
 
@@ -173,18 +174,47 @@ option through `layoutDiagram` (a flat call and a nested call), not only through
 out on its own, then route the edges that cross a border ourselves); dropping the option is not a
 free change.
 
-### P2 — the solver clones its whole value map per probe (`src/semantics/solver.ts`: `solveScalar`, `newtonStep`, `substitutedNewton`)
+### P2 — the solver cloned its whole value map per probe — fixed (`src/semantics/solver.ts`: `solveScalar`, `newtonStep`, `substitutedNewton`)
 
-`const trial = new Map(values)` sits inside the residual closure that every finite-difference probe
-calls (`solver.ts:2520`, `:2706` and `:2979` at `5943654`), so a solve clones the entire map once
+`const trial = new Map(values)` sat inside the residual closure that every finite-difference probe
+calls (`solver.ts:2520`, `:2706` and `:2979` at `5943654`), so a solve cloned the entire map once
 per probe. The profiling round counted about 50 000 clones for one solve of the example shipped
-then. That count was **not reproduced** at `5943654`. Counting `new Map(<Map>)` calls during a
-solve, `solve` copies a map 3 to 510 times on the six models in `examples/` and `solveFeasible` 5
-to 21 times, each in tens of milliseconds; on the drone-swarm v9 model of mbse-workflow (42 584
-elements) `solve` makes 3 082 clones and `solveFeasible` 132, each in under 100 ms. So P2 is a
-code-level defect whose cost is not visible on any model measured since, not a measured cost. The
-fix is unchanged: set the one key, read the residual, restore it. No behaviour change; the map is
-not retained.
+then. That count was **not reproduced** at `5943654` (and was not at `aac38fd`): the defect was
+code-level, not a measured cost on any model since.
+
+**Fixed.** The scalar root-find (`solveScalar`) and the coupled Newton step (`newtonStep`) set the
+keys a probe moves in the working map, read the residual and restore them in a `finally`
+(`probing`, and the same three lines inline for the one key of the scalar case): a key that was
+absent is absent again, one that was present holds its old value, and the map is not retained. The
+instance-variable step (`substitutedNewton`) substitutes definitions, which deletes and re-adds
+keys and would reorder the caller's map, so it probes one copy made per call and puts back what each
+probe touches. No behaviour change: the verdict differential and the v9 gate are identical.
+
+Counting `new Map(<Map>)` calls during `solve` and `solveFeasible` on a freshly loaded model
+(`aac38fd`, before, then after):
+
+| model | `solve` before | `solve` after | `solveFeasible` before / after |
+|---|---|---|---|
+| `contract-authoring-prompts` | 3 | 3 | 5 / 5 |
+| `uav-isr` | 5 | 5 | 8 / 8 |
+| `uav-isr-verification` | 510 | 9 | 12 / 12 |
+| `uav-power-budget` | 20 | 20 | 30 / 30 |
+| `vehicle` | 3 | 3 | 5 / 5 |
+| `views-tour` | 257 | 7 | 9 / 9 |
+| drone-swarm v9 (42 584 elements) | 3 082 | 81 | 132 / 132 |
+
+`solveFeasible` is unchanged on these models: none of its copies was a probe's (it ran after
+`solve` here, on the same model, so it started from the cached base point). The copies left are not
+probes: the ones the equations are built from (`keyedNames`, `valueEquation`, `assignmentEquation`,
+`relationEquation`), one start point per Newton step (`newtonStep`), `freeFeatures`, the cache-hit
+copy in `solveCore`, and two per `substitutedNewton` call. The wall time was tens of milliseconds
+on every one of these (v9 `solve` 83 ms before, 59 ms after, one run each on a loaded machine), so
+what is gained is the removed per-probe allocation, not a speed-up anyone sees at these sizes.
+
+`semantics.solver.test.ts` pins it: a scalar root and a coupled system take at most 6 copies (17 and
+39 before), a tree of instances takes no more copies when it needs Jacobian probes than when it
+needs none, and an unknown left unset by a failed root-find, or read by a check alone, is not left
+in the map at a probe's value.
 
 ### P3 — the first "Apply text → model" click blocks the main thread for ~1.28 s
 

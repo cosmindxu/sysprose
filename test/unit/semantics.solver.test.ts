@@ -11,6 +11,7 @@ import {
   solveFeasible,
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
+import { parseModel } from '@text/index';
 import { defaultStandsIn } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
@@ -583,5 +584,124 @@ describe('solve — a value a binding past a cap holds is no design freedom', ()
     expect(check.message).toBe(`Could not evaluate: ${row('c6').reason}`);
     const feasibility = solveFeasible(m!);
     expect([feasibility.decided, feasibility.free]).toEqual([false, []]);
+  });
+});
+
+/* ───────── a probe sets the keys it moves and puts them back (UI-ROADMAP P2) ───────── */
+
+describe('solve — a finite-difference probe leaves the working map as it found it (P2)', () => {
+  /** Run `fn`, counting the `new Map(<Map>)` copies it makes. */
+  function copies<T>(fn: () => T): { out: T; copies: number } {
+    const Native = Map;
+    let n = 0;
+    class Counting<K, V> extends Native<K, V> {
+      constructor(init?: Iterable<readonly [K, V]> | null) {
+        super(init);
+        if (init instanceof Native) n++;
+      }
+      static [Symbol.hasInstance](x: unknown): boolean {
+        return x instanceof Native;
+      }
+    }
+    (globalThis as { Map: unknown }).Map = Counting;
+    try {
+      return { out: fn(), copies: n };
+    } finally {
+      (globalThis as { Map: unknown }).Map = Native;
+    }
+  }
+  const implicit = (...exprs: string[]) => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.partDef('Implicit');
+    const vars = ['a', 'b'].slice(0, exprs.length > 1 ? 2 : 1).map((n) => f.attribute(n, p.id, { type: 'Real' }));
+    for (const expression of exprs) m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression } });
+    return { m, vars };
+  };
+  /** A depth-3 tree of instances over free leaves; `top` is held to `rhs`. */
+  const tree = (rhs: string) =>
+    parseModel(
+      [
+        'package PT {',
+        '  part def N0 { attribute x : Real; attribute s : Real = x; }',
+        ...[1, 2, 3].map((i) => `  part def N${i} { part a : N${i - 1}; part b : N${i - 1}; attribute s : Real = a.s + b.s; }`),
+        '  part top : N3;',
+        `  constraint sum { top.s == ${rhs} }`,
+        '}',
+      ].join('\n'),
+    ).model;
+
+  it('solves a scalar root and a coupled system with a few copies, not one per probe', () => {
+    const scalar = implicit('a * a = 9');
+    const sol = copies(() => solve(scalar.m));
+    expect(Math.abs(sol.out.values.get(scalar.vars[0]!.id)!)).toBeCloseTo(3, 4);
+
+    const coupled = implicit('a * b = 12', 'a + b = 7');
+    const co = copies(() => solve(coupled.m));
+    const [a, b] = coupled.vars.map((v) => co.out.values.get(v.id)!);
+    expect(co.out.converged).toBe(true);
+    expect([a! + b!, a! * b!]).toEqual([expect.closeTo(7, 6), expect.closeTo(12, 6)]);
+
+    // Before the fix: 17 and 39 (a copy at every probe of the root-find and of the Jacobian).
+    expect([sol.copies, co.copies].map((n) => n <= 6)).toEqual([true, true]);
+  });
+
+  it('solves an instance tree with the copies a satisfied one takes, however many probes it needs', () => {
+    // `top.s == a.s + b.s` already holds, so the Newton step probes twice;
+    // `top.s == 12.0` moves the leaves, so it probes the Jacobian as well.
+    const held = copies(() => solve(tree('top.a.s + top.b.s')));
+    const moved = copies(() => solve(tree('12.0')));
+    expect([held.out.converged, moved.out.converged]).toEqual([true, true]);
+    expect(moved.copies).toBeLessThanOrEqual(held.copies);
+  });
+
+  it('leaves no unknown behind at the value of its last probe', () => {
+    // The asserted loop is probed at many points. `z` is read by the check
+    // `mass + z == 130.0` alone, so nothing drives it: a probe that kept its
+    // guess left z = 1 in the map, and the check, which fixes z at 5, read
+    // violated by 4 (p16).
+    const m = parseModel(
+      [
+        'package PL {',
+        '  attribute dry = 100.0;',
+        '  attribute mass;',
+        '  attribute fuel;',
+        '  attribute z;',
+        '  assert constraint dm { mass == dry + fuel }',
+        '  assert constraint df { fuel == mass * 0.2 }',
+        '  constraint fixz { mass + z == 130.0 }',
+        '}',
+      ].join('\n'),
+    ).model;
+    const zId = [...m.all()].find((e) => e.declaredName === 'z')!.id;
+    const res = solve(m);
+    expect(res.converged).toBe(true);
+    expect(res.values.get(zId)).toBeCloseTo(5, 9);
+    expect(checkConstraintsNumeric(m).find((r) => r.name === 'fixz')!.result).toBe('satisfied');
+  });
+
+  it('leaves the unknown of a root-find that found no root unset', () => {
+    // `z·z + 1 = 0` has no real root: the scalar root-find fails after probing
+    // z at many points, and z must not stay at the last of them.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.partDef('NoRoot');
+    const z = f.attribute('z', p.id, { type: 'Real' });
+    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'z * z + 1 = 0' } });
+    const res = solve(m);
+    expect(res.converged).toBe(false);
+    expect(res.values.has(z.id)).toBe(false);
+  });
+
+  it('gives the same values on a second solve', () => {
+    const { m, vars } = implicit('a * b = 12', 'a + b = 7');
+    const fixed = new Map([[vars[0]!.id, 3]]);
+    const first = solve(m, { fixed });
+    const again = solve(m, { fixed, tol: 1e-10 });
+    expect(first.values.get(vars[1]!.id)).toBeCloseTo(4, 6);
+    expect([...again.values].map(([k, v]) => [k, Math.round(v * 1e6)])).toEqual(
+      [...first.values].map(([k, v]) => [k, Math.round(v * 1e6)]),
+    );
+    expect(first.free).toEqual(again.free);
   });
 });
