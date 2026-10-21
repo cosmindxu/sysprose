@@ -1762,6 +1762,134 @@ describe('the configuration key is what the next step depends on', () => {
   });
 });
 
+describe('a step exits to the least common ancestor of its source and its target (docs/06 §8.10)', () => {
+  /**
+   * Five composites of four substates, entered from `Idle` and left on events —
+   * the T80 shape above — with `exits` making every substate also leave for
+   * `Idle`, and `extra` lines added to the machine's body.
+   */
+  function modes5(pkg: string, exits: boolean, extra: string[] = []): string {
+    const L = [`package ${pkg} { state def Modes {`, '  state Idle;'];
+    for (let c = 0; c < 5; c++) {
+      L.push(`  state C${c} { ${[0, 1, 2, 3].map((k) => `state C${c}_${k};`).join(' ')}`);
+      for (let k = 0; k < 3; k++) L.push(`    transition c${c}_${k} first C${c}_${k} accept step${c}_${k} then C${c}_${k + 1};`);
+      if (exits) for (let k = 0; k < 4; k++) L.push(`    transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} then Idle;`);
+      L.push('  }', `  transition in${c} first Idle accept enter${c} then C${c};`, `  transition out${c} first C${c} accept leave${c} then Idle;`);
+    }
+    L.push(...extra, '} }');
+    return L.join('\n');
+  }
+
+  it('one composite of two substates, left from a substate, walks to the end', async () => {
+    // The step used to exit `b` alone and enter `Idle` under `C0`, so `go`
+    // stacked `C0` again on every round trip: the walk reached the depth bound
+    // (201 configurations) and withheld every list.
+    const loaded = await loadModelText(
+      'package Lca1 { state def M { state Idle;\n' +
+        '  state C0 { state a; state b; transition ab first a accept x then b; transition bk first b accept back then Idle; }\n' +
+        '  transition go first Idle accept go then C0; } }',
+      { fileName: 'lca1.sysml' },
+    );
+    const m = reachReport(loaded.model!).machines[0];
+    expect(m).toMatchObject({ configs: 3, boundHit: 'none', exhaustive: true });
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.deadlocks).toEqual([]);
+  });
+
+  it('five composites of four substates, every one of which also leaves for `Idle`, walk to the end', async () => {
+    // At `aac38fd` these reached the 10,000-configuration bound: every `back`
+    // left its composite on the stack under `Idle`.
+    const five = (await loadModelText(modes5('Exits5', true), { fileName: 'exits5.sysml' })).model!;
+    const m = reachReport(five).machines[0];
+    expect(m).toMatchObject({ configs: 21, boundHit: 'none', exhaustive: true });
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+  });
+
+  it('a state reached by leaving a composite from a substate is one nothing leaves when nothing leaves it', async () => {
+    // `first C0_3 then Done` used to leave `[C0, Done]`, and `C0`'s own `leave0`
+    // still left that: the walk printed no `no way out` row. Under the step that
+    // exits `C0`, `Done` is a state nothing leaves (docs/06 §8.9).
+    const done = (await loadModelText(modes5('Done5', false, ['  state Done;', '  transition dn first C0::C0_3 then Done;']), { fileName: 'done5.sysml' })).model!;
+    const m = reachReport(done).machines[0];
+    expect(m).toMatchObject({ configs: 22, boundHit: 'none', exhaustive: true });
+    expect(m.deadlocks.map((d) => [d.stack.map((s) => s.name), d.steps])).toEqual([[['Done'], 5]]);
+  });
+
+  it('a machine with no composite whose step targets a node inside a state: the walk and the interpreter agree', async () => {
+    // `then b::inner` into `state b { action inner; }` enters `b`, then `inner`.
+    // The interpreter's flat path entered `inner` alone and never offered `b`'s
+    // own `x`, while the walk stood at `[b, inner]` and took it: an exhaustive
+    // walk called `c` reached in 2 steps, and no run of the interpreter got
+    // there. Such a machine now runs on the path that drives the step relation.
+    const nd1 = (await loadModelText(
+      'package Nd1 { state def M { state a; state b { action inner; } state c;\n' +
+        '  transition t1 first a accept go then b::inner; transition t3 first b accept x then c; } }',
+      { fileName: 'nd1.sysml' },
+    )).model!;
+    const m = reachReport(nd1).machines[0];
+    expect(m).toMatchObject({ configs: 3, boundHit: 'none', exhaustive: true });
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.deadlocks.map((d) => [d.stack.map((s) => s.name), d.steps])).toEqual([[['c'], 2]]);
+    const run = runStateMachine(nd1, m.machine.id, ['go', 'x']);
+    expect(run.fired.map((f) => nd1.get(f.to)?.declaredName)).toEqual(['inner', 'c']);
+    // Timed or not, and beside an unrelated composite or not, the same run.
+    expect(nd1.get(runStateMachine(nd1, m.machine.id, ['go', { advance: 0 }, 'x']).finalState!)?.declaredName).toBe('c');
+
+    // With a trigger-less `first S then Idle`, the step into `S::work` settles
+    // back at `Idle`: `Z` is unreachable and `ez` dead, and no run of the
+    // interpreter enters `Z` (the flat path stayed at `work` and took `e`).
+    const flat = (await loadModelText(
+      'package FlatAct { state def M { state Idle; state S { action work; } state Z;\n' +
+        '  transition go first Idle accept go then S::work; transition settle first S then Idle;\n' +
+        '  transition ez first S::work accept e then Z; } }',
+      { fileName: 'flat-act.sysml' },
+    )).model!;
+    const f = reachReport(flat).machines[0];
+    expect(f).toMatchObject({ boundHit: 'none', exhaustive: true });
+    expect(f.states.unreachable.map((s) => s.name)).toEqual(['Z']);
+    expect(f.transitions.dead.map((t) => t.name)).toEqual(['ez']);
+    for (const events of [['go', 'e'], ['e', 'go', 'e'], ['go', 'go', 'e']]) {
+      expect(runStateMachine(flat, f.machine.id, events).visited.map((id) => flat.get(id)?.declaredName), events.join()).not.toContain('Z');
+    }
+  });
+
+  it('refuses a step whose target sits in no chain of the machine’s states, by name', async () => {
+    // A step into the machine's own root, and a step into a node under an
+    // action: neither has a least common ancestor to exit to, so the step
+    // relation reads them as every step was read before, and the walk refuses
+    // the machine rather than publish a walk over that reading.
+    const root = (await loadModelText(
+      'package Root1 { state def M { state a; state b;\n' +
+        '  transition t1 first a accept go then b; transition t2 first b accept back then M; } }',
+      { fileName: 'root1.sysml' },
+    )).model!;
+    const act = (await loadModelText(
+      'package Act1 { state def M { state a; state b; action act { action inner; }\n' +
+        '  transition t1 first a accept go then act::inner; transition t2 first a accept x then b; } }',
+      { fileName: 'act1.sysml' },
+    )).model!;
+    for (const [model, edge, where] of [
+      [root, 'Root1::M::t2', 'into `Root1::M`, the machine itself'],
+      [act, 'Act1::M::t1', 'to `Act1::M::act::inner`, which is written in `Act1::M::act` (`ActionUsage`), not in a state'],
+    ] as const) {
+      const r = reachReport(model);
+      const m = r.machines[0];
+      expect(m.exhaustive, edge).toBe(false);
+      expect(m.unsupported.map((u) => [u.construct, model.qualifiedName(u.elementId!)])).toEqual([['step-outside-states', edge]]);
+      expect(m.unsupported[0].detail).toContain(where);
+      expect(m.unsupported[0].detail).toContain('least common ancestor');
+      expect(m.deadlocks).toEqual([]);
+      const census = edgeCensus(model, stateMachinesIn(model)[0].id);
+      expect(census.unaccounted).toEqual([]);
+      expect(census.rows.find((row) => row.qualifiedName === edge)).toMatchObject({ account: 'refused' });
+      expect(r.diagnostics.filter((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE)).toHaveLength(1);
+    }
+  });
+});
+
 describe('a completion CYCLE, and the budget the interpreter spends on it', () => {
   /** `a` ⇄ `b` on completion transitions, plus an island nothing reaches. */
   function cycleWithIsland(): { model: Model; machineId: ElementId } {

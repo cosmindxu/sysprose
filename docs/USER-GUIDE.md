@@ -2604,6 +2604,29 @@ here at all), deferred events (none — there is no event pool), and time
 than advancing a clock). A verdict about a machine is a verdict under a reading
 of those six, and one that does not say which reading is one you cannot check.
 
+**A step out of a composite leaves it.** A transition exits to the least common
+ancestor of its source and its target: every active state that does not also
+hold the target is exited, innermost first with its exit actions, the
+transition's effect runs, and the states that hold the target are entered,
+outermost first, then the target and its initial substate. So `first b then
+Idle` written inside `state C0 { … }` exits `b` and then `C0`: at `Idle`, `C0`'s
+own transitions are not offered and a `state C0` atom does not hold. A step to
+an ancestor exits it and enters it again at its initial substate, and a step
+into a nested state from outside enters its composite first; so does a step into
+a node written inside a state, such as `then S::work` into `state S { action
+work; }`, which enters `S` and then `work`. Every transition is external: a
+self-transition exits its state and enters it again, and a composite restarts at
+its initial substate. A composite marked as a history state is the exception to
+both restarts: entered again, it resumes the child it was just left from. The Simulation
+tab steps the same way on every machine. A step
+whose target sits in no chain of the machine's states — into the machine's own
+root, or into a node written under an action — has no such ancestor, and the
+machine is refused: `verification/behaviour-unsupported-construct` with the
+construct `step-outside-states`, naming the transition. Until 2026-10-21 a step
+exited only down to its source's level and entered the target on top, so a
+composite stayed active after a step out of it, each round trip stacked one more
+state, and a property could be refuted on a composite the run had left.
+
 **A bound stops the walk, and then the absence claims stop with it.** Two
 sentences this command will only say after seeing the whole graph: "this state
 is unreachable" and "this transition is dead". Both are claims of ABSENCE, and a

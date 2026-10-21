@@ -597,22 +597,28 @@ package Reqs {
  * among them reached the 10,000-configuration bound while the walk kept where
  * each composite was left — measured in the built app at a fifth of a second for
  * `reach` and half a second for `check-behaviour` with three properties
- * (`docs/TEST-REPORT.md` §2.15) — and one whose every substate also leaves for a
- * top state still does — so the palette runs those two in a worker. These
- * tests pin the two halves of that: the worker's answer is the page's answer, and
- * the run around it (busy, Cancel, stale, fallback) does what a person is told.
+ * (`docs/TEST-REPORT.md` §2.15) — and a long procedure still walks for the better
+ * part of a second before it reaches the depth bound — so the palette runs those
+ * two in a worker. These tests pin the two halves of that: the worker's answer is
+ * the page's answer, and the run around it (busy, Cancel, stale, fallback) does
+ * what a person is told.
  */
 
 /**
  * A machine with `composites` composite states of `children` substates each,
  * driven by events — the shape of a flight controller's modes. No composite
  * resumes, so the walk does not keep where each was left (`hashConfig`): five
- * composites of four are 21 configurations. With `exits`, every substate also
- * leaves for `Idle`; the step exits the substate alone and enters `Idle` under
- * the composite, so each round trip stacks one more state and five composites
- * reach the walk's bound.
+ * composites of four are 21 configurations. With `sequence` the composites are
+ * the stages of one procedure instead: `Idle` enters only the first, the last
+ * substate of each steps into the first of the next, and every substate can
+ * abort to `Idle`. A step exits to the least common ancestor of its source and
+ * its target (`docs/06` §8.10), so the walk holds one configuration per state,
+ * and a procedure of more than 200 substates ends further away than the walk's
+ * depth bound. (Every substate leaving for `Idle` used to stack its composite
+ * under `Idle` on each round trip, and five composites of four reached the
+ * configuration bound that way.)
  */
-function hierarchical(pkg: string, composites: number, children: number, withProperties: boolean, exits = false): string {
+function hierarchical(pkg: string, composites: number, children: number, withProperties: boolean, sequence = false): string {
   const L = [`package ${pkg} {`, '  item def Cmd { attribute id; }', '  part def Machine {', '    state def Modes {'];
   if (withProperties) {
     L.push(
@@ -635,11 +641,14 @@ function hierarchical(pkg: string, composites: number, children: number, withPro
     for (let k = 0; k + 1 < children; k++) {
       L.push(`        transition c${c}_${k} first C${c}_${k} accept step${c}_${k} : Cmd then C${c}_${k + 1};`);
     }
-    if (exits) for (let k = 0; k < children; k++) L.push(`        transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} : Cmd then Idle;`);
+    if (sequence) {
+      for (let k = 0; k < children; k++) L.push(`        transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} : Cmd then Idle;`);
+      if (c + 1 < composites) L.push(`        transition nx${c} first C${c}_${children - 1} accept next${c} : Cmd then C${c + 1}::C${c + 1}_0;`);
+    }
     L.push('      }');
   }
   for (let c = 0; c < composites; c++) {
-    L.push(`      transition in${c} first Idle accept enter${c} : Cmd then C${c};`);
+    if (!sequence || c === 0) L.push(`      transition in${c} first Idle accept enter${c} : Cmd then C${c};`);
     L.push(`      transition out${c} first C${c} accept leave${c} : Cmd then Idle;`);
   }
   L.push('    }', '  }', '}');
@@ -711,12 +720,17 @@ describe('the checks that run in a worker', () => {
   });
 
   it('give a machine at the walk\'s bound the same undecided answer, and take the time it takes', { timeout: 120_000 }, async () => {
-    const loaded = await loadModelText(hierarchical('Big', 5, 4, true, true), { fileName: 'big.sysml' });
-    // At the bound, not decided short of it: the same five composites without
-    // the exits are 21 configurations and a walk to exhaustion.
-    expect(reachReport(loaded.model!).machines[0]).toMatchObject({ configs: 10_000, boundHit: 'configs', exhaustive: false });
-    const flat = (await loadModelText(hierarchical('Big', 5, 4, true), { fileName: 'big.sysml' })).model!;
-    expect(reachReport(flat).machines[0]).toMatchObject({ configs: 21, boundHit: 'none', exhaustive: true });
+    // A procedure of six stages of 35 substates: its end is 210 steps from the
+    // opening, past the depth bound of 200.
+    const loaded = await loadModelText(hierarchical('Big', 6, 35, true, true), { fileName: 'big.sysml' });
+    // At the bound, not decided short of it: a procedure of five stages of four
+    // substates, and the same five composites entered from `Idle`, are 21
+    // configurations and a walk to exhaustion.
+    expect(reachReport(loaded.model!).machines[0]).toMatchObject({ configs: 201, boundHit: 'depth', exhaustive: false });
+    for (const sequence of [true, false]) {
+      const short = (await loadModelText(hierarchical('Big', 5, 4, true, sequence), { fileName: 'big.sysml' })).model!;
+      expect(reachReport(short).machines[0], `sequence ${sequence}`).toMatchObject({ configs: 21, boundHit: 'none', exhaustive: true });
+    }
     const c = ctx({ model: loaded.model! });
     const host = new CheckHost(mergeLibrary);
     for (const spec of WALKERS) {

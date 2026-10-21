@@ -444,10 +444,15 @@ left only on a machine where a composite resumes it, and it walks no such machin
 A machine of this shape now walks one configuration per state stack: five
 generated composites of four substates, entered and left on events, walk 21
 configurations in about a millisecond (in process), where they reached the bound
-in about 0.6 s. The generated machines below still reach the bound, and their
-figures were measured before that change: each of their substates also leaves for
-a top state, and that step exits the substate alone and enters the top state under
-the composite, as the interpreter does, so every round trip stacks a state.
+in about 0.6 s. The generated machines below were measured before that change and
+before the next: each of their substates also leaves for a top state, and that step
+exited the substate alone and entered the top state under the composite, so every
+round trip stacked a state. **Since 2026-10-21 (`docs/06` §8.10)** a step exits to
+the least common ancestor of its source and its target, and those machines walk one
+configuration per state stack too (five composites of four, 21 configurations). The
+tests now load a long procedure instead, six composite stages of 35 substates whose
+end lies past the 200-step depth bound: 201 configurations, one to two seconds in
+process, and about a second in the worker in the built app.
 
 Larger machines take longer: a generated one of 6 composites with 4 substates each
 held the page 490 ms (`reach`) and 485 ms (`check-behaviour`) on the page, and

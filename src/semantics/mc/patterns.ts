@@ -1500,13 +1500,16 @@ export function replayWitness(
  * interpreter's own `visited` list — `null` where that list cannot be lined up
  * with the fires, which the caller reads as a departure.
  *
- * Every fire appends the states it enters: its target first, then — on the
- * hierarchical path, through `stepConfig` — each initial substate it cascades
- * into, every one a direct substate of the one before; the opening appends its
- * own cascade the same way. A cascade ends on a state with no substate, so the
- * next fire's target can never continue it. On the flat path a fire appends its
- * target alone, which is the point: a run there does not cascade, and a witness
- * that did is not that run.
+ * Every fire appends the states it enters. On the hierarchical path, through
+ * `stepConfig`, that is first the states that hold its target and were not
+ * active, outermost first, each the owner of the next and the last the
+ * target's own owner (a step exits to the least common ancestor of its two
+ * ends and enters the rest of the way down, `docs/06` §8.10); then its target;
+ * then each initial substate it cascades into, every one a direct substate of
+ * the one before. The opening appends its own cascade the same way. A cascade
+ * ends on a state with no substate, so the next fire's entries can never
+ * continue it. On the flat path a fire appends its target alone, which is the
+ * point: a run there does not cascade, and a witness that did is not that run.
  */
 function restingLeaves(
   model: Model,
@@ -1518,10 +1521,28 @@ function restingLeaves(
     while (j + 1 < visited.length && directStates(model, visited[j]).some((s) => s.id === visited[j + 1])) j++;
     return j;
   };
+  /**
+   * Where a fire into `to` appended `to`, its entries starting at `i`: `i`
+   * itself, or past the states it entered on the way down — exactly the run of
+   * `to`'s owners, outermost first, that ends at its own owner. Anything else
+   * is a departure (`-1`).
+   */
+  const targetAt = (i: number, to: ElementId): number => {
+    if (i >= visited.length) return -1;
+    if (visited[i] === to) return i;
+    const owners: ElementId[] = []; // innermost first
+    for (let p = model.get(to)?.ownerId ?? null; p != null; p = model.get(p)?.ownerId ?? null) owners.push(p);
+    let k = owners.indexOf(visited[i]);
+    if (k < 0) return -1;
+    let j = i;
+    for (; k >= 0; k--, j++) if (visited[j] !== owners[k]) return -1;
+    return visited[j] === to ? j : -1;
+  };
   const out: (ElementId | null)[] = [];
   let at = visited.length === 0 ? 0 : cascadeEnd(0) + 1;
   for (const f of fired) {
-    if (at >= visited.length || visited[at] !== f.to) {
+    at = targetAt(at, f.to);
+    if (at < 0) {
       out.push(null);
       at = visited.length;
       continue;

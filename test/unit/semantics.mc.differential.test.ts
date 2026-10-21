@@ -342,6 +342,23 @@ const CASES: Case[] = [
   { name: 'a succession between two states, mixed with a transition', build: buildSuccessionMix, steps: [] },
   { name: 'the same machine driven by a trigger it does not name', build: buildSuccessionMix, steps: ['go'] },
   { name: 'a succession that closes a completion cycle', build: buildSuccessionLoop, steps: [] },
+  // A STEP EXITS TO THE LEAST COMMON ANCESTOR (`docs/06` §8.10). Both drivers
+  // read `stepConfig`, so these hold the DRIVING DISCIPLINE to one relation on
+  // every way a step can stand to the hierarchy; what the relation does there
+  // is asserted on its result below.
+  { name: 'out of a composite, then a step its own transitions no longer offer', build: buildLca, steps: ['go', 'x', 'back', 'reset'] },
+  { name: 'to the composite’s sibling, then on to the first composite', build: buildLca, steps: ['go', 'x', 'side', 'cross'] },
+  { name: 'to an ancestor, and self-transitions on a substate and a composite', build: buildLca, steps: ['go', 'x', 'up', 'again', 'x', 'reset'] },
+  { name: 'from a composite to its own substate, and into a nested state from outside', build: buildLca, steps: ['go', 'pick', 'back', 'dive'] },
+  // A STEP INTO A NODE WRITTEN INSIDE A LEAF STATE, on a machine with no
+  // composite. The step enters the state first; the flat path entered the
+  // target alone, so it stood at `work` with `S` never entered, never offered
+  // `S`'s own transitions, and parted from the walk on the next step. Such a
+  // machine now runs on the path that drives `stepConfig` (`needsHierarchical`),
+  // and these cases fail the moment it takes the flat one again.
+  { name: 'a step into a node inside a leaf state, then the state’s own transition', build: () => buildIntoLeaf(false), steps: ['go', 'x'] },
+  { name: 'the same, the state settling on completion before an event its node accepts', build: () => buildIntoLeaf(true), steps: ['go', 'e'] },
+  { name: 'the same in one of two parallel regions', build: buildIntoLeafParallel, steps: ['go', 'x'] },
 ];
 
 /**
@@ -448,6 +465,85 @@ function buildTimer(): { model: Model; machineId: ElementId } {
   return { model: m, machineId: sm.id };
 }
 
+/**
+ * A top state and two composites, every state with an entry action `inX` and an
+ * exit action `outX`, and one transition for each way a step can stand to the
+ * state hierarchy (`docs/06` §8.10): between two substates, out of a composite,
+ * to the composite's sibling, to its ancestor, a self-transition on a substate
+ * and on a composite, from a composite to its own substate, into a nested state
+ * from outside, and from a substate of one composite to a substate of the other.
+ */
+function buildLca(): { model: Model; machineId: ElementId } {
+  const m = new Model();
+  const f = new ModelFactory(m);
+  const sm = f.stateDef('Lca');
+  const idle = f.state('Idle', sm.id);
+  const c0 = f.state('C0', sm.id);
+  const a = f.state('a', c0.id);
+  const b = f.state('b', c0.id);
+  const c1 = f.state('C1', sm.id);
+  const p = f.state('p', c1.id);
+  const q = f.state('q', c1.id);
+  for (const s of [idle, c0, a, b, c1, p, q]) {
+    m.create('ActionUsage', { ownerId: s.id, declaredName: `in${s.declaredName}`, attrs: { stateSubaction: 'entry' } });
+    m.create('ActionUsage', { ownerId: s.id, declaredName: `out${s.declaredName}`, attrs: { stateSubaction: 'exit' } });
+  }
+  f.transition(idle.id, c0.id, { ownerId: sm.id, trigger: 'go' });
+  f.transition(a.id, b.id, { ownerId: c0.id, trigger: 'x' });
+  f.transition(b.id, idle.id, { ownerId: c0.id, trigger: 'back' });
+  f.transition(b.id, c1.id, { ownerId: c0.id, trigger: 'side' });
+  f.transition(b.id, c0.id, { ownerId: c0.id, trigger: 'up' });
+  f.transition(a.id, a.id, { ownerId: c0.id, trigger: 'again' });
+  f.transition(c0.id, c0.id, { ownerId: sm.id, trigger: 'reset' });
+  f.transition(c0.id, b.id, { ownerId: sm.id, trigger: 'pick' });
+  f.transition(idle.id, q.id, { ownerId: sm.id, trigger: 'dive' });
+  f.transition(p.id, b.id, { ownerId: c1.id, trigger: 'cross' });
+  return { model: m, machineId: sm.id };
+}
+
+/**
+ * `Idle`, `S { action work; }` and `Z`, no composite: `Idle -go-> S::work`,
+ * `S -x-> Z` and `S::work -e-> Z`, every state with an entry action `inX` — and,
+ * with `settle`, a trigger-less `S -> Idle`. The review's `nd1` and `flat-act`.
+ */
+function buildIntoLeaf(settle: boolean): { model: Model; machineId: ElementId } {
+  const m = new Model();
+  const f = new ModelFactory(m);
+  const sm = f.stateDef('IntoLeaf');
+  const idle = f.state('Idle', sm.id);
+  const s = f.state('S', sm.id);
+  const work = m.create('ActionUsage', { ownerId: s.id, declaredName: 'work' });
+  const z = f.state('Z', sm.id);
+  for (const st of [idle, s, z]) {
+    m.create('ActionUsage', { ownerId: st.id, declaredName: `in${st.declaredName}`, attrs: { stateSubaction: 'entry' } });
+  }
+  f.transition(idle.id, work.id, { ownerId: sm.id, trigger: 'go' });
+  if (settle) f.transition(s.id, idle.id, { ownerId: sm.id });
+  f.transition(s.id, z.id, { ownerId: sm.id, trigger: 'x' });
+  f.transition(work.id, z.id, { ownerId: sm.id, trigger: 'e' });
+  return { model: m, machineId: sm.id };
+}
+
+/** {@link buildIntoLeaf}'s shape as region `r1` of a parallel machine, beside a plain region `r2`. */
+function buildIntoLeafParallel(): { model: Model; machineId: ElementId } {
+  const m = new Model();
+  const f = new ModelFactory(m);
+  const par = m.create('StateDefinition', { declaredName: 'ParLeaf', attrs: { parallel: true } });
+  const r1 = f.state('r1', par.id);
+  const idle = f.state('Idle', r1.id);
+  const s = f.state('S', r1.id);
+  m.create('ActionUsage', { ownerId: s.id, declaredName: 'inS', attrs: { stateSubaction: 'entry' } });
+  const work = m.create('ActionUsage', { ownerId: s.id, declaredName: 'work' });
+  const z = f.state('Z', r1.id);
+  f.transition(idle.id, work.id, { ownerId: r1.id, trigger: 'go' });
+  f.transition(s.id, z.id, { ownerId: r1.id, trigger: 'x' });
+  const r2 = f.state('r2', par.id);
+  const b1 = f.state('b1', r2.id);
+  const b2 = f.state('b2', r2.id);
+  f.transition(b1.id, b2.id, { ownerId: r2.id, trigger: 'go' });
+  return { model: m, machineId: par.id };
+}
+
 /* ──────────────────────────────── the gate ──────────────────────────────── */
 
 describe('the interpreter is the left fold of the step function', () => {
@@ -541,6 +637,93 @@ describe('the priority rule the differential cannot see', () => {
       'enabledTransitions no longer offers the innermost state first',
     ).toBe('inner');
     expect(enabled[0].level).toBeGreaterThan(enabled[1].level);
+  });
+});
+
+describe('a step exits to the least common ancestor of its source and its target', () => {
+  /*
+   * Where a step out of, into or across a composite leaves the machine is the
+   * relation's own rule, and the differential cannot see it either: both
+   * drivers read `stepConfig`, so a wrong rule is wrong in both and the
+   * comparison stays green. So each way a step can stand to the hierarchy is
+   * pinned on its RESULT — the stack it leaves and the exit and entry actions
+   * it performs, in order. The step used to exit only down to the source's
+   * level and enter the target on top (`docs/06` §8.9): `back` left `[C0,
+   * Idle]`, with `C0`'s own transitions still enabled, and every round trip
+   * stacked one more state. Every transition is external: a self-transition
+   * exits and re-enters its state (§8.10).
+   */
+  const nameOf = (model: Model, id: ElementId): string => model.get(id)!.declaredName ?? id;
+
+  /** The configuration the relation leaves after `steps`, each fired as the interpreter fires it. */
+  function configAfter(model: Model, machineId: ElementId, steps: string[]): MachineConfig {
+    let cfg = initialConfig(model, machineId).config;
+    for (const step of steps) {
+      const enabled = enabledTransitions(model, cfg, { kind: 'trigger', trigger: step });
+      if (enabled.length > 0) cfg = stepConfig(model, cfg, enabled[0]).config;
+    }
+    return cfg;
+  }
+
+  /** What the interpreter performed on the LAST of `steps`: its actions past those of all the others. */
+  function lastStepPerformed(model: Model, machineId: ElementId, steps: string[]): string[] {
+    const before = runStateMachine(model, machineId, steps.slice(0, -1)).performed.length;
+    return runStateMachine(model, machineId, steps).performed.slice(before).map((a) => a.name);
+  }
+
+  const WAYS: Array<{ way: string; steps: string[]; stack: string[]; performed: string[] }> = [
+    { way: 'between two substates of one composite', steps: ['go', 'x'], stack: ['C0', 'b'], performed: ['outa', 'inb'] },
+    { way: 'out of its composite: the composite is exited too', steps: ['go', 'x', 'back'], stack: ['Idle'], performed: ['outb', 'outC0', 'inIdle'] },
+    { way: 'to the composite’s sibling', steps: ['go', 'x', 'side'], stack: ['C1', 'p'], performed: ['outb', 'outC0', 'inC1', 'inp'] },
+    { way: 'to its ancestor: exited and entered again, at its initial substate', steps: ['go', 'x', 'up'], stack: ['C0', 'a'], performed: ['outb', 'outC0', 'inC0', 'ina'] },
+    { way: 'a self-transition on a substate: exited and entered again', steps: ['go', 'again'], stack: ['C0', 'a'], performed: ['outa', 'ina'] },
+    { way: 'a self-transition on a composite: exited and entered again, at its initial substate', steps: ['go', 'x', 'reset'], stack: ['C0', 'a'], performed: ['outb', 'outC0', 'inC0', 'ina'] },
+    { way: 'from a composite to its own substate: the composite is exited and entered again', steps: ['go', 'pick'], stack: ['C0', 'b'], performed: ['outa', 'outC0', 'inC0', 'inb'] },
+    { way: 'into a nested state from outside: its composite is entered first', steps: ['dive'], stack: ['C1', 'q'], performed: ['outIdle', 'inC1', 'inq'] },
+    { way: 'from a substate of one composite to a substate of another', steps: ['go', 'x', 'side', 'cross'], stack: ['C0', 'b'], performed: ['outp', 'outC1', 'inC0', 'inb'] },
+    { way: 'a composite that was left offers its own transitions no more', steps: ['go', 'x', 'back', 'reset'], stack: ['Idle'], performed: [] },
+  ];
+  for (const w of WAYS) {
+    it(w.way, () => {
+      const { model, machineId } = buildLca();
+      const cfg = configAfter(model, machineId, w.steps);
+      expect(cfg.stack.map((id) => nameOf(model, id)), 'the active stack the step leaves').toEqual(w.stack);
+      expect(lastStepPerformed(model, machineId, w.steps), 'the exit and entry actions, in order').toEqual(w.performed);
+      const run = runStateMachine(model, machineId, w.steps);
+      expect(nameOf(model, run.finalState!), 'the interpreter ends where the relation does').toBe(w.stack[w.stack.length - 1]);
+    });
+  }
+
+  it('a round trip out of a composite stacks nothing', () => {
+    const { model, machineId } = buildLca();
+    const trips = ['go', 'x', 'back', 'go', 'x', 'back', 'go', 'x', 'back'];
+    expect(configAfter(model, machineId, trips).stack.map((id) => nameOf(model, id))).toEqual(['Idle']);
+    // Each `back` exits `C0` once and each `go` enters it once.
+    const performed = runStateMachine(model, machineId, trips).performed.map((a) => a.name);
+    expect(performed.filter((n) => n === 'outC0')).toHaveLength(3);
+    expect(performed.filter((n) => n === 'inC0')).toHaveLength(3);
+  });
+
+  it('records where a composite was left, and a composite that resumes resumes there', () => {
+    // `out` leaves from the substate `h2`, so the composite `H` is exited by the
+    // step's exit cascade: `h2` first, recorded as `H`'s last-active child, then `H`.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Resume');
+    const idle = f.state('Idle', sm.id);
+    const h = m.create('StateUsage', { declaredName: 'H', ownerId: sm.id, attrs: { history: true } });
+    const h1 = f.state('h1', h.id);
+    const h2 = f.state('h2', h.id);
+    f.transition(idle.id, h.id, { ownerId: sm.id, trigger: 'in' });
+    f.transition(h1.id, h2.id, { ownerId: h.id, trigger: 'n' });
+    f.transition(h2.id, idle.id, { ownerId: h.id, trigger: 'out' });
+
+    const left = configAfter(m, sm.id, ['in', 'n', 'out']);
+    expect(left.stack.map((id) => nameOf(m, id))).toEqual(['Idle']);
+    expect(left.history.get(h.id)).toBe(h2.id);
+    const back = configAfter(m, sm.id, ['in', 'n', 'out', 'in']);
+    expect(back.stack.map((id) => nameOf(m, id))).toEqual(['H', 'h2']);
+    expect(nameOf(m, runStateMachine(m, sm.id, ['in', 'n', 'out', 'in']).finalState!)).toBe('h2');
   });
 });
 
@@ -691,6 +874,41 @@ describe('the interpreter never does what the checker calls impossible, and ever
       transition ab first a then b;
       transition ac first a then c;
       transition bd first b accept e then d;
+    } }`,
+    // O8 S1's review: each way a step can stand to the hierarchy (docs/06
+    // §8.10), so a witness through a step that enters a target's enclosing
+    // states is replayed, and a machine with no composite whose step targets a
+    // node inside a state is held to what the interpreter does.
+    'lca-out.sysml': `package LcaOut { state def M {
+      state Idle;
+      state C0 { state a; state b; transition ab first a accept x then b; transition bk first b accept back then Idle; }
+      transition go first Idle accept go then C0;
+    } }`,
+    'lca-dive.sysml': `package LcaDive { state def M {
+      state Idle;
+      state C1 { state p; state q; transition pq first p accept x then q; }
+      transition dive first Idle accept dive then C1::q;
+      transition home first C1 accept home then Idle;
+    } }`,
+    'lca-cousin.sysml': `package LcaCousin { state def M {
+      state Idle;
+      state A { state a1; state a2; state a3; transition x first a1 accept x then a2; }
+      state B { state b1; state b2; }
+      transition go first Idle accept go then A;
+      transition cross first A::a2 accept cross then B::b2;
+      transition pick first A accept pick then A::a3;
+      transition up first B::b2 accept up then B;
+    } }`,
+    'lca-into-leaf.sysml': `package LcaIntoLeaf { state def M {
+      state a; state b { action inner; } state c;
+      transition t1 first a accept go then b::inner;
+      transition t3 first b accept x then c;
+    } }`,
+    'lca-flat-act.sysml': `package LcaFlatAct { state def M {
+      state Idle; state S { action work; } state Z;
+      transition go first Idle accept go then S::work;
+      transition settle first S then Idle;
+      transition ez first S::work accept e then Z;
     } }`,
   };
 

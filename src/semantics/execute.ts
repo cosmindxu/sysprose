@@ -50,6 +50,7 @@ import {
   enabledTransitions,
   evalStr,
   guardHoldsStore,
+  hierarchyPath,
   initialConfig,
   initialState,
   inlineAssign,
@@ -911,7 +912,10 @@ export interface StateRunResult {
  * Drive the state machine rooted at `stateId` against `triggers`. Starts at the
  * initial state (an InitialNode's successor, else the first contained
  * StateUsage). For each trigger, fires the first enabled STEP EDGE (trigger
- * matches + guard true) leaving the current state, moving to its target.
+ * matches + guard true) leaving the current state, moving to its target: it
+ * exits to the least common ancestor of the two, innermost first, runs the
+ * effect, and enters the target's enclosing states outermost first
+ * (`stepConfig`, `./mc/config.ts`; `docs/06` §8.10).
  * Deterministic; bounded by `triggers.length`.
  *
  * A step edge is a `TransitionUsage` or a `Succession` between two states —
@@ -942,29 +946,16 @@ export function runStateMachine(
 
   // Route to the fuller HIERARCHICAL / TIMED interpreter when the machine has
   // nested composite states, a history pseudostate, an orthogonal join
-  // transition, or the run carries timed steps. Otherwise use the (unchanged)
-  // flat/simple-parallel path so existing behavior is preserved exactly.
+  // transition, a step into a node written below one of its states, or the run
+  // carries timed steps. Otherwise use the (unchanged) flat/simple-parallel
+  // path so existing behavior is preserved exactly.
   const timed = triggers.some(isTimedStep);
   if (timed || needsHierarchical(model, container, parallel)) {
     return runHierMachine(model, container, triggers, valueStore, performed, maxCompletion, parallel, tie);
   }
 
   const stringTriggers = triggers.filter((t): t is string => typeof t === 'string');
-
-  // Determine the concurrent regions. A state marked parallel runs each child
-  // composite state as an independent region; otherwise the container is one
-  // region.
-  let regions: ElementRecord[];
-  if (parallel) {
-    regions = model
-      .children(stateId)
-      .filter(
-        (c) => c.eClass === 'StateUsage' && model.descendants(c.id).some((d) => d.eClass === 'StateUsage'),
-      );
-    if (regions.length === 0) regions = [container];
-  } else {
-    regions = [container];
-  }
+  const regions = flatRegions(model, container, parallel);
 
   const visited: ElementId[] = [];
   const fired: StateFire[] = [];
@@ -981,6 +972,19 @@ export function runStateMachine(
   const activeStates = finals.filter((s): s is ElementId => s !== null);
   const finalState = parallel ? (finals[0] ?? null) : (finals[0] ?? null);
   return { visited, fired, performed, valueStore, activeStates, finalState, completionBudgetHit };
+}
+
+/**
+ * The regions the flat path runs. A state marked parallel runs each child
+ * composite state as an independent region; otherwise the container is one
+ * region. {@link needsHierarchical} reads the same list.
+ */
+function flatRegions(model: Model, container: ElementRecord, parallel: boolean): ElementRecord[] {
+  if (!parallel) return [container];
+  const regions = model
+    .children(container.id)
+    .filter((c) => c.eClass === 'StateUsage' && model.descendants(c.id).some((d) => d.eClass === 'StateUsage'));
+  return regions.length === 0 ? [container] : regions;
 }
 
 /** A driving step is a discrete-clock time advance rather than a named trigger. */
@@ -1063,6 +1067,12 @@ function runRegion(
     // simulator's own run pays for none; its head is `head`.
     const t = tie.follow === undefined ? head : tieBreak(tie, transitions.filter(accepts), (tr) => tr.id);
     const to = t.target![0];
+    // No composite on this path, and no step whose target is written below one
+    // of the region's states (`needsHierarchical`): every target sits directly
+    // in the region, so the least common ancestor of a step's two ends is the
+    // region, and `stepConfig`'s exit to it is this one exit. A target in no
+    // chain of the region's states — the region itself, a node under an action —
+    // is entered alone, as before `docs/06` §8.10; the walk refuses that machine.
     exitState(model, cur, store, scope, performed);
     applyTransitionEffect(t, store, scope);
     fired.push({ transitionId: t.id, from: cur, to, trigger });
@@ -1170,9 +1180,21 @@ function isJoinTransition(tr: ElementRecord): boolean {
 
 /**
  * Does the machine rooted at `container` require the fuller HIERARCHICAL
- * interpreter — a nested composite state, a history pseudostate, or an
- * orthogonal join transition? (Timed runs route there separately.) A simple
- * flat or one-level-parallel machine returns false and uses the legacy path.
+ * interpreter — a nested composite state, a history pseudostate, an
+ * orthogonal join transition, or a step into a node written below one of a
+ * region's states? (Timed runs route there separately.) A simple flat or
+ * one-level-parallel machine returns false and uses the legacy path.
+ *
+ * THE LAST IS HOW THE TWO PATHS STAY ONE STEP. A step enters the states that
+ * hold its target, outermost first (`stepConfig`, `docs/06` §8.10), and the
+ * flat path enters the target alone. On a machine with no composite those
+ * differ only where a target is written below a state — `then S::work` into
+ * `state S { action work; }` — and there the flat path stood at `work` with
+ * `S` never entered, so `S`'s own transitions were never offered, while the
+ * walk and the property search, which read `stepConfig`, stood at `[S, work]`
+ * and published absences the simulator contradicted. Such a machine takes the
+ * path that drives `stepConfig`. A target in no chain of states
+ * (`hierarchyPath` is `null`) does not route: the walk refuses that machine.
  */
 function needsHierarchical(model: Model, container: ElementRecord, parallel: boolean): boolean {
   const regionIds = new Set<ElementId>();
@@ -1187,6 +1209,9 @@ function needsHierarchical(model: Model, container: ElementRecord, parallel: boo
     if (isHistoryPseudostate(s) || isHistoryComposite(model, s.id)) return true;
   }
   if (model.descendants(container.id).some(isHistoryPseudostate)) return true;
+  const nestedTarget = (regionId: ElementId): boolean =>
+    regionTransitions(model, regionId).some((t) => (hierarchyPath(model, regionId, t.target![0])?.length ?? 1) > 1);
+  if (flatRegions(model, container, parallel).some((r) => nestedTarget(r.id))) return true;
   return containerTransitions(model, container.id).some(isJoinTransition);
 }
 

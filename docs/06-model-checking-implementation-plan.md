@@ -2422,22 +2422,136 @@ configurations multiplied with the composites.
   --pattern 'pattern=absence, scope=after, p=state C0, q=trigger back'` prints
   FAIL (`verification/refuted`, exit 1) with a witness that ends `on back … →
   Idle [holds p, q]`: `state C0` holds at `Idle` only because `C0` was never
-  exited, and under UML's reading the property holds. `reach` on the same
-  machine stops at the depth bound (201 configurations) and withholds every
-  list. `38c8d0b` does the same. Exiting to
+  exited, and under UML's reading the property holds. (§8.10: under the step
+  that exits `C0`, the `after-until` form that ends the scope at the next `go`
+  holds; this `after` form is refuted again, rightly, by `go` entering `C0`
+  again.) `reach` on the same machine stops at the depth bound (201
+  configurations) and withholds every list. `38c8d0b` does the same. Exiting to
   the least common ancestor of source and target, as UML reads a transition,
   would change what `simulate` does and every verdict on such a machine, so it
-  is left open. T80 moves no verdict in the gate corpus or v9: there only
-  `nest2-into` holds such a step, and that machine is refused
+  was left open here; §8.10 makes that change. T80 moves no verdict in the gate
+  corpus or v9: there only `nest2-into` holds such a step, and that machine is refused
   (`machine-boundary`). A machine T80 brings under the bound now publishes its
   lists, and where it holds such a step, the lists inherit that step's false
   readings. Five composites of four substates entered and left on events,
   where `C0_3` also leaves for a top state (`first C0_3 then Done`), reached the
   configuration bound at `38c8d0b` and withheld every list; they now walk 22
   configurations to the end and print 0 dead and no `no way out` row, because
-  `C0`'s own transitions still leave `[C0, Done]`. With the step leaving `C0`
+  `C0`'s own transitions still leave `[C0, Done]` (§8.10: now `no way out …
+  Done — reached in 5 step(s)`). With the step leaving `C0`
   itself (`first C0 then Done`), as UML reads it, the same machine prints
   `no way out … Done — reached in 2 step(s), not marked final`
   (`verification/deadlock`). The E2E machine `heavyMachine(6, 4)`
   (`palette-checks.spec.ts`) and the bound fixture of `checks-registry.test.ts`
-  reach the bound through it.
+  reached the bound through it; §8.10 re-makes both.
+
+### 8.10 A step exits to the least common ancestor — O8 `behaviour-lca`, 2026-10-21
+
+TODO "Exit a transition to the least common ancestor of its source and its target"
+(`close-open-items.md` §2.4, O8 S1), the second multiplier of §8.9: the step exited
+only down to the source's level and entered the target on top, so a step out of a
+composite left the composite active, its own transitions enabled and a `state`
+atom on it holding, and every round trip stacked one more state.
+
+- **What changed.** `stepConfig` (`config.ts`) exits to the least common ancestor
+  of a transition's source and its target, as UML reads a transition. The active
+  states that do not also hold the target are exited from the leaf, innermost
+  first (`exitTo`, which records each composite's last-active child as before);
+  then the effect runs; then the target's enclosing states that are not active
+  are entered outermost first (`enterOne`, no cascade into their initial
+  substates), and the target with its cascade (`enterCascade`).
+  `hierarchyPath` gives the chain of states that holds a target. The
+  interpreter's hierarchical path (`runHierRegion`) drives `stepConfig`, so
+  `runStateMachine`, `simulate` (the Simulation tab, `SimulationSession`), the
+  walk and the property search step one way, and the witness replay of
+  `check-behaviour` runs on the same step. The flat path (`runRegion`) enters a
+  target alone, so it now takes only a machine with no composite whose every
+  target is written directly in its region: there the least common ancestor of
+  a step's two ends is the region, and its one exit is the same step. A machine
+  with no composite whose step targets a node written inside a state (`then
+  S::work` into `state S { action work; }`) runs on the hierarchical path
+  (`needsHierarchical`): on the flat one it stood at `work` with `S` never
+  entered, so `S`'s own transitions were never offered, while the walk stood at
+  `[S, work]` — an exhaustive walk then called a state reached that no run of
+  the interpreter reached, and passed an absence a run broke. The witness
+  replay (`restingLeaves`, `patterns.ts`) reads a fire's entries from the first
+  enclosing state it enters, outermost first, down to its target: it read them
+  from the target, so every witness through a step into a nested state, from a
+  composite to its own substate or from cousin to cousin was withheld as
+  `verification/witness-not-replayed` (exit 2), with a reason that said the
+  interpreter entered no state.
+- **Every transition is external.** The interpreter documented no internal or
+  local kind, and the notation has none this tool reads, so the ancestor is a
+  proper ancestor of both ends. A self-transition exits its state and enters it
+  again, as the old step also did; on a composite it restarts at the initial
+  substate. A step to an ancestor exits it and enters it again at its initial
+  substate (it stacked it twice: `[C0, C0, a]`). On both, a composite marked
+  as a history state resumes instead the child it was just left from (the
+  profile's `history` field: `exitTo` records it, `enterCascade` resumes it).
+  A step from a composite to its own substate exits the composite and enters
+  it again (it dropped the composite: `[b]`); a step into a nested state from
+  outside enters its composite first (it entered the state alone), and so does
+  a step into a node written inside a state. The semantic profile's six
+  fields are unchanged: none of them is how a step exits, and the `history`
+  field's reading, "leaving a composite state records its last-active child",
+  now holds of every step that leaves one.
+- **What the step cannot read, refused.** A target in no chain of the machine's
+  states has no least common ancestor: the machine's own root (`then M` written
+  in `state def M`), or a node under an element that is not a state (`then
+  act::inner`, under an action). The step reads it as before — exit to the
+  source's level, enter the target on top — and the walk refuses the machine:
+  `verification/behaviour-unsupported-construct`, construct
+  `step-outside-states` (`stepsOutsideStates`, `explore.ts`), with the edge in
+  the census's `refused` bucket. Before, `then M` stacked to the depth bound, and
+  a step into `act::inner` was walked over the old reading and printed a `no way
+  out` row there. A step across a machine's boundary was already refused
+  (`machine-boundary`, §8.6) and is read by the interpreter as §8.6 says.
+- **What moved.** On the TODO's machine (`Idle -go-> C0`, `C0 { a -x-> b; b
+  -back-> Idle }`) `reach` walks 3 configurations to the end; it stopped at the
+  depth bound after 201 and withheld every list. `check-behaviour --pattern
+  'pattern=absence, scope=after-until, p=state C0, q=trigger back, r=trigger go'`
+  is PASS, exit 0; it was FAIL (`verification/refuted`, exit 1) on a witness that
+  ended `on back … → Idle [holds p, q]`. The TODO's own `scope=after` form stays
+  FAIL, and rightly: its witness is now four steps, the last of them `go`
+  entering `C0` again, and it replays. One composite of two substates and five
+  composites of four whose every substate also leaves for `Idle` walk to the end
+  (3 and 21 configurations); the second reached the 10,000-configuration bound.
+  `first C0_3 then Done` (§8.9) now prints `no way out … Done — reached in 5
+  step(s)` (`verification/deadlock`): the old step left `[C0, Done]`, and `C0`'s
+  `leave0` left that. In `simulate`, a composite's own transition fires no more
+  once a step from one of its substates has left it. On a machine with no
+  composite whose step targets a node inside a state, `simulate` enters the
+  state first: `then S::work` into `state S { action work; }`, with a
+  trigger-less `first S then Idle`, settles back at `Idle` on `go`, so `e` from
+  `work` never fires and `Z` is never entered (`aac38fd` stood at `work` and took
+  `e` into `Z`); with `first b accept x then c` instead, `[go, x]` ends at `c`
+  (it stayed at `b::inner`), timed or not, and the absence of `state b` is FAIL
+  (exit 1) on a witness that replays, where `aac38fd`'s walk and interpreter both
+  entered `inner` alone and passed it. A witness through a step into a nested
+  state, from a composite to its own substate, or between two composites'
+  substates replays, so those rows keep the FAIL (exit 1) and COVERED (exit 0)
+  they had at `aac38fd`.
+- **The fixtures that reached their bound through the old step.** A text-authored
+  machine changes its store only through effects the notation does not write, so
+  under this step it holds one configuration per state stack, and the
+  configuration bound would take ten thousand states. `hierarchical(…,
+  sequence)` (`checks-registry.test.ts`) and `heavyMachine`
+  (`palette-checks.spec.ts`) are now a procedure of composite stages, entered
+  from `Idle` at the first, the last substate of each stepping into the next:
+  six stages of 35 substates end 210 steps from the opening, past the depth
+  bound, and walk 201 configurations, in one to two seconds in process. In the
+  first every substate can also abort to `Idle`; in the second, which the state
+  view lays out, every substate can step back to the one before instead, because
+  two hundred edges into `Idle` cost that layout minutes. The E2E test waits for
+  the layout before it watches frames, and polls the `running` state every 50 ms:
+  the walk in the worker runs for about a second.
+- **No verdict in the gate corpus or v9 moves**, as the TODO said. Against
+  `aac38fd`: the verdict differential, 637 of 637 models identical; v9, 25 of 25
+  surfaces identical; `reach`, JSON and text, on the 54 state-bearing models and
+  v9, 55 of 55 identical; and `check-behaviour --element` on each of their 79
+  machines, JSON and text, identical. Among the step edges of every walked machine
+  there, and of the repository's fixture and example files, only `nest2-into`'s two
+  join a target whose owner is not its source's, and both are refused
+  (`machine-boundary`) before and after; no machine there is refused as
+  `step-outside-states`. `reach` on v9 takes the same time (54 to 75 ms against 59
+  to 71 at `aac38fd`, cold, three runs).

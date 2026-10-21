@@ -97,6 +97,7 @@ import {
   MAX_COMPLETION,
   afterDuration,
   hashConfig,
+  hierarchyPath,
   initialConfig,
   isFinalState,
   isHistoryComposite,
@@ -835,11 +836,13 @@ export function machineStates(model: Model, machineId: ElementId): ElementRecord
  * WHAT PUTS A NODE ON THE STACK, exactly. `initialConfig` (`./config.ts`) enters
  * `initialSubstate(machineId)` and cascades, which pushes `StateUsage`s; after
  * that, `stepConfig` pushes whatever the transition it fired TARGETS, whatever
- * that target's metaclass is. So the stack holds the machine's states, plus
- * everything the relation can land the walk on from one — a `decide` node
- * between two states, an action a transition enters. `stepCandidates` then
- * offers every relation edge leaving any stack member, so those nodes' outgoing
- * edges are walked as surely as a state's.
+ * that target's metaclass is, and before it the target's enclosing states it
+ * enters on the way down (`hierarchyPath`, `docs/06` §8.10), which are
+ * `StateUsage`s of the machine and so in the seed already. So the stack holds
+ * the machine's states, plus everything the relation can land the walk on
+ * from one — a `decide` node between two states, an action a transition
+ * enters. `stepCandidates` then offers every relation edge leaving any stack
+ * member, so those nodes' outgoing edges are walked as surely as a state's.
  *
  * WHY IT IS A CLOSURE AND NOT `eClass === 'StateUsage'`. That test was the old
  * reading, and it was wrong in both directions at once: it EXCLUDED the edges
@@ -991,6 +994,7 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
   const relation = new Set(regionTransitions(model, machineId).map((t) => t.id));
   const refusedIds = new Set(danglingTransitions(model, machineId).map((t) => t.id));
   const crossing = new Map(boundaryCrossings(model, machineId).map((c) => [c.edge.id, c] as const));
+  const outside = new Set(stepsOutsideStates(model, machineId).map((t) => t.id));
   const onStack = stackNodes(model, machineId);
   const rows: EdgeCensusRow[] = [];
   const nameOf = (id: ElementId | undefined): string =>
@@ -1030,6 +1034,13 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
       row(
         'refused',
         `it leads ${acrossSentence(model, c, inheritedAcross(model, machineId, c))}, so the walk ` +
+          'refuses this machine by name rather than walking a step whose meaning is not defined here',
+      );
+    } else if (outside.has(el.id)) {
+      row(
+        'refused',
+        `it leads ${outsideStatesSentence(model, machineId, el)}, so no chain of this machine’s ` +
+          'states holds its target, the step has no least common ancestor to exit to, and the walk ' +
           'refuses this machine by name rather than walking a step whose meaning is not defined here',
       );
     } else if (relation.has(el.id) && sourceKind === 'InitialNode') {
@@ -1133,6 +1144,48 @@ function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[
       CONTROL_EDGE_KINDS.has(e.eClass) &&
       (e.source?.[0] === undefined || e.target?.[0] === undefined),
   );
+}
+
+/**
+ * Step edges the walk can take whose target sits in no chain of this machine's
+ * states ({@link hierarchyPath} is `null`), short of a boundary crossing (which
+ * {@link boundaryCrossings} names): a step into the machine's own root, or into
+ * a node written under an element that is not a state, such as an action.
+ *
+ * A step exits to the least common ancestor of its source and its target and
+ * enters the states that hold the target, outermost first (`stepConfig`,
+ * `./config.ts`). These targets have no such states, so the step relation
+ * reads them as it read every step before `docs/06` §8.10 — exit down to the
+ * source's level, enter the target on top — which is the reading that left a
+ * composite active after a step out of it. A walk over that reading is a claim
+ * nobody can stand on, so the machine is refused instead.
+ *
+ * Read twice, like {@link danglingTransitions}: by {@link edgeCensus}, for the
+ * `refused` bucket, and by {@link unsupportedConstructs}.
+ */
+function stepsOutsideStates(model: Model, machineId: ElementId): ElementRecord[] {
+  const crossing = new Set(boundaryCrossings(model, machineId).map((c) => c.edge.id));
+  return walkableTransitions(model, machineId).filter(
+    (t) => !crossing.has(t.id) && hierarchyPath(model, machineId, t.target![0]) === null,
+  );
+}
+
+/**
+ * Where a {@link stepsOutsideStates} edge leads, in the refusal's words: the
+ * machine's own root, or the element above its target that is not a state.
+ */
+function outsideStatesSentence(model: Model, machineId: ElementId, edge: ElementRecord): string {
+  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  const to = edge.target![0];
+  if (to === machineId) return `into ${qn(to)}, the machine itself`;
+  let above: ElementId | null = model.get(to)?.ownerId ?? null;
+  while (above != null && above !== machineId && model.get(above)?.eClass === 'StateUsage') {
+    above = model.get(above)?.ownerId ?? null;
+  }
+  const owner = above == null ? undefined : model.get(above);
+  return owner === undefined || above === machineId
+    ? `to ${qn(to)}`
+    : `to ${qn(to)}, which is written in ${qn(owner.id)} (\`${owner.eClass}\`), not in a state`;
 }
 
 /** A step edge that joins this machine's states to states outside its region. */
@@ -1321,6 +1374,11 @@ function acrossSentence(model: Model, c: BoundaryCrossing, inherited: ElementId 
  * states. Each machine walks only its own transitions, so the step has no
  * meaning here, and neither side's walk is a claim about the model.
  *
+ * `step-outside-states` is a step edge into the machine's own root, or into a
+ * node written under an element that is not a state ({@link stepsOutsideStates}):
+ * a step exits to the least common ancestor of its source and its target, and
+ * such a target has no chain of states to exit to or to enter.
+ *
  * The last is not a construct anybody enumerated, and that is its point. It
  * is whatever the {@link edgeCensus} could not account for: an edge that
  * touches this machine's states and that the relation does not follow. §3.8's
@@ -1394,6 +1452,19 @@ function unsupportedConstructs(
             'transition inside the machine whose states it joins, or write a nested definition as a ' +
             'composite state (`state Inner { … }`) to make its states part of the outer machine.'),
       elementId: c.edge.id,
+    });
+  }
+  for (const tr of stepsOutsideStates(model, machineId)) {
+    out.push({
+      construct: 'step-outside-states',
+      detail:
+        `${qn(tr.id)} leads from ${qn(tr.source![0])} ${outsideStatesSentence(model, machineId, tr)}. ` +
+        'A step exits to the least common ancestor of its source and its target and enters the states ' +
+        'that hold the target, outermost first, so its target has to sit in a chain of this machine’s ' +
+        'states; this one does not, so what the step exits and enters is not defined here, and no walk of ' +
+        'this machine is a claim about it as written. Target one of the machine’s states, or a node ' +
+        'written directly in one of them.',
+      elementId: tr.id,
     });
   }
   // The detail is the census ROW'S OWN sentence, not a fixed one. A single
