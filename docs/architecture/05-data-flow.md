@@ -248,6 +248,9 @@ flowchart TB
 
 - The `Model` ↔ `Y.Doc` binding (`src/collab/model-doc.ts`) two-way-syncs
   element maps and translates `ChangeEvent`s into CRDT updates and vice-versa.
+  An `order` event (an owner's children held in another order; it carries
+  `ownerId` and no `id`) gives those children their places in the room's
+  document, so every peer holds them in that order.
 - The relay is a pure relay — it holds per-room docs and broadcasts. It has
   **no authentication** and binds loopback (`127.0.0.1`) by default (`HOST`), but
   it now enforces an Origin allowlist (`COLLAB_ALLOW_ORIGIN`), a 10 MiB

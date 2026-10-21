@@ -935,11 +935,16 @@ describe('the checks that run in a worker', () => {
    * d7). And the page decided by its own order: of two transitions out of an
    * `initial`, it took the one added first, so a drag that put that one second
    * in the text left the page saying `holds` where the worker and a terminal
-   * over the saved text said `issues` (the S2 review). A drag in the app lists
-   * the page's model as every copy is rebuilt (`Model.adoptSerialOrder`, called
-   * by the store's drag commands, a regroup and the SDK); the moves below make
-   * it as they do. The fresh loads the test above compares were never
-   * reparented, so they could not show either.
+   * over the saved text said `issues` (the S2 review). And between owners: a
+   * package dragged out of its owner and back in, or a machine made in a
+   * package above another machine's, left the page and the worker reporting the
+   * machines in the order they were added, and a terminal in the text's (its S2
+   * review). An edit in the app lists the page's model in the order its text
+   * gives it, which is also the order every copy is rebuilt in
+   * (`Model.adoptSerialOrder`, called by the store after each edit, by a
+   * regroup and by the SDK); the edits below make it as they do. The fresh
+   * loads the test above compares were never edited, so they could not show
+   * either.
    */
   it('give the page\'s answer after a reparent in the Explorer, and the terminal\'s over the text it saves', { timeout: 120_000 }, async () => {
     const machine = (never: string, states: string[]): string =>
@@ -1071,6 +1076,42 @@ describe('the checks that run in a worker', () => {
       const c = ctx({ model, fileName: 'm.sysml' });
       expect(runCheck(WALKERS[0], c).rows[0].message).toContain('P::M2::');
       await sameRows(model, c, 'two machines, the first dragged out and back in');
+
+      // Machines of different owners (the TODO entry's probe): Q1 dragged out of P and back in, and a machine made in
+      // Q1 after the load. Each is listed where the text puts it once the edit is made, as the store does after each one.
+      const twoPackages = [
+        'package P {',
+        '  package Q1 { state def M1 { state a; state b; state dead1; transition t1 first a then b; } }',
+        '  package Q2 { state def M2 { state x; state y; state dead2; transition t2 first x then y; } }',
+        '}',
+        '',
+      ].join('\n');
+      const machinesIn = (c2: CheckContext): string[] =>
+        runCheck(WALKERS[0], c2)
+          .rows.map((row) => /`P::Q\d::(M\d)::/.exec(row.message)?.[1])
+          .filter((m, i, all): m is string => m !== undefined && all.indexOf(m) === i);
+      const dragged = (await loadModelText(twoPackages, { fileName: 'm.sysml' })).model!;
+      const inDragged = (name: string): ElementId => dragged.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+      dragged.reparent(inDragged('Q1'), null);
+      dragged.reparent(inDragged('Q1'), inDragged('P'));
+      dragged.adoptSerialOrder();
+      const c1 = ctx({ model: dragged, fileName: 'm.sysml' });
+      expect(machinesIn(c1), 'Q1 dragged out of P and back in').toEqual(['M2', 'M1']);
+      await sameRows(dragged, c1, 'Q1 dragged out of P and back in');
+
+      const made = (await loadModelText(twoPackages, { fileName: 'm.sysml' })).model!;
+      made.transaction(() => {
+        const q1 = made.all().find((e) => e.declaredName === 'Q1' && e.attrs.isLibrary !== true)!;
+        const M0 = made.create('StateDefinition', { declaredName: 'M0', ownerId: q1.id });
+        const u = made.create('StateUsage', { declaredName: 'u', ownerId: M0.id });
+        const v = made.create('StateUsage', { declaredName: 'v', ownerId: M0.id });
+        made.create('StateUsage', { declaredName: 'dead0', ownerId: M0.id });
+        made.create('TransitionUsage', { declaredName: 't0', ownerId: M0.id, source: [u.id], target: [v.id] });
+      });
+      made.adoptSerialOrder();
+      const c0 = ctx({ model: made, fileName: 'm.sysml' });
+      expect(machinesIn(c0), 'a machine made in Q1 after the load').toEqual(['M1', 'M0', 'M2']);
+      await sameRows(made, c0, 'a machine made in Q1 after the load');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1979,6 +2020,7 @@ describe('the load, measured as a terminal measures it', () => {
     expect(corpus.length).toBeGreaterThan(200);
     let faulty = 0;
     let fixpoints = 0;
+    const relisted: string[] = [];
     for (const file of corpus) {
       const text = read(file);
       const m = measureTextHealth(text, loadFullStandardLibrary);
@@ -1993,9 +2035,18 @@ describe('the load, measured as a terminal measures it', () => {
         expect(measureTextHealth(written, loadFullStandardLibrary).rewritten, `${file}: written back, it reads as another model`).toBe(written);
         fixpoints++;
       }
+      // A load lists the model in the order its text gives it already, so the page, which loads a file through the
+      // same parse, is re-listed only once an edit adds or moves an element (`Model.adoptSerialOrder`; review
+      // 2026-10-14 D-1, its S2 review) — but for a relationship statement written above the element it is about,
+      // which the parser moves onto that element.
+      if (loaded.model?.adoptSerialOrder() === true) relisted.push(file);
     }
     expect(faulty, 'the campaign fixtures that test a fault').toBeGreaterThan(20);
     expect(fixpoints, 'the corpus models that load').toBeGreaterThan(60);
+    expect(relisted, 'the loads not in the order their text gives').toEqual([
+      'test/fixtures/agent-authoring/L5-relationship-after-fault/fixed.sysml',
+      'test/fixtures/agent-authoring/L5-relationship-after-fault/input.sysml',
+    ]);
   }, 600_000);
 
   /** A model Reachability holds over, with a field of every kind the serializer writes back verbatim. */
