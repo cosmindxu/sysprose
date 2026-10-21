@@ -3400,6 +3400,32 @@ describe('a value, a reference and a binding that equate two parts or structured
       expect(g.encodable, name).toMatchObject({ reason: 'unread-binding' });
     }
   });
+
+  it('reads no satisfaction, or subject, a definition writes through a reference with no value an instance redefines (F1, F3)', async () => {
+    const T0 = `part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+      part p50 : T0 { attribute :>> load = 50.0; }`;
+    const texts = {
+      F1: `${T0} part def W { ref part r : T0; satisfy RF by r; } part w : W { ref part :>> r = p50; }`,
+      F3: `${T0} part def W { ref part r : T0; requirement rr : RF { subject s = r; } } part w : W { ref part :>> r = p50; }`,
+    };
+    const said = { F1: 'in F1::W names its satisfier through a feature', F3: '`subject s = r` in F3::W::rr names the subject through a feature' };
+    // w's r is p50, which breaks RF: each read W's own r alone (T0's 1), held on all four surfaces, and
+    // `sysml-check --strict`, `verify` and `verify --engine literal` all passed. Each row of it abstains now.
+    for (const [name, body] of Object.entries(texts)) {
+      const { model: m, report } = await loadModelText(`package ${name} { ${body} }`, { fileName: `${name}.sysml`, strict: true });
+      const rows = check(m!, `${name}::RF::«ConstraintUsage»`).instances!;
+      expect(rows.length, name).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.result, name).toBe('unknown');
+        expect(row.message, name).toContain(said[name as keyof typeof said]);
+      }
+      const goals = obligationsOf(m!).filter((o) => o.role !== 'axiom' && o.instance !== undefined);
+      expect(goals.length, name).toBeGreaterThan(0);
+      for (const g of goals) expect(g.encodable, name).toMatchObject({ reason: 'unread-binding' });
+      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), name).toEqual([]);
+    }
+  });
 });
 
 describe('an enclosing equation read through a binding or a reference, and a relation read through one (O9 S2)', () => {
@@ -3615,6 +3641,98 @@ describe('an enclosing equation read through a binding or a reference, and a rel
       'Could not evaluate: x is not read in LE::q1::p: the asserted equations of the elements enclosing it give it two values',
     ]);
     expect(check(m!, 'LE::q1::tie').result).toBe('violated');
+  });
+
+  it('reads a relation in a context below which a usage is typed by a definition that asserts or frames what it reads', async () => {
+    const P = 'part def P { attribute L : ScalarValues::Real default = 2.0; attribute M : ScalarValues::Real; assert constraint qa { L == M } }';
+    const PX = `part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0;
+      attribute m2 : ScalarValues::Real = 10.0 - load - extra; }`;
+    const texts = {
+      // P5 values M, so q's p, a P5, has L 7 (PL5T); through a specialisation of Q, and a derived value over it (PL7).
+      PL5T: `${P} part def P5 :> P { attribute :>> M = 7.0; } part def Q { part p : P; constraint cq { p.L <= 6.0 } }
+        part q : Q { part :>> p : P5; }`,
+      PL7: `${P} part def P5 :> P { attribute :>> M = 7.0; }
+        part def Q { part p : P; attribute y : ScalarValues::Real = p.L; constraint cq { y <= 6.0 } }
+        part def Q2 :> Q { part :>> p : P5; } part q2 : Q2; part q : Q { part :>> p : P5; }`,
+      // P2 asserts its extra 50 (N4: q2's m2 is 10 − 1 − 50) or 20 (C3).
+      N4: `${PX} part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint cq { p.m2 >= 0.0 } }
+        part def P2 :> P { assert constraint a2 { extra == 50.0 } } part q2 : Q { part :>> p : P2; }`,
+      C3: `${PX} part def Q { part p : P; constraint cq { p.load + p.extra <= 10.0 } }
+        part def P2 :> P { assert constraint a2 { extra == 20.0 } } part q2 : Q { part :>> p : P2; }`,
+    };
+    const rows: Record<string, string[][]> = {
+      PL5T: [['PL5T::q', 'violated']],
+      PL7: [['PL7::Q2', 'violated'], ['PL7::q', 'violated']],
+      N4: [['N4::q2', 'violated']],
+      C3: [['C3::q2', 'violated']],
+    };
+    // Each read only Q's own value, true there, with no row for the context: `sysml-check --strict` said OK on
+    // a violated model, and PL5T, which the tool flagged before the framed reading, became a clean false pass.
+    for (const [name, body] of Object.entries(texts)) {
+      const { model: m, report } = await loadModelText(`package ${name} { ${body} }`, { fileName: `${name}.sysml`, strict: true });
+      const rel = `${name}::Q::cq`;
+      expect([check(m!, rel).result, ...rowsOf(m!, rel)], name).toEqual(['satisfied', ...rows[name]!]);
+      expect(report.ok, name).toBe(false);
+    }
+  });
+
+  it('abstains on an assert a definition typing a redefinition of the bound part writes over the binding’s default (M1, M3)', async () => {
+    const texts = {
+      M1: `part def P { attribute load : ScalarValues::Real; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def P2 :> P { assert constraint a2 { load == 50.0 } } part q2 : Q { part :>> p : P2; }
+        constraint top { q2.L <= 10.0 }`,
+      M3: `part def P { attribute load : ScalarValues::Real; } part def P2 :> P { assert constraint a2 { load == 50.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q3 :> Q { part :>> p : P2; } part q3 : Q3;
+        constraint top { q3.L <= 10.0 }`,
+    };
+    // q2's p and q3's p are P2s, whose assert stands over the 1 the binding carries (decision 14): L is 50. Each
+    // read the default 1 (T on three surfaces, the solver's axioms inconsistent) and warned the assert missed.
+    for (const [name, body] of Object.entries(texts)) {
+      const { model: m, report } = await loadModelText(`package ${name} { ${body} }`, { fileName: `${name}.sysml`, strict: true });
+      const c = check(m!, `${name}::top`);
+      expect([c.result, numeric(m!, `${name}::top`)], name).toEqual(['unknown', 'unknown']);
+      expect(c.message, name).toMatch(/the asserted `load == 50\.0` in \S+::P2 defines load, which `bind p\.load = L` in \S+::Q joins/);
+      expect(goal(m!, `${name}::top`).encodable, name).toMatchObject({ reason: 'unread-binding' });
+      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), name).toEqual([]);
+    }
+  });
+
+  it('a throw while the unread asserts are read leaves no partial index behind (equatedParts)', async () => {
+    const { model: m } = await loadModelText(`package RB3 {
+      part def P { attribute x : ScalarValues::Real; }
+      part q { part p : P; attribute L : ScalarValues::Real default = 4.0; bind p.x = L; }
+      assert constraint tie { q.p.x == 3.0 }
+      constraint top { q.L <= 3.5 }
+      constraint top2 { q.p.x <= 3.5 }
+    }`);
+    const results = () => ['RB3::tie', 'RB3::top', 'RB3::top2'].map((r) => check(m!, r).result);
+    expect(results()).toEqual(['unknown', 'unknown', 'unknown']);
+    // A fresh revision, and one throw from the first sweep the assert index makes of the model: the index of
+    // equated parts was kept without the unread asserts, and at the same revision every row was decided from
+    // the binding's default 4 (tie, top and top2 violated).
+    (m as unknown as { _rev: number })._rev++;
+    const all = Model.prototype.all.bind(m!);
+    let armed = true;
+    const spy = vi.spyOn(m!, 'all').mockImplementation(() => {
+      if (armed && new Error().stack!.includes('enclosingAsserts')) {
+        armed = false;
+        throw new RangeError('enclosingAsserts, planted to throw');
+      }
+      return all();
+    });
+    try {
+      try {
+        checkConstraints(m!);
+      } catch {
+        // Thrown or contained, the reading after it is what is checked.
+      }
+      expect(armed).toBe(false);
+      expect(results()).toEqual(['unknown', 'unknown', 'unknown']);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

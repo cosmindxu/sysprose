@@ -153,7 +153,8 @@ export type Fragment = 'qf-lra' | 'qf-nra' | 'temporal' | 'unsupported';
  * relation may read a value a binding or a value equates two parts, ports,
  * items or structured attributes over, which this tool does not read through
  * — or one a reference redefined over another's `=` value names, a
- * satisfaction a definition writes through a reference or an equated part, or
+ * satisfaction or a requirement usage's subject value a definition writes
+ * through a reference or an equated part, or
  * a `default` an asserted equation gives a value this tool does not read
  * (through a binding's end or a reference: `EnclosingAsserts.unreadAsserts`)
  * (`equatedPartsRefusal` of ./defining-equation). The model gives it a value,

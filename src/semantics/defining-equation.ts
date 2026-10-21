@@ -3412,7 +3412,10 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
   // value, an end that stands for its partner, or a subject. W's `satisfy RF
   // by r` over `ref part r : T0 = pp` and `bind pp = top.a` was read at W's
   // own top's a and held, where w's top's a breaks it.
-  const definitions = model.ofKind('Satisfy').length > 0 ? sharedDefinitions(model) : undefined;
+  const subjects = model.all().filter(
+    (x) => x.attrs.isLibrary !== true && x.attrs.requirementRole === 'subject' && typeof x.attrs.value === 'string' && x.ownerId != null,
+  );
+  const definitions = model.ofKind('Satisfy').length > 0 || subjects.length > 0 ? sharedDefinitions(model) : undefined;
   const perInstance = (id: ElementId | null | undefined): boolean => {
     const seen = new Set<ElementId>();
     for (let x = id != null ? model.get(id) : undefined; x && !seen.has(x.id); x = x.ownerId != null ? model.get(x.ownerId) : undefined) {
@@ -3422,8 +3425,28 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     }
     return false;
   };
+  // A reference with no value that a usage redefines as a reference or with a
+  // value (F1's `ref part :>> r = p50` in w over W's `ref part r : T0`): that
+  // instance's r is another part, which a reading at W's own values never
+  // reaches — built when first asked.
+  let rebound: Set<ElementId> | undefined;
+  const reboundRef = (l: ElementRecord): boolean => {
+    if (l.attrs.isRef !== true) return false;
+    if (!rebound) {
+      rebound = new Set();
+      for (const x of model.all()) {
+        if (x.attrs.isLibrary === true || !isUsage(x.eClass)) continue;
+        if (x.attrs.isRef !== true && (x.attrs.value === undefined || x.attrs.value === null)) continue;
+        for (const g of redefinedClosure(model, x)) rebound.add(g.id);
+      }
+    }
+    return rebound.has(l.id);
+  };
   const standsElsewhere = (l: ElementRecord): boolean =>
-    (l.attrs.isRef === true && typeof l.attrs.value === 'string') || l.attrs.requirementRole === 'subject' || standsFor.has(l.id);
+    (l.attrs.isRef === true && typeof l.attrs.value === 'string') ||
+    l.attrs.requirementRole === 'subject' ||
+    standsFor.has(l.id) ||
+    reboundRef(l);
   for (const rel of model.ofKind('Satisfy')) {
     if (rel.attrs.isLibrary === true || rel.ownerId == null) continue;
     const satisfier = rel.source?.[0] !== undefined ? model.get(rel.source[0]) : undefined;
@@ -3431,6 +3454,17 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
     const found = typeof chain === 'string' && VALUE_PATH.test(chain.trim()) ? featuresAlongValue(model, rel.ownerId, chain.trim()) : undefined;
     if ([...(found?.links ?? []), satisfier].some(standsElsewhere) && perInstance(rel.ownerId)) unread.push(rel);
+  }
+  // So is a requirement usage written there whose subject's value names it
+  // through such a feature (F3's `requirement rr : RF { subject s = r; }` in
+  // W, over W's `ref part r : T0` that w's `ref part :>> r = p50` redefines):
+  // read at W's own r alone, never at w's p50.
+  for (const s of subjects) {
+    const requirement = model.get(s.ownerId!);
+    const path = String(s.attrs.value).trim();
+    if (!requirement || requirement.ownerId == null || !VALUE_PATH.test(path)) continue;
+    const found = featuresAlongValue(model, requirement.id, path);
+    if (found !== undefined && found.links.some(standsElsewhere) && perInstance(requirement.ownerId)) unread.push(s);
   }
   // A reference redefined with a value other than the one it redefines writes
   // with `=` (`ref part :>> r1 = p2` in w over W's `ref part r1 = p1`): the
@@ -3448,8 +3482,17 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
   // not read ({@link EnclosingAsserts.unreadAsserts}), each a source of its own:
   // read after the sweep is kept, since that index reads it (its `partnerEnds`).
   // Nothing {@link enclosingAsserts} reaches may read `unread`, `partners` or
-  // the taint: until this returns they hold the sweep's sources alone.
-  const held = enclosingAsserts(model).unreadAsserts;
+  // the taint: until this returns they hold the sweep's sources alone. A
+  // throw drops the entry, so no later reader at this revision is handed the
+  // sweep's sources without these: their rows would be decided again from the
+  // binding's default.
+  let held: EnclosingAsserts['unreadAsserts'];
+  try {
+    held = enclosingAsserts(model).unreadAsserts;
+  } catch (e) {
+    if (EQUATED_PARTS.get(model) === fresh) EQUATED_PARTS.delete(model);
+    throw e;
+  }
   for (const { constraint, taint } of held.values()) {
     unread.push(constraint);
     partners.set(constraint.id, [...new Set([...(partners.get(constraint.id) ?? []), ...taint])]);
@@ -3715,6 +3758,16 @@ function equatedSentence(model: Model, b: ElementRecord): string {
       'that stands for another (a reference, a subject, or a part a binding or a value equates with its partner); ' +
       'this tool reads a satisfaction written in a definition, or in a usage another specialises, at its own values ' +
       'only, never in each instance of it, and an instance can make that feature stand for another'
+    );
+  }
+  if (b.attrs.requirementRole === 'subject') {
+    const requirement = b.ownerId != null ? model.get(b.ownerId) : undefined;
+    return (
+      `\`subject ${effectiveNameOf(model, b) ?? b.id} = ${String(b.attrs.value).trim()}\` in ` +
+      `${requirement ? effectiveQualifiedName(model, requirement.id) : '…'} names the subject through a feature that stands for ` +
+      'another (a reference, a subject, or a part a binding or a value equates with its partner); this tool reads a ' +
+      'requirement written in a definition, or in a usage another specialises, at its own values only, never in each ' +
+      'instance of it, and an instance can make that feature stand for another'
     );
   }
   const contradicted = b.attrs.isRef === true ? contradictedBindingOf(model, b) : undefined;
@@ -4824,11 +4877,18 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
     const mine = closureOf(a);
     return [...closureOf(b)].some((id) => mine.has(id));
   };
-  // Two elements some instance is both of: one, one redefining or specialising the other, or two definitions
-  // a third specialises (two usages of one type are two instances).
+  // Two elements some instance is both of: one, one redefining or specialising the other, two definitions
+  // a third specialises (two usages of one type are two instances), or a usage and a definition that types
+  // a usage redefining it — or a specialiser of that definition does (q2's `part :>> p : P2` makes q2's p,
+  // an instance of Q's p, a P2).
   const sameInstance = (x: ElementRecord, y: ElementRecord): boolean => {
     if (x.id === y.id || sameSlot(x, y)) return true;
     if (generalizationsOf(model, x.id).some((t) => t.id === y.id) || generalizationsOf(model, y.id).some((t) => t.id === x.id)) return true;
+    if (isUsage(x.eClass) !== isUsage(y.eClass)) {
+      const [u, d] = isUsage(x.eClass) ? [x, y] : [y, x];
+      if (!isDefinition(d.eClass)) return false;
+      return redefinersOf(u.id).some((r) => generalizationsOf(model, r.id).some((t) => t.id === d.id));
+    }
     if (!isDefinition(x.eClass) || !isDefinition(y.eClass)) return false;
     return sharedDefinitions(model).specialisersOf(x.id).some((s) => generalizationsOf(model, s.id).some((t) => t.id === y.id));
   };
@@ -5229,7 +5289,15 @@ function assertedThrough(model: Model, contextId: ElementId, reads: ReadonlySet<
  * }` over `bind pp = q.p`, in `w : W { part :>> q { assert constraint { p.x
  * == 50.0 } } }`; Q's `p.load + p.extra <= 10.0` in `q2 : Q { part :>> p {
  * assert constraint { extra == 20.0 } } }`. Each read only Q's or W's own
- * value, and `sysml-check --strict` said OK. `undefined` where none does.
+ * value, and `sysml-check --strict` said OK.
+ *
+ * So is a usage at or below the context typed by a DEFINITION that writes such
+ * an equation, or values such a name, where the owner's own reading of that
+ * slot is not of that definition: `q : Q { part :>> p : P5; }`, P5 :> P with
+ * `:>> M = 7.0` under P's `L == M` (q's p's L is 7, Q's p's 2), or P2 :> P
+ * with `assert constraint { extra == 50.0 }` typing q2's p — directly, or
+ * through a specialisation (`Q2 :> Q { part :>> p : P5; }`). The usage is
+ * returned. `undefined` where none does.
  */
 function assertedBelow(model: Model, contextId: ElementId, ownerId: ElementId, reads: ReadonlySet<ElementId>): ElementRecord | undefined {
   const { paths } = enclosingAsserts(model);
@@ -5245,11 +5313,70 @@ function assertedBelow(model: Model, contextId: ElementId, ownerId: ElementId, r
     }
     return false;
   };
+  // The definition that writes `id` — itself, or the nearest owner through usages — when it is none of the
+  // owner's types: its instances read the equation, or the name it values, wherever a usage is typed by it.
+  const writer = (id: ElementId): ElementRecord | undefined => {
+    const seen = new Set<ElementId>();
+    for (let cur = model.get(id); cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+      seen.add(cur.id);
+      if (isDefinition(cur.eClass)) return owners.has(cur.id) || cur.attrs.isLibrary === true ? undefined : cur;
+      if (!isUsage(cur.eClass)) return undefined;
+    }
+    return undefined;
+  };
+  const typing = new Set<ElementId>();
   for (const p of paths) {
     if (![...p.end].some((id) => reads.has(id))) continue;
-    for (const at of [p.owner, ...(p.valuedBy ?? [])]) if (under(at)) return model.get(at);
+    for (const at of [p.owner, ...(p.valuedBy ?? [])]) {
+      if (under(at)) return model.get(at);
+      const d = writer(at);
+      if (d !== undefined) typing.add(d.id);
+    }
+  }
+  if (typing.size === 0) return undefined;
+  // Each usage at or below the context — its own and inherited features, through usages — against the
+  // feature the owner reads at the same slot (`slot`, spelled from the owner; the owner itself for the
+  // context): a definition among its types that the owner's slot is not of is the instance's own. A
+  // feature the owner reads at no slot is no reading of the relation's. Past MAX_BELOW usages, or 32
+  // segments deep, the context is listed whole: a context read per instance needlessly is still read.
+  const MAX_BELOW = 4096;
+  const context = model.get(contextId);
+  const top = model.get(ownerId);
+  if (!context || !top) return undefined;
+  const stack: Array<{ u: ElementRecord; slot: ElementRecord; depth: number }> = [{ u: context, slot: top, depth: 0 }];
+  // Each usage once per slot: one inherited along two paths is read against each.
+  const seen = new Set<string>();
+  while (stack.length > 0) {
+    const { u, slot, depth } = stack.pop()!;
+    if (seen.has(`${u.id} ${slot.id}`)) continue;
+    seen.add(`${u.id} ${slot.id}`);
+    if (seen.size > MAX_BELOW || depth > 32) return context;
+    // Not the context's own types: such a definition specialises the owner, and is a context of its own.
+    if (u.id !== contextId) {
+      const theirs = new Set([slot.id, ...generalizationsOf(model, slot.id).map((t) => t.id)]);
+      if (generalizationsOf(model, u.id).some((t) => typing.has(t.id) && !theirs.has(t.id))) return u;
+    }
+    // The owner's own feature, inherited unchanged: what lies below it is the owner's reading.
+    if (u.id === slot.id) continue;
+    const slotFeatures = effectiveFeaturesByName(model, slot.id);
+    for (const h of [...ownFeatures(model, u.id), ...effectiveFeatures(model, u.id)]) {
+      if (!isUsage(h.eClass)) continue;
+      const n = effectiveNameOf(model, h);
+      const there = n !== undefined ? slotFeatures.get(n) : undefined;
+      if (there !== undefined && !seen.has(`${h.id} ${there.id}`)) stack.push({ u: h, slot: there, depth: depth + 1 });
+    }
   }
   return undefined;
+}
+
+/** The effective features of `typeId` by effective name, the first of each name. */
+function effectiveFeaturesByName(model: Model, typeId: ElementId): ReadonlyMap<string, ElementRecord> {
+  const out = new Map<string, ElementRecord>();
+  for (const h of [...ownFeatures(model, typeId), ...effectiveFeatures(model, typeId)]) {
+    const n = effectiveNameOf(model, h);
+    if (n !== undefined && !out.has(n)) out.set(n, h);
+  }
+  return out;
 }
 
 /** Is `el` an element whose asserted equation defines a `default` below it ({@link enclosingAsserts}), and that writes no binding? */

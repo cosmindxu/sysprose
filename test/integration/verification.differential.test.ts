@@ -7842,6 +7842,127 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'HQ2::Q::cq in HQ2::q2': ['F/F/F/F', 'F'],
       'HQ2::q2::«PartUsage»::a1': ['T/-/T/-', 'T'],
     }),
+    // The same, where the usage below the context gets the asserted equation or the framed value from the
+    // DEFINITION that types it (O9's branch review): q's `part :>> p : P5`, P5 :> P valuing M under P's `L == M`
+    // (PL5T: q's p's L is 7), through a specialisation of Q (PL7's Q2, which stands for q2) and a derived `y =
+    // p.L`; P2 :> P asserting `extra == 50.0` or `20.0` (N4T, N5 with Q3 standing for q3, C3T). No context was
+    // listed: Q's own reading stood for each, true there, `sysml-check --strict` said OK, and literal and SMT
+    // exited 0 — at aac38fd PL5T was flagged (the SMT's inconsistent axioms, a false qa warning), which S2's
+    // framed reading removed. Each context now has its row, violated on every surface.
+    'h5-pl5t': probe(`package PL5T {
+        part def P { attribute L : ScalarValues::Real default = 2.0; attribute M : ScalarValues::Real; assert constraint qa { L == M } }
+        part def P5 :> P { attribute :>> M = 7.0; }
+        part def Q { part p : P; constraint cq { p.L <= 6.0 } }
+        part q : Q { part :>> p : P5; }
+      }`, {
+      'PL5T::P::qa': ['T/-/T/-', 'T'],
+      'PL5T::P::qa in PL5T::P5': ['T/-/T/-', 'T'],
+      'PL5T::Q::cq': ['T/T/T/T', 'T'],
+      'PL5T::Q::cq in PL5T::q': ['F/F/F/F', 'F'],
+    }),
+    'h5-pl7': probe(`package PL7 {
+        part def P { attribute L : ScalarValues::Real default = 2.0; attribute M : ScalarValues::Real; assert constraint qa { L == M } }
+        part def P5 :> P { attribute :>> M = 7.0; }
+        part def Q { part p : P; attribute y : ScalarValues::Real = p.L; constraint cq { y <= 6.0 } }
+        part def Q2 :> Q { part :>> p : P5; }
+        part q2 : Q2;
+        part q : Q { part :>> p : P5; }
+        constraint k { q.p.L <= 6.0 }
+      }`, {
+      'PL7::P::qa': ['T/-/T/-', 'T'],
+      'PL7::P::qa in PL7::P5': ['T/-/T/-', 'T'],
+      'PL7::Q::cq': ['T/T/?/T', 'T'],
+      'PL7::Q::cq in PL7::Q2': ['F/F/F/F', 'F'],
+      'PL7::Q::cq in PL7::q': ['F/F/F/F', 'F'],
+      'PL7::k': ['F/F/F/F', 'F'],
+    }),
+    'h5-n4t': probe(`package N4T {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; attribute m2 : ScalarValues::Real = 10.0 - load - extra; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c { p.m2 >= 0.0 } }
+        part def P2 :> P { assert constraint a2 { extra == 50.0 } }
+        part q2 : Q { part :>> p : P2; }
+      }`, {
+      'N4T::P2::a2': ['T/-/T/-', 'T'],
+      'N4T::Q::c': ['T/T/T/T', 'T'],
+      'N4T::Q::c in N4T::q2': ['F/F/F/F', 'F'],
+    }),
+    'h5-n5': probe(`package N5 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c { p.load + p.extra <= 10.0 } }
+        part def P2 :> P { assert constraint a2 { extra == 50.0 } }
+        part q2 : Q { part :>> p : P2; }
+        part def Q3 :> Q { part :>> p : P2; }
+        part q3 : Q3;
+      }`, {
+      'N5::P2::a2': ['T/-/T/-', 'T'],
+      'N5::Q::c': ['T/T/T/T', 'T'],
+      'N5::Q::c in N5::Q3': ['F/F/F/F', 'F'],
+      'N5::Q::c in N5::q2': ['F/F/F/F', 'F'],
+    }),
+    'h5-c3t': probe(`package C3T {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q { part p : P; constraint cq { p.load + p.extra <= 10.0 } }
+        part def P2 :> P { assert constraint a2 { extra == 20.0 } }
+        part q2 : Q { part :>> p : P2; }
+      }`, {
+      'C3T::P2::a2': ['T/-/T/-', 'T'],
+      'C3T::Q::cq': ['T/T/T/T', 'T'],
+      'C3T::Q::cq in C3T::q2': ['F/F/F/F', 'F'],
+    }),
+    // P2's asserted `load == 50.0`, where P2 types a redefinition of the part Q's `bind p.load = L` binds (M1T's
+    // q2's `part :>> p : P2`, M3T's Q3 :> Q): under decision 14 it stands over the 1 L's default carries, as
+    // RB5's does, so q2's and q3's L is 50. The rule took Q's p, a usage, and P2, a definition, for two
+    // instances, and read the default: k and k2 T/T/T/X and T/T/?/X, `verify --engine literal` exit 0, and a
+    // false warning that p's load 1 misses a2. Every row over the pair abstains now (`unread-binding`).
+    'h5-m1t': probe(`package M1T {
+        part def P { attribute load : ScalarValues::Real; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c { p.load <= 10.0 } }
+        part def P2 :> P { assert constraint a2 { load == 50.0 } }
+        part q2 : Q { part :>> p : P2; }
+        constraint k { q2.L <= 10.0 }
+        constraint k2 { q2.p.load <= 10.0 }
+      }`, {
+      'M1T::P2::a2': ['?/-/?/-', 'T'],
+      'M1T::P2::a2 in M1T::q2::«PartUsage»': ['?/-/?/-', 'T'],
+      'M1T::Q::c': ['?/?/?/?', 'T'],
+      'M1T::k': ['?/?/?/?', 'F'],
+      'M1T::k2': ['?/?/?/?', 'F'],
+    }),
+    'h5-m3t': probe(`package M3T {
+        part def P { attribute load : ScalarValues::Real; }
+        part def P2 :> P { assert constraint a2 { load == 50.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q3 :> Q { part :>> p : P2; }
+        part q3 : Q3;
+        constraint k { q3.L <= 10.0 }
+      }`, {
+      'M3T::P2::a2': ['?/-/?/-', 'T'],
+      'M3T::P2::a2 in M3T::Q3::«PartUsage»': ['?/-/?/-', 'T'],
+      'M3T::k': ['?/?/?/?', 'F'],
+    }),
+    // A self-contradictory model (ref null): Q's p asserts `extra == 2.0` and q2's p `extra == 20.0`, two values.
+    // q3's p asserts `extra == 2.0` as Q's p does: q3's row reads 1 + 2, true there, beside SMT's inconsistent
+    // axioms (it abstained at aac38fd), as LE's rows read P's 3 (I7_ALLOWED).
+    'h5-k1t': probe(`package K1T {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; constraint c { load + extra <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { assert constraint qa { extra == 2.0 } } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { assert constraint a1 { extra == 20.0 } } }
+        part q3 : Q { part :>> p { assert constraint a3 { extra == 2.0 } } }
+        constraint k2 { q2.p.extra <= 10.0 }
+      }`, {
+      'K1T::P::c': ['T/T/T/X', null],
+      'K1T::P::c in K1T::Q::p': ['T/T/T/X', null],
+      'K1T::P::c in K1T::q1::p': ['T/T/T/X', null],
+      'K1T::P::c in K1T::q2::p': ['?/?/?/X', null],
+      'K1T::P::c in K1T::q3::p': ['T/T/T/X', null],
+      'K1T::Q::p::qa': ['T/-/T/-', null],
+      'K1T::Q::p::qa in K1T::q2::«PartUsage»': ['?/-/?/-', null],
+      'K1T::Q::p::qa in K1T::q3::«PartUsage»': ['T/-/T/-', null],
+      'K1T::k2': ['?/?/?/X', null],
+      'K1T::q2::«PartUsage»::a1': ['?/-/?/-', null],
+      'K1T::q3::«PartUsage»::a3': ['T/-/T/-', null],
+    }),
     // O5 S5's residue, read (O9 S1). A part valued with another (`part pp : T0 = top.a`) equates the two as a
     // binding does, and pp, saying nothing else of its own, stands for top's a as a reference does: pp's load
     // is 50 (it read pp's own default, pT F and pF T on all four, then abstained). A reference valued so in a
@@ -7996,6 +8117,31 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'SD3::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
       'SD3::RF::«ConstraintUsage» in SD3::W::«Satisfy»': ['?/-/?/-', 'F'],
       'SD3::RF::«ConstraintUsage» in SD3::W::top::a': ['-/?/-/?', 'F'],
+    }),
+    // The same through a reference with no value that an instance redefines (O9's branch review): W's `satisfy
+    // RF by r`, or W's `requirement rr : RF { subject s = r; }`, over `ref part r : T0` that w's `ref part :>> r =
+    // p50` makes p50, which breaks RF. Each read W's own r alone (T0's 1): T/T/T/T, `sysml-check --strict` OK and
+    // `verify` exit 0, with no row for w (as at aac38fd). Each row of it abstains now (`unread-binding`).
+    'h5-satdefref': probe(`package F1 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part p50 : T0 { attribute :>> load = 50.0; }
+        part def W { ref part r : T0; satisfy RF by r; }
+        part w : W { ref part :>> r = p50; }
+      }`, {
+      'F1::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'F1::RF::«ConstraintUsage» in F1::W::«Satisfy»': ['?/-/?/-', 'F'],
+      'F1::RF::«ConstraintUsage» in F1::W::r': ['-/?/-/?', 'F'],
+    }),
+    'h5-subjdefref': probe(`package F3 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part p50 : T0 { attribute :>> load = 50.0; }
+        part def W { ref part r : T0; requirement rr : RF { subject s = r; } }
+        part w : W { ref part :>> r = p50; }
+      }`, {
+      'F3::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'F3::RF::«ConstraintUsage» in F3::W::rr': ['?/?/?/?', 'F'],
     }),
     // An instance whose part a value this tool does not read through rebinds (`part :>> top = t50`) reads W's
     // `pp.load` through it, by a value, a binding or a reference (DVV, DVB, DVR): its row is its own, and
@@ -8269,6 +8415,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         [
           `h5-le | ${row}`,
           'P’s asserted `x == 3.0` and q1’s `p.x == 50.0` give q1’s p’s x two values: a self-contradictory model (ref null), as R8; every row over q1’s p’s x abstains (two values), while P’s own and Q’s p read P’s 3, true there',
+        ] as const,
+    ),
+    ...['K1T::P::c', 'K1T::P::c in K1T::Q::p', 'K1T::P::c in K1T::q1::p', 'K1T::P::c in K1T::q3::p'].map(
+      (row) =>
+        [
+          `h5-k1t | ${row}`,
+          'Q’s p’s asserted `extra == 2.0` and q2’s `extra == 20.0` give q2’s p’s extra two values: a self-contradictory model (ref null), as LE; every row over q2’s p abstains, while P’s own, Q’s p, q1’s p and q3’s p (whose own assert agrees with Q’s p’s) read their own values, true there',
         ] as const,
     ),
     ['h5-hi | HI::top', 'an inequality defines nothing (U5): x’s default stands and q1’s asserted `p.x >= 5.0` contradicts it; the check reads the default'],

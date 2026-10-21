@@ -996,11 +996,15 @@ q2's own `s`), or for one a binding reaches into; one whose path inherits a
 name twice, neither feature redefining the other (`part def Q3 :> Q2, Q4` over
 Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, or `part q3 : Q2, Q4`: q3's
 p is P2's and P4's at once, and no one element stands for it); and one whose
-own element states a `default` that an asserted equation of its own constrains
-where that equation is not read there (one over a name with no value, `extra
-== M`). One the equation gives a value is read in its element at that value:
-q2's `part :>> p { assert constraint { extra == 20.0 } }` over P's `extra
-default = 0.0` makes q2's p's extra 20. An instance row that reads a value an `assert` of an instance around
+own element writes an asserted equation over a `default` that this tool does
+not read there: one over a name with no value (`extra == M`), one beside a
+`default` the element writes itself (`attribute :>> extra default = 7.0;
+assert constraint { extra == 20.0 }`), or one that gives the feature another
+value than an equation of the element's type does (two values, below). An
+equation over a `default` the element inherits, which the enclosing rule
+reads (below), is read in its element at the equation's value: q2's `part :>>
+p { assert constraint { extra == 20.0 } }` over P's `extra default = 0.0`
+makes q2's p's extra 20. An instance row that reads a value an `assert` of an instance around
 it constrains, the package's included, is *could not be evaluated* too, read
 in its own element (`part q2 : Q { part :>> p { … } assert constraint { p.load
 >= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x >=
@@ -1033,9 +1037,12 @@ part r : T0 = pp`: r's load is top's a's; a package's `satisfy R by pp` is
 read at top's a), and so does a reference to a reference. A `satisfy` written
 in a definition, or in a usage another specialises, is read once, at that
 element's own values, never in each of its instances: one whose satisfier is a
-reference, such a part or a subject, or is reached through one, is *could not
-be evaluated*, since an instance can make that feature another (W's `satisfy R
-by r` over `ref part r : T0 = pp`, where w's top's a breaks R) — a limit of
+reference with a value or one an instance redefines (`ref part r : T0;` under
+w's `ref part :>> r = p50`), such a part or a subject, or is reached through
+one, is *could not be evaluated*, since an instance can make that feature
+another (W's `satisfy R by r` over `ref part r : T0 = pp`, where w's top's a
+breaks R); so is a requirement usage written there whose subject's value names
+it through one (`requirement rr : R { subject s = r; }` in W) — a limit of
 this tool. Where neither is so plain (`part pp : T0 { attribute :>> load
 default = 3.0; }`, a port bound to two inner ports), a row that may read a
 value the binding carries is *could not be evaluated*, in a sentence that
@@ -1748,7 +1755,7 @@ that renders these members carries it itself.
 |---|---|---|
 | `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement is prose with no constraint body | **Yes** — lowered to exit 0 |
 | `verification/timeout` | The solver ran out of time — raise it with `--timeout MS` | **Yes** |
-| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm | No |
+| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm — or it reads a value that a binding, a value or an asserted equation carries and this tool does not read through (`unread-binding`: a limit of this tool, the relation is well formed) | No |
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
 | `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
 | `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |
@@ -2225,7 +2232,11 @@ own `load` where no relation reads top's a's — is `verification/not-evaluable`
 at exit **2**, in a sentence that names the binding, before any solver runs. A measure read
 through one it does read — a plain end, a part valued with another (`part pp
 : T0 = top.a`), a reference in a definition read in an instance — is bounded
-at what it stands for.
+at what it stands for. Nor is a measure bounded that an asserted equation this
+tool does not read defines over a `default` a binding carries (Q's `p.x ==
+50.0` over q1's `bind p.x = K` and `K default = 9.0`, for `--measure
+q1.p.x`): it is `verification/not-evaluable` at exit **2**, in a sentence that
+names the assert.
 
 **The point z3 stopped at is re-read before the number is published.** Every
 design point this lane prints goes back through the tool's own evaluator first
