@@ -386,12 +386,6 @@ merge. The branch `behaviour-sound` (merged by `e0d8040`) closed the completion 
 `state def`, the method text and the completion livelock (C1, H2, C3, H1, M3, M1, U1); the entries
 tagged `[O1 …]` are what its steps and reviews left open.
 
-- [ ] **Searches the walk still refuses.** (1) On a machine that names no trigger, the property
-      search runs without the chase position, so a counting monitor round a completion cycle
-      (`bounded-existence` of a state at most 40 times round a two-state cycle) is refused as
-      inconclusive rather than decided. (2) On walks that carry the chase position, the depth bound
-      counts chase steps, not event steps, so four stacked completion cycles stay inconclusive; the
-      printed `maxDepth` would change meaning with the fix. [O1 S2]
 - [ ] **Walk a step written over inherited states.** Since `e0d8040` a control edge written outside a
       machine's region that touches one of its states refuses the machine (`machine-boundary`,
       `docs/06` §8.6). A specialisation that adds a step over inherited states (`package W2 { state
@@ -399,53 +393,53 @@ tagged `[O1 …]` are what its steps and reviews left open.
       Derived :> Base { transition bc first b accept more then c; } }`), or a typed usage that does,
       therefore refuses both `Base` and `Derived`, where `5943654` walked `Base` alone. Fail-closed by
       design. Fix: a reading that walks the two together. [O1 S3]
-- [ ] **Read a step into a machine's own root, or into a node under an action.** Since O8 S1 a step
-      exits to the least common ancestor of its source and its target (`docs/06` §8.10). A step
-      whose target sits in no chain of the machine's states has none: into the machine's own root
-      (`transition t2 first b accept back then M;` inside `state def M`), or into a node written
-      under an action (`then act::inner`). The walk refuses such a machine (`step-outside-states`).
-      The interpreter still reads the step the old way: on the flat path it stands at the root, or
-      at the node under the action, with nothing more offered; on the hierarchical path it restarts
-      at the initial state with the source's composite stacked under the root (`[C, M, a]`). The
-      guide says so ("A step out of a composite leaves it."). Done when these targets have a reading
-      (a step into the root restarts the machine at its initial state, with or without the root's
-      own phases) that the walk and the interpreter share, or the simulator refuses them too.
-      Fail-closed; no corpus model or v9 holds one. [O8 S1]
-- [ ] **Print the exits choice in the semantic profile.** S1's reading (every transition external,
-      exit to the least common ancestor) moves verdicts it does not show: absence of `state b` on
-      nd1 goes PASS to FAIL, and the TODO machine's after-until FAIL to PASS. The semantic profile
-      should print an `exits` field (provenance `config.ts — stepConfig, hierarchyPath`),
-      re-recorded with the corpus diff named; it moves every reach text, so it is its own step. [O8
-      review]
-- [ ] **Offer a lone definition's properties where nothing names it.** Since O8 S2, `check-behaviour
-      --element P::Lone` reports the properties carried by a top-level `state def` that owns no
-      transition as `not checked` (exit 2), and each row names the machines written inside it; only
-      when the definition itself is named. With nothing selected, the app's Behaviour properties
-      pick rows list machines only. `--element P` (a package holding it beside one machine, which
-      silently checks that machine) and `--element P::Lone::b` (a state inside it) leave the
-      carriers unreported, and the latter says `holds no state machine` without naming the
-      definition. The CLI reference's `--element` help still says "The state machine to check". The
-      app adds no `checks/pick-machine` rows for the machines inside such a definition. Done when
-      each of those names the carrier or lists its machines, with a test. [O8 S2]
-- [ ] **Make the palette's worker E2E independent of a one-second walk (optional).** Since O8 S1 no
-      text machine of a drawable size reaches the configuration bound, so `heavyMachine(6, 35)`
-      (`palette-checks.spec.ts`, 'a state-machine check runs in a worker') reaches the depth bound
-      in about a second. The test polls `running` every 50 ms and its while-it-runs assertions
-      (Statistics answered, reach still `running`) must fit inside that second, so it is fragile
-      under load; a longer walk needs more states within the 200-step depth bound, and 217 states
-      lay out in about 5 s. Hold the worker open from the test (a gate the test releases) instead of
-      racing the walk. [O8 S1, review]
 - [ ] **Compare the stack in the witness replay, not only the leaf (optional).** `replayWitness`
-      (`src/semantics/mc/patterns.ts`) compares each step's resting leaf. A walk stack that holds an
-      enclosing state the interpreter never entered would still replay; the differential CASES hold
-      three flat-path machines that would catch such a split today. Rebuilding the interpreter's
-      stack from `visited` and `fired` and comparing it with the trace's `stack` closes it in the
-      replay itself. [O8 S1, review]
-- [ ] **Name the transitions reach counts neither fired nor dead (optional, low).** Since O8 S2, "N
-      of M transition(s) fired, K dead" need not add up to M (chain65: 65 fired and 4 dead of 70).
-      Neither the text nor `--json` names the transition in the gap: `t65`, enabled where the chase
-      budget stops a chase, or one the priority rule beats wherever it is enabled. Fix: an `enabled,
-      never fired` list beside `dead` on `--json`, or a clause on the count line. [O8 S2]
+      (`src/semantics/mc/patterns.ts`) compares each step's resting leaf. The interpreter does not
+      expose its stack: `activeStates` is the final leaves, and `visited` records what a step enters,
+      never what it exits, so a stack rebuilt from them cannot catch a state the walk keeps and the
+      interpreter left. Fix: `runHierRegion` records each fire's active stack (an optional
+      `StateFire.stack`, which moves `executionReport`'s payload), and the replay compares it with
+      the trace's `stack`. The differential CASES' three flat-path machines catch such a split
+      today. [O8 S1, review; behaviour-rest S2]
+- [ ] **Decide a count past the budget where a trigger-less dwell follows (optional).** Since
+      `behaviour-rest` S1 a search on a machine that names no trigger ends each run where the chase
+      budget stops it (`budgetEndsRun`, `src/semantics/mc/patterns.ts`; docs/06 §8.12). The
+      exception is a walkable trigger-less transition that carries a numeric `attrs.after` (set only
+      through the API): a clock advance fires it where the chase stopped and the chase goes on (on
+      `a ⇄ b` with `a -> b` such a dwell, one advance of 5 takes the run into `b` 65 times), so the
+      search still refuses the step past the budget (`completion`, inconclusive). Done when such a
+      search carries the chase position and offers the clock advance where a chase stops, or the
+      refusal is documented as permanent. [behaviour-rest S1]
+- [ ] **Say in the bounds sentence that `maxDepth` counts events (optional).** Since `behaviour-rest`
+      S1 the depth bound counts the events a run takes from the opening, not its steps
+      (`DEFAULT_MAX_DEPTH`, docs/06 §8.12), while the `depth` figure beside it still counts steps,
+      so `reach` can print `depth 260` beside `maxDepth 200` (four stacked completion cycles). The
+      guide and the code say so; the printed bounds sentence does not. Rewording it (for example
+      `maxDepth 200 events`) re-records every qualification string in every report and pin, so it
+      is its own step, with the corpus diff named. [behaviour-rest S1]
+- [ ] **Name every region's refusal on a parallel machine (optional).** Since `behaviour-rest` S1 a
+      step into the machine's root or under an action stops only the region it came in on a
+      parallel machine (`attrs.parallel`, API only; `refusedStepSentence`, `SimRefusal.stopsRun`),
+      and `StateRunResult.refused` names the first region's refusal only, so a second region that
+      also stopped is not named. The walk refuses every parallel machine (`parallel-regions`), so
+      no verdict stands on it. Done when `refused` lists every region's refusal, or the parallel
+      interpreter interleaves its regions. [behaviour-rest S1]
+- [ ] **Name the holder in reach's refusal (optional, low).** `reach --element P::Lone::b` (a state
+      in a lone `state def`) and `reach --element P::Outer::Mach::Inner2::x` (a state of a
+      transition-less definition inside a machine) still print only "... holds no state machine";
+      `check-behaviour` names the lone definition or the machine since `behaviour-rest` S2 and its
+      review fixes (`behaviourNoMachine`, `report-lines.ts`). [behaviour-rest S2, review]
+- [ ] **A state def used as a state's type is not lone (optional).** `isLoneDefinition`
+      (`patterns.ts`) reads only ownership, so `state def Modes` typed by `state m2 : Modes` inside
+      machine `M` is offered as a lone carrier and its properties reported as not checked. It fails
+      closed (a refusal or a `not checked` row, exit 2). Decide whether a typed use places it in
+      `M`. [behaviour-rest S2, review probe]
+- [ ] **Take a step across a machine's boundary alike in the walk and the simulator.** The simulator
+      takes a step across a machine's boundary (`machine-boundary`, docs/06 §8.6) while the walk
+      refuses it, and a composite run on its own in `executionReport` takes a step out of itself
+      into its holding machine's root the old way. Both readings predate `behaviour-rest`; decide
+      whether the simulator refuses them as it now refuses the step into a root. Low.
+      [behaviour-rest S1, observation]
 - [ ] **What the livelock rows still lack.** (1) `check-behaviour` files no row for a livelock it
       withholds; a row needs a catalogue code of its own. (2) Closed by `d1aa330` (the history map
       left the key). (3) Not probed: the `covered`/`fail` witness note may key on the machine's published choice rows, so a witness
