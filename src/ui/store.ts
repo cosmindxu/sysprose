@@ -2044,7 +2044,10 @@ export const useAppStore = create<AppState>((set, get) => {
   }
 
   /**
-   * Re-run after any local model mutation: bump `rev` immediately so
+   * Re-run after any local model mutation: list the model in the order its
+   * text gives it (`Model.adoptSerialOrder`: an element just added or moved
+   * goes where Save writes it, as a terminal and every copy list it; nothing
+   * to do after an edit that added or moved nothing), bump `rev` immediately so
    * model-backed panels refresh, then schedule the coalesced recompute
    * (diagnostics + text + diagram). The text buffer is force-refreshed,
    * discarding any unapplied text edits (historical behavior) — but for
@@ -2052,6 +2055,7 @@ export const useAppStore = create<AppState>((set, get) => {
    * Text view first leaves it standing ({@link typedTextFirst}).
    */
   function afterMutation(keepTyped = false): void {
+    get().model.adoptSerialOrder();
     set({ rev: get().rev + 1 });
     scheduleRecompute(!keepTyped);
   }
@@ -2081,8 +2085,14 @@ export const useAppStore = create<AppState>((set, get) => {
    * a recompute already — one that keeps a dirty buffer, as a peer's edit
    * must. This only makes that same recompute replace a buffer nobody typed:
    * one edit, one refresh.
+   *
+   * First, in a room or not, the model is listed in the order its text gives
+   * it, as after an edit in the app ({@link afterMutation}): once per call, so
+   * a script that adds many elements in one `commit(fn)` re-lists the model
+   * once.
    */
   function afterSdkEdit(typed: boolean): void {
+    get().model.adoptSerialOrder();
     if (autoRecomputeSuppressed) return;
     if (collabRuntime !== null) {
       if (!typed) scheduleRecompute(true);
@@ -3721,6 +3731,9 @@ export const useAppStore = create<AppState>((set, get) => {
       forgetParseResult(); // the loaded model did not come from the open text
       takeDownLibraryNote(true);
       model.reset(data);
+      // Stored by this build or an earlier one, which listed a model in the order its elements were added: listed in
+      // the order its text gives it, as a terminal over the text it saves reads it (`Model.adoptSerialOrder`).
+      model.adoptSerialOrder({ whole: true });
       set((s) => ({
         projectName: name,
         ...rootSelection(model),
@@ -3755,7 +3768,12 @@ export const useAppStore = create<AppState>((set, get) => {
       takeDownLibraryNote(true);
       pushUndo({ pins: true });
       get().driveDetach(); // the attached Drive file no longer holds this model
-      withCommandMutation(() => model.reset(result.model.toJSON()));
+      withCommandMutation(() => {
+        model.reset(result.model.toJSON());
+        // A model JSON or an element graph lists the model in whatever order it was written in; a parse is in the
+        // text's own order already (`Model.adoptSerialOrder`).
+        if (fmt !== 'sysml') model.adoptSerialOrder({ whole: true });
+      });
       const parseDiags = (result.diagnostics ?? []).map(parseDiagToDiagnostic);
       set((s) => ({
         diagnostics: [...parseDiags, ...safeValidate(model)],
@@ -4031,9 +4049,11 @@ export const useAppStore = create<AppState>((set, get) => {
       get().driveDetach(); // another branch's model is not what the attached Drive file holds
       forgetParseResult(); // the branch head did not come from the open text
       takeDownLibraryNote(true);
-      withCommandMutation(() =>
-        model.reset(api.repository.getModelAtCommit(branch.headCommitId).toJSON()),
-      );
+      withCommandMutation(() => {
+        model.reset(api.repository.getModelAtCommit(branch.headCommitId).toJSON());
+        // A commit lists the model as it stood when it was made (`Model.adoptSerialOrder`).
+        model.adoptSerialOrder({ whole: true });
+      });
       set((s) => ({
         currentBranchId: branchId,
         diagnostics: safeValidate(model),

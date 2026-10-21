@@ -488,9 +488,9 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
 (the grouping); `src/ui/store.ts:321-334` (`diagramRootId`, the diagram
 scope), `1536-1691` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2512-2529` (`pinNodePositions`: the move itself), `2117-2174`
+saved project keeps them), `2522-2539` (`pinNodePositions`: the move itself), `2127-2184`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4228-4269` (`openText`: a file opened as text starts afresh).
+`4248-4289` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -566,6 +566,23 @@ deliberate: it keeps typing responsive. On a large model, where working them out
 takes a while itself, the lag grows with it — up to four times the last
 recompute — so the keyboard is never kept waiting.
 
+Beside the tree, what lists the elements you declare — the diagram, the tables
+and matrices, the palette's checks — takes them in the order the Text tab writes
+them. One you add, drag or paste, here or through the SDK, or that a
+collaborator adds, is taken where its declaration goes in the text, as after
+Save and reopen, not after everything else: a state machine made in a package
+above another machine's is walked before it, and `reach` and `check-behaviour`
+list their rows in the order a terminal prints them for the file Save writes. A
+doc, an attribute or any other member added to a typed element goes before its
+typing, as the text writes it, and the typing keeps its place among the others.
+A project you open, a model JSON or element graph you import, a branch you
+switch to and a room you join are taken in the text's order too, whatever order
+the copy they came from listed the elements in. A typing or specialisation made
+in the app — the Type field, a line drawn with the palette — is taken after
+those the model had, wherever the text writes it, so a check that goes by them,
+such as `where-used` over a definition, can list its usages in another order
+than a terminal does.
+
 ### The Text tab, in both directions
 
 - **Model → text** happens by itself. The buffer is re-serialised after every
@@ -636,14 +653,17 @@ hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
 **Source of truth:** `src/ui/store.ts:1733-1829` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `1952-2037` (`recomputeNow`), `2039-2216`
-(`afterSdkEdit`: an SDK edit; `typedTextFirst`, `applyParsed`: a field's change over
+`flushRecompute`: the recompute cycle), `1952-2037` (`recomputeNow`), `2039-2226`
+(`afterMutation`, `afterSdkEdit`: an edit, and an SDK edit, each listing the model
+in the order its text gives it; `typedTextFirst`, `applyParsed`: a field's change over
 typed text), `882-939` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2807-2838`
-(`createElement`: a new element), `3127-3194` (`reparent`, `reparentMany`: a
-move), `4879-4924` (`libraryNote`: the note that says so), `3635-3648`
-(`applyText`), `4082-4128` (`undo`, `redo`), `4966-5024`
+`sdkIntoLibrary`: nothing added to the standard library), `2817-2848`
+(`createElement`: a new element), `3137-3204` (`reparent`, `reparentMany`: a
+move), `4899-4944` (`libraryNote`: the note that says so), `3645-3658`
+(`applyText`), `4102-4148` (`undo`, `redo`), `4986-5044`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
+`src/core/model.ts` (`adoptSerialOrder`: the order the text gives),
+`src/collab/model-doc.ts` (`bindModelToDoc`: a room, and a peer that joins it);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
 guarantee, as a test).
@@ -3550,9 +3570,13 @@ applied, which an SDK edit never replaces
 its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
+Each call that adds or moves an element lists the model in the order its text
+gives it ([§5](#the-loop)): a pass over the whole model, about 15 ms on the
+drone-swarm model with its library, more on a busy machine. A script that
+makes many edits makes them in one `commit(fn)`, which lists the model once.
 
-**Source of truth:** `src/ui/store.ts:3318-3500` (`runValidation`,
-`solveParametric`: the four buttons), `2039-2216` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3328-3510` (`runValidation`,
+`solveParametric`: the four buttons), `2039-2226` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -3896,10 +3920,10 @@ carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
 `src/ui/store.ts:800-818` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3652-3745` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `3987-4053` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4808-4818` (`mergeLoads`: a merge that loads),
-`4820-4938` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+this browser), `3662-3758` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `4005-4073` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4828-4838` (`mergeLoads`: a merge that loads),
+`4840-4958` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `1378-1443` (the
@@ -4152,7 +4176,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:233`
 (`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5113-5236` (`mergeLibrary`, `loadStandardLibraryAsync`:
+derived surfaces lag), `5133-5256` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 

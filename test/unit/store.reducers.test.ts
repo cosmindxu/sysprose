@@ -563,6 +563,169 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
   });
 
   /**
+   * And between owners. A machine made in a package above another machine's,
+   * or a package dragged out of its owner and back in, goes where the text puts
+   * it in the Text view and for a terminal over the saved text, but stayed
+   * where it was added in the page's model and the checks worker's copy: the
+   * page reported the machines in the order they were added (review 2026-10-14
+   * D-1, its S2 review). Every edit lists the page's model in the order its
+   * text gives it — made through the app's commands or through the SDK on
+   * `window.sysml`.
+   */
+  it('an edit lists the model in the order its text gives it: a machine made above another, a package dragged back in, through the app and the SDK', async () => {
+    // The SDK edits the model the store started with.
+    useAppStore.setState({ model: st().api.model });
+    st().importModel(
+      [
+        'package P {',
+        '    package Q1 {',
+        '        state def M1 {',
+        '            state a;',
+        '            state b;',
+        '            state dead1;',
+        '            transition t1 first a then b;',
+        '        }',
+        '    }',
+        '    package Q2 {',
+        '        state def M2 {',
+        '            state x;',
+        '            state y;',
+        '            state dead2;',
+        '            transition t2 first x then y;',
+        '        }',
+        '    }',
+        '}',
+        '',
+      ].join('\n'),
+      'sysml',
+    );
+    await whenLibrarySettled();
+    flushRecompute();
+    const named = (name: string) => st().model.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+    const reach = CHECKS.find((c) => c.id === 'reach')!;
+    const healthy: ReturnType<typeof loadHealth> = {
+      errors: 0,
+      saved: { parseErrors: 0 },
+      exported: { parseErrors: 0 },
+      sameText: true,
+      validationErrors: 0,
+      validateThrew: false,
+      unwritable: null,
+      libraryPending: false,
+    };
+    const machinesIn = (model: Model) =>
+      runCheck(reach, { model, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: healthy })
+        .rows.map((r) => /`P::Q\d::(M\d)::/.exec(r.message)?.[1])
+        .filter((m, i, all) => m !== undefined && all.indexOf(m) === i);
+    /** The page's machines, and a terminal's over the text Save writes: the same, in the same order. */
+    const machines = async (): Promise<Array<string | undefined>> => {
+      const page = machinesIn(st().model);
+      const terminal = (await textApi.loadModelText(st().textBuffer, { fileName: 'x.sysml' })).model!;
+      expect(machinesIn(terminal), 'a terminal over the saved text').toEqual(page);
+      const all = st().model.all();
+      expect(st().model.inSerialOrder().every((el, i) => el === all[i]), 'listed as every copy is rebuilt').toBe(true);
+      return page;
+    };
+    expect(await machines()).toEqual(['M1', 'M2']);
+
+    // A machine made in Q1, below M1 and above Q2's M2, through the app's commands.
+    const M0 = st().createElement('StateDefinition', named('Q1'), 'M0');
+    const u = st().createElement('StateUsage', M0, 'u');
+    const v = st().createElement('StateUsage', M0, 'v');
+    st().createElement('StateUsage', M0, 'dead0');
+    st().connect(u, v, 'TransitionUsage');
+    flushRecompute();
+    expect(await machines(), 'made in Q1').toEqual(['M1', 'M0', 'M2']);
+
+    // Q1 dragged out of P and back in: now P's last.
+    st().reparent(named('Q1'), null);
+    st().reparent(named('Q1'), named('P'));
+    flushRecompute();
+    expect(await machines(), 'Q1 dragged back in').toEqual(['M2', 'M1', 'M0']);
+
+    // A machine made in Q2, above Q1's, through the SDK — one call at a time, and in one commit.
+    const api = st().api;
+    const M3 = api.create('StateDefinition', { declaredName: 'M3', ownerId: named('Q2') });
+    const s = api.create('StateUsage', { declaredName: 's', ownerId: M3.id });
+    const t = api.create('StateUsage', { declaredName: 't', ownerId: M3.id });
+    api.commit(() => {
+      api.create('StateUsage', { declaredName: 'dead3', ownerId: M3.id });
+      api.create('TransitionUsage', { declaredName: 't3', ownerId: M3.id, source: [s.id], target: [t.id] });
+    });
+    flushRecompute();
+    expect(await machines(), 'through the SDK').toEqual(['M2', 'M3', 'M1', 'M0']);
+
+    // A project an earlier build stored, or a Model JSON it exported, after the SDK's edit: M3 and what it holds listed
+    // last, as they were added. Opened or imported, it is listed in the order its text gives it.
+    const now = st().model.toJSON();
+    const inM3 = new Set([M3.id, ...st().model.descendants(M3.id).map((e) => e.id)]);
+    const earlier = { ...now, elements: [...now.elements.filter((e) => !inM3.has(e.id)), ...now.elements.filter((e) => inM3.has(e.id))] };
+    await new LocalStorageStore().saveProject('Stored earlier', earlier);
+    st().newProject('Other');
+    await st().loadProject('Stored earlier');
+    await whenLibrarySettled();
+    flushRecompute();
+    expect(await machines(), 'Open of a project an earlier build stored').toEqual(['M2', 'M3', 'M1', 'M0']);
+    st().importModel(JSON.stringify(earlier), 'model-json');
+    await whenLibrarySettled();
+    flushRecompute();
+    expect(await machines(), 'Import of a Model JSON an earlier build exported').toEqual(['M2', 'M3', 'M1', 'M0']);
+  });
+
+  /**
+   * A declaration added to a typed usage — a doc typed into Properties'
+   * Documentation box, an attribute — goes before the usage's typing among its
+   * children, where a terminal over the saved text holds it, and the typing
+   * stays where the load listed it among the typings. Before, the typing was
+   * walked among the declarations, ahead of every other usage's, and the
+   * palette's Where used listed the usage first where a terminal lists it last
+   * (the review of collab-order S1).
+   */
+  it('a doc or an attribute added to the later of two typed usages leaves Where used in the order a terminal gives', async () => {
+    st().importModel('package X {\n    part def D {\n        attribute a = 1;\n    }\n    part u1 : D;\n    part u2 : D;\n}\n', 'sysml');
+    await whenLibrarySettled();
+    flushRecompute();
+    const healthy: ReturnType<typeof loadHealth> = {
+      errors: 0,
+      saved: { parseErrors: 0 },
+      exported: { parseErrors: 0 },
+      sameText: true,
+      validationErrors: 0,
+      validateThrew: false,
+      unwritable: null,
+      libraryPending: false,
+    };
+    const whereUsedRow = CHECKS.find((c) => c.id === 'where-used')!;
+    const usedBy = (model: Model): string[] => {
+      const D = model.all().find((e) => e.declaredName === 'D' && e.attrs.isLibrary !== true)!;
+      const c = { model, selectionId: D.id, selectionName: 'D', isolated: false, fileName: 'x.sysml', loadHealth: healthy };
+      return runCheck(whereUsedRow, c).rows.map((r) => r.message);
+    };
+    /** The page's rows, and a terminal's over the text Save writes: the same, in the same order. */
+    const rows = async (): Promise<string[]> => {
+      const terminal = (await textApi.loadModelText(st().textBuffer, { fileName: 'x.sysml' })).model!;
+      expect(usedBy(st().model), 'a terminal over the saved text').toEqual(usedBy(terminal));
+      return usedBy(st().model);
+    };
+    const named = (name: string) => st().model.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+    expect(await rows()).toEqual(['u1 (PartUsage)', 'u2 (PartUsage)']);
+
+    // The Documentation box's first keystroke on u2: it makes u2's doc.
+    const doc = st().createElement('Documentation', named('u2'), undefined, { field: true });
+    st().setAttr(doc, 'body', 'note');
+    flushRecompute();
+    expect(st().textBuffer).toContain('part u2 : D {');
+    expect(await rows(), 'a doc on u2').toEqual(['u1 (PartUsage)', 'u2 (PartUsage)']);
+    expect(st().model.children(named('u2')).map((e) => e.eClass), 'held as a terminal holds it').toEqual(['Documentation', 'FeatureTyping']);
+
+    // An attribute added to u2.
+    st().createElement('AttributeUsage', named('u2'), 'extra');
+    flushRecompute();
+    expect(await rows(), 'an attribute on u2').toEqual(['u1 (PartUsage)', 'u2 (PartUsage)']);
+    expect(st().model.children(named('u2')).map((e) => e.eClass)).toEqual(['Documentation', 'AttributeUsage', 'FeatureTyping']);
+  });
+
+  /**
    * A load can reorder an owner's children itself: the parser puts a feature's
    * specialisations back in the order they were declared. Import keeps that
    * order now, so the Text view reads as the file, where it used to read

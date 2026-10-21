@@ -321,4 +321,82 @@ describe('bindModelToDoc — CRDT convergence', () => {
     const listed = m2.inSerialOrder();
     expect(m2.all().every((el, i) => el === listed[i])).toBe(true);
   });
+
+  /**
+   * An element added is listed where the text puts it, not after everything
+   * else: the store does so after each edit, and the peer after taking in the
+   * peer's edits (`Model.adoptSerialOrder`). So a machine made in a package
+   * above another machine's is walked before it on both, as a terminal over the
+   * saved text walks it (review 2026-10-14 D-1, its S2 review).
+   */
+  it("a peer adds an element: both peers list it where the text puts it", () => {
+    const { m1, m2 } = setup();
+    // One at a time: a batch reaches the peer in another order (TODO.md, a room's child order).
+    m1.create('Package', { id: 'P', declaredName: 'P' });
+    m1.create('Package', { id: 'Q1', declaredName: 'Q1', ownerId: 'P' });
+    m1.create('StateDefinition', { id: 'M1', declaredName: 'M1', ownerId: 'Q1' });
+    m1.create('Package', { id: 'Q2', declaredName: 'Q2', ownerId: 'P' });
+    m1.create('StateDefinition', { id: 'M2', declaredName: 'M2', ownerId: 'Q2' });
+    // A machine made in Q1 afterwards, and the model listed as the store lists it after an edit.
+    m1.create('StateDefinition', { id: 'M0', declaredName: 'M0', ownerId: 'Q1' });
+    m1.adoptSerialOrder();
+    const machines = (m: Model) => m.all().filter((e) => e.eClass === 'StateDefinition').map((e) => e.id);
+    expect(machines(m1)).toEqual(['M1', 'M0', 'M2']);
+    expect(machines(m2)).toEqual(['M1', 'M0', 'M2']);
+    const listed = m2.inSerialOrder();
+    expect(m2.all().every((el, i) => el === listed[i])).toBe(true);
+  });
+
+  /**
+   * A peer that joins loads the model from the room's document, which lists
+   * the elements in the order they reached it; and a doc a peer adds to a typed
+   * part goes before the part's typing among its children, where a terminal
+   * over the saved text holds it, so the typing stays where it was listed among
+   * the typings. Every peer lists the model as the mover does — the one that
+   * joins too, before and after an edit of its own that adds nothing (the
+   * review of collab-order S1).
+   */
+  it('a peer that joins after an edit, and a doc a peer adds to a typed part: every peer lists the model as the mover does', () => {
+    const { m1, m2, d1 } = setup();
+    m1.create('Package', { id: 'P', declaredName: 'P' });
+    m1.create('Package', { id: 'Q1', declaredName: 'Q1', ownerId: 'P' });
+    m1.create('StateDefinition', { id: 'M1', declaredName: 'M1', ownerId: 'Q1' });
+    m1.create('Package', { id: 'Q2', declaredName: 'Q2', ownerId: 'P' });
+    m1.create('StateDefinition', { id: 'M2', declaredName: 'M2', ownerId: 'Q2' });
+    m1.create('PartDefinition', { id: 'D', declaredName: 'D', ownerId: 'P' });
+    m1.create('PartUsage', { id: 'u1', declaredName: 'u1', ownerId: 'P' });
+    m1.create('PartUsage', { id: 'u2', declaredName: 'u2', ownerId: 'P' });
+    // As a load makes them, once every name is known.
+    m1.create('FeatureTyping', { id: 't1', ownerId: 'u1', source: ['u1'], target: ['D'] });
+    m1.create('FeatureTyping', { id: 't2', ownerId: 'u2', source: ['u2'], target: ['D'] });
+    m1.adoptSerialOrder();
+    // A machine made in Q1, and a doc on u2, each listed as the store lists the model after an edit.
+    m1.create('StateDefinition', { id: 'M0', declaredName: 'M0', ownerId: 'Q1' });
+    m1.adoptSerialOrder();
+    m1.create('Documentation', { id: 'doc', ownerId: 'u2', attrs: { body: 'note' } });
+    m1.adoptSerialOrder();
+
+    // A peer joins now: a fresh doc that receives the room's state.
+    const m3 = new Model();
+    const d3 = new Y.Doc();
+    Y.applyUpdate(d3, Y.encodeStateAsUpdate(d1), 'remote');
+    bindModelToDoc(m3, d3);
+    wire(d1, d3);
+    const machines = (m: Model) => m.all().filter((e) => e.eClass === 'StateDefinition').map((e) => e.id);
+    const typedByD = (m: Model) => m.edgesTo('D').map((e) => e.source?.[0]);
+    const ids = (m: Model) => m.all().map((e) => e.id);
+    for (const [peer, m] of [['the mover', m1], ['a peer present', m2], ['a peer that joined', m3]] as const) {
+      expect(machines(m), peer).toEqual(['M1', 'M0', 'M2']);
+      expect(typedByD(m), peer).toEqual(['u1', 'u2']);
+      expect(m.childIds('u2'), peer).toEqual(['doc', 't2']);
+      expect(ids(m), peer).toEqual(ids(m1));
+    }
+    // An edit on the joined peer that adds nothing keeps that order.
+    m3.rename('M1', 'M1r');
+    m3.adoptSerialOrder();
+    expect(machines(m3)).toEqual(['M1', 'M0', 'M2']);
+    expect(ids(m3)).toEqual(ids(m1));
+    const listed = m3.inSerialOrder();
+    expect(m3.all().every((el, i) => el === listed[i])).toBe(true);
+  });
 });

@@ -126,6 +126,10 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     applyingRemote = true;
     try {
       model.reset(serializeFromDoc(elements));
+      // The doc lists the elements in the order they reached it, not the order
+      // their text gives them: list the model as the peers present at those
+      // edits list theirs (`Model.adoptSerialOrder`, D-1).
+      model.adoptSerialOrder({ whole: true });
     } finally {
       applyingRemote = false;
     }
@@ -147,9 +151,13 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     applyingRemote = true;
     try {
       model.transaction(() => {
-        // A peer's drag lists this model as the peer's own: as its Undo, Save
-        // and checks worker rebuild it (`Model.adoptSerialOrder`, D-1).
-        if (reconcileModelFromDoc(model, elements)) model.adoptSerialOrder();
+        reconcileModelFromDoc(model, elements);
+        // A peer's drag, or an element a peer added, lists this model in the
+        // order its text gives it, as an edit made here does: as its Undo, Save
+        // and checks worker rebuild it, and a terminal over the text it saves
+        // reads it (`Model.adoptSerialOrder`, D-1). Free when the peer's edit
+        // added and moved nothing.
+        model.adoptSerialOrder();
       });
     } finally {
       applyingRemote = false;
@@ -212,11 +220,9 @@ function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeE
 /**
  * Reconcile the model to match the doc's element set. Idempotent & deterministic:
  * removes elements gone from the doc, creates missing ones (owners first), and
- * patches changed fields / ownership on the rest. Returns whether it reparented
- * anything.
+ * patches changed fields / ownership on the rest.
  */
-function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): boolean {
-  let moved = false;
+function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void {
   const docIds = new Set<ElementId>(elements.keys());
 
   // 1) Removals — anything in the model but no longer in the doc.
@@ -271,7 +277,6 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): bool
     if (cur.ownerId !== rec.ownerId) {
       try {
         model.reparent(id, rec.ownerId);
-        moved = true;
       } catch {
         /* ignore transient cycle/ordering during convergence */
       }
@@ -307,5 +312,4 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): bool
       if (el) el.attrs = next;
     }
   }
-  return moved;
 }

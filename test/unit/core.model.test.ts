@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Model, ModelFactory, buildSampleModel } from '@core/index';
 
 describe('Model core', () => {
@@ -239,6 +239,166 @@ describe('Model core', () => {
       expect(names(m, L.id)).toBe('B,C,A');
       // The library's own records, not copies (C6).
       expect(m.all().filter(isLib).every((el) => records.includes(el))).toBe(true);
+    });
+  });
+
+  /**
+   * Between owners too. A terminal reads the text Save writes from top to
+   * bottom, but a package dragged out of its owner and back in stayed where it
+   * was in `all()`, and a machine made in a package above another machine's was
+   * listed after it: the page and the checks worker walked the machines in the
+   * order they were added, a terminal in the text's (review 2026-10-14 D-1, its
+   * S2 review). `adoptSerialOrder` lists the user's declarations in containment
+   * pre-order, and what a load lists after them where a load lists it.
+   */
+  describe('listed in the order the text gives it after an edit (D-1, its S2 review)', () => {
+    const names = (m: Model): string[] => m.all().map((e) => e.declaredName ?? `«${e.eClass}»`);
+    const machines = (m: Model): string[] => m.all().filter((e) => e.eClass === 'StateDefinition').map((e) => e.declaredName!);
+    /** Every copy — Save then open, the checks worker's, an Undo snapshot — is rebuilt in the order the page lists the model. */
+    const listedAsCopies = (m: Model): boolean => {
+      const listed = m.inSerialOrder();
+      const copy = Model.fromJSON(m.toJSON());
+      return m.all().every((el, i) => el === listed[i] && copy.all()[i].id === el.id) && copy.size === m.size;
+    };
+
+    /** `P { package Q1 { state def M1 {…} } package Q2 { state def M2 {…} } }` as a load lists it, and a library after it. */
+    function owners() {
+      const m = new Model();
+      const P = m.create('Package', { declaredName: 'P' });
+      const machine = (pkg: string, def: string, [s, t]: [string, string]) => {
+        const Q = m.create('Package', { declaredName: pkg, ownerId: P.id });
+        const M = m.create('StateDefinition', { declaredName: def, ownerId: Q.id });
+        const a = m.create('StateUsage', { declaredName: s, ownerId: M.id });
+        const b = m.create('StateUsage', { declaredName: t, ownerId: M.id });
+        m.create('TransitionUsage', { declaredName: `${s}${t}`, ownerId: M.id, source: [a.id], target: [b.id] });
+        return Q;
+      };
+      const Q1 = machine('Q1', 'M1', ['a', 'b']);
+      const Q2 = machine('Q2', 'M2', ['x', 'y']);
+      const lib = m.create('Package', { declaredName: 'Lib', attrs: { isLibrary: true } });
+      m.create('DataType', { declaredName: 'Real', ownerId: lib.id, attrs: { isLibrary: true } });
+      expect(m.adoptSerialOrder(), 'listed as a load lists it: nothing to move').toBe(false);
+      return { m, P, Q1, Q2 };
+    }
+
+    it('a package dragged out and back in, and a machine made above another, are listed where the text puts them, as every copy lists them', () => {
+      const dragged = owners();
+      dragged.m.reparent(dragged.Q1.id, null);
+      dragged.m.reparent(dragged.Q1.id, dragged.P.id);
+      expect(machines(dragged.m), 'as added').toEqual(['M1', 'M2']);
+      const rev = dragged.m.rev;
+      expect(dragged.m.adoptSerialOrder()).toBe(true);
+      expect(dragged.m.rev, 'an index built at the move is built again').toBeGreaterThan(rev);
+      // Q1 is P's last child now: the text writes Q2 and its machine first.
+      expect(names(dragged.m)).toEqual(['P', 'Q2', 'M2', 'x', 'y', 'xy', 'Q1', 'M1', 'a', 'b', 'ab', 'Lib', 'Real']);
+      expect(listedAsCopies(dragged.m)).toBe(true);
+      expect(dragged.m.adoptSerialOrder(), 'once is enough').toBe(false);
+
+      const made = owners();
+      const M0 = made.m.create('StateDefinition', { declaredName: 'M0', ownerId: made.Q1.id });
+      made.m.create('StateUsage', { declaredName: 'u', ownerId: M0.id });
+      expect(machines(made.m), 'as added: after the library, too').toEqual(['M1', 'M2', 'M0']);
+      expect(made.m.adoptSerialOrder()).toBe(true);
+      // M0 is Q1's last child, above Q2: where Save writes it, and where a terminal reads it.
+      expect(names(made.m)).toEqual(['P', 'Q1', 'M1', 'a', 'b', 'ab', 'M0', 'u', 'Q2', 'M2', 'x', 'y', 'xy', 'Lib', 'Real']);
+      expect(listedAsCopies(made.m)).toBe(true);
+    });
+
+    it('a declaration an edit adds below a typing is seated before it, and what a load lists after the declarations stays where the load listed it', () => {
+      const m = new Model();
+      const P = m.create('Package', { declaredName: 'P' });
+      const T = m.create('PartDefinition', { declaredName: 'T', ownerId: P.id });
+      const x = m.create('PartUsage', { declaredName: 'x', ownerId: P.id });
+      const y = m.create('PartUsage', { declaredName: 'y', ownerId: P.id });
+      // As a load makes them, once every name is known: `x : T`, `y : T`, and a port made for a connector end chained through y's type.
+      const tx = m.create('FeatureTyping', { ownerId: x.id, source: [x.id], target: [T.id] });
+      const ty = m.create('FeatureTyping', { ownerId: y.id, source: [y.id], target: [T.id] });
+      const q = m.create('PortUsage', { declaredName: 'q', ownerId: y.id, attrs: { implicit: true } });
+      expect(m.adoptSerialOrder(), 'as a load lists it').toBe(false);
+      const typedByT = (): Array<string | undefined> => m.edgesTo(T.id).map((e) => m.get(e.source![0])!.declaredName);
+
+      // A part made in P goes where the text puts it, among the declarations; the typings and the port stay after them.
+      m.create('PartUsage', { declaredName: 'w', ownerId: P.id });
+      expect(m.adoptSerialOrder()).toBe(true);
+      expect(names(m)).toEqual(['P', 'T', 'x', 'y', 'w', '«FeatureTyping»', '«FeatureTyping»', 'q']);
+
+      // A part made in y and a doc in x, each below its owner's typing: each is seated before it, where a terminal over
+      // the saved text holds it, and the typings stay in the order the load listed them, as a terminal lists them.
+      const n = m.create('PartUsage', { declaredName: 'n', ownerId: y.id });
+      const d = m.create('Documentation', { ownerId: x.id, attrs: { body: 'note' } });
+      expect(m.adoptSerialOrder()).toBe(true);
+      expect(names(m)).toEqual(['P', 'T', 'x', '«Documentation»', 'y', 'n', 'w', '«FeatureTyping»', '«FeatureTyping»', 'q']);
+      expect(m.childIds(x.id)).toEqual([d.id, tx.id]);
+      expect(m.childIds(y.id)).toEqual([n.id, ty.id, q.id]);
+      expect(typedByT(), 'where-used over T').toEqual(['x', 'y']);
+      expect(listedAsCopies(m), 'each owner\'s children still in the order it holds them').toBe(true);
+      expect(Model.fromJSON(m.toJSON()).childIds(y.id)).toEqual(m.childIds(y.id));
+
+      // A part dragged into x, below its typing: seated the same way.
+      const w = m.all().find((e) => e.declaredName === 'w')!;
+      m.reparent(w.id, x.id);
+      expect(m.adoptSerialOrder()).toBe(true);
+      expect(m.childIds(x.id)).toEqual([d.id, w.id, tx.id]);
+      expect(names(m)).toEqual(['P', 'T', 'x', '«Documentation»', 'w', 'y', 'n', '«FeatureTyping»', '«FeatureTyping»', 'q']);
+      expect(typedByT()).toEqual(['x', 'y']);
+      expect(listedAsCopies(m)).toBe(true);
+    });
+
+    it('re-lists whole a model reset from data that lists it in the order its elements were added', () => {
+      // An earlier build's: `n` made in y after the load, below y's typing, and listed last.
+      const built = new Model();
+      const P = built.create('Package', { declaredName: 'P' });
+      const T = built.create('PartDefinition', { declaredName: 'T', ownerId: P.id });
+      const x = built.create('PartUsage', { declaredName: 'x', ownerId: P.id });
+      const y = built.create('PartUsage', { declaredName: 'y', ownerId: P.id });
+      built.create('FeatureTyping', { ownerId: x.id, source: [x.id], target: [T.id] });
+      const ty = built.create('FeatureTyping', { ownerId: y.id, source: [y.id], target: [T.id] });
+      const n = built.create('PartUsage', { declaredName: 'n', ownerId: y.id });
+      const data = built.toJSON();
+
+      const m = new Model();
+      m.reset(data);
+      expect(m.childIds(y.id), 'as the data holds it').toEqual([ty.id, n.id]);
+      expect(m.adoptSerialOrder({ whole: true })).toBe(true);
+      expect(m.childIds(y.id), 'as a terminal over the saved text holds it').toEqual([n.id, ty.id]);
+      expect(names(m)).toEqual(['P', 'T', 'x', 'y', 'n', '«FeatureTyping»', '«FeatureTyping»']);
+      expect(m.edgesTo(T.id).map((e) => m.get(e.source![0])!.declaredName)).toEqual(['x', 'y']);
+      expect(listedAsCopies(m)).toBe(true);
+      // Listed so, it is listed already: a snapshot of it, or a load, moves nothing.
+      expect(m.adoptSerialOrder({ whole: true })).toBe(false);
+      const again = new Model();
+      again.reset(m.toJSON());
+      expect(again.adoptSerialOrder({ whole: true })).toBe(false);
+    });
+
+    it('costs nothing after an edit that adds no declaration and moves nothing, and keeps the order a reset gives until one does', () => {
+      const { m, Q1, Q2 } = owners();
+      const all = vi.spyOn(m, 'all');
+      const serial = vi.spyOn(m, 'inSerialOrder');
+      m.rename(Q1.id, 'R1');
+      m.setAttrs(Q2.id, { note: 'kept' });
+      m.create('Subsetting', { ownerId: Q2.id, source: [Q2.id], target: [Q1.id] });
+      m.remove(m.all().find((e) => e.declaredName === 'xy')!.id);
+      all.mockClear();
+      expect(m.adoptSerialOrder()).toBe(false);
+      expect(all).not.toHaveBeenCalled();
+      expect(serial).not.toHaveBeenCalled();
+      all.mockRestore();
+      serial.mockRestore();
+
+      // A reset lists the model as it is given — a load's order, or a snapshot's; here the library first — and an
+      // edit that adds nothing keeps it. (Each owner's children come back in the order they are listed in.)
+      const data = m.toJSON();
+      const given = [...data.elements.filter((e) => e.attrs.isLibrary === true), ...data.elements.filter((e) => e.attrs.isLibrary !== true)];
+      m.reset({ ...data, elements: given });
+      m.rename(Q2.id, 'R2');
+      expect(m.adoptSerialOrder()).toBe(false);
+      expect(m.all().map((e) => e.id)).toEqual(given.map((e) => e.id));
+      m.create('StateUsage', { declaredName: 'z', ownerId: m.all().find((e) => e.declaredName === 'M2')!.id });
+      expect(m.adoptSerialOrder()).toBe(true);
+      expect(names(m).slice(0, 3), 'the text order once an edit adds a declaration: the user\'s part first').toEqual(['P', 'R1', 'M1']);
+      // The rest — the library, and the subsetting a load lists after every declaration — in the order it was given.
+      expect(names(m).slice(-3)).toEqual(['Lib', 'Real', '«Subsetting»']);
     });
   });
 });
