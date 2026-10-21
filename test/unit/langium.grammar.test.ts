@@ -8,7 +8,7 @@
  * expression with correct operator precedence.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { parseDocument } from '@text/langium/module';
 import { parseModel } from '@text/index';
 import {
@@ -508,4 +508,32 @@ describe('Langium SysML grammar — bracket expression', () => {
     expect(bin.left.$type).toBe('RefExpr');
     expect(bin.right.$type).toBe('BracketExpr');
   });
+});
+
+// The parser is built the first time something asks for it (Chevrotain's lookahead analysis,
+// about 1.3 s in a browser); `warmParser` lets a page pay that before the click that needs a
+// parse (`src/ui/parser-warmup.ts`, docs/UI-ROADMAP.md P3).
+describe('warmParser', () => {
+  it('builds the parser ahead of the first parse, which then costs milliseconds', async () => {
+    vi.resetModules();
+    const fresh = await import('@text/langium/module');
+    expect(fresh.parserIsWarm()).toBe(false);
+    fresh.warmParser();
+    expect(fresh.parserIsWarm()).toBe(true);
+    const t0 = performance.now();
+    const { lexerErrors, parserErrors } = fresh.parseDocument('package P { part def A; }');
+    expect(lexerErrors.length + parserErrors.length).toBe(0);
+    expect(performance.now() - t0, 'a first parse that still builds the parser takes over a second').toBeLessThan(500);
+  }, 60_000);
+
+  it('says the parser is built after a parse that built it, and warming again changes nothing', async () => {
+    vi.resetModules();
+    const fresh = await import('@text/langium/module');
+    expect(fresh.parserIsWarm()).toBe(false);
+    fresh.parseDocument('package P;');
+    expect(fresh.parserIsWarm()).toBe(true);
+    const t0 = performance.now();
+    fresh.warmParser();
+    expect(performance.now() - t0).toBeLessThan(500);
+  }, 60_000);
 });

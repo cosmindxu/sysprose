@@ -4,10 +4,12 @@
  *
  * THE CHARTER OF THIS FILE, IN ONE LINE: **an absent solver is an ANSWER, not
  * an import error.** `z3-solver` is an OPTIONAL dependency — the WASM asset is
- * tens of megabytes, the browser cannot run it at all (§6 non-goal 9:
- * `SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), and a
- * clone that skipped optional dependencies must still typecheck, build, and run
- * every suite. So the package is reached through a dynamic import behind a
+ * tens of megabytes, a browser page can run it only when cross-origin isolated
+ * (§6 non-goal 9: `SharedArrayBuffer` needs COOP/COEP headers GitHub Pages
+ * cannot set, so the hosted site has none; the local dev and preview servers
+ * send them and serve z3 to the page, `vite.config.ts`), and a clone that
+ * skipped optional dependencies must still typecheck, build, and run every
+ * suite. So the package is reached through a dynamic import behind a
  * variable specifier, its absence is reported as {@link Z3Absent} with a
  * sentence a person can act on, and NOTHING here throws because a package is
  * missing.
@@ -510,16 +512,18 @@ export async function loadZ3(): Promise<Z3Load> {
         'unset it to load `z3-solver`',
     };
   }
-  if (typeof process === 'undefined') {
-    // The browser, where §6 non-goal 9 says there is no solver at all: z3 WASM
-    // needs `SharedArrayBuffer`, which needs COOP/COEP headers a static host
-    // cannot set. The app's own affordance is "prove in the terminal".
+  if (typeof process === 'undefined' && !pageIsolated()) {
+    // A browser page that is not cross-origin isolated (the hosted site, which
+    // is static and gets no COOP/COEP headers): z3 WASM needs
+    // `SharedArrayBuffer`, so there is no solver here. The app's own affordance
+    // is "prove in the terminal". An isolated page (the local dev and preview
+    // servers) goes on and loads z3 from them, below.
     return {
       absent: true,
       disabled: false,
       reason:
-        'there is no solver in the browser build (z3 WASM needs SharedArrayBuffer, i.e. COOP/COEP ' +
-        'headers this deployment cannot set); run the proof in the terminal',
+        'there is no solver in this page (z3 WASM needs SharedArrayBuffer, i.e. a cross-origin-isolated ' +
+        'page, and this one is not); run the proof in the terminal',
     };
   }
   let entry = cached;
@@ -530,6 +534,15 @@ export async function loadZ3(): Promise<Z3Load> {
       });
       entry = await pending;
     } catch (err) {
+      if (typeof process === 'undefined') {
+        return {
+          absent: true,
+          disabled: false,
+          reason:
+            `z3 did not start in this page: ${messageOf(err)}. The local server serves it from the ` +
+            '`z3-solver` package, which is OPTIONAL: run `npm install z3-solver`, or run the proof in the terminal',
+        };
+      }
       return {
         absent: true,
         disabled: false,
@@ -573,8 +586,12 @@ async function initialise(): Promise<CachedModule> {
     // bundler neither resolves nor bundles a package the browser may not
     // have; `vite.config.ts` marks it external for the same reason.
     const spec = 'z3-solver';
-    const mod = (await import(/* @vite-ignore */ spec)) as { init: () => Promise<Z3Api> };
-    await watchAsyncMutex(spec);
+    const mod =
+      typeof process === 'undefined'
+        ? await importPageZ3()
+        : ((await import(/* @vite-ignore */ spec)) as { init: () => Promise<Z3Api> });
+    // `async-mutex` is a Node module the page does not have: nothing to watch there.
+    if (typeof process !== 'undefined') await watchAsyncMutex(spec);
     const t0 = now();
     z3 = await mod.init();
     initMs = now() - t0;
@@ -610,6 +627,32 @@ async function initialise(): Promise<CachedModule> {
   }
   cached = entry;
   return entry;
+}
+
+/** Whether this page can run z3: cross-origin isolated, so `SharedArrayBuffer` and WASM threads exist. */
+function pageIsolated(): boolean {
+  return (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+}
+
+/**
+ * z3 in an isolated page: the local server's `/z3/` (`vite.config.ts`
+ * `localZ3`). `z3-built.js` is a classic script, loaded by a tag because
+ * Emscripten finds its WASM and starts its worker threads from the tag's `src`,
+ * and it leaves `initZ3` on the page; `browser.mjs` is the package's browser
+ * entry, which reads it.
+ */
+async function importPageZ3(): Promise<{ init: () => Promise<Z3Api> }> {
+  const base = new URL('z3/', document.baseURI).href;
+  if ((globalThis as { initZ3?: unknown }).initZ3 === undefined) {
+    await new Promise<void>((resolve, reject) => {
+      const tag = document.createElement('script');
+      tag.src = `${base}z3-built.js`;
+      tag.onload = () => resolve();
+      tag.onerror = () => reject(new Error(`${tag.src} did not load`));
+      document.head.append(tag);
+    });
+  }
+  return (await import(/* @vite-ignore */ `${base}browser.mjs`)) as { init: () => Promise<Z3Api> };
 }
 
 /** One load's swap window: the registries built in it and the module they belong to. */

@@ -984,7 +984,7 @@ const CODES = [
     code: 'checks/not-here',
     source: 'checks',
     severity: 'info',
-    when: 'A solver-backed check (verify, consistency, bounds, refine, fault-tree) cannot run in the page because it is not cross-origin-isolated, so the row is the terminal command to run instead of a verdict.',
+    when: 'A solver-backed check (verify, consistency, bounds, refine, fault-tree) cannot run in the page, because it is not cross-origin-isolated (the hosted site; the local dev and preview servers are) or because z3 did not start there, so the row is the terminal command to run instead of a verdict.',
     hint: 'Copy the command and run it in a terminal, or open the app on a cross-origin-isolated page where z3 can load.',
   },
   {

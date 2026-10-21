@@ -335,11 +335,11 @@ export function RequirementsTable(): JSX.Element {
    * that printed the facet twice would render a point evaluation and a proof
    * identically, which is the display defect the plan names by hand.
    *
-   * WHY THERE IS NO CONTROL HERE. There is no solver in the browser in this
-   * plan at all: z3 WASM needs `SharedArrayBuffer`, which needs COOP/COEP
-   * headers GitHub Pages cannot set. So the app reads evidence and tells the
-   * reader the terminal command, and the tooltip on a row with nothing recorded
-   * is that command.
+   * WHY THERE IS NO CONTROL HERE. No solver runs from this table: z3 WASM needs
+   * `SharedArrayBuffer`, which needs COOP/COEP headers GitHub Pages cannot set
+   * (the palette's Checks run it only on an isolated page). So the app reads
+   * evidence and tells the reader the terminal command, and the tooltip on a
+   * row with nothing recorded is that command.
    *
    * A STALE CHIP NAMES ITS SLICE. Not a link, because the slice is a SET of
    * elements and a table cell has one click: the tooltip lists the elements

@@ -38,6 +38,7 @@ import {
   dependencyHubs,
   hubEdges,
   intrinsicSize,
+  leadingHubEdges,
   packRows,
   thoroughnessFor,
 } from '@diagram/layout';
@@ -46,15 +47,18 @@ import {
   COLUMN_HEADER_MAX_H,
   COLUMN_HEADER_MIN_H,
   COLUMN_LABEL_SCREEN_PX,
+  COLUMN_STRIP_H,
+  COLUMN_STRIP_LABEL_PX,
   columnHeaderHeight,
   columnLabelSize,
   columnLabelSizeAt,
   columnLabelSizeFor,
   columnSpans,
+  columnStripCells,
   fitColumnLabel,
 } from '@diagram/column-headers';
 import { fitRouteToEnds, roundedPath, routeIsCurrent, routeLabelPoint } from '@diagram/edges';
-import type { DiagramGraph, DiagramNode, Point, ViewKind } from '@diagram/types';
+import type { DiagramColumn, DiagramGraph, DiagramNode, Point, ViewKind } from '@diagram/types';
 
 interface Box {
   x: number;
@@ -433,6 +437,8 @@ describe('general view — each column of a layered model is headed by its packa
       expect(c.w).toBeGreaterThan(0);
       expect(c.h).toBeGreaterThanOrEqual(32);
       expect(c.fontSize).toBeLessThanOrEqual(c.h);
+      // The piece runs below its band: that is where the frozen strip's copy of the header leaves.
+      expect(c.bottom).toBeGreaterThan(c.y + c.h);
     }
   });
 
@@ -559,31 +565,56 @@ describe('general view — a hub that many dependency lines end on leads its pie
     expect([...dependencyHubs(into('R', 'satisfy', 2), 2).keys()]).toEqual(['R']);
   });
 
-  it('draws the hub first, its lines fanning out to the right, and leaves fewer crossings', async () => {
+  it('draws the biggest hub first, its lines fanning out to the right, and leaves far fewer crossings', async () => {
     const g0 = generalOf(hubText(8, 3, 6));
     const g = await layoutDiagram(g0);
     expectReadable(g);
-    // The hubs sit left of every activity allocated to them; the lines still run source -> hub.
-    for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
-      const hubBox = box(g, hub);
-      for (let i = 0; i < 8; i++) expect(box(g, `${who}${i}`).x, `${who}${i} is right of ${hub}`).toBeGreaterThan(hubBox.x + hubBox.w);
-      const hubId = g.nodes.find((n) => n.label === hub)!.id;
-      for (const e of g.edges.filter((x) => x.kind === 'allocate' && x.target === hubId)) {
-        const src = absoluteBoxes(g).get(e.source)!;
-        expect(onOutline(e.route![0]!, src), `${e.id} starts on its source`).toBe(true);
-        expect(onOutline(e.route![e.route!.length - 1]!, hubBox), `${e.id} ends on its hub`).toBe(true);
-      }
+    // memberA and memberB have eight lines each: only the first leads, so the two fans do not interleave.
+    // Its activities sit right of it; the lines still run source -> hub, ending on the hub.
+    const lead = box(g, 'memberA');
+    for (let i = 0; i < 8; i++) expect(box(g, `alpha${i}`).x, `alpha${i} is right of memberA`).toBeGreaterThan(lead.x + lead.w);
+    const leadId = g.nodes.find((n) => n.label === 'memberA')!.id;
+    for (const e of g.edges.filter((x) => x.kind === 'allocate' && x.target === leadId)) {
+      const src = absoluteBoxes(g).get(e.source)!;
+      expect(onOutline(e.route![0]!, src), `${e.id} starts on its source`).toBe(true);
+      expect(onOutline(e.route![e.route!.length - 1]!, lead), `${e.id} ends on its hub`).toBe(true);
     }
+    // memberB closes its piece, as it would in the usual way.
+    for (let i = 0; i < 8; i++) expect(box(g, `bravo${i}`).x, `bravo${i} is left of memberB`).toBeLessThan(box(g, 'memberB').x);
     // The same graph laid out the usual way, every line source -> target (one layering forced, so no hub leads).
     const usualWay = await layoutDiagram(g0, { elkOptions: { 'elk.layered.layering.strategy': 'NETWORK_SIMPLEX' } });
     expect(box(usualWay, 'memberA').x).toBeGreaterThan(box(usualWay, 'alpha0').x);
     expect(crossingsOf(g)).toBeLessThanOrEqual(crossingsOf(usualWay) - HUB_MIN_CROSSINGS_SAVED);
+    // With both hubs leading it was 34 of the usual 39; with one leading, 6.
+    expect(crossingsOf(g)).toBeLessThanOrEqual(12);
   }, 60_000);
 
-  it('keeps the usual direction where drawing from the hub saves too few crossings', async () => {
-    const g = await layoutDiagram(generalOf(hubText(4, 2, 3)));
+  it('names the lines of the biggest hub only where a piece has two hubs or more', () => {
+    /** The hub boxes the led lines end on, one entry per line. */
+    const lead = (text: string): string[] => {
+      const g = generalOf(text);
+      const label = new Map(g.nodes.map((n) => [n.id, n.label]));
+      const ids = new Set(connectedPieces(g).flatMap((p) => [...leadingHubEdges(g, p)]));
+      return g.edges.filter((e) => ids.has(e.id)).map((e) => label.get(e.target)!);
+    };
+    const two = hubText(8, 3, 6);
+    expect(lead(two)).toEqual(Array(8).fill('memberA'));
+    // memberB with nine lines is the biggest.
+    const nine = two.replace('allocate alpha0 to memberA;', 'allocate alpha0 to memberB;');
+    expect(lead(nine)).toEqual(Array(9).fill('memberB'));
+    // One hub alone has nothing to lead against; a piece with no hub, or with its columns, has none.
+    expect(lead(two.replace(/allocate bravo\d+ to memberB;/g, ''))).toEqual([]);
+    expect(lead(hubText(8, 3, 6, true))).toEqual([]);
+  });
+
+  it('keeps the usual direction where drawing from the hubs saves too few crossings', async () => {
+    // Two hubs of three lines each: drawn from the hubs is cheaper, but saves no crossing.
+    const g0 = generalOf(hubText(3, 2, 3));
+    expect(connectedPieces(g0).flatMap((p) => [...hubEdges(g0, p)]).length).toBeGreaterThan(0);
+    const g = await layoutDiagram(g0);
     expectReadable(g);
-    for (let i = 0; i < 4; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
+    for (let i = 0; i < 3; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
+    for (let i = 0; i < 3; i++) expect(box(g, `bravo${i}`).x).toBeLessThan(box(g, 'memberB').x);
   }, 30_000);
 
   it('keeps the usual direction where both drawings cross nothing, though the hub-led one costs less', async () => {
@@ -680,6 +711,86 @@ describe('column headers — size', () => {
       { partition: 0, x0: 0, x1: 170 },
       { partition: 2, x0: 400, x1: 500 },
     ]);
+  });
+});
+
+describe('column headers — the frozen strip, at the drone swarm\'s size', () => {
+  // The whole drone-swarm General view: a main piece of five columns about
+  // 19,000 px tall, and sixteen headers over four smaller pieces packed in a row
+  // below it. At 1400x900 the fit zoom is about 0.021.
+  const col = (id: string, x: number, w: number, y: number, bottom: number): DiagramColumn => ({
+    id, elementId: id, label: id, x, y, w, h: 640, bottom, fontSize: 352,
+  });
+  const main = [0, 1, 2, 3, 4].map((i) => col(`main${i}`, i * 12_000, 11_800, 0, 19_000));
+  const rest = [0, 1, 2, 3].flatMap((p) =>
+    [0, 1, 2, 3].map((i) => col(`rest${p}${i}`, p * 15_000 + i * 3_500, 3_400, 19_500, 25_000)),
+  );
+  const columns = [...main, ...rest];
+  const stripTop = 46;
+  const fit = { x: 100, y: stripTop, zoom: 0.021 };
+  const overlaps = (cells: ReturnType<typeof columnStripCells>): boolean =>
+    cells.some((a, i) => cells.slice(i + 1).some((b) => a.left < b.left + b.width && b.left < a.left + a.width && Math.abs(a.top - b.top) < COLUMN_STRIP_H));
+
+  it('draws its labels in screen space at a size that reads, whatever the zoom', () => {
+    expect(columns).toHaveLength(21);
+    expect(COLUMN_STRIP_LABEL_PX).toBeGreaterThanOrEqual(9);
+    expect(COLUMN_STRIP_LABEL_PX).toBeLessThanOrEqual(COLUMN_STRIP_H);
+  });
+
+  it('names the top row\'s five columns at the whole model\'s Fit, each wide enough for its label', () => {
+    const cells = columnStripCells(columns, fit, 1400, stripTop);
+    expect(cells.map((c) => c.label)).toEqual(main.map((c) => c.id));
+    for (const c of cells) {
+      expect(c.width).toBeGreaterThanOrEqual(200);
+      expect(c.top).toBe(0);
+    }
+    expect(overlaps(cells)).toBe(false);
+  });
+
+  it('keeps a column\'s header at the top while its piece runs beneath, clipped to the canvas', () => {
+    // Panned 9,000 px down the main piece at zoom 0.5: its columns are 6,000 px wide on screen.
+    const view = { x: -5_000, y: stripTop - 9_000 * 0.5, zoom: 0.5 };
+    const cells = columnStripCells(columns, view, 1400, stripTop);
+    expect(cells.map((c) => c.label)).toEqual(['main0', 'main1']);
+    for (const c of cells) {
+      expect(c.top).toBe(0);
+      expect(c.left).toBeGreaterThanOrEqual(0);
+      expect(c.left + c.width).toBeLessThanOrEqual(1400);
+    }
+    // Zoomed in on one column, the column's header still names it.
+    expect(columnStripCells(columns, { x: -100, y: stripTop - 5_000, zoom: 1 }, 1400, stripTop).map((c) => c.label)).toEqual(['main0']);
+  });
+
+  it('leaves with the bottom of its piece, and the next row\'s headers come in as theirs arrives', () => {
+    // The main piece's bottom edge `bottomOnScreen` px below the strip's top.
+    const at = (bottomOnScreen: number) =>
+      columnStripCells(columns, { x: 100, y: stripTop + bottomOnScreen - 19_000 * 0.021, zoom: 0.021 }, 1400, stripTop);
+    const mainTops = (cells: ReturnType<typeof at>) => cells.filter((c) => c.label.startsWith('main')).map((c) => c.top);
+    expect(mainTops(at(COLUMN_STRIP_H))).toEqual([0, 0, 0, 0, 0]);
+    expect(mainTops(at(COLUMN_STRIP_H / 2))).toEqual(Array(5).fill(-COLUMN_STRIP_H / 2));
+    expect(mainTops(at(0))).toEqual([]);
+    // The second row begins 500 diagram px (10.5 px) below: its headers come in as the first row's go, and never lie over them.
+    for (const b of [COLUMN_STRIP_H, COLUMN_STRIP_H / 2, 0, -5]) expect(overlaps(at(b))).toBe(false);
+    expect(at(0).map((c) => c.label)).toEqual(rest.map((c) => c.id));
+  });
+
+  it('leaves a band that is on screen below the strip and tall enough to read to the band', () => {
+    // Zoom 1: the 640 px band is on screen from the strip's top down.
+    expect(columnStripCells(columns, { x: 100, y: stripTop, zoom: 1 }, 1400, stripTop)).toEqual([]);
+    // Once panned past its top the strip takes the header over.
+    expect(columnStripCells(columns, { x: 100, y: stripTop - 1, zoom: 1 }, 1400, stripTop).length).toBeGreaterThan(0);
+  });
+
+  it('keeps a header off the first row of its piece, which a fit puts COLUMN_STRIP_H px under the strip\'s top', () => {
+    // Fit puts the first row of boxes COLUMN_STRIP_H px under the strip's top; the 640 px band and 8 px gap above it are 13.6 px on screen.
+    const cells = columnStripCells(columns, { x: 100, y: stripTop + COLUMN_STRIP_H - 648 * 0.021, zoom: 0.021 }, 1400, stripTop);
+    expect(cells.map((c) => c.label)).toEqual(main.map((c) => c.id));
+    for (const c of cells) expect(c.top).toBe(0);
+  });
+
+  it('skips a column too narrow on screen to hold its label', () => {
+    const tiny = [col('tiny', 0, 800, 0, 1_000)];
+    expect(columnStripCells(tiny, fit, 1400, stripTop)).toEqual([]);
   });
 });
 

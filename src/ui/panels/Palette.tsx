@@ -29,7 +29,7 @@ import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
 import { checkFileName, loadHealthAtHand, loadHealthNow, useAppStore } from '../store';
-import { checksFor, commandNote, selectionKey, type CheckSpec } from '../checks';
+import { checksFor, commandNote, pageIsolated, selectionKey, type CheckSpec } from '../checks';
 import { runningVerdict, useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 import { cancelChecked, runChecked, runCheckedOnceDrawn, type RunStart } from './checks-runner';
 
@@ -359,7 +359,7 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
       model,
       selectionId,
       selectionName,
-      isolated: (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true,
+      isolated: pageIsolated(),
       fileName,
     }),
     [model, selectionId, selectionName, fileName],
@@ -378,7 +378,8 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
     // A check not judged over the load reads the model alone, which an edit
     // changes at once: nothing an edit's recompute owes (the text, Problems) is
     // waited for.
-    if (!spec.readsLoadHealth) {
+    // (A solver check on a page that cannot run it reads nothing either: it is answered `not here`.)
+    if (!spec.readsLoadHealth || (spec.engine === 'solver' && !ctx.isolated)) {
       runChecked(spec, { ...ctx, model: st.model }, st.rev);
       return;
     }

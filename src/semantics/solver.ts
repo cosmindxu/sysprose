@@ -2547,6 +2547,25 @@ function numericPropagation(model: Model): Map<ElementId, number> {
   return out;
 }
 
+/**
+ * `read()` with the entries `keys` of `values` free to be overwritten, then
+ * put back exactly as they were (absent stays absent): a probe that sets the
+ * few keys it moves instead of cloning the whole map once per finite-difference
+ * evaluation. The map is not retained, and an exception cannot leave it changed.
+ */
+function probing<T>(values: Map<ElementId, number>, keys: Iterable<ElementId>, read: () => T): T {
+  const saved = new Map<ElementId, number | undefined>();
+  for (const k of keys) if (!saved.has(k)) saved.set(k, values.get(k));
+  try {
+    return read();
+  } finally {
+    for (const [k, prev] of saved) {
+      if (prev === undefined) values.delete(k);
+      else values.set(k, prev);
+    }
+  }
+}
+
 /** The residual `lhs − rhs` of an equation under `values`, or undefined. */
 function residualOf(eq: Equation, values: Map<ElementId, number>): number | undefined {
   const scope = idScope(eq, values);
@@ -2606,9 +2625,14 @@ function solveScalar(
   tol: number,
 ): number | undefined {
   const f = (t: number): number | undefined => {
-    const trial = new Map(values);
-    trial.set(u, t);
-    return residualOf(eq, trial);
+    const prev = values.get(u);
+    values.set(u, t);
+    try {
+      return residualOf(eq, values);
+    } finally {
+      if (prev === undefined) values.delete(u);
+      else values.set(u, prev);
+    }
   };
 
   // Per-equation residual scale (finding M6). The residual acceptance test was
@@ -2791,17 +2815,17 @@ function newtonStep(
     // Instance variables: their definitions are substituted, not solved for.
     moved = substitutedNewton(active, unknowns.filter((u) => driven.has(u)), values, fixedIds, tol, maxIter);
   } else {
-    const residuals = (xv: number[]): number[] | undefined => {
-      const trial = new Map(values);
-      unknowns.forEach((id, i) => trial.set(id, xv[i]));
-      const out: number[] = [];
-      for (const eq of active) {
-        const r = residualOf(eq, trial);
-        if (r === undefined) return undefined;
-        out.push(r);
-      }
-      return out;
-    };
+    const residuals = (xv: number[]): number[] | undefined =>
+      probing(values, unknowns, () => {
+        unknowns.forEach((id, i) => values.set(id, xv[i]!));
+        const out: number[] = [];
+        for (const eq of active) {
+          const r = residualOf(eq, values);
+          if (r === undefined) return undefined;
+          out.push(r);
+        }
+        return out;
+      });
     if (newtonCore(active, x, values, residuals, tol, maxIter).aborted) return { moved: false, left };
     // Only what an active equation drives is written back, and the step is
     // progress only when it MOVED something: "converged" without a move — the
@@ -3050,6 +3074,7 @@ function substitutedNewton(
   for (const u of free) components.get(find(u))?.vars.push(u);
 
   const x = new Map<ElementId, number>(free.map((u) => [u, values.get(u) ?? 1]));
+  const scratch = new Map(values);
   const rank = new Map(order.map((u, i) => [u, i]));
   for (const c of components.values()) {
     // The substituted variables the component's equations read, through the
@@ -3064,19 +3089,22 @@ function substitutedNewton(
     }
     const which = [...needed].sort((a, b) => rank.get(a)! - rank.get(b)!);
     const xc = c.vars.map((u) => x.get(u)!);
-    const residuals = (xv: number[]): number[] | undefined => {
-      const trial = new Map(values);
-      for (const [u, v] of x) trial.set(u, v);
-      c.vars.forEach((u, i) => trial.set(u, xv[i]!));
-      if (!substitute(trial, which)) return undefined;
-      const out: number[] = [];
-      for (const eq of c.eqs) {
-        const r = residualOf(eq, trial);
-        if (r === undefined) return undefined;
-        out.push(r);
-      }
-      return out;
-    };
+    // `substitute` deletes and re-adds its keys, which would reorder `values`
+    // itself, so the probes work on one copy of it (`values` is not written
+    // until the loop is done) and put back what they touch.
+    const residuals = (xv: number[]): number[] | undefined =>
+      probing(scratch, [...x.keys(), ...which], () => {
+        for (const [u, v] of x) scratch.set(u, v);
+        c.vars.forEach((u, i) => scratch.set(u, xv[i]!));
+        if (!substitute(scratch, which)) return undefined;
+        const out: number[] = [];
+        for (const eq of c.eqs) {
+          const r = residualOf(eq, scratch);
+          if (r === undefined) return undefined;
+          out.push(r);
+        }
+        return out;
+      });
     if (newtonCore(c.eqs, xc, values, residuals, tol, maxIter).aborted) return false;
     c.vars.forEach((u, i) => x.set(u, xc[i]!));
   }

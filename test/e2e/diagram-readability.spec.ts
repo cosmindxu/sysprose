@@ -13,7 +13,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, findElementId, gotoApp } from './fixtures';
+import { captureErrors, findElementId, gotoApp, selectElementById, viewportSettled } from './fixtures';
 
 interface Diagram {
   nodes: { id: string; position?: { x: number; y: number } }[];
@@ -358,6 +358,70 @@ test('the first screen of a layered General view shows every column header clear
   }
 });
 
+/** One connected piece 60 boxes tall and three wide columns: each of SA's units specialises OA's mission, and PA's task its unit. */
+function tallModel(): string {
+  const name = (kind: string, i: number): string => `${kind}${i}WithALongNameThatKeepsItsColumnWideEnoughToLabel`;
+  const units = Array.from({ length: 60 }, (_, i) => `        part def ${name('Unit', i)} :> OA::${name('Mission', 0)};`).join('\n');
+  const tasks = Array.from({ length: 60 }, (_, i) => `        part def ${name('Task', i)} :> SA::${name('Unit', i)};`).join('\n');
+  return `package Tall {\n    package OA {\n        part def ${name('Mission', 0)};\n    }\n    package SA {\n${units}\n    }\n    package PA {\n${tasks}\n    }\n}\n`;
+}
+
+test('a column header stays on screen in a frozen strip, at Fit and while panning down a tall column', async ({ page }) => {
+  const errors = captureErrors(page);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.route('**/layered/Tall.sysml', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/plain', body: tallModel() }),
+  );
+  await page.goto('/?model=layered/Tall.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect.poll(async () => (await current(page))?.nodes.length).toBe(121);
+  await expect(page.getByTestId('column-header')).toHaveCount(3);
+  await viewportSettled(page);
+
+  const canvas = page.getByTestId('diagram-canvas');
+  const cells = page.getByTestId('column-strip-cell');
+  /** Every strip header on screen: inside the canvas, clear of the toolbar, at a size that reads. */
+  const expectStripOnScreen = async (): Promise<void> => {
+    const box = (await canvas.boundingBox())!;
+    const bar = (await page.locator('.react-flow__panel.top.right').boundingBox())!;
+    for (let i = 0; i < (await cells.count()); i += 1) {
+      const rect = (await cells.nth(i).boundingBox())!;
+      expect(rect.x).toBeGreaterThanOrEqual(box.x - 1);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(box.x + box.width + 1);
+      expect(rect.y).toBeGreaterThanOrEqual(bar.y + bar.height);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(box.y + box.height);
+      expect(await cells.nth(i).evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(9);
+    }
+  };
+  const zoom = () =>
+    page.evaluate(() => Number(/scale\(([\d.e-]+)\)/.exec((document.querySelector('.react-flow__viewport') as HTMLElement).style.transform)![1]));
+
+  // At Fit the whole piece is on screen, far too small for its own bands to read: the strip names all three columns.
+  expect(await zoom()).toBeLessThan(0.3);
+  await expect.poll(async () => (await cells.allTextContents()).sort()).toEqual(['OA', 'PA', 'SA']);
+  await expectStripOnScreen();
+  // Fit leaves the first row of boxes below the strip's cells, not under them.
+  const covered = await page.evaluate(() => {
+    const cellRects = [...document.querySelectorAll('[data-testid="column-strip-cell"]')].map((e) => e.getBoundingClientRect());
+    return [...document.querySelectorAll('.react-flow__node')].filter((n) => {
+      const r = n.getBoundingClientRect();
+      return cellRects.some((c) => Math.min(c.right, r.right) - Math.max(c.left, r.left) > 0.5 && Math.min(c.bottom, r.bottom) - Math.max(c.top, r.top) > 0.5);
+    }).length;
+  });
+  expect(covered, 'boxes under a strip header at Fit').toBe(0);
+
+  // Zoomed to a box deep in the PA column, the column's own band is far above the screen; the strip still names it.
+  await selectElementById(page, await findElementId(page, 'PartDefinition', 'Task50WithALongNameThatKeepsItsColumnWideEnoughToLabel'));
+  await page.getByTestId('diagram-fit-selection').click();
+  await viewportSettled(page);
+  expect(await zoom()).toBeGreaterThan(0.9);
+  const own = (await page.getByTestId('column-header').first().boundingBox())!;
+  expect(own.y + own.height, "the headers' own bands are above the canvas").toBeLessThan((await canvas.boundingBox())!.y);
+  await expect.poll(async () => await cells.allTextContents()).toContain('PA');
+  await expectStripOnScreen();
+  expect(errors).toEqual([]);
+});
+
 /** The drone-swarm model's operational layer in small: every step is done by one activity per member, and the two members' activities share a definition. */
 function hubModel(): string {
   const each = (n: number, f: (i: number) => string): string => Array.from({ length: n }, (_, i) => f(i)).join('\n    ');
@@ -375,7 +439,7 @@ function hubModel(): string {
 `;
 }
 
-test('a hub that many dependency lines end on leads a one-layer General view, its lines running from the boxes that point at it', async ({ page }) => {
+test('the biggest hub that many dependency lines end on leads a one-layer General view, its lines running from the boxes that point at it', async ({ page }) => {
   const errors = captureErrors(page);
   await page.route('**/layered/Hub.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: hubModel() }));
   await page.goto('/?model=layered/Hub.sysml', { waitUntil: 'domcontentloaded' });
@@ -395,10 +459,15 @@ test('a hub that many dependency lines end on leads a one-layer General view, it
     p.x >= n.position.x - 1 && p.x <= n.position.x + n.size.w + 1 && p.y >= n.position.y - 1 && p.y <= n.position.y + n.size.h + 1 &&
     (Math.abs(p.x - n.position.x) < 1 || Math.abs(p.x - n.position.x - n.size.w) < 1 || Math.abs(p.y - n.position.y) < 1 || Math.abs(p.y - n.position.y - n.size.h) < 1);
 
-  // Each member sits left of all eight activities allocated to it, and every line still runs from its activity to the member.
-  for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
+  // The two members take eight lines each, so only the first leads (letting both lead interleaves their fans): memberA sits
+  // left of its eight activities and memberB right of its own, and every line still runs from its activity to its member.
+  for (const [hub, who, leads] of [['memberA', 'alpha', true], ['memberB', 'bravo', false]] as const) {
     const h = byLabel(hub);
-    for (let i = 0; i < 8; i += 1) expect(byLabel(`${who}${i}`).position.x, `${who}${i} is right of ${hub}`).toBeGreaterThan(h.position.x + h.size.w);
+    for (let i = 0; i < 8; i += 1) {
+      const a = byLabel(`${who}${i}`);
+      if (leads) expect(a.position.x, `${who}${i} is right of ${hub}`).toBeGreaterThan(h.position.x + h.size.w);
+      else expect(a.position.x + a.size.w, `${who}${i} is left of ${hub}`).toBeLessThan(h.position.x);
+    }
     const lines = d.edges.filter((e) => e.kind === 'allocate' && e.target === h.id);
     expect(lines).toHaveLength(8);
     for (const e of lines) {

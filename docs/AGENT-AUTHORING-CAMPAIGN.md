@@ -4269,8 +4269,9 @@ measured the probe's own erasure. It is printed as not measurable, not as a loss
 
 **The Contracts view shows what a requirement states, never whether it holds.**
 z3 WASM needs `SharedArrayBuffer`, which needs COOP/COEP headers GitHub Pages
-cannot set, so there is no solver in the browser and no view in this app reaches
-a verdict. The two that read this lane are read-only by construction: Contracts
+cannot set, so the hosted site has no solver in the browser and no view there
+reaches a verdict (the local dev and preview servers send the headers and run the
+palette's solver checks in the page). The two that read this lane are read-only by construction: Contracts
 projects the inventory `contractReport` returns — including the clauses a gate
 refused, with the reason, because a view that showed the clauses and hid the
 refusals would let a reader believe a requirement was fully encoded when half its

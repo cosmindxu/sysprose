@@ -15,13 +15,13 @@
  * an editable projection of a body this view does not own is how two spellings
  * of one clause come to exist.
  *
- * AND IT REACHES NO VERDICT. There is no solver in the browser in this plan
- * (z3 WASM needs `SharedArrayBuffer`, i.e. COOP/COEP headers GitHub Pages
- * cannot set), so the view prints the exact terminal command that decides —
- * once, under the table — instead of a column a reader would read as a result.
- * `crossOriginIsolated` is asked rather than assumed: on a host that DOES send
- * those headers the sentence says so, because a hint that lies about why it is
- * there is worse than no hint.
+ * AND IT REACHES NO VERDICT. This view has no solver column: it prints the exact
+ * terminal command that decides — once, under the table — instead of a column a
+ * reader would read as a result. (The palette's Checks run the solver in the page
+ * where it is cross-origin isolated, the local servers' pages; the hosted site's
+ * is not, GitHub Pages cannot set COOP/COEP.) `crossOriginIsolated` is asked
+ * rather than assumed: on a host that DOES send those headers the sentence says
+ * so, because a hint that lies about why it is there is worse than no hint.
  */
 
 import { useMemo } from 'react';

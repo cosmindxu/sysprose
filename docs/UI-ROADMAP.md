@@ -11,13 +11,15 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 > **Status:** the feature items below are implemented. Canvas drag-to-reparent
 > (+ multi), per-element PageRank centrality, roving menu tab-order, and the shared
 > toolbar↔canvas menu behavior all shipped in `9ba0b62` (each Fable-reviewed with
-> all confirmed findings fixed). Still open: three measured performance items from
+> all confirmed findings fixed). Still open: two measured performance items from
 > the profiling round, **P1** for a piece with nested boxes (the compound-layout
-> option is now off for a flat piece, but a nested piece still pays for it), **P2**
-> (the solver clones its value map per probe) and **P3** (the first "Apply text →
-> model" click builds the parser on the page's thread), and **Electron/Tauri** (a
-> hard environmental blocker: no Windows cross-build here). Community-detection
-> **per element** stays deferred as low-value optional depth.
+> option is now off for a flat piece, but a nested piece still pays for it) and
+> **P3** (Apply's parse is still on the page's thread; its first click no longer
+> builds the parser, which opening the Text view does while the page is idle), and
+> **Electron/Tauri** (a hard environmental blocker: no Windows
+> cross-build here). **P2** (the solver's per-probe clone of its value map) is
+> fixed. Community-detection **per element** stays deferred as low-value optional
+> depth.
 
 ---
 
@@ -124,7 +126,7 @@ connected piece that contains nested boxes and `SEPARATE_CHILDREN` for every oth
 a flat and for a nested call, not its timing. That is the 1.7× row, and it leaves a piece that
 nests exactly as it was.
 
-**Still open at `5943654`: a piece that nests.** `toElkTree` passes `nested = true` for any piece
+**Still open at `5943654`, and at `aac38fd` (measured below): a piece that nests.** `toElkTree` passes `nested = true` for any piece
 with one nested box, and that keeps `INCLUDE_CHILDREN`. Measured through `layoutDiagram` on the
 `interconnection` view, 30 parents of 10 children each and two edges per leaf (330 nodes): 11 113 ms
 as it stands (14 s on a loaded machine), 171 ms with `SEPARATE_CHILDREN` forced (65×); the raw ELK
@@ -137,20 +139,85 @@ edges that cross a parent's border for time), or to bound the compound layout, i
 is tracked in `TODO.md` (*Decide what the layout does with a piece that nests*) and awaits a user
 decision.
 
-### P2 — the solver clones its whole value map per probe (`src/semantics/solver.ts`: `solveScalar`, `newtonStep`, `substitutedNewton`)
+**Measured again at `aac38fd` (2026-10-21), forced `SEPARATE_CHILDREN` against the shipped option,
+through `layoutDiagram`.** Crossings and "through" are counted on what the canvas draws: an edge
+ELK did not route is drawn as a straight line between the centres of its boxes (`svg-export.ts`),
+and "unrouted" counts those edges. Each time is the faster of two warm runs, taken in the order
+forced, shipped, forced, shipped (the first run of a process is slower, which flattered the
+forced option in a first pass), on a loaded machine (load average about 15); the synthetic rows
+are two or three processes.
 
-`const trial = new Map(values)` sits inside the residual closure that every finite-difference probe
-calls (`solver.ts:2520`, `:2706` and `:2979` at `5943654`), so a solve clones the entire map once
+| Piece | Nodes / edges | `INCLUDE_CHILDREN` (shipped) | `SEPARATE_CHILDREN` forced | Time ratio |
+|---|---|---|---|---|
+| the entry's own graph: 30 parents × 10 leaves, two edges per leaf to `leaf[(i*7+d*13) % 300]` (576 of 600 edges cross a parent's border) | 330 / 600 | 42 574 ms (45 141 cold); 24 135 crossings; 0 through; 0 unrouted | 613 ms (1 380 cold); 23 748 crossings; 576 through; 576 unrouted | 69× (33× cold) |
+| a structured variant: 30 parents × 10 leaves, two edges per leaf (inside the parent, and to the next parent) | 330 / 600 | 2 035–2 135 ms; 386 crossings; 0 through; 0 unrouted | 366–467 ms; 464 crossings (+20 %); 10 through; 300 unrouted | 4.6–5.8× |
+| 30 `Cell` parts of 10 leaves in one `system`, one connector per leaf to the next cell (SysML text, `interconnection` view) | 331 / 300 | 559 ms; 0 crossings | 315 ms; 742 crossings; 300 through; 300 unrouted | 1.8× |
+| drone-swarm v9, `interconnection`, whole model | 172 / 42 | 926 ms; 0 crossings | 942 ms; 2 crossings; 2 unrouted | none |
+| drone-swarm v9, `interconnection`, `SwarmMember` and `MissionComputerNode` | 6 / 0, 5 / 0 | 13 and 8 ms | 13 and 8 ms | none |
+| drone-swarm v9, General: whole model, `Kinds`, `Common`, `OA`, `SA`, `LA`, `PA`, `EPBS` | 853 / 949 down to 33 / 0 | no nested box, so the option is already `SEPARATE_CHILDREN` and the two runs are the same layout (crossings 3 993, 0, 29, 18, 0, 0, 3, 0) | same | none |
+| the six `examples/` models, `interconnection` (whole, and each part with two or more parts; 9 views) | 3–14 / 0–9 | 8–78 ms; 0 crossings; 0 through; 0 unrouted | 8–95 ms; the same | none |
+
+The profile's 11 s for the 330-node case **is** reproduced on the entry's own graph (the N0
+reviewer's `synth.mts`): the shipped option takes 43–45 s here (load average 20 to 29), the forced
+option 0.6–1.4 s. The structured variant in the
+second row, where most edges stay inside a parent, costs about 2 s shipped and is only 4.6–5.8×
+faster forced. So the time criterion of the rule set (at least 10× on the 330-node case) **is met**
+on the entry's graph. The change is refused for another reason: `SEPARATE_CHILDREN` lays out each
+parent's interior alone and does **not route an edge that crosses a parent's border**. Every such
+edge (576 of 576 on the entry's graph, 300 of 300 in the `Cell` row) comes back without a route and
+is drawn straight, across other boxes, and on the v9 `interconnection` view, the one real model
+where the option matters, the crossings go from 0 to 2 with 2 edges unrouted. The rule set was "at
+least 10× on the 330-node case, crossings up by at most 10 % on every measured real model, and no
+overlap or line through a box"; the real-model and line-through conditions fail. So **no layout
+code changed**: a nested piece keeps `INCLUDE_CHILDREN`, and `U diagram.layout2` now pins the
+option through `layoutDiagram` (a flat call and a nested call), not only through
+`layoutOptionsFor`. What stays open is to bound the compound layout (lay each parent's interior
+out on its own, then route the edges that cross a border ourselves); dropping the option is not a
+free change.
+
+### P2 — the solver cloned its whole value map per probe — fixed (`src/semantics/solver.ts`: `solveScalar`, `newtonStep`, `substitutedNewton`)
+
+`const trial = new Map(values)` sat inside the residual closure that every finite-difference probe
+calls (`solver.ts:2520`, `:2706` and `:2979` at `5943654`), so a solve cloned the entire map once
 per probe. The profiling round counted about 50 000 clones for one solve of the example shipped
-then. That count was **not reproduced** at `5943654`. Counting `new Map(<Map>)` calls during a
-solve, `solve` copies a map 3 to 510 times on the six models in `examples/` and `solveFeasible` 5
-to 21 times, each in tens of milliseconds; on the drone-swarm v9 model of mbse-workflow (42 584
-elements) `solve` makes 3 082 clones and `solveFeasible` 132, each in under 100 ms. So P2 is a
-code-level defect whose cost is not visible on any model measured since, not a measured cost. The
-fix is unchanged: set the one key, read the residual, restore it. No behaviour change; the map is
-not retained.
+then. That count was **not reproduced** at `5943654` (and was not at `aac38fd`): the defect was
+code-level, not a measured cost on any model since.
 
-### P3 — the first "Apply text → model" click blocks the main thread for ~1.28 s
+**Fixed.** The scalar root-find (`solveScalar`) and the coupled Newton step (`newtonStep`) set the
+keys a probe moves in the working map, read the residual and restore them in a `finally`
+(`probing`, and the same three lines inline for the one key of the scalar case): a key that was
+absent is absent again, one that was present holds its old value, and the map is not retained. The
+instance-variable step (`substitutedNewton`) substitutes definitions, which deletes and re-adds
+keys and would reorder the caller's map, so it probes one copy made per call and puts back what each
+probe touches. No behaviour change: the verdict differential and the v9 gate are identical.
+
+Counting `new Map(<Map>)` calls during `solve` and `solveFeasible` on a freshly loaded model
+(`aac38fd`, before, then after):
+
+| model | `solve` before | `solve` after | `solveFeasible` before / after |
+|---|---|---|---|
+| `contract-authoring-prompts` | 3 | 3 | 5 / 5 |
+| `uav-isr` | 5 | 5 | 8 / 8 |
+| `uav-isr-verification` | 510 | 9 | 12 / 12 |
+| `uav-power-budget` | 20 | 20 | 30 / 30 |
+| `vehicle` | 3 | 3 | 5 / 5 |
+| `views-tour` | 257 | 7 | 9 / 9 |
+| drone-swarm v9 (42 584 elements) | 3 082 | 81 | 132 / 132 |
+
+`solveFeasible` is unchanged on these models: none of its copies was a probe's (it ran after
+`solve` here, on the same model, so it started from the cached base point). The copies left are not
+probes: the ones the equations are built from (`keyedNames`, `valueEquation`, `assignmentEquation`,
+`relationEquation`), one start point per Newton step (`newtonStep`), `freeFeatures`, the cache-hit
+copy in `solveCore`, and two per `substitutedNewton` call. The wall time was tens of milliseconds
+on every one of these (v9 `solve` 83 ms before, 59 ms after, one run each on a loaded machine), so
+what is gained is the removed per-probe allocation, not a speed-up anyone sees at these sizes.
+
+`semantics.solver.test.ts` pins it: a scalar root and a coupled system take at most 6 copies (17 and
+39 before), a tree of instances takes no more copies when it needs Jacobian probes than when it
+needs none, and an unknown left unset by a failed root-find, or read by a check alone, is not left
+in the map at a probe's value.
+
+### P3 — the first "Apply text → model" click blocks the main thread for ~1.28 s — the build now runs when the Text view opens (S5); Apply's parse stays on the page
 
 Not parsing — **parser construction**. Chevrotain's ALL(\*) lookahead analysis
 (`performSelfAnalysis`) costs 1 387 ms in the browser and 1 102 ms of it is one function,
@@ -163,6 +230,41 @@ palette's checks), and in Node the first parse of a one-line model takes 1.2 s a
 Since branch `load-health` (2026-10-14) the checks worker builds the parser too, and parses each
 text a palette check's load health needs there; Apply's parse is still on the page.
 
+**What was done (branch `ui-perf-backlog`, S5): the build is warmed, the parse is not moved.**
+Opening the Text view schedules `warmParser` (`src/text/langium/module.ts`) for when the page is
+idle (`src/ui/parser-warmup.ts`, from `TextEditor`), so a click on Apply, Save's apply of the typed
+text (`store.drive.ts`), and the `typedTextFirst` of a field's change (which applies the typed text
+before the change goes in) find the parser built. They keep parsing on the page, synchronously, as
+before.
+Measured in Chromium (headless, a loaded 16-core machine, a three-line package, the click timed in
+the page from `click()` to its return, seven runs before and eight after):
+
+| | first Apply | second Apply |
+|---|---|---|
+| before | 1 277 – 1 392 ms (a long task of 1.4 – 1.6 s) | 4 – 5 ms |
+| after (the Text view open for 3 s, or the click made as soon as the fill returned) | 11 – 21 ms | 3 – 7 ms |
+
+The build is not removed: it is one stretch of about 1.3 s on the page's thread, now right after
+the Text view opens (a click made within that stretch waits for the rest of it, as it did before).
+Opening the Text tab now holds the page for about 1.4 s, once per session. The time from opening the
+tab to an applied model is unchanged (about 2.5 s before, 2.6 s after, with real typing and a mouse
+click). What changes is that the Apply click itself answers at once.
+
+Two other moments were measured and not taken. At load: the build ran before the first diagram was
+drawn, and the diagram came up at 2.2 – 2.6 s instead of 0.9 – 1.0 s, for every session, most
+of which never open the Text view. At the click on Apply only: the status quo. A worker cannot take
+the build off the thread without taking the parse with it: the parser cannot be handed across, so
+the page would need an Apply that waits for a worker's reply.
+
+**Not done: the parse in a worker.** `applyText` and `typedTextFirst` are synchronous, and
+the second must stay so (its caller goes on with the change the moment it returns). Moving Apply's
+parse into the worker needs an Apply that is in flight: the buffer edited while it parses, Undo and
+the carried ids across the wait, the reply's model rebuilt on the page (`ParseResult` holds a
+`Model`, a range table and deferred warnings), and a page-thread fallback where the worker is
+unavailable. That is its own change, and it would not make the first Apply faster than the warm-up
+does; it would let a very large text not hold the page while it parses. Still open for the cases
+where the parse is the cost, not the build.
+
 ### What the profiling ruled OUT, with the arithmetic
 
 - **The model graph** — crossing 38 902 elements to WebAssembly costs ~100 ms against ~127 ms for
@@ -174,7 +276,7 @@ text a palette check's load health needs there; Apply's parse is still on the pa
   browser. Faulted input parses *faster* than clean input, because the parser bails early.
 - **The solver encoder** — most of a `verify --engine smt` run is z3, which is already native
   WebAssembly.
-- **Threads** — GitHub Pages cannot set COOP/COEP, so `crossOriginIsolated` is false and threaded
+- **Threads** — GitHub Pages cannot set COOP/COEP, so on the hosted site `crossOriginIsolated` is false (the local servers send them, for z3) and threaded
   WebAssembly is unavailable. Any "Rust for parallelism" argument does not apply to the shipped app.
 
 **One Rust candidate stays open**, unmerged and unscheduled: a layered layout engine behind

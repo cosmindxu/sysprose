@@ -38,6 +38,8 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import {
+  COLUMN_STRIP_H,
+  columnStripCells,
   edgeTypes,
   nodeTypes,
   reconnectEndpoint,
@@ -64,7 +66,7 @@ import {
 import { NodeContextMenu } from './NodeContextMenu';
 import { PaneContextMenu } from './PaneContextMenu';
 import { Legend } from './Legend';
-import { ColumnHeaders } from './ColumnHeaders';
+import { ColumnHeaders, columnStripTop } from './ColumnHeaders';
 
 /**
  * Canvas width (px) below which the minimap becomes a toggle ("Map"). It first
@@ -318,8 +320,10 @@ function DiagramCanvasInner(): JSX.Element {
    * Fit the whole drawing in the canvas. On a layered General view the column
    * headers are part of it: one cut off at the canvas's edge names nothing, and
    * fitting the boxes alone left the top row's headers there. They also start
-   * below the toolbar floating over the canvas's top-right, which would
-   * otherwise hide the names of the columns it lies over.
+   * at the column strip's top edge, below the toolbar floating over the
+   * canvas's top-right, which would otherwise hide the names of the columns it
+   * lies over; the strip then carries the top row's headers at a size that reads,
+   * and the first row of boxes begins just below it, not under it.
    */
   const fitDrawing = useCallback(
     (opts: { maxZoom?: number; duration?: number } = {}) => {
@@ -331,19 +335,25 @@ function DiagramCanvasInner(): JSX.Element {
       const x1 = Math.max(boxes.x + boxes.width, ...columns.map((c) => c.x + c.w));
       const y1 = Math.max(boxes.y + boxes.height, ...columns.map((c) => c.y + c.h));
       const { width, height, minZoom, maxZoom, domNode } = rfStore.getState();
-      const bar = domNode?.querySelector('.react-flow__panel.top.right');
-      const barBottom = domNode && bar ? bar.getBoundingClientRect().bottom - domNode.getBoundingClientRect().top : 0;
-      // The 15% margin of fitView, in px, or the toolbar's bottom edge and a gap, whichever is more.
-      const top = Math.max(Math.floor((height - height / 1.15) * 0.5), Math.ceil(barBottom) + 6);
-      const viewport = getViewportForBounds(
-        { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
-        width,
-        height,
-        minZoom,
-        opts.maxZoom ?? maxZoom,
-        { top: `${top}px`, x: 0.15, bottom: 0.15 },
-      );
-      return rf.setViewport(viewport, { duration: opts.duration });
+      const top = columnStripTop(domNode);
+      const fitTo = (yTop: number, padTop: number) =>
+        getViewportForBounds(
+          { x: x0, y: yTop, width: x1 - x0, height: y1 - yTop },
+          width,
+          height,
+          minZoom,
+          opts.maxZoom ?? maxZoom,
+          { top: `${padTop}px`, x: 0.15, bottom: 0.15 },
+        );
+      // Top-aligned, not centred in what the width leaves: the first row's headers must land in the strip.
+      let viewport = fitTo(y0, top);
+      let y = top - y0 * viewport.zoom;
+      if (columnStripCells(columns, { x: viewport.x, y, zoom: viewport.zoom }, width, top).length > 0) {
+        // The strip carries the top row's headers, over its first COLUMN_STRIP_H px: the boxes begin below that, not under a header.
+        viewport = fitTo(boxes.y, top + COLUMN_STRIP_H);
+        y = top + COLUMN_STRIP_H - boxes.y * viewport.zoom;
+      }
+      return rf.setViewport({ ...viewport, y }, { duration: opts.duration });
     },
     [rf, rfStore],
   );
