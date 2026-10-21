@@ -35,101 +35,19 @@ maintainer says `awaits user decision U<n>` and names the question.
       (vitest's `hookTimeout` is 10 s; the two that reach z3 now are given 240 s and 600 s). Have the
       bridge report the largest budget handed to it while a case ran, and read the counter around the
       hooks that load z3.
-- [ ] **Give the `sysprose` exit test an explicit timeout.** `test/unit/smt-z3-bridge-death.test.ts`
-      (*ends with the command's own code once stdout and stderr drain…*, :871) imports
-      `scripts/sysprose` and keeps vitest's 5 s default. The review saw it time out locally at
-      5943654 while CI passes; run alone on 2026-10-14 it took 2.7 s, so the cost of that import
-      depends on the load. It is the shape of the D5 gap, a case whose own cost can outlast the
-      default. Give it an explicit timeout of at least 30 s. Done when the case carries one.
-      [review 2026-10-14 X2]
-- [ ] **Scope the palette's `reach` to the selection, as its optional `--element` does.** It covers
-      the whole model here, and so does its command, but its summary does not say so. Give it what
-      `contracts` and `obligations` have (`scopedBySelection`, `checkScope`, a `checks/scoped` or
-      `checks/whole-model` row, `src/ui/checks.ts`), with `reachReport` narrowed the way
-      `reachScope` (`scripts/sysprose.ts`) narrows it.
-- [ ] **Name a linked model's file in the palette's commands.** Opened through `?model=`,
-      `examples/views-tour.sysml` shows "Opened views-tour.sysml from its link", but every copied
-      command names `Untitled.sysml`: `checkFileName` (`src/ui/store.drive.ts`) falls back to the
-      project name, `deriveProjectName` (`src/ui/store.ts`) takes it from the first root, and that
-      root is the file's unnamed header comment. Name a linked model after its URL's file name, or
-      skip roots that are not namespaces when deriving the project name.
-- [ ] **Credit the palette's checks in the user guide's terminal table.** In `docs/USER-GUIDE.md`,
-      "The same answers from a terminal" (:679-725) puts "—" in the *In the app* column for
-      `orphans`, `obligations`, `fault-tree` and `reach`, has no row for `check-behaviour`, and its
-      † note says `connectivity`, `orphans` and `obligations` exist only in the terminal and the
-      SDK. The palette's Checks section has a check for each of them (`src/ui/checks.ts`;
-      `fault-tree` answers `not here` with its command). The README's table was corrected in
-      0475db6, so the two now disagree. Name the palette check in that column, add the
-      `check-behaviour` row, and drop those names from the note.
-- [ ] **Decide what a palette put away does with an armed tool.** Collapsing the column hides the
-      "Placing X" hint, but the tool stays armed until Escape or Cancel, so the next canvas click
-      places an element the screen no longer announces. Either name the armed tool on the put-away
-      strip (`palette-collapsed-label`) or disarm on collapse.
-      Awaits user decision U14: which of the two.
-- [ ] **Keep the keyboard focus when the Explorer or Properties column is put away or brought
-      back.** The palette now hands the focus to the control that replaces the one pressed
-      (`Palette.tsx`, `refocus`); the two side panels (`src/ui/App.tsx`) swap their trees the same
-      way and leave the focus on `<body>`.
-- [ ] **Give register row W2's per-step alternative a producer.** `ExploreResult.successors` stores
-      no transition id per edge, so the trap entry path can never use the per-step wording
-      (`TRAP_ENTRY_WALK_ADMITS` exists and is asserted unprinted). Retain the transition id beside each
-      successor and wire the alternative.
-      Awaits user decision U14 (relax A6 per claim).
-- [ ] **Decide how the app shows inherited contract clauses.** The Contracts view shows an inherited
-      clause as `N more clause(s) inherited from X`, while `contracts` in the terminal prints its body
-      marked `(inherited)`. Either show the body in the app, or record the difference as deliberate
-      in `docs/USER-GUIDE.md`.
-      Awaits user decision U14: which of the two.
-- [ ] **Count a hand arrangement as unsaved work.** `browserDirty` (`src/ui/store.drive.ts`)
-      compares text only, so boxes moved by hand since the last Save or Open never read unsaved:
-      New, Open, Import, a Drive open and closing the tab let them go without a question. Undo
-      brings them back after New, Open and Import, but a Drive open clears Undo, so there an
-      arrangement never saved is lost for good, and Reload from Drive followed by Save stores
-      none in its place. Keep the pins Save and Open mark beside `savedText`, and let
-      `browserDirty` compare them too, so the existing question covers it. Or keep Undo, or the
-      pins, across a Drive open of a model whose element names match.
-- [ ] **Give back the library aliases an older api-json Import dropped.** Until fixes2 S5 an
-      api-json Import lost the full library's 268 `alias` `Membership` elements, and a browser
-      project saved after one still lacks them. `loadFullStandardLibrary`
-      (`src/library/full-library.ts`) returns early once a model holds any library element, so
-      they never come back and names reached through them stay unresolved. Let the merge add the
-      library ids such a model is missing, or tell the user that New and a fresh Import repair it.
-- [ ] **Read OMG's other owning memberships as containment in an api-json Import.**
-      `fromApiGraph` (`src/persistence/io.ts`) takes ownership from `OwningMembership` and
-      `FeatureMembership` only. A graph written by another tool can own a member through a subtype
-      (`ParameterMembership`, `ReturnParameterMembership`, `EndFeatureMembership`,
-      `ResultExpressionMembership`, …): that membership is kept as an element in its namespace,
-      and its member lands at the top level of the model. Sysprose's own export never writes them.
-- [ ] **Keep the other writers out of the standard library too.** `connect` (a line drawn from
-      a library box in a diagram scoped to the library) and `bindType` (the Type field on a
-      library usage) put a new user element — the relationship, the typing — under the library
-      element they act on, where the Text view, Save to Drive and Export ▾ → SysML leave it out.
-      `createElement`, `reparent`, `reparentMany`, `pasteClipboard` and the SDK's `create` /
-      `reparent` send such an element to the top level of the model with a note (`userOwner`);
-      give these the same, or refuse with a note.
-- [ ] **Keep library elements in the standard library.** The mirror of the item above:
-      `reparent` and `reparentMany` move a library element under one of the user's — a library
-      row dragged onto a user row in the Explorer (library toggle on) — and the Text view then
-      writes it into the user's package (`library part def Shelved;`), while the library no longer
-      has it. Refuse such a move with a note, or move a copy.
-- [ ] **Give the focus somewhere safe when a rename closes on `Enter`.** `Enter` in the
-      Explorer's rename (`tree-rename`), the context menu's (`node-ctx-rename-input`) or a
-      Requirements table cell (`req-cell-input`, `req-attr-input`) commits and closes the box,
-      and the focus falls to the page (to the canvas node, for the context menu): the next
-      `Backspace` deletes the selection — the element just renamed, with its subtree — and a
-      digit switches the view. Undo brings it back. `Ctrl/⌘+S` in those boxes already leaves the
-      focus on Save (`focusSave`, `src/ui/commands.ts`); do the same after `Enter`, or return
-      it to the row, guarded.
-- [ ] **Show the strip's note beside its status row, not in place of it.** With Google Drive
-      configured, any `info` notice — a save or an export that kept typed text back, an element
-      sent to the top level of the model — outranks the rows for a save waiting on a sign-in
-      (`expired`), a file in the trash or read-only (`gone`, `readonly`), unsaved changes
-      (`dirty`) and being offline (`driveStripStatus`, `src/ui/panels/DriveStrip.tsx`), until it
-      is hidden or Undone: the row that says the file lacks the model is not shown. In the other
-      direction `sayWhatWasKept` puts nothing up while an unrelated notice stands (a Drive error,
-      `<name> closed`), so an export that kept typed text back leaves the file lacking it
-      unsaid. Render the note on a line of its own under the row, and hold the export's until
-      the strip is free.
+- [ ] **Ask before the tab closes over a hand arrangement not saved.** `browserDirty` now counts boxes
+      moved by hand (`savedPins`), so New, Open, Import, a branch switch and a Drive open ask first;
+      `beforeunload` still asks only for a Drive-attached file, so closing the tab lets an arrangement
+      (and a typed-but-unsaved edit of a model with no Drive file) go without a question. Done when
+      closing the tab over unsaved text or boxes asks, with a test, or the maintainer decides it
+      should not.
+- [ ] **Give the focus somewhere safe when a rename closes on `Escape`.** `Enter` now leaves the
+      focus on Save (`commitAndFocusSave`); `Escape` in the Explorer's rename (`tree-rename`), the
+      context menu's (`node-ctx-rename-input`) or a Requirements table cell (`req-cell-input`,
+      `req-attr-input`) closes the box without committing and the focus still falls to the page, so
+      the next `Backspace` deletes the selection. Do the same refocus without the commit, or return
+      it to the row, guarded. Done when `Escape` in each box leaves a following `Backspace` harmless,
+      with a test beside the `Enter` one.
 - [ ] **Keep a layered General view's column headers on screen while panning down a column.** A
       header (`src/ui/panels/ColumnHeaders.tsx`) is drawn once, above the top of its piece, so in
       the drone-swarm model's whole General view (columns about 19,000 px tall) it is off screen
@@ -174,26 +92,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       option for a flat and a nested call, not the time). `docs/UI-ROADMAP.md` P1 has the table.
       Awaits a user decision, not yet numbered in the plan: drop the option for nested pieces, or
       bound the compound layout.
-- [ ] **Settle whether a drag-pan closes a canvas context menu, and delete the sentence that is
-      wrong.** `docs/UI-ROADMAP.md` says both that wheel-zoom and pan dismiss the fixed-position
-      menu (Shipped, *Context menus close when the canvas moves*) and that the menus do not
-      dismiss when the canvas is panned (Known limitations). `E gui-context-menu` drives a wheel
-      only. `useContextMenuChrome` (`src/ui/panels/useContextMenuChrome.ts`) closes on a canvas
-      wheel, on Escape and on a window `mousedown` outside the menu, and its comment calls a pan a
-      pane mousedown "already handled by `onDown`"; but d3-zoom's `mousedowned` stops the
-      propagation of the mousedown it takes for a pan, so `onDown` may never see it. Open a node's
-      context menu in the built app, drag the pane, and see whether the menu is gone. Then delete
-      the wrong sentence in the roadmap (and fix the hook's comment if that is the wrong one) and
-      add the pan to `gui-context-menu`. Done when the two sentences agree and the spec drives a
-      pan.
-- [ ] **Give tied centrality scores one rank.** Properties shows `Centrality … #N of 1373`
-      (`elementCentrality`, `src/diagram/centrality.ts`). It orders equal scores by element id, and
-      ids are random UUIDs (`newId`, `src/core/ids.ts`), so a tied element's rank changes with
-      every load: the drone-swarm v9 root package (score 0.0004) read #973, #852, #1188 and #1067
-      in four loads of the same file, so tutorial stills that show a tied element's rank differ
-      from one recording to the next. Give tied scores the best rank they share (competition
-      ranking), or show *tied*, or break the tie by qualified name, which a load does not change.
-      Awaits user decision U14: competition rank, *tied*, or a qualified-name tie-break.
 
 ## Per-instance readings — follow-ups and known-false rows
 
@@ -243,14 +141,6 @@ headings.
       of the default's owner and a per-type orientation (`rh`, `rh2`) read as before. X11's
       value-source clause still names `through X11::Q's bind` (`readsClause`). [O5, review]
 
-- [ ] **Decide the nonlinear and implicit shapes (classes D and E).** `b4c`, `n4`–`n6` and
-      `s2-usage-assert-leak` abstain because their value is nonlinear or implicit (n4's
-      `x * x == -1.0` admits no model), and the inequality-only asserts (B2 `g1`, S2 `y1`) leave no
-      value to read; none of this is the H5 question. Either an exact solve (z3 NRA) later, or a
-      permanent abstention with this item dropped; reading the solver's binary64 values in the check
-      would break soundness decision 3. Done when the maintainer has chosen and the rows are pinned
-      with that reason. [review 2026-10-14 E4] Awaits user decision U8 (keep classes D and E
-      abstaining for good and drop the item, or schedule an NRA solve).
 - [ ] **Finish what `table-rows` left of E3, E6 and E9.** The branch (merged by `0a69bcf`) closed E5
       (the mapper's end copy) and E7 (the context row at its own instance), made `d1plain` abstain
       (A.5), and moved eight of E3's ten rows and eight of E9's ten. Still open, pinned in
@@ -283,11 +173,6 @@ headings.
       rows; `DP33::negT` reads ?/?/T/T and `posF` ?/?/F/?). Sound, only weaker than it could be.
       Raise the cap or make the instance walk iterative. Done when those rows decide on all four
       surfaces. [review 2026-10-14 E10]
-- [ ] **Pin R18's refs null, citing decision 8.** The parameterised calculation `Twice(K)` is
-      refused on every surface (permanent, soundness decision 8), so `R18::m2NegT` and `R18::m2PosF`
-      read ?/?/?/? beside refs T and F (`verification.differential.test.ts:4412-4413`). Set the refs
-      to null and cite the decision on the rows. Done when the two rows pin null refs with that
-      comment. [review 2026-10-14 E11]
 
 ## Per-instance soundness — review 2026-10-14
 
