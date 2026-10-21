@@ -38,7 +38,7 @@ export interface CentralityElement {
 export interface ElementCentrality {
   /** PageRank score per node id (∑ ≈ 1 over the graph); absent for non-nodes. */
   score: Map<string, number>;
-  /** 1-based rank by descending score (1 = most central); ties broken by id. */
+  /** 1-based competition rank by descending score (1 = most central); equal scores share the best rank (1, 2, 2, 4). */
   rank: Map<string, number>;
   /** Number of nodes in the centrality graph. */
   nodeCount: number;
@@ -81,11 +81,13 @@ export function elementCentrality(elements: readonly CentralityElement[]): Eleme
   }
   const graph: Graph = { nodes: [...nodeIds], edges };
   const score = pageRank(graph);
-  // Rank by descending score, ties broken by id for a stable, deterministic order.
-  const ordered = [...score.entries()].sort(
-    (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
-  );
+  // Competition ranking: equal scores share the best rank they hold (1, 2, 2, 4). Ids are random
+  // per load, so an id tie-break would give a tied element a different rank on every load.
+  const ordered = [...score.entries()].sort((a, b) => b[1] - a[1]);
   const rank = new Map<string, number>();
-  ordered.forEach(([id], i) => rank.set(id, i + 1));
+  ordered.forEach(([id, sc], i) => {
+    const prev = ordered[i - 1];
+    rank.set(id, prev && prev[1] === sc ? rank.get(prev[0])! : i + 1);
+  });
   return { score, rank, nodeCount: nodeIds.size };
 }

@@ -219,9 +219,10 @@ import {
 } from './linked-model';
 import {
   DRIVE_MESSAGES,
-  browserDirty,
+  browserTextDirty,
   createDriveActions,
   initialDriveState,
+  pinsMark,
   withFinalNewline,
   type DriveActions,
   type DriveNotice,
@@ -419,13 +420,20 @@ export interface AppState extends DriveActions {
    * for this session as a save does: switching back to its branch loads it.
    *
    * What New, Open ▾, Import, a branch switch or merge and a room join would
-   * lose is the model's text differing from this (`browserDirty`): derived,
+   * lose is the model's text differing from this, or its boxes moved by hand
+   * differing from `savedPins` (`browserDirty`): derived,
    * never stored, so Undo back to the saved state reads saved again. A text,
    * not `rev`, which the library merge moves after every open — the merge
    * carries this across instead (`refreshAfterLibraryLoad`). Null when the
    * model last saved could not be written as text.
    */
   savedText: string | null;
+  /**
+   * The boxes moved by hand as Save, Open or New left them ({@link pinsMark}),
+   * the pins' side of {@link AppState.savedText}: `browserDirty` compares
+   * them too, so an arrangement nothing holds is asked about like unsaved text.
+   */
+  savedPins: string;
   projectName: string;
   queryResult: QueryResult | null;
   /** Bumps on every model mutation; selector hook for model-backed panels. */
@@ -443,9 +451,11 @@ export interface AppState extends DriveActions {
    * The model named by the page's `?model=` link, or null when the session was
    * not opened from one. While `status` is 'loading' the App keeps its loading
    * gate up, so a linked visit never shows the sample model first. See
-   * `src/ui/linked-model.ts`.
+   * `src/ui/linked-model.ts`. `projectName` is the project's name when the
+   * link finished loading: the Check panel names the linked file only while
+   * the project still has it, i.e. until another model replaces the linked one.
    */
-  linkedModel: (LinkedModel & { status: 'loading' | 'loaded' | 'failed'; error?: string }) | null;
+  linkedModel: (LinkedModel & { status: 'loading' | 'loaded' | 'failed'; error?: string; projectName?: string }) | null;
 
   // ── Real-time collaboration (Yjs CRDT + presence) ────────────────────────
   /** Live collaboration status, room, transport URL, self identity + remote peers. */
@@ -892,6 +902,16 @@ export function inLibrary(model: Model, id: ElementId): boolean {
  */
 function userOwner(model: Model, ownerId: ElementId | null): { ownerId: ElementId | null; refused: boolean } {
   return ownerId !== null && inLibrary(model, ownerId) ? { ownerId: null, refused: true } : { ownerId, refused: false };
+}
+
+/**
+ * A library element asked to move under an element outside the standard
+ * library: the Text view would write it into the user's package and the
+ * library would lose it. The top level is not outside: a library root is a
+ * root.
+ */
+function staysInLibrary(model: Model, el: ElementRecord, ownerId: ElementId | null): boolean {
+  return !isUserEl(el) && ownerId !== null && model.has(ownerId) && !inLibrary(model, ownerId);
 }
 
 /**
@@ -2265,6 +2285,7 @@ export const useAppStore = create<AppState>((set, get) => {
       initialText.serializeError == null && initialText.textBuffer !== undefined
         ? withFinalNewline(initialText.textBuffer)
         : null,
+    savedPins: pinsMark({}),
     projectName: deriveProjectName(initialModel),
     queryResult: null,
     rev: 0,
@@ -2866,6 +2887,14 @@ export const useAppStore = create<AppState>((set, get) => {
       } else if (typings.length === 0) {
         return;
       }
+      // An element in the standard library is not retyped: the typing would
+      // be a user element under it, left out of the text, and the old one is
+      // the library's, which Undo would not bring back. A change only; a blur
+      // that changes nothing returned above.
+      if (inLibrary(model, id)) {
+        sayLibraryNote(DRIVE_MESSAGES.notTypedInLibrary);
+        return;
+      }
       const typed = typedTextFirst([id]);
       if (typed === 'applied') return get().bindType(id, name);
       pushUndo();
@@ -3133,6 +3162,12 @@ export const useAppStore = create<AppState>((set, get) => {
       // nowhere to go, and spends no undo step. A library element moves
       // within the library as it always did.
       const placed = isUserEl(el) ? userOwner(model, ownerId) : { ownerId, refused: false };
+      // Nor does a library element move out of the library into the user's
+      // model, where the text would write it as the user's: nothing moves.
+      if (staysInLibrary(model, el, ownerId)) {
+        sayLibraryNote(DRIVE_MESSAGES.libraryStays(1));
+        return;
+      }
       if (placed.refused) sayNotIntoLibrary(1);
       if (placed.refused && el.ownerId === null) return;
       const to = placed.ownerId;
@@ -3160,7 +3195,14 @@ export const useAppStore = create<AppState>((set, get) => {
       // elements that exist and would actually change owner — where a user
       // element asked into the standard library goes to the top level of the
       // model instead, as in `reparent`, and the strip says how many did.
-      const roots = subtreeRoots(model, ids).filter((id) => model.has(id));
+      let roots = subtreeRoots(model, ids).filter((id) => model.has(id));
+      // A library element stays in the library, as in `reparent`: the rest of
+      // the selection still moves.
+      const staying = roots.filter((id) => staysInLibrary(model, model.get(id)!, ownerId));
+      if (staying.length > 0) {
+        roots = roots.filter((id) => !staying.includes(id));
+        sayLibraryNote(DRIVE_MESSAGES.libraryStays(staying.length));
+      }
       const intoLibrary = userOwner(model, ownerId).refused;
       const ownerFor = (id: ElementId): ElementId | null =>
         intoLibrary && isUserEl(model.get(id)!) ? null : ownerId;
@@ -3202,15 +3244,22 @@ export const useAppStore = create<AppState>((set, get) => {
       // A typing or specialization belongs to the element it types / the
       // specific element, as the parser makes it — so a line drawn with the
       // palette saves as `part x : T` / `part def S :> T`, not a separate
-      // statement. Every other relationship goes beside its source.
-      const ownerId = OWNED_BY_SOURCE.has(kind) ? sourceId : (model.get(sourceId)?.ownerId ?? null);
+      // statement. Every other relationship goes beside its source. Not
+      // inside the standard library, which the text leaves out: a line drawn
+      // from a library box goes to the top level of the model, as in
+      // `createElement`.
+      const placed = userOwner(
+        model,
+        OWNED_BY_SOURCE.has(kind) ? sourceId : (model.get(sourceId)?.ownerId ?? null),
+      );
       const edge = model.create(kind, {
-        ownerId,
+        ownerId: placed.ownerId,
         source: [sourceId],
         target: [targetId],
       });
       set(singleSel(edge.id));
       afterMutation();
+      if (placed.refused) sayNotIntoLibrary('new');
       return edge.id;
     },
 
@@ -3606,7 +3655,7 @@ export const useAppStore = create<AppState>((set, get) => {
       pushUndo({ pins: true });
       get().driveDetach(); // the attached Drive file no longer holds this model
       forgetParseResult(); // the new model did not come from the open text
-      takeDownLibraryNote(); // it names an element of the model replaced
+      takeDownLibraryNote(true); // it names an element of the model replaced
       // Clear the USER model but keep the already-loaded standard library in
       // place (so `mass : Real` still resolves in the fresh project, and an
       // undo of New restores the prior user model beside the same library — C6).
@@ -3623,7 +3672,7 @@ export const useAppStore = create<AppState>((set, get) => {
       afterMutation();
       // A new, empty model has nothing to lose: the next New, Open or Import
       // does not ask about it.
-      set({ savedText: savedTextNow() });
+      set({ savedText: savedTextNow(), savedPins: pinsMark({}) });
     },
 
     async saveProject(name) {
@@ -3634,8 +3683,9 @@ export const useAppStore = create<AppState>((set, get) => {
       // would replace the model meanwhile waits for the browser's answer
       // (`browserSaving`).
       const before = get().savedText;
+      const pinsBefore = get().savedPins;
       const mark = { saved: savedTextNow() };
-      set({ savedText: mark.saved });
+      set({ savedText: mark.saved, savedPins: pinsMark(get().diagramPins) });
       savesBeingStored.add(mark);
       const storing = (async (): Promise<void> => {
         try {
@@ -3644,7 +3694,7 @@ export const useAppStore = create<AppState>((set, get) => {
           await projectStore.saveProject(target, withPins(model.toJSON(), get().diagramPins));
         } catch (err) {
           // The browser refused to store it: it is not saved after all.
-          if (get().savedText === mark.saved) set({ savedText: before });
+          if (get().savedText === mark.saved) set({ savedText: before, savedPins: pinsBefore });
           throw err;
         } finally {
           savesBeingStored.delete(mark);
@@ -3669,7 +3719,7 @@ export const useAppStore = create<AppState>((set, get) => {
       pushUndo({ pins: true });
       get().driveDetach(); // the attached Drive file no longer holds this model
       forgetParseResult(); // the loaded model did not come from the open text
-      takeDownLibraryNote();
+      takeDownLibraryNote(true);
       model.reset(data);
       set((s) => ({
         projectName: name,
@@ -3683,7 +3733,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       afterMutation();
       // The project as stored: what this browser holds.
-      set({ savedText: savedTextNow() });
+      set((s) => ({ savedText: savedTextNow(), savedPins: pinsMark(s.diagramPins) }));
       // (Re)load the library when the saved project predates library support
       // (a no-op merge when it already carries one) and bind references — done
       // asynchronously so a large library never blocks the load.
@@ -3702,7 +3752,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model } = get();
       const result = ioImportModel(text, fmt);
       forgetParseResult(); // an import carries no retractable parse result
-      takeDownLibraryNote();
+      takeDownLibraryNote(true);
       pushUndo({ pins: true });
       get().driveDetach(); // the attached Drive file no longer holds this model
       withCommandMutation(() => model.reset(result.model.toJSON()));
@@ -3980,7 +4030,7 @@ export const useAppStore = create<AppState>((set, get) => {
       pushUndo();
       get().driveDetach(); // another branch's model is not what the attached Drive file holds
       forgetParseResult(); // the branch head did not come from the open text
-      takeDownLibraryNote();
+      takeDownLibraryNote(true);
       withCommandMutation(() =>
         model.reset(api.repository.getModelAtCommit(branch.headCommitId).toJSON()),
       );
@@ -3994,7 +4044,8 @@ export const useAppStore = create<AppState>((set, get) => {
         queryResult: null,
         rev: s.rev + 1,
       }));
-      // The branch head holds what was loaded: nothing unsaved.
+      // The branch head holds the text it loaded: nothing unsaved there. The boxes
+      // stay as they were, and unsaved: a branch head holds none.
       set({ savedText: savedTextNow() });
       void get().rebuildDiagram();
       get().refreshVersions();
@@ -4212,8 +4263,9 @@ if (
         useAppStore.setState({
           undoStack: [],
           redoStack: [],
-          linkedModel: { ...linked, status: 'loaded' },
+          linkedModel: { ...linked, status: 'loaded', projectName: useAppStore.getState().projectName },
           savedText: savedTextNow(),
+          savedPins: pinsMark(useAppStore.getState().diagramPins),
         });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
@@ -4260,7 +4312,7 @@ export async function openText(text: string, fmt: ModelFormat): Promise<void> {
     // that note as they were.
     if (useAppStore.getState().undoStack !== st.undoStack) {
       useAppStore.setState({ diagramPins: {} });
-      takeDownLibraryNote();
+      takeDownLibraryNote(true);
     }
   } else {
     st.importModel(text, fmt);
@@ -4859,6 +4911,9 @@ function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void
   // that kept typed text back says so over it — it standing must never let
   // one go unsaid — and one that kept nothing back leaves it.
   const library = drive.notice !== null && drive.notice === libraryNote?.notice;
+  // An export's note held behind another notice is superseded by a newer note
+  // of either kind, and by an export that holds the text.
+  if (by === 'export') heldExportNote = null;
   if (kept !== null && (drive.notice === null || standing !== null || library)) {
     const message =
       by === 'save'
@@ -4870,11 +4925,23 @@ function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void
           : DRIVE_MESSAGES.typedTextNotExported(kept.line);
     const notice: DriveNotice = { kind: 'info', message, retryable: false };
     keptBackNote = { notice, by };
+    heldExportNote = null;
     useAppStore.setState((s) => ({ drive: { ...s.drive, notice } }));
+  } else if (kept !== null && by === 'export') {
+    // A notice of another kind stands (a Drive error, `<name> closed`): the
+    // file lacks the typed text all the same, so the note waits for the strip.
+    const message = kept === 'room' ? DRIVE_MESSAGES.typedTextNotExportedInRoom : DRIVE_MESSAGES.typedTextNotExported(kept.line);
+    heldExportNote = { kind: 'info', message, retryable: false };
   } else if (kept === null && standing?.by === by) {
     useAppStore.setState((s) => ({ drive: { ...s.drive, notice: null } }));
   }
 }
+
+/**
+ * The note an export that kept typed text back could not put up, because a
+ * notice of another kind stood: it goes up once that notice has gone.
+ */
+let heldExportNote: DriveNotice | null = null;
 
 /**
  * The note {@link sayNotIntoLibrary} put up last — or holds back (`held`)
@@ -4894,7 +4961,16 @@ let libraryNote: { notice: DriveNotice; held: boolean } | null = null;
  * until that one has gone, then goes up.
  */
 function sayNotIntoLibrary(what: 'new' | number): void {
-  const notice: DriveNotice = { kind: 'info', message: DRIVE_MESSAGES.notIntoLibrary(what), retryable: false };
+  sayLibraryNote(DRIVE_MESSAGES.notIntoLibrary(what));
+}
+
+/**
+ * The same note for the refusals that change nothing: a library element not
+ * moved into the user's model (`libraryStays`), a type not set on one
+ * (`notTypedInLibrary`). It stands as {@link sayNotIntoLibrary}'s does.
+ */
+function sayLibraryNote(message: string): void {
+  const notice: DriveNotice = { kind: 'info', message, retryable: false };
   const standing = useAppStore.getState().drive.notice;
   const replaces = standing === null || standing === libraryNote?.notice || standing === keptBackNote?.notice;
   libraryNote = { notice, held: !replaces };
@@ -4905,9 +4981,11 @@ function sayNotIntoLibrary(what: 'new' | number): void {
  * Take the library note down, or forget it while it is held — Undo and Redo
  * call it: the element it names may be back where it was, or gone. So do New,
  * Open, Import, a file opened as text and a branch switch, which replace the
- * model it is about. A notice of another kind standing is left as it is.
+ * model it is about (`replaced`: an export's held note, about the model
+ * exported, goes too). A notice of another kind standing is left as it is.
  */
-function takeDownLibraryNote(): void {
+function takeDownLibraryNote(replaced = false): void {
+  if (replaced) heldExportNote = null;
   if (libraryNote === null) return;
   const standing = useAppStore.getState().drive.notice === libraryNote.notice;
   libraryNote = null;
@@ -4915,9 +4993,18 @@ function takeDownLibraryNote(): void {
 }
 
 // A held library note goes up once the notice it waited behind has gone:
-// dismissed, or taken down by what it was about.
-useAppStore.subscribe((state) => {
-  if (libraryNote?.held !== true || state.drive.notice !== null) return;
+// dismissed, or taken down by what it was about. An export's held note goes up
+// the same way, first — the file lacking typed text is the older worry.
+useAppStore.subscribe(() => {
+  if (useAppStore.getState().drive.notice !== null) return;
+  if (heldExportNote !== null) {
+    const notice = heldExportNote;
+    heldExportNote = null;
+    keptBackNote = { notice, by: 'export' };
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice } }));
+    return;
+  }
+  if (libraryNote?.held !== true) return;
   const { notice } = libraryNote;
   libraryNote = { notice, held: false };
   useAppStore.setState((s) => ({ drive: { ...s.drive, notice } }));
@@ -5005,7 +5092,7 @@ function refreshAfterLibraryLoad(): void {
     // is waiting: the text then lags the model, and carrying it would count
     // that edit as saved.
     const carried =
-      text.serializeError === null && text.textBuffer !== undefined && !recomputePending() && !browserDirty(s)
+      text.serializeError === null && text.textBuffer !== undefined && !recomputePending() && !browserTextDirty(s)
         ? { savedText: withFinalNewline(text.textBuffer) }
         : {};
     // A save still being stored is that save in the new layout: its refusal

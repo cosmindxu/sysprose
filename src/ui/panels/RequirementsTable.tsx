@@ -25,6 +25,7 @@
 
 import { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
+import { commitAndFocusSave } from '../commands';
 import { buildRequirementsTable } from '@diagram/index';
 import type { ReqAttrColumn, ReqReference, ReqRefColumn, ReqRow } from '@diagram/index';
 import { isAnnotation, isRelationship, type ElementId, type ElementRecord } from '@core/index';
@@ -195,8 +196,10 @@ export function RequirementsTable(): JSX.Element {
           onClick={(e) => e.stopPropagation()}
           onBlur={(e) => commitScalar(row.id, col, e.currentTarget.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-            else if (e.key === 'Escape') {
+            if (e.key === 'Enter') {
+              const box = e.currentTarget;
+              commitAndFocusSave(box, () => box.blur());
+            } else if (e.key === 'Escape') {
               e.stopPropagation();
               setNoteRefusal(null); // the attempt was withdrawn, so its reason goes with it
               setEditing(null);
@@ -295,8 +298,10 @@ export function RequirementsTable(): JSX.Element {
             setEditingAttr(null);
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-            else if (e.key === 'Escape') {
+            if (e.key === 'Enter') {
+              const box = e.currentTarget;
+              commitAndFocusSave(box, () => box.blur());
+            } else if (e.key === 'Escape') {
               e.stopPropagation();
               setEditingAttr(null);
             }

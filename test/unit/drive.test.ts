@@ -3588,11 +3588,14 @@ describe('DriveStrip — the strip under the toolbar, and the gate a ?drive= lin
       expect(st().textDirty, 'kept as typed').toBe(true);
       expect(st().undoStack).toHaveLength(undo);
       // ...and the strip says so, as Save and Ctrl/Cmd+S say it: the `}`
-      // missing at the end of the text, line 5. Put away, the row is back.
-      expect(status()).toBe('info');
+      // missing at the end of the text, line 5. The row is still there, with
+      // the note on a line of its own under it; put away, the note is gone.
+      expect(status()).toBe('offline');
       expect(st().drive.notice?.message).toBe(DRIVE_MESSAGES.typedTextKeptBack(5));
+      expect(item('drive-strip-note')).toHaveTextContent(DRIVE_MESSAGES.typedTextKeptBack(5));
       fireEvent.click(item('drive-strip-dismiss'));
       expect(status()).toBe('offline');
+      absent('drive-strip-note');
       await act(async () => {
         fireEvent.click(item('drive-strip-save-local'));
         await whenLibrarySettled();
@@ -3602,6 +3605,38 @@ describe('DriveStrip — the strip under the toolbar, and the gate a ?drive= lin
     } finally {
       act(() => st().model.reset(snapshot));
     }
+  });
+
+  /**
+   * An `info` note (a save or an export kept typed text back, an element went
+   * to the top level) used to outrank the rows for the file: the row that says
+   * the file lacks the model was not shown. It is a line of its own under the
+   * row now, and stands as the row only when there is none.
+   */
+  it('shows an info note on a line under the file’s row, not in place of it', () => {
+    const info = { kind: 'info' as const, message: DRIVE_MESSAGES.typedTextKeptBack(3), retryable: false };
+    const ready: DriveState = { ...initialDriveState, configStatus: 'ready', config: CONFIG, account: ACCOUNT, file: FILE, notice: info };
+    expect(driveStripStatus({ ...ready, online: false }, true)).toBe('offline');
+    expect(driveStripStatus(ready, true)).toBe('dirty');
+    expect(driveStripStatus({ ...ready, file: attachedFile({ trashed: true }) }, false)).toBe('gone');
+    expect(driveStripStatus({ ...ready, file: attachedFile({ canEdit: false }) }, false)).toBe('readonly');
+    expect(driveStripStatus({ ...ready, pending: { op: 'save' } }, true)).toBe('expired');
+    expect(driveStripStatus(ready, false)).toBe('clean');
+    expect(driveStripStatus({ ...ready, file: null }, false), 'no row for a file: the note is the row').toBe('info');
+    // An error still outranks the file's row, and the note is not shown under it.
+    expect(driveStripStatus({ ...ready, notice: { ...info, kind: 'error' } }, true)).toBe('error');
+
+    setDrive({ account: ACCOUNT, authReady: true, file: attachedFile(), online: true, notice: info });
+    act(() => useAppStore.setState({ textBuffer: EDITED }));
+    show();
+    expect(status()).toBe('dirty');
+    expect(strip()).toHaveTextContent('Swarm.sysml · unsaved changes');
+    expect(item('drive-strip-save')).toBeTruthy();
+    expect(item('drive-strip-note')).toHaveTextContent(DRIVE_MESSAGES.typedTextKeptBack(3));
+    fireEvent.click(item('drive-strip-dismiss'));
+    expect(st().drive.notice).toBeNull();
+    absent('drive-strip-note');
+    expect(status()).toBe('dirty');
   });
 
   it('says the sign-in expires soon in its last two minutes, and that it expired once it has', () => {

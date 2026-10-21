@@ -713,6 +713,12 @@ export interface ContractClauseCell {
   expression: string;
   /** Where it was written: on the requirement, or inside a case objective. */
   via: 'requirement' | 'objective';
+  /**
+   * The qualified name of the element whose body holds this clause when this
+   * row inherited it, `null` for a clause the row wrote itself. Marked in the
+   * view the way the terminal's `contracts` marks it: `(inherited)`.
+   */
+  inheritedFrom: string | null;
   /** Did every unit/typing gate accept it? */
   encodable: boolean;
   /** The branchable refusal reason, when it did not. */
@@ -755,6 +761,13 @@ export interface ContractRow {
    * to say so rather than claim its clauses live elsewhere.
    */
   inheritedClauses: number;
+  /**
+   * The inherited clauses themselves, bodies included, each marked with the
+   * element that holds it ({@link ContractClauseCell.inheritedFrom}). Shown
+   * beside the declared ones and never counted with them: the clause is still
+   * filed once, on the element whose body holds it.
+   */
+  inheritedClauseCells: ContractClauseCell[];
   /**
    * Relations a gate refused among the clauses this contract DECLARED, with
    * the reason each was refused for.

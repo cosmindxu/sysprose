@@ -45,3 +45,20 @@ test('palette: armed-tool hint + Escape-cancel; no drawing tools on non-graph vi
 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
+
+/**
+ * Putting the palette away disarms an armed tool: the hint that names it goes with
+ * the column, so the next canvas click must not place an element the screen no
+ * longer announces. Brought back, the palette shows no tool armed.
+ */
+test('palette: putting the column away disarms the armed tool', async ({ page }) => {
+  await gotoApp(page);
+  const partTool = page.locator('[data-testid="palette-tool"][data-kind="PartUsage"]').first();
+  await partTool.click();
+  await expect(page.getByTestId('palette-hint')).toContainText('Placing');
+
+  await page.getByTestId('palette-collapse').click();
+  await page.getByTestId('palette-expand').click();
+  await expect(page.getByTestId('palette-hint')).toHaveCount(0);
+  await expect(partTool).not.toHaveClass(/is-active/);
+});

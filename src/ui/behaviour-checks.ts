@@ -61,7 +61,9 @@ export function withholds(m: MachineReach): boolean {
  * walked machine nor a descendant of one (N of A.1): a state the walk said
  * nothing about, because it belongs to no machine the walk covered.
  */
-export function unwalkedStates(model: Model, r: ReachReport): ElementId[] {
+export function unwalkedStates(model: Model, r: ReachReport, scopeId?: ElementId): ElementId[] {
+  // A report scoped to an element says nothing of the states outside it, so none of them is "unwalked".
+  const inScope = scopeId === undefined ? undefined : new Set<ElementId>([scopeId, ...model.descendants(scopeId).map((d) => d.id)]);
   const walked = new Set<ElementId>();
   for (const m of r.machines) {
     walked.add(m.machine.id);
@@ -70,7 +72,7 @@ export function unwalkedStates(model: Model, r: ReachReport): ElementId[] {
   return model
     .all()
     .filter((el) => el.attrs.isLibrary !== true && (el.eClass === 'StateUsage' || el.eClass === 'ExhibitStateUsage'))
-    .filter((el) => !walked.has(el.id))
+    .filter((el) => !walked.has(el.id) && (inScope === undefined || inScope.has(el.id)))
     .map((el) => el.id);
 }
 
@@ -96,11 +98,11 @@ function diagnosticRows(r: ReachReport): CheckRow[] {
 export function reachResult(
   r: ReachReport,
   model: Model,
-  o: { fileName: string; health?: LoadHealth },
+  o: { fileName: string; health?: LoadHealth; scopeId?: ElementId },
 ): CheckResult {
   const M = r.machines.length;
   const K = r.machines.filter(withholds).length;
-  const N = unwalkedStates(model, r);
+  const N = unwalkedStates(model, r, o.scopeId);
   const F = r.diagnostics.filter((d) => d.severity === 'error' || d.severity === 'warning').length;
   const D = o.health === undefined || o.health.errors !== 0;
 
@@ -110,7 +112,10 @@ export function reachResult(
   if (D) clauses.push(notClean(o.health));
   const clauseText = clauses.map((c) => `; ${c}`).join('');
 
-  const lines = reachLines(r, { name: commandFileName(o.fileName) });
+  const lines = reachLines(r, {
+    name: commandFileName(o.fileName),
+    ...(o.scopeId !== undefined ? { scopeName: model.qualifiedName(o.scopeId) || o.scopeId } : {}),
+  });
   const head = lines[0]?.text ?? '';
   const noMachine = (lines.find((l) => l.kind === 'empty')?.text ?? '').trim();
 
@@ -126,7 +131,7 @@ export function reachResult(
 
   // The per-state marks and the status-panel summary they feed (A.4), plus the
   // per-edge marks (S7: dead transitions, undecided guards).
-  const { marks, edgeMarks, summary: markSummary } = reachMarks(model, r);
+  const { marks, edgeMarks, summary: markSummary } = reachMarks(model, r, o.scopeId);
 
   if (M === 0 && !D) {
     const summary = `${noMachine}${N.length > 0 ? `; ${N.length} state(s) belong to no walked machine` : ''}`;
@@ -163,10 +168,10 @@ export function reachResult(
   };
 }
 
-/** The reach entry: the report, judged. */
-export function reachCheck(ctx: CheckContext, fileName: string): CheckResult {
-  const r = reachReport(ctx.model);
-  return reachResult(r, ctx.model, { fileName, health: ctx.loadHealth });
+/** The reach entry: the report, judged; narrowed to `scopeId` and what it contains, as `--element` narrows it. */
+export function reachCheck(ctx: CheckContext, fileName: string, scopeId?: ElementId): CheckResult {
+  const r = reachReport(ctx.model, scopeId !== undefined ? { scopeId } : {});
+  return reachResult(r, ctx.model, { fileName, health: ctx.loadHealth, scopeId });
 }
 
 /* ──────────────────────────── check-behaviour, judged ───────────────────── */
@@ -524,6 +529,7 @@ export interface MarkSummary {
 export function reachMarks(
   model: Model,
   r: ReachReport,
+  scopeId?: ElementId,
 ): {
   marks: Record<ElementId, ReachMark>;
   edgeMarks: Record<ElementId, EdgeMark>;
@@ -587,7 +593,7 @@ export function reachMarks(
   }
 
   // 3. `not walked` — the N states of A.1, under no walked machine at all.
-  const unwalked = unwalkedStates(model, r);
+  const unwalked = unwalkedStates(model, r, scopeId);
   for (const id of unwalked) put(id, 'not-walked');
 
   return {

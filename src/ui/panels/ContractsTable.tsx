@@ -42,9 +42,16 @@ function ClauseLine({ clause }: { clause: ContractClauseCell }): JSX.Element {
       data-testid="contract-clause"
       data-role={clause.role}
       data-encodable={clause.encodable ? 'yes' : 'no'}
+      data-inherited={clause.inheritedFrom ? 'yes' : undefined}
       title={clause.refusal ?? `${clause.fragment} · written on the ${clause.via}`}
     >
       <code>{clause.expression}</code>
+      {clause.inheritedFrom && (
+        <span className="contract-origin" data-testid="contract-clause-inherited">
+          {' '}
+          (inherited from {clause.inheritedFrom})
+        </span>
+      )}
       {!clause.encodable && (
         <span className="contract-refusal" data-testid="contract-refusal">
           {' '}
@@ -52,6 +59,24 @@ function ClauseLine({ clause }: { clause: ContractClauseCell }): JSX.Element {
         </span>
       )}
     </div>
+  );
+}
+
+/** A cell's clauses: the ones the row wrote, then the inherited ones of its role. */
+function cells(
+  declared: ContractClauseCell[],
+  inherited: ContractClauseCell[],
+  role: ContractClauseCell['role'],
+): JSX.Element | string {
+  const all = [...declared, ...inherited.filter((c) => c.role === role)];
+  return all.length === 0 ? (
+    EMPTY
+  ) : (
+    <>
+      {all.map((c) => (
+        <ClauseLine key={c.id} clause={c} />
+      ))}
+    </>
   );
 }
 
@@ -100,14 +125,10 @@ function Row({
         {row.subjectOrigin && <span className="contract-origin"> ({row.subjectOrigin})</span>}
       </td>
       <td data-testid="contract-assumes">
-        {row.assumptions.length === 0
-          ? EMPTY
-          : row.assumptions.map((c) => <ClauseLine key={c.id} clause={c} />)}
+        {cells(row.assumptions, row.inheritedClauseCells, 'assume')}
       </td>
       <td data-testid="contract-guarantees">
-        {row.guarantees.length === 0
-          ? EMPTY
-          : row.guarantees.map((c) => <ClauseLine key={c.id} clause={c} />)}
+        {cells(row.guarantees, row.inheritedClauseCells, 'require')}
       </td>
       <td data-testid="contract-refused">{row.refused.length}</td>
       <td data-testid="contract-fragment">{row.fragment}</td>

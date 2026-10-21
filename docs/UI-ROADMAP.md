@@ -76,7 +76,7 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 - **Reduced-motion** — a global `prefers-reduced-motion` CSS reset (zeroes transitions/animations/scroll-behavior) + the diagram fit animations gated to 0ms. `E gui-a11y`.
 - **Focus-visible rings** — a consistent, token-driven keyboard focus ring on every interactive control (`:focus-visible` only, so no mouse-click outline noise). `E gui-a11y`.
 - **Arrow-key tree navigation** — the Explorer tree is focusable (`role="tree"`); ↑/↓ move the selection through the visible rows, → expands / descends, ← collapses / ascends (a click focuses the tree so keys work after it). `E gui-tree-keys`.
-- **Context menus close when the canvas moves** — wheel-zoom / pan dismiss the fixed-position menu (scoped to the React Flow canvas so an unrelated panel scroll — e.g. the Explorer selection-reveal — can't self-close it). Shared `useContextMenuChrome`. `E gui-context-menu`.
+- **Context menus close when the canvas moves** — wheel-zoom and a drag-pan (the pan's mousedown, seen in the capture phase because d3-zoom stops it) dismiss the fixed-position menu (scoped to the React Flow canvas so an unrelated panel scroll — e.g. the Explorer selection-reveal — can't self-close it). Shared `useContextMenuChrome`. `E gui-context-menu`.
 - **Context-menu icons** — each item carries a leading glyph (✎ Rename · ＋ Add · ⧉ Copy · ⎘ Duplicate · ⊙ Zoom · ✕ Delete …), fixed-width so labels align (`aria-hidden`).
 
 ### Diagram editing
@@ -213,7 +213,6 @@ without the nested-layout cost of P1 (the option off, or the compound layout fix
 ## Known limitations (tracked, not yet scheduled)
 - Regroup: a *deep-inside → fully-outside* crossing across ≥2 **new** bundle levels is delegated at every level (fixed) — but the general nested-composite delegation for arbitrary depth is only as deep as the reachable configs; see `docs/architecture/04-dependency-graph.md`.
 - Explorer local UI state (focus/filter/showLibrary) resets when the panel is collapsed (the Explorer unmounts). Acceptable; would need lifting to the store to persist.
-- The context menus don't dismiss when the React-Flow canvas is panned (RF eats the event); they close on action / outside-click / Escape.
 - Edge reconnection re-targets through the model → full rebuild (matching the app's `onConnect` pattern), so the dragged edge briefly snaps back before the relaid diagram shows the new endpoint. Cosmetic; final state is correct. It also does no endpoint-type validation (a free-form modeler choice — validation surfaces incompatible links); self-loops are allowed.
 
 *This roadmap is maintained alongside the code — update it as items ship.*

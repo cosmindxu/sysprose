@@ -19,6 +19,7 @@ import {
   type ElementRecord,
 } from '@core/index';
 import { useAppStore } from '../store';
+import { commitAndFocusSave } from '../commands';
 
 /** MIME-ish key used to carry the dragged element id between rows. */
 const DRAG_KEY = 'application/x-sysml-element-id';
@@ -212,8 +213,10 @@ function TreeRow({
             onClick={(e) => e.stopPropagation()}
             onBlur={(e) => commitRename(e.currentTarget.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') commitRename(e.currentTarget.value);
-              else if (e.key === 'Escape') setRenamingId(null);
+              if (e.key === 'Enter') {
+                const box = e.currentTarget;
+                commitAndFocusSave(box, () => commitRename(box.value));
+              } else if (e.key === 'Escape') setRenamingId(null);
             }}
           />
         ) : (

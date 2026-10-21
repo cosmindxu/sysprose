@@ -9,7 +9,7 @@
  * the shared {@link useAppStore}. This module only owns the layout.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import '@xyflow/react/dist/style.css';
 import './layout.css';
 
@@ -33,6 +33,35 @@ import { BottomPanel } from './panels/BottomPanel';
 import { LinkedModelBanner } from './panels/LinkedModelBanner';
 import { DriveLinkGate, DriveStrip, driveLinkHolds } from './panels/DriveStrip';
 import { modelFileName } from './linked-model';
+
+/**
+ * A side column put away or brought back swaps its control for the opposite one (two
+ * trees), and a focused button that leaves the page leaves the focus on <body>, where
+ * a reflex Backspace would delete the selection. So the keyboard goes to the control
+ * that took its place — only when the pressed one held the focus (a mouse click that
+ * gave none stays put), as the palette does (`Palette.tsx`, `refocus`).
+ */
+function useColumnToggle(): {
+  collapsed: boolean;
+  hideRef: React.RefObject<HTMLButtonElement>;
+  showRef: React.RefObject<HTMLButtonElement>;
+  toggle(e: React.MouseEvent<HTMLButtonElement>): void;
+} {
+  const [collapsed, setCollapsed] = useState(false);
+  const hideRef = useRef<HTMLButtonElement>(null);
+  const showRef = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    (collapsed ? showRef : hideRef).current?.focus();
+  }, [collapsed]);
+  const toggle = (e: React.MouseEvent<HTMLButtonElement>): void => {
+    refocus.current = document.activeElement === e.currentTarget;
+    setCollapsed(!collapsed);
+  };
+  return { collapsed, hideRef, showRef, toggle };
+}
 
 export function App(): JSX.Element {
   const api = useAppStore((s) => s.api);
@@ -98,8 +127,10 @@ export function App(): JSX.Element {
   // resizes within a clamp, a chevron collapses each side to a thin re-open rail.
   const [explorerW, setExplorerW] = useState(260);
   const [propertiesW, setPropertiesW] = useState(300);
-  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
-  const [propertiesCollapsed, setPropertiesCollapsed] = useState(false);
+  const explorerColumn = useColumnToggle();
+  const propertiesColumn = useColumnToggle();
+  const explorerCollapsed = explorerColumn.collapsed;
+  const propertiesCollapsed = propertiesColumn.collapsed;
   const [bottomCollapsed, setBottomCollapsed] = useState(false);
   const startResize = (which: 'explorer' | 'properties') => (e: React.PointerEvent) => {
     e.preventDefault();
@@ -193,11 +224,12 @@ export function App(): JSX.Element {
       <div className="app-body">
         {explorerCollapsed ? (
           <button
+            ref={explorerColumn.showRef}
             className="app-rail app-rail-left"
             data-testid="explorer-expand"
             title="Show Explorer"
             aria-label="Show Explorer"
-            onClick={() => setExplorerCollapsed(false)}
+            onClick={explorerColumn.toggle}
           >
             <span className="app-rail-chev">›</span>
             <span className="app-rail-label">Explorer</span>
@@ -206,11 +238,12 @@ export function App(): JSX.Element {
           <>
             <aside className="app-explorer" style={{ width: explorerW, flexBasis: explorerW }}>
               <button
+                ref={explorerColumn.hideRef}
                 className="app-collapse-btn"
                 data-testid="explorer-collapse"
                 title="Collapse Explorer"
                 aria-label="Collapse Explorer"
-                onClick={() => setExplorerCollapsed(true)}
+                onClick={explorerColumn.toggle}
               >
                 ‹
               </button>
@@ -241,11 +274,12 @@ export function App(): JSX.Element {
         </main>
         {propertiesCollapsed ? (
           <button
+            ref={propertiesColumn.showRef}
             className="app-rail app-rail-right"
             data-testid="properties-expand"
             title="Show Properties"
             aria-label="Show Properties"
-            onClick={() => setPropertiesCollapsed(false)}
+            onClick={propertiesColumn.toggle}
           >
             <span className="app-rail-chev">‹</span>
             <span className="app-rail-label">Properties</span>
@@ -265,11 +299,12 @@ export function App(): JSX.Element {
               style={{ width: propertiesW, flexBasis: propertiesW }}
             >
               <button
+                ref={propertiesColumn.hideRef}
                 className="app-collapse-btn app-collapse-btn-right"
                 data-testid="properties-collapse"
                 title="Collapse Properties"
                 aria-label="Collapse Properties"
-                onClick={() => setPropertiesCollapsed(true)}
+                onClick={propertiesColumn.toggle}
               >
                 ›
               </button>

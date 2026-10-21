@@ -994,8 +994,10 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
  * it; and an edit to it did not read unsaved (what is saved is compared as
  * text), so New, Open ▾ and Import dropped it without asking. Asked to go
  * there, a user element now goes to the top level of the user's model, and
- * the strip under the toolbar says so. (A line drawn from a library box and
- * the Type field of a library usage are not among these yet: see TODO.md.)
+ * the strip under the toolbar says so. A line drawn from a library box goes to
+ * the top level too, and the Type field of a library usage types nothing
+ * (connect and bindType, below). The other way round, a library element
+ * dragged onto an element of the user's stays in the library.
  */
 describe('createElement, reparent, reparentMany, paste and the SDK never put a user element inside the standard library', () => {
   const sdk = () => st().api;
@@ -1094,8 +1096,9 @@ describe('createElement, reparent, reparentMany, paste and the SDK never put a u
     expect(ownerOf(stray)).toBeNull();
     // A library element moves within the library as it always did.
     useAppStore.setState({ drive: initialDriveState });
-    st().reparent(shelved, stray);
-    expect(ownerOf(shelved)).toBe(stray);
+    const bin = st().model.create('Package', { declaredName: 'Bin', ownerId: shelf, attrs: { isLibrary: true } }).id;
+    st().reparent(shelved, bin);
+    expect(ownerOf(shelved)).toBe(bin);
     expect(st().drive.notice).toBeNull();
   });
 
@@ -1118,6 +1121,87 @@ describe('createElement, reparent, reparentMany, paste and the SDK never put a u
     expect(ownerOf(top)).toBeNull();
     expect(st().undoStack.length).toBe(before);
     expect(st().drive.notice).toEqual(said(1));
+  });
+
+  it('connect from an element in the library puts the relationship at the top level of the model, in one undo step, and says so', () => {
+    const wheel = st().createElement('PartDefinition', own, 'Wheel');
+    const undos = st().undoStack.length;
+    // A typing / specialization is owned by its source; any other goes beside it — both would sit in the library.
+    const special = st().connect(shelved, wheel, 'Specialization');
+    const depends = st().connect(stray, wheel, 'Dependency');
+    expect([ownerOf(special), ownerOf(depends)], 'not inside the library').toEqual([null, null]);
+    expect(st().model.get(special)?.attrs.isLibrary).toBeUndefined();
+    expect(st().drive.notice).toEqual(said('new'));
+    expect(st().undoStack.length).toBe(undos + 2);
+    flushRecompute();
+    expect(st().textBuffer, 'the text holds both').toMatch(/subtype Shelf::Shelved :> Hangar::Wheel;[\s\S]*dependency Shelf::Stray to Hangar::Wheel;/);
+    st().undo();
+    expect(st().model.has(depends)).toBe(false);
+    expect(st().drive.notice, 'Undo takes the note down').toBeNull();
+
+    // From an element of the user's own, nothing changes, and nothing is said.
+    useAppStore.setState({ drive: initialDriveState });
+    const own2 = st().createElement('PartDefinition', own, 'Axle');
+    const inOwn = st().connect(own2, wheel, 'Specialization');
+    expect(ownerOf(inOwn)).toBe(own2);
+    expect(st().drive.notice).toBeNull();
+  });
+
+  it('bindType on an element in the library changes nothing and says so — a blur that changes nothing is silent', () => {
+    const motor = st().createElement('PartDefinition', null, 'Motor');
+    const usage = st().model.create('PartUsage', { declaredName: 'drive', ownerId: shelf, attrs: { isLibrary: true } }).id;
+    const undos = st().undoStack.length;
+    const size = st().model.all().length;
+    st().bindType(usage, '');
+    expect(st().drive.notice, 'nothing to remove: nothing to say').toBeNull();
+    st().bindType(usage, 'Motor');
+    expect(st().model.all().length).toBe(size);
+    expect(st().undoStack.length, 'no undo step').toBe(undos);
+    expect(st().drive.notice).toEqual({ kind: 'info', message: DRIVE_MESSAGES.notTypedInLibrary, retryable: false });
+    // An element of the user's own is typed as before.
+    useAppStore.setState({ drive: initialDriveState });
+    const mine = st().createElement('PartUsage', own, 'mine');
+    st().bindType(mine, 'Motor');
+    expect(st().model.relationshipsFrom(mine).some((r) => r.eClass === 'FeatureTyping' && r.target?.[0] === motor)).toBe(true);
+    expect(st().drive.notice).toBeNull();
+  });
+
+  const stays = (n: number) => ({ kind: 'info', message: DRIVE_MESSAGES.libraryStays(n), retryable: false });
+
+  it('reparent of a library element under one of the user\'s moves nothing and says so — within the library, or to the top level, it moves', () => {
+    const undos = st().undoStack.length;
+    st().reparent(shelved, own);
+    expect(ownerOf(shelved)).toBe(shelf);
+    expect(st().undoStack.length, 'no undo step').toBe(undos);
+    expect(st().drive.notice).toEqual(stays(1));
+    flushRecompute();
+    expect(st().textBuffer).not.toContain('Shelved');
+
+    useAppStore.setState({ drive: initialDriveState });
+    st().reparent(shelved, stray);
+    expect(ownerOf(shelved)).toBe(stray);
+    st().reparent(shelved, null);
+    expect(ownerOf(shelved)).toBeNull();
+    expect(st().drive.notice).toBeNull();
+
+    // An owner that is not in the model is no element of the user's: not this note.
+    st().reparent(shelved, 'nope');
+    expect(st().drive.notice).toBeNull();
+  });
+
+  it('reparentMany leaves the library elements where they are, says how many, and moves the rest', () => {
+    const a = st().createElement('PartDefinition', null, 'A');
+    const other = st().model.create('PartDefinition', { declaredName: 'Other', ownerId: shelf, attrs: { isLibrary: true } }).id;
+    st().reparentMany([shelved, other], own);
+    expect([ownerOf(shelved), ownerOf(other)]).toEqual([shelf, shelf]);
+    expect(st().drive.notice).toEqual(stays(2));
+
+    useAppStore.setState({ drive: initialDriveState });
+    const undos = st().undoStack.length;
+    st().reparentMany([shelved, a], own);
+    expect([ownerOf(shelved), ownerOf(a)], 'the user\'s own element still moves').toEqual([shelf, own]);
+    expect(st().drive.notice).toEqual(stays(1));
+    expect(st().undoStack.length).toBe(undos + 1);
   });
 
   it('the SDK on window.sysml does the same — create and reparent, alone or in commit(fn) — and a library element goes where it is asked', () => {
@@ -3902,6 +3986,18 @@ describe('google drive', () => {
       expect(checkFileName(st())).toBe('Fleet plan.sysml');
     });
 
+    it('the Check panel’s commands name a linked model by its URL’s file name, the Drive file first', async () => {
+      const linkedModel = { url: 'https://example.org/models/views-tour.sysml', source: null, status: 'loaded' as const, projectName: 'Untitled' };
+      expect(checkFileName({ drive: { file: null }, projectName: 'Untitled', linkedModel })).toBe('views-tour.sysml');
+      expect(checkFileName({ drive: { file: null }, projectName: 'Untitled', linkedModel: { ...linkedModel, status: 'failed' } })).toBe('Untitled.sysml');
+      expect(checkFileName({ drive: { file: { name: 'Fleet.sysml' } }, projectName: 'Untitled', linkedModel })).toBe('Fleet.sysml');
+      // Another model replaced the linked one (New renames the project): its name, not the link's.
+      useAppStore.setState({ linkedModel: { ...linkedModel, projectName: st().projectName } });
+      expect(checkFileName(st())).toBe('views-tour.sysml');
+      st().newProject('Other');
+      expect(checkFileName(st())).toBe('Other.sysml');
+    });
+
     it('asks before leaving exactly while the attached file has unsaved changes', async () => {
       const leaving = () => new Event('beforeunload', { cancelable: true });
       let e = leaving();
@@ -4631,6 +4727,29 @@ describe('google drive', () => {
         st().setTextBuffer(BROKEN);
         runExportSysml();
         expect(drive().notice).toBe(refused);
+
+        // ...but the file lacks the typed text all the same: the export's note
+        // is held, and goes up once the strip is free.
+        st().driveDismiss();
+        expect(drive().notice, 'the held export note goes up when the strip is free').toEqual(exportNote);
+        st().driveDismiss();
+        expect(drive().notice).toBeNull();
+
+        // A held note is about the model exported: replacing it forgets the note.
+        useAppStore.setState((s) => ({ drive: { ...s.drive, notice: refused } }));
+        st().setTextBuffer(BROKEN);
+        runExportSysml();
+        st().newProject('Fresh');
+        st().driveDismiss();
+        expect(drive().notice, 'New forgot the held note').toBeNull();
+
+        // An export that holds the text in the meantime takes the held note down.
+        useAppStore.setState((s) => ({ drive: { ...s.drive, notice: refused } }));
+        runExportSysml();
+        st().setTextBuffer(SWARM.replace('Drone', 'Fin'));
+        runExportSysml();
+        st().driveDismiss();
+        expect(drive().notice, 'superseded: nothing to say').toBeNull();
       } finally {
         noDownload.mockRestore();
         exports.restore();
@@ -4855,6 +4974,36 @@ describe('unsaved work — what a command that replaces the model asks about', (
     expect(rootNames()).toEqual(['Swarm']);
     expect(named('Relay')).toBe(true);
     expect(unsaved(), 'Open').toBe(false);
+    await whenLibrarySettled();
+    expect(unsaved(), 'and still once its library merged').toBe(false);
+  });
+
+  it('counts a hand arrangement as unsaved work: New, Open and Import ask about it, Save and Open mark it, Undo back reads saved', async () => {
+    const box = (x: number) => ({ 'general|': { [rootId()]: { x, y: 20 } } });
+    expect(unsaved(), 'New').toBe(false);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(unsaved(), 'a box moved by hand, the text as saved').toBe(true);
+    const run = vi.fn();
+    st().driveGuard('New', 'dirty', run);
+    expect(run, 'New asks').not.toHaveBeenCalled();
+    expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    await st().driveRunPending('keep');
+
+    await st().saveProject('Swarm');
+    expect(unsaved(), 'Save marks the arrangement').toBe(false);
+    useAppStore.setState({ diagramPins: box(30) });
+    expect(unsaved(), 'moved again').toBe(true);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(unsaved(), 'moved back to where Save left it').toBe(false);
+    useAppStore.setState({ diagramPins: {} });
+    expect(unsaved(), 'auto-layout cleared the boxes Save held').toBe(true);
+
+    await st().loadProject('Swarm');
+    expect(st().diagramPins, 'Open brings the saved boxes').toEqual(box(10));
+    expect(unsaved(), 'Open marks them').toBe(false);
+    useAppStore.setState({ diagramPins: box(50) });
+    st().newProject('Fresh');
+    expect(unsaved(), 'New: nothing to lose').toBe(false);
     await whenLibrarySettled();
     expect(unsaved(), 'and still once its library merged').toBe(false);
   });

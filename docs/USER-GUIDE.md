@@ -392,12 +392,15 @@ brings the boxes back with the model. A file opened from Google Drive
 (**Browse Drive…**, **Recent**, a `?drive=` link) or from a `?model=` link
 starts from a fresh layout too, but Undo starts over there
 ([§8.1](#81-google-drive-optional)): an arrangement never saved with **Save**
-is gone for good, so press **Save** first. The boxes are not part of the
+is asked about first, as unsaved work, because it is gone for good once the file
+opens. The boxes are not part of the
 model's text: the Text view, the SysML and JSON exports and a Google Drive file
-never hold them. Moving a box is not an edit: it spends no Undo step, and the
-model does not read unsaved for it, so the question that guards a command
-which replaces the model ([§8](#8-what-is-kept-and-what-is-not)) is not asked
-for boxes. Press **Save** to keep an arrangement.
+never hold them. Moving a box is not an edit: it spends no Undo step. But the
+model does read unsaved for it, against the boxes **Save**, **Open ▾** or
+**New** left, so the question that guards a command which replaces the model
+([§8](#8-what-is-kept-and-what-is-not)) is asked for an arrangement too; moved
+back to where it was saved, it reads saved again. Press **Save** to keep an
+arrangement.
 
 ### Tables
 
@@ -418,6 +421,12 @@ the table it prints the exact command that does decide. A clause a unit or
 typing gate refused is shown with its reason rather than dropped, because a
 view that showed the clauses and hid the refusals would let you believe a
 requirement was fully encoded when half its body had been turned away.
+A clause a requirement inherits from a general type is shown too, body and all,
+in the **Assumes** or **Guarantees** cell after the ones it wrote, each marked
+`(inherited from <the element that holds it>)` — the terminal's `contracts`
+marks it `(inherited)` the same way. It is a disclosure and not a filing: the
+clause is still filed once, on the element whose body holds it, so the census
+under the table counts it there and nowhere else.
 
 The Requirements view edits the model directly: adding a chip creates the
 backing relationship, and ✕ deletes it. **+** on a chip cell opens a search box:
@@ -453,9 +462,9 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
-(the grouping); `src/ui/store.ts:320-333` (`diagramRootId`, the diagram
-scope), `1516-1671` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2491-2508` (`pinNodePositions`: the move itself), `2117-2174`
+(the grouping); `src/ui/store.ts:321-334` (`diagramRootId`, the diagram
+scope), `1536-1691` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2512-2529` (`pinNodePositions`: the move itself), `2117-2174`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
 `4228-4269` (`openText`: a file opened as text starts afresh).
 
@@ -517,7 +526,11 @@ them — not the Text view, not **Export ▾ → SysML**, not a Google Drive fil
 an element added under a library element (its **+**, or a palette tool with one
 selected), dragged onto one, or pasted onto one (`Ctrl/⌘ + V`), goes to the top
 level of your model instead, and the strip under the toolbar says so. One Undo
-takes it back, as any edit, and the note with it. Replacing the model — New,
+takes it back, as any edit, and the note with it. So does a line drawn from a
+library box (the relationship goes to the top level of your model). The other
+way round, a library element stays in the library: dragged onto an element of
+yours it does not move, and the strip says so; and the **Type** field on a
+library usage does not type it (the typed text stays in the box, no typing is made), and the strip says so. Replacing the model — New,
 Open, Import, a file opened from Drive — takes the note down too: it names an
 element of the model that is gone. For the same reason the **Documentation** box
 in Properties is read-only on a library element: it shows the library's own
@@ -601,11 +614,11 @@ hand on the model it restores (*Arranging by hand*,
 **Source of truth:** `src/ui/store.ts:1733-1829` (`RECOMPUTE_DEBOUNCE_MS`,
 `flushRecompute`: the recompute cycle), `1952-2037` (`recomputeNow`), `2039-2216`
 (`afterSdkEdit`: an SDK edit; `typedTextFirst`, `applyParsed`: a field's change over
-typed text), `872-919` (`inLibrary`, `userOwner`,
+typed text), `882-939` (`inLibrary`, `userOwner`,
 `sdkIntoLibrary`: nothing added to the standard library), `2807-2838`
 (`createElement`: a new element), `3127-3194` (`reparent`, `reparentMany`: a
-move), `4879-4924` (`libraryNote`: the note that says so), `3586-3599`
-(`applyText`), `4031-4077` (`undo`, `redo`), `4966-5024`
+move), `4879-4924` (`libraryNote`: the note that says so), `3635-3648`
+(`applyText`), `4082-4128` (`undo`, `redo`), `4966-5024`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
@@ -720,26 +733,26 @@ may legitimately differ, and the difference is spelled out under the table.
 | What satisfies / allocates what? | **Allocation** view † | `npm run sysprose -- trace model.sysml --relation satisfy` |
 | Which ports are wired? | **Interconnection** view † | `npm run sysprose -- connectivity model.sysml` |
 | What breaks if I change this? | Properties → *Used by* † | `npm run sysprose -- where-used model.sysml --element X` |
-| What did I declare and never use? | — | `npm run sysprose -- orphans model.sysml` |
+| What did I declare and never use? | Palette → Checks → **Unconnected definitions** → **Run** (`palette-check-run`) | `npm run sysprose -- orphans model.sysml` |
 | What guidance applies to this element? | — | `npm run sysprose -- prompts model.sysml --element X` |
 | What does each requirement assume and guarantee? | **Contracts** view † | `npm run sysprose -- contracts model.sysml` |
-| What must be shown, and what do the gates refuse? | — | `npm run sysprose -- obligations model.sysml` |
+| What must be shown, and what do the gates refuse? | Palette → Checks → **Obligations** → **Run** (`palette-check-run`) | `npm run sysprose -- obligations model.sysml` |
 | How do I write a clause the tool will accept? | — | `npm run sysprose -- property-draft model.sysml --element R` |
 | Would this clause pass the gates, and what does it say? | — | `npm run sysprose -- property-check model.sysml --element R --clause '…'` |
 | Does the verdict in the file still hold? | **Requirements** view → *Evidence* column † | `npm run sysprose -- evidence-status model.sysml` |
 | Write a run's verdicts into the file | — | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` |
 | Take them back off | — | `npm run sysprose -- evidence-detach model.sysml` |
-| Which contract failures break the top requirement? | — | `npm run sysprose -- fault-tree model.sysml --max-order 2` |
-| Which states can a machine reach, and where did the simulator hide a choice? | — | `npm run sysprose -- reach model.sysml` |
+| Which contract failures break the top requirement? | Palette → Checks → **Fault tree**: reads `not here` and gives this command (`palette-check-copy`) | `npm run sysprose -- fault-tree model.sysml --max-order 2` |
+| Which states can a machine reach, and where did the simulator hide a choice? | Palette → Checks → **Reachability** → **Run** (`palette-check-run`) | `npm run sysprose -- reach model.sysml` |
+| Does this behaviour pattern hold on every reachable configuration? | Palette → Checks → **Behaviour properties** → **Run** (`palette-check-run`) | `npm run sysprose -- check-behaviour model.sysml --element M` |
 
 † **Validate** re-runs the rule engine over the model already in the editor;
 `check` parses the file first and then applies those same rules. The
 **Allocation** view tabulates only the elements that take part in a link, where
 `trace` tabulates every element of the row and column kinds and so also shows
 what links to nothing. The **Interconnection** view *draws* the ports and
-connections; it computes no connectivity report — `connectivity` exists only in
-the terminal and the SDK, as do `orphans`, `prompts`, `obligations`,
-`property-draft`, `property-check`, `evidence-attach`, `evidence-detach` and
+connections; it computes no connectivity report — the palette's *Ports wired*
+check does, and `connectivity` prints it. `prompts`, `property-draft`, `property-check`, `evidence-attach`, `evidence-detach` and
 the depth walk behind `where-used`. The **Contracts** view projects the rows and
 the census `contractReport` returns, where `contracts` also prints the keyword
 inventory, the exclusion counts and every refusal reason, and can be scoped to
@@ -1565,6 +1578,12 @@ the registry holds. A value only a numeric solve produced is read at the
 solve's own tolerance: within it `==`, `<=` and `>=` hold, and a strict
 ordering or a `!=` is undecided — the solve does not know which side of the
 bound its value lies on.
+
+**Nonlinear and implicit values abstain, by design.** A constraint whose value
+is nonlinear (`x * x == -1.0`) or implicit (fixed only by an inequality, or by a
+product of unknowns) reads `?` on every surface; the solver's own binary64 value
+is never read in its place, because every verdict above rests on the decimals
+you wrote. This is the standing rule, not a gap waiting for a nonlinear solve.
 
 **Freeing a feature is a two-sided act.** `--free F` releases a value so the
 solver may vary it — but this tool derives no domain axiom from a quantity kind.
@@ -3451,7 +3470,7 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:3269-3451` (`runValidation`,
+**Source of truth:** `src/ui/store.ts:3318-3500` (`runValidation`,
 `solveParametric`: the four buttons), `2039-2216` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
@@ -3761,8 +3780,8 @@ commit in the Versions tab, or opened: a project from **Open ▾**, a `?model=`
 link, a Drive file, the branch the Versions tab loaded. **New** counts as
 saved, and so does the model the app starts with, so a first visit that
 touched nothing is never asked; Undo back to the saved model reads saved
-again. An import is not a save. A box moved by hand changes no text, so it is
-not asked about. A merge that meets conflicts (**manual**) loads nothing, and
+again. An import is not a save. Boxes moved by hand count too: they differ
+from the ones the last **Save**, **Open ▾** or **New** left (a commit in the Versions tab, a branch switch or a save to Google Drive does not hold them, and leaves them unsaved); an apply of text renews every element, so after one the boxes read as moved until the next **Save** (Undo of the apply reads saved). A merge that meets conflicts (**manual**) loads nothing, and
 asks nothing. **Save and continue** is disabled while text
 typed in the Text view has a syntax error — this browser keeps models, not
 text: fix it, or discard it. A command given while the browser is still
@@ -3795,14 +3814,14 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:790-808` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3603-3695` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `3937-4002` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4756-4766` (`mergeLoads`: a merge that loads),
-`4768-4877` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+`src/ui/store.ts:800-818` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3652-3745` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `3987-4053` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4808-4818` (`mergeLoads`: a merge that loads),
+`4820-4938` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
 (Save, and Export ▾ →
-SysML), `src/ui/store.drive.ts:422-434` (what reads unsaved), `1333-1398` (the
+SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `1378-1443` (the
 question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:96-103`,
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
@@ -3982,8 +4001,8 @@ first, as Save does — one Undo step — unless it has a syntax error or a
 collaboration room is connected ([§8](#8-what-is-kept-and-what-is-not)). It
 names the file after the project, so save it under the name the command uses.
 
-**Source of truth:** `src/ui/store.drive.ts:493-573` (every sentence the
-feature says), `1149-1163` (the content check), `src/persistence/drive/`,
+**Source of truth:** `src/ui/store.drive.ts:537-617` (every sentence the
+feature says), `1193-1207` (the content check), `src/persistence/drive/`,
 `src/ui/panels/DriveMenu.tsx`, `src/ui/panels/DriveStrip.tsx`,
 `test/e2e/drive.spec.ts` (against faked Google services).
 
@@ -4050,9 +4069,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:232`
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:233`
 (`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5026-5149` (`mergeLibrary`, `loadStandardLibraryAsync`:
+derived surfaces lag), `5113-5236` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 
@@ -4152,9 +4171,9 @@ standard library: see the *Strip · error or note* row.)
 | Strip · guard | Before New, Open, Import, a branch switch or a merge that resolves, joining a room, Close Drive file, Sign out or a Drive open replaces a model with unsaved Drive changes, or lets go of its file: **Save to Drive and continue**, **Discard and continue**, **Keep editing**. Before a Drive open replaces work no save holds: **Open anyway**, **Keep editing** | `drive-guard-save`, `drive-guard-discard`, `drive-guard-keep`, `drive-guard-open-anyway` |
 | Strip · conflict | The file changed in Drive since you opened it: **Save as copy**, **Overwrite** (Drive keeps the other version for about 30 days, under Manage versions), **Reload from Drive** (one Undo step back to yours) | `drive-strip-copy-save`, `drive-strip-overwrite`, `drive-strip-reload` |
 | Strip · view access, or gone | **Save to Drive as…** writes your own copy | `drive-strip-save-as` |
-| Strip · offline | **Save** keeps the unsaved changes in this browser — text typed in the Text view applied first, unless it has a syntax error, when the strip says the typed text was kept back (**×** brings the offline row back); a browser that refuses the copy is said so | `drive-strip-save-local` |
+| Strip · offline | **Save** keeps the unsaved changes in this browser — text typed in the Text view applied first, unless it has a syntax error, when the strip says the typed text was kept back, on a line of its own under the offline row (**×** hides it); a browser that refuses the copy is said so | `drive-strip-save-local` |
 | Strip · sign-in expired | **Sign in and continue** finishes what Google's refusal of the sign-in interrupted | `drive-strip-signin` |
-| Strip · error or note | **Try again** where trying again can help; **Privacy & data ↗** beside every error; **×** hides the message. The note that a save in this browser, or **Export ▾ → SysML**, kept typed text back, and the note that an element went to the top level of your model rather than into the standard library (`info`), show on every deployment, Google Drive or not. The library note never covers another message: it waits until that one is hidden; Undo takes it down | `drive-strip-retry`, `drive-strip-privacy`, `drive-strip-dismiss` |
+| Strip · error or note | **Try again** where trying again can help; **Privacy & data ↗** beside every error; **×** hides the message. The note that a save in this browser, or **Export ▾ → SysML**, kept typed text back, and the note that an element went to the top level of your model rather than into the standard library (`info`), show on every deployment, Google Drive or not. The library note never covers another message: it waits until that one is hidden; Undo takes it down. An export's kept-back note waits behind an error or a *closed* message and goes up when it is hidden. With Drive on and a file attached (or a sign-in to renew), these notes stand on a line of their own under the file's row (*saved*, *unsaved changes*, *offline*, *view access*, *gone*, *sign-in expired*), never in place of it | `drive-strip-retry`, `drive-strip-privacy`, `drive-strip-dismiss`, `drive-strip-note` |
 | `?drive=` link gate | **Sign in and open** — disabled, reading *Loading Google sign-in…*, until Google's script has loaded — or **Skip** to the sample model. When Drive refuses a file not yet granted to this app: **Browse Drive…** (Google's picker, on that one file — choosing it there grants it; nothing else does; on a site without the picker, the gate says the file cannot be opened there), the file's Drive link pasted (which grants nothing, but carries the `resourcekey` some older link-shared files need), and which account is signed in (shared with another of yours? Skip, Sign out under Drive ▾, open the link again). Any other failure: **Try again**, and **Privacy & data ↗** — where a sign-in Google blocked for a school account is explained | `drive-link-gate`, `drive-link-signin`, `drive-link-skip`, `drive-link-denied`, `drive-link-browse`, `drive-link-id`, `drive-link-id-go`, `drive-link-retry`, `drive-link-privacy` |
 
 ### Panels
@@ -4176,9 +4195,10 @@ standard library: see the *Strip · error or note* row.)
 | Where-used list | Everything that references the selection, click to navigate | `prop-used-by` |
 | Impact graph | The 1-hop reference neighbourhood, drawn | `prop-impact` |
 | Breadcrumb | The containment path of the **selection** (not the diagram scope) | `breadcrumb` |
-| Palette | Three sections for the active view — **Tools** (what to draw, including an explicit Select), **Edit** (what to do to the selection), **Checks** (what to verify). Every view has one: a table view draws nothing, so it has Edit and Checks only. The column can be put away (**‹**): it shrinks to a slim strip at the canvas's left edge, with a **›** and a label that names what it hides — *Palette: Tools, Edit, Checks* (the first word in capitals), or *Palette: Edit, Checks* on a table view — and a click anywhere on the strip brings the column back where you left it. From the keyboard, **Enter** on either control leaves the focus on the one that replaces it, and the strip shows a focus ring. On a window too short for the whole label, the label ends in an ellipsis (**…**) and the strip's accessible name still reads whole | `palette`, `palette-tools`, `palette-select`, `palette-edit`, `palette-checks`, `palette-collapse`, `palette-expand`, `palette-collapsed-label` |
+| Explorer and Properties, put away | Each side column can be put away (**‹** on the Explorer, **›** on Properties) to a slim rail at the window's edge, which brings it back on a click. From the keyboard, **Enter** on the control leaves the focus on the one that replaces it, so a following `Backspace` deletes nothing | `explorer-collapse`, `explorer-expand`, `properties-collapse`, `properties-expand` |
+| Palette | Three sections for the active view — **Tools** (what to draw, including an explicit Select), **Edit** (what to do to the selection), **Checks** (what to verify). Every view has one: a table view draws nothing, so it has Edit and Checks only. The column can be put away (**‹**): it shrinks to a slim strip at the canvas's left edge, with a **›** and a label that names what it hides — *Palette: Tools, Edit, Checks* (the first word in capitals), or *Palette: Edit, Checks* on a table view — and a click anywhere on the strip brings the column back where you left it. From the keyboard, **Enter** on either control leaves the focus on the one that replaces it, and the strip shows a focus ring. Putting the column away also disarms an armed tool, so the next canvas click places nothing the screen no longer names. On a window too short for the whole label, the label ends in an ellipsis (**…**) and the strip's accessible name still reads whole | `palette`, `palette-tools`, `palette-select`, `palette-edit`, `palette-checks`, `palette-collapse`, `palette-expand`, `palette-collapsed-label` |
 | Palette · Edit | Rename (opens the explorer's inline rename), Duplicate, Delete — each disabled with the reason when nothing is selected. Reparenting stays a drag onto the new owner | `palette-rename`, `palette-duplicate`, `palette-delete` |
-| Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `checking the load…` and `running…` while a check runs in the background, `holds`, `findings`, `undecided`, `stale` after an edit (and, for a check that reads the selection, once the selection moves off what it read: the command beside it then names something else), or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page. `reach` and `check-behaviour` walk a state machine's configurations, which can take a good part of a second on a machine with many configurations, so they run in the background: the Checks tab comes forward at the click and lists the check as under way (`checking the load…` while the model's text is parsed, then `running…`), the row reads the same with a **Cancel** button beside Run, the page stays usable meanwhile (an answer that arrives while you are in another tab leaves you there), and the answer lands in the Checks tab (marked `stale`, like any result, if the model was edited while it ran). Cancel keeps the result the check had before, and the keyboard focus moves to Run. The first Run in a while — after the page opens, or after a minute unused — takes longer, as the background worker starts and loads the standard library: a fraction of a second, or about a second and a half where the run checks the load (below), since the worker then builds the text parser too. Both are judged over whether the model loads as a terminal would load the file: the text Save writes and, where it differs, the text Export ▾ SysML writes, each parsed and validated with the standard library. A text no parse has measured is parsed in the background worker first — the text an edit leaves, and also, on the first Run after a model is opened, the text Export ▾ SysML writes, which is seldom the file's own text byte for byte, and so is parsed even when nothing has been edited — the row and the Checks tab read `checking the load…` meanwhile (a few seconds the first time on a model the size of the drone swarm, a few tenths of a second there once the worker is running), then `running…` — and the counts are kept, so a check run again over a model not changed since has its load at once. The click itself parses nothing and holds the page for no more than a moment, on a model the size of the drone swarm too: Run pressed straight after an edit, before the Text view and Problems have caught up with it, reads `checking the load…` at once, and the page catches up after that (a few tenths of a second on the drone swarm, as after any edit there). The walk is of the model as it was when the run started — at the click, or, for Run pressed straight after an edit, once the page has caught up with that edit a moment later: an edit made after that shows the result `stale`. A model that does not load cleanly is never `holds`: the check reads `undecided` (or `findings`, beside what it found), and its first row, `checks/degraded`, says why — the syntax errors and validation errors it counted, a model that cannot be written as text, a value written back as it came that the grammar cannot read (reported without the text being parsed, and said so), or a text that parses cleanly but to another model than the one on screen — a field written back as typed that closes its owner, adds a declaration or turns the rest of its line into a comment — for which the row claims no exit code, since a terminal loads that file and checks the other model. A load the worker could not check — it could not be started, failed, stopped, or said nothing for a minute — is taken as not checked, which counts the same way: the check is `undecided` and its row says the load could not be checked, and the page parses nothing, so it is not held for it. A model with no state machine starts no walk: once its load is known, the row says there is nothing to walk. A page with no worker parses the texts itself (and says the load could not be checked only where no standard library has loaded there either), and one whose worker fails, holds another standard library than the page's (a library element renamed in Properties makes it another), or says nothing for a minute during the walk has the check run where it stands; both hold the page while they last. A worker that could not load the standard library at all (offline, the data not cached) is not started again until the page is reloaded: later runs go straight to the page, and a load still to measure is taken as not checked. A check reads the selection where its terminal command does: `where-used` and `check-behaviour` name it as `--element`, `bounds` as `--measure`, and `contracts` and `obligations` cover the selected element and what it contains, as their optional `--element` does — the summary gives the figure beside the whole model's (*1 of 5 contract(s)*) and ends *scoped to* its name, and **Copy command** names it too. With nothing selected, a bundled library element (which the terminal refuses as a scope), or an element that can hold no contract — a comment, an import, a relationship, such as the header comment the app selects on opening a file that starts with one — those two cover the whole model, their command names no element, and the summary ends *covers the whole model:* and why — the reason at the click: selecting a different comment, import or library element afterwards leaves the result current, since it covers the same elements, and the reason keeps what it said. A file or element name that some terminal could read as a command — a Drive file named `R&D (copy).sysml`, say — never goes into the command: a stand-in of plain characters does (`R_D__copy_.sysml`), or `<qualified name>` for an element (also when a check needs one and nothing is selected), and a note under the row says what each stands for | `palette-check`, `palette-check-run`, `palette-check-cancel`, `palette-check-copy`, `palette-check-verdict`, `palette-check-note` |
+| Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `checking the load…` and `running…` while a check runs in the background, `holds`, `findings`, `undecided`, `stale` after an edit (and, for a check that reads the selection, once the selection moves off what it read: the command beside it then names something else), or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page. `reach` and `check-behaviour` walk a state machine's configurations, which can take a good part of a second on a machine with many configurations, so they run in the background: the Checks tab comes forward at the click and lists the check as under way (`checking the load…` while the model's text is parsed, then `running…`), the row reads the same with a **Cancel** button beside Run, the page stays usable meanwhile (an answer that arrives while you are in another tab leaves you there), and the answer lands in the Checks tab (marked `stale`, like any result, if the model was edited while it ran). Cancel keeps the result the check had before, and the keyboard focus moves to Run. The first Run in a while — after the page opens, or after a minute unused — takes longer, as the background worker starts and loads the standard library: a fraction of a second, or about a second and a half where the run checks the load (below), since the worker then builds the text parser too. Both are judged over whether the model loads as a terminal would load the file: the text Save writes and, where it differs, the text Export ▾ SysML writes, each parsed and validated with the standard library. A text no parse has measured is parsed in the background worker first — the text an edit leaves, and also, on the first Run after a model is opened, the text Export ▾ SysML writes, which is seldom the file's own text byte for byte, and so is parsed even when nothing has been edited — the row and the Checks tab read `checking the load…` meanwhile (a few seconds the first time on a model the size of the drone swarm, a few tenths of a second there once the worker is running), then `running…` — and the counts are kept, so a check run again over a model not changed since has its load at once. The click itself parses nothing and holds the page for no more than a moment, on a model the size of the drone swarm too: Run pressed straight after an edit, before the Text view and Problems have caught up with it, reads `checking the load…` at once, and the page catches up after that (a few tenths of a second on the drone swarm, as after any edit there). The walk is of the model as it was when the run started — at the click, or, for Run pressed straight after an edit, once the page has caught up with that edit a moment later: an edit made after that shows the result `stale`. A model that does not load cleanly is never `holds`: the check reads `undecided` (or `findings`, beside what it found), and its first row, `checks/degraded`, says why — the syntax errors and validation errors it counted, a model that cannot be written as text, a value written back as it came that the grammar cannot read (reported without the text being parsed, and said so), or a text that parses cleanly but to another model than the one on screen — a field written back as typed that closes its owner, adds a declaration or turns the rest of its line into a comment — for which the row claims no exit code, since a terminal loads that file and checks the other model. A load the worker could not check — it could not be started, failed, stopped, or said nothing for a minute — is taken as not checked, which counts the same way: the check is `undecided` and its row says the load could not be checked, and the page parses nothing, so it is not held for it. A model with no state machine starts no walk: once its load is known, the row says there is nothing to walk. A page with no worker parses the texts itself (and says the load could not be checked only where no standard library has loaded there either), and one whose worker fails, holds another standard library than the page's (a library element renamed in Properties makes it another), or says nothing for a minute during the walk has the check run where it stands; both hold the page while they last. A worker that could not load the standard library at all (offline, the data not cached) is not started again until the page is reloaded: later runs go straight to the page, and a load still to measure is taken as not checked. A check reads the selection where its terminal command does: `where-used` and `check-behaviour` name it as `--element`, `bounds` as `--measure`, and `contracts`, `obligations` and `reach` cover the selected element and what it contains, as their optional `--element` does (`reach` only where that element holds a state machine, as the terminal refuses one that holds none) — `contracts` and `obligations` give the figure beside the whole model's (*1 of 5 contract(s)*), all three end the summary *scoped to* its name, and **Copy command** names it too. With nothing selected, a bundled library element (which the terminal refuses as a scope), or an element that can hold no contract — a comment, an import, a relationship, such as the header comment the app selects on opening a file that starts with one (for `reach`, also an element that holds no state machine, such as a state inside a machine) — these three cover the whole model, their command names no element, and the summary ends *covers the whole model:* and why — the reason at the click: selecting a different comment, import or library element afterwards leaves the result current, since it covers the same elements, and the reason keeps what it said. The command names the file the model is in: the attached Drive file's name, a model opened through `?model=` by its link's file name (`views-tour.sysml`) until the project has another name — New, Open or Import, or a rename of the model's first top-level element, give it one — else the project's name. A file or element name that some terminal could read as a command — a Drive file named `R&D (copy).sysml`, say — never goes into the command: a stand-in of plain characters does (`R_D__copy_.sysml`), or `<qualified name>` for an element (also when a check needs one and nothing is selected), and a note under the row says what each stands for | `palette-check`, `palette-check-run`, `palette-check-cancel`, `palette-check-copy`, `palette-check-verdict`, `palette-check-note` |
 | Canvas | The diagram itself | `diagram-canvas` |
 | Column header | The package's name over one column of a layered General view — a band above the boxes of a connected piece that spans several packages; a click goes through it to the canvas | `column-header` |
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
@@ -4220,8 +4240,10 @@ after a click on it, so the keys you press next do not delete anything:
 `Backspace` and `Delete` are ignored while a button has focus, where they would
 remove the selection — often the element you just renamed. The Requirements
 table's reference picker, which leaving cancels, stays open with what you typed
-in it, and nothing is linked. Every other key in a field stays the field's
-own.
+in it, and nothing is linked. Plain `Enter` does the same without the save: in
+an Explorer rename, the canvas context menu's rename box or a Requirements table
+cell it closes the box and leaves the focus on **Save**, so a `Backspace` after
+it deletes nothing. Every other key in a field stays the field's own.
 
 `Ctrl/⌘ + S` also first applies what you typed in the Text view, as
 **Apply text → model** does, so the save holds the text on screen — unless the

@@ -116,3 +116,19 @@ test('explorer: focus scopes the tree to one subtree, then "Show all" restores i
 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
+
+test('explorer and properties: put away or brought back from the keyboard, the focus follows the control', async ({
+  page,
+}) => {
+  await gotoApp(page);
+  for (const column of ['explorer', 'properties']) {
+    await page.getByTestId(`${column}-collapse`).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId(`${column}-expand`)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId(`${column}-collapse`)).toBeFocused();
+    // A mouse click that gave no focus to the button leaves the focus where it is.
+    await page.getByTestId(`${column}-collapse`).click();
+    await page.getByTestId(`${column}-expand`).click();
+  }
+});

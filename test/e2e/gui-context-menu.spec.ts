@@ -109,6 +109,40 @@ test('canvas context menu closes on a CANVAS wheel, not on an unrelated panel sc
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
+test('canvas context menu closes when the canvas is drag-panned', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  const menu = page.getByTestId('node-ctx-menu');
+
+  // A point on the bare pane (no node, edge or panel over it), found before the menu opens.
+  const spot = await page.evaluate(() => {
+    const pane = document.querySelector('.react-flow__pane');
+    if (!pane) return null;
+    const r = pane.getBoundingClientRect();
+    // From the top-left: the menu opens at the first node, away from there.
+    for (let y = r.top + 20; y < r.bottom; y += 20)
+      for (let x = r.left + 20; x < r.right; x += 20)
+        if (document.elementFromPoint(x, y) === pane) return { x, y };
+    return null;
+  });
+  expect(spot).not.toBeNull();
+
+  await page.locator('.react-flow__node').first().click({ button: 'right' });
+  await expect(menu).toBeVisible();
+
+  // Dragging the pane pans the canvas (d3-zoom takes the mousedown and stops it): the menu goes.
+  const view = () => page.locator('.react-flow__viewport').getAttribute('style');
+  const v0 = await view();
+  await page.mouse.move(spot!.x, spot!.y);
+  await page.mouse.down();
+  await page.mouse.move(spot!.x - 40, spot!.y - 30, { steps: 5 });
+  await page.mouse.up();
+  expect(await view()).not.toBe(v0); // the drag did pan the canvas
+  await expect(menu).toHaveCount(0);
+
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 test('canvas edge context menu: right-click a connection → Delete removes it', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page);

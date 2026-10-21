@@ -16,6 +16,7 @@ import {
   type ElementId,
 } from '@core/index';
 import { useAppStore } from '../store';
+import { commitAndFocusSave } from '../commands';
 import { useContextMenuChrome } from './useContextMenuChrome';
 import { useRovingMenu } from './useRovingMenu';
 
@@ -110,8 +111,10 @@ export function NodeContextMenu(props: {
             defaultValue={el.declaredName ?? ''}
             onMouseDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') commitRename(e.currentTarget.value);
-              else if (e.key === 'Escape') {
+              if (e.key === 'Enter') {
+                const box = e.currentTarget;
+                commitAndFocusSave(box, () => commitRename(box.value));
+              } else if (e.key === 'Escape') {
                 e.stopPropagation();
                 setRenaming(false);
               }

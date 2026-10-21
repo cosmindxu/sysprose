@@ -170,3 +170,34 @@ test('Ctrl/⌘+S in the Explorer rename box saves the name, and the next Backspa
   expect(await exists(page, id)).toBe(true);
   await shot(page, 'kbd-f-rename-saved');
 });
+
+/*
+ * Enter in a rename box commits it and closes it, as Ctrl/⌘+S does, and the focus
+ * goes to Save for the same reason: the next Backspace would delete the element
+ * just renamed.
+ */
+test('Enter in the Explorer rename box leaves the focus on Save, and the next Backspace deletes nothing', async ({ page }) => {
+  await gotoApp(page);
+  const id = await findElementId(page, 'PartDefinition', 'Vehicle');
+  await selectElementById(page, id);
+  await treeName(page.locator(`[data-elementid="${id}"]`).first()).dblclick();
+  await page.getByTestId('tree-rename').fill('VehicleEntered');
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('tree-rename')).toHaveCount(0);
+  await expect(page.getByTestId('tb-save')).toBeFocused();
+
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Delete');
+  expect(await nameOf(page, id)).toBe('VehicleEntered');
+  expect(await exists(page, id)).toBe(true);
+});
+
+test('Enter in the canvas context menu rename box leaves the focus on Save', async ({ page }) => {
+  await gotoApp(page);
+  await page.locator('.react-flow__node').first().click({ button: 'right' });
+  await page.getByTestId('node-ctx-rename').click();
+  await page.getByTestId('node-ctx-rename-input').fill('RenamedByMenu');
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('node-ctx-menu')).toHaveCount(0);
+  await expect(page.getByTestId('tb-save')).toBeFocused();
+});

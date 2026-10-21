@@ -86,6 +86,23 @@ describe('full standard library — loading & structure', () => {
     expect(ids2.length).toBe(FULL_LIBRARY_ELEMENT_COUNT);
   });
 
+  it('adds the library elements a model is missing (an older api-json Import dropped the aliases)', () => {
+    const model = new Model();
+    loadFullStandardLibrary(model);
+    const aliases = model.all().filter((e) => e.attrs.isLibrary === true && e.eClass === 'Membership');
+    expect(aliases.length, 'the library has aliases').toBeGreaterThan(200);
+    const user = model.create('Package', { declaredName: 'Mine' });
+    for (const a of aliases) model.remove(a.id);
+    expect(model.size).toBe(FULL_LIBRARY_ELEMENT_COUNT - aliases.length + 1);
+    const ids = loadFullStandardLibrary(model);
+    expect(ids.length).toBe(FULL_LIBRARY_ELEMENT_COUNT);
+    expect(model.size).toBe(FULL_LIBRARY_ELEMENT_COUNT + 1);
+    for (const a of aliases) expect(model.get(a.id)?.ownerId).toBe(a.ownerId);
+    expect(model.get(user.id)?.declaredName).toBe('Mine');
+    loadFullStandardLibrary(model);
+    expect(model.size, 'a second merge adds nothing').toBe(FULL_LIBRARY_ELEMENT_COUNT + 1);
+  });
+
   it('the default loadStandardLibrary uses the FULL library', () => {
     const model = new Model();
     const ids = loadStandardLibrary(model);

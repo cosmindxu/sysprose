@@ -67,6 +67,10 @@ test('?model= opens the linked model in place of the sample, with a propose-chan
   await expect(link).toHaveAttribute('href', SOURCE);
   await expect(link).toHaveAttribute('target', '_blank');
 
+  // A command copied from the palette names the linked file, not `Untitled.sysml`.
+  const stats = page.locator('[data-testid="palette-check"][data-check="stats"]');
+  await expect(stats.getByTestId('palette-check-copy')).toHaveAttribute('title', 'npm run sysprose -- stats Fixture.sysml');
+
   // The linked model is where the session starts: nothing to undo back to.
   await expect(page.getByTestId('tb-undo')).toBeDisabled();
 
