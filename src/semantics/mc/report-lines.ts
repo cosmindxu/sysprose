@@ -33,6 +33,8 @@ import {
   UNREACHABLE_STATE_CODE,
   UNRECOVERABLE_MODE_CODE,
   livelockWithheldSentence,
+  machineHolding,
+  ownsMachine,
   stateMachinesIn,
   transitionLabel,
   type MachineReach,
@@ -524,6 +526,16 @@ function noMachine(model: Model, scopeId: ElementId): { message: string; holder:
  * property"* of an inner definition that carries nothing inside an outer one
  * that does, and named neither the outer one nor offered it as the pick.
  *
+ * THE CLIMB STOPS AT A MACHINE. An element written inside a definition that
+ * owns no transition inside a machine is no lone definition's: no lone
+ * definition sits below a machine, and the machine, not a lone definition
+ * above it, is what reports that nested definition's carriers (as not
+ * checked). So the first owner that owns a machine (`ownsMachine`) ends the
+ * climb, and the machine whose region holds it is named, in
+ * {@link noMachine}'s words — the climb went on past it, and named a lone
+ * definition above the machine, whose run reports its own carriers and not
+ * the nested one's.
+ *
  * `reach` keeps {@link noMachine}'s words: naming the definition reports
  * nothing there, since it reports on machines and the definition is none.
  */
@@ -537,7 +549,18 @@ function behaviourNoMachine(
   let carrier: ElementRecord | undefined;
   for (let p = model.get(scopeId)?.ownerId ?? null; p != null; p = model.get(p)?.ownerId ?? null) {
     const owner = model.get(p);
-    if (owner === undefined || !isLoneDefinition(model, owner)) continue;
+    if (owner === undefined) continue;
+    if (ownsMachine(model, owner)) {
+      const machine = machineHolding(model, owner.id);
+      return machine === null
+        ? { ...base, candidates: [] }
+        : {
+            message: `${base.message} — it is inside \`${qname(model, machine)}\`, which is one`,
+            holder: machine,
+            candidates: [],
+          };
+    }
+    if (!isLoneDefinition(model, owner)) continue;
     nearest ??= owner;
     if (propertiesOf(model, owner.id).length > 0) carrier = owner;
   }

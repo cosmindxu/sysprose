@@ -11,6 +11,7 @@ import {
   simulationAtRest,
 } from '../../src/semantics/index';
 import { executionReport, simulationReport } from '../../src/api/analytics';
+import { reachReport, stateMachinesIn } from '../../src/semantics/mc/explore';
 
 /** off --start--> running --stop--> off ; running --pause--> idle --resume--> running */
 function vehicleSM(): { model: Model; smId: string; ids: Record<string, string> } {
@@ -522,6 +523,36 @@ describe('SimulationSession — a step into the machine itself is not taken (doc
     expect(alone.refused?.sentence).toContain('In `M` a step to an ancestor exits it and enters it again');
     expect(alone.refused?.sentence).toContain('the run stops where it stands without taking it');
     expect(alone.refused?.sentence).not.toContain('the machine itself');
+  });
+
+  it('a composite no machine holds is the machine itself, whatever state or lone definition is written above it', () => {
+    // The whole-branch review's H1 and H2: the state above `C` owns no
+    // transition, so `C` is the machine (`stateMachinesIn`) and no machine
+    // exits and re-enters it. The sentence named `S` (and `D`) as one that
+    // would, where `reach` refuses the same step as one into the machine
+    // itself.
+    for (const lone of [false, true]) {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const above = lone ? f.stateDef('D') : m.create('StateUsage', { declaredName: 'S', ownerId: null });
+      const c = f.state('C', above.id);
+      const a = f.state('a', c.id);
+      const b = f.state('b', c.id);
+      f.transition(a.id, b.id, { ownerId: c.id, trigger: 'go' });
+      const back = f.transition(b.id, c.id, { ownerId: c.id, trigger: 'up' });
+      expect(stateMachinesIn(m).map((x) => x.id)).toEqual([c.id]);
+      const name = lone ? 'D::C' : 'S::C';
+      const walked = reachReport(m).machines[0];
+      expect(walked.unsupported.map((u) => u.construct)).toEqual(['step-outside-states']);
+      expect(walked.unsupported[0].detail).toContain(`into \`${name}\`, the machine itself`);
+      const run = executionReport(m).stateMachines.find((r) => r.stateMachine.id === c.id)!;
+      expect(run.refused?.transitionId).toBe(back.id);
+      expect(run.refused?.sentence).toContain(`into \`${name}\`, the machine itself`);
+      expect(run.refused?.sentence).not.toContain('a composite state of');
+      const s = new SimulationSession(m, c.id);
+      s.inject('go');
+      expect(s.inject('up').refused?.sentence).toBe(run.refused?.sentence);
+    }
   });
 
   it('the batched run and the Simulate report read the same', () => {

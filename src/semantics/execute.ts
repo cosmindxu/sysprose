@@ -76,6 +76,7 @@ import {
   type StepEffects,
   type StepInput,
 } from './mc/config';
+import { machineHolding } from './mc/explore';
 
 /* ───────────────────────────── action flow ───────────────────────────── */
 
@@ -1020,27 +1021,6 @@ export function runsParallel(model: Model, machineId: ElementId): boolean {
 }
 
 /**
- * The machine a composite state is a region of, when the run's container is
- * one: a `StateUsage` written in another state or in a `state def`. The
- * outermost state above it, stopping at a `state def`, which is a machine of
- * its own (`regionDescendants`, `./mc/config.ts`) — the machine the Simulation
- * tab runs it in. `undefined` for a machine's own root.
- */
-function machineHolding(model: Model, id: ElementId): ElementId | undefined {
-  if (model.get(id)?.eClass !== 'StateUsage') return undefined;
-  let holder: ElementId | undefined;
-  const seen = new Set<ElementId>([id]);
-  for (let p = model.get(id)?.ownerId ?? null; p != null && !seen.has(p); p = model.get(p)?.ownerId ?? null) {
-    const owner = model.get(p);
-    if (owner?.eClass !== 'StateUsage' && owner?.eClass !== 'StateDefinition') break;
-    seen.add(p);
-    holder = p;
-    if (owner.eClass === 'StateDefinition') break;
-  }
-  return holder;
-}
-
-/**
  * The sentence a surface prints for a run that stopped at a step it does not
  * take ({@link StateRunResult.refused}): which step, where it leads, and what
  * stopped there. One composer, read by the Simulation tab (`SimSample.refused`,
@@ -1059,7 +1039,14 @@ function machineHolding(model: Model, id: ElementId): ElementId | undefined {
  *   that holds it, a step to an ancestor exits it and enters it again
  *   (`docs/06` §8.10). Run alone, the composite has nothing above it to exit
  *   to, so the run stops there too, and the sentence names that machine rather
- *   than calling the composite "the machine itself".
+ *   than calling the composite "the machine itself". ONLY WHERE A MACHINE
+ *   HOLDS IT: the holder is the machine whose region holds the composite, by
+ *   `stateMachinesIn`'s rule (`machineHolding`, `./mc/explore`), never just
+ *   the state above it. A composite whose enclosing states own no transition
+ *   — a `state S { state C { … } }`, or a lone `state def` holding it — is a
+ *   machine itself, and naming `S` as a machine that would exit and re-enter
+ *   it was false: the step is the plain one, into the machine itself, in the
+ *   words `reach` prints for the same step.
  */
 export function refusedStepSentence(model: Model, machineId: ElementId, transitionId: ElementId): string {
   const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
@@ -1069,7 +1056,8 @@ export function refusedStepSentence(model: Model, machineId: ElementId, transiti
     ? 'its region stops where it stands without taking it and takes no step after it, while the machine’s ' +
       'other regions, each run on its own over the whole script, run on'
     : 'the run stops where it stands without taking it, and takes no step after it';
-  const holder = edge.target[0] === machineId ? machineHolding(model, machineId) : undefined;
+  const held = edge.target[0] === machineId ? machineHolding(model, machineId) : null;
+  const holder = held !== null && held !== machineId ? held : undefined;
   if (holder !== undefined) {
     return (
       `${qn(transitionId)} leads from ${qn(edge.source[0])} into ${qn(machineId)}, a composite state of ` +

@@ -2665,11 +2665,16 @@ button runs on its own (select it first) and that steps into itself stops the
 same way: in the machine that holds it, that step exits the composite and
 enters it again, but alone the composite has nothing above it to exit to, and
 the sentence names that machine rather than calling the composite the machine
-itself. On a parallel machine, which only the API makes, each region runs on its
-own over the whole script, so the step stops only its own region, the other
-regions run on, and the sentence says so. The simulator used to take it the old
-way, standing at the machine itself or at the node under the action, or
-restarting under the source's composite. Until 2026-10-21 a step
+itself. That holds only where a machine holds the composite, as `reach` counts
+machines: a state or `state def` above it that owns a transition, with no other
+`state def` between the two. Where no machine holds it, as in
+`state S { state C { … } }` or with a lone `state def` around it, the composite
+is the machine itself, and the sentence is the plain one above, the one `reach`
+prints for the same step. On a parallel machine, which only the API makes, each
+region runs on its own over the whole script, so the step stops only its own
+region, the other regions run on, and the sentence says so. The simulator used
+to take it the old way, standing at the machine itself or at the node under the
+action, or restarting under the source's composite. Until 2026-10-21 a step
 exited only down to its source's level and entered the target on top, so a
 composite stayed active after a step out of it, each round trip stacked one more
 state, and a property could be refuted on a composite the run had left.
@@ -3055,7 +3060,11 @@ that owns no transition and is written inside no machine, so no walk stands on
 its states; named itself, its property is reported as not checked"*). Where
 such definitions nest, it is the outermost that carries a property that counts
 and that a state inside them names, since naming it reports the carriers of
-every definition inside it. A definition like this that carries no property
+every definition inside it. A state inside a machine written in it names that
+machine instead (*"… — it is inside `P::Lone::Mach`, which is one"*), a state of
+a definition that owns no transition inside the machine among them: the machine
+reports that definition's carriers, as not checked, and the outer definition
+only its own. A definition like this that carries no property
 resolves as before: refused as holding no state machine when none is written
 inside it, and otherwise the one machine inside it is checked or the several
 are listed; a state written in it is refused with the definition named, *"…, and
@@ -3067,8 +3076,9 @@ definitions (*"`P::Lone` — 1 property in the file, on a `state def` that is no
 machine: selected, it is reported as not checked"*) — and every machine only
 when nothing in the file carries one; the rows of a refused package list such a
 definition beside its machines; a state written in one that carries a property
-lists that definition, and a state written in one that carries nothing lists
-the machines written inside it, where it holds any.
+lists that definition, a state inside a machine written in it lists that
+machine, and a state written in one that carries nothing lists the machines
+written inside it, where it holds any.
 
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither

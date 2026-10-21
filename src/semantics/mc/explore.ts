@@ -1297,8 +1297,13 @@ function outermostDefinitionAt(model: Model, machineId: ElementId, id: ElementId
   return found;
 }
 
-/** The machine whose region holds `id` as one of its nodes, if any does. */
-function machineHolding(model: Model, id: ElementId): ElementId | null {
+/**
+ * The machine whose region holds `id` as one of its nodes, if any does — `id`
+ * itself when it is a machine (`stateMachinesIn`). Also what decides whether a
+ * composite the interpreter runs on its own is a region of some machine, and
+ * which (`refusedStepSentence`, `../execute`).
+ */
+export function machineHolding(model: Model, id: ElementId): ElementId | null {
   for (const m of stateMachinesIn(model)) {
     if (m.id === id) return m.id;
     const holds = regionDescendants(model, m.id).some((d) => d.id === id && d.eClass !== 'StateDefinition');

@@ -1039,6 +1039,48 @@ describe('the chase budget, in the search, and every witness replayed through th
     expect(replayWitness(model, machineId, below.witness, MAX_COMPLETION).replays).toBe(true);
   });
 
+  it('a scope only the step past the budget would close or show is vacuous, not a pass (docs/06 §8.12)', async () => {
+    // The whole-branch review's cyc65: a trigger-less cycle of 65 states. The
+    // one run is `s0 … s64` and the budget stops it there, so the step back to
+    // `s0` is taken by no run — reach says so — and no run closes a segment
+    // that opens at `s64`. The search folded the vacuity flags before it
+    // dropped that step, and all four rows below printed `pass` with exit 0.
+    const n = 65;
+    const states = Array.from({ length: n }, (_, i) => `state s${i};`).join(' ');
+    const steps = Array.from({ length: n }, (_, i) => `transition t${i} first s${i} then s${(i + 1) % n};`).join(' ');
+    const { model, machineId, id } = await load(`package Cyc { state def M { ${states} ${steps} } }`);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.visited).toHaveLength(n);
+    expect(run.visited.at(-1)).toBe(id('s64'));
+    const reach = reachReport(model).machines[0];
+    expect(reach.exhaustive).toBe(true);
+    expect(reach.transitions.dead).toEqual([]);
+    expect(reach.transitions.enabledNeverFired.map((t) => t.name)).toEqual(['t64']);
+    for (const p of [
+      { pattern: 'absence', scope: 'between', q: 'state s64', r: 'state s0', p: 'state s1' },
+      { pattern: 'universality', scope: 'between', q: 'state s64', r: 'state s0', p: 'state s64' },
+      { pattern: 'bounded-existence', scope: 'between', q: 'state s64', r: 'state s0', p: 'state s1', n: '0' },
+      // `after s64` opens on the run; `s0` after it is the step no run takes.
+      { pattern: 'precedence', scope: 'after', q: 'state s64', p: 'state s0', s: 'state s3' },
+    ]) {
+      const v = checkProperty(model, machineId, prop(p));
+      expect(v.claim, `${p.pattern} ${p.scope}`).toBe('vacuous');
+      expect(v.exhaustive).toBe(true);
+      expect(v.boundHit).toBe('none');
+    }
+    // One state shorter, the step back to `s0` is the 64th and the run takes
+    // it: the same rows are decided on it.
+    const short = Array.from({ length: n - 1 }, (_, i) => `transition t${i} first s${i} then s${(i + 1) % (n - 1)};`).join(' ');
+    const m64 = await load(`package Cyc { state def M { ${Array.from({ length: n - 1 }, (_, i) => `state s${i};`).join(' ')} ${short} } }`);
+    const closes = checkProperty(m64.model, m64.machineId, prop({ pattern: 'absence', scope: 'between', q: 'state s63', r: 'state s0', p: 'state s1' }));
+    expect(closes.claim).toBe('pass');
+    expect(closes.activated).toBe(true);
+    const shows = checkProperty(m64.model, m64.machineId, prop({ pattern: 'precedence', scope: 'after', q: 'state s63', p: 'state s0', s: 'state s3' }));
+    expect(shows.claim).toBe('fail');
+    expect(replayWitness(m64.model, m64.machineId, shows.witness, MAX_COMPLETION).replays).toBe(true);
+  });
+
   it('four completion cycles stacked one behind another are decided: the depth bound counts events, not chase steps (docs/06 §8.12)', async () => {
     // Each cycle is left on an event, and the budget stops the chase round each
     // after 64 steps, so `z` is 260 steps out on four events. The depth bound

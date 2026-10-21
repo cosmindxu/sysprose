@@ -2671,6 +2671,29 @@ wave 2.
   after a3` under `maxCompletion 5`) goes from `inconclusive` to `pass`, which
   is true of the interpreter's runs: the detour's run stops at `a5`, and the
   other branch never opens the scope.
+- **What a dropped step may not decide (the branch review).** The search folded
+  each successor's `activated` and `pSeen` into the run's flags before the
+  budget gate, so the step it then dropped still counted. Before `budgetEndsRun`
+  that was harmless, since the same step set `boundHit` and the row was
+  inconclusive; with the drop, the walk stayed exhaustive and a scope only the
+  dropped step opened or closed turned a vacuous row into a `pass`, exit 0. The
+  review's `cyc65` is a trigger-less cycle of 65 states: the one run is
+  `s0 … s64`, the budget stops it there, and `reach` says `t64` (back to `s0`) is
+  taken by no run, while `absence of s1 between s64 and s0` printed `PASS …
+  exhaustive`, counting the `s0` after `s64` as closing the segment
+  (`universality` and `bounded-existence` between, and `precedence` after `s64`
+  with `p = s0`, the same). The flags now fold after the gate, only for a node
+  the search admits, and all four rows are `vacuous` again. Folding after the
+  `seen` test as well loses nothing: both flags are in the monitor, which is in
+  the key. The valuation still reads a step the gate drops, and over a walk
+  that finished cannot refuse a row there: where `budgetEndsRun`, a node's chase
+  position is its depth, and the walk without the position met no configuration
+  past the budget that it had not admitted inside it, so that configuration was
+  valued first, inside the budget. Over a walk that did not finish it can, and
+  that refusal fails closed: no pass or vacuity stands on such a walk.
+  `semantics.mc.patterns.test.ts` pins `cyc65` beside the count, and
+  the 64-state cycle, whose step back is the 64th and taken, decided on the same
+  rows.
 - **The depth bound counts events.** On a walk that carries the chase position
   the depth bound counted every step, and a chase the budget stops costs 64 of
   them. So four completion cycles stacked one behind another, each left on an
@@ -2737,7 +2760,16 @@ wave 2.
   in the machine that holds it the step exits `C` and enters it again (§8.10,
   and `reach` walks that machine exhaustively), so the sentence names the
   composite and that machine instead of calling `C` "the machine itself".
-  The parallel machine and the composite are pinned in `simulate.test.ts`.
+  Only where a machine holds it: the first cut took the outermost state above
+  the composite for its machine, whether or not that state owned a transition,
+  and on `state S { state C { … } }` (or a lone `state def` around `C`) said
+  that `S` would exit `C` and enter it again, where `S` is no machine, `C` is
+  (`stateMachinesIn`), and `reach` refuses the same step as one into `C`, the
+  machine itself (the branch review's H1 and H2). The holder is now the
+  machine whose region holds the composite (`machineHolding`, `explore.ts`),
+  and where none does the sentence is the plain one, in `reach`'s words.
+  The parallel machine and the composite, both ways, are pinned in
+  `simulate.test.ts`.
 - **What moved.** No output in the gate corpus or v9 moves: no property there is
   a count the search refused past the budget, no walk there reached the depth
   bound on its steps with fewer events, and no machine there holds a step into
@@ -2752,7 +2784,14 @@ wave 2.
   differential test gains a count oracle: on every corpus machine that names no
   trigger and steps on no dwell, `bounded-existence` of each nameable state is
   decided at the run's own count and at one fewer, and never passes below the
-  count the declaration-order run makes.
+  count the declaration-order run makes. The branch review added its scoped
+  half: where the walk also meets no choice, so the declaration-order run is
+  the only one, `absence of r between q and r` passes exactly where that run
+  closes a segment and is vacuous where it does not, and `precedence` after `q`
+  with `s = q` passes exactly where an `r` is on the run at or after the first
+  `q`, for every `q` on the stack the run ends at and every `r` (and `between`
+  the other way round). On `edge-chain62` (`q = c64`, `r = c63`) both rows were `pass`
+  before the flags moved behind the gate.
 
 ### 8.13 The exits field, a lone definition where nothing names it, and the count's gap — `behaviour-rest`, 2026-10-21
 
@@ -2822,7 +2861,14 @@ interpreter left — the very shape §8.10 fixed.
   innermost, so a state in an inner definition that carries nothing inside an
   outer one that does was told *"it carries no property"*, with the outer one
   never named: the step review's `D` probe), and the innermost where none
-  carries one. `reach` keeps its words there, since naming the definition
+  carries one. The climb stops at a machine: a state of a definition that owns
+  no transition, inside a machine written in a lone definition that carries a
+  property, named that outer definition, whose run reports its own carriers
+  and not the inner definition's, which the machine reports, as not checked
+  (the branch review's climb probe). The first owner that owns a machine now
+  ends the climb, and the machine whose region holds it is named, in
+  `noMachine`'s words (*"… — it is inside `P::Outer::Mach`, which is one"*),
+  as for the inner definition itself. `reach` keeps its words there, since naming the definition
   reports nothing to it. The `--element` help says all of it. In the app, the
   pick rows with nothing selected list what carries a property, machines and
   such definitions alike, and every machine only when nothing does (the first

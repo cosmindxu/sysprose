@@ -1392,8 +1392,6 @@ function search(
           };
         }
         const monitor = monitorStep(property, here.monitor, valued.value);
-        activated = activated || monitor.activated;
-        pSeen = pSeen || monitor.pSeen;
         const hash = hashConfig(next.config, history);
         const key = keyOf(next.config, hash, monitor, run);
         // A key already seen is never a violation: the monitor is in the key,
@@ -1420,6 +1418,25 @@ function search(
           if (!budgetEndsRun) boundHit = 'completion';
           continue;
         }
+        // THE VACUITY FLAGS FOLD ONLY WHAT THE SEARCH ADMITS, so AFTER the gate
+        // above. A step the budget drops is one no run takes, and a scope it
+        // would open or close — or a P it would show — is one no run sees:
+        // folded before the gate, the `s0` one step past the budget on a
+        // trigger-less 65-state cycle closed `between s64 and s0` and turned
+        // the vacuous row into a `pass` with exit 0, while `reach` on the same
+        // machine said the step back to `s0` is taken by no run. Nothing is
+        // lost by folding after the `seen` test too: both flags are in the
+        // monitor, and the monitor is in the key, so a key met again carries
+        // the flags it was folded with the first time. (The valuation above
+        // still reads a step this gate drops. Where `budgetEndsRun` over a walk
+        // that finished, that cannot refuse a row: a node's chase position
+        // there is its depth, and the walk without the position met past the
+        // budget no configuration it had not admitted inside it, so this one
+        // was valued first, at a shallower node inside the budget. Over a walk
+        // that did not finish it can, and a refusal is the fail-closed answer
+        // there: no pass and no vacuity stands on such a walk.)
+        activated = activated || monitor.activated;
+        pSeen = pSeen || monitor.pSeen;
         const node: ProductNode = {
           config: next.config,
           hash,

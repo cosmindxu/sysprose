@@ -1104,6 +1104,7 @@ describe('the interpreter never does what the checker calls impossible, and ever
     // over the stacks re-stepped through `./mc/config.ts`.
     const problems: string[] = [];
     let decided = 0;
+    let scoped = 0;
     for (const { name, model } of corpus) {
       for (const m of reachReport(model).machines) {
         if (m.bounds.alphabet.length > 0 || !m.exhaustive || m.undeterminedGuards.length > 0) continue;
@@ -1142,11 +1143,57 @@ describe('the interpreter never does what the checker calls impossible, and ever
             if (v.claim === 'pass' || v.claim === 'fail') decided++;
           }
         }
+        // THE SCOPED HALF (the whole-branch review's cyc65). A scope is opened
+        // and closed by what a run does, so where the walk meets no choice the
+        // run above is the machine's only run, and a scope it does not open is
+        // one no run opens. `absence of r between q and r` then passes exactly
+        // where that run closes a segment (a `q` without `r`, and a later `r`)
+        // and is vacuous where it does not; `precedence` after `q` with `s = q`
+        // passes exactly where an `r` is on the run at or after the first `q`.
+        // With `q` held where the run ends — the budget's stop on a cycle —
+        // the only step that could close the segment or show the `r` is the
+        // one past the budget, which no run takes: the search folded the
+        // vacuity flags on that step before it dropped it, and printed `pass`.
+        if (m.nondeterminism.length > 0) continue;
+        const states = nameable(model, m.machine.id);
+        const closes = (q: ElementId, r: ElementId) =>
+          stacks.some((st, i) => st.includes(q) && !st.includes(r) && stacks.slice(i + 1).some((later) => later.includes(r)));
+        const follows = (q: ElementId, r: ElementId) => {
+          const first = stacks.findIndex((st) => st.includes(q));
+          return first >= 0 && stacks.slice(first).some((st) => st.includes(r));
+        };
+        const ending = states.filter((s) => stacks[stacks.length - 1].includes(s.id));
+        const asked = (pattern: string) =>
+          behaviourReport(model, { machineId: m.machine.id, pattern }).properties.at(-1)!;
+        for (const q of ending) {
+          for (const r of states) {
+            const where = `${name} ${m.machine.qualifiedName}: q ${q.declaredName}, r ${r.declaredName}`;
+            const between = asked(`pattern=absence, scope=between, q=state ${q.declaredName}, r=state ${r.declaredName}, p=state ${r.declaredName}`);
+            if (between.claim !== (closes(q.id, r.id) ? 'pass' : 'vacuous')) {
+              problems.push(`${where}: between is ${between.claim}, and the run ${closes(q.id, r.id) ? 'closes' : 'closes no'} segment`);
+            }
+            const after = asked(`pattern=precedence, scope=after, q=state ${q.declaredName}, s=state ${q.declaredName}, p=state ${r.declaredName}`);
+            if (after.claim !== (follows(q.id, r.id) ? 'pass' : 'vacuous')) {
+              problems.push(`${where}: precedence after is ${after.claim}, and the run ${follows(q.id, r.id) ? 'shows' : 'shows no'} r at or after q`);
+            }
+            scoped++;
+          }
+          // And the other way round: segments the run closes where it ends.
+          for (const o of states) {
+            const where = `${name} ${m.machine.qualifiedName}: q ${o.declaredName}, r ${q.declaredName}`;
+            const between = asked(`pattern=absence, scope=between, q=state ${o.declaredName}, r=state ${q.declaredName}, p=state ${q.declaredName}`);
+            if (between.claim !== (closes(o.id, q.id) ? 'pass' : 'vacuous')) {
+              problems.push(`${where}: between is ${between.claim}, and the run ${closes(o.id, q.id) ? 'closes' : 'closes no'} segment`);
+            }
+            scoped++;
+          }
+        }
       }
     }
     expect(problems).toEqual([]);
     // Not vacuous: the cycles above, and the corpus's own trigger-less machines.
     expect(decided).toBeGreaterThan(20);
+    expect(scoped, 'no machine without a choice was asked a scoped question').toBeGreaterThan(100);
   }, 300_000);
 
   it('the replay sweep: every published witness is a run the interpreter takes', () => {

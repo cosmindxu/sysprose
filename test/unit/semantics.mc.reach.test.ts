@@ -1129,6 +1129,40 @@ describe('a nested state def: the machine that holds it, and a transition across
         'written inside no machine, so no walk stands on its states, and it carries no property. The machine written ' +
         'inside it, `R::Plain::Deep`, is checked when it is named itself.',
     );
+    // The climb stops at a machine (the whole-branch review's climb probe): a
+    // state of a definition that owns no transition, inside machine `Mach`,
+    // inside a lone `Outer` that carries a property. `Mach` reports `Inner2`'s
+    // carrier (as not checked), and `Outer` its own; the refusal named
+    // `Outer` and its pick row selected it.
+    const climb = await modelOf(`package P {
+      state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state a"; }
+        state a;
+        state def Mach {
+          state m1; state m2;
+          transition t first m1 accept go then m2;
+          state def Inner2 {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }
+            state x; state y;
+          }
+        }
+      }
+    }`);
+    const machId = idOf(climb, 'P::Outer::Mach');
+    for (const q of ['P::Outer::Mach::Inner2::x', 'P::Outer::Mach::Inner2']) {
+      const r = behaviourMachineFor(climb, idOf(climb, q));
+      expect(!r.ok && [r.holder, r.candidates, r.message], q).toEqual([
+        machId,
+        [],
+        `\`${q}\` holds no state machine — it is inside \`P::Outer::Mach\`, which is one`,
+      ]);
+    }
+    const onMach = behaviourReport(climb, { machineId: machId }).properties;
+    expect(onMach.map((p) => p.claim)).toEqual(['inconclusive']);
+    expect(onMach[0].detail).toContain('this property is carried by `P::Outer::Mach::Inner2`');
+    // A state of `Outer` itself still names `Outer`.
+    const inOuter = behaviourMachineFor(climb, idOf(climb, 'P::Outer::a'));
+    expect(!inOuter.ok && inOuter.holder).toBe(idOf(climb, 'P::Outer'));
 
     // Beside ONE machine whose own property holds: refused, where it was answered with the machine.
     const besideOne = `package T5 {
