@@ -430,7 +430,7 @@ function hubModel(): string {
 `;
 }
 
-test('a hub that many dependency lines end on leads a one-layer General view, its lines running from the boxes that point at it', async ({ page }) => {
+test('the biggest hub that many dependency lines end on leads a one-layer General view, its lines running from the boxes that point at it', async ({ page }) => {
   const errors = captureErrors(page);
   await page.route('**/layered/Hub.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: hubModel() }));
   await page.goto('/?model=layered/Hub.sysml', { waitUntil: 'domcontentloaded' });
@@ -450,10 +450,15 @@ test('a hub that many dependency lines end on leads a one-layer General view, it
     p.x >= n.position.x - 1 && p.x <= n.position.x + n.size.w + 1 && p.y >= n.position.y - 1 && p.y <= n.position.y + n.size.h + 1 &&
     (Math.abs(p.x - n.position.x) < 1 || Math.abs(p.x - n.position.x - n.size.w) < 1 || Math.abs(p.y - n.position.y) < 1 || Math.abs(p.y - n.position.y - n.size.h) < 1);
 
-  // Each member sits left of all eight activities allocated to it, and every line still runs from its activity to the member.
-  for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
+  // The two members take eight lines each, so only the first leads (letting both lead interleaves their fans): memberA sits
+  // left of its eight activities and memberB right of its own, and every line still runs from its activity to its member.
+  for (const [hub, who, leads] of [['memberA', 'alpha', true], ['memberB', 'bravo', false]] as const) {
     const h = byLabel(hub);
-    for (let i = 0; i < 8; i += 1) expect(byLabel(`${who}${i}`).position.x, `${who}${i} is right of ${hub}`).toBeGreaterThan(h.position.x + h.size.w);
+    for (let i = 0; i < 8; i += 1) {
+      const a = byLabel(`${who}${i}`);
+      if (leads) expect(a.position.x, `${who}${i} is right of ${hub}`).toBeGreaterThan(h.position.x + h.size.w);
+      else expect(a.position.x + a.size.w, `${who}${i} is left of ${hub}`).toBeLessThan(h.position.x);
+    }
     const lines = d.edges.filter((e) => e.kind === 'allocate' && e.target === h.id);
     expect(lines).toHaveLength(8);
     for (const e of lines) {

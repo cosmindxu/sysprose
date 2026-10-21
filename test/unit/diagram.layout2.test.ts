@@ -8,6 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import ELK from 'elkjs/lib/elk.bundled.js';
+import type { ELK as ElkInstance, ElkNode } from 'elkjs/lib/elk-api';
 import { buildSampleModel } from '@core/index';
 import { buildDiagram } from '@diagram/build';
 import {
@@ -16,7 +18,9 @@ import {
   layoutOptionsFor,
   layoutDirectionFor,
   PORT_CONSTRAINTS,
+  setElkFactory,
 } from '@diagram/layout';
+import type { DiagramGraph, DiagramNode } from '@diagram/types';
 
 describe('elkPortSide — in→WEST / out→EAST port-side policy', () => {
   it('maps feature directions and boundary sides to ELK sides', () => {
@@ -48,6 +52,32 @@ describe('layoutOptionsFor — layered + orthogonal + per-view direction', () =>
     // used it came out as one strip hundreds of screens long.
     expect(layoutOptionsFor('general')['elk.hierarchyHandling']).toBe('SEPARATE_CHILDREN');
     expect(layoutOptionsFor('interconnection', true)['elk.hierarchyHandling']).toBe('INCLUDE_CHILDREN');
+  });
+
+  it('hands ELK the compound option through layoutDiagram: INCLUDE_CHILDREN for a piece that nests, SEPARATE_CHILDREN for a flat one', async () => {
+    // Measured at aac38fd (docs/UI-ROADMAP.md P1): SEPARATE_CHILDREN for a nested piece is 30-70x faster on the entry's 330 boxes but
+    // leaves every edge that crosses a parent's border unrouted, so a nested piece keeps INCLUDE_CHILDREN.
+    const box = (id: string, parentId?: string): DiagramNode => ({
+      id, elementId: id, kind: 'PartUsage', label: id, data: {}, ...(parentId ? { parentId } : {}),
+    });
+    const graph = (nodes: DiagramNode[], viewKind: DiagramGraph['viewKind']): DiagramGraph => ({
+      nodes, viewKind, edges: [{ id: 'e', source: nodes[nodes.length - 2]!.id, target: nodes[nodes.length - 1]!.id, kind: 'connection' }],
+    });
+    const seen: (string | undefined)[] = [];
+    const real = new ELK();
+    setElkFactory(() => ({
+      layout: (g: ElkNode) => {
+        seen.push(g.layoutOptions?.['elk.hierarchyHandling']);
+        return real.layout(g);
+      },
+    }) as unknown as ElkInstance);
+    try {
+      await layoutDiagram(graph([box('a'), box('b')], 'interconnection'));
+      await layoutDiagram(graph([box('p'), box('c1', 'p'), box('c2', 'p')], 'interconnection'));
+    } finally {
+      setElkFactory(null);
+    }
+    expect(seen).toEqual(['SEPARATE_CHILDREN', 'INCLUDE_CHILDREN']);
   });
 
   it('flows every view left to right', () => {

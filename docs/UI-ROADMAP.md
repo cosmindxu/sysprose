@@ -124,7 +124,7 @@ connected piece that contains nested boxes and `SEPARATE_CHILDREN` for every oth
 a flat and for a nested call, not its timing. That is the 1.7× row, and it leaves a piece that
 nests exactly as it was.
 
-**Still open at `5943654`: a piece that nests.** `toElkTree` passes `nested = true` for any piece
+**Still open at `5943654`, and at `aac38fd` (measured below): a piece that nests.** `toElkTree` passes `nested = true` for any piece
 with one nested box, and that keeps `INCLUDE_CHILDREN`. Measured through `layoutDiagram` on the
 `interconnection` view, 30 parents of 10 children each and two edges per leaf (330 nodes): 11 113 ms
 as it stands (14 s on a loaded machine), 171 ms with `SEPARATE_CHILDREN` forced (65×); the raw ELK
@@ -136,6 +136,42 @@ and `tree` 44 184 against 42 411. Whether to drop the option for nested pieces (
 edges that cross a parent's border for time), or to bound the compound layout, is not decided; it
 is tracked in `TODO.md` (*Decide what the layout does with a piece that nests*) and awaits a user
 decision.
+
+**Measured again at `aac38fd` (2026-10-21), forced `SEPARATE_CHILDREN` against the shipped option,
+through `layoutDiagram`.** Crossings and "through" are counted on what the canvas draws: an edge
+ELK did not route is drawn as a straight line between the centres of its boxes (`svg-export.ts`),
+and "unrouted" counts those edges. Each time is the faster of two warm runs, taken in the order
+forced, shipped, forced, shipped (the first run of a process is slower, which flattered the
+forced option in a first pass), on a loaded machine (load average about 15); the synthetic rows
+are two or three processes.
+
+| Piece | Nodes / edges | `INCLUDE_CHILDREN` (shipped) | `SEPARATE_CHILDREN` forced | Time ratio |
+|---|---|---|---|---|
+| the entry's own graph: 30 parents × 10 leaves, two edges per leaf to `leaf[(i*7+d*13) % 300]` (576 of 600 edges cross a parent's border) | 330 / 600 | 42 574 ms (45 141 cold); 24 135 crossings; 0 through; 0 unrouted | 613 ms (1 380 cold); 23 748 crossings; 576 through; 576 unrouted | 69× (33× cold) |
+| a structured variant: 30 parents × 10 leaves, two edges per leaf (inside the parent, and to the next parent) | 330 / 600 | 2 035–2 135 ms; 386 crossings; 0 through; 0 unrouted | 366–467 ms; 464 crossings (+20 %); 10 through; 300 unrouted | 4.6–5.8× |
+| 30 `Cell` parts of 10 leaves in one `system`, one connector per leaf to the next cell (SysML text, `interconnection` view) | 331 / 300 | 559 ms; 0 crossings | 315 ms; 742 crossings; 300 through; 300 unrouted | 1.8× |
+| drone-swarm v9, `interconnection`, whole model | 172 / 42 | 926 ms; 0 crossings | 942 ms; 2 crossings; 2 unrouted | none |
+| drone-swarm v9, `interconnection`, `SwarmMember` and `MissionComputerNode` | 6 / 0, 5 / 0 | 13 and 8 ms | 13 and 8 ms | none |
+| drone-swarm v9, General: whole model, `Kinds`, `Common`, `OA`, `SA`, `LA`, `PA`, `EPBS` | 853 / 949 down to 33 / 0 | no nested box, so the option is already `SEPARATE_CHILDREN` and the two runs are the same layout (crossings 3 993, 0, 29, 18, 0, 0, 3, 0) | same | none |
+| the six `examples/` models, `interconnection` (whole, and each part with two or more parts; 9 views) | 3–14 / 0–9 | 8–78 ms; 0 crossings; 0 through; 0 unrouted | 8–95 ms; the same | none |
+
+The profile's 11 s for the 330-node case **is** reproduced on the entry's own graph (the N0
+reviewer's `synth.mts`): the shipped option takes 43–45 s here (load average 20 to 29), the forced
+option 0.6–1.4 s. The structured variant in the
+second row, where most edges stay inside a parent, costs about 2 s shipped and is only 4.6–5.8×
+faster forced. So the time criterion of the rule set (at least 10× on the 330-node case) **is met**
+on the entry's graph. The change is refused for another reason: `SEPARATE_CHILDREN` lays out each
+parent's interior alone and does **not route an edge that crosses a parent's border**. Every such
+edge (576 of 576 on the entry's graph, 300 of 300 in the `Cell` row) comes back without a route and
+is drawn straight, across other boxes, and on the v9 `interconnection` view, the one real model
+where the option matters, the crossings go from 0 to 2 with 2 edges unrouted. The rule set was "at
+least 10× on the 330-node case, crossings up by at most 10 % on every measured real model, and no
+overlap or line through a box"; the real-model and line-through conditions fail. So **no layout
+code changed**: a nested piece keeps `INCLUDE_CHILDREN`, and `U diagram.layout2` now pins the
+option through `layoutDiagram` (a flat call and a nested call), not only through
+`layoutOptionsFor`. What stays open is to bound the compound layout (lay each parent's interior
+out on its own, then route the edges that cross a border ourselves); dropping the option is not a
+free change.
 
 ### P2 — the solver clones its whole value map per probe (`src/semantics/solver.ts`: `solveScalar`, `newtonStep`, `substitutedNewton`)
 

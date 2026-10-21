@@ -38,6 +38,7 @@ import {
   dependencyHubs,
   hubEdges,
   intrinsicSize,
+  leadingHubEdges,
   packRows,
   thoroughnessFor,
 } from '@diagram/layout';
@@ -564,31 +565,56 @@ describe('general view — a hub that many dependency lines end on leads its pie
     expect([...dependencyHubs(into('R', 'satisfy', 2), 2).keys()]).toEqual(['R']);
   });
 
-  it('draws the hub first, its lines fanning out to the right, and leaves fewer crossings', async () => {
+  it('draws the biggest hub first, its lines fanning out to the right, and leaves far fewer crossings', async () => {
     const g0 = generalOf(hubText(8, 3, 6));
     const g = await layoutDiagram(g0);
     expectReadable(g);
-    // The hubs sit left of every activity allocated to them; the lines still run source -> hub.
-    for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
-      const hubBox = box(g, hub);
-      for (let i = 0; i < 8; i++) expect(box(g, `${who}${i}`).x, `${who}${i} is right of ${hub}`).toBeGreaterThan(hubBox.x + hubBox.w);
-      const hubId = g.nodes.find((n) => n.label === hub)!.id;
-      for (const e of g.edges.filter((x) => x.kind === 'allocate' && x.target === hubId)) {
-        const src = absoluteBoxes(g).get(e.source)!;
-        expect(onOutline(e.route![0]!, src), `${e.id} starts on its source`).toBe(true);
-        expect(onOutline(e.route![e.route!.length - 1]!, hubBox), `${e.id} ends on its hub`).toBe(true);
-      }
+    // memberA and memberB have eight lines each: only the first leads, so the two fans do not interleave.
+    // Its activities sit right of it; the lines still run source -> hub, ending on the hub.
+    const lead = box(g, 'memberA');
+    for (let i = 0; i < 8; i++) expect(box(g, `alpha${i}`).x, `alpha${i} is right of memberA`).toBeGreaterThan(lead.x + lead.w);
+    const leadId = g.nodes.find((n) => n.label === 'memberA')!.id;
+    for (const e of g.edges.filter((x) => x.kind === 'allocate' && x.target === leadId)) {
+      const src = absoluteBoxes(g).get(e.source)!;
+      expect(onOutline(e.route![0]!, src), `${e.id} starts on its source`).toBe(true);
+      expect(onOutline(e.route![e.route!.length - 1]!, lead), `${e.id} ends on its hub`).toBe(true);
     }
+    // memberB closes its piece, as it would in the usual way.
+    for (let i = 0; i < 8; i++) expect(box(g, `bravo${i}`).x, `bravo${i} is left of memberB`).toBeLessThan(box(g, 'memberB').x);
     // The same graph laid out the usual way, every line source -> target (one layering forced, so no hub leads).
     const usualWay = await layoutDiagram(g0, { elkOptions: { 'elk.layered.layering.strategy': 'NETWORK_SIMPLEX' } });
     expect(box(usualWay, 'memberA').x).toBeGreaterThan(box(usualWay, 'alpha0').x);
     expect(crossingsOf(g)).toBeLessThanOrEqual(crossingsOf(usualWay) - HUB_MIN_CROSSINGS_SAVED);
+    // With both hubs leading it was 34 of the usual 39; with one leading, 6.
+    expect(crossingsOf(g)).toBeLessThanOrEqual(12);
   }, 60_000);
 
-  it('keeps the usual direction where drawing from the hub saves too few crossings', async () => {
-    const g = await layoutDiagram(generalOf(hubText(4, 2, 3)));
+  it('names the lines of the biggest hub only where a piece has two hubs or more', () => {
+    /** The hub boxes the led lines end on, one entry per line. */
+    const lead = (text: string): string[] => {
+      const g = generalOf(text);
+      const label = new Map(g.nodes.map((n) => [n.id, n.label]));
+      const ids = new Set(connectedPieces(g).flatMap((p) => [...leadingHubEdges(g, p)]));
+      return g.edges.filter((e) => ids.has(e.id)).map((e) => label.get(e.target)!);
+    };
+    const two = hubText(8, 3, 6);
+    expect(lead(two)).toEqual(Array(8).fill('memberA'));
+    // memberB with nine lines is the biggest.
+    const nine = two.replace('allocate alpha0 to memberA;', 'allocate alpha0 to memberB;');
+    expect(lead(nine)).toEqual(Array(9).fill('memberB'));
+    // One hub alone has nothing to lead against; a piece with no hub, or with its columns, has none.
+    expect(lead(two.replace(/allocate bravo\d+ to memberB;/g, ''))).toEqual([]);
+    expect(lead(hubText(8, 3, 6, true))).toEqual([]);
+  });
+
+  it('keeps the usual direction where drawing from the hubs saves too few crossings', async () => {
+    // Two hubs of three lines each: drawn from the hubs is cheaper, but saves no crossing.
+    const g0 = generalOf(hubText(3, 2, 3));
+    expect(connectedPieces(g0).flatMap((p) => [...hubEdges(g0, p)]).length).toBeGreaterThan(0);
+    const g = await layoutDiagram(g0);
     expectReadable(g);
-    for (let i = 0; i < 4; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
+    for (let i = 0; i < 3; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
+    for (let i = 0; i < 3; i++) expect(box(g, `bravo${i}`).x).toBeLessThan(box(g, 'memberB').x);
   }, 30_000);
 
   it('keeps the usual direction where both drawings cross nothing, though the hub-led one costs less', async () => {

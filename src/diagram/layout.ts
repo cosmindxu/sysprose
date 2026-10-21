@@ -591,10 +591,10 @@ export const HUB_MIN_EDGES = 3;
  */
 export const HUB_MIN_CROSSINGS_SAVED = 3;
 /**
- * Drawing from the hubs is one more full layout run, which on a big piece with
- * a hub of a hundred lines costs as much as all the layering candidates
- * together. Pieces of more boxes than this keep the usual direction; every
- * layer of the drone-swarm models is well under it.
+ * Drawing from the hubs is one more full layout run (two more with two or more
+ * hubs), which on a big piece with a hub of a hundred lines costs as much as
+ * all the layering candidates together. Pieces of more boxes than this keep
+ * the usual direction; every layer of the drone-swarm models is well under it.
  */
 export const HUB_MAX_NODES = 200;
 
@@ -635,9 +635,26 @@ export function hubEdges(graph: DiagramGraph, piece: Piece): ReadonlySet<string>
 }
 
 /**
+ * The dependency lines of the one hub with the most of them (the first, on a
+ * tie), in a piece that has two or more hubs; empty otherwise. Two hubs whose
+ * lines come from boxes of one shared definition (the drone-swarm model's
+ * `memberA` and `memberB`, with fourteen activities each) lead against each
+ * other: their fans interleave and their lines cross (46 crossings in its
+ * Operational view, 18 with only `memberA` leading, `memberB` closing the
+ * piece). Exported for tests.
+ */
+export function leadingHubEdges(graph: DiagramGraph, piece: Piece): ReadonlySet<string> {
+  if (hubEdges(graph, piece).size === 0) return NO_EDGES;
+  const hubs = [...dependencyHubs(piece.edges).values()];
+  if (hubs.length < 2) return NO_EDGES;
+  return new Set(hubs.reduce((best, lines) => (lines.length > best.length ? lines : best)));
+}
+
+/**
  * Lay out one piece — every candidate layering where it pays, keeping the most
  * readable. A piece with a hub is also laid out with the hub's dependency lines
- * drawn from the hub, and that layout wins only when it is clearly more readable.
+ * drawn from the hub (and, with two or more hubs, with only the biggest hub
+ * leading), and that layout wins only when it is clearly more readable.
  */
 async function layoutPiece(
   graph: DiagramGraph,
@@ -648,6 +665,7 @@ async function layoutPiece(
   const forced = overrides['elk.layered.layering.strategy'] !== undefined;
   const tryCandidates = n >= CANDIDATE_MIN_NODES && n <= CANDIDATE_MAX_NODES && piece.edges.length >= 10 && !forced;
   const fromHubs = forced ? NO_EDGES : hubEdges(graph, piece);
+  const fromLead = forced ? NO_EDGES : leadingHubEdges(graph, piece);
   if (!tryCandidates && fromHubs.size === 0) return readGeometry(await runElk(toElkTree(graph, piece, overrides)));
   const portOwner = new Map<string, string>();
   for (const node of graph.nodes) for (const p of node.ports ?? []) portOwner.set(p.id, node.id);
@@ -670,8 +688,13 @@ async function layoutPiece(
   }
   if (fromHubs.size === 0) return usual!.g;
   // The layering that read best source → target also read best from the hubs on
-  // every layer of the drone-swarm model, so the hub-led layout costs one more run.
-  const hubLed = await run(fromHubs, usual!.layering);
+  // every layer of the drone-swarm model, so the hub-led layout costs one more run,
+  // or two with two or more hubs.
+  let hubLed = await run(fromHubs, usual!.layering);
+  if (fromLead.size > 0) {
+    const leadOnly = await run(fromLead, usual!.layering);
+    if (leadOnly.cost < hubLed.cost) hubLed = leadOnly;
+  }
   const saved = countCrossings(usual!.g.routes, ends) - countCrossings(hubLed.g.routes, ends);
   return saved >= HUB_MIN_CROSSINGS_SAVED && hubLed.cost < usual!.cost ? hubLed.g : usual!.g;
 }

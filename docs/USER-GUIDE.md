@@ -380,13 +380,17 @@ the layout made room for them — never on a box, a line or another label.
   that a dozen activities are allocated to, a requirement many things satisfy —
   is drawn at the left, and those lines fan out of it to the boxes they come
   from, their arrowheads pointing back at it, instead of each running the width
-  of the diagram to a box at the far right. The layout draws the piece both ways
-  and keeps this one only if it has at least three crossings fewer and reads
-  better overall, so a view that already reads well keeps every line running
-  left to right, as does a whole-model view with its layer columns. Adding or
-  removing a few lines can tip a piece from one drawing to the other, and its
-  hub then moves from one side to the other. Pieces of more than 200 boxes are
-  not tried both ways.
+  of the diagram to a box at the far right. Where a piece has two or more such
+  boxes (two members, each with an activity per step, whose fans would
+  interleave and cross), the layout also tries letting only the one with the
+  most lines lead (the first, on a tie), the others staying at the right where
+  their lines end. The layout draws the piece each way and keeps one
+  of the hub-led drawings only if it has at least three crossings fewer than the
+  usual one and reads better overall, so a view that already reads well keeps
+  every line running left to right, as does a whole-model view with its layer
+  columns. Adding or removing a few lines can tip a piece from one drawing to
+  another, and a hub then moves from one side to the other. Pieces of more than
+  200 boxes are not tried from their hubs.
 - **A label that would say the same thing on every line is left off.** When
   every dependency in a view is of one kind — the Requirement view's
   `«satisfy»`, for instance — the keyword is dropped and lines that leave one
