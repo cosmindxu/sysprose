@@ -73,6 +73,28 @@ export interface SysmlParseResult {
 /** Cached services (creating them is comparatively expensive). */
 let cachedServices: ReturnType<typeof createSysmlServices> | undefined;
 
+/** Whether the parser itself has been built (see {@link warmParser}). */
+let parserBuilt = false;
+
+/**
+ * Build the parser now, so the first {@link parseDocument} does not pay for it.
+ * The services come back at once; the parser is built the first time something
+ * asks for it, and building it runs Chevrotain's lookahead analysis — about
+ * 1.3 s in a browser and 99% of what a first parse costs (the next ones take
+ * milliseconds). A page that calls this at idle moves that wait off the click
+ * on "Apply text → model" (`src/ui/parser-warmup.ts`).
+ */
+export function warmParser(): void {
+  cachedServices ??= createSysmlServices();
+  void cachedServices.Sysml.parser.LangiumParser;
+  parserBuilt = true;
+}
+
+/** Whether the parser is built: a parse now costs milliseconds, not the construction. */
+export function parserIsWarm(): boolean {
+  return parserBuilt;
+}
+
 /**
  * Tokenize + parse `text` into a SysML AST. Pure syntactic parse: no linking,
  * scoping or validation is performed here (name resolution against the model
@@ -82,6 +104,7 @@ let cachedServices: ReturnType<typeof createSysmlServices> | undefined;
 export function parseDocument(text: string): SysmlParseResult {
   cachedServices ??= createSysmlServices();
   const parser = cachedServices.Sysml.parser.LangiumParser;
+  parserBuilt = true;
   const result = parser.parse<Namespace>(text);
   return {
     ast: result.value,

@@ -14,8 +14,9 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 > all confirmed findings fixed). Still open: two measured performance items from
 > the profiling round, **P1** for a piece with nested boxes (the compound-layout
 > option is now off for a flat piece, but a nested piece still pays for it) and
-> **P3** (the first "Apply text → model" click builds the parser on the page's
-> thread), and **Electron/Tauri** (a hard environmental blocker: no Windows
+> **P3** (Apply's parse is still on the page's thread; its first click no longer
+> builds the parser, which opening the Text view does while the page is idle), and
+> **Electron/Tauri** (a hard environmental blocker: no Windows
 > cross-build here). **P2** (the solver's per-probe clone of its value map) is
 > fixed. Community-detection **per element** stays deferred as low-value optional
 > depth.
@@ -216,7 +217,7 @@ what is gained is the removed per-probe allocation, not a speed-up anyone sees a
 needs none, and an unknown left unset by a failed root-find, or read by a check alone, is not left
 in the map at a probe's value.
 
-### P3 — the first "Apply text → model" click blocks the main thread for ~1.28 s
+### P3 — the first "Apply text → model" click blocks the main thread for ~1.28 s — the build now runs when the Text view opens (S5); Apply's parse stays on the page
 
 Not parsing — **parser construction**. Chevrotain's ALL(\*) lookahead analysis
 (`performSelfAnalysis`) costs 1 387 ms in the browser and 1 102 ms of it is one function,
@@ -228,6 +229,41 @@ Still open at `5943654`: there is no parser worker (the dedicated workers are EL
 palette's checks), and in Node the first parse of a one-line model takes 1.2 s and the next 2 ms.
 Since branch `load-health` (2026-10-14) the checks worker builds the parser too, and parses each
 text a palette check's load health needs there; Apply's parse is still on the page.
+
+**What was done (branch `ui-perf-backlog`, S5): the build is warmed, the parse is not moved.**
+Opening the Text view schedules `warmParser` (`src/text/langium/module.ts`) for when the page is
+idle (`src/ui/parser-warmup.ts`, from `TextEditor`), so a click on Apply, Save's apply of the typed
+text (`store.drive.ts`), and the `typedTextFirst` of a field's change (which applies the typed text
+before the change goes in) find the parser built. They keep parsing on the page, synchronously, as
+before.
+Measured in Chromium (headless, a loaded 16-core machine, a three-line package, the click timed in
+the page from `click()` to its return, seven runs before and eight after):
+
+| | first Apply | second Apply |
+|---|---|---|
+| before | 1 277 – 1 392 ms (a long task of 1.4 – 1.6 s) | 4 – 5 ms |
+| after (the Text view open for 3 s, or the click made as soon as the fill returned) | 11 – 21 ms | 3 – 7 ms |
+
+The build is not removed: it is one stretch of about 1.3 s on the page's thread, now right after
+the Text view opens (a click made within that stretch waits for the rest of it, as it did before).
+Opening the Text tab now holds the page for about 1.4 s, once per session. The time from opening the
+tab to an applied model is unchanged (about 2.5 s before, 2.6 s after, with real typing and a mouse
+click). What changes is that the Apply click itself answers at once.
+
+Two other moments were measured and not taken. At load: the build ran before the first diagram was
+drawn, and the diagram came up at 2.2 – 2.6 s instead of 0.9 – 1.0 s, for every session, most
+of which never open the Text view. At the click on Apply only: the status quo. A worker cannot take
+the build off the thread without taking the parse with it: the parser cannot be handed across, so
+the page would need an Apply that waits for a worker's reply.
+
+**Not done: the parse in a worker.** `applyText` and `typedTextFirst` are synchronous, and
+the second must stay so (its caller goes on with the change the moment it returns). Moving Apply's
+parse into the worker needs an Apply that is in flight: the buffer edited while it parses, Undo and
+the carried ids across the wait, the reply's model rebuilt on the page (`ParseResult` holds a
+`Model`, a range table and deferred warnings), and a page-thread fallback where the worker is
+unavailable. That is its own change, and it would not make the first Apply faster than the warm-up
+does; it would let a very large text not hold the page while it parses. Still open for the cases
+where the parse is the cost, not the build.
 
 ### What the profiling ruled OUT, with the arithmetic
 

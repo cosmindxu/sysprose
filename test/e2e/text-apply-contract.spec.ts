@@ -138,3 +138,26 @@ test('applying text stops a running simulation instead of orphaning it', async (
 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
+
+// docs/UI-ROADMAP.md P3: opening the Text view builds the parser while the page is idle
+// (`src/ui/parser-warmup.ts`), so the first Apply does not wait for it. Cold, the click holds the
+// page for the construction, about 1.3 s here (0.2 s to 3 s as the machine is loaded); built, it
+// takes a few milliseconds.
+test('the first Apply after the Text view has opened does not build the parser', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await openTab(page, 'tab-text');
+  await expect(page.getByTestId('text-editor')).toBeVisible();
+  await expect(page.locator('html[data-parser-warm="true"]')).toHaveCount(1, { timeout: 30_000 });
+
+  await page.getByTestId('text-editor').fill('package Warm {\n  part def Gearbox;\n}\n');
+  const held = await page.getByTestId('text-apply').evaluate((button) => {
+    const from = performance.now();
+    (button as HTMLElement).click(); // React runs the click's handler before this returns
+    return performance.now() - from;
+  });
+  await expect.poll(() => hasNamed(page, 'PartDefinition', 'Gearbox')).toBe(true);
+  expect(held, `the first Apply held the page for ${Math.round(held)} ms`).toBeLessThan(500);
+
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});

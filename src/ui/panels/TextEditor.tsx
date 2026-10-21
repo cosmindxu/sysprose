@@ -26,8 +26,9 @@
  *   and applying it is the way out of that state.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushRecompute, forcedRecomputePending, useAppStore } from '../store';
+import { scheduleParserWarmUp } from '../parser-warmup';
 import type { Diagnostic } from '@validation/index';
 import './panels.css';
 
@@ -45,6 +46,10 @@ export function TextEditor(): JSX.Element {
   const applyRefused = serializeError !== null && !textDirty;
 
   const gutterRef = useRef<HTMLDivElement>(null);
+
+  // Text is applied from here: build the parser while the page is idle, so the
+  // first Apply does not wait ~1.3 s for it (`../parser-warmup.ts`).
+  useEffect(() => scheduleParserWarmUp(), []);
 
   // NOTE: the model→text auto-sync (regenerate the buffer when the model changes
   // and the buffer is clean) is now owned by the store's coalesced recompute

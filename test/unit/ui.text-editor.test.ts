@@ -29,6 +29,7 @@ vi.mock('../../src/library/standard-library', () => ({
 
 import { flushRecompute, forcedRecomputePending, useAppStore } from '../../src/ui/store';
 import { TextEditor } from '../../src/ui/panels/TextEditor';
+import { scheduleParserWarmUp, type WarmUpDeps } from '../../src/ui/parser-warmup';
 
 beforeEach(() => {
   useAppStore.setState({
@@ -111,4 +112,74 @@ describe('TextEditor — focusing it', () => {
     flushRecompute();
     view.unmount();
   });
+});
+
+describe('the parser is built before the first Apply', () => {
+  /** A page whose idle callbacks and timers run when the test says so. */
+  function fakePage(over: Partial<WarmUpDeps> = {}) {
+    const queued: Array<() => void> = [];
+    const attrs: Record<string, string> = {};
+    let built = false;
+    const calls = { builds: 0 };
+    const deps: WarmUpDeps = {
+      build: () => {
+        calls.builds++;
+        built = true;
+      },
+      isBuilt: () => built,
+      requestIdleCallback: (cb) => void queued.push(cb),
+      setTimeout: (cb) => void queued.push(cb),
+      document: { documentElement: { setAttribute: (k, v) => void (attrs[k] = v) } },
+      ...over,
+    };
+    return { deps, queued, attrs, calls };
+  }
+
+  it('builds it when the page is idle, once, and says so on the document', () => {
+    const page = fakePage();
+    scheduleParserWarmUp(page.deps);
+    scheduleParserWarmUp(page.deps); // the Text view mounting again while the first waits
+    expect(page.calls.builds, 'nothing is built before the page is idle').toBe(0);
+    page.queued.forEach((run) => run());
+    expect(page.calls.builds, 'the second finds it built').toBe(1);
+    expect(page.attrs['data-parser-warm']).toBe('true');
+    const queuedBefore = page.queued.length;
+    scheduleParserWarmUp(page.deps); // built: nothing more to queue
+    expect(page.queued).toHaveLength(queuedBefore);
+  });
+
+  it('falls back to a timer where there is no idle callback', () => {
+    const page = fakePage({ requestIdleCallback: undefined });
+    scheduleParserWarmUp(page.deps);
+    expect(page.queued).toHaveLength(1);
+    page.queued[0]!();
+    expect(page.calls.builds).toBe(1);
+  });
+
+  it('leaves the page working when the build throws, and tries again at the next mount', () => {
+    let fail = true;
+    const page = fakePage();
+    const build = page.deps.build;
+    page.deps.build = () => {
+      if (fail) throw new Error('no parser here');
+      build();
+    };
+    scheduleParserWarmUp(page.deps);
+    expect(() => page.queued[0]!()).not.toThrow();
+    expect(page.attrs['data-parser-warm']).toBeUndefined();
+    fail = false;
+    scheduleParserWarmUp(page.deps);
+    page.queued[1]!();
+    expect(page.calls.builds).toBe(1);
+    expect(page.attrs['data-parser-warm']).toBe('true');
+  });
+
+  it('is started by the Text view opening', async () => {
+    document.documentElement.removeAttribute('data-parser-warm');
+    const view = render(React.createElement(TextEditor));
+    await vi.waitFor(() => expect(document.documentElement.getAttribute('data-parser-warm')).toBe('true'), {
+      timeout: 60_000,
+    });
+    view.unmount();
+  }, 70_000);
 });
