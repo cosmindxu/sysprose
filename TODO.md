@@ -342,42 +342,70 @@ true values. What follows is what that branch and the review of it left open; en
       worker, or both, measured on v9 first. Done when an edit on v9 leaves no task over 200 ms on
       the page with the machine loaded, measured as that guard measures a click. [review
       2026-10-14 D-3, measured on the `load-health` S3 tree]
-- [ ] **List the elements of different owners in the order the text gives them.** The page and
-      every copy of its model (the checks worker's, Undo's, Save's) now list each owner's children
-      in the order the owner holds them, but elements of different owners stay in the order they
-      were added, by a load, a creation or a drag (`Model.adoptSerialOrder` and `inSerialOrder`,
-      `src/core/model.ts`), while a terminal over the saved text reads them from top to bottom. So
-      the two can disagree on whatever goes by the model's order across owners: the order of
-      `reach` and `check-behaviour` rows, and a choice of the first of several, such as the first
-      transition out of an `initial` when the transitions have different owners. Probe:
-      `package P { package Q1 { state def M1 { state a; state b; state dead1; transition t1 first
-      a then b; } } package Q2 { state def M2 { state x; state y; state dead2; transition t2 first
-      x then y; } } }`; drag `Q1` out of `P` and back in: the Text view lists `Q2` first, and
-      `reach` on the saved text reports M2's rows first, while the page and the worker report M1's
-      first (measured on the `load-health` S2 tree). No drag is needed: a machine `M0` created in
-      `Q1` after the load is reported after M2 on the page and in the worker, and before it by the
-      terminal. Fix: list the user's part in containment
-      pre-order after each edit, at a measured cost on the drone-swarm model (a load is not in
-      pre-order: 1,030 of its 3,823 user elements would move), or order the rows by the text.
-      Done when the probe's page, worker and terminal rows come in one order. [review 2026-10-14
-      D-1, the S2 review]
-- [ ] **Keep each owner's child order in a collaboration room.** A room keeps the model's
-      elements in a `Y.Map` (`src/collab/model-doc.ts`), and a peer rebuilds the model from it in
-      ways that lose the order an owner holds its children in. `reconcileModelFromDoc` creates the
-      elements it is sent last to first, so a batch of new elements in one peer (one transaction,
-      or a reset: Apply, Import, Undo, Redo) reaches the others reversed: three parts `a, b, c`
-      made in one transaction read `c, b, a` on the other peer, and a reset to `x, y, z` reads
-      `z, y, x`. And a peer that joins loads the model in the map's key order
-      (`serializeFromDoc`), where a drag changed only the element's owner: after `toA` of
-      `start, A, B, toA, toB` is dragged out of its machine and back in, the room holds
-      `start, A, B, toB, toA` and a peer that joins then holds `start, A, B, toA, toB`, and walks
-      `toA` out of `start` first. Its Text view differs, and a composite with no `initial` can enter
-      another state. A peer present at a drag takes it in as a move, and lists its model as the
-      mover does (`load-health` S2). Fix: create in the map's order, and carry the child order in
-      the document (an order key per element, or a `Y.Array` of child ids per owner). Done when a
-      test shows every peer's children in the mover's order after a batch, a reset and a drag
-      followed by a join (measured on the `load-health` S2 tree). [review 2026-10-14 D-2, the S2
-      review]
+- [ ] **List what a load binds later in the order a terminal binds it, on the page and on every peer of
+      a room.** After an edit the page lists the user's declarations in the order the text gives them
+      (`Model.adoptSerialOrder`, `src/core/model.ts`), and each owner's children come in one order on
+      every peer of a room (`src/collab/model-doc.ts`). But a typing, specialisation, redefinition or
+      implicit feature keeps its place among the others: one made in the app (Properties' Type field, a
+      line drawn with the palette) is listed after every one the model had; one whose element a drag
+      puts elsewhere in the text, or that a project, model JSON or branch stored in another order,
+      stays where it was. A terminal over the saved text binds them in the order their declarations
+      come. In a room, a peer that joins lists them in the order the room's document lists its keys,
+      and a peer present after a reset (Apply, Import, Undo, Redo) keeps them where it had them. So a
+      check that goes by them (`where-used` over a definition) can list its rows in another order than
+      a terminal, and than another peer. Probes: (a) `package X { part def D { attribute a = 1;
+      constraint c { a <= 0 } } part u1; part u2 : D; }`, type `u1` as `D` in Properties: the page
+      gives u2, u1 and a terminal u1, u2; (b) `package X { part def D {...} package A { part u1 : D; }
+      package B { part u2 : D; } }`, drag A out and back in: the page gives [u1, u2] and a terminal
+      [u2, u1], and the same after the stored project is reopened (the same at 87e8c0f). Fix: list
+      them in the order the parser's binding pass makes them (`:>`-family first, then `:` typings, then
+      connector chains, each in the order of their declarations), measured to leave every load where it
+      is, or order such rows by the text; carry that order in the room's document too. Done when the
+      probes' page, terminal and peer rows come in one order. [review 2026-10-14 D-1, collab-order]
+- [ ] **Resolve two peers' moves that hold two elements in each other.** In a collaboration room, two
+      peers who at the same moment each move one of two elements into the other (`X` into `Y` on one
+      peer, `Y` into `X` on the other) leave the room's document holding `X` under `Y` and `Y` under
+      `X`. Each peer refuses the move that would close the cycle (`Model.reparent`,
+      `reconcileModelFromDoc` in `src/collab/model-doc.ts`): one holds `X` under `Y` with `Y` at the top
+      level, the other `Y` under `X` with `X` at the top level. A page that joins as the app joins
+      (`connectCollab`: its own model bound to a new document, then the room synced in) holds the pair
+      as one of the two does. A model bound to a document that already holds the room (the API's
+      `bindModelToDoc`, through `serializeFromDoc`) holds each under the other, reachable from no root:
+      neither shows in its tree, and its text drops both and all they hold. Moving either element
+      again does not end it: the peer that refused keeps its own reading, because its own edit is never
+      taken back in from the document. An Apply, Import, Undo or Redo by any peer brings every peer to
+      that peer's tree (USER-GUIDE section 9 states it). Fix: break such a cycle the same way on every
+      peer and on a join, for instance by putting the member with the lowest id at the top level. Done
+      when both peers, a page that joins and a model bound to the room's document hold the pair alike,
+      both in the tree. [collab-order S2]
+- [ ] **Keep the collaboration relay up on a model with the full library.** `scripts/collab-server.ts`
+      caps a message at 10 MiB and sets no `error` handler on a socket, so a larger message kills the
+      relay process (`RangeError: Max payload size exceeded`, an unhandled `error` event) and drops
+      every room on it. A peer's first message carries the whole document, standard library included.
+      For the drone-swarm v9 model that is 10,769,168 bytes at 87e8c0f and 10,845,744 bytes with the
+      places `collab-order` adds; a probe on a scratch port confirmed that a v9 room kills the relay.
+      The app's sample model with the library is 9,799,148 bytes, about 686 KB under the cap, which is
+      why the children of the library's owners get no place until one of them moves. Fix: on a socket
+      error close only the offending connection, and keep the standard library out of the room's
+      document (every peer loads it), or raise the cap, or split the message. Done when a room over v9
+      syncs between two pages (E2E). USER-GUIDE section 9 states the limit. Pre-existing. [collab-order
+      S2]
+- [ ] **Make a reset in a collaboration room cost what it changes (optional, measure first).** An Undo,
+      Redo, Apply or Import in a room clears the room's document and writes every element again,
+      library included. On v9 with its library, the editing peer's reseed plus one other peer's
+      reconcile take about 28 to 30 s in node on a quiet machine (80 to 100 s at load 30 to 35), at
+      87e8c0f and at `collab-order` alike. The whole document goes as one message, which runs into the
+      relay cap above. Fix: write only what the reset changed (a diff of the snapshot against the
+      document), with the library kept out. Pre-existing. [collab-order S2]
+- [ ] **Save a binding to an unnamed redefinition under a name a terminal can read.** Save writes a
+      binding whose end is an anonymous redefinition by a placeholder name: for the verdict-corpus
+      model `07f3a4f30d1d-d4-usage-redef-default-bound`, `part p : P { attribute :>> load default =
+      30.0; } bind p.load = L;` is saved as `bind D4::Q::p::«AttributeUsage» = L;`, which a terminal
+      reads back as `Connector ... has 1 endpoint(s)`. In `r14-bind` and `r14-bind-dflt` the constraint
+      over it then abstains for another reason ("w has no value anywhere" instead of "cannot be
+      derived: ... contradicts ..."), and `k4a-contra-units-same-number` shows the same pattern. The
+      page and a terminal over the original text agree, and every verdict seen abstains, so no false
+      verdict was found. Pre-existing at 87e8c0f. [collab-order S1]
 
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
