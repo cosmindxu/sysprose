@@ -1151,6 +1151,8 @@ interface ProductNode {
   readonly hash: string;
   readonly monitor: Monitor;
   readonly depth: number;
+  /** Events taken from the opening: what the depth bound counts, as in `./explore`. */
+  readonly events: number;
   /**
    * Completion steps fired since the last event: how far into its chase the
    * interpreter is here. Kept at 0, in the keyed search, wherever no completion
@@ -1215,9 +1217,17 @@ function valuationOf(
  * chase position beside the configuration and the monitor, and at the budget
  * offers the alphabet and no completion — the interpreter's next event, taken
  * where its chase stopped. Where it does not, the search is the one it always
- * was, and a run it would have to chase past the budget is refused — on a
- * machine that names no trigger and cycles on completion, that is a monitor
- * that counts round the cycle.
+ * was, and a run it would have to chase past the budget is refused — unless
+ * `budgetEndsRun`: on a machine that names no trigger and has no dwell, every
+ * run is the one chase from the opening, the interpreter ends it where the
+ * budget stops it and nothing follows, so a completion step past the budget is
+ * one no run takes, and the search does not take it either. There the search
+ * without the position is exact: every step is a completion step, so a node's
+ * chase position is its depth, and the breadth-first order meets each node
+ * first at its smallest. It used to refuse that step, and a monitor counting
+ * round a completion cycle — `bounded-existence` of a state at most 40 times
+ * round a two-state cycle, which a run enters 32 times — came back
+ * inconclusive rather than decided (`docs/06` §8.12).
  */
 function search(
   model: Model,
@@ -1225,6 +1235,7 @@ function search(
   property: ResolvedProperty,
   bounds: ExploreBounds,
   chaseKeyed: boolean,
+  budgetEndsRun: boolean,
 ): SearchResult {
   const COMPLETION: StepInput = { kind: 'completion' };
   const triggers: StepInput[] = bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger }));
@@ -1255,6 +1266,7 @@ function search(
     hash: hashConfig(opening.config, history),
     monitor: monitorStep(property, OPENING, first.value),
     depth: 0,
+    events: 0,
     completionRun: 0,
     parent: null,
     input: null,
@@ -1356,9 +1368,11 @@ function search(
         // state c66` on a 70-step chain printed `covered` over a run the
         // interpreter stops at `c65` on, every time. `>`, not `>=`: a
         // configuration reached in exactly `maxCompletion` completion steps is
-        // one the interpreter reaches cleanly.
+        // one the interpreter reaches cleanly. Where nothing follows a stopped
+        // chase (`budgetEndsRun`), the step is not refused but not taken: the
+        // run ends where the budget stopped it, and that is no bound.
         if (!chaseKeyed && run > bounds.maxCompletion) {
-          boundHit = 'completion';
+          if (!budgetEndsRun) boundHit = 'completion';
           continue;
         }
         const node: ProductNode = {
@@ -1366,6 +1380,7 @@ function search(
           hash,
           monitor,
           depth: here.depth + 1,
+          events: here.events + (input.kind === 'completion' ? 0 : 1),
           // The keyed search keeps the position only where it is in the key.
           completionRun: chaseKeyed && completionAt(next.config, hash).enabled.length === 0 ? 0 : run,
           parent: here,
@@ -1383,8 +1398,9 @@ function search(
             refusal: null,
           };
         }
-        // The two remaining bounds, in `exploreMachine`'s own order.
-        if (node.depth > bounds.maxDepth) {
+        // The two remaining bounds, in `exploreMachine`'s own order, the depth
+        // bound counting events as it does there.
+        if (node.events > bounds.maxDepth) {
           boundHit = 'depth';
           continue;
         }
@@ -1828,7 +1844,14 @@ export function checkProperty(
   // search, which must never run for it. The walk exists here; two lines
   // higher it would not.
   if (property.pattern.kind === 'branching') return recoveryRow(model, walk, property, row, bounds);
-  const found = search(model, machineId, property, bounds, walk.chaseKeyed);
+  // NOTHING FOLLOWS A CHASE THE BUDGET STOPS on a machine that names no
+  // trigger and steps on no dwell: no event moves a stopped run on, and no
+  // clock advance enables a transition. A dwell is excluded even where it
+  // names no trigger (an `attrs.after` set through the API on a trigger-less
+  // transition): the interpreter fires it on a clock advance after the chase
+  // stopped, and the chase goes on from there. Read from the walk's own census.
+  const budgetEndsRun = bounds.alphabet.length === 0 && walk.timedTransitions.size === 0;
+  const found = search(model, machineId, property, bounds, walk.chaseKeyed, budgetEndsRun);
   // ONE DEFINITION, in `./publishable`, and this is the reader that adds the
   // product-search conjunct: `found.boundHit === 'none'` becomes
   // `Publishability.searchComplete`, which is a field only a claim that ran a

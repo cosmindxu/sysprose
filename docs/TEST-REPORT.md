@@ -451,7 +451,7 @@ round trip stacked a state. **Since 2026-10-21 (`docs/06` §8.10)** a step exits
 the least common ancestor of its source and its target, and those machines walk one
 configuration per state stack too (five composites of four, 21 configurations). The
 tests now load a long procedure instead, six composite stages of 35 substates whose
-end lies past the 200-step depth bound: 201 configurations, one to two seconds in
+end lies past the depth bound (200 events): 201 configurations, one to two seconds in
 process, and about a second in the worker in the built app.
 
 Larger machines take longer: a generated one of 6 composites with 4 substates each

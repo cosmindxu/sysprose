@@ -31,6 +31,7 @@ import {
   checkConstraints,
   checkConstraintsNumeric,
   isNonNormativeStatement,
+  refusedStepSentence,
   runActionFlow,
   runStateMachine,
   simulateStateMachine,
@@ -2617,6 +2618,17 @@ export interface StateMachineRun {
    * its completion transitions cycle, so every run of it is cut off.
    */
   completionBudgetHit: boolean;
+  /**
+   * The step the run stopped at without taking it, where it stopped at one: a
+   * step into the machine's own root or into a node under an action, which the
+   * interpreter does not take (`StateRunResult.refused`, `docs/06` §8.12). The
+   * run takes no step after it — on a parallel machine, the region it came in
+   * takes none, and the other regions run on — and is not `complete`. Absent
+   * otherwise. `sentence` is `refusedStepSentence`'s, the words the Simulation
+   * tab and the app's Simulate trace print; for a composite state run on its own
+   * that steps into itself, it names the machine that holds the composite.
+   */
+  refused?: { transitionId: string; from: string; to: string; trigger: string; sentence: string };
 }
 
 /** Runnable behaviors in the model, each with a short simulated trace. */
@@ -2714,6 +2726,14 @@ export function executionReport(model: Model): ExecutionReport {
         clock: result.clock ?? 0,
         complete: result.complete ?? result.finalState !== null,
         completionBudgetHit: result.completionBudgetHit === true,
+        ...(result.refused === undefined
+          ? {}
+          : {
+              refused: {
+                ...result.refused,
+                sentence: refusedStepSentence(model, el.id, result.refused.transitionId),
+              },
+            }),
       });
     }
   }

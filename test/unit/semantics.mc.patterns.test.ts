@@ -828,8 +828,13 @@ describe('the chase budget, in the search, and every witness replayed through th
     // `a3` opens anything.
     const detour = runStateMachine(model, machineId, [], { maxCompletion: 5, follow: [id('t1')] });
     expect(detour.finalState).toBe(id('a5'));
-    expect(v.claim, 'a violation reported on a run the chase budget stops short of').toBe('inconclusive');
-    expect(v.boundHit).toBe('completion');
+    expect(v.claim, 'a violation reported on a run the chase budget stops short of').not.toBe('fail');
+    // And since docs/06 §8.12 it is decided: the machine names no trigger, so
+    // nothing follows the chase the budget stops at `a5` — that run ends there,
+    // the step to `x` is one no run takes, and the property holds of every run.
+    // It was refused as a chase past the budget (`completion`, inconclusive).
+    expect(v.claim).toBe('pass');
+    expect(v.boundHit).toBe('none');
     expect(v.witness).toEqual([]);
   });
 
@@ -972,17 +977,74 @@ describe('the chase budget, in the search, and every witness replayed through th
   });
 
   it('a refusal past the chase budget, or at the depth bound, never advises `--max-configs` — no N decides it', async () => {
-    // A counting monitor round a trigger-less cycle: the search does not carry
-    // the position on such a machine, and refuses the 65th chase step.
-    const { model, machineId } = await load('package TlCycle { state def M { state a; state b; transition ab first a then b; transition ba first b then a; } }');
-    const counted = checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }));
+    // A counting monitor round a trigger-less cycle whose step out of `a` is a
+    // dwell — `attrs.after`, set through the API, so the machine still names
+    // no trigger. A clock advance fires the dwell where the chase stopped, and
+    // the chase goes round again: the run does NOT end at the budget, so the
+    // search, which does not carry the position here, refuses the 65th step.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('TlDwell');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    m.create('TransitionUsage', { ownerId: sm.id, attrs: { after: 1 }, source: [a.id], target: [b.id] });
+    f.transition(b.id, a.id, { ownerId: sm.id });
+    const entries = (events: Parameters<typeof runStateMachine>[2]): number =>
+      runStateMachine(m, sm.id, events).visited.filter((s) => s === b.id).length;
+    expect(entries([])).toBe(32);
+    expect(entries([{ advance: 5 }]), 'a pass at 40 would be false here').toBeGreaterThan(40);
+    const counted = checkProperty(m, sm.id, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }));
     expect(counted.claim).toBe('inconclusive');
     expect(counted.boundHit).toBe('completion');
     expect(counted.detail).toContain('No flag decides it');
     expect(counted.detail).not.toContain('--max-configs');
-    expect(checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }), { maxConfigs: 100_000 }).detail).toBe(counted.detail);
-    // Four completion cycles, each left on an event: every stop costs the
-    // walk 65 steps of depth, so `z` is past the depth bound.
+    expect(checkProperty(m, sm.id, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }), { maxConfigs: 100_000 }).detail).toBe(counted.detail);
+    // A run of more than 200 events: `s202` is 202 events out, past the depth
+    // bound, which counts events (docs/06 §8.12). (The breach on the step that
+    // crosses the bound, at `s201`, is still found: the search reads a step's
+    // violation before it gates where the run goes next.)
+    const lines = Array.from({ length: 203 }, (_, i) => `state s${i};`);
+    for (let i = 0; i < 202; i++) lines.push(`transition t${i} first s${i} accept e then s${i + 1};`);
+    const long = await load(`package Events202 { state def M { ${lines.join(' ')} } }`);
+    const deep = checkProperty(long.model, long.machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state s202' }));
+    expect(deep.claim).toBe('inconclusive');
+    expect(deep.boundHit).toBe('depth');
+    expect(deep.detail).toContain('No flag raises the depth bound');
+    expect(deep.detail).not.toContain('--max-configs');
+  });
+
+  it('a counting monitor round a trigger-less cycle is decided: the run ends where the budget stops its chase (docs/06 §8.12)', async () => {
+    // The machine names no trigger and steps on no dwell, so nothing follows
+    // the chase the budget stops: its one run enters `b` 32 times in 64 steps
+    // and ends. The search used to refuse the 65th step as a chase past the
+    // budget and print `inconclusive` for every count it did not break inside
+    // the budget; it now ends the run there, as the interpreter does.
+    const { model, machineId, id } = await load('package TlCycle { state def M { state a; state b; transition ab first a then b; transition ba first b then a; } }');
+    expect(exploreMachine(model, machineId).chaseKeyed).toBe(false);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.visited.filter((s) => s === id('b'))).toHaveLength(32);
+    const at = (n: string) => checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n }));
+    for (const n of ['32', '40']) {
+      const v = at(n);
+      expect(v.claim, `at most ${n}`).toBe('pass');
+      expect(v.boundHit).toBe('none');
+      expect(v.exhaustive).toBe(true);
+    }
+    // One fewer than the run's count is broken, on the run itself.
+    const below = at('31');
+    expect(below.claim).toBe('fail');
+    expect(below.witness).toHaveLength(64);
+    expect(replaysIndependently(model, machineId, below.witness)).toBe(true);
+    expect(replayWitness(model, machineId, below.witness, MAX_COMPLETION).replays).toBe(true);
+  });
+
+  it('four completion cycles stacked one behind another are decided: the depth bound counts events, not chase steps (docs/06 §8.12)', async () => {
+    // Each cycle is left on an event, and the budget stops the chase round each
+    // after 64 steps, so `z` is 260 steps out on four events. The depth bound
+    // counted steps, and `z` sat past it: `reach` stopped at depth 200 and
+    // `absence z` was refused. The printed `depth` is still steps, and here it
+    // is larger than the `maxDepth` printed beside it.
     const four = await load(`package Depth4 { state def M {
       state a; state b; state c; state d; state f; state g; state h; state i; state z;
       transition ab first a then b; transition ba first b then a;
@@ -992,11 +1054,16 @@ describe('the chase budget, in the search, and every witness replayed through th
       transition e1 first a accept e1 then c; transition e2 first c accept e2 then f;
       transition e3 first f accept e3 then h; transition e4 first h accept e4 then z;
     } }`);
+    expect(runStateMachine(four.model, four.machineId, ['e1', 'e2', 'e3', 'e4']).finalState).toBe(four.id('z'));
     const deep = checkProperty(four.model, four.machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state z' }));
-    expect(deep.claim).toBe('inconclusive');
-    expect(deep.boundHit).toBe('depth');
-    expect(deep.detail).toContain('No flag raises the depth bound');
-    expect(deep.detail).not.toContain('--max-configs');
+    expect(deep.claim).toBe('fail');
+    expect(deep.witness.filter((s) => s.event !== '' && s.event !== '-').map((s) => s.event)).toEqual(['e1', 'e2', 'e3', 'e4']);
+    expect(deep.witness).toHaveLength(261);
+    expect(replaysIndependently(four.model, four.machineId, deep.witness)).toBe(true);
+    const m = reachReport(four.model).machines[0];
+    expect(m).toMatchObject({ boundHit: 'none', exhaustive: true, depth: 260 });
+    expect(m.bounds.maxDepth).toBe(200);
+    expect(m.states.unreachable).toEqual([]);
   });
 
   it('files the machine’s completion livelock once per cycle, in reach’s words, and moves no claim, count or exit code (U1)', async () => {

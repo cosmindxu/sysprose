@@ -99,19 +99,20 @@ import {
   MAX_COMPLETION,
   afterDuration,
   hashConfig,
-  hierarchyPath,
   initialConfig,
   isFinalState,
   isHistoryComposite,
   isHistoryPseudostate,
   isTruthy,
   leafOf,
+  outsideStatesSentence,
   regionDescendants,
   regionTransitions,
   resumesHistory,
   seedStore,
   stepCandidates,
   stepConfig,
+  stepOutsideStates,
   triggerLabelOf,
   type EnabledTransition,
   type MachineConfig,
@@ -224,7 +225,13 @@ export const BEHAVIOUR_WARNING_CODES: ReadonlySet<string> = new Set([
 
 /** Configurations explored before the walk gives up. */
 export const DEFAULT_MAX_CONFIGS = 10_000;
-/** Steps from the opening configuration before a branch is abandoned. */
+/**
+ * Events from the opening configuration before a branch is abandoned — the
+ * `maxDepth` every bounds sentence prints. An EVENT, not a step: a completion
+ * step is not counted, because the chase budget already stops a chase after
+ * `maxCompletion` of them (`docs/06` §8.12). So the `depth` a walk prints, its
+ * steps with the completion steps among them, can be larger than this.
+ */
 export const DEFAULT_MAX_DEPTH = 200;
 
 /**
@@ -233,14 +240,17 @@ export const DEFAULT_MAX_DEPTH = 200;
  * `'completion'` is never on a walk `exploreMachine` returns: the chase budget
  * is followed, not cut (see the note above it). It is what the product search
  * in `./patterns` reports if, over a walk that hashed without the chase
- * position, it ever met a chase longer than the budget — a run it refuses
- * rather than reports on.
+ * position, it ever met a chase longer than the budget that a run could go on
+ * from — a run it refuses rather than reports on. On a machine that names no
+ * trigger and has no dwell, nothing follows a chase the budget stops, so the
+ * search ends that run there instead.
  */
 export type BoundHit = 'none' | 'configs' | 'depth' | 'completion';
 
 /** The bounds a walk ran under, printed beside every figure it produced. */
 export interface ExploreBounds {
   maxConfigs: number;
+  /** Events, not steps, from the opening ({@link DEFAULT_MAX_DEPTH}). */
   maxDepth: number;
   maxCompletion: number;
   /**
@@ -1161,44 +1171,25 @@ function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[
 
 /**
  * Step edges the walk can take whose target sits in no chain of this machine's
- * states ({@link hierarchyPath} is `null`), short of a boundary crossing (which
- * {@link boundaryCrossings} names): a step into the machine's own root, or into
- * a node written under an element that is not a state, such as an action.
+ * states (`hierarchyPath`, `./config.ts`, is `null`), short of a boundary
+ * crossing (which {@link boundaryCrossings} names): a step into the machine's
+ * own root, or into a node written under an element that is not a state, such
+ * as an action.
  *
  * A step exits to the least common ancestor of its source and its target and
  * enters the states that hold the target, outermost first (`stepConfig`,
- * `./config.ts`). These targets have no such states, so the step relation
- * reads them as it read every step before `docs/06` §8.10 — exit down to the
- * source's level, enter the target on top — which is the reading that left a
- * composite active after a step out of it. A walk over that reading is a claim
- * nobody can stand on, so the machine is refused instead.
+ * `./config.ts`). These targets have no such states, and neither UML nor the
+ * profile says what such a step exits and enters, so nothing here reads it: the
+ * machine is refused, and the interpreter refuses to take the step
+ * (`runStateMachine`'s `refused`). The predicate is `stepOutsideStates`
+ * (`./config.ts`), the one the interpreter reads, so the two refuse the same
+ * steps (`docs/06` §8.12).
  *
  * Read twice, like {@link danglingTransitions}: by {@link edgeCensus}, for the
  * `refused` bucket, and by {@link unsupportedConstructs}.
  */
 function stepsOutsideStates(model: Model, machineId: ElementId): ElementRecord[] {
-  const crossing = new Set(boundaryCrossings(model, machineId).map((c) => c.edge.id));
-  return walkableTransitions(model, machineId).filter(
-    (t) => !crossing.has(t.id) && hierarchyPath(model, machineId, t.target![0]) === null,
-  );
-}
-
-/**
- * Where a {@link stepsOutsideStates} edge leads, in the refusal's words: the
- * machine's own root, or the element above its target that is not a state.
- */
-function outsideStatesSentence(model: Model, machineId: ElementId, edge: ElementRecord): string {
-  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
-  const to = edge.target![0];
-  if (to === machineId) return `into ${qn(to)}, the machine itself`;
-  let above: ElementId | null = model.get(to)?.ownerId ?? null;
-  while (above != null && above !== machineId && model.get(above)?.eClass === 'StateUsage') {
-    above = model.get(above)?.ownerId ?? null;
-  }
-  const owner = above == null ? undefined : model.get(above);
-  return owner === undefined || above === machineId
-    ? `to ${qn(to)}`
-    : `to ${qn(to)}, which is written in ${qn(owner.id)} (\`${owner.eClass}\`), not in a state`;
+  return walkableTransitions(model, machineId).filter((t) => stepOutsideStates(model, machineId, t));
 }
 
 /** A step edge that joins this machine's states to states outside its region. */
@@ -1475,8 +1466,9 @@ function unsupportedConstructs(
         'A step exits to the least common ancestor of its source and its target and enters the states ' +
         'that hold the target, outermost first, so its target has to sit in a chain of this machine’s ' +
         'states; this one does not, so what the step exits and enters is not defined here, and no walk of ' +
-        'this machine is a claim about it as written. Target one of the machine’s states, or a node ' +
-        'written directly in one of them.',
+        'this machine is a claim about it as written. The simulator does not take it either: a run that ' +
+        'would stops at its source and says so. Target one of the machine’s states, or a node written ' +
+        'directly in one of them.',
       elementId: tr.id,
     });
   }
@@ -1503,7 +1495,14 @@ function unsupportedConstructs(
 
 interface Frontier {
   config: MachineConfig;
+  /** Steps from the opening, completion steps included: the figure `depth` prints. */
   depth: number;
+  /**
+   * Events taken from the opening on the path this configuration was first
+   * found by — what the depth bound counts ({@link DEFAULT_MAX_DEPTH}). A
+   * completion step is not one: the chase budget bounds those after every event.
+   */
+  events: number;
   /**
    * Completion steps fired since the last event (or since the opening): how far
    * into its chase the interpreter is here. Read only where a completion
@@ -1916,7 +1915,7 @@ function walkConfigurations(
   const configStates: (readonly ElementId[])[] = [opening.config.stack];
   const configLeaves: (ElementId | null)[] = [leafOf(opening.config)];
   const queue: (Frontier & { hash: string })[] = [
-    { config: opening.config, depth: 0, completionRun: 0, index: 0, hash: openingHash },
+    { config: opening.config, depth: 0, events: 0, completionRun: 0, index: 0, hash: openingHash },
   ];
   let boundHit: BoundHit = 'none';
   let depth = 0;
@@ -2087,7 +2086,18 @@ function walkConfigurations(
           boundHit = 'completion';
           continue;
         }
-        if (here.depth + 1 > bounds.maxDepth) {
+        // THE DEPTH BOUND COUNTS EVENTS, not steps. A completion step is
+        // bounded already — the chase budget stops a chase after
+        // `maxCompletion` of them, and the walk without the position cuts one
+        // longer above — so what can grow without end is the number of events a
+        // run takes, and that is what `maxDepth` bounds. It counted every step
+        // once, and a chase the budget stops costs `maxCompletion` of them: four
+        // completion cycles stacked one behind another, each left on an event,
+        // put the fourth event's target 260 steps out and past the bound,
+        // though a run reaches it on four events (`docs/06` §8.12). The `depth`
+        // this walk prints is still its steps.
+        const events = here.events + (input.kind === 'completion' ? 0 : 1);
+        if (events > bounds.maxDepth) {
           boundHit = 'depth';
           continue;
         }
@@ -2113,6 +2123,7 @@ function walkConfigurations(
         queue.push({
           config: next.config,
           depth: here.depth + 1,
+          events,
           completionRun: run,
           index: to,
           hash,
@@ -3250,9 +3261,11 @@ function boundSentence(hit: BoundHit): string {
  * ONLY THE CONFIGURATION BOUND IS A FLAG. Advising `--max-configs` after a
  * depth hit, or after a chase the budget stops, sends an agent round a loop
  * that cannot end: the row comes back the same at every `N`. Measured on four
- * completion cycles stacked one behind another, each left on an event: every
- * stopped chase costs the walk `maxCompletion + 1` steps of depth, and the
- * search's refusal was identical at `--max-configs 100000`. `'none'` keeps the
+ * completion cycles stacked one behind another, each left on an event, while
+ * the depth bound counted steps: every stopped chase cost the walk
+ * `maxCompletion + 1` of them, and the search's refusal was identical at
+ * `--max-configs 100000` (the bound counts events since `docs/06` §8.12, and
+ * that machine is decided). `'none'` keeps the
  * configuration advice — a row refused because a trigger was never offered is
  * its own item (the plan's M2), and this function does not decide it.
  */

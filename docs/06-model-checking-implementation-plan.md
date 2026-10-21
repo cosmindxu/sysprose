@@ -2016,7 +2016,9 @@ interpreter fires on `[peerVerdict]`.
   depth bound, or past the chase budget in a search that does not carry the
   position (a counting monitor round a trigger-less cycle), no longer advises
   `--max-configs`, which comes back with the same row at every `N`; only the
-  configuration bound keeps that advice (`boundAdvice`).
+  configuration bound keeps that advice (`boundAdvice`). (§8.12 decides both of
+  the shapes named here: the counting monitor ends its run where the budget
+  stops the chase, and the depth bound counts events.)
 - **H2.** In the search without the position, the budget test now comes BEFORE
   the violation test: a configuration reached only by chasing past the budget is
   one no run enters, and a monitor that breaks there breaks on nothing.
@@ -2513,6 +2515,8 @@ atom on it holding, and every round trip stacked one more state.
   a step into `act::inner` was walked over the old reading and printed a `no way
   out` row there. A step across a machine's boundary was already refused
   (`machine-boundary`, §8.6) and is read by the interpreter as §8.6 says.
+  (§8.12: the interpreter no longer takes a step into the root or under an
+  action either; it stops before it and says so.)
 - **What moved.** On the TODO's machine (`Idle -go-> C0`, `C0 { a -x-> b; b
   -back-> Idle }`) `reach` walks 3 configurations to the end; it stopped at the
   depth bound after 201 and withheld every list. `check-behaviour --pattern
@@ -2630,3 +2634,119 @@ property no machine checks" (`close-open-items.md` §2.4, O8 S2), both left by
   JSON and text, on the 54 state-bearing models and v9, 54 of 55 identical,
   chain65's count line the one difference; and `check-behaviour --element` on
   each of their 79 machines, JSON and text, identical.
+
+### 8.12 The searches the walk refused, and a step nothing reads — `behaviour-rest`, 2026-10-21
+
+TODO "Searches the walk still refuses" (O1 S2) and "Read a step into a machine's
+own root, or into a node under an action" (O8 S1), `close-open-items.md` §2.5,
+wave 2.
+
+- **A run that ends where the budget stops its chase.** A machine that names no
+  trigger keeps the relation it states (§8.5), so the property search over it
+  does not carry the chase position, and it refused a step one past the budget
+  as `boundHit: 'completion'`. That is right where something follows the stopped
+  chase and wrong where nothing can: every run of such a machine is the one
+  chase from the opening, which the interpreter ends where the budget stops it.
+  A monitor that counts round a completion cycle repeats no product state
+  inside the budget, so it met the refusal: `bounded-existence` of `b` at most
+  40 times round `a ⇄ b` was `inconclusive`, though the run enters `b` 32 times
+  in its 64 steps and ends. The search now ends that run there (`budgetEndsRun`,
+  `patterns.ts`): the step past the budget is one no run takes, so it is not
+  taken and is no bound. That is exact. On such a machine every step is a
+  completion step, so a product node's chase position is its depth, and the
+  breadth-first order meets every node first at its smallest: a node is admitted
+  exactly when some run of at most `maxCompletion` steps reaches it. The rule
+  holds only where nothing follows a stopped chase: no trigger in the alphabet
+  and no walkable dwell. A trigger-less transition carrying `attrs.after` (set
+  only through the API) is fired by a clock advance where the chase stopped, and
+  the chase goes on: on `a ⇄ b` with `a -> b` such a dwell, one advance of 5
+  takes the run into `b` 65 times. So there the search still refuses, and that
+  is the shape `semantics.mc.patterns.test.ts` now pins the `completion` advice
+  on. The H2 order of §8.5 stands: the budget gate is read before the violation
+  test. `at most 40` and `at most 32` are `pass`, `at most 31` is `fail` on the
+  run itself (a 63-step witness that replays). §8.5's own H2 probe (`absence x
+  after a3` under `maxCompletion 5`) goes from `inconclusive` to `pass`, which
+  is true of the interpreter's runs: the detour's run stops at `a5`, and the
+  other branch never opens the scope.
+- **The depth bound counts events.** On a walk that carries the chase position
+  the depth bound counted every step, and a chase the budget stops costs 64 of
+  them. So four completion cycles stacked one behind another, each left on an
+  event, put `z` 260 steps out, past `maxDepth 200`, though `[e1, e2, e3, e4]`
+  takes a run there: `reach` stopped at depth 200 after 201 configurations and
+  withheld every list, and `absence z` was refused. The bound now counts the
+  events a run takes from the opening (`Frontier.events` in the walk,
+  `ProductNode.events` in the search). A completion step is not counted: the
+  chase budget bounds those after every event, and the walk without the
+  position cuts a longer chase as before. The printed `depth` is still the
+  walk's steps, so `reach` on that machine prints `261 configuration(s)
+  explored, depth 260` beside `maxDepth 200`, and `absence z` is `fail` on a
+  260-step witness that replays. The printed `maxDepth 200` keeps its value and
+  now counts events; where a machine has no completion step, events and steps
+  are one count. No verdict can be widened by the measure either: a cut of
+  either kind sets `boundHit`, the search order is unchanged, and a walk the
+  old measure did not cut admits the same nodes in the same order, so only a
+  walk the old measure cut can move, toward finishing. The search still reads a
+  step's violation before it gates where the run goes next, so a breach on the
+  step that crosses the bound is found, as before.
+- **A step nothing reads, refused on both sides.** A step into the machine's
+  own root or into a node under an action has no least common ancestor
+  (§8.10). The walk refused the machine (`step-outside-states`), and the
+  interpreter still took the step the pre-§8.10 way: standing at the root or at
+  the node under the action, or, under a composite, restarting at the initial
+  state with the composite still stacked (`[C, M, a]`). Neither UML nor this
+  profile gives such a step a reading: a UML transition targets a vertex of a
+  region, and neither the machine itself nor a node of an action is one, and
+  restarting the machine would invent whether the root's own phases run. So,
+  as the entry's second way to be done, the simulator refuses it too.
+  `runStateMachine` stops where the run stands, before the step, takes no step
+  after it whatever it is driven with, and returns `refused` (the transition,
+  its source and target, and the label it would have fired under) with
+  `complete: false`. Both interpreter paths do, on an event, a clock advance or
+  a completion. One predicate decides it, `stepOutsideStates` (`config.ts`),
+  read by the walk's `stepsOutsideStates` and by the interpreter; it is the
+  walk's old filter (an end outside the region's nodes is a crossing, and a
+  crossing is not this). A step across a machine's boundary is not refused:
+  the interpreter still reads it as §8.6 says. The refusal reaches every
+  surface. `SimSample.refused` drives the Simulation tab's Stopped line
+  (`sim-refused`), `executionReport`'s `refused` carries the sentence
+  (`refusedStepSentence`) that the app's Simulate trace prints on its header,
+  and the `step-outside-states` detail and its catalogue entry say the
+  simulator does not take such a step either. Probes, pinned in
+  `semantics.mc.reach.test.ts`: `Root1` (flat path), `Root2` (under a
+  composite, which restarted at `[C, M, a]`), `Root3` (a completion into the
+  root) and `Act1` (a node under an action).
+- **What the stop is said to be (the step's review).** The sentence is
+  composed once, when the sample is captured (`SimSample.refused.sentence`,
+  as `executionReport` composes its own): the Stopped line used to be rebuilt
+  from the live model on every render, and an edit in place, which does not
+  stop the session, made it name the deleted edge by its raw id. Play stops at
+  a run at rest (`simulationAtRest`: complete, or stopped), where it ticked on
+  to the sample cap. Two runs are worded apart, both reachable only outside
+  the walk's machines. On a parallel machine (`attrs.parallel`, API only, and
+  refused by the walk as `parallel-regions`) each region is driven on its own
+  over the whole script, so the stop is the region's: the other regions fire
+  on, and a sentence saying the run "takes no step after it" was contradicted
+  by the Fired line of the same sample. The sentence now says the other regions
+  run on, and `SimRefusal.stopsRun` is false there, so Play goes on. And
+  `executionReport` runs every element that owns a transition, a composite
+  written inside a machine among them: a composite `C` holding `c2 -re-> C`,
+  run alone, stops there too, since it has nothing above it to exit to, but
+  in the machine that holds it the step exits `C` and enters it again (§8.10,
+  and `reach` walks that machine exhaustively), so the sentence names the
+  composite and that machine instead of calling `C` "the machine itself".
+  The parallel machine and the composite are pinned in `simulate.test.ts`.
+- **What moved.** No output in the gate corpus or v9 moves: no property there is
+  a count the search refused past the budget, no walk there reached the depth
+  bound on its steps with fewer events, and no machine there holds a step into
+  its root or under an action. Against `9202964`: the verdict differential, 637
+  of 637 models identical; v9, 25 of 25 surfaces identical; `reach`, JSON and
+  text, on the 54 state-bearing models and v9, 55 of 55 identical; and
+  `check-behaviour --element` on each of their 79 machines, JSON and text,
+  identical. In the tree, two pins of
+  `semantics.mc.patterns.test.ts` move toward the interpreter: §8.5's H2 probe
+  (`inconclusive` to `pass`), and the advice test, whose `completion` and
+  `depth` refusals now stand on the dwell probe and on a run of 202 events. The
+  differential test gains a count oracle: on every corpus machine that names no
+  trigger and steps on no dwell, `bounded-existence` of each nameable state is
+  decided at the run's own count and at one fewer, and never passes below the
+  count the declaration-order run makes.

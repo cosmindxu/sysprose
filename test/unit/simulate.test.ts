@@ -5,9 +5,12 @@ import {
   simulateStateMachine,
   isSimulatable,
   discoverTriggers,
+  refusedStepSentence,
+  runStateMachine,
   setStatementKind,
+  simulationAtRest,
 } from '../../src/semantics/index';
-import { simulationReport } from '../../src/api/analytics';
+import { executionReport, simulationReport } from '../../src/api/analytics';
 
 /** off --start--> running --stop--> off ; running --pause--> idle --resume--> running */
 function vehicleSM(): { model: Model; smId: string; ids: Record<string, string> } {
@@ -406,6 +409,140 @@ describe('SimulationSession — a step out of a composite exits it (docs/06 §8.
     // The batched run reads the same.
     const t = simulateStateMachine(model, smId, ['go', 'x', 'back', 'abort'].map((event) => ({ event })));
     expect(t.samples[t.samples.length - 1].activeStates).toEqual([ids.idle]);
+  });
+});
+
+describe('SimulationSession — a step into the machine itself is not taken (docs/06 §8.12)', () => {
+  /** `a -go-> b`, `b -back-> Root` (the machine itself), `b -on-> a`. */
+  function rooted(): { model: Model; smId: string; ids: Record<string, string> } {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Root');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 'go' });
+    const back = f.transition(b.id, sm.id, { ownerId: sm.id, trigger: 'back' });
+    f.transition(b.id, a.id, { ownerId: sm.id, trigger: 'on' });
+    return { model: m, smId: sm.id, ids: { a: a.id, b: b.id, back: back.id } };
+  }
+
+  it('stops at the step, says which, and takes no step after it', () => {
+    // The run used to take `back` into the machine itself and stand there, a
+    // state of no region with nothing more offered.
+    const { model, smId, ids } = rooted();
+    const s = new SimulationSession(model, smId);
+    const moving = s.inject('go');
+    expect(moving.refused).toBeUndefined();
+    expect(simulationAtRest(moving)).toBe(false);
+    const stopped = s.inject('back');
+    const sentence = refusedStepSentence(model, smId, ids.back);
+    expect(stopped.refused).toEqual({ id: ids.back, from: ids.b, to: smId, trigger: 'back', sentence, stopsRun: true });
+    expect(stopped.fired).toEqual([]);
+    expect(stopped.activeStates).toEqual([ids.b]);
+    expect(stopped.complete).toBe(false);
+    // No clock advance moves a stopped run on, so Play stops there.
+    expect(simulationAtRest(stopped)).toBe(true);
+    // `on` would take the run back to `a`; a stopped run takes nothing.
+    const after = s.inject('on');
+    expect(after.fired).toEqual([]);
+    expect(after.activeStates).toEqual([ids.b]);
+    expect(after.refused?.id).toBe(ids.back);
+    // The sentence the surfaces print names the step and where it leads.
+    expect(sentence).toContain('into `Root`, the machine itself');
+    expect(sentence).toContain('the run stops where it stands without taking it');
+    // The sample is a snapshot, and so are its words: an edit in place after
+    // it (which does not stop the session) does not reword a stop that happened.
+    // Composed at render time, the line read the deleted edge's raw id.
+    model.remove(ids.back);
+    expect(refusedStepSentence(model, smId, ids.back)).not.toBe(sentence);
+    expect(stopped.refused?.sentence).toBe(sentence);
+  });
+
+  it('on a parallel machine the step stops its own region, and the sentence says the others run on', () => {
+    // Region R1 `a -go-> Par` (the machine itself); region R2 `x -go-> y -go2-> z`.
+    // Each region is driven on its own over the whole script, so R2 runs on.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const par = f.stateDef('Par');
+    m.setAttrs(par.id, { parallel: true });
+    const r1 = f.state('R1', par.id);
+    const a = f.state('a', r1.id);
+    const r2 = f.state('R2', par.id);
+    const x = f.state('x', r2.id);
+    const y = f.state('y', r2.id);
+    const z = f.state('z', r2.id);
+    const into = f.transition(a.id, par.id, { ownerId: r1.id, trigger: 'go' });
+    f.transition(x.id, y.id, { ownerId: r2.id, trigger: 'go' });
+    f.transition(y.id, z.id, { ownerId: r2.id, trigger: 'go2' });
+
+    const run = runStateMachine(m, par.id, ['go', 'go2']);
+    expect(run.refused).toEqual({ transitionId: into.id, from: a.id, to: par.id, trigger: 'go' });
+    expect(run.fired.map((q) => [q.from, q.to])).toEqual([
+      [x.id, y.id],
+      [y.id, z.id],
+    ]);
+    expect(run.activeStates).toEqual([a.id, z.id]);
+    expect(run.complete).toBe(false);
+
+    const sentence = refusedStepSentence(m, par.id, into.id);
+    expect(sentence).toContain('its region stops where it stands without taking it');
+    expect(sentence).toContain('other regions, each run on its own over the whole script, run on');
+    expect(sentence).not.toContain('the run stops');
+    const s = new SimulationSession(m, par.id);
+    expect(s.inject('go').refused).toEqual({ id: into.id, from: a.id, to: par.id, trigger: 'go', sentence, stopsRun: false });
+    // The Stopped line and the Fired line of one sample agree: R2 fired on.
+    const second = s.inject('go2');
+    expect(second.refused?.stopsRun).toBe(false);
+    expect(second.fired.map((q) => [q.from, q.to])).toEqual([[y.id, z.id]]);
+    // Only a region stopped, so the run is not at rest.
+    expect(simulationAtRest(second)).toBe(false);
+  });
+
+  it('a composite run on its own that steps into itself is worded as one, not as the machine itself', () => {
+    // `executionReport` runs every element that owns a transition, the
+    // composite `C` among them. Inside `M`, `back` (`c2 -re-> C`, written in
+    // `C`) exits `C` and enters it again (docs/06 §8.10); run alone, `C` has
+    // nothing above it to exit to.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('M');
+    const a = f.state('a', sm.id);
+    const c = f.state('C', sm.id);
+    const c1 = f.state('c1', c.id);
+    const c2 = f.state('c2', c.id);
+    f.transition(c1.id, c2.id, { ownerId: c.id, trigger: 'go' });
+    const back = f.transition(c2.id, c.id, { ownerId: c.id, trigger: 're' });
+    f.transition(a.id, c.id, { ownerId: sm.id, trigger: 'enter' });
+    const runs = executionReport(m).stateMachines;
+    expect(runs.find((r) => r.stateMachine.id === sm.id)).not.toHaveProperty('refused');
+    const alone = runs.find((r) => r.stateMachine.id === c.id)!;
+    expect(alone.refused?.transitionId).toBe(back.id);
+    expect(alone.finalState).toBe(c2.id);
+    expect(alone.refused?.sentence).toContain('into `M::C`, a composite state of `M` run on its own');
+    expect(alone.refused?.sentence).toContain('In `M` a step to an ancestor exits it and enters it again');
+    expect(alone.refused?.sentence).toContain('the run stops where it stands without taking it');
+    expect(alone.refused?.sentence).not.toContain('the machine itself');
+  });
+
+  it('the batched run and the Simulate report read the same', () => {
+    const { model, smId, ids } = rooted();
+    const t = simulateStateMachine(model, smId, ['go', 'back', 'on'].map((event) => ({ event })));
+    expect(t.samples.map((x) => x.refused?.id ?? null)).toEqual([null, null, ids.back, ids.back]);
+    expect(t.complete).toBe(false);
+    const run = executionReport(model).stateMachines.find((x) => x.stateMachine.id === smId)!;
+    expect(run.refused).toEqual({
+      transitionId: ids.back,
+      from: ids.b,
+      to: smId,
+      trigger: 'back',
+      sentence: refusedStepSentence(model, smId, ids.back),
+    });
+    expect(run.complete).toBe(false);
+    expect(run.finalState).toBe(ids.b);
+    // A machine that takes every step it comes to carries no such field.
+    const { model: plain, smId: plainId } = vehicleSM();
+    expect(executionReport(plain).stateMachines[0]).not.toHaveProperty('refused');
+    expect(new SimulationSession(plain, plainId).inject('start')).not.toHaveProperty('refused');
   });
 });
 

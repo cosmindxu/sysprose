@@ -1405,6 +1405,37 @@ describe('useAppStore — diagram scope', () => {
   });
 });
 
+describe('useAppStore.simulate — a run stopped at a step it does not take says so (docs/06 §8.12)', () => {
+  beforeEach(reset);
+
+  it('the trace header names the step into the machine itself and why the run stopped there', () => {
+    const { model } = parseModel(`package Demo {
+    state def Loop {
+        state idle;
+        state busy;
+        transition start first idle accept go then busy;
+        transition again first busy accept back then Loop;
+        transition rest first busy accept done then idle;
+    }
+}
+`);
+    useAppStore.setState({ model, activeView: 'state', selectionId: null });
+    st().simulate();
+    const header = st().diagnostics[0].message;
+    // Driven with its alphabet `[go, back, done]`: `back` would take `again`
+    // into the machine itself, so the run stops at `busy`, and `done` never fires.
+    expect(header).toContain('1 transition(s) fired; active: busy.');
+    expect(header).toContain(
+      'Stopped: `Demo::Loop::again` leads from `Demo::Loop::busy` into `Demo::Loop`, the machine itself.',
+    );
+    expect(header).not.toContain('; complete');
+    // A machine that takes every step it comes to has no such clause.
+    useAppStore.setState({ model: parseModel('package P { state def M { state a; state b; transition t first a accept go then b; } }\n').model });
+    st().simulate();
+    expect(st().diagnostics[0].message).not.toContain('Stopped:');
+  });
+});
+
 describe('useAppStore.solveParametric — the Solve rows carry their units (I6)', () => {
   beforeEach(reset);
 

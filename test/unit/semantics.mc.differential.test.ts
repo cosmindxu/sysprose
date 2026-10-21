@@ -42,7 +42,7 @@ import {
   type StepInput,
 } from '../../src/semantics/mc/config';
 import { loadModelText } from '@text/load';
-import { machineStates, reachReport, stateMachinesIn } from '../../src/semantics/mc/explore';
+import { exploreMachine, machineStates, reachReport, stateMachinesIn } from '../../src/semantics/mc/explore';
 import { WITNESS_NOT_REPLAYED_CODE, behaviourReport } from '../../src/semantics/mc/patterns';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
@@ -875,6 +875,14 @@ describe('the interpreter never does what the checker calls impossible, and ever
       transition ac first a then c;
       transition bd first b accept e then d;
     } }`,
+    // docs/06 §8.12: a trigger-less cycle, where a counting monitor's search
+    // ends the run where the budget stops its one chase; and the same cycle
+    // with a choice out of it, so the tie-break's other runs are searched too.
+    'tl-cycle.sysml': `package TlCycle { state def M { state a; state b; transition ab first a then b; transition ba first b then a; } }`,
+    'tl-cycle-exit.sysml': `package TlCycleExit { state def M {
+      state a; state b; state c;
+      transition ab first a then b; transition ba first b then a; transition bc first b then c;
+    } }`,
     // O8 S1's review: each way a step can stand to the hierarchy (docs/06
     // §8.10), so a witness through a step that enters a target's enclosing
     // states is replayed, and a machine with no composite whose step targets a
@@ -1084,6 +1092,61 @@ describe('the interpreter never does what the checker calls impossible, and ever
     expect(rows, 'no corpus machine carries a livelock row, so the oracle checked nothing').toBeGreaterThanOrEqual(4);
     expect(simulated, 'no row was held to the soundness half').toBeGreaterThanOrEqual(4);
     expect(problems).toEqual([]);
+  }, 300_000);
+
+  it('the count oracle: on a machine that names no trigger, a count is decided at the budget, and never passed below the run’s own (docs/06 §8.12)', () => {
+    // Every run of such a machine is the one chase from the opening, which the
+    // interpreter ends where the budget stops it. So a `bounded-existence` of a
+    // state is decided over the runs the budget allows — no row is refused as
+    // a chase past it — and none passes at a count the declaration-order run
+    // itself goes over: the run's occurrences of the state, counted as the
+    // monitor counts them (rising edges of the state on the active stack),
+    // over the stacks re-stepped through `./mc/config.ts`.
+    const problems: string[] = [];
+    let decided = 0;
+    for (const { name, model } of corpus) {
+      for (const m of reachReport(model).machines) {
+        if (m.bounds.alphabet.length > 0 || !m.exhaustive || m.undeterminedGuards.length > 0) continue;
+        const walk = exploreMachine(model, m.machine.id);
+        if (walk.timedTransitions.size > 0) continue;
+        const run = runStateMachine(model, m.machine.id, []);
+        const store = new Map<string, unknown>();
+        seedStore(model, model.get(m.machine.id)!, store);
+        let cfg: MachineConfig = initialConfig(model, m.machine.id, { store }).config;
+        const stacks: (readonly ElementId[])[] = [cfg.stack];
+        let followed = true;
+        for (const f of run.fired) {
+          const choice = enabledTransitions(model, cfg, COMPLETION).find((e) => e.transition.id === f.transitionId);
+          if (choice === undefined) {
+            followed = false;
+            break;
+          }
+          cfg = stepConfig(model, cfg, choice).config;
+          stacks.push(cfg.stack);
+        }
+        if (!followed) {
+          problems.push(`${name} ${m.machine.qualifiedName}: the run could not be re-stepped`);
+          continue;
+        }
+        for (const s of nameable(model, m.machine.id)) {
+          const count = stacks.filter((st, i) => st.includes(s.id) && (i === 0 || !stacks[i - 1].includes(s.id))).length;
+          for (const n of count > 0 ? [count, count - 1] : [count]) {
+            const v = behaviourReport(model, {
+              machineId: m.machine.id,
+              pattern: `pattern=bounded-existence, scope=globally, p=state ${s.declaredName}, n=${n}`,
+            }).properties.at(-1)!;
+            const where = `${name} ${m.machine.qualifiedName}: at most ${n} of ${s.declaredName} (the run has ${count})`;
+            if (v.boundHit === 'completion') problems.push(`${where}: refused as a chase past the budget`);
+            if (v.claim !== 'pass' && v.claim !== 'fail') problems.push(`${where}: ${v.claim}, not decided`);
+            if (n < count && v.claim === 'pass') problems.push(`${where}: passes below the run's own count`);
+            if (v.claim === 'pass' || v.claim === 'fail') decided++;
+          }
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+    // Not vacuous: the cycles above, and the corpus's own trigger-less machines.
+    expect(decided).toBeGreaterThan(20);
   }, 300_000);
 
   it('the replay sweep: every published witness is a run the interpreter takes', () => {

@@ -2000,6 +2000,77 @@ describe('a step exits to the least common ancestor of its source and its target
       expect(r.diagnostics.filter((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE)).toHaveLength(1);
     }
   });
+
+  it('the interpreter refuses the same step the walk refuses, and takes nothing after it (docs/06 §8.12)', async () => {
+    // Each shape the walk refuses as `step-outside-states`, on the flat path
+    // and the hierarchical one, on an event and as a completion. The run stops
+    // where it stands, says which step it did not take, and takes no step
+    // after it. It used to stand at the root or at the node under the action,
+    // or restart at the initial state under the source's composite (`[C, M, a]`).
+    const name = (model: Model, id: ElementId | null | undefined): string | undefined =>
+      id == null ? undefined : model.get(id)?.declaredName;
+    const cases: { text: string; events: string[]; stands: string; edge: string; trigger: string }[] = [
+      {
+        text: 'package Root1 { state def M { state a; state b;\n  transition t1 first a accept go then b; transition t2 first b accept back then M; } }',
+        events: ['go', 'back', 'go'],
+        stands: 'b',
+        edge: 'Root1::M::t2',
+        trigger: 'back',
+      },
+      {
+        text:
+          'package Root2 { state def M { state a; state C { state c1; state c2; transition c12 first c1 accept go then c2; }\n' +
+          '  transition t0 first a accept enter then C; transition t2 first C::c2 accept back then M; } }',
+        events: ['enter', 'go', 'back', 'enter'],
+        stands: 'c2',
+        edge: 'Root2::M::t2',
+        trigger: 'back',
+      },
+      {
+        text: 'package Root3 { state def M { state a; state b;\n  transition t1 first a accept go then b; transition t2 first b then M; } }',
+        events: ['go', 'go'],
+        stands: 'b',
+        edge: 'Root3::M::t2',
+        trigger: '',
+      },
+      {
+        text:
+          'package Act1 { state def M { state a; state b; action act { action inner; }\n' +
+          '  transition t1 first a accept go then act::inner; transition t2 first a accept x then b; } }',
+        events: ['go', 'x'],
+        stands: 'a',
+        edge: 'Act1::M::t1',
+        trigger: 'go',
+      },
+    ];
+    for (const c of cases) {
+      const model = (await loadModelText(c.text, { fileName: 'outside.sysml' })).model!;
+      const m = reachReport(model).machines[0];
+      expect(m.unsupported.map((u) => [u.construct, model.qualifiedName(u.elementId!)]), c.edge).toEqual([['step-outside-states', c.edge]]);
+      expect(m.unsupported[0].detail).toContain('The simulator does not take it either');
+      for (const events of [c.events, [...c.events, { advance: 5 }]]) {
+        const run = runStateMachine(model, m.machine.id, events);
+        expect(run.refused && model.qualifiedName(run.refused.transitionId), c.edge).toBe(c.edge);
+        expect(run.refused?.trigger).toBe(c.trigger);
+        expect(run.fired.map((f) => f.transitionId)).not.toContain(run.refused!.transitionId);
+        expect(name(model, run.finalState), c.edge).toBe(c.stands);
+        expect(run.complete).toBe(false);
+      }
+    }
+    // A step across a machine's boundary is not one of them: the interpreter
+    // still reads it as docs/06 §8.6 says, and takes it.
+    const nest = (await loadModelText(
+      'package Nest2 { state def Outer { state a; state b;\n' +
+        '  state def Inner { state x; state y; transition xy first x accept go then y; }\n' +
+        '  transition ax first a accept e then Inner::x; } }',
+      { fileName: 'nest2.sysml' },
+    )).model!;
+    const outer = stateMachinesIn(nest).find((s) => s.declaredName === 'Outer')!;
+    expect(reachReport(nest).machines.find((x) => x.machine.id === outer.id)!.unsupported.map((u) => u.construct)).toContain('machine-boundary');
+    const crossed = runStateMachine(nest, outer.id, ['e']);
+    expect(crossed.refused).toBeUndefined();
+    expect(name(nest, crossed.finalState)).toBe('x');
+  });
 });
 
 describe('a completion CYCLE, and the budget the interpreter spends on it', () => {

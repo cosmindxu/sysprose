@@ -2635,12 +2635,25 @@ Simulation tab steps the same way on every machine the walk takes. A step whose
 target sits in no chain of the machine's states — into the machine's own root,
 or into a node written under an action — has no such ancestor, and the machine
 is refused: `verification/behaviour-unsupported-construct` with the construct
-`step-outside-states`, naming the transition. A simulator run still takes such a
-step the old way: into a node under an action it stands at that node; into the
-machine's own root, on a machine with no composite it stands at the machine
-itself and nothing more is offered, and otherwise it restarts at the machine's
-initial state, with any composite the source sat in still active beneath it.
-That is what the Simulation tab shows, not a verdict. Until 2026-10-21 a step
+`step-outside-states`, naming the transition. The simulator does not take such
+a step either: neither UML nor the semantic profile says what it exits and
+enters, so a run that comes to one stops where it stands, takes no step after
+it whatever it is driven with, and is not complete. The Simulation tab says so
+on a **Stopped** line (`sim-refused`) — *`` `Demo::Loop::again` leads from
+`Demo::Loop::busy` into `Demo::Loop`, the machine itself ``*, then why — and the
+Simulate button's trace ends its header line with the same sentence after
+`Stopped:`. The line keeps the words it was written with when the model is
+edited afterwards, and **Play** stops there, since no clock advance moves a
+stopped run on. Two runs are worded apart. A composite state that the Simulate
+button runs on its own (select it first) and that steps into itself stops the
+same way: in the machine that holds it, that step exits the composite and
+enters it again, but alone the composite has nothing above it to exit to, and
+the sentence names that machine rather than calling the composite the machine
+itself. On a parallel machine, which only the API makes, each region runs on its
+own over the whole script, so the step stops only its own region, the other
+regions run on, and the sentence says so. The simulator used to take it the old
+way, standing at the machine itself or at the node under the action, or
+restarting under the source's composite. Until 2026-10-21 a step
 exited only down to its source's level and entered the target on top, so a
 composite stayed active after a step out of it, each round trip stacked one more
 state, and a property could be refuted on a composite the run had left.
@@ -2657,6 +2670,16 @@ $ npm run sysprose -- reach examples/uav-isr.sysml --max-configs 2
 …
     partial under {maxConfigs 2, …} — the configuration bound was reached; the unreachable and dead lists are lower bounds and are NOT reported as findings
 ```
+
+**The depth bound counts events, not steps.** `maxDepth 200` bounds the events
+a run takes from the opening. The trigger-less steps of the chase after each
+event are not counted: the 64-step chase budget bounds those already. So four
+trigger-less cycles stacked one behind another, each left on an event, are
+walked to the end, though the fourth event's target is 260 steps out. The
+`depth` printed beside the configurations still counts every step, so it can be
+larger than the `maxDepth` printed in the bounds (`depth 260` beside `maxDepth
+200` there). Until 2026-10-21 the bound counted steps, and that machine stopped
+at depth 200 with every list withheld. No flag raises the depth bound.
 
 A `check-behaviour` search can also come back short with no bound hit at all:
 the walk finished, but never offered a trigger the machine names, so a run that
@@ -2687,7 +2710,16 @@ the budget does decide there is where a run *ends* — every run is the one chas
 from the opening, stopped after 64 steps wherever it is — so the two answers
 that are about where runs end are checked against those stopping points:
 `check-behaviour`'s `recoverable` (below) and the `every run? guaranteed` line.
-Each is withheld where the run the budget stops would read differently.
+Each is withheld where the run the budget stops would read differently. A
+`check-behaviour` search ends each run where the budget stops it, as the
+simulator does, so a count round such a cycle is decided: `bounded-existence`
+of `b` at most 40 times round `a ⇄ b`, which the run enters 32 times in its 64
+steps, is a `pass`, and at most 31 times a `fail` on the run itself. Until
+2026-10-21 the search refused the 65th step as a chase past the budget and
+printed `inconclusive`. A trigger-less transition that carries a dwell (an
+`attrs.after` set through the API) is the exception: a clock advance fires it
+where the chase stopped and the chase goes on, so the search still refuses that
+step there.
 
 **A cycle the chase never leaves is a finding of its own.** On `FlightModes` the
 simulator's chase goes `standby -> manual -> autonomous -> manual -> …` for its
@@ -3529,7 +3561,7 @@ of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
 **Source of truth:** `src/ui/store.ts:3318-3500` (`runValidation`,
 `solveParametric`: the four buttons), `2039-2216` (`afterSdkEdit`: an SDK edit),
-`src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
+`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -4130,7 +4162,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 (`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
 derived surfaces lag), `5113-5236` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
+`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:198-310`.
 
 ---
 
@@ -4276,7 +4308,7 @@ The **▾** at the end of the tab strip folds the panel down to its tabs
 | Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A check scoped to the selection says so in its summary (*scoped to* its name, or *covers the whole model:* and why). A check running in the background is listed at once — as `checking the load…` while its model's text is parsed, then as `running…` — in place of what it said before, which comes back if the run is cancelled. A result from before the last edit is marked stale rather than shown as current. A reach or check-behaviour result also carries the terminal's own report under `checks-report`, the same lines the command prints, each one a `checks-report-line` with `data-kind`, `data-code` and `data-withholds`; reach groups them per `checks-report-machine` (`data-machine`, `data-status`), and check-behaviour per `checks-report-property` (`data-claim`). Every witness the run found is steppable on the diagram: each step is a `checks-witness-step` button, with **Prev** / **Next** / **Close** (`checks-witness-prev`, `checks-witness-next`, `checks-witness-close`) | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear`, `checks-report`, `checks-witness-step`, `checks-witness-prev`, `checks-witness-next`, `checks-witness-close` |
 | Text | The model as editable text, with **Apply text → model**; parse warnings fold to one line | `tab-text`, `text-editor`, `text-apply`, `text-editor-diags-toggle` |
 | API Console | A console over the live SDK: queries, metrics, requirement satisfaction, where-used, commit | `tab-api`, `api-query`, `api-run`, `api-metrics` |
-| Simulation | The interactive stepper: target, start, play, step, inject, scrub | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject` |
+| Simulation | The interactive stepper: target, start, play, step, inject, scrub; a run stopped at a step it does not take says which | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject`, `sim-refused` |
 | Versions | Commits, branches and a 3-way merge over the working model — in memory only. Switching to a branch, or a merge that resolves (it loads its result), asks first when the model has work no save holds — a commit holds it, as a save does — or unsaved changes to an attached Drive file; a merge that meets conflicts loads nothing and asks nothing | `tab-versions`, `version-commit-btn`, `version-branch-new`, `version-merge-btn` |
 
 ---
