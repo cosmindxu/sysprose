@@ -2,6 +2,10 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /**
  * Emit a versioned service worker (`dist/sw.js`) that atomically precaches the
@@ -101,8 +105,9 @@ function refuseBundledZ3(): Plugin {
         if (hit) {
           this.error(
             `${fileName} carries a static reference to \`z3-solver\` (${String(hit)}). The solver ` +
-              'cannot run in the browser at all (z3 WASM needs SharedArrayBuffer, i.e. COOP/COEP ' +
-              'headers a static host cannot set) and it is an OPTIONAL dependency, so a bare ' +
+              'cannot run in a page a static host serves (z3 WASM needs SharedArrayBuffer, i.e. COOP/COEP ' +
+              'headers a static host cannot set; the local servers send them and serve z3 themselves, ' +
+              '`localZ3`) and it is an OPTIONAL dependency, so a bare ' +
               'specifier left in a chunk is a page that fails to load rather than a build that ' +
               'fails. Reach it the way `src/semantics/smt/z3-bridge.ts` does: a variable specifier ' +
               'behind `import(/* @vite-ignore */ spec)`, guarded by an absent path.',
@@ -113,11 +118,113 @@ function refuseBundledZ3(): Plugin {
   };
 }
 
+/**
+ * Cross-origin isolation for the LOCAL servers (`npm run dev`, `npm run preview`,
+ * and the preview the E2E suite starts): COOP `same-origin` + COEP `require-corp`
+ * make the page `crossOriginIsolated`, which z3's WASM threads need, so the
+ * palette's solver checks run in the page (`src/ui/checks.ts`). The hosted site
+ * is static: it gets no headers and no service worker, stays not isolated, and
+ * keeps `not here` with the copyable command.
+ *
+ * The same two headers break Google Drive's sign-in popup and its Picker
+ * iframe, so `SYSPROSE_NO_ISOLATION=1` (set, non-empty and not `0`, the reading
+ * of `SYSPROSE_NO_Z3`) turns them off for local Drive testing; the solver checks
+ * then read `not here`, as on the site.
+ */
+const isolated = (): boolean => {
+  const raw = process.env.SYSPROSE_NO_ISOLATION;
+  return raw === undefined || raw === '' || raw === '0';
+};
+
+const ISOLATION_HEADERS: Record<string, string> = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+};
+
+/**
+ * Serve z3 to an isolated page from `node_modules/z3-solver`, on the local
+ * servers only (never in `dist/`): `/z3/z3-built.js` and `/z3/z3-built.wasm` as
+ * they are, and `/z3/browser.mjs`, the package's browser entry bundled to one
+ * ES module (it is CommonJS). `z3-bridge.ts` loads them when the page is
+ * isolated. The package is OPTIONAL: where it is not installed these answer 404
+ * and the bridge reports the solver absent, which the palette says.
+ *
+ * The page's CSP (`index.html`) has no `'wasm-unsafe-eval'`, and the hosted
+ * site has no use for it, so the local servers add it to the page they serve,
+ * while isolated, rather than the static policy gaining it.
+ */
+function localZ3(): Plugin {
+  const require_ = createRequire(import.meta.url);
+  let bundle: Promise<string> | undefined;
+  const build = (): Promise<string> =>
+    (bundle ??= (async () => {
+      const { build: esbuild } = await import('esbuild');
+      const out = await esbuild({
+        // The package's browser entry is CommonJS: re-exported by name, it comes out as an ES module with `init`.
+        stdin: { contents: "export { init } from './browser.js';", resolveDir: dirname(require_.resolve('z3-solver/build/browser.js')) },
+        bundle: true,
+        format: 'esm',
+        platform: 'browser',
+        define: { global: 'globalThis' },
+        write: false,
+        logLevel: 'silent',
+      });
+      return out.outputFiles[0].text;
+    })().catch((err: unknown) => {
+      bundle = undefined;
+      throw err;
+    }));
+  const CSP_SCRIPT = "script-src 'self'";
+  const middleware = (distDir?: string) => async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    const path = (req.url ?? '').split('?')[0];
+    // The answers this middleware gives itself carry the headers too: the servers' `headers` option does not reach a plugin's.
+    if (isolated()) for (const [name, value] of Object.entries(ISOLATION_HEADERS)) res.setHeader(name, value);
+    try {
+      if (path.startsWith('/z3/')) {
+        const file = path.slice('/z3/'.length);
+        res.setHeader('Cache-Control', 'no-store');
+        if (file === 'browser.mjs') {
+          res.setHeader('Content-Type', 'text/javascript');
+          res.end(await build());
+        } else if (file === 'z3-built.js' || file === 'z3-built.wasm') {
+          const dir = join(dirname(require_.resolve('z3-solver/package.json')), 'build');
+          res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : 'application/wasm');
+          res.end(await readFile(join(dir, file)));
+        } else next();
+        return;
+      }
+      if (distDir !== undefined && isolated() && (path === '/' || path === '/index.html')) {
+        const html = (await readFile(join(distDir, 'index.html'), 'utf8')).replace(CSP_SCRIPT, `${CSP_SCRIPT} 'wasm-unsafe-eval'`);
+        res.setHeader('Content-Type', 'text/html');
+        res.end(html);
+        return;
+      }
+    } catch {
+      // z3-solver not installed (or not buildable): the page is told the solver is absent.
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+    next();
+  };
+  return {
+    name: 'local-z3',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use(middleware());
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware(join(server.config.root, server.config.build.outDir)));
+    },
+    transformIndexHtml: { order: 'post', handler: (html) => (isolated() ? html.replace(CSP_SCRIPT, `${CSP_SCRIPT} 'wasm-unsafe-eval'`) : html) },
+  };
+}
+
 export default defineConfig({
   // Relative base so the static build works on any host path (GitHub Pages
   // subpath, a plain file server, or the root) without reconfiguration.
   base: './',
-  plugins: [react(), pwaServiceWorker(), refuseBundledZ3()],
+  plugins: [react(), pwaServiceWorker(), refuseBundledZ3(), localZ3()],
   resolve: {
     alias: {
       '@core': fileURLToPath(new URL('./src/core', import.meta.url)),
@@ -134,11 +241,13 @@ export default defineConfig({
       '@server': fileURLToPath(new URL('./src/server', import.meta.url)),
     },
   },
-  server: { port: 5173, strictPort: true },
+  server: { port: 5173, strictPort: true, headers: isolated() ? ISOLATION_HEADERS : {} },
+  preview: { headers: isolated() ? ISOLATION_HEADERS : {} },
   // `z3-solver` never enters the browser build. Three reasons, and the first is
-  // the one that decides it: the app CANNOT run it — z3 WASM needs
+  // the one that decides it: the hosted app CANNOT run it — z3 WASM needs
   // `SharedArrayBuffer`, i.e. the COOP/COEP headers a static host such as GitHub
-  // Pages cannot set (docs/04-formal-verification-plan.md §6, non-goal 9). The
+  // Pages cannot set (docs/04-formal-verification-plan.md §6, non-goal 9); the
+  // local servers set them and serve the package themselves (`localZ3`). The
   // WASM asset is also tens of megabytes beside an entry chunk measured in
   // hundreds of kilobytes, and the package is an OPTIONAL dependency, so a clone
   // that skipped it must still `npm run build`. `src/semantics/smt/z3-bridge.ts`

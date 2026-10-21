@@ -69,6 +69,11 @@ export default defineConfig({
     },
   ],
 
+  // The preview server sends COOP/COEP (`vite.config.ts`), so the pages under test are cross-origin
+  // isolated and the palette's solver checks run z3 in them; `SYSPROSE_NO_ISOLATION=1` in the
+  // environment turns that off, as real Google sign-in needs (the Drive specs fake Google with
+  // `page.route`, which COEP lets through). The E2E suite needs the isolated preview: with
+  // `SYSPROSE_NO_ISOLATION=1` the isolated solver test in palette-checks.spec.ts fails.
   // Two servers: the built app (vite preview :4173) and the Yjs collaboration
   // relay (`npm run collab` on :1234). The relay is Node-only (imports "ws") and
   // is exercised solely by test/e2e/collab.spec.ts — the browser never imports it.

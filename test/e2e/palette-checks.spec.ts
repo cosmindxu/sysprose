@@ -49,7 +49,9 @@ test('a finding selects its element', async ({ page }) => {
   }
 });
 
-test('a solver check offers its command instead of a verdict it cannot give', async ({ page }) => {
+test('a solver check offers its command instead of a verdict it cannot give, on a page that is not isolated', async ({ page }) => {
+  // The preview server isolates the page (COOP/COEP, for z3); the hosted site is not, and this is its page.
+  await page.addInitScript(() => Object.defineProperty(window, 'crossOriginIsolated', { value: false }));
   await gotoApp(page);
   await page.getByTestId('tb-view-contracts').click();
   const faultTree = page.locator('[data-testid="palette-check"][data-check="fault-tree"]');
@@ -60,6 +62,31 @@ test('a solver check offers its command instead of a verdict it cannot give', as
   const result = page.locator('[data-testid="checks-result"][data-check="fault-tree"]');
   await expect(result).toContainText('cross-origin-isolated');
   await expect(result).toContainText('sysprose -- fault-tree');
+});
+
+test('a solver check runs z3 in the page on the isolated preview server and lands its verdict', async ({ page }) => {
+  const errors = captureErrors(page);
+  const source = readFileSync(resolve('examples/uav-power-budget.sysml'), 'utf8');
+  await page.route('**/linked/Power.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: source }));
+  await page.goto('/?model=linked/Power.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect.poll(() => userRoots(page)).toContain('UAVPowerBudget');
+  expect(await page.evaluate(() => window.crossOriginIsolated), 'the preview server sends COOP and COEP').toBe(true);
+
+  await page.getByTestId('tb-view-requirement').click();
+  const verify = checkRow(page, 'verify');
+  await verify.getByTestId('palette-check-run').click();
+  // z3 loads and decides: a verdict from the solver, not the command.
+  await expect(verify).toHaveAttribute('data-verdict', 'holds', { timeout: 60_000 });
+  await expect(verify.locator('.palette-check-summary')).toHaveText('0 inconclusive, 6 discharged, 0 refuted');
+  const result = page.locator('[data-testid="checks-result"][data-check="verify"]');
+  await expect(result).toHaveAttribute('data-verdict', 'holds');
+  await expect(result).toContainText('6 discharged');
+
+  // An edit does not leave it current, as for every check.
+  await page.getByTestId('tb-new').click();
+  await expect(page.locator('[data-testid="checks-result"][data-check="verify"]')).toHaveAttribute('data-verdict', 'stale');
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
 test('contracts and obligations read the selection as --element does, and say when they cover the whole model', async ({ page }) => {

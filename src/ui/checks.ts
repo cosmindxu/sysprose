@@ -17,11 +17,15 @@
  *    one more. Those carry {@link CheckSpec.offThread}: the palette runs them in
  *    a worker (`panels/checks-runner.ts`) with the same function, so a result is
  *    the same wherever it was computed.
- *  - `solver` — needs z3, which needs a cross-origin-isolated page. When the
- *    page is not isolated the entry does not pretend: it reports `unavailable`
- *    with the reason and the exact terminal command. A check that cannot run
- *    must never read as one that passed (the Agent Diagnostics Contract's rule
- *    for this project: no silent pass).
+ *  - `solver` — needs z3, which needs a cross-origin-isolated page. On the
+ *    local dev and preview servers, which send COOP/COEP (`vite.config.ts`),
+ *    the page is isolated and the entry runs through `z3-bridge` in the page
+ *    ({@link runSolverCheck}), landing in the Checks tab like the others. When
+ *    the page is not isolated (the hosted site, a static host with no headers)
+ *    the entry does not pretend: it reports `unavailable` with the reason and
+ *    the exact terminal command, and so does one whose z3 did not start. A
+ *    check that cannot run must never read as one that passed (the Agent
+ *    Diagnostics Contract's rule for this project: no silent pass).
  *
  * Some checks read the selection, and their command names it: `where-used` and
  * `check-behaviour` as `--element`, `bounds` as `--measure`. `contracts` and
@@ -42,6 +46,12 @@ import type { ViewKind } from '@diagram/index';
 import {
   modelMetrics,
   orphanReport,
+  boundsReport,
+  consistencyReport,
+  faultTreeReport,
+  refinementReport,
+  verifyModel,
+  VerifyOptionError,
   connectivityReport,
   requirementSatisfaction,
   stateMachinesIn,
@@ -51,9 +61,13 @@ import {
   traceabilityMatrix,
 } from '@api/index';
 import type { ReportLine } from '@semantics/mc/report-lines';
-import { reachCheck, behaviourCheck } from './behaviour-checks';
+import { reachCheck, behaviourCheck, degradedRow } from './behaviour-checks';
 import type { MarkSummary, ReachMark, EdgeMark, WitnessView } from './behaviour-checks';
 import type { LoadHealth } from './store';
+
+/** Whether this page is cross-origin isolated, so z3 can run in it: the local servers' pages are, the hosted site's is not. */
+export const pageIsolated = (): boolean =>
+  (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
 
 /**
  * What a check says about the model when it has run — or, while it runs in the
@@ -92,7 +106,7 @@ export interface CheckContext {
   /** The selected element, when there is one — what `--element` would name. */
   selectionId: string | null;
   selectionName: string | null;
-  /** Whether z3 can run on this page. */
+  /** Whether z3 can run on this page ({@link pageIsolated}). */
   isolated: boolean;
   /** The model's file name, for the copyable command. */
   fileName: string;
@@ -468,12 +482,13 @@ export const CHECKS: readonly CheckSpec[] = [
       );
     },
   },
-  // Solver-backed: z3 in a worker, which needs a cross-origin-isolated page.
+  // Solver-backed: z3 in the page, which needs a cross-origin-isolated page, and judged over the load health as the terminal judges it.
   {
     id: 'verify',
     label: 'Verify a case',
     question: 'Does the model satisfy the requirements a verification case names?',
     engine: 'solver',
+    readsLoadHealth: true,
     views: ['requirement', 'requirements', 'case', 'contracts'],
     command: (ctx) => cli('verify', ctx, '--engine smt --record evidence.json'),
   },
@@ -482,6 +497,7 @@ export const CHECKS: readonly CheckSpec[] = [
     label: 'Consistency',
     question: 'Can these requirements all hold at once?',
     engine: 'solver',
+    readsLoadHealth: true,
     views: ['requirement', 'requirements', 'contracts', 'parametric'],
     command: (ctx) => cli('consistency', ctx),
   },
@@ -490,6 +506,7 @@ export const CHECKS: readonly CheckSpec[] = [
     label: 'Bounds of a measure',
     question: 'What is the worst case this design allows for a measure?',
     engine: 'solver',
+    readsLoadHealth: true,
     views: ['parametric', 'requirements', 'grid'],
     needsSelection: true,
     command: (ctx) => cli('bounds', ctx, `--measure ${selected(ctx)}`),
@@ -499,6 +516,7 @@ export const CHECKS: readonly CheckSpec[] = [
     label: 'Refinement',
     question: 'Do the parts together deliver what the whole promises?',
     engine: 'solver',
+    readsLoadHealth: true,
     views: ['contracts', 'interconnection'],
     command: (ctx) => cli('refine', ctx),
   },
@@ -507,6 +525,7 @@ export const CHECKS: readonly CheckSpec[] = [
     label: 'Fault tree',
     question: 'Which combinations of component failures break the top requirement?',
     engine: 'solver',
+    readsLoadHealth: true,
     views: ['contracts'],
     command: (ctx) => cli('fault-tree', ctx),
   },
@@ -556,7 +575,7 @@ export function checksFor(view: ViewKind): CheckSpec[] {
   return CHECKS.filter((c) => c.views.includes(view));
 }
 
-/** Why a solver check cannot run here — the sentence the palette shows instead of a verdict. */
+/** Why a solver check cannot run on a page that is not isolated — the sentence the palette shows instead of a verdict. */
 export const NOT_ISOLATED =
   'z3 needs a cross-origin-isolated page, which this one is not. Copy the command and run it in a terminal.';
 
@@ -579,19 +598,118 @@ export const CHECK_META_CODES: readonly string[] = [
 /**
  * Runs one check. A `model` check runs here; a `solver` check reports
  * `unavailable` with the reason rather than a verdict it has not earned — its
- * rows are the command, and what that command left out (`commandNote`). A
- * thrown error becomes an `issues` row carrying the message — never a pass.
+ * rows are the command, and what that command left out (`commandNote`) — and the
+ * palette runs it with {@link runSolverCheck} instead where the page is isolated.
+ * A thrown error becomes an `issues` row carrying the message — never a pass.
  */
 export function runCheck(spec: CheckSpec, ctx: CheckContext): CheckResult {
-  if (spec.engine === 'solver' || !spec.run) {
-    const note = commandNote(spec, ctx);
-    const rows: CheckRow[] = [{ code: 'checks/not-here', message: spec.command(ctx), severity: 'info' }];
-    if (note !== null) rows.push({ code: 'checks/command-note', message: note, severity: 'info' });
-    return { verdict: 'unavailable', summary: NOT_ISOLATED, rows };
-  }
+  if (spec.engine === 'solver' || !spec.run) return notHere(spec, ctx, NOT_ISOLATED);
   try {
     return spec.run(ctx);
   } catch (err) {
+    return checkThrew(err);
+  }
+}
+
+/** `unavailable`, with `summary` as the reason and the command that runs the check in a terminal. */
+function notHere(spec: CheckSpec, ctx: CheckContext, summary: string): CheckResult {
+  const note = commandNote(spec, ctx);
+  const rows: CheckRow[] = [{ code: 'checks/not-here', message: spec.command(ctx), severity: 'info' }];
+  if (note !== null) rows.push({ code: 'checks/command-note', message: note, severity: 'info' });
+  return { verdict: 'unavailable', summary, rows };
+}
+
+/** The most findings of a solver check the Checks tab lists; the summary says how many more there were. */
+const MAX_SOLVER_ROWS = 100;
+
+/** The part of a verification report that decides a verdict: the CLI's exit code, read as the terminal reads it. */
+interface SolverReport {
+  toolAbsent: boolean;
+  exitCode: 0 | 1 | 2;
+  diagnostics: ReadonlyArray<{ code?: string; message: string; severity: 'info' | 'warning' | 'error'; elementId?: string }>;
+}
+
+/**
+ * Runs a `solver` check in the page, through the same report function the
+ * terminal command calls (`src/api/verification.ts`) and so through
+ * `z3-bridge`. Exit 0 reads `holds`, 1 `issues`, 2 `undecided`: a check that
+ * decided nothing is never `holds`. z3 not starting (the report says
+ * `toolAbsent`) is `unavailable` with the reason and the command, like a page
+ * that cannot run it at all; a request the check refuses (a measure that names
+ * nothing) is `undecided` with the sentence; anything else that throws is
+ * {@link checkThrew}.
+ */
+export async function runSolverCheck(spec: CheckSpec, ctx: CheckContext): Promise<CheckResult> {
+  if (!ctx.isolated) return notHere(spec, ctx, NOT_ISOLATED);
+  if (spec.needsSelection === true && (ctx.selectionName === null || ctx.selectionId === null)) {
+    return { verdict: 'not-run', summary: 'Select an element first — this check reads the selection.', rows: [] };
+  }
+  try {
+    const { model } = ctx;
+    let report: SolverReport;
+    let summary: string;
+    switch (spec.id) {
+      case 'verify': {
+        const r = await verifyModel(model, { engine: 'smt' });
+        report = r;
+        summary = `${r.inconclusive} inconclusive, ${r.discharged} discharged, ${r.violated} refuted`;
+        break;
+      }
+      case 'consistency': {
+        const r = await consistencyReport(model);
+        report = r;
+        summary = `${r.inconsistent} inconsistent, ${r.inconclusive} inconclusive, ${r.consistent} consistent requirement set(s)`;
+        break;
+      }
+      case 'refine': {
+        const r = await refinementReport(model);
+        report = r;
+        summary = `${r.notRefined} not refined, ${r.inconclusive} inconclusive, ${r.vacuous} vacuous, ${r.refined} refined`;
+        break;
+      }
+      case 'bounds': {
+        const r = await boundsReport(model, { measure: ctx.selectionName as string });
+        report = r;
+        summary = `${r.bounds.length} bound(s) of ${ctx.selectionName}`;
+        break;
+      }
+      case 'fault-tree': {
+        const r = await faultTreeReport(model);
+        report = r;
+        summary = `${r.singlePointsOfFailure} single point(s) of failure, ${r.withCutSets} tree(s) with cut sets, ${r.inconclusive} inconclusive`;
+        break;
+      }
+      default:
+        return notHere(spec, ctx, `${spec.id} has no in-page engine; run it in a terminal.`);
+    }
+    if (report.toolAbsent) {
+      const why = report.diagnostics.find((d) => d.code === 'verification/tool-absent')?.message ?? 'the solver did not load';
+      return notHere(spec, ctx, `z3 did not start, so ${spec.id} did not run: ${why}`);
+    }
+    const rows: CheckRow[] = report.diagnostics.slice(0, MAX_SOLVER_ROWS).map(
+      (d): CheckRow => ({ code: d.code ?? 'checks/internal-error', message: d.message, ...(d.elementId !== undefined ? { elementId: d.elementId } : {}), severity: d.severity }),
+    );
+    const more = report.diagnostics.length - rows.length;
+    // As the CLI's `judge*` do: a model that does not load cleanly exits 2 for every solver command, whatever the solver found.
+    const health = ctx.loadHealth;
+    const degraded = health === undefined || health.errors !== 0;
+    if (degraded) {
+      rows.unshift(
+        health !== undefined
+          ? degradedRow(spec.id, health)
+          : { code: 'checks/degraded', message: 'Whether the model loads cleanly was not read, so nothing is judged over it', severity: 'warning' },
+      );
+    }
+    const exit = degraded ? 2 : report.exitCode;
+    const verdict: CheckVerdict = exit === 0 ? 'holds' : exit === 1 ? 'issues' : 'undecided';
+    return {
+      verdict,
+      summary: `${summary}${degraded ? ' — the model did not load cleanly, so nothing is judged over it' : ''}${more > 0 ? ` (${more} more finding(s) not listed here)` : ''}`,
+      rows,
+    };
+  } catch (err) {
+    // A refusal of the request itself (`bounds` on a name that resolves to no feature) is an answer about the request, not a defect.
+    if (err instanceof VerifyOptionError) return { verdict: 'undecided', summary: err.message, rows: [] };
     return checkThrew(err);
   }
 }

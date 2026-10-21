@@ -1929,23 +1929,23 @@ export function evidenceRowAt(
 /**
  * The sentence the app prints where a verdict would go, with the exact command.
  *
- * NO SOLVER RUNS IN THIS BUNDLE. z3 WASM needs `SharedArrayBuffer`, which needs
- * the COOP/COEP headers GitHub Pages cannot set, so the app's job in this lane
- * is to read what a run left behind and name the command that produces one
- * (plan §6, non-goal 9). `crossOriginIsolated` is ASKED rather than assumed
- * because the reason changes with the host: on a page that is not isolated the
- * headers are the reason and the reader can act on it; on one that is, the
- * reason is simply that this plan ships no in-browser engine. A hint that gave
- * the wrong reason would send somebody to fix a header that was already set.
+ * NO SOLVER IS IN THIS BUNDLE. z3 WASM needs `SharedArrayBuffer`, which needs
+ * COOP/COEP headers GitHub Pages cannot set; the local dev and preview servers
+ * send them and serve z3 (`vite.config.ts`), so there the palette's Checks run
+ * the solver in the page, but keep no record: only the terminal writes one (plan
+ * §6, non-goal 9). `crossOriginIsolated` is ASKED rather than assumed: where the
+ * page is not isolated the headers are the reason and the reader can act on it;
+ * where it is, the palette can run it. A hint that gave the wrong reason would
+ * send somebody to fix a header that was already set.
  */
 export function proveInTerminalHint(command: string): string {
   const isolated =
     typeof globalThis !== 'undefined' &&
     (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
-  const why = isolated
-    ? 'This build ships no in-browser engine'
-    : 'This page is not cross-origin isolated, so no in-browser engine could run here';
-  return `${why} — run it in a terminal: ${command}`;
+  if (isolated) {
+    return `The palette’s Checks can run the solver in this page where z3 loads; to keep the verdict as a record, run it in a terminal: ${command}`;
+  }
+  return `This page is not cross-origin isolated, so no in-browser engine could run here — run it in a terminal: ${command}`;
 }
 
 export const useAppStore = create<AppState>((set, get) => {

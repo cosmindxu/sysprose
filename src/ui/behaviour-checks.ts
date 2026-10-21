@@ -340,13 +340,13 @@ function refusedText(health: LoadHealth): string {
 
 /**
  * The `checks/degraded` row, from the load health, for a command that exits 1
- * (reach) or 2 (check-behaviour): what made the model not count as loading
+ * (reach) or 2 (check-behaviour, and the solver checks): what made the model not count as loading
  * cleanly — the load could not be checked, the model cannot be written, a text of
  * it does not parse or parses to another model, validation finds errors on the
  * user's elements, or validation itself failed. It says what a terminal does with
  * a file holding the text only where that follows from what was found.
  */
-export function degradedRow(cmd: 'reach' | 'check-behaviour', health: LoadHealth): CheckRow {
+export function degradedRow(cmd: string, health: LoadHealth): CheckRow {
   const row = (message: string): CheckRow => ({ code: 'checks/degraded', message, severity: 'warning' });
   if (health.unchecked != null) {
     // Nothing is known of the text, so nothing is said of what a terminal would do with it.
@@ -413,7 +413,7 @@ export function degradedRow(cmd: 'reach' | 'check-behaviour', health: LoadHealth
     }
   } else {
     text += refused
-      ? `. Nothing is judged over half a model: \`check-behaviour\` on a file holding that text exits 2`
+      ? `. Nothing is judged over half a model: \`${cmd}\` on a file holding that text exits 2`
       : '. Nothing is judged over it: a file holding that text holds another model';
   }
   return row(text);

@@ -134,8 +134,8 @@ describe('Properties — the Evidence chip reads what a run left, and nothing mo
 /**
  * The hint asks the host rather than assuming it, because the REASON changes:
  * on a page that is not cross-origin isolated the headers are the reason and a
- * reader can act on it; on one that is, the reason is that this plan ships no
- * in-browser engine. A hint giving the wrong reason sends somebody to fix a
+ * reader can act on it; on one that is, the palette's Checks can run the solver
+ * in the page and only the record needs a terminal. A hint giving the wrong reason sends somebody to fix a
  * header that was already set.
  */
 describe('proveInTerminalHint — the reason it gives is the true one for the host', () => {
@@ -154,13 +154,14 @@ describe('proveInTerminalHint — the reason it gives is the true one for the ho
     }
   });
 
-  it('blames the build, not the headers, on a host that DOES isolate', () => {
+  it('points at the palette, not at the headers, on a host that DOES isolate', () => {
     const g = globalThis as { crossOriginIsolated?: boolean };
     const before = g.crossOriginIsolated;
     g.crossOriginIsolated = true;
     try {
       const s = proveInTerminalHint(CMD);
-      expect(s).toMatch(/ships no in-browser engine/i);
+      expect(s).toMatch(/palette.s Checks can run the solver in this page/i);
+      expect(s).toMatch(/run it in a terminal/i);
       expect(s).not.toMatch(/not cross-origin isolated/i);
       expect(s).toContain(CMD);
     } finally {

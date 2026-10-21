@@ -240,7 +240,7 @@ text a palette check's load health needs there; Apply's parse is still on the pa
   browser. Faulted input parses *faster* than clean input, because the parser bails early.
 - **The solver encoder** — most of a `verify --engine smt` run is z3, which is already native
   WebAssembly.
-- **Threads** — GitHub Pages cannot set COOP/COEP, so `crossOriginIsolated` is false and threaded
+- **Threads** — GitHub Pages cannot set COOP/COEP, so on the hosted site `crossOriginIsolated` is false (the local servers send them, for z3) and threaded
   WebAssembly is unavailable. Any "Rust for parallelism" argument does not apply to the shipped app.
 
 **One Rust candidate stays open**, unmerged and unscheduled: a layered layout engine behind

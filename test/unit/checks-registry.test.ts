@@ -38,7 +38,9 @@ import {
   commandNote,
   runCheck,
   NOT_ISOLATED,
+  pageIsolated,
   QUALIFIED_NAME_PLACEHOLDER,
+  runSolverCheck,
   selectionKey,
   type CheckContext,
   type CheckResult,
@@ -667,6 +669,145 @@ function pageModel(): Model {
   loadFullStandardLibrary(model);
   return model;
 }
+
+/**
+ * The solver checks in the page (TODO T6, decision U14). The local servers send
+ * COOP/COEP, so the page is `crossOriginIsolated` and `verify`, `consistency`,
+ * `refine`, `bounds` and `fault-tree` run through `z3-bridge` (here in Node,
+ * where it loads the package itself); the hosted site is not isolated and keeps
+ * `not here` with the command. z3 not starting is `not here` too, and nothing
+ * that decided nothing reads `holds`.
+ */
+describe('the solver checks in the page', () => {
+  const solver = CHECKS.filter((c) => c.engine === 'solver');
+  const spec = (id: string) => CHECKS.find((c) => c.id === id)!;
+  const power = readFileSync(resolve(__dirname, '../../examples/uav-power-budget.sysml'), 'utf8');
+  const verification = readFileSync(resolve(__dirname, '../../examples/uav-isr-verification.sysml'), 'utf8');
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    resetCheckRunner();
+    useChecksStore.getState().clear();
+  });
+
+  it('reads crossOriginIsolated from the page, and only true counts', () => {
+    vi.stubGlobal('crossOriginIsolated', true);
+    expect(pageIsolated()).toBe(true);
+    vi.stubGlobal('crossOriginIsolated', false);
+    expect(pageIsolated()).toBe(false);
+    vi.stubGlobal('crossOriginIsolated', undefined);
+    expect(pageIsolated()).toBe(false);
+  });
+
+  it('keeps `not here` with the command on a page that is not isolated, for every solver check', async () => {
+    for (const s of solver) {
+      const result = await runSolverCheck(s, ctx({ isolated: false }));
+      expect(result.verdict, s.id).toBe('unavailable');
+      expect(result.summary, s.id).toBe(NOT_ISOLATED);
+      expect(result.rows[0], s.id).toMatchObject({ code: 'checks/not-here', message: s.command(ctx()) });
+    }
+  });
+
+  it('runs verify on an isolated page and says holds, then refuted when a requirement is broken', async () => {
+    const held = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+    const ok = await runSolverCheck(spec('verify'), ctx({ model: held, isolated: true }));
+    expect(ok).toMatchObject({ verdict: 'holds', summary: '0 inconclusive, 6 discharged, 0 refuted' });
+
+    const broken = (await loadModelText(verification.replace('<= 25.0 [kg]', '<= 5.0 [kg]'), { fileName: 'v.sysml' })).model!;
+    const bad = await runSolverCheck(spec('verify'), ctx({ model: broken, isolated: true }));
+    expect(bad.verdict).toBe('issues');
+    expect(bad.summary).toBe('0 inconclusive, 2 discharged, 1 refuted');
+    expect(bad.rows.some((r) => r.code === 'verification/refuted'), 'the refutation is a row with its code').toBe(true);
+  });
+
+  it('never reads a check that decided nothing as holds', async () => {
+    // The sample model states no obligation, requirement set, contract or measure: the CLI exits 2 on each.
+    const sampled = ctx({ isolated: true });
+    const named = ctx({ isolated: true, selectionId: [...sampled.model.roots()][0].id, selectionName: 'NoSuchMeasure' });
+    for (const s of solver) {
+      const result = await runSolverCheck(s, s.needsSelection === true ? named : sampled);
+      expect(result.verdict, `${s.id}: ${result.summary}`).toBe('undecided');
+      expect(result.summary.length, s.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('reads the selection for bounds, and asks for one', async () => {
+    const model = (await loadModelText(verification, { fileName: 'v.sysml' })).model!;
+    const none = await runSolverCheck(spec('bounds'), ctx({ model, isolated: true }));
+    expect(none).toMatchObject({ verdict: 'not-run' });
+    expect(none.summary).toContain('Select an element');
+  });
+
+  it('says so, with the command, when z3 does not start, and records no pass', async () => {
+    vi.stubEnv('SYSPROSE_NO_Z3', '1');
+    const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+    for (const s of solver.filter((c) => c.needsSelection !== true)) {
+      const result = await runSolverCheck(s, ctx({ model, isolated: true }));
+      expect(result.verdict, s.id).toBe('unavailable');
+      expect(result.summary, s.id).toContain('z3 did not start');
+      expect(result.summary, s.id).toContain('SYSPROSE_NO_Z3');
+      expect(result.rows[0], s.id).toMatchObject({ code: 'checks/not-here', message: s.command(ctx()) });
+    }
+  });
+
+  it('runs from the palette without the worker: running at once, then the verdict lands against the click\u2019s revision', async () => {
+    const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+    const c = ctx({ model, isolated: true });
+    runChecked(spec('verify'), c, 7);
+    expect(useChecksStore.getState().running.verify, 'running from the click').toMatchObject({ phase: 'walk', rev: 7 });
+    await vi.waitFor(() => expect(useChecksStore.getState().running.verify).toBeUndefined(), { timeout: 60_000 });
+    expect(useChecksStore.getState().results.verify).toMatchObject({ rev: 7, ranIn: 'page', result: { verdict: 'holds' } });
+
+    // Not isolated: answered on the spot, as before.
+    runChecked(spec('verify'), ctx({ model, isolated: false }), 8);
+    expect(useChecksStore.getState().running.verify).toBeUndefined();
+    expect(useChecksStore.getState().results.verify).toMatchObject({ rev: 8, result: { verdict: 'unavailable' } });
+  });
+
+  it('judges every solver check over the load health, as the terminal does: a model that does not load cleanly is never holds', async () => {
+    const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+    for (const s of solver.filter((c) => c.needsSelection !== true)) {
+      expect(s.readsLoadHealth, `${s.id} reads the load health`).toBe(true);
+      const bad = await runSolverCheck(s, ctx({ model, isolated: true, loadHealth: degradedHealth({ errors: 2, saved: { parseErrors: 2 }, exported: { parseErrors: 2 } }) }));
+      expect(bad.verdict, `${s.id}: ${bad.summary}`).toBe('undecided');
+      expect(bad.rows[0], s.id).toMatchObject({ code: 'checks/degraded' });
+      expect(bad.rows[0].message, s.id).toContain(`\`${s.id}\` on a file holding that text exits 2`);
+      const unread = await runSolverCheck(s, ctx({ model, isolated: true, loadHealth: undefined }));
+      expect(unread.verdict, `${s.id} with no health read`).toBe('undecided');
+    }
+    const clean = await runSolverCheck(spec('verify'), ctx({ model, isolated: true }));
+    expect(clean.verdict, 'over a clean load, it holds').toBe('holds');
+  }, 60_000);
+
+  it('measures the load of a palette run first when the page has not, then runs the check over it', async () => {
+    FakeWorker.made = [];
+    setCheckWorkerFactory(() => new FakeWorker());
+    try {
+      const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+      const { load } = pendingLoad();
+      runChecked(spec('verify'), ctx({ model, isolated: true, loadHealth: undefined }), 5, load);
+      const w = FakeWorker.made[0];
+      expect(useChecksStore.getState().running.verify, 'checking the load first').toMatchObject({ phase: 'load' });
+      w.measured([{ parseErrors: 2, validationErrors: 0, rewritten: 'package Q;' }]);
+      await vi.waitFor(() => expect(useChecksStore.getState().running.verify).toBeUndefined(), { timeout: 60_000 });
+      const landed = useChecksStore.getState().results.verify;
+      expect(landed).toMatchObject({ rev: 5, ranIn: 'page', result: { verdict: 'undecided' } });
+      expect(landed.result.rows[0]).toMatchObject({ code: 'checks/degraded' });
+    } finally {
+      setCheckWorkerFactory(undefined);
+    }
+  });
+
+  it('drops the answer of a run that was cancelled', async () => {
+    const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+    runChecked(spec('verify'), ctx({ model, isolated: true }), 3);
+    cancelChecked('verify');
+    expect(useChecksStore.getState().running.verify).toBeUndefined();
+    await new Promise((resolveWait) => setTimeout(resolveWait, 3000));
+    expect(useChecksStore.getState().results.verify, 'a cancelled run lands nothing').toBeUndefined();
+  });
+});
 
 describe('the checks that run in a worker', () => {
   it('are the two that walk a state machine, and both are plain model checks', () => {

@@ -29,6 +29,14 @@
  * known (below): a text no parse has measured is the one thing such a model
  * still sends a worker.
  *
+ * A SOLVER CHECK RUNS IN THE PAGE, NOT THE WORKER. On an isolated page (the local
+ * servers', `vite.config.ts`) `verify`, `consistency`, `refine`, `bounds` and
+ * `fault-tree` run through `z3-bridge` ({@link runSolverCheck}): z3's own check
+ * runs on its threads, so the page stays usable, and the row is `running` from
+ * the click like a walk, with Cancel. z3 cannot be asked to stop, so Cancel
+ * drops the answer and not the check, which ends at its own time budget. On a
+ * page that is not isolated the check is answered at once as `not here`.
+ *
  * AN ANSWER NO WORKER GIVES IS NOT LOST. A page with no workers (and every unit
  * test), a worker that fails to start or dies, a reply that says it could not
  * run, a worker that says nothing for a minute ({@link WATCHDOG_MS}): each ends
@@ -88,7 +96,7 @@
  * edit's work.
  */
 
-import { checkThrew, hasStateMachine, runCheck, selectionKey, type CheckContext, type CheckResult, type CheckSpec } from '../checks';
+import { checkThrew, hasStateMachine, runCheck, runSolverCheck, selectionKey, type CheckContext, type CheckResult, type CheckSpec } from '../checks';
 import type { Model, SerializedModel } from '@core/index';
 import {
   libraryKey,
@@ -218,7 +226,15 @@ function settle(job: Job, result: CheckResult, ranIn: RanIn): void {
  */
 function runHere(job: Job): void {
   endWorker();
-  settle(job, runCheck(job.spec, job.ctx), 'page');
+  answerHere(job);
+}
+
+/** The run's answer, worked out in the page: a solver check on an isolated page goes through z3, any other check runs at once. */
+function answerHere(job: Job): void {
+  if (job.spec.engine === 'solver' && job.ctx.isolated) {
+    // z3 cannot be stopped: a Cancel took the job away (`active`), and the answer that comes later is dropped.
+    void runSolverCheck(job.spec, job.ctx).then((result) => (active === job ? settle(job, result, 'page') : undefined));
+  } else settle(job, runCheck(job.spec, job.ctx), 'page');
 }
 
 /**
@@ -313,8 +329,8 @@ function measureLoad(job: Job, load: PendingLoadHealth): void {
 function walk(job: Job): void {
   const { ctx, part } = job;
   if (part === null) {
-    // Nothing to walk (a model with no state machine), or nothing that needs the worker: answered here, at once.
-    settle(job, runCheck(job.spec, ctx), 'page');
+    // Nothing to walk (a model with no state machine, or a solver check), or nothing that needs the worker: answered here.
+    answerHere(job);
     return;
   }
   const library = libraryKey(ctx.model);
@@ -435,11 +451,24 @@ function launch(spec: CheckSpec, ctx: CheckContext, rev: number, health: LoadHea
   const selection = selectionKey(spec, ctx);
   let c = ctx;
   let load: PendingLoadHealth | undefined;
-  if (health !== undefined) {
+  // A solver check on a page that cannot run it is answered `not here`, judged over nothing.
+  if (health !== undefined && !(spec.engine === 'solver' && !ctx.isolated)) {
     if ('known' in health) c = { ...ctx, loadHealth: health.known };
     else if (factory() === null) c = { ...ctx, loadHealth: health.here() };
     else if (libraryFailed) c = { ...ctx, loadHealth: health.unchecked(LIBRARY_FAILED) };
     else load = health;
+  }
+  // The load health known: the solver check runs now. Still to measure: it queues like a walk, its first phase the load.
+  if (spec.engine === 'solver' && c.isolated && load === undefined) {
+    const token = begun ?? nextToken++;
+    if (begun === undefined) store.begin(spec.id, token, rev, 'walk');
+    else store.walking(spec.id, token);
+    void runSolverCheck(spec, c).then((result) => {
+      // Wanted still? A Cancel, or a run begun since, took the token away.
+      const now = useChecksStore.getState();
+      if (now.running[spec.id]?.token === token) now.land(spec.id, result, rev, 'page', selection);
+    });
+    return;
   }
   const walks = spec.offThread === true && hasStateMachine(c.model);
   if (load === undefined && (!walks || factory() === null || libraryFailed)) {
