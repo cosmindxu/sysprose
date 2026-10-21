@@ -230,20 +230,6 @@ true values. What follows is what that branch and the review of it left open; en
       frame-cap count is a lower bound ("at least N") and counts print raw beside the capped
       sentences, and a footer fold over a requirement's per-subject rows names the clause's
       synthetic name, not the requirement. [N3 S1-S4, reviews]
-- [ ] **Exit a transition to the least common ancestor of its source and target.** `stepConfig`
-      (`src/semantics/mc/config.ts`) exits only to the source's level (`exitTo(choice.level)`) and
-      enters the target on top, as `runStateMachine` does, so a step from a substate to a state outside
-      its composite leaves the composite active (`[C0, Idle]`). A `state C0` atom then holds at
-      `Idle`, and a property can be refuted by a run that holds only because `C0` was never exited:
-      on `Idle -go-> C0`, `C0 { a -x-> b; b -back-> Idle }`, absence of `state C0` after `back` is
-      FAIL (`verification/refuted`, exit 1) at `Idle`, where UML's reading holds (`38c8d0b` does the
-      same). Each round trip also stacks one more state: one composite of two substates reaches the
-      depth bound and every reach list is withheld; five of four reach the configuration bound
-      (`docs/06` §8.9). UML exits to the least common ancestor. A fix changes `simulate` and every
-      verdict on such a machine; none in the gate corpus or v9 (`nest2-into` is refused). Fixtures
-      that rely on it: `heavyMachine` (`palette-checks.spec.ts`) and `hierarchical(…, exits)`
-      (`checks-registry.test.ts`). Opus class: it changes semantics and a false verdict exists now.
-      [O7 S1]
 - [ ] **Say when Save or Export drops field changes made over older typed text.** In the "kept" case of
       `typedTextFirst` (the element is not in the typed text, or the model changed since the typing) a
       later Save or Export applies the typed text over the newer model and so drops the field changes
@@ -319,11 +305,6 @@ merge. The branch `behaviour-sound` (merged by `e0d8040`) closed the completion 
 `state def`, the method text and the completion livelock (C1, H2, C3, H1, M3, M1, U1); the entries
 tagged `[O1 …]` are what its steps and reviews left open.
 
-- [ ] **Count what fires in reach's "N of M transition(s) fired".** The count includes a completion
-      transition that is enabled only where the chase budget stops a chase (`chain65`'s edge into
-      `c66`, printed beside `unreachable c66`), as it already includes transitions beaten by
-      priority: it counts enabled transitions under a label that says fired (`docs/06` §8.7).
-      Fix: count the transitions some run fires, or say enabled. [O1 S2, S4]
 - [ ] **Searches the walk still refuses.** (1) On a machine that names no trigger, the property
       search runs without the chase position, so a counting monitor round a completion cycle
       (`bounded-existence` of a state at most 40 times round a two-state cycle) is refused as
@@ -337,9 +318,53 @@ tagged `[O1 …]` are what its steps and reviews left open.
       Derived :> Base { transition bc first b accept more then c; } }`), or a typed usage that does,
       therefore refuses both `Base` and `Derived`, where `5943654` walked `Base` alone. Fail-closed by
       design. Fix: a reading that walks the two together. [O1 S3]
-- [ ] **Report a property no machine checks.** A property carried by a top-level `state def` that owns
-      no transition is checked by nothing and reported by nothing (a nested one is reported as not
-      checked since `e0d8040`). [O1 S4]
+- [ ] **Read a step into a machine's own root, or into a node under an action.** Since O8 S1 a step
+      exits to the least common ancestor of its source and its target (`docs/06` §8.10). A step
+      whose target sits in no chain of the machine's states has none: into the machine's own root
+      (`transition t2 first b accept back then M;` inside `state def M`), or into a node written
+      under an action (`then act::inner`). The walk refuses such a machine (`step-outside-states`).
+      The interpreter still reads the step the old way: on the flat path it stands at the root, or
+      at the node under the action, with nothing more offered; on the hierarchical path it restarts
+      at the initial state with the source's composite stacked under the root (`[C, M, a]`). The
+      guide says so ("A step out of a composite leaves it."). Done when these targets have a reading
+      (a step into the root restarts the machine at its initial state, with or without the root's
+      own phases) that the walk and the interpreter share, or the simulator refuses them too.
+      Fail-closed; no corpus model or v9 holds one. [O8 S1]
+- [ ] **Print the exits choice in the semantic profile.** S1's reading (every transition external,
+      exit to the least common ancestor) moves verdicts it does not show: absence of `state b` on
+      nd1 goes PASS to FAIL, and the TODO machine's after-until FAIL to PASS. The semantic profile
+      should print an `exits` field (provenance `config.ts — stepConfig, hierarchyPath`),
+      re-recorded with the corpus diff named; it moves every reach text, so it is its own step. [O8
+      review]
+- [ ] **Offer a lone definition's properties where nothing names it.** Since O8 S2, `check-behaviour
+      --element P::Lone` reports the properties carried by a top-level `state def` that owns no
+      transition as `not checked` (exit 2), and each row names the machines written inside it; only
+      when the definition itself is named. With nothing selected, the app's Behaviour properties
+      pick rows list machines only. `--element P` (a package holding it beside one machine, which
+      silently checks that machine) and `--element P::Lone::b` (a state inside it) leave the
+      carriers unreported, and the latter says `holds no state machine` without naming the
+      definition. The CLI reference's `--element` help still says "The state machine to check". The
+      app adds no `checks/pick-machine` rows for the machines inside such a definition. Done when
+      each of those names the carrier or lists its machines, with a test. [O8 S2]
+- [ ] **Make the palette's worker E2E independent of a one-second walk (optional).** Since O8 S1 no
+      text machine of a drawable size reaches the configuration bound, so `heavyMachine(6, 35)`
+      (`palette-checks.spec.ts`, 'a state-machine check runs in a worker') reaches the depth bound
+      in about a second. The test polls `running` every 50 ms and its while-it-runs assertions
+      (Statistics answered, reach still `running`) must fit inside that second, so it is fragile
+      under load; a longer walk needs more states within the 200-step depth bound, and 217 states
+      lay out in about 5 s. Hold the worker open from the test (a gate the test releases) instead of
+      racing the walk. [O8 S1, review]
+- [ ] **Compare the stack in the witness replay, not only the leaf (optional).** `replayWitness`
+      (`src/semantics/mc/patterns.ts`) compares each step's resting leaf. A walk stack that holds an
+      enclosing state the interpreter never entered would still replay; the differential CASES hold
+      three flat-path machines that would catch such a split today. Rebuilding the interpreter's
+      stack from `visited` and `fired` and comparing it with the trace's `stack` closes it in the
+      replay itself. [O8 S1, review]
+- [ ] **Name the transitions reach counts neither fired nor dead (optional, low).** Since O8 S2, "N
+      of M transition(s) fired, K dead" need not add up to M (chain65: 65 fired and 4 dead of 70).
+      Neither the text nor `--json` names the transition in the gap: `t65`, enabled where the chase
+      budget stops a chase, or one the priority rule beats wherever it is enabled. Fix: an `enabled,
+      never fired` list beside `dead` on `--json`, or a clause on the count line. [O8 S2]
 - [ ] **What the livelock rows still lack.** (1) `check-behaviour` files no row for a livelock it
       withholds; a row needs a catalogue code of its own. (2) Closed by `d1aa330` (the history map
       left the key). (3) Not probed: the `covered`/`fail` witness note may key on the machine's published choice rows, so a witness
