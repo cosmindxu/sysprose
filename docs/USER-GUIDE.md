@@ -997,8 +997,10 @@ name twice, neither feature redefining the other (`part def Q3 :> Q2, Q4` over
 Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, or `part q3 : Q2, Q4`: q3's
 p is P2's and P4's at once, and no one element stands for it); and one whose
 own element states a `default` that an asserted equation of its own constrains
-(`part :>> p { assert constraint { extra == 20.0 } }` over P's `extra default =
-0.0`). An instance row that reads a value an `assert` of an instance around
+where that equation is not read there (one over a name with no value, `extra
+== M`). One the equation gives a value is read in its element at that value:
+q2's `part :>> p { assert constraint { extra == 20.0 } }` over P's `extra
+default = 0.0` makes q2's p's extra 20. An instance row that reads a value an `assert` of an instance around
 it constrains, the package's included, is *could not be evaluated* too, read
 in its own element (`part q2 : Q { part :>> p { … } assert constraint { p.load
 >= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x >=
@@ -1071,7 +1073,19 @@ be 1 and 50, and that reading is *could not be evaluated*. A context that sets
 the input by an asserted equation instead (`q2 : Q { assert constraint { K ==
 25.0 } }`, or a package's `assert constraint { q2.K == 25.0 }`), or that also
 redefines the bound feature under a name of its own (`attribute ld :>> load`),
-lists no such reading on any surface: known gaps. A binding written in a
+lists no such reading on any surface: known gaps. A usage that redefines a part
+on the path and changes another input of a value Q reads through it is read
+there too, though Q reads that value in its own p already (Q's `c { p.m2 >= 0.0
+}` over P's `m2 = 10.0 - load - extra` and Q's `bind p.load = L`, in `q2 : Q {
+part :>> p { attribute :>> extra = 50.0; } }`: q2's m2 is −41, violated); one
+that changes no input (`part :>> p { attribute tag = 1.0; }`) reads Q's. So is
+a context below which an asserted equation defines what the relation reads,
+or a usage values the name a local equation over usage values reads: Q's `c {
+p.L <= 6.0 }` in `q : Q { part :>> p { attribute :>> M = 7.0; } }` under P's
+`L == M` (7, violated), in `q2 : Q { part :>> p { assert constraint { extra ==
+20.0 } } }` for a relation over `p.extra`, or W's `c { pp.x <= 10.0 }` over
+`bind pp = q.p` in `w : W { part :>> q { assert constraint { p.x == 50.0 } }
+}` (50, violated). A binding written in a
 usage's body to a feature of the definition around it (`part q : Q { bind
 p.load = L; }` in R, over R's L) is read in the instance of that definition
 around each reading, on every surface: r's q reads r's L (50 where `r : R` sets
@@ -1164,9 +1178,23 @@ P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
 against it) or two such asserts give it two (it is read as no value). Where
 that binding's value is a `default` (`bind p.x = L` with `L default = 4.0`),
-the assert should stand over it. This is a known gap: the check, the literal
-engine and the numeric surface read the 4 and report the assert violated, and
-the solver lane finds the axioms inconsistent. An assert
+the assert stands over it, but this tool does not read an asserted equation
+through a binding's end, wherever the two are written: the package's `assert
+constraint { q.p.x == 3.0 }` over Q's binding, an assert in a definition that
+specialises the binding's owner or in a usage of it, or Q's `p.x == 50.0` over
+`part q1 : Q { bind p.x = K; }` with `K default = 9.0` (or the package's `bind
+q1.p.x = K`, or q1's `part :>> p { bind x = K; }`) leaves every row that may
+read the pair *could not be evaluated* on every surface, the binding's own
+row too, in a sentence naming the assert (`verify`'s reason `unread-binding`,
+a limit of this tool, at exit 2). An equation of the bound feature's own,
+under its own name, written in the element that declares it (Q's `L == 5.0`
+beside its `L default = 4.0`), is read with the binding, as the value it
+carries; so is one that fixes an instance's slot of a package's binding on a
+definition's feature (`p2.load == 5.0` beside `bind P::load = M`), which the
+check leaves undecided and the numeric and solver lanes solve. A part that a
+plain part-valued binding makes another stand for (q's
+p, under `bind pp = q.p`) is its own instance: Q's `p.x == 50.0` gives q's p's
+x 50, and `pp.x` reads it. An assert
 written in an instance around the feature, over a `default` (`part q1 : Q {
 assert constraint { p.x == 50.0 } }`), defines it in that instance alone: q1's
 p's x is 50 on every surface, while P's own x, Q's p's and every other
@@ -1184,12 +1212,15 @@ surface but the SMT engine, which cannot read the assert's `p.x` in that
 instance and leaves its rows undecided. A path
 through a reference or a subject, or through a part some usage redefines as
 one or with a value (`ref part :>> r = p1`, `part :>> p = other`), is not
-read so: the instance there may be another one, so the default stands, the
-assert is reported violated against it, and the solver lane finds the axioms
-inconsistent. A binding into the instance whose value is written with `=` is
+read so: the instance there may be another one, whose default the assert
+overrides, and every row that may read through that feature, a redefinition
+of it, or what their values name (p1) is *could not be evaluated*, in a
+sentence naming the assert (`unread-binding`); a P no reference names keeps
+its default, beside the solver lane's inconsistent axioms (it reads Q's `r.x`
+as every P's x). A binding into the instance whose value is written with `=` is
 read over the assert (`bind p.x = K` in q1, K = 7.0, under Q's `p.x ==
 50.0`): q1's p reads K, and the assert is reported violated against it. One
-whose value is a `default` is read the same way, the known gap above. An
+whose value is a `default` is the case above. An
 equation over names, `p.x == M`, is read over q1's own M — it
 is *could not be evaluated* where it is written in an element that is not the
 instance's own (an assert in a usage nested in a definition) or beside a
@@ -1200,7 +1231,19 @@ the default equal to another `default` (`p.x == L` with q1's `L default =
 constraint over q1's p's x or L is *could not be evaluated*, on the solver
 lane too — but in an instance that states that name with `=` (`part q : Q {
 attribute :>> L = 50.0; }` under Q's `p.load == L`), the equation reads it, and
-q's p's load is 50.
+q's p's load is 50. A local equation whose other side only usages value
+(P's `L == M`, M declared without one, `part p : P { attribute :>> M = 7.0;
+}`) defines L in each instance that values M with a literal — p's L is 7, on
+every surface, and P's `c { L <= 6.0 }` is read in p — and M from L's default
+in any other (P's own L is 2); a usage that gives M a `default` leaves both
+undecided, and one that values it with an expression over other names, or a
+binding that joins M to a value (`bind p2.M = K`), makes every reading of L
+*could not be evaluated* (`unread-binding`), that binding's own row included.
+A local and an
+enclosing equation that give one feature two values (P's `x == 3.0`, q1's
+`p.x == 50.0`) make every reading of q1's p's x *could not be evaluated*, a
+package constraint over `q1.p.x` included; q1's assert is still reported
+violated against P's 3, the contradiction the model states.
 An inequality (`p.x >= 5.0`) defines nothing: the default stands, the assert
 is reported violated against it, and the solver lane finds the axioms
 inconsistent.

@@ -161,7 +161,8 @@ export function isOutsideTheFragment(reason: RefusalReason): boolean {
 /**
  * The sentence that closes a `not-evaluable` row a gate refused, by its
  * reason: a relation this tool does not read where the model gives it a value
- * (`unread-binding`, a binding or a value that equates two parts) is a LIMIT
+ * (`unread-binding`, a binding or a value that equates two parts, or an
+ * asserted equation over a `default` read through one or a reference) is a LIMIT
  * OF THIS TOOL — the relation is well-formed and the model decides it — and
  * every other such reason a defect in the relation. Neither is forgiven, and
  * the exit code is the same 2; only what a person is told to fix differs.

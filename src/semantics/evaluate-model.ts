@@ -2044,9 +2044,12 @@ function contradictions(model: Model, pass: ScalarPass): ConstraintCheck[] {
  * for being written `default`: an end with a default and an asserted
  * equation that defines it reads the equation's value, one the model states
  * (`L default = 5.0` with `assert constraint { L == 5.0 }`, bound to a `load`
- * P asserts is 7.0, is a contradiction). A reading that throws is that row's,
- * `unknown` in the A.9 `internal` sentence (A.2.9), never a throw out of the
- * sweep.
+ * P asserts is 7.0, is a contradiction). A conflict read at an end a value
+ * this tool does not read may reach ({@link equatedPartsRefusal}: an unread
+ * binding, or an asserted equation it does not read) is `unknown`, in that
+ * sentence — unless two values written with `=` differ as written. A reading
+ * that throws is that row's, `unknown` in the A.9 `internal` sentence
+ * (A.2.9), never a throw out of the sweep.
  */
 function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
   const out: ConstraintCheck[] = [];
@@ -2070,6 +2073,7 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
       };
       const where = pass.definitions.contextName(x.id);
       let result: ConstraintCheck['result'];
+      let unread: string | undefined;
       try {
         // Two ends whose values are written with `=` and differ as written
         // (A.5) read nothing, so the pair is this binding's to report — only
@@ -2077,6 +2081,11 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
         const [l, r] = [left, right].map((end) => pass.definitions.denote(x.id).get(end)?.feature);
         const against = l !== undefined && r !== undefined && bindsDifferingWrittenValues(model, l, r);
         result = against ? 'violated' : judgeConstraint(model, reading, expr, pass).result;
+        // An end a value this tool does not read may reach (equatedPartsRefusal):
+        // the conflict read there is no conflict of the model's. PA's `bind p2.M
+        // = K` beside P's `L == M`: p2's M is K's 9, which the equation makes
+        // p2's L too, where M was read from L's default 2 and the pair reported.
+        if (!against && result === 'violated') unread = equatedPartsRefusal(model, b.id, expr, x.id === owner.id ? undefined : { contextId: x.id });
       } catch (e) {
         // A.2.9: a reading that throws is this row's, reported — never a throw
         // out of the sweep, which emptied the Problems view.
@@ -2087,6 +2096,17 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
           expression: expr,
           result: 'unknown',
           message: `Could not evaluate: ${sentence}`,
+          conflict: 'bind',
+        });
+        continue;
+      }
+      if (unread !== undefined) {
+        out.push({
+          id: x.id === owner.id ? b.id : `${b.id}@${x.id}`,
+          ownerId: x.id,
+          expression: expr,
+          result: 'unknown',
+          message: `Could not evaluate: ${unread}`,
           conflict: 'bind',
         });
         continue;
@@ -3156,9 +3176,27 @@ function equationBindings(
   // A chain to a feature its asserted definition fixes, where the chain reads
   // it ({@link valueThroughChain}): bound the same way, from where it is defined.
   const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
+  // The instance the relation is read in, as {@link judgeBound} reads it.
+  const at = inst ?? (readsPerInstance(model) && el.ownerId != null ? pass.definitions.instanceNameOf(el.ownerId) : undefined);
   for (const name of namesIn(expr)) {
     if (!name.includes('.') || taken?.has(name)) continue;
     const end = pass.definitions.chainDefinition(contexts, name);
+    // Nor at the instance the chain ends in, where enclosing asserts give the
+    // feature two values or another `default` (LE's package `q1.p.x`, which P's
+    // `x == 3.0` and q1's `p.x == 50.0` both define): read there, it abstains,
+    // as q1's p's own rows do. An asserted relation is still checked against
+    // the definition it meets (q1's `p.x == 50.0` against P's 3, violated): the
+    // contradiction is the model's, and is reported.
+    // A throw leaves the name to the scope, whose read contains it (A.2.9).
+    if (end && at !== undefined && !isAsserted(el)) {
+      let defined: ReturnType<typeof assertDefinitionIn> | 'threw';
+      try {
+        defined = assertDefinitionIn(model, end.feature, `${at}::${name.split('.').slice(0, -1).join('::')}`);
+      } catch {
+        defined = 'threw';
+      }
+      if (defined === 'threw' || (defined !== undefined && 'abstain' in defined)) continue;
+    }
     if (!end) {
       // A chain an enclosing asserted equation defines by its dotted path
       // (`assert constraint { p.x == 3.0 }`, {@link DefiningEquations.reachingAssert}):
