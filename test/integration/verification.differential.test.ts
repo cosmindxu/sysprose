@@ -6483,6 +6483,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'B3::gF': ['F/F/F/F', 'F'],
       'B3::px': ['T/-/T/-', 'T'],
     }),
+    // Classes D/E (nonlinear or implicit values) abstain permanently, by decision (soundness decision 3
+    // forbids reading the solver's binary64 values): this row and `n4` pin that reason, not a gap.
     'xtrack-s2-usage-assert-leak': probe(`package S2 {
           part def C { attribute v : ScalarValues::Real; attribute u : ScalarValues::Real default = 1.0; }
           part a : C { assert constraint { v >= 5.0 } attribute :>> u = 7.0; }
@@ -6500,6 +6502,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'S2::y2': ['T/T/T/T', 'T'],
       'S2::y3': ['T/T/T/T', 'T'],
     }),
+    // Class D, nonlinear: abstains for good (see `xtrack-s2-usage-assert-leak`).
     n4: probe(`package N4 {
         attribute x;
         attribute z;

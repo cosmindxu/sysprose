@@ -3890,7 +3890,8 @@ export const useAppStore = create<AppState>((set, get) => {
         queryResult: null,
         rev: s.rev + 1,
       }));
-      // The branch head holds what was loaded: nothing unsaved.
+      // The branch head holds the text it loaded: nothing unsaved there. The boxes
+      // stay as they were, and unsaved: a branch head holds none.
       set({ savedText: savedTextNow() });
       void get().rebuildDiagram();
       get().refreshVersions();

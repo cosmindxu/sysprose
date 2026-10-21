@@ -397,6 +397,9 @@ describe('exportModel / importModel — round-trips', () => {
           { '@id': `f${i}`, '@type': 'PartUsage', identifier: `f${i}`, declaredName: `f${i}` },
         ]),
         { '@id': 'a', '@type': 'Membership', identifier: 'a', memberElement: ref('f0'), owningRelatedElement: ref('d') },
+        // A FeatureValue is a subtype of OwningMembership too, but carries a meaning of its
+        // own: it stays an element (the export never writes one), its value unowned by it.
+        { '@id': 'fv', '@type': 'FeatureValue', identifier: 'fv', memberElement: ref('f0'), owningRelatedElement: ref('d') },
       ],
     };
     const { model } = importModel(JSON.stringify(graph), 'api-json');
@@ -406,7 +409,8 @@ describe('exportModel / importModel — round-trips', () => {
     });
     expect(model.rootIds()).toEqual(['d']);
     expect(model.get('a')?.ownerId, 'the alias stays an element of d').toBe('d');
-    expect(model.size).toBe(1 + subtypes.length + 1);
+    expect(model.get('fv')?.ownerId, 'a FeatureValue stays an element of d').toBe('d');
+    expect(model.size).toBe(1 + subtypes.length + 2);
   });
 
   it("'model-json' round-trips an empty model", () => {

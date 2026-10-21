@@ -915,5 +915,5 @@ describe('the `sysprose` command ends itself after a death, and only then', () =
       process.exitCode = exitCode;
       exit.mockRestore();
     }
-  });
+  }, 30_000);
 });

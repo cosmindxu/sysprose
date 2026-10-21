@@ -218,17 +218,18 @@ const RESERVED_KEYS = new Set<string>([
 
 /**
  * Membership metaclasses used to reify ownership on the wire: an
- * `OwningMembership` or any subtype of it (`FeatureMembership`, and through it
- * `ParameterMembership`, `ReturnParameterMembership`, `EndFeatureMembership`,
+ * `OwningMembership` or a `FeatureMembership` and its subtypes
+ * (`ParameterMembership`, `ReturnParameterMembership`, `EndFeatureMembership`,
  * `ResultExpressionMembership`, … as another tool writes them; the export only
  * writes the first two). A plain `Membership` is not one: it never owns its
  * member (KerML), the export never reifies ownership with one, and in a model it
- * is an element of its own — an `alias`. The test also takes `FeatureValue`,
- * `VariantMembership` and `ElementFilterMembership`; the export writes no
- * `memberElement` on them, so only a foreign graph that names one is affected.
+ * is an element of its own — an `alias`. The other subtypes of
+ * `OwningMembership` (`FeatureValue`, `VariantMembership`,
+ * `ElementFilterMembership`) are not taken: they carry a meaning of their own
+ * that dropping them would lose, so they stay elements.
  */
 function isOwnershipMembership(eClass: string): boolean {
-  return isKindOf(eClass, 'OwningMembership');
+  return eClass === 'OwningMembership' || isKindOf(eClass, 'FeatureMembership');
 }
 
 /** Deterministic id for the synthesised ownership membership of `childId`. */
