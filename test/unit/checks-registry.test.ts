@@ -2522,6 +2522,34 @@ describe('the machine pick against the terminal (I14)', () => {
     expect(inner.code).toBe(1);
   });
 
+  it('runs a top-level definition that owns no transition when it is selected: its property is not checked (O8 S2)', async () => {
+    // `Lone` is no machine and sits in none, so no machine reported its
+    // carrier: selected, it was refused as holding no state machine.
+    const text = `package T1 {
+      state def Lone {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+      }
+      state def M { state m1; state m2; transition t first m1 accept go then m2; }
+    }`;
+    const model = inline(text);
+    const loneId = idOf(model, 'T1::Lone');
+    expect(pickBehaviourMachine(model, loneId)).toEqual({ kind: 'machine', id: loneId, qualifiedName: 'T1::Lone' });
+    const behaviour = CHECKS.find((c) => c.id === 'check-behaviour')!;
+    const r = runCheck(behaviour, ctx({ model, selectionId: loneId, selectionName: 'T1::Lone' }));
+    expect(r.verdict).toBe('undecided');
+    expect(r.summary).toContain('T1::Lone — 1 property: 0 pass, 0 fail, 0 vacuous, 1 inconclusive');
+    expect(r.rows.map((x) => x.code)).toEqual(['verification/behaviour-unsupported-construct']);
+    // With nothing selected, the pick rows still list machines only.
+    const none = pickBehaviourMachine(model, null);
+    expect(none.kind === 'refused' && none.rows.map((x) => x.elementId)).toEqual([idOf(model, 'T1::M')]);
+    writeFileSync(file('lone.sysml'), text);
+    const lone = await cliSplit(['check-behaviour', file('lone.sysml'), '--no-library', '--element', 'T1::Lone']);
+    expect(lone.code).toBe(2);
+    expect(lone.stdout).toContain('INCONCLUSIVE absence — not checked');
+  });
+
   it('refuses a library element with the library sentence', async () => {
     const text = 'package P { state def M { state a; state b; transition a -> b; } }\n';
     const loaded = await loadModelText(text, { fileName: 'lib.sysml', library: 'full' });

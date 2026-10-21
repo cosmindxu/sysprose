@@ -125,6 +125,7 @@ import {
   machineAlphabet,
   machineStates,
   ownsMachine,
+  stateMachinesIn,
   transitionLabel,
   walkableTransitions,
   type BoundHit,
@@ -701,6 +702,24 @@ export function isPropertyCarrier(el: ElementRecord): boolean {
 }
 
 /**
+ * A LONE DEFINITION: a `state def` that owns no transition and is written inside
+ * no machine. It is no machine of its own (`ownsMachine`, `./explore`), and no
+ * machine's text holds it, so no machine's {@link propertiesOf} reads what it
+ * carries — unlike a nested definition that owns no transition, whose carriers
+ * the machine it is written in reports. A library element is never one.
+ */
+export function isLoneDefinition(model: Model, el: ElementRecord): boolean {
+  if (el.eClass !== 'StateDefinition' || el.attrs.isLibrary === true || ownsMachine(model, el)) return false;
+  for (let p: ElementId | null = el.ownerId; p != null; ) {
+    const owner = model.get(p);
+    if (owner === undefined) break;
+    if (ownsMachine(model, owner)) return false;
+    p = owner.ownerId;
+  }
+  return true;
+}
+
+/**
  * Every property carried inside one machine, in model order.
  *
  * Read from the machine AND its region: the natural home for a property about
@@ -729,6 +748,16 @@ export function isPropertyCarrier(el: ElementRecord): boolean {
  * the same reason a misspelled field is not (the S4 review's `q4` probe). The
  * definition's own region is read the same way, down to a nested definition
  * that IS a machine, whose carriers are its own.
+ *
+ * AND A LONE DEFINITION, NAMED BY ITSELF. A top-level `state def` that owns no
+ * transition ({@link isLoneDefinition}) is in no machine's text, so the reading
+ * above never reaches its carriers. Given as `machineId` — what a reference
+ * that is such a definition and carries a property names
+ * (`behaviourMachineFor`, `./report-lines`) — its carriers are read the same
+ * way, every one marked `stranded`, and refused at {@link checkProperty}. A
+ * machine written inside it keeps its own carriers: a nested definition that
+ * owns a transition, and a composite state that does, which in a definition
+ * that is no machine is a machine of its own (`stateMachinesIn`).
  */
 export function propertiesOf(model: Model, machineId: ElementId): PropertyText[] {
   const out: PropertyText[] = [];
@@ -736,9 +765,23 @@ export function propertiesOf(model: Model, machineId: ElementId): PropertyText[]
   // in the region, between the machine's own.
   const holders: { holder: ElementRecord; stranded?: string }[] = [];
   const machineEl = model.get(machineId);
-  if (machineEl) holders.push({ holder: machineEl });
+  const lone =
+    machineEl !== undefined && isLoneDefinition(model, machineEl)
+      ? model.qualifiedName(machineId) || machineId
+      : undefined;
+  if (machineEl) holders.push({ holder: machineEl, ...(lone !== undefined ? { stranded: lone } : {}) });
+  // Under a lone definition only: is `el`, or what holds it below `regionId`,
+  // a machine of its own?
+  const inMachineBelow = (el: ElementRecord, regionId: ElementId): boolean => {
+    for (let at: ElementRecord | undefined = el; at !== undefined && at.id !== regionId; ) {
+      if (ownsMachine(model, at)) return true;
+      at = at.ownerId != null ? model.get(at.ownerId) : undefined;
+    }
+    return false;
+  };
   const region = (regionId: ElementId, stranded: string | undefined): void => {
     for (const el of regionDescendants(model, regionId)) {
+      if (lone !== undefined && inMachineBelow(el, regionId)) continue;
       if (el.eClass !== 'StateDefinition') {
         holders.push({ holder: el, ...(stranded !== undefined ? { stranded } : {}) });
         continue;
@@ -749,7 +792,7 @@ export function propertiesOf(model: Model, machineId: ElementId): PropertyText[]
       region(el.id, name);
     }
   };
-  region(machineId, undefined);
+  region(machineId, lone);
   for (const { holder, stranded } of holders) {
     for (const carrier of model.children(holder.id)) {
       if (!isPropertyCarrier(carrier)) continue;
@@ -1627,6 +1670,47 @@ export function checkProperty(
     maxCompletion: Math.max(0, opts.maxCompletion ?? MAX_COMPLETION),
     alphabet: machineAlphabet(model, machineId),
   };
+
+  // A LONE DEFINITION IS NO MACHINE, so every property about it is refused
+  // before it is read — a carrier it holds, and a `--pattern` given against it
+  // alike. Walked, it would be a relation of successions or of nothing, and a
+  // verdict over that would be about a machine nobody wrote. The nested
+  // sentence below would be false of it: no machine holds it.
+  //
+  // AND THE ROW NAMES THE MACHINES WRITTEN INSIDE IT. Named, such a definition
+  // reports these rows and nothing else, so a verdict a machine inside it
+  // reaches — a FAIL — is not on this run; without their names the reader had
+  // no pointer to the reference that decides it (the S2 review's `top3` probe).
+  if (machineEl !== undefined && isLoneDefinition(model, machineEl)) {
+    const inside = stateMachinesIn(model, machineId).map((m) => `\`${model.qualifiedName(m.id) || m.id}\``);
+    const insideClause =
+      inside.length === 0
+        ? ''
+        : inside.length === 1
+          ? ` The machine written inside it, ${inside[0]}, is checked when it is named itself.`
+          : ` The machines written inside it — ${inside.join(', ')} — are each checked when named themselves.`;
+    const remedy =
+      text.source === 'flag'
+        ? 'Name the machine the property is about, or give the definition the transitions that make it a machine checked by itself.'
+        : 'Put the carrier on the machine or the state it is about, or give the definition the transitions that make it a machine checked by itself.';
+    return {
+      ...refusedRow(
+        machine,
+        text,
+        {
+          code: BEHAVIOUR_UNSUPPORTED_CODE,
+          detail:
+            `inconclusive: \`${machine.qualifiedName}\` is a \`state def\` that owns no transition and is ` +
+            'written inside no machine — it is no machine of its own and sits in none — so no walk checks ' +
+            `this property and nothing about it is claimed.${insideClause} ${remedy}`,
+          candidates: [],
+        },
+        bounds,
+      ),
+      sentence: `${text.pattern || '(no pattern)'} — not checked`,
+      qualification: 'nothing was checked: the definition named is no machine this engine walks, and sits in none',
+    };
+  }
 
   // A CARRIER NO WALK STANDS ON, refused before it is read: its atoms would be
   // read against this machine, which is not the one it was written in, and a
@@ -3081,8 +3165,8 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
   // only: a withheld one is a `withheld` line of `reach`'s report and has no
   // code to be filed under here, so the catalogue entry, the user guide and
   // `docs/06` §8.8 say that this command carries none and send a reader to
-  // `reach` for it.
-  if (machine !== null) {
+  // `reach` for it. A lone definition is no machine, and has none to file.
+  if (machine !== null && machineEl !== undefined && !isLoneDefinition(model, machineEl)) {
     const walk = exploreMachine(model, machineId, explore);
     for (const l of livelocksOf(model, walk).livelocks) {
       findings.push(livelockFinding(machine, l, walk.bounds));

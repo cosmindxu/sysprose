@@ -2204,7 +2204,9 @@ transition is due.
   transition(s) fired, 4 dead`, and `t65` is among the 66 though no run fires it
   (`check-behaviour`'s `cover` of `fires t65` says `not covered`). The claim is
   `dead`, which leaves `t65` out correctly; rewording the count moves it on every
-  machine, so the review of this step left it for a later change.
+  machine, so the review of this step left it for a later change. §8.11 made it:
+  the count is now of the transitions a step of some run takes, and chain65
+  prints `65 of 70`.
 - **A property no walk stands on is reported, not dropped.** §8.6 read a
   machine's properties from its region, so a carrier inside a nested `state def`
   is that definition's. A nested definition that owns no transition is no
@@ -2217,7 +2219,8 @@ transition is due.
   `INCONCLUSIVE … — not checked`, `verification/behaviour-unsupported-construct`,
   exit 2, naming the definition and what to do. A nested definition that IS a
   machine keeps its carriers. No model of the 857-file survey holds such a
-  carrier, so no output there moves.
+  carrier, so no output there moves. A top-level definition that owns no
+  transition has no machine whose text holds it; §8.11 reports its carriers.
 
 ### 8.8 The completion livelock — O1 `behaviour-sound`, 2026-10-15
 
@@ -2555,3 +2558,70 @@ atom on it holding, and every round trip stacked one more state.
   (`machine-boundary`) before and after; no machine there is refused as
   `step-outside-states`. `reach` on v9 takes the same time (54 to 75 ms against 59
   to 71 at `aac38fd`, cold, three runs).
+
+### 8.11 The count line, and a property no machine checks — O8 `behaviour-lca`, 2026-10-21
+
+TODO "Count what fires in reach's N of M transition(s) fired" and "Report a
+property no machine checks" (`close-open-items.md` §2.4, O8 S2), both left by
+§8.7.
+
+- **What `fired` counts.** `reach`'s count line read one set of the walk, every
+  transition enabled at a configuration some explored run reaches — the set
+  `dead` is the rest of. So a transition the priority rule beats wherever it is
+  enabled, and since §8.5 a completion transition due only where the chase
+  budget stops a chase, were counted `fired` though no run takes them: chain65
+  printed `66 of 70 transition(s) fired, 4 dead`, `t65` among the 66. The walk
+  now keeps two sets. `ExploreResult.enabled` is the old one, and `dead` still
+  reads it. `ExploreResult.fired` holds the transitions a step of some explored
+  run takes: the innermost level only, and not the completion step one past the
+  budget, from a configuration a chase reaches on its last step. The walk
+  without the chase position still takes that step on a machine that names no
+  trigger, into a configuration it already knows (a 64-step chain whose last
+  state steps back, which `recordChase` already kept out of the chase cycles);
+  the interpreter never does, and the keyed walk offers no completion there.
+  Every other step the walk takes is one some run of the walk takes, the
+  tie-break's and the dwells' included, as every figure of the report reads; a
+  bound that refuses a step's target refuses where the run goes next, not the
+  step. Of the two changes the entry allowed, this is the smaller: the label
+  stays `fired` and becomes true, where relabelling it `enabled` would have moved
+  the line on every machine. `fired` and `dead` need not add up to the total
+  any more: chain65 prints `65 of 70 transition(s) fired, 4 dead`, and the
+  70th, `t65`, is neither. `--json`'s `transitions.fired` is the same count.
+- **A property on a lone definition.** A `state def` that owns no transition and
+  is written inside no machine (`isLoneDefinition`, `patterns.ts`) is no machine,
+  and no machine's text holds it, so §8.7's reading, which reports a nested
+  definition's carriers on the machine that holds it, never reached what it
+  carries: `check-behaviour --element T1::Lone` printed *"`T1::Lone` holds no
+  state machine"* (exit 2), or, where machines are written inside it, checked
+  the one or listed the several, and never what it carries itself. A reference
+  that is such a definition and carries a property now names it
+  (`behaviourMachineFor`), as a reference that is a machine names that machine.
+  Its carriers are read as §8.7 reads a nested definition's, every one marked
+  `stranded`, down to a machine written inside it — a nested definition or a
+  composite state that owns a transition, whose carriers are its own.
+  `checkProperty` refuses every property about it before reading it, a
+  `--pattern` given against it too, which is never walked: `INCONCLUSIVE … — not
+  checked`, `verification/behaviour-unsupported-construct`, exit 2, naming the
+  definition, with no livelock filed since there is no walk. A machine written
+  inside it is checked only by its own name, so the run says nothing of it: the
+  review's `top3` probe, a definition carrying `absence` of one of its states
+  and holding a machine `Deep` whose own `absence` fails, printed that failure
+  under `--element T3::Lone` at `8ecc4fc` (exit 1) and now prints only the
+  definition's `not checked` row (exit 2). Each row therefore names the machines
+  written inside it (*"The machine written inside it, `T3::Lone::Deep`, is
+  checked when it is named itself."*), and `--element T3::Lone::Deep` still
+  prints the failure. No verdict is widened: the exit stays non-zero, and each
+  row prints the reference that decides the machine inside. A definition like
+  this that carries no property resolves as before: refused as holding no
+  machine when none is written inside it, and otherwise the one machine inside
+  it is checked or the several are listed. The app's Behaviour properties check
+  reads the same resolution, so selecting the definition reports the same rows;
+  with nothing selected its pick rows list machines only.
+- **What moved.** Over the 857-file survey of §8.6 the count moves on one
+  machine of 111, the gate corpus's chain65 (`66` to `65`, in the text and in
+  `--json`), and no model there holds a lone definition that carries a
+  property. Against `aac38fd`: the verdict differential, 637 of 637 models
+  identical; v9, 25 of 25 surfaces identical; `reach` and `check-behaviour`,
+  JSON and text, on the 54 state-bearing models and v9, 54 of 55 identical,
+  chain65's count line the one difference; and `check-behaviour --element` on
+  each of their 79 machines, JSON and text, identical.

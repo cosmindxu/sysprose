@@ -2594,6 +2594,19 @@ never entered in simulation while the model plainly admits it. That is
 what the line does NOT contain: a trigger name. The machine names none, and a
 report that printed one would have invented it.
 
+**What the count line counts.** `N of M transition(s) fired` counts the
+transitions a step of some explored run takes; `dead` counts the ones enabled at
+no configuration a run reaches. The two need not add up to `M`: a transition
+that is enabled where no run takes it is neither. That is one an inner
+transition beats wherever it is enabled (priority: innermost substate first), or
+a trigger-less one due only where the 64-step chase budget stops a chase. On a
+machine that takes one event and then a chain of 69 trigger-less steps, the
+chase after the event takes 64 of them and stops at the 65th state of the chain,
+whose step out is enabled and never taken: `reach` prints `65 of 70
+transition(s) fired, 4 dead` — the event and the 64 steps fired, the four steps
+after the one never taken dead, and that one neither. `--json` carries the same
+count as `transitions.fired`.
+
 **Every figure carries the reading it holds under.** The semantic profile
 printed under each machine names six things every published formalisation of
 state machines disagrees about — run-to-completion (chasing is bounded at 64
@@ -2964,6 +2977,22 @@ to — for a state of the nested definition, that definition, not the outer
 machine whose text holds it. In the app, the pick row such a refusal lists in
 the Checks tab (the machine's qualified name and its property count) selects
 that machine, and the next Run checks it.
+
+A `state def` that owns no transition and is written inside **no** machine is
+no machine and sits in none, so no machine reports what it carries. When it
+carries a property, name it itself — `check-behaviour --element P::Lone` — and
+every property about it is `inconclusive`, `… — not checked`,
+`verification/behaviour-unsupported-construct`, exit 2, naming the definition:
+each carrier on it or inside it, and a `--pattern` given against it, which is
+never walked. A machine written inside it (a nested definition or a composite
+state that owns a transition) keeps its own carriers and is checked only by its
+own name, so this run says nothing of it, a failure there included; each row
+names it, and `--element P::Lone::Deep` checks it. A definition like this that
+carries no property resolves as before: refused as holding no state machine when
+none is written inside it, and otherwise the one machine inside it is checked or
+the several are listed. In the app, select the definition and run **Behaviour
+properties** for the same rows; the pick rows with nothing selected list
+machines only, so such a definition is not among them.
 
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither

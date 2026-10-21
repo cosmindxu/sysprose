@@ -82,8 +82,10 @@
  * and `verification/nondeterministic-choice` are claims about a configuration
  * being REACHED, and exploring extra configurations invents them. That is why
  * `exploreMachine` steps only the innermost level while still counting every
- * enabled transition as fired — `dead` means never ENABLED anywhere reachable,
- * which is the reading the finding's hint states.
+ * enabled transition as not dead — `dead` means never ENABLED anywhere
+ * reachable, which is the reading the finding's hint states. What it counts as
+ * `fired` is narrower: the transitions a step of some explored run takes, so a
+ * beaten one is neither dead nor fired.
  *
  * MUST NEVER, from §3.8: this module does not say "verified", does not say
  * "deadlock-free", and does not say "proved". It says what it explored, under
@@ -537,7 +539,18 @@ export interface ExploreResult {
   boundHit: BoundHit;
   /** Every state entered on some explored run. */
   reachable: ReadonlySet<ElementId>;
-  /** Every transition fired on some explored run. */
+  /**
+   * Every transition enabled at some configuration an explored run reaches —
+   * what `dead` is read against: a transition the priority rule beats there,
+   * or one due where the chase budget stops a chase, is in it.
+   */
+  enabled: ReadonlySet<ElementId>;
+  /**
+   * Every transition a step of some explored run takes: the part of
+   * {@link enabled} the walk steps by, and what `reach` counts as `fired`. It
+   * leaves out a transition the priority rule beats, and a completion
+   * transition due where a chase stops: no run takes either.
+   */
   fired: ReadonlySet<ElementId>;
   /** The events actually offered — a bound can stop the walk before some are. */
   offered: ReadonlySet<string>;
@@ -1686,6 +1699,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
       exhaustive: false,
       boundHit: 'none',
       reachable: new Set(),
+      enabled: new Set(),
       fired: new Set(),
       offered: new Set(),
       nondeterminism: [],
@@ -1732,6 +1746,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
     exhaustive: walked.exhaustive,
     boundHit: walked.boundHit,
     reachable: walked.reachable,
+    enabled: walked.enabled,
     fired: walked.fired,
     offered: walked.offered,
     nondeterminism: walked.nondeterminism,
@@ -1759,6 +1774,7 @@ interface Walked {
   exhaustive: boolean;
   boundHit: BoundHit;
   reachable: Set<ElementId>;
+  enabled: Set<ElementId>;
   fired: Set<ElementId>;
   offered: Set<string>;
   nondeterminism: NondeterministicChoice[];
@@ -1794,6 +1810,9 @@ function walkConfigurations(
   const triggers: StepInput[] = bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger }));
   const inputs: StepInput[] = [COMPLETION, ...triggers];
   const reachable = new Set<ElementId>();
+  // Enabled somewhere a run reaches (`dead` is the rest), and taken by a step
+  // of some run (`reach`'s `fired`) — the second a part of the first.
+  const everEnabled = new Set<ElementId>();
   const fired = new Set<ElementId>();
   const offered = new Set<string>();
   const nondeterminism: NondeterministicChoice[] = [];
@@ -1932,9 +1951,10 @@ function walkConfigurations(
       chaseStops++;
       // Enabled, at a configuration a run reaches: not dead, and not a
       // deadlock. Not fired either — not by this walk, and not by the
-      // interpreter, whose budget is spent — so no successor is recorded.
+      // interpreter, whose budget is spent — so no successor is recorded and
+      // `fired` does not get it.
       anyEnabled = true;
-      for (const e of completion.enabled) fired.add(e.transition.id);
+      for (const e of completion.enabled) everEnabled.add(e.transition.id);
       recordUndetermined(completion.undetermined);
     }
     const offeredInputs: StepInput[] = stopped
@@ -1957,11 +1977,11 @@ function walkConfigurations(
       // The interpreter fires `enabled[0]`, and the list is innermost level
       // first: a transition at an OUTER level is beaten by the priority rule
       // and fires in no run at all while an inner one is enabled. Every one of
-      // them is still counted FIRED — `dead` means never enabled anywhere
-      // reachable — but only the innermost level generates successors and only
-      // it can hold a hidden choice, because a configuration reached by firing
-      // a beaten transition is one no run enters, and a deadlock or an
-      // ambiguity reported there is invented rather than found.
+      // them is still counted ENABLED — `dead` means never enabled anywhere
+      // reachable — but only the innermost level generates successors, is
+      // counted `fired`, and can hold a hidden choice, because a configuration
+      // reached by firing a beaten transition is one no run enters, and a
+      // deadlock or an ambiguity reported there is invented rather than found.
       const innermost = enabled[0].level;
       // AND NOT OVER A WITHHELD INNER EDGE. A hidden choice is an existential
       // claim, and at ONE level a withheld edge can only ever remove a
@@ -2021,8 +2041,20 @@ function walkConfigurations(
       };
 
       for (const choice of enabled) {
-        fired.add(choice.transition.id);
+        everEnabled.add(choice.transition.id);
         if (choice.level !== innermost) continue;
+        // TAKEN, so `fired` — unless it is the completion step one past the
+        // budget, from a configuration a chase reaches on its last step. The
+        // walk without the position still takes that step on a machine that
+        // names no trigger (a 64-state chain whose last state steps back, which
+        // `recordChase` leaves out for the same reason), and the interpreter
+        // never does: its chase stops there. Every other step this loop takes
+        // is one some run of the walk takes, the tie-break's and the dwells'
+        // included, and a bound below that refuses its target refuses only
+        // where the run goes next, not the step.
+        if (input.kind !== 'completion' || here.completionRun < bounds.maxCompletion) {
+          fired.add(choice.transition.id);
+        }
         const next = stepConfig(model, here.config, choice);
         for (const v of next.effects.visited) reachable.add(v);
         const hash = hashConfig(next.config, history);
@@ -2097,6 +2129,7 @@ function walkConfigurations(
     exhaustive: boundHit === 'none',
     boundHit,
     reachable,
+    enabled: everEnabled,
     fired,
     offered,
     nondeterminism,
@@ -2930,6 +2963,12 @@ export interface MachineReach {
   transitions: {
     /** The {@link walkableTransitions} census, not every edge in the machine. */
     total: number;
+    /**
+     * How many a step of some explored run takes ({@link ExploreResult.fired}).
+     * With `dead` it need not add up to `total`: a transition enabled where
+     * no run takes it — beaten by the priority rule, or due where the chase
+     * budget stops a chase — is neither.
+     */
     fired: number;
     /** EMPTY whenever the walk was not exhaustive, for the same reason. */
     dead: readonly TransitionRef[];
@@ -3300,7 +3339,7 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     ? states.filter((s) => !walk.reachable.has(s.id)).map((s) => stateRef(model, s.id))
     : [];
   const dead = publishable
-    ? transitions.filter((t) => !walk.fired.has(t.id)).map((t) => transitionRef(model, t))
+    ? transitions.filter((t) => !walk.enabled.has(t.id)).map((t) => transitionRef(model, t))
     : [];
 
   // The word `exhaustive` appears in exactly one branch, and an undetermined
