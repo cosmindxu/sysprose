@@ -1501,6 +1501,7 @@ Each lane's row says what it retires, and the two columns after it say what it n
 *Status (measured at `510793c`, 2026-09-16):* HELD — `exactness.acyclic` `false` on 3 of 3 shipped machines (`edges` 5 / 4 / 2, `walkIsExact true`, `failedClause null`, `alphabet 0`, `timedTransitions 0`, `undeterminedGuards 0`).
 *Files:* CHANGE `patterns.ts` (**move the class check out of its position ahead of the walk and down to below the `const walk = exploreMachine(…)` call and below the unsupported-construct refusal that guards it — by anchor, never by number — an earlier revision named a line that holds a comment**; the **six** verdict branches of §3.5a's dispatch, in its stated order, including the trigger/dwell split at rows 2–3 **and the store refusal at row 3b, which the draft had no row for**; the seventh semantic-profile field, named **`run classes`** and **defining BOTH of them**), `src/semantics/mc/profile.ts`, `publishable.ts` (register A10 — polarity `decreasing` in edges, `walkRequires: 'walkIsExact'` with `alsoRequires: ['acyclic === true']`, and the *"decreasing row reading the gate"* justification in its `Otherwise` cell so the reflection test does not read it as a mis-wiring — **and witness row W4 for the `fail`, `kind: 'maximality'`, `walkRequires: 'walkIsExact'`, `alsoRequires: ['acyclic === true']`. W4 reads the WHOLE gate and W1 reads only the relation half because a refutation of `F p` asserts the witness run has no successors, which a bound and an undecided guard both manufacture, while a bound can only ever hide the existential witness W1 publishes. Writing a numbered publishability condition into this row — which an earlier revision did — reddens §5(a)'s reflection test on this commit's own edit, since `walkRequires` admits exactly four values and no numbered one is among them**), `sysprose-spec.ts` and **`BEHAVIOUR_EXIT_CODES` — the second pair of edits: the 0 row gains the maximal-run shape, the 2 row's liveness clause narrows (§2.1)**, and the **nine** documents quoting the refusal, **plus `docs/CONFORMANCE.md`'s two prose statements of the profile's arity (six-field → seven-field), which are protected by no test at all and were in neither list**; REGEN `CLI-REFERENCE.md`, `DIAGNOSTIC-CODES.md`.
 **And the seventh profile field moves `reach`, not only `check-behaviour` — `SEMANTIC_PROFILE` is one constant rendered from `patterns.ts` AND `explore.ts`.** Three exact six-element arrays become the same seven-element array ending `…, 'time', 'run classes'`: in `test/campaign/cli.sysprose.test.ts` the `body.reach.profile.map((f) => f.field)` array and the `body.behaviour.profile.map((f) => f.field)` array — **two different `it(…)`s, found by those expressions** — and in `test/unit/semantics.mc.reach.test.ts` the `r.profile.map((f) => f.field)` array inside `it('carries the semantic profile on the report')`. The guide's *"names six things"* prose goes to seven with the new item spelled out. All four are **deliberate re-records with the reason in the diff**, and this commit says out loud that a liveness commit changes `reach`'s published payload.
+*Note (`behaviour-rest` S2, 2026-10-21, §8.13):* the profile has had **seven** fields since then — `exits`, between `priority` and `history` — so `run classes` is the **eighth**: each of the three arrays this commit re-records already holds `'exits'` after `'priority'` and becomes the eight-element array ending `…, 'time', 'run classes'`; the guide's *"names seven things"* and `CONFORMANCE.md`'s two *"seven-field"* sentences go to eight, and the `docs-counts` arity claims on the guide and on `CONFORMANCE.md` §8.5 (trap 83's CLAIM, which now exists) turn red until they do. Where this commit's text says six → seven, read seven → eight.
 *Tests:* the §3.5a list, including the final-state variant with **no** deadlock clause, the triggered variant refused at row 2, **the factory-built dwell variant refused at row 3 with `FairnessAssumption` asserted absent**, **the factory-built `after(5) → done` before `after(60) → stuck` machine asserting row 3 and NOT `fail` — the W4 regression, with `refuted — finite maximal run of 1 step(s)` at exit 1 named as the wrong answer**, the refusal text asserted byte-identically on every cyclic machine in the corpus, **every verdict line asserted to name its run class**, and **`cli-reference.test.ts` asserting both contract-row edits**. Plus **`test/unit/semantics.mc.patterns.test.ts` over `buildChain()`** — the already-passing test this move flips, with §3.5a's table as the record of what changes and what does not: **the two `v.detail` assertions re-recorded** to `toContain('names triggers')` and `toContain('FairnessAssumption')` — found by their present text, `'liveness not checked in-process'` and `'fairness'` — and the `v.claim`, both `v.code`, `v.patternClass`, `v.configs` and `v.exhaustive` assertions **asserted UNCHANGED**, because `configs`/`exhaustive` are the product-search fields and a refused liveness row still runs no product search.
 *Gate proves:* liveness is decided only where every run is finite and the environment is not a party to the claim; the refusal is unchanged everywhere else; and the exit contract says what the verdict established rather than what the safety lane established.
 *Guards moved:* nine doc quotations · `BEHAVIOUR_EXIT_CODES`' 0 and 2 rows (second edit; the first was commit 6) · the `verification/behaviour-unsupported-construct` catalogue entry's meaning, whose "not lowerable" promise must survive · **the three exact semantic-profile arrays, six elements → seven — the two `profile.map((f) => f.field)` arrays in `cli.sysprose.test.ts` and the one in `semantics.mc.reach.test.ts`'s `it('carries the semantic profile on the report')`, each found by its expression** · **the guide's "names six things" prose** · **`docs/CONFORMANCE.md`'s two prose statements of the profile's arity — *"every verdict it prints carries the **six-field** semantic profile"* and, in the behaviour lane's conformance record, *"every verdict prints the **six-field** profile it holds under"* — both false after this commit, both absent from the draft's list, and neither protected by any test or `docs-counts` claim, which is exactly why a Guards-moved list is where they have to appear. The second of the two also names the run-class distinction the way the other profile facets are named there. Optionally, and recommended, a `docs-counts` CLAIM `/carries the (\S+)-field semantic profile/` mapped to `SEMANTIC_PROFILE.length` spelled as a word, so the next field addition is a red test rather than a review catch — which is the discipline every other count in this plan already has** · **`semantics.mc.patterns.test.ts`'s two `v.detail` assertions on the `buildChain()` liveness loop, re-recorded; the `v.configs`/`v.exhaustive` pair beside them explicitly NOT moved.**
@@ -1598,7 +1599,7 @@ Three mechanisms, and every new claim in §3 is covered by at least two — plus
 | `--why` | `uav-power-budget` 24 → 9 | the three-reasons fixture prints the sufficiency caveat |
 | `no fair cycle` **and no finite maximal run** | the cyclic-fair fixture | the non-conforming assumption prints **no** liveness verdict; **a lasso whose cycle is built entirely from `after(n)` edges is `inconclusive`, never `refuted under fairness` at exit 1** (W5); **`idle ⇄ busy` + `busy → done` + `idle → parked` with `parked` a dead end is a REFUTATION over the finite-maximal-run class — `holds under fairness … no fair cycle avoids \`state done\`` at exit 0 is pinned as the wrong answer** (R3-12), and §5(d) records that this shape exists in the fixture corpus and in none of the three examples, so the member has to be built rather than borrowed |
 | the behaviour lane's 0 row | three discharge shapes after commit 16 | **four after commit 18** — the fair pass discharges under none of the three, so `check-behaviour <cyclic fair model>` exiting 0 under the unedited sentence is pinned as the wrong answer, and commit 18's byte-identity assertion is narrowed to the 1 and 2 rows rather than deleted |
-| the semantic profile | six fields today | **seven after commit 16** — the three exact arrays and the guide's *"six things"* re-recorded, `reach`'s payload moving in a liveness commit, named in the commit rather than found on landing. **And `CONFORMANCE.md`:855 and :939, which state the arity in prose twice and are protected by no test at all**: after commit 16 both sentences are false in the one document readers treat as measured, and nothing reddens — which is why they are in the commit's Guards-moved list and why the optional `docs-counts` CLAIM over *"the N-field semantic profile"* is recommended |
+| the semantic profile | six fields when this was written; seven since `behaviour-rest` S2 (`exits`, §8.13) | **seven after commit 16 — eight, since `exits`; see the note under commit 16** — the three exact arrays and the guide's *"six things"* re-recorded, `reach`'s payload moving in a liveness commit, named in the commit rather than found on landing. **And `CONFORMANCE.md`:855 and :939, which state the arity in prose twice and are protected by no test at all**: after commit 16 both sentences are false in the one document readers treat as measured, and nothing reddens — which is why they are in the commit's Guards-moved list and why the optional `docs-counts` CLAIM over *"the N-field semantic profile"* is recommended |
 | `no cut set` | the redundant variant | one undecided order-1 query ⇒ `singlePointOfFailure` null; **the timed variant publishes no cut set AND no `no cut set`**, and so do the triggered variant and the undecided-guard variant — the last being the one that matters most here, because the injection substrate *is* the store and an unbound attribute the guards read manufactures `no cut set` directly |
 | `no simulation relation` | the probe pair | either walk fails **`walkIsExact`, on either machine, on any of its four clauses** ⇒ inconclusive; exit **2 under the new clause**, never exit 2 under *"states no chain the `--via` family can read"*. (The draft had this row twice, once naming only exhaustiveness; the weaker copy is deleted) |
 | the `FairnessAssumption` carrier | the delimited cell, `npm run check` 0 errors | **the repeated-cell spelling FAILS with two `validation/duplicate-name` errors, rc=1** — pinned so the rejected spelling has a name in the suite |
@@ -2503,7 +2504,8 @@ atom on it holding, and every round trip stacked one more state.
   a step into a node written inside a state. The semantic profile's six
   fields are unchanged: none of them is how a step exits, and the `history`
   field's reading, "leaving a composite state records its last-active child",
-  now holds of every step that leaves one.
+  now holds of every step that leaves one. (§8.13 adds a seventh, `exits`,
+  that says how.)
 - **What the step cannot read, refused.** A target in no chain of the machine's
   states has no least common ancestor: the machine's own root (`then M` written
   in `state def M`), or a node under an element that is not a state (`then
@@ -2556,7 +2558,8 @@ atom on it holding, and every round trip stacked one more state.
   instead (two hundred edges into `Idle` cost that layout minutes), and each
   stage can be left for `Idle` from the composite. The E2E test waits for
   the layout before it watches frames, and polls the `running` state every 50 ms:
-  the walk in the worker runs for about a second.
+  the walk in the worker runs for about a second. (§8.13: it now holds the
+  walk's answer until the checks made while it runs are done.)
 - **No verdict in the gate corpus or v9 moves**, as the TODO said. Against
   `aac38fd`: the verdict differential, 637 of 637 models identical; v9, 25 of 25
   surfaces identical; `reach`, JSON and text, on the 54 state-bearing models and
@@ -2750,3 +2753,122 @@ wave 2.
   trigger and steps on no dwell, `bounded-existence` of each nameable state is
   decided at the run's own count and at one fewer, and never passes below the
   count the declaration-order run makes.
+
+### 8.13 The exits field, a lone definition where nothing names it, and the count's gap — `behaviour-rest`, 2026-10-21
+
+TODO "Print the exits choice in the semantic profile" (O8 review), "Offer a lone
+definition's properties where nothing names it" (O8 S2), and two of the three
+optional entries: "Name the transitions reach counts neither fired nor dead" (O8
+S2) and "Make the palette's worker E2E independent of a one-second walk" (O8
+S1); `close-open-items.md` §2.5, wave 2. The third, "Compare the stack in the
+witness replay", is left: the interpreter returns its active leaves, not its
+stack, and its `visited` list records what a step enters but not what it exits,
+so a stack rebuilt from it cannot catch a state the walk keeps and the
+interpreter left — the very shape §8.10 fixed.
+
+- **A seventh profile field, `exits`.** §8.10's reading — a step exits to the
+  least common ancestor of its source and its target, and every transition is
+  external — moved verdicts that none of the six fields showed: the absence of
+  `state b` on nd1 went from PASS to FAIL, and the TODO machine's `after-until`
+  from FAIL to PASS, under a profile that printed the same six lines before and
+  after. `SEMANTIC_PROFILE` now carries `exits` between `priority` and
+  `history`, with its provenance `config.ts — stepConfig, hierarchyPath,
+  stepOutsideStates` (symbols, as the provenance test reads them). Its reading
+  says what is exited and entered and in which order, that a self-transition,
+  a step to an ancestor and a step from a composite into one of its own
+  substates exit that state and enter it again, that a step into the machine's
+  own root or under an action is taken by neither side (§8.12),
+  and that a step across the machine's boundary, which the walk refuses, is
+  still taken the old way by the interpreter (§8.6). It is one constant
+  rendered into both reports (trap 57), so it moves every `reach` and
+  `check-behaviour` text and JSON payload by one profile row, and that is the
+  re-record: the three field arrays (`semantics.mc.reach.test.ts` and the two
+  in `cli.sysprose.test.ts`), the guide's "names seven things" and
+  `CONFORMANCE.md`'s "seven-field semantic profile", each held by a
+  `docs-counts` claim, and the scorecard row's "seven-field profile", which no
+  claim holds (trap 83). `semantics.mc.patterns.test.ts` pins the field against the
+  interpreter, as it pins the other six: a step out of a composite leaves it, so
+  the composite's own transition is not offered at the target, and a
+  self-transition on a composite restarts it at its initial substate; and the
+  walk agrees, `absence of state C0` and of `state Z` passing from `back` until
+  `go`, both FAIL under the old step. The first wording of the reading ("the
+  active states that do not also hold the target are exited") was UML's LOCAL
+  reading on the one shape where local and external differ, a composite's step
+  into its own substate (`C -jump-> C::b`): `C` holds `b`, so it read `C` as
+  kept, where `stepConfig` exits it and enters it again (the step review's
+  probe: `performed enterC, leaveC, enterC`). It now names the source and the
+  states below it as exited first, and the same test pins that shape: the
+  interpreter visits `C` twice and runs `leaveC` before the second `enterC`, and
+  the walk FAILs the absence of the store value `leaveC` writes.
+- **A lone definition where nothing names it.** §8.11 reported a lone
+  definition's carriers when `--element` named the definition itself, and
+  nowhere else. The package holding it beside two machines listed the two and
+  left it out; the package holding it beside ONE machine was answered with
+  that machine, so the definition's properties were passed over in silence and
+  the run exited 0 when the machine's own held (the `T5` probe: `--element T5`
+  printed `T5::M — 1 property: 1 pass`, exit 0); and a state written in it was
+  refused as *"holds no state machine"* with no word of the definition. Such a
+  definition now counts beside the machines a reference holds
+  (`loneCarriersIn`, `patterns.ts`: the lone definitions at or under the
+  reference that carry a property, outermost only, since an outer one's
+  `propertiesOf` reads an inner one's carriers): a reference holding it and a
+  machine, or two of them, is refused with each listed and the definition's
+  line saying what naming it reports; one holding it and no machine names it,
+  as one holding a single machine names that. A state written in it is refused
+  with the definition named (`behaviourNoMachine`, `report-lines.ts`), saying
+  whether it carries a property and naming the machines written inside it;
+  where lone definitions nest, the definition named is the outermost that
+  carries a property, the one `loneCarriersIn` lists (the first cut named the
+  innermost, so a state in an inner definition that carries nothing inside an
+  outer one that does was told *"it carries no property"*, with the outer one
+  never named: the step review's `D` probe), and the innermost where none
+  carries one. `reach` keeps its words there, since naming the definition
+  reports nothing to it. The `--element` help says all of it. In the app, the
+  pick rows with nothing selected list what carries a property, machines and
+  such definitions alike, and every machine only when nothing does (the first
+  cut fell back to every machine whenever no MACHINE carried one, and listed
+  machines that decide nothing beside the one carrier); a refused package's
+  rows include such a definition; a state in one that carries a property
+  offers it as the pick, and a state in one that carries nothing offers the
+  machines written inside it; and the run of the definition itself adds a
+  `checks/pick-machine` row for each machine written inside it. The
+  catalogue's `checks/pick-machine` entry says so. No
+  verdict is widened: every new outcome is a refusal or a `not checked` row,
+  exit 2, and the machine a reference used to answer with is still checked by
+  its own name.
+- **The count's gap, named.** §8.11 left `fired` and `dead` free not to add up
+  to the total, and named nothing in the gap. `MachineReach.transitions` now
+  carries `enabledNeverFired`: the transitions enabled at a configuration some
+  run reaches and taken by no step of any, which over an exhaustive walk is
+  true of the interpreter's runs too (the walk takes every step the interpreter
+  could, the tie-break's other branch included). It is gated with `dead`, and
+  empty whenever `dead` is withheld. The count line names its size where it is
+  not zero (`65 of 70 transition(s) fired, 4 dead, 1 enabled and never fired`)
+  and a `never fired` row with no code names each, after the `dead` rows: not a
+  finding, since the chase budget or the priority rule keeping a run from a step
+  is the interpreter as the profile describes it.
+- **The worker E2E no longer races the walk.** TODO "Make the palette's worker
+  E2E independent of a one-second walk" (O8 S1, optional). `palette-checks.spec.ts`'
+  'a state-machine check runs in a worker' polled `running` every 50 ms and made
+  its while-it-runs checks (Statistics answered, `reach` still `running`) inside
+  the second the walk takes, which load could squeeze. It now holds the check's
+  result in the page until it releases it (`holdWorkerReplies(page, 'results')`,
+  a wrapper the test installs over `Worker` before the page loads, which lets the
+  load's measured texts through and holds only a reply that carries `result`):
+  the run goes from `checking the load…` to `running` and stays there, its walk
+  done in the worker, until the test is through. No source changed for it; the
+  frame comparison with the page's own run is as before.
+- **What moved.** Against `9202964`: the verdict differential, 637 of 637
+  models identical; v9, 25 of 25 surfaces identical (none of them runs `reach`
+  or `check-behaviour`). `reach` and `check-behaviour`, JSON and text, on the 54
+  state-bearing models and v9: 55 of 55 differ, every one by the `exits` row
+  alone — three JSON leaves and one text row added, the four fields after it
+  renumbered — and chain65 also by `t65`, named on its count line, on a `never
+  fired` row and under `transitions.enabledNeverFired`. `check-behaviour
+  --element` on each of their 79 machines, JSON and text: 49 of the 55 models
+  differ, by the `exits` row alone on every machine, and the 6 with no machine
+  are identical. No verdict, code, exit status, witness or figure moved; the only
+  machine of the corpus and v9 whose count line has a gap is chain65's. No model
+  there, in the repository's examples and fixtures, or v9 holds a lone
+  definition that carries a property, so the resolution of a reference moves
+  nowhere on them.

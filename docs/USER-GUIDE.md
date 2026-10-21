@@ -2603,31 +2603,47 @@ a trigger-less one due only where the 64-step chase budget stops a chase. On a
 machine that takes one event and then a chain of 69 trigger-less steps, the
 chase after the event takes 64 of them and stops at the 65th state of the chain,
 whose step out is enabled and never taken: `reach` prints `65 of 70
-transition(s) fired, 4 dead` — the event and the 64 steps fired, the four steps
-after the one never taken dead, and that one neither. `--json` carries the same
-count as `transitions.fired`.
+transition(s) fired, 4 dead, 1 enabled and never fired` — the event and the 64
+steps fired, the four steps after the one never taken dead, and that one
+neither. The line names the gap only where there is one, and a `never fired`
+row under the `dead` rows names each transition in it (`t65 (c65 -> c66) —
+enabled where a run reaches, and taken by no run: …`); the row has no code,
+since a step the budget or the priority rule keeps a run from taking is the
+interpreter doing what the profile says, not a defect. Both are withheld with
+the `dead` rows, over a walk that did not finish. `--json` carries the same
+count as `transitions.fired`, and the transitions in the gap as
+`transitions.enabledNeverFired`.
 
 **Every figure carries the reading it holds under.** The semantic profile
-printed under each machine names six things every published formalisation of
+printed under each machine names seven things every published formalisation of
 state machines disagrees about — run-to-completion (chasing is bounded at 64
-steps), priority (innermost substate first), history (shallow, by parent map),
-regions (the interpreter concatenates them; a parallel machine is not explored
-here at all), deferred events (none — there is no event pool), and time
-(discrete `after(n)`; the walk offers each `after(n)` label as an event rather
-than advancing a clock). A verdict about a machine is a verdict under a reading
-of those six, and one that does not say which reading is one you cannot check.
+steps), priority (innermost substate first), exits (a step exits to the least
+common ancestor of its source and its target, and every transition is external:
+the next paragraph), history (shallow, by parent map), regions (the interpreter
+concatenates them; a parallel machine is not explored here at all), deferred
+events (none — there is no event pool), and time (discrete `after(n)`; the walk
+offers each `after(n)` label as an event rather than advancing a clock). A
+verdict about a machine is a verdict under a reading of those seven, and one
+that does not say which reading is one you cannot check. `exits` is the newest:
+it was added on 2026-10-21, after the step's reading changed and moved verdicts
+that none of the other six showed, so a `reach` or `check-behaviour` report
+saved before then prints six.
 
 **A step out of a composite leaves it.** A transition exits to the least common
-ancestor of its source and its target: every active state that does not also
-hold the target is exited, innermost first with its exit actions, the
-transition's effect runs, and the states that hold the target are entered,
+ancestor of its source and its target: the source and every active state below
+it are exited, then each state above the source that does not also hold the
+target, innermost first with their exit actions; the transition's effect runs;
+then the states that hold the target and did not stay active are entered,
 outermost first, then the target and its initial substate. So `first b then
 Idle` written inside `state C0 { … }` exits `b` and then `C0`: at `Idle`, `C0`'s
 own transitions are not offered and a `state C0` atom does not hold. A step to
-an ancestor exits it and enters it again at its initial substate, and a step
-into a nested state from outside enters its composite first; so does a step into
-a node written inside a state, such as `then S::work` into `state S { action
-work; }`, which enters `S` and then `work`. Every transition is external: a
+an ancestor exits it and enters it again at its initial substate. A step from a
+composite into one of its own substates exits the composite too and enters it
+again: `C0` to `C0::b` runs the exit actions of `C0`'s active substate and of
+`C0`, then `C0`'s entry actions, then `b`'s. A step into a nested state from
+outside enters its composite first; so does a step into a node written inside a
+state, such as `then S::work` into `state S { action work; }`, which enters `S`
+and then `work`. Every transition is external: a
 self-transition exits its state and enters it again, and a composite restarts at
 its initial substate. A composite marked as a history state is the exception to
 both restarts: entered again, it resumes the child it was just left from. The
@@ -3009,7 +3025,8 @@ checked by nothing, and said so rather than dropped — and a property of
 `Outer`'s that names one of the nested definition's states or
 transitions is refused as `verification/unknown-atom`, as one naming another
 machine's state is. A reference that only contains machines (the package, say) is still refused
-with the machines it holds, and a state is refused with the machine it belongs
+with the machines it holds (and with any definition that is no machine and
+carries a property, below), and a state is refused with the machine it belongs
 to — for a state of the nested definition, that definition, not the outer
 machine whose text holds it. In the app, the pick row such a refusal lists in
 the Checks tab (the machine's qualified name and its property count) selects
@@ -3017,19 +3034,41 @@ that machine, and the next Run checks it.
 
 A `state def` that owns no transition and is written inside **no** machine is
 no machine and sits in none, so no machine reports what it carries. When it
-carries a property, name it itself — `check-behaviour --element P::Lone` — and
-every property about it is `inconclusive`, `… — not checked`,
+carries a property, name it — `check-behaviour --element P::Lone` — and every
+property about it is `inconclusive`, `… — not checked`,
 `verification/behaviour-unsupported-construct`, exit 2, naming the definition:
 each carrier on it or inside it, and a `--pattern` given against it, which is
 never walked. A machine written inside it (a nested definition or a composite
 state that owns a transition) keeps its own carriers and is checked only by its
 own name, so this run says nothing of it, a failure there included; each row
-names it, and `--element P::Lone::Deep` checks it. A definition like this that
-carries no property resolves as before: refused as holding no state machine when
-none is written inside it, and otherwise the one machine inside it is checked or
-the several are listed. In the app, select the definition and run **Behaviour
-properties** for the same rows; the pick rows with nothing selected list
-machines only, so such a definition is not among them.
+names it, and `--element P::Lone::Deep` checks it. Such a definition counts
+beside the machines a reference holds, as one more thing a property can be
+about: `--element P`, for a package holding it beside one machine, is refused
+with both listed (*"`P` holds 1 state machine and 1 `state def` that is no
+machine and carries a property"*, then the definition's line, *"owns no
+transition and sits in no machine: named, its property is reported as not
+checked"*), where it used to check the machine and pass the definition's
+properties over, exiting 0 when the machine's own held; a package holding it and
+no machine names it. A state written in it is refused with the definition named
+(*"`P::Lone::b` holds no state machine — it is inside `P::Lone`, a `state def`
+that owns no transition and is written inside no machine, so no walk stands on
+its states; named itself, its property is reported as not checked"*). Where
+such definitions nest, it is the outermost that carries a property that counts
+and that a state inside them names, since naming it reports the carriers of
+every definition inside it. A definition like this that carries no property
+resolves as before: refused as holding no state machine when none is written
+inside it, and otherwise the one machine inside it is checked or the several
+are listed; a state written in it is refused with the definition named, *"…, and
+it carries no property"*, and the machines written inside it named. In the app,
+select the definition and run **Behaviour properties** for the same rows, with
+a pick row for each machine written inside it. The pick rows with nothing
+selected list what carries a property — the machines that do, then such
+definitions (*"`P::Lone` — 1 property in the file, on a `state def` that is no
+machine: selected, it is reported as not checked"*) — and every machine only
+when nothing in the file carries one; the rows of a refused package list such a
+definition beside its machines; a state written in one that carries a property
+lists that definition, and a state written in one that carries nothing lists
+the machines written inside it, where it holds any.
 
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither

@@ -43,6 +43,8 @@ import {
   WALK_ADMITS,
   coverRequiredRefusal,
   isLoneDefinition,
+  loneCarriersIn,
+  machinesInsideSentence,
   propertiesOf,
   traceLine,
   type BehaviourReport,
@@ -66,6 +68,7 @@ export type ReportLineKind =
   | 'undecided'
   | 'unreachable'
   | 'dead'
+  | 'never-fired'
   | 'no-way-out'
   | 'withheld'
   | 'trap'
@@ -185,7 +188,12 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
       // sentence that says the list is withheld.
       `    ${m.states.reachable.length} of ${m.states.total} state(s) reachable; ` +
         `${m.transitions.fired} of ${m.transitions.total} transition(s) fired, ` +
-        `${m.suppressed ? 'dead withheld' : `${m.transitions.dead.length} dead`}`,
+        `${m.suppressed ? 'dead withheld' : `${m.transitions.dead.length} dead`}` +
+        // The gap between the two, named where there is one: on a machine
+        // with none the line reads as it always has.
+        (m.transitions.enabledNeverFired.length > 0
+          ? `, ${m.transitions.enabledNeverFired.length} enabled and never fired`
+          : ''),
       { elementId: id, withholds: m.suppressed },
     ),
   ];
@@ -230,6 +238,18 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
         code: DEAD_TRANSITION_CODE,
         elementId: t.id,
       }),
+    );
+  }
+  // No code: a transition enabled where no run takes it is a fact about the
+  // walk's figures, not a finding — on chain65 it is the step the chase budget
+  // stops one short of, which is the interpreter working as the profile says.
+  for (const t of m.transitions.enabledNeverFired) {
+    out.push(
+      line(
+        'never-fired',
+        `    never fired  ${transitionLabel(t)} — enabled where a run reaches, and taken by no run: an inner transition wins wherever it is enabled, or it is due only where the chase budget stops a chase`,
+        { elementId: t.id },
+      ),
     );
   }
   for (const d of m.deadlocks) {
@@ -487,6 +507,58 @@ function noMachine(model: Model, scopeId: ElementId): { message: string; holder:
 }
 
 /**
+ * `check-behaviour`'s refusal of a reference that holds no machine and no lone
+ * definition carrying a property: {@link noMachine}'s, and for an element
+ * written inside a LONE DEFINITION (`isLoneDefinition`, `./patterns`), whose
+ * states no machine's region holds, naming that definition. It said only
+ * *"`P::Lone::b` holds no state machine"*, and the reader had no pointer to the
+ * reference that reports what the definition carries. Where it carries a
+ * property, it is the `holder` — the app's pick row selects it — and otherwise
+ * the machines written inside it are the `candidates`.
+ *
+ * WHICH DEFINITION, when lone definitions nest: the outermost that carries a
+ * property, the one {@link loneCarriersIn} lists — its `propertiesOf` reads the
+ * carriers of every definition inside it, so naming it reports them all — and,
+ * where none of them carries one, the innermost, the most specific name the
+ * refusal can give. Taking the innermost always said *"it carries no
+ * property"* of an inner definition that carries nothing inside an outer one
+ * that does, and named neither the outer one nor offered it as the pick.
+ *
+ * `reach` keeps {@link noMachine}'s words: naming the definition reports
+ * nothing there, since it reports on machines and the definition is none.
+ */
+function behaviourNoMachine(
+  model: Model,
+  scopeId: ElementId,
+): { message: string; holder: ElementId | null; candidates: ElementId[] } {
+  const base = noMachine(model, scopeId);
+  if (base.holder !== null) return { ...base, candidates: [] };
+  let nearest: ElementRecord | undefined;
+  let carrier: ElementRecord | undefined;
+  for (let p = model.get(scopeId)?.ownerId ?? null; p != null; p = model.get(p)?.ownerId ?? null) {
+    const owner = model.get(p);
+    if (owner === undefined || !isLoneDefinition(model, owner)) continue;
+    nearest ??= owner;
+    if (propertiesOf(model, owner.id).length > 0) carrier = owner;
+  }
+  const def = carrier ?? nearest;
+  if (def === undefined) return { ...base, candidates: [] };
+  const n = propertiesOf(model, def.id).length;
+  const inside = machinesInsideSentence(model, def.id);
+  return {
+    message:
+      `${base.message} — it is inside \`${qname(model, def.id)}\`, a \`state def\` that owns no transition ` +
+      'and is written inside no machine, so no walk stands on its states' +
+      (n === 0
+        ? ', and it carries no property'
+        : `; named itself, its ${n === 1 ? 'property is' : `${n} properties are`} reported as not checked`) +
+      (inside === '' ? '' : `. ${inside}`),
+    holder: n > 0 ? def.id : null,
+    candidates: n > 0 ? [] : stateMachinesIn(model, def.id).map((m) => m.id),
+  };
+}
+
+/**
  * What a reference names for `check-behaviour`. `ok: true` carries a machine —
  * or a LONE DEFINITION (`isLoneDefinition`, `./patterns`), a `state def` that
  * owns no transition, sits in no machine and carries a property, which is NO
@@ -518,7 +590,10 @@ export const NO_DEFAULT_MACHINE =
 /**
  * The machine to check, refused BY NAME when the reference holds none or
  * several — or, for a reference that is a lone definition carrying a property,
- * that definition, which is no machine and is not to be walked ({@link MachineFor}).
+ * or holds one and no machine, that definition, which is no machine and is not
+ * to be walked ({@link MachineFor}). Such a definition counts beside the
+ * machines a reference holds, so one that holds it and a machine is refused
+ * with both.
  */
 export function behaviourMachineFor(model: Model, scopeId: ElementId): MachineFor {
   const machines = stateMachinesIn(model, scopeId);
@@ -541,25 +616,52 @@ export function behaviourMachineFor(model: Model, scopeId: ElementId): MachineFo
   if (scope !== undefined && isLoneDefinition(model, scope) && propertiesOf(model, scopeId).length > 0) {
     return { ok: true, machine: scope };
   }
-  if (machines.length === 0) {
-    return { ok: false, ...noMachine(model, scopeId), candidates: [] };
+  // AND A REFERENCE THAT HOLDS ONE COUNTS IT BESIDE ITS MACHINES. A package
+  // holding a lone definition that carries a property beside one machine was
+  // answered with that machine: the definition's properties were reported by
+  // nothing, and the run exited 0 when the machine's own held. Counted, the
+  // reference holds two things a property can be about and is refused with
+  // both; one that holds such a definition and no machine names it, as one
+  // that holds a single machine names that.
+  const lones = loneCarriersIn(model, scopeId);
+  if (machines.length + lones.length === 0) {
+    return { ok: false, ...behaviourNoMachine(model, scopeId) };
   }
-  if (machines.length > 1) {
+  if (machines.length + lones.length > 1) {
     // Refused rather than answered over all of them, for `ELEMENT_REQUIRED_LEAD`'s
     // reason: a verdict is about one machine, and a `REF` that holds several is
     // a reference the reader has to narrow.
+    const counted = [
+      ...(machines.length === 0
+        ? []
+        : [machines.length === 1 ? '1 state machine' : `${machines.length} state machines`]),
+      ...(lones.length === 0
+        ? []
+        : [
+            lones.length === 1
+              ? '1 `state def` that is no machine and carries a property'
+              : `${lones.length} \`state def\`s that are no machine and carry a property`,
+          ]),
+    ].join(' and ');
     return {
       ok: false,
       message: [
-        `\`${qname(model, scopeId)}\` holds ${machines.length} state machines:`,
+        `\`${qname(model, scopeId)}\` holds ${counted}:`,
         ...machines.map((m) => `    ${qname(model, m.id)} [${m.eClass}]`),
+        ...lones.map((d) => {
+          const n = propertiesOf(model, d.id).length;
+          return (
+            `    ${qname(model, d.id)} [${d.eClass}] — owns no transition and sits in no machine: named, ` +
+            `its ${n === 1 ? 'property is' : `${n} properties are`} reported as not checked`
+          );
+        }),
         '  name one of them — a property is a claim about one machine.',
       ].join('\n'),
       holder: null,
-      candidates: machines.map((m) => m.id),
+      candidates: [...machines, ...lones].map((m) => m.id),
     };
   }
-  return { ok: true, machine: machines[0] };
+  return { ok: true, machine: machines[0] ?? lones[0] };
 }
 
 /* ──────────────────────────────── check-behaviour ───────────────────────── */

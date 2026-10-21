@@ -375,7 +375,8 @@ export type {
 // `dead` is read against. A caller deriving dead transitions reads `enabled`, or
 // `reachReport`'s `transitions.dead`: the walkable transitions less `fired` also
 // hold one the priority rule beats and a completion due where the chase budget
-// stops, and neither is dead.
+// stops, and neither is dead. Those two are `reachReport`'s
+// `transitions.enabledNeverFired` (`docs/06` §8.13), withheld with `dead`.
 //
 // `MachineReach` now carries `ExactnessCensus` beside the edge census: the shape
 // of the walk as numbers, including the THREE-VALUED `acyclic`. A caller reading

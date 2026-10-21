@@ -2541,13 +2541,120 @@ describe('the machine pick against the terminal (I14)', () => {
     expect(r.verdict).toBe('undecided');
     expect(r.summary).toContain('T1::Lone — 1 property: 0 pass, 0 fail, 0 vacuous, 1 inconclusive');
     expect(r.rows.map((x) => x.code)).toEqual(['verification/behaviour-unsupported-construct']);
-    // With nothing selected, the pick rows still list machines only.
+    // With nothing selected, the pick rows list it (behaviour-rest S2): they listed
+    // machines only, so no row offered the one carrier no machine reports. It counts
+    // as a carrier, so `M`, which carries nothing, is not listed beside it: the first
+    // cut fell back to every machine whenever no machine carried a property.
     const none = pickBehaviourMachine(model, null);
-    expect(none.kind === 'refused' && none.rows.map((x) => x.elementId)).toEqual([idOf(model, 'T1::M')]);
+    expect(none.kind === 'refused' && none.rows.map((x) => [x.elementId, x.message])).toEqual([
+      [
+        loneId,
+        'T1::Lone — 1 property in the file, on a `state def` that is no machine: selected, it is reported as not checked',
+      ],
+    ]);
+    // With nothing in the file carrying a property, every machine is listed, as before.
+    const bare = inline('package T0 { state def Lone { state a; state b; } state def M { state m1; state m2; transition t first m1 accept go then m2; } }');
+    const bareNone = pickBehaviourMachine(bare, null);
+    expect(bareNone.kind === 'refused' && bareNone.rows.map((x) => x.elementId)).toEqual([idOf(bare, 'T0::M')]);
     writeFileSync(file('lone.sysml'), text);
     const lone = await cliSplit(['check-behaviour', file('lone.sysml'), '--no-library', '--element', 'T1::Lone']);
     expect(lone.code).toBe(2);
     expect(lone.stdout).toContain('INCONCLUSIVE absence — not checked');
+  });
+
+  it('offers a lone definition where nothing names it: the package, a state in it, the machines inside it (behaviour-rest S2)', async () => {
+    // `M`'s own property passes. The package holding `M` beside `Lone` was answered
+    // with `M` alone — holds, exit 0 — and `Lone`'s carrier was reported by nothing.
+    const text = `package T5 {
+      state def Lone {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        first a then b;
+        state def Deep { state q; state r; transition qr first q accept go then r; }
+      }
+      state def M {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state m3"; }
+        state m1; state m2; state m3;
+        transition t first m1 accept go then m2;
+      }
+    }`;
+    const model = inline(text);
+    const [pkgId, loneId, deepId, mId] = ['T5', 'T5::Lone', 'T5::Lone::Deep', 'T5::M'].map((q) => idOf(model, q));
+    const behaviour = CHECKS.find((c) => c.id === 'check-behaviour')!;
+    // The package is refused, with a pick row for each machine and for the definition.
+    const pkg = runCheck(behaviour, ctx({ model, selectionId: pkgId, selectionName: 'T5' }));
+    expect(pkg.verdict).toBe('not-run');
+    expect(pkg.summary).toContain('`T5` holds 2 state machines and 1 `state def` that is no machine and carries a property:');
+    expect(pkg.rows.map((x) => [x.code, x.elementId])).toEqual([
+      ['checks/pick-machine', deepId],
+      ['checks/pick-machine', mId],
+      ['checks/pick-machine', loneId],
+    ]);
+    // A state written in it names it, and its pick row selects it.
+    const inLone = runCheck(behaviour, ctx({ model, selectionId: idOf(model, 'T5::Lone::b'), selectionName: 'T5::Lone::b' }));
+    expect(inLone.verdict).toBe('not-run');
+    expect(inLone.summary).toContain('it is inside `T5::Lone`, a `state def` that owns no transition');
+    expect(inLone.rows.map((x) => [x.code, x.elementId])).toEqual([['checks/pick-machine', loneId]]);
+    // Selected, its rows are not checked, and the machine inside it gets the pick row that checks it.
+    const sel = runCheck(behaviour, ctx({ model, selectionId: loneId, selectionName: 'T5::Lone' }));
+    expect(sel.verdict).toBe('undecided');
+    expect(sel.rows.map((x) => [x.code, x.elementId])).toEqual([
+      ['verification/behaviour-unsupported-construct', loneId],
+      ['checks/pick-machine', deepId],
+    ]);
+    // The terminal agrees: refused, exit 2, with the definition listed.
+    writeFileSync(file('lone5.sysml'), text);
+    const cli = await cliSplit(['check-behaviour', file('lone5.sysml'), '--no-library', '--element', 'T5']);
+    expect(cli.code).toBe(2);
+    expect(cli.stderr).toContain(
+      'T5::Lone [StateDefinition] — owns no transition and sits in no machine: named, its property is reported as not checked',
+    );
+    // A package holding the definition and no machine names it, as one holding a single machine names that.
+    const alone = inline(`package T6 {
+      state def Lone {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+      }
+    }`);
+    expect(pickBehaviourMachine(alone, idOf(alone, 'T6'))).toEqual({
+      kind: 'machine',
+      id: idOf(alone, 'T6::Lone'),
+      qualifiedName: 'T6::Lone',
+    });
+    // A state in one that carries NOTHING but holds a machine offers exactly that
+    // machine: the refusal's candidates are the machines written inside it, where
+    // the rows fell back to every carrier in the file.
+    const plain = inline(`package R {
+      state def Plain {
+        state a;
+        state b;
+        state def Deep { state q; state r; transition qr first q accept go then r; }
+      }
+      state def M {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state m2"; }
+        state m1; state m2;
+        transition t first m1 accept go then m2;
+      }
+    }`);
+    const inPlain = pickBehaviourMachine(plain, idOf(plain, 'R::Plain::a'));
+    expect(inPlain.kind === 'refused' && inPlain.summary).toContain('it is inside `R::Plain`');
+    expect(inPlain.kind === 'refused' && inPlain.summary).toContain('and it carries no property');
+    expect(inPlain.kind === 'refused' && inPlain.rows.map((x) => [x.code, x.elementId, x.message])).toEqual([
+      ['checks/pick-machine', idOf(plain, 'R::Plain::Deep'), 'R::Plain::Deep — 0 properties in the file'],
+    ]);
+    // And where lone definitions nest, a state in an inner one that carries nothing
+    // offers the outer one that carries a property.
+    const nest = inline(`package D {
+      state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }
+        state x;
+        state def Inner { state a; state b; }
+      }
+    }`);
+    const inInner = pickBehaviourMachine(nest, idOf(nest, 'D::Outer::Inner::a'));
+    expect(inInner.kind === 'refused' && inInner.rows.map((x) => x.elementId)).toEqual([idOf(nest, 'D::Outer')]);
   });
 
   it('refuses a library element with the library sentence', async () => {

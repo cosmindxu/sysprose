@@ -2983,6 +2983,17 @@ export interface MachineReach {
     fired: number;
     /** EMPTY whenever the walk was not exhaustive, for the same reason. */
     dead: readonly TransitionRef[];
+    /**
+     * The transitions in the gap between `fired` and `dead`: enabled at a
+     * configuration some explored run reaches, and taken by no step of any —
+     * one an inner transition beats wherever it is enabled (priority), or a
+     * completion transition due only where the chase budget stops a chase.
+     * No run of the interpreter takes one either, which is a claim of absence
+     * like `dead`'s, so it is EMPTY whenever `dead` is withheld. Named because
+     * the count line's two figures need not add up to `total`, and a reader
+     * shown `65 of 70 fired, 4 dead` had no way to find the 70th.
+     */
+    enabledNeverFired: readonly TransitionRef[];
   };
   nondeterminism: readonly NondeterministicChoice[];
   /**
@@ -3354,6 +3365,13 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
   const dead = publishable
     ? transitions.filter((t) => !walk.enabled.has(t.id)).map((t) => transitionRef(model, t))
     : [];
+  // The gap the count line leaves, gated as `dead` is: a step no explored run
+  // takes is one no run of the interpreter takes only over an exhaustive walk.
+  const enabledNeverFired = publishable
+    ? transitions
+        .filter((t) => walk.enabled.has(t.id) && !walk.fired.has(t.id))
+        .map((t) => transitionRef(model, t))
+    : [];
 
   // The word `exhaustive` appears in exactly one branch, and an undetermined
   // guard is not it: the walk finished, so "partial" would be false too, and
@@ -3400,7 +3418,7 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     boundHit: walk.boundHit,
     qualification,
     states: { total: states.length, reachable, unreachable },
-    transitions: { total: transitions.length, fired: walk.fired.size, dead },
+    transitions: { total: transitions.length, fired: walk.fired.size, dead, enabledNeverFired },
     // PUBLISHED ON A PARTIAL WALK, and the asymmetry is deliberate. A hidden
     // choice is an EXISTENTIAL claim — two transitions were enabled at once in
     // a configuration this walk reached — and a BOUND cannot manufacture one:

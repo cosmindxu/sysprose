@@ -1584,7 +1584,7 @@ describe('a property in the file, and a run with nothing to decide', () => {
 /**
  * The profile, field by field, against the interpreter it describes.
  *
- * Every verdict this command reaches is printed under these six sentences, so
+ * Every verdict this command reaches is printed under these seven sentences, so
  * each one is a claim about `execute.ts` that a reader is invited to rely on.
  * `andre-2023` §2.6's point is that every published formalisation differs on
  * exactly these, which is why a report that does not name its reading is a
@@ -1629,6 +1629,84 @@ describe('the semantic profile is a description of what the interpreter does', (
     f.transition(outer.id, ot.id, { ownerId: sm.id, trigger: 'go' });
     const run = runStateMachine(m, sm.id, ['go']);
     expect(m.get(run.finalState!)?.declaredName).toBe('innerTarget');
+  });
+
+  it('exits: to the least common ancestor, every transition external, and the walk steps the same way', () => {
+    // The field the TODO "Print the exits choice in the semantic profile" adds:
+    // the reading `docs/06` §8.10 moved verdicts with, printed nowhere until then.
+    expect(field('exits').reading).toContain('least common ancestor');
+    expect(field('exits').reading).toContain('every transition is external');
+    // `Idle -go-> C0`, `C0 { a -x-> b; b -back-> Idle }`, and `C0`'s own `C0 -esc-> Z`
+    // and `C0 -again-> C0`.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('X');
+    const idle = f.state('Idle', sm.id);
+    const c0 = f.state('C0', sm.id);
+    const a = f.state('a', c0.id);
+    const b = f.state('b', c0.id);
+    const z = f.state('Z', sm.id);
+    f.transition(idle.id, c0.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(a.id, b.id, { ownerId: c0.id, trigger: 'x' });
+    f.transition(b.id, idle.id, { ownerId: c0.id, trigger: 'back' });
+    f.transition(c0.id, z.id, { ownerId: sm.id, trigger: 'esc' });
+    f.transition(c0.id, c0.id, { ownerId: sm.id, trigger: 'again' });
+    const name = (id: ElementId | null) => (id === null ? null : m.get(id)?.declaredName);
+    // A step out of a composite leaves it: at `Idle`, `C0`'s own `esc` is not offered.
+    const out = runStateMachine(m, sm.id, ['go', 'x', 'back', 'esc']);
+    expect(name(out.finalState)).toBe('Idle');
+    expect(out.fired.map((x) => x.trigger)).toEqual(['go', 'x', 'back']);
+    // A self-transition on a composite exits it and enters it again, at its initial substate.
+    const again = runStateMachine(m, sm.id, ['go', 'x', 'again']);
+    expect(name(again.finalState)).toBe('a');
+    // The walk steps the same way: from `back` until the next `go`, no run is
+    // in `C0`, so neither `state C0` holds nor `esc` takes a run into `Z`. Under
+    // the old step, which left `[C0, Idle]`, both were FAIL.
+    for (const p of ['state C0', 'state Z']) {
+      const row = checkProperty(
+        m,
+        sm.id,
+        prop({ pattern: 'absence', scope: 'after-until', p, q: 'trigger back', r: 'trigger go' }),
+      );
+      expect(row.claim, p).toBe('pass');
+    }
+    // And a run does reach `Z`, through `C0`: the pass above is not a walk that never left `Idle`.
+    expect(checkProperty(m, sm.id, prop({ pattern: 'absence', scope: 'globally', p: 'state Z' })).claim).toBe('fail');
+
+    // A COMPOSITE'S STEP INTO ITS OWN SUBSTATE, the one shape where UML's local
+    // and external readings differ: `C` holds `b`, so a local step keeps `C`,
+    // and an external one exits it and enters it again. The field's first
+    // wording ("the active states that do not also hold the target are
+    // exited") read it as local; the step reads it as external, and so must the
+    // field.
+    expect(field('exits').reading).toContain('a step from a composite into one of its own substates exits that state and enters it again');
+    const k = new Model();
+    const g = new ModelFactory(k);
+    const ks = g.stateDef('X');
+    k.create('AttributeUsage', { ownerId: ks.id, declaredName: 'left', attrs: { value: '0' } });
+    const kIdle = g.state('Idle', ks.id);
+    const kc = g.state('C', ks.id);
+    g.state('a', kc.id);
+    const kb = g.state('b', kc.id);
+    g.transition(kIdle.id, kc.id, { ownerId: ks.id, trigger: 'go' });
+    g.transition(kc.id, kb.id, { ownerId: ks.id, trigger: 'jump' });
+    k.create('ActionUsage', { ownerId: kc.id, declaredName: 'enterC', attrs: { stateSubaction: 'entry' } });
+    k.create('ActionUsage', { ownerId: kc.id, declaredName: 'leaveC', attrs: { stateSubaction: 'exit', effect: 'left = 1' } });
+    const kName = (id: ElementId | null) => (id === null ? null : k.get(id)?.declaredName);
+    const sub = runStateMachine(k, ks.id, ['go', 'jump']);
+    expect(sub.visited.map(kName)).toEqual(['Idle', 'C', 'a', 'C', 'b']);
+    expect(sub.performed.map((x) => x.name)).toEqual(['enterC', 'leaveC', 'enterC']);
+    expect(sub.valueStore.get('left')).toBe(1);
+    // The walk agrees: `C`'s exit action runs on `jump`, the only step out of
+    // `C`, so a run reaches `left == 1`. Read as local, nothing ever exits `C`
+    // and the absence would pass.
+    const leftOnce = checkProperty(k, ks.id, prop({ pattern: 'absence', scope: 'globally', p: 'left == 1' }));
+    expect(leftOnce.claim).toBe('fail');
+    expect(leftOnce.witness.map((w) => [w.event, w.stack.map((x) => x.name)])).toEqual([
+      ['-', ['Idle']],
+      ['go', ['C', 'a']],
+      ['jump', ['C', 'b']],
+    ]);
   });
 
   it('history: shallow, and only where the composite is marked as one', () => {

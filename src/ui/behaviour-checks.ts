@@ -26,6 +26,8 @@ import {
   type ReportLine,
 } from '@semantics/mc/report-lines';
 import {
+  isLoneDefinition,
+  loneCarriersIn,
   propertiesOf,
   traceLine,
   type BehaviourReport,
@@ -185,7 +187,11 @@ function machinesWithProperties(model: Model): ElementRecord[] {
  * The machine check-behaviour runs on, or the refusal and its pick rows.
  * Mirrors the terminal: `--element` names the machine, a library element is
  * refused, and a reference that holds several machines or none is refused by
- * name with the machines a person can pick.
+ * name with the machines a person can pick. A LONE DEFINITION that carries a
+ * property (`isLoneDefinition`, `@semantics/mc/patterns`) is no machine, but
+ * named it reports what it carries as not checked, and nothing else does: so
+ * `kind: 'machine'` may carry one, as `behaviourMachineFor` may return one, and
+ * the pick rows list every such definition beside the machines.
  */
 export type MachinePick =
   | { kind: 'machine'; id: ElementId; qualifiedName: string }
@@ -194,9 +200,12 @@ export type MachinePick =
 function pickRow(model: Model, machine: ElementRecord): CheckRow {
   const qn = model.qualifiedName(machine.id) || machine.id;
   const n = propertiesOf(model, machine.id).length;
+  const lone = isLoneDefinition(model, machine)
+    ? `, on a \`state def\` that is no machine: selected, ${n === 1 ? 'it is' : 'they are'} reported as not checked`
+    : '';
   return {
     code: 'checks/pick-machine',
-    message: `${qn} — ${n} propert${n === 1 ? 'y' : 'ies'} in the file`,
+    message: `${qn} — ${n} propert${n === 1 ? 'y' : 'ies'} in the file${lone}`,
     elementId: machine.id,
     severity: 'info',
   };
@@ -205,7 +214,13 @@ function pickRow(model: Model, machine: ElementRecord): CheckRow {
 export function pickBehaviourMachine(model: Model, selectionId: string | null): MachinePick {
   const carriers = machinesWithProperties(model);
   const allMachines = stateMachinesIn(model);
-  const defaultList = carriers.length > 0 ? carriers : allMachines;
+  // The lone definitions that carry a property, after the machines: listed
+  // with the machines only, they were the one carrier no pick row offered, and
+  // nothing selected them but a person who knew to. They count as carriers, so
+  // every machine is listed only when nothing in the file carries a property:
+  // beside a lone carrier, a machine with none is a pick that decides nothing.
+  const lones = loneCarriersIn(model);
+  const defaultList = carriers.length + lones.length === 0 ? allMachines : [...carriers, ...lones];
 
   if (selectionId === null) {
     return {
@@ -233,8 +248,12 @@ export function pickBehaviourMachine(model: Model, selectionId: string | null): 
   }
 
   // Refused. The pick rows name what a person can narrow to: the one machine
-  // that holds a state named by the selection, the several machines a
-  // reference holds, or — when neither applies — every carrier (or machine).
+  // that holds a state named by the selection (or the lone definition that
+  // holds it and carries a property), the several machines and lone
+  // definitions a reference holds (or, when the lone definition that holds the
+  // selection carries nothing, the machines written inside it), or — when
+  // neither applies — every machine and lone definition that carries a
+  // property (every machine, when nothing does).
   let list: ElementRecord[];
   if (r.holder !== null) {
     const holder = model.get(r.holder);
@@ -284,14 +303,24 @@ export function behaviourResult(
   return { verdict, summary, rows, lines, witnesses: compactWitnesses(b, lines) };
 }
 
-/** The check-behaviour entry: the machine pick, the report. */
+/**
+ * The check-behaviour entry: the machine pick, the report — and, on a lone
+ * definition, a pick row for each machine written inside it. Its rows are
+ * `not checked` and name those machines, which their own names check; the rows
+ * give the person the selection that does, as the terminal's sentence gives
+ * the `--element` that does.
+ */
 export function behaviourCheck(ctx: CheckContext, fileName: string): CheckResult {
   const pick = pickBehaviourMachine(ctx.model, ctx.selectionId);
   if (pick.kind === 'refused') {
     return { verdict: 'not-run', summary: pick.summary, rows: pick.rows };
   }
   const b = behaviourReport(ctx.model, { machineId: pick.id });
-  return behaviourResult(b, ctx.model, { fileName, machineName: pick.qualifiedName, health: ctx.loadHealth });
+  const result = behaviourResult(b, ctx.model, { fileName, machineName: pick.qualifiedName, health: ctx.loadHealth });
+  const picked = ctx.model.get(pick.id);
+  if (picked === undefined || !isLoneDefinition(ctx.model, picked)) return result;
+  const inside = stateMachinesIn(ctx.model, pick.id);
+  return inside.length === 0 ? result : { ...result, rows: [...result.rows, ...inside.map((m) => pickRow(ctx.model, m))] };
 }
 
 /* ───────────────────────────── the meta rows ─────────────────────────────── */

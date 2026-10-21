@@ -37,13 +37,20 @@ import { resolveTypeReferences } from '../../src/library/resolve';
 import { main as sysproseMain } from '../../scripts/sysprose';
 import {
   behaviourMachineFor,
+  noMachineRefusal,
   reachLines,
   reachMachineLines,
   rowKeyOf,
   textOf,
   type ReportLine,
 } from '../../src/semantics/mc/report-lines';
-import { behaviourReport, propertiesOf, replayWitness, type TraceStep } from '../../src/semantics/mc/patterns';
+import {
+  behaviourReport,
+  loneCarriersIn,
+  propertiesOf,
+  replayWitness,
+  type TraceStep,
+} from '../../src/semantics/mc/patterns';
 import {
   BEHAVIOUR_CODES,
   BOUND_EXHAUSTED_CODE,
@@ -154,6 +161,7 @@ describe('reach on FlightModes — the finding is the hidden choice', () => {
     expect(r.profile.map((f) => f.field)).toEqual([
       'run-to-completion',
       'priority',
+      'exits',
       'history',
       'regions',
       'deferred events',
@@ -1037,6 +1045,120 @@ describe('a nested state def: the machine that holds it, and a transition across
     const plain = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T1::Plain']);
     expect(plain.code).toBe(2);
     expect(plain.stderr).toContain('`T1::Plain` holds no state machine');
+  }, 60_000);
+
+  /*
+   * AND WHERE NOTHING NAMES IT (behaviour-rest S2). Only a reference that is the
+   * definition itself reported its carriers. The package holding it listed the
+   * two machines and left it out; a package holding it beside ONE machine
+   * checked that machine and passed the definition's properties over (exit 0
+   * when the machine's own held); and a state in it was refused as holding no
+   * state machine, with no word of the definition.
+   */
+  it('counts a lone definition beside the machines a reference holds, and names it for a state written in it', async () => {
+    const model = await modelOf(TOP_STRANDED);
+    const [pkgId, loneId, deepId, mId] = ['T1', 'T1::Lone', 'T1::Lone::Deep', 'T1::M'].map((q) => idOf(model, q));
+    expect(loneCarriersIn(model).map((d) => d.id)).toEqual([loneId]);
+    const pkg = behaviourMachineFor(model, pkgId);
+    expect(pkg.ok).toBe(false);
+    expect(!pkg.ok && pkg.candidates).toEqual([deepId, mId, loneId]);
+    expect(!pkg.ok && pkg.message).toBe(
+      [
+        '`T1` holds 2 state machines and 1 `state def` that is no machine and carries a property:',
+        '    T1::Lone::Deep [StateDefinition]',
+        '    T1::M [StateDefinition]',
+        '    T1::Lone [StateDefinition] — owns no transition and sits in no machine: named, its 2 properties are reported as not checked',
+        '  name one of them — a property is a claim about one machine.',
+      ].join('\n'),
+    );
+    const inLone = behaviourMachineFor(model, idOf(model, 'T1::Lone::a'));
+    expect(!inLone.ok && [inLone.holder, inLone.message]).toEqual([
+      loneId,
+      '`T1::Lone::a` holds no state machine — it is inside `T1::Lone`, a `state def` that owns no transition and is ' +
+        'written inside no machine, so no walk stands on its states; named itself, its 2 properties are reported as not ' +
+        'checked. The machine written inside it, `T1::Lone::Deep`, is checked when it is named itself.',
+    ]);
+    // One that carries nothing is named too, and is no pick: naming it reports nothing.
+    const inPlain = behaviourMachineFor(model, idOf(model, 'T1::Plain::p1'));
+    expect(!inPlain.ok && [inPlain.holder, inPlain.message]).toEqual([
+      null,
+      '`T1::Plain::p1` holds no state machine — it is inside `T1::Plain`, a `state def` that owns no transition and ' +
+        'is written inside no machine, so no walk stands on its states, and it carries no property',
+    ]);
+    // `reach` keeps its words: naming the definition reports nothing there.
+    expect(noMachineRefusal(model, idOf(model, 'T1::Lone::a'))?.message).toBe('`T1::Lone::a` holds no state machine');
+
+    // Nested lone definitions: a state in an inner one that carries nothing,
+    // inside an outer one that carries a property, names the OUTER one — the
+    // carrier `loneCarriersIn` lists — and offers it as the pick. The first cut
+    // named the inner one and said it carried no property, and never named the
+    // carrier (the step review's `D` probe).
+    const nested = await modelOf(`package D {
+      state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }
+        state x;
+        state def Inner { state a; state b; }
+      }
+    }`);
+    const outerId = idOf(nested, 'D::Outer');
+    expect(loneCarriersIn(nested).map((d) => d.id)).toEqual([outerId]);
+    for (const q of ['D::Outer::Inner::a', 'D::Outer::Inner']) {
+      const r = behaviourMachineFor(nested, idOf(nested, q));
+      expect(!r.ok && [r.holder, r.candidates, r.message], q).toEqual([
+        outerId,
+        [],
+        `\`${q}\` holds no state machine — it is inside \`D::Outer\`, a \`state def\` that owns no transition and is ` +
+          'written inside no machine, so no walk stands on its states; named itself, its property is reported as not checked',
+      ]);
+    }
+    // Where none of them carries one, the innermost is named, with the machines inside it as the candidates.
+    const plainNest = await modelOf(`package R {
+      state def Plain {
+        state p;
+        state def Mid { state a; state b; }
+        state def Deep { state q; state r; transition qr first q accept go then r; }
+      }
+    }`);
+    const inMid = behaviourMachineFor(plainNest, idOf(plainNest, 'R::Plain::Mid::a'));
+    expect(!inMid.ok && [inMid.holder, inMid.candidates]).toEqual([null, []]);
+    expect(!inMid.ok && inMid.message).toContain('it is inside `R::Plain::Mid`, a `state def`');
+    const inPlain2 = behaviourMachineFor(plainNest, idOf(plainNest, 'R::Plain::p'));
+    expect(!inPlain2.ok && [inPlain2.holder, inPlain2.candidates]).toEqual([null, [idOf(plainNest, 'R::Plain::Deep')]]);
+    expect(!inPlain2.ok && inPlain2.message).toBe(
+      '`R::Plain::p` holds no state machine — it is inside `R::Plain`, a `state def` that owns no transition and is ' +
+        'written inside no machine, so no walk stands on its states, and it carries no property. The machine written ' +
+        'inside it, `R::Plain::Deep`, is checked when it is named itself.',
+    );
+
+    // Beside ONE machine whose own property holds: refused, where it was answered with the machine.
+    const besideOne = `package T5 {
+      state def Lone {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        first a then b;
+      }
+      state def M {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state m3"; }
+        state m1; state m2; state m3;
+        transition t first m1 accept go then m2;
+      }
+    }`;
+    const file = fileOf('lone-beside-one.sysml', besideOne);
+    const pkgCli = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T5']);
+    expect(pkgCli.code).toBe(2);
+    expect(pkgCli.stderr).toContain('`T5` holds 1 state machine and 1 `state def` that is no machine and carries a property:');
+    const stateCli = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T5::Lone::b']);
+    expect(stateCli.code).toBe(2);
+    expect(stateCli.stderr).toContain('it is inside `T5::Lone`, a `state def` that owns no transition');
+    // The machine, named, is checked as before.
+    const mCli = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T5::M']);
+    expect(mCli.code).toBe(0);
+    // Holding the definition and no machine, a package names it.
+    const aloneFile = fileOf('lone-alone.sysml', besideOne.replace(/state def M \{[\s\S]*?\n {6}\}\n/, ''));
+    const aloneCli = await reachCli(['check-behaviour', aloneFile, '--no-library', '--element', 'T5']);
+    expect(aloneCli.code).toBe(2);
+    expect(aloneCli.stdout).toContain('T5::Lone — 1 property: 0 pass, 0 fail, 0 vacuous, 1 inconclusive');
   }, 60_000);
 
   /*
@@ -2243,9 +2365,13 @@ describe('the chase budget, followed the way the interpreter follows it', () => 
     // `go` and `t1` … `t64`, 65 of the 70, beside the 4 dead — the 70th is the
     // one enabled where the budget stops the chase.
     expect(m.transitions.fired).toBe(65);
-    expect(textOf(reachMachineLines(m, 1))).toContain(
-      '66 of 71 state(s) reachable; 65 of 70 transition(s) fired, 4 dead',
-    );
+    // And the 70th is named (behaviour-rest S2): on the count line, on a row of
+    // its own with no code, and under `--json`'s `transitions.enabledNeverFired`.
+    expect(m.transitions.enabledNeverFired.map((t) => t.name)).toEqual(['t65']);
+    const text = textOf(reachMachineLines(m, 1));
+    expect(text).toContain('66 of 71 state(s) reachable; 65 of 70 transition(s) fired, 4 dead, 1 enabled and never fired');
+    expect(text).toContain('    never fired  t65 (c65 -> c66) — enabled where a run reaches, and taken by no run');
+    expect(reachMachineLines(m, 1).find((l) => l.kind === 'never-fired')?.code).toBeNull();
   });
 
   it('a chain whose last state steps back: the step back is due only where the budget stops the one chase, so it is not fired', async () => {
@@ -2266,6 +2392,7 @@ describe('the chase budget, followed the way the interpreter follows it', () => 
     expect(m.transitions.total).toBe(MAX_COMPLETION + 1);
     expect(m.transitions.dead).toEqual([]);
     expect(m.transitions.fired).toBe(MAX_COMPLETION);
+    expect(m.transitions.enabledNeverFired.map((t) => t.id)).toEqual([back.id]);
   });
 
   it('a transition the priority rule beats wherever it is enabled is counted neither fired nor dead', async () => {
@@ -2287,7 +2414,13 @@ describe('the chase budget, followed the way the interpreter follows it', () => 
     expect(m.states.unreachable.map((s) => s.name)).toEqual(['b']);
     expect(m.transitions.dead).toEqual([]);
     expect(m.transitions).toMatchObject({ total: 3, fired: 2 });
-    expect(textOf(reachMachineLines(m, 1))).toContain('2 of 3 transition(s) fired, 0 dead');
+    expect(m.transitions.enabledNeverFired.map((t) => t.name)).toEqual(['ab']);
+    expect(textOf(reachMachineLines(m, 1))).toContain('2 of 3 transition(s) fired, 0 dead, 1 enabled and never fired');
+    // Withheld with `dead`: over a walk the configuration bound cut, nothing is named.
+    const cut = reachReport(model, { maxConfigs: 1 }).machines[0];
+    expect(cut.suppressed).toBe(true);
+    expect(cut.transitions.enabledNeverFired).toEqual([]);
+    expect(textOf(reachMachineLines(cut, 1))).not.toContain('never fired');
   });
 
   it('the v9 SwarmMemberModes shape: admissionFails fires — the run that takes it is the interpreter’s', async () => {

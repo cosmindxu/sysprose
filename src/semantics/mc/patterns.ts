@@ -720,6 +720,51 @@ export function isLoneDefinition(model: Model, el: ElementRecord): boolean {
 }
 
 /**
+ * The lone definitions ({@link isLoneDefinition}) at or under `scopeId`, or in
+ * the whole model when it is absent, that carry a property, in model order —
+ * the outermost of them only: one written inside another is left out, since
+ * the outer one's {@link propertiesOf} reads its carriers already.
+ *
+ * WHAT A REFERENCE CAN NAME BESIDE A MACHINE. Named, such a definition reports
+ * what it carries as not checked ({@link checkProperty}), and nothing else
+ * does. So a reference that holds one beside a machine is not answered with
+ * the machine alone, which checked that machine and passed the definition's
+ * properties over in silence (exit 0 when the machine's own held); it is
+ * refused with both listed (`behaviourMachineFor`, `./report-lines`). And the
+ * app's pick rows, which list what a person can select, list these beside the
+ * machines.
+ */
+export function loneCarriersIn(model: Model, scopeId?: ElementId): ElementRecord[] {
+  const pool =
+    scopeId === undefined
+      ? model.all()
+      : [model.get(scopeId), ...model.descendants(scopeId)].filter((el): el is ElementRecord => el !== undefined);
+  const carriers = pool.filter((el) => isLoneDefinition(model, el) && propertiesOf(model, el.id).length > 0);
+  const ids = new Set(carriers.map((el) => el.id));
+  return carriers.filter((el) => {
+    for (let p: ElementId | null = el.ownerId; p != null; p = model.get(p)?.ownerId ?? null) {
+      if (ids.has(p)) return false;
+    }
+    return true;
+  });
+}
+
+/**
+ * The sentence that names the machines written inside a lone definition, which
+ * are each checked by their own names and never by the definition's: `''` when
+ * there is none. Printed on every `not checked` row about the definition, and
+ * by the refusal of a state written in it, so a reader has the reference that
+ * decides each machine inside (the O8 S2 review's `top3` probe).
+ */
+export function machinesInsideSentence(model: Model, definitionId: ElementId): string {
+  const inside = stateMachinesIn(model, definitionId).map((m) => `\`${model.qualifiedName(m.id) || m.id}\``);
+  if (inside.length === 0) return '';
+  return inside.length === 1
+    ? `The machine written inside it, ${inside[0]}, is checked when it is named itself.`
+    : `The machines written inside it — ${inside.join(', ')} — are each checked when named themselves.`;
+}
+
+/**
  * Every property carried inside one machine, in model order.
  *
  * Read from the machine AND its region: the natural home for a property about
@@ -1698,13 +1743,8 @@ export function checkProperty(
   // reaches — a FAIL — is not on this run; without their names the reader had
   // no pointer to the reference that decides it (the S2 review's `top3` probe).
   if (machineEl !== undefined && isLoneDefinition(model, machineEl)) {
-    const inside = stateMachinesIn(model, machineId).map((m) => `\`${model.qualifiedName(m.id) || m.id}\``);
-    const insideClause =
-      inside.length === 0
-        ? ''
-        : inside.length === 1
-          ? ` The machine written inside it, ${inside[0]}, is checked when it is named itself.`
-          : ` The machines written inside it — ${inside.join(', ')} — are each checked when named themselves.`;
+    const inside = machinesInsideSentence(model, machineId);
+    const insideClause = inside === '' ? '' : ` ${inside}`;
     const remedy =
       text.source === 'flag'
         ? 'Name the machine the property is about, or give the definition the transitions that make it a machine checked by itself.'

@@ -1054,17 +1054,18 @@ export function outsideStatesSentence(model: Model, machineId: ElementId, edge: 
  * firing appended to the run.
  *
  * A STEP EXITS TO THE LEAST COMMON ANCESTOR of its source and its target, as
- * UML reads a transition, and every transition is external: the states the
- * source sits in that do not also hold the target are exited, innermost first
- * from the active leaf; then the effect runs; then the target's enclosing
- * states that are not active are entered, outermost first, and the target with
- * its cascade into its initial substate. So a step out of a composite exits the
- * composite, a step to an ancestor exits and re-enters it, and a self-transition
- * exits and re-enters its state — a composite restarts at its initial
- * substate. The step used to exit only down to the SOURCE's level and enter the
- * target on top of what was left, so `first b then Idle` from inside `C0` left
- * `[C0, Idle]`: `C0` still active, its transitions still enabled, a `state C0`
- * atom still holding, and one more state stacked per round trip
+ * UML reads a transition, and every transition is external: the source, the
+ * states below it and those above it that do not also hold the target are
+ * exited, innermost first from the active leaf; then the effect runs; then the
+ * target's enclosing states that are not active are entered, outermost first,
+ * and the target with its cascade into its initial substate. So a step out of a
+ * composite exits the composite; a step to an ancestor, or from a composite into
+ * one of its own substates, exits that state and re-enters it; and a
+ * self-transition exits and re-enters its state — a composite restarts at its
+ * initial substate. The step used to exit only down to the SOURCE's level and
+ * enter the target on top of what was left, so `first b then Idle` from inside
+ * `C0` left `[C0, Idle]`: `C0` still active, its transitions still enabled, a
+ * `state C0` atom still holding, and one more state stacked per round trip
  * (`docs/06` §8.9, §8.10).
  *
  * A target with no chain of states ({@link hierarchyPath} is `null`) is stepped
