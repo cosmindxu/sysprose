@@ -2728,6 +2728,7 @@ export async function boundsReport(
     const prepared = prepareBounds(model, {
       measureId,
       ...(measureSymbol !== undefined ? { measureSymbol } : {}),
+      measureSpelling: opts.measure,
       free: freed.qualifiedNames,
       ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
       withRequirements,
@@ -2780,6 +2781,7 @@ export async function boundsReport(
     backend: load,
     measureId,
     ...(measureSymbol !== undefined ? { measureSymbol } : {}),
+    measureSpelling: opts.measure,
     sense,
     free: freed.qualifiedNames,
     ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),

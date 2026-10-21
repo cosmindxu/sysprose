@@ -1509,7 +1509,7 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
     const violated = violatedOwn(input, reach.own);
     const forgivable =
       violated.length === 0 && reach.context.length === 0 && reach.own.every((r) => isOutsideTheFragment(r.reason));
-    const unread = left.some((r) => r.reason === 'unread-definition');
+    const unread = left.some((r) => r.reason === 'unread-definition' || r.reason === 'unread-binding');
     return {
       ...shape,
       outcome: 'inconclusive',

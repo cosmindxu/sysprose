@@ -1020,9 +1020,15 @@ q2's own `s`), or for one a binding reaches into; one whose path inherits a
 name twice, neither feature redefining the other (`part def Q3 :> Q2, Q4` over
 Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, or `part q3 : Q2, Q4`: q3's
 p is P2's and P4's at once, and no one element stands for it); and one whose
-own element states a `default` that an asserted equation of its own constrains
-(`part :>> p { assert constraint { extra == 20.0 } }` over P's `extra default =
-0.0`). An instance row that reads a value an `assert` of an instance around
+own element writes an asserted equation over a `default` that this tool does
+not read there: one over a name with no value (`extra == M`), one beside a
+`default` the element writes itself (`attribute :>> extra default = 7.0;
+assert constraint { extra == 20.0 }`), or one that gives the feature another
+value than an equation of the element's type does (two values, below). An
+equation over a `default` the element inherits, which the enclosing rule
+reads (below), is read in its element at the equation's value: q2's `part :>>
+p { assert constraint { extra == 20.0 } }` over P's `extra default = 0.0`
+makes q2's p's extra 20. An instance row that reads a value an `assert` of an instance around
 it constrains, the package's included, is *could not be evaluated* too, read
 in its own element (`part q2 : Q { part :>> p { … } assert constraint { p.load
 >= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x >=
@@ -1039,26 +1045,54 @@ per instance nowhere, the usage's own row included: that row is *could not be
 evaluated*, as it was before any instance was read. A relation written in such
 a usage (`part p : P { constraint c2 { load <= 10.0 } }` in Q) is read the same
 way; an `assert` there stays an axiom, read for the usage's own instance. A
-part, port or item a binding equates with another (`bind pp = top.a`) is read
+part, port, item or structured attribute (one whose type has features of its
+own: `attribute q : V` over `attribute def V { attribute x … }`; a type that
+specialises a library scalar or quantity value is a scalar whatever features
+it adds, `attribute def RatedMass :> ISQ::MassValue { attribute margin … }`) a
+binding equates with another (`bind pp = top.a`, `bind q = top.pos`) is read
 as that other where it says nothing of its own — no feature, value or binding
-below it, one such binding, no type the other lacks, no reference, subject or
-`satisfy` that names it, and a feature of the element the binding is written
-in or of a package: `pp.load` is top's a's load on every surface, and in each
-instance of that element the instance's own (W's `bind pp = top.a` read as
-`s.w.pp`, for `part s : Sys` whose w is a W, is s's w's top's a). Where
-neither is so plain (`part pp : T0 { attribute :>> load default = 3.0; }`, a
-port bound to two inner ports), a row that may read a value the binding
-carries is *could not be evaluated*, in a sentence that names the binding: one
-that reads through either end or a usage above one, or through a feature a
-binding, a value or an `assert` ties to one, and one read for an instance at
-or below one. Every other row of the model reads as before. A part, port or
-item valued with another (`part pp : T0 = top.a`, `part :>> p = other`)
-equates the two the same way, and is never read through: such rows are *could
-not be evaluated*, in a sentence that names the value. A reference valued so
-is read as what it names (`ref part pp : T0 = top.a`: top's a's load), but one
-written in a definition reads the definition's own `top`, not each instance's
-(W's, read in w whose top differs), and an attribute a binding equates with
-another attribute (`bind q = top.pos`) reads its own default: known gaps. A
+below it, one such binding, no type the other lacks, and a feature of the
+element the binding is written in or of a package: `pp.load` is top's a's load
+on every surface, `q.x` is top's pos's x, and in each instance of that element
+the instance's own (W's `bind pp = top.a` read as `s.w.pp`, for `part s : Sys`
+whose w is a W, is s's w's top's a). A reference, a subject's value or a
+`satisfy` that lands on such a part reads on through it to the other (`ref
+part r : T0 = pp`: r's load is top's a's; a package's `satisfy R by pp` is
+read at top's a), and so does a reference to a reference. A `satisfy` written
+in a definition, or in a usage another specialises, is read once, at that
+element's own values, never in each of its instances: one whose satisfier is a
+reference with a value or one an instance redefines (`ref part r : T0;` under
+w's `ref part :>> r = p50`), such a part or a subject, or is reached through
+one, is *could not be evaluated*, since an instance can make that feature
+another (W's `satisfy R by r` over `ref part r : T0 = pp`, where w's top's a
+breaks R); so is a requirement usage written there whose subject's value names
+it through one (`requirement rr : R { subject s = r; }` in W) — a limit of
+this tool. Where neither is so plain (`part pp : T0 { attribute :>> load
+default = 3.0; }`, a port bound to two inner ports), a row that may read a
+value the binding carries is *could not be evaluated*, in a sentence that
+names the binding: one that reads through either end or a usage above one, or
+through a feature a binding, a value or an `assert` ties to one; one an
+instance reads through such a feature where its definition does not (W's
+`pp.load` over `pp = top.a`, read in `w : W { part :>> top = t50; }`); and one
+read for an instance at or below one. Every other row of the model reads as
+before. `verify` files such a row `verification/not-evaluable` under the
+reason `unread-binding`, a limit of this tool rather than a defect in the
+relation, at exit 2, which `--allow-inconclusive` does not lower; `bounds`
+claims no bound of a measure such a binding may carry. One valued with
+another (`part pp : T0 = top.a`, `attribute q : V = top.pos`) equates the two
+the same way: where it says nothing else of its own and its value is a path
+below where it is written, it is read as that other, as a plain end of a
+binding is; otherwise (`part pp : T0 = top.a { attribute :>> load = 50.0;
+}`, `part :>> p = other` under an `assert` that reads through p, a part or an
+attribute of a structured type valued with any other expression, a call
+included) such rows are *could not be evaluated*, in a sentence that names
+the value — and, where it says something of its own or has a type the other
+lacks, so are those that read what the value names (top's a, which has pp's
+50), as a binding's other end. A reference valued so is read as what
+it names, in each instance at that instance's own: W's `ref part pp : T0 =
+top.a`, read in w, is w's top's a. One redefined over a reference written with
+`=` (`ref part :>> r1 = p2` in w, over W's `ref part r1 = p1`) states a
+second value, and a row read through it is *could not be evaluated*. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A relation of Q read in a usage or a specialisation
@@ -1070,7 +1104,19 @@ be 1 and 50, and that reading is *could not be evaluated*. A context that sets
 the input by an asserted equation instead (`q2 : Q { assert constraint { K ==
 25.0 } }`, or a package's `assert constraint { q2.K == 25.0 }`), or that also
 redefines the bound feature under a name of its own (`attribute ld :>> load`),
-lists no such reading on any surface: known gaps. A binding written in a
+lists no such reading on any surface: known gaps. A usage that redefines a part
+on the path and changes another input of a value Q reads through it is read
+there too, though Q reads that value in its own p already (Q's `c { p.m2 >= 0.0
+}` over P's `m2 = 10.0 - load - extra` and Q's `bind p.load = L`, in `q2 : Q {
+part :>> p { attribute :>> extra = 50.0; } }`: q2's m2 is −41, violated); one
+that changes no input (`part :>> p { attribute tag = 1.0; }`) reads Q's. So is
+a context below which an asserted equation defines what the relation reads,
+or a usage values the name a local equation over usage values reads: Q's `c {
+p.L <= 6.0 }` in `q : Q { part :>> p { attribute :>> M = 7.0; } }` under P's
+`L == M` (7, violated), in `q2 : Q { part :>> p { assert constraint { extra ==
+20.0 } } }` for a relation over `p.extra`, or W's `c { pp.x <= 10.0 }` over
+`bind pp = q.p` in `w : W { part :>> q { assert constraint { p.x == 50.0 } }
+}` (50, violated). A binding written in a
 usage's body to a feature of the definition around it (`part q : Q { bind
 p.load = L; }` in R, over R's L) is read in the instance of that definition
 around each reading, on every surface: r's q reads r's L (50 where `r : R` sets
@@ -1163,9 +1209,23 @@ P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
 against it) or two such asserts give it two (it is read as no value). Where
 that binding's value is a `default` (`bind p.x = L` with `L default = 4.0`),
-the assert should stand over it. This is a known gap: the check, the literal
-engine and the numeric surface read the 4 and report the assert violated, and
-the solver lane finds the axioms inconsistent. An assert
+the assert stands over it, but this tool does not read an asserted equation
+through a binding's end, wherever the two are written: the package's `assert
+constraint { q.p.x == 3.0 }` over Q's binding, an assert in a definition that
+specialises the binding's owner or in a usage of it, or Q's `p.x == 50.0` over
+`part q1 : Q { bind p.x = K; }` with `K default = 9.0` (or the package's `bind
+q1.p.x = K`, or q1's `part :>> p { bind x = K; }`) leaves every row that may
+read the pair *could not be evaluated* on every surface, the binding's own
+row too, in a sentence naming the assert (`verify`'s reason `unread-binding`,
+a limit of this tool, at exit 2). An equation of the bound feature's own,
+under its own name, written in the element that declares it (Q's `L == 5.0`
+beside its `L default = 4.0`), is read with the binding, as the value it
+carries; so is one that fixes an instance's slot of a package's binding on a
+definition's feature (`p2.load == 5.0` beside `bind P::load = M`), which the
+check leaves undecided and the numeric and solver lanes solve. A part that a
+plain part-valued binding makes another stand for (q's
+p, under `bind pp = q.p`) is its own instance: Q's `p.x == 50.0` gives q's p's
+x 50, and `pp.x` reads it. An assert
 written in an instance around the feature, over a `default` (`part q1 : Q {
 assert constraint { p.x == 50.0 } }`), defines it in that instance alone: q1's
 p's x is 50 on every surface, while P's own x, Q's p's and every other
@@ -1183,12 +1243,15 @@ surface but the SMT engine, which cannot read the assert's `p.x` in that
 instance and leaves its rows undecided. A path
 through a reference or a subject, or through a part some usage redefines as
 one or with a value (`ref part :>> r = p1`, `part :>> p = other`), is not
-read so: the instance there may be another one, so the default stands, the
-assert is reported violated against it, and the solver lane finds the axioms
-inconsistent. A binding into the instance whose value is written with `=` is
+read so: the instance there may be another one, whose default the assert
+overrides, and every row that may read through that feature, a redefinition
+of it, or what their values name (p1) is *could not be evaluated*, in a
+sentence naming the assert (`unread-binding`); a P no reference names keeps
+its default, beside the solver lane's inconsistent axioms (it reads Q's `r.x`
+as every P's x). A binding into the instance whose value is written with `=` is
 read over the assert (`bind p.x = K` in q1, K = 7.0, under Q's `p.x ==
 50.0`): q1's p reads K, and the assert is reported violated against it. One
-whose value is a `default` is read the same way, the known gap above. An
+whose value is a `default` is the case above. An
 equation over names, `p.x == M`, is read over q1's own M — it
 is *could not be evaluated* where it is written in an element that is not the
 instance's own (an assert in a usage nested in a definition) or beside a
@@ -1199,7 +1262,19 @@ the default equal to another `default` (`p.x == L` with q1's `L default =
 constraint over q1's p's x or L is *could not be evaluated*, on the solver
 lane too — but in an instance that states that name with `=` (`part q : Q {
 attribute :>> L = 50.0; }` under Q's `p.load == L`), the equation reads it, and
-q's p's load is 50.
+q's p's load is 50. A local equation whose other side only usages value
+(P's `L == M`, M declared without one, `part p : P { attribute :>> M = 7.0;
+}`) defines L in each instance that values M with a literal — p's L is 7, on
+every surface, and P's `c { L <= 6.0 }` is read in p — and M from L's default
+in any other (P's own L is 2); a usage that gives M a `default` leaves both
+undecided, and one that values it with an expression over other names, or a
+binding that joins M to a value (`bind p2.M = K`), makes every reading of L
+*could not be evaluated* (`unread-binding`), that binding's own row included.
+A local and an
+enclosing equation that give one feature two values (P's `x == 3.0`, q1's
+`p.x == 50.0`) make every reading of q1's p's x *could not be evaluated*, a
+package constraint over `q1.p.x` included; q1's assert is still reported
+violated against P's 3, the contradiction the model states.
 An inequality (`p.x >= 5.0`) defines nothing: the default stands, the assert
 is reported violated against it, and the solver lane finds the axioms
 inconsistent.
@@ -1704,7 +1779,7 @@ that renders these members carries it itself.
 |---|---|---|
 | `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement is prose with no constraint body | **Yes** — lowered to exit 0 |
 | `verification/timeout` | The solver ran out of time — raise it with `--timeout MS` | **Yes** |
-| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm | No |
+| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm — or it reads a value that a binding, a value or an asserted equation carries and this tool does not read through (`unread-binding`: a limit of this tool, the relation is well formed) | No |
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
 | `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
 | `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |
@@ -2170,6 +2245,22 @@ bound: a file whose only ceiling on a quantity is a relation the encoder refused
 would otherwise read *unbounded above*. A refusal in an unrelated corner of the
 file cannot move the answer and is listed rather than acted on — the same reach
 test `verify` applies before it publishes a refutation.
+
+**A measure a binding this tool does not read may carry is no bound either.**
+The axioms state no equality for a binding or a value that equates two parts
+where both say something of their own (`bind pp = top.a` beside pp's own `load
+default = 3.0`), so a bound over them would be the measure's own value alone —
+pp's 3, where the model makes pp's load top's a's 50. Such a measure, and one
+read through either end — `top.a.load` too, which `--measure` resolves to T0's
+own `load` where no relation reads top's a's — is `verification/not-evaluable`
+at exit **2**, in a sentence that names the binding, before any solver runs. A measure read
+through one it does read — a plain end, a part valued with another (`part pp
+: T0 = top.a`), a reference in a definition read in an instance — is bounded
+at what it stands for. Nor is a measure bounded that an asserted equation this
+tool does not read defines over a `default` a binding carries (Q's `p.x ==
+50.0` over q1's `bind p.x = K` and `K default = 9.0`, for `--measure
+q1.p.x`): it is `verification/not-evaluable` at exit **2**, in a sentence that
+names the assert.
 
 **The point z3 stopped at is re-read before the number is published.** Every
 design point this lane prints goes back through the tool's own evaluator first

@@ -173,7 +173,7 @@ export const REFINE_EXIT_CODES = `Exit codes: 0 every decomposition or derivatio
  * codes, and a run whose only answer was "optimality not established" must not read
  * as a run that answered.
  */
-export const BOUNDS_EXIT_CODES = `Exit codes: 0 every bound asked for was DECIDED — an optimum whose optimality z3's νZ established, an exact supremum or infimum it proved is approached and never attained, or an unboundedness it proved under the axioms that were asserted · 2 usage/IO error, a degraded model, or any bound that was not decided — a value νZ does not certify as the tightest (nonlinear), a timeout, an absent solver, an axiom set that cannot hold together, or a measure no relation in the model reads. There is no exit 1: a bound is what the axioms admit and not a verdict, and there is no --allow-inconclusive here`;
+export const BOUNDS_EXIT_CODES = `Exit codes: 0 every bound asked for was DECIDED — an optimum whose optimality z3's νZ established, an exact supremum or infimum it proved is approached and never attained, or an unboundedness it proved under the axioms that were asserted · 2 usage/IO error, a degraded model, or any bound that was not decided — a value νZ does not certify as the tightest (nonlinear), a timeout, an absent solver, an axiom set that cannot hold together, a measure no relation in the model reads, or a measure a binding, or an asserted equation, this tool does not read may carry or define. There is no exit 1: a bound is what the axioms admit and not a verdict, and there is no --allow-inconclusive here`;
 
 /**
  * `check-behaviour`'s exit-code contract — a FIFTH one, and it is here for the

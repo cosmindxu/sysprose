@@ -98,8 +98,10 @@ export type LiteralOutcome =
  * `unit-unresolved`, `unscalable`, `derived-bare-literal` (a bare number
  * compared with a value derived from dimensioned quantities, which has no unit
  * to read it in), `refused-derivation` (an operand whose own derivation the
- * validation surface refuses) and `unread-definition` — is a relation this
- * tool cannot read, and it maps to `not-evaluable`, which nothing forgives.
+ * validation surface refuses), `unread-definition` and `unread-binding` (a
+ * value a binding this tool does not read through may carry: a limit of this
+ * tool, {@link refusalTail}) — is a relation this tool cannot read, and it
+ * maps to `not-evaluable`, which nothing forgives.
  * An operand that is a point on an offset scale in arithmetic, or whose
  * derivation does arithmetic on one, is refused as `offset-arithmetic`, the
  * same refusal as that arithmetic in the body.
@@ -154,6 +156,24 @@ export function unreadOutcome(
  */
 export function isOutsideTheFragment(reason: RefusalReason): boolean {
   return OUTSIDE_THE_FRAGMENT.has(reason);
+}
+
+/**
+ * The sentence that closes a `not-evaluable` row a gate refused, by its
+ * reason: a relation this tool does not read where the model gives it a value
+ * (`unread-binding`, a binding or a value that equates two parts, or an
+ * asserted equation over a `default` read through one or a reference) is a LIMIT
+ * OF THIS TOOL — the relation is well-formed and the model decides it — and
+ * every other such reason a defect in the relation. Neither is forgiven, and
+ * the exit code is the same 2; only what a person is told to fix differs.
+ * Shared with the SMT engine, which files the same rows.
+ */
+export function refusalTail(reason: RefusalReason): string {
+  return reason === 'unread-binding'
+    ? 'This is a limit of this tool, not a defect in the relation: the model gives it a value, so ' +
+        '`--allow-inconclusive` does not forgive it'
+    : 'This is a defect in the relation, not a construct outside the fragment, so ' +
+        '`--allow-inconclusive` does not forgive it';
 }
 
 /** One assumption, and what it said at the model's values. */
@@ -405,9 +425,9 @@ function judgeOne(
       ...base,
       outcome: 'not-evaluable',
       detail:
-        `not evaluable at the model's values — the relation itself cannot be read (${refusal.reason}): ` +
-        `${refusal.detail}. This is a defect in the relation, not a construct outside the fragment, ` +
-        'so `--allow-inconclusive` does not forgive it',
+        `not evaluable at the model's values — ${
+          refusal.reason === 'unread-binding' ? 'the relation reads a value this tool does not read' : 'the relation itself cannot be read'
+        } (${refusal.reason}): ${refusal.detail}. ${refusalTail(refusal.reason)}`,
     };
   }
   return { ...base, outcome: 'not-evaluable', detail: `not evaluable at the model's values: ${why}` };
