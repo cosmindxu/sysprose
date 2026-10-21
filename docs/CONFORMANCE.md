@@ -1014,7 +1014,7 @@ this seam as of commit 5 of the verification plan; §8.3 above states what it ma
 and may not claim. The seam's own rules are unchanged by that, and they are what
 keep an engine defect from reading as a verdict.
 
-**Not in the browser, and the build enforces it.** z3 WASM needs
+**Not in the bundle, and the build enforces it.** z3 WASM needs
 `SharedArrayBuffer`, i.e. COOP/COEP headers a static host cannot set, so the
 package is excluded from the bundle (`optimizeDeps.exclude` and
 `rollupOptions.external` in `vite.config.ts`) and nothing in `src/` imports it
@@ -1022,7 +1022,7 @@ statically. `external` alone would point the wrong way for an import — it leav
 a bare `z3-solver` specifier in the emitted chunk, which builds green and breaks
 the published page at load time — so a `refuse-bundled-z3` build plugin fails
 the build when any emitted chunk names the package in an import or a require.
-The app's affordance is the terminal command, not a smaller solver.
+The hosted site's affordance is the terminal command, not a smaller solver; the local dev and preview servers, which send the isolation headers, serve z3 to the page and run the palette's solver checks there (`localZ3` in `vite.config.ts`).
 
 **Measured on this machine, not remembered** (Node 22, z3 5.1.0 via `z3-solver`
 5.2.0): `init()` **~105 ms**, three checks (unsat, negation-unsat, sat with a

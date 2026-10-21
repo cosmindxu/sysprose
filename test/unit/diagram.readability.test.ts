@@ -781,6 +781,13 @@ describe('column headers — the frozen strip, at the drone swarm\'s size', () =
     expect(columnStripCells(columns, { x: 100, y: stripTop - 1, zoom: 1 }, 1400, stripTop).length).toBeGreaterThan(0);
   });
 
+  it('keeps a header off the first row of its piece, which a fit puts COLUMN_STRIP_H px under the strip\'s top', () => {
+    // Fit puts the first row of boxes COLUMN_STRIP_H px under the strip's top; the 640 px band and 8 px gap above it are 13.6 px on screen.
+    const cells = columnStripCells(columns, { x: 100, y: stripTop + COLUMN_STRIP_H - 648 * 0.021, zoom: 0.021 }, 1400, stripTop);
+    expect(cells.map((c) => c.label)).toEqual(main.map((c) => c.id));
+    for (const c of cells) expect(c.top).toBe(0);
+  });
+
   it('skips a column too narrow on screen to hold its label', () => {
     const tiny = [col('tiny', 0, 800, 0, 1_000)];
     expect(columnStripCells(tiny, fit, 1400, stripTop)).toEqual([]);

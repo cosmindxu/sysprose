@@ -799,6 +799,28 @@ describe('the solver checks in the page', () => {
     }
   });
 
+  it('hands the queue on once its load is known: a walk clicked meanwhile does not wait for z3', async () => {
+    FakeWorker.made = [];
+    setCheckWorkerFactory(() => new FakeWorker());
+    try {
+      const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+      const machine = (await loadModelText(hierarchical('Small', 1, 2, false), { fileName: 'small.sysml' })).model!;
+      const { load } = pendingLoad();
+      runChecked(spec('verify'), ctx({ model, isolated: true, loadHealth: undefined }), 5, load);
+      runChecked(CHECKS.find((c) => c.id === 'reach')!, ctx({ model: machine }), 5);
+      const w = FakeWorker.made[0];
+      expect(w.posted, 'the walk waits for the load').toEqual([]);
+      w.measured([cleanCount()]);
+      // z3 is still checking (it answers later); the walk is already with the worker.
+      expect(useChecksStore.getState().running.verify).toBeDefined();
+      expect(w.posted.map((r) => r.check)).toEqual(['reach']);
+      await vi.waitFor(() => expect(useChecksStore.getState().running.verify).toBeUndefined(), { timeout: 60_000 });
+      expect(useChecksStore.getState().results.verify).toMatchObject({ ranIn: 'page' });
+    } finally {
+      setCheckWorkerFactory(undefined);
+    }
+  });
+
   it('drops the answer of a run that was cancelled', async () => {
     const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
     runChecked(spec('verify'), ctx({ model, isolated: true }), 3);

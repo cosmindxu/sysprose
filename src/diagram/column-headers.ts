@@ -124,8 +124,9 @@ export interface ColumnStripCell {
  * Flow keeps them) on a canvas `canvasWidth` px wide, the strip starting
  * `stripTop` px below the canvas's top. A header is in the strip while its piece
  * reaches the strip's rows, clamped to that piece: it stays at the strip's top
- * as the piece runs beneath it and leaves upward with the piece's bottom edge.
- * Its x-range is the column's, clipped to the canvas. A header whose own band
+ * as the piece runs beneath it and leaves upward with the piece's bottom edge;
+ * where the piece's top is itself in the strip, the header sits there, but never
+ * over the piece's first row of boxes. Its x-range is the column's, clipped to the canvas. A header whose own band
  * is on screen below the strip and tall enough to read ({@link COLUMN_STRIP_H})
  * is left to the band; so is a column too narrow on screen for a label.
  */
@@ -144,7 +145,10 @@ export function columnStripCells(
     const left = Math.max(0, c.x * view.zoom + view.x);
     const right = Math.min(canvasWidth, (c.x + c.w) * view.zoom + view.x);
     if (right - left < COLUMN_STRIP_MIN_W) continue;
-    const top = Math.min(Math.max(pieceTop, stripTop), pieceBottom - COLUMN_STRIP_H) - stripTop;
+    // At the piece's top where that is in the strip, but no lower than leaves the first row of boxes clear of it
+    // (which begins a band and a gap below the piece's top): a short band does not put the header over them.
+    const firstRow = pieceTop + (c.h + COLUMN_HEADER_GAP) * view.zoom;
+    const top = Math.min(Math.max(pieceTop, stripTop), Math.max(stripTop, firstRow - COLUMN_STRIP_H), pieceBottom - COLUMN_STRIP_H) - stripTop;
     cells.push({ id: c.id, elementId: c.elementId, label: c.label, left, width: right - left, top });
   }
   return cells;

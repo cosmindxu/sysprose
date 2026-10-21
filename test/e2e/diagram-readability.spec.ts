@@ -400,6 +400,15 @@ test('a column header stays on screen in a frozen strip, at Fit and while pannin
   expect(await zoom()).toBeLessThan(0.3);
   await expect.poll(async () => (await cells.allTextContents()).sort()).toEqual(['OA', 'PA', 'SA']);
   await expectStripOnScreen();
+  // Fit leaves the first row of boxes below the strip's cells, not under them.
+  const covered = await page.evaluate(() => {
+    const cellRects = [...document.querySelectorAll('[data-testid="column-strip-cell"]')].map((e) => e.getBoundingClientRect());
+    return [...document.querySelectorAll('.react-flow__node')].filter((n) => {
+      const r = n.getBoundingClientRect();
+      return cellRects.some((c) => Math.min(c.right, r.right) - Math.max(c.left, r.left) > 0.5 && Math.min(c.bottom, r.bottom) - Math.max(c.top, r.top) > 0.5);
+    }).length;
+  });
+  expect(covered, 'boxes under a strip header at Fit').toBe(0);
 
   // Zoomed to a box deep in the PA column, the column's own band is far above the screen; the strip still names it.
   await selectElementById(page, await findElementId(page, 'PartDefinition', 'Task50WithALongNameThatKeepsItsColumnWideEnoughToLabel'));

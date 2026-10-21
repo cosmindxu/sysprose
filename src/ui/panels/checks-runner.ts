@@ -32,10 +32,13 @@
  * A SOLVER CHECK RUNS IN THE PAGE, NOT THE WORKER. On an isolated page (the local
  * servers', `vite.config.ts`) `verify`, `consistency`, `refine`, `bounds` and
  * `fault-tree` run through `z3-bridge` ({@link runSolverCheck}): z3's own check
- * runs on its threads, so the page stays usable, and the row is `running` from
- * the click like a walk, with Cancel. z3 cannot be asked to stop, so Cancel
- * drops the answer and not the check, which ends at its own time budget. On a
- * page that is not isolated the check is answered at once as `not here`.
+ * runs on its threads, so the page stays usable while it checks (the encoding
+ * before it runs on the page's thread, and has not been measured on a model the
+ * size of the drone swarm's), and the row is `running` from the click like a
+ * walk, with Cancel. z3 cannot be asked to stop, so Cancel drops the answer and
+ * not the check, which ends at its own time budget; a walk queued behind it does
+ * not wait on it. On a page that is not isolated the check is answered at once as
+ * `not here`.
  *
  * AN ANSWER NO WORKER GIVES IS NOT LOST. A page with no workers (and every unit
  * test), a worker that fails to start or dies, a reply that says it could not
@@ -232,8 +235,16 @@ function runHere(job: Job): void {
 /** The run's answer, worked out in the page: a solver check on an isolated page goes through z3, any other check runs at once. */
 function answerHere(job: Job): void {
   if (job.spec.engine === 'solver' && job.ctx.isolated) {
-    // z3 cannot be stopped: a Cancel took the job away (`active`), and the answer that comes later is dropped.
-    void runSolverCheck(job.spec, job.ctx).then((result) => (active === job ? settle(job, result, 'page') : undefined));
+    // z3 runs on its own threads, with no watchdog: the queue is handed on at once, so a walk waiting behind this check
+    // does not wait on z3. A Cancel takes the token away, and the answer that comes later is dropped (z3 cannot be stopped).
+    if (active === job) active = null;
+    stopWatchdog();
+    armIdle();
+    pump();
+    void runSolverCheck(job.spec, job.ctx).then((result) => {
+      const store = useChecksStore.getState();
+      if (store.running[job.spec.id]?.token === job.token) store.land(job.spec.id, result, job.rev, 'page', job.selection);
+    });
   } else settle(job, runCheck(job.spec, job.ctx), 'page');
 }
 
