@@ -756,12 +756,14 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
 
   // A part-valued binding no end of which stands for the other may carry a
   // value (equatedPartsRefusal): no goal that may read one is encoded, as the
-  // validation surface judges none. Axioms stay facts.
+  // validation surface judges none, under a reason of its own — a limit of
+  // this tool, not a defect in the relation (`unread-binding`). Axioms stay
+  // facts.
   for (const o of out) {
     if (o.role === 'axiom' || o.encodable !== true) continue;
     const equated = equatedPartsRefusal(model, o.instance?.baseId ?? o.element.id, o.expression, o.instance);
     if (equated === undefined) continue;
-    o.encodable = { reason: 'unread-definition', detail: equated };
+    o.encodable = { reason: 'unread-binding', detail: equated };
     o.status = statusOf(o.encodable);
   }
   if (opts.missing) return out.filter((o) => o.status === 'no-formal-clause' || o.status === 'not-encodable');

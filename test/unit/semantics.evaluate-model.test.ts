@@ -3214,6 +3214,194 @@ describe('a binding reads through a renamed redefinition and a package’s defin
   });
 });
 
+describe('a value, a reference and a binding that equate two parts or structured attributes (O9 S1)', () => {
+  const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+  const check = (m: Model, rel: string) => checkConstraints(m).find((k) => m.qualifiedName(k.id) === rel)!;
+  const numeric = (m: Model, rel: string) => checkConstraintsNumeric(m).find((r) => m.qualifiedName(r.id) === rel)!.result;
+  const goal = (m: Model, rel: string) => obligationsOf(m).find((o) => o.role !== 'axiom' && o.element.qualifiedName === rel)!;
+  const T = `part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }`;
+
+  it('reads a reference a definition values with a path at each instance’s own partner (V8R)', async () => {
+    const { model: m } = await loadModelText(`package V8R {
+      ${T}
+      part def W { part top : T1; ref part pp : T0 = top.a; constraint pT { pp.load >= 40.0 } }
+      part w : W { part :>> top { attribute :>> L = 50.0; } }
+    }`);
+    // w's pp is w's top's a, whose L w sets to 50: it read W's own top's a (1), F on all four surfaces.
+    const at = sharedDefinitions(m!).denote(named(m!, 'V8R::w').id).get('pp.load')!;
+    expect(at.instance).toBe('V8R::w::top::a');
+    const c = check(m!, 'V8R::W::pT');
+    expect([c.result, c.instances!.map((i) => [m!.qualifiedName(i.contextId), i.result])]).toEqual([
+      'violated',
+      [['V8R::w', 'satisfied']],
+    ]);
+    expect(goal(m!, 'V8R::W::pT in V8R::w').vars.map((v) => v.qualifiedName)).toEqual(['V8R::w::top::a::load']);
+  });
+
+  it('reads a part valued with another as that other where it says nothing else of its own, and nowhere else (PPV)', async () => {
+    const { model: m } = await loadModelText(`package PPV {
+      ${T}
+      part top : T1 { attribute :>> L = 50.0; }
+      part pp : T0 = top.a;
+      constraint pT { pp.load >= 40.0 }
+    }`);
+    // pp is top's a (50): it read pp's own default 1, then abstained on every surface.
+    expect([check(m!, 'PPV::pT').result, numeric(m!, 'PPV::pT'), goal(m!, 'PPV::pT').encodable]).toEqual(['satisfied', 'satisfied', true]);
+    const { model: q } = await loadModelText(`package PPQ {
+      ${T}
+      part top : T1 { attribute :>> L = 50.0; }
+      part top2 : T1 { attribute :>> L = 50.0; }
+      part pp : T0 = top.a;
+      part pq : T0 = top.a { attribute :>> load default = 3.0; }
+      constraint pT { pp.load >= 40.0 }
+      constraint qT { pq.load >= 40.0 }
+      constraint aT { top.a.load >= 40.0 }
+      constraint oT { top2.a.load >= 40.0 }
+    }`);
+    // pq says something of its own: no surface reads through its value, and the goal files it under its own
+    // reason, a limit of this tool. Its partner, top's a, has what pq says too, so a row that reads top's a —
+    // directly, or through pp, which stands for it — abstains in the same sentence (they read top's a's own 50
+    // with pq's load beside it unread); top2's a is no partner and keeps its verdict.
+    const sentence =
+      '`pq = top.a` in PPQ values a part, port, item or structured attribute with another, which equates the two as a ' +
+      'binding does; this tool reads through such a value only where the feature says nothing else of its own and its ' +
+      'value is a path, below where it is written, to one as plain, and that is not so here, so no relation that may ' +
+      'read a value it carries is read';
+    for (const rel of ['PPQ::qT', 'PPQ::pT', 'PPQ::aT']) {
+      expect([check(q!, rel).result, check(q!, rel).message], rel).toEqual(['unknown', `Could not evaluate: ${sentence}`]);
+      expect(goal(q!, rel).encodable, rel).toEqual({ reason: 'unread-binding', detail: sentence });
+    }
+    expect([check(q!, 'PPQ::oT').result, numeric(q!, 'PPQ::oT'), goal(q!, 'PPQ::oT').encodable]).toEqual(['satisfied', 'satisfied', true]);
+  });
+
+  it('reads a binding or a value between two structured attributes as one between two parts (R8A, R8V)', async () => {
+    const V = `attribute def V { attribute x : ScalarValues::Real default = 1.0; }
+      part def T1 { attribute L : ScalarValues::Real default = 1.0; attribute pos : V; bind pos.x = L; }
+      part top : T1 { attribute :>> L = 50.0; }`;
+    const { model: a } = await loadModelText(`package R8A { ${V} attribute q : V; bind q = top.pos; constraint qT { q.x >= 40.0 } }`);
+    const { model: v } = await loadModelText(`package R8V { ${V} attribute q : V = top.pos; constraint qT { q.x >= 40.0 } }`);
+    // q's x is top's pos's 50: both read q's own default 1, F on all four surfaces.
+    for (const [m, rel] of [
+      [a!, 'R8A::qT'],
+      [v!, 'R8V::qT'],
+    ] as const) {
+      expect([check(m, rel).result, numeric(m, rel), goal(m, rel).vars.map((x) => x.qualifiedName)], rel).toEqual([
+        'satisfied',
+        'satisfied',
+        [`${rel.split('::')[0]}::top::pos::x`],
+      ]);
+    }
+    // A scalar attribute's binding is the binding reading's, as before: no part-valued pair.
+    const { model: s } = await loadModelText(`package R8S {
+      part def P { attribute load : ScalarValues::Real default = 1.0; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> L = 50.0; }
+      constraint c { q.p.load >= 40.0 }
+    }`);
+    expect(check(s!, 'R8S::c').result).toBe('satisfied');
+    // So is an attribute whose user type specialises a library scalar or quantity value and adds a feature: its
+    // value is one mass or one number, and `m = base`, `m2 = 2.0 * base` and `bind m1 = m2` are the scalar
+    // readings' (they were read as two structured attributes equated, and abstained on all four surfaces).
+    const { model: f } = await loadModelText(`package Q1F {
+      private import SI::*;
+      attribute def RatedMass :> ISQ::MassValue { attribute margin : ScalarValues::Real default = 0.1; }
+      part def P { attribute base : ISQ::MassValue = 5.0 [kg]; attribute m : RatedMass = base; attribute m2 : RatedMass = 2.0 * base; }
+      part p : P;
+      constraint cT { p.m <= 10.0 [kg] }
+      constraint dF { p.m2 >= 40.0 [kg] }
+    }`);
+    const { model: b } = await loadModelText(`package Q1C {
+      attribute def Num :> ScalarValues::Real { attribute tol : ScalarValues::Real default = 0.1; }
+      part def P { attribute m1 : Num; attribute m2 : Num = 5.0; bind m1 = m2; }
+      part p : P;
+      constraint cF { p.m1 >= 40.0 }
+    }`);
+    for (const [m, rel, result] of [
+      [f!, 'Q1F::cT', 'satisfied'],
+      [f!, 'Q1F::dF', 'violated'],
+      [b!, 'Q1C::cF', 'violated'],
+    ] as const) {
+      expect([check(m, rel).result, numeric(m, rel), goal(m, rel).encodable], rel).toEqual([result, result, true]);
+    }
+  });
+
+  it('reads on through a reference, a subject or a satisfy to what an equated part or a reference stands for (PPR, RC)', async () => {
+    const { model: m } = await loadModelText(`package PPR {
+      ${T}
+      part top : T1 { attribute :>> L = 50.0; }
+      part pp : T0;
+      bind pp = top.a;
+      ref part r : T0 = pp;
+      requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+      satisfy RF by pp;
+      constraint rT { r.load >= 40.0 }
+    }`);
+    // r is pp, and pp is top's a: every row that read through pp abstained (pp was not plain), and before
+    // that r's load read pp's own 1.
+    const definitions = sharedDefinitions(m!);
+    const pkg = named(m!, 'PPR');
+    expect(definitions.subjectOf(pkg.id, named(m!, 'PPR::r'))!.id).toBe(definitions.subjectOf(pkg.id, named(m!, 'PPR::pp'))!.id);
+    expect(definitions.denote(pkg.id).get('r.load')!.instance).toBe('PPR::top::a');
+    expect([check(m!, 'PPR::rT').result, numeric(m!, 'PPR::rT')]).toEqual(['satisfied', 'satisfied']);
+    const satisfied = check(m!, 'PPR::RF::«ConstraintUsage»').instances!;
+    expect(satisfied.map((i) => [m!.qualifiedName(i.contextId), i.result, i.reads?.[0]?.symbol])).toEqual([
+      ['PPR::«Satisfy»', 'violated', 'PPR::top::a::load'],
+    ]);
+    const { model: j } = await loadModelText(`package PSJ {
+      ${T}
+      part top : T1 { attribute :>> L = 50.0; }
+      part pp : T0;
+      bind pp = top.a;
+      requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+      requirement r1 : RF { subject s = pp; }
+    }`);
+    expect(check(j!, 'PSJ::RF::«ConstraintUsage»').instances!.map((i) => [j!.qualifiedName(i.contextId), i.result])).toEqual([
+      ['PSJ::r1', 'violated'],
+    ]);
+    const { model: c } = await loadModelText(`package RC {
+      part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      part p1 : T0 { attribute :>> load = 50.0; }
+      ref part r1 : T0 = p1;
+      ref part r2 : T0 = r1;
+      constraint rT { r2.load >= 40.0 }
+    }`);
+    // r2 is r1, and r1 is p1: r2's load read r1's own default 1, F on all four surfaces.
+    expect([check(c!, 'RC::rT').result, numeric(c!, 'RC::rT')]).toEqual(['satisfied', 'satisfied']);
+    // A value that leads back to itself stands for nothing, and the walk ends.
+    const { model: loop } = await loadModelText(`package RL {
+      part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      ref part r1 : T0 = r2;
+      ref part r2 : T0 = r1;
+      constraint rT { r2.load >= 0.5 }
+    }`);
+    // The cycle stands for nothing, so r2 is read as itself: T0's default 1.
+    expect(check(loop!, 'RL::rT').result).toBe('satisfied');
+  });
+
+  it('reads no satisfaction a definition writes through a reference or an equated part, which an instance can change (SD)', async () => {
+    for (const [name, body] of [
+      ['SD', 'part pp : T0; bind pp = top.a; ref part r : T0 = pp; satisfy RF by r;'],
+      ['SD3', 'part pp : T0 = top.a; satisfy RF by pp;'],
+    ] as const) {
+      const { model: m } = await loadModelText(`package ${name} {
+        ${T}
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part top : T1; ${body} }
+        part w : W { part :>> top { attribute :>> L = 50.0; } }
+      }`);
+      // The satisfaction is read once, at W's own top's a (1), and held, where w's top's a (50) breaks it: no
+      // row of it is read, in a sentence of its own (it abstained until the reference, the value and the
+      // binding were read through, then held on all four surfaces).
+      const rows = check(m!, `${name}::RF::«ConstraintUsage»`).instances!;
+      expect(rows.map((i) => [m!.qualifiedName(i.contextId), i.result]), name).toEqual([[`${name}::W::«Satisfy»`, 'unknown']]);
+      expect(rows[0]!.message, name).toContain(`in ${name}::W names its satisfier through a feature that stands for another`);
+      const g = obligationsOf(m!).find((o) => o.role !== 'axiom' && o.instance?.contextId === rows[0]!.contextId)!;
+      expect(g.encodable, name).toMatchObject({ reason: 'unread-binding' });
+    }
+  });
+});
+
 describe('valueAtPath — a path has the value the relation reads it at', () => {
   const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
   const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }';

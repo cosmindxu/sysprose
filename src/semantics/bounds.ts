@@ -88,6 +88,7 @@ import {
   type RefusalReason,
 } from './contracts';
 import { isLiteralValueAxiom } from './consistency';
+import { equatedPartsMeasureRefusal } from './defining-equation';
 import { rereadRelation, tieSentence, type PointValues } from './exact';
 import {
   isCurrentWorklist,
@@ -177,6 +178,13 @@ export interface BoundsOptions {
    * feature's qualified name.
    */
   measureSymbol?: string;
+  /**
+   * The measure as the caller spelled it (`--measure top.a.load`), where that
+   * is a dotted path: read through an unread part-valued binding, it is no
+   * bound even where it resolves to a definition's own feature
+   * ({@link equatedPartsMeasureRefusal}).
+   */
+  measureSpelling?: string;
   /** `min`, `max`, or both. Two senses are two scripts — see {@link Z3Backend.optimize}. */
   sense?: BoundsSense;
   /** Feature values released, already resolved to qualified names by the caller. */
@@ -490,6 +498,12 @@ interface Prepared {
    * nor whether one exists, and listing them is all this run owes them.
    */
   relevantRefusals: RefusedAxiom[];
+  /**
+   * Why the measure may read a value a binding or a value that equates two
+   * parts carries, which no axiom states ({@link equatedPartsMeasureRefusal}),
+   * or `undefined`.
+   */
+  equated?: string;
   released: string[];
   requirements: string[];
   /** Every variable the assertions may read, plus the objective's own. */
@@ -510,6 +524,7 @@ export function prepareBounds(
   opts: {
     measureId: ElementId;
     measureSymbol?: string;
+    measureSpelling?: string;
     free?: ReadonlySet<string>;
     freeAll?: boolean;
     withRequirements?: boolean;
@@ -670,11 +685,13 @@ export function prepareBounds(
       variables.push(v);
     }
   }
+  const equated = equatedPartsMeasureRefusal(model, opts.measureId, measureName, opts.measureSpelling);
   return {
     measure,
     assertions: kept,
     refused,
     relevantRefusals,
+    ...(equated !== undefined ? { equated } : {}),
     released,
     requirements: requirements.filter((q) =>
       kept.some((a) => a.assertion.kind === 'premise' && a.assertion.name === q),
@@ -798,6 +815,7 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
   const prepared = prepareBounds(model, {
     measureId: opts.measureId,
     ...(opts.measureSymbol !== undefined ? { measureSymbol: opts.measureSymbol } : {}),
+    ...(opts.measureSpelling !== undefined ? { measureSpelling: opts.measureSpelling } : {}),
     ...(opts.free !== undefined ? { free: opts.free } : {}),
     ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
     withRequirements,
@@ -834,6 +852,37 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
           `no relation this lane encodes reads \`${model.qualifiedName(opts.measureId)}\`, so there ` +
           `is nothing to optimise over: a measure is bounded by the relations that mention it. ` +
           `${census}`,
+        value: null,
+        siValue: null,
+        term: '',
+        witness: [],
+        checks: 0,
+      })),
+      fragment: 'qf-lra',
+      logic: '',
+      vacuityCore: [],
+      checks: 0,
+    };
+  }
+
+  // A MEASURE THAT MAY READ A VALUE AN UNREAD PART-VALUED BINDING CARRIES has
+  // no bound in these axioms. They state no equality for a binding or a value
+  // that equates two parts (`bind pp = top.a` beside pp's own `load default =
+  // 3.0`), so what they bound is the measure's own value alone: "3 exactly"
+  // where the model makes it top's a's 50. Every surface leaves a relation
+  // that reads such a value undecided; so does this one, before any solver
+  // runs. A limit of this tool, not of the model: never a decided row.
+  if (prepared.equated !== undefined) {
+    const name = prepared.measure.qualifiedName;
+    return {
+      ...base,
+      bounds: sensesOf(opts.sense).map((sense) => ({
+        sense,
+        outcome: 'inconclusive' as const,
+        code: 'verification/not-evaluable',
+        detail:
+          `no ${sense} of \`${name}\` is claimed: ${prepared.equated}. That is a limit of this tool, not a ` +
+          `defect in the model. ${census}`,
         value: null,
         siValue: null,
         term: '',

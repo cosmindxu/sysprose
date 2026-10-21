@@ -546,8 +546,8 @@ const CODES = [
     code: 'verification/not-evaluable',
     source: 'verification',
     severity: 'info',
-    when: 'A relation this lane encodes could not be decided at the model’s own values — a feature it reads carries no value, a derived quantity cannot be compared as a bare number, or the expression did not evaluate to a boolean.',
-    hint: 'Give the features it reads values, or compare against a unit literal of the right dimension. `--allow-inconclusive` deliberately does NOT forgive this: an obligation nobody could evaluate is not an obligation that holds.',
+    when: 'A relation this lane encodes could not be decided at the model’s own values — a feature it reads carries no value, a derived quantity cannot be compared as a bare number, or the expression did not evaluate to a boolean. Also a LIMIT OF THIS TOOL. A `verify` or `obligations` row with the reason `unread-binding` reads a value this tool does not read through: one a binding or a value equating two parts, ports, items or structured attributes may carry (`bind pp = top.a` where both say something of their own), one a reference redefined over another’s `=` value names, or a satisfaction a definition writes through a reference or an equated part. A `bounds` measure such a binding may carry is the same code, in a sentence that names the binding (a bounds row carries no reason). The model gives such a relation a value; this tool does not decide it.',
+    hint: 'Give the features it reads values, or compare against a unit literal of the right dimension. For `unread-binding` the relation is well-formed: the row names the binding or value, which is read through once one of its two ends says nothing of its own and is bound once, or the relation can read the partner directly. `--allow-inconclusive` deliberately does NOT forgive this: an obligation nobody could evaluate is not an obligation that holds.',
   },
   {
     code: 'verification/unsupported-construct',
