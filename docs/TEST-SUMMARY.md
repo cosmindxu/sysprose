@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4792 total — 4792 passed, 0 failed, 0 skipped
+- **Tests:** 4806 total — 4806 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -61,7 +61,7 @@
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 137 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 138 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 15 | 0 | 0 |
@@ -120,11 +120,11 @@
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 43 | 0 | 0 |
-| test/unit/semantics.mc.differential.test.ts | 46 | 0 | 0 |
+| test/unit/semantics.mc.differential.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
-| test/unit/semantics.mc.patterns.test.ts | 84 | 0 | 0 |
+| test/unit/semantics.mc.patterns.test.ts | 88 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 120 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 122 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 33 | 0 | 0 |
@@ -141,10 +141,10 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/simulate.test.ts | 25 | 0 | 0 |
+| test/unit/simulate.test.ts | 30 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 269 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 270 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
