@@ -148,6 +148,8 @@ export interface DiagramColumn {
   y: number;
   w: number;
   h: number;
+  /** The bottom edge of the column's piece (diagram y): where the frozen strip's copy of the header leaves. */
+  bottom: number;
   /** The label's largest size (px) — the band's, so it never leaves it. */
   fontSize: number;
 }

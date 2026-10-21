@@ -46,15 +46,18 @@ import {
   COLUMN_HEADER_MAX_H,
   COLUMN_HEADER_MIN_H,
   COLUMN_LABEL_SCREEN_PX,
+  COLUMN_STRIP_H,
+  COLUMN_STRIP_LABEL_PX,
   columnHeaderHeight,
   columnLabelSize,
   columnLabelSizeAt,
   columnLabelSizeFor,
   columnSpans,
+  columnStripCells,
   fitColumnLabel,
 } from '@diagram/column-headers';
 import { fitRouteToEnds, roundedPath, routeIsCurrent, routeLabelPoint } from '@diagram/edges';
-import type { DiagramGraph, DiagramNode, Point, ViewKind } from '@diagram/types';
+import type { DiagramColumn, DiagramGraph, DiagramNode, Point, ViewKind } from '@diagram/types';
 
 interface Box {
   x: number;
@@ -433,6 +436,8 @@ describe('general view — each column of a layered model is headed by its packa
       expect(c.w).toBeGreaterThan(0);
       expect(c.h).toBeGreaterThanOrEqual(32);
       expect(c.fontSize).toBeLessThanOrEqual(c.h);
+      // The piece runs below its band: that is where the frozen strip's copy of the header leaves.
+      expect(c.bottom).toBeGreaterThan(c.y + c.h);
     }
   });
 
@@ -680,6 +685,79 @@ describe('column headers — size', () => {
       { partition: 0, x0: 0, x1: 170 },
       { partition: 2, x0: 400, x1: 500 },
     ]);
+  });
+});
+
+describe('column headers — the frozen strip, at the drone swarm\'s size', () => {
+  // The whole drone-swarm General view: a main piece of five columns about
+  // 19,000 px tall, and sixteen headers over four smaller pieces packed in a row
+  // below it. At 1400x900 the fit zoom is about 0.021.
+  const col = (id: string, x: number, w: number, y: number, bottom: number): DiagramColumn => ({
+    id, elementId: id, label: id, x, y, w, h: 640, bottom, fontSize: 352,
+  });
+  const main = [0, 1, 2, 3, 4].map((i) => col(`main${i}`, i * 12_000, 11_800, 0, 19_000));
+  const rest = [0, 1, 2, 3].flatMap((p) =>
+    [0, 1, 2, 3].map((i) => col(`rest${p}${i}`, p * 15_000 + i * 3_500, 3_400, 19_500, 25_000)),
+  );
+  const columns = [...main, ...rest];
+  const stripTop = 46;
+  const fit = { x: 100, y: stripTop, zoom: 0.021 };
+  const overlaps = (cells: ReturnType<typeof columnStripCells>): boolean =>
+    cells.some((a, i) => cells.slice(i + 1).some((b) => a.left < b.left + b.width && b.left < a.left + a.width && Math.abs(a.top - b.top) < COLUMN_STRIP_H));
+
+  it('draws its labels in screen space at a size that reads, whatever the zoom', () => {
+    expect(columns).toHaveLength(21);
+    expect(COLUMN_STRIP_LABEL_PX).toBeGreaterThanOrEqual(9);
+    expect(COLUMN_STRIP_LABEL_PX).toBeLessThanOrEqual(COLUMN_STRIP_H);
+  });
+
+  it('names the top row\'s five columns at the whole model\'s Fit, each wide enough for its label', () => {
+    const cells = columnStripCells(columns, fit, 1400, stripTop);
+    expect(cells.map((c) => c.label)).toEqual(main.map((c) => c.id));
+    for (const c of cells) {
+      expect(c.width).toBeGreaterThanOrEqual(200);
+      expect(c.top).toBe(0);
+    }
+    expect(overlaps(cells)).toBe(false);
+  });
+
+  it('keeps a column\'s header at the top while its piece runs beneath, clipped to the canvas', () => {
+    // Panned 9,000 px down the main piece at zoom 0.5: its columns are 6,000 px wide on screen.
+    const view = { x: -5_000, y: stripTop - 9_000 * 0.5, zoom: 0.5 };
+    const cells = columnStripCells(columns, view, 1400, stripTop);
+    expect(cells.map((c) => c.label)).toEqual(['main0', 'main1']);
+    for (const c of cells) {
+      expect(c.top).toBe(0);
+      expect(c.left).toBeGreaterThanOrEqual(0);
+      expect(c.left + c.width).toBeLessThanOrEqual(1400);
+    }
+    // Zoomed in on one column, the column's header still names it.
+    expect(columnStripCells(columns, { x: -100, y: stripTop - 5_000, zoom: 1 }, 1400, stripTop).map((c) => c.label)).toEqual(['main0']);
+  });
+
+  it('leaves with the bottom of its piece, and the next row\'s headers come in as theirs arrives', () => {
+    // The main piece's bottom edge `bottomOnScreen` px below the strip's top.
+    const at = (bottomOnScreen: number) =>
+      columnStripCells(columns, { x: 100, y: stripTop + bottomOnScreen - 19_000 * 0.021, zoom: 0.021 }, 1400, stripTop);
+    const mainTops = (cells: ReturnType<typeof at>) => cells.filter((c) => c.label.startsWith('main')).map((c) => c.top);
+    expect(mainTops(at(COLUMN_STRIP_H))).toEqual([0, 0, 0, 0, 0]);
+    expect(mainTops(at(COLUMN_STRIP_H / 2))).toEqual(Array(5).fill(-COLUMN_STRIP_H / 2));
+    expect(mainTops(at(0))).toEqual([]);
+    // The second row begins 500 diagram px (10.5 px) below: its headers come in as the first row's go, and never lie over them.
+    for (const b of [COLUMN_STRIP_H, COLUMN_STRIP_H / 2, 0, -5]) expect(overlaps(at(b))).toBe(false);
+    expect(at(0).map((c) => c.label)).toEqual(rest.map((c) => c.id));
+  });
+
+  it('leaves a band that is on screen below the strip and tall enough to read to the band', () => {
+    // Zoom 1: the 640 px band is on screen from the strip's top down.
+    expect(columnStripCells(columns, { x: 100, y: stripTop, zoom: 1 }, 1400, stripTop)).toEqual([]);
+    // Once panned past its top the strip takes the header over.
+    expect(columnStripCells(columns, { x: 100, y: stripTop - 1, zoom: 1 }, 1400, stripTop).length).toBeGreaterThan(0);
+  });
+
+  it('skips a column too narrow on screen to hold its label', () => {
+    const tiny = [col('tiny', 0, 800, 0, 1_000)];
+    expect(columnStripCells(tiny, fit, 1400, stripTop)).toEqual([]);
   });
 });
 

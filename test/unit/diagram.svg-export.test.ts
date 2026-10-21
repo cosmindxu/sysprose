@@ -204,8 +204,8 @@ describe('svgFromDiagram — column headers', () => {
   const withColumns = (): DiagramGraph => ({
     ...fixture(),
     columns: [
-      { id: 'c1', elementId: 'pkg1', label: 'OA & <SA>', x: 0, y: -40, w: 360, h: 32, fontSize: 18 },
-      { id: 'c2', elementId: 'pkg2', label: 'SurveillanceDroneSwarm', x: 400, y: -40, w: 48, h: 32, fontSize: 18 },
+      { id: 'c1', elementId: 'pkg1', label: 'OA & <SA>', x: 0, y: -40, w: 360, h: 32, bottom: 300, fontSize: 18 },
+      { id: 'c2', elementId: 'pkg2', label: 'SurveillanceDroneSwarm', x: 400, y: -40, w: 48, h: 32, bottom: 300, fontSize: 18 },
     ],
   });
 

@@ -72,6 +72,41 @@
   text-overflow: ellipsis;
 }
 
+/* The frozen strip along the canvas's top repeats those headers in screen space,
+ * at a fixed size (COLUMN_STRIP_LABEL_PX, COLUMN_STRIP_H in column-headers.ts), for the
+ * columns whose band a pan or a far zoom leaves off screen or too small to read.
+ * The boxes scroll beneath it; a click goes through to them. */
+.column-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22px; /* COLUMN_STRIP_H */
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 4;
+}
+.column-strip-cell {
+  position: absolute;
+  box-sizing: border-box;
+  height: 22px; /* COLUMN_STRIP_H */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg);
+  border-bottom: 2px solid var(--accent);
+  color: var(--text);
+  font-size: 12px; /* COLUMN_STRIP_LABEL_PX */
+  font-weight: 600;
+  line-height: 1;
+}
+.column-strip-cell > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Simulation: the currently-active state(s) pulse with a success-hued glow. */
 .react-flow__node.rf-sim-active {
   outline: 2px solid var(--dgm-green, #1a7f37);

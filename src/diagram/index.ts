@@ -57,7 +57,7 @@ export type {
 
 export { buildDiagram } from './build';
 export { layoutDiagram } from './layout';
-export { columnLabelSizeAt, columnLabelSizeFor } from './column-headers';
+export { columnLabelSizeAt, columnLabelSizeFor, columnStripCells } from './column-headers';
 
 // Pure, DOM-free SVG export of a laid-out DiagramGraph (de-facto graphical
 // interchange). Rasterised to PNG in the browser by the toolbar.

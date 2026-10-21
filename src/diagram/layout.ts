@@ -736,7 +736,7 @@ function columnHeads(
   partitionOf: ReadonlyMap<string, unknown>,
   piece: Piece,
   g: PieceGeometry,
-): { band: number; columns: DiagramColumn[] } | undefined {
+): { band: number; columns: Omit<DiagramColumn, 'bottom'>[] } | undefined {
   if (!partitions) return undefined;
   const boxes: { partition: number; x: number; w: number }[] = [];
   for (const id of piece.tops) {
@@ -820,7 +820,7 @@ export async function layoutDiagram(
     }
     for (const [id, pts] of g.routes) routes.set(id, pts.map((p) => ({ x: p.x + off.x, y: p.y + dy })));
     for (const [id, p] of g.labels) labels.set(id, { x: p.x + off.x, y: p.y + dy });
-    for (const c of head?.columns ?? []) columns.push({ ...c, x: c.x + off.x, y: off.y });
+    for (const c of head?.columns ?? []) columns.push({ ...c, x: c.x + off.x, y: off.y, bottom: dy + g.height });
   });
 
   const nodes: DiagramNode[] = graph.nodes.map((n) => {

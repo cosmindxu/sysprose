@@ -33,6 +33,13 @@ export const COLUMN_LABEL_PAD_EM = 0.4;
 /** A label too wide for its column is shrunk to no less than this share of its size, then cut. */
 const COLUMN_LABEL_FLOOR = 0.6;
 
+/** Height (screen px) of the frozen strip along the canvas top, which repeats the headers a pan or a far zoom leaves unreadable. */
+export const COLUMN_STRIP_H = 22;
+/** Size (screen px) of a strip label, whatever the zoom (`.column-strip-cell` in layout.css); at least 9 so it reads at the drone swarm's Fit. */
+export const COLUMN_STRIP_LABEL_PX = 12;
+/** A column narrower than this on screen (px) gets no strip label: it would be only an ellipsis. */
+export const COLUMN_STRIP_MIN_W = 28;
+
 /** One package's x-range within a piece. */
 export interface ColumnSpan {
   /** Index into `DiagramGraph.partitions`. */
@@ -100,4 +107,45 @@ export function fitColumnLabel(text: string, maxWidth: number, fontSize: number)
   let cut = text.length;
   while (cut > 1 && width(`${text.slice(0, cut)}…`) > maxWidth) cut -= 1;
   return `${text.slice(0, cut)}…`;
+}
+
+/** One header of the frozen strip, in screen px: `left` and `width` from the canvas's left edge, `top` from the strip's top. */
+export interface ColumnStripCell {
+  id: string;
+  elementId: string;
+  label: string;
+  left: number;
+  width: number;
+  top: number;
+}
+
+/**
+ * The headers the frozen strip shows for a viewport (`x`, `y`, `zoom` as React
+ * Flow keeps them) on a canvas `canvasWidth` px wide, the strip starting
+ * `stripTop` px below the canvas's top. A header is in the strip while its piece
+ * reaches the strip's rows, clamped to that piece: it stays at the strip's top
+ * as the piece runs beneath it and leaves upward with the piece's bottom edge.
+ * Its x-range is the column's, clipped to the canvas. A header whose own band
+ * is on screen below the strip and tall enough to read ({@link COLUMN_STRIP_H})
+ * is left to the band; so is a column too narrow on screen for a label.
+ */
+export function columnStripCells(
+  columns: readonly DiagramColumn[],
+  view: { x: number; y: number; zoom: number },
+  canvasWidth: number,
+  stripTop: number,
+): ColumnStripCell[] {
+  const cells: ColumnStripCell[] = [];
+  for (const c of columns) {
+    const pieceTop = c.y * view.zoom + view.y;
+    const pieceBottom = c.bottom * view.zoom + view.y;
+    if (pieceTop >= stripTop + COLUMN_STRIP_H || pieceBottom <= stripTop) continue;
+    if (pieceTop >= stripTop && c.h * view.zoom >= COLUMN_STRIP_H) continue;
+    const left = Math.max(0, c.x * view.zoom + view.x);
+    const right = Math.min(canvasWidth, (c.x + c.w) * view.zoom + view.x);
+    if (right - left < COLUMN_STRIP_MIN_W) continue;
+    const top = Math.min(Math.max(pieceTop, stripTop), pieceBottom - COLUMN_STRIP_H) - stripTop;
+    cells.push({ id: c.id, elementId: c.elementId, label: c.label, left, width: right - left, top });
+  }
+  return cells;
 }
