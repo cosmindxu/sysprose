@@ -2262,11 +2262,18 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
  * read there, where a name it reads is a feature a binding joins that the
  * context redefines under a name of its own (R38's `q2 : Q { attribute ld :>>
  * load; }` for Q's `c { load <= 5.0 }` over Q's `bind load = L`): this tool
- * does not read what the binding gives the renamed feature — or `undefined`.
+ * does not read what the binding gives the renamed feature — with that
+ * renamed feature, where the row's finding points — or `undefined`.
  * The row said "a referenced value is unknown", which named nothing an
  * author could act on.
  */
-function renamedIn(model: Model, pass: ScalarPass, ownerId: ElementId, contextId: ElementId, names: readonly string[]): string | undefined {
+function renamedIn(
+  model: Model,
+  pass: ScalarPass,
+  ownerId: ElementId,
+  contextId: ElementId,
+  names: readonly string[],
+): { sentence: string; member: ElementRecord } | undefined {
   const there = pass.definitions.denote(contextId);
   const here = pass.definitions.denote(ownerId);
   for (const n of names) {
@@ -2276,11 +2283,11 @@ function renamedIn(model: Model, pass: ScalarPass, ownerId: ElementId, contextId
     if (!f || !g || g.id === f.id || effectiveNameOf(model, g) === head) continue;
     if (!redefinedClosure(model, g).some((r) => r.id === f.id) || ![...joinedTo(model, f.id)].some((id) => id !== f.id)) continue;
     const name = effectiveNameOf(model, g) ?? g.id;
-    return (
+    const sentence =
       `${pass.definitions.contextName(contextId)} redefines the bound \`${head}\` under a name of its own (\`${name} :>> ${head}\`), ` +
       `and this tool does not read what a binding gives a feature so renamed, so ${effectiveQualifiedName(model, ownerId)}'s ` +
-      `\`${n}\` is not read there`
-    );
+      `\`${n}\` is not read there`;
+    return { sentence, member: g };
   }
   return undefined;
 }
@@ -2359,7 +2366,11 @@ function readInContexts(
     // relation reads through a binding of its owner — h2c's and k2's `Q::c in
     // q` (q's L, Q's `bind p.load = L`), M7's `Q::c in q2` (q2's K, through the
     // bound L). It is `constraint-by-instance`'s, at the instance's own line.
-    const carried = above !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
+    // So is one that renames the bound end the relation reads (R38's `ld :>>
+    // load`), whose row the binding's value is unread in ({@link renamedIn}):
+    // routed as a target's, mbse-workflow reported it and never blocked on it.
+    const renamed = renamedIn(model, pass, owner, x.id, bodyNames);
+    const carried = above !== undefined || renamed !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
     const readAs = carried ? pass.definitions.instanceNameOf(x.id) : undefined;
     const here =
       !cap && !via && pass.definitions.readsBoundOnly(el, names, x.id)
@@ -2375,9 +2386,8 @@ function readInContexts(
       ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false, ...(cap ? { abstention: 'past-cap' as const } : {}) }
       : judgeConstraint(model, reading, expr, pass);
     // Unread where the context renames a bound feature the relation reads: said so.
-    if (judged.result === 'unknown' && why === undefined && judged.abstention === undefined) {
-      const renamed = renamedIn(model, pass, owner, x.id, bodyNames);
-      if (renamed !== undefined) judged = { ...judged, message: `Could not evaluate: ${renamed}` };
+    if (judged.result === 'unknown' && why === undefined && judged.abstention === undefined && renamed !== undefined) {
+      judged = { ...judged, message: `Could not evaluate: ${renamed.sentence}` };
     }
     const ids = pass.definitions.scope(x.id, 'all');
     const scope = combinedScope(model, reading, pass);
@@ -2409,7 +2419,13 @@ function readInContexts(
     });
     const satisfied = pass.definitions.satisfaction(x.id);
     const contextName = effectiveNameOf(model, satisfied?.satisfier ?? x) ?? nameOf(satisfied?.satisfier ?? x);
-    const anchor = readAs !== undefined ? instanceAnchor(model, pass.definitions, readAs, names, judged.reads, undefined, x.id) : undefined;
+    // The renamed end, for a row it leaves unread: the line an author edits.
+    const anchor =
+      readAs === undefined
+        ? undefined
+        : renamed !== undefined && judged.result === 'unknown'
+          ? renamed.member.id
+          : instanceAnchor(model, pass.definitions, readAs, names, judged.reads, undefined, x.id);
     instances.push({
       contextId: x.id,
       context: contextName,

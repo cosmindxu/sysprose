@@ -918,7 +918,11 @@ neither, and the solve takes neither as a freedom) — in a usage typed by both
 states no value (`attribute :>> L;`) as through the copy; two literal bindings
 that differ are a contradiction reported at C, or at the usage that is itself
 the diamond. One `=` and one `default` (Q2's `L = 50.0`, Q3's `L default =
-60.0`) are no contradiction, and are read nowhere either.
+60.0`) are no contradiction, and are read nowhere either. Nor are two values that
+agree (Q2's and Q3's `L = 50.0`) read through such a copy or valueless
+redefinition: it redefines neither, so the `default` the binding joins gives way
+to them, and q's L and q's p's load are *could not be evaluated*; without the
+copy (`part t : Q2, Q3;`) t's L is 50.
 
 **A binding overrides a `default` as a redefinition does.** `bind p.m = M` in
 `part def Q`, over P's `attribute m default = 18.5 [kg]`, makes p's m Q's M in
@@ -1115,10 +1119,12 @@ lacks, so are those that read what the value names (top's a, which has pp's
 it names, in each instance at that instance's own: W's `ref part pp : T0 =
 top.a`, read in w, is w's top's a. A relation W writes is read anew in an
 instance that rebinds a reference on what it reads, or renames a part on its
-path — directly, or through a value of W's it reads — at what that instance's
-own reaches: w's `ref part :>> top = t50` makes W's `pp.load`, `top.a.load` and
-an `attribute m = pp.load` t50's a's load there, and w's `part top2 redefines
-top { … }` makes `pp.load` w's top2's a's. A value read in w that names the
+path — directly, or through a value or a binding of W's it reads, however long
+the chain of values — at what that instance's own reaches: w's `ref part :>> top
+= t50` makes W's `pp.load`, `top.a.load`, an `attribute m = pp.load` and an
+`attribute m; bind m = pp.load;` t50's a's load there (50, where t50's binding
+gives it its L), and w's `part top2 redefines top { … }` makes `pp.load` w's
+top2's a's. A value read in w that names the
 renamed part by the name W gives it (`m = pp.load` over `pp = top.a`) is
 *could not be evaluated* there — a limit of this tool. A reference a usage
 nested in W writes is read in each instance of W a path reaches it through
@@ -1133,7 +1139,9 @@ there as above (Q's `part p : P { ref part :>> r = s; }` beside Q's `bind
 p.load = L`). A reference redefinition that states no value (`ref part :>>
 r;` in w, over W's `ref part r : T0 = x`) is read as a fresh instance of its
 type, never as what `x` names, so every row read through it is *could not be
-evaluated* too — a limit of this tool. Through either kind, `bounds` claims no
+evaluated* too — a limit of this tool; so is the copy a binding's end written in
+w makes of W's valued reference (w's `bind m = pp.load` over W's `ref part pp :
+T0 = top.a`), and every row read through it (`w.m`). Through either kind, `bounds` claims no
 bound of a measure (`w.sub.m`, `w.r.load`). One redefined over a reference written
 with `=` (`ref part :>> r1 = p2` in w, over W's `ref part r1 = p1`) states a
 second value, and a row read through it is *could not be evaluated*. A
@@ -1144,11 +1152,12 @@ that redefines such an input (Q's `c { load <= 5.0 }` over `bind load = L`,
 read in `q2 : Q { attribute :>> K = 25.0; }`) is read at that context's own
 instance, on every surface: q2's load is 50. Where another member the binding
 joins states a value of its own there (`load = 1.0` beside it), q2's load would
-be 1 and 50, and that reading is *could not be evaluated*. So is a context that
-sets the input by an asserted equation instead (`q2 : Q { assert constraint { K
-== 25.0 } }`, or a package's `assert constraint { q2.K == 25.0 }`): q2's load is
-50 there too; one that redefines the bound feature under a name of its own
-(`attribute ld :>> load`) has its row, *could not be evaluated* (below). A usage that redefines a part
+be 1 and 50, and that reading is *could not be evaluated*. A context that sets
+the input by an asserted equation instead (`q2 : Q { assert constraint { K ==
+25.0 } }`, or a package's `assert constraint { q2.K == 25.0 }`) is read at its
+own instance too: q2's load is 50 there, and `c` is violated. One that redefines
+the bound feature under a name of its own (`attribute ld :>> load`) has its row,
+*could not be evaluated* (below). A usage that redefines a part
 on the path and changes another input of a value Q reads through it is read
 there too, though Q reads that value in its own p already (Q's `c { p.m2 >= 0.0
 }` over P's `m2 = 10.0 - load - extra` and Q's `bind p.load = L`, in `q2 : Q {
@@ -1194,7 +1203,8 @@ value a binding of the definition carries into what the relation reads (`q : Q {
 attribute :>> L = 50.0; }` over Q's `bind p.load = L`, for Q's `constraint c {
 p.m2 >= 0.0 }`), is that instance's reading: a
 `validation/constraint-by-instance` finding at the member of the context stating
-the carried value (q's `:>> L`), else at the context itself, never a target's
+the carried value (q's `:>> L`) or renaming the bound end (q2's `ld :>> load`),
+else at the context itself, never a target's
 `validation/target-by-specialisation` verdict. A per-instance reading that fails
 inside the tool makes the row it was read for *could not be evaluated*, in a
 sentence naming the failure (`… the per-instance reading failed (RangeError);
@@ -1203,9 +1213,10 @@ row and finding stands — on the verify lane too, where the goal row is refused
 that sentence. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
 sentence; one while it lists the asserted equations over a `default` it does not
-read leaves every row *could not be evaluated* (*… could not be listed: the
-reading failed (RangeError); reported, not dropped*), since which rows they reach
-is then unknown — and every other rule's findings stand. A value a binding carries is read in the unit
+read, or the satisfactions, subjects and references an instance reads otherwise,
+leaves every row *could not be evaluated* (*… could not be listed: the reading
+failed (RangeError); reported, not dropped*), since which rows they reach is
+then unknown — and every other rule's findings stand. A value a binding carries is read in the unit
 the feature it fills declares — the copy `bind p.load = L` makes of P's `load`
 included — and compared as the quantity it is: q1's `L = 20.0 [kg]` is 20 kg
 against P's `cap = 10000.0 [g]` (violated, on every surface), q2's `L = 5000.0
@@ -1289,9 +1300,13 @@ Where the definition's body holds an equation — alone, or in a conjunction (`a
 == 50.0 and a >= 0.0`) — what it may define is read nowhere: every feature a
 name in it reads — each value it gives a parameter, bare or dotted (`in a =
 p.load`), and each feature it binds one to (`bind a = L;`), resolved where the
-assert is written, in a definition, a usage or a package, and each name the
-body, or a value the definition gives a parameter, reads that is no parameter —
-with what that feature redefines and what redefines it. A `default` among them
+assert is written, in a definition, a usage or a package — or in a constraint
+usage the assert specialises (`assert constraint ea :> e0;` over `constraint e0 :
+Eq { in a = p.load; }`) — and each name the body, or a value the definition gives
+a parameter, reads: one that is no parameter, and one read through a parameter as
+what the parameter is given (`x.load` over `in x = p`, or `bind x = p`, is p's
+load; where the rest of the name is nothing of p's, every feature below p) — with
+what that feature redefines and what redefines it. A `default` among them
 gives way, by feature, in every instance (an assert written in `part q : Q`
 leaves Q's own rows *could not be evaluated* too), one with no value is no
 design freedom to the numeric surface, which solves no relation over it as a

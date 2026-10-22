@@ -308,6 +308,8 @@ export class DefiningEquations {
   /** {@link inheritedClashes} per context. */
   private readonly inherited = new Map<ElementId, Map<string, NameClash>>();
   private reportedClashes?: ReadonlyArray<{ context: ElementRecord; name: string; clash: NameClash }>;
+  /** The user's binding connectors by the feature an end is, or copies ({@link boundPathsOf}). */
+  private boundEnds?: Map<ElementId, Array<{ binding: ElementRecord; other: ElementId }>>;
   /** The {@link sameIn} questions being asked, and whether one was answered by a guess meanwhile. */
   private readonly asking = new Set<string>();
   private guessed = false;
@@ -2300,7 +2302,7 @@ export class DefiningEquations {
       const own = this.byName(contextId);
       const transparent = (f: ElementRecord): boolean => f.ownerId === contextId && statesNothing(this.model, f);
       if ([...own.values()].some(transparent)) {
-        for (const [name, clash] of this.clashesOf(contextId, transparent)) {
+        for (const [name, clash] of this.clashesOf(contextId, transparent, true)) {
           const mine = own.get(name);
           if (out.has(name) || mine === undefined || mine === clash.kept || !transparent(mine)) continue;
           out.set(name, { ...clash, kept: mine });
@@ -2322,13 +2324,22 @@ export class DefiningEquations {
     return out;
   }
 
-  /** {@link inheritedClashes}, worked out — with the own features `transparent` says state nothing set aside. */
-  private clashesOf(contextId: ElementId, transparent?: (f: ElementRecord) => boolean): Map<string, NameClash> {
+  /**
+   * {@link inheritedClashes}, worked out — with the own features `transparent`
+   * says state nothing set aside. With `agreeing`, two values that are the
+   * same are a clash too (`same`), where no other pair differs: ME6's `part s
+   * : Q2, Q3 { bind p.load = L; }` over Q2's and Q3's `L = 50.0`, whose copy
+   * redefines Q's declared L and reads neither 50 — so P's `load default =
+   * 1.0` stood for s's p's load on every surface (`s.p.load == 50.0`
+   * refuted). The copy gives way to them ({@link endValue}), and is read nowhere.
+   */
+  private clashesOf(contextId: ElementId, transparent?: (f: ElementRecord) => boolean, agreeing = false): Map<string, NameClash> {
     const out = new Map<string, NameClash>();
     for (const [name, [kept, ...others]] of inheritedNameClashes(this.model, contextId, transparent)) {
       const rk = valueSourceOf(this.model, kept!);
       if (!rk) continue;
       const keptOwner = kept!.ownerId;
+      let agreed: NameClash | undefined;
       for (const other of others) {
         // The kept feature's owner specialises the other's: it masks it, as
         // a feature masks one by name ({@link contradictedBindingOf}).
@@ -2342,7 +2353,10 @@ export class DefiningEquations {
         const ro = valueSourceOf(this.model, other);
         if (!ro || ro === rk || redefinedClosure(this.model, rk).includes(ro)) continue;
         const compared = compareWrittenValues(rk, ro);
-        if (compared === 'same') continue;
+        if (compared === 'same') {
+          if (agreeing) agreed ??= { kept: kept!, other, keptValue: rk, otherValue: ro, contradiction: false, decided: false, same: true };
+          continue;
+        }
         const independent = !redefinedClosure(this.model, ro).includes(rk);
         const contradiction = independent && rk.attrs.defaultValue !== true && ro.attrs.defaultValue !== true;
         out.set(name, {
@@ -2355,6 +2369,7 @@ export class DefiningEquations {
         });
         break;
       }
+      if (agreed !== undefined && !out.has(name)) out.set(name, agreed);
     }
     return out;
   }
@@ -2922,6 +2937,11 @@ export class DefiningEquations {
     const there: string[] = [];
     this.readsLandIn(mine, own, new Set(), 0);
     this.readsLandIn(theirs, there, new Set(), 0);
+    // Past the cap neither side is known: the context is listed, its row read
+    // in its own instance as a shorter chain's is. Alike, the two marks hid a
+    // reference w rebinds at the end of a 16-link chain (rbd16n's `m0 = m1;
+    // … m16 = pp.load`), and W's own row (1) stood for w's (50).
+    if (own.includes(LANDS_CAP) || there.includes(LANDS_CAP)) return LANDS_CAP;
     // The context's side re-rooted too where it is not already below the
     // context's own instance: a link the walk resolves at the owner's own
     // instance either way (a reference valued with a feature around it, {@link
@@ -2931,8 +2951,16 @@ export class DefiningEquations {
     // and re-rooted again it was another.
     for (let i = 0; i < Math.max(own.length, there.length); i++) {
       const inst = there[i] ?? '';
-      const theirs = inst === here || inst.startsWith(`${here}::`) ? inst : rebaseInstance(this, ownerId, here, inst);
+      const below = inst === here || inst.startsWith(`${here}::`);
+      const theirs = below ? inst : rebaseInstance(this, ownerId, here, inst);
       if (own[i] !== undefined && rebaseInstance(this, ownerId, here, own[i]!) === theirs) continue;
+      // A link the context alone reads — through a binding its own type
+      // writes on the name, as QB's `bind p.load = L` on AM's q0's L — that
+      // lands in the context's own instance is that instance's, read per
+      // instance by the binding's own rule ({@link bindingReadingIn}); no
+      // reference lands it elsewhere. Listed, it filed a row QB's stood for,
+      // and the SMT engine claimed no proof beside its refused axiom.
+      if (own[i] === undefined && below) continue;
       return inst.startsWith(`${here}::`) ? inst.slice(here.length) : inst;
     }
     return undefined;
@@ -2941,35 +2969,42 @@ export class DefiningEquations {
   /**
    * The instances a reading of `d` lands in ({@link landsElsewhere}), in
    * order: its own, then — where the value it reads ({@link carrier}) is
-   * stated as an expression — each instance a name of that value lands in,
-   * read where `d` is read and re-rooted at `d`'s instance, transitively.
+   * stated as an expression, or a binding written where that feature is, or
+   * where `d` is read, joins it to a path ({@link boundPathsOf}) — each
+   * instance a name of that value, or that path, lands in, read where `d` is
+   * read and re-rooted at `d`'s instance, transitively. RBB1's `attribute m;
+   * bind m = pp.load;` is m read through `pp.load` as RB9's `m = pp.load` is:
+   * followed by its stated value alone, w (whose `ref part :>> top = t50`
+   * makes it 50) was not listed, and W's own reading (1) stood for w's.
    * Only a name whose first link is a feature of both `d`'s reader and the
-   * element the value is written in — the same feature, or the reader's
-   * redefinition of it — is followed: one resolved outward of either is
-   * spelled at the outer element's own instance, which re-roots at no
-   * instance of it (LexU's `pl` for Q's p, read in q0), and one only the
+   * element the value (or the binding) is written in — the same feature, or
+   * the reader's redefinition of it — is followed: one resolved outward of
+   * either is spelled at the outer element's own instance, which re-roots at
+   * no instance of it (LexU's `pl` for Q's p, read in q0), and one only the
    * reader resolves is a feature the value does not name (DY1's q's p's own
    * `L`, where the `load = L` Q's p writes names Q's). Each such name, as one
    * that resolves nowhere, lands in nothing (`?name`), alike either way, and
    * the rule for names read outward stands ({@link standsIn}); past
-   * `MAX_LANDS_DEPTH` links the reading ends in a mark of its own, alike
-   * either way too.
+   * `MAX_LANDS_DEPTH` links the reading ends in a mark of its own, which
+   * lists the context ({@link landsElsewhere}).
    */
   private readsLandIn(d: Denotation, out: string[], seen: Set<string>, depth: number): void {
     out.push(d.instance);
     const target = this.carrier(d.reader, d.feature);
-    const value = this.statedValue(target);
-    if (typeof value !== 'string' || target.ownerId == null) return;
+    if (target.ownerId == null) return;
+    const links: Array<{ name: string; writtenIn: ElementId }> = this.valueNamesOf(target).map((name) => ({ name, writtenIn: target.ownerId! }));
+    links.push(...this.boundPathsOf(target, d.reader));
+    if (links.length === 0) return;
     const key = `${d.reader} ${target.id}`;
     if (seen.has(key)) return;
     if (depth >= MAX_LANDS_DEPTH) {
-      out.push('…');
+      out.push(LANDS_CAP);
       return;
     }
     seen.add(key);
     const scope = this.denote(d.reader);
-    const written = this.denote(target.ownerId);
-    for (const v of this.valueNamesOf(target)) {
+    for (const { name: v, writtenIn } of links) {
+      const written = this.denote(writtenIn);
       const head = v.split('.')[0]!;
       const mine = scope.get(head);
       const theirs = written.get(head);
@@ -2979,7 +3014,7 @@ export class DefiningEquations {
         continue;
       }
       const dv =
-        mine && theirs && mine.reader === d.reader && theirs.reader === target.ownerId &&
+        mine && theirs && mine.reader === d.reader && theirs.reader === writtenIn &&
         (mine.feature === theirs.feature || redefinedClosure(this.model, mine.feature).some((g) => g.id === theirs.feature.id))
           ? scope.get(v)
           : undefined;
@@ -2987,6 +3022,45 @@ export class DefiningEquations {
       else out.push(`?${v}`);
     }
     seen.delete(key);
+  }
+
+  /**
+   * The paths the user's binding connectors written in `f`'s owner, or in
+   * `reader`, join `f` to — an end that is `f`, or an implicit copy of it —
+   * each the other end's path below the element the binding is written in
+   * ({@link bindingEndPath}): RBB1's `bind m = pp.load` gives W's m `pp.load`,
+   * written in W. For {@link readsLandIn}, which follows each as a name of a
+   * value `f` reads.
+   */
+  private boundPathsOf(f: ElementRecord, reader: ElementId): Array<{ name: string; writtenIn: ElementId }> {
+    if (!hasUserBindings(this.model)) return [];
+    if (!this.boundEnds) {
+      const index = new Map<ElementId, Array<{ binding: ElementRecord; other: ElementId }>>();
+      for (const b of this.model.all()) {
+        if (b.attrs.isLibrary === true || b.ownerId == null || !isBindingConnector(b)) continue;
+        const ends = [b.source?.[0], b.target?.[0]];
+        for (let i = 0; i < 2; i++) {
+          const end = ends[i] !== undefined ? this.model.get(ends[i]!) : undefined;
+          const other = ends[1 - i];
+          if (!end || other === undefined) continue;
+          const keys = [end.id, ...(end.attrs.implicit === true ? redefinedClosure(this.model, end).map((g) => g.id) : [])];
+          for (const k of keys) {
+            const list = index.get(k);
+            if (list) list.push({ binding: b, other });
+            else index.set(k, [{ binding: b, other }]);
+          }
+        }
+      }
+      this.boundEnds = index;
+    }
+    const out: Array<{ name: string; writtenIn: ElementId }> = [];
+    for (const { binding, other } of this.boundEnds.get(f.id) ?? []) {
+      const at = binding.ownerId!;
+      if (at !== f.ownerId && at !== reader) continue;
+      const name = bindingEndPath(this.model, other, at);
+      if (name !== undefined && !out.some((x) => x.name === name && x.writtenIn === at)) out.push({ name, writtenIn: at });
+    }
+    return out;
   }
 
   /** The names `f`'s stated value reads ({@link namesOfValue}), once per feature. */
@@ -3654,8 +3728,15 @@ const MAX_BINDING_FRAMES = 4096;
 /** Past this many usages on a context's path below where a binding is written, the context is not read. */
 const MAX_BINDING_SEGMENTS = 32;
 
-/** Past this many values read through one another, a name's reading is compared no further ({@link DefiningEquations.landsElsewhere}). */
+/**
+ * Past this many values read through one another, a name's reading is followed
+ * no further ({@link DefiningEquations.landsElsewhere}): it ends in
+ * {@link LANDS_CAP}, and the context is listed.
+ */
 const MAX_LANDS_DEPTH = 16;
+
+/** The mark a reading followed past {@link MAX_LANDS_DEPTH} ends in, and the answer it lists a context with. */
+const LANDS_CAP = '…';
 
 function bindingEnds(model: Model): BindingEnds {
   const hit = BINDING_ENDS.get(model);
@@ -4377,7 +4458,7 @@ function readsTainted(
  * refuses then abstains as `internal`: the reading failed.
  */
 export function equatedPartsFailed(model: Model): boolean {
-  return equatedParts(model).failed !== undefined;
+  return equatedParts(model).failed !== undefined || satisfierTaint(model).failed !== undefined;
 }
 
 /**
@@ -4431,14 +4512,47 @@ export function equatedPartsRefusal(
  * instance row re-resolves a reference in its own instance, and abstains
  * where that lands elsewhere ({@link instanceReadsOtherwise}).
  */
-const SATISFIERS_OTHERWISE = new WeakMap<
-  Model,
-  { rev: number; taint: ReadonlyMap<ElementId, ElementRecord>; grouped: ReadonlyMap<ElementId, ElementRecord>; why: ReadonlyMap<ElementId, ReadOtherwise> }
->();
+const SATISFIERS_OTHERWISE = new WeakMap<Model, SatisfiersOtherwise>();
 
-function satisfierTaint(model: Model): NonNullable<ReturnType<typeof SATISFIERS_OTHERWISE.get>> {
+/**
+ * {@link SATISFIERS_OTHERWISE}' entry. `failed` where building it threw
+ * (A.2.9): which rows read through one is then unknown, so every row {@link
+ * equatedPartsRefusal} is asked about abstains in that sentence, as `internal`
+ * ({@link equatedPartsFailed}) — never decided from an empty taint, and never
+ * a throw out of the check, which ended the load (`import/internal-error`, no
+ * model at all). Kept for the revision, as {@link equatedParts}' is.
+ */
+interface SatisfiersOtherwise {
+  rev: number;
+  taint: ReadonlyMap<ElementId, ElementRecord>;
+  grouped: ReadonlyMap<ElementId, ElementRecord>;
+  why: ReadonlyMap<ElementId, ReadOtherwise>;
+  failed?: string;
+}
+
+function satisfierTaint(model: Model): SatisfiersOtherwise {
   const hit = SATISFIERS_OTHERWISE.get(model);
   if (hit && hit.rev === model.rev) return hit;
+  let fresh: SatisfiersOtherwise;
+  try {
+    fresh = instanceIndexSeam.satisfiersOtherwise(model);
+  } catch (e) {
+    fresh = {
+      rev: model.rev,
+      taint: new Map(),
+      grouped: new Map(),
+      why: new Map(),
+      failed:
+        'the satisfactions, subjects and references an instance reads otherwise could not be listed: the reading failed ' +
+        `(${e instanceof Error ? e.constructor.name : 'error'}); reported, not dropped`,
+    };
+  }
+  SATISFIERS_OTHERWISE.set(model, fresh);
+  return fresh;
+}
+
+/** {@link satisfierTaint}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. */
+function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
   const taint = new Map<ElementId, ElementRecord>();
   const why = new Map<ElementId, ReadOtherwise>();
   const subjects = model.all().filter(
@@ -4482,14 +4596,18 @@ function satisfierTaint(model: Model): NonNullable<ReturnType<typeof SATISFIERS_
   // redefines (`ref part :>> r;` in `w : W` over W's `ref part r : T0 = x`):
   // the walk reads it as a fresh instance of its type, never as what `x`
   // names, so `W::c { r.load <= 5.0 }` read in w and `w.r.load` read T0's
-  // default where w's x is 50 — true on all four surfaces.
+  // default where w's x is 50 — true on all four surfaces. So is the copy a
+  // binding's end makes of a valued reference (w's `bind m = pp.load` over W's
+  // `ref part pp : T0 = top.a`): `w.m` read T0's default 1 where w's `ref part
+  // :>> top = t50` makes it 50, on all four surfaces since before the branch.
   for (const s of model.ofKind('Redefinition')) {
     const source = s.source?.[0] !== undefined ? model.get(s.source[0]) : undefined;
-    if (!source || taint.has(source.id) || source.attrs.isRef !== true || source.attrs.isLibrary === true) continue;
-    if (source.attrs.implicit === true || source.ownerId == null || source.attrs.value !== undefined) continue;
+    if (!source || taint.has(source.id) || source.attrs.isLibrary === true) continue;
+    const copy = source.attrs.implicit === true;
+    if ((!copy && source.attrs.isRef !== true) || source.ownerId == null || source.attrs.value !== undefined) continue;
     const valued = redefinedClosure(model, source).find((g) => typeof g.attrs.value === 'string');
     const scope = model.get(source.ownerId);
-    if (!valued || !scope) continue;
+    if (!valued || !scope || (copy && valued.attrs.isRef !== true)) continue;
     taint.set(source.id, source);
     why.set(source.id, { kind: 'valueless', written: source, scope, path: String(valued.attrs.value).trim(), instance: undefined, redefined: valued });
   }
@@ -4532,9 +4650,7 @@ function satisfierTaint(model: Model): NonNullable<ReturnType<typeof SATISFIERS_
   }
   // Only a reference itself is left to a group's own re-resolution: what reads through it is not.
   const grouped = new Map([...taint].filter(([id, source]) => !(id === source.id && why.get(id)?.kind === 'reference')));
-  const fresh = { rev: model.rev, taint, grouped, why };
-  SATISFIERS_OTHERWISE.set(model, fresh);
-  return fresh;
+  return { rev: model.rev, taint, grouped, why };
 }
 
 /** {@link equatedPartsRefusal} for a row read in, or through, what {@link satisfierTaint} holds. */
@@ -4544,7 +4660,8 @@ function satisfierRefusal(
   expression: string,
   at?: { contextId: ElementId; path?: string },
 ): string | undefined {
-  const { taint: all, grouped, why } = satisfierTaint(model);
+  const { taint: all, grouped, why, failed } = satisfierTaint(model);
+  if (failed !== undefined) return relationNamesOf(expression).length > 0 ? `${failed}, so no relation that may read one is read` : undefined;
   if (all.size === 0) return undefined;
   // A row of an expanded group — an instance's (`at.path`), or the usage's own, beside which every other
   // instance is a row of its own — reads a reference in its own instance ({@link instanceGroups}).
@@ -4623,7 +4740,8 @@ export function equatedPartsMeasureRefusal(
 
 /** {@link equatedPartsMeasureRefusal} for a measure read through what {@link satisfierTaint} holds. */
 function satisfierMeasureRefusal(model: Model, featureId: ElementId, symbol: string, spelled?: string): string | undefined {
-  const { taint, why } = satisfierTaint(model);
+  const { taint, why, failed } = satisfierTaint(model);
+  if (failed !== undefined) return `${failed}, so no bound of a value read through one is claimed`;
   if (taint.size === 0) return undefined;
   let b = taintedAt(model, taint, model.get(featureId));
   if (!b && spelled !== undefined && spelled.includes('.') && VALUE_PATH.test(spelled)) {
@@ -4679,7 +4797,11 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   if (s.kind === 'valueless') {
     const name = effectiveNameOf(model, s.written) ?? s.written.id;
     const redefined = s.redefined ? effectiveQualifiedName(model, s.redefined.id) : 'a valued reference';
-    return `\`${name}\` in ${where} redefines ${redefined} (\`= ${s.path}\`) and states no value of its own: this tool reads it as a fresh instance of its type, never as what \`${s.path}\` names${so('no relation that reads through it')}`;
+    const what =
+      s.written.attrs.implicit === true
+        ? `the copy of ${redefined} (\`= ${s.path}\`) that a binding's end makes in ${where} as \`${name}\` states no value of its own`
+        : `\`${name}\` in ${where} redefines ${redefined} (\`= ${s.path}\`) and states no value of its own`;
+    return `${what}: this tool reads it as a fresh instance of its type, never as what \`${s.path}\` names${so('no relation that reads through it')}`;
   }
   const who = s.instance ? effectiveQualifiedName(model, s.instance.id) : `an instance of ${where}`;
   const tail = `is read at ${where}'s own values only, never in each instance of it, and ${who} reads`;
@@ -5721,35 +5843,80 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
       for (const segment of rest) h = h && featuresOf(h.id).get(segment);
       return h;
     };
+    // Every feature below `f`, for a body name read through a parameter whose
+    // value names `f` where the rest of the name resolves to nothing there.
+    const targetBelow = (f: ElementRecord, a: ElementRecord, seen = new Set<ElementId>()): void => {
+      if (seen.has(f.id) || seen.size > 4096) return;
+      seen.add(f.id);
+      for (const g of featuresOf(f.id).values()) {
+        target(g, a);
+        targetBelow(g, a, seen);
+      }
+    };
     for (const { a, types } of typedAsserts) {
-      // A feature of the assert's own, or of its definitions: a parameter.
-      const own = new Set([a.id, ...types.map((t) => t.id)]);
+      // Where its parameters are given values: the assert, and each constraint
+      // usage it specialises (`constraint e0 : Eq { in x = p.load; }` under
+      // `assert constraint ea :> e0;`), each resolved from its own owner.
+      const givers = [a, ...generalizationsOf(model, a.id).filter((g) => g.attrs.isLibrary !== true && isUsage(g.eClass) && g.ownerId != null)];
+      // A feature of the assert's own, of a usage it specialises, or of its definitions: a parameter.
+      const own = new Set([...givers.map((g) => g.id), ...types.map((t) => t.id)]);
       const parameter = (e: ElementRecord): boolean => {
         for (let cur: ElementRecord | undefined = e; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
           if (own.has(cur.id)) return true;
         }
         return false;
       };
-      for (const c of model.children(a.id)) {
-        // A parameter bound rather than valued (`bind a = L;`): the end outside it.
-        if (isBindingConnector(c)) {
-          for (const id of [c.source?.[0], c.target?.[0]]) {
-            const e = id !== undefined ? model.get(id) : undefined;
-            if (e && !parameter(e)) target(e, a);
+      // What each parameter is given, by its name: the feature a path value
+      // names, or a binding's end outside it — the nearest giver first.
+      const given = new Map<string, ElementRecord | null>();
+      const give = (name: string | undefined, f: ElementRecord | undefined): void => {
+        if (name !== undefined && !given.has(name)) given.set(name, f ?? null);
+      };
+      for (const g of givers) {
+        for (const c of model.children(g.id)) {
+          // A parameter bound rather than valued (`bind a = L;`): the end outside it.
+          if (isBindingConnector(c)) {
+            const ends = [c.source?.[0], c.target?.[0]].map((id) => (id !== undefined ? model.get(id) : undefined));
+            for (let i = 0; i < 2; i++) {
+              const e = ends[i];
+              if (!e || parameter(e)) continue;
+              target(e, a);
+              const p = ends[1 - i];
+              if (p && parameter(p)) give(effectiveNameOf(model, p), e);
+            }
+            continue;
           }
-          continue;
-        }
-        if (typeof c.attrs.value !== 'string') continue;
-        for (const n of namesOfValue(c.attrs.value)) {
-          const f = resolve(a.ownerId!, n);
-          if (f) target(f, a);
+          if (typeof c.attrs.value !== 'string') continue;
+          for (const n of namesOfValue(c.attrs.value)) {
+            const f = resolve(g.ownerId!, n);
+            if (f) target(f, a);
+          }
+          const path = c.attrs.value.trim();
+          give(effectiveNameOf(model, c), VALUE_PATH.test(path) ? resolve(g.ownerId!, path) : undefined);
         }
       }
       for (const t of types) {
         // Its body, and the values its definition gives its parameters itself (`in a = L;` in Eq).
+        for (const c of model.children(t.id)) {
+          const path = typeof c.attrs.value === 'string' ? c.attrs.value.trim() : undefined;
+          if (path !== undefined) give(effectiveNameOf(model, c), VALUE_PATH.test(path) ? resolve(t.id, path) : undefined);
+        }
         const values = model.children(t.id).flatMap((c) => (typeof c.attrs.value === 'string' ? namesOfValue(c.attrs.value) : []));
         for (const n of [...relationNamesOf(String(t.attrs.expression)), ...values]) {
-          if (featuresOf(t.id).has(n.split('.')[0]!)) continue;
+          const [head, ...rest] = n.split('.');
+          if (featuresOf(t.id).has(head!)) {
+            // A name read through a parameter (`x.load` over `in x = p`) reads
+            // what the parameter is given: p's load. Where that rest names
+            // nothing there, or the value is no path, every feature below it.
+            if (rest.length === 0 || !given.has(head!)) continue;
+            const p = given.get(head!);
+            if (!p) continue;
+            let f: ElementRecord | undefined = p;
+            for (const segment of rest) f = f && featuresOf(f.id).get(segment);
+            if (f) target(f, a);
+            else targetBelow(p, a);
+            continue;
+          }
           const f = resolve(t.id, n);
           if (f) target(f, a);
         }
@@ -8569,6 +8736,14 @@ function standingDefaultOf(
     const v = endValue(model, f, rootEl, path);
     if (v.kind === 'value') return undefined;
     if (v.kind !== 'default') continue;
+    // A member read through a reference lands where the reference stands: w's
+    // `pp.load`, over W's `ref part pp : T0 = top.a` and w's `ref part :>> top
+    // = t50`, is t50's a's load, which T1's `bind a.load = L` makes 50. Its
+    // default is that instance's to keep or give way, which no path below
+    // `root` reads, so none stands here: the binding's own row carries the
+    // value from where it lands. Stood, w's m was T0's 1 beside that row's 50,
+    // and the solver lane's axioms contradicted on a consistent model (RBB1).
+    if (landsAway(definitions, root, path)) return undefined;
     const literal = v.source.attrs.value;
     if (typeof literal !== 'number' && typeof literal !== 'boolean') return undefined;
     if (first === undefined) {
@@ -8578,6 +8753,20 @@ function standingDefaultOf(
     if (!sameConstant(first.source, v.source)) return undefined;
   }
   return first;
+}
+
+/**
+ * Does the member at `path` in the binding reading rooted at `rootId` land in
+ * an instance other than the one its path spells ({@link standingDefaultOf})
+ * — read through a reference, which the walk resolves where it stands
+ * ({@link Denotation}'s `instance`)?
+ */
+function landsAway(definitions: DefiningEquations, rootId: ElementId, path: string): boolean {
+  if (path.startsWith('#') || !path.includes('.')) return false;
+  const d = definitions.denote(rootId).get(path);
+  const spelled = heldInstance(definitions, rootId, path);
+  if (!d || spelled === undefined) return false;
+  return `${d.instance}::${path.slice(path.lastIndexOf('.') + 1)}` !== spelled;
 }
 
 /**
@@ -9393,14 +9582,16 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
 /**
  * The calls the instance index makes to itself where a throw is contained
  * (A.2.9) — inside {@link instanceGroups} (a usage's sites, and the asserted
- * equations the coverage guard reads, {@link readFeatures}) and in {@link
- * equatedParts} (the asserted equations no surface reads) — made through this
+ * equations the coverage guard reads, {@link readFeatures}), in {@link
+ * equatedParts} (the asserted equations no surface reads) and in {@link
+ * satisfierTaint} (what an instance reads otherwise) — made through this
  * object, never directly: the seam a test makes one of them throw through
  * (`vi.spyOn`), since a module-level stub reaches only the calls another
  * module makes. Each is the function it names; nothing else changes them.
  */
 export const instanceIndexSeam = {
   enclosingAsserts: (model: Model): EnclosingAsserts => enclosingAsserts(model),
+  satisfiersOtherwise: (model: Model): SatisfiersOtherwise => satisfiersOtherwise(model),
   assertHeldInSome: (model: Model, f: ElementRecord): boolean => assertHeldInSome(model, f),
   instanceSitesOf: (definitions: DefiningEquations, usage: ElementRecord): ReturnType<typeof instanceSitesOf> =>
     instanceSitesOf(definitions, usage),
@@ -9801,6 +9992,13 @@ export interface NameClash {
    * contradiction, and `other` is that feature.
    */
   shadow?: { writer: ElementRecord; general: ElementRecord };
+  /**
+   * Set where the two values are the same, and the context's own feature of
+   * the name states nothing and redefines neither ({@link
+   * DefiningEquations.clashesIn}): never a contradiction, and read nowhere,
+   * since this tool does not read the agreed value through that feature.
+   */
+  same?: true;
 }
 
 /** The feature whose written value `f` reads: `f` itself, else the nearest it redefines that states one. */
@@ -9833,6 +10031,12 @@ export function clashSentence(model: Model, contextId: ElementId, clash: NameCla
     `${writtenName(model, clash.otherValue)} = ${writtenValue(clash.otherValue)} under the one name \`${name}\``;
   if (clash.decided) {
     return `${both}, both bindings every instance holds (values written with \`=\`), so the model states both values and neither is read`;
+  }
+  if (clash.same) {
+    return (
+      `${both}, which agree; but its own \`${name}\` states nothing (an implicit connector-end copy, or a redefinition with no ` +
+      'value) and redefines neither, and this tool does not read the value they agree on through it, so neither is read'
+    );
   }
   return `${both}, and which one an instance has is not decided by reading them, so neither is read`;
 }

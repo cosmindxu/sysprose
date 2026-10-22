@@ -5761,6 +5761,39 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'MI2::t50': ['?/?/?/?', 'T'],
       'MI2::t60': ['?/?/?/?', 'F'],
     }),
+    // Two general types that AGREE (Q2's and Q3's `L = 50.0`), under the copy a usage's binding makes: the copy
+    // redefines Q's declared L and neither 50, so P's `load default = 1.0` stood for s's p's load on all four
+    // surfaces (ME6's s50 and sl50 F, ME9's S::p and s::p rows T where m2 is −40), at 3c54ae0 too, until the
+    // branch review. The agreeing pair is a clash of its own now: the default gives way, and the name is read
+    // nowhere through the copy. ME9's own, Q's, Q2's and Q3's rows keep their check, literal and numeric T; the
+    // SMT engine claims no proof beside the two refused instance axioms of m2.
+    'mapper-me6': probe(`package ME6 {
+        part def P { attribute load default = 1.0; }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part def Q3 :> Q { attribute :>> L = 50.0; }
+        part s : Q2, Q3 { bind p.load = L; }
+        constraint s50 { s.p.load == 50.0 }
+        constraint sl50 { s.L == 50.0 }
+      }`, {
+      'ME6::s50': ['?/?/?/?', 'T'],
+      'ME6::sl50': ['?/?/?/?', 'T'],
+    }),
+    'mapper-me9': probe(`package ME9 {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; constraint c { m2 >= 0.0 } }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part def Q3 :> Q { attribute :>> L = 50.0; }
+        part def S :> Q2, Q3 { bind p.load = L; }
+        part s : S;
+      }`, {
+      'ME9::P::c': ['T/T/T/?', 'T'],
+      'ME9::P::c in ME9::Q::p': ['T/T/T/?', 'T'],
+      'ME9::P::c in ME9::Q2::p': ['T/T/T/?', 'T'],
+      'ME9::P::c in ME9::Q3::p': ['T/T/T/?', 'T'],
+      'ME9::P::c in ME9::S::p': ['?/?/?/?', 'F'],
+      'ME9::P::c in ME9::s::p': ['?/?/?/?', 'F'],
+    }),
     // Found by F2's review (identical before F1): a bound partner's default RESTATED, equal to the partner
     // definition's own, in a redefinition (`part :>> p { attribute :>> a default = 50.0; }`). The restated
     // default is held, so q4's p.a reads nothing, but p.b is read at P::b over P::a's own default — and the
@@ -8896,6 +8929,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           ['ref-rebind-rb9', 'RB9', 'ref part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real = pp.load;', 'ref part :>> top = t50;', 'F/F/F/F'],
           ['ref-rebind-rb9d', 'RB9D', 'ref part top : T1; attribute m : ScalarValues::Real = top.a.load;', 'ref part :>> top = t50;', 'F/F/F/F'],
           ['ref-rename-rb10', 'RB10', 'part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real = pp.load;', 'part top2 redefines top { attribute :>> L = 50.0; }', '?/?/?/?'],
+          // m read through a binding (RBB1, RBB2), and through a chain of values 16 or 17 long (RBD15N, RBD16N):
+          // the binding was not followed, and past 16 links both readings ended in one mark, so no row was filed
+          // for w and W's own reading (1) stood for w's (50) on all four surfaces until the branch review.
+          ['ref-bind-rbb1', 'RBB1', 'ref part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real; bind m = pp.load;', 'ref part :>> top = t50;', 'F/F/F/F'],
+          ['ref-bind-rbb2', 'RBB2', 'ref part top : T1; attribute m : ScalarValues::Real; bind m = top.a.load;', 'ref part :>> top = t50;', 'F/F/F/F'],
+          ...[15, 16].map(
+            (n) =>
+              [
+                `ref-chain-rbd${n}n`,
+                `RBD${n}N`,
+                `ref part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real = m1; ${Array.from(
+                  { length: n - 1 },
+                  (_, i) => `attribute m${i + 1} : ScalarValues::Real = m${i + 2};`,
+                ).join(' ')} attribute m${n} : ScalarValues::Real = pp.load;`,
+                'ref part :>> top = t50;',
+                'F/F/F/F',
+              ] as const,
+          ),
         ] as const
       ).map(([name, pkg, own, inst, there]) => [
         name,
@@ -8911,6 +8962,36 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         }),
       ]),
     ),
+    // RBB1 read from outside: the solver lane read w's m at T0's default, which t50's binding overrides where w's pp
+    // lands (`standingDefaultOf`), beside the binding's own row, and found the axioms of a consistent model
+    // inconsistent (k F/F/?/X, W's own row T/T/T/X). A member read through a reference holds no default now.
+    'ref-bind-rbb1k': probe(`package RBB1K {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part t50 : T1 { attribute :>> L = 50.0; }
+        part def W { ref part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real; bind m = pp.load; constraint pF { m <= 5.0 } }
+        part w : W { ref part :>> top = t50; }
+        constraint k { w.m <= 5.0 }
+      }`, {
+      'RBB1K::W::pF': ['T/T/T/T', 'T'],
+      'RBB1K::W::pF in RBB1K::w': ['F/F/F/F', 'F'],
+      'RBB1K::k': ['F/F/F/F', 'F'],
+    }),
+    // The binding written in the instance instead (`w : W { …; bind m = pp.load; }`): its end makes a copy of W's
+    // valued pp in w, which the walk reads as a fresh T0, so `w.m` read T0's default 1 on all four surfaces, at
+    // 3c54ae0 too; a row through the copy abstains now, as through a valueless `ref part :>> pp;`. W's own m has
+    // no value (no binding in W), and W's pF files no row of w's, as at 3c54ae0.
+    'ref-bind-rbb4k': probe(`package RBB4K {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part t50 : T1 { attribute :>> L = 50.0; }
+        part def W { ref part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real; constraint pF { m <= 5.0 } }
+        part w : W { ref part :>> top = t50; bind m = pp.load; }
+        constraint k { w.m <= 5.0 }
+      }`, {
+      'RBB4K::W::pF': ['?/?/?/?', '?'],
+      'RBB4K::k': ['?/?/?/?', 'F'],
+    }),
     // A value or a binding over COWN2's outward `r = p1` read W's own p1 (1) for every W, where w's is 50 (RC7's
     // `sub.m` over sub's `m = r.load`, RC7B's `m = sub.r.load`): the taint stopped at the reference. It reaches
     // what reads through it now, and each row abstains, W's own too (true of W's own sub, it stood for w's).
@@ -9174,6 +9255,38 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'CD5::Q::cl': ['?/?/?/?', 'F'],
       'CD5::top': ['?/?/?/?', 'T'],
+    }),
+    // A typed assert's body that reads a parameter's feature (`x.load` over `in x = p`) defines p's load, and one
+    // that specialises a constraint usage (`ea :> e0`) takes e0's parameter values: both read P's default 1 on all
+    // four surfaces, at 3c54ae0 too, until the branch review (p's load is 50). p's load gives way now, by feature.
+    'name-tp1': probe(`package TP1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        constraint def Eq { in x : P; x.load == 50.0 }
+        part def Q {
+          part p : P;
+          assert constraint e : Eq { in x = p; }
+          constraint c { p.load <= 10.0 }
+        }
+        part q : Q;
+        constraint top { q.p.load <= 10.0 }
+      }`, {
+      'TP1::Q::c': ['?/?/?/?', 'F'],
+      'TP1::top': ['?/?/?/?', 'F'],
+    }),
+    'name-tp2': probe(`package TP2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        constraint def Eq { in x : ScalarValues::Real; x == 50.0 }
+        part def Q {
+          part p : P;
+          constraint e0 : Eq { in x = p.load; }
+          assert constraint ea :> e0;
+          constraint c { p.load <= 10.0 }
+        }
+        part q : Q;
+        constraint top { q.p.load <= 10.0 }
+      }`, {
+      'TP2::Q::c': ['?/?/?/?', 'F'],
+      'TP2::top': ['?/?/?/?', 'F'],
     }),
     // A binding into one instance reaches the path it binds, not every feature typed alike (O2 S4's residual):
     // q2's `bind p.s.extra = E` is no reason to read P's `t.extra <= 10.0` per instance. Matched by feature, it
