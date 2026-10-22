@@ -3089,9 +3089,12 @@ check and the numeric surface, infeasible, and `inconsistent-axioms` on the
 SMT engine. Neither value is read where the binding joins them (A.5): `q.p.m2
 >= 0.0` is *could not be evaluated* on the check, the literal engine and the
 numeric surface, never at P's 1.0. The two are compared as written; a pair
-only an evaluation could compare is read as before (a known gap: neither should
-be read), and the binding's row is judged at the two values read. A pair the
-check cannot compare is no row, left to the SMT engine.
+only an evaluation could compare (`load = 30.0` against `L = 2.0 * K`) is
+evaluated exactly, both where the binding's valued members are read: one value
+where they meet, two where they differ, and where the evaluation decides
+neither, neither end reads it, in a sentence of its own. The binding's row
+judges the pair at its two values as written, each read where it is stated. A
+pair the check cannot compare there is no row, left to the SMT engine.
 
 **Feasibility REPAIR at extreme scales is still absolute.** The gate that judges
 an inequality is relative to its SI magnitude, but the penalty descent that

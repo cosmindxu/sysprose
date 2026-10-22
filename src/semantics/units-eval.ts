@@ -62,6 +62,7 @@ import {
   defaultGivesWayIn,
   statedAgainstBoundIn,
   statedAgainstBoundSomewhere,
+  definedAgainstBoundIn,
   defaultGivesWaySomewhere,
   failedReadingSentence,
   namesDefinedBy,
@@ -74,11 +75,14 @@ import {
   sharedDefinitions,
   statedValueOf,
   undecidedPartnerOf,
+  type BoundPair,
   type BoundSource,
   type Contact,
+  type DefinedAgainst,
   type DefiningEquation,
   type InFlight,
   type InstanceLookup,
+  type WrittenComparison,
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
@@ -1640,6 +1644,17 @@ export type DerivationMemo = Map<ElementId, FeatureDerivation> & {
   /** The dimension memo of this pass, made on first use. */
   dimensionsMemo?: DerivationMemo;
   /**
+   * The instance symbols this memo's derivations read where each is stated,
+   * though a binding joins it to another value the two may not share (A.5,
+   * {@link statedAgainstBoundIn}; an asserted equation's, {@link
+   * definedAgainstBoundIn}): the two ends of the one binding whose own row
+   * is judged at its two values as written (`statedPass` of
+   * ./evaluate-model), or the two members a {@link BoundPair} compares
+   * ({@link boundPairAt}). Every other value is read as the check reads it,
+   * so a pair read through another that A.5 abstains on is no pair decided.
+   */
+  stated?: ReadonlySet<string>;
+  /**
    * The lookups each derivation keyed on an instance was worked out with
    * ({@link lookupsWhile}), said again where it is taken from the memo
    * ({@link replayLookups}).
@@ -1674,6 +1689,7 @@ function everyPathMemo(model: Model, memo: DerivationMemo): DerivationMemo {
     const every: DerivationMemo = new Map();
     every.pass = pass;
     every.everyPath = true;
+    if (memo.stated !== undefined) every.stated = memo.stated;
     memo.everyPathMemo = every;
   }
   return memo.everyPathMemo;
@@ -1700,6 +1716,7 @@ function dimensionsMemo(model: Model, memo: DerivationMemo): DerivationMemo {
     const dims: DerivationMemo = new Map();
     dims.pass = pass;
     dims.dimensions = true;
+    if (memo.stated !== undefined) dims.stated = memo.stated;
     memo.dimensionsMemo = dims;
   }
   return memo.dimensionsMemo;
@@ -1865,7 +1882,10 @@ function deriveFeatureUncached(
   // `=` that differs (A.5, d1plain): the model states both there. A generic
   // reading leaves one joined so in some instance to the check, which reads
   // per instance.
-  const against = inst !== undefined ? statedAgainstBoundIn(model, feat, inst) : undefined;
+  const against =
+    inst !== undefined && !readsStated(memo.stated, inst, passOf(model, memo).definitions.nameOf(feat))
+      ? statedAgainstBoundAt(model, feat, inst)
+      : undefined;
   if (against !== undefined) return claimOnly('unknown', 'contradiction', against);
   if (inst === undefined && statedAgainstBoundSomewhere(model, feat)) return claimOnly('unknown', 'unresolved');
 
@@ -2295,12 +2315,34 @@ function definedQuantity(
     note(reads, d);
     return derivationEval(d, name);
   };
+  // A feature its element's asserted equation defines, which a binding joins
+  // where it is read to a value written with `=` the equation does not give
+  // it, is not read (the scalar twin's `definedAgainstHere`). A throw is this
+  // read's (A.2.9), as `boundInInstanceQ`'s is.
+  const against = (feature: ElementRecord): QEval | undefined => {
+    const den = definitions.denote(contextId).get(name);
+    const ownName = name.slice(name.lastIndexOf('.') + 1);
+    const at = den?.instance ?? definitions.instanceNameOf(contextId);
+    const child = inst !== undefined ? rebaseInstance(definitions, contextId, inst, at) : at;
+    if (readsStated(memo.stated, child, ownName)) return undefined;
+    let found: DefinedAgainst | undefined;
+    try {
+      found = definedAgainstBoundAt(model, den?.feature ?? feature, child, ownName);
+    } catch (e) {
+      const sentence = failedReadingSentence(ownName, child, e);
+      return unknownQ('internal', sentence, sentence);
+    }
+    return found === undefined ? undefined : unknownQ('contradiction', name, `"${name}" cannot be derived: ${found.sentence}`);
+  };
   if (name.includes('.')) {
     const end = definitions.chainDefinition([contextId], name);
-    return end ? read(end.feature.id, definitions.nameOf(end.feature)!, end.site, end.at) : undefined;
+    if (!end) return undefined;
+    return against(end.feature) ?? read(end.feature.id, definitions.nameOf(end.feature)!, end.site, end.at);
   }
   const feature = definitions.feature(contextId, name);
   if (!feature) return undefined;
+  const refused = against(feature);
+  if (refused !== undefined) return refused;
   const candidates = definitions.of(contextId, name);
   if (candidates.length === 0) {
     const inherited = definitions.definitionReadIn(contextId, name);
@@ -2386,6 +2428,117 @@ function sourceScope(model: Model, root: ElementId, memo: DerivationMemo): QScop
 export function boundSourceQuantity(model: Model, root: ElementId, source: string, memo: DerivationMemo): Quantity | undefined {
   const r = sourceScope(model, root, memo)(source);
   return r !== undefined && !isQUnknown(r) && 'q' in r ? r.q : undefined;
+}
+
+/**
+ * Is the instance symbol `${inst}::${name}` one the derivations of a memo
+ * read where it is stated ({@link DerivationMemo.stated})?
+ */
+export function readsStated(stated: ReadonlySet<string> | undefined, inst: string, name: string | undefined): boolean {
+  return stated !== undefined && name !== undefined && stated.has(`${inst}::${name}`);
+}
+
+/** {@link boundPairAt}'s decisions, and the pairs being decided, once per model revision. */
+const BOUND_PAIRS = new WeakMap<Model, { rev: number; decided: Map<string, WrittenComparison>; inFlight: Set<string> }>();
+
+/**
+ * How the two members a {@link BoundPair} names compare — the decision
+ * {@link statedAgainstBoundIn} and {@link definedAgainstBoundIn} leave to an
+ * evaluation. Each is read where the component's valued members are read: in
+ * its root's quantity scope, at the root's generic instance (A.2.3, as
+ * {@link boundSourceQuantity} reads the value a binding carries), the pair's
+ * own two where each is stated and every other value as the check reads it
+ * ({@link DerivationMemo.stated}). `same` or `differs` where both are
+ * quantities of one dimension and kind with an exact reading in coherent SI
+ * ({@link siExact}), or both truth values; `undecided` everywhere else — a
+ * bare number against a quantity, a value with no exact reading, one that is
+ * not read. No binary64 number decides it (decision 3). A pair asked again
+ * while its own evaluation is in flight is `undecided` there.
+ */
+export function boundPairAt(model: Model, pair: BoundPair): WrittenComparison {
+  let cache = BOUND_PAIRS.get(model);
+  if (!cache || cache.rev !== model.rev) {
+    cache = { rev: model.rev, decided: new Map(), inFlight: new Set() };
+    BOUND_PAIRS.set(model, cache);
+  }
+  // The member read through its equation is another reading of the same path.
+  const key = `${pair.root} ${pair.own} ${pair.written}${pair.defined === true ? ' by-equation' : ''}`;
+  const hit = cache.decided.get(key);
+  if (hit !== undefined) return hit;
+  if (cache.inFlight.has(key)) return 'undecided';
+  cache.inFlight.add(key);
+  let compared: WrittenComparison;
+  try {
+    const memo: DerivationMemo = new Map();
+    memo.stated = new Set(pair.symbols);
+    const { definitions } = passOf(model, memo);
+    const scope = quantityScopeFor(model, pair.root, new Map(), memo, { depth: 0 }, definitions.instanceNameOf(pair.root));
+    const own = pair.defined === true ? definedAt(model, pair.root, pair.own, memo) : scope(pair.own);
+    compared = comparedExactly(own, scope(pair.written));
+  } finally {
+    cache.inFlight.delete(key);
+  }
+  cache.decided.set(key, compared);
+  return compared;
+}
+
+/**
+ * The quantity the asserted equation that defines `path` gives it, read in
+ * `root` as the check reads it there — a chain through the definition at its
+ * end ({@link DefiningEquations.chainDefinition}), a name through its own
+ * context's equations or the one it inherits ({@link
+ * DefiningEquations.definitionReadIn}): {@link definedQuantity}'s
+ * equation branches, and none of its others (a binding's value is no value
+ * the equation gives). `undefined` where no equation defines it there.
+ */
+function definedAt(model: Model, root: ElementId, path: string, memo: DerivationMemo): QEval | undefined {
+  const { definitions } = passOf(model, memo);
+  const inFlight: InFlight = new Map();
+  const derive = (feature: ElementRecord, own: string, site: ElementId, at: ElementId): QEval => {
+    const candidates = definitions.of(site, own);
+    return derivationEval(definitionOf(model, feature.id, own, candidates, memo, at, inFlight, at !== site), path);
+  };
+  if (path.includes('.')) {
+    const end = definitions.chainDefinition([root], path);
+    const own = end ? definitions.nameOf(end.feature) : undefined;
+    return end && own !== undefined ? derive(end.feature, own, end.site, end.at) : undefined;
+  }
+  const feature = definitions.feature(root, path);
+  if (!feature) return undefined;
+  if (definitions.of(root, path).length > 0) return derive(feature, path, root, root);
+  const inherited = definitions.definitionReadIn(root, path);
+  return inherited !== undefined ? derive(feature, path, inherited.site, inherited.at) : undefined;
+}
+
+/** {@link boundPairAt}'s comparison of the two values read. */
+function comparedExactly(a: QEval | undefined, b: QEval | undefined): WrittenComparison {
+  if (a === undefined || b === undefined || isQUnknown(a) || isQUnknown(b)) return 'undecided';
+  if ('b' in a || 'b' in b) return 'b' in a && 'b' in b ? (a.b === b.b ? 'same' : 'differs') : 'undecided';
+  const x = a.q;
+  const y = b.q;
+  // A bare number against a quantity is not decided by reading them, as two
+  // constants written so are not ({@link compareWrittenValues}).
+  const plain = (q: Quantity): boolean => q.unit === undefined && q.convertedFrom === undefined && dimEqual(q.dimension, DIMENSIONLESS);
+  if (x.absolute === true || y.absolute === true || plain(x) !== plain(y) || !dimEqual(x.dimension, y.dimension)) return 'undecided';
+  if (!sameKinds(x.convertedFrom?.kinds ?? {}, y.convertedFrom?.kinds ?? {})) return 'undecided';
+  const ex = siExact(x);
+  const ey = siExact(y);
+  if (ex === undefined || ey === undefined) return 'undecided';
+  return compareRationals(ex, ey) === 0 ? 'same' : 'differs';
+}
+
+/**
+ * {@link definedAgainstBoundIn}, its pair decided by {@link boundPairAt}: the
+ * one reading every surface that asks it shares (the check's two scopes, and
+ * the binding's own row).
+ */
+export function definedAgainstBoundAt(model: Model, feature: ElementRecord, instance: string, name: string): DefinedAgainst | undefined {
+  return definedAgainstBoundIn(model, feature, instance, name, (pair) => boundPairAt(model, pair));
+}
+
+/** {@link statedAgainstBoundIn}, its pair decided by {@link boundPairAt}, as {@link definedAgainstBoundAt}'s is. */
+export function statedAgainstBoundAt(model: Model, f: ElementRecord, inst: string): string | undefined {
+  return statedAgainstBoundIn(model, f, inst, (pair) => boundPairAt(model, pair));
 }
 
 /**

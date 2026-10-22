@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
 import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, anchorFor, quotePath, foldByVerdictAndCause } from '../../src/semantics/index';
-import { featureIdsFor, valueAtPath, valueKey, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
+import { featureIdsFor, unreadValuesOf, valueAtPath, valueKey, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
   assertDefinitionsIn,
@@ -70,6 +70,7 @@ vi.mock('../../src/semantics/defining-equation', async (importOriginal) => {
     defaultStandsIn: stub('defaultStandsIn', real.defaultStandsIn),
     enclosingAssertOn: stub('enclosingAssertOn', real.enclosingAssertOn),
     assertDefinitionIn: stub('assertDefinitionIn', real.assertDefinitionIn),
+    definedAgainstBoundIn: stub('definedAgainstBoundIn', real.definedAgainstBoundIn),
   };
 });
 
@@ -2218,15 +2219,64 @@ describe('checkConstraints — a bound partner is read only where every instance
       ],
     ]);
     expect(checkConstraints(m!).filter((x) => x.conflict === 'bind').map((x) => x.result)).toEqual(['violated']);
-    // A pair only an evaluation compares (q's `L = 2.0 * K`) is read as before: the finding names what q reads.
-    const { model: e } = await loadModelText(`package LF {
+    // A pair only an evaluation compares (q's `L = 2.0 * K`) is evaluated, both where the binding's valued members
+    // are read (E6): 50 against 3 differ, so neither is read, as of two values that differ as written — read as
+    // before, q's load was 3 and the row a false `satisfied`. The binding's own row judges the pair at the two
+    // values as written, and reports it.
+    const lf = (k: string) => `package LF {
       part def Q { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real = 3.0; bind load = L; constraint c { load <= 5.0 } }
-      part q : Q { attribute K : ScalarValues::Real = 25.0; attribute :>> L = 2.0 * K; }
-    }`);
+      part q : Q { attribute K : ScalarValues::Real${k}; attribute :>> L = 2.0 * K; }
+    }`;
+    const { model: e } = await loadModelText(lf(' = 25.0'));
     const ce = checkConstraints(e!).find((x) => e!.qualifiedName(x.id) === 'LF::Q::c')!;
     expect(ce.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
-      ['q', 'satisfied', 'q::load = 3 meets Q::c (load <= 5.0)'],
+      [
+        'q',
+        'unknown',
+        'Q::c (load <= 5.0) could not be evaluated for q: "load" cannot be derived: load is not read in LF::q: ' +
+          '`bind load = L` of LF::Q joins two values the model states (q.load, q.L), and a binding holds in every ' +
+          'instance (see the binding\u2019s own finding)',
+      ],
     ]);
+    expect(checkConstraints(e!).filter((x) => x.conflict === 'bind').map((x) => [x.ownerId === named(e!, 'LF::q').id, x.result])).toEqual([
+      [true, 'violated'],
+    ]);
+    // Where the two meet (K 1.5: 3 against 3) they are one value, and it is read: a true reading the S2 rule had
+    // given up (D1C, bc2-ctx-derived), and no binding row.
+    const { model: meets } = await loadModelText(lf(' = 1.5'));
+    const cm = checkConstraints(meets!);
+    expect(cm.find((x) => meets!.qualifiedName(x.id) === 'LF::Q::c')!.instances!.map((i) => [i.context, i.result])).toEqual([['q', 'satisfied']]);
+    expect(cm.filter((x) => x.conflict === 'bind')).toEqual([]);
+    // Where the evaluation decides neither (K stated nowhere), neither is read, in a sentence of its own, and the
+    // binding's own row reports nothing it cannot judge.
+    const { model: open } = await loadModelText(lf(''));
+    const co = checkConstraints(open!);
+    expect(co.find((x) => open!.qualifiedName(x.id) === 'LF::Q::c')!.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
+      [
+        'q',
+        'unknown',
+        'Q::c (load <= 5.0) could not be evaluated for q: "load" cannot be derived: load is not read in LF::q: ' +
+          '`bind load = L` of LF::Q joins Q::load = 3.0 to q::L = 2.0 * K, two values written with `=` that are not ' +
+          'the same as written, and a binding holds in every instance; whether the two meet there takes an evaluation ' +
+          'this tool does not make, so neither is read',
+      ],
+    ]);
+    expect(co.filter((x) => x.conflict === 'bind' && x.result === 'violated')).toEqual([]);
+    // The binding's own row reads only its two ends where each is stated: a value it reads through another pair
+    // A.5 abstains on (K, which `bind K = M` joins to M's 30) is no value it judges, so SC's `bind load = L` files
+    // no row beside `bind K = M`'s own (a newly decided row on a self-contradictory model, before).
+    const { model: sc } = await loadModelText(`package SC {
+      part def Q {
+        attribute K : ScalarValues::Real = 25.0;
+        attribute M : ScalarValues::Real = 30.0;
+        bind K = M;
+        attribute L : ScalarValues::Real = 2.0 * K;
+        attribute load : ScalarValues::Real = 60.0;
+        bind load = L;
+      }
+      part q : Q;
+    }`);
+    expect(checkConstraints(sc!).filter((x) => x.conflict === 'bind').map((x) => [x.expression, x.result])).toEqual([['K == M', 'violated']]);
     // A binding whose end is outside the element that writes it (R's L in q's body, EB4) files no row of its
     // own, so the sentence points at none.
     const { model: eb } = await loadModelText(`package EB4 {
@@ -2390,7 +2440,8 @@ describe('checkConstraints — a bound partner is read only where every instance
 
   it('reads no context listed by a member’s own value alone where the model states a second value of the member there', async () => {
     // load's own `= 1.0` beside the bound `L = 2.0 * K`: q2's load is 1 and 50. Its instance reading reads
-    // the 1 alone, a false T; every surface leaves q2's reading undecided, in one sentence. q2's L is read.
+    // the 1 alone, a false T; every surface leaves q2's reading undecided, in one sentence. Neither end of the
+    // pair is read in q2 (A.5 over a pair only an evaluation compares, E6), so q2's L is not either.
     const { model: m } = await loadModelText(`package M7S {
       part def Q {
         attribute K : ScalarValues::Real default = 0.5;
@@ -2415,7 +2466,7 @@ describe('checkConstraints — a bound partner is read only where every instance
     const checks = checkConstraints(m!);
     const rows = (q: string) => checks.find((x) => m!.qualifiedName(x.id) === q)!.instances!.map((i) => [i.context, i.result, i.detail]);
     expect(rows('M7S::Q::c')).toEqual([['q2', 'unknown', `Could not evaluate: ${sentence}`]]);
-    expect(rows('M7S::Q::d').map(([ctx, result]) => [ctx, result])).toEqual([['q2', 'violated']]);
+    expect(rows('M7S::Q::d').map(([ctx, result]) => [ctx, result])).toEqual([['q2', 'unknown']]);
     const goal = obligationsOf(m!).find((o) => o.element.qualifiedName === 'M7S::Q::c in M7S::q2')!;
     expect(goal.encodable).toEqual({ reason: 'unread-definition', detail: sentence });
     const numeric = checkConstraintsNumeric(m!).find((r) => r.id === `${c.id}@${q2.id}`)!;
@@ -2689,6 +2740,49 @@ describe('checkConstraints — an asserted equation stands over a default (H5)',
     }`);
     expect([defaultGivesWay(q!, named(q!, 'Q4L::L')), defaultGivesWay(q!, named(q!, 'Q4L::K'))]).toEqual([true, true]);
     expect(checkConstraints(q!).find((k) => q!.qualifiedName(k.id) === 'Q4L::c')!.result).toBe('unknown');
+    // …and says so, of a feature that writes a default: "L has no value anywhere" it was.
+    expect(checkConstraints(q!).find((k) => q!.qualifiedName(k.id) === 'Q4L::c')!.message).toBe(
+      "Could not evaluate: L has no value: its `default = 2.0` gives way to Q4L's asserted `L == K` (an asserted " +
+        'equation overrides a default), and that equation gives it none here',
+    );
+    // So through a chain, of the inherited default the chain ends at (RH2's p.L, T's `L == M`).
+    const { model: rh } = await loadModelText(`package RH2 {
+      part def T { attribute L : ScalarValues::Real default = 2.0; attribute M : ScalarValues::Real default = 5.0; assert constraint qa { L == M } }
+      part def P :> T { attribute :>> M default = L * 2.0; constraint c { L <= 1.0 } }
+      part p : P;
+      constraint top { p.L <= 1.0 }
+    }`);
+    expect(checkConstraints(rh!).find((k) => rh!.qualifiedName(k.id) === 'RH2::top')!.message).toBe(
+      'Could not evaluate: p.L has no value: T::L states `default = 2.0`, which gives way to an asserted equation, its ' +
+        'asserted equation, read through the chain, gives it none, and nothing specialises it',
+    );
+    // …and T's own equation read in P, of both its sides ("a referenced value is unknown" it was).
+    const inP = checkConstraints(rh!).find((k) => rh!.qualifiedName(k.id) === 'RH2::T::qa')!.instances!.find((i) => i.context === 'P')!;
+    expect([inP.result, inP.message]).toEqual([
+      'unknown',
+      "T::qa (L == M) could not be evaluated for P: L has no value: its `default = 2.0` gives way to RH2::T's asserted " +
+        '`L == M` (an asserted equation overrides a default), and that equation gives it none here; M has no value: ' +
+        "its `default = L * 2.0` gives way to RH2::T's asserted `L == M` (an asserted equation overrides a default), " +
+        'and that equation gives it none here',
+    ]);
+    // A default a BINDING holds, in a model with no assert (BW4, BW5): the chain names the binding, never an
+    // asserted equation the model does not have ("which gives way to an asserted equation" it said).
+    for (const [pkg, rel, body] of [
+      ['BW4', 'BW4::top', 'part q : Q; constraint top { q.p.load <= 3.0 }'],
+      ['BW5', 'BW5::Q::c', 'part q : Q;'],
+    ] as const) {
+      const { model: bw } = await loadModelText(`package ${pkg} {
+        part def P { attribute load : ScalarValues::Real default = 2.0; }
+        part def Q {
+          attribute K : ScalarValues::Real; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L;
+          ${pkg === 'BW5' ? 'constraint c { p.load <= 3.0 }' : ''}
+        }
+        ${body}
+      }`);
+      const message = checkConstraints(bw!).find((k) => bw!.qualifiedName(k.id) === rel)!.message;
+      expect(message, pkg).toContain(`p::load states \`default = 2.0\`, which gives way to ${pkg}::Q's \`bind p.load = L\``);
+      expect(message, pkg).not.toMatch(/asserted/);
+    }
     expect(checkConstraintsNumeric(q!).find((r) => r.name === 'c')!.result).toBe('unknown');
     // A side that reads the feature itself gives it no value of its own; one over a default does.
     const { model: x } = await loadModelText(`package EX {
@@ -2719,6 +2813,77 @@ describe('checkConstraints — an asserted equation stands over a default (H5)',
       ['IND::qa', 'violated'],
       ['IND::c', 'violated'],
     ]);
+  });
+
+  it('reads neither an element’s asserted equation nor the plain value a binding joins it to (RBL2)', async () => {
+    // p's own `x == 3.0` defines x; q's `bind p.x = L` joins it to q's plain `L = 4.0`. The check read the 3,
+    // the numeric surface the binding's 4: `top` was T on the one and F on the other. The model states both.
+    const { model: m } = await loadModelText(`package RBL2 {
+      part def P { attribute x : ScalarValues::Real; constraint c { x <= 3.5 } }
+      part q { part p : P { assert constraint tie { x == 3.0 } } attribute L : ScalarValues::Real = 4.0; bind p.x = L; }
+      constraint top { q.p.x <= 3.5 }
+    }`);
+    const checks = checkConstraints(m!);
+    const sentence =
+      "x is not read in RBL2::q::p: RBL2::q::p's asserted `x == 3.0` defines it, and `bind p.x = L` of RBL2::q " +
+      'joins it to q::L = 4.0, a value written with `=` that differs from the one the equation gives it there: a ' +
+      'binding holds in every instance, so the model states two values for it, and it is not read (see the ' +
+      'binding\u2019s own finding)';
+    const row = (q: string) => checks.find((c) => m!.qualifiedName(c.id) === q)!;
+    expect([row('RBL2::top').result, row('RBL2::top').message]).toEqual(['unknown', `Could not evaluate: ${sentence}`]);
+    expect([row('RBL2::q::p::tie').result, row('RBL2::q::p::tie').message]).toEqual(['unknown', `Could not evaluate: ${sentence}`]);
+    expect(row('RBL2::P::c').instances!.map((i) => [i.context, i.result])).toEqual([['p', 'unknown']]);
+    // The binding's own row reports the pair, judged at the two values as written.
+    expect(checks.filter((c) => c.conflict === 'bind').map((c) => c.result)).toEqual(['violated']);
+    // With nothing written against it (L a `default`, which gives way), the equation's value is read as before.
+    const { model: d } = await loadModelText(`package RBL3 {
+      part def P { attribute x : ScalarValues::Real; constraint c { x <= 3.5 } }
+      part q { part p : P { assert constraint tie { x == 3.0 } } attribute L : ScalarValues::Real default = 4.0; bind p.x = L; }
+      constraint top { q.p.x <= 3.5 }
+    }`);
+    expect(checkConstraints(d!).find((c) => d!.qualifiedName(c.id) === 'RBL3::top')!.result).toBe('satisfied');
+    // Where the equation gives x the value bound to it — evaluated, `y * 2.0` at y 1.5 against q's `L = 3.0` —
+    // the two are one value, and it is read (RY3, RY4): giving them up let `lim`'s true violation through
+    // `sysml-check --strict`.
+    const ry = (lim: string) => `package RY {
+      part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = 1.5; }
+      part q { part p : P { assert constraint tie { x == y * 2.0 } } attribute L : ScalarValues::Real = 3.0; bind p.x = L; }
+      constraint lim { q.p.x <= ${lim} }
+    }`;
+    for (const [lim, result] of [
+      ['2.5', 'violated'],
+      ['3.5', 'satisfied'],
+    ] as const) {
+      const { model: y } = await loadModelText(ry(lim));
+      const cy = checkConstraints(y!);
+      expect(cy.find((c) => y!.qualifiedName(c.id) === 'RY::lim')!.result, lim).toBe(result);
+      expect(cy.filter((c) => c.conflict === 'bind'), lim).toEqual([]);
+    }
+    // An equation P writes, read through `q.p.x` (RBB), and one written in an instance's own redefinition of p
+    // (RBL4: q1's `part :>> p { assert … }` under Q's binding) are read at q's and q1's p, where they meet the
+    // binding's 4: neither is read there, as p's own is not — where q's chain read P's 3 beside an abstention
+    // of P's `tie` in q's p, and q1's chain the 3 against the numeric surface's 4.
+    const { model: rbb } = await loadModelText(`package RBB {
+      part def P { attribute x : ScalarValues::Real; assert constraint tie { x == 3.0 } }
+      part q { part p : P; attribute L : ScalarValues::Real = 4.0; bind p.x = L; }
+      part def Q { part p : P; attribute L : ScalarValues::Real = 4.0; bind p.x = L; constraint dc { p.x <= 3.5 } }
+      part qq : Q;
+      constraint top { q.p.x <= 3.5 }
+      constraint topq { qq.p.x <= 3.5 }
+    }`);
+    const cb = checkConstraints(rbb!);
+    for (const r of ['RBB::top', 'RBB::topq', 'RBB::Q::dc']) {
+      expect(cb.find((c) => rbb!.qualifiedName(c.id) === r)!.message, r).toMatch(/^Could not evaluate: x is not read in RBB::(q|qq|Q)::p: RBB::P's asserted/);
+    }
+    const { model: rbl4 } = await loadModelText(`package RBL4 {
+      part def P { attribute x : ScalarValues::Real; }
+      part def Q { part p : P; attribute L : ScalarValues::Real = 4.0; bind p.x = L; }
+      part q1 : Q { part :>> p { assert constraint tie { x == 3.0 } } }
+      constraint t1 { q1.p.x <= 3.5 }
+    }`);
+    expect(checkConstraints(rbl4!).find((c) => rbl4!.qualifiedName(c.id) === 'RBL4::t1')!.message).toMatch(
+      /^Could not evaluate: x is not read in RBL4::q1::p: RBL4::q1::p's asserted `x == 3\.0` defines it/,
+    );
   });
 
   it('holds an inherited assert over a redefinition’s default, in a usage and in a specialisation (f, HR)', async () => {
@@ -4444,7 +4609,7 @@ describe('the instance index — frames, components, and bound sources', () => {
     // Each row names its own instance and the source it read, never the one it shares a reading with.
     const row = c.find((i) => i.instance === 'T::top::b::a::b')!;
     expect(row.reads?.map((r) => [r.symbol, r.value, r.via?.sourceSymbol])).toEqual([['T::top::b::a::b::load', 50, 'T::top::L']]);
-    expect(row.message).toBe('Constraint violated: load <= 10.0 (load = 50 in T::top::b::a::b, its L T::top::L through T::top\'s `bind`)');
+    expect(row.message).toBe('Constraint violated: load <= 10.0 (load = 50 in T::top::b::a::b, its L T::top::L through T::T1\'s `bind a.load = L`)');
   });
 
   it('asks a kept reading\'s questions again of another instance, and takes it only where every answer is the same', async () => {
@@ -5021,12 +5186,63 @@ describe('a value a binding carries is read in the unit its feature declares (A.
     expect(checks.find((x) => m!.qualifiedName(x.id) === 'UC::top')!.result).toBe('violated');
     // The witness is the value in `load`'s unit (kg), exactly: the point the solver lane stores.
     const q2 = checks.find((x) => m!.qualifiedName(x.id) === 'UC::P::c')!.instances!.find((i) => i.instance === 'UC::q2::p')!;
-    expect(q2.message).toBe("Constraint satisfied (load = 5 [SI::kg] in UC::q2::p, its L UC::q2::L through UC::q2's `bind`)");
+    expect(q2.message).toBe("Constraint satisfied (load = 5 [SI::kg] in UC::q2::p, its L UC::q2::L through UC::Q's `bind p.load = L`)");
     expect(q2.reads).toEqual([
       expect.objectContaining({ path: 'load', symbol: 'UC::q2::p::load', value: 5, exact: '5/1', unit: 'SI::kg' }),
     ]);
     // …and the two sides of its comparison in SI, for the literal and SMT notes (A-M2).
     expect(q2.sides).toEqual({ lhsSI: 5, rhsSI: 10, dimension: 'M' });
+  });
+
+  it('compares no bare number with a quantity carried into a feature that declares no unit (UB4, E9)', async () => {
+    // q's L is `2.0 * K` over `K = 25000.0 [g]`: 50000 as written, 50 kg in SI. Into an untyped load, the
+    // check compared the 50000 with the bare 1000 (F) where the numeric surface compared 50 (T).
+    const { model: m } = await loadModelText(`package UB4 {
+      part def P { attribute load default = 1.0; }
+      part def Q { attribute K : ISQ::MassValue default = 500.0 [SI::g]; attribute L : ISQ::MassValue = 2.0 * K; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> K = 25000.0 [SI::g]; }
+      constraint cX { q.p.load <= 1000.0 }
+      constraint kg { q.p.load <= 60.0 [SI::kg] }
+    }`);
+    const checks = checkConstraints(m!);
+    const row = (q: string) => checks.find((c) => m!.qualifiedName(c.id) === q)!;
+    expect([row('UB4::cX').result, row('UB4::cX').message]).toEqual([
+      'unknown',
+      'Could not evaluate: load is not read in UB4::q::p: the binding carries 50 (M, coherent SI) into it, and it ' +
+        'declares no unit or kind: a bare number beside it is read in no unit the model states, so no comparison is ' +
+        'made on it',
+    ]);
+    // A quantity beside it is compared in units, as before.
+    expect(row('UB4::kg').result).toBe('satisfied');
+    // A carried value whose number as written is its SI one is read as before (no unit to disagree with).
+    const { model: si } = await loadModelText(`package UB5 {
+      part def P { attribute load default = 1.0; }
+      part def Q { attribute K : ISQ::MassValue default = 1.0 [SI::kg]; attribute L : ISQ::MassValue = 2.0 * K; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> K = 25.0 [SI::kg]; }
+      constraint cT { q.p.load <= 1000.0 }
+    }`);
+    expect(checkConstraints(si!).find((c) => si!.qualifiedName(c.id) === 'UB5::cT')!.result).toBe('satisfied');
+  });
+
+  it('reads a chain to a binding’s end at the value the binding carries, on the numeric surface too (GA7)', async () => {
+    // P's `load default = 2.0 * K` behind the end copy of Q's `bind p.load = L` was taken for a derived value
+    // no surface reads at Q's p, so the numeric surface abstained where the check reads L's 5 (decision 14).
+    const { model: m } = await loadModelText(`package GA7 {
+      part def P { attribute load : ScalarValues::Real default = 2.0 * K; attribute K : ScalarValues::Real default = 1.0; }
+      part def Q {
+        attribute L : ScalarValues::Real default = 2.0 * K;
+        attribute K : ScalarValues::Real default = 1.0;
+        assert constraint qa { L == 5.0 }
+        part p : P;
+        bind p.load = L;
+        constraint pl { p.load <= 3.0 }
+      }
+      part q : Q;
+    }`);
+    const pl = named(m!, 'GA7::Q::pl');
+    expect(unreadValuesOf(m!, pl, ['p.load'])).toEqual([]);
+    expect(checkConstraints(m!).find((c) => c.id === pl.id)!.result).toBe('violated');
+    expect(checkConstraintsNumeric(m!).find((r) => r.id === pl.id)!.result).toBe('violated');
   });
 
   it('prints the value beside a decided group row (A-M2)', async () => {
@@ -5845,6 +6061,33 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     thrower.armed = (fn, args) => fn === 'assertDefinitionIn' && args[2] === 'T2::q1::p';
     const asked = instanceRow(m!, checkConstraints(m!), 'T2::P::c', 'T2::q1::p');
     expect([asked.result, asked.cause]).toEqual(['unknown', 'internal']);
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+  });
+
+  it('an element’s equation against a bound value that throws is the read’s abstention (definedAgainstBoundIn)', async () => {
+    // RY4's shape: p's `x == y * 2.0` against q's bound `L = 3.0`, which meet (3): `lim` is violated.
+    const { model: m } = await loadModelText(`package RY {
+      import Missing::*;
+      part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = 1.5; }
+      part q { part p : P { assert constraint tie { x == y * 2.0 } } attribute L : ScalarValues::Real = 3.0; bind p.x = L; }
+      attribute z : ScalarValues::Real = 1.0;
+      constraint lim { q.p.x <= 2.5 }
+      constraint other { z >= 100.0 }
+    }`);
+    expect(rowOf(m!, checkConstraints(m!), 'RY::lim').result).toBe('violated');
+    // Thrown for q's p's x, wherever it is asked — the scalar read, the specialiser's, the unit-aware twin's and
+    // the binding's own row: the row abstains in the read's sentence, and every other row and rule stands.
+    thrower.armed = (fn, args) => fn === 'definedAgainstBoundIn' && args[2] === 'RY::q::p';
+    const checks = checkConstraints(m!);
+    expect(rowOf(m!, checks, 'RY::lim').result).toBe('unknown');
+    expect(rowOf(m!, checks, 'RY::lim').message).toContain(failed('x', 'RY::q::p'));
+    expect(rowOf(m!, checks, 'RY::other').result).toBe('violated');
+    expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+    // Inside the unit-aware twin only (`definedQuantity`): its failure is that reading's `internal` refusal, never
+    // a throw out of the read.
+    const inside = (fn: string) => new Error().stack!.includes(fn);
+    thrower.armed = (fn) => fn === 'definedAgainstBoundIn' && inside('definedQuantity');
+    expect(() => checkConstraints(m!)).not.toThrow();
     expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
   });
 

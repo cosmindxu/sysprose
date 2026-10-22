@@ -3389,6 +3389,8 @@ interface BindingEnds {
   partnerSafe?: Map<string, boolean>;
   /** {@link statedAgainstBoundSomewhere}'s features, built when first asked. */
   against?: ReadonlySet<ElementId>;
+  /** {@link definedAgainstBoundIn} per `${featureId} ${symbol}`, once per revision. */
+  definedAgainst?: Map<string, DefinedAgainst | null>;
 }
 
 /**
@@ -6548,6 +6550,29 @@ export function defaultGivesWay(model: Model, f: ElementRecord): boolean {
 }
 
 /**
+ * What the `default` that `f` or a feature it redefines writes gives way to,
+ * for a sentence: an asserted equation that defines one of them (`assert`,
+ * {@link assertHeld}, {@link assertHeldEverywhere}), else the user's binding
+ * that holds one of them (`binding`, its connector: BW4's `bind p.load = L`
+ * over P's `load default = 2.0`) — `undefined` where neither holds one. A
+ * chain to a feature whose default a binding holds had said it "gives way to
+ * an asserted equation" of a model with no assert.
+ */
+export function defaultGivesWayTo(model: Model, f: ElementRecord): { to: 'assert' } | { to: 'binding'; bindingId?: ElementId } | undefined {
+  const chain = [f, ...redefinedClosure(model, f)];
+  if (chain.some((g) => assertHeld(model).has(g.id) || assertHeldEverywhere(model, g))) return { to: 'assert' };
+  const ends = bindingEnds(model);
+  if (!chain.some((g) => ends.held.has(g.id))) return undefined;
+  const ids = new Set(chain.map((g) => g.id));
+  const joins = (end: ElementId | undefined): boolean => {
+    const e = end !== undefined ? model.get(end) : undefined;
+    return e !== undefined && (ids.has(e.id) || redefinedClosure(model, e).some((g) => ids.has(g.id)));
+  };
+  const connector = ends.connectors.find((c) => joins(c.source?.[0]) || joins(c.target?.[0]));
+  return connector ? { to: 'binding', bindingId: connector.id } : { to: 'binding' };
+}
+
+/**
  * Does a binding of the model, or one joined to it, meet a cap ({@link
  * BindingEnds.overCap}), or hold in a context where an end has no instance
  * ({@link BindingEnds.unread}, the `outside` cap)?
@@ -7280,6 +7305,21 @@ function memberInstance(definitions: DefiningEquations, root: ElementId, path: s
 }
 
 /**
+ * The first connector of a binding component in words — `` `bind p.load = L` ``
+ * and ` of D1E::Q`, the element that writes it — and whether both its ends have
+ * a path there (`ends`); `a binding` where they do not.
+ */
+function componentBindingWords(model: Model, root: ElementId, component: string): { bind: string; of: string; ends: boolean } {
+  const connector = componentConnectors(model, root, component)[0];
+  const ownerId = connector?.ownerId ?? null;
+  const holder = ownerId != null ? effectiveQualifiedName(model, ownerId) : undefined;
+  const l = ownerId != null ? bindingEndPath(model, connector!.source?.[0], ownerId) : undefined;
+  const r = ownerId != null ? bindingEndPath(model, connector!.target?.[0], ownerId) : undefined;
+  const ends = l !== undefined && r !== undefined;
+  return { bind: ends ? `\`bind ${l} = ${r}\`` : 'a binding', of: holder !== undefined ? ` of ${holder}` : '', ends };
+}
+
+/**
  * Why a binding component gives no value, in the A.9 sentence — `two-values`
  * pointing at the binding's own finding, which a package's binding on a
  * definition's feature does not file (`finding` false), nor one whose end is
@@ -7298,18 +7338,12 @@ function abstentionSentence(
   const name = sep >= 0 ? symbol.slice(sep + 2) : symbol;
   const instance = sep >= 0 ? symbol.slice(0, sep) : '';
   const members = componentPaths(model, root, component);
-  const connector = componentConnectors(model, root, component)[0];
-  const ownerId = connector?.ownerId ?? null;
-  const holder = ownerId != null ? effectiveQualifiedName(model, ownerId) : undefined;
-  const l = ownerId != null ? bindingEndPath(model, connector!.source?.[0], ownerId) : undefined;
-  const r = ownerId != null ? bindingEndPath(model, connector!.target?.[0], ownerId) : undefined;
-  const bind = l !== undefined && r !== undefined ? `\`bind ${l} = ${r}\`` : 'a binding';
-  const of = holder !== undefined ? ` of ${holder}` : '';
+  const { bind, of, ends } = componentBindingWords(model, root, component);
   if (kind === 'two-values') {
     return (
       `${name} is not read in ${instance}: ${bind}${of} joins two values the model states (${members.join(', ')}), ` +
       'and a binding holds in every instance' +
-      (finding && l !== undefined && r !== undefined ? ' (see the binding\u2019s own finding)' : '')
+      (finding && ends ? ' (see the binding\u2019s own finding)' : '')
     );
   }
   if (kind === 'defaults-differ') {
@@ -7630,6 +7664,34 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
 }
 
 /**
+ * Two members of a binding component read in `root` that each give a value —
+ * `own`, the member a name read at an instance is, and `written`, one whose
+ * value is written with `=` — by their paths there ({@link
+ * statedAgainstBoundIn}, {@link definedAgainstBoundIn}), for a caller that
+ * evaluates both where the component's valued members are read (A.2.3).
+ */
+export interface BoundPair {
+  root: ElementId;
+  own: string;
+  written: string;
+  /** The instance symbols of the two members: the evaluation reads each where it is stated. */
+  symbols: readonly string[];
+  /**
+   * `own` is the member an asserted equation defines ({@link definedAgainstBoundIn}): it is read through
+   * that equation, as the check reads it, never through the binding it is compared with.
+   */
+  defined?: true;
+}
+
+/**
+ * How the two values of a {@link BoundPair} compare, evaluated exactly —
+ * `undecided` where the evaluation does not decide it. The evaluation is the
+ * unit-aware reader's (`boundPairAt` of ./units-eval), which this module
+ * does not import; every caller passes that one, so the readings agree.
+ */
+export type DecidePair = (pair: BoundPair) => WrittenComparison;
+
+/**
  * Why the value `f` states with `=`, read at the instance `inst`, is not read
  * there: a binding joins it to another value written with `=` that DIFFERS
  * from it (A.5, U11) — `part q : Q { part :>> p { attribute :>> load = 30.0;
@@ -7642,12 +7704,21 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
  * definition's feature, whose package-side value, one instance, is still read
  * at its own. The values are compared as
  * written ({@link compareWrittenValues}), as {@link contradictedBindingOf}
- * compares a redefinition with the binding it redefines; a pair only an
- * evaluation could compare is read as before, and the binding's finding is
- * judged at the two values read. `undefined` where `f` writes no `=` value,
- * no binding joins it at `inst`, or no value written there differs from it.
+ * compares a redefinition with the binding it redefines. A pair only an
+ * evaluation could compare (`load = 30.0` against `L = 2.0 * K`, D1E; M7Y's
+ * `load = 1.0` against it, which meets it at Q's own K and not at q2's) is
+ * evaluated, both values where the binding's valued members are read
+ * (`decide`): one value where the two meet exactly (D1C's `load = 50.0` at K
+ * 25), and two where they differ. Where the evaluation decides neither, the
+ * value is not read either, in a sentence of its own: whether the two meet
+ * takes an evaluation this tool does not make there, and read as before, the
+ * one value was read where the model states both (false on every surface but
+ * the SMT engine's inconsistent axioms). The binding's finding judges that
+ * pair at the two values as written ({@link bindsUndecidedWrittenValues}).
+ * `undefined` where `f` writes no `=` value, no binding joins it at `inst`, or
+ * every value written there is the same as it.
  */
-export function statedAgainstBoundIn(model: Model, f: ElementRecord, inst: string): string | undefined {
+export function statedAgainstBoundIn(model: Model, f: ElementRecord, inst: string, decide: DecidePair): string | undefined {
   // Asked first, per feature: no instance is asked anything of the others.
   if (!statedAgainstBoundSomewhere(model, f)) return undefined;
   const name = sharedDefinitions(model).nameOf(f);
@@ -7662,23 +7733,214 @@ export function statedAgainstBoundIn(model: Model, f: ElementRecord, inst: strin
   if (!best || !reading || !own || !(valueSourceOf(model, own) === f || redefinedClosure(model, f).includes(own))) {
     return undefined;
   }
-  const differs = classified(model, best.root, best.component).valued.some((path) => {
+  let differs = false;
+  let undecided: ElementRecord | undefined;
+  for (const path of classified(model, best.root, best.component).valued) {
     const member = reading.get(path);
     const g = member ? model.get(member.feature) : undefined;
     const written = g ? valueSourceOf(model, g) : undefined;
     // A value an asserted equation states is not written to compare: today's reading stands beside it.
-    if (written === undefined || written === f || written.attrs.defaultValue === true) return false;
-    return compareWrittenValues(f, written) === 'differs';
-  });
-  if (!differs) return undefined;
-  if ('abstain' in src) return src.sentence;
-  return abstentionSentence(model, symbol, best.root, best.component, 'two-values', false);
+    if (written === undefined || written === f || written.attrs.defaultValue === true) continue;
+    let compared = compareWrittenValues(f, written);
+    if (compared === 'undecided') {
+      const mine = ownPathOf(model, best.root, best.component, symbol);
+      if (mine !== undefined && !path.startsWith('#')) compared = decide(boundPair(model, best.root, mine, path, symbol));
+    }
+    if (compared === 'differs') differs = true;
+    else if (compared === 'undecided') undecided ??= written;
+  }
+  if (differs) return 'abstain' in src ? src.sentence : abstentionSentence(model, symbol, best.root, best.component, 'two-values', false);
+  if (undecided === undefined) return undefined;
+  const sep = symbol.lastIndexOf('::');
+  const { bind, of } = componentBindingWords(model, best.root, best.component);
+  return (
+    `${symbol.slice(sep + 2)} is not read in ${symbol.slice(0, sep)}: ${bind}${of} joins ${writtenName(model, f)} = ` +
+    `${writtenValue(f)} to ${writtenName(model, undecided)} = ${writtenValue(undecided)}, two values written with ` +
+    '`=` that are not the same as written, and a binding holds in every instance; whether the two meet there takes ' +
+    'an evaluation this tool does not make, so neither is read'
+  );
+}
+
+/**
+ * The path, in `root`'s reading of `component`, of the member that IS the
+ * instance symbol `symbol` ({@link memberInstance}) — not a package's head
+ * (`#id`) — or `undefined`.
+ */
+function ownPathOf(model: Model, root: ElementId, component: string, symbol: string): string | undefined {
+  const definitions = sharedDefinitions(model);
+  return componentPaths(model, root, component).find((p) => !p.startsWith('#') && memberInstance(definitions, root, p) === symbol);
+}
+
+/** The {@link BoundPair} of the members `own` (the instance symbol `symbol`) and `written` of `root`'s reading. */
+function boundPair(model: Model, root: ElementId, own: string, written: string, symbol: string): BoundPair {
+  const other = memberInstance(sharedDefinitions(model), root, written);
+  return { root, own, written, symbols: other !== undefined ? [symbol, other] : [symbol] };
+}
+
+/**
+ * {@link definedAgainstBoundIn}'s answer: the two values are decided to
+ * differ (`differs`, a contradiction the binding's own row reports), or
+ * whether they meet is not decided (`undecided`); the sentence says which.
+ */
+export interface DefinedAgainst {
+  verdict: 'differs' | 'undecided';
+  sentence: string;
+}
+
+/**
+ * Why `feature`, read at `instance` under `name`, is not read there: it states
+ * no value, an asserted equation of the element that declares it (or of one
+ * whose feature it redefines, or of the element that denotes the instance —
+ * q1's `part :>> p { assert … }`) defines it, and a binding joins it there to
+ * another member that states a value written with `=` that the equation does
+ * not give it — RBL2's `part p : P { assert constraint { x == 3.0 } }` under
+ * q's `attribute L = 4.0; bind p.x = L;`. The model states two values for it
+ * (strict KerML: a binding holds in every instance), so it is not read, as
+ * A.5 reads neither of two written values ({@link statedAgainstBoundIn}); the
+ * binding's own row reports the pair. Read as before, the check took the
+ * equation's 3 and the numeric surface the binding's 4: `q.p.x <= 3.5` was T
+ * on the one and F on the other. Where the equation restates the value
+ * exactly — as written, or evaluated where the binding's valued members are
+ * read (`decide`: RY4's `x == y * 2.0` at y 1.5 against `L = 3.0`) — the two
+ * are one value, and it is read as before; where neither decides it, it is
+ * not read either, in a sentence of its own (`undecided`: whether the two meet
+ * takes an evaluation this tool does not make). A binding to a member with no
+ * value of its own (`default`s, the G340 family) carries the equation's
+ * value, as before. `undefined` where any of that does not hold.
+ */
+export function definedAgainstBoundIn(
+  model: Model,
+  feature: ElementRecord,
+  instance: string,
+  name: string,
+  decide: DecidePair,
+): DefinedAgainst | undefined {
+  if (!hasUserBindings(model) || hasStatedValue(model, feature)) return undefined;
+  const memo = (bindingEnds(model).definedAgainst ??= new Map());
+  const key = `${feature.id} ${instance}::${name}`;
+  const hit = memo.get(key);
+  if (hit !== undefined) return hit ?? undefined;
+  const found = definedAgainstBoundUncached(model, feature, instance, name, decide);
+  memo.set(key, found ?? null);
+  return found;
+}
+
+/** {@link definedAgainstBoundIn}, worked out. */
+function definedAgainstBoundUncached(
+  model: Model,
+  feature: ElementRecord,
+  instance: string,
+  name: string,
+  decide: DecidePair,
+): DefinedAgainst | undefined {
+  const definitions = sharedDefinitions(model);
+  const symbol = `${instance}::${name}`;
+  const best = outermostReading(model, symbol);
+  const reading = best ? bindingEnds(model).readings.get(best.root) : undefined;
+  const own = best ? model.get(best.feature) : undefined;
+  if (!best || !reading || !own || hasStatedValue(model, own)) return undefined;
+  // The feature read (a generic `P::x`, read per instance) and the member the
+  // binding holds there (p's end copy, whose element writes the equation) —
+  // after the element that denotes the instance, whose own asserts define it
+  // there first (RBL4: q1's `part :>> p { assert constraint { x == 3.0 } }`
+  // under Q's `bind p.x = L`, read T on the check against F on the numeric
+  // surface while only the end copy's and P's owners were asked).
+  const read = [feature, ...redefinedClosure(model, feature)];
+  const held = [own, ...redefinedClosure(model, own)];
+  // A value of its own anywhere it redefines (P's `x = 3.0` beside an `x ==
+  // 4.0`) is the feature's, and the equation a check of it: where the equation
+  // does not give it the bound value, that is no contradiction of the
+  // binding's (A.5 compares the two written values), so the pair is never
+  // `differs` — the binding's own row is judged as before — but the feature is
+  // still not read there, where the check took the equation's 4 and the
+  // numeric surface the 3 (G304).
+  const stated = [...held, ...read].find((g) => hasStatedValue(model, g));
+  const sites: Array<{ site: ElementId; name: string }> = [];
+  const element = denotingElementOf(definitions, instance);
+  if (element) sites.push({ site: element.id, name });
+  for (const g of [...held, ...read]) {
+    const n = definitions.nameOf(g);
+    if (n !== undefined && g.ownerId != null) sites.push({ site: g.ownerId, name: n });
+  }
+  let equations: readonly DefiningEquation[] = [];
+  for (const s of sites) {
+    equations = definitions.of(s.site, s.name);
+    if (equations.length > 0) break;
+  }
+  if (equations.length === 0) return undefined;
+  const closure = new Set([...read, ...held].map((g) => g.id));
+  const constants = equations.map((eq) => exactConstant(eq.definition, eq.literals));
+  let found: { verdict: DefinedAgainst['verdict']; written: ElementRecord } | undefined;
+  for (const path of classified(model, best.root, best.component).valued) {
+    const member = reading.get(path);
+    const g = member ? model.get(member.feature) : undefined;
+    const written = g ? valueSourceOf(model, g) : undefined;
+    if (!g || !written || written.attrs.defaultValue === true || closure.has(g.id) || closure.has(written.id)) continue;
+    if (memberInstance(definitions, best.root, path) === symbol) continue;
+    // An equation that restates the written value exactly gives the one value:
+    // compared as written where both are constants, else evaluated.
+    const w = constantOf(written);
+    let compared: WrittenComparison = 'undecided';
+    if (w && constants.every((c) => c !== undefined)) {
+      const each = constants.map((c) => compareConstants(c!, w));
+      compared = each.every((x) => x === 'same') ? 'same' : each.some((x) => x === 'differs') ? 'differs' : 'undecided';
+    }
+    if (compared === 'undecided' && !path.startsWith('#')) {
+      const mine = ownPathOf(model, best.root, best.component, symbol);
+      if (mine !== undefined) compared = decide({ ...boundPair(model, best.root, mine, path, symbol), defined: true });
+    }
+    if (compared === 'same') continue;
+    if (compared === 'differs' && stated === undefined) {
+      found = { verdict: 'differs', written };
+      break;
+    }
+    found ??= { verdict: 'undecided', written };
+  }
+  if (!found) return undefined;
+  const { bind, of } = componentBindingWords(model, best.root, best.component);
+  const eq = equations[0]!.constraint;
+  const head =
+    `${name} is not read in ${instance}: ${effectiveQualifiedName(model, eq.ownerId ?? eq.id)}'s asserted ` +
+    `\`${String(eq.attrs.expression ?? '').trim()}\` defines it, and ${bind}${of} joins it to ` +
+    `${writtenName(model, found.written)} = ${writtenValue(found.written)}, a value written with \`=\``;
+  if (stated !== undefined) {
+    return {
+      verdict: 'undecided',
+      sentence:
+        `${head}, beside its own \`${writtenValue(stated)}\` (${writtenName(model, stated)}): a binding holds in every ` +
+        'instance, and the equation does not give it the value the binding joins it to there, so it is not read',
+    };
+  }
+  return {
+    verdict: found.verdict,
+    sentence:
+      found.verdict === 'differs'
+        ? `${head} that differs from the one the equation gives it there: a binding holds in every instance, so the ` +
+          'model states two values for it, and it is not read (see the binding’s own finding)'
+        : `${head}: a binding holds in every instance, and whether the two meet there takes an evaluation this tool ` +
+          'does not make, so it is not read',
+  };
+}
+
+/**
+ * The element that denotes `instance` — the feature its last link names, in
+ * the element the instance's walk reads it in ({@link
+ * DefiningEquations.framesAbove}): q1's `part :>> p` for `R::q1::p` — or
+ * `undefined` where no walk spells it.
+ */
+function denotingElementOf(definitions: DefiningEquations, instance: string): ElementRecord | undefined {
+  const frames = definitions.framesAbove(instance);
+  const last = frames?.[frames.length - 1];
+  const sep = instance.lastIndexOf('::');
+  if (!last || sep < 0 || last.instance !== instance.slice(0, sep)) return undefined;
+  return definitions.byName(last.reader).get(instance.slice(sep + 2));
 }
 
 /**
  * Is `f` a value written with `=` that a binding joins, in SOME context it is
- * read in, to another value written with `=` that differs from it
- * ({@link statedAgainstBoundIn})? Both are, and a redefinition with a value of
+ * read in, to another value written with `=` that differs from it, or that
+ * only an evaluation could compare with it ({@link statedAgainstBoundIn})?
+ * Both are, and a redefinition with a value of
  * its own of the slot a package's binding joins (`fixed`,
  * {@link DefinitionHead}) is joined so to every value written in that
  * component. The readings that key no instance — the numeric lane's seeds, a
@@ -7693,7 +7955,7 @@ export function statedAgainstBoundSomewhere(model: Model, f: ElementRecord): boo
   if (!ends.against) {
     const out = new Set<ElementId>();
     const against = (list: readonly ElementRecord[]): void => {
-      for (const w of list) if (list.some((o) => o !== w && compareWrittenValues(w, o) === 'differs')) out.add(w.id);
+      for (const w of list) if (list.some((o) => o !== w && compareWrittenValues(w, o) !== 'same')) out.add(w.id);
     };
     const fixed: Array<{ head: DefinitionHead; written: ElementRecord[] }> = [];
     for (const [root, reading] of ends.readings) {
@@ -7739,11 +8001,28 @@ export function statedAgainstBoundSomewhere(model: Model, f: ElementRecord): boo
  * component joins.
  */
 export function bindsDifferingWrittenValues(model: Model, a: ElementRecord, b: ElementRecord): boolean {
+  return writtenPairOf(model, a, b) === 'differs';
+}
+
+/**
+ * Do the two features a binding's ends denote state values written with `=`
+ * that only an evaluation could compare ({@link compareWrittenValues}: D1E's
+ * `load = 30.0` against `L = 2.0 * K`)? Neither end reads either value where
+ * the binding joins them ({@link statedAgainstBoundIn}), so the binding's own
+ * row judges the pair at the two values as written, each read where it is
+ * written, in the context the row is read in.
+ */
+export function bindsUndecidedWrittenValues(model: Model, a: ElementRecord, b: ElementRecord): boolean {
+  return writtenPairOf(model, a, b) === 'undecided';
+}
+
+/** How the values written with `=` that a binding's two ends read compare, or `undefined` where an end reads none. */
+function writtenPairOf(model: Model, a: ElementRecord, b: ElementRecord): WrittenComparison | undefined {
   const x = valueSourceOf(model, a);
   const y = valueSourceOf(model, b);
-  if (x === undefined || y === undefined || x === y) return false;
-  if (x.attrs.defaultValue === true || y.attrs.defaultValue === true) return false;
-  return compareWrittenValues(x, y) === 'differs';
+  if (x === undefined || y === undefined || x === y) return undefined;
+  if (x.attrs.defaultValue === true || y.attrs.defaultValue === true) return undefined;
+  return compareWrittenValues(x, y);
 }
 
 /**

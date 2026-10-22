@@ -1191,6 +1191,13 @@ against P's `cap = 10000.0 [g]` (violated, on every surface), q2's `L = 5000.0
 [g]` is 5 kg (`load = 5` in the row's sentence), and a bare literal beside it
 is read in `load`'s unit (`load <= 10.0` holds for q2). A value of another
 dimension carried into it (a length into a mass) is compared by no surface.
+Into a feature that declares neither a unit nor a kind, a quantity is read as
+written only where that is its number in coherent SI: q's `L = 2.0 * K` over `K
+= 25000.0 [g]` is 50000 as written and 50 kg, and a bare number beside it
+(`q.p.load <= 1000.0`) is compared by neither the check nor the literal engine,
+in a sentence saying the feature declares no unit to read it in; a quantity
+beside it (`<= 60.0 [kg]`) is compared in units, and the numeric surface and the
+solver lane read SI.
 Against a value written with `=`, a binding is a **contradiction**, as a
 redefinition is: `bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20
 kg is reported violated at the binding (in a context that specialises the
@@ -1205,10 +1212,19 @@ written in P itself is still judged on P's own row at 18.5 kg by the check and
 the literal engine, even where q's p is the only P. The two are compared as
 written, as a redefinition's value is against the one it redefines: a pair
 written the same (`1000.0 [g]` and `1.0 [kg]`) is one value, and is read. A
-pair only an evaluation could compare (a value expression that reads a name) is
-still read, each value where it is stated, where neither should be: a known
-gap. The binding is reported violated where the check finds the two differ, and
-a pair it cannot compare is left to the solver lane. A binding to a feature of
+pair only an evaluation could compare (a value expression that reads a name:
+q's p's `load = 30.0` against Q's `L = 2.0 * K`) is evaluated, both values where
+the binding's valued members are read, exactly (no rounded number decides it):
+where the two meet (`load = 50.0` there, with K 25) they are one value, and it is
+read; where they differ (30 against 50) neither is read, as above; and where the
+evaluation decides neither (an input with no value, a bare number against a
+quantity), neither is read either, in a sentence that names the two values and
+says that whether they meet takes an evaluation this tool does not make. The
+numeric surface reads neither value of such a pair anywhere, and reports that
+the feature has no value in scope. The binding is reported violated where the
+check finds the two differ: such a pair is judged on the binding's own row at
+its two values as written, each read where it is stated, and every other value
+as the check reads it. A binding to a feature of
 the instance around the usage it is written in (R's `L` in `part q : Q { bind
 p.load = L; }`, against r2's own `:>> load = 3.0` in its q's p) files no such
 row, and the solver lane, which has no axiom of it where that usage is
@@ -1235,14 +1251,34 @@ feature's owner specialises, over a redefinition's own default (Q's `assert
 constraint { L == 5.0 }` makes `part q : Q { attribute :>> L default = 9.0; }`
 read 5). The equation defines the side whose other side has a value of its
 own: `L == M`, M declared without one, still makes M the 2 L's default gives;
-two defaults set equal (`L == K`) are both read as no value. An inequality
+two defaults set equal (`L == K`) are both read as no value, and a relation over
+either says so (*L has no value: its `default = 2.0` gives way to Q4L's asserted
+`L == K` (an asserted equation overrides a default), and that equation gives it
+none here*; through a chain, *T::L states `default = 2.0`, which gives way to an
+asserted equation*). An inequality
 defines nothing (`assert constraint { L >= 5.0 }`): the default stands and the
 assert is reported violated against it; a plain `=` value never gives way,
 and an equation that contradicts it is reported violated. An equation that
 names a feature by its path, `assert constraint { p.x == 3.0 }` over `part p :
 P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
-against it) or two such asserts give it two (it is read as no value). Where
+against it) or two such asserts give it two (it is read as no value). Nor is an
+element's own equation over a feature it declares without one read where a
+binding joins that feature to a value written with `=` that the equation does
+not give it: p's `assert constraint { x == 3.0 }` under q's `bind p.x = L` and
+`L = 4.0` states two values for q's p's x (a contradiction) — as does P's own
+`x == 3.0` read in q's p, or one written in q1's `part :>> p { … }` under Q's
+binding — and every relation over q's p's x, the assert's own row included, is
+*could not be evaluated* on the check and the literal engine, in a sentence
+naming the equation and the value; the binding's own row reports the pair. The
+numeric surface still reads one of the two for `q.p.x` itself (the binding's 4
+where p's own assert writes 3, P's 3 where P writes it), and neither for P's
+own relations in q's p, beside the solver lane's inconsistent axioms; q's L, the
+other end, is still read at its 4 (a known gap). The two are compared exactly,
+and evaluated where only an evaluation compares them: `x == y * 2.0` with y 1.5
+against `L = 3.0` is one value, 3, and is read; where the evaluation decides
+neither, x is not read either, in a sentence saying that whether the two meet
+takes an evaluation this tool does not make. Where
 that binding's value is a `default` (`bind p.x = L` with `L default = 4.0`),
 the assert stands over it, but this tool does not read an asserted equation
 through a binding's end, wherever the two are written: the package's `assert
