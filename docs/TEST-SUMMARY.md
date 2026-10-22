@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4806 total — 4806 passed, 0 failed, 0 skipped
+- **Tests:** 4843 total — 4843 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -64,10 +64,10 @@
 | test/unit/checks-registry.test.ts | 138 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
-| test/unit/collab.binding.test.ts | 15 | 0 | 0 |
+| test/unit/collab.binding.test.ts | 27 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
-| test/unit/core.model.test.ts | 12 | 0 | 0 |
+| test/unit/core.model.test.ts | 17 | 0 | 0 |
 | test/unit/diagnostic-codes.test.ts | 11 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
@@ -142,9 +142,9 @@
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 30 | 0 | 0 |
-| test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
+| test/unit/smt-z3-bridge-death.test.ts | 45 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 270 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 287 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
@@ -161,7 +161,7 @@
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
-| test/unit/ui.requirements-table.test.ts | 23 | 0 | 0 |
+| test/unit/ui.requirements-table.test.ts | 25 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
