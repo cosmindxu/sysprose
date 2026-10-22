@@ -103,10 +103,11 @@ its four surfaces (the check, the literal engine, the numeric surface and the SM
 abstain on or read false in the four-surface table
 (`test/integration/verification.differential.test.ts`). The branch `h5` (merged by `755352c`) made
 an asserted equation override a `default` on every surface, read definition-feature and part-valued
-bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open:
-`KNOWN_FALSE` and `I7_ALLOWED` entries tagged `no step yet` are the residuals below. The false
-verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
-headings.
+bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open.
+Since per-instance-rest (merged by `ca4992c`), `KNOWN_FALSE` is empty (it held 20 rows at 3c54ae0),
+so the plan's "Done means" item is met, and no allowlist entry is tagged `no step yet`. The
+residuals are the entries below. The false verdicts the review of 2026-10-14 found in the
+per-instance code itself follow under their own headings.
 
 - [ ] **Read an asserted equation through a binding's end.** An equation that decision 14 makes stand
       over a `default` carried by a binding component (only defaults) abstains on every surface with
@@ -143,34 +144,60 @@ headings.
       q1::p` were T/T/T/X and are now ?/?/?/?; in h5bL, q2's L is a plain 5), RB4's q2, PIN5's
       `P::c` and p's rows, PA's `P::c`. Sound, only weaker. An instance-only taint must still reach
       the binding partners: q2's L through Q's `bind p.load = L`. [O9 S2, review]
-- [ ] **Contain the remaining new instance-index calls.** `equatedParts`'s call to `enclosingAsserts`
-      (`unreadAsserts`) and the `readAt` filter in `readFeatures` (`enclosingAsserts`,
-      `assertHeldInSome`) are not contained, so a throw there still ends the check (loudly) rather
-      than one row; it now drops the half-built `EQUATED_PARTS` entry first, so a later call at the
-      same revision rebuilds the index and abstains as a clean run does. The calls in
-      `contextsUncached` are contained. No throwing-stub test: the calls are internal to
-      `defining-equation.ts`, and the module-level `vi.mock` stub cannot reach them; a test needs an
-      injectable seam (A.2.9). [O9 S2, review]
 - [ ] **Finish H5B: an element's own equation over a default.** An element's own asserted equation
       over a `default` still abstains as `not-enumerated` when the enclosing rule does not file it
       because the other side has no value (`extra == M`), and when the default is also held by the
       local rule (q7's `:>> extra default = 7.0` plus `extra == 2.0`, or the element's type's own
       assert). The wording of those refusals is a separate entry. [O9 S2]
-- [ ] **File per-instance rows for a `satisfy` a definition writes.** `part def W { part p1 : T0;
-      satisfy RF by p1; } part w : W { part :>> p1 { attribute :>> load = 50.0; } }` files no row
-      for w, so `verify` exits 0 and `sysml-check --strict` passes while w breaks RF (sd0, sd1, g8
-      in `bindings-residual-scratch/rv/p`). The same holds for a requirement usage in a definition
-      whose subject is bound to a plain part (sbj0). A satisfier reached through a reference, an
-      equated part or a subject, and a valueless `ref` an instance rebinds (F1, F3), abstain
-      (`unread-binding`). File per-instance rows for a satisfaction, as for a constraint written in
-      a definition, or abstain on every satisfaction a specialised definition writes. A false pass.
-      [O9 S1, review]
-- [ ] **Read a definition's relation through a reference or a renamed redefinition an instance
-      rebinds.** `part def W { ref part top : T1; ref part pp : T0 = top.a; constraint pF { pp.load
-      <= 5.0 } } part w : W { ref part :>> top = t50; }` (v8x, v8x2), the direct `top.a.load` (v8xd)
-      and `part top2 redefines top {...}` (v8n) file no row for w: W's `pF` holds while w's 50 breaks
-      it. A part rebound by a value this tool does not read through (`part :>> top = t50`) files the
-      row and abstains (h5-valinst, h5-bndinst, h5-refinst). A false pass. [O9 S1, review]
+- [ ] **Read a satisfaction, a subject or a reference a definition writes in each instance of it.**
+      Since per-instance-rest S1 these are read at the values of the element they are written in,
+      and each of their rows abstains (`unread-binding`, naming the instance) where an instance of
+      that element reads them otherwise: a `satisfy` written in a definition or in a usage another
+      specialises, whether R reads the satisfier through its subject or through a feature of its own
+      (sd0, sd1, SM1, SM6); a requirement usage there whose subject a value binds (sbj0, SM3, SM2)
+      and any read of that subject from outside (`w.q.s.load`, SBO, SBN); a reference a nested usage
+      values with a feature around it, and every value, binding or redefinition read through it
+      (cown2, RC7, RC7B, RC7C, X17NB, X17K's `q2.p.r.x`); and a reference redefinition that states
+      no value of the valued one it redefines (`ref part :>> r;`, VR1, COWN7: the walk reads a fresh
+      instance of its type); and the copy a binding's end written in an instance makes of a valued
+      reference (RBB4K: w's `bind m = pp.load` over W's `ref part pp : T0 = top.a`, under w's `ref
+      part :>> top = t50`). The walk read that copy as a fresh T0, so `w.m <= 5.0` read 1 on all
+      four surfaces at 3c54ae0; since the review fixes it abstains, as a valueless `ref part :>>
+      pp;` does. `bounds` refuses a measure read through any of them. G8, F1 and F3 keep their O9
+      sentence and belong here too. Sound, only weaker: W's own true rows abstain as well (refout's
+      `W::sub::pT`/`pF`, 24 M-generator rows in `sr_refout`, `sd_refoutm` and `sd_refoutb`), because
+      they stand for every instance. Reading them needs one of: a row per instance; the path read in
+      each instance as `landsElsewhere` reads a relation W writes, named per instance on the literal
+      and SMT surfaces; or the walk resolving such a value in its own instance of the element around
+      it (as `instanceStep` already does for a value below its element, cown3), and a valueless
+      reference redefinition read at the redefined value, or the walk reading such a copy as what
+      the reference it copies names. Done when sd0, sbj0, SM1, cown2, RC7, VR1 and RBB4K read F for
+      w on all four surfaces. [per-instance-rest S1]
+- [ ] **Read a subsetting usage in an instance that redefines what it subsets.** `part def W { part
+      p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 } }` with `part w : W { part :>> p1 {
+      attribute :>> load = 50.0; } }`: every w's p2 is one of w's p1s (load 50), but the walk reads
+      w's p2 as W's own, a fresh T0 (1). So `W::c` files no row for w, and `constraint k { w.p2.load
+      <= 5.0 }` reads T/T/T/T. A `satisfy RF by p2` written in W files no row for w either, and
+      `verify` exits 0 (sa7, sa3 in per-instance-rest-scratch/branch-review/p; SA5's W-level reading
+      is F). Read p2 through what the instance's p1 is, or put a usage that subsets a feature an
+      instance redefines into `satisfierTaint`'s narrowing (and `satisfierOtherwise` for a
+      satisfier) so that its rows abstain. Done when sa7's k and `W::c in w`, and sa3's satisfaction
+      in w, read F or abstain on all four surfaces. A false pass. [per-instance-rest review]
+- [ ] **Resolve an unnamed `:>> x` in a usage to the most specific inherited feature.** The mapper
+      resolves `attribute :>> M;` in `part s : Q2` to Q's M, not to Q2's `:>> M default = 2.0` that
+      redefines it. So s's M reads Q's 1, and `s.M == 2.0` is refuted on all four surfaces (MI7,
+      true T). Likewise `part r : Q2 { attribute :>> L; bind p.load = L; }` over Q2's `L = 50.0`
+      reads P's default 1 for r's p's load (MI6's `r50` F/F/F/F, true T). U10 (O6 S2) made the
+      implicit end copy redefine the most specific inherited feature; an explicit unnamed
+      redefinition needs the same where the redefinition target is resolved (src/core or the text
+      mapper), gated on the verdict differential and a v9 capture. Identical at 7565eb2.
+      [per-instance-rest S3 finish]
+- [ ] **Read a group's row through a reference its usage writes, now the walk reads it per
+      instance.** cown3's `W::sub::c in w::sub` abstains (`not-enumerated`: "this tool resolves what
+      a reference stands for only where its value is written"), while since per-instance-rest S1 the
+      walk reads W's sub's `ref part r : T0 = x`, reached as `w.sub.r`, in w's sub (cown3's k reads
+      F). The coverage guard (`instanceReadsOtherwise`) could read the row in that instance instead.
+      Sound, only weaker. [per-instance-rest S1]
 - [ ] **Name the instance a finding is about.** `p50::r2.load = 50 misses P::c` (rv/p/g7, where the
       row is read for pb), `p1::r2.load` for q2's p (g3), and at aac38fd `p2::r1.load` (rr1): the
       message names the target of the last link, not the instance the row is read for
@@ -187,6 +214,11 @@ headings.
       seven`), the numeric surface abstains with `"top.a.load" has no value in scope`, not the
       binding's sentence: its `equatedPartsRefusal` pass in `solver.ts` skips a row that is already
       unknown. Wording only; every surface abstains. [O9 S1, review]
+      Also the obligations lane's own catch in `groupGoalRows` (a per-instance reading that throws
+      inside the tool): it files the goal under `unread-definition` with `failedReadingSentence`, so
+      `refusalTail` closes it with "This is a defect in the relation". That blames the user's
+      relation for a failure of the tool; USER-GUIDE says only that "the goal row is refused in that
+      sentence". Give it a tail that says the tool failed. [per-instance-rest review]
 - [ ] **Read what two steps of standing-for, a call, or a second subject would decide.** All sound,
       all weaker: (1) a shared-usage (group) row read through two steps of standing-for (a reference
       to a reference, or to an equated part, written in the usage's definition) abstains with "this
@@ -212,46 +244,106 @@ headings.
       in q1::p` (a specialiser reading and the group's enclosing-assert row), which makes the
       four-surface harness throw (pre-existing at aac38fd). Every such row abstains or agrees.
       Low. [O9 S2, review]
-- [ ] **Close the rows F's section 2.8 listed and the abstentions it did not.** GA7 `pl` reads
-      F/F/?/F (the numeric `?` comes from `derivedElsewhere` / `derivedValueBehind` reading P's
-      derived default behind the end copy; target F/F/F/F); GA6 `qa` reads T/-/?/- (target
-      T/-/T/-); GA6 `pa` and GA12 `pa`/`qa` moved from a numeric T to `?` and gained or lost rows
-      (invariant (h) against F's section 2.8: needs the maintainer's ruling); a package-level
-      definition-feature bind files no per-instance `#bind` row on the check and the numeric
-      surface, so `sysml-check` abstains where SMT decides (`W4o::c4`); under a fixed slot the
-      check and literal engine abstain where the true answer is decided (X3, X6, X10, W4d); the
-      numeric surface still imposes the first equation over a free partner (Q4, decision 7); SMT
-      abstains on renamed paths (`q.pp.x`); the bare-name analogue of the RB clash (the assert in
-      p's own body, `rbloc2`) reads T/T/F/X with no allowlist entry; an assert in a specialisation
-      of the default's owner and a per-type orientation (`rh`, `rh2`) read as before. X11's
-      value-source clause still names `through X11::Q's bind` (`readsClause`). [O5, review]
+- [ ] **Close the F section 2.8 rows still open, and the other end of an asserted equation's
+      binding.** (1) GA6 `qa` reads T/-/?/- (target T/-/T/-; the numeric surface does not converge
+      on that self-contradictory model). GA6 `pa` and GA12 `pa`/`qa` moved from a numeric T to `?`
+      and gained or lost rows; that needs the maintainer's ruling under invariant (h). (2) A
+      package-level definition-feature bind files no per-instance `#bind` row on the check and the
+      numeric surface, so `sysml-check` abstains where SMT decides (`W4o::c4` ?/?/?/X). (3) Under a
+      fixed slot the check and the literal engine abstain where the true answer is decided: X3
+      `c3T`/`cMT`, X6 `c2T` and X10 `c3T`/`cq2T` read ?/?/?/T (the SMT engine decides them; pinned
+      as W4X3 and W4X6), W4d `c2F` ?/?/F/?, `c2T` ?/?/T/T. (4) The numeric surface still imposes the
+      first equation over a free partner (Q4L `eq` ?/-/T/-, decision 7: the label stays); its
+      abstention on `c`/`d` says 'L is left free … no relation fixes it', not a sentence of its own.
+      (5) SMT abstains on renamed paths (`q.pp.x`). (6) Where a binding joins an element's asserted
+      equation to a value written with `=` that it does not give, the equation's end is not read on
+      the check and the literal engine since per-instance-rest S2, but the other end still is, at
+      its own value: RBL2L's `topL { q.L <= 3.5 }` and `q::lq` F/F/F/X, GV1's `pl` T/T/T/X, GW's `pl
+      in q2` T/T/T/? (q2's own `load = 2.0` against Q's `L == 5.0` over L's default). Abstain on
+      that end too, as A.5 does for both ends of d1plain. (7) The numeric surface reads one of the
+      two for `q.p.x` itself: the binding's 4 where p's own assert writes 3 (RBL2 `top`, RBL4 `t1`
+      ?/?/F/X), P's 3 where P writes it (RBB `top`, RBC `qc`/`dc`/`top` ?/?/T/X), all pinned in
+      I7_ALLOWED. GW's generic `pl` lost its SMT refutation to a context a gate refuses (F/F/F/?, F
+      before; sound). Closed by per-instance-rest S2: GA7 `pl` (F/F/F/F); rbloc2's T-against-F;
+      RBB/RBC (an equation P writes, read at the instance a chain reads); RBL4 (an assert in an
+      instance's own redefinition of p); rh and rh2 (pinned, own sentences); X11's value-source
+      clause; the Q4 and RH2 'no value anywhere' sentences; BW4/BW5 (a chain to a default a binding
+      holds names the binding). [O5, review, per-instance-rest S2]
 
-- [ ] **Finish what `table-rows` left of E3, E6 and E9.** The branch (merged by `0a69bcf`) closed E5
-      (the mapper's end copy) and E7 (the context row at its own instance), made `d1plain` abstain
-      (A.5), and moved eight of E3's ten rows and eight of E9's ten. Still open, pinned in
-      `KNOWN_FALSE` / `I7_ALLOWED` as "no step yet": (1) E3 `h2p0` (`P::c in Q::p`) and `h2c0`
-      (`Q::c`) read ?/?/?/? beside ref T: they need a per-instance read of a non-uniform enclosing
-      attribute, plus the new `in q::p` and `in q` rows (F); (2) E6 `D1E`, the expression-valued
-      pair (`load = 30.0` against `L = 2.0 * K`), and `m7y`, read as before; (3) E9 `Fx4` `c` and
-      `c2` (`%` over a constant divisor) stay T/T/T/?: encoding `%` in QF_LIRA means a new
-      standard-refused construct across about twelve differential tests, `smt-encode`, the campaign,
-      five fixtures, the unsupported-construct catalogue and the docs; and `P5G` stays in
-      `SAME_POINT_DEMOTED`; (4) the E9 entry's diagnosis of `u-m2` was wrong (gate (e) refused the
-      binding's context row); and gate (e) does not see the dimension a binding gives an untyped
-      feature, so the check reads it unit-blind (50000 g) where numeric, SMT and bounds read SI (50)
-      (`UB6 q::big`, `UB4 cX/dX`: I1 clashes since before the branch, not pinned). [O6]
-- [ ] **Read a name by the scope the surfaces use, and the shapes the lexical rule leaves.** Pinned
-      "no step yet": (1) a bare name is read as the one feature nested below the context that
-      answers it before the lexical name (`NX1`, `NX3`, `NX4`); (2) a body inherited from a general
-      type is read in the context's own scope (`DY1`: q's own `L` answers the `load = L` Q's p
-      writes; false on three surfaces since before the branch); (3) an end copy under two general
-      types that each redefine its head (`MI1`, `MI2`); (4) an enclosed binding has no `#bind` row
-      and no SMT axiom where its usage is redefined (`EB4`, `EB5`); (5) a context that sets the
-      bound partner's input by an asserted equation, or redefines the bound feature under a new
-      name, gets no `c in q2` row on any surface (`R22B`, `R27F`, `R38`); (6) the SMT engine does not
-      read a unit-typed package binding (`W4u`); (7) a name reached through an import or alias, a
-      qualified `Lex::K` and a non-attribute lexical feature are left unread; (8) typed asserts are
-      ignored by the engines (`CD1`). [O6 S1-S4, reviews]
+- [ ] **Finish what `table-rows` left of E3 and E9, and the numeric surface's reading of an
+      evaluated pair.** (1) E3 `h2p0` (`P::c in Q::p`) and `h2c0` (`Q::c`) read ?/?/?/? beside ref
+      T; the check and the literal engine give a sentence of their own, but h2c0's numeric surface
+      says only 'the solve did not converge'. They need a per-instance read of a non-uniform
+      enclosing attribute, plus the new `in q::p` and `in q` rows (F). (2) E6 is closed on the check
+      and the literal engine by per-instance-rest S2: a pair of `=` values only an evaluation
+      compares is evaluated exactly where the binding's valued members are read (one value where
+      they meet, two where they differ, an abstention of its own where it decides neither). The
+      numeric surface still drops both values of such a pair for every instance
+      (`statedAgainstBoundSomewhere`, per feature), where they meet too: bc2-ctx-derived's `k`
+      T/T/?/T (T/T/T/T at 3c54ae0), and 466 rows on consistent models of the S2 review's 1260-model
+      family (e.g. `G360::q::qc` T/T/?/T). It also says only '"load" has no value in scope', not the
+      A.5 sentence (D1P, D1E, M7Y, bc2). Read the pair per instance there, or carry the sentence
+      through `claimOnly`. (3) E9 `Fx4` `c` and `c2` (`%` over a constant divisor) stay T/T/T/?:
+      encoding `%` in QF_LIRA means a new standard-refused construct across about twelve
+      differential tests, `smt-encode`, the campaign, five fixtures, the unsupported-construct
+      catalogue and the docs. `P5G` stays in `SAME_POINT_DEMOTED`. (4) Where a bare number meets a
+      quantity a binding carries into a feature that declares no unit or kind, the check and the
+      literal engine abstain since S2, but the numeric surface and the SMT engine still read SI (UB4
+      `cX` ?/?/T/T, `dX` ?/?/F/?; UB6 `bT`/`cT` pinned in I7_ALLOWED). Gate (e) on all four surfaces
+      is the remaining step (optional). [O6, per-instance-rest S2]
+- [ ] **Read the name-scope shapes S3 left abstaining.** per-instance-rest S3 reads NX1/NX3/NX4 as
+      KerML resolves them. It files R22B's and R27F's `c in q2` (F, `constraint-by-instance`) and
+      R38's (`constraint-by-instance` info at q2's `ld :>> load`, since 1a8f9ca). It holds
+      EB4/EB5/W4u's usages to their bindings (SMT inconsistent axioms), and gives an enclosed
+      binding its `#bind` row, quoted as written. Still abstaining where KerML gives a value, each
+      pinned in the four-surface table:
+      (1) DY1: a context that declares a name a body of its general reads through the general's
+      owners (q's `part :>> p { attribute L = 50.0; }` beside Q's p `:>> load = L`) reads the name
+      nowhere, its own bodies included. Read each body by the scope of the element that writes it.
+      (2) R38: a renamed redefinition of a bound end (`attribute ld :>> load`) is read through no
+      binding, so `c in q2` abstains, in a sentence naming the renaming, where it is F.
+      (3) MI2 (and MI4): one `=` and one `default` under one name from two general types (Q2's `L =
+      50.0`, Q3's `L default = 60.0`, on the usage itself or through a general) are read nowhere,
+      though L is 50; read the `=` value. Since 1a8f9ca the same holds for two values that AGREE
+      under a usage's binding copy or a valueless `:>> L;` (ME6's `part s : Q2, Q3 { bind p.load =
+      L; }` over both `L = 50.0`; ME9's `part def S :> Q2, Q3`; md_*_same and md_*_samedef). Before,
+      they read P's default 1 on every surface; now the agreeing pair is a `same` clash, the default
+      gives way, and s's L and p's load abstain. Read the agreed value through the copy. ME9's own,
+      Q, Q2 and Q3 rows read T/T/T/? beside the two refused instance axioms of m2. MI1, MI1D and MI3
+      (two different `=` values) are a contradiction, rightly read nowhere, with the `#clash` filed.
+      (4) An assert typed by a constraint definition is read by no surface. Its own row is filed
+      nowhere, so a contradiction it makes with a value written with `=`, or with an untyped
+      asserted equation over the same default (which keeps its reading), is silent. Where its
+      definition's body holds an equation, every default it names gives way BY FEATURE in every
+      instance. That covers CD1, CD13, cd2-cd9 and cd21-cd23. Since 1a8f9ca it also covers a body
+      name read through a parameter (TP1's `x.load == 50.0` over `in x = p`, TP5's `bind x = p`: p's
+      load; where the rest names nothing there, every feature below p) and the parameter values of a
+      constraint usage the assert specialises (TP2's `assert constraint ea :> e0;`). Q's own rows
+      abstain for an assert written in `part q : Q`, and every P's for one naming `p.load`. Every
+      valueless feature it names, with what the model states from it, is no design freedom to the
+      numeric surface. Read the definition's body with the parameters' values, per instance.
+      (5) A name reached through an import or an alias, a qualified `Lex::K` and a non-attribute
+      lexical feature are still left unread.
+      (6) Wording only (every row abstains):
+      - EB4's r2 row, read through the package, says "a binding" and does not point at the `#bind`
+      finding (`componentConnectors` finds no enclosed binding from that root).
+      - EB4's `c in R::q::p` quotes "`bind q.p.load = L` of EB4::R", a form not in the text (written
+      `bind p.load = L` in R::q).
+      - MI1's numeric sentence says L "is left free … no value states it" where two values do.
+      - CD1's `c` and `topF` numeric sentence says "the solve did not converge … a point that misses
+      an equation" for a value a typed assert makes unreadable.
+      - CDQ's `t2` check sentence ("… gives way to `assert constraint e : Eq` in CDQ::q … and is not
+      read by this tool, has no asserted equation, and nothing specialises it") contradicts itself,
+      and TP1's ("… is not read by this tool and nothing specialises it") runs on the same way.
+      - ME9's `P::c in S::p` says only "a referenced value is unknown", not the agreeing clash.
+      Probes: per-instance-rest-scratch/branch-review2/p (cd1, cdq, eb4) and branch-review/p (tp1,
+      me9).
+      (7) A value W writes that names a part by the name an instance's renamed redefinition replaces
+      (RB10: W's `m = pp.load` over `ref part pp : T0 = top.a`, w's `part top2 redefines top {
+      attribute :>> L = 50.0; }`). `top.a` resolves nothing in w, so `W::pF in w` abstains on all
+      four surfaces ("a referenced value is unknown"), and `w.m` read from outside reads ?/?/F/? as
+      at 3c54ae0.
+      [per-instance-rest S1, S3, review]
 - [ ] **Read bindings deeper than 32 usages (optional).** A context more than `MAX_BINDING_SEGMENTS`
       (32, `src/semantics/defining-equation.ts:2001`) usages below where its binding is written is
       not read, so the check and the literal engine abstain on `chain33` and `chainPkg33` (four
@@ -276,21 +368,33 @@ true values. What follows is what that branch and the review of it left open; en
       adds about 30 ms warm on `big-bind-600` (restricting it to models that assert something
       changes no row on the 1,289 review models). Done when `big-bind-1200` is under 1 s cold, or the
       target is restated on the warm figure with the reason. [O2 S5, review 2026-10-14 A-H2]
-- [ ] **Contain the last throw paths and decide P5.** The throw paths in `groupGoalRows`
-      (`src/semantics/obligations.ts`) and `instanceGroups` are not contained as
-      `bindingConflicts` and `boundInInstanceQ` now are (a throw becomes one `internal` refusal), so
-      a throwing read there still ends the whole check (A.2.9). The planted bug P5 (literals counted
-      in `readsOtherwise`) is an equivalent mutant: no test can turn red on it until H5 is decided,
-      so give it a pin after `h5`. [O2 S6, review 2026-10-14 A-H4]
 - [ ] **Say the same thing about a bare literal in the note and the row.** After a carried value is
       read in the filled feature's declared unit, the `U3` note still reads `refuted … (5 vs 10 in
       M, coherent SI)` beside a verdict the unit reading reached; the literal and SMT notes of a
       carried value also lack the `(x vs y in M, coherent SI)` clause and print the end copy with
       unit null, and the value-source clause prints a converted value without its unit (`load =
       5`). Pre-existing for `U3`; the rest is display only, with A-M2. [O2 S6]
-- [ ] **Read per-instance bindings by path, not by feature.** The detection of a binding into a
-      redefiner matches by feature, so a binding into another part typed alike can form an extra
-      group. The extra group's rows are read correctly, so this costs rows, not verdicts. [O2 S4]
+- [ ] **Match a binding into an instance by path through a value too (optional, low).** Since
+      per-instance-rest S3 a binding written in an instance makes its usage a group only where it
+      reaches a path the relation reads. What a value the relation reads reads is still matched by
+      feature: `m = t.extra * 2.0` beside q2's `bind p.s.extra = E` (BA7) forms an extra group of
+      rows read alike. That costs rows, never a verdict. [O2 S4, per-instance-rest S3]
+- [ ] **Contain a throw in a relation's own context walk.** Since per-instance-rest S3 these become
+      `internal` refusals: a throw while `instanceGroups` groups a usage, in a `groupGoalRows` row,
+      or while `equatedParts` lists the asserted equations no surface reads (tested through
+      `instanceIndexSeam`). A throw in `DefiningEquations.readingContexts` still ends the check;
+      `instanceGroups`, `readInContexts` and the obligations lane's `instanceRows` all ask it. A
+      failed asserts listing is kept for the revision, so every row abstains until the next edit,
+      even after a transient throw. [per-instance-rest S3, A.2.9]
+- [ ] **Decide whether an untyped asserted conjunction defines its equation's feature.** `attribute
+      L default = 1.0; assert constraint { L == 50.0 and L >= 0.0 }`: decision 14 makes the bare
+      equation `L == 50.0` the definition of L over its default, but the untyped rule reads the
+      default of a conjunction that holds an equation and reports the assert violated (cl F/F/F/X in
+      `rv-s3fit/p/cd2.sysml`'s U). If decision 14 covers conjunctions, that F is a false verdict on
+      all four surfaces; if it does not, the default stands as for an inequality (U5). The typed
+      rule already abstains on such a conjunction (CD23), which is weaker under either reading and
+      never false. Awaits the maintainer's ruling on decision 14; until then the F stays and is
+      pinned. [per-instance-rest S3]
 - [ ] **Name the differing value in a violated-instance finding.** Witnesses now carry their values
       (`engine-small`, merged by `318283c`), but the finding's value clause still names the first
       bound read: `g-a4r2` prints `load = 2` where `extra = 20` differs, and `s-a4` names no value.
@@ -534,6 +638,15 @@ User guide and tutorials that are wrong, and what waits on something outside the
       output holds 49 diagnostics, none `constraint-by-instance`). Done when one workflow run on a
       model with instance groups has shown whether the rule should block, and the note and the
       severity say so. Waits for such a model. [review 2026-10-14 E15]
+      Also weigh the rows filed since per-instance-rest that report `target-by-specialisation`
+      (report-only). (1) An instance that rebinds a reference whose value a binding of the
+      referenced part carries (V8X, RB9: 50 from t50's L through T1's `bind a.load = L`), and the
+      same read through a binding or past 16 values (RBB1, RBB2, RBD16N: `w::m = 50 misses W::pF`);
+      the same binding-carried read through a part redefinition reports `constraint-by-instance`
+      (V8XC's q), as does a renamed end (R38). (2) A `satisfy` context whose satisfier's value a
+      binding of the definition carries from the instance's own member (NC4: sys's K through W's
+      `bind p1.load = K`; pre-existing for NC4P at 3c54ae0). The NC4 unit test no longer pins the
+      code. [per-instance-rest S1, review]
 - [ ] **Move to the z3 release that fixes the finalizer race.** The WASM finalizer race behind the
       intermittent z3 deaths (z3 issue #10999, fixed by PR #11001, merged upstream on 2026-10-02 as
       55eb9fa) is in no release: the npm `z3-solver` latest is still 5.2.0 (`package.json` `^5.2.0`;
