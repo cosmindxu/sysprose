@@ -3655,6 +3655,8 @@ interface BindingEnds {
   written: ReadonlyArray<{ holder: ElementId; ends: readonly ElementId[] }>;
   /** Each of them, in the model's order ({@link componentConnectors}). */
   connectors: readonly ElementRecord[];
+  /** {@link connectors} by the feature their source end is, each with its place in `connectors`, built when first asked. */
+  bySource?: ReadonlyMap<ElementId, ReadonlyArray<{ connector: ElementRecord; order: number }>>;
   /** Lazy indexes over `readings`, built when first asked ({@link indexOf}). */
   index?: BindingIndex;
   /** {@link bindingsIntoRedefiners}, built when first asked. */
@@ -7574,14 +7576,35 @@ function componentConnectors(model: Model, root: ElementId, component: string): 
     const f = model.get(r.feature);
     if (f) for (const g of redefinedClosure(model, f)) origins.add(g.id);
   }
-  facts.connectors =
-    origins.size === 0
-      ? []
-      : ends.connectors.filter((el) => {
-          const [s, t] = [el.source?.[0], el.target?.[0]];
-          return s !== undefined && t !== undefined && origins.has(s) && origins.has(t);
-        });
+  facts.connectors = origins.size === 0 ? [] : connectorsAmong(ends, origins);
   return facts.connectors;
+}
+
+/**
+ * The user's binding connectors whose two ends are both among `origins`, in the
+ * model's order — found by each origin's own connectors ({@link
+ * BindingEnds.bySource}), not by testing every connector once per component.
+ */
+function connectorsAmong(ends: BindingEnds, origins: ReadonlySet<ElementId>): readonly ElementRecord[] {
+  if (!ends.bySource) {
+    const bySource = new Map<ElementId, Array<{ connector: ElementRecord; order: number }>>();
+    ends.connectors.forEach((connector, order) => {
+      const s = connector.source?.[0];
+      if (s === undefined) return;
+      const list = bySource.get(s);
+      if (list) list.push({ connector, order });
+      else bySource.set(s, [{ connector, order }]);
+    });
+    ends.bySource = bySource;
+  }
+  const found: Array<{ connector: ElementRecord; order: number }> = [];
+  for (const origin of origins) {
+    for (const entry of ends.bySource.get(origin) ?? []) {
+      const t = entry.connector.target?.[0];
+      if (t !== undefined && origins.has(t)) found.push(entry);
+    }
+  }
+  return found.sort((a, b) => a.order - b.order).map((e) => e.connector);
 }
 
 /**
