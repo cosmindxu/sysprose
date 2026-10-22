@@ -4464,7 +4464,7 @@ package P {
     // interpreter reads it. Appended after the alphabet clause, which is why
     // the prefix assertion above and this one are both true.
     expect(r.stdout).toContain(
-      'alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     );
     // The exactness census is a `--json` payload field and not a report row: it
     // is the kill measurement for the features that will read the gate, and a

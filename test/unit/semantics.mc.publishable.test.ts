@@ -268,7 +268,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -282,7 +282,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -296,7 +296,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -310,7 +310,7 @@ const REACH_BEFORE: Array<{
     exhaustive: false,
     boundHit: 'none',
     qualification:
-      'undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — 1 guard(s) the walk could not evaluate; the unreachable and dead lists are WITHHELD and are NOT reported as findings, as is the no-way-out row for 1 configuration(s) whose only ways out are guards this walk could not decide',
+      'undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — 1 guard(s) the walk could not evaluate; the unreachable and dead lists are WITHHELD and are NOT reported as findings, as is the no-way-out row for 1 configuration(s) whose only ways out are guards this walk could not decide',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -324,7 +324,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: ['hazard'],
     dead: 1,
     deadlocks: 1,
@@ -338,7 +338,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -352,7 +352,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -366,7 +366,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -380,7 +380,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -408,7 +408,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -1602,7 +1602,7 @@ describe('each clause of the gate, on the one input that can fail it', () => {
       expect(row.exactness.walkIsExact, row.machine.qualifiedName).toBe(false);
       expect(row.exactness.failedClause, row.machine.qualifiedName).toBe('unsupported');
       expect(row.qualification, row.machine.qualifiedName).toBe(
-        'not explored — machine-boundary, machine-boundary; no figure below is a claim of absence',
+        'not explored — machine-boundary; no figure below is a claim of absence',
       );
       const walk = exploreMachine(model, row.machine.id);
       expect(publishabilityOf(walk).decreasingOk, row.machine.qualifiedName).toBe(false);

@@ -119,8 +119,11 @@ import {
   chaseEnds,
   boundsSentence,
   classifyBottoms,
+  constructsOf,
   exploreMachine,
+  hasChoice,
   livelockFinding,
+  livelockWithheldFinding,
   livelocksOf,
   machineAlphabet,
   machineStates,
@@ -1602,11 +1605,18 @@ export function replayWitness(
         reason: `at step ${want.index} the witness fires \`${qn(got.transitionId)}\` and enters \`${qn(want.leaf?.id)}\`, and the interpreter fires it and enters \`${qn(rests[i])}\``,
       };
     }
-    const taken = want.transition === null ? 'nothing' : `\`${transitionLabel(want.transition)}\``;
+    // THE ENDPOINT LABEL WITHOUT ITS TRIGGER, on both sides: `transitionLabel`
+    // carries its own backticks around the trigger, so wrapping it nests them,
+    // and a qualified name prints the same `…::«TransitionUsage»` for every
+    // anonymous transition, so the two sides would read as one. The event
+    // follows the label below.
+    const bare = (t: TransitionRef): string => `\`${transitionLabel({ ...t, label: '' })}\``;
+    const taken = want.transition === null ? 'nothing' : bare(want.transition);
+    const gotTr = got === undefined ? undefined : model.get(got.transitionId);
     const instead =
       got === undefined
         ? 'fires nothing more'
-        : `fires \`${model.qualifiedName(got.transitionId) || got.transitionId}\`${got.trigger === '' ? ' as a completion' : ` on \`${got.trigger}\``}`;
+        : `fires ${gotTr ? bare(transitionRef(model, gotTr)) : `\`${got.transitionId}\``}${got.trigger === '' ? ' as a completion' : ` on \`${got.trigger}\``}`;
     return {
       replays: false,
       step: want.index,
@@ -1877,7 +1887,7 @@ export function checkProperty(
       machineConfigs: 0,
       exhaustive: false,
       boundHit: walk.boundHit,
-      qualification: `not explored — ${walk.unsupported.map((u) => u.construct).join(', ')}`,
+      qualification: `not explored — ${constructsOf(walk.unsupported)}`,
       unsupported: walk.unsupported,
       witness: [],
       modality: null,
@@ -2467,13 +2477,12 @@ function modalityOf(
     return stateRef(model, leaf ?? stack[stack.length - 1] ?? '');
   };
   const verb = property.pattern.name === 'absence' ? 'enters' : 'leaves';
-  // The (d) trigger reads the RECORDED rows alone. §2.4(d) also names "a
-  // nondeterminism row was withheld" — `exploreMachine` withholds one where an
-  // undetermined guard sits strictly inside the level of the choice — but that
-  // arm is vacuous here: such a walk has a non-empty `undeterminedGuards`, so
-  // `walkIsExact` fails on its store clause and row 7 has already returned.
+  // The (d) trigger is `hasChoice`: the recorded rows and a withheld one
+  // (§2.4(d)). The withheld arm is vacuous here: a walk that withheld one has a
+  // non-empty `undeterminedGuards`, so `walkIsExact` fails on its store clause
+  // and row 7 has already returned.
   const simulator =
-    walk.nondeterminism.length > 0 ? ` — ${SIMULATOR_SENTENCE}` : '';
+    hasChoice(walk) ? ` — ${SIMULATOR_SENTENCE}` : '';
 
   if (cycle !== null) {
     const run = cycle.map(nameOf);
@@ -2843,7 +2852,7 @@ function recoveryRow(
       'pass',
       null,
       `recoverable: \`${atom.text}\` is reachable from every reachable configuration, ${qualification}${
-        walk.nondeterminism.length > 0 ? ` — ${SIMULATOR_SENTENCE}` : ''
+        hasChoice(walk) ? ` — ${SIMULATOR_SENTENCE}` : ''
       }`,
       0,
       0,
@@ -2956,7 +2965,7 @@ function coverWarrant(
   const riders = [
     ...(consumed.length > 0 ? [environmentSentence(consumed)] : []),
     ...(dwell ? [DWELL_SENTENCE] : []),
-    ...(walk.nondeterminism.length > 0 ? [SIMULATOR_SENTENCE] : []),
+    ...(hasChoice(walk) ? [SIMULATOR_SENTENCE] : []),
   ];
   const head = bare
     ? `covered — witness trace of ${steps} step(s), ${SEMANTICS_ADMITS}: ${sentence}`
@@ -3061,7 +3070,7 @@ export function coverRequiredRefusal(census: CoverCensus): string {
   const states =
     unreached === 0
       ? 'no state of this machine is unreached'
-      : `${behind} of its ${unreached} unreached state(s) sit${behind === 1 ? 's' : ''} behind a guard over an attribute with no declared value, which the walk read as false`;
+      : `${behind} of its ${unreached} unreached state(s) sit${behind === 1 ? 's' : ''} behind a guard over an attribute with no declared value, on which the walk took no edge`;
   return `--cover-required not applied: this cover is inconclusive under verification/guard-undetermined, not \`not covered\`, so there is no decided absence to spend the 1 on — ${states} — exit 2, not 1`;
 }
 
@@ -3229,7 +3238,7 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
               // error row beside it is what says the flag was applied.
               'This row IS decided: over a graph the walk saw whole, no run enters the situation the cover names. It is a missing behaviour and not a violated requirement, so it exits 2 — pass `--cover-required` to make it exit 1, which adds `verification/cover-required` and changes no word above.'
             : row.code === WITNESS_NOT_REPLAYED_CODE
-              ? 'Nothing is claimed about this property, and nothing here is a defect in the model: the search and the interpreter disagree about one run, which is a defect in this engine. The row names the step where the two parted; drive the machine with the same events in the Simulation tab to see what the interpreter does there, and report the model.'
+              ? 'Nothing is claimed about this property, and nothing here is a defect in the model: the search and the interpreter disagree about one run, which is a defect in this engine. The row names the step where the two parted and what the interpreter does there instead; the Simulation tab takes the first declared transition at a tie, so it cannot follow a witness that took another branch of one. Report the model.'
               : 'Nothing is claimed about this property. A row that says what was not decided is the one thing a silence could never say.',
     });
   }
@@ -3241,16 +3250,16 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
   // passes, and the run says beside it that the machine never comes to rest.
   // Read off the walk `reach` takes — the one each property above was decided
   // over, which `exploreMachine` keeps per model revision, so filing them
-  // walks the machine again only where no property did. The PUBLISHED rows
-  // only: a withheld one is a `withheld` line of `reach`'s report and has no
-  // code to be filed under here, so the catalogue entry, the user guide and
-  // `docs/06` §8.8 say that this command carries none and send a reader to
-  // `reach` for it. A lone definition is no machine, and has none to file.
+  // walks the machine again only where no property did. A WITHHELD row is
+  // filed too, as `verification/completion-livelock-withheld` (info) after the
+  // published ones: `reach` prints it as a `withheld` line, which carries no
+  // code, and a command that files findings has to say what it declined to
+  // say. A lone definition is no machine, and has none to file.
   if (machine !== null && machineEl !== undefined && !isLoneDefinition(model, machineEl)) {
     const walk = exploreMachine(model, machineId, explore);
-    for (const l of livelocksOf(model, walk).livelocks) {
-      findings.push(livelockFinding(machine, l, walk.bounds));
-    }
+    const { livelocks, withheld } = livelocksOf(model, walk);
+    for (const l of livelocks) findings.push(livelockFinding(machine, l, walk.bounds));
+    for (const l of withheld) findings.push(livelockWithheldFinding(machine, l));
   }
 
   return {

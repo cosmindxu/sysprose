@@ -455,7 +455,7 @@ The `Polarity` column below carries the enumerated value in bold and the note af
 
 The second half of that sentence is the fourth reading of §2.3 made visible to the reader: the draft's wording said *"every `after(n)` label"*, which is a true sentence about the machines the draft measured and a false one about a machine whose dwells carry no label at all.
 
-It is not a substitute for the gate. Where the claim is increasing the claim is **withheld** and this sentence says why; where the claim is a positive witness, `WITNESS_CLAIMS` says per row which of the two happens — the witness is **re-worded** at §3.1 (`covered`), §3.2a (a trap's `entry` path) and §3.8 (a published cut set), and it is **withheld** at §3.R (the named avoiding cycle or sink — the row the draft left ungated entirely), §3.5a (the refuting finite maximal run) and §3.5b (the lasso). In every case this sentence stands beside whatever survives. The two hazards are different and the disclosure must not be asked to do the suppression's job — which is exactly the error §2.4(a) would have made if it had been left to cover this case, since a dwell is not a trigger an environment can withhold or offer out of order. **The store has the third sentence of this family**, printed by `boundsSentence` on every bounds line in every lane (§2.3): `store seeded from declared literal values — a guard over an attribute with no declared value is read as false`.
+It is not a substitute for the gate. Where the claim is increasing the claim is **withheld** and this sentence says why; where the claim is a positive witness, `WITNESS_CLAIMS` says per row which of the two happens — the witness is **re-worded** at §3.1 (`covered`), §3.2a (a trap's `entry` path) and §3.8 (a published cut set), and it is **withheld** at §3.R (the named avoiding cycle or sink — the row the draft left ungated entirely), §3.5a (the refuting finite maximal run) and §3.5b (the lasso). In every case this sentence stands beside whatever survives. The two hazards are different and the disclosure must not be asked to do the suppression's job — which is exactly the error §2.4(a) would have made if it had been left to cover this case, since a dwell is not a trigger an environment can withhold or offer out of order. **The store has the third sentence of this family**, printed by `boundsSentence` on every bounds line in every lane (§2.3): `store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge`.
 
 **(d) The simulator sentence — what the exactness gate does NOT cover, and the reason it must print on every increasing claim.** **Every increasing claim in this plan is a claim about the MACHINE's semantics and never a claim about what the shipped simulator does.** That sentence is the standing one; the rest of this paragraph is why it has to be printed rather than assumed. `walkIsExact` establishes that the retained relation is the **machine's**. It establishes nothing at all about what the shipped interpreter does with that machine, and the two differ on every nondeterministic choice point: the walk explores both branches of a declaration-order tie-break and `runStateMachine` fires `enabled[0]` (`execute.ts`:1300-1308). Measured, this is not a corner case — `verification/nondeterministic-choice` reads **1** on `UAVSurveillanceSystem::FlightModes` (at `…::autonomous`, `event=""`, enabled `autonomous→manual` and `autonomous→failsafe`, taken `→manual`, notTaken `→failsafe`) and **1** on `VehicleModel::VehicleStates` (at `…::idling`, `event=""`, enabled `idling→moving` and `idling→off`, taken `→moving`, notTaken `→off`). On **two of the three shipped machines**, every increasing claim this plan publishes is therefore a claim about the machine's semantics and not about the simulator's. So, printed once as a shared constant beside every increasing claim and every published witness, whenever `nondeterministic > 0` **or a nondeterminism row was withheld under `c929278`'s rule** (§0.1 — a row is withheld when an undetermined guard sits strictly inside the level where the choice is reported, and a trigger written as *"the count is non-zero"* would drop the disclosure on exactly the walks that least resemble the simulator):
 
@@ -687,7 +687,7 @@ npm run sysprose -- check-behaviour <file> --element REF \
 |---|---|---|
 | `covered` | `covered — witness trace of N step(s), a run this semantics admits` + the environment sentence of §2.4(a) when the witness consumed a trigger + §2.4(d) when the machine has a choice point | **W1**, an **existential** row. `found.violation !== null` ∧ (**`relationIsTheMachines` ∨ the per-step disjunction of §2.3 — no step of the trace was taken across a transition for which `afterDuration` is defined, tested on the step's transition id and not on its recorded label, and no step crossed a transition in `undeterminedGuards`; a step that consumed a trigger keeps this row and prints §2.4(a) beside it**). **It reads no member of the bound family — not `seenWhole`, not `decreasingOk`, not `Publishability.searchComplete` — and that is asserted rather than left implicit** (§2.3): it **stands on a partial walk**, for the same reason `fail` does (`patterns.ts`:1214-1218) — a bound can hide a run and can never invent one — and measured, `--max-configs 3` on the 3-step `uav-isr` witness prints `partial under {maxConfigs 3, …}` and still publishes the row |
 | `covered` | `covered — witness trace of N step(s), a run this WALK admits: step 2 fires \`after(10)\`, a dwell this engine offers as a named event without advancing a clock, so the interpreter may never take this trace` + §2.4(c) | `found.violation !== null` ∧ **some step of the trace was taken across a dwell transition (`afterDuration(step.transition) !== undefined`) or crossed a transition in `undeterminedGuards`**. The claim survives; the warrant is re-worded to the one the walk actually has, naming the mechanism the step used — a dwell (§2.4(c)) or a guard read against an undecided store (the store sentence) |
-| `not-covered` | `not covered under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet …, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — over W configuration(s)` | **A5**, and it reads `decreasingOk` and nothing from the exactness gate. `W` is the new named field `machineConfigs` (= `walk.configs`), **never** `found.configs`. The store clause is no longer §3.1's own prose: `boundsSentence` prints it in every lane (§2.3, §3.P), which is what lifted correction 23 from a one-feature clause to a plan-wide disclosure |
+| `not-covered` | `not covered under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet …, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — over W configuration(s)` | **A5**, and it reads `decreasingOk` and nothing from the exactness gate. `W` is the new named field `machineConfigs` (= `walk.configs`), **never** `found.configs`. The store clause is no longer §3.1's own prose: `boundsSentence` prints it in every lane (§2.3, §3.P), which is what lifted correction 23 from a one-feature clause to a plan-wide disclosure |
 | `vacuous` | `vacuous: no explored run opens the \`before\` scope` | `!found.activated`, non-`globally` scope, walk publishable |
 | `inconclusive` | `inconclusive: bound exhausted — the not-covered claim is not made` | A5's condition fails and there is no breach |
 
@@ -2180,10 +2180,12 @@ transition is due.
   never made. A walk a bound stopped short decides less still: without the chase
   position it takes no event where the budget would stop a chase its frontier
   hides, and a partial walk publishes no absence either. The store clause of the
-  bounds record (*a guard over an attribute with no declared value is read as
-  false*) is the interpreter's reading; at a completion guard the walk's is the
-  fail-closed one above. It is left as written because it is printed in every
-  qualification on every machine; the `verification/guard-undetermined` row
+  bounds record said *a guard over an attribute with no declared value is read
+  as false*, which is the interpreter's reading; at a completion guard the
+  walk's is the fail-closed one above. The review of this step left it as
+  written, because it is printed in every qualification on every machine, and
+  `reporting-residuals` S3 reworded it to what holds at both kinds of guard:
+  *is undecided and takes no edge*. The `verification/guard-undetermined` row
   beside it is what a reader acts on.
 - **What moved, text only.** The environment sentence (§2.4(a)) now names the
   two places — *wherever the walk could decide that the interpreter takes its
@@ -2349,9 +2351,11 @@ run-to-completion the machine never comes to rest. `reach` now says so, as
   property refused before any walk 0 → 290 → 290 ms — that last is the walk the
   rows need, which no property took. `reach` on the same machine is about 240 ms
   at `5943654` and about 290 ms on this branch, the livelock pass's own cost.
-  A WITHHELD row is not filed there — it is a `withheld` line of `reach`'s
-  report, with no code to file it under — so `reach` is where a withheld cycle
-  is read. This is a scope beyond
+  A WITHHELD row is filed there too, since `reporting-residuals` S3, as
+  `verification/completion-livelock-withheld` (info, after the published rows,
+  one per cycle of states, in the words of `reach`'s `withheld` line); `reach`
+  keeps the line, which carries no code. It claims nothing about the machine and
+  moves no verdict, count or exit code. This is a scope beyond
   U1's wording (*reach reports it*), taken so a reader of `check-behaviour` is
   not told a property holds over a machine whose chase never rests without
   being told that too; on v9 it is ten more warnings (`check-behaviour

@@ -630,6 +630,7 @@ describe('a nested state def: the machine that holds it, and a transition across
   const modelOf = async (text: string): Promise<Model> =>
     (await loadModelText(text, { fileName: 'nested.sysml', library: 'none' })).model!;
   const idOf = (m: Model, qn: string): ElementId => m.all().find((e) => m.qualifiedName(e.id) === qn)!.id;
+  const ref2 = (m: Model, id: ElementId) => ({ id, name: m.get(id)?.declaredName ?? '', qualifiedName: m.qualifiedName(id) || id });
 
   /*
    * THE SELF-CONTRADICTION (H1). `ax` is written in `Outer` and leads into the
@@ -859,6 +860,46 @@ describe('a nested state def: the machine that holds it, and a transition across
     expect(replay.reason).toBe(
       'at step 1 the witness fires `ToDef::Outer::ai` and enters `ToDef::Outer::Inner::x`, and the interpreter fires ' +
         'it and enters `ToDef::Outer::Inner`',
+    );
+    // A departure at the trigger names the transition by its endpoints, without
+    // its trigger, so the message carries no nested backticks.
+    const wrongEvent = replayWitness(model, outerId, [witness[0], { ...witness[1], event: 'zz' }], MAX_COMPLETION);
+    expect(wrongEvent.replays).toBe(false);
+    expect(wrongEvent.reason).toBe(
+      'at step 1 the witness fires `ai (a -> Inner)` on `zz` and the interpreter fires nothing more',
+    );
+    // ANONYMOUS transitions share one qualified name, so the two sides of a departure
+    // are told apart by their endpoints.
+    const anon = await modelOf(`package Anon { state def M {
+      entry; then a;
+      state a; state b; state c;
+      transition first a accept e then b;
+      transition first a accept f then c;
+      transition first b accept e then c;
+    } }`);
+    const anonId = idOf(anon, 'Anon::M');
+    const trs = anon.all().filter((x) => x.eClass === 'TransitionUsage');
+    const endpoints = (t: (typeof trs)[number]) => ({
+      id: t.id,
+      name: '',
+      qualifiedName: anon.qualifiedName(t.id) || t.id,
+      from: ref2(anon, t.source![0]),
+      to: ref2(anon, t.target![0]),
+      label: 'e',
+    });
+    const bc = trs.find((t) => anon.get(t.source![0])!.declaredName === 'b')!;
+    const forged = replayWitness(
+      anon,
+      anonId,
+      [
+        { index: 0, event: '-', transition: null, leaf: ref2(anon, idOf(anon, 'Anon::M::a')), stack: [], holds: [] },
+        { index: 1, event: 'e', transition: endpoints(bc), leaf: ref2(anon, idOf(anon, 'Anon::M::c')), stack: [], holds: [] },
+      ],
+      MAX_COMPLETION,
+    );
+    expect(forged.replays).toBe(false);
+    expect(forged.reason).toBe(
+      'at step 1 the witness fires `b -> c` on `e` and the interpreter fires `a -> b` on `e`',
     );
     // The same witness ending where the run rests replays.
     const resting: TraceStep[] = [
@@ -1274,16 +1315,19 @@ describe('the semantic profile is data, and its provenance is real', () => {
     }
   });
 
-  it('names the nine codes this engine can raise', () => {
+  it('names the ten codes this engine can raise', () => {
     // Eight since the trap row: `verification/unrecoverable-mode` is a set of
     // configurations nothing leaves, and it is the one code of them that is
     // gated on the exactness gate rather than on the decreasing conjunction.
     // Nine since U1 (plan O1 S4): `verification/completion-livelock`, a cycle
-    // the interpreter's chase goes round, gated on neither.
+    // the interpreter's chase goes round, gated on neither. Ten since
+    // `reporting-residuals` S3: `verification/completion-livelock-withheld`,
+    // the same cycle where a clause withholds it, filed by `check-behaviour`.
     expect([...BEHAVIOUR_CODES].sort()).toEqual([
       'verification/behaviour-unsupported-construct',
       'verification/bound-exhausted',
       'verification/completion-livelock',
+      'verification/completion-livelock-withheld',
       'verification/dead-transition',
       'verification/deadlock',
       'verification/guard-undetermined',

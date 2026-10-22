@@ -39,7 +39,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { loadModelText } from '@text/load';
-import { COMPLETION_LIVELOCK_CODE, exploreMachine, stateMachinesIn } from '../../src/semantics/mc/explore';
+import {
+  COMPLETION_LIVELOCK_CODE,
+  COMPLETION_LIVELOCK_WITHHELD_CODE,
+  exploreMachine,
+  stateMachinesIn,
+} from '../../src/semantics/mc/explore';
 import {
   behaviourReport,
   checkProperty,
@@ -466,6 +471,16 @@ describe('not decided — rows 5, 6 and 7, one per clause of `walkIsExact`', () 
     expect(typed.value).toBe('not-decided');
     expect(typed.failedClause).toBe('store');
     expect(typed.sentence).not.toContain('no declared value');
+    // The withheld-livelock finding's hint says the same: it must not tell the reader to
+    // value a feature that already has a value.
+    const report = behaviourReport(await modelOf(FILES.trapguardTyped), {
+      machineId: machineIn(await modelOf(FILES.trapguardTyped), 'TrapGuardTyped::Trap'),
+      pattern: 'pattern=absence, scope=globally, p=state degradedB',
+    });
+    const withheld = report.diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_WITHHELD_CODE);
+    expect(withheld).toHaveLength(1);
+    expect(withheld[0].hint).toContain('one the walk can evaluate');
+    expect(withheld[0].hint).not.toContain('Give the feature');
   });
 });
 
@@ -699,7 +714,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 3 step(s): `state failsafe` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → UAVSurveillanceSystem::FlightModes::standby',
       '       1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual',
@@ -723,7 +738,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 0 step(s): `state standby` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → UAVSurveillanceSystem::FlightModes::standby  [holds p]',
     ],
@@ -745,7 +760,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 3 step(s): `state failsafe` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    3 product state(s) explored — partial under {maxConfigs 3, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the configuration bound was reached — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    3 product state(s) explored — partial under {maxConfigs 3, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the configuration bound was reached — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → UAVSurveillanceSystem::FlightModes::standby',
       '       1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual',
@@ -769,7 +784,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `state failsafe` holds before `state manual` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → UAVSurveillanceSystem::FlightModes::standby',
       '       1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual  [holds p]',
@@ -791,7 +806,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 3 step(s): `state failsafe` never holds, from the first `state manual` onwards. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → UAVSurveillanceSystem::FlightModes::standby',
       '       1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual  [holds q]',
@@ -815,7 +830,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `state standby` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → UAVSurveillanceSystem::FlightModes::standby  [holds p]',
       '       1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual',
@@ -837,7 +852,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 2 step(s): `state landed` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → MissionDag::Mission::Modes::takeoff',
       '       1  completion takeoff -> cruise → MissionDag::Mission::Modes::cruise',
@@ -860,7 +875,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `state takeoff` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → MissionDag::Mission::Modes::takeoff  [holds p]',
       '       1  completion takeoff -> cruise → MissionDag::Mission::Modes::cruise',
@@ -882,7 +897,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `state hazard` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → Sink::Plant::Modes::nominal',
       '       1  completion nominal -> hazard → Sink::Plant::Modes::hazard  [holds p]',
@@ -904,7 +919,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `state alarm` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → AvoidingSink::Vehicle::Modes::start',
       '       1  completion start -> alarm → AvoidingSink::Vehicle::Modes::alarm  [holds p]',
@@ -926,7 +941,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `state fault` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → CycleBehindViolation::Controller::Modes::boot',
       '       1  completion boot -> fault → CycleBehindViolation::Controller::Modes::fault  [holds p]',
@@ -948,7 +963,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `state locked` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet unlatch, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet unlatch, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → Latch::Latch::Modes::nominal',
       '       1  completion nominal -> locked → Latch::Latch::Modes::locked  [holds p]',
@@ -970,7 +985,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 2 step(s): `state degradedB` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    2 product state(s) explored — undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — 1 guard(s) the walk could not evaluate — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    2 product state(s) explored — undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — 1 guard(s) the walk could not evaluate — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → TrapGuard::Trap::Modes::nominal',
       '       1  completion nominal -> degradedA → TrapGuard::Trap::Modes::degradedA',
@@ -993,7 +1008,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 2 step(s): `state degradedB` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → TrapGuardTrue::Trap::Modes::nominal',
       '       1  completion nominal -> degradedA → TrapGuardTrue::Trap::Modes::degradedA',
@@ -1016,7 +1031,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 2 step(s): `state degradedB` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → TrapGuardFalse::Trap::Modes::nominal',
       '       1  completion nominal -> degradedA → TrapGuardFalse::Trap::Modes::degradedA',
@@ -1039,7 +1054,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 2 step(s): `state degradedB` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    2 product state(s) explored — undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — 1 guard(s) the walk could not evaluate — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    2 product state(s) explored — undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — 1 guard(s) the walk could not evaluate — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → TrapGuardTyped::Trap::Modes::nominal',
       '       1  completion nominal -> degradedA → TrapGuardTyped::Trap::Modes::degradedA',
@@ -1062,7 +1077,7 @@ const BEFORE: readonly Before[] = [
       '    from --pattern',
       '    fail — witness trace of 1 step(s): `node hazard` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       '    verification/refuted',
-      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space',
+      '    1 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space',
       '    witness — a run this semantics admits:',
       '       0  start → Sink::Plant::Modes::nominal',
       '       1  completion nominal -> hazard → Sink::Plant::Modes::hazard  [holds p]',
@@ -1117,9 +1132,10 @@ describe('the annotation moved nothing on the row', () => {
           // The machine's completion livelocks (U1, plan O1 S4) are filed after
           // every property finding and are a finding about the MACHINE, not
           // about this row: what the annotation moved is read without them,
-          // and `semantics.mc.patterns.test.ts` pins them on their own.
+          // and `semantics.mc.patterns.test.ts` pins them on their own. So are
+          // the ones a clause withheld (`reporting-residuals` S3).
           diagnostics: report.diagnostics
-            .filter((d) => d.code !== COMPLETION_LIVELOCK_CODE)
+            .filter((d) => d.code !== COMPLETION_LIVELOCK_CODE && d.code !== COMPLETION_LIVELOCK_WITHHELD_CODE)
             .map((d) => [d.severity, d.code]),
         },
         want.id,

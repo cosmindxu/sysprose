@@ -70,8 +70,10 @@ import {
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
   COMPLETION_LIVELOCK_CODE,
+  COMPLETION_LIVELOCK_WITHHELD_CODE,
   GUARD_UNDETERMINED_CODE,
   exploreMachine,
+  livelockWithheldSentence,
   machineAlphabet,
   reachReport,
   stateMachinesIn,
@@ -1161,6 +1163,85 @@ describe('the chase budget, in the search, and every witness replayed through th
     }
   }, 120_000);
 
+  it('files a livelock it withholds as its own info finding, in the words of reach’s `withheld` line, and moves no verdict', async () => {
+    // A guard nothing decided on a trigger-less way out of the cycle (`store`)
+    // and a dwell as the chase's step (`time`): `reach` prints a `withheld`
+    // line and `check-behaviour` used to file nothing.
+    const { model, machineId } = await load(`package UndetLoop { part def P {
+      attribute x : Integer;
+      state def M {
+        state a; state b; state c;
+        transition ab first a then b;
+        transition bc first b if x > 0 then c;
+        transition ba first b then a;
+      }
+    } }`);
+    const withheld = reachReport(model).machines[0].livelocksWithheld;
+    expect(withheld.map((l) => l.clause)).toEqual(['store']);
+    const r = behaviourReport(model, { machineId, pattern: 'pattern=absence, scope=globally, p=state c' });
+    const filed = r.diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_WITHHELD_CODE);
+    expect(filed.map((d) => [d.severity, d.message])).toEqual([
+      ['info', `\`UndetLoop::P::M\`: {a, b} — ${livelockWithheldSentence('store')}`],
+    ]);
+    expect(r.diagnostics.map((d) => d.code)).not.toContain(COMPLETION_LIVELOCK_CODE);
+    // Beside the verdict, never in place of it: the row and the exit code are the property's own.
+    expect(r.properties.map((p) => p.claim)).toEqual(['inconclusive']);
+    expect(r.exitCode).toBe(2);
+
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Dwell');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id });
+    m.create('TransitionUsage', { ownerId: sm.id, attrs: { after: 5 }, source: [b.id], target: [a.id] });
+    const dwell = behaviourReport(m, { machineId: sm.id, pattern: 'pattern=absence, scope=globally, p=state a' });
+    expect(dwell.diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_WITHHELD_CODE).map((d) => d.message)).toEqual([
+      `\`Dwell\`: {a, b} — ${livelockWithheldSentence('time')}`,
+    ]);
+    // A machine whose livelock is published files no withheld finding.
+    const { model: cyc, machineId: cycId } = await load(
+      'package Cyc { state def M { state a; state b; state z; transition ab first a then b; transition ba first b then a; } }',
+    );
+    const pub = behaviourReport(cyc, { machineId: cycId, pattern: 'pattern=absence, scope=globally, p=state z' });
+    expect(pub.diagnostics.map((d) => d.code)).toEqual([COMPLETION_LIVELOCK_CODE]);
+  });
+
+  it('a witness through a branch of a choice whose row the walk withheld carries the simulator sentence', () => {
+    // `Outer -go-> O1` and `Outer -go-> O2` beside a guarded self-loop on a substate with `armed`
+    // unvalued: the walk withholds the choice row at `Outer` (the loop may win the priority rule),
+    // yet `cover O2` is witnessed through the branch the simulator never takes.
+    const build = (armed?: number) => {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const sm = f.stateDef('Hier');
+      if (armed !== undefined) f.attribute('armed', sm.id, { type: 'Integer', value: armed });
+      const outer = f.state('Outer', sm.id);
+      const inner = f.state('inner', outer.id);
+      const o1 = f.state('O1', sm.id);
+      const o2 = f.state('O2', sm.id);
+      f.transition(inner.id, inner.id, { ownerId: outer.id, trigger: 'go', guard: 'armed == 1' });
+      f.transition(outer.id, o1.id, { ownerId: sm.id, trigger: 'go' });
+      f.transition(outer.id, o2.id, { ownerId: sm.id, trigger: 'go' });
+      const row = behaviourReport(m, { machineId: sm.id, pattern: 'pattern=cover, scope=globally, p=state O2' }).properties[0];
+      return { row, walk: exploreMachine(m, sm.id) };
+    };
+    const hidden = build();
+    expect(hidden.walk.nondeterminism).toEqual([]);
+    expect(hidden.walk.choiceWithheld).toBe(true);
+    expect(hidden.row.claim).toBe('covered');
+    expect(hidden.row.detail).toContain(SIMULATOR_SENTENCE);
+    // Decided true, the loop wins the priority rule and there is no choice: no sentence.
+    const decidedTrue = build(1);
+    expect(decidedTrue.walk.choiceWithheld).toBe(false);
+    expect(decidedTrue.row.detail).not.toContain(SIMULATOR_SENTENCE);
+    // Decided false, the choice is a recorded row, and the sentence stands as it always did.
+    const decidedFalse = build(2);
+    expect(decidedFalse.walk.choiceWithheld).toBe(false);
+    expect(decidedFalse.walk.nondeterminism).toHaveLength(1);
+    expect(decidedFalse.row.detail).toContain(SIMULATOR_SENTENCE);
+  });
+
   it('every `fail` and `covered` row goes through the replay before it stands on its witness', () => {
     // The two returns that publish a witness, read off the producer: the
     // replay and its refusal come first, so neither can be reached around it.
@@ -1171,6 +1252,16 @@ describe('the chase budget, in the search, and every witness replayed through th
     expect(block.indexOf('code: WITNESS_NOT_REPLAYED_CODE')).toBeGreaterThan(replayAt);
     expect(block.indexOf("claim: 'covered'")).toBeGreaterThan(block.indexOf('code: WITNESS_NOT_REPLAYED_CODE'));
     expect(PROPERTY_PATTERN_CODES.has(WITNESS_NOT_REPLAYED_CODE)).toBe(true);
+  });
+
+  it('the hint on a row that did not replay does not send a reader to the Simulation tab to follow the run', () => {
+    // The replay resolves a tie-break the witness's way and the Simulation tab takes the first
+    // declared transition, so it cannot follow a witness that took another branch.
+    const hint = diagnosticCode(WITNESS_NOT_REPLAYED_CODE)!.hint!;
+    expect(hint).not.toContain('with the same events in the Simulation tab');
+    expect(hint).toContain('the Simulation tab takes the first declared transition at a tie');
+    const src = readFileSync(resolve(process.cwd(), 'src/semantics/mc/patterns.ts'), 'utf8');
+    expect(src).toContain(hint.match(/The row names the step.*Report the model\./)![0]);
   });
 });
 

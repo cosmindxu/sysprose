@@ -2891,7 +2891,7 @@ $ npm run sysprose -- reach examples/uav-isr.sysml
 examples/uav-isr.sysml: 1 state machine(s), 1 walked to exhaustion; 4 configuration(s) explored
   a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
   UAVSurveillanceSystem::FlightModes [StateDefinition]
-    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
     4 of 4 state(s) reachable; 5 of 5 transition(s) fired, 0 dead
     livelock     {manual, autonomous} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
     choice       UAVSurveillanceSystem::FlightModes::autonomous: 2 enabled as completion transitions (no trigger); the simulator takes autonomous -> manual, never autonomous -> failsafe
@@ -3083,7 +3083,9 @@ where the machine should wait, is the fix. A guard on a trigger-less way out of
 the cycle that the walk could not evaluate withholds the row — a `withheld` line
 says so in its place — and `check-behaviour` files the same warning beside its
 verdicts on the machine it checks, without changing a verdict or the exit code.
-It files the published rows only: read a withheld one in `reach`. On `--json`
+A withheld one it files as `verification/completion-livelock-withheld`, an info
+finding in the words of the `withheld` line, which says only that a cycle was
+seen and not decided. On `--json`
 every machine row carries `livelocks` and `livelocksWithheld` (empty on a
 machine with none, the second with the `clause` that withheld each), and
 `totals.livelocks` counts the published rows. A row names its `states`, the
@@ -3176,7 +3178,7 @@ $ npm run sysprose -- reach test/fixtures/verification/models/trap-probe.sysml
 test/fixtures/verification/models/trap-probe.sysml: 1 state machine(s), 1 walked to exhaustion; 5 configuration(s) explored
   a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
   TrapProbe::Probe::Modes [StateDefinition]
-    5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+    5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
     5 of 5 state(s) reachable; 6 of 6 transition(s) fired, 0 dead
     trap         {failsafe, failsafeHold} — 2 configuration(s) nothing leaves; entered in 3 step(s) from standby
     livelock     {alpha, beta} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
@@ -3467,7 +3469,7 @@ examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pas
     fail — witness trace of 3 step(s) …
     verification/refuted
     every run? potential — some run avoids it: the cycle manual → autonomous → manual never enters `failsafe` — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces
-    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} …
+    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} …
     witness — a run this semantics admits:
        0  start → UAVSurveillanceSystem::FlightModes::standby
        1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual
@@ -3524,7 +3526,7 @@ model.sysml: CoverProbe::Reachable::Modes — 1 property: 0 pass, 0 fail, 0 vacu
   COVERED      `state failsafe` holds on some run, over the whole run
     from --pattern
     covered — witness trace of 2 step(s), a run this semantics admits: `state failsafe` holds on some run, over the whole run — the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes `abort` is a claim about that environment and not about one that withholds it
-    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space
+    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space
     witness — a run this semantics admits:
        0  start → CoverProbe::Reachable::Modes::idle
        1  completion idle -> armed → CoverProbe::Reachable::Modes::armed
@@ -3601,7 +3603,7 @@ test/fixtures/verification/models/trap-probe.sysml: TrapProbe::Probe::Modes — 
     from --pattern
     not recoverable: 4 configuration(s) cannot reach `state standby`: {alpha, beta, failsafe, failsafeHold}; the nearest is entered in 1 step(s) from `standby`. Of these, 2 form a set nothing leaves — `reach` reports them as `verification/unrecoverable-mode`.
     verification/refuted
-    5 configuration(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+    5 configuration(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
   semantic profile (the reading every verdict above holds under):
     ...
   error verification/refuted  `TrapProbe::Probe::Modes`: `state standby` is reachable from every reachable configuration, over the whole run — not recoverable: 4 configuration(s) cannot reach `state standby`: …
@@ -3769,7 +3771,8 @@ row is published: the interpreter must fire the witness's transitions in its
 order and enter the states it enters. The one choice the replay makes the
 witness's way is the declaration-order tie-break, where the walk explores both
 branches and the simulator takes the first declared one (the simulator
-sentence beside such a row says so); run-to-completion, the 64-step chase
+sentence beside such a row says so, also where an undecided guard withheld the
+choice's own row); run-to-completion, the 64-step chase
 budget and the priority rule are the interpreter's own. A row whose witness
 does not replay is `inconclusive` under `verification/witness-not-replayed`,
 exit 2, with the step where the two parted — a defect in this engine, not in
