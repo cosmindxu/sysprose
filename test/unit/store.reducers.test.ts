@@ -5195,6 +5195,23 @@ describe('unsaved work — what a command that replaces the model asks about', (
     expect(asks(), 'a branch head that only the repository holds').toBe(true);
     await st().saveProject('Swarm');
     expect(asks(), 'Save').toBe(false);
+    // A commit, then New: the committed model is replaced and still only in
+    // the repository, so the tab keeps asking until Save.
+    edit('Falcon');
+    st().commitVersion('only copy');
+    expect(asks(), 'a commit of a model no save holds').toBe(true);
+    st().newProject('Next');
+    expect(unsaved(), 'New runs without a question: the guard reads the commit as holding it').toBe(false);
+    expect(asks(), 'New replaced the model the commit holds').toBe(true);
+    await st().saveProject('Next');
+    expect(asks(), 'Save').toBe(false);
+    // The same with Open ▾ over a commit.
+    edit('Osprey');
+    st().commitVersion('only copy');
+    await st().loadProject('Swarm');
+    expect(asks(), 'Open replaced the model the commit holds').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save').toBe(false);
   });
 
   it('asks while an edit’s recompute is waiting, and while a save is being stored', async () => {

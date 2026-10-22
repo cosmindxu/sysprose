@@ -574,8 +574,8 @@ one task was 200 to 400, the text and the last step being the longest
 (*Performance*, `docs/UI-ROADMAP.md`, P4). An edit while it runs ends it and the
 wait starts again, but the cap above still holds: the recompute due at the end of
 a burst's cap is one task, which an edit cannot end. Until it ends the edit is
-still waiting, as in its quiet period: Save finishes it first, and the prompt on
-closing the tab asks while it runs.
+still waiting, as in its quiet period: the prompt on closing the tab asks while
+it runs.
 
 ### The Text tab, in both directions
 
@@ -3994,8 +3994,8 @@ the Text view has not caught up with yet, and an attached Drive file's unsaved
 changes as well — and asks nothing once **Save** has kept them (a Drive file
 does not hold the boxes: with one attached, a box moved by hand still makes the
 tab ask). A commit, a branch switch or a merge in the Versions tab does not stop
-the tab asking: those are kept in memory and go with the tab, so only **Save**
-does. Press **Save** before you leave.
+the tab asking, nor does New or Open ▾ over them: those are kept in memory and go
+with the tab, so only **Save** does. Press **Save** before you leave.
 
 If you want the model out of the browser, use **Export ▾**: SysML text, model
 JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
@@ -4029,7 +4029,8 @@ a save or an export, or kept back and said so), `src/ui/commands.ts:39-106`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
 `leaveBeforeUnload`: the tab's question), `1399-1466` (the question), `src/api/versioning.ts:481-494`,
-`src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:96-103`,
+`src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:181-191` (the page's listener),
+`src/ui/store.ts:4969-4977` (`askBeforeLeaving`),
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
 

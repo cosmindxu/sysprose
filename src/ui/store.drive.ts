@@ -1358,7 +1358,6 @@ export function createDriveActions(
         set((s) => ({
           savedText: opened.savedText,
           savedPins: pinsMark(s.diagramPins),
-          savedInVersions: false,
           drive: { ...s.drive, file: { ...withMeta(current, meta), ...opened }, conflict: null },
         }));
       },
@@ -1815,7 +1814,7 @@ export function createDriveActions(
             // Opened, not attached: saving JSON back would be another format.
             // Still, the model is the file Drive holds — unless it was edited
             // while the library settled over it.
-            if (untouched) set((s) => ({ savedText: internals.savedTextNow(), savedPins: pinsMark(s.diagramPins), savedInVersions: false }));
+            if (untouched) set((s) => ({ savedText: internals.savedTextNow(), savedPins: pinsMark(s.diagramPins) }));
             patch({
               notice: { kind: 'info', message: DRIVE_MESSAGES.openedJson(meta.name), retryable: false },
               ...(link ? { link: null } : {}),
@@ -1829,7 +1828,6 @@ export function createDriveActions(
           set((s) => ({
             savedText: opened.savedText,
             savedPins: pinsMark(s.diagramPins),
-            savedInVersions: false,
             drive: {
               ...s.drive,
               file: {

@@ -438,10 +438,10 @@ export interface AppState extends DriveActions {
   savedPins: string;
   /**
    * `savedText` was last set by a Versions-tab commit, branch switch or merge,
-   * which hold the model in memory alone: they go with the tab. Every save
-   * that persists (Save, Open ▾, New, a `?model=` link, a Drive open or save)
-   * clears it. `browserDirty` does not read it, for within the session a
-   * commit does hold the work; the tab's own question does (`leaveUnsaved`).
+   * which hold the model in memory alone: they go with the tab. Only a save
+   * that persists (Save, a `?model=` link, a Drive save) clears it: New, Open ▾
+   * and a Drive open replace the model but leave it, the commit is still only
+   * in the repository. `browserDirty` does not read it; the tab's question does.
    */
   savedInVersions: boolean;
   projectName: string;
@@ -3800,7 +3800,7 @@ export const useAppStore = create<AppState>((set, get) => {
       afterMutation();
       // A new, empty model has nothing to lose: the next New, Open or Import
       // does not ask about it.
-      set({ savedText: savedTextNow(), savedPins: pinsMark({}), savedInVersions: false });
+      set({ savedText: savedTextNow(), savedPins: pinsMark({}) });
     },
 
     async saveProject(name) {
@@ -3862,7 +3862,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       afterMutation();
       // The project as stored: what this browser holds.
-      set((s) => ({ savedText: savedTextNow(), savedPins: pinsMark(s.diagramPins), savedInVersions: false }));
+      set((s) => ({ savedText: savedTextNow(), savedPins: pinsMark(s.diagramPins) }));
       // (Re)load the library when the saved project predates library support
       // (a no-op merge when it already carries one) and bind references — done
       // asynchronously so a large library never blocks the load.
