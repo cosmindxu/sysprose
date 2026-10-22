@@ -27,20 +27,26 @@ import {
   clashSentence,
   contradictionSentence,
   bindingEndPath,
+  bindingHolder,
   boundAboveSentence,
+  boundClashOf,
   boundHereSentence,
   boundPartnerSafe,
   boundSourceIn,
   defaultGivesWay,
   defaultGivesWayIn,
-  statedAgainstBoundIn,
+  defaultGivesWayTo,
+  typedAssertHolding,
   bindsDifferingWrittenValues,
+  bindsUndecidedWrittenValues,
   defaultStandsIn,
   assertDefinitionIn,
   enclosingAssertOn,
+  equatedPartsFailed,
   equatedPartsRefusal,
   failedReadingSentence,
   hasUndecidedPartners,
+  joinedTo,
   hasUserBindings,
   readsPerInstance,
   heldPastCapSentence,
@@ -79,8 +85,8 @@ import {
   type InstanceAbstention,
   type NameClash,
 } from './defining-equation';
-import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, redefinedClosure } from './inheritance';
-import { evaluateDecided, statedRational, tieSentence, type ExactScope, type Rational } from './exact';
+import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
+import { compareRationals, evaluateDecided, statedRational, tieSentence, type ExactScope, type Rational } from './exact';
 import { parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
   NO_MARKERS,
@@ -102,6 +108,9 @@ import {
   boundDerivation,
   boundSourceQuantity,
   declaredFacetsOf,
+  definedAgainstBoundAt,
+  readsStated,
+  statedAgainstBoundAt,
   definitionDerivation,
   describeReason,
   equationDerivation,
@@ -176,6 +185,15 @@ interface ScalarPass {
   calculations?: Set<string>;
   /** {@link derivedElsewhere}'s answer per relation, reading context and name (`null` for none), built on first use. */
   elsewhere?: Map<string, ElementRecord | null>;
+  /**
+   * The instance symbols this pass reads where each is stated, though a
+   * binding joins it to a value the two may not share (A.5's undecided pair,
+   * `statedAgainstBoundIn`; an asserted equation's, `definedAgainstBoundIn`):
+   * the two ends of the one binding whose own row it judges at its two values
+   * as written ({@link bindingConflicts}). Every other value is read as the
+   * check reads it. Its memo says so to the unit-aware twin.
+   */
+  stated?: ReadonlySet<string>;
 }
 
 function newPass(model: Model): ScalarPass {
@@ -187,6 +205,13 @@ function newPass(model: Model): ScalarPass {
     definitions: sharedDefinitions(model),
     memo: new Map(),
   };
+}
+
+/** A pass that reads the values at the instance symbols `symbols` where each is stated ({@link ScalarPass.stated}). */
+function statedPass(model: Model, symbols: ReadonlySet<string>): ScalarPass {
+  const memo: DerivationMemo = new Map();
+  memo.stated = symbols;
+  return { ...newPass(model), memo, stated: symbols };
 }
 
 /** What the scalar scope answers for one feature. */
@@ -402,6 +427,11 @@ function answerFor(
       }
     }
   }
+  // A feature its element's asserted equation defines, which a binding joins
+  // where it is read to a value written with `=` the equation does not give
+  // it, is not read (`definedAgainstBoundIn`), read per instance or not.
+  const against = definedAgainstHere(model, contextId, name, pass, inst);
+  if (against !== undefined) return against;
   const id = idsIn(pass, contextId).get(name);
   let answer: ScalarAnswer | undefined;
   if (id !== undefined) {
@@ -447,6 +477,33 @@ function answerFor(
   if (answer?.value !== undefined || inst === undefined) return answer;
   if (pass.definitions.clashedIn(contextId, name)) return answer;
   return valueBoundInInstance(model, contextId, name, pass, inst) ?? answer;
+}
+
+/**
+ * `definedAgainstBoundIn` for a name read in `contextId` — at the instance
+ * `inst` rebases it to, else at the one the context's own reading denotes —
+ * as the abstention, or `undefined`: none at a symbol the pass reads where it
+ * is stated ({@link ScalarPass.stated}). A throw is the read's (A.2.9).
+ */
+function definedAgainstHere(
+  model: Model,
+  contextId: ElementId,
+  name: string,
+  pass: ScalarPass,
+  inst?: string,
+): ScalarAnswer | undefined {
+  const den = pass.definitions.denote(contextId).get(name);
+  if (!den) return undefined;
+  const ownName = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
+  const instance = inst !== undefined ? rebaseInstance(pass.definitions, contextId, inst, den.instance) : den.instance;
+  if (readsStated(pass.stated, instance, ownName)) return undefined;
+  let found: ReturnType<typeof definedAgainstBoundAt>;
+  try {
+    found = definedAgainstBoundAt(model, den.feature, instance, ownName);
+  } catch (e) {
+    return failedReading(ownName, instance, e);
+  }
+  return found === undefined ? undefined : { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: found.sentence } };
 }
 
 /**
@@ -836,7 +893,8 @@ function valueOfFeature(
   // So too a value written with `=` that a binding joins, in this instance, to
   // another written with `=` that differs (A.5, d1plain): the binding's
   // finding reports the two, and neither is read.
-  const against = inst !== undefined ? statedAgainstBoundIn(model, feat, inst) : undefined;
+  const against =
+    inst !== undefined && !readsStated(pass.stated, inst, pass.definitions.nameOf(feat)) ? statedAgainstBoundAt(model, feat, inst) : undefined;
   if (against !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: against } };
   // A `default` a binding overrides gives way — per feature, or at the one
   // instance where a held redefinition of it falls through (`held-redef`).
@@ -1109,7 +1167,28 @@ function carriedInto(
   if (plain) return undefined;
   const carried: Carried = { quantity: q, name, instance };
   const shown = `${q.magnitude}${q.unit !== undefined ? ` [${q.unit}]` : ` (${dimToString(q.dimension)}, coherent SI)`}`;
-  if (dimension === undefined) return { carried };
+  if (dimension === undefined) {
+    // A feature that declares neither reads the number as written — the
+    // number the solver lane reads too where that is the quantity's own in
+    // coherent SI. Where it is not, a bare number beside it is read in no
+    // unit the model states: `2.0 * K` over K's `25000.0 [g]` is 50000 as
+    // written and 50 kg to the numeric surface and the SMT engine, and UB4's
+    // `q.p.load <= 1000.0` was F on the one and T on the others (gate (e)'s
+    // case, reached through a binding).
+    if (dimEqual(q.dimension, DIMENSIONLESS)) return { carried };
+    const si = quantityIn(q, undefined);
+    const same =
+      si !== undefined &&
+      (si.exact !== undefined && answer.exact !== undefined ? compareRationals(si.exact, answer.exact) === 0 : si.magnitude === answer.value);
+    if (same) return { carried };
+    return {
+      carried,
+      unconverted: unread(
+        `the binding carries ${shown} into it, and it declares no unit or kind: a bare number beside it is read ` +
+          'in no unit the model states',
+      ),
+    };
+  }
   if (!dimEqual(dimension, q.dimension)) {
     return {
       carried,
@@ -1462,7 +1541,9 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
   }
   // A part-valued binding no end of which stands for the other may carry a
   // value (equatedPartsRefusal): no row that may read one is decided, on any
-  // surface. A row that abstains already keeps its sentence.
+  // surface. A row that abstains already keeps its sentence. Where listing
+  // what may carry one threw (A.2.9), every row abstains as `internal`.
+  const internal = equatedPartsFailed(model);
   for (const c of out) {
     const own = c.result === 'unknown' ? undefined : equatedPartsRefusal(model, c.id, c.expression);
     if (own !== undefined) {
@@ -1479,8 +1560,13 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       i.result = 'unknown';
       i.message = `Could not evaluate: ${each}`;
       i.detail = i.message;
-      delete i.abstention;
-      delete i.cause;
+      if (internal) {
+        i.abstention = 'internal';
+        i.cause = 'internal';
+      } else {
+        delete i.abstention;
+        delete i.cause;
+      }
       delete i.reads;
       delete i.sides;
     }
@@ -2055,16 +2141,24 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
   const out: ConstraintCheck[] = [];
   for (const b of model.all()) {
     if (b.attrs.isLibrary === true || b.ownerId == null || !isBindingConnector(b)) continue;
-    const owner = model.get(b.ownerId);
-    const left = bindingEndPath(model, b.source?.[0], b.ownerId);
-    const right = bindingEndPath(model, b.target?.[0], b.ownerId);
+    // One end a feature of an instance ENCLOSING the usage the binding is
+    // written in (R's `L` in `part q : Q { bind p.load = L; }`): the binding is
+    // read in the element around it that holds both ends — R, at `q.p.load ==
+    // L` — and in every context that changes them there ({@link
+    // bindingHolder}). Skipped, r2's q's p's own `load = 3.0` against r2's L of
+    // 50 (EB4) was a contradiction no row reported.
+    const read = bindingHolder(model, b);
+    const owner = read?.holder;
+    const left = read?.left;
+    const right = read?.right;
     if (!owner || left === undefined || right === undefined || left === right) continue;
     const expr = `${left} == ${right}`;
-    for (const x of [owner, ...pass.definitions.changingContexts(b, [left, right])]) {
+    const at: ElementRecord = owner.id === b.ownerId ? b : { ...b, ownerId: owner.id };
+    for (const x of [owner, ...pass.definitions.changingContexts(at, [left, right])]) {
       // A context listed only because a member reads its own value there: its
       // relations are read at its instance (E7), but the binding's own row is
       // not filed there yet — sound, only weaker.
-      if (x.id !== owner.id && pass.definitions.readsBoundOnly(b, [left, right], x.id)) continue;
+      if (x.id !== owner.id && pass.definitions.readsBoundOnly(at, [left, right], x.id)) continue;
       const reading: ElementRecord = {
         ...b,
         eClass: 'ConstraintUsage',
@@ -2078,14 +2172,33 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
         // Two ends whose values are written with `=` and differ as written
         // (A.5) read nothing, so the pair is this binding's to report — only
         // its own pair: another binding of the component reports its own.
-        const [l, r] = [left, right].map((end) => pass.definitions.denote(x.id).get(end)?.feature);
+        const ends = [left, right].map((end) => ({ den: pass.definitions.denote(x.id).get(end), name: end.slice(end.lastIndexOf('.') + 1) }));
+        const [l, r] = ends.map((e) => e.den?.feature);
         const against = l !== undefined && r !== undefined && bindsDifferingWrittenValues(model, l, r);
-        result = against ? 'violated' : judgeConstraint(model, reading, expr, pass).result;
+        // So is an end its element's asserted equation defines, against a
+        // value written with `=` the equation does not give it there
+        // (`definedAgainstBoundIn`): the same contradiction, decided where the
+        // binding's valued members are read — what every reading of that end
+        // abstains on.
+        const defined = ends.map((e) => (e.den !== undefined ? definedAgainstBoundAt(model, e.den.feature, e.den.instance, e.name) : undefined));
+        const contradicted = against || defined.some((v) => v?.verdict === 'differs');
+        // A pair only an evaluation could compare reads nothing either where
+        // that does not decide it (A.5): the pair is judged at its two values as
+        // written, in a pass that reads only this binding's two ends where each
+        // is stated — a value read through another pair A.5 abstains on is no
+        // value it judges (SC: `bind K = M` beside `bind load = L`).
+        const undecided =
+          !contradicted &&
+          ((l !== undefined && r !== undefined && bindsUndecidedWrittenValues(model, l, r)) || defined.some((v) => v?.verdict === 'undecided'));
+        const judging = undecided
+          ? statedPass(model, new Set(ends.flatMap((e) => (e.den !== undefined ? [`${e.den.instance}::${e.name}`] : []))))
+          : pass;
+        result = contradicted ? 'violated' : judgeConstraint(model, reading, expr, judging).result;
         // An end a value this tool does not read may reach (equatedPartsRefusal):
         // the conflict read there is no conflict of the model's. PA's `bind p2.M
         // = K` beside P's `L == M`: p2's M is K's 9, which the equation makes
         // p2's L too, where M was read from L's default 2 and the pair reported.
-        if (!against && result === 'violated') unread = equatedPartsRefusal(model, b.id, expr, x.id === owner.id ? undefined : { contextId: x.id });
+        if (!against && result === 'violated') unread = equatedPartsRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
       } catch (e) {
         // A.2.9: a reading that throws is this row's, reported — never a throw
         // out of the sweep, which emptied the Problems view.
@@ -2113,10 +2226,23 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
       }
       if (result !== 'violated') continue;
       const holder = effectiveQualifiedName(model, owner.id);
+      // One read in an element around the one it is written in (EB4's `bind
+      // p.load = L` in R's q, read in R as `q.p.load == L`) is quoted as
+      // written, where it is written: the line an author searches for.
+      const written =
+        owner.id === b.ownerId
+          ? undefined
+          : `\`bind ${[b.source?.[0], b.target?.[0]]
+              .map((id) => bindingEndPath(model, id, b.ownerId!) ?? (id !== undefined ? effectiveNameOf(model, model.get(id) ?? b) : undefined) ?? '…')
+              .join(' = ')}\` in ${effectiveQualifiedName(model, b.ownerId)}`;
       const sentence =
-        `${x.id === owner.id ? holder : `${holder}'s binding, read in ${where},`} binds ${left} to ${right} ` +
-        `(\`bind ${left} = ${right}\`), and the model states different values for the two there — a binding ` +
-        'holds in every instance, as a value written with `=` does, so the model states both values';
+        written !== undefined
+          ? `${written}, read ${x.id === owner.id ? 'in' : `in ${where} through`} ${holder} as \`${left} == ${right}\`, binds ${left} to ` +
+            `${right}, and the model states different values for the two there — a binding holds in every instance, as a ` +
+            'value written with `=` does, so the model states both values'
+          : `${x.id === owner.id ? holder : `${holder}'s binding, read in ${where},`} binds ${left} to ${right} ` +
+            `(\`bind ${left} = ${right}\`), and the model states different values for the two there — a binding ` +
+            'holds in every instance, as a value written with `=` does, so the model states both values';
       out.push({
         id: x.id === owner.id ? b.id : `${b.id}@${x.id}`,
         ownerId: x.id,
@@ -2130,6 +2256,41 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
   return out;
 }
 
+
+/**
+ * Why a relation of `ownerId` that abstains in the context `contextId` is not
+ * read there, where a name it reads is a feature a binding joins that the
+ * context redefines under a name of its own (R38's `q2 : Q { attribute ld :>>
+ * load; }` for Q's `c { load <= 5.0 }` over Q's `bind load = L`): this tool
+ * does not read what the binding gives the renamed feature — with that
+ * renamed feature, where the row's finding points — or `undefined`.
+ * The row said "a referenced value is unknown", which named nothing an
+ * author could act on.
+ */
+function renamedIn(
+  model: Model,
+  pass: ScalarPass,
+  ownerId: ElementId,
+  contextId: ElementId,
+  names: readonly string[],
+): { sentence: string; member: ElementRecord } | undefined {
+  const there = pass.definitions.denote(contextId);
+  const here = pass.definitions.denote(ownerId);
+  for (const n of names) {
+    const head = n.split('.')[0]!;
+    const f = here.get(head)?.feature;
+    const g = there.get(head)?.feature;
+    if (!f || !g || g.id === f.id || effectiveNameOf(model, g) === head) continue;
+    if (!redefinedClosure(model, g).some((r) => r.id === f.id) || ![...joinedTo(model, f.id)].some((id) => id !== f.id)) continue;
+    const name = effectiveNameOf(model, g) ?? g.id;
+    const sentence =
+      `${pass.definitions.contextName(contextId)} redefines the bound \`${head}\` under a name of its own (\`${name} :>> ${head}\`), ` +
+      `and this tool does not read what a binding gives a feature so renamed, so ${effectiveQualifiedName(model, ownerId)}'s ` +
+      `\`${n}\` is not read there`;
+    return { sentence, member: g };
+  }
+  return undefined;
+}
 
 /**
  * Read a definition's constraint in every context that specialises the
@@ -2205,7 +2366,11 @@ function readInContexts(
     // relation reads through a binding of its owner — h2c's and k2's `Q::c in
     // q` (q's L, Q's `bind p.load = L`), M7's `Q::c in q2` (q2's K, through the
     // bound L). It is `constraint-by-instance`'s, at the instance's own line.
-    const carried = above !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
+    // So is one that renames the bound end the relation reads (R38's `ld :>>
+    // load`), whose row the binding's value is unread in ({@link renamedIn}):
+    // routed as a target's, mbse-workflow reported it and never blocked on it.
+    const renamed = renamedIn(model, pass, owner, x.id, bodyNames);
+    const carried = above !== undefined || renamed !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
     const readAs = carried ? pass.definitions.instanceNameOf(x.id) : undefined;
     const here =
       !cap && !via && pass.definitions.readsBoundOnly(el, names, x.id)
@@ -2217,9 +2382,13 @@ function readInContexts(
         : here !== undefined
           ? boundHereSentence(pass.definitions, x.id, here)
           : undefined;
-    const judged: Judgement = why !== undefined
+    let judged: Judgement = why !== undefined
       ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false, ...(cap ? { abstention: 'past-cap' as const } : {}) }
       : judgeConstraint(model, reading, expr, pass);
+    // Unread where the context renames a bound feature the relation reads: said so.
+    if (judged.result === 'unknown' && why === undefined && judged.abstention === undefined && renamed !== undefined) {
+      judged = { ...judged, message: `Could not evaluate: ${renamed.sentence}` };
+    }
     const ids = pass.definitions.scope(x.id, 'all');
     const scope = combinedScope(model, reading, pass);
     // What the context reads differently: the measures with no value where the
@@ -2250,7 +2419,13 @@ function readInContexts(
     });
     const satisfied = pass.definitions.satisfaction(x.id);
     const contextName = effectiveNameOf(model, satisfied?.satisfier ?? x) ?? nameOf(satisfied?.satisfier ?? x);
-    const anchor = readAs !== undefined ? instanceAnchor(model, pass.definitions, readAs, names, judged.reads, undefined, x.id) : undefined;
+    // The renamed end, for a row it leaves unread: the line an author edits.
+    const anchor =
+      readAs === undefined
+        ? undefined
+        : renamed !== undefined && judged.result === 'unknown'
+          ? renamed.member.id
+          : instanceAnchor(model, pass.definitions, readAs, names, judged.reads, undefined, x.id);
     instances.push({
       contextId: x.id,
       context: contextName,
@@ -2457,7 +2632,7 @@ function readAlike(
   const unspelled = (inst: string): boolean => !qualified.some((q) => spells(q, inst));
   const kept: ReadAlike[] = [];
   const message = (result: 'satisfied' | 'violated', reads: InstanceRead[] | undefined): string =>
-    result === 'satisfied' ? `Constraint satisfied${readsClause(reads)}` : `Constraint violated: ${expr}${readsClause(reads)}`;
+    result === 'satisfied' ? `Constraint satisfied${readsClause(model, reads)}` : `Constraint violated: ${expr}${readsClause(model, reads)}`;
   const keep = (inst: string, judged: Judgement, lookups: readonly InstanceLookup[]): ReadAlike | undefined => {
     if (judged.result === 'unknown' || judged.tie || judged.abstention !== undefined || judged.cause !== undefined) return undefined;
     if (judged.message !== message(judged.result, judged.reads)) return undefined;
@@ -2797,10 +2972,10 @@ function judgeBound(
   }
   const reads = collectReads(model, el, pass, referencedNames(node), own, at);
   if (r.value === true) {
-    return { result: 'satisfied', message: `Constraint satisfied${readsClause(reads)}`, gap: false, ...(reads ? { reads } : {}) };
+    return { result: 'satisfied', message: `Constraint satisfied${readsClause(model, reads)}`, gap: false, ...(reads ? { reads } : {}) };
   }
   if (r.value === false) {
-    return { result: 'violated', message: `Constraint violated: ${expr}${readsClause(reads)}`, gap: false, ...(reads ? { reads } : {}) };
+    return { result: 'violated', message: `Constraint violated: ${expr}${readsClause(model, reads)}`, gap: false, ...(reads ? { reads } : {}) };
   }
   return { result: 'unknown', message: 'Expression did not evaluate to a boolean', gap: false };
 }
@@ -2890,7 +3065,7 @@ function carriedVerdict(
     const refused = unread();
     if (refused) return { result: 'unknown', message: refused, gap: false };
     const reads = collectReads(model, el, pass, names, own, at);
-    const message = ua.result === 'satisfied' ? `Constraint satisfied${readsClause(reads)}` : `Constraint violated: ${expr}${readsClause(reads)}`;
+    const message = ua.result === 'satisfied' ? `Constraint satisfied${readsClause(model, reads)}` : `Constraint violated: ${expr}${readsClause(model, reads)}`;
     return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}) };
   }
   if (isRefusalReason(ua.reason)) {
@@ -3058,17 +3233,27 @@ function unitSuffix(r: InstanceRead): string {
 
 /**
  * The C.1 value-source clause appended to a decided own row read through a
- * binding: ` (q.p.m2 = -40 in H2::q::p, its load H2::q::L = 50.0 through
- * H2::Q's \`bind p.load = L\`)`.
+ * binding: ` (q.p.m2 = -40 in H2::q::p, its load H2::q::L through H2::Q's
+ * \`bind p.load = L\`)` — the binding named where it is written, as the
+ * user's guide shows it. It named the instance the source is read in as the
+ * binding's holder (X11's `through X11::q2's \`bind\``, of Q's binding read in
+ * q2), and an agent looked there for a binding q2 does not write.
  */
-function readsClause(reads: InstanceRead[] | undefined): string {
+function readsClause(model: Model, reads: InstanceRead[] | undefined): string {
   if (!reads) return '';
   const r = reads.find((x) => x.via !== undefined);
   if (!r || r.via === undefined || r.value === undefined) return '';
   const instance = r.symbol.slice(0, r.symbol.lastIndexOf('::'));
   const sourceName = r.via.sourcePath.slice(r.via.sourcePath.lastIndexOf('.') + 1);
-  const holder = r.via.sourceSymbol.slice(0, r.via.sourceSymbol.lastIndexOf('::'));
-  return ` (${r.path} = ${String(r.value)}${unitSuffix(r)} in ${instance}, its ${sourceName} ${r.via.sourceSymbol} through ${holder}'s \`bind\`)`;
+  const b = model.get(r.via.bindingId);
+  const ownerId = b?.ownerId ?? null;
+  const l = ownerId != null ? bindingEndPath(model, b!.source?.[0], ownerId) : undefined;
+  const rt = ownerId != null ? bindingEndPath(model, b!.target?.[0], ownerId) : undefined;
+  const through =
+    ownerId != null && l !== undefined && rt !== undefined
+      ? `${effectiveQualifiedName(model, ownerId)}'s \`bind ${l} = ${rt}\``
+      : `${r.via.sourceSymbol.slice(0, r.via.sourceSymbol.lastIndexOf('::'))}'s \`bind\``;
+  return ` (${r.path} = ${String(r.value)}${unitSuffix(r)} in ${instance}, its ${sourceName} ${r.via.sourceSymbol} through ${through})`;
 }
 
 /**
@@ -3169,7 +3354,7 @@ function equationBindings(
       });
       continue;
     }
-    const read = readSpecialiser(model, site.feature, name, pass, site);
+    const read = readSpecialiser(model, site.feature, name, pass, site, readInstanceOf(el, name, pass, inst));
     if ('bound' in read) bindings.set(name, read.bound);
     else if (!read.valueless) return { reason: read.reason };
   }
@@ -3209,15 +3394,33 @@ function equationBindings(
       else if (!read.valueless) return { reason: read.reason };
       continue;
     }
-    const read = readSpecialiser(model, end.feature, name, pass, {
-      contextId: end.at,
-      feature: end.feature,
-      ...(end.at !== end.site ? { site: end.site } : {}),
-    });
+    const read = readSpecialiser(
+      model,
+      end.feature,
+      name,
+      pass,
+      { contextId: end.at, feature: end.feature, ...(end.at !== end.site ? { site: end.site } : {}) },
+      readInstanceOf(el, name, pass, inst) ?? (at !== undefined ? `${at}::${name.split('.').slice(0, -1).join('::')}` : undefined),
+    );
     if ('bound' in read) bindings.set(name, read.bound);
     else if (!read.valueless) return { reason: read.reason };
   }
   return { bindings };
+}
+
+/**
+ * The instance a name the relation `el` reads is read at — read for the
+ * instance `inst` of its owner, where given (A.2): the one the name's
+ * denotation in the owner's scope names, rebased onto `inst` as the scalar
+ * scope rebases it ({@link answerFor}) — q's p for `q.p.x` read in the
+ * package, never P, where P's `x == 3.0` is written (RBB). `undefined` where
+ * the owner's scope denotes no such name.
+ */
+function readInstanceOf(el: ElementRecord, name: string, pass: ScalarPass, inst?: string): string | undefined {
+  if (el.ownerId == null) return undefined;
+  const den = pass.definitions.denote(el.ownerId).get(name);
+  if (!den) return undefined;
+  return inst !== undefined ? rebaseInstance(pass.definitions, el.ownerId, inst, den.instance) : den.instance;
 }
 
 /**
@@ -3286,7 +3489,26 @@ function unknownCause(
   scope: Scope,
   pass: ScalarPass = newPass(model),
 ): string {
-  return chainCauses(model, el, names, scope, pass) ?? 'a referenced value is unknown';
+  return chainCauses(model, el, names, scope, pass) ?? givenWayCauses(model, el, names, scope, pass) ?? 'a referenced value is unknown';
+}
+
+/**
+ * {@link givenWayCause} for every bare name a body reads with no value, where
+ * each has one (RH2's T::qa read in P: L's and M's defaults both give way to
+ * T's `L == M`) — or `undefined`.
+ */
+function givenWayCauses(model: Model, el: ElementRecord, names: readonly string[], scope: Scope, pass: ScalarPass): string | undefined {
+  if (el.ownerId == null) return undefined;
+  const lacking = [...new Set(names)].filter((n) => scope(n) === undefined);
+  if (lacking.length === 0 || lacking.some((n) => n.includes('.'))) return undefined;
+  const causes: string[] = [];
+  for (const n of lacking) {
+    const f = pass.definitions.feature(el.ownerId, n);
+    const cause = f ? givenWayCause(model, el.ownerId, f, n) : undefined;
+    if (!cause) return undefined;
+    causes.push(cause);
+  }
+  return causes.join('; ');
 }
 
 /**
@@ -3503,7 +3725,16 @@ function derivedElsewhere(
       break;
     }
   }
-  const answer = !derived || contexts.some((c) => idsIn(pass, c).has(name)) ? undefined : derived;
+  // A name the scope answers through a binding is read: a chain to a
+  // binding's end reads the value the binding carries there, not the derived
+  // `default` its end copy redefines (GA7's `p.load`, which Q's `bind p.load =
+  // L` makes L's 5 — the numeric surface took it for unread and abstained,
+  // beside F on the other three).
+  const read = (): boolean => {
+    const a = combinedAnswer(model, el, pass)(name);
+    return a?.value !== undefined && a.via !== undefined;
+  };
+  const answer = !derived || contexts.some((c) => idsIn(pass, c).has(name)) || read() ? undefined : derived;
   pass.elsewhere.set(key, answer ?? null);
   return answer;
 }
@@ -3563,7 +3794,9 @@ function calculationCause(model: Model, el: ElementRecord, name: string, pass: S
 /**
  * The two values a name `el` reads collides under where it is read
  * ({@link DefiningEquations.clash}) — `c.load` in `part c : C` over `part def
- * C :> A, B` — with the context the name is read in, or `undefined`.
+ * C :> A, B` — with the context the name is read in, or `undefined`. So do
+ * the two a binding joins it to ({@link boundClashOf}: MI1's `q.p.load`,
+ * bound to q's L over Q2's 50 and Q3's 60).
  */
 function clashOf(
   el: ElementRecord,
@@ -3575,7 +3808,7 @@ function clashOf(
     const d = pass.definitions.denote(c).get(name);
     if (!d) continue;
     const clash = pass.definitions.clash(d.reader, d.feature);
-    return clash ? { contextId: d.reader, clash } : undefined;
+    return clash ? { contextId: d.reader, clash } : boundClashOf(pass.model, c, name);
   }
   return undefined;
 }
@@ -3683,7 +3916,7 @@ function inheritedCause(model: Model, el: ElementRecord, name: string, pass: Sca
   if (!feature || feature.ownerId == null || el.ownerId == null) return undefined;
   const specialisers = [...specialisersOf(model, feature).byContext.values()].flat();
   const clauses = [
-    `${shortName(model, feature)} is declared without one`,
+    declaredWithout(model, feature),
     `its asserted equation in ${nameOf(model.get(feature.ownerId))} is not read in ${nameOf(model.get(el.ownerId))}, ` +
       'which redefines what it reads',
     specialisers.length === 0
@@ -3691,6 +3924,27 @@ function inheritedCause(model: Model, el: ElementRecord, name: string, pass: Sca
       : `what specialises it (${specialisers.map((f) => shortName(model, f, name)).join(', ')}) is not read here`,
   ];
   return `${name} has no value here: ${listed(clauses)}`;
+}
+
+/**
+ * The first clause of {@link chainCause} and {@link inheritedCause}: `P::e is
+ * declared without one` — or, of a feature that writes a `default`, what that
+ * default gives way to (`defaultGivesWayTo`): `T::L states \`default =
+ * 2.0\`, which gives way to an asserted equation` (decision 14), `p::load
+ * states \`default = 2.0\`, which gives way to BW4::Q's \`bind p.load = L\``
+ * (BW4, a model with no assert, had been told of one), or `… which is not
+ * read here`. It was said to be declared without one.
+ */
+function declaredWithout(model: Model, feature: ElementRecord): string {
+  const written = [feature, ...redefinedClosure(model, feature)].find((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+  if (written?.attrs.defaultValue !== true) return `${shortName(model, feature)} is declared without one`;
+  const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
+  const states = `${shortName(model, feature)} states \`default = ${shown}\``;
+  const to = defaultGivesWayTo(model, feature);
+  if (to?.to === 'typed') return `${states}, which gives way to ${typedAssertText(model, to.assert)}`;
+  if (to?.to === 'assert') return `${states}, which gives way to an asserted equation`;
+  if (to?.to === 'binding') return `${states}, which gives way to ${to.bindingId !== undefined ? bindingText(model, to.bindingId) : 'a `bind`'}`;
+  return `${states}, which is not read here`;
 }
 
 /** Why the validation surface would not read what a relation reads, as {@link readRefusalOf} names it. */
@@ -3820,7 +4074,7 @@ function chainCause(model: Model, el: ElementRecord, chain: string, pass: Scalar
   const checked = !asserted && sites.some((c) => hasUnassertedEquation(model, c, name));
   const specialisers = [...specialisersOf(model, feature).byContext.values()].flat();
   const clauses = [
-    `${shortName(model, feature)} is declared without one`,
+    declaredWithout(model, feature),
     ...(checked ? ['has no asserted equation'] : []),
     ...(asserted
       ? [
@@ -4014,12 +4268,24 @@ function readThroughSpecialisers(
   // definition, and only an assert is one. Beside an asserted equation that
   // yields no value (its inputs have none) the clause would be false.
   const target = targetName(model, el);
+  const answer = combinedAnswer(model, el, pass);
   const why = missing.map((m) => {
     const walk = walks.get(m.name)!;
     const checked =
       definingEquationFor(model, el.ownerId!, m.name) === undefined &&
       hasUnassertedEquation(model, el.ownerId!, m.name);
     if (walk.byContext.size === 0) {
+      // A reading that abstained says why in its own sentence: a `default` an
+      // asserted equation sets equal to another `default` gives way with it
+      // (U7, Q4L's `L == K`), where "no value anywhere" was false of both.
+      const abstained = answer(m.name)?.abstention;
+      if (abstained) return abstained.sentence;
+      // A `default` an asserted equation gives way to, which that equation
+      // gives no value here — the local twin of the U7 sentence (Q4L's `L ==
+      // K` over two defaults, RH2's T's `L == M` under P's `M default = L *
+      // 2.0`): it has a value written, and "no value anywhere" was false.
+      const givenWay = givenWayCause(model, el.ownerId!, m.feature, m.name);
+      if (givenWay) return givenWay;
       // A feature this context inherits with its definition where it is
       // declared: that equation is not read here, and saying "no value
       // anywhere" of a feature an equation defines was false.
@@ -4249,7 +4515,8 @@ function specialises(specific: ElementId, general: ElementId, parents: Map<Eleme
  * the scalar scope reads there, and the messages name the feature as the body
  * does, as they name a value-expression feature in that context.
  * `valueless` marks the one outcome that is not a reason to refuse: there is
- * no value to read at all.
+ * no value to read at all. `instance` is the instance the name is read at,
+ * where the caller knows it ({@link readInstanceOf}).
  */
 function readSpecialiser(
   model: Model,
@@ -4257,6 +4524,7 @@ function readSpecialiser(
   measure: string,
   pass: ScalarPass,
   local?: EquationSite,
+  instance?: string,
 ): { bound: Bound } | { reason: string; refused: boolean; valueless: boolean } {
   const name = local ? measure : shortName(model, feature, measure);
   // A feature fixed by an equation beside it states no value to derive: its
@@ -4276,6 +4544,22 @@ function readSpecialiser(
   // one the solver lane refuses the same operand with (`refusalSentence`).
   const refusal = refusalSentence(d, name, true);
   if (refusal) return { reason: refusal, refused: true, valueless: false };
+  // An equation beside it, where a binding joins it to a value written with
+  // `=` the equation does not give it (`definedAgainstBoundIn`): it is not
+  // read — at the instance the name is read at (`instance`: q's p for `q.p.x`,
+  // where P's `x == 3.0` is written), else at its context's own.
+  const own = pass.definitions.nameOf(feature);
+  const where = local?.contextId ?? feature.ownerId;
+  if (own !== undefined && where != null && !hasValue(model, feature)) {
+    const at = instance ?? pass.definitions.instanceNameOf(where);
+    let against: string | undefined;
+    try {
+      against = readsStated(pass.stated, at, own) ? undefined : definedAgainstBoundAt(model, feature, at, own)?.sentence;
+    } catch (e) {
+      against = failedReadingSentence(own, at, e);
+    }
+    if (against !== undefined) return { reason: against, refused: true, valueless: false };
+  }
   // A value with a bare number against a derived dimension inside it — gate
   // (e) where the value is written — has no magnitude any surface reads.
   const inner = valueFaultOf(model, feature.id, pass.memo);
@@ -4341,6 +4625,56 @@ function hasValue(model: Model, f: ElementRecord): boolean {
 function hasDefiningEquation(model: Model, f: ElementRecord): boolean {
   const name = effectiveNameOf(model, f);
   return f.ownerId != null && !!name && definingEquationFor(model, f.ownerId, name) !== undefined;
+}
+
+/**
+ * Why `feature`, read under `name` in `ownerId`, has no value though it writes
+ * a `default`: an asserted equation that may define it — written in `ownerId`,
+ * or where it or a feature it redefines is declared — makes that default give
+ * way (decision 14), and gives it no value of its own there. So for one that
+ * writes none, which an assert typed by an equation's definition may define
+ * ({@link typedAssertHolding}): the model states it, and this tool does not
+ * read how. `undefined` where neither holds.
+ */
+function givenWayCause(model: Model, ownerId: ElementId, feature: ElementRecord, name: string): string | undefined {
+  const chain = [feature, ...redefinedClosure(model, feature)];
+  const written = chain.find((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+  if (written === undefined) {
+    const typed = typedAssertHolding(model, feature);
+    return typed ? `${name} has no value this tool reads: it is named by ${typedAssertText(model, typed)}` : undefined;
+  }
+  if (written.attrs.defaultValue !== true) return undefined;
+  const sites = [ownerId, ...chain.map((g) => g.ownerId).filter((o): o is ElementId => o != null)];
+  for (const site of new Set(sites)) {
+    const eq = definingEquationFor(model, site, name);
+    if (!eq) continue;
+    const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
+    return (
+      `${name} has no value: its \`default = ${shown}\` gives way to ${effectiveQualifiedName(model, site)}'s asserted ` +
+      `\`${String(eq.constraint.attrs.expression ?? '').trim()}\` (an asserted equation overrides a default), and that ` +
+      'equation gives it none here'
+    );
+  }
+  const typed = typedAssertHolding(model, feature);
+  if (typed) {
+    const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
+    return `${name} has no value: its \`default = ${shown}\` gives way to ${typedAssertText(model, typed)}`;
+  }
+  return undefined;
+}
+
+/**
+ * An assert typed by a constraint definition whose body holds an equation, and
+ * why it leaves the `default` it names with no value ({@link
+ * typedAssertHolding}): `` `assert constraint e : Eq` in CD1::Q, whose
+ * equation may define it (an asserted equation overrides a default) and is
+ * not read by this tool ``.
+ */
+function typedAssertText(model: Model, a: ElementRecord): string {
+  const type = generalizationsOf(model, a.id).find((t) => t.attrs.isLibrary !== true && typeof t.attrs.expression === 'string');
+  const spelled = `assert constraint ${effectiveNameOf(model, a) ?? ''}${type ? ` : ${effectiveNameOf(model, type) ?? ''}` : ''}`.replace('  ', ' ');
+  const where = a.ownerId != null ? ` in ${effectiveQualifiedName(model, a.ownerId)}` : '';
+  return `\`${spelled}\`${where}, whose equation may define it (an asserted equation overrides a default) and is not read by this tool`;
 }
 
 /** The bare (undotted) names a body reads, once each, in source order. */

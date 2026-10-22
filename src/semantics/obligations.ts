@@ -94,7 +94,9 @@ import {
   defaultStandsIn,
   enclosedBindingFrame,
   equatedPartsRefusal,
+  failedReadingSentence,
   hasEnclosedBindings,
+  hasUserBindings,
   hasStatedValue,
   isAsserted,
   instanceGroups,
@@ -1091,7 +1093,9 @@ function goalBudgetRefusal(model: Model, el: ElementRecord, group: InstanceGroup
  *
  * `refuse` is the group's generic row over the run's budget: it files that one
  * row with the refusal and no instance rows. The caller decides all-or-nothing
- * with {@link takeGoalBudget}, so a group is never filed in part.
+ * with {@link takeGoalBudget}, so a group is never filed in part. A row whose
+ * reading throws is that row's refusal, in the A.9 sentence (A.2.9) — the
+ * group's other rows stand.
  */
 function groupGoalRows(
   model: Model,
@@ -1165,13 +1169,50 @@ function groupGoalRows(
       },
     };
   };
+  // A.2.9: a row whose reading throws is that row's refusal, in the sentence
+  // the check gives a group row that throws — never a throw out of the
+  // worklist, which ended `verify` and every command over it.
+  const contained = (instance: string, generic: boolean): Obligation | undefined => {
+    try {
+      return make(instance, generic);
+    } catch (e) {
+      const encodable: Encodable = { reason: 'unread-definition', detail: failedReadingSentence(relationName, instance, e) };
+      return {
+        requirement: contract ? instanceRef(model, contractRef(contract), usage) : null,
+        shortId: contract?.shortId ?? '',
+        subject: contract?.subject ?? null,
+        role: filed.role,
+        source: filed.source,
+        element: generic
+          ? { ...ref(model, el), id: `${el.id}@${usage.id}`, qualifiedName: `${relationName} in ${definitions.contextName(usage.id)} (${ownerName}'s own)` }
+          : { ...ref(model, el), id: `${el.id}@${instance}`, qualifiedName: `${relationName} in ${instance}` },
+        expression: raw,
+        node: null,
+        vars: [],
+        sortPerVar: {},
+        scaled: false,
+        encodable,
+        nonlinear: false,
+        verifiedBy: [],
+        method: null,
+        evidence: [],
+        status: statusOf(encodable),
+        instance: {
+          baseId: el.id,
+          contextId: generic ? usage.id : (group.readIn?.get(instance) ?? usage.id),
+          ...(generic ? {} : { path: instance }),
+          ...(contract ? { requirementId: contract.id } : {}),
+        },
+      };
+    }
+  };
   if (withGeneric) {
-    const generic = make(definitions.instanceNameOf(usage.id), true);
+    const generic = contained(definitions.instanceNameOf(usage.id), true);
     if (generic) out.push(generic);
   }
   if (refuse === undefined) {
     for (const inst of group.instances.slice(1)) {
-      const row = make(inst, false);
+      const row = contained(inst, false);
       if (row) out.push(row);
     }
   }
@@ -1884,8 +1925,22 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
     }
   }
   const pending: ContractVariable[] = [];
+  // A usage's own feature a row reads by its own symbol, by the usage's id: its
+  // instance holds the bindings of its types too (below).
+  const owned: ElementId[] = [];
+  const ownedSeen = new Set<ElementId>();
+  const bound = hasUserBindings(model);
   const read = (vars: readonly ContractVariable[]): void => {
-    for (const v of vars) if (v.instance) pending.push(v);
+    for (const v of vars) {
+      if (v.instance) pending.push(v);
+      else if (bound) {
+        const owner = model.get(v.featureId)?.ownerId;
+        const usage = owner != null ? model.get(owner) : undefined;
+        if (!usage || !isUsage(usage.eClass) || usage.attrs.isLibrary === true || ownedSeen.has(usage.id)) continue;
+        ownedSeen.add(usage.id);
+        owned.push(usage.id);
+      }
+    }
   };
   for (const r of rows) read(r.vars);
   let budget = MAX_INSTANCE_RELATIONS;
@@ -1895,10 +1950,11 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
     budget--;
     read(row.vars);
   };
-  // Every assert and binding of `reader`'s types, read for the instance `path`.
-  const hold = (path: string, reader: ElementId): void => {
-    const heldKey = `held ${reader} ${path}`;
-    if (done.has(heldKey)) return;
+  // Every assert and binding of `reader`'s types, read for the instance `path`
+  // — its bindings alone (`bindings`) for a usage whose own feature a row reads.
+  const hold = (path: string, reader: ElementId, bindings = false): void => {
+    const heldKey = `held${bindings ? ' bindings' : ''} ${reader} ${path}`;
+    if (done.has(heldKey) || done.has(`held ${reader} ${path}`)) return;
     done.add(heldKey);
     const context = model.get(reader);
     if (!context) return;
@@ -1909,7 +1965,7 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
         if (!isUserModelElement(model, c)) continue;
         const key = `${c.id} ${path}`;
         if (done.has(key)) continue;
-        if (isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
+        if (!bindings && isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
           done.add(key);
           file(instanceAssertRow(model, c, context, path, memo));
         } else if (isBindingEdge(c)) {
@@ -1926,7 +1982,22 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
       }
     }
   };
-  while (pending.length > 0 && budget > 0) {
+  while ((pending.length > 0 || owned.length > 0) && budget > 0) {
+    // A usage whose own feature a row reads by its own symbol (`r2.q.p.load`
+    // over r2's q's p's `:>> load = 3.0`; p4's `:>> load = 7.0 [kg]`): the
+    // bindings that hold of its instance — of its types, of the types of every
+    // instance enclosing it, and a package's on its types' features (w4) — are
+    // filed for that instance, as for one read through an instance. Read for
+    // the feature alone, the SMT engine proved such a row at the feature's own
+    // value where a binding gives it another the model states (EB4, EB5, W4u:
+    // A.5, which the other surfaces read neither of).
+    if (pending.length === 0) {
+      const usage = owned.shift()!;
+      const path = definitions.instanceNameOf(usage);
+      for (const e of definitions.framesAbove(path) ?? []) hold(e.instance, e.reader, true);
+      hold(path, usage, true);
+      continue;
+    }
     const v = pending.shift()!;
     const { path, reader, enclosing } = v.instance!;
     const context = model.get(reader);
@@ -1947,10 +2018,12 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
     for (const e of frames) hold(e.instance, e.reader);
     hold(path, reader);
   }
-  if (pending.length > 0) {
-    // The budget ran out: every row that reads an instance left unread is refused.
+  if (pending.length > 0 || owned.length > 0) {
+    // The budget ran out: every row that reads an instance left unread — or an
+    // own feature of a usage whose bindings were not filed — is refused.
     const unread = new Set(pending.map((v) => v.instance!.path));
-    for (const row of [...rows, ...out]) refuseUnreadInstances(row, unread);
+    const unheld = new Set(owned);
+    for (const row of [...rows, ...out]) refuseUnreadInstances(model, row, unread, unheld);
   }
   return out;
 }
@@ -2168,9 +2241,11 @@ function pathBelow(model: Model, id: ElementId | undefined, ownerId: ElementId):
  * ({@link MAX_INSTANCE_RELATIONS}): over a symbol nothing constrains, a proof
  * would rest on less than the model states.
  */
-function refuseUnreadInstances(row: Obligation, unread: ReadonlySet<string>): void {
+function refuseUnreadInstances(model: Model, row: Obligation, unread: ReadonlySet<string>, unheld: ReadonlySet<ElementId>): void {
   if (row.encodable !== true) return;
-  const hit = row.vars.filter((v) => v.instance && unread.has(v.instance.path));
+  const hit = row.vars.filter((v) =>
+    v.instance ? unread.has(v.instance.path) : unheld.size > 0 && unheld.has(model.get(v.featureId)?.ownerId ?? ''),
+  );
   if (hit.length === 0) return;
   row.encodable = {
     reason: 'unread-definition',
