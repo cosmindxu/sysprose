@@ -1999,6 +1999,137 @@ describe('google drive — the boot, and opening a file’s text', () => {
     expect(st().textDirty).toBe(false);
   });
 
+  /**
+   * Review 2026-10-14, D-3: on the drone-swarm model one task of 0.2 to 0.4 s validated
+   * the model and wrote its text after every edit. A recompute that has run 40 ms now lets
+   * the page draw and goes on in the next task — validation a rule at a time, then the text,
+   * then the results in one step — and is pending until it ends. A clock that runs 100 ms
+   * a read makes every step end a task, as a large model does.
+   */
+  describe('a recompute over a large model, in tasks', () => {
+    let clock = 0;
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.spyOn(performance, 'now').mockImplementation(() => (clock += 100));
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      // The clock above left the last recompute's time at seconds, and with it the next tests' quiet period and cap.
+      st().createElement('PartDefinition', null, 'Reset');
+      flushRecompute();
+      vi.useRealTimers();
+    });
+    /** Run the timers until nothing is waiting, counting the tasks the recompute took after its first. */
+    function runToTheEnd(): number {
+      let tasks = 0;
+      while (recomputePending() && tasks < 500) {
+        vi.advanceTimersToNextTimer();
+        tasks++;
+      }
+      return tasks;
+    }
+
+    it('validateSteps yields once for each rule and returns what validate returns, with the rule filters', () => {
+      const m = new Model();
+      const p = m.create('PartDefinition', { declaredName: 'P' });
+      m.create('PartDefinition', { declaredName: 'P' }); // a duplicate name
+      m.create('PartUsage', { declaredName: ' ', ownerId: p.id }); // a blank one
+      expect(validationApi.validate(m).length, 'the model has findings to compare').toBeGreaterThan(0);
+      for (const opts of [{}, { ruleIds: ['duplicate-name', 'blank-name'] }, { excludeRuleIds: ['duplicate-name'] }]) {
+        const steps = validationApi.validateSteps(m, opts);
+        let yielded = 0;
+        let step = steps.next();
+        while (!step.done) {
+          yielded++;
+          step = steps.next();
+        }
+        const ran = validationApi.RULES.filter(
+          (r) => (opts.ruleIds === undefined || opts.ruleIds.includes(r.id)) && !(opts.excludeRuleIds ?? []).includes(r.id),
+        ).length;
+        expect(yielded).toBe(ran);
+        expect(step.value).toEqual(validationApi.validate(m, opts));
+      }
+    });
+
+    it('is pending between its tasks, shows nothing of the edit until its last, and then shows what validate and the text say', () => {
+      st().createElement('PartDefinition', null, 'Sliced');
+      expect(recomputePending()).toBe(true);
+      vi.advanceTimersToNextTimer(); // the quiet period ends: the first task
+      expect(recomputePending(), 'one task did not do it all').toBe(true);
+      expect(st().textBuffer, 'the edit is not shown yet').not.toContain('Sliced');
+      const tasks = runToTheEnd();
+      expect(tasks, 'a task for each rule, and more').toBeGreaterThan(validationApi.RULES.length);
+      expect(recomputePending()).toBe(false);
+      expect(st().textBuffer).toContain('part def Sliced');
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+      expect(st().textDirty).toBe(false);
+    });
+
+    it('is ended by an edit, which makes the next recompute of the model as it is', () => {
+      st().createElement('PartDefinition', null, 'First');
+      vi.advanceTimersToNextTimer();
+      vi.advanceTimersToNextTimer();
+      expect(recomputePending()).toBe(true);
+      st().createElement('PartDefinition', null, 'Second');
+      runToTheEnd();
+      expect(st().textBuffer).toContain('part def First');
+      expect(st().textBuffer).toContain('part def Second');
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+    });
+
+    it('gives the text and the results a task each once its task has run 10 ms, though under 40', () => {
+      vi.mocked(performance.now).mockImplementation(() => (clock += 1)); // 27 rules: 27 ms
+      const write = textApi.serializeUserModelSignals;
+      vi.spyOn(textApi, 'serializeUserModelSignals').mockImplementation((...args) => {
+        clock += 20; // the text: 20 ms
+        return write(...args);
+      });
+      st().createElement('PartDefinition', null, 'Cut');
+      vi.advanceTimersToNextTimer(); // the quiet period ends: the rules
+      expect(recomputePending(), 'the rules did not take the text and the results with them').toBe(true);
+      expect(st().textBuffer).not.toContain('Cut');
+      expect(runToTheEnd(), 'the text, then the results').toBe(2);
+      expect(st().textBuffer).toContain('part def Cut');
+    });
+
+    it('is not starved by edits made between its tasks: the recompute due at the burst’s deadline is one task, and edits cannot end it', () => {
+      let edits = 0;
+      st().createElement('PartDefinition', null, `Burst${edits++}`);
+      for (let n = 0; recomputePending() && n < 200; n++) {
+        vi.advanceTimersToNextTimer();
+        if (n % 2 === 1 && recomputePending()) st().createElement('PartDefinition', null, `Burst${edits++}`);
+      }
+      expect(recomputePending(), 'a recompute ended').toBe(false);
+      expect(edits, 'by the cap, with edits still arriving').toBeLessThan(20);
+      expect(st().textBuffer).toContain(`part def Burst${edits - 1}`);
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+    });
+
+    it('is finished by flushRecompute in the task that calls it, with the force flag the edit gave it', () => {
+      useAppStore.setState({ textBuffer: 'typed, not applied', textDirty: true });
+      st().createElement('PartDefinition', null, 'Flushed');
+      vi.advanceTimersToNextTimer();
+      expect(recomputePending()).toBe(true);
+      expect(forcedRecomputePending(), 'a local edit forced it').toBe(true);
+      flushRecompute();
+      expect(recomputePending()).toBe(false);
+      expect(st().textBuffer).toContain('part def Flushed');
+      expect(st().textDirty).toBe(false);
+    });
+
+    it('leaves the text typed while it runs as it is, and its results do not replace the buffer', () => {
+      st().createElement('PartDefinition', null, 'Peer');
+      vi.advanceTimersToNextTimer();
+      expect(recomputePending()).toBe(true);
+      st().setTextBuffer('typed meanwhile');
+      expect(forcedRecomputePending(), 'the keystrokes downgraded it').toBe(false);
+      runToTheEnd();
+      expect(st().textBuffer).toBe('typed meanwhile');
+      expect(st().textDirty).toBe(true);
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+    });
+  });
+
   it('lastAppliedText outlives the library refresh and nothing else', async () => {
     const text = 'package A {\n    part def P;\n}\n';
     await openText(text, 'sysml');
@@ -6385,7 +6516,7 @@ describe('the load health a check is judged under', () => {
 
   it('validates the live model only when none ran at this revision', async () => {
     await apply(CLEAN);
-    const validate = vi.spyOn(validationApi, 'validate');
+    const validate = vi.spyOn(validationApi, 'validateSteps');
     const ofLive = () => validate.mock.calls.filter(([m]) => m === st().model).length;
     try {
       loadHealth();
@@ -6902,7 +7033,7 @@ describe('the load health never vouches for a text that does not load (review 20
    */
   it('says whether the load can be read without work on the page: never while an edit’s recompute waits, nor with the text or the validation behind the model', async () => {
     const write = vi.spyOn(textApi, 'serializeUserModelSignals');
-    const validate = vi.spyOn(validationApi, 'validate');
+    const validate = vi.spyOn(validationApi, 'validateSteps');
     const work = (): number => write.mock.calls.length + validate.mock.calls.length;
     try {
       await apply(BASE);

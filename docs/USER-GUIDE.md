@@ -487,10 +487,10 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
 (the grouping); `src/ui/store.ts:323-336` (`diagramRootId`, the diagram
-scope), `1546-1701` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2524-2541` (`pinNodePositions`: the move itself), `2128-2185`
+scope), `1562-1717` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2640-2657` (`pinNodePositions`: the move itself), `2244-2301`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4242-4284` (`openText`: a file opened as text starts afresh).
+`4358-4400` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -564,7 +564,18 @@ The tree and Properties update instantly. The diagram, the Problems list and the
 Text tab are *derived*, and they lag a burst of edits by up to 250 ms. That is
 deliberate: it keeps typing responsive. On a large model, where working them out
 takes a while itself, the lag grows with it — up to four times the last
-recompute — so the keyboard is never kept waiting.
+recompute — so the keyboard is never kept waiting. And on such a model that work
+is not one stretch of the page: a task that has run 40 ms lets the page draw and
+the work goes on in the next one (validation a rule at a time, then the text, then
+the results and the diagram), and the text and the results, which cannot be
+divided, each start a task of their own once the one before has run 10 ms. On the drone-swarm model, after the
+session's first edit and at a moderate load, no task of it is over 200 ms where
+one task was 200 to 400, the text and the last step being the longest
+(*Performance*, `docs/UI-ROADMAP.md`, P4). An edit while it runs ends it and the
+wait starts again, but the cap above still holds: the recompute due at the end of
+a burst's cap is one task, which an edit cannot end. Until it ends the edit is
+still waiting, as in its quiet period: Save finishes it first, and the prompt on
+closing the tab asks while it runs.
 
 ### The Text tab, in both directions
 
@@ -637,14 +648,14 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1743-1839` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `1962-2047` (`recomputeNow`), `2049-2227`
+**Source of truth:** `src/ui/store.ts:1759-1878` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `2021-2163` (`recomputeSteps`, `flushRecomputeImpl`: the steps of a recompute), `2165-2343`
 (`afterSdkEdit`: an SDK edit; `typedTextFirst`, `applyParsed`: a field's change over
-typed text), `892-949` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2819-2850`
-(`createElement`: a new element), `3139-3206` (`reparent`, `reparentMany`: a
-move), `4952-5013` (`libraryNote`: the note that says so), `3647-3660`
-(`applyText`), `4096-4142` (`undo`, `redo`), `5041-5099`
+typed text), `908-965` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2935-2966`
+(`createElement`: a new element), `3255-3322` (`reparent`, `reparentMany`: a
+move), `5068-5129` (`libraryNote`: the note that says so), `3763-3776`
+(`applyText`), `4212-4258` (`undo`, `redo`), `5157-5215`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
@@ -3644,8 +3655,8 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:3330-3512` (`runValidation`,
-`solveParametric`: the four buttons), `2049-2227` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3446-3628` (`runValidation`,
+`solveParametric`: the four buttons), `2165-2343` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -4009,11 +4020,11 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:810-828` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3664-3758` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `4000-4067` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4863-4873` (`mergeLoads`: a merge that loads),
-`4875-5013` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+`src/ui/store.ts:826-844` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3780-3874` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `4116-4183` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4979-4989` (`mergeLoads`: a merge that loads),
+`4991-5129` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-106`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
@@ -4266,8 +4277,8 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:234`
-(`UNDO_LIMIT`: undo is bounded), `1743-1773` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5188-5311` (`mergeLibrary`, `loadStandardLibraryAsync`:
+(`UNDO_LIMIT`: undo is bounded), `1759-1789` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `5304-5427` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:200-312`.
 

@@ -7,6 +7,7 @@
  * the command instead of a verdict nobody earned.
  */
 import { readFileSync } from 'node:fs';
+import { cpus, loadavg } from 'node:os';
 import { resolve } from 'node:path';
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { captureErrors, diagramSettled, findElementId, gotoApp, openTab, selectElementById } from './fixtures';
@@ -569,7 +570,7 @@ function editThenRun(page: Page, check: string, name: string): Promise<{ waiting
 /** The long task the page was in at `at`, in ms; 0 when that task was under 50 ms, which the browser does not report. */
 const taskAt = (watch: PageThreadWatch, at: number): number => watch.long.find((t) => t.start <= at && t.start + t.duration >= at)?.duration ?? 0;
 
-test('on the drone-swarm model, a check clicked after an edit holds the page for no task over 200 ms of its own, and the edit’s own work waits for a frame (review 2026-10-14, D-3)', async ({ page }, testInfo) => {
+test('on the drone-swarm model, a check clicked after an edit holds the page for no task over 200 ms of its own, and the edit’s own work waits for a frame and runs in tasks under 200 ms (review 2026-10-14, D-3)', async ({ page }, testInfo) => {
   test.setTimeout(300_000);
   const errors = captureErrors(page);
   const source = readFileSync(resolve(testInfo.project.testDir, DRONE_SWARM), 'utf8');
@@ -613,8 +614,8 @@ test('on the drone-swarm model, a check clicked after an edit holds the page for
   // loaded, and the load cannot be read before it. The run begins first: the click's handler
   // does nothing that grows with the model (it is no long task: under 50 ms), its task holds the
   // page under 200 ms, the row reads `checking the load…`, a frame is drawn, and only then does
-  // the page do the edit's work — a task that is the edit's, run after every edit with or
-  // without a click, and not the click's to bound (TODO.md has it).
+  // the page do the edit's work — the edit's own, run after every edit with or without a click
+  // (step 4 bounds it).
   await clearPageThread(page);
   const click = await editThenRun(page, 'reach', 'SwarmEditedTwice');
   await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
@@ -651,6 +652,32 @@ test('on the drone-swarm model, a check clicked after an edit holds the page for
   expect(statsClick.waiting, 'the edit’s recompute was still waiting at the click').toBe(true);
   expect(statsClick.stillWaiting, 'the Statistics click left the edit’s recompute for later').toBe(true);
   expect(taskAt(third, statsClick.at), 'how long the Statistics click’s task held the page, in ms').toBeLessThan(200);
+
+  // 4. An edit alone, no click: the recompute it sets off (validating the model, writing its text,
+  // building the diagram) took one task of 0.2 to 0.4 s here, longer the more loaded the machine.
+  // It now runs in tasks of its own, a rule's validation or the text each, and the page draws
+  // between them: no task of the edit, its own or its recompute's, is over 200 ms. The time is
+  // wall-clock, so on a machine with more runnable tasks than cores (a load average above its core
+  // count, as when other work shares it) every task stretches by about that ratio: the limit does,
+  // up to 1.5. Beyond that the limit (400 ms at 2) would be the size of the unsliced task, and the
+  // step could not tell the two apart: it is not asserted there, and says so in the annotation.
+  await diagramSettled(page);
+  await clearPageThread(page);
+  const loadBefore = loadavg()[0];
+  await renameFirstPartDef(page, 'SwarmEditedFourth');
+  await diagramSettled(page);
+  await page.waitForTimeout(1000); // the browser reports a long task after it ends
+  const fourth = await pageThread(page);
+  const edited = fourth.long.map((t) => Math.round(t.duration));
+  const stretch = Math.max(1, loadBefore / cpus().length, loadavg()[0] / cpus().length);
+  measured.push(`an edit alone: long tasks ${JSON.stringify(edited)} ms, at ${stretch.toFixed(2)} runnable tasks a core`);
+  if (stretch <= 1.5) {
+    expect(Math.max(0, ...edited), `the longest task of an edit and its recompute, in ms (all: ${edited.join(', ')}; the limit is 200 ms × ${stretch.toFixed(2)})`).toBeLessThan(200 * stretch);
+  } else {
+    measured.push('(not asserted: the machine is too loaded for 200 ms to tell a sliced recompute from an unsliced one)');
+  }
+  expect(await page.evaluate(() => (window as unknown as { sysprose: { diagram: { recomputePending(): boolean } } }).sysprose.diagram.recomputePending()), 'the recompute ended').toBe(false);
+
   testInfo.annotations.push({ type: 'page thread on the drone-swarm model', description: measured.join('; ') });
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });

@@ -8,4 +8,4 @@
 export type { Diagnostic, Severity, ValidationRule } from './types';
 export { SEVERITY_ORDER } from './types';
 export { RULES, RULES_BY_ID, RULE_IDS } from './rules';
-export { validate, isValid, type ValidateOptions } from './validate';
+export { validate, validateSteps, isValid, type ValidateOptions } from './validate';

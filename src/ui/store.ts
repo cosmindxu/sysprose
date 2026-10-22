@@ -110,7 +110,7 @@ import {
 // asynchronously via a dynamic import (see loadStandardLibraryAsync) so it is
 // code-split into a lazy chunk and never blocks first paint.
 import { resolveDeclaredTypeName, resolveTypeReferences } from '@library/resolve';
-import { validate, type Diagnostic } from '@validation/index';
+import { validateSteps, type Diagnostic } from '@validation/index';
 import {
   ModelApi,
   SysmlApiServer,
@@ -762,9 +762,24 @@ let validationHealth: { model: WeakRef<Model>; modelRev: number; errors: number;
 
 /** Safe validation that never throws into a render. */
 function safeValidate(model: Model): Diagnostic[] {
+  const steps = safeValidateSteps(model, false);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value ?? [];
+  }
+}
+
+/**
+ * {@link safeValidate} in steps (one per rule, see `validateSteps`), for the
+ * recompute to run between frames. With `watch`, returns null, recording
+ * nothing, when the model changed while it stepped: what it found is of a model
+ * that is gone.
+ */
+function* safeValidateSteps(model: Model, watch: boolean): Generator<void, Diagnostic[] | null> {
   const modelRev = model.rev;
   try {
-    const found = validate(model);
+    const found = yield* validateSteps(model);
+    if (watch && model.rev !== modelRev) return null;
     validationHealth = {
       model: new WeakRef(model),
       modelRev,
@@ -779,6 +794,7 @@ function safeValidate(model: Model): Diagnostic[] {
     return found;
   } catch (err) {
     console.error('validation failed', err);
+    if (watch && model.rev !== modelRev) return null;
     validationHealth = { model: new WeakRef(model), modelRev, errors: 0, threw: true };
     return [];
   }
@@ -1776,6 +1792,27 @@ const RECOMPUTE_MAX_WAIT_MS = 250;
 let recomputeTimer: ReturnType<typeof setTimeout> | null = null;
 let recomputeDeadline = 0;
 /**
+ * A recompute under way, in steps (see {@link recomputeSteps}): one task on a
+ * small model, but on a large one the steps run in separate tasks, so that no
+ * one task holds the page for the whole of it. Until it finishes the edit's
+ * recompute is still pending, as while it waits out its quiet period.
+ */
+let recomputeJob: Generator<void | 'cut', 'done' | 'stale'> | null = null;
+let recomputeSliceTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * How long one task of a recompute may run before it lets the page draw: the
+ * browser reports a task over 50 ms as long. A step that is itself longer (one
+ * validation rule, the text) still runs whole.
+ */
+const RECOMPUTE_SLICE_MS = 40;
+/**
+ * Where a step that cannot be divided is next (the text, the results), a task
+ * that has run this long ends first, so that step has a task of its own and
+ * the task is not up to {@link RECOMPUTE_SLICE_MS} plus that step. A small
+ * model's recompute, which has run less, stays one task.
+ */
+const RECOMPUTE_CUT_MS = 10;
+/**
  * How long the last recompute took. On a large model a recompute is itself a
  * few hundred milliseconds (validation, serialization and the diagram build of
  * a 3,700-element model: ~175 ms), so running one every 250 ms of typing left
@@ -1784,6 +1821,8 @@ let recomputeDeadline = 0;
  * recompute's own duration.
  */
 let lastRecomputeMs = 0;
+/** The time the recompute under way has kept the page so far, over its tasks. */
+let busyMs = 0;
 // While a store command that OWNS its derived state (sets diagnostics/text
 // synchronously) is mutating the model, suppress the collab model-subscribe
 // listener's auto-scheduled recompute — otherwise that listener, which fires
@@ -1799,11 +1838,11 @@ let autoRecomputeSuppressed = false;
 let recomputePendingForce = false;
 
 /**
- * True while an edit's recompute is still waiting out its quiet period: the
- * diagram, Problems and the Text tab do not show that edit yet.
+ * True while an edit's recompute is still waiting out its quiet period, or
+ * under way: the diagram, Problems and the Text tab do not show that edit yet.
  */
 export function recomputePending(): boolean {
-  return recomputeTimer !== null;
+  return recomputeTimer !== null || recomputeJob !== null;
 }
 
 /**
@@ -1811,7 +1850,7 @@ export function recomputePending(): boolean {
  * runs it replaces the text buffer, whatever was typed there and not applied.
  */
 export function forcedRecomputePending(): boolean {
-  return recomputeTimer !== null && recomputePendingForce;
+  return recomputePending() && recomputePendingForce;
 }
 
 /** The body of {@link flushRecompute}; the store factory, whose closure runs recomputes, installs it. */
@@ -1980,40 +2019,110 @@ export const useAppStore = create<AppState>((set, get) => {
   }
 
   /**
-   * The coalesced recompute body (C4/C5/L6): refresh diagnostics, re-serialize
-   * the textual view (keeps the bidirectional text sync; §5), and rebuild the
-   * diagram. `forceText` overwrites the text buffer even when dirty (a local
-   * model edit); remote CRDT applies pass `false` to preserve unapplied edits.
+   * The coalesced recompute body (C4/C5/L6), in steps: refresh diagnostics,
+   * re-serialize the textual view (keeps the bidirectional text sync; §5), and
+   * rebuild the diagram. The text buffer is overwritten when a local model edit
+   * forced the recompute ({@link recomputePendingForce}), and otherwise only
+   * when it is not dirty; remote CRDT applies are not forcing, so they never
+   * clobber unapplied text edits. A step yields where the recompute may let the
+   * page draw ({@link advanceRecompute}); it returns 'stale', having changed
+   * nothing, when the model changed meanwhile, and then the recompute is made
+   * again. Its results are set in the one step at its end, which decides again
+   * whether to replace the text buffer: text typed meanwhile is left alone.
    */
-  function recomputeNow(forceText: boolean): void {
-    const started = performance.now();
-    const { model, textDirty, textBuffer } = get();
-    const patch: Partial<AppState> = { diagnostics: safeValidate(model) };
-    if (forceText || !textDirty) Object.assign(patch, textView(model, textBuffer));
+  function* recomputeSteps(): Generator<void | 'cut', 'done' | 'stale'> {
+    const { model } = get();
+    const rev = model.rev;
+    const diagnostics = yield* safeValidateSteps(model, true);
+    if (diagnostics === null) return 'stale';
+    yield 'cut'; // the text cannot be divided
+    const writesText = (): boolean => recomputePendingForce || !get().textDirty;
+    const written = writesText() ? textView(model, get().textBuffer) : null;
+    yield 'cut'; // nor can the results
+    if (get().model !== model || model.rev !== rev) return 'stale';
+    const patch: Partial<AppState> = { diagnostics };
+    if (writesText()) Object.assign(patch, written ?? textView(model, get().textBuffer));
+    recomputeJob = null;
+    recomputePendingForce = false;
     set(patch);
     void get().rebuildDiagram();
-    lastRecomputeMs = performance.now() - started;
+    return 'done';
+  }
+
+  /**
+   * Run `job`, which is {@link recomputeJob}, for one task: until it finishes,
+   * or until {@link RECOMPUTE_SLICE_MS} have gone and the page should draw
+   * (`sliced`), when the rest is left to a timer. A stale step starts the
+   * recompute again. `lastRecomputeMs` is the time it kept the page, over all
+   * its tasks.
+   */
+  function advanceRecompute(job: Generator<void | 'cut', 'done' | 'stale'>, sliced: boolean): void {
+    let current = job;
+    const started = performance.now();
+    try {
+      for (;;) {
+        const step = current.next();
+        if (step.done && step.value === 'done') break;
+        if (step.done) recomputeJob = current = recomputeSteps();
+        const spent = performance.now() - started;
+        if (sliced && (spent >= RECOMPUTE_SLICE_MS || (step.value === 'cut' && spent >= RECOMPUTE_CUT_MS))) {
+          const later = current;
+          recomputeSliceTimer = setTimeout(() => {
+            recomputeSliceTimer = null;
+            if (recomputeJob === later) advanceRecompute(later, true);
+          }, 0);
+          break;
+        }
+      }
+    } catch (err) {
+      recomputeJob = null;
+      recomputePendingForce = false;
+      throw err;
+    } finally {
+      busyMs += performance.now() - started;
+    }
+    if (recomputeJob === null) lastRecomputeMs = busyMs;
+  }
+
+  /** Start a recompute: the timer's, or a flush's. */
+  function startRecompute(sliced: boolean): void {
+    busyMs = 0;
+    recomputeJob = recomputeSteps();
+    advanceRecompute(recomputeJob, sliced);
   }
 
   /**
    * Debounce a recompute; `forceText` sticks for the whole coalescing window.
    * The per-burst delay is capped at RECOMPUTE_MAX_WAIT_MS so a long stream of
-   * closely-spaced calls can't postpone the recompute forever (Fable #1).
+   * closely-spaced calls can't postpone the recompute forever (Fable #1). An
+   * edit while a recompute is under way ends it: it is of a model that is gone.
+   * It keeps its burst's deadline, and a recompute that reaches the deadline
+   * runs in one task, which an edit cannot end: the cap holds on a model whose
+   * recompute spans several tasks, as on one whose recompute is one.
    */
   function scheduleRecompute(forceText: boolean): void {
     recomputePendingForce = recomputePendingForce || forceText;
+    const superseded = recomputeJob !== null;
+    stopRecomputeJob();
     const now = Date.now();
     const quiet = Math.max(RECOMPUTE_DEBOUNCE_MS, 1.5 * lastRecomputeMs);
     const cap = Math.max(RECOMPUTE_MAX_WAIT_MS, 4 * lastRecomputeMs);
-    if (recomputeTimer === null) recomputeDeadline = now + cap;
-    else clearTimeout(recomputeTimer);
+    if (recomputeTimer !== null) clearTimeout(recomputeTimer);
+    else if (!superseded) recomputeDeadline = now + cap;
     const wait = Math.max(0, Math.min(quiet, recomputeDeadline - now));
     recomputeTimer = setTimeout(() => {
       recomputeTimer = null;
-      const force = recomputePendingForce;
-      recomputePendingForce = false;
-      recomputeNow(force);
+      startRecompute(Date.now() + 2 < recomputeDeadline); // 2 ms: a timer may fire a little early
     }, wait);
+  }
+
+  /** End the recompute under way, if one is: it changed nothing, as it sets its results in one step at its end. */
+  function stopRecomputeJob(): void {
+    recomputeJob = null;
+    if (recomputeSliceTimer !== null) {
+      clearTimeout(recomputeSliceTimer);
+      recomputeSliceTimer = null;
+    }
   }
 
   /**
@@ -2028,14 +2137,21 @@ export const useAppStore = create<AppState>((set, get) => {
       clearTimeout(recomputeTimer);
       recomputeTimer = null;
     }
+    stopRecomputeJob();
     recomputePendingForce = false;
   }
 
   flushRecomputeImpl = () => {
-    if (recomputeTimer === null) return;
-    const force = recomputePendingForce;
-    cancelRecompute();
-    recomputeNow(force);
+    if (recomputeTimer !== null) {
+      clearTimeout(recomputeTimer);
+      recomputeTimer = null;
+      startRecompute(false);
+    } else if (recomputeJob !== null) {
+      // Under way: the rest of it now, in this task.
+      if (recomputeSliceTimer !== null) clearTimeout(recomputeSliceTimer);
+      recomputeSliceTimer = null;
+      advanceRecompute(recomputeJob, false);
+    }
   };
 
   /**
@@ -5135,7 +5251,7 @@ function retainedParseRows(current: Diagnostic[], model: Model): Diagnostic[] {
  * reported NOTHING. Validation findings are recomputed here because the merged
  * library can change them; parse findings describe the TEXT, which the merge did
  * not touch, so they must survive it. They are dropped on the next real model
- * mutation (`recomputeNow`), where they would genuinely be stale.
+ * mutation (`recomputeSteps`), where they would genuinely be stale.
  */
 function refreshAfterLibraryLoad(): void {
   const { model } = useAppStore.getState();

@@ -23,6 +23,20 @@ export interface ValidateOptions {
  * then diagnostic `id` — fully deterministic for snapshot-friendly output.
  */
 export function validate(model: Model, opts: ValidateOptions = {}): Diagnostic[] {
+  const steps = validateSteps(model, opts);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * {@link validate} in steps: yields after each rule has run, and returns the
+ * list. The page's recompute drives it between frames on a large model, so that
+ * no one task holds the page for the whole model's validation; `validate` drives
+ * it to the end, so the two always return the same list.
+ */
+export function* validateSteps(model: Model, opts: ValidateOptions = {}): Generator<void, Diagnostic[]> {
   const include = opts.ruleIds ? new Set(opts.ruleIds) : undefined;
   const exclude = opts.excludeRuleIds ? new Set(opts.excludeRuleIds) : undefined;
 
@@ -35,12 +49,15 @@ export function validate(model: Model, opts: ValidateOptions = {}): Diagnostic[]
   // diagnostic they attract (e.g. port-direction) already fires on that visible
   // prototype, so surfacing it again would point the user at a phantom element
   // absent from the Text view. Drop diagnostics anchored on an implicit element.
-  const diagnostics = rules
-    .flatMap((r) => r.run(model))
-    .filter((d) => {
-      if (!d.elementId) return true;
-      return model.get(d.elementId)?.attrs.implicit !== true;
-    });
+  const found: Diagnostic[] = [];
+  for (const r of rules) {
+    for (const d of r.run(model)) found.push(d); // not push(...): a rule may return very many
+    yield;
+  }
+  const diagnostics = found.filter((d) => {
+    if (!d.elementId) return true;
+    return model.get(d.elementId)?.attrs.implicit !== true;
+  });
 
   diagnostics.sort(
     (a, b) =>
