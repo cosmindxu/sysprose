@@ -1058,19 +1058,33 @@ the instance's own (W's `bind pp = top.a` read as `s.w.pp`, for `part s : Sys`
 whose w is a W, is s's w's top's a). A reference, a subject's value or a
 `satisfy` that lands on such a part reads on through it to the other (`ref
 part r : T0 = pp`: r's load is top's a's; a package's `satisfy R by pp` is
-read at top's a), and so does a reference to a reference. A `satisfy` written
-in a definition, or in a usage another specialises, is read once, at that
-element's own values, never in each of its instances: one whose satisfier is a
-reference with a value or one an instance redefines (`ref part r : T0;` under
-w's `ref part :>> r = p50`), such a part or a subject, or is reached through
-one, is *could not be evaluated*, since an instance can make that feature
-another (W's `satisfy R by r` over `ref part r : T0 = pp`, where w's top's a
-breaks R); so is a requirement usage written there whose subject's value names
-it through one (`requirement rr : R { subject s = r; }` in W) — a limit of
-this tool. Where neither is so plain (`part pp : T0 { attribute :>> load
-default = 3.0; }`, a port bound to two inner ports), a row that may read a
-value the binding carries is *could not be evaluated*, in a sentence that
-names the binding: one that reads through either end or a usage above one, or
+read at top's a), and so does a reference to a reference. A `satisfy` is
+read in the element it is written in, at the satisfier its path names there:
+one that element inherits is that element's own (`satisfy R by p1` in `part sys
+: W` is sys's p1, whose load sys's K gives through W's `bind p1.load = K`), and
+so is one it redefines (beside w's `part :>> p1 { … }`, or the package's
+`satisfy R by w.p1`). One written in a definition, or in a usage another
+specialises, is read once, at that element's own values, never in each of its
+instances: one whose satisfier is a reference with a value or one an instance
+redefines (`ref part r : T0;` under w's `ref part :>> r = p50`), such a part
+or a subject, or is reached through one, is *could not be evaluated*, since an
+instance can make that feature another (W's `satisfy R by r` over `ref part r
+: T0 = pp`, where w's top's a breaks R); so is a requirement usage written
+there whose subject's value names it through one (`requirement rr : R { subject
+s = r; }` in W). And where an instance of that element reads what R requires
+of the satisfier otherwise (W's `satisfy R by p1`, or W's `requirement q : R {
+subject s = p1; }`, beside w's `part :>> p1 { attribute :>> load = 50.0; }`),
+whether R reads it through the subject (`s.load`) or through a feature of its
+own (`attribute m = s.load`, or one a binding gives it), each row of it is
+*could not be evaluated* too, naming that instance; so is a relation read
+through that subject from outside (`w.q.s.load`) wherever an instance reads
+anything below p1 otherwise, whatever R reads, and `bounds` claims no bound of
+a measure read so — a limit of this tool. An instance that changes nothing the
+satisfier reads (`part w0 : W;`) reads it as written. Where neither is so plain
+(`part pp : T0 { attribute :>> load default = 3.0; }`, a port bound to two
+inner ports), a row that may read a value the binding carries is *could not be
+evaluated*, in a sentence that names the binding: one that reads through
+either end or a usage above one, or
 through a feature a binding, a value or an `assert` ties to one; one an
 instance reads through such a feature where its definition does not (W's
 `pp.load` over `pp = top.a`, read in `w : W { part :>> top = t50; }`); and one
@@ -1090,8 +1104,29 @@ the value — and, where it says something of its own or has a type the other
 lacks, so are those that read what the value names (top's a, which has pp's
 50), as a binding's other end. A reference valued so is read as what
 it names, in each instance at that instance's own: W's `ref part pp : T0 =
-top.a`, read in w, is w's top's a. One redefined over a reference written with
-`=` (`ref part :>> r1 = p2` in w, over W's `ref part r1 = p1`) states a
+top.a`, read in w, is w's top's a. A relation W writes is read anew in an
+instance that rebinds a reference on what it reads, or renames a part on its
+path — directly, or through a value of W's it reads — at what that instance's
+own reaches: w's `ref part :>> top = t50` makes W's `pp.load`, `top.a.load` and
+an `attribute m = pp.load` t50's a's load there, and w's `part top2 redefines
+top { … }` makes `pp.load` w's top2's a's. A value read in w that names the
+renamed part by the name W gives it (`m = pp.load` over `pp = top.a`) is
+*could not be evaluated* there — a limit of this tool. A reference a usage
+nested in W writes is read in each instance of W a path reaches it through
+(W's `part sub { ref part r : T0 = x; }`, read as `w.sub.r`, is w's sub's x);
+one valued with a feature around that usage (`ref part r : T0 = p1`, W's p1)
+is read at W's own values only, so where an instance of W reads that feature
+otherwise (w's `part :>> p1 { … }`), every row read through it — or through a
+value or a binding that reads through it, as `sub.m` over `attribute m =
+r.load` — is *could not be evaluated*, naming that instance, but for the rows
+of a group that reads each instance, which re-resolve the reference itself
+there as above (Q's `part p : P { ref part :>> r = s; }` beside Q's `bind
+p.load = L`). A reference redefinition that states no value (`ref part :>>
+r;` in w, over W's `ref part r : T0 = x`) is read as a fresh instance of its
+type, never as what `x` names, so every row read through it is *could not be
+evaluated* too — a limit of this tool. Through either kind, `bounds` claims no
+bound of a measure (`w.sub.m`, `w.r.load`). One redefined over a reference written
+with `=` (`ref part :>> r1 = p2` in w, over W's `ref part r1 = p1`) states a
 second value, and a row read through it is *could not be evaluated*. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not

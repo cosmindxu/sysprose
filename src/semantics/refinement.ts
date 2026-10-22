@@ -1671,8 +1671,14 @@ function prepare(model: Model, connectionsAsEqualities: boolean): Prepared {
   for (const o of worklist) {
     // A requirement read where a `satisfy R by x` binds its subject is filed
     // under R and x ({@link satisfiedBy}); read elsewhere, under its own id.
+    // x is the feature the relationship records, as the contract's
+    // `satisfiedBy` names it ({@link encodeContract} looks it up so): the
+    // satisfaction reads an instance's own redefinition of it (`satisfy R by
+    // w.p1`), and filed under that one, its rows were never found, and the
+    // contract was read at R's generic rows.
     const satisfied = o.instance?.requirementId !== undefined ? definitions.satisfaction(o.instance.contextId) : undefined;
-    const id = satisfied ? satisfiedBy(o.instance!.requirementId!, satisfied.satisfier.id) : o.requirement?.id;
+    const recorded = satisfied ? (model.get(o.instance!.contextId)?.source?.[0] ?? satisfied.satisfier.id) : undefined;
+    const id = satisfied ? satisfiedBy(o.instance!.requirementId!, recorded!) : o.requirement?.id;
     // A row whose role is `axiom` is context even inside a requirement body
     // (`assert constraint`), and the synthetic `no-formal-clause` row is not a
     // relation at all: neither is part of what a contract ASSUMES or PROMISES,

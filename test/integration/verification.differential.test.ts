@@ -1546,6 +1546,31 @@ describe('a value read where its inputs are changed is that context’s own, and
     expect(await bound(r8, 'R8B', 'q.x')).toEqual(fifty);
   });
 
+  withZ3('bounds claims no bound of a measure read through a subject, a reference or a valueless reference redefinition an instance reads otherwise (per-instance-rest S1)', async () => {
+    const T0 = 'part def T0 { attribute load : ScalarValues::Real default = 1.0; }';
+    const bound = async (text: string, name: string, measure: string) => {
+      const r = await boundsReport(await contextModel(text, name), { measure, sense: 'max', sourceText: text });
+      return [r.bounds.map((b) => [b.outcome, b.code, b.value]), r.exitCode, r.bounds[0]!.detail];
+    };
+    const p50 = 'part :>> p1 { attribute :>> load = 50.0; }';
+    // Each resolved to a feature read at W's own values, or to T0's own load, and was bounded "1 exactly" where
+    // w's is 50: the subject of W's q (`w.q.s.load`), W's sub's outward `r = p1` under a value (`w.sub.m`), and
+    // w's `ref part :>> r;` over W's `r = x`. Every row that reads it abstains; the bound too.
+    for (const [name, text, measure, said] of [
+      ['SB', `package SB { ${T0} requirement def RF { subject s : T0; } part def W { part p1 : T0; requirement q : RF { subject s = p1; } } part w : W { ${p50} } }`, 'w.q.s.load', '`subject s = p1` in SB::W::q'],
+      ['RO', `package RO { ${T0} part def W { part p1 : T0; part sub { ref part r : T0 = p1; attribute m : ScalarValues::Real = r.load; } } part w : W { ${p50} } }`, 'w.sub.m', '`r = p1` in RO::W::sub'],
+      ['VL', `package VL { ${T0} part def W { part x : T0 { attribute :>> load = 50.0; } ref part r : T0 = x; } part w : W { ref part :>> r; } }`, 'w.r.load', '`r` in VL::w redefines VL::W::r'],
+    ] as const) {
+      const [rows, exit, detail] = await bound(text, name, measure);
+      expect([rows, exit], name).toEqual([[['inconclusive', 'verification/not-evaluable', null]], 2]);
+      expect(detail, name).toContain(said);
+      expect(detail, name).toContain('so no bound of a value read through it is claimed');
+    }
+    // Where no instance reads p1 otherwise, the reference reads as written: bounded at W's p1's 1.
+    const same = `package RS { ${T0} part def W { part p1 : T0; part sub { ref part r : T0 = p1; } } part w : W; }`;
+    expect((await bound(same, 'RS', 'w.sub.r.load')).slice(0, 2)).toEqual([[['optimum', null, 1]], 0]);
+  });
+
   it('files a binding it does not read under its own reason: a limit of this tool, exit 2, never forgiven (O9 S1)', async () => {
     const text = `package PU {
     part def T0 { attribute load : ScalarValues::Real default = 1.0; }
@@ -2877,6 +2902,32 @@ describe('two instances of a feature with no value are two unknowns, on every co
       const t = await faultTreeReport(m, { sourceText: text });
       expect([t.groups[0].outcome, t.groups[0].cutSets.length], name).toEqual(['inconclusive', 0]);
     }
+  });
+
+  withZ3('refine: a sub-contract read at an instance’s own satisfier is filed under the one its contract names (RF1, RF2, RF5)', async () => {
+    const pkg = (name: string, sys: string, satisfy: string) => `package ${name} {
+    part def C { attribute load : ScalarValues::Real default = 1.0; }
+    requirement def CompReq { subject c : C; require constraint { c.load <= 5.0 } }
+    requirement def SysReq { subject s : Sys; require constraint { s.c1.load <= 5.0 } }
+    ${sys}
+    satisfy SysReq by sys;
+    ${satisfy} }`;
+    // `satisfy CompReq by sys.c1`, and the same written in sys, read sys's own c1 (per-instance-rest S1). Filed
+    // under it while the contract names the c1 the relationship records (Sys's), the component's rows were never
+    // found, and its contract was read at C's generic load: `not refined`, a witness with sys's c1 at 6.
+    for (const [name, sys, satisfy] of [
+      ['RF1', 'part def Sys { part c1 : C; } part sys : Sys { part :>> c1 { attribute :>> load = 3.0; } }', 'satisfy CompReq by sys.c1;'],
+      ['RF2', 'part def Sys { part c1 : C; } part sys : Sys { part :>> c1 { attribute :>> load = 3.0; } satisfy CompReq by c1; }', ''],
+    ] as const) {
+      const text = pkg(name, sys, satisfy);
+      const r = await refinementReport(await contextModel(text, name), { sourceText: text });
+      expect([r.refined, r.notRefined, r.exitCode], name).toEqual([1, 0, 0]);
+    }
+    // Sys's `satisfy CompReq by c1`, where sys's c1 is 50, is read for no instance (its rows abstain): the
+    // decomposition is undecided, never `not refined` over C's generic load as it was before.
+    const rf5 = pkg('RF5', 'part def Sys { part c1 : C; satisfy CompReq by c1; } part sys : Sys { part :>> c1 { attribute :>> load = 50.0; } }', '');
+    const r5 = await refinementReport(await contextModel(rf5, 'RF5'), { sourceText: rf5 });
+    expect([r5.notRefined, r5.groups[0].code, r5.exitCode]).toEqual([0, 'verification/refinement-undecided', 2]);
   });
 
   withZ3('a subject bound to a chain is that chain’s instance, and no other requirement’s', async () => {
@@ -7489,8 +7540,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // (the branch had split Q's generic variable from p1's and read top and top2 T on all four, SMT `proved`):
     // RF's top and top2 read T/T/T/X, false. Such an assert is now an unread source of its own (O9 S2): every
     // row that may read through the reference, its redefinitions or what their values name abstains, on all
-    // four surfaces, in a sentence naming the assert (`unread-binding`) — top, top2, Q's own tie, P's c read in
-    // p1, in Q's r and in q's. P's own c (x = 2, true of a P no reference names) stays T beside SMT's
+    // four surfaces, in a sentence naming the assert (`unread-binding`) — top, top2, Q's own tie and q's (q's own
+    // row since q's rebound r lands Q's `r.x` in p1, per-instance-rest S1), P's c read in p1, in Q's r and in
+    // q's. P's own c (x = 2, true of a P no reference names) stays T beside SMT's
     // inconsistent axioms: the SMT engine reads Q's `r.x` as P's generic x (I7, reviewed). RF2's p, valued with
     // `other` under an assert that reads through it, says something of its own (as h5-ppvalbody's pp, not
     // h5-ppval's, which is read): its rows abstain in the value's sentence (O9 S1), the assert's in its own.
@@ -7508,6 +7560,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RF::P::c in RF::q::«PartUsage»': ['?/-/?/-', 'F'],
       'RF::P::c in RF::q::r': ['-/?/-/?', 'F'],
       'RF::Q::tie': ['?/-/?/-', null],
+      'RF::Q::tie in RF::q': ['?/-/?/-', null],
       'RF::top': ['?/?/?/?', 'F'],
       'RF::top2': ['?/?/?/?', 'F'],
     }),
@@ -7530,6 +7583,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RF3::P::c in RF3::q::«PartUsage»': ['?/-/?/-', 'F'],
       'RF3::P::c in RF3::q::r': ['-/?/-/?', 'F'],
       'RF3::Q::tie': ['?/-/?/-', null],
+      'RF3::Q::tie in RF3::q': ['?/-/?/-', null],
       'RF3::t0': ['T/T/T/X', 'T'],
       'RF3::t3': ['?/?/?/?', 'F'],
       'RF3::top': ['?/?/?/?', 'F'],
@@ -8273,6 +8327,363 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RR2::W::cF in RR2::w': ['?/?/?/?', null],
       'RR2::w::«PartUsage»#binding': ['?/-/?/-', null],
       'RR2::wT': ['?/?/?/?', null],
+    }),
+    // A definition's relation read through a reference an instance rebinds, or through a part an instance
+    // redefines under a new name (per-instance-rest S1, O9's review). W's `pp.load` (over `ref part pp : T0 =
+    // top.a`) and W's `top.a.load` are T1's a's load in W and in w alike, so no test by feature told w's reading
+    // apart: w's `ref part :>> top = t50` lands it in t50's a, and w's `part top2 redefines top { … }` in w's top2's
+    // a, both 50 where W's own top's a is 1. No row was filed for w: W's pF held for every W, `sysml-check
+    // --strict` passed and `verify` exited 0. w's rows are its own now (`landsElsewhere`), and read 50.
+    ...Object.fromEntries(
+      (
+        [
+          ['ref-rebind-v8x', 'V8X', 'ref part top : T1; ref part pp : T0 = top.a;', 'ref part :>> top = t50;', 'pp.load', 'wF { w.pp.load <= 5.0 }', 'F'],
+          ['ref-rebind-v8xd', 'V8XD', 'ref part top : T1;', 'ref part :>> top = t50;', 'top.a.load', 'wF { w.top.a.load <= 5.0 }', 'F'],
+          ['ref-rename-v8n', 'V8N', 'part top : T1; ref part pp : T0 = top.a;', 'part top2 redefines top { attribute :>> L = 50.0; }', 'pp.load', 'wT { w.pp.load >= 40.0 }', 'T'],
+        ] as const
+      ).map(([name, pkg, own, inst, read, top, ref]) => [
+        name,
+        probe(`package ${pkg} {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part t50 : T1 { attribute :>> L = 50.0; }
+        part def W { ${own} constraint pT { ${read} >= 40.0 } constraint pF { ${read} <= 5.0 } }
+        part w : W { ${inst} }
+        constraint ${top}
+      }`, {
+          [`${pkg}::W::pT`]: ['F/F/F/F', 'F'],
+          [`${pkg}::W::pF`]: ['T/T/T/T', 'T'],
+          [`${pkg}::W::pT in ${pkg}::w`]: ['T/T/T/T', 'T'],
+          [`${pkg}::W::pF in ${pkg}::w`]: ['F/F/F/F', 'F'],
+          [`${pkg}::${top.split(' ')[0]}`]: [ref === 'F' ? 'F/F/F/F' : 'T/T/T/T', ref],
+        }),
+      ]),
+    ),
+    // A `satisfy` a definition writes, or a requirement usage there whose subject a value binds, is read once, at
+    // W's own values (1), never in each instance of W: w's 50 breaks RF, yet no row was filed for it (SD0's p1,
+    // SD1's top.a through T1's binding, SBJ0's `subject s = p1`), and the same subject read from outside
+    // (`w.q.s.load`) read W's p1 too, T on all four. Where an instance of W reads the satisfier otherwise, each
+    // such row abstains, naming that instance (per-instance-rest S1); G8's satisfier, a reference an instance
+    // rebinds, keeps its own sentence (O9). The refs are w's: the satisfaction is a claim about every W.
+    'sat-def-sd0': probe(`package SD0 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; satisfy RF by p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      }`, {
+      'SD0::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SD0::RF::«ConstraintUsage» in SD0::W::«Satisfy»': ['?/-/?/-', 'F'],
+      'SD0::RF::«ConstraintUsage» in SD0::W::p1': ['-/?/-/?', 'F'],
+    }),
+    'sat-def-sd1': probe(`package SD1 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part top : T1; satisfy RF by top.a; }
+        part w : W { part :>> top { attribute :>> L = 50.0; } }
+      }`, {
+      'SD1::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SD1::RF::«ConstraintUsage» in SD1::W::«Satisfy»': ['?/-/?/-', 'F'],
+      'SD1::RF::«ConstraintUsage» in SD1::W::top::a': ['-/?/-/?', 'F'],
+    }),
+    'sat-def-g8': probe(`package G8 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part p1 : T0;
+        part p50 : T0 { attribute :>> load = 50.0; }
+        part def P { ref part r1 : T0 default = p1; ref part r2 : T0 = r1; satisfy RF by r2; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 10.0 } }
+        part pa : P;
+        part pb : P { ref part :>> r1 = p50; }
+      }`, {
+      'G8::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'G8::RF::«ConstraintUsage» in G8::P::«Satisfy»': ['?/-/?/-', 'F'],
+      'G8::RF::«ConstraintUsage» in G8::p1': ['-/?/-/?', 'F'],
+    }),
+    'subj-def-sbj0': probe(`package SBJ0 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; requirement q : RF { subject s = p1; } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        constraint k { w.q.s.load <= 5.0 }
+        constraint k2 { w.p1.load <= 5.0 }
+      }`, {
+      'SBJ0::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SBJ0::RF::«ConstraintUsage» in SBJ0::W::q': ['?/?/?/?', 'F'],
+      'SBJ0::k': ['?/?/?/?', 'F'],
+      'SBJ0::k2': ['F/F/F/F', 'F'],
+    }),
+    'subj-def-own': probe(`package SBJOWN {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RG { subject s : T0; }
+        part def W { part p1 : T0; requirement q : RG { subject s = p1; require constraint qc { s.load <= 5.0 } } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      }`, {
+      'SBJOWN::RG': ['-/U/-/U', null],
+      'SBJOWN::W::q::qc': ['?/?/?/?', 'F'],
+    }),
+    // An instance that changes nothing the satisfier reads (none at all, another part, another feature of p1)
+    // reads the satisfaction as W does: no row of its own, nothing withheld.
+    'sat-def-same': probe(`package NC1 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute tag : ScalarValues::Real default = 0.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; part p2 : T0; satisfy RF by p1; requirement q : RF { subject s = p1; } }
+        part w0 : W;
+        part w1 : W { part :>> p2 { attribute :>> load = 50.0; } }
+        part w2 : W { part :>> p1 { attribute :>> tag = 9.0; } }
+      }`, {
+      'NC1::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+    }),
+    // A `satisfy` is read in the instance it is written in (per-instance-rest S1). The relationship records the
+    // feature its path names as declared (W's p1), never an instance's redefinition of it: NC2's `satisfy RF by p1`
+    // in w, and SD0K's `satisfy RF by w.p1`, read W's p1 (1) where w's is 50. And a satisfier named bare that the
+    // element it is written in inherits was read in its declaring definition: NC4's sys's p1, whose load W's
+    // binding gives sys's K of 50, read W's K (1). Each held on all four surfaces.
+    'sat-own-nc2': probe(`package NC2 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } satisfy RF by p1; }
+      }`, {
+      'NC2::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'NC2::RF::«ConstraintUsage» in NC2::w::«Satisfy»': ['F/-/F/-', 'F'],
+      'NC2::RF::«ConstraintUsage» in NC2::w::p1': ['-/F/-/F', 'F'],
+    }),
+    'sat-chain-sd0k': probe(`package SD0K {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        satisfy RF by w.p1;
+      }`, {
+      'SD0K::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SD0K::RF::«ConstraintUsage» in SD0K::«Satisfy»': ['F/-/F/-', 'F'],
+      'SD0K::RF::«ConstraintUsage» in SD0K::w::p1': ['-/F/-/F', 'F'],
+    }),
+    'sat-inherited-nc4': probe(`package NC4 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; attribute K : ScalarValues::Real default = 1.0; bind p1.load = K; }
+        part sys : W { attribute :>> K = 50.0; satisfy RF by p1; }
+      }`, {
+      'NC4::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'NC4::RF::«ConstraintUsage» in NC4::sys::«Satisfy»': ['F/-/F/-', 'F'],
+      'NC4::RF::«ConstraintUsage» in NC4::sys::p1': ['-/F/-/F', 'F'],
+    }),
+    // A reference a usage nested in W writes (per-instance-rest S1). Valued below that usage (COWN3's `r = x` in
+    // W's sub), it is read in each instance the walk is in: `w.sub.r` is w's sub's x, whose load W's binding
+    // gives w's K of 50 (it named W's own sub's x, K's default 1: k read T on all four beside k2's F). Valued
+    // with a feature around it (COWN2's `r = p1`, W's p1), it is read at W's own values only, never in each
+    // instance of W, and w's p1 is 50: the relation sub writes and the package's read through w's sub held on all
+    // four. Each such row abstains now, naming the instance; where none reads p1 otherwise it reads as written.
+    'ref-own-cown3': probe(`package COWN3 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { attribute K : ScalarValues::Real default = 1.0; part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } bind sub.x.load = K; }
+        part w : W { attribute :>> K = 50.0; }
+        constraint k { w.sub.r.load <= 5.0 }
+        constraint k2 { w.sub.x.load <= 5.0 }
+      }`, {
+      'COWN3::W::sub::c': ['T/T/T/T', 'T'],
+      'COWN3::W::sub::c in COWN3::w::sub': ['?/?/?/?', 'F'],
+      'COWN3::k': ['F/F/F/F', 'F'],
+      'COWN3::k2': ['F/F/F/F', 'F'],
+    }),
+    'ref-outward-cown2': probe(`package COWN2 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { part p1 : T0; part sub { ref part r : T0 = p1; constraint c { r.load <= 5.0 } } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        constraint k { w.sub.r.load <= 5.0 }
+      }`, {
+      'COWN2::W::sub::c': ['?/?/?/?', 'T'],
+      'COWN2::k': ['?/?/?/?', 'F'],
+    }),
+    'ref-outward-same': probe(`package COWN0 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { part p1 : T0; part sub { ref part r : T0 = p1; constraint c { r.load <= 5.0 } } }
+        part w : W;
+        constraint k { w.sub.r.load <= 5.0 }
+      }`, {
+      'COWN0::W::sub::c': ['T/T/T/T', 'T'],
+      'COWN0::k': ['T/T/T/T', 'T'],
+    }),
+    // X17's `ref part :>> r = s` in Q's p names Q's s, around p, which q2 redefines (x 100). Where a group reads
+    // each instance (Q's `bind p.load = L`), its rows re-resolve r in their own instance as before — q1's T, q2's
+    // `not-enumerated` — and only a read from outside abstains (`q2.p.r.x`: Q's own s, T on all four). With no
+    // group (X17NB), Q's p's row stood for every Q's p, q2's included, with no row of q2's: it abstains.
+    'ref-outward-group': probe(`package X17K {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R; part p : P { ref part :>> r = s; } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> s { attribute :>> k = 50.0; } }
+        constraint k { q2.p.r.x <= 10.0 }
+      }`, {
+      'X17K::P::c': ['T/T/T/T', 'T'],
+      'X17K::P::c in X17K::Q::p': ['T/T/T/T', 'T'],
+      'X17K::P::c in X17K::q1::p': ['T/T/T/T', 'T'],
+      'X17K::P::c in X17K::q2::p': ['?/?/?/?', 'F'],
+      'X17K::k': ['?/?/?/?', 'F'],
+    }),
+    'ref-outward-nogroup': probe(`package X17NB {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { part s : R; part p : P { ref part :>> r = s; } }
+        part q1 : Q;
+        part q2 : Q { part :>> s { attribute :>> k = 50.0; } }
+      }`, {
+      'X17NB::P::c': ['T/T/T/T', 'T'],
+      'X17NB::P::c in X17NB::Q::p': ['?/?/?/?', 'T'],
+    }),
+    // The same shapes read through a value or a binding (the review of per-instance-rest S1): each was T on all
+    // four surfaces where w breaks the relation. A requirement that reads its satisfier through a feature of its
+    // own (`m = s.load`, or `bind m = s.load`) dropped `m` from the instance test, so no instance was found to
+    // read p1 otherwise: each satisfaction or subject row of W's abstains now, naming w.
+    ...Object.fromEntries(
+      (
+        [
+          ['sat-def-sm1', 'SM1', 'attribute m : ScalarValues::Real = s.load;'],
+          ['sat-def-sm6', 'SM6', 'attribute m : ScalarValues::Real; bind m = s.load;'],
+        ] as const
+      ).map(([name, pkg, m]) => [
+        name,
+        probe(`package ${pkg} {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; ${m} require constraint { m <= 5.0 } }
+        part def W { part p1 : T0; satisfy RF by p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      }`, {
+          [`${pkg}::RF::«ConstraintUsage»`]: ['T/T/T/T', 'T'],
+          [`${pkg}::RF::«ConstraintUsage» in ${pkg}::W::«Satisfy»`]: ['?/-/?/-', 'F'],
+          [`${pkg}::RF::«ConstraintUsage» in ${pkg}::W::p1`]: ['-/?/-/?', 'F'],
+        }),
+      ]),
+    ),
+    'subj-def-sm3': probe(`package SM3 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; attribute m : ScalarValues::Real = s.load; require constraint { m <= 5.0 } }
+        part def W { part p1 : T0; requirement q : RF { subject s = p1; } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      }`, {
+      'SM3::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SM3::RF::«ConstraintUsage» in SM3::W::q': ['?/?/?/?', 'F'],
+    }),
+    // Read from outside through the subject (`w.q.s.load`), the subject reads any feature below p1, not only what
+    // R's clauses read: SBO's RF reads `s.tag`, which w leaves alone, so no row of R's is w's, but k read W's own
+    // p1's load (1) where w's is 50, T on all four. It abstains now; RF's own row reads as written.
+    'subj-def-outside': probe(`package SBO {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute tag : ScalarValues::Real default = 0.0; }
+        requirement def RF { subject s : T0; require constraint { s.tag <= 5.0 } }
+        part def W { part p1 : T0; requirement q : RF { subject s = p1; } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        constraint k { w.q.s.load <= 5.0 }
+      }`, {
+      'SBO::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SBO::k': ['?/?/?/?', 'F'],
+    }),
+    'subj-def-sm2': probe(`package SM2 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RG { subject s : T0; }
+        part def W { part p1 : T0; requirement q : RG { subject s = p1; attribute m : ScalarValues::Real = s.load; require constraint qc { m <= 5.0 } } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      }`, {
+      'SM2::RG': ['-/U/-/U', null],
+      'SM2::W::q::qc': ['?/?/?/?', 'F'],
+    }),
+    // W's `m` read through a reference w rebinds (RB9's `m = pp.load`, RB9D's `m = top.a.load`) is W's own m in
+    // both, read alike by name, so no row was filed for w: m's value is compared now by where its names land
+    // (`landsElsewhere`), and w's row reads t50's 50. RB10's w renames top, and the `top.a` W's pp is valued with
+    // names no feature of w: w's row abstains (the name-scope rule; its `w.m` read from outside reads ?/?/F/? as
+    // at 3c54ae0). An instance that changes nothing m reads gets no row of its own (lex-same, lex-dy1).
+    ...Object.fromEntries(
+      (
+        [
+          ['ref-rebind-rb9', 'RB9', 'ref part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real = pp.load;', 'ref part :>> top = t50;', 'F/F/F/F'],
+          ['ref-rebind-rb9d', 'RB9D', 'ref part top : T1; attribute m : ScalarValues::Real = top.a.load;', 'ref part :>> top = t50;', 'F/F/F/F'],
+          ['ref-rename-rb10', 'RB10', 'part top : T1; ref part pp : T0 = top.a; attribute m : ScalarValues::Real = pp.load;', 'part top2 redefines top { attribute :>> L = 50.0; }', '?/?/?/?'],
+        ] as const
+      ).map(([name, pkg, own, inst, there]) => [
+        name,
+        probe(`package ${pkg} {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part t50 : T1 { attribute :>> L = 50.0; }
+        part def W { ${own} constraint pF { m <= 5.0 } }
+        part w : W { ${inst} }
+      }`, {
+          [`${pkg}::W::pF`]: ['T/T/T/T', 'T'],
+          [`${pkg}::W::pF in ${pkg}::w`]: [there, 'F'],
+        }),
+      ]),
+    ),
+    // A value or a binding over COWN2's outward `r = p1` read W's own p1 (1) for every W, where w's is 50 (RC7's
+    // `sub.m` over sub's `m = r.load`, RC7B's `m = sub.r.load`): the taint stopped at the reference. It reaches
+    // what reads through it now, and each row abstains, W's own too (true of W's own sub, it stood for w's).
+    ...Object.fromEntries(
+      (
+        [
+          ['ref-outward-rc7', 'RC7', 'part sub { ref part r : T0 = p1; attribute m : ScalarValues::Real = r.load; } constraint c { sub.m <= 5.0 }', 'w.sub.m'],
+          ['ref-outward-rc7b', 'RC7B', 'part sub { ref part r : T0 = p1; } attribute m : ScalarValues::Real = sub.r.load; constraint c { m <= 5.0 }', 'w.m'],
+        ] as const
+      ).map(([name, pkg, body, read]) => [
+        name,
+        probe(`package ${pkg} {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { part p1 : T0; ${body} }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        constraint k { ${read} <= 5.0 }
+      }`, {
+          [`${pkg}::W::c`]: ['?/?/?/?', 'T'],
+          [`${pkg}::k`]: ['?/?/?/?', 'F'],
+        }),
+      ]),
+    ),
+    // A reference redefinition that states no value (`ref part :>> r;`) of a valued reference was read as a fresh
+    // T0 (1), never as what W's value names (VR1's x, 50; COWN7's outward p1, w's 50): T on all four, and COWN7's
+    // w's sub row T on the engines. Each row read through it abstains now, in a sentence of its own.
+    'ref-valueless-vr1': probe(`package VR1 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { part x : T0 { attribute :>> load = 50.0; } ref part r : T0 = x; constraint c { r.load <= 5.0 } }
+        part w : W { ref part :>> r; }
+        constraint k { w.r.load <= 5.0 }
+      }`, {
+      'VR1::W::c': ['F/F/F/F', 'F'],
+      'VR1::W::c in VR1::w': ['?/?/?/?', 'F'],
+      'VR1::k': ['?/?/?/?', 'F'],
+    }),
+    'ref-valueless-cown7': probe(`package COWN7 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { part p1 : T0; part sub { ref part r : T0 = p1; constraint c { r.load <= 5.0 } } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } part :>> sub { ref part :>> r; } }
+        constraint k { w.sub.r.load <= 5.0 }
+      }`, {
+      'COWN7::W::sub::c': ['?/?/?/?', 'T'],
+      'COWN7::W::sub::c in COWN7::w::«PartUsage»': ['?/-/?/-', 'F'],
+      'COWN7::W::sub::c in COWN7::w::sub': ['-/?/-/?', 'F'],
+      'COWN7::k': ['?/?/?/?', 'F'],
+    }),
+    // Two moves of per-instance-rest S1 the step's own probes did not pin: SR1's `satisfy RF by w.r` over w's
+    // rebound `ref part :>> r = p50` (the written satisfier) and COWN3B's W-written `sub.r.load` (the walk's
+    // instance) were T on all four at 3c54ae0.
+    'sat-chain-sr1': probe(`package SR1 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part p50 : T0 { attribute :>> load = 50.0; }
+        part def W { ref part r : T0; }
+        part w : W { ref part :>> r = p50; }
+        satisfy RF by w.r;
+      }`, {
+      'SR1::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SR1::RF::«ConstraintUsage» in SR1::«Satisfy»': ['F/-/F/-', 'F'],
+      'SR1::RF::«ConstraintUsage» in SR1::p50': ['-/F/-/F', 'F'],
+    }),
+    'ref-own-cown3b': probe(`package COWN3B {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { attribute K : ScalarValues::Real default = 1.0; part sub { part x : T0; ref part r : T0 = x; } bind sub.x.load = K; constraint c { sub.r.load <= 5.0 } }
+        part w : W { attribute :>> K = 50.0; }
+        constraint k { w.sub.r.load <= 5.0 }
+      }`, {
+      'COWN3B::W::c': ['T/T/T/T', 'T'],
+      'COWN3B::W::c in COWN3B::w': ['F/F/F/F', 'F'],
+      'COWN3B::k': ['F/F/F/F', 'F'],
     }),
   };
 

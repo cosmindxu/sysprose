@@ -248,6 +248,33 @@ export interface InstanceReading {
 }
 
 /**
+ * A `satisfy`, the subject of a requirement usage a value binds, or a
+ * reference whose value resolves in an element around it, read at the values
+ * of the element its path is resolved in while an instance of that element
+ * reads it otherwise ({@link DefiningEquations.satisfierOtherwise}, {@link
+ * DefiningEquations.referenceOtherwise}).
+ */
+export interface ReadOtherwise {
+  /**
+   * `valueless`: a reference redefinition that states no value of the valued
+   * reference it redefines (`ref part :>> r;` over `ref part r : T0 = x`),
+   * which the walk reads as a fresh instance of its type, never as what `x`
+   * names ({@link satisfierTaint}).
+   */
+  kind: 'satisfy' | 'subject' | 'reference' | 'valueless';
+  /** The `satisfy` relationship, the requirement usage, the reference, or the valueless redefinition. */
+  written: ElementRecord;
+  /** The element the path is resolved in, at whose own values it is read; for `valueless`, the redefinition's owner. */
+  scope: ElementRecord;
+  /** The path as written: the satisfier's (`top.a`), the subject's value (`p1`), the reference's value. */
+  path: string;
+  /** The context that reads it otherwise — `undefined` past a binding cap, and for `valueless`. */
+  instance: ElementRecord | undefined;
+  /** For `valueless`: the valued reference it redefines. */
+  redefined?: ElementRecord;
+}
+
+/**
  * The defining equations one evaluation pass reads, gathered once per context
  * — with the valueless feature of each name an equation there may define — so
  * a long chain does not re-parse every constraint of its context at every
@@ -314,6 +341,14 @@ export class DefiningEquations {
   private readonly resolving = new Set<ElementId>();
   /** The features {@link boundInstance} is naming the instance of, for the same guard. */
   private readonly instancing = new Set<ElementId>();
+  /** {@link satisfierOtherwise} per context (`null`: read as written). */
+  private readonly satisfierAsked = new Map<ElementId, ReadOtherwise | null>();
+  /** {@link referenceOtherwise} per reference (`null`: read as written). */
+  private readonly referenceAsked = new Map<ElementId, ReadOtherwise | null>();
+  /** {@link subjectOtherwise} per subject (`null`: read as written). */
+  private readonly subjectAsked = new Map<ElementId, ReadOtherwise | null>();
+  /** The contexts {@link satisfierOtherwise} is answering, for its re-entry guard. */
+  private readonly satisfierAsking = new Set<ElementId>();
 
   constructor(readonly model: Model) {
     this.rev = model.rev;
@@ -349,7 +384,12 @@ export class DefiningEquations {
    * read there with the subject standing for x ({@link subjectOf}), so `s.load
    * <= 10.0` in `requirement def R { subject s : P; }` is read at `p`'s load,
    * not P's: proved at P's values while p — `:>> load = 50.0` over a
-   * `default` — breaks it was a false proof.
+   * `default` — breaks it was a false proof. The satisfier is the feature
+   * its path names where the `satisfy` is written: an instance's own
+   * redefinition of the feature the relationship records ({@link
+   * writtenSatisfier}) — `satisfy RF by p1` in `part w : W { part :>> p1 {
+   * attribute :>> load = 50.0; } }`, or `satisfy RF by w.p1` — whose 50 W's
+   * own p1 (1) stood for.
    */
   satisfaction(contextId: ElementId): { requirement: ElementRecord; satisfier: ElementRecord } | undefined {
     if (!this.satisfying) {
@@ -357,8 +397,9 @@ export class DefiningEquations {
       for (const rel of this.model.ofKind('Satisfy')) {
         if (rel.attrs.isLibrary === true) continue;
         const requirement = rel.target?.[0] !== undefined ? this.model.get(rel.target[0]) : undefined;
-        const satisfier = rel.source?.[0] !== undefined ? this.model.get(rel.source[0]) : undefined;
-        if (!requirement || !satisfier) continue;
+        const recorded = rel.source?.[0] !== undefined ? this.model.get(rel.source[0]) : undefined;
+        if (!requirement || !recorded) continue;
+        const satisfier = writtenSatisfier(this.model, rel, recorded) ?? recorded;
         const subject = effectiveFeatures(this.model, requirement.id).find((f) => f.attrs.requirementRole === 'subject');
         const type = subject ? this.model.typesOf(subject.id)[0] : undefined;
         if (!type) continue;
@@ -1159,7 +1200,15 @@ export class DefiningEquations {
     }
     const satisfied = equated ? undefined : this.satisfaction(contextId);
     const written = satisfied ? this.model.get(contextId) : undefined;
-    const ref = equated ? equated.path : satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
+    // A satisfier named bare is a path of one link from where the `satisfy` is
+    // written, as a chain is, where that element has it: `satisfy RF by p1`
+    // in `part sys : W { … }` is sys's p1, whose load sys's K gives through
+    // W's `bind p1.load = K` — never W's own p1, read at W's K.
+    const bare =
+      satisfied && written?.ownerId != null && f.attrs.requirementRole === 'subject'
+        ? this.bareSatisfierPath(written.ownerId, satisfied.satisfier)
+        : undefined;
+    const ref = equated ? equated.path : satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef ?? bare) : f.attrs.value;
     if (typeof ref !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(ref.trim())) {
       const s = satisfied && f.attrs.requirementRole === 'subject' ? satisfied.satisfier : undefined;
       if (!s) return undefined;
@@ -1171,6 +1220,15 @@ export class DefiningEquations {
     // names that instance's own feature.
     const inContext = equated || satisfied || f.attrs.isRef !== true ? undefined : this.referencedIn(contextId, f, path);
     if (inContext !== undefined && at) return this.chainFrom(at.instance, at.enclosing, contextId, path, false, true);
+    // So does one read where it is written, in an instance of that element the
+    // walk is in other than the element's own: W's `part sub { ref part r : T0
+    // = x; }` reached as `w.sub.r` is w's sub's x, whose load W's `bind
+    // sub.x.load = K` gives w's K. It named W's own sub's x (K's default) for
+    // every instance, true on all four surfaces where w's breaks the relation.
+    if (inContext === undefined && at && !equated && !satisfied && f.attrs.isRef === true && contextId === f.ownerId) {
+      const end = at.instance !== this.instanceNameOf(contextId) ? this.chainFrom(at.instance, at.enclosing, contextId, path, false, true) : undefined;
+      if (end) return end;
+    }
     const seen = new Set<ElementId>();
     for (
       let cur = equated ? equated.from : satisfied ? (written?.ownerId ?? null) : (inContext ?? f.ownerId);
@@ -1182,6 +1240,20 @@ export class DefiningEquations {
       if (end) return end;
     }
     return undefined;
+  }
+
+  /**
+   * The name a `satisfy` written in `ownerId` reaches its satisfier by, as a
+   * path of one link from there ({@link instanceStep}): where the satisfier
+   * is a feature that element INHERITS, under its own name — sys's p1 for
+   * `satisfy RF by p1` in `part sys : W`. `undefined` for one written beside
+   * its satisfier (in W, or in a package), which is its own instance, as
+   * before.
+   */
+  private bareSatisfierPath(ownerId: ElementId, satisfier: ElementRecord): string | undefined {
+    if (satisfier.ownerId === ownerId) return undefined;
+    const name = this.nameOf(satisfier);
+    return name !== undefined && this.byName(ownerId).get(name) === satisfier ? name : undefined;
   }
 
   /**
@@ -1346,6 +1418,254 @@ export class DefiningEquations {
   subjectTypeOf(requirementId: ElementId): ElementRecord | undefined {
     const subject = effectiveFeatures(this.model, requirementId).find((f) => f.attrs.requirementRole === 'subject');
     return subject ? this.model.typesOf(subject.id)[0] : undefined;
+  }
+
+  /**
+   * Where a `satisfy R by x` ({@link satisfaction}), or a requirement usage
+   * whose subject a value binds (`requirement q : RF { subject s = p1; }`),
+   * reads its satisfier in an element — the `satisfy`'s owner, the namespace
+   * the subject's value resolves in: W for either, written in `part def W` —
+   * and an instance of that element reads what R requires of the satisfier
+   * otherwise: what it answers, the instance first; else `undefined`. Every
+   * surface reads such a context once, at W's own values, never in each
+   * instance of W: sd0's `satisfy RF by p1` read W's p1's 1, and held for
+   * every W, where w's `part :>> p1 { attribute :>> load = 50.0; }` breaks
+   * RF. So each row of it abstains ({@link equatedPartsRefusal}), as one of a
+   * satisfier this tool does not read through does ({@link equatedParts}),
+   * which keeps that sentence. The test is the one that gives a constraint
+   * written in W a row per instance: the names R's clauses read through the
+   * subject — directly, or through the values of R's own features — spelled
+   * through the satisfier's path (`s.load`, a bare `load`, and `m` over `m =
+   * s.load`, as `p1.load`; every name below p1 where a name cannot be
+   * followed so), read otherwise in a context that specialises W ({@link
+   * changingContexts}), or — W a usage below another instance — through a
+   * binding above it ({@link boundAbove}). Satisfied in a package, or read
+   * alike in every instance (`part w : W;`), it reads as written.
+   */
+  satisfierOtherwise(contextId: ElementId): ReadOtherwise | undefined {
+    const hit = this.satisfierAsked.get(contextId);
+    if (hit !== undefined) return hit ?? undefined;
+    const written = this.model.get(contextId);
+    if (!written || written.attrs.isLibrary === true) return undefined;
+    // Re-entered through a context of the element the question is about (a
+    // `satisfy` written in a requirement another satisfies): no answer is
+    // kept, and the one given abstains.
+    if (this.satisfierAsking.has(contextId)) {
+      return { kind: this.satisfaction(contextId) ? 'satisfy' : 'subject', written, scope: written, path: '', instance: undefined };
+    }
+    this.satisfierAsking.add(contextId);
+    let answer: ReadOtherwise | undefined;
+    try {
+      answer = this.satisfierOtherwiseOf(written);
+    } finally {
+      this.satisfierAsking.delete(contextId);
+    }
+    this.satisfierAsked.set(contextId, answer ?? null);
+    return answer;
+  }
+
+  /** {@link satisfierOtherwise}, worked out. */
+  private satisfierOtherwiseOf(written: ElementRecord): ReadOtherwise | undefined {
+    const satisfied = this.satisfaction(written.id);
+    if (!satisfied && !isUsage(written.eClass)) return undefined;
+    const subject = this.features(written.id).find((f) => f.attrs.requirementRole === 'subject');
+    const subjectName = subject ? this.nameOf(subject) : undefined;
+    if (!subject || subjectName === undefined) return undefined;
+    let path: string | undefined;
+    let scope: ElementRecord | undefined;
+    if (satisfied) {
+      // The satisfier's path is resolved where the `satisfy` is written, and
+      // there alone ({@link instanceStep}).
+      const chain = written.attrs.sourceChain ?? written.attrs.sourceRef;
+      path = typeof chain === 'string' ? chain.trim() : this.nameOf(satisfied.satisfier);
+      scope = written.ownerId != null ? this.model.get(written.ownerId) : undefined;
+    } else {
+      // A subject's value, from where it is written outward ({@link standsIn}).
+      if (typeof subject.attrs.value !== 'string') return undefined;
+      path = subject.attrs.value.trim();
+      if (!VALUE_PATH.test(path)) return undefined;
+      const seen = new Set<ElementId>();
+      for (let cur = subject.ownerId ?? null; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+        seen.add(cur);
+        if (this.chain([cur], path)) {
+          scope = this.model.get(cur);
+          break;
+        }
+      }
+    }
+    if (path === undefined || !VALUE_PATH.test(path) || !scope || isPackage(scope)) return undefined;
+    if (equatedParts(this.model).unread.some((u) => u.id === written.id || u.id === subject.id)) return undefined;
+    // R's clauses' names through the subject, spelled through the satisfier —
+    // and, for a feature of R's own a clause reads, the names its value or an
+    // asserted equation that defines it reads, transitively: `m <= 5.0` over
+    // `attribute m = s.load` reads `p1.load`. A name this cannot follow so — a
+    // feature a binding gives its value (`bind m = s.load`), one the walk reads
+    // through the subject by another route, a value's name R does not resolve
+    // — answers with every name below the satisfier, as a reference's value
+    // does ({@link referenceOtherwise}). Only the names spelled through the
+    // subject were read, so `m` was dropped, no instance was found to read the
+    // satisfier otherwise, and w's 50 was never read: SM1's `satisfy RF by p1`
+    // held on all four surfaces.
+    const denoted = this.denote(written.id);
+    const through = this.subjectInstance(written.id)?.instance;
+    const own = this.instanceNameOf(written.id);
+    const names: string[] = [];
+    const add = (n: string): void => {
+      if (!names.includes(n)) names.push(n);
+    };
+    const pending: Array<{ n: string; ofValue: boolean }> = [];
+    for (const c of this.features(written.id)) {
+      const role = c.attrs.requirementRole;
+      if ((role !== 'require' && role !== 'assume') || typeof c.attrs.expression !== 'string') continue;
+      for (const n of relationNamesOf(c.attrs.expression)) pending.push({ n, ofValue: false });
+    }
+    const asked = new Set<string>();
+    let whole = false;
+    while (pending.length > 0 && !whole) {
+      const { n, ofValue } = pending.pop()!;
+      if (asked.has(n)) continue;
+      asked.add(n);
+      const head = n.split('.')[0]!;
+      if (head === subjectName) {
+        add(`${path}${n.slice(head.length)}`);
+        continue;
+      }
+      const d = denoted.get(n);
+      // A clause's name nothing resolves fails on its own; a value's may be
+      // written where R does not spell it (a nested owner naming `s` outward).
+      if (d === undefined) {
+        whole = ofValue;
+        continue;
+      }
+      // A nested bare name the subject answers (`load` for `s.load`): the walk keeps one record for both.
+      let alias: string | undefined;
+      if (!n.includes('.')) {
+        for (const [k, v] of denoted) {
+          if (v === d && k.startsWith(`${subjectName}.`)) {
+            alias = k;
+            break;
+          }
+        }
+      }
+      if (alias !== undefined) {
+        add(`${path}${alias.slice(subjectName.length)}`);
+        continue;
+      }
+      // A feature of R's own lands in the context's own instance, which a
+      // `satisfy` spells below its satisfier's (`W::p1::«satisfy RF»`).
+      const ownFeature = d.instance === own || d.instance.startsWith(`${own}::`);
+      if (!ownFeature && through !== undefined && (d.instance === through || d.instance.startsWith(`${through}::`))) {
+        whole = true;
+        continue;
+      }
+      const reads = this.readsOf(this.carrier(d.reader, d.feature), [d.reader]);
+      if (reads === undefined) {
+        whole = true;
+        continue;
+      }
+      const prefix = n.includes('.') ? n.slice(0, n.lastIndexOf('.') + 1) : '';
+      for (const r of reads) for (const v of r.names) pending.push({ n: `${prefix}${v}`, ofValue: true });
+    }
+    if (whole) {
+      for (const k of this.denote(scope.id).keys()) if (k === path || k.startsWith(`${path}.`)) add(k);
+    }
+    if (names.length === 0) return undefined;
+    const otherwise = this.instanceReadingOtherwise(`${written.id} satisfier`, scope, names);
+    return otherwise ? { kind: satisfied ? 'satisfy' : 'subject', written, scope, path, instance: otherwise.instance } : undefined;
+  }
+
+  /**
+   * Where a REFERENCE's value (`ref part r : T0 = p1`) resolves not below the
+   * element it is written in but in one around it — W, for r written in W's
+   * `part sub { … }` — and an instance of that element reads what the path
+   * names otherwise: what it answers, as {@link satisfierOtherwise} does for
+   * a subject; else `undefined`. The walk resolves such a value in that
+   * element ({@link standsIn}), at its own values — W's own p1 (1) — never in
+   * each instance of it (w's p1, 50): W's sub's `r.load <= 5.0` held for every
+   * W, and so did `w.sub.r.load <= 5.0`. So each reading through it abstains
+   * ({@link equatedPartsRefusal}). One that resolves below its own element is
+   * read in each instance of it ({@link referencedIn}, {@link instanceStep}).
+   */
+  referenceOtherwise(f: ElementRecord): ReadOtherwise | undefined {
+    const hit = this.referenceAsked.get(f.id);
+    if (hit !== undefined) return hit ?? undefined;
+    let answer: ReadOtherwise | undefined;
+    if (f.attrs.isRef === true && f.attrs.isLibrary !== true && typeof f.attrs.value === 'string' && f.ownerId != null) {
+      answer = this.pathOtherwise(f, f.attrs.value.trim(), 'reference', f);
+    }
+    this.referenceAsked.set(f.id, answer ?? null);
+    return answer;
+  }
+
+  /**
+   * {@link referenceOtherwise} for the subject of a requirement usage a value
+   * binds (`requirement q : RF { subject s = p1; }` in W): where an instance
+   * of the element the value resolves in reads ANY name below the path
+   * otherwise — what a relation read through the subject from outside reads
+   * (`w.q.s.load`), whatever R's clauses read ({@link satisfierOtherwise} asks
+   * of those alone). R's `s.tag <= 5.0` read in w changes nothing w's `part
+   * :>> p1 { attribute :>> load = 50.0; }` writes, but `w.q.s.load <= 5.0` read
+   * W's own p1 (1) where w's is 50: true on all four surfaces.
+   */
+  subjectOtherwise(subject: ElementRecord): ReadOtherwise | undefined {
+    const hit = this.subjectAsked.get(subject.id);
+    if (hit !== undefined) return hit ?? undefined;
+    let answer: ReadOtherwise | undefined;
+    const written = subject.ownerId != null ? this.model.get(subject.ownerId) : undefined;
+    if (subject.attrs.requirementRole === 'subject' && subject.attrs.isLibrary !== true && typeof subject.attrs.value === 'string' && written) {
+      answer = this.pathOtherwise(subject, subject.attrs.value.trim(), 'subject', written);
+    }
+    this.subjectAsked.set(subject.id, answer ?? null);
+    return answer;
+  }
+
+  /**
+   * The answer of {@link referenceOtherwise} or {@link subjectOtherwise} for
+   * the feature `f` valued with `path`: the first namespace outward from `f`'s
+   * owner the path resolves in, where that is neither `f`'s owner nor a
+   * package and an instance of it reads any name below the path otherwise.
+   */
+  private pathOtherwise(f: ElementRecord, path: string, kind: 'reference' | 'subject', written: ElementRecord): ReadOtherwise | undefined {
+    let scope: ElementRecord | undefined;
+    const seen = new Set<ElementId>();
+    for (let cur: ElementId | null = VALUE_PATH.test(path) ? f.ownerId : null; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+      seen.add(cur);
+      if (this.chain([cur], path)) {
+        scope = this.model.get(cur);
+        break;
+      }
+    }
+    const unread = () => equatedParts(this.model).unread.some((u) => u.id === f.id || u.id === written.id);
+    if (!scope || scope.id === f.ownerId || isPackage(scope) || unread()) return undefined;
+    const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
+    const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} ${kind}`, scope, names) : undefined;
+    return otherwise ? { kind, written, scope, path, instance: otherwise.instance } : undefined;
+  }
+
+  /**
+   * The context of `scope` that reads `names` — spelled in `scope` — otherwise
+   * than `scope` does, as a relation written there would be read anew in it:
+   * one that specialises `scope` ({@link changingContexts}, under the pseudo
+   * relation `key`), or, `scope` a usage below another instance (`part def Sys {
+   * part w : W { … } }`), a binding above it that reads them otherwise there
+   * ({@link boundAbove}; `instance` `undefined` past a cap) — else `undefined`.
+   */
+  private instanceReadingOtherwise(
+    key: string,
+    scope: ElementRecord,
+    names: readonly string[],
+  ): { instance: ElementRecord | undefined } | undefined {
+    const listed = this.contextsOf({ id: key, ownerId: scope.id }, names).listed;
+    if (listed.length > 0) return { instance: listed[0] };
+    if (!isUsage(scope.eClass)) return undefined;
+    const seen = new Set<ElementId>();
+    let nested = false;
+    for (let o = scope.ownerId != null ? this.model.get(scope.ownerId) : undefined; o && !seen.has(o.id); o = o.ownerId != null ? this.model.get(o.ownerId) : undefined) {
+      seen.add(o.id);
+      if ((isDefinition(o.eClass) && !isPackage(o)) || (isUsage(o.eClass) && this.specialisersOf(o.id).length > 0)) nested = true;
+    }
+    const above = nested ? this.boundAbove(scope.id, names) : undefined;
+    return above === undefined ? undefined : { instance: 'pastCap' in above ? undefined : above };
   }
 
   /**
@@ -2239,7 +2559,7 @@ export class DefiningEquations {
    * either lists it, so none a feature-only reading lists is ever dropped.
    */
   private contextsOf(
-    el: ElementRecord,
+    el: Pick<ElementRecord, 'id' | 'ownerId'>,
     names: readonly string[],
   ): { listed: ElementRecord[]; plain: ReadonlySet<ElementId> } {
     const key = `${el.id} ${el.ownerId ?? ''} ${names.join(' ')}`;
@@ -2251,7 +2571,7 @@ export class DefiningEquations {
   }
 
   private contextsUncached(
-    el: ElementRecord,
+    el: Pick<ElementRecord, 'id' | 'ownerId'>,
     names: readonly string[],
   ): { listed: ElementRecord[]; plain: ReadonlySet<ElementId> } {
     const plain = new Set<ElementId>();
@@ -2282,6 +2602,22 @@ export class DefiningEquations {
       const value = this.scope(x.id, 'value');
       let changed = false;
       const reading: string[] = [];
+      // A `satisfy`, or a requirement usage whose subject a value binds, read
+      // at the values of the element it is written in where an instance of
+      // that element reads its satisfier otherwise ({@link
+      // satisfierOtherwise}): its row is its own, and abstains. Unlisted, it
+      // read as R's own (sd0: W's p1's 1 for every W, where w's p1 is 50). A
+      // throw lists it, its row read and contained on its own (A.2.9).
+      let satisfierElsewhere: boolean;
+      try {
+        satisfierElsewhere = this.satisfierOtherwise(x.id) !== undefined;
+      } catch {
+        satisfierElsewhere = true;
+      }
+      if (satisfierElsewhere) {
+        changed = true;
+        reading.push(`satisfier~${x.id}`);
+      }
       for (const n of names) {
         const idT = ownAll.get(n);
         if (idT === undefined) continue;
@@ -2304,6 +2640,24 @@ export class DefiningEquations {
         const at = valued ? this.readAt(x.id, n) : undefined;
         const site = valued ? undefined : this.definitionSite(x.id, n);
         reading.push(`${n}=${idX ?? ''}:${valued}:${site ?? ''}:${at ?? ''}`);
+        // A name the context reads in an instance other than the owner's own,
+        // re-rooted there ({@link landsElsewhere}): a reference on its path the
+        // context rebinds, or a renamed redefinition. W's `pp.load` over `ref
+        // part pp = top.a`, read in `w : W { ref part :>> top = t50; }`, is
+        // T1's a's load in both, but t50's in w (50) and W's own top's in W (1);
+        // read in `part top2 redefines top { … }`, w's top2's; and so does a
+        // name whose value reads such a path (RB9's `m = pp.load`). Unlisted,
+        // W's reading stood for w's. A throw lists the context (A.2.9).
+        let elsewhere: string | undefined;
+        try {
+          elsewhere = idX !== undefined ? this.landsElsewhere(owner, x.id, n) : undefined;
+        } catch {
+          elsewhere = `@threw:${x.id}`;
+        }
+        if (elsewhere !== undefined) {
+          changed = true;
+          reading.push(`${n}@${elsewhere}`);
+        }
         // A value an asserted equation gives in the context's instance over a name valued only in some
         // usages (PIN2's `L == M` with p's `:>> M = 7.0` and p2's 5, {@link EnclosingAsserts.framed}): the
         // context's own, read alike only where that name is the same feature. A
@@ -2397,6 +2751,114 @@ export class DefiningEquations {
       if (listed || plain.has(x.id)) out.push(x);
     }
     return { listed: out, plain };
+  }
+
+  /**
+   * The instance `name`, read in the context `contextId`, lands in, where that
+   * is not the one it lands in read in `ownerId` re-rooted at the context
+   * ({@link rebaseInstance}) — spelled below the context's own instance where
+   * it lies there — or `undefined` where the two agree. W's `top.a.load` read
+   * in `w : W { part :>> top { … } }` lands in w's top's a, W's own re-rooted;
+   * read in `w : W { ref part :>> top = t50; }`, in t50's a, and W's `pp.load`
+   * over `ref part pp : T0 = top.a` with it. A renamed redefinition on the
+   * path (`part top2 redefines top { … }`) lands in w's top2's a. The feature
+   * is T1's a's load every time, so no test by feature tells these apart
+   * ({@link contextsUncached}). So, for a name whose value is an expression,
+   * is each instance a name of that value lands in, read in the instance the
+   * name is ({@link readsLandIn}): RB9's `attribute m = pp.load` is W's m in
+   * W and in w, read in W and in w, but its `pp.load` lands in t50's a in w.
+   * Compared by the name alone, w was not listed, and W's own reading (1)
+   * stood for w's (50). A subject's reading is left out: a satisfaction or a
+   * bound subject reads what its subject stands for by its own rule ({@link
+   * subjectInstance}).
+   */
+  private landsElsewhere(ownerId: ElementId, contextId: ElementId, name: string): string | undefined {
+    if (this.satisfaction(contextId)) return undefined;
+    const mine = this.denote(ownerId).get(name);
+    const theirs = this.denote(contextId).get(name);
+    if (!mine || !theirs) return undefined;
+    const head = name.split('.')[0]!;
+    for (const d of [this.denote(ownerId).get(head), this.denote(contextId).get(head)]) {
+      if (d?.feature.attrs.requirementRole === 'subject') return undefined;
+    }
+    const here = this.instanceNameOf(contextId);
+    const own: string[] = [];
+    const there: string[] = [];
+    this.readsLandIn(mine, own, new Set(), 0);
+    this.readsLandIn(theirs, there, new Set(), 0);
+    // The context's side re-rooted too where it is not already below the
+    // context's own instance: a link the walk resolves at the owner's own
+    // instance either way (a reference valued with a feature around it, {@link
+    // referenceOtherwise}) is no instance the context lands in otherwise. One
+    // below it is the context's own already — a context nested in the owner
+    // (massR's `subject s : P` in P) is spelled below the owner's instance too,
+    // and re-rooted again it was another.
+    for (let i = 0; i < Math.max(own.length, there.length); i++) {
+      const inst = there[i] ?? '';
+      const theirs = inst === here || inst.startsWith(`${here}::`) ? inst : rebaseInstance(this, ownerId, here, inst);
+      if (own[i] !== undefined && rebaseInstance(this, ownerId, here, own[i]!) === theirs) continue;
+      return inst.startsWith(`${here}::`) ? inst.slice(here.length) : inst;
+    }
+    return undefined;
+  }
+
+  /**
+   * The instances a reading of `d` lands in ({@link landsElsewhere}), in
+   * order: its own, then — where the value it reads ({@link carrier}) is
+   * stated as an expression — each instance a name of that value lands in,
+   * read where `d` is read and re-rooted at `d`'s instance, transitively.
+   * Only a name whose first link is a feature of both `d`'s reader and the
+   * element the value is written in — the same feature, or the reader's
+   * redefinition of it — is followed: one resolved outward of either is
+   * spelled at the outer element's own instance, which re-roots at no
+   * instance of it (LexU's `pl` for Q's p, read in q0), and one only the
+   * reader resolves is a feature the value does not name (DY1's q's p's own
+   * `L`, where the `load = L` Q's p writes names Q's). Each such name, as one
+   * that resolves nowhere, lands in nothing (`?name`), alike either way, and
+   * the rule for names read outward stands ({@link standsIn}); past
+   * `MAX_LANDS_DEPTH` links the reading ends in a mark of its own, alike
+   * either way too.
+   */
+  private readsLandIn(d: Denotation, out: string[], seen: Set<string>, depth: number): void {
+    out.push(d.instance);
+    const target = this.carrier(d.reader, d.feature);
+    const value = this.statedValue(target);
+    if (typeof value !== 'string' || target.ownerId == null) return;
+    const key = `${d.reader} ${target.id}`;
+    if (seen.has(key)) return;
+    if (depth >= MAX_LANDS_DEPTH) {
+      out.push('…');
+      return;
+    }
+    seen.add(key);
+    const scope = this.denote(d.reader);
+    const written = this.denote(target.ownerId);
+    for (const v of this.valueNamesOf(target)) {
+      const head = v.split('.')[0]!;
+      const mine = scope.get(head);
+      const theirs = written.get(head);
+      // A subject reads what it stands for by its own rule, as a name's own head does ({@link landsElsewhere}).
+      if (mine?.feature.attrs.requirementRole === 'subject' || theirs?.feature.attrs.requirementRole === 'subject') {
+        out.push(`§${v}`);
+        continue;
+      }
+      const dv =
+        mine && theirs && mine.reader === d.reader && theirs.reader === target.ownerId &&
+        (mine.feature === theirs.feature || redefinedClosure(this.model, mine.feature).some((g) => g.id === theirs.feature.id))
+          ? scope.get(v)
+          : undefined;
+      if (dv) this.readsLandIn({ ...dv, instance: rebaseInstance(this, d.reader, d.instance, dv.instance) }, out, seen, depth + 1);
+      else out.push(`?${v}`);
+    }
+    seen.delete(key);
+  }
+
+  /** The names `f`'s stated value reads ({@link namesOfValue}), once per feature. */
+  private valueNamesOf(f: ElementRecord): readonly string[] {
+    const stated = this.statedOf(f);
+    if (typeof stated.value !== 'string') return [];
+    stated.names ??= namesOfValue(stated.value);
+    return stated.names;
   }
 
   /**
@@ -2976,6 +3438,9 @@ const MAX_BINDING_FRAMES = 4096;
 /** Past this many usages on a context's path below where a binding is written, the context is not read. */
 const MAX_BINDING_SEGMENTS = 32;
 
+/** Past this many values read through one another, a name's reading is compared no further ({@link DefiningEquations.landsElsewhere}). */
+const MAX_LANDS_DEPTH = 16;
+
 function bindingEnds(model: Model): BindingEnds {
   const hit = BINDING_ENDS.get(model);
   if (hit && hit.rev === model.rev) return hit;
@@ -3203,6 +3668,26 @@ function isStructuredByType(model: Model, e: ElementRecord): boolean {
         .some((t) => t.attrs.isLibrary !== true && effectiveFeatures(model, t.id).some((x) => x.attrs.isLibrary !== true && isUsage(x.eClass))),
     ) && !isScalarTyped(model, e)
   );
+}
+
+/**
+ * The feature a `satisfy`'s path — its chain (`w.p1`), or the name of the
+ * feature the relationship records (`p1`) — names where the `satisfy` is
+ * written, link by link below its owner, where that is a redefinition of the
+ * recorded feature: an instance's own (`part :>> p1 { … }` in w, the
+ * `satisfy` written there or reached as `w.p1`). The relationship records
+ * the feature it redefines (W's p1), which says nothing of the instance's
+ * values. `undefined` where the path names the recorded feature itself, or
+ * does not resolve below the owner ({@link DefiningEquations.satisfaction}).
+ */
+function writtenSatisfier(model: Model, rel: ElementRecord, recorded: ElementRecord): ElementRecord | undefined {
+  if (rel.ownerId == null) return undefined;
+  const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
+  const path = typeof chain === 'string' ? chain.trim() : effectiveNameOf(model, recorded);
+  if (path === undefined || !VALUE_PATH.test(path)) return undefined;
+  const found = featuresAlongValue(model, rel.ownerId, path);
+  const last = found?.scope === rel.ownerId ? found.links[found.links.length - 1] : undefined;
+  return last !== undefined && last.id !== recorded.id && redefinedClosure(model, last).some((g) => g.id === recorded.id) ? last : undefined;
 }
 
 /**
@@ -3676,9 +4161,181 @@ function readsTainted(
  * row undecided in this sentence (`checkConstraints` of ./evaluate-model,
  * `numericRows` of ./solver, `obligationsOf` of ./obligations, under the
  * reason `unread-binding`: a limit of this tool, not a defect in the
- * relation); any other row reads as before.
+ * relation); any other row reads as before. So does a row read in a
+ * `satisfy`, or through the subject of a requirement usage a value binds,
+ * that an instance of the element it is written in reads otherwise ({@link
+ * satisfierTaint}): each of R's read there, a relation the usage owns, and
+ * any other read through that subject (`w.q.s.load`); and a row read through
+ * a reference valued with a feature around it that an instance reads
+ * otherwise, or through a reference redefinition that states no value of the
+ * valued one it redefines — or through a value or a binding that reads
+ * through either.
  */
 export function equatedPartsRefusal(
+  model: Model,
+  relationId: ElementId,
+  expression: string,
+  at?: { contextId: ElementId; path?: string },
+): string | undefined {
+  return unreadRefusal(model, relationId, expression, at) ?? satisfierRefusal(model, relationId, expression, at);
+}
+
+/**
+ * The `satisfy`s, the subjects of requirement usages and the references an
+ * instance of the element they are resolved in reads otherwise ({@link
+ * DefiningEquations.satisfierOtherwise}, {@link
+ * DefiningEquations.referenceOtherwise}), once per revision: each by its own
+ * id — the `satisfy`, the context its rows are read in; the subject or the
+ * reference, which every read through it reaches; and the requirement usage
+ * whose subject it is, whose clauses and features read through that subject
+ * by names no link of which is the subject (`m` over `attribute m = s.load`)
+ * — with that answer. Then, to a fixpoint, as {@link equatedTaint} follows an
+ * unread binding: every usage whose value reads through one (RC7's `attribute
+ * m = r.load` in W's `part sub { ref part r : T0 = p1; }`, read as `sub.m` and
+ * `w.sub.m`), the ends of a binding one end of which is one or reads through
+ * one, and what redefines or subsets one (`ref part :>> r;` in an instance),
+ * each with the answer of what it reads through. The taint stopped at the
+ * reference, so `sub.m <= 5.0` read W's own p1 (1) for every W, where w's is
+ * 50: true on all four surfaces. What they name is read per instance as any
+ * feature is. `grouped` leaves the references themselves out: a group's
+ * instance row re-resolves a reference in its own instance, and abstains
+ * where that lands elsewhere ({@link instanceReadsOtherwise}).
+ */
+const SATISFIERS_OTHERWISE = new WeakMap<
+  Model,
+  { rev: number; taint: ReadonlyMap<ElementId, ElementRecord>; grouped: ReadonlyMap<ElementId, ElementRecord>; why: ReadonlyMap<ElementId, ReadOtherwise> }
+>();
+
+function satisfierTaint(model: Model): NonNullable<ReturnType<typeof SATISFIERS_OTHERWISE.get>> {
+  const hit = SATISFIERS_OTHERWISE.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const taint = new Map<ElementId, ElementRecord>();
+  const why = new Map<ElementId, ReadOtherwise>();
+  const subjects = model.all().filter(
+    (x) => x.attrs.isLibrary !== true && x.attrs.requirementRole === 'subject' && typeof x.attrs.value === 'string' && x.ownerId != null,
+  );
+  const satisfies = model.ofKind('Satisfy').filter((x) => x.attrs.isLibrary !== true);
+  const references = model.all().filter(
+    (x) => x.attrs.isLibrary !== true && x.attrs.isRef === true && typeof x.attrs.value === 'string' && x.ownerId != null,
+  );
+  if (subjects.length > 0 || satisfies.length > 0 || references.length > 0) {
+    const defs = sharedDefinitions(model);
+    for (const rel of satisfies) {
+      const answer = defs.satisfierOtherwise(rel.id);
+      if (!answer) continue;
+      taint.set(rel.id, rel);
+      why.set(rel.id, answer);
+    }
+    for (const subject of subjects) {
+      const answer = defs.satisfierOtherwise(subject.ownerId!);
+      if (answer) {
+        taint.set(subject.id, subject);
+        why.set(subject.id, answer);
+        if (!taint.has(subject.ownerId!)) taint.set(subject.ownerId!, subject);
+        continue;
+      }
+      // Read through from outside (`w.q.s.load`), the subject reads any feature below its path, not only what
+      // R's clauses read: R's rows in q read as before, every read through the subject abstains.
+      const wide = defs.subjectOtherwise(subject);
+      if (!wide) continue;
+      taint.set(subject.id, subject);
+      why.set(subject.id, wide);
+    }
+    for (const r of references) {
+      const answer = defs.referenceOtherwise(r);
+      if (!answer) continue;
+      taint.set(r.id, r);
+      why.set(r.id, answer);
+    }
+  }
+  // A reference redefinition that states no value of the valued reference it
+  // redefines (`ref part :>> r;` in `w : W` over W's `ref part r : T0 = x`):
+  // the walk reads it as a fresh instance of its type, never as what `x`
+  // names, so `W::c { r.load <= 5.0 }` read in w and `w.r.load` read T0's
+  // default where w's x is 50 — true on all four surfaces.
+  for (const s of model.ofKind('Redefinition')) {
+    const source = s.source?.[0] !== undefined ? model.get(s.source[0]) : undefined;
+    if (!source || taint.has(source.id) || source.attrs.isRef !== true || source.attrs.isLibrary === true) continue;
+    if (source.attrs.implicit === true || source.ownerId == null || source.attrs.value !== undefined) continue;
+    const valued = redefinedClosure(model, source).find((g) => typeof g.attrs.value === 'string');
+    const scope = model.get(source.ownerId);
+    if (!valued || !scope) continue;
+    taint.set(source.id, source);
+    why.set(source.id, { kind: 'valueless', written: source, scope, path: String(valued.attrs.value).trim(), instance: undefined, redefined: valued });
+  }
+  if (taint.size > 0) {
+    const users = model.all().filter((el) => el.attrs.isLibrary !== true);
+    const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string' && el.ownerId != null);
+    const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
+    const narrowing = [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')];
+    const endsOf = (b: ElementRecord): ElementRecord[] =>
+      [b.source?.[0], b.target?.[0]].flatMap((id) => (id !== undefined ? (model.get(id) ?? []) : []));
+    let grew = true;
+    const join = (e: ElementRecord, source: ElementRecord): void => {
+      if (taint.has(e.id) || e.attrs.isLibrary === true) return;
+      taint.set(e.id, source);
+      grew = true;
+    };
+    while (grew) {
+      grew = false;
+      for (const f of valued) {
+        if (taint.has(f.id)) continue;
+        const hit = namesOfValue(f.attrs.value as string)
+          .map((n) => readsTainted(model, taint, [f.ownerId!], n))
+          .find((x) => x !== undefined);
+        if (hit) join(f, hit);
+      }
+      for (const b of bindings) {
+        const ends = endsOf(b);
+        const hit = ends
+          .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
+          .find((x) => x !== undefined);
+        if (hit) for (const e of ends) join(e, hit);
+      }
+      for (const r of narrowing) {
+        const target = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+        const source = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+        const hit = target ? taint.get(target.id) : undefined;
+        if (hit && source) join(source, hit);
+      }
+    }
+  }
+  // Only a reference itself is left to a group's own re-resolution: what reads through it is not.
+  const grouped = new Map([...taint].filter(([id, source]) => !(id === source.id && why.get(id)?.kind === 'reference')));
+  const fresh = { rev: model.rev, taint, grouped, why };
+  SATISFIERS_OTHERWISE.set(model, fresh);
+  return fresh;
+}
+
+/** {@link equatedPartsRefusal} for a row read in, or through, what {@link satisfierTaint} holds. */
+function satisfierRefusal(
+  model: Model,
+  relationId: ElementId,
+  expression: string,
+  at?: { contextId: ElementId; path?: string },
+): string | undefined {
+  const { taint: all, grouped, why } = satisfierTaint(model);
+  if (all.size === 0) return undefined;
+  // A row of an expanded group — an instance's (`at.path`), or the usage's own, beside which every other
+  // instance is a row of its own — reads a reference in its own instance ({@link instanceGroups}).
+  const inGroup =
+    at !== undefined &&
+    (at.path !== undefined || instanceGroups(model).some((g) => g.expanded && g.relationId === relationId && g.usageId === at.contextId));
+  const taint = inGroup ? grouped : all;
+  if (taint.size === 0) return undefined;
+  const rel = model.get(relationId);
+  const context = at ? model.get(at.contextId) : rel;
+  const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
+  const b =
+    relationNamesOf(expression)
+      .map((n) => readsTainted(model, taint, roots, n))
+      .find((x) => x !== undefined) ?? taintedAt(model, taint, context);
+  const answer = b ? why.get(b.id) : undefined;
+  return answer ? satisfierSentence(model, answer) : undefined;
+}
+
+/** {@link equatedPartsRefusal} for what {@link equatedParts} leaves unread. */
+function unreadRefusal(
   model: Model,
   relationId: ElementId,
   expression: string,
@@ -3717,7 +4374,12 @@ export function equatedPartsRefusal(
  * be the measure's own value alone: pp's `default = 3.0` was bounded "3
  * exactly" where `bind pp = top.a` makes it top's a's 50, and `top.a.load`,
  * resolved to T0's own `load` (no relation reads top's a's), was bounded at
- * T0's 1 where pp's `load = 50.0` makes it 50.
+ * T0's 1 where pp's `load = 50.0` makes it 50. So for a measure read in, or
+ * through, a `satisfy`, a subject, a reference or a valueless reference
+ * redefinition an instance reads otherwise ({@link satisfierTaint}): `w.q.s.load`
+ * resolved to T0's own load, `w.sub.m` to W's own sub's m and `w.r.load` over
+ * w's `ref part :>> r;` to T0's load were each bounded "1 exactly" where w's is
+ * 50.
  */
 export function equatedPartsMeasureRefusal(
   model: Model,
@@ -3725,6 +4387,31 @@ export function equatedPartsMeasureRefusal(
   symbol: string,
   spelled?: string,
 ): string | undefined {
+  return unreadMeasureRefusal(model, featureId, symbol, spelled) ?? satisfierMeasureRefusal(model, featureId, symbol, spelled);
+}
+
+/** {@link equatedPartsMeasureRefusal} for a measure read through what {@link satisfierTaint} holds. */
+function satisfierMeasureRefusal(model: Model, featureId: ElementId, symbol: string, spelled?: string): string | undefined {
+  const { taint, why } = satisfierTaint(model);
+  if (taint.size === 0) return undefined;
+  let b = taintedAt(model, taint, model.get(featureId));
+  if (!b && spelled !== undefined && spelled.includes('.') && VALUE_PATH.test(spelled)) {
+    const defs = sharedDefinitions(model);
+    for (const p of model.all()) {
+      if (b || p.attrs.isLibrary === true || p.attrs.implicit === true || !isPackage(p) || !defs.denote(p.id).has(spelled)) continue;
+      b = readsTainted(model, taint, [p.id], spelled);
+    }
+  }
+  b ??= sharedDefinitions(model)
+    .framesAbove(symbol)
+    ?.map((fr) => taintedAt(model, taint, model.get(fr.reader)))
+    .find((x) => x !== undefined);
+  const answer = b ? why.get(b.id) : undefined;
+  return answer ? satisfierSentence(model, answer, true) : undefined;
+}
+
+/** {@link equatedPartsMeasureRefusal} for what {@link equatedParts} leaves unread. */
+function unreadMeasureRefusal(model: Model, featureId: ElementId, symbol: string, spelled?: string): string | undefined {
   const { unread } = equatedParts(model);
   if (unread.length === 0) return undefined;
   const taint = equatedTaint(model);
@@ -3741,6 +4428,42 @@ export function equatedPartsMeasureRefusal(
     b = frames === undefined ? unread[0] : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
   }
   return b ? `${equatedSentence(model, b)}, so no bound of a value it may carry is claimed` : undefined;
+}
+
+/**
+ * Why a `satisfy`, or a requirement usage whose subject a value binds, is not
+ * read ({@link DefiningEquations.satisfierOtherwise}): read at the values of
+ * the element its satisfier is resolved in, it holds of no instance that
+ * reads the satisfier otherwise, and this tool reads it in none. So for a
+ * reference valued with a feature around it ({@link
+ * DefiningEquations.referenceOtherwise}), and for a reference redefinition
+ * that states no value of the valued one it redefines (`valueless`), which
+ * the walk reads as a fresh instance of its type.
+ */
+function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): string {
+  const where = effectiveQualifiedName(model, s.scope.id);
+  // `bounds` claims no bound of a measure read through it ({@link equatedPartsMeasureRefusal}).
+  const so = (rows: string): string => (measure ? ', so no bound of a value read through it is claimed' : `, so ${rows} is read`);
+  if (s.kind === 'valueless') {
+    const name = effectiveNameOf(model, s.written) ?? s.written.id;
+    const redefined = s.redefined ? effectiveQualifiedName(model, s.redefined.id) : 'a valued reference';
+    return `\`${name}\` in ${where} redefines ${redefined} (\`= ${s.path}\`) and states no value of its own: this tool reads it as a fresh instance of its type, never as what \`${s.path}\` names${so('no relation that reads through it')}`;
+  }
+  const who = s.instance ? effectiveQualifiedName(model, s.instance.id) : `an instance of ${where}`;
+  const tail = `is read at ${where}'s own values only, never in each instance of it, and ${who} reads`;
+  if (s.kind === 'reference') {
+    const name = effectiveNameOf(model, s.written) ?? s.written.id;
+    const at = effectiveQualifiedName(model, s.written.ownerId!);
+    return `\`${name} = ${s.path}\` in ${at} names a feature of ${where}, which ${tail} it otherwise${so('no relation that reads through it')}`;
+  }
+  if (s.kind === 'satisfy') {
+    const requirement = s.written.target?.[0] !== undefined ? model.get(s.written.target[0]) : undefined;
+    const req = requirement ? (effectiveNameOf(model, requirement) ?? effectiveQualifiedName(model, requirement.id)) : '…';
+    return `\`satisfy ${req} by ${s.path || '…'}\` in ${where} ${tail} its satisfier otherwise${so('no relation it requires of the satisfier')}`;
+  }
+  const subject = effectiveFeatures(model, s.written.id).find((f) => f.attrs.requirementRole === 'subject');
+  const spelled = subject ? `\`subject ${effectiveNameOf(model, subject) ?? subject.id} = ${s.path || '…'}\`` : 'its subject';
+  return `${spelled} in ${effectiveQualifiedName(model, s.written.id)} ${tail} what it names otherwise${so('no relation it requires of the subject')}`;
 }
 
 /** What the unread binding, value or satisfaction `b` ({@link equatedParts}) is, and why this tool does not read through it. */
