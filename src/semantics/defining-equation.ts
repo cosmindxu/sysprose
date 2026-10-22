@@ -7311,8 +7311,18 @@ export type InstanceAbstention =
  * reading and its unit-aware twin.
  */
 export function failedReadingSentence(name: string, instance: string, e: unknown): string {
-  return `${name} is not read in ${instance}: the per-instance reading failed ` +
+  return `${name} is not read in ${instance}: ${READING_FAILED} ` +
     `(${e instanceof Error ? e.constructor.name : 'error'}); reported, not dropped`;
+}
+
+const READING_FAILED = 'the per-instance reading failed';
+
+/**
+ * Is this refusal sentence a {@link failedReadingSentence}: the tool failed, whatever the relation says? The
+ * verification lanes close such a row in a sentence that blames the tool, not the relation ({@link refusalTail}).
+ */
+export function isFailedReading(sentence: string): boolean {
+  return sentence.includes(`: ${READING_FAILED} (`);
 }
 
 /** One context a definition is read in, with the dotted path to it from that context's root ({@link bindingFrames}). */

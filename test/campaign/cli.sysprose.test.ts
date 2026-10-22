@@ -2217,6 +2217,23 @@ package P {
       const q = spawnCli(['verify', quoted, '--engine', 'literal']);
       expect(q.stdout).toContain("\u2026 and 2 more rows of H::'P in X'::c: refuted in 7");
       expect(q.stdout).toContain("\u2026 and 2 more verification/refuted on H::'P in X'::c\n");
+
+      // A requirement's rows fold on its clause, which has no name of its own: the footer names the requirement.
+      const req = join(dir, 'req.sysml');
+      writeFileSync(
+        req,
+        [
+          'package H {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+          '  requirement def LoadReq { subject s : P; require constraint { s.load <= 10.0 } }',
+          ...Array.from({ length: 7 }, (_, i) => `  part p${i + 1} : P { attribute :>> load = 50.0; } satisfy LoadReq by p${i + 1};`),
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const s = spawnCli(['verify', req, '--engine', 'literal']);
+      expect(s.stdout).toContain('\u2026 and 2 more verification/refuted on H::LoadReq\n');
+      expect(s.stdout).not.toContain('\u00abConstraintUsage\u00bb\n');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

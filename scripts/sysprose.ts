@@ -505,6 +505,13 @@ function baseIdOf(id: string | undefined): string {
   return (id ?? '').split('@')[0];
 }
 
+/** The requirement an anonymous clause is written in, else the element itself: a fold line names the requirement, not `«ConstraintUsage»`. */
+function requirementOfClause(model: Model, id: string): string {
+  const el = model.get(id);
+  const owner = el !== undefined && el.declaredName === undefined && el.ownerId != null ? model.get(el.ownerId) : undefined;
+  return owner !== undefined && (owner.eClass === 'RequirementDefinition' || owner.eClass === 'RequirementUsage') ? owner.id : id;
+}
+
 /**
  * A command footer's diagnostics, folded (R2-M3): rows sharing a relation (the
  * element id before any `@` instance marker) and a code print the first five,
@@ -534,7 +541,7 @@ function foldedDiagnostics(model: Model, diags: readonly Diagnostic[]): string[]
       // (PI-11): cutting a row name at ` in ` would split a relation whose own
       // name holds one.
       const id = baseIdOf(group[0].elementId);
-      const rel = id ? quotePath(qname(model, id)) : (group[0].elementName ?? '');
+      const rel = id ? quotePath(qname(model, requirementOfClause(model, id))) : (group[0].elementName ?? '');
       out.push(`  \u2026 and ${group.length - 5} more ${group[0].code} on ${rel}`);
     }
   }

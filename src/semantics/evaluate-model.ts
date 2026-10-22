@@ -4542,14 +4542,17 @@ function instanceMessage(
   expr: string,
   scope?: Scope,
 ): string {
+  // The paths in the sentence are quoted as the roll-up's are (PI-11): a segment holding ` in ` or `@`.
   if (judged.result !== 'unknown') {
     // A value read in a context is named by the context it is read in.
     const label = (b: SpecialisationBinding): string =>
-      b.instance !== undefined
-        ? `${b.instance}::${b.name}`
-        : b.qualifiedName === effectiveQualifiedName(model, b.featureId)
-          ? shortName(model, model.get(b.featureId), b.name)
-          : b.qualifiedName.split('::').slice(-2).join('::');
+      quotePath(
+        b.instance !== undefined
+          ? `${b.instance}::${b.name}`
+          : b.qualifiedName === effectiveQualifiedName(model, b.featureId)
+            ? shortName(model, model.get(b.featureId), b.name)
+            : b.qualifiedName.split('::').slice(-2).join('::'),
+      );
     const shownValue = (v: unknown): string =>
       typeof v === 'number'
         ? String(Number(v.toPrecision(6)))
@@ -4560,12 +4563,12 @@ function instanceMessage(
       shown.length > 0 || !scope
         ? shown.map((b) => `${label(b)} = ${b.value ?? '?'}${b.unit ? ` [${b.unit}]` : ''}`).join(', ')
         : namesIn(expr)
-            .map((n) => `${contextName}::${n} = ${shownValue(scope(n))}`)
+            .map((n) => `${quotePath(contextName)}::${n} = ${shownValue(scope(n))}`)
             .join(', ');
     return `${values} ${judged.result === 'violated' ? 'misses' : 'meets'} ${target} (${expr})`;
   }
   const why = judged.message.replace(/^Could not evaluate: /, '');
-  return `${target} (${expr}) could not be evaluated for ${contextName}: ${why}`;
+  return `${target} (${expr}) could not be evaluated for ${quotePath(contextName)}: ${why}`;
 }
 
 /**
@@ -4848,7 +4851,7 @@ function targetName(model: Model, el: ElementRecord): string {
   const owner = el.ownerId != null ? model.get(el.ownerId) : undefined;
   const ownerName = nameOf(owner);
   const own = el.declaredName ?? el.declaredShortName;
-  return own ? `${ownerName}::${own}` : `a constraint in ${ownerName}`;
+  return own ? quotePath(`${ownerName}::${own}`) : `a constraint in ${quotePath(ownerName)}`;
 }
 
 /**

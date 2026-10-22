@@ -9807,6 +9807,34 @@ describe('a witness is the value at the path the row read, not the feature’s o
       expect(p.values).toEqual({ load: null, extra: null, extra2: null });
     });
 
+    // The abstention names the tool, not the relation: `unread-definition` is a limit of this tool, as `unread-binding` is.
+    t(`${engine}: a group row the reading cannot enumerate is closed as a limit of this tool, never a defect in the relation`, async () => {
+      const m = await contextModel(DM1, 'DM1');
+      const row = (await verifyModel(m, { engine, sourceText: DM1 })).results.find((r) => r.clause.qualifiedName === 'DM1::P::c in DM1::q3::p')!;
+      expect([row.claim, row.code]).toEqual(['inconclusive', 'verification/not-evaluable']);
+      expect(row.detail).toContain('the relation reads a value this tool does not read (unread-definition): DM1::P::c is not read in DM1::q3::p');
+      expect(row.detail).toContain('This is a limit of this tool, not a defect in the relation: the model decides it');
+      expect(row.detail).not.toContain('This is a defect in the relation');
+      expect(row.detail).not.toContain('the relation itself cannot be read');
+    });
+
+    // A bare literal beside a quantity is read in the feature's declared unit, by the scalar reading: the unit-aware
+    // evaluator declines it, so its coherent-SI pair is not the comparison the verdict made (5000 g against 10 g).
+    t(`${engine}: a bare literal beside a quantity prints no coherent-SI pair of a comparison nobody made (U3)`, async () => {
+      const U3 = `package U3 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; constraint c { load <= 10.0 } }
+        part p1 : P { attribute :>> load = 5000.0 [SI::g]; }
+        constraint top1 { p1.load <= 10.0 }
+      }`;
+      for (const clause of ['U3::P::c in U3::p1', 'U3::top1']) {
+        const r = await shown(U3, 'U3', engine, clause);
+        expect(r.claim, clause).toBe('refuted');
+        expect([r.values[clause === 'U3::top1' ? 'p1.load' : 'load'], r.units[clause === 'U3::top1' ? 'p1.load' : 'load']], clause).toEqual([5000, 'SI::g']);
+        expect(r.detail, clause).not.toContain('coherent SI');
+        expect(r.bound, clause).not.toContain('coherent SI');
+      }
+    });
+
     t(`${engine}: a carried value prints in the unit its feature declares, with the comparison's clause (A-M2): U8`, async () => {
       const q1 = await shown(U8, 'U8', engine, 'U8::P::c in U8::q1::p');
       expect(q1.claim).toBe('refuted');

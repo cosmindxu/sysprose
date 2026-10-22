@@ -926,6 +926,11 @@ export type QReason =
   | 'tie'
   | 'internal';
 
+/** Is this {@link describeReason} sentence the `unresolved` one: a name the evaluator reads no value for? */
+export function isUnresolvedSentence(sentence: string): boolean {
+  return sentence === describeReason('unresolved') || (sentence.startsWith('"') && sentence.endsWith('" has no value in scope'));
+}
+
 /** A one-line, author-facing rendering of a {@link QReason}. */
 export function describeReason(reason: QReason, detail?: string): string {
   switch (reason) {
@@ -2953,7 +2958,11 @@ export function evaluateConstraintQuantityDetailed(
   if (node.kind === 'binary' && COMPARISONS.has(node.op)) {
     const l = evalQ(node.left, scope, tol);
     const rr = evalQ(node.right, scope, tol);
-    if (!isQUnknown(l) && 'q' in l && !isQUnknown(rr) && 'q' in rr) {
+    // The pair of a comparison that was made: two sides of one dimension. A bare literal beside a quantity
+    // (`dimension`, the bare-literal contract) is read in the feature's declared unit by the scalar
+    // evaluator, so its 10 is not 10 of the quantity's coherent SI unit — a pair printed for it would
+    // say 5 kg against 10 kg beside a verdict that read 5000 g against 10 g.
+    if (!isQUnknown(l) && 'q' in l && !isQUnknown(rr) && 'q' in rr && dimEqual(l.q.dimension, rr.q.dimension)) {
       const ls = siValue(l.q);
       const rs = siValue(rr.q);
       if (ls !== undefined) sides.lhsSI = ls;
