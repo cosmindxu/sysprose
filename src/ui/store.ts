@@ -110,7 +110,7 @@ import {
 // asynchronously via a dynamic import (see loadStandardLibraryAsync) so it is
 // code-split into a lazy chunk and never blocks first paint.
 import { resolveDeclaredTypeName, resolveTypeReferences } from '@library/resolve';
-import { validate, type Diagnostic } from '@validation/index';
+import { validateSteps, type Diagnostic } from '@validation/index';
 import {
   ModelApi,
   SysmlApiServer,
@@ -222,6 +222,7 @@ import {
   browserTextDirty,
   createDriveActions,
   initialDriveState,
+  leaveBeforeUnload,
   pinsMark,
   withFinalNewline,
   type DriveActions,
@@ -264,7 +265,6 @@ export {
   browserDirty,
   checkFileName,
   createDriveServices,
-  driveBeforeUnload,
   driveConflictMessage,
   driveDirty,
   driveFileName,
@@ -273,6 +273,8 @@ export {
   driveMessage,
   driveTime,
   initialDriveState,
+  leaveBeforeUnload,
+  leaveUnsaved,
   setDriveServices,
   withFinalNewline,
 } from './store.drive';
@@ -434,6 +436,14 @@ export interface AppState extends DriveActions {
    * them too, so an arrangement nothing holds is asked about like unsaved text.
    */
   savedPins: string;
+  /**
+   * `savedText` was last set by a Versions-tab commit, branch switch or merge,
+   * which hold the model in memory alone: they go with the tab. Only a save
+   * that persists (Save, a `?model=` link, a Drive save) clears it: New, Open ▾
+   * and a Drive open replace the model but leave it, the commit is still only
+   * in the repository. `browserDirty` does not read it; the tab's question does.
+   */
+  savedInVersions: boolean;
   projectName: string;
   queryResult: QueryResult | null;
   /** Bumps on every model mutation; selector hook for model-backed panels. */
@@ -752,9 +762,24 @@ let validationHealth: { model: WeakRef<Model>; modelRev: number; errors: number;
 
 /** Safe validation that never throws into a render. */
 function safeValidate(model: Model): Diagnostic[] {
+  const steps = safeValidateSteps(model, false);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value ?? [];
+  }
+}
+
+/**
+ * {@link safeValidate} in steps (one per rule, see `validateSteps`), for the
+ * recompute to run between frames. With `watch`, returns null, recording
+ * nothing, when the model changed while it stepped: what it found is of a model
+ * that is gone.
+ */
+function* safeValidateSteps(model: Model, watch: boolean): Generator<void, Diagnostic[] | null> {
   const modelRev = model.rev;
   try {
-    const found = validate(model);
+    const found = yield* validateSteps(model);
+    if (watch && model.rev !== modelRev) return null;
     validationHealth = {
       model: new WeakRef(model),
       modelRev,
@@ -769,6 +794,7 @@ function safeValidate(model: Model): Diagnostic[] {
     return found;
   } catch (err) {
     console.error('validation failed', err);
+    if (watch && model.rev !== modelRev) return null;
     validationHealth = { model: new WeakRef(model), modelRev, errors: 0, threw: true };
     return [];
   }
@@ -1766,6 +1792,27 @@ const RECOMPUTE_MAX_WAIT_MS = 250;
 let recomputeTimer: ReturnType<typeof setTimeout> | null = null;
 let recomputeDeadline = 0;
 /**
+ * A recompute under way, in steps (see {@link recomputeSteps}): one task on a
+ * small model, but on a large one the steps run in separate tasks, so that no
+ * one task holds the page for the whole of it. Until it finishes the edit's
+ * recompute is still pending, as while it waits out its quiet period.
+ */
+let recomputeJob: Generator<void | 'cut', 'done' | 'stale'> | null = null;
+let recomputeSliceTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * How long one task of a recompute may run before it lets the page draw: the
+ * browser reports a task over 50 ms as long. A step that is itself longer (one
+ * validation rule, the text) still runs whole.
+ */
+const RECOMPUTE_SLICE_MS = 40;
+/**
+ * Where a step that cannot be divided is next (the text, the results), a task
+ * that has run this long ends first, so that step has a task of its own and
+ * the task is not up to {@link RECOMPUTE_SLICE_MS} plus that step. A small
+ * model's recompute, which has run less, stays one task.
+ */
+const RECOMPUTE_CUT_MS = 10;
+/**
  * How long the last recompute took. On a large model a recompute is itself a
  * few hundred milliseconds (validation, serialization and the diagram build of
  * a 3,700-element model: ~175 ms), so running one every 250 ms of typing left
@@ -1774,6 +1821,8 @@ let recomputeDeadline = 0;
  * recompute's own duration.
  */
 let lastRecomputeMs = 0;
+/** The time the recompute under way has kept the page so far, over its tasks. */
+let busyMs = 0;
 // While a store command that OWNS its derived state (sets diagnostics/text
 // synchronously) is mutating the model, suppress the collab model-subscribe
 // listener's auto-scheduled recompute — otherwise that listener, which fires
@@ -1789,11 +1838,11 @@ let autoRecomputeSuppressed = false;
 let recomputePendingForce = false;
 
 /**
- * True while an edit's recompute is still waiting out its quiet period: the
- * diagram, Problems and the Text tab do not show that edit yet.
+ * True while an edit's recompute is still waiting out its quiet period, or
+ * under way: the diagram, Problems and the Text tab do not show that edit yet.
  */
 export function recomputePending(): boolean {
-  return recomputeTimer !== null;
+  return recomputeTimer !== null || recomputeJob !== null;
 }
 
 /**
@@ -1801,7 +1850,7 @@ export function recomputePending(): boolean {
  * runs it replaces the text buffer, whatever was typed there and not applied.
  */
 export function forcedRecomputePending(): boolean {
-  return recomputeTimer !== null && recomputePendingForce;
+  return recomputePending() && recomputePendingForce;
 }
 
 /** The body of {@link flushRecompute}; the store factory, whose closure runs recomputes, installs it. */
@@ -1970,40 +2019,110 @@ export const useAppStore = create<AppState>((set, get) => {
   }
 
   /**
-   * The coalesced recompute body (C4/C5/L6): refresh diagnostics, re-serialize
-   * the textual view (keeps the bidirectional text sync; §5), and rebuild the
-   * diagram. `forceText` overwrites the text buffer even when dirty (a local
-   * model edit); remote CRDT applies pass `false` to preserve unapplied edits.
+   * The coalesced recompute body (C4/C5/L6), in steps: refresh diagnostics,
+   * re-serialize the textual view (keeps the bidirectional text sync; §5), and
+   * rebuild the diagram. The text buffer is overwritten when a local model edit
+   * forced the recompute ({@link recomputePendingForce}), and otherwise only
+   * when it is not dirty; remote CRDT applies are not forcing, so they never
+   * clobber unapplied text edits. A step yields where the recompute may let the
+   * page draw ({@link advanceRecompute}); it returns 'stale', having changed
+   * nothing, when the model changed meanwhile, and then the recompute is made
+   * again. Its results are set in the one step at its end, which decides again
+   * whether to replace the text buffer: text typed meanwhile is left alone.
    */
-  function recomputeNow(forceText: boolean): void {
-    const started = performance.now();
-    const { model, textDirty, textBuffer } = get();
-    const patch: Partial<AppState> = { diagnostics: safeValidate(model) };
-    if (forceText || !textDirty) Object.assign(patch, textView(model, textBuffer));
+  function* recomputeSteps(): Generator<void | 'cut', 'done' | 'stale'> {
+    const { model } = get();
+    const rev = model.rev;
+    const diagnostics = yield* safeValidateSteps(model, true);
+    if (diagnostics === null) return 'stale';
+    yield 'cut'; // the text cannot be divided
+    const writesText = (): boolean => recomputePendingForce || !get().textDirty;
+    const written = writesText() ? textView(model, get().textBuffer) : null;
+    yield 'cut'; // nor can the results
+    if (get().model !== model || model.rev !== rev) return 'stale';
+    const patch: Partial<AppState> = { diagnostics };
+    if (writesText()) Object.assign(patch, written ?? textView(model, get().textBuffer));
+    recomputeJob = null;
+    recomputePendingForce = false;
     set(patch);
     void get().rebuildDiagram();
-    lastRecomputeMs = performance.now() - started;
+    return 'done';
+  }
+
+  /**
+   * Run `job`, which is {@link recomputeJob}, for one task: until it finishes,
+   * or until {@link RECOMPUTE_SLICE_MS} have gone and the page should draw
+   * (`sliced`), when the rest is left to a timer. A stale step starts the
+   * recompute again. `lastRecomputeMs` is the time it kept the page, over all
+   * its tasks.
+   */
+  function advanceRecompute(job: Generator<void | 'cut', 'done' | 'stale'>, sliced: boolean): void {
+    let current = job;
+    const started = performance.now();
+    try {
+      for (;;) {
+        const step = current.next();
+        if (step.done && step.value === 'done') break;
+        if (step.done) recomputeJob = current = recomputeSteps();
+        const spent = performance.now() - started;
+        if (sliced && (spent >= RECOMPUTE_SLICE_MS || (step.value === 'cut' && spent >= RECOMPUTE_CUT_MS))) {
+          const later = current;
+          recomputeSliceTimer = setTimeout(() => {
+            recomputeSliceTimer = null;
+            if (recomputeJob === later) advanceRecompute(later, true);
+          }, 0);
+          break;
+        }
+      }
+    } catch (err) {
+      recomputeJob = null;
+      recomputePendingForce = false;
+      throw err;
+    } finally {
+      busyMs += performance.now() - started;
+    }
+    if (recomputeJob === null) lastRecomputeMs = busyMs;
+  }
+
+  /** Start a recompute: the timer's, or a flush's. */
+  function startRecompute(sliced: boolean): void {
+    busyMs = 0;
+    recomputeJob = recomputeSteps();
+    advanceRecompute(recomputeJob, sliced);
   }
 
   /**
    * Debounce a recompute; `forceText` sticks for the whole coalescing window.
    * The per-burst delay is capped at RECOMPUTE_MAX_WAIT_MS so a long stream of
-   * closely-spaced calls can't postpone the recompute forever (Fable #1).
+   * closely-spaced calls can't postpone the recompute forever (Fable #1). An
+   * edit while a recompute is under way ends it: it is of a model that is gone.
+   * It keeps its burst's deadline, and a recompute that reaches the deadline
+   * runs in one task, which an edit cannot end: the cap holds on a model whose
+   * recompute spans several tasks, as on one whose recompute is one.
    */
   function scheduleRecompute(forceText: boolean): void {
     recomputePendingForce = recomputePendingForce || forceText;
+    const superseded = recomputeJob !== null;
+    stopRecomputeJob();
     const now = Date.now();
     const quiet = Math.max(RECOMPUTE_DEBOUNCE_MS, 1.5 * lastRecomputeMs);
     const cap = Math.max(RECOMPUTE_MAX_WAIT_MS, 4 * lastRecomputeMs);
-    if (recomputeTimer === null) recomputeDeadline = now + cap;
-    else clearTimeout(recomputeTimer);
+    if (recomputeTimer !== null) clearTimeout(recomputeTimer);
+    else if (!superseded) recomputeDeadline = now + cap;
     const wait = Math.max(0, Math.min(quiet, recomputeDeadline - now));
     recomputeTimer = setTimeout(() => {
       recomputeTimer = null;
-      const force = recomputePendingForce;
-      recomputePendingForce = false;
-      recomputeNow(force);
+      startRecompute(Date.now() + 2 < recomputeDeadline); // 2 ms: a timer may fire a little early
     }, wait);
+  }
+
+  /** End the recompute under way, if one is: it changed nothing, as it sets its results in one step at its end. */
+  function stopRecomputeJob(): void {
+    recomputeJob = null;
+    if (recomputeSliceTimer !== null) {
+      clearTimeout(recomputeSliceTimer);
+      recomputeSliceTimer = null;
+    }
   }
 
   /**
@@ -2018,14 +2137,21 @@ export const useAppStore = create<AppState>((set, get) => {
       clearTimeout(recomputeTimer);
       recomputeTimer = null;
     }
+    stopRecomputeJob();
     recomputePendingForce = false;
   }
 
   flushRecomputeImpl = () => {
-    if (recomputeTimer === null) return;
-    const force = recomputePendingForce;
-    cancelRecompute();
-    recomputeNow(force);
+    if (recomputeTimer !== null) {
+      clearTimeout(recomputeTimer);
+      recomputeTimer = null;
+      startRecompute(false);
+    } else if (recomputeJob !== null) {
+      // Under way: the rest of it now, in this task.
+      if (recomputeSliceTimer !== null) clearTimeout(recomputeSliceTimer);
+      recomputeSliceTimer = null;
+      advanceRecompute(recomputeJob, false);
+    }
   };
 
   /**
@@ -2056,6 +2182,7 @@ export const useAppStore = create<AppState>((set, get) => {
    */
   function afterMutation(keepTyped = false): void {
     get().model.adoptSerialOrder();
+    if (keepTyped) fieldOverTyped = true;
     set({ rev: get().rev + 1 });
     scheduleRecompute(!keepTyped);
   }
@@ -2296,6 +2423,7 @@ export const useAppStore = create<AppState>((set, get) => {
         ? withFinalNewline(initialText.textBuffer)
         : null,
     savedPins: pinsMark({}),
+    savedInVersions: false,
     projectName: deriveProjectName(initialModel),
     queryResult: null,
     rev: 0,
@@ -3694,8 +3822,9 @@ export const useAppStore = create<AppState>((set, get) => {
       // (`browserSaving`).
       const before = get().savedText;
       const pinsBefore = get().savedPins;
+      const inVersionsBefore = get().savedInVersions;
       const mark = { saved: savedTextNow() };
-      set({ savedText: mark.saved, savedPins: pinsMark(get().diagramPins) });
+      set({ savedText: mark.saved, savedPins: pinsMark(get().diagramPins), savedInVersions: false });
       savesBeingStored.add(mark);
       const storing = (async (): Promise<void> => {
         try {
@@ -3704,7 +3833,7 @@ export const useAppStore = create<AppState>((set, get) => {
           await projectStore.saveProject(target, withPins(model.toJSON(), get().diagramPins));
         } catch (err) {
           // The browser refused to store it: it is not saved after all.
-          if (get().savedText === mark.saved) set({ savedText: before, savedPins: pinsBefore });
+          if (get().savedText === mark.saved) set({ savedText: before, savedPins: pinsBefore, savedInVersions: inVersionsBefore });
           throw err;
         } finally {
           savesBeingStored.delete(mark);
@@ -4016,7 +4145,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().refreshVersions();
       // The commit holds the model for this session, as a save does: a branch
       // switch, or New, loses nothing switching back to this branch restores.
-      set({ savedText: savedTextNow() });
+      // Not the tab, though: the repository goes with it (`savedInVersions`).
+      versionsHold();
     },
 
     /**
@@ -4066,7 +4196,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       // The branch head holds the text it loaded: nothing unsaved there. The boxes
       // stay as they were, and unsaved: a branch head holds none.
-      set({ savedText: savedTextNow() });
+      versionsHold();
       void get().rebuildDiagram();
       get().refreshVersions();
       void loadStandardLibraryAsync();
@@ -4286,6 +4416,7 @@ if (
           linkedModel: { ...linked, status: 'loaded', projectName: useAppStore.getState().projectName },
           savedText: savedTextNow(),
           savedPins: pinsMark(useAppStore.getState().diagramPins),
+          savedInVersions: false,
         });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
@@ -4387,6 +4518,17 @@ let lastApplied: { text: string; model: Model; modelRev: number } | null = null;
  * is — the text it was is no longer the model's, and it stays typed.
  */
 let typedFrom: { text: string; model: Model; modelRev: number } | null = null;
+
+/**
+ * A field's change went into the model over text typed in the Text view and
+ * not applied, which stayed ({@link typedTextFirst}'s `'kept'`): applying that
+ * text later — a Save or an Export ▾ → SysML does — puts it over the change.
+ * It is read by {@link applyTypedTextToSave}, which says so, and it is forgotten
+ * as soon as no typed text stands (see below). Not set by an SDK edit, a peer's
+ * edit or a faulted apply: those never go through a field's change, and each
+ * has its own rule for the text ({@link afterSdkEdit}).
+ */
+let fieldOverTyped = false;
 
 /**
  * The text the live model was last applied from, or null once the model has
@@ -4766,6 +4908,13 @@ function typedTextUnapplied(): boolean {
   return textDirty && textBuffer !== lastAppliedText();
 }
 
+// The typed text a field's change went in over is gone — applied, replaced by
+// the model's own text, or the model replaced — so the next typed text is not
+// one a change was made over.
+useAppStore.subscribe(() => {
+  if (fieldOverTyped && !typedTextUnapplied()) fieldOverTyped = false;
+});
+
 /** Where the first syntax error of a text typed in the Text view is: what a save that kept the text back names. */
 export interface TypedTextFault {
   line: number;
@@ -4826,6 +4975,28 @@ function savedTextNow(): string | null {
 }
 
 /**
+ * The Versions tab's commit or branch head holds the model as it stands: it
+ * reads saved ({@link AppState.savedText}) — and not for the tab, whose
+ * repository is in memory ({@link AppState.savedInVersions}), unless the text
+ * it marks is the one that was saved already.
+ */
+function versionsHold(): void {
+  const saved = savedTextNow();
+  useAppStore.setState((s) => ({ savedText: saved, savedInVersions: s.savedInVersions || saved !== s.savedText }));
+}
+
+/**
+ * The page's `beforeunload` listener: asks (`leaveBeforeUnload`) before the
+ * tab closes or reloads over work nothing holds. It counts what the store does
+ * not show yet: an edit whose recompute is still waiting has not reached the
+ * text, and a browser save still being stored may yet be refused. Installed
+ * for the page's lifetime — it asks only by preventing the leave.
+ */
+export function askBeforeLeaving(e: Event): boolean {
+  return leaveBeforeUnload(useAppStore.getState(), e, forcedRecomputePending() || browserSaving !== null);
+}
+
+/**
  * Whether the Versions tab's merge of `sourceBranchId` into `targetBranchId`
  * with `strategy` would load a model in place of the working one
  * (`mergeBranchesCmd`): a merge that resolves — a clean one, or `ours` /
@@ -4845,6 +5016,14 @@ export function mergeLoads(sourceBranchId: string, targetBranchId: string, strat
 export type TypedTextKept = TypedTextFault | 'room';
 
 /**
+ * What a save or an export has to say about the typed text it met: why it was
+ * kept back ({@link TypedTextKept}), or `'over-changes'`: it was applied, over
+ * field changes made in the app since the typing began, which the apply drops
+ * (see {@link applyTypedTextToSave}).
+ */
+export type TypedTextNote = TypedTextKept | 'over-changes';
+
+/**
  * Before a save in this browser — Save and Ctrl/Cmd+S (in the Text view's
  * editor too), the offline row's Save, the guard's Save — and before
  * Export ▾ → SysML: make text typed in the Text view the model, as Apply
@@ -4861,6 +5040,15 @@ export type TypedTextKept = TypedTextFault | 'room';
  *   the peers' edits for everyone. **Apply text → model** still does it, as
  *   a choice.
  *
+ * A field's change made while the text stood (a Properties box, a rename:
+ * {@link typedTextFirst} kept the text, as the element is not in it, or the
+ * model changed since the typing began) is in the model but not in the typed
+ * text, so the apply drops it: `'over-changes'` is returned, for the save to
+ * say so (the strip's info note, once per Save or Export). An SDK edit, a
+ * peer's edit and a faulted apply leave the text standing too, but they are no
+ * field's change, and say nothing. Nor does the guard's Save say it: the command it
+ * guards replaces the model right after.
+ *
  * The save writes the project that is open. An apply renames the project
  * after the model's first package (`deriveProjectName`), and the save after
  * it would then overwrite another saved project of that name, and leave the
@@ -4874,16 +5062,17 @@ export type TypedTextKept = TypedTextFault | 'room';
  * the force off, and the typed text wins. (A Drive save's upload does the
  * same, `payloadNow` in `./store.drive`.)
  */
-export function applyTypedTextToSave(opts: { replacing?: boolean } = {}): TypedTextKept | null {
+export function applyTypedTextToSave(opts: { replacing?: boolean } = {}): TypedTextNote | null {
   if (forcedRecomputePending()) flushRecompute();
   if (!typedTextUnapplied()) return null;
   const fault = typedTextFault();
   if (fault !== null) return fault;
   if (collabRuntime !== null && opts.replacing !== true) return 'room';
+  const over = fieldOverTyped;
   const { projectName, applyText } = useAppStore.getState();
   applyText();
   useAppStore.setState({ projectName });
-  return null;
+  return over ? 'over-changes' : null;
 }
 
 /**
@@ -4904,7 +5093,7 @@ let keptBackNote: { notice: DriveNotice; by: 'save' | 'export' } | null = null;
  * this browser. Another notice standing (the browser refused the save, say)
  * is left as it is.
  */
-export function sayWhatTheBrowserKept(kept: TypedTextKept | null): void {
+export function sayWhatTheBrowserKept(kept: TypedTextNote | null): void {
   sayWhatWasKept(kept, 'save');
 }
 
@@ -4914,16 +5103,26 @@ export function sayWhatTheBrowserKept(kept: TypedTextKept | null): void {
  * back takes down an earlier export's note, and leaves a save's: the copy in
  * this browser still lacks the text — as an export's stays after a save.
  */
-export function sayWhatTheExportKept(kept: TypedTextKept | null): void {
+export function sayWhatTheExportKept(kept: TypedTextNote | null): void {
   sayWhatWasKept(kept, 'export');
 }
 
+/** The sentence for `kept`, from a save or an export (`by`). */
+function keptBackMessage(kept: TypedTextNote, by: 'save' | 'export'): string {
+  if (kept === 'over-changes') {
+    return by === 'save' ? DRIVE_MESSAGES.typedTextOverChanges : DRIVE_MESSAGES.typedTextExportedOverChanges;
+  }
+  if (by === 'save') return kept === 'room' ? DRIVE_MESSAGES.typedTextInRoom : DRIVE_MESSAGES.typedTextKeptBack(kept.line);
+  return kept === 'room' ? DRIVE_MESSAGES.typedTextNotExportedInRoom : DRIVE_MESSAGES.typedTextNotExported(kept.line);
+}
+
 /**
- * Put up the note that a save or an export (`by`) kept typed text back — over
- * an earlier such note, or the library note ({@link sayNotIntoLibrary}) — or
- * take its own kind down.
+ * Put up the note that a save or an export (`by`) kept typed text back — or
+ * applied it over a field's change ({@link TypedTextNote}) — over an earlier
+ * such note, or the library note ({@link sayNotIntoLibrary}), or take its own
+ * kind down.
  */
-function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void {
+function sayWhatWasKept(kept: TypedTextNote | null, by: 'save' | 'export'): void {
   const { drive } = useAppStore.getState();
   // The last kept-back note, of either kind, when it is the notice up now.
   const standing = drive.notice !== null && drive.notice === keptBackNote?.notice ? keptBackNote : null;
@@ -4935,14 +5134,7 @@ function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void
   // of either kind, and by an export that holds the text.
   if (by === 'export') heldExportNote = null;
   if (kept !== null && (drive.notice === null || standing !== null || library)) {
-    const message =
-      by === 'save'
-        ? kept === 'room'
-          ? DRIVE_MESSAGES.typedTextInRoom
-          : DRIVE_MESSAGES.typedTextKeptBack(kept.line)
-        : kept === 'room'
-          ? DRIVE_MESSAGES.typedTextNotExportedInRoom
-          : DRIVE_MESSAGES.typedTextNotExported(kept.line);
+    const message = keptBackMessage(kept, by);
     const notice: DriveNotice = { kind: 'info', message, retryable: false };
     keptBackNote = { notice, by };
     heldExportNote = null;
@@ -4950,8 +5142,7 @@ function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void
   } else if (kept !== null && by === 'export') {
     // A notice of another kind stands (a Drive error, `<name> closed`): the
     // file lacks the typed text all the same, so the note waits for the strip.
-    const message = kept === 'room' ? DRIVE_MESSAGES.typedTextNotExportedInRoom : DRIVE_MESSAGES.typedTextNotExported(kept.line);
-    heldExportNote = { kind: 'info', message, retryable: false };
+    heldExportNote = { kind: 'info', message: keptBackMessage(kept, 'export'), retryable: false };
   } else if (kept === null && standing?.by === by) {
     useAppStore.setState((s) => ({ drive: { ...s.drive, notice: null } }));
   }
@@ -5080,7 +5271,7 @@ function retainedParseRows(current: Diagnostic[], model: Model): Diagnostic[] {
  * reported NOTHING. Validation findings are recomputed here because the merged
  * library can change them; parse findings describe the TEXT, which the merge did
  * not touch, so they must survive it. They are dropped on the next real model
- * mutation (`recomputeNow`), where they would genuinely be stale.
+ * mutation (`recomputeSteps`), where they would genuinely be stale.
  */
 function refreshAfterLibraryLoad(): void {
   const { model } = useAppStore.getState();

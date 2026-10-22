@@ -55,7 +55,7 @@ import {
   type DriveSession,
   type ModelFormat,
 } from '@persistence/index';
-import type { AppState, TypedTextKept } from './store';
+import type { AppState, TypedTextNote } from './store';
 
 /* ─────────────────────────────── The slice ──────────────────────────────── */
 
@@ -502,14 +502,28 @@ export function driveFileView(file: DriveFile | null): (DriveFileMeta & { opened
 }
 
 /**
- * The page's `beforeunload` handler: asks before leaving exactly while the
- * attached file has unsaved changes. Returns whether it asked.
+ * Closing or reloading the tab would lose work: the attached Drive file has
+ * unsaved changes ({@link driveDirty}), or the model has work nothing holds in
+ * this browser ({@link browserDirty}) — typed or applied text, or boxes moved
+ * by hand — or only a Versions commit does ({@link AppState.savedInVersions}):
+ * the commit and the repository go with the tab. Unlike the commands that
+ * replace a model, which let an attached file decide alone, the tab asks for
+ * the boxes of a Drive-attached model too: no Drive file holds them, and the
+ * browser keeps them only with Save.
  */
-export function driveBeforeUnload(
-  s: Pick<AppState, 'drive' | 'textBuffer' | 'serializeError'>,
-  e: Event,
+export function leaveUnsaved(
+  s: Pick<AppState, 'drive' | 'textBuffer' | 'serializeError' | 'savedText' | 'diagramPins' | 'savedPins' | 'savedInVersions'>,
 ): boolean {
-  if (!driveDirty(s)) return false;
+  return driveDirty(s) || browserDirty(s) || s.savedInVersions;
+}
+
+/**
+ * The page's `beforeunload` handler: asks before leaving exactly while
+ * {@link leaveUnsaved} or `editWaiting` (work the store does not show yet).
+ * Returns whether it asked.
+ */
+export function leaveBeforeUnload(s: Parameters<typeof leaveUnsaved>[0], e: Event, editWaiting = false): boolean {
+  if (!editWaiting && !leaveUnsaved(s)) return false;
   e.preventDefault();
   // Older browsers read the prompt from `returnValue`; any value asks.
   (e as BeforeUnloadEvent).returnValue = '';
@@ -596,6 +610,10 @@ export const DRIVE_MESSAGES = {
     "Saved in this browser without the text typed in the Text view: in a collaboration room, Save does not replace the room's model with it. Apply text → model does, for everyone in the room; then save again.",
   typedTextNotExported: (line: number) =>
     `Exported without the text typed in the Text view: it has a syntax error at line ${line}. Fix it, then export again.`,
+  typedTextOverChanges:
+    'Saved in this browser with the text typed in the Text view applied over changes made in the app since you began typing: where the two differ, the text won. Undo brings those changes back.',
+  typedTextExportedOverChanges:
+    'Exported with the text typed in the Text view applied over changes made in the app since you began typing: where the two differ, the text won. Undo brings those changes back.',
   typedTextNotExportedInRoom:
     "Exported without the text typed in the Text view: in a collaboration room, Export does not replace the room's model with it. Apply text → model does, for everyone in the room; then export again.",
   notIntoLibrary: (what: 'new' | number) =>
@@ -819,11 +837,12 @@ export interface DriveInternals {
   /**
    * Before a save in this browser: apply text typed in the Text view, unless
    * it has a parse error, or a collaboration room is connected and the save
-   * is not `replacing` — then why it was kept back, else null.
+   * is not `replacing` — then why it was kept back; `'over-changes'` when it
+   * was applied over a field's change made since the typing began; else null.
    */
-  applyTypedTextToSave(opts?: { replacing?: boolean }): TypedTextKept | null;
+  applyTypedTextToSave(opts?: { replacing?: boolean }): TypedTextNote | null;
   /** After a save in this browser alone: say in the strip what it kept back, or take down an earlier such note. */
-  sayWhatTheBrowserKept(kept: TypedTextKept | null): void;
+  sayWhatTheBrowserKept(kept: TypedTextNote | null): void;
   /** The model's text as it stands, for `savedText` — null when it cannot be written as text. */
   savedTextNow(): string | null;
   /**
@@ -1261,6 +1280,7 @@ export function createDriveActions(
       // Drive holds this text now: nothing a command would replace is lost.
       set((s) => ({
         savedText: payload,
+        savedInVersions: false,
         drive: { ...s.drive, file: { ...withMeta(file, meta), savedText: payload, rewrites: false }, conflict: null },
       }));
     } catch (err) {
@@ -1439,10 +1459,13 @@ export function createDriveActions(
    * the strip's Save is disabled then. Applied in a collaboration room too,
    * where Save keeps it back: the command replaces the room's model right
    * after. A note that an earlier save kept typed text back goes: this copy
-   * holds it.
+   * holds it. A text applied over a field's change (`'over-changes'`) says
+   * nothing here: the command replaces the model, and one Undo would bring
+   * back that model, not the change.
    */
   const saveBeforeReplacing = async (): Promise<boolean> => {
-    if (internals.applyTypedTextToSave({ replacing: true }) !== null) return false;
+    const note = internals.applyTypedTextToSave({ replacing: true });
+    if (note !== null && note !== 'over-changes') return false;
     const kept = await browserSave();
     if (kept) internals.sayWhatTheBrowserKept(null);
     return kept;
@@ -1671,6 +1694,7 @@ export function createDriveActions(
           set((s) => ({
             linkedModel: null,
             savedText: payload,
+            savedInVersions: false,
             drive: {
               ...s.drive,
               file: { ...meta, savedText: payload, rewrites: false, rewriteAcknowledged: false, openedFrom: 'save-as' },

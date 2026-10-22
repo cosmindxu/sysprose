@@ -265,6 +265,58 @@ unavailable. That is its own change, and it would not make the first Apply faste
 does; it would let a very large text not hold the page while it parses. Still open for the cases
 where the parse is the cost, not the build.
 
+### P4 — an edit's recompute was one task of 0.2 to 0.4 s on the drone-swarm model — now a task for each rule, the text, and the results (`recomputeSteps`, `src/ui/store.ts`)
+
+After every edit the page validates the whole model (27 rules), writes its text and builds the
+diagram. Measured in Chromium (headless, the `drone-swarm-v9` model of the palette-checks guard, the
+State view, six renames through `window.sysml`, the page's long tasks timed from each edit), on a
+16-core machine at a load average of about 13: the recompute was one task of 207 – 393 ms after the
+first, 100 – 600 ms after the edit. Inside it (the same build, timed in the page): validation
+123 – 216 ms, writing the text 42 – 87 ms, the sync part of the diagram build 18 – 35 ms (the layout
+is another task, of about 100 ms, and not part of this). In node, warm, no rule is more
+than 47 ms (`constraint-violation`); the other 26 are 12 ms and under, so validation is spread over the
+rules, and no one rule or one part of the model is the cost.
+
+**What was done:** the recompute is a generator, and a task that has run 40 ms (`RECOMPUTE_SLICE_MS`)
+lets the page draw and goes on in the next one. Validation steps once per rule (`validateSteps`,
+which `validate` drives to its end, so the lists are the same); the text is a step; the results are
+set, and the diagram build started, in the last. The text and the last step cannot be divided, so
+each begins a task of its own once the task before it has run 10 ms (`RECOMPUTE_CUT_MS`); the task
+is then not up to 40 ms plus the step. On a model whose recompute takes under 10 ms it is still one
+task, as before. The recompute stays pending (`recomputePending`, `forcedRecomputePending`)
+until its last step, so the guards that read them (a save, the unsaved prompt, the tab-close prompt)
+are unchanged; `flushRecompute` runs the rest of it at once; an edit ends the one under way, and the
+next is made of the model as it is. A burst is still bounded by its cap
+(`RECOMPUTE_MAX_WAIT_MS`, or four times the last recompute): an edit that ends a recompute keeps its
+burst's deadline, and the recompute that reaches the deadline runs in one task, as it did before,
+which an edit cannot end; without that, edits arriving faster than a recompute's wall time (several
+tasks, with draws between) would end every one of them and the diagnostics, diagram and text would
+not refresh for as long as the typing lasted. So the 200 ms bound is of an edit alone; under a
+sustained burst one task of the recompute is the whole of it, at the cap. Nothing is validated incrementally: the same 27 rules run over the
+whole model, and no finding can depend on what an edit was thought to leave alone.
+
+| | the recompute's longest task | the longest task of an edit and its recompute |
+|---|---|---|
+| before, load about 13 | 207 – 393 ms | 207 – 393 ms |
+| after, load about 4 | 54 – 93 ms | 54 – 93 ms (six edits) |
+| after, 14 busy loops on 16 cores | 129 – 149 ms; 230 ms on the session's first edit (cold code) | 238 ms on the session's first edit, 71 – 109 ms on the rest |
+
+At a load average of 25 on the 16 cores (other work on the machine, eight edits): the recompute's
+tasks 127 – 188 ms, 233 ms on the session's first edit; the edit's own 86 – 208 ms. The two steps that
+cannot be divided are the text (100 – 180 ms there) and the last step (the results set and the diagram
+build begun: 90 – 156 ms), about 2.5 times their size at a load of 4.
+
+`palette-checks.spec.ts` (the drone-swarm guard, step 4: an edit after three others) pins it at
+200 ms, times the load average per core when that is over 1 and up to 1.5 (above that the step is not
+asserted: 400 ms is the size of the unsliced task), since the times are wall-clock; without
+the slicing it reads 353 ms under the busy loops. The session's first edit, with the code cold, can
+still be over 200 ms on a loaded machine; it is not in the guard.
+
+**Not done:** the text is one step of 40 – 130 ms (the serializer writes one root in one pass, and
+the model has one), and the longest rule one of 47 ms in node: a model whose text takes over 200 ms to
+write would still hold the page that long. Writing it in a worker means sending the model to the
+worker for each edit, which costs about what the write does.
+
 ### What the profiling ruled OUT, with the arithmetic
 
 - **The model graph** — crossing 38 902 elements to WebAssembly costs ~100 ms against ~127 ms for

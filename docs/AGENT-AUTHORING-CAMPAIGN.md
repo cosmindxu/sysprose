@@ -5304,11 +5304,16 @@ intermittent of another kind can pass behind a retry. A case vitest stops before
 that margin runs out (35 s for the default 5 s budget) reads as a plain timeout
 and leaves the `[D5]` line to a later case, so the wrapper also notes each case
 that handed z3 a check (`z3CallCount()`), and the file's last case fails on any
-of them given less than 40 s, the budget plus the margin plus 5 s (a case that
+of them given less than 40 s, the budget plus the margin plus 5 s, and, for a
+case that handed z3 a larger budget than the default (`z3BudgetWatch()` reports
+the largest while a case ran), less than that budget plus 35 s (a case that
 began while one vitest had stopped was still running is named beside that one
-instead, since the counter cannot tell their checks apart); the `withZ3`
-wrappers of `smt-z3.integration` and `verification.differential` refuse such a
-timeout when a case is declared. The campaign file's **78 `withZ3`
+instead, since the counter cannot tell their checks apart). The file's
+`beforeAll` hooks that hand z3 a check are held to the same floor, a hook given
+no timeout counting as vitest's 10 s `hookTimeout`; the `withZ3`
+wrappers of `smt-z3.integration` and `verification.differential` refuse a
+timeout under 40 s when a case is declared (they see neither a larger budget
+nor a hook). The campaign file's **78 `withZ3`
 cases** and the plain cases that also drive the solver used to share one
 context from the first block to the last; each of its **12 solver blocks** now
 starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per

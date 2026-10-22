@@ -154,7 +154,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:163-286`, `src/ui/panels/Toolbar.tsx:524-660`,
+**Source of truth:** `src/ui/App.tsx:163-285`, `src/ui/panels/Toolbar.tsx:524-660`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -486,11 +486,11 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
-(the grouping); `src/ui/store.ts:321-334` (`diagramRootId`, the diagram
-scope), `1536-1691` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2522-2539` (`pinNodePositions`: the move itself), `2127-2184`
+(the grouping); `src/ui/store.ts:323-336` (`diagramRootId`, the diagram
+scope), `1562-1717` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2650-2667` (`pinNodePositions`: the move itself), `2254-2311`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4300-4341` (`openText`: a file opened as text starts afresh).
+`4378-4420` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -564,7 +564,18 @@ The tree and Properties update instantly. The diagram, the Problems list and the
 Text tab are *derived*, and they lag a burst of edits by up to 250 ms. That is
 deliberate: it keeps typing responsive. On a large model, where working them out
 takes a while itself, the lag grows with it — up to four times the last
-recompute — so the keyboard is never kept waiting.
+recompute — so the keyboard is never kept waiting. And on such a model that work
+is not one stretch of the page: a task that has run 40 ms lets the page draw and
+the work goes on in the next one (validation a rule at a time, then the text, then
+the results and the diagram), and the text and the results, which cannot be
+divided, each start a task of their own once the one before has run 10 ms. On the drone-swarm model, after the
+session's first edit and at a moderate load, no task of it is over 200 ms where
+one task was 200 to 400, the text and the last step being the longest
+(*Performance*, `docs/UI-ROADMAP.md`, P4). An edit while it runs ends it and the
+wait starts again, but the cap above still holds: the recompute due at the end of
+a burst's cap is one task, which an edit cannot end. Until it ends the edit is
+still waiting, as in its quiet period: the prompt on closing the tab asks while
+it runs.
 
 Beside the tree, what lists the elements you declare — the diagram, the tables
 and matrices, the palette's checks — takes them in the order the Text tab writes
@@ -619,7 +630,9 @@ and, in a room, than another peer does.
   it stays, reading *modified — not yet applied*, as over an SDK edit: when
   it has a syntax error, in a collaboration room, when the element the
   field changes is not in it under the same qualified name and kind, or
-  when the model has changed since you began typing it.
+  when the model has changed since you began typing it. A **Save** or an
+  **Export ▾ → SysML** that later applies that text puts it over the change,
+  and, in the cases [§8](#8-what-is-kept-and-what-is-not) lists, says so.
 - **Text → model** happens when you press **Apply text → model** — or **Save**
   / `Ctrl/⌘ + S` or **Export ▾ → SysML**, which apply it first unless it has a
   syntax error or a collaboration room is connected
@@ -663,15 +676,15 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1733-1849` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `1952-2037` (`recomputeNow`), `2039-2226`
-(`afterMutation`, `afterSdkEdit`: an edit, and an SDK edit, each listing the model
-in the order its text gives it; `typedTextFirst`, `applyParsed`: a field's change over
-typed text), `882-939` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2817-2848`
-(`createElement`: a new element), `3137-3204` (`reparent`, `reparentMany`: a
-move), `4966-5031` (`libraryNote`: the note that says so), `3645-3658`
-(`applyText`), `4102-4148` (`undo`, `redo`), `5073-5131`
+**Source of truth:** `src/ui/store.ts:1759-1878` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `2021-2163` (`recomputeSteps`, `flushRecomputeImpl`:
+the steps of a recompute), `2172-2353` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
+edit, each listing the model in the order its text gives it; `typedTextFirst`, `applyParsed`: a
+field's change over typed text), `908-965` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2945-2976`
+(`createElement`: a new element), `3265-3332` (`reparent`, `reparentMany`: a
+move), `5088-5149` (`libraryNote`: the note that says so), `3773-3786`
+(`applyText`), `4232-4278` (`undo`, `redo`), `5177-5235`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/core/model.ts` (`adoptSerialOrder`: the order the text gives),
 `src/collab/model-doc.ts` (`bindModelToDoc`: a room, and a peer that joins it);
@@ -3760,8 +3773,8 @@ makes many edits makes them in one `commit(fn)`, which lists the model once
 for the elements it adds; each `reparent` lists it at its own call, inside a
 `commit(fn)` too.
 
-**Source of truth:** `src/ui/store.ts:3328-3510` (`runValidation`,
-`solveParametric`: the four buttons), `2039-2226` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3456-3638` (`runValidation`,
+`solveParametric`: the four buttons), `2165-2353` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -4020,7 +4033,7 @@ automatically.
 | A project you pressed **Save** on | IndexedDB (`sysmlv2-modeler`), falling back to localStorage | **Yes** — reopen it with **Open ▾** |
 | Boxes you moved by hand on a diagram | with that project, beside the model — never in its text, a SysML or JSON export, or a Drive file | **Yes**, with the project — **Open ▾** puts them back |
 | A file you saved to Drive | your Google Drive (`drive.file` scope: only files made or chosen with this app) | **Yes** — Drive ▾ → Recent, Browse Drive…, or its link |
-| Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work |
+| Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work (closing or reloading the tab asks first) |
 | Versions-tab commits, branches, merges | memory | **No** |
 | Regroup scenarios | localStorage (`sysmlv2-scenarios`) | Yes |
 | Light/dark theme | localStorage (`theme`) | Yes |
@@ -4054,6 +4067,20 @@ toolbar says so.
 
 The next save that holds the text takes the note down; **×** hides it.
 
+A third note is about text that *was* applied. When a field's change (a
+Properties box, a rename, a Requirements table cell) went into the model while
+your typed text stood — it stays, as above, when the element is not in the text
+or the model changed since you began typing — Save applies the text over the
+change, and where the two differ the text wins. With no Google Drive file
+attached, the strip says *Saved in this
+browser with the text typed in the Text view applied over changes made in the
+app since you began typing: where the two differ, the text won. Undo brings
+those changes back.* once, and the save is made; the next save that holds the
+model takes the note down. A save to an attached Google Drive file, and the
+**Save and continue** of the question below, apply the text over the change and
+say nothing of it. An SDK edit or a peer's edit made since the typing is not a
+field's change: Save applies the text over it as before and says nothing.
+
 **Replacing a model with unsaved work asks first.** **New**, **Open ▾**,
 **Import**, switching to a branch in the Versions tab and a merge there that
 resolves (it loads the merged model) each put another model in place of this
@@ -4079,9 +4106,14 @@ storing a **Save** waits for it; if the browser refuses the save (its storage
 full, or blocked for the site), the command waits, and the question says so.
 With a Google Drive file attached, the question is about that file's unsaved
 changes instead ([§8.1](#81-google-drive-optional)). Closing or reloading the
-tab asks nothing about work unsaved in this browser, and the Versions tab's
-commits go with the tab; only an attached Drive file's unsaved changes raise
-the browser's question. Press **Save** before you leave.
+tab asks too, with the browser's own question whether to leave the page, while
+the model has work no save holds — the same text and boxes as above, an edit
+the Text view has not caught up with yet, and an attached Drive file's unsaved
+changes as well — and asks nothing once **Save** has kept them (a Drive file
+does not hold the boxes: with one attached, a box moved by hand still makes the
+tab ask). A commit, a branch switch or a merge in the Versions tab does not stop
+the tab asking, nor does New or Open ▾ over them: those are kept in memory and go
+with the tab, so only **Save** does. Press **Save** before you leave.
 
 If you want the model out of the browser, use **Export ▾**: SysML text, model
 JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
@@ -4096,7 +4128,9 @@ syntax error, and any typed text in a collaboration room, are kept back — the
 file holds the model as it stands, the Text view still reads *modified — not
 yet applied*, and the strip under the toolbar says *Exported without the text
 typed in the Text view*, naming the line of the first syntax error, or the
-room. The next export that holds the text takes that note down. A save in
+room. An export that applies the text over a field's change says so too, as Save
+does (*Exported with the text typed in the Text view applied over changes made
+in the app since you began typing … Undo brings those changes back.*). The next export that holds the text takes that note down. A save in
 this browser does not — the file still lacks the text — nor does an export
 take down a save's note; but a newer note of either kind replaces the older
 one, and a save to an attached Google Drive file takes either down. The two
@@ -4104,16 +4138,17 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:800-818` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3662-3758` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `4005-4073` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4828-4838` (`mergeLoads`: a merge that loads),
-`4840-4958` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
-a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
+`src/ui/store.ts:826-844` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3790-3887` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `4134-4203` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4999-5009` (`mergeLoads`: a merge that loads),
+`5011-5149` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+a save or an export, or kept back and said so), `src/ui/commands.ts:39-106`
 (Save, and Export ▾ →
-SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `1378-1443` (the
-question), `src/api/versioning.ts:481-494`,
-`src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:96-103`,
+SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
+`leaveBeforeUnload`: the tab's question), `1399-1466` (the question), `src/api/versioning.ts:481-494`,
+`src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:181-191` (the page's listener),
+`src/ui/store.ts:4989-4997` (`askBeforeLeaving`),
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
 
@@ -4164,7 +4199,8 @@ the parser's best guess at broken text is not what you see, so the browser keeps
 the model as it stood, while Drive gets your text as typed. Nothing goes to
 Drive by itself — there is no autosave — and closing or reloading the tab while
 a Drive file has unsaved changes raises the browser's own question whether to
-leave the page. Every row the strip can show, and every Drive control with its
+leave the page (as it does for work no save holds without a Drive file,
+[§8](#8-what-is-kept-and-what-is-not)). Every row the strip can show, and every Drive control with its
 test id, is in [Appendix A](#google-drive-panel-and-strip).
 
 **Opening.** Signed in, the panel's **Recent** lists the files this app saved or
@@ -4291,8 +4327,8 @@ first, as Save does — one Undo step — unless it has a syntax error or a
 collaboration room is connected ([§8](#8-what-is-kept-and-what-is-not)). It
 names the file after the project, so save it under the name the command uses.
 
-**Source of truth:** `src/ui/store.drive.ts:537-617` (every sentence the
-feature says), `1193-1207` (the content check), `src/persistence/drive/`,
+**Source of truth:** `src/ui/store.drive.ts:551-635` (every sentence the
+feature says), `1212-1226` (the content check), `src/persistence/drive/`,
 `src/ui/panels/DriveMenu.tsx`, `src/ui/panels/DriveStrip.tsx`,
 `test/e2e/drive.spec.ts` (against faked Google services).
 
@@ -4366,11 +4402,11 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:233`
-(`UNDO_LIMIT`: undo is bounded), `1733-1763` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5133-5256` (`mergeLibrary`, `loadStandardLibraryAsync`:
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:234`
+(`UNDO_LIMIT`: undo is bounded), `1759-1789` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `5324-5447` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:198-310`.
+`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:200-312`.
 
 ---
 
@@ -4541,7 +4577,10 @@ table's reference picker, which leaving cancels, stays open with what you typed
 in it, and nothing is linked. Plain `Enter` does the same without the save: in
 an Explorer rename, the canvas context menu's rename box or a Requirements table
 cell it closes the box and leaves the focus on **Save**, so a `Backspace` after
-it deletes nothing. Every other key in a field stays the field's own.
+it deletes nothing. `Escape` closes the same boxes without writing what was
+typed, and the focus goes to **Save** as well (the context menu's rename box
+hands it back to its own *Rename* item). Every other key in a field stays the
+field's own.
 
 `Ctrl/⌘ + S` also first applies what you typed in the Text view, as
 **Apply text → model** does, so the save holds the text on screen — unless the
@@ -4570,5 +4609,5 @@ over the field's change, which one Undo brings back.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:39-104`, `198-422`, `src/ui/App.tsx:143-148`,
-`src/ui/panels/RequirementsTable.tsx:569-606` (the reference picker).
+**Source of truth:** `src/ui/commands.ts:39-106`, `200-435`, `src/ui/App.tsx:143-148`,
+`src/ui/panels/RequirementsTable.tsx:575-646` (the reference picker).

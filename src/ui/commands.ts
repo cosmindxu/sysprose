@@ -63,7 +63,8 @@ function driveUnsaved(store: AppState): boolean {
  * yet applied", and with no Drive file attached the strip under the toolbar
  * says the typed text was kept back (`sayWhatTheBrowserKept`). A save to the
  * attached Drive file applies a faulted text for its upload, as Save to Drive
- * does, and keeps the browser copy as the model stood before.
+ * does, and keeps the browser copy as the model stood before. A text applied
+ * over a field's change kept back from it is said too (`'over-changes'`).
  */
 export function runSave(): Promise<void> {
   const kept = applyTypedTextToSave();
@@ -80,8 +81,9 @@ export function runSave(): Promise<void> {
  * parse error, and in a collaboration room. The file then holds the model
  * as it stands, and the strip under the toolbar says the typed text is not
  * in it (`sayWhatTheExportKept`) — unless the export wrote nothing: a model
- * the serializer refuses is named where the Text view shows it. Returns the
- * text exported ('' for none).
+ * the serializer refuses is named where the Text view shows it. A text applied
+ * over a field's change is said too, as Save does. Returns the text exported
+ * ('' for none).
  */
 export function runExportSysml(): string {
   const kept = applyTypedTextToSave();
@@ -356,6 +358,17 @@ export function commitAndFocusSave(box: Element, commit: () => void): void {
   setTimeout(() => {
     if (!box.isConnected) focusSave();
   }, 0);
+}
+
+/**
+ * `Escape` in a rename box or a table cell closes it without writing, and the
+ * focus goes to Save as `Enter` leaves it (`commitAndFocusSave`): a box that
+ * unmounts under the focus drops it to the page, and the next `Backspace` would
+ * delete the selection. The canvas context menu's rename box is not routed
+ * here: it hands the focus back to its own Rename item.
+ */
+export function cancelAndFocusSave(box: Element, cancel: () => void): void {
+  commitAndFocusSave(box, cancel);
 }
 
 /**

@@ -19,7 +19,7 @@ import {
   type ElementRecord,
 } from '@core/index';
 import { useAppStore } from '../store';
-import { commitAndFocusSave } from '../commands';
+import { cancelAndFocusSave, commitAndFocusSave } from '../commands';
 
 /** MIME-ish key used to carry the dragged element id between rows. */
 const DRAG_KEY = 'application/x-sysml-element-id';
@@ -216,7 +216,9 @@ function TreeRow({
               if (e.key === 'Enter') {
                 const box = e.currentTarget;
                 commitAndFocusSave(box, () => commitRename(box.value));
-              } else if (e.key === 'Escape') setRenamingId(null);
+              } else if (e.key === 'Escape') {
+                cancelAndFocusSave(e.currentTarget, () => setRenamingId(null));
+              }
             }}
           />
         ) : (

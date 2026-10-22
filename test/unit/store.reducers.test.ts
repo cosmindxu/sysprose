@@ -63,10 +63,10 @@ const fetchSpy = vi.hoisted(() => vi.spyOn(globalThis, 'fetch'));
 
 import {
   DRIVE_MESSAGES,
+  askBeforeLeaving,
   bootDrive,
   browserDirty,
   checkFileName,
-  driveBeforeUnload,
   driveDirty,
   driveFileName,
   driveLink,
@@ -75,6 +75,7 @@ import {
   forcedRecomputePending,
   initialDriveState,
   lastAppliedText,
+  leaveBeforeUnload,
   loadHealth,
   loadHealthAtHand,
   loadHealthNow,
@@ -2248,6 +2249,137 @@ describe('google drive — the boot, and opening a file’s text', () => {
     expect(st().textDirty).toBe(false);
   });
 
+  /**
+   * Review 2026-10-14, D-3: on the drone-swarm model one task of 0.2 to 0.4 s validated
+   * the model and wrote its text after every edit. A recompute that has run 40 ms now lets
+   * the page draw and goes on in the next task — validation a rule at a time, then the text,
+   * then the results in one step — and is pending until it ends. A clock that runs 100 ms
+   * a read makes every step end a task, as a large model does.
+   */
+  describe('a recompute over a large model, in tasks', () => {
+    let clock = 0;
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.spyOn(performance, 'now').mockImplementation(() => (clock += 100));
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      // The clock above left the last recompute's time at seconds, and with it the next tests' quiet period and cap.
+      st().createElement('PartDefinition', null, 'Reset');
+      flushRecompute();
+      vi.useRealTimers();
+    });
+    /** Run the timers until nothing is waiting, counting the tasks the recompute took after its first. */
+    function runToTheEnd(): number {
+      let tasks = 0;
+      while (recomputePending() && tasks < 500) {
+        vi.advanceTimersToNextTimer();
+        tasks++;
+      }
+      return tasks;
+    }
+
+    it('validateSteps yields once for each rule and returns what validate returns, with the rule filters', () => {
+      const m = new Model();
+      const p = m.create('PartDefinition', { declaredName: 'P' });
+      m.create('PartDefinition', { declaredName: 'P' }); // a duplicate name
+      m.create('PartUsage', { declaredName: ' ', ownerId: p.id }); // a blank one
+      expect(validationApi.validate(m).length, 'the model has findings to compare').toBeGreaterThan(0);
+      for (const opts of [{}, { ruleIds: ['duplicate-name', 'blank-name'] }, { excludeRuleIds: ['duplicate-name'] }]) {
+        const steps = validationApi.validateSteps(m, opts);
+        let yielded = 0;
+        let step = steps.next();
+        while (!step.done) {
+          yielded++;
+          step = steps.next();
+        }
+        const ran = validationApi.RULES.filter(
+          (r) => (opts.ruleIds === undefined || opts.ruleIds.includes(r.id)) && !(opts.excludeRuleIds ?? []).includes(r.id),
+        ).length;
+        expect(yielded).toBe(ran);
+        expect(step.value).toEqual(validationApi.validate(m, opts));
+      }
+    });
+
+    it('is pending between its tasks, shows nothing of the edit until its last, and then shows what validate and the text say', () => {
+      st().createElement('PartDefinition', null, 'Sliced');
+      expect(recomputePending()).toBe(true);
+      vi.advanceTimersToNextTimer(); // the quiet period ends: the first task
+      expect(recomputePending(), 'one task did not do it all').toBe(true);
+      expect(st().textBuffer, 'the edit is not shown yet').not.toContain('Sliced');
+      const tasks = runToTheEnd();
+      expect(tasks, 'a task for each rule, and more').toBeGreaterThan(validationApi.RULES.length);
+      expect(recomputePending()).toBe(false);
+      expect(st().textBuffer).toContain('part def Sliced');
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+      expect(st().textDirty).toBe(false);
+    });
+
+    it('is ended by an edit, which makes the next recompute of the model as it is', () => {
+      st().createElement('PartDefinition', null, 'First');
+      vi.advanceTimersToNextTimer();
+      vi.advanceTimersToNextTimer();
+      expect(recomputePending()).toBe(true);
+      st().createElement('PartDefinition', null, 'Second');
+      runToTheEnd();
+      expect(st().textBuffer).toContain('part def First');
+      expect(st().textBuffer).toContain('part def Second');
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+    });
+
+    it('gives the text and the results a task each once its task has run 10 ms, though under 40', () => {
+      vi.mocked(performance.now).mockImplementation(() => (clock += 1)); // 27 rules: 27 ms
+      const write = textApi.serializeUserModelSignals;
+      vi.spyOn(textApi, 'serializeUserModelSignals').mockImplementation((...args) => {
+        clock += 20; // the text: 20 ms
+        return write(...args);
+      });
+      st().createElement('PartDefinition', null, 'Cut');
+      vi.advanceTimersToNextTimer(); // the quiet period ends: the rules
+      expect(recomputePending(), 'the rules did not take the text and the results with them').toBe(true);
+      expect(st().textBuffer).not.toContain('Cut');
+      expect(runToTheEnd(), 'the text, then the results').toBe(2);
+      expect(st().textBuffer).toContain('part def Cut');
+    });
+
+    it('is not starved by edits made between its tasks: the recompute due at the burst’s deadline is one task, and edits cannot end it', () => {
+      let edits = 0;
+      st().createElement('PartDefinition', null, `Burst${edits++}`);
+      for (let n = 0; recomputePending() && n < 200; n++) {
+        vi.advanceTimersToNextTimer();
+        if (n % 2 === 1 && recomputePending()) st().createElement('PartDefinition', null, `Burst${edits++}`);
+      }
+      expect(recomputePending(), 'a recompute ended').toBe(false);
+      expect(edits, 'by the cap, with edits still arriving').toBeLessThan(20);
+      expect(st().textBuffer).toContain(`part def Burst${edits - 1}`);
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+    });
+
+    it('is finished by flushRecompute in the task that calls it, with the force flag the edit gave it', () => {
+      useAppStore.setState({ textBuffer: 'typed, not applied', textDirty: true });
+      st().createElement('PartDefinition', null, 'Flushed');
+      vi.advanceTimersToNextTimer();
+      expect(recomputePending()).toBe(true);
+      expect(forcedRecomputePending(), 'a local edit forced it').toBe(true);
+      flushRecompute();
+      expect(recomputePending()).toBe(false);
+      expect(st().textBuffer).toContain('part def Flushed');
+      expect(st().textDirty).toBe(false);
+    });
+
+    it('leaves the text typed while it runs as it is, and its results do not replace the buffer', () => {
+      st().createElement('PartDefinition', null, 'Peer');
+      vi.advanceTimersToNextTimer();
+      expect(recomputePending()).toBe(true);
+      st().setTextBuffer('typed meanwhile');
+      expect(forcedRecomputePending(), 'the keystrokes downgraded it').toBe(false);
+      runToTheEnd();
+      expect(st().textBuffer).toBe('typed meanwhile');
+      expect(st().textDirty).toBe(true);
+      expect(st().diagnostics).toEqual(validationApi.validate(st().model));
+    });
+  });
+
   it('lastAppliedText outlives the library refresh and nothing else', async () => {
     const text = 'package A {\n    part def P;\n}\n';
     await openText(text, 'sysml');
@@ -3585,7 +3717,7 @@ describe('google drive', () => {
       expect(file().id).toBe(remote.id);
       expect(st().textBuffer).toContain('part def Relay;');
       expect(driveDirty(st()), 'Drive does not hold the edit').toBe(true);
-      expect(driveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
+      expect(leaveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
       expect(st().undoStack, 'the edit’s step, nothing from before the open').toHaveLength(1);
       st().undo();
       expect(st().model.all().some((e) => e.declaredName === 'Relay')).toBe(false);
@@ -3613,7 +3745,7 @@ describe('google drive', () => {
       expect(file().savedText, 'Drive does not hold it').not.toContain('Kite');
       expect(driveDirty(st())).toBe(true);
       expect(browserDirty(st()), 'nor does this browser').toBe(true);
-      expect(driveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
+      expect(leaveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
       const run = vi.fn();
       st().driveGuard('New', 'dirty', run);
       expect(run).not.toHaveBeenCalled();
@@ -4248,19 +4380,21 @@ describe('google drive', () => {
       expect(checkFileName(st())).toBe('Other.sysml');
     });
 
-    it('asks before leaving exactly while the attached file has unsaved changes', async () => {
+    it('asks before leaving while the attached file has unsaved changes, and not once it is saved', async () => {
       const leaving = () => new Event('beforeunload', { cancelable: true });
       let e = leaving();
-      expect(driveBeforeUnload(st(), e)).toBe(false);
-      expect(e.defaultPrevented, 'no file').toBe(false);
+      expect(leaveBeforeUnload(st(), e)).toBe(false);
+      expect(e.defaultPrevented, 'no file, nothing edited').toBe(false);
       await attached();
       e = leaving();
-      expect(driveBeforeUnload(st(), e)).toBe(false);
+      expect(leaveBeforeUnload(st(), e)).toBe(false);
       expect(e.defaultPrevented, 'saved').toBe(false);
       edit();
       e = leaving();
-      expect(driveBeforeUnload(st(), e)).toBe(true);
+      expect(leaveBeforeUnload(st(), e)).toBe(true);
       expect(e.defaultPrevented, 'unsaved changes').toBe(true);
+      await st().driveSave();
+      expect(leaveBeforeUnload(st(), leaving()), 'saved to Drive').toBe(false);
     });
 
     it('names a Drive file as a .sysml file, without path or control characters, and not too long', () => {
@@ -4871,11 +5005,14 @@ describe('google drive', () => {
 
         // The guard's Save applies typed text, in a room too, and New goes on.
         st().setTextBuffer(st().textBuffer.replace('part def Typed;', 'part def Typed;\n    part def Guarded;'));
+        // A peer's edit since the typing is no field's change: the apply drops it, and says nothing of it.
+        peer.create('PartDefinition', { declaredName: 'PeerLate', ownerId: peer.roots()[0].id });
         const run = vi.fn();
         st().driveGuard('New', 'dirty', run);
         expect(drive().prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
         await st().driveRunPending('save');
         expect(sorted(saved.at(-1)!)).toEqual(['Drone', 'Guarded', 'Typed']);
+        expect(drive().notice, 'a peer’s edit is not a field’s change').toBeNull();
         expect(run).toHaveBeenCalledTimes(1);
       } finally {
         st().disconnectCollab();
@@ -5256,6 +5393,88 @@ describe('unsaved work — what a command that replaces the model asks about', (
     expect(unsaved(), 'New: nothing to lose').toBe(false);
     await whenLibrarySettled();
     expect(unsaved(), 'and still once its library merged').toBe(false);
+  });
+
+  it('asks before the tab closes over unsaved text or boxes, with no Drive file attached', async () => {
+    const leaving = () => new Event('beforeunload', { cancelable: true });
+    const asks = () => {
+      const e = leaving();
+      const asked = leaveBeforeUnload(st(), e);
+      expect(e.defaultPrevented, 'prevented exactly when it asked').toBe(asked);
+      return asked;
+    };
+    const box = (x: number) => ({ 'general|': { [rootId()]: { x, y: 20 } } });
+    expect(st().drive.file, 'no file').toBeNull();
+    expect(asks(), 'a first visit that touched nothing').toBe(false);
+    edit('Relay');
+    expect(asks(), 'an edit nothing holds').toBe(true);
+    st().undo();
+    expect(asks(), 'Undo back to the saved model').toBe(false);
+    st().setTextBuffer(st().textBuffer.replace('Swarm', 'Kite'));
+    expect(asks(), 'text typed and not applied').toBe(true);
+    st().setTextBuffer(st().textBuffer.replace('Kite', 'Swarm'));
+    expect(asks(), 'typed back as it was').toBe(false);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(asks(), 'a box moved by hand').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save holds the text and the boxes').toBe(false);
+    useAppStore.setState({ diagramPins: box(30) });
+    expect(asks(), 'moved again').toBe(true);
+    useAppStore.setState({ diagramPins: box(10) });
+    expect(asks(), 'moved back to where Save left it').toBe(false);
+    // A Versions commit holds the work for the session, not for the tab: the
+    // repository goes with it.
+    edit('Kite');
+    st().commitVersion('held in memory');
+    expect(unsaved(), 'a command that replaces the model: the commit holds it').toBe(false);
+    expect(asks(), 'but the tab: the commit goes with it').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save holds it').toBe(false);
+  });
+
+  it('asks before the tab closes over a branch switch or a merge no browser save holds', async () => {
+    const asks = () => askBeforeLeaving(new Event('beforeunload', { cancelable: true }));
+    st().refreshVersions();
+    st().commitVersion('first');
+    expect(asks(), 'a commit of the model as Save left it').toBe(false);
+    const main = st().currentBranchId;
+    st().createBranchCmd('side');
+    edit('Kite');
+    st().commitVersion('side work');
+    st().switchBranch(main);
+    expect(asks(), 'a branch head that only the repository holds').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save').toBe(false);
+    // A commit, then New: the committed model is replaced and still only in
+    // the repository, so the tab keeps asking until Save.
+    edit('Falcon');
+    st().commitVersion('only copy');
+    expect(asks(), 'a commit of a model no save holds').toBe(true);
+    st().newProject('Next');
+    expect(unsaved(), 'New runs without a question: the guard reads the commit as holding it').toBe(false);
+    expect(asks(), 'New replaced the model the commit holds').toBe(true);
+    await st().saveProject('Next');
+    expect(asks(), 'Save').toBe(false);
+    // The same with Open ▾ over a commit.
+    edit('Osprey');
+    st().commitVersion('only copy');
+    await st().loadProject('Swarm');
+    expect(asks(), 'Open replaced the model the commit holds').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save').toBe(false);
+  });
+
+  it('asks while an edit’s recompute is waiting, and while a save is being stored', async () => {
+    const asks = () => askBeforeLeaving(new Event('beforeunload', { cancelable: true }));
+    st().createElement('PartDefinition', rootId(), 'Relay');
+    expect(browserDirty(st()), 'the Text view does not show the edit yet').toBe(false);
+    expect(asks(), 'the edit is waiting').toBe(true);
+    flushRecompute();
+    expect(asks(), 'and once it has run').toBe(true);
+    const saving = st().saveProject('Swarm');
+    expect(asks(), 'the browser is still storing the save').toBe(true);
+    await saving;
+    expect(asks(), 'stored').toBe(false);
   });
 
   it('counts a save from the click: an edit made while the browser stores it reads unsaved, and a refused save is taken back', async () => {
@@ -6275,6 +6494,101 @@ describe('a field’s change over text typed in the Text view and not applied', 
     expect(st().textDirty).toBe(true);
     expect(st().undoStack.length, 'no Undo step').toBe(steps);
   });
+
+  /**
+   * The "kept" case above leaves the typed text over a model that has the
+   * change: a later Save or Export ▾ → SysML applies it, and drops the change.
+   * They say so — an info note, once; the text is not kept back for it — and
+   * only for a field's change: an SDK edit, a peer's edit (the room test in the
+   * Save block) and a faulted apply leave the text standing too, and say nothing.
+   */
+  describe('Save or Export applying it over the change', () => {
+    const OTHER = (t: string) => t.replace('part def Relay;', 'part def Other;');
+    const note = () => st().drive.notice;
+
+    it('Save says so once, and the next save that holds the model takes the note down', async () => {
+      const relay = await relayModel();
+      const typed = OTHER(st().textBuffer);
+      st().setTextBuffer(typed);
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      expect(st().textBuffer, 'the text stays over the change').toBe(typed);
+
+      await runSave();
+      expect(named('Other'), 'the typed text is applied').toBe(true);
+      expect(named('Kite'), 'the change is dropped').toBe(false);
+      expect(note()).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextOverChanges, retryable: false });
+      st().undo();
+      expect(named('Kite'), 'Undo brings the change back, as the note says').toBe(true);
+
+      await runSave();
+      expect(note(), 'the save that holds the change takes the note down').toBeNull();
+    });
+
+    it('Export ▾ → SysML says so too, in its own words', async () => {
+      const relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+
+      expect(runExportSysml()).toContain('part def Other;');
+      expect(note()).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextExportedOverChanges, retryable: false });
+      runExportSysml();
+      expect(note(), 'an export that holds the model takes it down').toBeNull();
+    });
+
+    it('the guard’s Save applies it over the change and says nothing: the command replaces the model next', async () => {
+      const relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      const run = vi.fn(() => st().newProject('NewModel'));
+      st().driveGuard('New', 'dirty', run);
+      await st().driveRunPending('save');
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(note(), 'a note about the model the command replaced would mislead').toBeNull();
+    });
+
+    it('says nothing over an SDK edit or a faulted apply, nor once the typed text was applied or replaced', async () => {
+      // An SDK edit: the text stays, and Save applies it over the edit (one Undo brings the edit back).
+      let relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      sdk().update(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      await runSave();
+      expect(named('Other') && !named('Kite'), 'applied over the edit').toBe(true);
+      expect(note(), 'an SDK edit is no field’s change').toBeNull();
+
+      // A faulted apply: its text is the model's, not typed.
+      await openText('package Swarm {\n    blok bad;\n}\n', 'sysml');
+      expect(st().textDirty).toBe(true);
+      await runSave();
+      expect(note(), 'a faulted apply').toBeNull();
+
+      // A change over typed text, then that text applied: the next typed text is not one a change was made over.
+      relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      st().applyText();
+      st().setTextBuffer(st().textBuffer.replace('part def Other;', 'part def Other;\n    part def Later;'));
+      await runSave();
+      expect(named('Later'), 'applied').toBe(true);
+      expect(note(), 'the earlier change was made over the text applied since').toBeNull();
+
+      // ...or replaced by the model's own text: an edit in the app forces the recompute.
+      relay = await relayModel();
+      st().setTextBuffer(OTHER(st().textBuffer));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      st().createElement('PartDefinition', rootId(), 'Edited');
+      flushRecompute();
+      expect(st().textDirty, 'the edit replaced the typed text').toBe(false);
+      st().setTextBuffer(st().textBuffer.replace('part def Edited;', 'part def Edited;\n    part def Later;'));
+      await runSave();
+      expect(named('Later'), 'applied').toBe(true);
+      expect(note()).toBeNull();
+    });
+  });
 });
 
 /**
@@ -6469,7 +6783,7 @@ describe('the load health a check is judged under', () => {
 
   it('validates the live model only when none ran at this revision', async () => {
     await apply(CLEAN);
-    const validate = vi.spyOn(validationApi, 'validate');
+    const validate = vi.spyOn(validationApi, 'validateSteps');
     const ofLive = () => validate.mock.calls.filter(([m]) => m === st().model).length;
     try {
       loadHealth();
@@ -6986,7 +7300,7 @@ describe('the load health never vouches for a text that does not load (review 20
    */
   it('says whether the load can be read without work on the page: never while an edit’s recompute waits, nor with the text or the validation behind the model', async () => {
     const write = vi.spyOn(textApi, 'serializeUserModelSignals');
-    const validate = vi.spyOn(validationApi, 'validate');
+    const validate = vi.spyOn(validationApi, 'validateSteps');
     const work = (): number => write.mock.calls.length + validate.mock.calls.length;
     try {
       await apply(BASE);

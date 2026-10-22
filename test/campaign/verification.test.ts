@@ -52,7 +52,7 @@
  * regenerates the goldens; a regenerated golden is a DRAFT and every one in
  * this corpus was read by hand.
  */
-import { describe, it as vitestIt, expect, beforeAll, afterEach, type TestFunction } from 'vitest';
+import { describe, it as vitestIt, expect, beforeAll as vitestBeforeAll, afterEach, type TestFunction } from 'vitest';
 import Ajv from 'ajv';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -119,6 +119,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   loadZ3,
   resetZ3Cache,
+  z3BudgetWatch,
   z3CallCount,
   z3DeathCount,
   z3Disabled,
@@ -272,6 +273,29 @@ function project(r: VerifyReport): Golden {
 }
 
 /**
+ * Every hook so far whose body handed z3 a check, the timeout it was registered
+ * with (`undefined` is vitest's `hookTimeout`, 10 s) and the largest budget it
+ * handed. The guard at the end of this file holds each to the same floor a case
+ * is held to: a hook is not a case, so the case wrapper below never sees it, and
+ * the death a slow hook outlasts lands on whichever case is running then.
+ */
+const solverHooks: Array<{ name: string; timeout: number | undefined; budget: number; pending: string[] }> = [];
+
+/** `beforeAll`, noting the largest budget its body hands z3 (see {@link solverHooks}). */
+const beforeAll = (fn: Parameters<typeof vitestBeforeAll>[0], timeout?: number) =>
+  vitestBeforeAll(async (suite) => {
+    const calls = z3CallCount();
+    const pending = [...bodiesRunning].map((b) => b.name); // bodies vitest stopped but that still run: their checks are not this hook's
+    const stop = z3BudgetWatch();
+    try {
+      return await fn(suite);
+    } finally {
+      const budget = stop();
+      if (z3CallCount() !== calls) solverHooks.push({ name: `a beforeAll in "${suite.name}"`, timeout, budget, pending });
+    }
+  }, timeout);
+
+/**
  * The solver, or the reason it is absent — `z3-solver` is an OPTIONAL dependency.
  *
  * A clone that skipped optional dependencies must still run every suite, so the
@@ -305,9 +329,17 @@ beforeAll(async () => {
  * 5 s) reads as a plain timeout, and the death the guard records later lands on
  * whichever case is running then: the `[D5]` line names the wrong case, and the
  * wrapper below re-runs that case if it went red. The floor is the guard plus
- * 5 s, 40 s today.
+ * 5 s, 40 s today for the default budget and {@link floorFor} for a larger one.
  */
 const SOLVER_CASE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS + DEAD_MODULE_MARGIN_MS + 5_000;
+
+/**
+ * The least timeout for a case or hook that handed z3 a check with this budget:
+ * the guard for THAT budget plus 5 s, and never less than the floor above. A
+ * check given a larger budget than the default is presumed dead later, so the
+ * floor moves with it.
+ */
+const floorFor = (budgetMs: number) => Math.max(SOLVER_CASE_TIMEOUT_MS, budgetMs + DEAD_MODULE_MARGIN_MS + 5_000);
 
 /**
  * Every case so far whose body handed z3 a check, the timeout it was registered
@@ -319,7 +351,14 @@ const SOLVER_CASE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS + DEAD_MODULE_MARGIN_MS + 5_00
  * moves on from a case it stopped while that body is still issuing checks, and
  * a body a death re-runs goes on in the background. Either already left a red.
  */
-const solverCases: Array<{ name: string; timeout: number | undefined; pending: string[]; overtaken: string[] }> = [];
+const solverCases: Array<{
+  name: string;
+  timeout: number | undefined;
+  /** The largest budget, in ms, any check the body handed z3 was given (see `z3BudgetWatch`). */
+  budget: number;
+  pending: string[];
+  overtaken: string[];
+}> = [];
 
 /** Every case whose body resolved, so the guard can tell a case that drove nothing from one that went red first. */
 const casesPassed = new Set<string>();
@@ -349,7 +388,7 @@ const bodiesRunning = new Set<{ name: string; timeout: number | undefined }>();
  *
  * The wrapper also notes every case that handed z3 a check, with the timeout it
  * was given, for the guard at the end of this file: a case like that has to
- * outlast {@link SOLVER_CASE_TIMEOUT_MS}, and which cases are like that is
+ * outlast {@link floorFor} its largest budget, and which cases are like that is
  * measured here, never read off the source.
  */
 const it = (name: string, fn: TestFunction, timeout?: number) =>
@@ -362,6 +401,7 @@ const it = (name: string, fn: TestFunction, timeout?: number) =>
       bodiesRunning.add(body);
       const deathsBefore = z3DeathCount();
       const callsBefore = z3CallCount();
+      const stopWatch = z3BudgetWatch();
       try {
         await fn(ctx);
       } catch (err) {
@@ -374,8 +414,9 @@ const it = (name: string, fn: TestFunction, timeout?: number) =>
         await fn(ctx);
       } finally {
         bodiesRunning.delete(body);
+        const budget = stopWatch();
         if (z3CallCount() !== callsBefore) {
-          solverCases.push({ name, timeout, pending, overtaken: bodiesBegun.slice(ordinal) });
+          solverCases.push({ name, timeout, budget, pending, overtaken: bodiesBegun.slice(ordinal) });
         }
       }
       casesPassed.add(name);
@@ -5604,6 +5645,9 @@ describe('L8 — staleness scoped to what provably cannot affect the proof', () 
  * no failure here can hide another.
  */
 describe('D5 — every case that drives z3 outlasts the death guard', () => {
+  /** Vitest's `hookTimeout` default, which a hook given no timeout runs under. */
+  const HOOK_TIMEOUT_MS = 10_000;
+
   it('names no case that handed z3 a check under a timeout shorter than the guard', (ctx) => {
     if (!backendPresent) {
       expect(absentReason.length, 'no backend and no reason either').toBeGreaterThan(20);
@@ -5612,17 +5656,25 @@ describe('D5 — every case that drives z3 outlasts the death guard', () => {
     }
     const limit = (timeout: number | undefined) => (timeout === undefined ? 'vitest’s 5 s default' : `${timeout} ms`);
     const short = solverCases
-      .filter((c) => c.pending.length === 0 && (c.timeout === undefined || c.timeout < SOLVER_CASE_TIMEOUT_MS))
+      .filter((c) => c.pending.length === 0 && (c.timeout === undefined || c.timeout < floorFor(c.budget)))
       .map(
         (c) =>
-          `${c.name} (${limit(c.timeout)}` +
+          `${c.name} (${limit(c.timeout)}, needs ${floorFor(c.budget)} ms for a ${c.budget} ms budget` +
           (c.overtaken.length > 0
             ? `; vitest moved on before it settled, so its count may include ${c.overtaken.join(', ')})`
             : ')'),
       );
-    const shared = solverCases
-      .filter((c) => c.pending.length > 0)
-      .map((c) => `${c.name} (began while ${c.pending.join(', ')} still ran)`);
+    const shortHooks = solverHooks
+      .filter((h) => h.pending.length === 0 && (h.timeout ?? HOOK_TIMEOUT_MS) < floorFor(h.budget))
+      .map(
+        (h) =>
+          `${h.name} (${h.timeout ?? HOOK_TIMEOUT_MS} ms${h.timeout === undefined ? ', vitest’s default' : ''}, ` +
+          `needs ${floorFor(h.budget)} ms for a ${h.budget} ms budget)`,
+      );
+    const shared = [
+      ...solverCases.filter((c) => c.pending.length > 0).map((c) => ({ name: c.name, pending: c.pending })),
+      ...solverHooks.filter((h) => h.pending.length > 0).map((h) => ({ name: h.name, pending: h.pending })),
+    ].map((c) => `${c.name} (began while ${c.pending.join(', ')} still ran)`);
     const unsettled = [...bodiesRunning]
       .filter((b) => b.name !== ctx.task.name)
       .map((b) => `${b.name} (${limit(b.timeout)})`);
@@ -5634,8 +5686,15 @@ describe('D5 — every case that drives z3 outlasts the death guard', () => {
     expect
       .soft(
         short,
-        `these cases drive z3 under a timeout shorter than ${SOLVER_CASE_TIMEOUT_MS} ms, the death guard plus 5 s; ` +
-          'give each an explicit one at least that long',
+        `these cases drive z3 under a timeout shorter than ${SOLVER_CASE_TIMEOUT_MS} ms, the death guard plus 5 s, ` +
+          'or than the largest budget they handed z3 plus the margin plus 5 s; give each an explicit one at least that long',
+      )
+      .toEqual([]);
+    expect
+      .soft(
+        shortHooks,
+        'these hooks hand z3 a check under a timeout shorter than the budget plus the margin plus 5 s: ' +
+          'a hook has no [D5] line, so the death they outlast lands on a later case; give each a longer one',
       )
       .toEqual([]);
     expect
@@ -5648,6 +5707,12 @@ describe('D5 — every case that drives z3 outlasts the death guard', () => {
     expect
       .soft(unsettled, 'these cases were still running when this one began: vitest stopped them first')
       .toEqual([]);
+    expect
+      .soft(
+        solverHooks.map((h) => h.name),
+        'the L8 exit-contract hook drives z3 over the corpus and must be recorded: the hook record is broken',
+      )
+      .toContain('a beforeAll in "L8 — the exit contract holds over the whole corpus"');
     expect
       .soft(unrecorded, 'golden cases that passed through z3 went unrecorded: the record is broken')
       .toEqual([]);

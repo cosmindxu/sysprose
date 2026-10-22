@@ -422,6 +422,18 @@ let deaths = 0;
 let calls = 0;
 
 /**
+ * The windows {@link z3BudgetWatch} has open: each keeps the largest budget a
+ * check or optimisation was handed while it was open. Empty outside a suite.
+ */
+const budgetWatches = new Set<{ largest: number }>();
+
+/** Count a call whose budget was accepted, and show that budget to every open watch. */
+function countCall(timeoutMs: number): void {
+  calls += 1;
+  for (const w of budgetWatches) if (timeoutMs > w.largest) w.largest = timeoutMs;
+}
+
+/**
  * The slice of `z3-solver` this bridge uses.
  *
  * Declared structurally rather than imported: the package is optional, so a
@@ -744,6 +756,28 @@ export function z3CallCount(): number {
 }
 
 /**
+ * Open a window on the budgets handed to a module, and get back the function
+ * that closes it and returns the largest budget, in ms, a check or optimisation
+ * was handed meanwhile (0 when none was; a call without `timeoutMs` counts as
+ * {@link DEFAULT_TIMEOUT_MS}, the budget it ran under).
+ *
+ * FOR SUITES, like {@link z3CallCount}: the campaign holds a case that hands z3
+ * a check to that check's budget plus {@link DEAD_MODULE_MARGIN_MS} plus 5 s,
+ * and only the case's own timeout is known to the case. A window, not a
+ * counter, because the largest value of a window cannot be read off a
+ * monotonic one; windows may overlap, and each sees every call made while it
+ * was open. The returned function may be called once.
+ */
+export function z3BudgetWatch(): () => number {
+  const watch = { largest: 0 };
+  budgetWatches.add(watch);
+  return () => {
+    budgetWatches.delete(watch);
+    return watch.largest;
+  };
+}
+
+/**
  * How many finalizer callbacks were held because a check was in flight on
  * their module — the count of races the deferral prevented. For the soak
  * suite, which must show the mechanism was exercised and not merely present.
@@ -1039,7 +1073,7 @@ async function runCheck(
   // A bad budget is the caller's error and keeps its own stack: it is refused
   // before the module is touched, so it can never be mistaken for a death.
   const timeoutMs = boundOf(opts.timeoutMs);
-  calls += 1;
+  countCall(timeoutMs);
   return serially(entry, async () => {
     try {
       return await checkOn(entry, script, timeoutMs, opts.variables, opts.witness !== false);
@@ -1237,7 +1271,7 @@ async function runOptimize(
   opts: CheckOptions = {},
 ): Promise<OptimizeOutcome> {
   const timeoutMs = boundOf(opts.timeoutMs);
-  calls += 1;
+  countCall(timeoutMs);
   return serially(entry, async () => {
     try {
       return await optimizeOn(entry, script, sense, timeoutMs, opts.variables);

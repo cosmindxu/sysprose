@@ -11,7 +11,9 @@
  *    so nobody is misled into thinking their work was kept;
  *  - boxes moved by hand on a diagram are saved with the project, beside the
  *    model — through the apply Save makes of text typed in the Text view —
- *    and Open puts them back where they were.
+ *    and Open puts them back where they were;
+ *  - closing or reloading the tab asks first while the text or the boxes are
+ *    unsaved, and not once they are saved.
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -24,6 +26,15 @@ async function waitForApp(page: Page): Promise<void> {
   await expect(page.getByTestId('diagram-canvas')).toBeVisible();
   await page.locator('.react-flow__node').first().waitFor({ state: 'visible' });
   await page.waitForFunction(() => !!(window as unknown as { sysml?: unknown }).sysml);
+}
+
+/** Whether leaving the page now would ask first: a cancelable `beforeunload`, prevented or not. */
+async function leavingAsks(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    return e.defaultPrevented;
+  });
 }
 
 /** Id of the root package of the freshly-created "NewModel" project. */
@@ -78,6 +89,44 @@ test('a saved project is still there after a full browser reload', async ({ page
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
+test('the tab asks at once after an edit, and a Versions commit does not stop it asking', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  expect(await leavingAsks(page), 'a first visit that touched nothing').toBe(false);
+
+  // An edit and the question in one turn of the page: the Text view has not
+  // caught up with the edit yet, and the tab asks all the same.
+  const askedAtOnce = await page.evaluate(() => {
+    const sysml = (
+      window as unknown as {
+        sysml: {
+          elementsOfType(t: string): { id: string; attrs?: { isLibrary?: boolean } }[];
+          update(id: string, patch: { declaredName: string }): void;
+        };
+      }
+    ).sysml;
+    const def = sysml.elementsOfType('PartDefinition').find((e) => e.attrs?.isLibrary !== true)!;
+    sysml.update(def.id, { declaredName: 'CommittedOnly' });
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    return e.defaultPrevented;
+  });
+  expect(askedAtOnce, 'an edit the text does not show yet').toBe(true);
+  await diagramSettled(page);
+
+  // A commit in the Versions tab is kept in memory: it goes with the tab.
+  await openTab(page, 'tab-versions');
+  const commits = await page.getByTestId('version-commit').count();
+  await page.getByTestId('version-commit-btn').click();
+  await expect(page.getByTestId('version-commit')).toHaveCount(commits + 1);
+  expect(await leavingAsks(page), 'the commit goes with the tab').toBe(true);
+
+  // Save keeps it in this browser.
+  await page.getByTestId('tb-save').click();
+  await expect.poll(() => leavingAsks(page)).toBe(false);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 test('unsaved edits are discarded by a reload rather than silently restored', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page);
@@ -97,8 +146,17 @@ test('unsaved edits are discarded by a reload rather than silently restored', as
   await renameInTree(page, ghostId, 'NeverSaved');
   await expect.poll(() => hasNamed(page, 'PartDefinition', 'NeverSaved')).toBe(true);
 
+  // Leaving asks first: the edit is held nowhere. A reload that the browser's
+  // question lets through (accepted here) is what discards it.
+  await expect.poll(() => leavingAsks(page)).toBe(true);
+  const asked: string[] = [];
+  page.on('dialog', (dialog) => {
+    asked.push(dialog.type());
+    void dialog.accept();
+  });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await waitForApp(page);
+  expect(asked, 'the browser asked once whether to leave').toEqual(['beforeunload']);
 
   // The unsaved element is gone and the pristine sample is back.
   await expect.poll(() => hasNamed(page, 'PartDefinition', 'NeverSaved')).toBe(false);
@@ -192,6 +250,8 @@ test('a box moved by hand is saved with the project, and is where it was when th
     })
     .toBeGreaterThan(40);
   const dropped = (await boxAt(page, vehicleId))!;
+  // The box moved by hand is held nowhere yet: closing the tab asks.
+  await expect.poll(() => leavingAsks(page)).toBe(true);
 
   // A line typed in the Text view and not applied: Save applies it first, and
   // the apply makes every element anew, under a new id — the box stays put.
@@ -211,6 +271,7 @@ test('a box moved by hand is saved with the project, and is where it was when th
     .poll(async () => ((await savedPins(page, 'VehicleModel')) as Record<string, unknown> | null)?.['general|'])
     .toEqual({ [savedId]: dropped });
   await shot(page, 'reload-d-box-moved');
+  expect(await leavingAsks(page), 'Save holds the text and the box: the tab closes without asking').toBe(false);
 
   // ── Reload: a cold boot lays the sample out afresh… ──
   await page.reload({ waitUntil: 'domcontentloaded' });
