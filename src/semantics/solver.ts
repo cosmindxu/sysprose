@@ -100,6 +100,9 @@ import {
   sharedDefinitions,
   spelledIn,
   statedValueOf,
+  typedAssertHolding,
+  typedAssertNames,
+  typedAssertsName,
   usageOwnedRefusal,
   type InstanceAbstention,
   type InstanceReading,
@@ -610,6 +613,16 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
         unreadable.add(el.id);
         continue;
       }
+      // A feature an assert typed by an equation's definition may define — its
+      // `default`, given way, or no value at all (`assert constraint e : Eq {
+      // in a = L; }`) — is no design freedom: the model states what it is, and
+      // nothing here reads the equation that does. Free, a plain `p.load ==
+      // 5.0` was solved as a design equation over CD13's L, and Q's `p.m2 >=
+      // 0.0` decided at that 5 where L is 50.
+      if (typedAssertNames(model, el)) {
+        unreadable.add(el.id);
+        continue;
+      }
       // A `default` a binding overrides is no value of the feature's: the
       // binding's equation solves it, as it solves a valueless one.
       if (defaultGivesWaySomewhere(model, el)) continue;
@@ -662,6 +675,39 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
   const instances = instanceSystem(model, scopeId);
   for (const id of instances.unreadable) unreadable.add(id);
   const all = [...instances.eqs, ...eqs];
+  // An instance's variable of a feature an assert typed by an equation's
+  // definition may define is no freedom either, however the instances reached
+  // it — and nor is what the model states from one: what a value, a binding
+  // or an asserted equation that reads one states or defines. CD10's `q.L`,
+  // which Q's `bind p.load = L` joins to q's p's load, was oriented from that
+  // load where the solve had left it at its starting guess, and `q.p.load ==
+  // 50.0` refuted at 1; so was q's p's `:>> load = L` over the package's typed
+  // assert on `q.L`, read as Q's one L.
+  if (typedAssertsName(model)) {
+    const typed = new Set<ElementId>();
+    const mark = (vars: readonly ElementId[]): void => {
+      for (const v of vars) {
+        const f = model.get(baseIdOf(v));
+        if (!f || !typedAssertNames(model, f)) continue;
+        unreadable.add(v);
+        typed.add(v);
+      }
+    };
+    for (const eq of all) mark(eq.vars);
+    for (const iq of gatherInequalities(model, scopeId)) mark(iq.vars);
+    for (let grew = typed.size > 0; grew; ) {
+      grew = false;
+      for (const eq of all) {
+        if (!eq.vars.some((v) => typed.has(v))) continue;
+        for (const v of [...(eq.states !== undefined ? [eq.states] : []), ...(eq.defines ?? [])]) {
+          if (typed.has(v)) continue;
+          unreadable.add(v);
+          typed.add(v);
+          grew = true;
+        }
+      }
+    }
+  }
   pastCapUnreadable(model, all, unreadable, scopeId);
   return { eqs: all, unreadable, relationOf };
 }
@@ -1318,6 +1364,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       const name = definitions.nameOf(feature);
       const d = name !== undefined ? definitions.denote(reader.id).get(name) : undefined;
       const source = (d ? definitions.valueRef(d)?.target : undefined) ?? (hasStatedValue(model, feature) ? feature : undefined);
+      // What an assert typed by an equation's definition may define, here too:
+      // no freedom, solved from nothing ({@link typedAssertNames}).
+      if (typedAssertHolding(model, source ?? feature) !== undefined) system.unreadable.add(key);
       // A `default` that gives way at THIS instance (`held-redef`): no value
       // equation fixes it — the binding that holds it does.
       if (source && name !== undefined && !defaultGivesWayIn(model, feature, reading.symbol)) {

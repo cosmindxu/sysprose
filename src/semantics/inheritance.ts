@@ -192,13 +192,19 @@ export function effectiveFeatures(model: Model, typeId: ElementId): ElementRecor
  * features of two of its general types under one name, neither redefining the
  * other (`part def C :> A, B` over A's and B's `:>> load`): name → the
  * feature {@link effectiveFeatures} keeps first, then the others. A name one
- * of `typeId`'s own features claims is not among them.
+ * of `typeId`'s own features claims is not among them — but for one
+ * `transparent` says states nothing of its own, which leaves the pair as it
+ * finds it.
  */
-export function inheritedNameClashes(model: Model, typeId: ElementId): Map<string, ElementRecord[]> {
+export function inheritedNameClashes(
+  model: Model,
+  typeId: ElementId,
+  transparent?: (f: ElementRecord) => boolean,
+): Map<string, ElementRecord[]> {
   const own = new Set<string>();
   for (const f of ownFeatures(model, typeId)) {
     const n = effectiveNameOf(model, f);
-    if (n !== undefined) own.add(n);
+    if (n !== undefined && transparent?.(f) !== true) own.add(n);
   }
   const candidates: ElementRecord[] = [];
   let contributing = 0;
