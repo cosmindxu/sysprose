@@ -24,27 +24,28 @@ maintainer says `awaits user decision U<n>` and names the question.
       moving the model site to a host that sends the headers, which would break the Google Drive
       sign-in popup and Picker iframe there too. Awaits user decision U14 (host): whether in-page z3
       on the hosted site is worth that cost. [N6 S4]
-- [ ] **Hold z3's timeout floor where the D5 guard cannot see.** The last case of
-      `test/campaign/verification.test.ts` holds every case that hands z3 a check to 40 s: the death
-      guard for the DEFAULT 5 s budget, plus 5 s. A check given a larger budget needs that budget plus
-      35 s, and nothing holds a case to it (today "an undecided check spends the 2 even when the same
-      tree found cut sets" passes 30 s under a 120 s timeout, which is enough). Hooks are not guarded
-      (vitest's `hookTimeout` is 10 s; the two that reach z3 now are given 240 s and 600 s). Have the
-      bridge report the largest budget handed to it while a case ran, and read the counter around the
-      hooks that load z3.
-- [ ] **Ask before the tab closes over a hand arrangement not saved.** `browserDirty` now counts boxes
-      moved by hand (`savedPins`), so New, Open, Import, a branch switch and a Drive open ask first;
-      `beforeunload` still asks only for a Drive-attached file, so closing the tab lets an arrangement
-      (and a typed-but-unsaved edit of a model with no Drive file) go without a question. Done when
-      closing the tab over unsaved text or boxes asks, with a test, or the maintainer decides it
-      should not.
-- [ ] **Give the focus somewhere safe when a rename closes on `Escape`.** `Enter` now leaves the
-      focus on Save (`commitAndFocusSave`); `Escape` in the Explorer's rename (`tree-rename`), the
-      context menu's (`node-ctx-rename-input`) or a Requirements table cell (`req-cell-input`,
-      `req-attr-input`) closes the box without committing and the focus still falls to the page, so
-      the next `Backspace` deletes the selection. Do the same refocus without the commit, or return
-      it to the row, guarded. Done when `Escape` in each box leaves a following `Backspace` harmless,
-      with a test beside the `Enter` one.
+- [ ] **Hold the same timeout floor on the hooks of the differential table.** The budget-aware guard
+      `ui-small` S5 added covers `test/campaign/verification.test.ts`. The two `beforeAll` hooks of
+      `test/integration/verification.differential.test.ts` (600_000 and 1_800_000 ms) drive z3 across
+      the whole corpus, and the `withZ3` wrappers of that file and of `smt-z3.integration` refuse only
+      a timeout under 40 s at declaration time; neither file has a counter-backed last case. A shared
+      helper over `z3BudgetWatch()` would cover them. [ui-small S5, review]
+- [ ] **Decide whether a collaboration room's copy counts as saved for the tab's close question
+      (optional).** Since `ui-small` S1 the tab asks before closing over text or boxes not saved
+      (`askBeforeLeaving`, `leaveUnsaved`). In a collaboration room a peer's edit makes the text read
+      unsaved while the relay and y-indexeddb hold the room's copy, so every collaborator gets the
+      question on close. It only errs toward asking. Decide whether the room's copy counts as saved.
+      [ui-small S1, review]
+- [ ] **Give the focus somewhere safe when the Requirements table's reference picker closes.** Since
+      `ui-small` S2 `Escape` in the Explorer's rename, the context menu's and a Requirements cell
+      leaves the focus on Save (`cancelAndFocusSave`, `src/ui/commands.ts`). `Escape` in the picker
+      (`req-ref-picker`) and `Enter` on a candidate close it with the focus dropped to the page, and a
+      pick selects the requirement row, so the next `Backspace` deletes the requirement just linked.
+      Route the keydown paths (not the blur, which cancels) through `cancelAndFocusSave` /
+      `commitAndFocusSave`. Check the Regroup view's bundle-label and port-name boxes
+      (`RegroupView.tsx`, the Enter and Escape handlers that call `blur()`), which from code reading
+      also leave the focus on the page. Done when `Escape` and `Enter` in the picker leave a following
+      `Backspace` harmless, with a test. [ui-small S2, review]
 - [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
       checks in the page behind a queue and a mutex. Left: Cancel drops the answer but cannot stop
       z3, so the check ends at its own time budget and a Run started meanwhile queues behind it; a
@@ -311,12 +312,21 @@ true values. What follows is what that branch and the review of it left open; en
       frame-cap count is a lower bound ("at least N") and counts print raw beside the capped
       sentences, and a footer fold over a requirement's per-subject rows names the clause's
       synthetic name, not the requirement. [N3 S1-S4, reviews]
-- [ ] **Say when Save or Export drops field changes made over older typed text.** In the "kept" case of
-      `typedTextFirst` (the element is not in the typed text, or the model changed since the typing) a
-      later Save or Export applies the typed text over the newer model and so drops the field changes
-      made since, without a note. Give it an info note, or keep the text back; it needs a message
-      design, and the stale-`typedFrom` test would also fire on the SDK, peer and faulted-apply paths.
-      Also: a field's change over typed text parses on the page (P3). [O7 S2, review]
+- [ ] **Say when a Save applies typed text over a field's change in the two cases that stay silent.**
+      The in-browser Save, the offline Save and Export say so since `ui-small` S3 (`fieldOverTyped`,
+      `over-changes`). (1) A Save to an attached Google Drive file with unsaved changes (`runSave`
+      then `driveSave`, `payloadNow`) applies the text over a change `typedTextFirst` kept back and the
+      strip says nothing: it needs a Drive-strip message that survives the save's own notice. (2) The
+      guard's Save (`saveBeforeReplacing`, the Save and continue of New, Open, Import, Switch branch,
+      Merge or Join room) does the same and says nothing, because the guarded command replaces the
+      model next: it needs a sentence that does not promise one Undo (it takes two). [ui-small S3]
+- [ ] **Keep the project's name across an undo of an apply.** `undo` and `redo` (`src/ui/store.ts`)
+      re-derive `projectName` from the first package (`deriveProjectName`). After a package rename,
+      or after an Undo of a Save's apply, the next Save writes another project and can overwrite a
+      saved project of that name. Probe: New('NewModel'), rename the package to Drone, Save, then
+      typed text, a field change, Save, Undo, Save leaves the open project holding the text-only
+      version and writes the other project. The S3 note now invites the Undo. Optional one-line fix:
+      keep `projectName` across undo and redo of an apply. [ui-small S3, review]
 - [ ] **Anchor at the value that breaks the relation, and once per cause.** Since `f27d99b` a
       violated-instance finding is anchored at the instance's own differing line, but (1) when a
       binding carries two values into an instance the anchor follows the first read's source, not
@@ -330,18 +340,19 @@ true values. What follows is what that branch and the review of it left open; en
       Pick the source whose value is the difference, fold the per-`rN` findings into the one at the
       stated member, and name the redefinition. [O4 S2, review] See also the A-M2 entry (per-instance
       soundness section).
-- [ ] **Cut what an edit costs the page on the drone-swarm v9 model.** Each edit's recompute
-      (`recomputeNow`, `src/ui/store.ts`) validates the whole model and writes its text on the
-      page's thread before the diagram is rebuilt: one task, after every edit, whether or not a
-      check is run, of 0.14 to 0.63 s on v9 in a browser, the longer the more loaded the machine
-      (load averages from about 4 to about 20; in node, validation about 0.35 s and the text 0.15
-      to 0.3 s). A palette check's click no longer runs it ahead of time (branch `load-health` S3: the
-      run begins first and reads the load once its row is drawn, `runCheckedOnceDrawn`), but the
-      page still stops for it after each edit, and the `E palette-checks` guard on v9 leaves that
-      task out as the edit's. Fix: validate only what an edit can change, write the text in a
-      worker, or both, measured on v9 first. Done when an edit on v9 leaves no task over 200 ms on
-      the page with the machine loaded, measured as that guard measures a click. [review
-      2026-10-14 D-3, measured on the `load-health` S3 tree]
+- [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small` S4
+      an edit's recompute yields to the page between its steps (`recomputeSteps`), but three tasks
+      stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root in a
+      single pass: 40 to 90 ms at load about 4, up to about 180 ms at load 25. The edit's own task
+      (the undo snapshot `model.toJSONWhere` plus the SDK update) takes 54 to 109 ms warm, up to about
+      296 ms at load 25, and 238 ms on the session's first edit when cold. The last step (the results
+      set plus the synchronous `buildDiagram`) takes 90 to 156 ms at load 25. Fix: a step-wise
+      serializer, or moving the undo snapshot and the diagram build apart. Not done by design:
+      incremental validation (unsound for cross-element rules) and the text in a worker (a model
+      transfer per edit costs about what the write does). Done when no task of an edit and its
+      recompute is over 200 ms at load 25. The `palette-checks` step 4 bound (200 ms) has a thin
+      margin on slower CI cores: if the first CI run is red, make the assertion relative. [ui-small
+      S4, review 2026-10-14 D-3]
 - [ ] **List what a load binds later in the order a terminal binds it, on the page and on every peer of
       a room.** After an edit the page lists the user's declarations in the order the text gives them
       (`Model.adoptSerialOrder`, `src/core/model.ts`), and each owner's children come in one order on
