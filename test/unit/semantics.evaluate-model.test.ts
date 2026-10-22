@@ -5056,6 +5056,31 @@ describe('the instance index — frames, components, and bound sources', () => {
     expect(instanceGroups(m!).map((g) => g.instances)).toEqual([['C5::Q::p', 'C5::q1::p']]);
   });
 
+  // The connectors that join a component are found by the ends they join, not by testing every user binding
+  // once per component (cold-check S1): the same list as filtering them all — those whose two ends are both
+  // among the component's features, whichever end is the source, in the model's order.
+  it('lists the connectors that join a component in the model\'s order, from either end and none of another component\'s', async () => {
+    const { model: m } = await loadModelText(`package CC {
+      part def U { attribute A : ScalarValues::Real default = 1.0; attribute B : ScalarValues::Real default = 2.0; bind A = B; }
+      part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; part b : T0; bind L = a.load; bind b.load = L; }
+      part u : U;
+      part top : T1 { attribute :>> L = 50.0; }
+    }`);
+    const source = boundSourceIn(m!, 'CC::top::b::load');
+    if (!source || 'abstain' in source) throw new Error('no source');
+    const position = new Map(m!.all().map((e, i) => [e.id, i]));
+    const joined = source.via.bindingIds;
+    // The two connectors of T1, and U's `bind A = B` is no part of it.
+    expect(joined.map((id) => m!.qualifiedName(m!.get(id)!.ownerId!))).toEqual(['CC::T1', 'CC::T1']);
+    expect(joined.map((id) => position.get(id)!)).toEqual([...joined.map((id) => position.get(id)!)].sort((a, b) => a - b));
+    // `bind L = a.load` (source L) is written before `bind b.load = L` (source b.load): the model's order in this
+    // shape, where it is also the order the members are met in (so the sort itself is not pinned here, and a
+    // member's target end is always a member too: the target test is the old filter's second condition, kept).
+    const ends = joined.map((id) => m!.get(id)!.source?.[0]);
+    expect(ends.map((id) => m!.qualifiedName(id!))).toEqual(['CC::T1::L', 'CC::T1::b::load']);
+  });
+
   // A-H2 (O2 S5), the E target tree10 ≤ 2× main: tree10's 3,070 instances read L from eleven components, and
   // each was judged by the whole pipeline (115 ms against 8). A decided reading is now kept with the questions
   // it asked of its instance's spelling — where a binding carries a value in, whether a default stands or gives
