@@ -772,7 +772,10 @@ report it as `validation/target-by-specialisation` at the estimate: a
 **warning** when it misses (`LA::m = 0.78 misses Common::t (m >= 0.9)`),
 **info** when it meets the target or cannot be read — two estimates of one
 measure in the same layer, or a layer that specialises only some of the
-measures a target names, are named rather than guessed between. A miss is its
+measures a target names, are named rather than guessed between. A name the
+context reaches through a reference (`pb`'s `r2.load` over `ref part r1 = p50`) is
+named for the context's instance (`pb::r2.load = 50 misses P::c`), not for the
+feature the last link ends at. A miss is its
 own code, not a `constraint-violation`, because an estimate that misses is a
 result to record, not a contradiction in the model.
 
@@ -1028,7 +1031,9 @@ it reads reads: `bind p.s.extra = E` makes Q's p such a usage for `s.extra <=
 rows are read apart, each at the value of the instance it names, so an instance
 that breaks the relation is reported against that instance — at the line that
 makes it differ: the member of its own stating the value the binding carries in
-(q's `attribute :>> L = 50.0`), else the element the instance is read in, else
+(q's `attribute :>> L = 50.0`; where two values reach the instance, the one that
+breaks the relation — the one that makes it hold when it alone is put back to the value
+the relation's own context gives it; where none does, or a value carries a unit, the first value a binding carried), else the element the instance is read in, else
 its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never the usage the instances share — and the check rolls
 two or more of them up into one finding for each usage (past twenty usages of one
 relation, into one finding for the relation, counting every instance and naming
@@ -1042,8 +1047,14 @@ than 16,384 instance readings in this model)*, counts printed with thousands sep
 tool reads is one info finding that counts them all unread (where a binding holds
 in more than 4,096 contexts, *not read in at least* the instances found, and the `instances`
 payload then carries `atLeast: true`). A violated instance
-names the value it reads, the value the binding carries in and the binding
-(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``), and a path with a
+names the value that breaks the relation (the one above: `extra = 20` where
+`load = 2` alone would have held it; else the first value a binding carried), and, where a binding
+carries it in, the value the binding carries and the binding
+(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``). Instances that read
+the value from one line they share are one finding: `part def R { part q : Q {
+attribute :>> L = 50.0; } }` read by R's own q and by each `part r1 : R` points at that
+line once, named for what it redefines (`elementName` is `L`), and lists the others
+(*; the same line breaks it in r1::q::p, r2::q::p*). A path with a
 segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; the `instance` and
 `instances.listed` fields keep the names as written). A relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)

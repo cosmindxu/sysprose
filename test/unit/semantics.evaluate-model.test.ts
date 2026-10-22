@@ -6302,6 +6302,100 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     ).toEqual([['R3::Q2::p', 5, 'attribute :>> L = 50.0']]);
   });
 
+  it('names the value that breaks the relation, points at its line, and states a cause shared by instances once (PI-2, S1)', async () => {
+    const findings = async (text: string) => {
+      const { report } = await loadModelText(text, { fileName: 'pi2s1.sysml' });
+      return report.diagnostics
+        .filter((d) => d.code === 'validation/constraint-by-instance' && d.instance !== undefined)
+        .map((d) => [d.instance, d.range!.start.line, text.slice(d.range!.start.offset).split(/[;{]/)[0]!.trim(), d.elementName, d.message.slice(d.message.indexOf(' is violated in '))]);
+    };
+    const defs = [
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }',
+      '  part def Q {',
+      '    attribute L : ScalarValues::Real default = 1.0;',
+      '    part p : P { constraint c2 { load + extra <= 10.0 } }',
+      '    bind p.load = L;',
+      '  }',
+    ];
+    // Two values reach q2's p: `load = 2` through `L`, `extra = 20` through `E`. Put back to its default `extra` holds
+    // the relation, `load` does not, so `extra` is the difference: named, and anchored at the line stating it.
+    expect(
+      await findings(['package G1 {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['G1::q2::p', 8, 'attribute E : ScalarValues::Real = 20.0', 'E', ' is violated in G1::q2::p: extra = 20']]);
+    // A relation Q owns, read in q2 (a context, not a group): the same line, where it had pointed at `part q2`.
+    expect(
+      (
+        await findings(
+          [
+            'package G0 {',
+            ...defs.slice(0, 1),
+            '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c2 { p.load + p.extra <= 10.0 } }',
+            '  part q2 : Q { attribute :>> L = 2.0; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }',
+            '}',
+          ].join('\n'),
+        )
+      ).map((f) => f.slice(0, 4)),
+    ).toEqual([['G0::q2', 4, 'attribute E : ScalarValues::Real = 20.0', 'E']]);
+    // Only the one read there is: named too, where no binding carries it (it had no value clause).
+    expect(
+      await findings(['package G2 {', ...defs, '  part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['G2::q2::p', 8, 'attribute E : ScalarValues::Real = 20.0', 'E', ' is violated in G2::q2::p: extra = 20']]);
+    // Neither put back alone holds it: the first read a binding carried is named, as before.
+    expect(
+      await findings(['package G3 {', ...defs, '  part q2 : Q { attribute :>> L = 20.0; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['G3::q2::p', 8, 'attribute :>> L = 20.0', 'L', " is violated in G3::q2::p: load = 20 — q2.L = 20 through G3::Q's `bind p.load = L`"]]);
+    // One cause: a definition's usage states the value, so its own instance and each part typed by the definition
+    // read it from that one line. One finding, at the line (named for what it redefines), listing the others.
+    const shared = await findings(
+      ['package G4 {', ...defs, '  part def R { part q : Q { attribute :>> L = 50.0; } }', '  part r1 : R;', '  part r2 : R;', '}'].join('\n'),
+    );
+    expect(shared).toEqual([
+      [
+        'G4::R::q::p',
+        8,
+        'attribute :>> L = 50.0',
+        'L',
+        " is violated in G4::R::q::p: load = 50 — q.L = 50 through G4::Q's `bind p.load = L`; the same line breaks it in G4::r1::q::p, G4::r2::q::p",
+      ],
+    ]);
+    // A finding about a context that reaches a value through a reference names the context's instance, not
+    // the feature the last link ends at (p50's `load`, q2's p1's): the line to edit is the instance's.
+    const named = async (text: string) =>
+      (await loadModelText(text, { fileName: 'pi2s1n.sysml' })).report.diagnostics
+        .filter((d) => d.code === 'validation/target-by-specialisation')
+        .map((d) => d.message);
+    const T0 = 'part def T0 { attribute load : ScalarValues::Real default = 1.0; }';
+    expect(
+      await named(
+        ['package G7 {', T0, 'part p1 : T0;', 'part p50 : T0 { attribute :>> load = 50.0; }', 'part def P { ref part r1 : T0 default = p1; ref part r2 : T0 = r1; constraint c { r2.load <= 10.0 } }', 'part pa : P;', 'part pb : P { ref part :>> r1 = p50; }', '}'].join('\n'),
+      ),
+    ).toEqual(['pb::r2.load = 50 misses P::c (r2.load <= 10.0)']);
+    expect(
+      await named(
+        ['package G8 {', T0, 'part def P { part p1 : T0; ref part r1 : T0 = p1; ref part r2 : T0 = r1; constraint c { r2.load <= 10.0 } }', 'part def Q { part p : P; }', 'part q1 : Q;', 'part q2 : Q { part :>> p { part :>> p1 { attribute :>> load = 50.0; } } }', '}'].join('\n'),
+      ),
+    ).toEqual(['q2::p::r2.load = 50 misses P::c (r2.load <= 10.0)']);
+    // A satisfy context keeps the satisfier's name (h6), and a renamed redefinition no reference is read through
+    // its own (f1f): neither is the context's anonymous element or a name the finding's line does not carry.
+    expect(
+      await named(
+        ['package H6 {', 'part def P { attribute load : ScalarValues::Real default = 1.0; }', "requirement def 'Load in range' { subject s : P; require constraint { s.load <= 10.0 } }", 'part p1 : P { attribute :>> load = 50.0; }', "satisfy 'Load in range' by p1;", '}'].join('\n'),
+      ),
+    ).toEqual(["p1::s.load = 50 misses a constraint in Load in range (s.load <= 10.0)"]);
+    expect(
+      await named(
+        ['package F1f {', 'part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }', 'part p : P { attribute heavy :>> load = 50.0; }', '}'].join('\n'),
+      ),
+    ).toEqual(['p::heavy = 50 misses P::c (load <= 10.0)']);
+    // A value the instance's own element redefines (`extra`) is not among the reads: the relation is not mended by
+    // putting the one read back, so no read is said to break it and the first read a binding carried is named.
+    expect(
+      await findings(
+        ['package G5 {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }', '}'].join('\n'),
+      ),
+    ).toEqual([['G5::q2::p', 8, 'attribute :>> L = 2.0', 'L', " is violated in G5::q2::p: load = 2 — q2.L = 2 through G5::Q's `bind p.load = L`"]]);
+  });
+
   it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {
     // h2c and k2: q's L reaches Q's `p.m2` through Q's `bind p.load = L` (`bind p.x = L`); M7: q2's K
     // reaches the bound L. They were target-by-specialisation findings at P's m2, which mbse-workflow

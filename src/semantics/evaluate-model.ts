@@ -87,7 +87,7 @@ import {
 } from './defining-equation';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, type ExactScope, type Rational } from './exact';
-import { parseExpr, type EvalResult, type ExprNode } from './expr';
+import { evaluate, parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
   NO_MARKERS,
   bareLiteralRefusal,
@@ -1428,6 +1428,20 @@ export interface SpecialisationInstance {
   cause?: InstanceAbstention;
   /** The values the row read, for the value-source message and the witness (F5). */
   reads?: InstanceRead[];
+  /**
+   * On a violated row: the {@link InstanceRead.path} of the read whose value
+   * breaks the relation ({@link breakingRead}) — the one a finding names and
+   * points at. Unset where the reads cannot say which: the finding then names
+   * the first read a binding carried.
+   */
+  breaks?: string;
+  /**
+   * On a violated group row: its anchor is a line the instance shares with every
+   * instance of a definition its element is typed by (the literal `R::q::L =
+   * 50.0` under `part r1 : R`), the one cause of each of their findings
+   * ({@link instanceRollup} folds them into one).
+   */
+  sharedAnchor?: true;
   /** The two sides in SI where the row read a carried value as a quantity ({@link ConstraintCheck.sides}). */
   sides?: ConstraintSides;
 }
@@ -1441,6 +1455,13 @@ export interface SpecialisationBinding {
   value?: number | boolean | string;
   /** The unit the value is written in, when it carries one. */
   unit?: string;
+  /**
+   * The instance the context reads the name for, where the name reaches its
+   * feature through another one (`pb`'s `r2.load` over `ref part r1 = p50`
+   * reads p50's `load`): the finding names this instance, not the feature
+   * the last link ends at.
+   */
+  instance?: string;
 }
 
 /**
@@ -1630,6 +1651,41 @@ export function anchorFor(model: Model, check: ConstraintCheck, inst: Specialisa
   return cur ? cur.id : check.id;
 }
 
+/** Whether a value's text is one number as written (`50.0`), not an expression over other features. */
+function isNumberLiteral(text: unknown): boolean {
+  return typeof text === 'string' && /^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(text.trim());
+}
+
+/**
+ * The read whose value breaks a violated relation at an instance (PI-2): one
+ * that makes the relation hold when it alone is put back to the value the
+ * relation's own context gives it — the
+ * difference, where `load + extra <= 10.0` reads `load = 2` from one binding
+ * and `extra = 20` from another (`load` put back to 1 still misses). Read in
+ * the scalar scope the judgement itself used, so only where that reproduces
+ * the verdict and no value is a quantity in a unit: `undefined` otherwise (and
+ * where it throws), when the finding keeps naming the first read a binding
+ * carried.
+ */
+function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, expr: string, pass: ScalarPass, inst: string | undefined, judged: Judgement): InstanceRead | undefined {
+  const reads = judged.reads;
+  if (judged.result !== 'violated' || reads === undefined || reads.length === 0) return undefined;
+  try {
+    if (judged.sides !== undefined || reads.some((r) => typeof r.value !== 'number' || r.si === true || r.unit !== undefined)) return undefined;
+    const node = parseExpr(expr);
+    const here = combinedScope(model, reading, pass, inst);
+    const base = evaluate(node, here);
+    if (!('value' in base) || base.value !== false) return undefined;
+    const there = combinedScope(model, own, pass);
+    return reads.find((r) => {
+      const put = evaluate(node, (n) => (n === r.path ? there(n) : here(n)));
+      return 'value' in put && put.value === true;
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The anchor an instance's row sets (C.1's anchor rule, PI-2), so its finding
  * points at the line that makes the instance differ, never at the usage every
@@ -1660,7 +1716,7 @@ function instanceAnchor(
   reads: readonly InstanceRead[] | undefined,
   readIn: ElementId | undefined,
   own: ElementId | undefined,
-): ElementId | undefined {
+): { id: ElementId; shared?: true } | undefined {
   try {
     const user = (el: ElementRecord | undefined): el is ElementRecord =>
       el !== undefined && el.attrs.isLibrary !== true && el.attrs.implicit !== true;
@@ -1678,7 +1734,20 @@ function instanceAnchor(
         if (source === instance || !spellsInstance(source, instance)) continue;
         const d = definitions.denote(reader).get(source.slice(instance.length + 2).split('::').join('.'));
         const stated = d ? definitions.carrier(d.reader, d.feature) : undefined;
-        if (user(stated) && definitions.qualifiedNameOf(stated.id) === source) return stated.id;
+        if (user(stated) && definitions.qualifiedNameOf(stated.id) === source) return { id: stated.id };
+      }
+      // The only value read is a literal an element every instance of a definition shares states (`R::q::L
+      // = 50.0` for r1's q and r2's): no own element spells its source, and the line to change is that one.
+      const only = reads?.length === 1 ? reads[0]!.via : undefined;
+      for (let k = frames.length - 1; only?.sourceSymbol === source && k >= 0; k--) {
+        const reader = model.get(frames[k]!.reader);
+        const shared = reader !== undefined ? definitions.instanceNameOf(reader.id) : undefined;
+        if (!user(reader) || shared === undefined || mine.some((m) => m.reader === reader.id) || source === shared || !spellsInstance(source, shared)) continue;
+        const d = definitions.denote(reader.id).get(source.slice(shared.length + 2).split('::').join('.'));
+        const stated = d ? definitions.carrier(d.reader, d.feature) : undefined;
+        if (user(stated) && definitions.qualifiedNameOf(stated.id) === source && only.sourceValue === stated.attrs.value && isNumberLiteral(stated.attrs.valueText)) {
+          return { id: stated.id, shared: true };
+        }
       }
     }
     // No read names a source of its own: the stated member, from the innermost own element, the names
@@ -1688,10 +1757,11 @@ function instanceAnchor(
       if ((frame.reader !== own && !mine.includes(frame)) || !spellsInstance(inst, frame.instance)) continue;
       const at = frame.instance === inst ? '' : `${inst.slice(frame.instance.length + 2).split('::').join('.')}.`;
       const stated = definitions.statedMember(frame.reader, names.map((n) => at + n), at);
-      if (user(stated)) return stated.id;
+      if (user(stated)) return { id: stated.id };
     }
-    if (readIn !== undefined && user(model.get(readIn))) return readIn;
-    return mine[mine.length - 1]?.reader ?? (own !== undefined && user(model.get(own)) ? own : undefined);
+    if (readIn !== undefined && user(model.get(readIn))) return { id: readIn };
+    const innermost = mine[mine.length - 1]?.reader ?? (own !== undefined && user(model.get(own)) ? own : undefined);
+    return innermost !== undefined ? { id: innermost } : undefined;
   } catch {
     return undefined;
   }
@@ -1827,6 +1897,9 @@ function countsSentence(counts: InstanceCounts, listed: readonly string[], rows:
 /** Past this many contexts (or usages) of one relation, its findings fold into one per result (C.2). */
 export const TARGET_CONTEXT_FOLD = 20;
 
+/** A group lists at most this many of its violated instances, in instance order (C.2). */
+const MAX_LISTED_VIOLATED = 5;
+
 /** The source order of an element — its index in the model's parse-order walk. */
 export function sourceOrder(model: Model): Map<ElementId, number> {
   const order = new Map<ElementId, number>();
@@ -1898,7 +1971,7 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
     // usages and the first five violated instances (PI-4).
     const counts = countInstances(group);
     const violated = group.filter((i) => i.result === 'violated');
-    const listed = violated.slice(0, 5).map(instanceLabel);
+    const listed = violated.slice(0, MAX_LISTED_VIOLATED).map(instanceLabel);
     out.push({
       elementId: check.id,
       severity: counts.violated > 0 ? 'warning' : 'info',
@@ -1906,14 +1979,14 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
       instances: { ...counts, listed },
       relation,
     });
-    for (const inst of violated.slice(0, 5)) out.push(violatedInstanceRow(model, check, relation, inst));
+    for (const [inst, same] of foldSharedCause(model, check, violated).slice(0, MAX_LISTED_VIOLATED)) out.push(violatedInstanceRow(model, check, relation, inst, same));
     return out;
   }
   for (const rows of usages) {
     const violated = rows.filter((i) => i.result === 'violated');
     if (rows.length >= 2) {
       const counts = countInstances(rows);
-      const listed = violated.slice(0, 5).map(instanceLabel);
+      const listed = violated.slice(0, MAX_LISTED_VIOLATED).map(instanceLabel);
       const generic = rows.find((i) => i.generic === true);
       // The generic row is the usage's own instance: `({D}'s own)` names the
       // element that OWNS the usage (Q, not its part p), so "Q's own p".
@@ -1930,7 +2003,7 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
     // Whatever the group's size: a usage-owned relation's one other instance
     // (`part q1 : Q` over Q's `part p : P { constraint c2 … }`, whose own row is
     // the check itself) is a group of one, and its violation is still a finding.
-    for (const inst of violated.slice(0, 5)) out.push(violatedInstanceRow(model, check, relation, inst));
+    for (const [inst, same] of foldSharedCause(model, check, violated).slice(0, MAX_LISTED_VIOLATED)) out.push(violatedInstanceRow(model, check, relation, inst, same));
     // A group of one whose instance could not be read has no roll-up to count
     // it: it is a finding of its own, info, in the row's own sentence — as the
     // verify lane reports that row inconclusive.
@@ -1952,12 +2025,41 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
   return out;
 }
 
-/** One violated-instance finding, at the line that makes the instance differ. */
-function violatedInstanceRow(model: Model, check: ConstraintCheck, relation: string, inst: SpecialisationInstance): InstanceRollupRow {
+/**
+ * The violated instances of a group, one entry per cause (PI-2): an instance
+ * whose anchor is a line it shares with every instance of a definition
+ * ({@link SpecialisationInstance.sharedAnchor}: r1 and r2 of `part def R { part
+ * q : Q { attribute :>> L = 50.0; } }`) is the same finding as the first
+ * violated instance anchored at that line, and is listed with it.
+ */
+function foldSharedCause(
+  model: Model,
+  check: ConstraintCheck,
+  violated: readonly SpecialisationInstance[],
+): Array<[SpecialisationInstance, SpecialisationInstance[]]> {
+  const out: Array<[SpecialisationInstance, SpecialisationInstance[]]> = [];
+  const byAnchor = new Map<ElementId, SpecialisationInstance[]>();
+  for (const inst of violated) {
+    const anchor = anchorFor(model, check, inst);
+    const lead = inst.sharedAnchor === true ? byAnchor.get(anchor) : undefined;
+    if (lead !== undefined) {
+      lead.push(inst);
+      continue;
+    }
+    const same: SpecialisationInstance[] = [];
+    out.push([inst, same]);
+    if (!byAnchor.has(anchor)) byAnchor.set(anchor, same);
+  }
+  return out;
+}
+
+/** One violated-instance finding, at the line that makes the instance differ; `same` are the instances that line breaks it in too. */
+function violatedInstanceRow(model: Model, check: ConstraintCheck, relation: string, inst: SpecialisationInstance, same: readonly SpecialisationInstance[] = []): InstanceRollupRow {
+  const also = same.length === 0 ? '' : `; the same line breaks it in ${same.slice(0, 5).map((i) => quotePath(instanceLabel(i))).join(', ')}${same.length > 5 ? `, \u2026 and ${num(same.length - 5)} more` : ''}`;
   return {
     elementId: anchorFor(model, check, inst),
     severity: 'warning',
-    message: violatedInstanceMessage(model, quotePath(relation), check.expression, inst),
+    message: violatedInstanceMessage(model, quotePath(relation), check.expression, inst) + also,
     instance: instanceLabel(inst),
     relation,
   };
@@ -2038,9 +2140,11 @@ function rollupMessage(
  * (`load = 50 \u2014 q1.L = 50 through R17::Q's \`bind p.load = L\``).
  */
 function violatedInstanceMessage(model: Model, relation: string, expr: string, inst: SpecialisationInstance): string {
-  const read = inst.reads?.find((r) => r.via !== undefined);
+  const read = inst.breaks !== undefined ? inst.reads?.find((r) => r.path === inst.breaks) : inst.reads?.find((r) => r.via !== undefined);
   let detail = '';
-  if (read?.via) {
+  if (read && !read.via && inst.breaks !== undefined) {
+    detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)}`;
+  } else if (read?.via) {
     const v = read.via;
     const source = v.sourceValue !== undefined ? ` = ${String(v.sourceValue)}${v.sourceUnit !== undefined ? ` [${v.sourceUnit}]` : ''}` : '';
     detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)} \u2014 ${quoteSourcePath(v.sourcePath)}${source} through ${bindingText(model, v.bindingId)}`;
@@ -2323,6 +2427,7 @@ function readInContexts(
   const instances = check.instances ?? [];
   const bodyNames = relationNamesOf(expr);
   const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
+  let broken = 0;
   // The elements an expanded group's row reads as their own instance (q2's
   // `part :>> p { … }` is q2's p): that row is the relation read there.
   const standing = new Set((groups ?? []).filter((g) => g.expanded).flatMap((g) => [...(g.standsFor?.values() ?? [])]));
@@ -2400,12 +2505,17 @@ function readInContexts(
     // A value read in the context is shown beside a missing measure: it is why
     // the context reads the body otherwise.
     const read = missing.length > 0 ? [...missing, ...changed.filter((n) => own(n) && !missing.includes(n))] : changed;
+    const satisfied = pass.definitions.satisfaction(x.id);
     const shown: SpecialisationBinding[] = read.map((n) => {
       const featureId = ids.get(n)!;
       const value = scope(n);
+      // A name the context reads through a chain reaches a feature that is not the context's `n`: the
+      // finding names the context's instance (a satisfy's satisfier), not that feature.
+      const through = !own(n) && n.includes('.') && effectiveQualifiedName(model, featureId) !== `${effectiveQualifiedName(model, x.id)}::${n.split('.').join('::')}`;
       return {
         name: n,
         featureId,
+        ...(through ? { instance: instancePathOf(model, satisfied?.satisfier ?? x) } : {}),
         // A value read in the context is the context's own: named by it.
         qualifiedName: own(n)
           ? `${pass.definitions.contextName(x.id)}::${n}`
@@ -2417,15 +2527,20 @@ function readInContexts(
             : {}),
       };
     });
-    const satisfied = pass.definitions.satisfaction(x.id);
     const contextName = effectiveNameOf(model, satisfied?.satisfier ?? x) ?? nameOf(satisfied?.satisfier ?? x);
+    // The read whose value breaks the relation, where it read several (PI-2).
+    const broke =
+      readAs !== undefined && judged.result === 'violated' && broken++ < TARGET_CONTEXT_FOLD
+        ? breakingRead(model, el, reading, expr, pass, undefined, judged)
+        : undefined;
+    const several = broke !== undefined && (judged.reads?.length ?? 0) > 1;
     // The renamed end, for a row it leaves unread: the line an author edits.
     const anchor =
       readAs === undefined
         ? undefined
         : renamed !== undefined && judged.result === 'unknown'
           ? renamed.member.id
-          : instanceAnchor(model, pass.definitions, readAs, names, judged.reads, undefined, x.id);
+          : instanceAnchor(model, pass.definitions, readAs, several ? [broke.path] : names, several ? [broke] : judged.reads, undefined, x.id)?.id;
     instances.push({
       contextId: x.id,
       context: contextName,
@@ -2441,6 +2556,7 @@ function readInContexts(
       ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
       ...(causeOf(judged) !== undefined ? { cause: causeOf(judged) } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
+      ...(broke !== undefined ? { breaks: broke.path } : {}),
       ...(judged.sides ? { sides: judged.sides } : {}),
     });
   }
@@ -2498,6 +2614,7 @@ function groupInstanceRows(
   const featureId = shown[0]?.featureId ?? usage.id;
   const qualifiedName = effectiveQualifiedName(model, featureId);
   const rows: SpecialisationInstance[] = [];
+  let asked = 0;
   // One row per instance, thousands to a group: its fields set in the order they print.
   const push = (inst: string | undefined, judged: Judgement, readIn?: ElementId): void => {
     const row: SpecialisationInstance = {
@@ -2514,9 +2631,23 @@ function groupInstanceRows(
     else row.instance = inst;
     const element = inst !== undefined ? group.standsFor?.get(inst) : undefined;
     if (element !== undefined) row.elementId = element;
-    // Where the instance's finding points (PI-2): its own line, not the shared usage.
-    const anchor = inst !== undefined ? instanceAnchor(model, definitions, inst, names, judged.reads, readIn, readIn ?? element) : undefined;
-    if (anchor !== undefined) row.anchorId = anchor;
+    // Where the instance's finding points (PI-2): its own line, not the shared usage — that of the read
+    // whose value breaks the relation where it read several. Only a listed row is asked (the first
+    // {@link MAX_LISTED_VIOLATED} violated ones of the group).
+    const broke =
+      inst !== undefined && judged.result === 'violated' && asked++ < MAX_LISTED_VIOLATED
+        ? breakingRead(model, el, readIn !== undefined ? { ...el, ownerId: readIn } : reading, expr, pass, inst, judged)
+        : undefined;
+    if (broke !== undefined) row.breaks = broke.path;
+    const several = broke !== undefined && (judged.reads?.length ?? 0) > 1;
+    const anchor =
+      inst !== undefined
+        ? instanceAnchor(model, definitions, inst, several ? [broke.path] : names, several ? [broke] : judged.reads, readIn, readIn ?? element)
+        : undefined;
+    if (anchor !== undefined) {
+      row.anchorId = anchor.id;
+      if (anchor.shared) row.sharedAnchor = true;
+    }
     if (judged.abstention !== undefined) row.abstention = judged.abstention;
     const cause = causeOf(judged);
     if (cause !== undefined) row.cause = cause;
@@ -4386,6 +4517,15 @@ function readThroughSpecialisers(
   if (instances.length > 0) check.instances = instances;
 }
 
+/** An element's path from the package that holds it, effective names (`q2::p` for q2's `part :>> p`). */
+function instancePathOf(model: Model, el: ElementRecord): string {
+  const parts: string[] = [];
+  for (let cur: ElementRecord | undefined = el; cur && cur.eClass !== 'Package' && cur.eClass !== 'LibraryPackage'; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    parts.unshift(effectiveNameOf(model, cur) ?? nameOf(cur));
+  }
+  return parts.join('::');
+}
+
 /**
  * The finding an instance reports, worded for the specialiser it is anchored
  * at. A context that reads the body otherwise through a binding alone — no
@@ -4405,9 +4545,11 @@ function instanceMessage(
   if (judged.result !== 'unknown') {
     // A value read in a context is named by the context it is read in.
     const label = (b: SpecialisationBinding): string =>
-      b.qualifiedName === effectiveQualifiedName(model, b.featureId)
-        ? shortName(model, model.get(b.featureId), b.name)
-        : b.qualifiedName.split('::').slice(-2).join('::');
+      b.instance !== undefined
+        ? `${b.instance}::${b.name}`
+        : b.qualifiedName === effectiveQualifiedName(model, b.featureId)
+          ? shortName(model, model.get(b.featureId), b.name)
+          : b.qualifiedName.split('::').slice(-2).join('::');
     const shownValue = (v: unknown): string =>
       typeof v === 'number'
         ? String(Number(v.toPrecision(6)))
