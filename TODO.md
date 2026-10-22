@@ -360,14 +360,30 @@ they cannot, and the four-surface table pins A1–A9, A4, CAP1, X-shapes and the
 true values. What follows is what that branch and the review of it left open; entries tagged
 `[O2 …]` come from its steps and reviews.
 
-- [ ] **Meet the per-instance targets on a cold check.** After an edit, `big-bind-1200`'s check takes
-      1.3 s against the 1 s target (`7277a97`: 0.73 s), `tree10`'s warm check is about twice
-      `7277a97`'s (16 against 7–8 ms) and `big-bind-600` is 560 ms cold; the warm figures meet every
-      target. About 0.2 s of `big-bind-1200`'s cold check is `componentConnectors` filtering every
-      user binding connector once per component (index it by connector end), and `abstainedRead`
-      adds about 30 ms warm on `big-bind-600` (restricting it to models that assert something
-      changes no row on the 1,289 review models). Done when `big-bind-1200` is under 1 s cold, or the
-      target is restated on the warm figure with the reason. [O2 S5, review 2026-10-14 A-H2]
+- [ ] **Make the per-instance check cheaper after an edit, and bring tree10 back under 2x.**
+      cold-check S1 finds the connectors that join a component by connector end (358e0b7). Paired on
+      f3004c6 (median, min-max, load <=6): big-bind-1200 cold 1.95 s (1.77-7.95, n=9) to 1.77 s
+      (1.63-1.84, n=7); big-bind-600 cold 0.82 to 0.78 s, within the spread; perf9b and tree10 cold
+      unchanged. The cold target of 1 s is NOT met and the entry is not closed on the warm figure,
+      because tree10 misses its warm target. big-bind-1200 cold, three-way on this machine: 4ac2fff
+      (O2 merge) 1.48 s (1.37-1.58, n=7), f3004c6 1.95 s, cold-check S1 1.77 s, output identical;
+      about 0.5 s of the cold figure came in after O2, cause not isolated. tree10 warm, four-way,
+      alternating, n=8: 7277a97 9 ms (9-10), 4ac2fff 16 (15-17), f3004c6 35 (34-37), cold-check S1
+      36 (33-38): about 4x 7277a97 against the <= 2x target (tree10 output changed after O2). The
+      absolute warm targets hold: big-bind-1200 0.55 s (target 1 s), big-bind-600 0.27 s (700 ms),
+      perf9b 0.15 s (300 ms). Where the cold time goes: the per-instance reading itself
+      (groupInstanceRows, instanceGroups and bindingConflicts re-asking each row's names, about 1.7
+      s of 1,201 rows) and abstainedRead (about 0.15 to 0.2 s of big-bind-1200 cold). abstainedRead
+      cannot be restricted to models that assert something: with that restriction the test "a bound
+      read that throws is the read's abstention, not a depth limit (valueBoundInInstance, P17)" (T1
+      has no assert) turns from unknown to satisfied, a read failure dropped (probe:
+      cold-check-scratch/review-s1/mut-assert; vitest fails at
+      semantics.evaluate-model.test.ts:6521). A specialiser's lexical two-values, a bound source's
+      past-cap / defaults-differ and an internal throw are further possible no-assert abstentions,
+      not shown. Done when a model-level test proves that no abstention can arise or the per-row
+      answers are shared with collectReads, big-bind-1200 is under 1 s cold and tree10 is within 2x
+      7277a97 warm, or each is restated with a measured reason. [cold-check S1, O2 S5, review
+      2026-10-14 A-H2]
 - [ ] **Say the same thing about a bare literal in the note and the row.** After a carried value is
       read in the filled feature's declared unit, the `U3` note still reads `refuted … (5 vs 10 in
       M, coherent SI)` beside a verdict the unit reading reached; the literal and SMT notes of a
@@ -675,14 +691,12 @@ tagged `[O1 …]` are what its steps and reviews left open.
 From the review of the speed2 branch (66704a8, 79f7350, merged by 607e783): no verdict, code, exit
 code or value changed, and the claimed gains reproduce. These three are what it left.
 
-- [ ] **Cache `READINGS` from the second read on (optional).** The readings cache (`READINGS`,
-      `src/semantics/contracts.ts:663-691`) builds a JSON key and `structuredClone`s on every read,
-      so v9 `obligationsOf` is 1.039× slower than at 3ab826a (paired range 1.008–1.070 over 7 pairs,
-      about +2 ms) and `refineAll` 1.023×. Cache from the second read of a key on, or use a cheaper
-      clone. Done when v9 `obligationsOf` is no slower than at 3ab826a, paired. `engine-small` cached
-      from the second read of a key on and is faster than `98d3595`, but measures 1.08× `3ab826a`
-      paired (the cache costs about 1 ms; the rest comes from other merged changes): keep open, or
-      accept as a residual. [review 2026-10-14 C-F5; N1 S4]
+- [ ] **Skip the READINGS key until a second read is possible (optional, low).** On v9
+      `obligationsOf` makes 78 `readRelation` reads through the cache (`src/semantics/contracts.ts`
+      near `:678`, `:710-741`) with 0 hits: the JSON key and the Map get and set cost about 0.6 ms
+      (about 1.5%) per pass and gain nothing there. A cheaper key, or no key until a second read can
+      happen, would recover it; it is below what paired process timing resolves, so cold-check S2
+      did not attempt it. [cold-check S2, C-F5]
 
 ## Docs, tutorials and what waits on others — review 2026-10-14
 
