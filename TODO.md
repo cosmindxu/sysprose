@@ -386,15 +386,87 @@ true values. What follows is what that branch and the review of it left open; en
       `instanceGroups`, `readInContexts` and the obligations lane's `instanceRows` all ask it. A
       failed asserts listing is kept for the revision, so every row abstains until the next edit,
       even after a transient throw. [per-instance-rest S3, A.2.9]
-- [ ] **Decide whether an untyped asserted conjunction defines its equation's feature.** `attribute
-      L default = 1.0; assert constraint { L == 50.0 and L >= 0.0 }`: decision 14 makes the bare
-      equation `L == 50.0` the definition of L over its default, but the untyped rule reads the
-      default of a conjunction that holds an equation and reports the assert violated (cl F/F/F/X in
-      `rv-s3fit/p/cd2.sysml`'s U). If decision 14 covers conjunctions, that F is a false verdict on
-      all four surfaces; if it does not, the default stands as for an inequality (U5). The typed
-      rule already abstains on such a conjunction (CD23), which is weaker under either reading and
-      never false. Awaits the maintainer's ruling on decision 14; until then the F stays and is
-      pinned. [per-instance-rest S3]
+- [ ] **Make an unmarked `default` stand against every assertion (decision 14 amended 2026-10-22).**
+      DECIDED by the maintainer (analysis Q1, with Q2 = soft is written as a value, tag held): a
+      `default` is hard against every assertion; an assertion that contradicts it is reported
+      violated, and no surface reads an assertion's value into a default. A feature WITHOUT a value
+      keeps decision 14 (an asserted equation defines it: v9's CV-17 pattern). Soft is written as a
+      value (`attribute :>> mass = cellCount * cellMass;` in the variant or usage) or as a valueless
+      feature plus an equation. Why: U4 (an asserted equation replaces a default) and U5 (any other
+      assertion is checked against it) give opposite verdicts on logically equivalent assertions: `L
+      == 50.0 and L >= 0.0` is violated while the same two parts as two asserts define L = 50 (G1);
+      `L >= 50.0 and L <= 50.0` is violated while `L == 50.0` defines (G3); `L = L0` stands while
+      `bind L = L0` gives way over `L0 default = 1.0` (H2 against H2f, G2); and a soft override
+      prints nothing on any surface (`mass default = 1.2` with `assert constraint { mass == 0.8 }`:
+      `check` 0 errors 0 warnings, `verify --engine literal` passes `b.mass <= 1.0` at 0.8; with `=`
+      the same model is refuted). The standard's text reads a default as hard against assertions
+      (KerML 8.3.4.10.2, SysML 7.13.1 and 7.20.1). Work: (1) gate BOTH index builders:
+      `assertHeldIndex` stops collecting defaults (`src/semantics/defining-equation.ts:5776`) and
+      the enclosing rule files no assertion against a default (next to `:6310-6311`; a gate on the
+      first alone is a no-op); typed asserts keep abstaining (`:5970-5975`). (2) The binding route:
+      `endValue` calls `assertDefinesEnd` (`:7084`, `:7111`); an asserted value carried through a
+      binding must not replace a default either, so H2f reads as H2; a crude gate made H2f read
+      check `T` against numeric `F`, so design this route. (3) Say why in the violation sentence on
+      a default: "P::mass's `default = 1.2` is not changed by an assertion: write the analysis as
+      the value (`:>> mass = ...`) to replace it." (4) Re-pin the decision-14 default fixtures (the
+      differential table and the unit tests; the number is unknown, up to about 970 lines by grep),
+      rewrite USER-GUIDE `:1325-1362` and `:1446-1452` and the hints in DIAGNOSTIC-CODES `:429` and
+      `:495-496`, and add every probe of the analysis
+      (`~/Work/sysprose-soundness-artifacts/soft-hard-defaults/{p,p2,reconcile}`; the report is
+      `FINAL.md` there) to the M-generator or the table, pinning: no row reads T on one surface and
+      F on another; no verdict changes with the order of the text; no `default` reads an assertion's
+      value. Emulated on scratch trees (gating two lines): 146 rows in 35 of 101 probe files change,
+      every `default` row reads as the `=` row, no check row starts to abstain, typed asserts still
+      abstain. v9 has 0 `default` and 0 redefinition, so v9-gate must stay identical. After this,
+      re-measure and close or rewrite the entries that read an asserted equation over a default
+      ('Read an asserted equation through a binding's end', '... through a reference or a valued
+      part', 'Read a local equation over usage values', 'Read a framed equation in units', 'Taint
+      the instance an unread asserted equation reaches', 'Finish H5B'); they were not re-run under
+      the new rule. This entry replaces the untyped-conjunction question: for a `default` the
+      conjunction does not define, and today's F is the intended verdict. Done when the three pins
+      hold, the probes read as the `=` rows and the guide says so. Opus, critical (verdicts move on
+      four surfaces); about 50M. [soft-hard analysis Q1, Q2]
+- [ ] **Mark an obligation over a contradicted value inconclusive, and settle two disagreeing
+      asserted equations.** DECIDED (analysis Q4 and Q5). (1) When an assertion contradicts a value
+      (`=`, or a `default` once the entry above lands), `verify --engine literal` calls the pass
+      "unconditional" and exits 0, and `check` exits 0 with one warning; only the SMT engine fails
+      (exit 2; `soft-hard-defaults/p2/a1-hard-exit.sysml`). The literal engine marks every
+      obligation over the contradicted values inconclusive (exit 2) and names the violated
+      assertion; the `check` exit code stays. v9 must not move (its blocking gate admits no
+      constraint violation; re-run it). (2) Two asserted equations that give one valueless feature
+      different values are settled by position: the first written, or the local one, wins; swapping
+      them flips `t50` between `T/T/?/X` with literal exit 0 and `F/F/?/X` with exit 1
+      (`reconcile/n-ab.sysml`, `n-ba.sysml`; F1 and M8), and two asserts, one in P and one in `p`,
+      read T with `check` silent. Warn, name both equations, and abstain on every reading of that
+      feature (`=` is order-free). (3) M11: an `assert` inside a requirement def files an abstention
+      sentence beside a decided `t50` `F/F/F/X`. (4) One contradiction makes every SMT row of the
+      file `X`: say so in the guide. Same file as the entry above: run after it. Opus, critical;
+      about 50M. [soft-hard analysis Q4, Q5]
+- [ ] **Show `default` in `elements`, and read it in the workflow's `literal()`.** `elements` prints
+      `mass AttributeUsage = 1.2` for a default and a bound value alike
+      (`soft-hard-defaults/practice-probe/mass.sysml`). Print the word `default` for a default and
+      keep the line for `=`; the workflow's `literal()` (mbse-workflow-public `src/`, mirrored by
+      hand to ../mbse-workflow) must read both forms; its tests and the pin bump follow. Sonnet,
+      budget; about 1.5M plus the mirror. [soft-hard analysis]
+- [ ] **Parse `metadata X about Y;`.** The form of SysML 7.27.2's own example is a parse error
+      today. Also reconcile the short form `#k :>> L` (BNF `kebnf:1699-1701` against the 7.27.4
+      prose, not reconciled); it matters only if a tag ships. Parse and round-trip tests in existing
+      files. Sonnet with an Opus reviewer; about 5M. [soft-hard analysis]
+- [ ] **Match a keyword by its package, not its simple name.** `hasKeyword` accepts any definition
+      with the same simple name (`src/semantics/keywords.ts:186`), so `VendorHints::HardDefault`
+      stands for a Sysprose tag. The same function serves `#exceptional`
+      (`src/semantics/fault-tree.ts:487`, `:766`; not probed). Done when a foreign definition of the
+      same simple name is not taken for Sysprose's, for `#exceptional` and any later tag, and a test
+      says so. Sonnet with an Opus reviewer. [soft-hard analysis S-M4]
+- [ ] **Hold: an opt-in tag that lets an assertion adjust a written number (for example
+      `#provisional`).** DECIDED to hold (analysis Q2): a soft value is written as a value until a
+      model needs the tag, as `#Observable` was held
+      (`src/semantics/verification-vocabulary.ts:17-21`). If built: metadata cannot change a model's
+      meaning in the standard (KerML 7.4.13), so a tool without the tag reads the value as hard; it
+      must (M1-M5) gate both index builders and the binding route, be inherited by a redefinition
+      that does not repeat it with an explicit opt-out (Q6 = inherited), be identified by its
+      package (see the keyword entry), and be read in every `@`, `#` and `about` form. v9 and the
+      six Sysprose examples use no `default`. Opus; about 45M. [soft-hard analysis Q2, Q3, Q6]
 - [ ] **Name the differing value in a violated-instance finding.** Witnesses now carry their values
       (`engine-small`, merged by `318283c`), but the finding's value clause still names the first
       bound read: `g-a4r2` prints `load = 2` where `extra = 20` differs, and `s-a4` names no value.
