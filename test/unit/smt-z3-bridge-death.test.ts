@@ -28,10 +28,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 import {
   DEAD_MODULE_MARGIN_MS,
+  DEFAULT_TIMEOUT_MS,
   Z3ModuleDeadError,
   isZ3ModuleDeath,
   loadZ3,
   resetZ3Cache,
+  z3BudgetWatch,
   z3DeathCount,
   z3DeferredFinalizerCount,
 } from '@semantics/smt/z3-bridge';
@@ -425,6 +427,34 @@ describe('the negative control: what z3 SAYS is never a death', () => {
     const z3 = await backend();
     await expect(z3.check(SCRIPT, { timeoutMs: 0 })).rejects.toThrow(/finite positive number/);
     expect(z3DeathCount()).toBe(deaths);
+  });
+
+  it('reports the largest budget handed to a module while a window was open', async () => {
+    const z3 = await backend();
+    await z3.check(SCRIPT, { timeoutMs: 90_000 }); // before the window: not seen
+
+    const outer = z3BudgetWatch();
+    await z3.check(SCRIPT, { timeoutMs: 30_000 });
+    const inner = z3BudgetWatch();
+    await z3.check(SCRIPT); // no budget given: it ran under the default
+    const optimizeAlone = z3BudgetWatch();
+    await z3.optimize(`${SCRIPT}\n(maximize x)`, 'max', { timeoutMs: 20_000 });
+    expect(optimizeAlone(), 'an optimisation shows its budget to a window too').toBe(20_000);
+    await expect(z3.check(SCRIPT, { timeoutMs: 0 })).rejects.toThrow(/finite positive number/);
+    await z3.check(SCRIPT, { timeoutMs: 600_000 });
+    expect(inner(), 'the window opened later sees its own calls').toBe(600_000);
+    expect(outer(), 'the window opened earlier sees every call after it opened').toBe(600_000);
+
+    const quiet = z3BudgetWatch();
+    expect(quiet(), 'a window with no call is 0').toBe(0);
+    const dflt = z3BudgetWatch();
+    await z3.check(SCRIPT);
+    expect(dflt(), 'an unbudgeted check counts as the default').toBe(DEFAULT_TIMEOUT_MS);
+    const refused = z3BudgetWatch();
+    // Infinity is refused and would beat any window's 0 were it counted; 0 and -1 could not.
+    await expect(z3.check(SCRIPT, { timeoutMs: Infinity })).rejects.toThrow(/finite positive number/);
+    await expect(z3.optimize(`${SCRIPT}\n(maximize x)`, 'max', { timeoutMs: Infinity })).rejects.toThrow(/finite positive number/);
+    expect(refused(), 'a refused budget was never handed to a module').toBe(0);
   });
 
   it.each<[string, unknown, boolean]>([
