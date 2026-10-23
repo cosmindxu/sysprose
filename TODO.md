@@ -105,50 +105,19 @@ abstain on or read false in the four-surface table
 an asserted equation override a `default` on every surface, read definition-feature and part-valued
 bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open.
 Since per-instance-rest (merged by `ca4992c`), `KNOWN_FALSE` is empty (it held 20 rows at 3c54ae0),
-so the plan's "Done means" item is met, and no allowlist entry is tagged `no step yet`. The
-residuals are the entries below. The false verdicts the review of 2026-10-14 found in the
-per-instance code itself follow under their own headings.
+so the plan's "Done means" item is met, and no allowlist entry is tagged `no step yet`. Since
+default-stands (decision 14 amended 2026-10-22) a `default` stands against every assertion; only a
+feature without a value is defined by an asserted equation. The residuals are the entries below. The
+false verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
+headings.
 
-- [ ] **Read an asserted equation through a binding's end.** An equation that decision 14 makes stand
-      over a `default` carried by a binding component (only defaults) abstains on every surface with
-      `unread-binding`, wherever the binding or the assert is written (O9 S2). Probes: RB3 and RB4
-      (the package assert over Q's binding; RB4's q2 abstains too); RB5, RB5C, RB5D, RB5F (Q's
-      `p.x == 50.0` over a binding in q1, in q1's p, in the package, or in W; truth K = 50); RBS1,
-      RBS2, RBS5 (the assert in a specialisation, beside the binding in the package, or in a usage;
-      truth L = 3, top T); PJ (P's framed `L == M` over q's `bind p.L = K`; truth 7). Reading these
-      needs the component's value taken from the equation (`classified` / `endValue`), and the
-      numeric and SMT lanes dropping the component's default at that instance; the SMT still keeps
-      that default axiom, so PJ's `P::c` reads X (I7) and RB5 with a relation on P reads
-      inconsistent axioms. [O9 S2]
-- [ ] **Read an asserted equation through a reference or a valued part.** RF, RF2 and RF3: the rows
-      through Q's `r`, q's `r` and `p1` abstain; under decision 14, `p1.x` and `q.r.x` are 50. P's
-      own `c` (and RF3's `p0`) stays T beside the SMT's inconsistent axioms (I7), because the SMT
-      reads Q's `r.x` as P's generic x. Reading these needs the referenced instance's symbol filed
-      with q's frame, and an SMT instance split. [O9 S2]
-- [ ] **Read a local equation over usage values that read names or bindings.** P's `L == M` is read
-      per instance only where every usage that values M gives a literal (or a `default`, U7). Every
-      reading of L abstains, P's own and p's literal frame included, when a usage gives M an
-      expression over other names (PIN5's `:>> M = K`), or a binding joins M to a value (PA's `bind
-      p2.M = K`, PA4's `bind M = K` in p2, PA2, and PA0 with no literal frame); the binding's own
-      `#bind` row abstains too. Fix: an independence check of the frame's value, as `valued` does in
-      the owner, and a reading of the bound value per instance. [O9 S2]
-- [ ] **Read a framed equation in units.** P's `L == M` with P5's or p's `:>> M = 7.0 [kg]`: the check
-      and the literal engine abstain (`"L" has no value in scope`). `P::qa`'s generic row went from
-      T/-/T/- at aac38fd to ?/-/T/- since O9 S2; the context rows the review fixes add read ?/?/?/T
-      (cT) and ?/?/?/? (cF), and the package rows ?/?/T/T and ?/?/F/?. None is false; readings are
-      lost. Shapes: the M-generator files `dt_frame_{usage,spec,deep}_kg`. [O9 review]
-- [ ] **Taint the instance an unread asserted equation reaches, not the definition's feature.** Three
-      refusals (through a reference or valued part, the bound-partner refusal, and the unsure /
-      framed refusal) taint a definition's feature and its redefiners (`P::x`, `P::load`, `P::L`),
-      so true rows of every other instance abstain: h5bD and h5bL (`P::c`, `P::c in Q::p` and `in
-      q1::p` were T/T/T/X and are now ?/?/?/?; in h5bL, q2's L is a plain 5), RB4's q2, PIN5's
-      `P::c` and p's rows, PA's `P::c`. Sound, only weaker. An instance-only taint must still reach
-      the binding partners: q2's L through Q's `bind p.load = L`. [O9 S2, review]
-- [ ] **Finish H5B: an element's own equation over a default.** An element's own asserted equation
-      over a `default` still abstains as `not-enumerated` when the enclosing rule does not file it
-      because the other side has no value (`extra == M`), and when the default is also held by the
-      local rule (q7's `:>> extra default = 7.0` plus `extra == 2.0`, or the element's type's own
-      assert). The wording of those refusals is a separate entry. [O9 S2]
+- [ ] **Read another part's own rows past an assert read through a part valued with it (RF2).**
+      Unchanged on dca0014. `P::c in other` and `top` read ?/?/?/?, and `Q::tie in q` reads ?/-/?/-.
+      RF and RF3 read T/T/T/X, and their tie F. [O9 S2, default-stands S2]
+- [ ] **Read a local equation where a binding gives its other side a value (PA, PA4, PA2, PA0).**
+      Unchanged on dca0014. `P::qa in p2` reads ?/-/?/- (ref F). P's own `qa` reads T/-/?/- (the
+      numeric surface abstains over the bound M). `top2` reads T/T/T/X and the `#bind` row F/-/F/-.
+      [O9 S2, default-stands S2]
 - [ ] **Read a satisfaction, a subject or a reference a definition writes in each instance of it.**
       Since per-instance-rest S1 these are read at the values of the element they are written in,
       and each of their rows abstains (`unread-binding`, naming the instance) where an instance of
@@ -216,7 +185,7 @@ per-instance code itself follow under their own headings.
       "the numeric surface never gathered this relation" (SAT2). [O9 S1]
 - [ ] **Abstain on a self-contradictory model, or keep the pin.** LE (`P::c` and `P::c in Q::p`) and
       K1T (`P::c in K1T::q3::p`, which abstained at aac38fd and which `readAt` now decides) read
-      T/T/T/X: true where they are read (x is 3 there), beside a whole-model contradiction the SMT
+      T/T/T/X: true where they are read (x reads its `default = 2.0` there, which P's `own { x == 3.0 }` and q1's tie are both checked against), beside a whole-model contradiction the SMT
       reports. Ruled at the merge: a permanent `I7_ALLOWED` pin with the LE wording, as for R8. The
       alternative is to abstain on every row of a model the enclosing rule finds contradictory (or
       where an element's assert gives the feature two values anywhere in the group). Optional.
@@ -253,6 +222,9 @@ per-instance code itself follow under their own headings.
       instance's own redefinition of p); rh and rh2 (pinned, own sentences); X11's value-source
       clause; the Q4 and RH2 'no value anywhere' sentences; BW4/BW5 (a chain to a default a binding
       holds names the binding). [O5, review, per-instance-rest S2]
+      Since default-stands S2: item (1) closes (GA6 `qa` and `pa in Q::p` and GA12 `qa in q` read
+      ?/-/?/- with ref '?'; GA6/GA12 `pa` and GA12 `qa` read T/-/T/- with ref T); item (6)'s GW
+      example is obsolete: `pl in q2` reads T/T/T/X, ref null.
 
 - [ ] **Finish what `table-rows` left of E3 and E9, and the numeric surface's reading of an
       evaluated pair.** (1) E3 `h2p0` (`P::c in Q::p`) and `h2c0` (`Q::c`) read ?/?/?/? beside ref
@@ -328,6 +300,9 @@ per-instance code itself follow under their own headings.
       four surfaces ("a referenced value is unknown"), and `w.m` read from outside reads ?/?/F/? as
       at 3c54ae0.
       [per-instance-rest S1, S3, review]
+      Since default-stands S2: item (4)'s '(which keeps its reading)' is obsolete: an untyped
+      asserted equation over a default is checked against it, and the lexical reading also reads a
+      default an assert names as its value (LP1, SLD, SLO, SLP).
 - [ ] **Read bindings deeper than 32 usages (optional).** A context more than `MAX_BINDING_SEGMENTS`
       (32, `src/semantics/defining-equation.ts:2001`) usages below where its binding is written is
       not read, so the check and the literal engine abstain on `chain33` and `chainPkg33` (four
@@ -380,49 +355,9 @@ true values. What follows is what that branch and the review of it left open; en
       `instanceGroups`, `readInContexts` and the obligations lane's `instanceRows` all ask it. A
       failed asserts listing is kept for the revision, so every row abstains until the next edit,
       even after a transient throw. [per-instance-rest S3, A.2.9]
-- [ ] **Make an unmarked `default` stand against every assertion (decision 14 amended 2026-10-22).**
-      DECIDED by the maintainer (analysis Q1, with Q2 = soft is written as a value, tag held): a
-      `default` is hard against every assertion; an assertion that contradicts it is reported
-      violated, and no surface reads an assertion's value into a default. A feature WITHOUT a value
-      keeps decision 14 (an asserted equation defines it: v9's CV-17 pattern). Soft is written as a
-      value (`attribute :>> mass = cellCount * cellMass;` in the variant or usage) or as a valueless
-      feature plus an equation. Why: U4 (an asserted equation replaces a default) and U5 (any other
-      assertion is checked against it) give opposite verdicts on logically equivalent assertions: `L
-      == 50.0 and L >= 0.0` is violated while the same two parts as two asserts define L = 50 (G1);
-      `L >= 50.0 and L <= 50.0` is violated while `L == 50.0` defines (G3); `L = L0` stands while
-      `bind L = L0` gives way over `L0 default = 1.0` (H2 against H2f, G2); and a soft override
-      prints nothing on any surface (`mass default = 1.2` with `assert constraint { mass == 0.8 }`:
-      `check` 0 errors 0 warnings, `verify --engine literal` passes `b.mass <= 1.0` at 0.8; with `=`
-      the same model is refuted). The standard's text reads a default as hard against assertions
-      (KerML 8.3.4.10.2, SysML 7.13.1 and 7.20.1). Work: (1) gate BOTH index builders:
-      `assertHeldIndex` stops collecting defaults (`src/semantics/defining-equation.ts:5776`) and
-      the enclosing rule files no assertion against a default (next to `:6310-6311`; a gate on the
-      first alone is a no-op); typed asserts keep abstaining (`:5970-5975`). (2) The binding route:
-      `endValue` calls `assertDefinesEnd` (`:7084`, `:7111`); an asserted value carried through a
-      binding must not replace a default either, so H2f reads as H2; a crude gate made H2f read
-      check `T` against numeric `F`, so design this route. (3) Say why in the violation sentence on
-      a default: "P::mass's `default = 1.2` is not changed by an assertion: write the analysis as
-      the value (`:>> mass = ...`) to replace it." (4) Re-pin the decision-14 default fixtures (the
-      differential table and the unit tests; the number is unknown, up to about 970 lines by grep),
-      rewrite USER-GUIDE `:1325-1362` and `:1446-1452` and the hints in DIAGNOSTIC-CODES `:429` and
-      `:495-496`, and add every probe of the analysis
-      (`~/Work/sysprose-soundness-artifacts/soft-hard-defaults/{p,p2,reconcile}`; the report is
-      `FINAL.md` there) to the M-generator or the table, pinning: no row reads T on one surface and
-      F on another; no verdict changes with the order of the text; no `default` reads an assertion's
-      value. Emulated on scratch trees (gating two lines): 146 rows in 35 of 101 probe files change,
-      every `default` row reads as the `=` row, no check row starts to abstain, typed asserts still
-      abstain. v9 has 0 `default` and 0 redefinition, so v9-gate must stay identical. After this,
-      re-measure and close or rewrite the entries that read an asserted equation over a default
-      ('Read an asserted equation through a binding's end', '... through a reference or a valued
-      part', 'Read a local equation over usage values', 'Read a framed equation in units', 'Taint
-      the instance an unread asserted equation reaches', 'Finish H5B'); they were not re-run under
-      the new rule. This entry replaces the untyped-conjunction question: for a `default` the
-      conjunction does not define, and today's F is the intended verdict. Done when the three pins
-      hold, the probes read as the `=` rows and the guide says so. Opus, critical (verdicts move on
-      four surfaces); about 50M. [soft-hard analysis Q1, Q2]
 - [ ] **Mark an obligation over a contradicted value inconclusive, and settle two disagreeing
       asserted equations.** DECIDED (analysis Q4 and Q5). (1) When an assertion contradicts a value
-      (`=`, or a `default` once the entry above lands), `verify --engine literal` calls the pass
+      (`=` or a `default`), `verify --engine literal` calls the pass
       "unconditional" and exits 0, and `check` exits 0 with one warning; only the SMT engine fails
       (exit 2; `soft-hard-defaults/p2/a1-hard-exit.sysml`). The literal engine marks every
       obligation over the contradicted values inconclusive (exit 2) and names the violated
@@ -436,6 +371,128 @@ true values. What follows is what that branch and the review of it left open; en
       sentence beside a decided `t50` `F/F/F/X`. (4) One contradiction makes every SMT row of the
       file `X`: say so in the guide. Same file as the entry above: run after it. Opus, critical;
       about 50M. [soft-hard analysis Q4, Q5]
+- [ ] **Say why on an instance row, and through a binding, when a violated assert leaves a default
+      standing.** `standingDefaultSentence` is printed only on `check`'s message for a violated
+      `assert` that is an equation naming the `default`'s feature alone on one side, in the assert's
+      own element, where no binding makes that default give way. Two cases print no reason. An
+      instance row: h2e-ancestor-assert-eq's `q::L = 50 misses Q::tie (p.load == L)` never says that
+      P::load's `default = 1.0` stood. And a default the assert reaches only through a binding
+      (RB3's tie). The instance row needs the instance's own reading: naming Q::L's `default = 1.0`
+      where q writes `L = 50.0` would mislead. [default-stands S1]
+- [ ] **Read an assert in the binding's type at an instance whose binding joins the asserted path to
+      a value (RB5).** No surface reads Q's `assert constraint tie { p.x == 50.0 }` for an instance
+      whose own binding joins p.x to a value: `part q1 : Q { bind p.x = K; }`, q1's `part :>> p {
+      bind x = K; }`, the package's `bind q1.p.x = K`, or a definition's around q1 (RB5F). With K's
+      `default = 9.0`, every reading of the pair now abstains (`standingUnderInstance` in
+      defining-equation.ts, `unread-binding`): verify exits 2 and check prints 4 infos. With `K =
+      9.0` the model, which contradicts itself, passes silently on every surface (check OK, literal
+      and SMT exit 0). File `Q::tie in q1` as violated on the check and the numeric surface, and as
+      an axiom for SMT so its axioms read inconsistent. Then read K's 9 again under the default and
+      drop the abstention. [default-stands S1] Q's own `tie` row abstains too: it reads ?/-/?/- in
+      RB5, RB5C, RB5D and RB5F (ref T), because p.x has no value in Q and the assert defines it (the
+      last case of the closed 'Taint the instance ...' entry).
+- [ ] **Word the abstention for two defaults a binding joins in one instance (GA6).** `bind p.load =
+      L` joins P's `load default = 7.0` and Q's `L default = 5.0`. Reading neither is correct (two
+      defaults that differ), but the row of Q's asserted `L == 5.0` abstains with 'L has no value
+      anywhere and nothing specialises it', which names neither the binding nor the two defaults.
+      Say instead that the binding joins two defaults that differ (7.0, 5.0), so neither is read.
+      [default-stands S1]
+- [ ] **Read a `default` that an assert in an enclosing scope names, instead of abstaining (A.2.4
+      lexical rule).** `assertAbove` / `enclosingAssertOn` still make a constraint over a `default`
+      abstain when an assert in an enclosing scope names that default. Since decision 14 was amended
+      no assertion changes a default, so this abstention is now only conservative: read the default,
+      and check the assert against it as for a value written with `=`. Pin each row against its `=`
+      twin. [default-stands S1]
+- [ ] **Remove the decision-14 default machinery, or ship the held tag (analysis Q2).**
+      `replaceableDefaults` (always empty) gates code that is now unreachable: the local rule
+      (`assertHeldIndex`), the enclosing rule's owner loop (`enclosingAsserts`), the binding route's
+      replaceable branch in `heldDefaults`, the guard's `assertedDefault`, `assertDefinitionsAt`,
+      `unreadAsserts` from the owner loop, `givenWayCause`'s untyped branch, and `assertedAnswer`
+      over defaults. Remove it unless the soft tag ships. Keep `standingUnderInstance` (the RB5
+      abstention) and the head-slot read (`headSlots` / `definedAgainstHead`): they serve the
+      amended rule. Planted bug P5 sits in the dead code and is an equivalent mutant again: move it
+      or retire it. [default-stands S1] Name the dead user-facing strings so they go with it:
+      evaluate-model.ts near :4109 ('which gives way to an asserted equation') and :4836 ('(an
+      asserted equation overrides a default)'), and defining-equation.ts near :6764 and :6797
+      ('under decision 14 the equation stands over ...').
+- [ ] **Give the shared-reason I7_ALLOWED keys their own reasons.** About 188 keys share one reason
+      in test/integration/verification.differential.test.ts ('an assert contradicts a value that
+      stands …'): default-stands S1's and its review's (W4X5, stand-w4a/w4b and their twins,
+      stand-x3f, stand-x5, stand-x6). Split them by probe family, so that a later move is attributed
+      to its cause. [default-stands S1]
+- [ ] **Read `bind L = L0` over a valueless L as `L = L0` is read, so H2f decides as H2.** The
+      maintainer decided that H2f reads as H2 (analysis G2; KerML 8.4.4.11 makes `L = L0` and `bind
+      L = L0` one construct). Since default-stands S1, H2f reads as its own `=` twin and never reads
+      the assert's 50 into L0 (u1 T/T/T/X). But its L rows abstain (ca ?/-/F/-, t1 ?/?/?/X, t50
+      ?/?/F/X) where H2 decides (ca F/-/F/-, t1 T/T/T/X, t50 F/F/F/X). The cause: H2's `L = L0`
+      gives L a value, so the assert is checked against L0's 1; H2f's L is valueless, so the assert
+      defines it and the binding gives it a second value. Read a binding from a valueless end to a
+      valued feature as giving that end the value, as `=` does. Then H2f decides as H2 on all four
+      surfaces, and its `=` twin as H2's; pin all four with I14. [default-stands S1, G2]
+- [ ] **SMT decides beside a violated top-level binding (G340, ref null).** In G340, `bind
+      r.q.p.load = r.q.L` reads F/-/F/-: load stands at 1.0, and L = 50 from Q's assert at K = 25.
+      Yet SMT decides (negT F, posF T) rather than reporting inconsistent axioms, as it does for
+      h2e's enclosing assert. The `=` twin reads the same on 414ba14, so this is the existing `=`
+      behaviour, not a change made here. Check whether the binding should be an SMT axiom.
+      [default-stands S1] Two more cases: (1) the `=` twin of h5-m3t (`L = 1.0`): the check reports
+      `P2::a2 in Q3::p` violated, yet SMT proves `k`, and the literal engine and SMT both exit 0;
+      with `default`, SMT exits 2. (2) The M-generator's `g_assert_*_encl_d{1,2}_pd1_*` and
+      `g_assert_*_pkg_d2_*` (12 files) read F/F/F/F with SMT `refuted` on a self-contradictory
+      model; the other 68 placements read X.
+- [ ] **Carry no asserted value through a package head's slot into a `default` that gave way to
+      another default (E1).** `bind P::load = M` (M `default = 9.0`) beside `part p4 : P { attribute
+      :>> load default = 7.0; }`: the two defaults differ, so M gives way (decision 10). Add
+      `attribute L; assert constraint fix { L == 5.0 }; bind p2.load = L;` and `constraint c3T {
+      p3.load <= 6.0 }`. c3T then reads ?/?/?/T: the check, literal and numeric surfaces abstain,
+      but SMT proves it from L's 5, carried through p2's slot into M and on to p3's load. M has no
+      value, and no assertion should give it one. `definedAgainstHead` skips a head whose component
+      holds only defaults that give way. Make that head's slot abstain, or refuse the axiom on the
+      verification lane, as `gateRelation` does for a default named directly. It holds on the
+      implementer's tree too, so it is not a regression. Probe:
+      default-stands-scratch/fin/np/edge1.sysml. [default-stands S1 review]
+- [ ] **Carry an asserted inequality over a `default` a binding makes give way with no value, on the
+      SMT lane.** Since default-stands S1, `gateRelation` refuses every asserted relation over such
+      a default (`givenWayUnvalued`), inequalities included. perf9b (per-instance/rv) goes from 2 to
+      768 refused obligations: 766 `N0::lo` (`x >= 0.0`) axioms are `unread-definition`. GI's gT
+      `q.p.load >= -1.0` loses its SMT proof (?/?/?/T at 414ba14, ?/?/?/? now; probe
+      default-stands-scratch/brv/p/gi.sysml). It was kept on purpose: `L >= 5.0 and L <= 5.0` fixes
+      the symbol as `L == 5.0` does. A fix carries only an asserted relation that cannot fix the
+      symbol (no pair of bounds that meet), and names those moves. [default-stands review]
+- [ ] **Read a binding component whose valued members agree.** In X6, W's `bind q.p.load = M` (M =
+      3.0) sits beside Q's asserted `L == 3.0`. `X6::P::c in X6::W::q::p` and `in X6::w::q::p` read
+      ?/?/?/X ('joins two values the model states (q.p.load, q.L, M)') although the two values
+      agree. The fix: compare the valued members exactly in `boundSourceIn` before abstaining, as
+      `definedAgainstBoundIn` does, then re-pin stand-x6 and drop the 'known gap' clause from
+      USER-GUIDE ('even where the two values agree, as here'). Probe:
+      default-stands-scratch/fin/np/x6.sysml. [default-stands review]
+- [ ] **Encode a definition's binding in each usage's instance.** In x6n (X6 without Q's assert),
+      the SMT engine proves `X6N::P::c in X6N::W::q::p` but finds a counterexample for `in
+      X6N::w::q::p`. The witness gate then demotes it to 'witness not confirmed', because the
+      numeric surface reads 3. It is safe, but a reading is lost. Identical at 414ba14. Probe:
+      default-stands-scratch/branch-review/p4/x6n.sysml. [default-stands review]
+- [ ] **Keep the numeric solve off a feature an assertion constrains in a form it does not read.**
+      Take a feature with no value that an assertion constrains in a form the solve does not read:
+      an asserted conjunction `L == 50.0 and L >= 0.0`, an inequality, a disjunction, or a
+      requirement's `require`/`assume`. The numeric surface then takes the first plain equality over
+      the feature, in TEXT ORDER, as its design equation, and reads every other at that point.
+      Beside the conjunction, from which SMT proves t50, the reversed text reads t50 F on the
+      numeric surface and T on SMT: a false F. The shapes are the soft-hard analysis' S1_N_and,
+      S1_KN_and, S2enc_N_and, S2spec_N_and and S2use_N_and, each with its members reversed. In all,
+      38 N/KN cells flip with the order of the text. Fix: take no design equation over such a
+      feature (the numeric surface then reads `?`), or read the conjunction's equation part. Measure
+      the corpus and v9 first. Then drop SH_CLASH_KNOWN and the SH_NUM entries of SH_ORDER_APART in
+      the M-generator (canonical copy ~/Work/sysprose-soundness-artifacts/per-instance/gen/gen.py,
+      once copied back). [default-stands S2]
+- [ ] **File a definition's context row under one name whatever the declaration order.** A relation
+      of P read in a specialisation P2 :> P whose one usage is p is filed `P::ca in P2` when P2 is
+      written first, and `P::ca in p` when p is, with the same verdict. This shows in H3, H6 and the
+      24 S3 spec cells of the soft-hard analysis with their members reversed (the M-generator prints
+      them RENAMED, 27 pairs). File the row under P2 wherever it is declared. [default-stands S2]
+- [ ] **Report a feature that redefines its own sibling.** `part def Battery { attribute mass
+      default = 1.2; attribute :>> mass = 0.8; … }` gets 0 findings. KerML lets a feature redefine
+      only features its owner inherits, not one its own owner declares. Add a validation finding,
+      with a code and a range, plus a catalogue entry and `npm run codes`. Probe:
+      default-stands-scratch/review-s2/p/msg-own-fix.sysml. [default-stands S2 review]
 - [ ] **Parse the rest of the `about` forms.** `metadata T about A, B { ... }` parses since
       small-defaults S2. Still failing: the named and typed form from SysML 7.27.2, `metadata
       securityDesignAnnotation : SecurityRelated about SecurityRequirements, SecurityDesign;`
