@@ -3724,6 +3724,9 @@ state def FlightModes {
 One attribute per field, so the phrase-to-atom trace survives a save: a reader
 can see which pattern, over which scope, filled by which atom, without
 re-parsing a sentence.
+A carrier is read from the element it is written in: `about` is not read, so a
+`PropertyPattern`, `Evidence` or `FaultHypothesis` written with `about` is refused
+(`mapper/carrier-about-unread`) and the checks abstain. Write it inside its target.
 
 **What it refuses to say, and how each refusal reads.**
 
@@ -3997,9 +4000,10 @@ and a `comment` have nowhere to put one. The tool refuses rather than accepting
 a tag that would vanish on the next save: the Kind selector is absent on those
 elements and the writer throws. A `doc` and a `comment` still *read* as prose —
 they simply cannot be told to be anything else. The other way a kind can be
-invisible is the longer metadata form: `@ProseStatement about p1;` parses and
-round-trips, but it is not read as a kind, because reading it means resolving
-`about` against scope and this tool does not do that yet.
+invisible is the longer metadata form: `@ProseStatement about p1;` (or, with the
+keyword, `metadata ProseStatement about p1;`) parses and round-trips, the keyword
+form printed as the `@` form, but it is not read as a kind, because reading it
+means resolving `about` against scope and this tool does not do that yet.
 
 In the app the kind is **Properties → Kind** (`prop-statement-kind`), offered on
 every element that can carry one — not only on requirements, since guidance is

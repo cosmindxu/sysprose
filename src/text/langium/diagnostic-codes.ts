@@ -124,6 +124,14 @@ const CODES = [
   },
 
   {
+    code: 'mapper/carrier-about-unread',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A SysproseVerification carrier (PropertyPattern, Evidence or FaultHypothesis) is written with `about` (`@T about X` or `metadata T about X`). Every reader takes a carrier from the element it is written in and none reads `about`, so the property would be dropped or checked on the wrong element.',
+    hint: 'The carrier {found} is read on the element it is written in, and `about` is not read. Write it as `@Type { … }` inside the element it is about; the load stays degraded and the checks abstain until you do.',
+  },
+
+  {
     code: 'parse/dangling-then',
     source: 'mapper',
     severity: 'error',

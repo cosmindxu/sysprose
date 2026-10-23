@@ -168,6 +168,13 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 - **Fires when:** A declaration keyword the grammar accepts has no metaclass in this tool — the KerML type/feature family (namespace, class, feature, step, connector, …).
 - **Hint given:** This KerML keyword {found} is not modelled; the declaration and its body are preserved verbatim and re-emitted unchanged on save. Rewrite it with a supported keyword such as part, attribute, item, port, action or state.
 
+### `mapper/carrier-about-unread`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** A SysproseVerification carrier (PropertyPattern, Evidence or FaultHypothesis) is written with `about` (`@T about X` or `metadata T about X`). Every reader takes a carrier from the element it is written in and none reads `about`, so the property would be dropped or checked on the wrong element.
+- **Hint given:** The carrier {found} is read on the element it is written in, and `about` is not read. Write it as `@Type { … }` inside the element it is about; the load stays degraded and the checks abstain until you do.
+
 ## Reference resolution
 
 A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.
@@ -915,4 +922,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*117 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*118 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

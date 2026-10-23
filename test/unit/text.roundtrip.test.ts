@@ -319,6 +319,22 @@ describe('round-trip — hand-written snippets', () => {
       }`,
     ],
     [
+      'metadata annotation (keyword form, SysML 7.27.2 example)',
+      `package AnnK {
+        part def Design;
+        part def Other;
+        metadata def ApprovalAnnotation {
+          attribute approved : Boolean;
+          attribute approver : String;
+        }
+        metadata ApprovalAnnotation about Design {
+          approved = true;
+          approver = "John Smith";
+        }
+        metadata ApprovalAnnotation about Design, Other;
+      }`,
+    ],
+    [
       'dependency with multiple clients & suppliers',
       `package Dm {
         part a;
@@ -1003,6 +1019,59 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     const ann = a.all().find((e) => e.eClass === 'MetadataUsage' && e.attrs.annotation === true)!;
     expect(ann.attrs.type).toBe('Safety');
     expect(ann.attrs.about).toEqual(['C']);
+  });
+
+  it('reads `metadata T about A, B` as the annotation `@T about A, B`, and prints the same text', () => {
+    // SysML 7.27.2's own example form. The keyword and the symbol are synonyms
+    // for a metadata usage; the keyword form parsed as an error before.
+    const kw = reparse(
+      `package A { part def C; part def D; metadata Safety about C, D { level = 3; } }`,
+    );
+    const sym = reparse(`package A { part def C; part def D; @Safety about C, D { level = 3; } }`);
+    const ann = kw.all().find((e) => e.eClass === 'MetadataUsage' && e.attrs.annotation === true)!;
+    expect(ann.attrs.type).toBe('Safety');
+    expect(ann.attrs.about).toEqual(['C', 'D']);
+    expect(ann.declaredName).toBeUndefined();
+    expect(kw.children(ann.id).map((c) => c.declaredName)).toEqual(['level']);
+    const text = serializeModel(kw);
+    expect(text).toBe(serializeModel(sym));
+    expect(text).toContain('@Safety about C, D');
+    expect(serializeModel(parseModel(text).model)).toBe(text);
+  });
+
+  it('keeps `metadata N { … }` without `about` as the named usage it has always been', () => {
+    // The keyword annotation REQUIRES `about`: `metadata RequirementMetadata { … }`
+    // is read by requirements.ts as the usage NAMED RequirementMetadata.
+    const m = reparse(`package A { metadata RequirementMetadata { attribute status = "open"; } }`);
+    const usage = m.all().find((e) => e.eClass === 'MetadataUsage')!;
+    expect(usage.attrs.annotation).toBeUndefined();
+    expect(usage.declaredName).toBe('RequirementMetadata');
+  });
+
+  it('refuses a SysproseVerification carrier written with `about`, in either spelling, and only that', () => {
+    // No reader looks at `about`: a carrier is read from the element it is
+    // WRITTEN IN, so one written beside its target would be dropped or checked
+    // on the wrong machine. The load carries an error, so the checks abstain.
+    const codes = (src: string) =>
+      parseModel(src).diagnostics.filter((d) => d.severity === 'error').map((d) => d.code);
+    const body = '{ attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }';
+    for (const t of [
+      'SysproseVerification::PropertyPattern',
+      'PropertyPattern',
+      'SysproseVerification::Evidence',
+      'SysproseVerification::FaultHypothesis',
+    ]) {
+      expect(codes(`package A { state def M; metadata ${t} about M ${body} }`)).toEqual([
+        'mapper/carrier-about-unread',
+      ]);
+      expect(codes(`package A { state def M; @${t} about M ${body} }`)).toEqual([
+        'mapper/carrier-about-unread',
+      ]);
+      // Written inside its target, with no `about`, it is read as ever.
+      expect(codes(`package A { state def M { @${t} ${body} } }`)).toEqual([]);
+    }
+    // Another annotation type keeps its `about`.
+    expect(codes('package A { state def M; metadata Safety about M { level = 3; } }')).toEqual([]);
   });
 
   it('resolves a forward disjoint / subset target and leaves genuine typos unresolved (F4)', () => {

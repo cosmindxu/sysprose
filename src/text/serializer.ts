@@ -798,7 +798,7 @@ function stateBehaviorLine(model: Model, el: ElementRecord, indent: number): str
   return renderWithBody(model, el, indent, parts.join(' '));
 }
 
-/** `@Type` metadata annotation, with optional `about A, B` and body. */
+/** `@Type` metadata annotation, with optional `about A, B` and body (also the print of `metadata Type about …`). */
 function annotationLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = [`@${attrStr(el, 'type')}`];
   const about = el.attrs.about;

@@ -51,6 +51,14 @@ import {
 } from '@semantics/bind';
 import { generalizationsWithImplicit } from '@semantics/featuring';
 import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
+import {
+  EVIDENCE_DEFINITION,
+  EVIDENCE_QUALIFIED_NAME,
+  FAULT_HYPOTHESIS_DEFINITION,
+  FAULT_HYPOTHESIS_QUALIFIED_NAME,
+  PROPERTY_PATTERN_DEFINITION,
+  PROPERTY_PATTERN_QUALIFIED_NAME,
+} from '@semantics/verification-vocabulary';
 import { resolveName } from '@semantics/resolve-names';
 import type { AstNode } from 'langium';
 import type { ParseResult, ParseDiagnostic } from '../types';
@@ -659,6 +667,16 @@ function resolveChainEndpointsOf(model: Model, el: ElementRecord): number {
 }
 
 /* ─────────────────────────────── the mapper ─────────────────────────────── */
+
+/** The SysproseVerification carriers, both spellings, as the readers accept them. */
+const UNREAD_ABOUT_CARRIERS: ReadonlySet<string> = new Set([
+  EVIDENCE_DEFINITION,
+  EVIDENCE_QUALIFIED_NAME,
+  FAULT_HYPOTHESIS_DEFINITION,
+  FAULT_HYPOTHESIS_QUALIFIED_NAME,
+  PROPERTY_PATTERN_DEFINITION,
+  PROPERTY_PATTERN_QUALIFIED_NAME,
+]);
 
 class Mapper {
   readonly model = new Model();
@@ -1788,10 +1806,33 @@ class Mapper {
     });
   }
 
-  /** `@Type { … }` metadata annotation → a MetadataUsage carrying the type. */
+  /**
+   * `@Type { … }` or `metadata Type about … { … }` metadata annotation (printed
+   * back as `@Type …`) → a MetadataUsage carrying the type.
+   */
   private mapAnnotation(node: Annotation, ownerId: ElementId | null): void {
     const attrs: Record<string, AttrValue> = { annotation: true, type: node.type };
-    if (node.about && node.about.length) attrs.about = [...node.about];
+    if (node.about && node.about.length) {
+      attrs.about = [...node.about];
+      // Every SysproseVerification carrier is read from the element it is
+      // WRITTEN IN; no reader looks at `about`. Accepted silently, a carrier
+      // written beside its target would be dropped or read on the wrong machine,
+      // and a verdict would be given over a half-read model. Refuse it instead:
+      // the load degrades, so the checks abstain.
+      if (UNREAD_ABOUT_CARRIERS.has(node.type)) {
+        const code = 'mapper/carrier-about-unread';
+        this.diagnostics.push({
+          message: `'${node.type}' is read on the element it is written in; \`about\` is not read.`,
+          ...posOf(node),
+          severity: 'error',
+          source: 'mapper',
+          code,
+          found: node.type,
+          hint: renderHint(code, { found: node.type }),
+          ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+        });
+      }
+    }
     const el = this.create('MetadataUsage', {
       ownerId: ownerId ?? undefined,
       attrs,

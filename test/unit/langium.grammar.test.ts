@@ -237,6 +237,21 @@ describe('Langium SysML grammar — extended construct families', () => {
     `);
   });
 
+  it('parses the keyword annotation `metadata T about A, B { … }` (SysML 7.27.2) as an Annotation', () => {
+    const ast = parseClean(`
+      package M {
+        metadata ApprovalAnnotation about Design, Other { approved = true; }
+        metadata Approval about Design;
+        metadata Named { attribute x = 1; }
+      }
+    `);
+    const members = (ast.members[0] as { body: { members: { $type: string; type?: string; about?: string[] }[] } })
+      .body.members;
+    expect(members.map((m) => m.$type)).toEqual(['Annotation', 'Annotation', 'Definition']);
+    expect(members[0].type).toBe('ApprovalAnnotation');
+    expect(members[0].about).toEqual(['Design', 'Other']);
+  });
+
   it('parses flows, accept/send/assign and connector ends with multiplicities', () => {
     parseClean(`
       action def A {

@@ -108,10 +108,19 @@ Dependency infers Dependency:
 
 // ─────────────────────── metadata annotation (@) ─────────────────────
 
+// The keyword form `metadata T about A, B { … }` (SysML 7.27.2's own example,
+// `metadata ApprovalAnnotation about Design { … }`) is the same annotating
+// usage spelled with the keyword. `about` is REQUIRED in that spelling: without
+// it `metadata N { … }` is the long-standing named usage (BaseKeyword), which
+// this rule must not capture. The standard reads a bare `metadata T;` as typed
+// by T (BNF `MetadataUsageDeclaration`); that reading is not built here.
 Annotation infers Annotation:
-    '@' type=QualifiedName
-    ('about' about+=QualifiedName (',' about+=QualifiedName)*)?
-    (body=Body)? ';'?;
+      '@' type=QualifiedName
+      ('about' about+=QualifiedName (',' about+=QualifiedName)*)?
+      (body=Body)? ';'?
+    | 'metadata' type=QualifiedName
+      'about' about+=QualifiedName (',' about+=QualifiedName)*
+      (body=Body)? ';'?;
 
 // Prefix metadata `#Meta` (used both as a member and as a Definition prefix).
 PrefixMetadata infers PrefixMetadata:
