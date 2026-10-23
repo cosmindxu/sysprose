@@ -62,6 +62,15 @@ export const EXCEPTIONAL_KEYWORD = 'exceptional';
 /** The metadata definition the keyword names. */
 export const EXCEPTIONAL_DEFINITION = 'ExceptionalOutcome';
 
+/**
+ * `SysproseVerification::ExceptionalOutcome`, the definition's qualified name.
+ *
+ * What an engine asks {@link ./keywords}' `hasKeyword` for: the package is part
+ * of the name, so a `metadata def <exceptional> ExceptionalOutcome` that
+ * another vocabulary declares is not taken for this one.
+ */
+export const EXCEPTIONAL_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}::${EXCEPTIONAL_DEFINITION}`;
+
 /** `SysproseVerification::exceptional`, the spelling every provenance line prints. */
 export const EXCEPTIONAL_QUALIFIED_KEYWORD = `${SYSPROSE_VERIFICATION_PACKAGE}::${EXCEPTIONAL_KEYWORD}`;
 

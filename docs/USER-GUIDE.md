@@ -3839,6 +3839,17 @@ expect are deliberately absent: `#precondition` and `#postcondition`, because
 `assume constraint`, `require constraint` and a case `objective { … }` already
 say both, three ways and two ways respectively.
 
+**A tag is Sysprose's by its package, not by its name.** If another vocabulary
+declares its own `metadata def <exceptional> ExceptionalOutcome` (say in a
+package `VendorHints`) and your `#exceptional` resolves to that one, it is
+*their* tag: `contracts --keywords` lists it as `other vocabulary` (here
+`#exceptional on P::Theirs → VendorHints::ExceptionalOutcome`), and
+`fault-tree` does not label a top event with `(#exceptional)` or count a state
+as an `#exceptional` hazard for it. Write `#SysproseVerification::exceptional`,
+or import that package, to mean ours (a pasted copy of the package must sit at
+the top level of the file; a copy nested in your own package is your
+vocabulary, not ours).
+
 **`Evidence` in that same package is deliberately not a keyword.** It ships with
 no short name, so there is nothing to write after a `#`. A keyword is a tag — it
 says one thing by being present — and an evidence record has a body: a claim, an

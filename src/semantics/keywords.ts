@@ -161,31 +161,55 @@ function isMetadataDefinition(el: ElementRecord): boolean {
   return el.eClass === 'MetadataDefinition';
 }
 
+/** What {@link hasKeyword} may accept besides a Sysprose definition. */
+export interface HasKeywordOptions {
+  /**
+   * Accept a definition of that simple name from ANY package: the model's OWN
+   * vocabulary, counted and never acted on. Off by default, and a caller that
+   * turns it on says in a comment why a foreign definition may stand for the
+   * thing it asks about.
+   */
+  anyPackage?: boolean;
+}
+
 /**
  * Does `id` carry a keyword that RESOLVES to the metadata definition `definition`?
  *
  * The predicate an engine asks before acting on a tag, and it is deliberately
- * strict on both sides. It never consults {@link FOREIGN_KEYWORD_ALIASES}: a
+ * strict on three sides. It never consults {@link FOREIGN_KEYWORD_ALIASES}: a
  * third-party `#Exception` is not `#exceptional`, and an engine that could not
  * tell the two apart would let a vocabulary this tool did not define change
- * what it decides. And it never string-matches: a keyword that names no
+ * what it decides. It never string-matches: a keyword that names no
  * definition in scope is a keyword that tags nothing, which is the same answer
- * the notation gives.
+ * the notation gives. And it matches by PACKAGE, not by simple name alone: two
+ * vocabularies may both declare a `metadata def <exceptional> ExceptionalOutcome`
+ * (a `VendorHints::HardDefault` next to a Sysprose `HardDefault`), and the
+ * notation tells them apart by their qualified names, so this does too.
  *
- * `definition` may be the definition's declared name, its short name (the
- * keyword spelling) or its qualified name — the three ways a caller has of
- * naming the thing it shipped.
+ * `definition` may be the definition's qualified name, which matches that name
+ * exactly and is what an engine asks for; or its declared name or short name
+ * (the keyword spelling), which match only a definition of one of the packages
+ * Sysprose ships ({@link isSysproseVocabulary}) unless `options.anyPackage`.
  */
-export function hasKeyword(model: Model, id: ElementId, definition: string): boolean {
+export function hasKeyword(
+  model: Model,
+  id: ElementId,
+  definition: string,
+  options: HasKeywordOptions = {},
+): boolean {
   const wanted = definition.trim();
   if (wanted === '') return false;
+  const qualified = splitQualified(wanted).length > 1;
   for (const keyword of keywordsOf(model, id)) {
     const def = resolveKeyword(model, keyword);
     if (!def) continue;
+    if (qualified) {
+      if (model.qualifiedName(def.id) === wanted) return true;
+      continue;
+    }
     if (
-      def.declaredName === wanted ||
-      def.declaredShortName === wanted ||
-      model.qualifiedName(def.id) === wanted
+      (def.declaredName === wanted || def.declaredShortName === wanted) &&
+      (options.anyPackage === true || isSysproseVocabulary(model, def))
     ) {
       return true;
     }
