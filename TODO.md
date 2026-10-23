@@ -15,6 +15,26 @@ the review's artifact folder, which is not in this repository. Entries tagged `[
 merged branch `behaviour-sound` (the plan's O1) left open, by step. An entry that waits on the
 maintainer says `awaits user decision U<n>` and names the question.
 
+- [ ] **Decide the z3 version string in verdict lines.** z3 5.3.1 reports its full version as
+      `5.3.1.0 ac9156f97cb44e56472e1c841f7a2beb1e976b24 z3-5.3.1` (5.2.0 said `Z3 5.1.0.0`), so
+      every SMT verdict line, evidence record and `decided by z3 ...` text now carries the 40-hex
+      commit (`src/semantics/engines/smt.ts` near :1617, `src/api/property.ts` near :1339). Decide
+      whether to shorten it (for example `z3 5.3.1.0`) or keep the commit as provenance, re-pin any
+      golden that quotes it, and update README lines 243 and 247 (`decided by z3 Z3 5.1.0.0, seed
+      0`). Done when decided and the text is stable. [z3-bump]
+- [ ] **One outcome for `bounds --free all` on a nonlinear unbounded case.** z3 5.3.1 answers `oo`
+      where 5.2.0 timed out: 36 corpus models and 4 v9 rows move from inconclusive/timeout to
+      bound-without-optimality (`verification/optimality-not-established`, value null; exit 2 in
+      both). Re-run the v9 audit and the tutorial stills if they show that row, and decide whether
+      the engine should keep one outcome for the nonlinear unbounded case. [z3-bump]
+- [ ] **Exercise a z3 death in a real browser.** The USER-GUIDE says a z3 that dies mid-session ends
+      that Run with a `checks/internal-error` row and the next Run starts a fresh z3, 'not yet
+      exercised in a real browser'; the bridge's `onAbort` rejection of a worker-thread trap is
+      covered only by the fake, and the page-side hang is unverified. Add an E2E (or a manual probe
+      recorded in UI-ROADMAP) that kills the module in the page and runs again. The old N6 S4 clause
+      that a hang keeps the async mutex held until reload is gone (the lock is per module now). Also
+      make the soak repeatable from the repository: the header of `test/campaign/z3-soak.soak.ts`
+      carries the invocation. [z3-bump, review]
 - [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
       the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
       `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
@@ -53,8 +73,7 @@ maintainer says `awaits user decision U<n>` and names the question.
       z3, so the check ends at its own time budget and a Run started meanwhile queues behind it; a
       model edit during a run can give a torn read across awaits (the result lands against the
       click's revision and shows stale; documented, not snapshotted); a z3 module that dies in the
-      page (the finalizer race, or a hang) keeps the bundled async-mutex held until the page is
-      reloaded, because the mutex watcher is not wired into the esbuild-bundled entry; an in-page
+      page is unverified in a real browser (the lock is per module since z3 5.3.1); an in-page
       check keeps no evidence record (`verify --record` is terminal-only); the encoding cost
       (`obligationsOf`, script building, `resolveFreeFeatures`) runs on the page thread and is not
       measured on v9, with no long-task guard over solver checks; the `bounds` check's degraded path
@@ -798,18 +817,6 @@ User guide and tutorials that are wrong, and what waits on something outside the
       binding of the definition carries from the instance's own member (NC4: sys's K through W's
       `bind p1.load = K`; pre-existing for NC4P at 3c54ae0). The NC4 unit test no longer pins the
       code. [per-instance-rest S1, review]
-- [ ] **Move to the z3 release that fixes the finalizer race.** The WASM finalizer race behind the
-      intermittent z3 deaths (z3 issue #10999, fixed by PR #11001, merged upstream on 2026-10-02 as
-      55eb9fa) is in no release: the npm `z3-solver` latest is still 5.2.0 (`package.json` `^5.2.0`;
-      checked 2026-10-14). When it is released: bump it, adapt `src/semantics/smt/z3-bridge.ts` (the
-      deferring registry, the `runExclusive` wrapper, `releaseHeldMutex`, the CLI exit), keep the
-      dead-module discard and the serial calls, and soak it under load against an unfixed control
-      (`npm run soak:z3`). Done when the bump is merged with the soak green and the control still
-      showing the race. [review 2026-10-14 F-U1] Awaits user decision U15 (bump at once with the soak
-      as the gate, or wait for independent confirmation: the upstream PR was never run on a real
-      WASM build).
-      DECIDED 2026-10-23 (U15): bump at once when a release exists, with `npm run soak:z3` under
-      load against the unfixed control as the gate; do not wait for independent confirmation.
 - [ ] **Switch Google Drive on for the model site and run its manual test.** The feature is built
       and published dormant: a deployment without a `drive.json` next to `index.html` shows no Drive
       control (`src/persistence/drive/config.ts`, `README.md`). It needs, from the maintainer, a
