@@ -30,6 +30,7 @@ import {
   instanceGroups,
   instanceIndexSeam,
   instancesOfDefinition,
+  isFailedReading,
   isBindingConnector,
   lookupsHold,
   lookupsOf,
@@ -42,10 +43,12 @@ import {
   sharedDefinitions,
 } from '../../src/semantics/defining-equation';
 import { obligationsOf } from '../../src/semantics/obligations';
+import { refusalHead, refusalTail } from '../../src/semantics/engines/literal';
 import { checkConstraintsNumeric, solveFeasible } from '../../src/semantics/solver';
 import { DIMENSIONLESS } from '../../src/semantics/units';
 import { equationDerivation, evaluateConstraintQuantityDetailed } from '../../src/semantics/units-eval';
 import { parseModel } from '../../src/text/index';
+import { verifyModel } from '../../src/api/verification';
 import { validate } from '../../src/validation/index';
 import { loadModelText } from '@text/load';
 import type { ConstraintCheck } from '../../src/semantics/evaluate-model';
@@ -4022,6 +4025,30 @@ describe('a value, a reference and a binding that equate two parts or structured
     }
   });
 
+  it('names the unread binding for a partner of an unread valued part on the numeric surface (SBV)', async () => {
+    // `pp = top.a` values a part this tool does not read through: top.a.load has no value of its own there, and the
+    // numeric row said only that ("top.a.load" has no value in scope) where the other surfaces name the binding.
+    const { model: m } = await loadModelText(`package SBV {
+      part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      part def T1 { part a : T0; }
+      part top : T1;
+      part pp : T0 = top.a;
+      attribute seven : ScalarValues::Real = 7.0;
+      bind pp.load = seven;
+      constraint pT { pp.load >= 5.0 }
+      constraint aT { top.a.load >= 5.0 }
+      constraint typo { pp.lod >= 5.0 }
+    }`);
+    // A typo is the author's defect on every surface: the numeric row keeps saying the name has no value.
+    expect(checkConstraintsNumeric(m!).find((r) => r.name === 'typo')!.reason).toContain('has no value in scope');
+    for (const name of ['pT', 'aT']) {
+      const row = checkConstraintsNumeric(m!).find((r) => r.name === name)!;
+      expect([name, row.result], name).toEqual([name, 'unknown']);
+      expect(row.reason, name).toContain('`pp = top.a` in SBV values a part');
+      expect(row.reason, name).not.toContain('has no value in scope');
+    }
+  });
+
   /** The numeric surface's row of `rel` read in the context `ctx` (`rel@ctx`). */
   const numericIn = (m: Model, rel: string, ctx: string) =>
     checkConstraintsNumeric(m).find((r) => {
@@ -6117,7 +6144,7 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(bare.find((r) => r.instances)!.message).toContain('could not be read in 1 (a referenced value is unknown: R::q1)');
   });
 
-  it('quotes a path segment holding " in " or "@", in the relation, the usage and the instance (PI-11)', () => {
+  it('quotes a path segment holding " in " or "@", in the relation, the usage and the instance (PI-11)', async () => {
     expect(quotePath('R::q1::p')).toBe('R::q1::p');
     expect(quotePath('R::q in 1::p')).toBe("R::'q in 1'::p");
     expect(quotePath('A@B::x')).toBe("'A@B'::x");
@@ -6130,6 +6157,12 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     // The row's own fields stay the raw path: they are data, not text.
     expect(quoted[1]!.instance).toBe('R::q in 1');
     expect(quoted[0]!.instances!.listed).toEqual(['R::q in 1']);
+    // And in a context row's sentence, the specialiser's path (target-by-specialisation, a binding-carried row).
+    const { model: tm } = await loadModelText(`package Common { attribute m : ScalarValues::Real; constraint t { m >= 0.9 } }
+      package LA { part def 'X in Y' { attribute 'est@1' :>> Common::m = 0.78; } }`);
+    expect(validate(tm!).filter((d) => d.ruleId === 'target-by-specialisation').map((d) => d.message)).toEqual([
+      "'X in Y'::'est@1' = 0.78 misses Common::t (m >= 0.9)",
+    ]);
   });
 
   it('folds context rows by verdict and cause, past twenty (PI-12)', () => {
@@ -6325,6 +6358,115 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         ].join('\n'),
       ),
     ).toEqual([['R3::Q2::p', 5, 'attribute :>> L = 50.0']]);
+  });
+
+  it('names the value that breaks the relation, points at its line, and states a cause shared by instances once (PI-2, S1)', async () => {
+    const findings = async (text: string) => {
+      const { report } = await loadModelText(text, { fileName: 'pi2s1.sysml' });
+      return report.diagnostics
+        .filter((d) => d.code === 'validation/constraint-by-instance' && d.instance !== undefined)
+        .map((d) => [d.instance, d.range!.start.line, text.slice(d.range!.start.offset).split(/[;{]/)[0]!.trim(), d.elementName, d.message.slice(d.message.indexOf(' is violated in '))]);
+    };
+    const defs = [
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }',
+      '  part def Q {',
+      '    attribute L : ScalarValues::Real default = 1.0;',
+      '    part p : P { constraint c2 { load + extra <= 10.0 } }',
+      '    bind p.load = L;',
+      '  }',
+    ];
+    // Two values reach q2's p: `load = 2` through `L`, `extra = 20` through `E`. Put back to its default `extra` holds
+    // the relation, `load` does not, so `extra` is the difference: named, and anchored at the line stating it.
+    expect(
+      await findings(['package G1 {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['G1::q2::p', 8, 'attribute E : ScalarValues::Real = 20.0', 'E', ' is violated in G1::q2::p: extra = 20']]);
+    // A relation Q owns, read in q2 (a context, not a group): the same line, where it had pointed at `part q2`.
+    expect(
+      (
+        await findings(
+          [
+            'package G0 {',
+            ...defs.slice(0, 1),
+            '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c2 { p.load + p.extra <= 10.0 } }',
+            '  part q2 : Q { attribute :>> L = 2.0; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }',
+            '}',
+          ].join('\n'),
+        )
+      ).map((f) => f.slice(0, 4)),
+    ).toEqual([['G0::q2', 4, 'attribute E : ScalarValues::Real = 20.0', 'E']]);
+    // Only the one read there is: named too, where no binding carries it (it had no value clause).
+    expect(
+      await findings(['package G2 {', ...defs, '  part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['G2::q2::p', 8, 'attribute E : ScalarValues::Real = 20.0', 'E', ' is violated in G2::q2::p: extra = 20']]);
+    // Neither put back alone holds it: the first read a binding carried is named, as before.
+    expect(
+      await findings(['package G3 {', ...defs, '  part q2 : Q { attribute :>> L = 20.0; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['G3::q2::p', 8, 'attribute :>> L = 20.0', 'L', " is violated in G3::q2::p: load = 20 — q2.L = 20 through G3::Q's `bind p.load = L`"]]);
+    // One cause: a definition's usage states the value, so its own instance and each part typed by the definition
+    // read it from that one line. One finding, at the line (named for what it redefines), listing the others.
+    const shared = await findings(
+      ['package G4 {', ...defs, '  part def R { part q : Q { attribute :>> L = 50.0; } }', '  part r1 : R;', '  part r2 : R;', '}'].join('\n'),
+    );
+    expect(shared).toEqual([
+      [
+        'G4::R::q::p',
+        8,
+        'attribute :>> L = 50.0',
+        'L',
+        " is violated in G4::R::q::p: load = 50 — q.L = 50 through G4::Q's `bind p.load = L`; the same line breaks it in G4::r1::q::p, G4::r2::q::p",
+      ],
+    ]);
+    // Not a cause the line states: the relation fails on a default too (`extra`), so putting the read back does not
+    // mend it. No fold and no 'breaks it' clause: one finding per instance, at its own line.
+    const notCause = await findings(
+      ['package FN {', '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 20.0; }', ...defs.slice(1), '  part def R { part q : Q { attribute :>> L = 5.0; } }', '  part r1 : R;', '  part r2 : R;', '}'].join('\n'),
+    );
+    expect(notCause.map((f) => f[0])).toEqual(['FN::R::q::p', 'FN::r1::q::p', 'FN::r2::q::p']);
+    expect(notCause.some((f) => String(f[4]).includes('the same line breaks it'))).toBe(false);
+    // Past the five a group asks, instances that read alike share the answer: seven parts typed by R, beside a part
+    // whose binding gives a second read, are still one finding at the shared line, not one more per later part.
+    const many = await findings(
+      ['package FC {', ...defs, '  part def R { part q : Q { attribute :>> L = 50.0; } }', ...[1, 2, 3, 4, 5, 6, 7].map((n) => `  part r${n} : R;`), '  part q9 : Q { attribute E : ScalarValues::Real = 0.0; bind p.extra = E; }', '}'].join('\n'),
+    );
+    expect(many.filter((f) => f[2] === 'attribute :>> L = 50.0')).toHaveLength(1);
+    expect(many.map((f) => f[0])).toEqual(['FC::R::q::p']);
+    expect(String(many[0]![4])).toContain('… and 2 more');
+    // A finding about a context that reaches a value through a reference names the context's instance, not
+    // the feature the last link ends at (p50's `load`, q2's p1's): the line to edit is the instance's.
+    const named = async (text: string) =>
+      (await loadModelText(text, { fileName: 'pi2s1n.sysml' })).report.diagnostics
+        .filter((d) => d.code === 'validation/target-by-specialisation')
+        .map((d) => d.message);
+    const T0 = 'part def T0 { attribute load : ScalarValues::Real default = 1.0; }';
+    expect(
+      await named(
+        ['package G7 {', T0, 'part p1 : T0;', 'part p50 : T0 { attribute :>> load = 50.0; }', 'part def P { ref part r1 : T0 default = p1; ref part r2 : T0 = r1; constraint c { r2.load <= 10.0 } }', 'part pa : P;', 'part pb : P { ref part :>> r1 = p50; }', '}'].join('\n'),
+      ),
+    ).toEqual(['pb::r2.load = 50 misses P::c (r2.load <= 10.0)']);
+    expect(
+      await named(
+        ['package G8 {', T0, 'part def P { part p1 : T0; ref part r1 : T0 = p1; ref part r2 : T0 = r1; constraint c { r2.load <= 10.0 } }', 'part def Q { part p : P; }', 'part q1 : Q;', 'part q2 : Q { part :>> p { part :>> p1 { attribute :>> load = 50.0; } } }', '}'].join('\n'),
+      ),
+    ).toEqual(['q2::p::r2.load = 50 misses P::c (r2.load <= 10.0)']);
+    // A satisfy context keeps the satisfier's name (h6), and a renamed redefinition no reference is read through
+    // its own (f1f): neither is the context's anonymous element or a name the finding's line does not carry.
+    expect(
+      await named(
+        ['package H6 {', 'part def P { attribute load : ScalarValues::Real default = 1.0; }', "requirement def 'Load in range' { subject s : P; require constraint { s.load <= 10.0 } }", 'part p1 : P { attribute :>> load = 50.0; }', "satisfy 'Load in range' by p1;", '}'].join('\n'),
+      ),
+    ).toEqual(["p1::s.load = 50 misses a constraint in 'Load in range' (s.load <= 10.0)"]);
+    expect(
+      await named(
+        ['package F1f {', 'part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }', 'part p : P { attribute heavy :>> load = 50.0; }', '}'].join('\n'),
+      ),
+    ).toEqual(['p::heavy = 50 misses P::c (load <= 10.0)']);
+    // A value the instance's own element redefines (`extra`) is not among the reads: the relation is not mended by
+    // putting the one read back, so no read is said to break it and the first read a binding carried is named.
+    expect(
+      await findings(
+        ['package G5 {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }', '}'].join('\n'),
+      ),
+    ).toEqual([['G5::q2::p', 8, 'attribute :>> L = 2.0', 'L', " is violated in G5::q2::p: load = 2 — q2.L = 2 through G5::Q's `bind p.load = L`"]]);
   });
 
   it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {
@@ -6661,6 +6803,18 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       'T2::P::c in T2::q1::p: encoded',
       `T2::P::c in T2::q2::p: ${failed('T2::P::c', 'T2::q2::p')}`,
     ]);
+    // `verify` closes such a row in a sentence that blames the tool, not the user's relation.
+    const sentence = failed('T2::P::c', 'T2::q2::p');
+    expect(isFailedReading(sentence)).toBe(true);
+    expect(refusalHead('unread-definition', sentence)).toBe('this tool failed while reading the relation');
+    expect(refusalTail('unread-definition', sentence)).toContain('This is a failure of this tool, not a defect in the relation');
+    // A limit of the tool is not a failure of it, and a relation nobody can read is a defect of the relation.
+    expect(refusalTail('unread-definition', 'T2::P::c is not read in T2::q3::p: why')).toContain('This is a limit of this tool');
+    // A body over a parameter of its own may state no value: the model does not decide it, and the relation is no defect.
+    const shadowed = 'y in own is SH::P::own::y, its own in parameter; this tool reads a body in its owner\'s scope, where `y` is SH::P::y — another feature — so the body is not read';
+    expect(refusalTail('unread-definition', shadowed)).toContain('its body is over a parameter of its own');
+    expect(refusalTail('unread-definition', shadowed)).not.toContain('the model decides it');
+    expect(refusalTail('unresolved-name', 'x')).toContain('This is a defect in the relation');
   });
 
   // The instance index's own calls (the seam, A.2.9): armed before the model loads, since the load's validation
@@ -6683,6 +6837,12 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       ]);
       expect(rowOf(m!, checks, 'T2::other').result).toBe('violated');
       expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+      // `verify` closes that row in a sentence that blames the tool, on both engines.
+      for (const engine of ['literal', 'smt'] as const) {
+        const row = (await verifyModel(m!, { engine })).results.find((r) => r.detail.includes('T2::Q::p'));
+        expect(row?.detail, engine).toContain('this tool failed while reading the relation (unread-definition)');
+        expect(row?.detail, engine).toContain('This is a failure of this tool, not a defect in the relation');
+      }
       // The obligations lane and the numeric lane read the same refusal.
       expect(goals(m!, 'T2::P::c')).toEqual([`T2::P::c in T2::Q::p: ${failed('T2::P::c', 'T2::Q::p')}`]);
       expect(checkConstraintsNumeric(m!).filter((r) => r.context?.baseId === rowOf(m!, checks, 'T2::P::c').id).map((r) => r.result)).toEqual([

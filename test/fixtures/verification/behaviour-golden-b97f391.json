@@ -75,7 +75,7 @@
     "pattern": "pattern=precedence, scope=globally, p=state failsafe, s=state standby",
     "claim": "pass",
     "code": null,
-    "detail": "pass — holds on every reachable configuration: `state standby` holds before `state failsafe` ever does, over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 7 product state(s).",
+    "detail": "pass — holds on every reachable configuration: `state standby` holds before `state failsafe` ever does, over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}, over 7 product state(s).",
     "witness": [],
     "exitCode": 0,
     "counts": {
@@ -332,7 +332,7 @@
     "pattern": "pattern=bounded-existence, scope=globally, p=state standby, n=1",
     "claim": "pass",
     "code": null,
-    "detail": "pass — holds on every reachable configuration: `state standby` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 5 product state(s).",
+    "detail": "pass — holds on every reachable configuration: `state standby` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}, over 5 product state(s).",
     "witness": [],
     "exitCode": 0,
     "counts": {
@@ -874,7 +874,7 @@
     "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
     "claim": "pass",
     "code": null,
-    "detail": "pass — holds on every reachable configuration: `state nominal` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 3 product state(s).",
+    "detail": "pass — holds on every reachable configuration: `state nominal` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}, over 3 product state(s).",
     "witness": [],
     "exitCode": 0,
     "counts": {
@@ -1009,7 +1009,7 @@
     "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
     "claim": "pass",
     "code": null,
-    "detail": "pass — holds on every reachable configuration: `state nominal` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 2 product state(s).",
+    "detail": "pass — holds on every reachable configuration: `state nominal` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}, over 2 product state(s).",
     "witness": [],
     "exitCode": 0,
     "counts": {
@@ -1512,7 +1512,7 @@
     "pattern": "pattern=absence, scope=globally, p=state failsafe",
     "claim": "pass",
     "code": null,
-    "detail": "pass — holds on every reachable configuration: `state failsafe` never holds, over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 2 product state(s).",
+    "detail": "pass — holds on every reachable configuration: `state failsafe` never holds, over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}, over 2 product state(s).",
     "witness": [],
     "exitCode": 0,
     "counts": {
@@ -1550,7 +1550,7 @@
     "pattern": "pattern=bounded-existence, scope=globally, p=state failsafe, n=1",
     "claim": "pass",
     "code": null,
-    "detail": "pass — holds on every reachable configuration: `state failsafe` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 2 product state(s).",
+    "detail": "pass — holds on every reachable configuration: `state failsafe` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}, over 2 product state(s).",
     "witness": [],
     "exitCode": 0,
     "counts": {
@@ -1586,7 +1586,7 @@
     "pattern": "pattern=cover, scope=globally, p=state failsafe",
     "claim": "not-covered",
     "code": "verification/not-covered",
-    "detail": "not covered under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — over 2 configuration(s): `state failsafe` holds on some run, over the whole run — and no explored run holds `state failsafe` inside an open scope segment. A decided absence: the design as written admits no such run within these bounds. It is a missing behaviour and not a violated requirement, so it exits 2; `--cover-required` spends the 1 for it instead.",
+    "detail": "not covered under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — over 2 configuration(s): `state failsafe` holds on some run, over the whole run — and no explored run holds `state failsafe` inside an open scope segment. A decided absence: the design as written admits no such run within these bounds. It is a missing behaviour and not a violated requirement, so it exits 2; `--cover-required` spends the 1 for it instead.",
     "witness": [],
     "exitCode": 2,
     "counts": {

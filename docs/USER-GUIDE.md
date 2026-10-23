@@ -772,7 +772,10 @@ report it as `validation/target-by-specialisation` at the estimate: a
 **warning** when it misses (`LA::m = 0.78 misses Common::t (m >= 0.9)`),
 **info** when it meets the target or cannot be read — two estimates of one
 measure in the same layer, or a layer that specialises only some of the
-measures a target names, are named rather than guessed between. A miss is its
+measures a target names, are named rather than guessed between. A name the
+context reaches through a reference (`pb`'s `r2.load` over `ref part r1 = p50`) is
+named for the context's instance (`pb::r2.load = 50 misses P::c`), not for the
+feature the last link ends at. A miss is its
 own code, not a `constraint-violation`, because an estimate that misses is a
 result to record, not a contradiction in the model.
 
@@ -1028,7 +1031,9 @@ it reads reads: `bind p.s.extra = E` makes Q's p such a usage for `s.extra <=
 rows are read apart, each at the value of the instance it names, so an instance
 that breaks the relation is reported against that instance — at the line that
 makes it differ: the member of its own stating the value the binding carries in
-(q's `attribute :>> L = 50.0`), else the element the instance is read in, else
+(q's `attribute :>> L = 50.0`; where two values reach the instance, the one that
+breaks the relation — the one that makes it hold when it alone is put back to the value
+the relation's own context gives it; where none does, or a value carries a unit, the first value a binding carried), else the element the instance is read in, else
 its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never the usage the instances share — and the check rolls
 two or more of them up into one finding for each usage (past twenty usages of one
 relation, into one finding for the relation, counting every instance and naming
@@ -1042,9 +1047,18 @@ than 16,384 instance readings in this model)*, counts printed with thousands sep
 tool reads is one info finding that counts them all unread (where a binding holds
 in more than 4,096 contexts, *not read in at least* the instances found, and the `instances`
 payload then carries `atLeast: true`). A violated instance
-names the value it reads, the value the binding carries in and the binding
-(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``), and a path with a
-segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; the `instance` and
+names the value that breaks the relation (the one above: `extra = 20` where
+`load = 2` alone would have held it; else the first value a binding carried), and, where a binding
+carries it in, the value the binding carries and the binding
+(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``). Instances whose
+violation that one value from one line they share breaks (put back to the relation's own
+value, it holds) are one finding: `part def R { part q : Q {
+attribute :>> L = 50.0; } }` read by R's own q and by each `part r1 : R` points at that
+line once, named for what it redefines (`elementName` is `L`), and lists the others
+(*; the same line breaks it in r1::q::p, r2::q::p*); one the line does not mend (the
+relation fails on a default too), or a sixth distinct set of values read in a group,
+keeps its own finding. A path with a
+segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; in a context row's sentence too, `'X in Y'::'est@1' = 0.78 misses Common::t …`; the `instance` and
 `instances.listed` fields keep the names as written). A relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
 has no roll-up, and a violation there is that instance's finding alone — one the
@@ -1057,7 +1071,8 @@ and the first one's sentence, which names that instance. In a terminal,
 `verify` text folds the same way: past five rows of one relation and one claim
 it prints five and one line counting the rest (`… and 3 more rows of R::c:
 refuted in 8`; the rows of one relation and one claim print together), and the footer's findings fold by relation and code, counted
-against the relation (`… and 3 more verification/refuted on R::c`), not against
+against the relation (`… and 3 more verification/refuted on R::c`; a requirement's
+unnamed clause is counted against the requirement, `… on H::LoadReq`), not against
 the instance of its first row; `--json` keeps every row. An
 instance whose own element — the most specific one that denotes it — reads a
 name of the relation, or a name that name's value reads, through another feature
@@ -1254,7 +1269,7 @@ inside the tool makes the row it was read for *could not be evaluated*, in a
 sentence naming the failure (`… the per-instance reading failed (RangeError);
 reported, not dropped`; a group's roll-up counts it *not read*), and every other
 row and finding stands — on the verify lane too, where the goal row is refused in
-that sentence. A failure while the tool lists the instances one usage reads a
+that sentence and closed as a failure of the tool, not a defect in the relation. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
 sentence; one while it lists the asserted equations over a `default` it does not
 read, or the satisfactions, subjects and references an instance reads otherwise,
@@ -1760,7 +1775,12 @@ its own equation produced, with no declared unit, beside a requirement written
 in `[min]`. Read on its own that number looks like a refutation of the verdict
 it supports. The SI pair is what the comparison was actually made on, it is in
 the evidence record's `bound.si`, and every witness value in a record carries
-its `role` so a computed value is never mistaken for one you could edit.
+its `role` so a computed value is never mistaken for one you could edit. Where
+the unit-aware reading made no comparison, there is no pair: a bare number beside a
+quantity (`load <= 10.0` over a `load` written `5000.0 [g]`) is read in the
+feature's declared unit, as 5000 g against 10 g, and the verdict says only
+that it is false there — a pair printed for it would have read 5 kg against 10
+kg.
 
 **`holds-at-values` is not `proved`, and the tool will not let the two words
 blur.** The literal engine substitutes the values your file states and reads off
@@ -1963,7 +1983,7 @@ that renders these members carries it itself.
 |---|---|---|
 | `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement is prose with no constraint body | **Yes** — lowered to exit 0 |
 | `verification/timeout` | The solver ran out of time — raise it with `--timeout MS` | **Yes** |
-| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm — or it reads a value that a binding, a value or an asserted equation carries and this tool does not read through (`unread-binding`: a limit of this tool, the relation is well formed) | No |
+| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm — or it reads a value that a binding, a value or an asserted equation carries and this tool does not read through (`unread-binding`: a limit of this tool, the relation is well formed), or it reads a value this tool does not read where the model states it (`unread-definition`: a limit of this tool too, closed in that sentence — a per-instance reading it cannot enumerate, a definition written in another context, a body whose names its own parameters shadow (its sentence says the body is over a parameter of its own, which may state no value), a parameterised calculation, more instance rows than a run reads; a reading that failed inside the tool says so) | No |
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
 | `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
 | `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |
@@ -2874,7 +2894,7 @@ $ npm run sysprose -- reach examples/uav-isr.sysml
 examples/uav-isr.sysml: 1 state machine(s), 1 walked to exhaustion; 4 configuration(s) explored
   a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
   UAVSurveillanceSystem::FlightModes [StateDefinition]
-    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
     4 of 4 state(s) reachable; 5 of 5 transition(s) fired, 0 dead
     livelock     {manual, autonomous} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
     choice       UAVSurveillanceSystem::FlightModes::autonomous: 2 enabled as completion transitions (no trigger); the simulator takes autonomous -> manual, never autonomous -> failsafe
@@ -3066,7 +3086,9 @@ where the machine should wait, is the fix. A guard on a trigger-less way out of
 the cycle that the walk could not evaluate withholds the row — a `withheld` line
 says so in its place — and `check-behaviour` files the same warning beside its
 verdicts on the machine it checks, without changing a verdict or the exit code.
-It files the published rows only: read a withheld one in `reach`. On `--json`
+A withheld one it files as `verification/completion-livelock-withheld`, an info
+finding in the words of the `withheld` line, which says only that a cycle was
+seen and not decided. On `--json`
 every machine row carries `livelocks` and `livelocksWithheld` (empty on a
 machine with none, the second with the `clause` that withheld each), and
 `totals.livelocks` counts the published rows. A row names its `states`, the
@@ -3159,7 +3181,7 @@ $ npm run sysprose -- reach test/fixtures/verification/models/trap-probe.sysml
 test/fixtures/verification/models/trap-probe.sysml: 1 state machine(s), 1 walked to exhaustion; 5 configuration(s) explored
   a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
   TrapProbe::Probe::Modes [StateDefinition]
-    5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+    5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
     5 of 5 state(s) reachable; 6 of 6 transition(s) fired, 0 dead
     trap         {failsafe, failsafeHold} — 2 configuration(s) nothing leaves; entered in 3 step(s) from standby
     livelock     {alpha, beta} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
@@ -3450,7 +3472,7 @@ examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pas
     fail — witness trace of 3 step(s) …
     verification/refuted
     every run? potential — some run avoids it: the cycle manual → autonomous → manual never enters `failsafe` — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces
-    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} …
+    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} …
     witness — a run this semantics admits:
        0  start → UAVSurveillanceSystem::FlightModes::standby
        1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual
@@ -3507,7 +3529,7 @@ model.sysml: CoverProbe::Reachable::Modes — 1 property: 0 pass, 0 fail, 0 vacu
   COVERED      `state failsafe` holds on some run, over the whole run
     from --pattern
     covered — witness trace of 2 step(s), a run this semantics admits: `state failsafe` holds on some run, over the whole run — the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes `abort` is a claim about that environment and not about one that withholds it
-    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space
+    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space
     witness — a run this semantics admits:
        0  start → CoverProbe::Reachable::Modes::idle
        1  completion idle -> armed → CoverProbe::Reachable::Modes::armed
@@ -3584,7 +3606,7 @@ test/fixtures/verification/models/trap-probe.sysml: TrapProbe::Probe::Modes — 
     from --pattern
     not recoverable: 4 configuration(s) cannot reach `state standby`: {alpha, beta, failsafe, failsafeHold}; the nearest is entered in 1 step(s) from `standby`. Of these, 2 form a set nothing leaves — `reach` reports them as `verification/unrecoverable-mode`.
     verification/refuted
-    5 configuration(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+    5 configuration(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
   semantic profile (the reading every verdict above holds under):
     ...
   error verification/refuted  `TrapProbe::Probe::Modes`: `state standby` is reachable from every reachable configuration, over the whole run — not recoverable: 4 configuration(s) cannot reach `state standby`: …
@@ -3752,7 +3774,8 @@ row is published: the interpreter must fire the witness's transitions in its
 order and enter the states it enters. The one choice the replay makes the
 witness's way is the declaration-order tie-break, where the walk explores both
 branches and the simulator takes the first declared one (the simulator
-sentence beside such a row says so); run-to-completion, the 64-step chase
+sentence beside such a row says so, also where an undecided guard withheld the
+choice's own row); run-to-completion, the 64-step chase
 budget and the priority rule are the interpreter's own. A row whose witness
 does not replay is `inconclusive` under `verification/witness-not-replayed`,
 exit 2, with the step where the two parted — a defect in this engine, not in

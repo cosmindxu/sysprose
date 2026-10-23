@@ -41,6 +41,7 @@
 
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
+import { isFailedReading, isShadowedBody } from '../defining-equation';
 import { evaluateFeatureValue, featuresWithoutValue, valueAtPath } from '../evaluate-model';
 import { rowElement, type Obligation } from '../obligations';
 import { type ContractRef, type Refusal, type RefusalReason, type VariableRole } from '../contracts';
@@ -162,18 +163,42 @@ export function isOutsideTheFragment(reason: RefusalReason): boolean {
  * The sentence that closes a `not-evaluable` row a gate refused, by its
  * reason: a relation this tool does not read where the model gives it a value
  * (`unread-binding`, a binding or a value that equates two parts, or an
- * asserted equation over a `default` read through one or a reference) is a LIMIT
- * OF THIS TOOL — the relation is well-formed and the model decides it — and
- * every other such reason a defect in the relation. Neither is forgiven, and
- * the exit code is the same 2; only what a person is told to fix differs.
- * Shared with the SMT engine, which files the same rows.
+ * asserted equation over a `default` read through one or a reference;
+ * `unread-definition`, a value the model states in a context this tool does
+ * not read it in) is a LIMIT OF THIS TOOL — the relation is well-formed and
+ * the model decides it — except a body over a parameter of its own
+ * ({@link isShadowedBody}), which may state no value and is no one's to
+ * decide — and a per-instance reading that threw ({@link isFailedReading}) is
+ * a failure of the tool. Every other such
+ * reason is a defect in the relation. None is forgiven, and the exit code is
+ * the same 2; only what a person is told to fix differs. Shared with the SMT
+ * engine, which files the same rows.
  */
-export function refusalTail(reason: RefusalReason): string {
+export function refusalTail(reason: RefusalReason, detail = ''): string {
+  if (reason === 'unread-definition') {
+    return isFailedReading(detail)
+      ? 'This is a failure of this tool, not a defect in the relation: its reading of the relation threw, so ' +
+          '`--allow-inconclusive` does not forgive it'
+      : isShadowedBody(detail)
+        ? 'This is a limit of this tool, not a defect in the relation: its body is over a parameter of its own, ' +
+          'which this tool does not read, so `--allow-inconclusive` does not forgive it'
+        : 'This is a limit of this tool, not a defect in the relation: the model decides it, so ' +
+          '`--allow-inconclusive` does not forgive it';
+  }
   return reason === 'unread-binding'
     ? 'This is a limit of this tool, not a defect in the relation: the model gives it a value, so ' +
         '`--allow-inconclusive` does not forgive it'
     : 'This is a defect in the relation, not a construct outside the fragment, so ' +
         '`--allow-inconclusive` does not forgive it';
+}
+
+/** What a `not-evaluable` row a gate refused says is wrong, by its reason: the head of the sentence {@link refusalTail} closes. */
+export function refusalHead(reason: RefusalReason, detail = ''): string {
+  return reason === 'unread-definition' && isFailedReading(detail)
+    ? 'this tool failed while reading the relation'
+    : reason === 'unread-binding' || reason === 'unread-definition'
+      ? 'the relation reads a value this tool does not read'
+      : 'the relation itself cannot be read';
 }
 
 /** One assumption, and what it said at the model's values. */
@@ -426,8 +451,8 @@ function judgeOne(
       outcome: 'not-evaluable',
       detail:
         `not evaluable at the model's values — ${
-          refusal.reason === 'unread-binding' ? 'the relation reads a value this tool does not read' : 'the relation itself cannot be read'
-        } (${refusal.reason}): ${refusal.detail}. ${refusalTail(refusal.reason)}`,
+          refusalHead(refusal.reason, refusal.detail)
+        } (${refusal.reason}): ${refusal.detail}. ${refusalTail(refusal.reason, refusal.detail)}`,
     };
   }
   return { ...base, outcome: 'not-evaluable', detail: `not evaluable at the model's values: ${why}` };

@@ -101,6 +101,7 @@ import {
   isOutsideTheFragment,
   modelBindings,
   readPremise,
+  refusalHead,
   refusalTail,
   unreadOutcome,
   type PremiseReading,
@@ -851,13 +852,13 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
           ...refusedPoint,
           outcome: 'not-evaluable',
           detail:
-            `${refusal.reason === 'unread-binding' ? 'the relation reads a value this tool does not read' : 'the relation itself cannot be read'} ` +
+            `${refusalHead(refusal.reason, refusal.detail)} ` +
             `(${refusal.reason}): ${refusal.detail}. ` +
             (gatesRefusedToo
               ? ''
               : 'The unit gates passed this relation and the encoder refused it, so the two ' +
                 'surfaces of this tool read it differently. ') +
-            refusalTail(refusal.reason),
+            refusalTail(refusal.reason, refusal.detail),
           boundKind: 'none',
           boundDetail: 'no relation was encoded, so nothing is claimed',
         };

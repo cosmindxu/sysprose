@@ -373,7 +373,7 @@ const REACH_BEFORE: Record<string, unknown> = {
         "depth": 3,
         "exhaustive": true,
         "boundHit": "none",
-        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}",
+        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}",
         "states": {
           "total": 4,
           "reachable": [
@@ -533,7 +533,7 @@ const REACH_BEFORE: Record<string, unknown> = {
           "exemptedAsDeadlock": 0,
           "exemptedAsCore": 1,
           "refusedByGate": null,
-          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}"
+          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}"
         },
         "unsupported": [],
         "undeterminedGuards": [],
@@ -594,7 +594,7 @@ const REACH_BEFORE: Record<string, unknown> = {
         "depth": 2,
         "exhaustive": true,
         "boundHit": "none",
-        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}",
+        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}",
         "states": {
           "total": 3,
           "reachable": [
@@ -744,7 +744,7 @@ const REACH_BEFORE: Record<string, unknown> = {
           "exemptedAsDeadlock": 0,
           "exemptedAsCore": 1,
           "refusedByGate": null,
-          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}"
+          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}"
         },
         "unsupported": [],
         "undeterminedGuards": [],
@@ -791,7 +791,7 @@ const REACH_BEFORE: Record<string, unknown> = {
         "depth": 1,
         "exhaustive": true,
         "boundHit": "none",
-        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}",
+        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}",
         "states": {
           "total": 2,
           "reachable": [
@@ -861,7 +861,7 @@ const REACH_BEFORE: Record<string, unknown> = {
           "exemptedAsDeadlock": 0,
           "exemptedAsCore": 1,
           "refusedByGate": null,
-          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}"
+          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}"
         },
         "unsupported": [],
         "undeterminedGuards": [],
@@ -1452,7 +1452,7 @@ function withoutIds(value: unknown): unknown {
  */
 const MOVED_BY_THE_CENSUS = {
   storeClause:
-    ', store seeded from declared literal values — a guard over an attribute with no declared value is read as false',
+    ', store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge',
   censusField: 'exactness',
   withheldField: 'deadlocksWithheld',
   /**

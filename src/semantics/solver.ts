@@ -136,6 +136,7 @@ import {
   evaluateQuantity,
   expressionValueUnitOf,
   isRefusalReason,
+  isUnresolvedSentence,
   operandDerivation,
   valueUnitRefusal,
   type DerivationMemo,
@@ -4851,11 +4852,18 @@ function numericRows(
   }
   // A part-valued binding no end of which stands for the other may carry a
   // value (equatedPartsRefusal): no row that may read one is judged, as the
-  // validation surface judges none.
+  // validation surface judges none. A row already unknown keeps its sentence, unless that sentence only
+  // says a name it reads has no value in scope: a partner of an unread valued part has none because the
+  // binding carries one this tool does not read, which is the cause the other surfaces name.
   for (const r of out) {
-    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const unresolved =
+      r.result === 'unknown' && r.cause === undefined && r.context === undefined && isUnresolvedSentence(r.reason ?? '');
+    if (r.conflict !== undefined || (r.result === 'unknown' && !unresolved)) continue;
     const equated = equatedPartsRefusal(model, r.context?.baseId ?? r.id, r.raw, r.context);
     if (equated === undefined) continue;
+    // Only where the validation surface names the binding itself: a typo, or a feature declared without a
+    // value, read through the equated part is the user's defect there and stays so here.
+    if (unresolved && checkSentence(r.id) !== equated) continue;
     r.result = 'unknown';
     r.slack = null;
     r.amount = 0;

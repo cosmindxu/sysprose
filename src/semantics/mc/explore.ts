@@ -175,6 +175,12 @@ export const UNRECOVERABLE_MODE_CODE = 'verification/unrecoverable-mode';
  * {@link LivelockRow}).
  */
 export const COMPLETION_LIVELOCK_CODE = 'verification/completion-livelock';
+/**
+ * A cycle the chase goes round that {@link LivelockWithheldRow} withholds,
+ * filed by `check-behaviour` only: `reach` prints a `withheld` line in its
+ * place. Info, like every code that says what was NOT decided.
+ */
+export const COMPLETION_LIVELOCK_WITHHELD_CODE = 'verification/completion-livelock-withheld';
 
 /** Every code this module can put in front of a reader, for the catalogue guard. */
 export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
@@ -187,6 +193,7 @@ export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
   GUARD_UNDETERMINED_CODE,
   UNRECOVERABLE_MODE_CODE,
   COMPLETION_LIVELOCK_CODE,
+  COMPLETION_LIVELOCK_WITHHELD_CODE,
 ]);
 
 /**
@@ -565,6 +572,15 @@ export interface ExploreResult {
   /** The events actually offered — a bound can stop the walk before some are. */
   offered: ReadonlySet<string>;
   nondeterminism: readonly NondeterministicChoice[];
+  /**
+   * Did the walk WITHHOLD a choice row it would otherwise have recorded: an
+   * undetermined guard strictly inside the level of a choice (see the
+   * `withheldInside` test in the walk)? Then the machine may have a choice the
+   * rows do not show, and a witness through one of its branches is as much a
+   * run `simulate` may never produce as one through a recorded choice, so the
+   * simulator sentence stands beside it (`hasChoice`).
+   */
+  choiceWithheld: boolean;
   deadlocks: readonly DeadlockRow[];
   unsupported: readonly UnsupportedConstruct[];
   /**
@@ -1707,6 +1723,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
       fired: new Set(),
       offered: new Set(),
       nondeterminism: [],
+      choiceWithheld: false,
       deadlocks: [],
       unsupported,
       census,
@@ -1754,6 +1771,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
     fired: walked.fired,
     offered: walked.offered,
     nondeterminism: walked.nondeterminism,
+    choiceWithheld: walked.choiceWithheld,
     deadlocks: walked.deadlocks,
     unsupported,
     census,
@@ -1782,6 +1800,7 @@ interface Walked {
   fired: Set<ElementId>;
   offered: Set<string>;
   nondeterminism: NondeterministicChoice[];
+  choiceWithheld: boolean;
   deadlocks: DeadlockRow[];
   undeterminedGuards: UndeterminedGuardRow[];
   successors: number[][];
@@ -1820,6 +1839,7 @@ function walkConfigurations(
   const fired = new Set<ElementId>();
   const offered = new Set<string>();
   const nondeterminism: NondeterministicChoice[] = [];
+  let choiceWithheld = false;
   const deadlocks: DeadlockRow[] = [];
   // ONE row per transition, not one per configuration it was consulted at: a
   // guard over an unvalued feature is undetermined at every configuration the
@@ -2008,6 +2028,12 @@ function walkConfigurations(
           nondetSeen,
           nondeterminism,
         );
+      } else if (!choiceWithheld) {
+        // The row this branch withholds, found the way it would have been, so
+        // the machine says it may hide a choice only where one was there.
+        const would: NondeterministicChoice[] = [];
+        recordNondeterminism(model, here.config, input, enabled.filter((e) => e.level === innermost), new Set(), would);
+        choiceWithheld = would.length > 0;
       }
 
       // The transition the INTERPRETER's chase fires here — `enabled[0]`, the
@@ -2149,6 +2175,7 @@ function walkConfigurations(
     fired,
     offered,
     nondeterminism,
+    choiceWithheld,
     deadlocks,
     undeterminedGuards: [...undeterminedGuards.values()],
     successors: succ,
@@ -2954,6 +2981,33 @@ export function livelockWithheldSentence(clause: LivelockWithheldRow['clause']):
   return `the chase goes round these configuration(s) on trigger-less transitions and no livelock is reported: ${CLAUSE_SENTENCE[clause]}`;
 }
 
+/**
+ * The `verification/completion-livelock-withheld` finding for one withheld
+ * row, in the words of `reach`'s `withheld` line (one composer for the line's
+ * sentence, {@link livelockWithheldSentence}). Read by `behaviourReport`
+ * (`./patterns`) only: `reach` keeps the line, and the line carries no code.
+ * It claims nothing about the machine: a cycle was seen and a clause of the
+ * gate stopped the walk from saying it is a livelock.
+ */
+export function livelockWithheldFinding(
+  machine: { id: ElementId; qualifiedName: string },
+  row: LivelockWithheldRow,
+): Omit<Diagnostic, 'id' | 'ruleId' | 'source'> {
+  return {
+    severity: 'info',
+    message:
+      `\`${machine.qualifiedName}\`: {${row.states.map((s) => s.name).join(', ')}} — ${livelockWithheldSentence(row.clause)}` +
+      (row.cycles > 1 ? ` (one finding for ${row.cycles} cycles of configurations over these states)` : ''),
+    elementId: row.states[0].id,
+    elementName: row.states[0].qualifiedName,
+    code: COMPLETION_LIVELOCK_WITHHELD_CODE,
+    hint:
+      row.clause === 'store'
+        ? 'Make the guard on the trigger-less way out one the walk can evaluate (`reach` names it under `verification/guard-undetermined` and says why, most often an attribute with no declared value) so the walk can say whether the chase leaves. Nothing is claimed about this cycle either way: a cycle whose chase was not decided is neither a livelock nor a cycle that settles.'
+        : 'The step the chase takes round this cycle is an `after(n)` dwell, which this walk takes without waiting it out, so the interpreter may wait there instead of going round. Nothing is claimed about this cycle either way: it is neither a livelock nor a cycle that settles.',
+  };
+}
+
 /* ─────────────────────────────── the report ─────────────────────────────── */
 
 /** One machine's answer. */
@@ -3204,6 +3258,26 @@ export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecor
 }
 
 /**
+ * Does the machine have a choice the simulator resolves by declaration order —
+ * one recorded in {@link ExploreResult.nondeterminism}, or one withheld
+ * ({@link ExploreResult.choiceWithheld})? Where it does, a claim that stands on
+ * a run says so (the simulator sentence), because the run may be one `simulate`
+ * never produces.
+ */
+export function hasChoice(walk: Pick<ExploreResult, 'nondeterminism' | 'choiceWithheld'>): boolean {
+  return walk.nondeterminism.length > 0 || walk.choiceWithheld;
+}
+
+/**
+ * The constructs a machine was refused for, each named once, in the order met:
+ * two step edges across the machine's boundary, or several without endpoints,
+ * are two rows (each with its own detail) and one name in the qualification.
+ */
+export function constructsOf(unsupported: readonly UnsupportedConstruct[]): string {
+  return [...new Set(unsupported.map((u) => u.construct))].join(', ');
+}
+
+/**
  * `{maxConfigs …, maxDepth …, maxCompletion …, alphabet …, store …}`, spelled
  * out — the sentence every figure in every lane is true UNDER.
  *
@@ -3218,22 +3292,21 @@ export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecor
  * commit whose whole gate was *"`reach`'s output did not move"*. It says what
  * `exhaustive under {…}` has always meant — the walk opens from the literal
  * values the model declares, and a guard over an attribute with no declared
- * value is read the way the interpreter reads it. It is a DISCLOSURE and not a
+ * value decides nothing and takes no edge. It is a DISCLOSURE and not a
  * condition: it says LESS than the guard clause the walk already publishes,
  * which covers guards that decided nothing for reasons other than an unvalued
  * feature, and where the two differ it is the `verification/guard-undetermined`
  * row that a reader acts on.
  *
- * "READ AS FALSE" IS THE INTERPRETER'S READING, AND SINCE H1 NOT QUITE THE
- * WALK'S. At a TRIGGERED guard the two agree: the walk takes no edge there. At
- * a COMPLETION guard they part: where nothing else is due, the interpreter
- * reads the guard as false and takes its next event, and the walk offers no
- * trigger there at all (the header's WHERE AN EVENT IS OFFERED). Either way the
- * guard is undecided, the machine fails the store clause and every absence on
- * it is withheld with the row that names the guard, so no claim rests on the
- * clause's wording. It is left as it stands because it is printed in every
- * qualification on every machine, and rewording it re-records them all (O1,
- * review of S4).
+ * "UNDECIDED AND TAKES NO EDGE", NOT "READ AS FALSE". The clause used to say
+ * the guard was read as false, which is the interpreter's reading and, since
+ * H1, not quite the walk's. At a TRIGGERED guard the two agree: the walk takes
+ * no edge there. At a COMPLETION guard they part: where nothing else is due,
+ * the interpreter reads the guard as false and takes its next event, and the
+ * walk offers no trigger there at all (the header's WHERE AN EVENT IS OFFERED).
+ * What holds at both is what the clause now says: the guard is undecided and
+ * the walk takes no edge on it. The machine then fails the store clause and
+ * every absence on it is withheld with the row that names the guard.
  *
  * APPENDED AFTER THE ALPHABET CLAUSE, and the position is not a style choice:
  * the process-level campaign asserts a PREFIX of this sentence that stops before
@@ -3245,7 +3318,7 @@ export function boundsSentence(b: ExploreBounds): string {
   return (
     `{maxConfigs ${b.maxConfigs}, maxDepth ${b.maxDepth}, maxCompletion ${b.maxCompletion}, ` +
     `alphabet ${alphabet}, store seeded from declared literal values — a guard over an ` +
-    'attribute with no declared value is read as false}'
+    'attribute with no declared value is undecided and takes no edge}'
   );
 }
 
@@ -3384,7 +3457,7 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
   const qualification = publishable
     ? `exhaustive under ${boundsSentence(walk.bounds)}`
     : walk.unsupported.length > 0
-      ? `not explored — ${walk.unsupported.map((u) => u.construct).join(', ')}; no figure below is a claim of absence`
+      ? `not explored — ${constructsOf(walk.unsupported)}; no figure below is a claim of absence`
       : !guardsDecided
         ? // BOTH causes, when both are present. An undetermined guard is fixed
           // in the model and a bound is raised with `--max-configs`; a reader

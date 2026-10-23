@@ -7313,8 +7313,18 @@ export type InstanceAbstention =
  * reading and its unit-aware twin.
  */
 export function failedReadingSentence(name: string, instance: string, e: unknown): string {
-  return `${name} is not read in ${instance}: the per-instance reading failed ` +
+  return `${name} is not read in ${instance}: ${READING_FAILED} ` +
     `(${e instanceof Error ? e.constructor.name : 'error'}); reported, not dropped`;
+}
+
+const READING_FAILED = 'the per-instance reading failed';
+
+/**
+ * Is this refusal sentence a {@link failedReadingSentence}: the tool failed, whatever the relation says? The
+ * verification lanes close such a row in a sentence that blames the tool, not the relation ({@link refusalTail}).
+ */
+export function isFailedReading(sentence: string): boolean {
+  return sentence.includes(`: ${READING_FAILED} (`);
 }
 
 /** One context a definition is read in, with the dotted path to it from that context's root ({@link bindingFrames}). */
@@ -10530,8 +10540,15 @@ export function shadowedSentence(model: Model, el: ElementRecord, shadowed: read
   return (
     `\`${head}\` in ${who} is ${f ? effectiveQualifiedName(model, f.id) : head}, ${what}; this tool reads a ` +
     `body in its owner's scope, where \`${head}\` is ${outer !== undefined ? effectiveQualifiedName(model, outer) : 'another feature'} ` +
-    '— another feature — so the body is not read'
+    `— another feature — ${BODY_NOT_READ}`
   );
+}
+
+const BODY_NOT_READ = 'so the body is not read';
+
+/** Is this refusal sentence a {@link shadowedSentence}: a body over a name its own element declares, which may state no value? */
+export function isShadowedBody(sentence: string): boolean {
+  return sentence.endsWith(`— another feature — ${BODY_NOT_READ}`);
 }
 
 /**

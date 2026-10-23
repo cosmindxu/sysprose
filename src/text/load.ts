@@ -46,6 +46,7 @@
 import type { ElementId, Model } from '@core/index';
 import type { Diagnostic, Severity, TextRange } from '@validation/types';
 import { validate } from '@validation/index';
+import { effectiveNameOf } from '@semantics/inheritance';
 import {
   parseModel,
   resolveConnectorFeatureChains,
@@ -326,6 +327,8 @@ export async function loadModelText(
       if (d.elementId !== undefined && !userIds.has(d.elementId)) continue;
       const range = d.elementId !== undefined ? parsed.ranges.get(d.elementId) : undefined;
       const el = d.elementId !== undefined ? model.get(d.elementId) : undefined;
+      // An unnamed redefinition (`attribute :>> L = 50.0`) is named for what it redefines.
+      const name = el !== undefined ? effectiveNameOf(model, el) : undefined;
       const code = d.code ?? `validation/${d.ruleId}`;
       const hint = d.hint ?? renderHint(code);
       diagnostics.push({
@@ -333,7 +336,7 @@ export async function loadModelText(
         code,
         source: d.source ?? 'validation',
         ...(range ? { range } : {}),
-        ...(el?.declaredName ? { elementName: el.declaredName } : {}),
+        ...(name ? { elementName: name } : {}),
         ...(hint ? { hint } : {}),
       });
     }

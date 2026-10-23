@@ -90,7 +90,7 @@ this family alone, because no span of the file would name the thing the row is
 about; see the \`checks\` source in the campaign document.
 
 \`elementId\`
-and \`elementName\` appear on validation findings. \`expected\`/\`found\` appear on
+and \`elementName\` appear on validation findings (an unnamed redefinition, \`attribute :>> L = 50.0\`, is named for what it redefines, \`L\`). \`expected\`/\`found\` appear on
 lexer and parser errors. \`instances\`, \`instance\` and \`relation\` appear on
 per-instance findings: a roll-up carries the counts in \`instances\`, and a
 finding about one instance names it in \`instance\`.
