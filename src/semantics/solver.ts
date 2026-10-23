@@ -108,7 +108,7 @@ import {
   type InstanceAbstention,
   type InstanceReading,
 } from './defining-equation';
-import { effectiveNameOf, generalizationsOf } from './inheritance';
+import { effectiveNameOf, generalizationsOf, redefinedClosure } from './inheritance';
 import { isNonNormativeStatement } from './statement-kind';
 import {
   NO_MARKERS,
@@ -1434,9 +1434,20 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
     // The instances that enclose it hold what their types state of it too
     // (Sys's `bind p.load = q.load` of `s.q.load`) — the frames above a usage
     // whose own walk read it, where a binding joins a feature of an enclosing
-    // instance (E3, {@link hasEnclosedBindings}).
+    // instance (E3, {@link hasEnclosedBindings}), or where a `default` it
+    // reads gives way at THIS instance (its own, or one an end copy reads
+    // through what it redefines): no value equation fixes it, and the binding
+    // that holds it may be one an enclosing instance's type writes. HL's q2's
+    // `part :>> p { assert constraint a1 { extra == 2.0 * load } }` reads p's
+    // load from q2's p's own walk, with no frame above it, and Q's `bind p.load
+    // = L` (q2's L of 5) was never solved: load was a freedom the solve fitted
+    // to the assert, and a1, violated at 5 on the check, read satisfied here.
     const frames =
-      reading.enclosing.length === 0 && hasEnclosedBindings(model) ? (definitions.framesAbove(reading.instance) ?? []) : reading.enclosing;
+      reading.enclosing.length === 0 &&
+      (hasEnclosedBindings(model) ||
+        [feature, ...redefinedClosure(model, feature)].some((g) => defaultGivesWayIn(model, g, reading.symbol)))
+        ? (definitions.framesAbove(reading.instance) ?? [])
+        : reading.enclosing;
     for (const e of frames) hold(e.instance, e.reader);
     hold(reading.instance, reader.id);
   }

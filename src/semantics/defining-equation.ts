@@ -917,11 +917,12 @@ export class DefiningEquations {
    *    that encloses the reading, so it is read here only where that is the
    *    same value in EVERY instance of its owner ({@link lexicallyUniform}):
    *    none specialises the owner and declares it anew, no binding joins it,
-   *    no asserted relation names it where it is a `default`, and what its
-   *    value reads is the same too. Where one is not (h2c0's `q : Q { :>> L =
-   *    50.0; }` beside Q's p `:>> load = L`), the name is left unread — the
-   *    generic read abstains where a specialiser changes the value — and the
-   *    reason is kept (`refused`, {@link lexicalRefusal}).
+   *    no asserted relation names it where it is a `default` an assertion may
+   *    replace ({@link replaceableDefaults}: none), and what its value reads is
+   *    the same too. Where one is not (h2c0's `q : Q { :>> L = 50.0; }` beside
+   *    Q's p `:>> load = L`), the name is left unread — the generic read
+   *    abstains where a specialiser changes the value — and the reason is kept
+   *    (`refused`, {@link lexicalRefusal}).
    * Once per context; it reads no {@link denote} walk, and no value a binding
    * or an assert decides ({@link lexicallyUniform}). `written`: each bare name
    * a body read here names that the context's own features do not answer,
@@ -967,9 +968,15 @@ export class DefiningEquations {
       // reads the name there not at all ({@link lexicalShadows}: DY1's q's p, which declares `L` itself):
       // then this reading is the body's in every instance that reads it.
       if (this.specialisersOf(contextId).some((s) => (this.byName(s.id).get(n) ?? f) !== f && !this.clashesIn(s.id).get(n)?.shadow)) continue;
-      // A package's `default` an assert other than its own names (one nested in it too) may give way there
-      // with the default it is set equal to (U7): not one value either.
-      const elsewhere = isPackage(o) && f.attrs.defaultValue === true && [...(this.assertedNames().get(n) ?? [])].some((x) => x !== o.id);
+      // A package's `default` an assertion may replace ({@link replaceableDefaults}: none since decision 14 was
+      // amended), which an assert other than its own names (one nested in it too), would give way there with
+      // the default it is set equal to (U7): not one value either. Every other default is the one value it is,
+      // as one written with `=`, and the assert is checked against it (LP1, SLP).
+      const elsewhere =
+        isPackage(o) &&
+        f.attrs.defaultValue === true &&
+        replaceableDefaults(this.model).has(f.id) &&
+        [...(this.assertedNames().get(n) ?? [])].some((x) => x !== o.id);
       const why = elsewhere ? `an asserted relation other than its own names ${n}` : isPackage(o) ? undefined : this.lexicallyUniform(o.id, f, n);
       if (why !== undefined) {
         refused.set(n, `${n} is read through ${this.qualifiedNameOf(o.id)}, which declares it, and is not one value in every instance of it: ${why}`);
@@ -1085,9 +1092,14 @@ export class DefiningEquations {
       this.joined = joined;
     }
     if (this.joined.has(f.id)) return `a binding joins ${name}`;
-    // An assert overrides a `default` (H5), never a value written with `=`:
-    // against one, it is checked.
-    if (f.attrs.defaultValue === true && this.assertedNames().has(name)) return `an asserted relation names ${name}`;
+    // An assert is checked against a `default` as against a value written with
+    // `=` (decision 14 amended 2026-10-22): only one an assertion may replace
+    // ({@link replaceableDefaults}: none) is no one value where an assert names
+    // it. Refused here, a contradicting assert over such a default was never
+    // reported violated (SLO, SLD).
+    if (f.attrs.defaultValue === true && replaceableDefaults(this.model).has(f.id) && this.assertedNames().has(name)) {
+      return `an asserted relation names ${name}`;
+    }
     // The value as written: whether a `default` gives way is a binding's or an
     // assert's question, both answered above — and asking it here would read
     // the walk this one is part of.
@@ -5820,11 +5832,14 @@ const NO_DEFAULTS: ReadonlySet<ElementId> = new Set();
  * (G1, G3), and two that disagree read alike in either order (M8). A soft
  * value is written as the value (`:>> L = …`), or as a feature with no value
  * that an asserted equation defines — that keeps decision 14 (v9's CV-17).
- * The three readings that let one give way each ask this set — the local rule
- * ({@link assertHeld}), the enclosing rule ({@link enclosingAsserts}) and the
- * binding route ({@link heldDefaults}: an end an asserted equation defines) —
- * so that an opt-in tag that lets an assertion adjust a written number, held
- * until a model needs one (TODO.md), would answer here alone. Typed asserts
+ * The readings that let one give way each ask this set — the local rule
+ * ({@link assertHeld}), the enclosing rule ({@link enclosingAsserts}), the
+ * binding route ({@link heldDefaults}: an end an asserted equation defines)
+ * and the lexical reading of a name an owning namespace declares ({@link
+ * DefiningEquations.lexicalNames}: a `default` an assert names is the one
+ * value it is there, LP1, SLD) — so that an opt-in tag that lets an assertion
+ * adjust a written number, held until a model needs one (TODO.md), would
+ * answer here alone. Typed asserts
  * are another matter: no surface reads their equation, so a `default` one may
  * define is read nowhere ({@link typedAssertHolding}).
  */
@@ -5919,7 +5934,7 @@ export function standingDefaultSentence(model: Model, el: ElementRecord): string
     said.set(
       g.id,
       `${writtenName(model, g)}'s \`default = ${writtenValue(g)}\` is not changed by an assertion: write the analysis as the ` +
-        `value (${redefinitionSpelling(model, ownerId, n)}) to replace it`,
+        `value (${redefinitionSpelling(model, ownerId, n, f, g)}) to replace it`,
     );
   }
   return said.size > 0 ? [...said.values()].join('; ') : undefined;
@@ -5928,25 +5943,50 @@ export function standingDefaultSentence(model: Model, el: ElementRecord): string
 /**
  * Where the value of the feature `path` names below `ownerId` is written to
  * replace its `default` ({@link standingDefaultSentence}): `` `:>> mass = …` ``
- * for a bare name; for a dotted one, the redefinitions down the path, each
- * with its own keyword, in the element that writes the assert — `` `part :>> p
- * { attribute :>> x = …; }` in R::q1 `` — since a bare `:>> x` there would
- * name no feature of q1's.
+ * for a bare name the element inherits (a usage of the definition, or a
+ * specialisation of it); for a dotted one, the redefinitions down the path,
+ * each with its own keyword, in the element that writes the assert — `` `part
+ * :>> p { attribute :>> x = …; }` in R::q1 `` — since a bare `:>> x` there
+ * would name no feature of q1's. A feature the element declares itself, or
+ * reads through an owning namespace, is no feature it may redefine: a feature
+ * that redefines its own sibling is no KerML, and one nested below the
+ * declaring namespace has no such feature at all. So the leading segments the
+ * element declares down the path are not redefined but entered — Pack's `b.mass
+ * == 0.8` over its own `part b : Battery` reads `` `attribute :>> mass = …;` in
+ * M4::Pack::b `` — and a feature declared all the way down (`f`, the one the
+ * path denotes; `g`, the one that writes the default) has its value written
+ * where it is declared: `` `= …` in place of `default = 1.2` where M1::Battery
+ * declares mass ``.
  */
-function redefinitionSpelling(model: Model, ownerId: ElementId, path: string): string {
+function redefinitionSpelling(model: Model, ownerId: ElementId, path: string, f: ElementRecord, g: ElementRecord): string {
   const segments = path.split('.');
-  if (segments.length === 1) return `\`:>> ${path} = …\``;
   const keywords: string[] = [];
+  // The element each segment is read in, and whether the feature there is one it declares itself.
+  const holders: ElementId[] = [];
+  const declared: boolean[] = [];
   let cur = ownerId;
   for (const segment of segments) {
-    const f = [...ownFeatures(model, cur), ...effectiveFeatures(model, cur)].find((h) => effectiveNameOf(model, h) === segment);
-    keywords.push(f ? (TEXTUAL_KEYWORD[f.eClass] ?? '') : '');
-    if (f) cur = f.id;
+    holders.push(cur);
+    const h = [...ownFeatures(model, cur), ...effectiveFeatures(model, cur)].find((x) => effectiveNameOf(model, x) === segment);
+    keywords.push(h ? (TEXTUAL_KEYWORD[h.eClass] ?? '') : '');
+    declared.push(h !== undefined && h.ownerId === cur);
+    if (h) cur = h.id;
   }
+  // A bare name no feature of the element answers is one it reads through an owning namespace.
+  if (segments.length === 1 && keywords[0] === '' && f.ownerId != null && f.ownerId !== ownerId) declared[0] = true;
+  const entered = declared.findIndex((d) => !d);
+  if (entered === -1) {
+    const at = f.ownerId != null ? effectiveQualifiedName(model, f.ownerId) : effectiveQualifiedName(model, holders[holders.length - 1]!);
+    const name = segments[segments.length - 1]!;
+    return f.id === g.id
+      ? `\`= …\` in place of \`default = ${writtenValue(g)}\` where ${at} declares ${name}`
+      : `\`= …\` on the ${name} ${at} declares`;
+  }
+  if (segments.length === 1) return `\`:>> ${path} = …\``;
   const at = (k: number): string => `${keywords[k] ? `${keywords[k]} ` : ''}:>> ${segments[k]}`;
   let text = `${at(segments.length - 1)} = …;`;
-  for (let k = segments.length - 2; k >= 0; k--) text = `${at(k)} { ${text} }`;
-  return `\`${text}\` in ${effectiveQualifiedName(model, ownerId)}`;
+  for (let k = segments.length - 2; k >= entered; k--) text = `${at(k)} { ${text} }`;
+  return `\`${text}\` in ${effectiveQualifiedName(model, holders[entered]!)}`;
 }
 
 /**
@@ -7451,8 +7491,10 @@ function renamedMember(
 function endValue(model: Model, f: ElementRecord, root: ElementRecord, path: string): EndValue {
   for (const g of [f, ...redefinedClosure(model, f)]) {
     if (g.attrs.value === undefined || g.attrs.value === null) continue;
-    // A `default` an asserted equation overrides (H5, {@link assertHeld}) is
-    // the equation's value, and a default in the component gives way to it.
+    // A `default` an asserted equation would override ({@link assertHeld}:
+    // since decision 14 was amended, only one a typed assert may define, read
+    // nowhere) is no default of the component's to stand: it counts as a
+    // value, and a default in the component gives way to it.
     return g.attrs.defaultValue === true && !assertHeld(model).has(g.id) ? { kind: 'default', source: g } : { kind: 'value' };
   }
   // No value of its own: an asserted equation that defines the feature — its
@@ -7486,7 +7528,15 @@ function statesNothing(model: Model, f: ElementRecord): boolean {
 /**
  * Does an asserted equation define the binding end `f` at `path` in `root` —
  * one of the owner of `f` or of a feature it redefines, under that feature's
- * name, or one of the context, under the path ({@link endValue})?
+ * name, one of the context, under the path, or one of a feature the path
+ * passes through in the context, under the rest of it ({@link endValue})? The
+ * last is a redefinition that writes the assert where the end is no feature
+ * of its own: q2's `part :>> p { assert constraint { load == 50.0 } }` under
+ * Q's `bind p.load = L`, read in q2 at `p.load` (an end copy Q's p owns), or
+ * Q2's `part :>> p { … }` for `Q2 :> Q`. Asked of the end's owner alone, the
+ * assert went unseen, Q's `L default = 1.0` was never one of two values
+ * there, and the check read q2's p's load at the equation's 50 where the
+ * numeric surface read the default's 1 (M2, M3).
  */
 function assertDefinesEnd(
   model: Model,
@@ -7508,7 +7558,19 @@ function assertDefinesEnd(
   };
   const defines = (ownerId: ElementId | null, n: string | undefined): boolean =>
     n !== undefined && ownerId != null && definedIn(ownerId, n);
-  return [f, ...redefinedClosure(model, f)].some((g) => defines(g.ownerId, effectiveNameOf(model, g))) || defines(root.id, path);
+  if ([f, ...redefinedClosure(model, f)].some((g) => defines(g.ownerId, effectiveNameOf(model, g))) || defines(root.id, path)) return true;
+  // Each feature the path passes through in the context, and what it redefines, under the rest of the path.
+  const segments = path.split('.');
+  const definitions = sharedDefinitions(model);
+  let owner = root.id;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const h = definitions.byName(owner).get(segments[i]!);
+    if (!h) return false;
+    const rest = segments.slice(i + 1).join('.');
+    if ([h, ...redefinedClosure(model, h)].some((g) => defines(g.id, rest))) return true;
+    owner = h.id;
+  }
+  return false;
 }
 
 /**

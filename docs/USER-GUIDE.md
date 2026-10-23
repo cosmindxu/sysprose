@@ -993,10 +993,14 @@ P::m = M` beside `part def P`) holds in every instance of P — `part p2 : P`,
 Q's `part p : P` and each q's — and over a redefinition's own `default` there
 (`part p3 : P { attribute :>> m default = 30.0 [kg]; }` reads M too). Where
 one instance's m gets a value outside that binding — its own `:>> m = 25.0
-[kg]`, another binding (Q's `bind p.m = N`), or an asserted equation (`p2.m ==
-25.0 [kg]`) — that value is M's and every instance's, which the check and the
-literal engine do not read: no `default` the binding joins stands, and they
-name what fixes it (*could not be evaluated*). One that joins two features of
+[kg]`, or another binding (Q's `bind p.m = N`) — that value is M's and every
+instance's, which the check and the literal engine do not read: no `default`
+the binding joins stands, and they name what fixes it (*could not be
+evaluated*). An asserted equation on one instance's slot (`p2.m == 25.0 [kg]`)
+gives it no value: it is checked against what the binding carries there — M's
+value, or, where M has none, P's `default`, which the binding carries into M
+and which stands against the assert (below) — so every P's m is 18.5 kg, and
+the assert is reported violated. One that joins two features of
 a definition (`bind P::m = P::cap`) joins them in each instance at that
 instance's values: the check and the literal engine do not read it, the
 numeric surface solves it, and the solver lane proves what holds there but
@@ -1343,10 +1347,16 @@ finds its axioms inconsistent, as beside `L = 2.0`. Where the assert is an
 equation that names the default's feature alone on one side, its other side
 reading neither it nor another `default` — the shape that once defined it — the
 sentence also says why the default stood and how to write the value it meant to
-give (*Constraint violated: L == 5.0 — HL::L's `default = 2.0` is not changed by
-an assertion: write the analysis as the value (`:>> L = …`) to replace it*; for
-a dotted name written in an instance, where: *(`part :>> p { attribute :>> x =
-…; }` in R::q1)*). An inequality (`mass <= limit` over `limit default = 1.0`),
+give (*Constraint violated: L == 5.0 — Q::L's `default = 2.0` is not changed by
+an assertion: write the analysis as the value (`:>> L = …`) to replace it*, for
+an assert written in a usage or a specialisation of Q; for one written where L
+is declared, or below it (a part nested in Q, or a package's assert over the
+package's L), *(`= …` in place of `default = 2.0` where HL::Q declares L)*,
+since an element may not redefine its own feature; for a dotted name, the
+redefinitions down the path from the deepest feature the element declares
+itself: *(`part :>> p { attribute :>> x = …; }` in R::q1)* over Q's p,
+*(`attribute :>> mass = …;` in M4::Pack::b)* over Pack's own `part b`). An
+inequality (`mass <= limit` over `limit default = 1.0`),
 or an equation that only reads a default on its other side (`mass == 0.2 *
 cells` over `cells default = 4.0`), is a requirement checked against the
 default, and its sentence says nothing more. The default stands whatever the
@@ -1508,13 +1518,16 @@ keeps KerML's reading in the element (Q's p reads Q's L), and the specialiser,
 which one reading cannot give the name both meanings, reads it nowhere: a row
 through q's p's load is *could not be evaluated*, in a sentence naming the
 body and both features. A
-package's attribute is one value wherever it is read, unless it is a `default`
-that an `assert` other than the package's own names. An attribute of an
-enclosing definition or usage is read where it is declared only where it is one
-value in every instance of that owner: nothing that specialises the owner
-declares the name anew, no binding joins it, no `assert` names it where it is a
-`default`, and what its value reads is such a value too (R's `y = 3.0` read by
-its nested `part def Q { attribute z = y + K; }`). Elsewhere a row that reads it
+package's attribute is one value wherever it is read, a `default` too. An
+attribute of an enclosing definition or usage is read where it is declared only
+where it is one value in every instance of that owner: nothing that specialises
+the owner declares the name anew, no binding joins it, and what its value reads
+is such a value too (R's `y = 3.0` read by its nested `part def Q { attribute z
+= y + K; }`). A `default` an `assert` names is such a value, as one written
+with `=`, and the assert is checked against it (above): `part def Battery {
+attribute mass default = 1.2; part cells { assert constraint { mass == 0.8 } }
+}` reports the assert violated, and so does P's `L == 50.0` over the package's
+`L default = 1.0`. Elsewhere a row that reads it
 is *could not be evaluated*, in a sentence naming the element that changes it —
 Q's p `:>> load = L` beside `part q : Q { attribute :>> L = 50.0; }` reads
 neither Q's 1 nor q's 50, for Q's own p or for q's. An asserted equation over a

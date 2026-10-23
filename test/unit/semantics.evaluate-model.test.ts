@@ -2906,9 +2906,11 @@ describe('checkConstraints — a default stands against an asserted equation (de
       }
     }`);
     const message = (model: Model, q: string) => checkConstraints(model).find((c) => model.qualifiedName(c.id) === q)!.message;
+    // Battery declares mass itself: a `:>> mass` there would redefine its own sibling, so the value is written in
+    // place of the default.
     expect(message(m!, 'MASS::Battery::massSum')).toBe(
       "Constraint violated: mass == 0.2 * cells — Battery::mass's `default = 1.2` is not changed by an assertion: write the " +
-        'analysis as the value (`:>> mass = …`) to replace it',
+        'analysis as the value (`= …` in place of `default = 1.2` where MASS::Battery declares mass) to replace it',
     );
     expect(message(m!, 'MASS::Battery::lim')).toBe('Constraint violated: mass <= 1.0');
     // Not over a value written with `=`, nor a `default` a binding gives another value (it is not the value
@@ -2954,6 +2956,37 @@ describe('checkConstraints — a default stands against an asserted equation (de
       "Constraint violated: p.x == 50.0 — P::x's `default = 2.0` is not changed by an assertion: write the analysis as the " +
         'value (`part :>> p { attribute :>> x = …; }` in DT::q1) to replace it',
     );
+    // A usage inherits the feature, and redefines it; an element that declares the path's first feature itself
+    // enters it rather than redefine its own sibling; a name read through an owning namespace (cells' `mass`, of
+    // Battery's) is written where it is declared.
+    const said = (body: string, owner: string, where: string): string =>
+      `Constraint violated: ${body} — ${owner}'s \`default = 1.2\` is not changed by an assertion: write the analysis as ` +
+      `the value (${where}) to replace it`;
+    for (const [text, rel, expected] of [
+      [
+        'package MU { part def Battery { attribute mass : ScalarValues::Real default = 1.2; } part b : Battery { assert constraint a { mass == 0.8 } } }',
+        'MU::b::a',
+        said('mass == 0.8', 'Battery::mass', '`:>> mass = …`'),
+      ],
+      [
+        'package MD { part def Battery { attribute mass : ScalarValues::Real default = 1.2; } part def Pack { part b : Battery; assert constraint a { b.mass == 0.8 } } }',
+        'MD::Pack::a',
+        said('b.mass == 0.8', 'Battery::mass', '`attribute :>> mass = …;` in MD::Pack::b'),
+      ],
+      [
+        'package ML { part def Battery { attribute mass : ScalarValues::Real default = 1.2; part cells { assert constraint a { mass == 0.8 } } } }',
+        'ML::Battery::cells::a',
+        said('mass == 0.8', 'Battery::mass', '`= …` in place of `default = 1.2` where ML::Battery declares mass'),
+      ],
+      [
+        'package MP { attribute mass : ScalarValues::Real default = 1.2; assert constraint a { mass == 0.8 } }',
+        'MP::a',
+        said('mass == 0.8', 'MP::mass', '`= …` in place of `default = 1.2` where MP declares mass'),
+      ],
+    ] as const) {
+      const { model: x } = await loadModelText(text);
+      expect(message(x!, rel), rel).toBe(expected);
+    }
   });
 
   it('defines a side with no value from the other, and checks two values against each other (e, U7)', async () => {
@@ -3824,7 +3857,7 @@ describe('a binding reads through a renamed redefinition and a package’s defin
     expect([result(m!, 'W4v::c2'), numeric(m!, 'W4v::c2')]).toEqual(['unknown', 'unknown']);
   });
 
-  it('stands no default where an instance’s slot is fixed outside the binding — another binding, an assert (W4X)', async () => {
+  it('stands no default where another binding fixes an instance’s slot, and checks an assert on the slot against the default (W4X, W4A)', async () => {
     const { model: m } = await loadModelText(`package W4X {
       part def P { attribute load : ScalarValues::Real default = 50.0; }
       attribute L : ScalarValues::Real;

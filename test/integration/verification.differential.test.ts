@@ -5466,7 +5466,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // bound part, so the group is refused whole, its own row included. X9: the context row of q2's own p read
     // T through a memo entry its group row left (A-L2); q2's row is now read in q2's p, once (F). X11: q2's p
     // redefines the relation itself; P's c is not read there (what such a redefinition means for P's c is not
-    // decided).
+    // decided). The redefinition's own `load <= 100.0` reads q2's p's load, which Q's binding makes q2's L of 50:
+    // T on the numeric surface too since default-stands S2, which holds the frames above an instance whose
+    // `default` gives way there (it read "load" as having no value in scope).
     'X15b-ref-at-instance': probe(`package X15b {
         part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
         part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
@@ -5571,7 +5573,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'X11::P::c in X11::Q::p': ['T/T/T/T', 'T'],
       'X11::P::c in X11::q1::p': ['T/T/T/T', 'T'],
       'X11::P::c in X11::q2::p': ['?/?/?/?', null],
-      'X11::q2::«PartUsage»::«ConstraintUsage»': ['T/-/?/-', 'T'],
+      'X11::q2::«PartUsage»::«ConstraintUsage»': ['T/-/T/-', 'T'],
       'X11::q2::p::c': ['-/T/-/T', 'T'],
     }),
     chain33: probe(bindingChain(33), {
@@ -6685,9 +6687,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'LD1::topF': ['T/T/T/X', null],
       'LD1::topT': ['F/F/F/X', null],
     }),
-    // Where the other side is such a name read as no constant — a `default` an assert outside its package
-    // names, which gives way with x's (U7), or one refused (LR1: q sets Q's L) — x gives way and has no value:
-    // every surface abstains, where x's default 1 was read before (topF T, topT F on three surfaces).
+    // Where the other side is such a name read as no constant — one refused (LR1: q sets Q's L) — x has no value:
+    // every surface abstains, where x's default 1 was read before (topF T, topT F on three surfaces). The
+    // package's `L default = 50.0` an assert outside its package names (LP1) was such a name too, which gave way
+    // with x's (U7), until default-stands S2: no assertion replaces a `default`, so L is 50 and x is 1, and p's
+    // assert is checked against the two (violated: the model contradicts itself), as with `=`.
     'lex-lp1': probe(`package LP1 {
         attribute L : ScalarValues::Real default = 50.0;
         part def P { attribute x : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - x; }
@@ -6696,10 +6700,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topF { p.m2 >= 0.0 }
         constraint l50 { L == 50.0 }
       }`, {
-      'LP1::l50': ['T/T/T/T', null],
-      'LP1::p::t': ['?/-/?/-', null],
-      'LP1::topF': ['T/T/T/?', null],
-      'LP1::topT': ['F/F/F/?', null],
+      'LP1::l50': ['T/T/T/X', null],
+      'LP1::p::t': ['F/-/F/-', 'F'],
+      'LP1::topF': ['T/T/T/X', null],
+      'LP1::topT': ['F/F/F/X', null],
     }),
     'lex-lr1': probe(`package LR1 {
         part def P { attribute x : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - x; }
@@ -7200,6 +7204,74 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'SM8::P::c60': ['F/-/F/-', 'F'],
       'SM8::t50': ['F/F/F/X', null],
     }),
+    // The order of the text (the soft/hard analysis' S2use and S1 eqMd cells, default-stands S2): an assert written
+    // in a usage of the default's owner (SU), and `L == M` over two defaults (SEM), each beside the same text with its
+    // members in the reverse order (`-rev`), which I14 reads alike. Read as the assert's value, SU's usage written
+    // before its definition read p's L at 50 on three surfaces and nothing on the numeric one, and SEM's numeric
+    // surface took whichever of `t50` and `t1` came first as a design equation. SEM's `standing` twin rewrites L's
+    // `default = 1.0` alone; `stand-eqmd-alleq` writes M's 50 with `=` too, and I14 reads it alike.
+    ...standing('stand-use', `package SU {
+        part def P { attribute L : ScalarValues::Real default = 1.0; }
+        part p : P { assert constraint ca { L == 50.0 } }
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+      }`, {
+      'SU::p::ca': ['F/-/F/-', 'F'],
+      'SU::t1': ['T/T/T/X', null],
+      'SU::t50': ['F/F/F/X', null],
+    }),
+    'stand-use-rev': probe(`package SU {
+        constraint t1 { p.L == 1.0 }
+        constraint t50 { p.L == 50.0 }
+        part p : P { assert constraint ca { L == 50.0 } }
+        part def P { attribute L : ScalarValues::Real default = 1.0; }
+      }`, {
+      'SU::p::ca': ['F/-/F/-', 'F'],
+      'SU::t1': ['T/T/T/X', null],
+      'SU::t50': ['F/F/F/X', null],
+    }),
+    ...standing('stand-eqmd', `package SEM {
+        part def P { attribute L : ScalarValues::Real default = 1.0; attribute M : ScalarValues::Real default = 50.0; assert constraint ca { L == M } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint tM50 { p.M == 50.0 }
+        constraint tM1 { p.M == 1.0 }
+      }`, {
+      'SEM::P::ca': ['F/-/F/-', 'F'],
+      'SEM::t1': ['T/T/T/X', null],
+      'SEM::t50': ['F/F/F/X', null],
+      'SEM::tM1': ['F/F/F/X', null],
+      'SEM::tM50': ['T/T/T/X', null],
+    }),
+    'stand-eqmd-alleq': probe(`package SEM {
+        part def P { attribute L : ScalarValues::Real = 1.0; attribute M : ScalarValues::Real = 50.0; assert constraint ca { L == M } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint tM50 { p.M == 50.0 }
+        constraint tM1 { p.M == 1.0 }
+      }`, {
+      'SEM::P::ca': ['F/-/F/-', 'F'],
+      'SEM::t1': ['T/T/T/X', null],
+      'SEM::t50': ['F/F/F/X', null],
+      'SEM::tM1': ['F/F/F/X', null],
+      'SEM::tM50': ['T/T/T/X', null],
+    }),
+    'stand-eqmd-rev': probe(`package SEM {
+        constraint tM1 { p.M == 1.0 }
+        constraint tM50 { p.M == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint t50 { p.L == 50.0 }
+        part p : P;
+        part def P { assert constraint ca { L == M } attribute M : ScalarValues::Real default = 50.0; attribute L : ScalarValues::Real default = 1.0; }
+      }`, {
+      'SEM::P::ca': ['F/-/F/-', 'F'],
+      'SEM::t1': ['T/T/T/X', null],
+      'SEM::t50': ['F/F/F/X', null],
+      'SEM::tM1': ['F/F/F/X', null],
+      'SEM::tM50': ['T/T/T/X', null],
+    }),
     // The two the amended decision leaves as they were: an assert typed by an equation's definition over a
     // `default` (no surface reads its equation, so every row over L abstains — the `=` twin is read as written,
     // F3), and a feature WITHOUT a value, which an asserted equation defines (v9's CV-17 shape).
@@ -7312,6 +7384,123 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'X6::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
       'X6::Q::a': ['?/-/?/-', 'F'],
       'X6::Q::a in X6::W::q': ['T/-/T/-', 'T'],
+    }),
+    // default-stands S2's review. A `part :>> p` redefinition whose assert defines a valueless feature that a
+    // binding of the general definition joins to a `default` — in a usage (SRU: q2's `part :>> p`) or in a
+    // specialisation (SRS: Q2's) — gives it two values there, the equation's 50 and the default's 1, as the `=`
+    // twin does: q2's p's load is read on neither the check nor the literal engine, and the binding's row reports
+    // the pair. The binding reading asked only the end copy's owner (Q's p) for an assert, so L's default never
+    // stood beside the equation, and the check read q2's p's load at the assert's 50 where the numeric surface
+    // read the default's 1 (kp50 T/T/F/X, kp1 F/F/T/X, a2 T/-/F/-).
+    ...standing('stand-redef-use', `package SRU {
+        part def P { attribute load : ScalarValues::Real; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q2 : Q { part :>> p { assert constraint a2 { load == 50.0 } } }
+        constraint kL1 { q2.L == 1.0 }
+        constraint kp50 { q2.p.load == 50.0 }
+        constraint kp1 { q2.p.load == 1.0 }
+      }`, {
+      'SRU::Q::«BindingConnectorAsUsage» in SRU::q2#bind': ['F/-/F/-', 'F'],
+      'SRU::kL1': ['T/T/T/X', null],
+      'SRU::kp1': ['?/?/T/X', null],
+      'SRU::kp50': ['?/?/F/X', null],
+      'SRU::q2::«PartUsage»::a2': ['?/-/F/-', 'F'],
+    }),
+    ...standing('stand-redef-spec', `package SRS {
+        part def P { attribute load : ScalarValues::Real; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p { assert constraint a2 { load == 50.0 } } }
+        part q2 : Q2;
+        constraint kp50 { q2.p.load == 50.0 }
+        constraint kp1 { q2.p.load == 1.0 }
+      }`, {
+      'SRS::Q2::«PartUsage»::a2': ['?/-/F/-', 'F'],
+      'SRS::Q::«BindingConnectorAsUsage» in SRS::Q2#bind': ['F/-/F/-', 'F'],
+      'SRS::kp1': ['?/?/T/X', null],
+      'SRS::kp50': ['?/?/F/X', null],
+    }),
+    // HLX (h5bL): q2's `part :>> p { assert constraint a1 { extra == 2.0 * load } }` reads p's load, which Q's `bind
+    // p.load = L` makes q2's L of 5, against extra's 0 — a `default`, or `= 0.0` in `-eqx` — and is violated (the
+    // model contradicts itself). The numeric surface held no frame above q2's p's own walk, so it never solved Q's
+    // binding for q2's p's load, and fitted that load to the assert: a1 read satisfied, F/-/T/- in both spellings
+    // (the `=` one since before this branch). Solved with the binding, the system has no solution, and a1 abstains.
+    'stand-hlx': probe(`package HLX {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; constraint c { load + extra <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 5.0; part :>> p { assert constraint a1 { extra == 2.0 * load } } }
+        constraint k { q2.p.extra <= 8.0 }
+      }`, {
+      'HLX::P::c': ['T/T/T/X', null],
+      'HLX::P::c in HLX::Q::p': ['T/T/T/X', null],
+      'HLX::P::c in HLX::q1::p': ['T/T/T/X', null],
+      'HLX::P::c in HLX::q2::p': ['T/T/T/X', null],
+      'HLX::k': ['T/T/T/X', null],
+      'HLX::q2::«PartUsage»::a1': ['F/-/?/-', 'F'],
+    }),
+    'stand-hlx-eqx': probe(`package HLX {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real = 0.0; constraint c { load + extra <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 5.0; part :>> p { assert constraint a1 { extra == 2.0 * load } } }
+        constraint k { q2.p.extra <= 8.0 }
+      }`, {
+      'HLX::P::c': ['T/T/T/X', null],
+      'HLX::P::c in HLX::Q::p': ['T/T/T/X', null],
+      'HLX::P::c in HLX::q1::p': ['T/T/T/X', null],
+      'HLX::P::c in HLX::q2::p': ['T/T/T/X', null],
+      'HLX::k': ['T/T/T/X', null],
+      'HLX::q2::«PartUsage»::a1': ['F/-/?/-', 'F'],
+    }),
+    // A name read through an owning namespace (the lexical reading, O6 S1): a `default` an assert names is the one
+    // value it is, as `=` is, and the assert is checked against it — Q's L named by its nested p's assert (SLD),
+    // Battery's mass by its cells' (SLO), the package's L by P's (SLP); an inequality over it is a requirement
+    // that holds (SLI). Read as no one value in every instance ("an asserted relation names L"), every row
+    // abstained, and SLO's contradicting assert was reported nowhere (`sysml-check --strict` exit 0).
+    ...standing('stand-lexdef', `package SLD {
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p { assert constraint ca { L == 50.0 } }
+        }
+        part q : Q;
+        constraint t50 { q.L == 50.0 }
+        constraint t1 { q.L == 1.0 }
+      }`, {
+      'SLD::Q::p::ca': ['F/-/F/-', 'F'],
+      'SLD::t1': ['T/T/T/X', null],
+      'SLD::t50': ['F/F/F/X', null],
+    }),
+    ...standing('stand-lexonly', `package SLO {
+        part def Battery {
+          attribute mass : ScalarValues::Real default = 1.0;
+          part cells { assert constraint est { mass == 0.8 } }
+        }
+        part b : Battery;
+      }`, {
+      'SLO::Battery::cells::est': ['F/-/F/-', 'F'],
+    }),
+    ...standing('stand-lexpkg', `package SLP {
+        attribute L : ScalarValues::Real default = 1.0;
+        part def P { assert constraint ca { L == 50.0 } }
+        part p : P;
+        constraint t50 { L == 50.0 }
+        constraint t1 { L == 1.0 }
+      }`, {
+      'SLP::P::ca': ['F/-/F/-', 'F'],
+      'SLP::t1': ['T/T/T/X', null],
+      'SLP::t50': ['F/F/F/X', null],
+    }),
+    ...standing('stand-lexineq', `package SLI {
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p { assert constraint ca { L >= 0.0 } constraint c { L >= 0.5 } }
+        }
+        part q : Q;
+        constraint top { q.L <= 2.0 }
+      }`, {
+      'SLI::Q::p::c': ['T/T/T/T', 'T'],
+      'SLI::Q::p::ca': ['T/-/T/-', 'T'],
+      'SLI::top': ['T/T/T/T', 'T'],
     }),
     // A `default` a binding makes give way, which the binding gives no value (two defaults that differ: P's 1 and
     // Q's L's 7), takes none from an assertion either, on any surface: Q's asserted `L == 2.0` is no axiom of the
@@ -9650,6 +9839,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * sound-C r8, n2) are models whose asserts alone admit no value. sound-C r8's two variants are one
    * text, so it is one probe here, and its `pM2` sits beside `pLoad` for the same reason.
    */
+  /** The I7 reason of the `part :>> p { assert … }` redefinitions (SRU, SRS) and their `=` twins. */
+  const REDEF_ASSERT =
+    'a `part :>> p` redefinition’s asserted `load == 50.0` gives q2’s p’s load, which Q’s binding joins to L’s 1 — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or a value written with `=` — a second value: the model contradicts itself, which the SMT engine reports; the check and the literal engine read neither value of load, the numeric surface the binding’s 1';
   const I7_ALLOWED = new Map<string, string>([
     ['n4 | N4::zl', 'an asserted `x * x == -1.0` admits no model; the numeric surface reads z apart from it (out of scope)'],
     ['soundC-r8 | R8::pLoad', 'P’s asserted `load == 1.0` and p’s asserted `load == 50.0` contradict; the check reads p’s'],
@@ -9922,12 +10114,62 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'stand-x5 | X5::P::c in X5::Q::p',
       'stand-x6 | X6::P::c',
       'stand-x6 | X6::P::c in X6::Q::p',
+      'lex-lp1 | LP1::l50',
+      'lex-lp1 | LP1::topF',
+      'lex-lp1 | LP1::topT',
     ].map(
       (key) =>
         [
           key,
           'an assert contradicts a value that stands — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), as one written with `=` (HP) — so the model contradicts itself, and the SMT engine reports its axioms inconsistent beside the other surfaces’ reading of the value',
         ] as const,
+    ),
+    ...['stand-use', 'stand-use-eq', 'stand-use-rev'].flatMap((probe) =>
+      ['SU::t1', 'SU::t50'].map(
+        (row) =>
+          [
+            `${probe} | ${row}`,
+            'p’s own asserted `L == 50.0`, written in the usage before or after its definition, is checked against P’s L of 1 — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or a value written with `=` — whatever the order of the text: a self-contradictory model, which the SMT engine reports; the other surfaces read p’s 1',
+          ] as const,
+      ),
+    ),
+    ...['stand-eqmd', 'stand-eqmd-eq', 'stand-eqmd-alleq', 'stand-eqmd-rev'].flatMap((probe) =>
+      ['SEM::t1', 'SEM::t50', 'SEM::tM1', 'SEM::tM50'].map(
+        (row) =>
+          [
+            `${probe} | ${row}`,
+            'P’s asserted `L == M` is checked against L’s 1 and M’s 50 — each a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or a value written with `=` — whatever the order of the text: a self-contradictory model, which the SMT engine reports; the other surfaces read L’s 1 and M’s 50',
+          ] as const,
+      ),
+    ),
+    ...['stand-redef-use', 'stand-redef-use-eq'].flatMap((probe) =>
+      ['SRU::kL1', 'SRU::kp1', 'SRU::kp50'].map((row) => [`${probe} | ${row}`, REDEF_ASSERT] as const),
+    ),
+    ...['stand-redef-spec', 'stand-redef-spec-eq'].flatMap((probe) =>
+      ['SRS::kp1', 'SRS::kp50'].map((row) => [`${probe} | ${row}`, REDEF_ASSERT] as const),
+    ),
+    ...['stand-hlx', 'stand-hlx-eqx'].flatMap((probe) =>
+      ['HLX::P::c', 'HLX::P::c in HLX::Q::p', 'HLX::P::c in HLX::q1::p', 'HLX::P::c in HLX::q2::p', 'HLX::k'].map(
+        (row) =>
+          [
+            `${probe} | ${row}`,
+            'q2’s p’s asserted `extra == 2.0 * load` is checked against extra’s 0 — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or a value written with `=` — and the 5 Q’s binding gives load there: a self-contradictory model, which the SMT engine reports; the other surfaces read P’s c and k at those values',
+          ] as const,
+      ),
+    ),
+    ...[
+      ['stand-lexdef', ['SLD::t1', 'SLD::t50']],
+      ['stand-lexpkg', ['SLP::t1', 'SLP::t50']],
+    ].flatMap(([probe, rows]) =>
+      [probe, `${probe}-eq`].flatMap((name) =>
+        (rows as readonly string[]).map(
+          (row) =>
+            [
+              `${name} | ${row}`,
+              'an assert written below the namespace that declares L, which it reads through that namespace, is checked against L’s 1 — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or a value written with `=`: a self-contradictory model, which the SMT engine reports beside the other surfaces’ reading of L',
+            ] as const,
+        ),
+      ),
     ),
   ]);
 
@@ -10069,15 +10311,23 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   /**
    * I14's pairs: each `default` probe and its `=` twin ({@link standing}) — and the spellings of one model, whose
    * rows of the same name read alike: the asserted conjunction and its two parts (G1), `L == 50.0` and its two
-   * inequalities (G3), and two asserts that disagree written in either order (M8).
+   * inequalities (G3), two asserts that disagree written in either order (M8), a model and the same text with
+   * its members in the reverse order (SU, SEM), SEM with both its defaults written `=`, and HLX with extra's
+   * written `=` (the `standing` twin rewrites only `default = 1.0`).
    */
-  const STAND_TWINS = ['stand-g1s', 'stand-g1c', 'stand-g2', 'stand-g2f', 'stand-g3b', 'stand-g3e', 'stand-m8ab', 'stand-m8ba', 'stand-w4a', 'stand-w4b'].map(
-    (k) => [k, `${k}-eq`] as const,
-  );
+  const STAND_TWINS = [
+    'stand-g1s', 'stand-g1c', 'stand-g2', 'stand-g2f', 'stand-g3b', 'stand-g3e', 'stand-m8ab', 'stand-m8ba', 'stand-use',
+    'stand-eqmd', 'stand-w4a', 'stand-w4b', 'stand-redef-use', 'stand-redef-spec', 'stand-lexdef', 'stand-lexonly',
+    'stand-lexpkg', 'stand-lexineq',
+  ].map((k) => [k, `${k}-eq`] as const);
   const STAND_ALIKE = [
     ['stand-g1s', 'stand-g1c'],
     ['stand-g3b', 'stand-g3e'],
     ['stand-m8ab', 'stand-m8ba'],
+    ['stand-use', 'stand-use-rev'],
+    ['stand-eqmd', 'stand-eqmd-rev'],
+    ['stand-eqmd', 'stand-eqmd-alleq'],
+    ['stand-hlx', 'stand-hlx-eqx'],
   ] as const;
   withZ3('I14: a `default` reads as its `=` twin against every assertion, whatever the assertion’s spelling or order', () => {
     const apart: string[] = [];
