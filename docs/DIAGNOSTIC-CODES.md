@@ -611,7 +611,7 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** z3 returned a bound for a measure and this tool will not call it the optimum: the script it optimised over is nonlinear in its bytes — a product or a quotient of two features — and νZ is complete for LINEAR real arithmetic only. The value is a bound the optimiser reached, not one it established as the tightest.
+- **Fires when:** z3 returned a bound for a measure and this tool will not call it the optimum: the script it optimised over is nonlinear in its bytes — a product or a quotient of two features — and νZ is complete for LINEAR real arithmetic only. The value is a bound the optimiser reached, not one it established as the tightest. On a nonlinear script z3 may also return no finite bound at all (`oo`, value null): the row then has no number to read and says so.
 - **Hint given:** Read the row as the bound it is. Pinning the feature that makes the objective nonlinear (a divisor, or the second operand of a product) puts the question back inside the fragment νZ decides, and `npm run sysprose -- obligations <file>` shows which relation carries it. It exits 2 and no flag lowers it: presenting a non-optimal bound as the optimum is the one sentence this command may never write. The heuristic `optimize` in `src/semantics/solver.ts` searches for a point and proves nothing, so it is not a second opinion about optimality either.
 
 ### `verification/free-variable-unbounded`

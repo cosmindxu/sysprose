@@ -73,6 +73,8 @@ const fake = {
   released: [] as Kind[],
   /** What `async_cancel` was called with, in call order. */
   cancelled: [] as unknown[],
+  /** 'stop' and 'cancel' in the order the bridge made them: the threads go first. */
+  order: [] as string[],
   /** The reject of every check started, so `async_cancel` can reject the one still pending. */
   rejects: [] as Array<(reason: unknown) => void>,
 };
@@ -141,6 +143,7 @@ vi.mock('z3-solver', () => ({
         PThread: {
           terminateAllThreads: () => {
             fake.terminated += 1;
+            fake.order.push('stop');
             if (fake.behaviour.stopThrows) throw new Error('module past helping');
           },
         },
@@ -149,6 +152,7 @@ vi.mock('z3-solver', () => ({
           : {
               async_cancel: (reason: unknown) => {
                 if (fake.behaviour.cancelThrows) throw new Error('module past helping');
+                fake.order.push('cancel');
                 fake.cancelled.push(reason);
                 for (const reject of fake.rejects.splice(0)) reject(reason);
               },
@@ -199,6 +203,7 @@ beforeEach(() => {
   fake.checksStarted = 0;
   fake.released = [];
   fake.cancelled = [];
+  fake.order = [];
   fake.rejects = [];
   resetZ3Cache();
 });
@@ -641,6 +646,7 @@ describe('a module the bridge gives up on has its pending call cancelled', () =>
     resetZ3Cache({ terminate: true });
     expect(fake.terminated).toBe(1);
     expect(fake.cancelled.map(String)).toEqual(['Error: Z3 threads were terminated']);
+    expect(fake.order, 'the call is cancelled only once the threads running it are stopped').toEqual(['stop', 'cancel']);
     const failure = await p;
     expect(failure, 'the abandoned check printed as an `error` outcome or never settled').toBeInstanceOf(
       Z3ModuleDeadError,

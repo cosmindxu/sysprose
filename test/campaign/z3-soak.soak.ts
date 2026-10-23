@@ -44,6 +44,13 @@
  * 1.2 million finalizer callbacks under checks per process, no trap, no death,
  * no changed answer. Re-run both when `z3-solver` moves.
  *
+ * THE EXACT INVOCATION (repeat per process, five at once): `SYSPROSE_SOAK=1
+ * NODE_OPTIONS=--expose-gc SYSPROSE_SOAK_CHECKS=1000 SYSPROSE_SOAK_ITERATIONS=25
+ * SYSPROSE_SOAK_MODEL=test/fixtures/drone-swarm-v9.sysml.txt
+ * SYSPROSE_SOAK_MEASURES=SurveillanceDroneSwarm::LA::areaUnderWatchFraction,SurveillanceDroneSwarm::PA::areaUnderWatchFraction,SurveillanceDroneSwarm::LA::coverageUnderMeshJammingFraction,SurveillanceDroneSwarm::PA::coverageLossAfterMemberLossFraction
+ * npx vitest run test/campaign/z3-soak.soak.ts`, beside twelve `node -e
+ * 'for(;;){}'` loops. A plain `npm run soak:z3` skips the load case.
+ *
  * OPT-IN, AND NOT A SKIP. Run it as `npm run soak:z3`: `SYSPROSE_SOAK=1` is
  * what makes `vitest.config.ts` collect a `*.soak.ts` at all, and
  * `NODE_OPTIONS=--expose-gc` reaches vitest's forked workers, so the case can
