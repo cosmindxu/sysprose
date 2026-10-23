@@ -69,7 +69,7 @@ import {
 } from './refinement';
 import { sortedCore, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
 import {
-  EXCEPTIONAL_DEFINITION,
+  EXCEPTIONAL_QUALIFIED_NAME,
   FAULT_HYPOTHESIS_DEFINITION,
   FAULT_HYPOTHESIS_QUALIFIED_NAME,
 } from './verification-vocabulary';
@@ -331,6 +331,11 @@ export function isBehaviouralElement(el: ElementRecord): boolean {
  * scope tags nothing, so a bare `#failureMode` written ahead of the vocabulary
  * reads 0 here for the same reason `contracts --keywords` reports it as naming
  * nothing. The census reads 0 on the shipped corpus for the RIGHT reason.
+ *
+ * It is the ONE tag asked of {@link hasKeyword} with `anyPackage`, because the
+ * definition is not shipped yet and the census counts the model's own. Once it
+ * ships in `SysproseVerification`, ask for its qualified name like
+ * `#exceptional` and drop the option.
  */
 export const FAILURE_MODE_DEFINITION = 'FailureMode';
 
@@ -481,10 +486,14 @@ export function machineRouteRefusal(model: Model, id: ElementId): string | null 
 export function machineFailureModes(model: Model, machineId: ElementId): MachineFailureModes {
   const failureModeFlags = model
     .descendants(machineId)
-    .filter((e) => e.eClass === 'AttributeUsage' && hasKeyword(model, e.id, FAILURE_MODE_DEFINITION))
+    .filter(
+      (e) =>
+        e.eClass === 'AttributeUsage' &&
+        hasKeyword(model, e.id, FAILURE_MODE_DEFINITION, { anyPackage: true }),
+    )
     .length;
   const exceptionalStates = machineStates(model, machineId).filter((s) =>
-    hasKeyword(model, s.id, EXCEPTIONAL_DEFINITION),
+    hasKeyword(model, s.id, EXCEPTIONAL_QUALIFIED_NAME),
   ).length;
   return { failureModeFlags, exceptionalStates };
 }
@@ -763,7 +772,7 @@ function emptyGroup(
     shortId: target.shortId,
     subject: target.subject,
     part: target.part,
-    exceptional: hasKeyword(model, target.system.id, EXCEPTIONAL_DEFINITION),
+    exceptional: hasKeyword(model, target.system.id, EXCEPTIONAL_QUALIFIED_NAME),
     events: eventsOf(target, all),
     cutSets: [],
     undecided: [],

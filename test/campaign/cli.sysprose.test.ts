@@ -866,6 +866,21 @@ describe('L7 — sysprose reporting command', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+
+    // A default value is printed as the word `default`, a bound one keeps `=`.
+    const src = 'package P { part def B { attribute fixed = 4.0; attribute soft default = 1.2; } }\n';
+    const soft = spawnCli(['elements', '-'], src);
+    expect(soft.code).toBe(0);
+    expect(soft.stdout).toMatch(/P::B::fixed\s+AttributeUsage = 4(\.0)?\n/);
+    expect(soft.stdout).toMatch(/P::B::soft\s+AttributeUsage default 1\.2\n/);
+    expect(soft.stdout).not.toMatch(/soft\s+AttributeUsage = /);
+    // The JSON row carries the same words, so a reader of `value` cannot take a default for a bound number.
+    const rows = JSON.parse(spawnCli(['elements', '-', '--json'], src).stdout) as {
+      elements: Array<{ qualifiedName: string; value: string }>;
+    };
+    const valueOf = (qn: string) => rows.elements.find((e) => e.qualifiedName === qn)?.value;
+    expect(valueOf('P::B::fixed')).toMatch(/^4(\.0)?$/);
+    expect(valueOf('P::B::soft')).toBe('default 1.2');
   }, 180_000);
 
   it('a report larger than the pipe buffer arrives whole, and parses', () => {
@@ -2234,6 +2249,35 @@ package P {
       const s = spawnCli(['verify', req, '--engine', 'literal']);
       expect(s.stdout).toContain('\u2026 and 2 more verification/refuted on H::LoadReq\n');
       expect(s.stdout).not.toContain('\u00abConstraintUsage\u00bb\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('verify abstains on a VerificationMethod written beside its case with `about`', () => {
+    // massBench declares `kind = test`. Moved out of the case and written as the
+    // standard's own `metadata VerificationMethod about massBench { … }`, no
+    // reader sees it, and the case would be JUDGED as declaring no method: a pass
+    // for a bench test this tool cannot perform, exit 0. The load degrades instead.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-vm-about-'));
+    try {
+      const src = readFileSync(resolve(process.cwd(), 'examples/uav-isr-verification.sysml'), 'utf8');
+      const carrier = /\n *@VerificationCases::VerificationMethod \{\n *attribute kind = test;\n *\}/;
+      expect(src).toMatch(carrier);
+      const moved = src
+        .replace(carrier, '')
+        .replace(
+          '    verify MassRequirement by massBench;',
+          '    metadata VerificationCases::VerificationMethod about massBench { attribute kind = test; }\n' +
+            '    verify MassRequirement by massBench;',
+        );
+      const file = join(dir, 'moved.sysml');
+      writeFileSync(file, moved);
+      const r = spawnCli(['verify', file, '--engine', 'literal']);
+      expect(r.stdout + r.stderr).toContain('mapper/carrier-about-unread');
+      expect(r.code, 'a verdict was given over a method it could not read').toBe(2);
+      // Degraded, like any load with an error: the exit status is the abstention.
+      expect(r.stderr).toContain('did not load cleanly');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

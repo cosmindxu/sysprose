@@ -168,6 +168,13 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 - **Fires when:** A declaration keyword the grammar accepts has no metaclass in this tool — the KerML type/feature family (namespace, class, feature, step, connector, …).
 - **Hint given:** This KerML keyword {found} is not modelled; the declaration and its body are preserved verbatim and re-emitted unchanged on save. Rewrite it with a supported keyword such as part, attribute, item, port, action or state.
 
+### `mapper/carrier-about-unread`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** A carrier a reader takes from the element it is written in (PropertyPattern, Evidence, FaultHypothesis, VerificationMethod or RequirementMetadata, qualified or not, or an `about` annotation whose `kind` names a verification method) is written with `about` (`@T about X` or `metadata T about X`). No reader looks at `about`, so the property would be dropped or read on the wrong element, and a case with a method declared beside it would be judged as declaring none.
+- **Hint given:** The carrier {found} is read on the element it is written in, and `about` is not read. Write it as `@Type { … }` inside the element it is about; the load stays degraded and the checks abstain until you do.
+
 ## Reference resolution
 
 A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.

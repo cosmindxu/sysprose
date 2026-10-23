@@ -646,7 +646,9 @@ function reportElements(model: Model, name: string, includeLibrary: boolean): Re
     '  relationships and documentation are reported through the elements they attach to',
     `  ${implicitExcluded} re-derived element(s) (usage-scoped connector endpoints) left out`,
     ...rows.map((r) => {
-      const tail = [r.type ? `: ${r.type}` : '', r.value ? ` = ${r.value}` : ''].join('');
+      // The grid's value cell already reads `default 1.2` for a default and `1.2` for a bound value.
+      const isDefault = model.get(r.id)?.attrs.defaultValue === true;
+      const tail = [r.type ? `: ${r.type}` : '', r.value ? (isDefault ? ` ${r.value}` : ` = ${r.value}`) : ''].join('');
       return `  ${r.qualifiedName.padEnd(width)}  ${r.metaclass}${tail}`;
     }),
   ].join('\n');

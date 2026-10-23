@@ -29,6 +29,20 @@ function str(v: unknown): string {
   return '';
 }
 
+/**
+ * The value cell. A `default` value reads `default 1.2`, never the bare `1.2` a
+ * bound (`=`) value shows: a redefinition or an asserted equation overrides the
+ * one and not the other, so a reader (the CLI's `elements`, the in-process
+ * workflow) that cannot tell them apart would take a default for a fixed number.
+ * A reader that parses the bare form gets no number from `default 1.2`; what it
+ * then does is its own (the mbse-workflow readers must change, TODO residual of
+ * small-defaults S1, before their SYSPROSE_REF moves past this change).
+ */
+function valueCell(el: ElementRecord): string {
+  const v = str(el.attrs.value);
+  return v !== '' && el.attrs.defaultValue === true ? `default ${v}` : v;
+}
+
 /** The fixed column set of the grid view (a sensible subset per element). */
 const GRID_COLUMNS: { key: string; label: string }[] = [
   { key: 'name', label: 'Name' },
@@ -119,7 +133,7 @@ export function buildGrid(model: Model, opts: BuildGridOptions = {}): GridModel 
         metaclass: el.eClass,
         type: typeCell(model, el),
         multiplicity: str(el.attrs.multiplicity),
-        value: str(el.attrs.value),
+        value: valueCell(el),
         redefines: redefinesCell(model, el),
         doc: docCell(model, el),
       },

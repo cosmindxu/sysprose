@@ -227,6 +227,7 @@ export {
   type Keyword,
   type ForeignKeywordAlias,
   type ForeignReading,
+  type HasKeywordOptions,
 } from './keywords';
 export {
   SYSPROSE_VERIFICATION_PACKAGE,
@@ -234,6 +235,7 @@ export {
   EXCEPTIONAL_KEYWORD,
   EXCEPTIONAL_DEFINITION,
   EXCEPTIONAL_QUALIFIED_KEYWORD,
+  EXCEPTIONAL_QUALIFIED_NAME,
   EVIDENCE_DEFINITION,
   EVIDENCE_QUALIFIED_NAME,
   PROPERTY_PATTERN_DEFINITION,

@@ -434,7 +434,7 @@ app.
 | View | What it shows | The question it answers | Test id |
 |---|---|---|---|
 | Allocation | A matrix of elements × elements with a mark wherever an Allocation joins them (falling back to Satisfy when a model declares no allocations) | What is allocated to what? | `tb-view-allocation` |
-| Grid | Every in-scope non-relationship element as a row: name, metaclass, type, multiplicity, value, redefines, doc | What is in this model, in bulk? | `tb-view-grid` |
+| Grid | Every in-scope non-relationship element as a row: name, metaclass, type, multiplicity, value, redefines, doc; a `default` value reads `default 1.2` and a bound one `1.2`; `elements` prints `default 1.2` and `= 1.2`, and its `--json` `value` is the cell | What is in this model, in bulk? | `tb-view-grid` |
 | Requirements | Hierarchical requirement rows with outline numbers, editable id / name / text, chips for Satisfied By / Verified By / Refined By / Traced To / Derived From, and a Kind cell plus the nine management attributes (status, verdict, risk, priority, criticality, rationale, source, owner, verification) | Are my requirements covered, and by what? | `tb-view-requirements` |
 | Contracts | One row per requirement or case objective: the subject and how it got there, every `assume` and every `require` clause as written, the relations a gate refused with the reason, and the fragment the row sits in — with the census under it | What does each requirement assume and guarantee, and about whom? | `tb-view-contracts` |
 
@@ -3746,6 +3746,11 @@ state def FlightModes {
 One attribute per field, so the phrase-to-atom trace survives a save: a reader
 can see which pattern, over which scope, filled by which atom, without
 re-parsing a sentence.
+A carrier is read from the element it is written in: `about` is not read, so a
+`PropertyPattern`, `Evidence`, `FaultHypothesis`, `VerificationMethod` or
+`RequirementMetadata` (or an `about` annotation with a `kind` naming a method)
+written with `about`, including inside its own target, is refused
+(`mapper/carrier-about-unread`) and the checks abstain. Write it inside its target.
 
 **What it refuses to say, and how each refusal reads.**
 
@@ -3858,6 +3863,17 @@ extension and this guide will not pretend otherwise. Two keywords you might
 expect are deliberately absent: `#precondition` and `#postcondition`, because
 `assume constraint`, `require constraint` and a case `objective { … }` already
 say both, three ways and two ways respectively.
+
+**A tag is Sysprose's by its package, not by its name.** If another vocabulary
+declares its own `metadata def <exceptional> ExceptionalOutcome` (say in a
+package `VendorHints`) and your `#exceptional` resolves to that one, it is
+*their* tag: `contracts --keywords` lists it as `other vocabulary` (here
+`#exceptional on P::Theirs → VendorHints::ExceptionalOutcome`), and
+`fault-tree` does not label a top event with `(#exceptional)` or count a state
+as an `#exceptional` hazard for it. Write `#SysproseVerification::exceptional`,
+or import that package, to mean ours (a pasted copy of the package must sit at
+the top level of the file; a copy nested in your own package is your
+vocabulary, not ours).
 
 **`Evidence` in that same package is deliberately not a keyword.** It ships with
 no short name, so there is nothing to write after a `#`. A keyword is a tag — it
@@ -4020,9 +4036,10 @@ and a `comment` have nowhere to put one. The tool refuses rather than accepting
 a tag that would vanish on the next save: the Kind selector is absent on those
 elements and the writer throws. A `doc` and a `comment` still *read* as prose —
 they simply cannot be told to be anything else. The other way a kind can be
-invisible is the longer metadata form: `@ProseStatement about p1;` parses and
-round-trips, but it is not read as a kind, because reading it means resolving
-`about` against scope and this tool does not do that yet.
+invisible is the longer metadata form: `@ProseStatement about p1;` (or, with the
+keyword, `metadata ProseStatement about p1;`) parses and round-trips, the keyword
+form printed as the `@` form, but it is not read as a kind, because reading it
+means resolving `about` against scope and this tool does not do that yet.
 
 In the app the kind is **Properties → Kind** (`prop-statement-kind`), offered on
 every element that can carry one — not only on requirements, since guidance is

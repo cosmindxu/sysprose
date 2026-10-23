@@ -139,7 +139,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below; thirteen `it(` and one `it.each`, so the figure is the run's own row for `invariants.test.ts`, held by `docs-counts.test.ts` against `TEST-SUMMARY.md`) | 32 assertions (run-measured) |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 133 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 134 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -2605,7 +2605,9 @@ type reference goes through, with the bundled library as the namespace of last
 resort (which is what makes the library's own `#moe` resolve). `hasKeyword` —
 the predicate a later engine asks before acting on a tag — answers ONLY from
 that resolution and never consults the alias table, so a third-party `#Exception`
-is not `#exceptional` to anything that decides something. Resolution takes the
+is not `#exceptional` to anything that decides something; and it matches the
+definition's package as well as its name, so another vocabulary's
+`<exceptional>` is not either. Resolution takes the
 token AS WRITTEN, quotes included, so a quoted `#'a.b'` is one name and stays
 one: rejoining its unquoted segments reported it as resolved to a definition
 that answers to neither half. The alias table exists
@@ -5316,7 +5318,7 @@ instead, since the counter cannot tell their checks apart). The file's
 no timeout counting as vitest's 10 s `hookTimeout`; the `withZ3`
 wrappers of `smt-z3.integration` and `verification.differential` refuse a
 timeout under 40 s when a case is declared (they see neither a larger budget
-nor a hook). The campaign file's **78 `withZ3`
+nor a hook). The campaign file's **79 `withZ3`
 cases** and the plain cases that also drive the solver used to share one
 context from the first block to the last; each of its **12 solver blocks** now
 starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per

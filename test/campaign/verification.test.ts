@@ -102,6 +102,8 @@ import {
   ORDERS_NOT_EXPLORED_NOTE,
   SINGLE_POINT_OF_FAILURE_CODE,
   SYSPROSE_VERIFICATION_LIBRARY,
+  SYSPROSE_VERIFICATION_PACKAGE,
+  EXCEPTIONAL_QUALIFIED_KEYWORD,
   optimize,
   CONNECTIONS_AS_EQUALITIES_NOTE,
   CONTRACT_SET_VACUOUS_CODE,
@@ -4191,18 +4193,29 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
   /**
    * A machine built by hand, because nothing shipped carries `#exceptional` on
    * a state — the same discipline the dwell fixtures use for a timed edge.
-   * The definition is declared in the same package, under the short name the
-   * shipped library uses, so `hasKeyword` resolves it the way it resolves the
-   * library's own.
+   * The definition is declared in the shipped package (or the package a test
+   * names), under the short name the shipped library uses, and the tag is
+   * written qualified, because `hasKeyword` matches the package as well as the
+   * name.
    */
-  function machineWith(opts: { exceptional: boolean; flag: boolean; declareFlagDef?: boolean }) {
+  function machineWith(opts: {
+    exceptional: boolean;
+    flag: boolean;
+    declareFlagDef?: boolean;
+    /** The package declaring `ExceptionalOutcome`: the shipped one unless a test says otherwise. */
+    exceptionalPackage?: string;
+  }) {
     const model = new Model();
     const f = new ModelFactory(model);
     const pkg = f.pkg('P');
+    // The shipped definition, in the shipped package: `hasKeyword` matches the
+    // PACKAGE as well as the name, so one declared in `P` would be a foreign one.
+    const exceptionalPackage = opts.exceptionalPackage ?? SYSPROSE_VERIFICATION_PACKAGE;
+    const vocabulary = f.pkg(exceptionalPackage);
     model.create('MetadataDefinition', {
       declaredName: 'ExceptionalOutcome',
       declaredShortName: 'exceptional',
-      ownerId: pkg.id,
+      ownerId: vocabulary.id,
     });
     if (opts.declareFlagDef !== false) {
       model.create('MetadataDefinition', {
@@ -4216,7 +4229,7 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     const hazard = model.create('StateUsage', {
       declaredName: 'hazard',
       ownerId: sm.id,
-      attrs: opts.exceptional ? { metadata: ['exceptional'] } : {},
+      attrs: opts.exceptional ? { metadata: [`${exceptionalPackage}::exceptional`] } : {},
     });
     if (opts.flag) {
       model.create('AttributeUsage', {
@@ -4257,6 +4270,26 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     expect(r.groups).toEqual([]);
     expect(r.machine!.exceptionalStates).toBe(1);
     expect(r.machine!.sentence).toContain('1 `#exceptional` state(s)');
+  });
+
+  it('a foreign package’s `exceptional` is not counted as the shipped tag', () => {
+    // The same simple name in another vocabulary resolves, and is that
+    // vocabulary's. Counting it would put a hazard on the shipped keyword's
+    // account that nothing Sysprose defines said was one.
+    const own = machineWith({ exceptional: true, flag: false });
+    const foreign = machineWith({ exceptional: true, flag: false, exceptionalPackage: 'VendorHints' });
+    expect(machineFailureModes(own.model, own.machineId).exceptionalStates).toBe(1);
+    expect(machineFailureModes(foreign.model, foreign.machineId)).toEqual({
+      failureModeFlags: 0,
+      exceptionalStates: 0,
+    });
+    expect(behaviouralLaneCensus(foreign.model)).toEqual({
+      machines: 1,
+      machinesWithExceptionalStates: 0,
+      machinesWithFailureModeFlags: 0,
+      hazardsUnreachableFromTheContractLane: 0,
+    });
+    expect(EXCEPTIONAL_QUALIFIED_KEYWORD).toBe(`${SYSPROSE_VERIFICATION_PACKAGE}::exceptional`);
   });
 
   it('a failure-mode flag this build does not inject is counted, and never called absent', () => {
@@ -4655,6 +4688,18 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     );
     expect(tagged.groups[0].checks).toBe(bare.groups[0].checks);
     expect(tagged.exitCode).toBe(bare.exitCode);
+  });
+
+  withZ3('a foreign `exceptional` does not label the top event', async () => {
+    // `VendorHints` declares its own `<exceptional> ExceptionalOutcome`; the
+    // tag resolves, to the vendor's definition, and is not the shipped one.
+    const source = `package VendorHints {\n    metadata def <exceptional> ExceptionalOutcome;\n}\n\n${read(REDUNDANT).replace(
+      '    requirement def MissionPower {',
+      '    #VendorHints::exceptional requirement def MissionPower {',
+    )}`;
+    expect(source, 'the tag was not inserted').toContain('#VendorHints::exceptional');
+    const foreign = await tree(REDUNDANT, {}, source);
+    expect(foreign.groups[0].exceptional, 'a foreign tag was read as the shipped one').toBe(false);
   });
 
   withZ3('an undecided check spends the 2 even when the same tree found cut sets', async () => {

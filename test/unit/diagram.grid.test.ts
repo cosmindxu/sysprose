@@ -77,6 +77,22 @@ describe('buildGrid — columns and rows', () => {
     expect(row.cells.type).toBe('Real');
   });
 
+  it('writes a default value as `default 1.2`, a bound value bare', () => {
+    // A default is overridable (a redefinition, an asserted equation); a bound
+    // value is not. A reader that sees only `1.2` takes the default for fixed.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const pkg = f.pkg('P');
+    const bound = f.attribute('bound', pkg.id, { value: 1.2 });
+    const soft = m.create('AttributeUsage', { declaredName: 'soft', ownerId: pkg.id, attrs: { value: 1.2, defaultValue: true } });
+    const valueless = m.create('AttributeUsage', { declaredName: 'bare', ownerId: pkg.id, attrs: { defaultValue: true } });
+    const g = buildGrid(m);
+    const cell = (id: string) => g.rows.find((r) => r.id === id)!.cells.value;
+    expect(cell(bound.id)).toBe('1.2');
+    expect(cell(soft.id)).toBe('default 1.2');
+    expect(cell(valueless.id)).toBe('');
+  });
+
   it('computes the redefines cell from Redefinition relationships', () => {
     const row = grid.rows.find((r) => r.id === ids.heavyMass)!;
     expect(row.cells.redefines).toBe('mass');

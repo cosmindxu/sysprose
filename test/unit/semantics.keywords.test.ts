@@ -51,6 +51,7 @@ import {
   EXCEPTIONAL_DEFINITION,
   EXCEPTIONAL_KEYWORD,
   EXCEPTIONAL_QUALIFIED_KEYWORD,
+  EXCEPTIONAL_QUALIFIED_NAME,
   FOREIGN_KEYWORD_ALIASES,
   PROPERTY_PATTERN_DEFINITION,
   STATEMENT_KIND_PACKAGE,
@@ -140,6 +141,7 @@ describe('the shipped verification vocabulary', () => {
     expect(EXCEPTIONAL_KEYWORD).toBe('exceptional');
     expect(EXCEPTIONAL_DEFINITION).toBe('ExceptionalOutcome');
     expect(EXCEPTIONAL_QUALIFIED_KEYWORD).toBe('SysproseVerification::exceptional');
+    expect(EXCEPTIONAL_QUALIFIED_NAME).toBe('SysproseVerification::ExceptionalOutcome');
     // The gap the plan HOLDS rather than ships. A `metadata def` written into a
     // user's file is a compatibility commitment, so the absence of this one is
     // an asserted decision and not an oversight.
@@ -782,6 +784,86 @@ package P {
   it('is false for a keyword that names nothing, however it is spelled', () => {
     const model = parsed('package P {\n    #exceptional part def Abort;\n}');
     expect(hasKeyword(model, byName(model, 'Abort').id, EXCEPTIONAL_DEFINITION)).toBe(false);
+  });
+
+  /**
+   * THE SAME SIMPLE NAME IN ANOTHER PACKAGE. `VendorHints` declares a
+   * `metadata def <exceptional> ExceptionalOutcome` of its own, so
+   * `#exceptional` written beside it RESOLVES, to the vendor's definition. It is
+   * the vendor's tag and not Sysprose's, and no spelling of the question
+   * (qualified name, declared name, short name) may say otherwise. The same
+   * model also carries the shipped one, so the two are asked of one file.
+   */
+  const FOREIGN = `${SYSPROSE_VERIFICATION_LIBRARY}
+
+package VendorHints {
+    metadata def <exceptional> ExceptionalOutcome;
+    metadata def HardDefault;
+}
+
+package Vendor {
+    import VendorHints::*;
+    #exceptional part def Theirs;
+    #HardDefault part def TheirsHard;
+}
+
+package Ours {
+    import SysproseVerification::*;
+    #exceptional part def Mine;
+}`;
+
+  it('does not take a foreign definition of the same simple name for the shipped one', () => {
+    const model = parsed(FOREIGN);
+    const theirs = byName(model, 'Theirs');
+    // It resolves, to the vendor's definition: the keyword is not "unresolved".
+    const resolved = resolveKeyword(model, keywordsOf(model, theirs.id)[0]);
+    expect(model.qualifiedName(resolved!.id)).toBe('VendorHints::ExceptionalOutcome');
+    for (const name of [
+      EXCEPTIONAL_QUALIFIED_NAME,
+      EXCEPTIONAL_DEFINITION,
+      EXCEPTIONAL_KEYWORD,
+    ]) {
+      expect(hasKeyword(model, theirs.id, name), `a foreign tag was read as Sysprose's by ${name}`).toBe(false);
+      expect(hasKeyword(model, byName(model, 'Mine').id, name), `the shipped tag by ${name}`).toBe(true);
+    }
+    // Asked of the vendor's own qualified name, it is theirs.
+    expect(hasKeyword(model, theirs.id, 'VendorHints::ExceptionalOutcome')).toBe(true);
+  });
+
+  it('holds for a tag the package has not shipped yet, and only an explicit option reads another package', () => {
+    const model = parsed(FOREIGN);
+    const theirs = byName(model, 'TheirsHard').id;
+    // `HardDefault` is the vendor's alone: no Sysprose package declares it, so
+    // no spelling of it is Sysprose's — and the option is what says otherwise.
+    expect(hasKeyword(model, theirs, 'HardDefault')).toBe(false);
+    expect(hasKeyword(model, theirs, 'SysproseVerification::HardDefault')).toBe(false);
+    expect(hasKeyword(model, theirs, 'HardDefault', { anyPackage: true })).toBe(true);
+    // A qualified name is exact even under the option.
+    expect(hasKeyword(model, theirs, 'SysproseVerification::HardDefault', { anyPackage: true })).toBe(false);
+    // A definition in a package that merely CONTAINS the name is not a match either.
+    expect(hasKeyword(model, theirs, 'Hard', { anyPackage: true })).toBe(false);
+    // A definition at the ROOT of the file has no package at all, and its
+    // qualified name is its declared name: that is still not Sysprose's.
+    const root = parsed(`metadata def <hd> HardDefault;
+package P { #hd part def X; }`);
+    const x = byName(root, 'X').id;
+    expect(hasKeyword(root, x, 'HardDefault')).toBe(false);
+    expect(hasKeyword(root, x, 'hd')).toBe(false);
+    expect(hasKeyword(root, x, 'HardDefault', { anyPackage: true })).toBe(true);
+  });
+
+  it('does not take a nested copy of the package name for the shipped package', () => {
+    const model = parsed(`package P {
+    package ${SYSPROSE_VERIFICATION_PACKAGE} {
+        metadata def <exceptional> ${EXCEPTIONAL_DEFINITION};
+    }
+    import ${SYSPROSE_VERIFICATION_PACKAGE}::*;
+    #exceptional part def Nested;
+}`);
+    const nested = byName(model, 'Nested').id;
+    expect(keywordsOf(model, nested)).toHaveLength(1);
+    expect(hasKeyword(model, nested, EXCEPTIONAL_DEFINITION)).toBe(false);
+    expect(hasKeyword(model, nested, EXCEPTIONAL_QUALIFIED_NAME)).toBe(false);
   });
 });
 
