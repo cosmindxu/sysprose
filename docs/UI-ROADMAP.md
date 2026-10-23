@@ -104,7 +104,7 @@ Rust/WebAssembly to improve the user's experience and memory use. **The answer i
 Four of six subsystems returned *do-not-port*, and the two largest user-visible costs are
 JavaScript defects a port would have inherited unchanged. Ordered by measured value.
 
-### P1 — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` is applied to every view — fixed for flat pieces, still open for nested ones
+### P1 — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` is applied to every view — fixed for flat pieces; for nested ones the time is accepted (decided 2026-10-23)
 
 The single worst measured defect in the tool. The option makes ELK route edges across the node
 hierarchy, and it was set unconditionally for all fourteen view kinds. Measured with `elkjs` in this

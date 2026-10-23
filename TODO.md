@@ -24,6 +24,8 @@ maintainer says `awaits user decision U<n>` and names the question.
       moving the model site to a host that sends the headers, which would break the Google Drive
       sign-in popup and Picker iframe there too. Awaits user decision U14 (host): whether in-page z3
       on the hosted site is worth that cost. [N6 S4]
+      DECIDED 2026-10-23 (U14): decide after Drive (U16); until then the hosted site keeps `not
+      here` with the copyable command.
 - [ ] **Hold the same timeout floor on the hooks of the differential table.** The budget-aware guard
       `ui-small` S5 added covers `test/campaign/verification.test.ts`. The two `beforeAll` hooks of
       `test/integration/verification.differential.test.ts` (600_000 and 1_800_000 ms) drive z3 across
@@ -80,21 +82,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       overlap the leaving one for a few px of scroll; and the E2E uses a generated tall-column
       model, not the v9-sized one. Done when every header of the v9 Fit is findable (a strip row per
       piece, or a hover label) and a guard holds it. [review 2026-10-14 D-7, N6 S1]
-- [ ] **Decide what the layout does with a piece that nests (P1, U19).** `layoutOptionsFor(viewKind,
-      nested)` (`src/diagram/layout.ts`) sets `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` for a
-      piece that has a nested box and `SEPARATE_CHILDREN` for every other piece. N6 S2 measured both
-      through `layoutDiagram` at `aac38fd` (the table is in `docs/UI-ROADMAP.md` P1): the profile's
-      11 s reproduces on the entry's own 330-node graph (43–45 s shipped on a loaded machine,
-      0.6–1.4 s forced, 69×), so the time rule is met there, but forcing `SEPARATE_CHILDREN` lays
-      each parent's interior out alone and does not route an edge that crosses a parent's border
-      (576 of that graph's 600 edges are drawn as straight lines through boxes); on a structured
-      variant it is only 4.6–5.8× faster with 20% more crossings and 300 unrouted edges, and on the
-      real v9 views it changes nothing. So no layout code changed. What stays open is to bound the
-      compound layout: lay each parent's interior out on its own, then route the border-crossing
-      edges ourselves. Done when the 330-node case lays out within a time the decision names,
-      measured through `layoutDiagram`, with no unrouted edge and no more crossings than the shipped
-      option on the structured variant. Awaits a user decision, not yet numbered in the plan: bound
-      the compound layout, or accept the time. [N6 S2]
 
 ## Per-instance readings — follow-ups and known-false rows
 
@@ -821,6 +808,8 @@ User guide and tutorials that are wrong, and what waits on something outside the
       showing the race. [review 2026-10-14 F-U1] Awaits user decision U15 (bump at once with the soak
       as the gate, or wait for independent confirmation: the upstream PR was never run on a real
       WASM build).
+      DECIDED 2026-10-23 (U15): bump at once when a release exists, with `npm run soak:z3` under
+      load against the unfixed control as the gate; do not wait for independent confirmation.
 - [ ] **Switch Google Drive on for the model site and run its manual test.** The feature is built
       and published dormant: a deployment without a `drive.json` next to `index.html` shows no Drive
       control (`src/persistence/drive/config.ts`, `README.md`). It needs, from the maintainer, a
