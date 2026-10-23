@@ -65,6 +65,7 @@ import {
   definedAgainstBoundIn,
   defaultGivesWaySomewhere,
   writesStandingDefault,
+  boundAgainstAssertSentence,
   failedReadingSentence,
   namesDefinedBy,
   rebaseInstance,
@@ -2705,6 +2706,15 @@ export function operandDerivation(
  * A member whose value is a LITERAL gives none: a binding to `m : MassValue =
  * 5.0 [kg]` copies a stated value, and a plain `x` keeps reading it by the
  * declared-unit contract, as it always has.
+ *
+ * Nor does one an asserted equation defines where the class also joins a
+ * value the model states — written with `=`, or a `default`, which no
+ * assertion replaces (decision 14 amended 2026-10-22) — that is not that one
+ * value: the class holds two, and the feature is refused, in the sentence
+ * {@link boundAgainstAssertSentence} gives. T1C's `bind L = M; bind M = L0;`
+ * beside the asserted `L == 50.0` and L0's `default = 1.0` read M at the
+ * assert's 50 (the literal skipped) on the check and the literal engine, where
+ * the numeric surface reads L0's 1; so did the `=` twin.
  */
 export function boundDerivation(
   model: Model,
@@ -2713,13 +2723,24 @@ export function boundDerivation(
 ): FeatureDerivation | undefined {
   const feat = model.get(featureId);
   if (!feat || hasStatedValue(model, feat)) return undefined;
+  const members: Array<{ p: ElementRecord; d: FeatureDerivation | undefined; stated: boolean }> = [];
   for (const partner of boundTo(model, featureId, memo)) {
     const p = model.get(partner);
     if (!p) continue;
-    const d =
-      hasStatedValue(model, p) || passOf(model, memo).definitions.redefinedValueOf(p)
-        ? deriveFeature(model, partner, new Map(), memo)
-        : definitionDerivation(model, partner, memo);
+    const stated = hasStatedValue(model, p) || passOf(model, memo).definitions.redefinedValueOf(p) !== undefined;
+    members.push({ p, d: stated ? deriveFeature(model, partner, new Map(), memo) : definitionDerivation(model, partner, memo), stated });
+  }
+  const valued = (d: FeatureDerivation | undefined): d is FeatureDerivation => d !== undefined && (d.q !== undefined || d.b !== undefined);
+  const defined = members.find((m) => !m.stated && valued(m.d));
+  if (defined) {
+    for (const m of members) {
+      if (!m.stated || !valued(m.d)) continue;
+      const verdict = sameBoundValue(defined.d!, m.d);
+      if (verdict === 'same') continue;
+      return claimOnly('unknown', 'contradiction', boundAgainstAssertSentence(model, feat, defined.p, m.p, defined.d!.definedBy, verdict));
+    }
+  }
+  for (const { d } of members) {
     if (!d || d.claim === 'literal') continue;
     if (d.q && d.derived) return { ...judgeDerivation(model, featureId, d.q), ...(d.depth ? { depth: d.depth } : {}) };
     if (d.q || d.b !== undefined) continue;
@@ -2727,6 +2748,20 @@ export function boundDerivation(
     if (isRefusalReason(d.reason)) return { ...claimOnly('unknown', d.reason, d.detail, d.message) };
   }
   return undefined;
+}
+
+/**
+ * Do two members of a binding class give it one value ({@link boundDerivation}): `same` where both are booleans
+ * alike, or quantities whose coherent-SI values are equal exactly; `differs` where they are decided apart; else
+ * `undecided`.
+ */
+function sameBoundValue(a: FeatureDerivation, b: FeatureDerivation): 'same' | 'differs' | 'undecided' {
+  if (a.b !== undefined || b.b !== undefined) return a.b !== undefined && b.b !== undefined ? (a.b === b.b ? 'same' : 'differs') : 'differs';
+  if (!a.q || !b.q) return 'undecided';
+  const x = siExact(a.q);
+  const y = siExact(b.q);
+  if (x !== undefined && y !== undefined) return compareRationals(x, y) === 0 ? 'same' : 'differs';
+  return 'undecided';
 }
 
 /** The other members of `featureId`'s binding class, in the order the model states them. */

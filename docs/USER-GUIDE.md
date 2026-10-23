@@ -1339,9 +1339,9 @@ evaluated*.
 
 **A `default` stands against every assertion.** `attribute L default = 2.0;`
 beside `assert constraint qa { L == 5.0 }` is L = 2 on every surface, as `attribute
-L = 2.0;` is (plan J decision 14, as the maintainer amended it on 2026-10-22,
-after the standard's text: a default gives way to another value given for it,
-and an assertion that does not hold is an inconsistency for tooling to flag).
+L = 2.0;` is (as the maintainer decided on 2026-10-22, after the standard's
+text: a default gives way to another value given for it, and an assertion that
+does not hold is an inconsistency for tooling to flag).
 The assert is reported violated, `L <= 3.0` is read at 2, and the solver lane
 finds its axioms inconsistent, as beside `L = 2.0`. Where the assert is an
 equation that names the default's feature alone on one side, its other side
@@ -1384,23 +1384,40 @@ assert's 50, and L, which the equation defines and the binding joins to that 1,
 has two values and is *could not be evaluated* on the check and the literal
 engine (*… joins it to P::L0's `default = 1.0`, a value no assertion replaces (as
 one written with `=`) that differs from the one the equation gives it there …*);
-the binding's own row reports the pair. So through a package's binding on a
-definition's feature: an asserted equation that fixes one instance's slot
+the binding's own row reports the pair. A feature with no value that the
+bindings join to both (M in `bind L = M; bind M = L0;`) has the same two values,
+and no surface reads it (*M is not read in …: a binding joins it to …::L, which
+…'s asserted `L == 50.0` defines, and to …::L0's `default = 1.0` …*). So through
+a package's binding on a definition's feature: an asserted equation that fixes one instance's slot
 (`p2.load == 5.0` under `bind P::load = M`, M's `default = 9.0`), or an end
 only an assert defines that a binding joins to the slot (`bind p2.load = L`
 beside `L == 5.0`), leaves M's default standing in every instance of P, as `M =
 9.0` does — every P's load is 9, the first assert is reported violated, and
 the second's L, joined to p2's load and so to M, has two values and is not read
 (the binding's own row reports the pair). A `default` that a binding to a value
-written with `=` makes give way (decision 10) — W's `bind q.p.load = M` at W's
-q's p, beside Q's `bind p.load = L`; a package's `bind P::load = M` in every P —
-reads what that binding gives it there, and an asserted end of the same
-component is checked against that value (Q's `L == 3.0` holds in W's q); where
-no such binding reaches (Q's own p), the default stands, as against any
-assertion, and Q's binding is reported. A `default` a binding makes give way
-is no feature without a value either: where that binding gives it none (two
-defaults that differ), no asserted equation gives it one, on any surface — the
-SMT engine carries no axiom over it. An assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
+written with `=` makes give way (a default gives way to a binding in its context
+— W's `bind q.p.load = M` at W's q's p, beside Q's `bind p.load = L`; a
+package's `bind P::load = M` in every P) reads what that binding gives it there.
+Where an asserted end of the same component states a value there too (Q's `L ==
+3.0`, joined to W's q's p's load), a relation over the default there is *could
+not be evaluated*, even where the two values agree, as here: this tool does not
+compare them there, a known gap; the assert itself is checked against M's 3 and
+holds. Where no such binding reaches (Q's own p), the default stands, as against
+any assertion, and Q's binding is reported; so it does where such a binding
+reaches only another context — a specialisation or another instance that sets
+the bound feature with `=` (`part def Q5 :> Q { attribute :>> L = 7.0; }`, `part
+q5 : Q { attribute :>> L = 7.0; }`): Q's own `part q : Q` reads P's default on
+the check and the literal engine, never the asserted `L == 50.0` read through
+Q's binding, and the solver lane finds q's values contradict themselves, as
+beside `load = 1.0`. A `default` a binding makes give way is no feature without
+a value either: where that binding gives it none (two defaults that differ), no
+asserted equation gives it one, on any surface — the SMT engine carries no axiom
+over it, nor over a feature with no value whose bindings carry the equation's
+value to such defaults through a package's binding on a definition's feature
+(`bind p2.load = L` beside `L == 5.0`, under `bind P::load = M` with M's
+`default = 9.0` and p4's `:>> load default = 7.0`: p2's load is read at L's 5 on
+the check, and p3's, which only M would carry it to, is read on no surface). An
+assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
 def Eq { in a; a == 50.0 }`) is read by no surface, and files no row of its own.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
 == 50.0 and a >= 0.0`) — what it may define is read nowhere: every feature a
@@ -2454,11 +2471,13 @@ own `load` where no relation reads top's a's — is `verification/not-evaluable`
 at exit **2**, in a sentence that names the binding, before any solver runs. A measure read
 through one it does read — a plain end, a part valued with another (`part pp
 : T0 = top.a`), a reference in a definition read in an instance — is bounded
-at what it stands for. Nor is a measure bounded that an asserted equation this
-tool does not read defines over a `default` a binding carries (Q's `p.x ==
-50.0` over q1's `bind p.x = K` and `K default = 9.0`, for `--measure
-q1.p.x`): it is `verification/not-evaluable` at exit **2**, in a sentence that
-names the assert.
+at what it stands for. Nor is a measure bounded where an instance's own binding
+joins the path to a `default` and its type's asserted equation over that path is
+not read there (Q's `p.x == 50.0` over q1's `bind p.x = K` and `K default =
+9.0`, for `--measure q1.p.x`): the default stands, the assert holds in that
+instance too, and this tool does not read it there, so the model may contradict
+itself unreported — `verification/not-evaluable` at exit **2**, in a sentence
+that names the assert.
 
 **The point z3 stopped at is re-read before the number is published.** Every
 design point this lane prints goes back through the tool's own evaluator first

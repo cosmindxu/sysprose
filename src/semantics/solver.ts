@@ -778,8 +778,15 @@ function givenWayDefaults(model: Model, eqs: readonly Equation[], values: Readon
       if (values.has(v) || out.has(v)) continue;
       const f = model.get(baseIdOf(v));
       if (!f || !writesStandingDefault(model, f)) continue;
+      // The default it reads through what it redefines too, as the frame walk asks ({@link buildInstanceSystem}):
+      // U6's `impl-…@U6::q::pp::m`, the end copy `bind pp.m = k` makes of P's `m default = 1.0`, gives way only
+      // through P's m, and free to the solve, Q's asserted `pp.m == 0.8` fixed it, and the binding carried 0.8 into
+      // Q's `k default = 2.0` (`q.pp.m <= 1.5` satisfied where no value is read).
       const at = v.indexOf('@');
-      if (at < 0 ? defaultGivesWaySomewhere(model, f) : defaultGivesWayIn(model, f, v.slice(at + 1))) out.add(v);
+      const inst = at < 0 ? undefined : v.slice(at + 1);
+      if ([f, ...redefinedClosure(model, f)].some((g) => (inst === undefined ? defaultGivesWaySomewhere(model, g) : defaultGivesWayIn(model, g, inst)))) {
+        out.add(v);
+      }
     }
   }
   return out;

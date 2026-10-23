@@ -52,7 +52,15 @@ import {
 } from '@core/index';
 import { isBindingEdge } from './connectors';
 import { readRefusalOf, unreadDependenciesOf, unreadValuesOf, type ReadRefusal } from './evaluate-model';
-import { defaultGivesWay, givenWayUnvalued, isAsserted, sharedDefinitions, shadowedNamesOf, shadowedSentence } from './defining-equation';
+import {
+  defaultGivesWay,
+  givenWayThroughHead,
+  givenWayUnvalued,
+  isAsserted,
+  sharedDefinitions,
+  shadowedNamesOf,
+  shadowedSentence,
+} from './defining-equation';
 import { evaluate, type ExprNode } from './expr';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import {
@@ -989,6 +997,31 @@ export function gateRelation(
         detail:
           `the axiom reads \`${givenWay.p}\`, a \`default\` a binding makes give way and gives no value (${givenWay.why}); no ` +
           'assertion gives a default a value, so the axiom is not carried',
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
+  }
+  // Nor one over a feature with no value that bindings join to such a default through a package's binding on a
+  // definition's feature (E1's `L == 5.0`, carried by `bind p2.load = L` into the M that `bind P::load = M` joins to
+  // two defaults that differ): carried, it gave M, and every P's load, the assert's 5, and `p3.load <= 6.0` was
+  // PROVED on this lane alone.
+  const throughHead =
+    readBy && readBy.binding !== true && isAsserted(readBy.el) && readBy.el.ownerId != null
+      ? pathsOf(node)
+          .filter((p) => !markers.has(p))
+          .map((p) => ({ p, why: givenWayThroughHead(model, readBy.el.ownerId!, p) }))
+          .find((x) => x.why !== undefined)
+      : undefined;
+  if (throughHead) {
+    return refused(
+      expression,
+      {
+        reason: 'unread-definition',
+        detail:
+          `the axiom reads \`${throughHead.p}\`, which ${throughHead.why}; carried, the axiom would give those defaults its ` +
+          'value, and no assertion gives a default a value, so the axiom is not carried',
       },
       null,
       variables,

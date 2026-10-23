@@ -7385,6 +7385,179 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'X6::Q::a': ['?/-/?/-', 'F'],
       'X6::Q::a in X6::W::q': ['T/-/T/-', 'T'],
     }),
+    // default-stands' branch review. A binding to a value written with `=` that holds a `default` only in ANOTHER
+    // context — a specialisation never instantiated (T4C's `Q5 :> Q { :>> L = 7.0 }`) or a sibling instance (T4D's
+    // `q5 : Q`) — does not reach Q's own q, where Q's binding carries only Q's asserted `L == 50.0`: q's p's default
+    // stands there, as its `=` twin's value does (cT T and cF F on the check and the literal engine, q's values a
+    // contradiction to the solver lane and the SMT engine). Held there too, the default read the assert's 50
+    // through Q's binding on three surfaces (cT F/F/F/X, cF T/T/T/X). T4E: a default Q writes itself, held per
+    // feature by q5's `:>> L = 50.0` (cT F/F/F/F before: the same 50, with no contradiction for the SMT engine to
+    // see). The `=` twins read cT and cF alike (I14); their other rows differ by design: two values written with
+    // `=` in Q5 and q5, where the default gives way to the one written.
+    'stand-t4c': probe(`package T4C {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; assert constraint a { L == 50.0 } }
+        part def Q5 :> Q { attribute :>> L = 7.0; }
+        part q : Q;
+        constraint cT { q.p.load <= 3.0 }
+        constraint cF { q.p.load >= 3.0 }
+      }`, {
+      'T4C::Q::a': ['?/-/?/-', 'F'],
+      'T4C::Q::a in T4C::Q5': ['F/-/F/-', 'F'],
+      'T4C::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'T4C::cF': ['F/F/?/X', 'F'],
+      'T4C::cT': ['T/T/?/X', 'T'],
+    }),
+    'stand-t4c-eq': probe(`package T4C {
+        part def P { attribute load : ScalarValues::Real = 1.0; }
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; assert constraint a { L == 50.0 } }
+        part def Q5 :> Q { attribute :>> L = 7.0; }
+        part q : Q;
+        constraint cT { q.p.load <= 3.0 }
+        constraint cF { q.p.load >= 3.0 }
+      }`, {
+      'T4C::Q::a': ['?/-/?/-', 'F'],
+      'T4C::Q::a in T4C::Q5': ['F/-/F/-', 'F'],
+      'T4C::Q::«BindingConnectorAsUsage» in T4C::Q5#bind': ['F/-/F/-', 'F'],
+      'T4C::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'T4C::cF': ['F/F/?/X', 'F'],
+      'T4C::cT': ['T/T/?/X', 'T'],
+    }),
+    'stand-t4d': probe(`package T4D {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part q5 : Q { attribute :>> L = 7.0; }
+        part q : Q;
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; assert constraint a { L == 50.0 } }
+        constraint cT { q.p.load <= 3.0 }
+        constraint cF { q.p.load >= 3.0 }
+        constraint c5 { q5.p.load >= 6.0 }
+      }`, {
+      'T4D::Q::a': ['?/-/?/-', 'F'],
+      'T4D::Q::a in T4D::q5': ['F/-/F/-', 'F'],
+      'T4D::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'T4D::c5': ['T/T/T/X', 'T'],
+      'T4D::cF': ['F/F/?/X', 'F'],
+      'T4D::cT': ['T/T/?/X', 'T'],
+    }),
+    'stand-t4d-eq': probe(`package T4D {
+        part def P { attribute load : ScalarValues::Real = 1.0; }
+        part q5 : Q { attribute :>> L = 7.0; }
+        part q : Q;
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; assert constraint a { L == 50.0 } }
+        constraint cT { q.p.load <= 3.0 }
+        constraint cF { q.p.load >= 3.0 }
+        constraint c5 { q5.p.load >= 6.0 }
+      }`, {
+      'T4D::Q::a': ['?/-/?/-', 'F'],
+      'T4D::Q::a in T4D::q5': ['F/-/F/-', 'F'],
+      'T4D::Q::«BindingConnectorAsUsage» in T4D::q5#bind': ['F/-/F/-', 'F'],
+      'T4D::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'T4D::c5': ['?/?/?/X', null],
+      'T4D::cF': ['F/F/?/X', 'F'],
+      'T4D::cT': ['T/T/?/X', 'T'],
+    }),
+    'stand-t4e': probe(`package T4E {
+        part def Q { attribute L : ScalarValues::Real; attribute L0 : ScalarValues::Real default = 1.0; bind L0 = L; assert constraint a { L == 50.0 } }
+        part q5 : Q { attribute :>> L = 50.0; }
+        part q : Q;
+        constraint cT { q.L0 <= 3.0 }
+        constraint cF { q.L0 >= 3.0 }
+        constraint c5 { q5.L0 >= 6.0 }
+      }`, {
+      'T4E::Q::a': ['?/-/?/-', 'F'],
+      'T4E::Q::a in T4E::q5': ['T/-/T/-', 'T'],
+      'T4E::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'T4E::c5': ['T/T/T/X', 'T'],
+      'T4E::cF': ['F/F/?/X', 'F'],
+      'T4E::cT': ['T/T/?/X', 'T'],
+    }),
+    'stand-t4e-eq': probe(`package T4E {
+        part def Q { attribute L : ScalarValues::Real; attribute L0 : ScalarValues::Real = 1.0; bind L0 = L; assert constraint a { L == 50.0 } }
+        part q5 : Q { attribute :>> L = 50.0; }
+        part q : Q;
+        constraint cT { q.L0 <= 3.0 }
+        constraint cF { q.L0 >= 3.0 }
+        constraint c5 { q5.L0 >= 6.0 }
+      }`, {
+      'T4E::Q::a': ['?/-/F/-', 'F'],
+      'T4E::Q::a in T4E::q5': ['T/-/T/-', 'T'],
+      'T4E::Q::«BindingConnectorAsUsage» in T4E::q5#bind': ['F/-/F/-', 'F'],
+      'T4E::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'T4E::c5': ['?/?/?/X', null],
+      'T4E::cF': ['F/F/?/X', 'F'],
+      'T4E::cT': ['T/T/?/X', 'T'],
+    }),
+    // A valueless feature the bindings join both to a member an asserted equation defines and to a `default` that
+    // stands (T1C's M under `bind L = M; bind M = L0;`, beside `L == 50.0` and L0's `default = 1.0`) has the two
+    // values L has, and no surface reads it, in either spelling (I14). The check and the literal engine read it at
+    // the assert's 50 (`boundDerivation` skipped the literal and took L's equation) where the numeric surface read
+    // L0's 1: m50 T/T/F/X, m1 F/F/T/X — and so did the `=` twin, before this branch too.
+    ...standing('stand-t1c', `package T1C {
+        attribute L : ScalarValues::Real;
+        attribute L0 : ScalarValues::Real default = 1.0;
+        attribute M : ScalarValues::Real;
+        bind L = M;
+        bind M = L0;
+        assert constraint fix { L == 50.0 }
+        constraint m50 { M == 50.0 }
+        constraint m1 { M == 1.0 }
+      }`, {
+      'T1C::fix': ['?/-/F/-', 'F'],
+      'T1C::m1': ['?/?/?/?', '?'],
+      'T1C::m50': ['?/?/?/?', '?'],
+      'T1C::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    // A `default` a binding makes give way with no value (two defaults that differ) takes none from an asserted
+    // equation on the numeric surface either, where the variable the solve keys is the implicit end copy `bind
+    // pp.m = k` makes of P's m, whose default gives way only through what it redefines: Q's dotted `pp.m == 0.8`
+    // (U6) or P's own `m == 0.8` (U2) fixed it, and the binding carried 0.8 into k (U6: qT F, qF T, kT F and Q's fix
+    // T on the numeric surface alone; every surface abstained at 414ba14). E1: an asserted end a package's binding
+    // on a definition's feature carries, through `bind p2.load = L`, to M's `default = 9.0` and p4's `:>> load
+    // default = 7.0`, two that differ, gives M no value either: the SMT engine had PROVED c3T from it.
+    'stand-gw-u6': probe(`package U6 {
+        part def P { attribute m : ScalarValues::Real default = 1.0; }
+        part def Q { attribute k : ScalarValues::Real default = 2.0; part pp : P; bind pp.m = k; assert constraint fix { pp.m == 0.8 } }
+        part q : Q;
+        constraint qT { q.pp.m >= 1.5 }
+        constraint qF { q.pp.m <= 1.5 }
+        constraint kT { q.k >= 1.5 }
+      }`, {
+      'U6::Q::fix': ['?/-/?/-', '?'],
+      'U6::kT': ['?/?/?/?', '?'],
+      'U6::qF': ['?/?/?/?', '?'],
+      'U6::qT': ['?/?/?/?', '?'],
+    }),
+    'stand-gw-u2': probe(`package U2 {
+        part def P { attribute m : ScalarValues::Real default = 1.0; assert constraint fix { m == 0.8 } }
+        part def Q { attribute k : ScalarValues::Real default = 2.0; part pp : P; bind pp.m = k; }
+        part q : Q;
+        constraint qT { q.pp.m >= 1.5 }
+        constraint qF { q.pp.m <= 1.5 }
+        constraint kT { q.k >= 1.5 }
+      }`, {
+      'U2::P::fix': ['F/-/F/-', 'F'],
+      'U2::P::fix in U2::Q::pp': ['?/-/?/-', '?'],
+      'U2::kT': ['?/?/?/X', '?'],
+      'U2::qF': ['?/?/?/X', '?'],
+      'U2::qT': ['?/?/?/X', '?'],
+    }),
+    'stand-gw-e1': probe(`package E1 {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        attribute L : ScalarValues::Real;
+        assert constraint fix { L == 5.0 }
+        part p2 : P;
+        bind p2.load = L;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+      }`, {
+      'E1::c3F': ['?/?/?/?', '?'],
+      'E1::c3T': ['?/?/?/?', '?'],
+      'E1::fix': ['T/-/T/-', 'T'],
+    }),
     // default-stands S2's review. A `part :>> p` redefinition whose assert defines a valueless feature that a
     // binding of the general definition joins to a `default` — in a usage (SRU: q2's `part :>> p`) or in a
     // specialisation (SRS: Q2's) — gives it two values there, the equation's 50 and the default's 1, as the `=`
@@ -10114,6 +10287,20 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'stand-x5 | X5::P::c in X5::Q::p',
       'stand-x6 | X6::P::c',
       'stand-x6 | X6::P::c in X6::Q::p',
+      'stand-t4c | T4C::cF',
+      'stand-t4c | T4C::cT',
+      'stand-t4c-eq | T4C::cF',
+      'stand-t4c-eq | T4C::cT',
+      'stand-t4d | T4D::c5',
+      'stand-t4d | T4D::cF',
+      'stand-t4d | T4D::cT',
+      'stand-t4d-eq | T4D::cF',
+      'stand-t4d-eq | T4D::cT',
+      'stand-t4e | T4E::c5',
+      'stand-t4e | T4E::cF',
+      'stand-t4e | T4E::cT',
+      'stand-t4e-eq | T4E::cF',
+      'stand-t4e-eq | T4E::cT',
       'lex-lp1 | LP1::l50',
       'lex-lp1 | LP1::topF',
       'lex-lp1 | LP1::topT',
@@ -10318,8 +10505,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   const STAND_TWINS = [
     'stand-g1s', 'stand-g1c', 'stand-g2', 'stand-g2f', 'stand-g3b', 'stand-g3e', 'stand-m8ab', 'stand-m8ba', 'stand-use',
     'stand-eqmd', 'stand-w4a', 'stand-w4b', 'stand-redef-use', 'stand-redef-spec', 'stand-lexdef', 'stand-lexonly',
-    'stand-lexpkg', 'stand-lexineq',
+    'stand-lexpkg', 'stand-lexineq', 'stand-t1c',
   ].map((k) => [k, `${k}-eq`] as const);
+  /**
+   * The pairs whose other rows differ by design (two values written with `=` where the default gives way to the
+   * one written), read alike on the rows named: T4C, T4D and T4E's q, where the default stands against Q's assert.
+   */
+  const STAND_ROWS_ALIKE = [
+    ['stand-t4c', 'stand-t4c-eq', ['T4C::cT', 'T4C::cF']],
+    ['stand-t4d', 'stand-t4d-eq', ['T4D::cT', 'T4D::cF']],
+    ['stand-t4e', 'stand-t4e-eq', ['T4E::cT', 'T4E::cF']],
+  ] as const;
   const STAND_ALIKE = [
     ['stand-g1s', 'stand-g1c'],
     ['stand-g3b', 'stand-g3e'],
@@ -10341,6 +10537,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       for (const row of [...seen.get(a)!.keys()].filter((r) => seen.get(b)!.has(r))) {
         if (letters(a, row) !== letters(b, row)) apart.push(`${a} | ${row}: ${letters(a, row)}, ${b} ${letters(b, row)}`);
       }
+    }
+    for (const [a, b, rows] of STAND_ROWS_ALIKE) {
+      for (const row of rows) if (letters(a, row) !== letters(b, row)) apart.push(`${a} | ${row}: ${letters(a, row)}, ${b} ${letters(b, row)}`);
     }
     expect(apart).toEqual([]);
     // Not vacuous: every pair shares its obligations.

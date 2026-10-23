@@ -40,6 +40,7 @@ import {
   bindsDifferingWrittenValues,
   bindsUndecidedWrittenValues,
   defaultStandsIn,
+  standsAgainstAssertsIn,
   assertDefinitionIn,
   enclosingAssertOn,
   equatedPartsFailed,
@@ -1043,8 +1044,10 @@ function valueBoundInInstance(
   if ('abstain' in src) {
     // A `default` the binding holds per FEATURE, which this instance reads as
     // its value (F8, A.4 Part 2): the outermost component states none and its
-    // every default is a literal agreeing exactly, so the default stands.
-    if (src.abstain === 'defaults-differ') {
+    // every default is a literal agreeing exactly, so the default stands — or
+    // states only values asserted equations give, which no default takes
+    // (`standsAgainstAssertsIn`: T4E's q's L0, held per feature by q5's).
+    if (src.abstain === 'defaults-differ' || (src.abstain === 'two-values' && standsAgainstAssertsIn(model, symbol))) {
       let stand: ElementRecord | undefined;
       try {
         stand = defaultStandsIn(model, symbol);
@@ -1847,7 +1850,8 @@ export function causeWords(cause: InstanceAbstention | undefined): string {
     case 'held-elsewhere':
       return 'held by a binding elsewhere';
     case 'two-values':
-      return 'enclosing asserted equations give it two values';
+      // A binding that joins two values, or two enclosing asserted equations: the model states two either way.
+      return 'the model states two values for it';
     case 'enclosing-assert':
       return 'an enclosing assert constrains it';
     case 'past-cap':

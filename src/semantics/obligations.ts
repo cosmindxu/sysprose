@@ -92,6 +92,7 @@ import {
   defaultGivesWay,
   defaultGivesWayIn,
   defaultStandsIn,
+  standsAgainstAssertsIn,
   enclosedBindingFrame,
   equatedPartsRefusal,
   failedReadingSentence,
@@ -2067,8 +2068,14 @@ function instanceValueRow(
   if (!source) return undefined;
   // A `default` that gives way at THIS instance (a held redefinition's
   // fall-through, `held-redef`): the binding that holds it fixes the instance
-  // variable, not a value row here.
-  if (defaultGivesWayIn(model, target, symbol) || defaultGivesWayIn(model, source, symbol)) return undefined;
+  // variable, not a value row here. Not one held per feature only in another
+  // context, which stands here against the asserted members of its component
+  // (`standsAgainstAssertsIn`): the instance variable stands on the literal, as
+  // the check and the numeric surface read it, never on Q's asserted `L ==
+  // 50.0` carried through the binding (T4E).
+  if ((defaultGivesWayIn(model, target, symbol) || defaultGivesWayIn(model, source, symbol)) && !standsAgainstAssertsIn(model, symbol)) {
+    return undefined;
+  }
   if (source.eClass === 'CalculationUsage' && isParameterisedCalculation(model, source)) return undefined;
   let valueSource = source;
   let text = statedValueOf(model, source);
