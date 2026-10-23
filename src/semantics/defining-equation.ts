@@ -10517,8 +10517,15 @@ export function shadowedSentence(model: Model, el: ElementRecord, shadowed: read
   return (
     `\`${head}\` in ${who} is ${f ? effectiveQualifiedName(model, f.id) : head}, ${what}; this tool reads a ` +
     `body in its owner's scope, where \`${head}\` is ${outer !== undefined ? effectiveQualifiedName(model, outer) : 'another feature'} ` +
-    '— another feature — so the body is not read'
+    `— another feature — ${BODY_NOT_READ}`
   );
+}
+
+const BODY_NOT_READ = 'so the body is not read';
+
+/** Is this refusal sentence a {@link shadowedSentence}: a body over a name its own element declares, which may state no value? */
+export function isShadowedBody(sentence: string): boolean {
+  return sentence.endsWith(`— another feature — ${BODY_NOT_READ}`);
 }
 
 /**

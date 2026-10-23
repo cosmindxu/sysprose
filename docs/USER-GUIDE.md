@@ -1050,11 +1050,14 @@ payload then carries `atLeast: true`). A violated instance
 names the value that breaks the relation (the one above: `extra = 20` where
 `load = 2` alone would have held it; else the first value a binding carried), and, where a binding
 carries it in, the value the binding carries and the binding
-(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``). Instances that read
-the value from one line they share are one finding: `part def R { part q : Q {
+(``load = 50 — q1.L = 50 through R17::Q's `bind p.load = L` ``). Instances whose
+violation that one value from one line they share breaks (put back to the relation's own
+value, it holds) are one finding: `part def R { part q : Q {
 attribute :>> L = 50.0; } }` read by R's own q and by each `part r1 : R` points at that
 line once, named for what it redefines (`elementName` is `L`), and lists the others
-(*; the same line breaks it in r1::q::p, r2::q::p*). A path with a
+(*; the same line breaks it in r1::q::p, r2::q::p*); one the line does not mend (the
+relation fails on a default too), or a sixth distinct set of values read in a group,
+keeps its own finding. A path with a
 segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; in a context row's sentence too, `'X in Y'::'est@1' = 0.78 misses Common::t …`; the `instance` and
 `instances.listed` fields keep the names as written). A relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
@@ -1980,7 +1983,7 @@ that renders these members carries it itself.
 |---|---|---|
 | `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement is prose with no constraint body | **Yes** — lowered to exit 0 |
 | `verification/timeout` | The solver ran out of time — raise it with `--timeout MS` | **Yes** |
-| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm — or it reads a value that a binding, a value or an asserted equation carries and this tool does not read through (`unread-binding`: a limit of this tool, the relation is well formed), or it reads a value this tool does not read where the model states it (`unread-definition`: a limit of this tool too, closed in that sentence — a per-instance reading it cannot enumerate, a definition written in another context, a body whose names its own parameters shadow, a parameterised calculation, more instance rows than a run reads; a reading that failed inside the tool says so) | No |
+| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm — or it reads a value that a binding, a value or an asserted equation carries and this tool does not read through (`unread-binding`: a limit of this tool, the relation is well formed), or it reads a value this tool does not read where the model states it (`unread-definition`: a limit of this tool too, closed in that sentence — a per-instance reading it cannot enumerate, a definition written in another context, a body whose names its own parameters shadow (its sentence says the body is over a parameter of its own, which may state no value), a parameterised calculation, more instance rows than a run reads; a reading that failed inside the tool says so) | No |
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
 | `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
 | `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |

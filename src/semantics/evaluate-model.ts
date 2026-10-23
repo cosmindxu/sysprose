@@ -1686,6 +1686,12 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
   }
 }
 
+/** What {@link breakingRead} depends on in a violated row: its reads' names, values and units, and where the relation is read. */
+function breakKey(judged: Judgement, readIn: ElementId | undefined): string {
+  const reads = (judged.reads ?? []).map((r) => `${r.path}=${String(r.value)}${r.unit ?? ''}${r.si === true ? '!' : ''}`);
+  return `${readIn ?? ''}\u0000${judged.sides !== undefined ? 'q' : ''}${reads.join('\u0000')}`;
+}
+
 /**
  * The anchor an instance's row sets (C.1's anchor rule, PI-2), so its finding
  * points at the line that makes the instance differ, never at the usage every
@@ -1716,6 +1722,7 @@ function instanceAnchor(
   reads: readonly InstanceRead[] | undefined,
   readIn: ElementId | undefined,
   own: ElementId | undefined,
+  mends = true,
 ): { id: ElementId; shared?: true } | undefined {
   try {
     const user = (el: ElementRecord | undefined): el is ElementRecord =>
@@ -1738,7 +1745,9 @@ function instanceAnchor(
       }
       // The only value read is a literal an element every instance of a definition shares states (`R::q::L
       // = 50.0` for r1's q and r2's): no own element spells its source, and the line to change is that one.
-      const only = reads?.length === 1 ? reads[0]!.via : undefined;
+      // A group row takes it only where putting that read back mends the relation (`mends`, {@link breakingRead}):
+      // one that fails for another reason too (a default) is not broken by that line, and keeps its own finding.
+      const only = mends && reads?.length === 1 ? reads[0]!.via : undefined;
       for (let k = frames.length - 1; only?.sourceSymbol === source && k >= 0; k--) {
         const reader = model.get(frames[k]!.reader);
         const shared = reader !== undefined ? definitions.instanceNameOf(reader.id) : undefined;
@@ -2614,7 +2623,15 @@ function groupInstanceRows(
   const featureId = shown[0]?.featureId ?? usage.id;
   const qualifiedName = effectiveQualifiedName(model, featureId);
   const rows: SpecialisationInstance[] = [];
-  let asked = 0;
+  const broken = new Map<string, InstanceRead | undefined>();
+  const breaking = (inst: string, judged: Judgement, readIn: ElementId | undefined): InstanceRead | undefined => {
+    const key = breakKey(judged, readIn);
+    if (broken.has(key)) return broken.get(key);
+    if (broken.size >= MAX_LISTED_VIOLATED) return undefined;
+    const found = breakingRead(model, el, readIn !== undefined ? { ...el, ownerId: readIn } : reading, expr, pass, inst, judged);
+    broken.set(key, found);
+    return found;
+  };
   // One row per instance, thousands to a group: its fields set in the order they print.
   const push = (inst: string | undefined, judged: Judgement, readIn?: ElementId): void => {
     const row: SpecialisationInstance = {
@@ -2632,17 +2649,14 @@ function groupInstanceRows(
     const element = inst !== undefined ? group.standsFor?.get(inst) : undefined;
     if (element !== undefined) row.elementId = element;
     // Where the instance's finding points (PI-2): its own line, not the shared usage — that of the read
-    // whose value breaks the relation where it read several. Only a listed row is asked (the first
-    // {@link MAX_LISTED_VIOLATED} violated ones of the group).
-    const broke =
-      inst !== undefined && judged.result === 'violated' && asked++ < MAX_LISTED_VIOLATED
-        ? breakingRead(model, el, readIn !== undefined ? { ...el, ownerId: readIn } : reading, expr, pass, inst, judged)
-        : undefined;
+    // whose value breaks the relation where it read several. Instances that read alike share one answer
+    // ({@link breakKey}); only the first {@link MAX_LISTED_VIOLATED} distinct readings of the group are asked.
+    const broke = inst !== undefined && judged.result === 'violated' ? breaking(inst, judged, readIn) : undefined;
     if (broke !== undefined) row.breaks = broke.path;
     const several = broke !== undefined && (judged.reads?.length ?? 0) > 1;
     const anchor =
       inst !== undefined
-        ? instanceAnchor(model, definitions, inst, several ? [broke.path] : names, several ? [broke] : judged.reads, readIn, readIn ?? element)
+        ? instanceAnchor(model, definitions, inst, several ? [broke.path] : names, several ? [broke] : judged.reads, readIn, readIn ?? element, broke !== undefined)
         : undefined;
     if (anchor !== undefined) {
       row.anchorId = anchor.id;

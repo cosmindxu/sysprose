@@ -41,7 +41,7 @@
 
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
-import { isFailedReading } from '../defining-equation';
+import { isFailedReading, isShadowedBody } from '../defining-equation';
 import { evaluateFeatureValue, featuresWithoutValue, valueAtPath } from '../evaluate-model';
 import { rowElement, type Obligation } from '../obligations';
 import { type ContractRef, type Refusal, type RefusalReason, type VariableRole } from '../contracts';
@@ -166,8 +166,10 @@ export function isOutsideTheFragment(reason: RefusalReason): boolean {
  * asserted equation over a `default` read through one or a reference;
  * `unread-definition`, a value the model states in a context this tool does
  * not read it in) is a LIMIT OF THIS TOOL — the relation is well-formed and
- * the model decides it — and so is a per-instance reading that threw
- * ({@link isFailedReading}), which is a failure of the tool. Every other such
+ * the model decides it — except a body over a parameter of its own
+ * ({@link isShadowedBody}), which may state no value and is no one's to
+ * decide — and a per-instance reading that threw ({@link isFailedReading}) is
+ * a failure of the tool. Every other such
  * reason is a defect in the relation. None is forgiven, and the exit code is
  * the same 2; only what a person is told to fix differs. Shared with the SMT
  * engine, which files the same rows.
@@ -177,7 +179,10 @@ export function refusalTail(reason: RefusalReason, detail = ''): string {
     return isFailedReading(detail)
       ? 'This is a failure of this tool, not a defect in the relation: its reading of the relation threw, so ' +
           '`--allow-inconclusive` does not forgive it'
-      : 'This is a limit of this tool, not a defect in the relation: the model decides it, so ' +
+      : isShadowedBody(detail)
+        ? 'This is a limit of this tool, not a defect in the relation: its body is over a parameter of its own, ' +
+          'which this tool does not read, so `--allow-inconclusive` does not forgive it'
+        : 'This is a limit of this tool, not a defect in the relation: the model decides it, so ' +
           '`--allow-inconclusive` does not forgive it';
   }
   return reason === 'unread-binding'

@@ -6391,6 +6391,21 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         " is violated in G4::R::q::p: load = 50 — q.L = 50 through G4::Q's `bind p.load = L`; the same line breaks it in G4::r1::q::p, G4::r2::q::p",
       ],
     ]);
+    // Not a cause the line states: the relation fails on a default too (`extra`), so putting the read back does not
+    // mend it. No fold and no 'breaks it' clause: one finding per instance, at its own line.
+    const notCause = await findings(
+      ['package FN {', '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 20.0; }', ...defs.slice(1), '  part def R { part q : Q { attribute :>> L = 5.0; } }', '  part r1 : R;', '  part r2 : R;', '}'].join('\n'),
+    );
+    expect(notCause.map((f) => f[0])).toEqual(['FN::R::q::p', 'FN::r1::q::p', 'FN::r2::q::p']);
+    expect(notCause.some((f) => String(f[4]).includes('the same line breaks it'))).toBe(false);
+    // Past the five a group asks, instances that read alike share the answer: seven parts typed by R, beside a part
+    // whose binding gives a second read, are still one finding at the shared line, not one more per later part.
+    const many = await findings(
+      ['package FC {', ...defs, '  part def R { part q : Q { attribute :>> L = 50.0; } }', ...[1, 2, 3, 4, 5, 6, 7].map((n) => `  part r${n} : R;`), '  part q9 : Q { attribute E : ScalarValues::Real = 0.0; bind p.extra = E; }', '}'].join('\n'),
+    );
+    expect(many.filter((f) => f[2] === 'attribute :>> L = 50.0')).toHaveLength(1);
+    expect(many.map((f) => f[0])).toEqual(['FC::R::q::p']);
+    expect(String(many[0]![4])).toContain('… and 2 more');
     // A finding about a context that reaches a value through a reference names the context's instance, not
     // the feature the last link ends at (p50's `load`, q2's p1's): the line to edit is the instance's.
     const named = async (text: string) =>
@@ -6770,6 +6785,10 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     expect(refusalTail('unread-definition', sentence)).toContain('This is a failure of this tool, not a defect in the relation');
     // A limit of the tool is not a failure of it, and a relation nobody can read is a defect of the relation.
     expect(refusalTail('unread-definition', 'T2::P::c is not read in T2::q3::p: why')).toContain('This is a limit of this tool');
+    // A body over a parameter of its own may state no value: the model does not decide it, and the relation is no defect.
+    const shadowed = 'y in own is SH::P::own::y, its own in parameter; this tool reads a body in its owner\'s scope, where `y` is SH::P::y — another feature — so the body is not read';
+    expect(refusalTail('unread-definition', shadowed)).toContain('its body is over a parameter of its own');
+    expect(refusalTail('unread-definition', shadowed)).not.toContain('the model decides it');
     expect(refusalTail('unresolved-name', 'x')).toContain('This is a defect in the relation');
   });
 
