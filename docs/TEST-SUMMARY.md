@@ -5,15 +5,15 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4881 total — 4881 passed, 0 failed, 0 skipped
+- **Tests:** 4893 total — 4893 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 119 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 120 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
-| test/campaign/verification.test.ts | 182 | 0 | 0 |
+| test/campaign/verification.test.ts | 184 | 0 | 0 |
 | test/conformance/api-contract.test.ts | 22 | 0 | 0 |
 | test/conformance/corpus.test.ts | 16 | 0 | 0 |
 | test/conformance/oslc-conformance.test.ts | 8 | 0 | 0 |
@@ -74,7 +74,7 @@
 | test/unit/diagram.exports.test.ts | 3 | 0 | 0 |
 | test/unit/diagram.geometry.test.ts | 18 | 0 | 0 |
 | test/unit/diagram.geometry3d.test.ts | 14 | 0 | 0 |
-| test/unit/diagram.grid.test.ts | 12 | 0 | 0 |
+| test/unit/diagram.grid.test.ts | 13 | 0 | 0 |
 | test/unit/diagram.layout.test.ts | 4 | 0 | 0 |
 | test/unit/diagram.layout2.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
@@ -93,7 +93,7 @@
 | test/unit/graph-algorithms.test.ts | 19 | 0 | 0 |
 | test/unit/graph-analysis.test.ts | 19 | 0 | 0 |
 | test/unit/langium.direction.test.ts | 5 | 0 | 0 |
-| test/unit/langium.grammar.test.ts | 48 | 0 | 0 |
+| test/unit/langium.grammar.test.ts | 49 | 0 | 0 |
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
 | test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
@@ -119,7 +119,7 @@
 | test/unit/semantics.expr.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 10 | 0 | 0 |
-| test/unit/semantics.keywords.test.ts | 43 | 0 | 0 |
+| test/unit/semantics.keywords.test.ts | 46 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 91 | 0 | 0 |
@@ -157,7 +157,7 @@
 | test/unit/text.recovery-honesty.test.ts | 30 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 115 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 119 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
