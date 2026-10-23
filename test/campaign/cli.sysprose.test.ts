@@ -866,6 +866,21 @@ describe('L7 — sysprose reporting command', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+
+    // A default value is printed as the word `default`, a bound one keeps `=`.
+    const src = 'package P { part def B { attribute fixed = 4.0; attribute soft default = 1.2; } }\n';
+    const soft = spawnCli(['elements', '-'], src);
+    expect(soft.code).toBe(0);
+    expect(soft.stdout).toMatch(/P::B::fixed\s+AttributeUsage = 4(\.0)?\n/);
+    expect(soft.stdout).toMatch(/P::B::soft\s+AttributeUsage default 1\.2\n/);
+    expect(soft.stdout).not.toMatch(/soft\s+AttributeUsage = /);
+    // The JSON row carries the same words, so a reader of `value` cannot take a default for a bound number.
+    const rows = JSON.parse(spawnCli(['elements', '-', '--json'], src).stdout) as {
+      elements: Array<{ qualifiedName: string; value: string }>;
+    };
+    const valueOf = (qn: string) => rows.elements.find((e) => e.qualifiedName === qn)?.value;
+    expect(valueOf('P::B::fixed')).toMatch(/^4(\.0)?$/);
+    expect(valueOf('P::B::soft')).toBe('default 1.2');
   }, 180_000);
 
   it('a report larger than the pipe buffer arrives whole, and parses', () => {
