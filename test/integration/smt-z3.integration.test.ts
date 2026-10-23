@@ -42,6 +42,7 @@ import {
   rationalToNumber,
   rereadPoint,
   resetZ3Cache,
+  Z3ModuleDeadError,
   z3DeathCount,
   z3Disabled,
   type Z3Backend,
@@ -510,11 +511,16 @@ describe('a long run of checks does not grow the heap without bound', () => {
 });
 
 /**
- * `z3-solver` runs every check of every module under ONE process-wide async
- * mutex, and a check abandoned on a terminated module never settles. Before the
- * bridge gave that lock back, the fresh module's first check waited on it past
- * its budget plus the 30 s margin and was counted a second death (measured:
- * `Z3ModuleDeadError` after 32.6 s; 0.5 s with the lock released by hand).
+ * A check abandoned on a terminated module. Before 5.3.1 `z3-solver` ran every
+ * check of every module under ONE process-wide async mutex and had no way to
+ * end a call whose thread was gone: the abandoned check held that lock for
+ * good, the fresh module's first check waited on it past its budget plus the
+ * 30 s margin and was counted a second death (measured: `Z3ModuleDeadError`
+ * after 32.6 s; 0.5 s with the lock released by hand), and the process stayed
+ * up on the call's 600 s keep-alive timer. Now each module has its own lock and
+ * the bridge cancels the abandoned call with its threads (`async_cancel`): the
+ * orphan rejects at once, as the death it is, the fresh module is not held up,
+ * and nothing keeps the process alive.
  *
  * The abandoned check is {@link HARD}, which z3 cannot decide, under a budget
  * no part of this file outlasts — the investigation's probe used a nonlinear
@@ -522,21 +528,20 @@ describe('a long run of checks does not grow the heap without bound', () => {
  * was still running. The file's own `backend` is left alone: the module that is
  * terminated is a fresh one, made after a plain reset kept the shared one alive.
  */
-describe('a terminated module’s abandoned check does not hold up the next module', () => {
+describe('a terminated module’s abandoned check is cancelled and does not hold up the next module', () => {
   withZ3(
-    'a fresh module answers within 5 s, and nothing is counted dead',
+    'the orphan rejects as a death, a fresh module answers within 5 s, and only the terminated module is counted dead',
     async () => {
       resetZ3Cache();
       const a = await loadZ3();
       if (a.absent) throw new Error(a.reason);
-      let orphanSettled = false;
-      // Rejected 30 s past its budget by the bridge's guard, by which time this file is done.
+      let orphanOutcome: unknown = 'pending';
       const orphan = a.check(HARD, { timeoutMs: 60_000 }).then(
-        () => (orphanSettled = true),
-        () => (orphanSettled = true),
+        () => (orphanOutcome = 'answered'),
+        (err: unknown) => (orphanOutcome = err),
       );
       await new Promise((r) => setTimeout(r, 300));
-      expect(orphanSettled, 'the undecidable check answered: nothing was abandoned').toBe(false);
+      expect(orphanOutcome, 'the undecidable check answered: nothing was abandoned').toBe('pending');
       const deaths = z3DeathCount();
       resetZ3Cache({ terminate: true });
 
@@ -550,10 +555,13 @@ describe('a terminated module’s abandoned check does not hold up the next modu
       const r = await b.check(trivial, { timeoutMs: 5000 });
       const wall = performance.now() - t0;
       expect(r.status).toBe('unsat');
-      expect(wall, 'the fresh module waited on the abandoned check’s lock').toBeLessThan(5000);
-      expect(z3DeathCount(), 'the fresh module was counted dead').toBe(deaths);
-      expect(orphanSettled, 'the abandoned check settled, so the lock was never in question').toBe(false);
-      void orphan;
+      expect(wall, 'the fresh module waited on the abandoned check').toBeLessThan(5000);
+
+      await orphan;
+      expect(orphanOutcome, 'the abandoned check was left hanging or read as an `error` outcome').toBeInstanceOf(
+        Z3ModuleDeadError,
+      );
+      expect(z3DeathCount(), 'the terminated module is one death; the fresh one is none').toBe(deaths + 1);
       // The shared `backend` is a third module, kept by the plain reset, and it still answers.
       if (backend) expect((await backend.check(trivial)).status).toBe('unsat');
     },

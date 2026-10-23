@@ -73,6 +73,6 @@
     "vitest": "^2.1.8"
   },
   "optionalDependencies": {
-    "z3-solver": "^5.2.0"
+    "z3-solver": "^5.3.1"
   }
 }

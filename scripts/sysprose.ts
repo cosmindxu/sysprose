@@ -182,7 +182,6 @@ import {
 import { buildGrid } from '../src/diagram/grid';
 import { buildRequirementsTable } from '../src/diagram/requirements-table';
 import { loadModelText, type CheckReport } from '../src/text/load';
-import { z3DeathCount } from '../src/semantics/smt/z3-bridge';
 import type { Diagnostic, TextRange } from '../src/validation/types';
 import { serializeElement } from '../src/text/serializer';
 import { flagGiven, flagValue, isArgError, parseArgs, type ParsedArgs } from './lib/args';
@@ -3972,23 +3971,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 /**
- * Whether this run has to end itself once its command has returned: only
- * when a z3 module died under it (defect D5).
- *
- * A call the bridge abandoned on a dead module leaves a timer behind that
- * nothing will clear. Every off-thread call `z3-solver` makes pushes a ref'd
- * 600 s keep-alive (`threadTimeouts` in `z3-built.js`) that only that call's
- * own completion clears, and a call whose thread died never completes; the
- * array lives inside the module factory, out of the bridge's reach. Measured:
- * one such timer left live, the process still up 108 s after its work was
- * done — `sysprose` would sit for ten minutes after printing its verdict. A
- * run with no death ends the ordinary way, untouched.
- */
-export function lingersAfterZ3Death(): boolean {
-  return z3DeathCount() > 0;
-}
-
-/**
  * Only when this file was RUN — the guard `scripts/gen-cli-reference.ts` and
  * `scripts/agent-repair-bench.ts` already use, for the same reason. `main` is
  * imported by the L7 suite now, and an import that ran the command as a side
@@ -3999,4 +3981,4 @@ export function lingersAfterZ3Death(): boolean {
  * `import.meta.url` and `process.argv[1]` keeps them — and a guard that gets
  * that wrong does not fail loudly: it runs nothing, prints nothing and exits 0.
  */
-if (isMainModule(import.meta.url)) runMain('sysprose', main, { lingers: lingersAfterZ3Death });
+if (isMainModule(import.meta.url)) runMain('sysprose', main);

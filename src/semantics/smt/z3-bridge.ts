@@ -48,44 +48,41 @@
  *    `error` outcome on purpose: `error` means "z3 refused the script this tool
  *    produced", and a runtime that stopped existing is not a defect in the
  *    script — folding it in would print that sentence over the wrong fact.
- *    Discarding it also gives back the one lock `z3-solver` keeps for the
- *    whole PROCESS: every `check()` of every module runs under a single
- *    module-level async mutex, so a check abandoned on a dead or terminated
- *    module — one that will never settle — would hold it for good, and the
- *    fresh module's first check would wait on it past its own budget and the
- *    margin and be counted a second death. Measured: a trivial check on a
- *    fresh module after a terminate answered `Z3ModuleDeadError` after 32.6 s
- *    with the lock left held, and `sat` in 0.5 s with it given back
- *    ({@link releaseHeldMutex}).
+ *    The abandoned call is cancelled with the threads (`async_cancel`, the
+ *    module's own hook): its promise rejects, so the caller is not left
+ *    waiting, and the 600 s keep-alive timer the call left behind is cleared,
+ *    so the process can end. `z3-solver` 5.2 kept ONE lock for the whole
+ *    process and no such hook, and this file gave the lock back by hand and
+ *    ended the command itself; 5.3.1 has a lock per module and the hook.
  *  - **No z3 call on the main thread overlaps a check.** This is what killed
  *    the module in D5, found later and reproduced. The shipped `z3-solver`
  *    WASM is a libz3 built `--single-threaded` — no allocator in it takes a
  *    lock — driven from pthreads: `check()` runs on a worker thread while the
- *    main thread stays free. And `z3-solver` frees every Solver, Optimize,
+ *    main thread stays free. And `z3-solver` 5.2 freed every Solver, Optimize,
  *    Model and term wrapper from a `FinalizationRegistry` whose callbacks are
  *    bare `*_dec_ref` calls, which V8 runs on the main thread when it collects
  *    the last checks' objects: traced, every one of them ran while the NEXT
  *    check was on its thread. The two threads then corrupt the heap they
  *    share, and later the solver or a free dereferences garbage (`memory
  *    access out of bounds`, `corrupted its heap`, the `hashtable.h:445`
- *    assertion). Load lengthens checks and lands more collections inside them:
- *    with four to five such processes running at once (load average 12–27), 4
- *    of 5 unguarded processes died within 10 iterations of 50 checks and all 8
- *    within 21. So a check holds its module from `new Solver()` to its last
- *    read ({@link enter} / {@link leave}), checks on one module queue rather
- *    than overlap ({@link serially}), a finalizer that arrives meanwhile is
- *    held and run once the check has settled ({@link installDeferringRegistry}),
- *    and the solver, optimiser and model are released explicitly so the heavy
- *    frees happen between checks. Measured: 0 traps in 66 iterations (~3,300
- *    checks) under that load. The two obvious alternatives were measured too
- *    and do not help: `Z3_enable_concurrent_dec_ref` is compiled out of a
- *    single-threaded build (a run with it on died at iteration 5), and a fresh
- *    context or module per check died faster, because what races is the
- *    module's own allocator; switching finalizers off instead fills the fixed
- *    2 GB heap in ~17 iterations. Reported upstream, with the process-wide
- *    lock and the 600 s keep-alive timer an abandoned call leaves behind:
- *    https://github.com/Z3Prover/z3/issues/10999 — when a `z3-solver` release
- *    fixes them, the deferral, the lock release and the CLI exit can go.
+ *    assertion), or an answer is simply wrong. Under load (five processes of
+ *    154 checks an iteration on the v9 model beside twelve busy loops) all five
+ *    unguarded 5.2.0 processes failed within eight iterations. Fixed upstream
+ *    (https://github.com/Z3Prover/z3/issues/10999, released in 5.3.1): the
+ *    library queues the frees a collection asks for and runs them on its next
+ *    API call, defers the others until the async call settles, and keeps the
+ *    lock per module. The same load on 5.3.1 with every guard this file used
+ *    to carry switched off ran 5 x 25 iterations (over a million finalizer
+ *    callbacks landing under checks per process) with no trap, death or
+ *    changed answer. So the finalizer deferral, the lock release and the
+ *    command's own ending are gone, and a `z3-solver` without the fix is
+ *    refused ({@link initialise}) rather than trusted. What stays is what the
+ *    library still documents as unsafe: a SYNCHRONOUS z3 call on the main
+ *    thread under a running check. A check holds its module from `new
+ *    Solver()` to its last read ({@link enter} / {@link leave}), and checks on
+ *    one module queue rather than overlap ({@link serially}). The solver,
+ *    optimiser and model are still released explicitly, so the heavy frees
+ *    happen between checks and z3's heap stays flat.
  *
  * WHY SMT-LIB2 TEXT RATHER THAN THE `Context` OBJECT API. The encoder
  * ({@link ./encode}) builds a SCRIPT, and this bridge asserts it with
@@ -130,7 +127,7 @@ export interface Z3Backend {
   readonly absent: false;
   /** z3's own version string, e.g. `5.1.0`. Never empty. */
   readonly version: string;
-  /** z3's long form, e.g. `Z3 5.1.0.0`. */
+  /** z3's long form, e.g. `5.3.1.0 <commit> z3-5.3.1`. */
   readonly fullVersion: string;
   /** The seed every solver in this process is pinned to. */
   readonly seed: number;
@@ -328,8 +325,7 @@ let cached: CachedModule | undefined;
 
 /**
  * The `init()` in progress, so a second {@link loadZ3} during it awaits the
- * first rather than initialising a second module beside it (and swapping the
- * registry constructor twice at once).
+ * first rather than initialising a second module beside it.
  */
 let pending: Promise<CachedModule> | undefined;
 
@@ -354,51 +350,11 @@ interface CachedModule {
   fullVersion: string;
   /** Checks between {@link enter} and {@link leave} on this module: 0 or 1. */
   inFlight: number;
-  /** Finalizer callbacks that arrived while a check was in flight, in order. */
-  deferred: Array<() => void>;
-  /** Found dead or terminated: its finalizers are dropped, never run. */
+  /** Found dead or terminated: nothing more is released into it. */
   dead: boolean;
   /** The last check queued on this module ({@link serially}); never rejects. */
   tail: Promise<unknown>;
-  /** `z3-solver`'s process-wide async mutex, once a check here was seen taking it. */
-  mutex: AsyncMutex | undefined;
-  /** A check of THIS module holds that mutex now: taken, and not yet given back. */
-  holdsMutex: boolean;
 }
-
-/** The two members of `async-mutex`'s `Mutex` the bridge uses. */
-interface AsyncMutex {
-  isLocked(): boolean;
-  release(): void;
-}
-
-/**
- * The registry constructor in place when this file was loaded — the one every
- * swap restores. Restoring "whatever was there before the swap" instead would
- * leave the deferring subclass installed for the rest of the process the first
- * time two loads overlapped, gating every later registry in it (a test
- * runner's, an HTTP client's) on z3's accounting.
- */
-const ORIGINAL_FR: FinalizationRegistryConstructor | undefined = globalThis.FinalizationRegistry;
-
-/** How many finalizer callbacks were held because a check was in flight. Monotonic. */
-let deferredFinalizers = 0;
-
-/**
- * Whether `Mutex.prototype.runExclusive` is wrapped ({@link watchAsyncMutex}):
- * `undefined` until the first load tries, `false` when it could not.
- */
-let mutexWatched: boolean | undefined;
-
-/**
- * The module whose high-level `check()` is being CALLED right now — set only
- * for the synchronous span of that call ({@link watched}), which is where
- * `z3-solver` takes its mutex, so another package's mutex is never recorded.
- */
-let watching: CachedModule | undefined;
-
-/** Whether the one debug line about the mutex watch has been printed. */
-let mutexNoted = false;
 
 /**
  * How many times a module has been found dead in this process.
@@ -448,11 +404,13 @@ interface Z3Api {
   Context(name: string): Z3Context;
   /**
    * The emscripten module behind the API, as `init()` spreads it in. Only its
-   * thread pool is touched, and only to stop the workers of a module this
-   * bridge has given up on; every member is optional because the shape is the
-   * package's internals, not its contract.
+   * thread pool and its `async_cancel` are touched, and only to stop the
+   * workers of a module this bridge has given up on and reject the call they
+   * were running; every member is optional because the shape is the package's
+   * internals, not its contract. `async_cancel` is also the mark of a
+   * `z3-solver` with the finalizer fix ({@link initialise}).
    */
-  em?: { PThread?: { terminateAllThreads?: () => void } };
+  em?: { PThread?: { terminateAllThreads?: () => void }; async_cancel?: (reason?: Error) => void };
 }
 interface Z3Context {
   Solver: new () => Z3Solver;
@@ -546,6 +504,16 @@ export async function loadZ3(): Promise<Z3Load> {
       });
       entry = await pending;
     } catch (err) {
+      if (err instanceof Z3TooOldError) {
+        return {
+          absent: true,
+          disabled: false,
+          reason:
+            typeof process === 'undefined'
+              ? `${err.message}, or run the proof in the terminal`
+              : `${err.message}, or use \`--engine literal\` for a point evaluation at the model’s values, which is not a proof`,
+        };
+      }
       if (typeof process === 'undefined') {
         return {
           absent: true,
@@ -580,35 +548,43 @@ export async function loadZ3(): Promise<Z3Load> {
   };
 }
 
+/** The installed `z3-solver` is older than the release that fixed defect D5. */
+class Z3TooOldError extends Error {
+  constructor(spec: string) {
+    super(
+      `the installed \`${spec}\` predates the release that fixed defect D5 (5.3.0; this tool is ` +
+        'checked on 5.3.1): its finalizers free under a running check and corrupt the solver’s heap, ' +
+        `which can answer wrongly before it dies. Run \`npm install ${spec}@^5.3.1\``,
+    );
+    this.name = 'Z3TooOldError';
+  }
+}
+
 /**
  * Import and initialise `z3-solver`, cache the module, and hand it back.
  *
- * Any throw is the caller's "not installed" answer. The deferring registry is
- * installed around BOTH the import and `init()`, because `z3-solver` builds its
- * one `FinalizationRegistry` inside `init()` (in `createApi`), and restored in
- * a `finally` so a failed init cannot leave it in place.
+ * Any throw is the caller's "not installed" answer, except {@link Z3TooOldError}:
+ * a `z3-solver` without `async_cancel` on its module is older than the fix
+ * (finalizers no longer free under a running check), so it is refused, with
+ * the sentence that says what to install, rather than trusted.
  */
 async function initialise(): Promise<CachedModule> {
-  const swap: SwapWindow = { owner: undefined, registries: 0 };
-  const swapped = installDeferringRegistry(swap);
-  let z3: Z3Api;
-  let initMs: number;
-  try {
-    // The specifier is held in a variable and marked `@vite-ignore` so the
-    // bundler neither resolves nor bundles a package the browser may not
-    // have; `vite.config.ts` marks it external for the same reason.
-    const spec = 'z3-solver';
-    const mod =
-      typeof process === 'undefined'
-        ? await importPageZ3()
-        : ((await import(/* @vite-ignore */ spec)) as { init: () => Promise<Z3Api> });
-    // `async-mutex` is a Node module the page does not have: nothing to watch there.
-    if (typeof process !== 'undefined') await watchAsyncMutex(spec);
-    const t0 = now();
-    z3 = await mod.init();
-    initMs = now() - t0;
-  } finally {
-    if (swapped) globalThis.FinalizationRegistry = ORIGINAL_FR as FinalizationRegistryConstructor;
+  // The specifier is held in a variable and marked `@vite-ignore` so the
+  // bundler neither resolves nor bundles a package the browser may not
+  // have; `vite.config.ts` marks it external for the same reason. It is used
+  // twice on purpose: a constant used once is inlined back into the `import()`
+  // by the minifier, and `refuse-bundled-z3` then refuses the build.
+  const spec = 'z3-solver';
+  const mod =
+    typeof process === 'undefined'
+      ? await importPageZ3()
+      : ((await import(/* @vite-ignore */ spec)) as { init: () => Promise<Z3Api> });
+  const t0 = now();
+  const z3 = await mod.init();
+  const initMs = now() - t0;
+  if (typeof z3.em?.async_cancel !== 'function') {
+    z3.em?.PThread?.terminateAllThreads?.();
+    throw new Z3TooOldError(spec);
   }
   // Process-wide, and set once: the per-solver `random_seed` below pins the
   // SMT core, this pins the modules that read the global namespace.
@@ -620,23 +596,9 @@ async function initialise(): Promise<CachedModule> {
     version: z3.getVersionString(),
     fullVersion: z3.getFullVersion(),
     inFlight: 0,
-    deferred: [],
     dead: false,
     tail: Promise.resolve(),
-    mutex: undefined,
-    holdsMutex: false,
   };
-  swap.owner = entry;
-  if (swapped && swap.registries !== 1) {
-    // Zero means this `z3-solver` builds its registry somewhere else, and its
-    // frees race the solver thread again; more than one means a registry that
-    // is not z3's was built in the window and is now gated on z3's checks.
-    console.warn(
-      `z3-bridge: ${swap.registries} FinalizationRegistry instances were built while z3-solver ` +
-        'initialised; exactly 1 (its own) was expected, so finalizer deferral (defect D5) may not ' +
-        'cover what it should',
-    );
-  }
   cached = entry;
   return entry;
 }
@@ -667,55 +629,6 @@ async function importPageZ3(): Promise<{ init: () => Promise<Z3Api> }> {
   return (await import(/* @vite-ignore */ `${base}browser.mjs`)) as { init: () => Promise<Z3Api> };
 }
 
-/** One load's swap window: the registries built in it and the module they belong to. */
-interface SwapWindow {
-  /** Set once the module exists; until then nothing can be in flight on it. */
-  owner: CachedModule | undefined;
-  registries: number;
-}
-
-/**
- * Put a `FinalizationRegistry` subclass on `globalThis` that holds a callback
- * back while its module has a check in flight.
- *
- * `z3-solver`'s callbacks are bare `*_dec_ref` calls on the main thread; see
- * the charter's last rule for why one must never run under a check. A callback
- * that arrives then is queued on the owning module and run by {@link leave}
- * once the check has settled; one that arrives with nothing in flight runs at
- * once, as before; one for a module found dead or terminated is dropped, since
- * running it would free into a heap nobody trusts. `register` and `unregister`
- * are inherited untouched, so `release()`'s `cleanup.unregister(this)` still
- * works. `fire` is the handler itself, kept on the instance so a suite can
- * deliver a callback without a real collection.
- *
- * Answers whether it swapped: a runtime with no registry has nothing to gate.
- */
-function installDeferringRegistry(swap: SwapWindow): boolean {
-  if (typeof ORIGINAL_FR !== 'function') return false;
-  const Base = ORIGINAL_FR;
-  class DeferringRegistry<T> extends Base<T> {
-    readonly fire: (held: T) => void;
-    constructor(callback: (held: T) => void) {
-      const fire = (held: T): void => {
-        const owner = swap.owner;
-        if (owner === undefined) return callback(held);
-        if (owner.dead) return;
-        if (owner.inFlight > 0) {
-          owner.deferred.push(() => callback(held));
-          deferredFinalizers += 1;
-          return;
-        }
-        callback(held);
-      };
-      super(fire);
-      this.fire = fire;
-      swap.registries += 1;
-    }
-  }
-  globalThis.FinalizationRegistry = DeferringRegistry;
-  return true;
-}
-
 /**
  * Forget the initialised module, so the next {@link loadZ3} pays `init()` again.
  *
@@ -730,10 +643,8 @@ function installDeferringRegistry(swap: SwapWindow): boolean {
  * RSS per forgotten module). `terminate: true` stops those workers as well
  * (+14 MB instead) and is only for a caller that holds no such backend.
  *
- * The same split holds for the module's finalizers: after a pure reset they
- * still run (held while one of its checks is in flight, as ever), because the
- * backend still using it would otherwise leak; after `terminate: true` they
- * are dropped with the module.
+ * A call the terminated module had in flight is cancelled with its threads
+ * ({@link terminateThreads}), so it rejects, and is counted a death, at once.
  */
 export function resetZ3Cache(opts: { terminate?: boolean } = {}): void {
   const entry = cached;
@@ -741,7 +652,6 @@ export function resetZ3Cache(opts: { terminate?: boolean } = {}): void {
   if (entry && opts.terminate === true) {
     discard(entry);
     terminateThreads(entry);
-    releaseHeldMutex(entry);
   }
 }
 
@@ -775,15 +685,6 @@ export function z3BudgetWatch(): () => number {
     budgetWatches.delete(watch);
     return watch.largest;
   };
-}
-
-/**
- * How many finalizer callbacks were held because a check was in flight on
- * their module — the count of races the deferral prevented. For the soak
- * suite, which must show the mechanism was exercised and not merely present.
- */
-export function z3DeferredFinalizerCount(): number {
-  return deferredFinalizers;
 }
 
 /**
@@ -832,6 +733,9 @@ export class Z3ModuleDeadError extends Error {
   }
 }
 
+/** What {@link terminateThreads} rejects an abandoned call with. */
+const THREADS_TERMINATED = 'Z3 threads were terminated';
+
 /**
  * The shapes a dead emscripten module speaks in, measured from the CI trace
  * of defect D5 and from `z3-solver`'s own async wrapper.
@@ -843,7 +747,10 @@ export class Z3ModuleDeadError extends Error {
  * invalid index …`). `async_call` keeps ONE pending-call slot, so once a call
  * has been abandoned the wrapper itself refuses the next one with "you can't
  * execute multiple async functions at the same time" — that sentence is a
- * death too, of the module rather than of the call.
+ * death too, of the module rather than of the call. Since 5.3.1 an abort
+ * (`Z3 module aborted: …`) or a stop of the threads under a call rejects it
+ * (`Z3 threads were terminated`, this file's own {@link THREADS_TERMINATED}),
+ * where the call used to hang; those two are a death as well.
  */
 const DEATH_SIGNATURES: readonly RegExp[] = [
   /\bAborted\(/,
@@ -854,6 +761,8 @@ const DEATH_SIGNATURES: readonly RegExp[] = [
   /table index is out of bounds/,
   /can't execute multiple async functions at the same time/,
   /^unwind$/,
+  /^Z3 module aborted: /,
+  new RegExp(`^${THREADS_TERMINATED}$`),
 ];
 
 /**
@@ -885,20 +794,6 @@ class HangSignal extends Error {
 }
 
 /**
- * The internal token for "this module was discarded while its check waited
- * for `z3-solver`'s process-wide lock" — see {@link watchAsyncMutex}.
- */
-class DiscardedSignal extends Error {
-  constructor() {
-    super(
-      'the module was discarded while its check waited for z3-solver’s process-wide lock; ' +
-        'nothing was run on it',
-    );
-    this.name = 'DiscardedSignal';
-  }
-}
-
-/**
  * Await a solver promise, or give up when the module is presumed dead.
  *
  * The timer is cleared the moment the promise settles, so a live CLI process
@@ -920,141 +815,55 @@ function settleOrDie<T>(p: Promise<T>, timeoutMs: number): Promise<T> {
  * caller's own error keeps its original stack.
  */
 function classify(entry: CachedModule, err: unknown): never {
-  if (!(err instanceof HangSignal) && !(err instanceof DiscardedSignal) && !isZ3ModuleDeath(err)) {
-    throw err;
-  }
+  if (!(err instanceof HangSignal) && !isZ3ModuleDeath(err)) throw err;
   deaths += 1;
   discard(entry);
   if (cached === entry) cached = undefined;
   terminateThreads(entry);
-  releaseHeldMutex(entry);
   throw new Z3ModuleDeadError(err instanceof HangSignal ? err.message : messageOf(err));
 }
 
-/** Mark a module dead: its held finalizers are dropped, and so is every later one. */
-function discard(entry: CachedModule): void {
-  entry.dead = true;
-  entry.deferred = [];
+/**
+ * Refuse a call that reaches a module already discarded, before z3 is touched.
+ *
+ * A backend handed out before a death keeps pointing at its module, and a call
+ * queued behind the one that died only gets its turn after the discard. After a
+ * real death the heap is untrusted, so an answer from it could be false: it is
+ * refused, not run. Not counted again — the module's death was, once.
+ */
+function refuseDiscarded(entry: CachedModule): void {
+  if (entry.dead) {
+    throw new Z3ModuleDeadError('the module was discarded before this call reached it; nothing was run on it');
+  }
 }
 
-/** Stop a module's worker threads, best effort: a dead module may refuse even this. */
+/** Mark a module dead: nothing more is released into it. */
+function discard(entry: CachedModule): void {
+  entry.dead = true;
+}
+
+/**
+ * Stop a module's worker threads and cancel the call they were running, best
+ * effort: a dead module may refuse even this.
+ *
+ * `async_cancel` is `z3-solver`'s own `killThreads` second half: it rejects the
+ * pending call, so whoever awaits it is released, and clears the ref'd 600 s
+ * keep-alive timer every off-thread call leaves, which nothing else clears for
+ * a call whose thread died and which kept `sysprose` up for ten minutes after
+ * its verdict. Run after the threads are stopped, as there.
+ */
 function terminateThreads(entry: CachedModule): void {
   try {
     entry.z3.em?.PThread?.terminateAllThreads?.();
   } catch {
     // The module is already past helping; nothing to report and nowhere to.
   }
-}
-
-/**
- * Give back `z3-solver`'s process-wide mutex if a check of this discarded
- * module holds it — see the charter's fifth rule for why.
- *
- * Keyed on {@link CachedModule.holdsMutex}, not on `inFlight`: a check that
- * died has already left its region when {@link classify} runs, and a module
- * with nothing in flight must never release a lock ANOTHER module's check
- * holds — the mutex is shared, so a plain `isLocked()` cannot say whose it is.
- * The abandoned check's own release, should it ever settle, is a no-op:
- * `async-mutex` hands each holder a releaser that works once.
- */
-function releaseHeldMutex(entry: CachedModule): void {
-  if (!entry.holdsMutex) return;
-  entry.holdsMutex = false;
+  // Its own try: a stop that threw must not leave the keep-alive timer running.
   try {
-    if (entry.mutex?.isLocked()) entry.mutex.release();
+    entry.z3.em?.async_cancel?.(new Error(THREADS_TERMINATED));
   } catch {
-    // A mutex that refuses is one this bridge cannot help; the guard still ends the wait.
+    // As above.
   }
-}
-
-/**
- * Call a high-level `check()` with {@link watching} set, so the mutex it takes
- * is recorded on `entry` ({@link watchAsyncMutex}).
- */
-function watched<T>(entry: CachedModule, call: () => Promise<T>): Promise<T> {
-  watching = entry;
-  try {
-    return call();
-  } finally {
-    watching = undefined;
-    if (mutexWatched === true && entry.mutex === undefined) {
-      noteMutex('a check took no async-mutex lock the bridge could see');
-    }
-  }
-}
-
-/**
- * Wrap `async-mutex`'s `Mutex.prototype.runExclusive`, once per process, so the
- * instance `z3-solver` locks around a check — and whether this module's check
- * holds it — is known when the module is discarded.
- *
- * Resolved from `z3-solver`'s own directory, because that is the copy its
- * `require('async-mutex')` loads; Node only — the browser never gets this far.
- * The wrapper records nothing outside {@link watched}, so every other mutex in
- * the process is passed straight through. A check that was still WAITING for
- * the lock when its module was discarded holds nothing to release; when the
- * lock reaches it, it gives it straight back ({@link DiscardedSignal}) rather
- * than run a z3 call on a module that is gone — one that would never settle
- * and hold the lock for good. Any failure degrades to the old
- * behaviour (an abandoned check holds the lock until the guard frees its
- * caller), with one debug line and no throw.
- */
-async function watchAsyncMutex(spec: string): Promise<void> {
-  if (mutexWatched !== undefined) return;
-  mutexWatched = false;
-  try {
-    const nodeModule = 'node:module';
-    const { createRequire } = (await import(/* @vite-ignore */ nodeModule)) as {
-      createRequire(from: string): { (id: string): unknown; resolve(id: string): string };
-    };
-    const z3Main = createRequire(import.meta.url).resolve(spec);
-    const { Mutex } = createRequire(z3Main)('async-mutex') as {
-      Mutex?: { prototype: { runExclusive?: RunExclusive } };
-    };
-    const proto = Mutex?.prototype;
-    const original = proto?.runExclusive;
-    if (proto === undefined || typeof original !== 'function') {
-      throw new Error('async-mutex has no Mutex.prototype.runExclusive');
-    }
-    proto.runExclusive = function (this: AsyncMutex, callback, ...rest) {
-      const entry = watching;
-      if (entry === undefined) return original.call(this, callback, ...rest);
-      entry.mutex = this;
-      return original.call(
-        this,
-        async (...args: unknown[]) => {
-          if (entry.dead) throw new DiscardedSignal();
-          entry.holdsMutex = true;
-          try {
-            return await callback(...args);
-          } finally {
-            entry.holdsMutex = false;
-          }
-        },
-        ...rest,
-      );
-    };
-    mutexWatched = true;
-  } catch (err) {
-    noteMutex(`could not watch async-mutex (${messageOf(err)})`);
-  }
-}
-
-/** `Mutex.prototype.runExclusive`, as far as the wrapper needs it. */
-type RunExclusive = (
-  this: AsyncMutex,
-  callback: (...args: unknown[]) => unknown,
-  ...rest: unknown[]
-) => Promise<unknown>;
-
-/** The one debug line about the mutex watch, printed at most once per process. */
-function noteMutex(what: string): void {
-  if (mutexNoted) return;
-  mutexNoted = true;
-  console.debug(
-    `z3-bridge: ${what}; a check abandoned on a discarded module may hold z3-solver's ` +
-      'process-wide lock until its guard fires',
-  );
 }
 
 /**
@@ -1075,6 +884,7 @@ async function runCheck(
   const timeoutMs = boundOf(opts.timeoutMs);
   countCall(timeoutMs);
   return serially(entry, async () => {
+    refuseDiscarded(entry);
     try {
       return await checkOn(entry, script, timeoutMs, opts.variables, opts.witness !== false);
     } catch (err) {
@@ -1122,9 +932,9 @@ async function checkOn(
     const t0 = now();
     let status: 'sat' | 'unsat' | 'unknown';
     try {
-      status = await settleOrDie(watched(entry, () => solver.check()), timeoutMs);
+      status = await settleOrDie(solver.check(), timeoutMs);
     } catch (err) {
-      if (err instanceof HangSignal || err instanceof DiscardedSignal || isZ3ModuleDeath(err)) throw err;
+      if (err instanceof HangSignal || isZ3ModuleDeath(err)) throw err;
       settled = true;
       return {
         ...empty,
@@ -1195,16 +1005,14 @@ function enter(entry: CachedModule): void {
 }
 
 /**
- * Close the region: release what the check made, then run the finalizers held
- * while it ran.
+ * Close the region: release what the check made.
  *
- * Both happen only when the check SETTLED, on a module not already discarded.
- * On the death path the module is about to be discarded, and its heap is
- * either corrupt (a trap) or still in use by a thread that never answered (a
- * hang): a free into it is the very race the region exists to prevent — the
- * main-thread `~context` traps the investigation saw were exactly that. A
- * release that traps, or a flushed callback that throws, marks the module
- * dead and drops what is held, unrun; its throw goes on to {@link classify}.
+ * Only when the check SETTLED, on a module not already discarded. On the death
+ * path the module is about to be discarded, and its heap is either corrupt (a
+ * trap) or still in use by a thread that never answered (a hang): a free into
+ * it is the very race the region exists to prevent — the main-thread
+ * `~context` traps the investigation saw were exactly that. A release that
+ * traps marks the module dead; its throw goes on to {@link classify}.
  */
 function leave(entry: CachedModule, settled: boolean, made: { release?(): void } | undefined): void {
   const clean = settled && !entry.dead;
@@ -1216,22 +1024,13 @@ function leave(entry: CachedModule, settled: boolean, made: { release?(): void }
   } finally {
     entry.inFlight -= 1;
   }
-  if (!clean) return;
-  const queue = entry.deferred;
-  entry.deferred = [];
-  for (const free of queue) {
-    try {
-      free();
-    } catch (err) {
-      discard(entry);
-      throw err;
-    }
-  }
 }
 
 /**
  * Free a solver, optimiser or model now, between checks, rather than whenever
- * V8 collects it — usually under the next check, where the free is deferred.
+ * V8 collects it — usually under the next check, where z3-solver queues the
+ * free and runs it later. Explicit, the heavy frees happen here and the
+ * heap stays flat.
  *
  * Best effort for a refusal: a fake without `release`, or one that says no in
  * words, leaves the outcome already read untouched and the finalizer frees the
@@ -1273,6 +1072,7 @@ async function runOptimize(
   const timeoutMs = boundOf(opts.timeoutMs);
   countCall(timeoutMs);
   return serially(entry, async () => {
+    refuseDiscarded(entry);
     try {
       return await optimizeOn(entry, script, sense, timeoutMs, opts.variables);
     } catch (err) {
@@ -1316,9 +1116,9 @@ async function optimizeOn(
     const t0 = now();
     let status: 'sat' | 'unsat' | 'unknown';
     try {
-      status = await settleOrDie(watched(entry, () => opt.check()), timeoutMs);
+      status = await settleOrDie(opt.check(), timeoutMs);
     } catch (err) {
-      if (err instanceof HangSignal || err instanceof DiscardedSignal || isZ3ModuleDeath(err)) throw err;
+      if (err instanceof HangSignal || isZ3ModuleDeath(err)) throw err;
       settled = true;
       return { ...empty, status: 'error', reason: messageOf(err), timedOut: false, elapsedMs: now() - t0 };
     }
