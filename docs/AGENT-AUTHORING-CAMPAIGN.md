@@ -5403,6 +5403,48 @@ trap, no death, 10,129 callbacks held under a check, z3's heap at most 8.6 MB
 the fix proved — with the deferral off it was clean three times too; the
 evidence for the fix is the reproduction.
 
+**Defect D5, closed upstream — `z3-solver` 5.3.1, and what the bridge no longer
+carries.** The fix (Z3 PR #11001, merged 2026-10-02, in npm `z3-solver` 5.3.0
+and 5.3.1) is in the library: the context queues the `*_dec_ref` calls a
+collection asks for (`Z3_enable_concurrent_dec_ref` now works in the
+single-threaded build) and runs them on its next API call, the other
+finalizers wait until the async call settles, each `init()` has its own lock,
+and `async_cancel` rejects an abandoned call and clears its 600 s keep-alive.
+The JS half is in the published 5.3.1 sources and was read against the PR (its
+diff to 5.2.0 is that, plus a `Seq.power`); the C++ half cannot be read in a
+WASM binary and the PR was never run on one, so what proves it is the
+measurement. Measured, on the v9 model (154 checks an iteration: eight
+bounds reports plain and `--free all`, a SMT verify, a `consistency
+--with-values`, a collection before each), five processes beside twelve busy
+loops (load 14–22): **5.2.0 with the bridge's guards off failed 5 of 5
+processes within eight iterations** (three module deaths at iteration 2; the
+others `table index is out of bounds` and `memory access out of bounds` traps,
+three iterations whose answers CHANGED, and one `Cannot enlarge memory` abort);
+**5.3.1 with the same guards off ran 5 x 25 iterations clean** (1.23 million
+finalizer callbacks landed under checks per process; no trap, no death, every
+iteration's answers identical to the first), and so did 5.3.0, and 5.3.1 with
+the guards on. A changed answer is why this was worth a gate: a heap two
+threads share answers wrongly before it dies. So `src/semantics/smt/z3-bridge.ts`
+lost the deferring registry (`installDeferringRegistry`, `z3DeferredFinalizerCount`),
+the `async-mutex` watch and `releaseHeldMutex` (the lock is per module now),
+and the command's own ending (`lingersAfterZ3Death`, `Ending.lingers`): a
+terminated or dead module's threads are stopped and its pending call cancelled
+(`async_cancel`), the call rejects at once and is counted a death (it was
+rejected 35 s later, by the guard, before), and a probe run on the real
+module ends its process 1.1 s after the terminate (it had not ended in 75 s on
+5.2.0). What it kept: the discard of a dead module, the serial exclusive
+region (the library still calls a synchronous z3 call under a running check
+unsafe), and the explicit releases. A `z3-solver` without `async_cancel` is
+refused with the sentence that says what to install, because it would race
+again silently. The soak (`npm run soak:z3`) gained a load case for a heavy
+model (`SYSPROSE_SOAK_MODEL`, `SYSPROSE_SOAK_MEASURES`,
+`SYSPROSE_SOAK_ITERATIONS`) and its header carries the control: through the
+soak itself, five processes at once beside the same loops, 5.2.0 without the
+check failed 3 of 5 (a module death, changed answers), 5.3.1 passed 5 of 5
+(and 8 of 8 beside sixteen loops). The version z3 reports for itself changed
+shape with the release: `5.3.1.0 <commit> z3-5.3.1`, where 5.2.0 said `Z3
+5.1.0.0`, so a verdict's `decided by z3 …` line names the commit now.
+
 **The `recovery` pattern: a branching-time question answered by a branching-time
 algorithm, at the one position where the walk exists and the search has not run
 (model-checking plan §3.2b).** `pattern=recovery, scope=globally, p=state
