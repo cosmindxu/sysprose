@@ -40,6 +40,7 @@ import {
   bindsDifferingWrittenValues,
   bindsUndecidedWrittenValues,
   defaultStandsIn,
+  standsAgainstAssertsIn,
   assertDefinitionIn,
   enclosingAssertOn,
   equatedPartsFailed,
@@ -69,6 +70,9 @@ import {
   mergeContact,
   namesDefinedBy,
   relationNamesOf,
+  standingDefaultSentence,
+  replaceableDefaults,
+  writesStandingDefault,
   isCall,
   isDerivedValue,
   returnTo,
@@ -517,7 +521,10 @@ function definedAgainstHere(
  * sets it equal to another `default` (both give way, U7), and where an
  * equation over names is written in a frame whose element is not the
  * instance's own (it would read that element's names, not the instance's), or
- * reads a `[unit]` literal beside them.
+ * reads a `[unit]` literal beside them. No such equation is found since
+ * decision 14 was amended (2026-10-22): no assertion replaces a `default`
+ * ({@link replaceableDefaults}), the enclosing rule files none, and this reads
+ * nothing.
  */
 function assertedAnswer(
   model: Model,
@@ -579,7 +586,8 @@ function assertedAnswer(
  */
 function valueThroughChain(model: Model, contextId: ElementId, name: string, pass: ScalarPass): ScalarAnswer | undefined {
   const end = pass.definitions.chainDefinition([contextId], name);
-  if (!end) return undefined;
+  // A feature that writes a `default` is no feature an asserted equation defines (`writesStandingDefault`).
+  if (!end || writesStandingDefault(model, end.feature)) return undefined;
   const own = pass.definitions.nameOf(end.feature)!;
   // Read in the usage that changes what the definition reads: its own value there.
   if (end.at !== end.site) return defineIn(model, end.at, end.feature, own, pass.definitions.of(end.site, own), pass, true);
@@ -616,7 +624,8 @@ function boundOf(
 ): { feature: ElementRecord; derivation: FeatureDerivation } | undefined {
   if (name.includes('.')) return undefined;
   const feature = pass.definitions.feature(contextId, name);
-  if (!feature || pass.definitions.of(contextId, name).length > 0) return undefined;
+  // An asserted equation over one that writes a `default` defines nothing: the binding gives it its value.
+  if (!feature || (pass.definitions.of(contextId, name).length > 0 && !writesStandingDefault(model, feature))) return undefined;
   if (!boundPartnerSafe(model, contextId, name, feature.id)) return undefined;
   const derivation = boundDerivation(model, feature.id, pass.memo);
   return derivation ? { feature, derivation } : undefined;
@@ -657,7 +666,9 @@ function valueDefinedByEquation(
 ): ScalarAnswer | undefined {
   if (name.includes('.')) return undefined;
   const feature = pass.definitions.feature(contextId, name);
-  if (!feature) return undefined;
+  // Only a feature WITHOUT a value: one that writes a `default`, even one a binding made give way, keeps
+  // what the binding gives it, and the assert is checked (decision 14 amended, `writesStandingDefault`).
+  if (!feature || writesStandingDefault(model, feature)) return undefined;
   const candidates = pass.definitions.of(contextId, name);
   if (candidates.length === 0) {
     const read = pass.definitions.definitionReadIn(contextId, name);
@@ -830,7 +841,7 @@ export function definedFeatureOf(model: Model, constraint: ElementRecord): Eleme
   // literal included (`e == 640.0 [Wh] / power`).
   for (const name of namesDefinedBy(constraint)) {
     const feature = effectiveFeatures(model, constraint.ownerId).find(
-      (f) => effectiveNameOf(model, f) === name && !hasStatedValue(model, f),
+      (f) => effectiveNameOf(model, f) === name && !hasStatedValue(model, f) && !writesStandingDefault(model, f),
     );
     if (feature) return feature;
   }
@@ -1033,8 +1044,10 @@ function valueBoundInInstance(
   if ('abstain' in src) {
     // A `default` the binding holds per FEATURE, which this instance reads as
     // its value (F8, A.4 Part 2): the outermost component states none and its
-    // every default is a literal agreeing exactly, so the default stands.
-    if (src.abstain === 'defaults-differ') {
+    // every default is a literal agreeing exactly, so the default stands — or
+    // states only values asserted equations give, which no default takes
+    // (`standsAgainstAssertsIn`: T4E's q's L0, held per feature by q5's).
+    if (src.abstain === 'defaults-differ' || (src.abstain === 'two-values' && standsAgainstAssertsIn(model, symbol))) {
       let stand: ElementRecord | undefined;
       try {
         stand = defaultStandsIn(model, symbol);
@@ -1539,12 +1552,14 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
         : shared
           ? { result: 'unknown', message: `Could not evaluate: ${shared}`, gap: false }
           : judgeConstraint(model, el, expr, pass);
+    // A violated `assert` over a `default` says why the default stood, and how to write the value it meant to give.
+    const standing = judged.result === 'violated' ? standingDefaultSentence(model, el) : undefined;
     const check: ConstraintCheck = {
       id: el.id,
       ownerId: el.ownerId,
       expression: expr,
       result: judged.result,
-      message: judged.message,
+      message: standing !== undefined ? `${judged.message} — ${standing}` : judged.message,
       ...(judged.tie ? { tie: true as const } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
       ...(judged.sides ? { sides: judged.sides } : {}),
@@ -1835,7 +1850,8 @@ export function causeWords(cause: InstanceAbstention | undefined): string {
     case 'held-elsewhere':
       return 'held by a binding elsewhere';
     case 'two-values':
-      return 'enclosing asserted equations give it two values';
+      // A binding that joins two values, or two enclosing asserted equations: the model states two either way.
+      return 'the model states two values for it';
     case 'enclosing-assert':
       return 'an enclosing assert constrains it';
     case 'past-cap':
@@ -3601,7 +3617,7 @@ function equationSiteOf(model: Model, el: ElementRecord, name: string, pass: Sca
   for (let i = 0; i < contexts.length; i++) {
     const contextId = contexts[i]!;
     const feature = pass.definitions.feature(contextId, name);
-    if (!feature) continue;
+    if (!feature || writesStandingDefault(model, feature)) continue;
     // An enclosing context's dotted asserted equation ({@link DefiningEquations.reachingAssert}) is read here.
     const read =
       pass.definitions.of(contextId, name).length > 0
@@ -4045,7 +4061,7 @@ function inheritedDefinition(
     feature = pass.definitions.feature(c, name);
     if (feature) break;
   }
-  if (!feature || feature.ownerId == null || contexts.includes(feature.ownerId)) return undefined;
+  if (!feature || feature.ownerId == null || contexts.includes(feature.ownerId) || writesStandingDefault(model, feature)) return undefined;
   return pass.definitions.of(feature.ownerId, name).length > 0 ? feature : undefined;
 }
 
@@ -4075,7 +4091,10 @@ function inheritedCause(model: Model, el: ElementRecord, name: string, pass: Sca
  * The first clause of {@link chainCause} and {@link inheritedCause}: `P::e is
  * declared without one` — or, of a feature that writes a `default`, what that
  * default gives way to (`defaultGivesWayTo`): `T::L states \`default =
- * 2.0\`, which gives way to an asserted equation` (decision 14), `p::load
+ * 2.0\`, which gives way to an asserted equation` (decision 14, before it was
+ * amended), `T::L states \`default = 2.0\` and is not read: it is named by
+ * \`assert constraint e : Eq\` in T, whose equation this tool does not read`
+ * (an assert typed by an equation's definition, a limit of this tool), `p::load
  * states \`default = 2.0\`, which gives way to BW4::Q's \`bind p.load = L\``
  * (BW4, a model with no assert, had been told of one), or `… which is not
  * read here`. It was said to be declared without one.
@@ -4086,7 +4105,7 @@ function declaredWithout(model: Model, feature: ElementRecord): string {
   const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
   const states = `${shortName(model, feature)} states \`default = ${shown}\``;
   const to = defaultGivesWayTo(model, feature);
-  if (to?.to === 'typed') return `${states}, which gives way to ${typedAssertText(model, to.assert)}`;
+  if (to?.to === 'typed') return `${states} and is not read: it is named by ${typedAssertText(model, to.assert)}`;
   if (to?.to === 'assert') return `${states}, which gives way to an asserted equation`;
   if (to?.to === 'binding') return `${states}, which gives way to ${to.bindingId !== undefined ? bindingText(model, to.bindingId) : 'a `bind`'}`;
   return `${states}, which is not read here`;
@@ -4255,7 +4274,7 @@ function chainEnd(
   const name = feature ? pass.definitions.nameOf(feature) : undefined;
   if (!end || !feature || !name || hasValue(model, feature)) return undefined;
   const sites = [...new Set([end.via, feature.ownerId].filter((c): c is ElementId => c != null))];
-  const asserted = sites.some((c) => pass.definitions.of(c, name).length > 0);
+  const asserted = !writesStandingDefault(model, feature) && sites.some((c) => pass.definitions.of(c, name).length > 0);
   const read = asserted && pass.definitions.chainDefinition(contexts, chain) !== undefined;
   return { feature, name, sites, asserted, read };
 }
@@ -4789,11 +4808,13 @@ function hasDefiningEquation(model: Model, f: ElementRecord): boolean {
 /**
  * Why `feature`, read under `name` in `ownerId`, has no value though it writes
  * a `default`: an asserted equation that may define it — written in `ownerId`,
- * or where it or a feature it redefines is declared — makes that default give
- * way (decision 14), and gives it no value of its own there. So for one that
- * writes none, which an assert typed by an equation's definition may define
- * ({@link typedAssertHolding}): the model states it, and this tool does not
- * read how. `undefined` where neither holds.
+ * or where it or a feature it redefines is declared — makes a default an
+ * assertion may replace give way, and gives it no value of its own there;
+ * none may since decision 14 was amended ({@link replaceableDefaults}), so
+ * that sentence is never said of an untyped one. So for an assert typed by an
+ * equation's definition, which may define the feature, whether it writes a
+ * default or none ({@link typedAssertHolding}): the model states it, and this
+ * tool does not read how. `undefined` where neither holds.
  */
 function givenWayCause(model: Model, ownerId: ElementId, feature: ElementRecord, name: string): string | undefined {
   const chain = [feature, ...redefinedClosure(model, feature)];
@@ -4803,7 +4824,9 @@ function givenWayCause(model: Model, ownerId: ElementId, feature: ElementRecord,
     return typed ? `${name} has no value this tool reads: it is named by ${typedAssertText(model, typed)}` : undefined;
   }
   if (written.attrs.defaultValue !== true) return undefined;
-  const sites = [ownerId, ...chain.map((g) => g.ownerId).filter((o): o is ElementId => o != null)];
+  // Only a default an assertion may replace gives way to one (`replaceableDefaults`: none since decision 14 was
+  // amended); one a binding made give way says so in the binding's own sentence.
+  const sites = replaceableDefaults(model).has(written.id) ? [ownerId, ...chain.map((g) => g.ownerId).filter((o): o is ElementId => o != null)] : [];
   for (const site of new Set(sites)) {
     const eq = definingEquationFor(model, site, name);
     if (!eq) continue;
@@ -4817,23 +4840,24 @@ function givenWayCause(model: Model, ownerId: ElementId, feature: ElementRecord,
   const typed = typedAssertHolding(model, feature);
   if (typed) {
     const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
-    return `${name} has no value: its \`default = ${shown}\` gives way to ${typedAssertText(model, typed)}`;
+    return `${name} is not read: its \`default = ${shown}\` is named by ${typedAssertText(model, typed)}`;
   }
   return undefined;
 }
 
 /**
  * An assert typed by a constraint definition whose body holds an equation, and
- * why it leaves the `default` it names with no value ({@link
- * typedAssertHolding}): `` `assert constraint e : Eq` in CD1::Q, whose
- * equation may define it (an asserted equation overrides a default) and is
- * not read by this tool ``.
+ * why the feature it names is not read ({@link typedAssertHolding}): ``
+ * `assert constraint e : Eq` in CD1::Q, whose equation this tool does not read
+ * ``. A limit of this tool, not a rule: no assertion replaces a `default`
+ * (decision 14 amended 2026-10-22), but this tool does not read such an
+ * equation to check it, so every reading of what it names abstains.
  */
 function typedAssertText(model: Model, a: ElementRecord): string {
   const type = generalizationsOf(model, a.id).find((t) => t.attrs.isLibrary !== true && typeof t.attrs.expression === 'string');
   const spelled = `assert constraint ${effectiveNameOf(model, a) ?? ''}${type ? ` : ${effectiveNameOf(model, type) ?? ''}` : ''}`.replace('  ', ' ');
   const where = a.ownerId != null ? ` in ${effectiveQualifiedName(model, a.ownerId)}` : '';
-  return `\`${spelled}\`${where}, whose equation may define it (an asserted equation overrides a default) and is not read by this tool`;
+  return `\`${spelled}\`${where}, whose equation this tool does not read`;
 }
 
 /** The bare (undotted) names a body reads, once each, in source order. */

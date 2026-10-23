@@ -103,11 +103,12 @@ import {
   typedAssertHolding,
   typedAssertNames,
   typedAssertsName,
+  writesStandingDefault,
   usageOwnedRefusal,
   type InstanceAbstention,
   type InstanceReading,
 } from './defining-equation';
-import { effectiveNameOf, generalizationsOf } from './inheritance';
+import { effectiveNameOf, generalizationsOf, redefinedClosure } from './inheritance';
 import { isNonNormativeStatement } from './statement-kind';
 import {
   NO_MARKERS,
@@ -211,6 +212,12 @@ export interface Equation {
    * through it ({@link closedByDefinitions}).
    */
   states?: ElementId;
+  /**
+   * An `assert`'s relation — the user's, or one an instance holds of its
+   * types: never what fixes a `default` a binding made give way ({@link
+   * givenWayDefaults}).
+   */
+  asserted?: true;
 }
 
 /** Options for {@link solve}. */
@@ -599,6 +606,7 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
         }
       }
       if (defines.length > 0) eq.defines = defines;
+      if (isAsserted(el)) eq.asserted = true;
       eqs.push(eq);
       relationOf.set(eq, el);
       continue;
@@ -746,6 +754,42 @@ function pastCapUnreadable(model: Model, eqs: readonly Equation[], unreadable: S
   }
   const closed = closedByDefinitions(eqs, definedFeatures(eqs, unreadable), (v) => stated.has(v), stated, unreadable, true);
   for (const v of capped) if (!stated.has(v) && !closed.has(v)) unreadable.add(v);
+}
+
+/**
+ * The variables an asserted relation of `eqs` reads, valueless at `values`, of
+ * a feature that writes a `default` no assertion replaces ({@link
+ * writesStandingDefault}) where a binding makes that default give way — at the
+ * variable's instance, or everywhere. Only the equation that DEFINES such a
+ * variable (its binding's) or states its value may fix it — never the assert
+ * or a check, and the feasibility search does not move it: where its binding
+ * gives it no value (two defaults that differ, neither read) no relation is
+ * judged over it (decision 14 amended 2026-10-22: no surface reads an
+ * assertion's value into a default). Free to them, GA6's Q's L, which `bind
+ * p.load = L` joins to P's `load default = 7.0`, was solved from Q's asserted
+ * `L == 5.0`, and that assert read satisfied on the numeric surface alone. One
+ * no assert reads is left as it was: a design freedom where nothing fixes it.
+ */
+function givenWayDefaults(model: Model, eqs: readonly Equation[], values: ReadonlyMap<ElementId, number>): Set<ElementId> {
+  const out = new Set<ElementId>();
+  for (const eq of eqs) {
+    if (eq.asserted !== true) continue;
+    for (const v of eq.vars) {
+      if (values.has(v) || out.has(v)) continue;
+      const f = model.get(baseIdOf(v));
+      if (!f || !writesStandingDefault(model, f)) continue;
+      // The default it reads through what it redefines too, as the frame walk asks ({@link buildInstanceSystem}):
+      // U6's `impl-…@U6::q::pp::m`, the end copy `bind pp.m = k` makes of P's `m default = 1.0`, gives way only
+      // through P's m, and free to the solve, Q's asserted `pp.m == 0.8` fixed it, and the binding carried 0.8 into
+      // Q's `k default = 2.0` (`q.pp.m <= 1.5` satisfied where no value is read).
+      const at = v.indexOf('@');
+      const inst = at < 0 ? undefined : v.slice(at + 1);
+      if ([f, ...redefinedClosure(model, f)].some((g) => (inst === undefined ? defaultGivesWaySomewhere(model, g) : defaultGivesWayIn(model, g, inst)))) {
+        out.add(v);
+      }
+    }
+  }
+  return out;
 }
 
 /** A predicate selecting elements at/under `scopeId` (or everything when none). */
@@ -973,7 +1017,8 @@ function instanceKeysDefinedBy(model: Model, node: ExprNode, eq: Equation): Elem
     const key = eq.nameToId.get(side.path.join('.'));
     if (key === undefined || !key.includes('@') || out.includes(key)) continue;
     const f = model.get(baseIdOf(key));
-    if (f !== undefined && !hasStatedValue(model, f)) out.push(key);
+    // Never one that writes a `default`, even one a binding made give way (decision 14 amended).
+    if (f !== undefined && !hasStatedValue(model, f) && !writesStandingDefault(model, f)) out.push(key);
   }
   return out;
 }
@@ -1331,6 +1376,7 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           const read: ElementRecord = { ...c, ownerId: reader.id };
           const eq = relationEquation(model, read, memo, false, undefined, instance);
           if (eq) {
+            eq.asserted = true;
             // An asserted equation defines, in the instance, the valueless
             // features it names: the instance's own, never a check's to fix.
             const body = parseRelationBody(String(c.attrs.expression));
@@ -1395,9 +1441,20 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
     // The instances that enclose it hold what their types state of it too
     // (Sys's `bind p.load = q.load` of `s.q.load`) — the frames above a usage
     // whose own walk read it, where a binding joins a feature of an enclosing
-    // instance (E3, {@link hasEnclosedBindings}).
+    // instance (E3, {@link hasEnclosedBindings}), or where a `default` it
+    // reads gives way at THIS instance (its own, or one an end copy reads
+    // through what it redefines): no value equation fixes it, and the binding
+    // that holds it may be one an enclosing instance's type writes. HL's q2's
+    // `part :>> p { assert constraint a1 { extra == 2.0 * load } }` reads p's
+    // load from q2's p's own walk, with no frame above it, and Q's `bind p.load
+    // = L` (q2's L of 5) was never solved: load was a freedom the solve fitted
+    // to the assert, and a1, violated at 5 on the check, read satisfied here.
     const frames =
-      reading.enclosing.length === 0 && hasEnclosedBindings(model) ? (definitions.framesAbove(reading.instance) ?? []) : reading.enclosing;
+      reading.enclosing.length === 0 &&
+      (hasEnclosedBindings(model) ||
+        [feature, ...redefinedClosure(model, feature)].some((g) => defaultGivesWayIn(model, g, reading.symbol)))
+        ? (definitions.framesAbove(reading.instance) ?? [])
+        : reading.enclosing;
     for (const e of frames) hold(e.instance, e.reader);
     hold(reading.instance, reader.id);
   }
@@ -1779,6 +1836,9 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
 
   const { eqs, unreadable, relationOf } = gatherSystem(model, opts.scopeId);
   const defined = definedFeatures(eqs, unreadable);
+  // A `default` a binding made give way is fixed by that binding alone, or
+  // stays free: never solved from an assert or a check ({@link givenWayDefaults}).
+  const givenWay = givenWayDefaults(model, eqs, values);
   // The definitions that BIND — those that alone determine what they define
   // ({@link closedByDefinitions}), over the values the model states: no check
   // orients what they define, nor a feature whose stated value expression
@@ -1787,6 +1847,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   const binding = new Set<ElementId>([
     ...unreadable,
     ...closedByDefinitions(eqs, defined, (v) => values.has(v), values, unreadable, true),
+    ...givenWay,
   ]);
   // Numeric binding-propagated values (seed additional equalities) — never a
   // value that contradicts a binding it overrides, which nothing here reads.
@@ -1839,7 +1900,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
 
     // Remaining coupled unknowns → one bounded Newton solve. A feature whose
     // own value cannot be read is no unknown to solve for.
-    const unknowns = remainingUnknowns(eqs, values, fixedIds).filter((v) => !unreadable.has(v));
+    const unknowns = remainingUnknowns(eqs, values, fixedIds).filter((v) => !unreadable.has(v) && !givenWay.has(v));
     if (unknowns.length === 0) break;
     iterations++;
     const moved = newtonSolve(eqs, unknowns, values, fixedIds, tol, maxIter, defined, unreadable, used);
@@ -3924,7 +3985,7 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
   // One the definitions leave open (a loop over a design freedom) is free, and
   // so is one the equations leave free though its definitions read as closing
   // it — stopped on a step, or on a slope that cannot be read.
-  const defined = new Set<ElementId>(unreadable);
+  const defined = new Set<ElementId>([...unreadable, ...givenWayDefaults(model, eqs, values)]);
   for (const id of closed) if (settled(id)) defined.add(id);
   const freeSet = new Set<ElementId>();
   for (const iq of ineqs) for (const v of iq.vars) if (!pinned.has(v) && !defined.has(v)) freeSet.add(v);
