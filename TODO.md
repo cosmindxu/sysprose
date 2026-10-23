@@ -436,22 +436,77 @@ true values. What follows is what that branch and the review of it left open; en
       sentence beside a decided `t50` `F/F/F/X`. (4) One contradiction makes every SMT row of the
       file `X`: say so in the guide. Same file as the entry above: run after it. Opus, critical;
       about 50M. [soft-hard analysis Q4, Q5]
-- [ ] **Show `default` in `elements`, and read it in the workflow's `literal()`.** `elements` prints
-      `mass AttributeUsage = 1.2` for a default and a bound value alike
-      (`soft-hard-defaults/practice-probe/mass.sysml`). Print the word `default` for a default and
-      keep the line for `=`; the workflow's `literal()` (mbse-workflow-public `src/`, mirrored by
-      hand to ../mbse-workflow) must read both forms; its tests and the pin bump follow. Sonnet,
-      budget; about 1.5M plus the mirror. [soft-hard analysis]
-- [ ] **Parse `metadata X about Y;`.** The form of SysML 7.27.2's own example is a parse error
-      today. Also reconcile the short form `#k :>> L` (BNF `kebnf:1699-1701` against the 7.27.4
-      prose, not reconciled); it matters only if a tag ships. Parse and round-trip tests in existing
-      files. Sonnet with an Opus reviewer; about 5M. [soft-hard analysis]
-- [ ] **Match a keyword by its package, not its simple name.** `hasKeyword` accepts any definition
-      with the same simple name (`src/semantics/keywords.ts:186`), so `VendorHints::HardDefault`
-      stands for a Sysprose tag. The same function serves `#exceptional`
-      (`src/semantics/fault-tree.ts:487`, `:766`; not probed). Done when a foreign definition of the
-      same simple name is not taken for Sysprose's, for `#exceptional` and any later tag, and a test
-      says so. Sonnet with an Opus reviewer. [soft-hard analysis S-M4]
+- [ ] **Parse the rest of the `about` forms.** `metadata T about A, B { ... }` parses since
+      small-defaults S2. Still failing: the named and typed form from SysML 7.27.2, `metadata
+      securityDesignAnnotation : SecurityRelated about SecurityRequirements, SecurityDesign;`
+      (sysml.txt:10180-10181; parse/no-viable-alt), and the visibility-prefixed `public metadata T
+      about A;` and `public @T about A;` (BNF MemberPrefix with AnnotatingElement, kebnf:74-78,
+      130-136, 180-183). [small-defaults S2]
+- [ ] **Read `default <number>` in every reader of `ElementRow.value` in mbse-workflow-public
+      (mirrored to ../mbse-workflow).** Old row forms: `value` '1.2' and CLI text ` = 1.2` for a
+      default and a bound value alike. New forms (Sysprose small-defaults S1): `value` 'default 1.2'
+      for a default and '1.2' for a bound value, both through `--json` and the in-process buildGrid
+      path (src/sysprose/inprocess.ts copies r.cells.value); CLI text `default 1.2` for a default
+      and unchanged ` = 1.2` for a bound value. Readers and their behaviour on 'default 0.92' once
+      SYSPROSE_REF moves past S1: (1) src/check/checker.ts:432 `literal()` does not abstain, because
+      its regex fails and it falls back to the solver's two-sided point(qn); (2)
+      src/check/predicates.ts:567 `moe.dutyCycleBound` does Number.parseFloat(row.value), gets NaN
+      and returns []: the blocking gate goes silent for a `#Estimate ... default = 0.92` above the
+      bound, a FALSE PASS; (3) predicates.ts:645 `moe.estimated`: when the solver refused a point, a
+      stated default fails as if derived, with the false reason "is derived, but the solver's value
+      for it could not be confirmed"; (4) src/realization/adapter.ts:210 relabels a stated default
+      estimate as kind: 'derived' and takes the solver's value; (5) src/prompts/context.ts:129
+      writes `x = default 0.92` into the authoring prompt. Each must read `default <number>` as the
+      stated number. That number is hard against assertions once the decision-14 amendment lands,
+      and only a redefinition overrides it. One test per reader, following
+      test/unit/moe-duty-cycle.test.ts with value: 'default 0.92'. SYSPROSE_REF must not be bumped
+      past the small-defaults merge (this merge) until these land: they land in the same pin-bump
+      commit. A silent false pass in `moe.dutyCycleBound` otherwise. Sonnet, budget.
+- [ ] **Show `:=` (an initial value, not a binding) and the value's unit in `elements` and the grid;
+      the workflow readers then read them (optional).** Today `init := 4.0` prints `= 4`, `softInit
+      default := 3.0` prints `default 3`, and `= 7 [kg]` prints `= 7`. These predate small-defaults
+      S1. Sonnet, budget. [small-defaults S1]
+- [ ] **Parse a declaration whose user-defined keyword stands without a reserved keyword.** SysML
+      7.27.4 (sysml.txt:10327-10334) allows it for semantic metadata (`#situation def Failure;`,
+      `#situation batteryLow;`); BNF ExtendedDefinition and ExtendedUsage (kebnf:1695-1701) admit it
+      for any metadata, so `#k :>> L = 3;` is a usage redefining L, tagged k. The grammar rejects
+      all three today (mismatched-token / unknown-keyword). It matters only if a tag such as
+      `#provisional` ships, and then it must be read in every `@`, `#` and `about` form.
+      [small-defaults S2]
+- [ ] **Read a bare `metadata T;` as typed by T.** Per BNF `MetadataUsageDeclaration`, `metadata T;`
+      and `metadata T {...}` are an unnamed usage typed by T. This tool reads `metadata N {...}` as
+      a usage NAMED N with no type (requirements.ts RM_METADATA_NAME, the verification tests and the
+      fixture L8-evidence-stale rely on it). Changing it means moving the RequirementMetadata
+      carrier to a spelling that survives; a design choice, Opus. [small-defaults S2]
+- [ ] **Read an annotation's `about` targets (attach a carrier to the element it names).** Every
+      consumer takes a carrier from its owner. Until then a carrier written with `about` is refused
+      with `mapper/carrier-about-unread` (PropertyPattern, Evidence, FaultHypothesis,
+      VerificationMethod, RequirementMetadata, and an `about` annotation whose `kind` names a
+      method; both spellings, including `about` naming the owner itself). When it lands, lift that
+      blanket refusal. A keyword annotation's `about` targets are raw qualified names no consumer
+      resolves. [small-defaults S2, review]
+- [ ] **Resolve a metadata body redefinition (optional, low).** In `@T about X { ref :>> approved =
+      true; }` and the keyword form the redefined name is looked up with no typing for the
+      annotation, so the standard's own `ref :>> approved` example files
+      `ref/unresolved-specialization` warnings. Resolve `:>> name` against the metadata definition T
+      the annotation names (old behaviour of the `@` form). [small-defaults S2]
+- [ ] **Print a degraded load's verdicts as such on stdout (optional).** A load that degrades (any
+      error) still prints the full verdict report, including `verdict pass` lines, on stdout; only
+      the exit status 2 and the stderr line abstain. Say so on stdout too if wanted. [small-defaults
+      review]
+- [ ] **Ask FailureMode by its qualified name when it ships.** `machineFailureModes`
+      (src/semantics/fault-tree.ts) counts a model's own FailureMode through `hasKeyword(..., {
+      anyPackage: true })` because the definition is not in SysproseVerification yet. When the
+      vocabulary commit ships it, add FAILURE_MODE_QUALIFIED_NAME, ask for it and drop the option;
+      the campaign test then declares the definition in SysproseVerification and its "model's own
+      definition is counted" sentence changes. [small-defaults S3]
+- [ ] **Report an ambiguous keyword as ambiguous (optional).** When two imported definitions answer
+      to a keyword (a bare `#exceptional` with both VendorHints and SysproseVerification imported)
+      it resolves to the first import in `resolveFullName`, so `contracts --keywords` and the
+      fault-tree label depend on import order; the rule fails safe (no label). Report it as
+      ambiguous. Also `statement-kind.ts` reads `#prose` and `#prompt` from the spelling alone, so a
+      foreign `<prose>` is still read as a statement kind: needs its own decision. [small-defaults
+      S3]
 - [ ] **Hold: an opt-in tag that lets an assertion adjust a written number (for example
       `#provisional`).** DECIDED to hold (analysis Q2): a soft value is written as a value until a
       model needs the tag, as `#Observable` was held
@@ -459,7 +514,7 @@ true values. What follows is what that branch and the review of it left open; en
       meaning in the standard (KerML 7.4.13), so a tool without the tag reads the value as hard; it
       must (M1-M5) gate both index builders and the binding route, be inherited by a redefinition
       that does not repeat it with an explicit opt-out (Q6 = inherited), be identified by its
-      package (see the keyword entry), and be read in every `@`, `#` and `about` form. v9 and the
+      package (ask `hasKeyword` for its qualified name, as `#exceptional` is since small-defaults S3), and be read in every `@`, `#` and `about` form. v9 and the
       six Sysprose examples use no `default`. Opus; about 45M. [soft-hard analysis Q2, Q3, Q6]
 - [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations --element`
       (and the app's scoped checks) filters by the relation's own element only (`scopeFilter` in
