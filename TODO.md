@@ -198,27 +198,11 @@ per-instance code itself follow under their own headings.
       walk reads W's sub's `ref part r : T0 = x`, reached as `w.sub.r`, in w's sub (cown3's k reads
       F). The coverage guard (`instanceReadsOtherwise`) could read the row in that instance instead.
       Sound, only weaker. [per-instance-rest S1]
-- [ ] **Name the instance a finding is about.** `p50::r2.load = 50 misses P::c` (rv/p/g7, where the
-      row is read for pb), `p1::r2.load` for q2's p (g3), and at aac38fd `p2::r1.load` (rr1): the
-      message names the target of the last link, not the instance the row is read for
-      (`pb::r2.load`, `q2::p::r2.load`), so an agent edits the wrong element (the PI-2 class).
-      [O9 S1, review]
-- [ ] **Say a tool limit is a tool limit.** `unread-definition` refusals print "This is a defect in
-      the relation", and verify files the per-instance `not-enumerated` abstention of H5Q7's shape
-      (`attribute :>> extra default = 7.0; assert constraint { extra == 20.0 }` in the instance's
-      own element) under `unread-definition`. A relation over a value the model states but this
-      tool does not read is a limit of the tool, as `unread-binding` is (`engines/literal.ts`, the
-      not-evaluable branch for gate refusals; `engines/smt.ts`, the refusal outcome): give it the
-      tool-limit sentence through `refusalTail`; the exit code stays 2. And where an unread valued
-      part's partner is read (sbv: `top.a.load` beside `part pp : T0 = top.a` and `bind pp.load =
-      seven`), the numeric surface abstains with `"top.a.load" has no value in scope`, not the
-      binding's sentence: its `equatedPartsRefusal` pass in `solver.ts` skips a row that is already
-      unknown. Wording only; every surface abstains. [O9 S1, review]
-      Also the obligations lane's own catch in `groupGoalRows` (a per-instance reading that throws
-      inside the tool): it files the goal under `unread-definition` with `failedReadingSentence`, so
-      `refusalTail` closes it with "This is a defect in the relation". That blames the user's
-      relation for a failure of the tool; USER-GUIDE says only that "the goal row is refused in that
-      sentence". Give it a tail that says the tool failed. [per-instance-rest review]
+- [ ] **Say the tool limit exactly for a shadowed body.** The shadowed-parameter tail of an
+      `unread-definition` refusal is neutral since reporting-residuals S2, but the refusal head for
+      a shadowed body still reads "the relation reads a value this tool does not read", which is
+      imprecise for a valueless parameter. Wording in `src/semantics/engines/literal.ts`, not a
+      reading change. [reporting-residuals review]
 - [ ] **Read what two steps of standing-for, a call, or a second subject would decide.** All sound,
       all weaker: (1) a shared-usage (group) row read through two steps of standing-for (a reference
       to a reference, or to an equated part, written in the usage's definition) abstains with "this
@@ -384,12 +368,6 @@ true values. What follows is what that branch and the review of it left open; en
       answers are shared with collectReads, big-bind-1200 is under 1 s cold and tree10 is within 2x
       7277a97 warm, or each is restated with a measured reason. [cold-check S1, O2 S5, review
       2026-10-14 A-H2]
-- [ ] **Say the same thing about a bare literal in the note and the row.** After a carried value is
-      read in the filled feature's declared unit, the `U3` note still reads `refuted … (5 vs 10 in
-      M, coherent SI)` beside a verdict the unit reading reached; the literal and SMT notes of a
-      carried value also lack the `(x vs y in M, coherent SI)` clause and print the end copy with
-      unit null, and the value-source clause prints a converted value without its unit (`load =
-      5`). Pre-existing for `U3`; the rest is display only, with A-M2. [O2 S6]
 - [ ] **Match a binding into an instance by path through a value too (optional, low).** Since
       per-instance-rest S3 a binding written in an instance makes its usage a group only where it
       reaches a path the relation reads. What a value the relation reads reads is still matched by
@@ -483,27 +461,39 @@ true values. What follows is what that branch and the review of it left open; en
       that does not repeat it with an explicit opt-out (Q6 = inherited), be identified by its
       package (see the keyword entry), and be read in every `@`, `#` and `about` form. v9 and the
       six Sysprose examples use no `default`. Opus; about 45M. [soft-hard analysis Q2, Q3, Q6]
-- [ ] **Name the differing value in a violated-instance finding.** Witnesses now carry their values
-      (`engine-small`, merged by `318283c`), but the finding's value clause still names the first
-      bound read: `g-a4r2` prints `load = 2` where `extra = 20` differs, and `s-a4` names no value.
-      Pick the read whose value breaks the relation (with the anchor entry above). Narrow the `U3`
-      note entry above to its note half: the carried-value clauses are done. [N1 S2, review]
-- [ ] **Finish the wording and evidence residuals of `reporting-small`.** The branch (merged by
-      `794c038`) rolled findings up and folded them, stated causes and the cap, folded and named the
-      `verify` text and footer, removed the dead H6b label, and closed EV-4, EV-6 and EV-7's
-      cross-checks. Left: (1) the `under` filter misses renamed redefinitions (probe `e5`), and
-      `big-bind-600`'s cold check is 17% slower than before the routing change (577 to 675 ms);
-      (2) the evidence record does not record the instance path of a shared-usage reading
-      (`satisfy LoadReq by Sys::p` records only the own row); `verify` prints a moved reading as
-      `H::LoadReq in H::p1` where the record says `H::massR in H::p1`; a case that verifies both
-      the definition and the usage counts the one moved reading twice; the move fires for a
-      requirement-def specialisation too; an earlier build's `LoadReq in p1` record is skipped with
-      a sentence that says the model never reads it, which is not quite true; (3) paths in the
-      binding-carried context rows and the unfolded `target-by-specialisation` rows are still
-      unquoted (the witness tests pin the text), the fold lines name the relation unquoted, the
-      frame-cap count is a lower bound ("at least N") and counts print raw beside the capped
-      sentences, and a footer fold over a requirement's per-subject rows names the clause's
-      synthetic name, not the requirement. [N3 S1-S4, reviews]
+- [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations --element`
+      (and the app's scoped checks) filters by the relation's own element only (`scopeFilter` in
+      `obligations.ts`), so a relation read per instance in the scoped element lists none of its
+      rows: `--element E5::q2` on the e5-renamed probe (`part q2 : Q { part p2 :>> p; ... }`) shows
+      0 rows although `P::c in E5::q2::p2` is violated; decide whether the scope should include the
+      rows read in a context under the scoped element. big-bind-600's cold check is 17% slower than
+      before the routing change (577 to 675 ms; the cold-check branch measures it). (2) The evidence
+      record does not record the instance path of a shared-usage reading (`satisfy LoadReq by
+      Sys::p` records only the own row), and `verify` prints a moved reading as `H::LoadReq in
+      H::p1` where the record says `H::massR in H::p1`. [reporting-residuals S2]'. The quoting,
+      footer-name, double-count, requirement-def specialisation, earlier-build sentence, frame-cap
+      and raw-count items are done or were fixed by earlier reviewers
+- [ ] **Fold the per-instance findings of a cause a definition states by a derived value, or beside
+      another read.** S1 folds a violated group row into its lead only when its one read comes from
+      a plain number literal that a definition's usage states, and putting that read back to the
+      relation's own value mends the relation (`breakingRead`, asked once per distinct set of reads,
+      for the first five distinct sets of a group). A row whose value is derived (`L = 2.0 * K`, PB
+      in the PI-2 test), a default, one the line does not mend, one with a unit or `sides`, or a
+      sixth distinct reading in a group keeps its own finding, anchored at the part. Several reads
+      fold too when `breakingRead` names the shared read. Fix: anchor those at the shared member the
+      value comes from, or at the instance's own line that changes it. Probes: R2/R3 in e4-deep-spec
+      for the folded shape. [reporting-residuals S1, review]
+- [ ] **Name the breaking value in a unit-bearing violated instance.** `breakingRead` leaves
+      `breaks` unset (the finding names the first bound read, as before) when any read carries a
+      unit, an SI figure or sides, or when no single read, put back to the relation's own context
+      value, makes the relation hold (both needed, or the relation is already violated there). It is
+      decided on the scalar scope only, and for the first 5 violated rows of a group or 20 contexts.
+- [ ] **Name and anchor a value the instance redefines, which no read carries.** a value the
+      instance's own element redefines is not among the reads, so a finding never names or anchors
+      at it. In redef-breaks2 (q2 has `attribute :>> L = 2.0;` plus `part :>> p { attribute :>>
+      extra = 20.0; }` under `load + extra <= 10.0`) the finding points at `:>> L = 2.0` and names
+      `load = 2`, though putting load back to 1 still misses (1 + 20 > 10) and `extra = 20.0` breaks
+      it. Pinned in the PI-2 S1 test (G5) as the current, honest behaviour.
 - [ ] **Say when a Save applies typed text over a field's change in the two cases that stay silent.**
       The in-browser Save, the offline Save and Export say so since `ui-small` S3 (`fieldOverTyped`,
       `over-changes`). (1) A Save to an attached Google Drive file with unsaved changes (`runSave`
@@ -519,19 +509,6 @@ true values. What follows is what that branch and the review of it left open; en
       typed text, a field change, Save, Undo, Save leaves the open project holding the text-only
       version and writes the other project. The S3 note now invites the Undo. Optional one-line fix:
       keep `projectName` across undo and redo of an apply. [ui-small S3, review]
-- [ ] **Anchor at the value that breaks the relation, and once per cause.** Since `f27d99b` a
-      violated-instance finding is anchored at the instance's own differing line, but (1) when a
-      binding carries two values into an instance the anchor follows the first read's source, not
-      the one that breaks the relation (`q2 : Q { attribute :>> L = 2.0; attribute E = 20.0; bind
-      p.extra = E; }` under `load + extra <= 10.0` points at `:>> L = 2.0`, where `E = 20.0` causes
-      the miss), so the hint "change the value the binding carries" sends an agent to a line that
-      cannot clear it; (2) a violation inherited from a definition's usage (`part def R { part q :
-      Q { attribute :>> L = 50.0; } } part r1 : R; part r2 : R;`) is one finding at `R::q::p` and
-      one at each `part rN : R`, for one cause; (3) an anchor at an unnamed redefinition (`attribute
-      :>> L = 50.0`) has no `elementName`, because `src/text/load.ts` takes `declaredName` only.
-      Pick the source whose value is the difference, fold the per-`rN` findings into the one at the
-      stated member, and name the redefinition. [O4 S2, review] See also the A-M2 entry (per-instance
-      soundness section).
 - [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small` S4
       an edit's recompute yields to the page between its steps (`recomputeSteps`), but three tasks
       stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root in a
@@ -671,20 +648,9 @@ tagged `[O1 …]` are what its steps and reviews left open.
       into its holding machine's root the old way. Both readings predate `behaviour-rest`; decide
       whether the simulator refuses them as it now refuses the step into a root. Low.
       [behaviour-rest S1, observation]
-- [ ] **What the livelock rows still lack.** (1) `check-behaviour` files no row for a livelock it
-      withholds; a row needs a catalogue code of its own. (2) Closed by `d1aa330` (the history map
-      left the key). (3) Not probed: the `covered`/`fail` witness note may key on the machine's published choice rows, so a witness
-      through a branch whose choice row is withheld (the hidden-choice shape) may carry no simulator
-      sentence; the witness still replays. (4) `reach` is about 20% slower than at `5943654` on a
-      9,641-configuration machine (about 240 to 290 ms), from the livelock pass (`docs/06` §8.8).
-      [O1 S5, branch review]
-- [ ] **Wording O1 left.** (1) The store clause says a completion guard the walk cannot decide is
-      "read as false": that is the interpreter's reading, while the walk fails closed there
-      (`explore.ts`, `docs/06` §8.7). (2) A machine refused for two crossings prints
-      `machine-boundary, machine-boundary`, as several dangling transitions already repeat their
-      construct. (3) The replay's departure message prints `transitionLabel` with nested backticks
-      (`ai (a -> Inner) on `e``). (4) The `verification/witness-not-replayed` hint sends the reader to
-      the Simulation tab, which cannot follow a tie-break branch. [O1 S3, S4, branch review]
+- [ ] **Livelock-pass cost.** `reach` is about 20% slower than at `5943654` on a 9,641-configuration
+      machine (about 240 to 290 ms) from the livelock pass (`docs/06` §8.8); measure paired on an
+      idle machine and decide whether to accept it. [reporting-residuals S3]
 
 ## Solver and speed — review 2026-10-14
 
