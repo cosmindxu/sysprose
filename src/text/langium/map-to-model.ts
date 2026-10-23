@@ -60,6 +60,8 @@ import {
   PROPERTY_PATTERN_QUALIFIED_NAME,
 } from '@semantics/verification-vocabulary';
 import { resolveName } from '@semantics/resolve-names';
+import { RM_METADATA_NAME, VERIFICATION_METHOD_VALUES } from '@semantics/requirements';
+import { VERIFICATION_METHOD_DEF } from '@semantics/verify';
 import type { AstNode } from 'langium';
 import type { ParseResult, ParseDiagnostic } from '../types';
 import type { TextRange } from '@validation/types';
@@ -677,6 +679,15 @@ const UNREAD_ABOUT_CARRIERS: ReadonlySet<string> = new Set([
   PROPERTY_PATTERN_DEFINITION,
   PROPERTY_PATTERN_QUALIFIED_NAME,
 ]);
+
+/**
+ * The standard carriers a reader takes from the element they are written in,
+ * matched on the LAST `::` segment as verify.ts `metadataTypeNames` does (a file
+ * may qualify or import them): the method gate reads `VerificationMethod` off
+ * the case and `getRequirementMetadata` reads `RequirementMetadata` off the
+ * requirement, and neither looks at `about`.
+ */
+const UNREAD_ABOUT_SEGMENTS: ReadonlySet<string> = new Set([VERIFICATION_METHOD_DEF, RM_METADATA_NAME]);
 
 class Mapper {
   readonly model = new Model();
@@ -1812,32 +1823,57 @@ class Mapper {
    */
   private mapAnnotation(node: Annotation, ownerId: ElementId | null): void {
     const attrs: Record<string, AttrValue> = { annotation: true, type: node.type };
-    if (node.about && node.about.length) {
-      attrs.about = [...node.about];
-      // Every SysproseVerification carrier is read from the element it is
-      // WRITTEN IN; no reader looks at `about`. Accepted silently, a carrier
-      // written beside its target would be dropped or read on the wrong machine,
-      // and a verdict would be given over a half-read model. Refuse it instead:
-      // the load degrades, so the checks abstain.
-      if (UNREAD_ABOUT_CARRIERS.has(node.type)) {
-        const code = 'mapper/carrier-about-unread';
-        this.diagnostics.push({
-          message: `'${node.type}' is read on the element it is written in; \`about\` is not read.`,
-          ...posOf(node),
-          severity: 'error',
-          source: 'mapper',
-          code,
-          found: node.type,
-          hint: renderHint(code, { found: node.type }),
-          ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
-        });
-      }
-    }
+    const about = !!(node.about && node.about.length);
+    if (about) attrs.about = [...node.about];
     const el = this.create('MetadataUsage', {
       ownerId: ownerId ?? undefined,
       attrs,
     });
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
+    // Every carrier below is read from the element it is WRITTEN IN; no reader
+    // looks at `about`. Accepted silently, a carrier written beside its target
+    // would be dropped or read on the wrong element, and a verdict would be
+    // given over a half-read model (a `VerificationMethod` beside its case reads
+    // as "no method declared" and the case is JUDGED). Refuse it instead: the
+    // load degrades, so the checks abstain. A carrier is recognised by its type
+    // (qualified or not) or, as verify.ts `methodOf` does for an alias, by a
+    // `kind` cell naming a VerificationMethodKind literal.
+    if (about && (this.isUnreadAboutCarrier(node.type) || this.holdsMethodKind(el.id))) {
+      const code = 'mapper/carrier-about-unread';
+      this.diagnostics.push({
+        message: `'${node.type}' is read on the element it is written in; \`about\` is not read.`,
+        ...posOf(node),
+        severity: 'error',
+        source: 'mapper',
+        code,
+        found: node.type,
+        hint: renderHint(code, { found: node.type }),
+        ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+      });
+    }
+  }
+
+  private isUnreadAboutCarrier(type: string): boolean {
+    return UNREAD_ABOUT_CARRIERS.has(type) || UNREAD_ABOUT_SEGMENTS.has(type.split('::').pop() ?? type);
+  }
+
+  /** Does the usage own a `kind` cell whose value names a VerificationMethodKind literal? */
+  private holdsMethodKind(id: ElementId): boolean {
+    return this.model.children(id).some((cell) => {
+      const redefines = cell.attrs.redefines;
+      const isKind =
+        cell.declaredName === 'kind' ||
+        (Array.isArray(redefines) && redefines.some((r) => String(r).split('::').pop() === 'kind'));
+      const raw = cell.attrs.value;
+      return (
+        isKind &&
+        typeof raw === 'string' &&
+        raw
+          .replace(/^\s*\(|\)\s*$/g, '')
+          .split(',')
+          .some((t) => (VERIFICATION_METHOD_VALUES as readonly string[]).includes((t.split('::').pop() ?? t).trim()))
+      );
+    });
   }
 
   /** `alias N for Target` → a named Membership pointing at the target. */

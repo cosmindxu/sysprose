@@ -3725,7 +3725,9 @@ One attribute per field, so the phrase-to-atom trace survives a save: a reader
 can see which pattern, over which scope, filled by which atom, without
 re-parsing a sentence.
 A carrier is read from the element it is written in: `about` is not read, so a
-`PropertyPattern`, `Evidence` or `FaultHypothesis` written with `about` is refused
+`PropertyPattern`, `Evidence`, `FaultHypothesis`, `VerificationMethod` or
+`RequirementMetadata` (or an `about` annotation with a `kind` naming a method)
+written with `about`, including inside its own target, is refused
 (`mapper/carrier-about-unread`) and the checks abstain. Write it inside its target.
 
 **What it refuses to say, and how each refusal reads.**

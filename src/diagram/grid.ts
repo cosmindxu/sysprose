@@ -34,7 +34,9 @@ function str(v: unknown): string {
  * bound (`=`) value shows: a redefinition or an asserted equation overrides the
  * one and not the other, so a reader (the CLI's `elements`, the in-process
  * workflow) that cannot tell them apart would take a default for a fixed number.
- * A reader written for the bare form fails to parse `default 1.2` and abstains.
+ * A reader that parses the bare form gets no number from `default 1.2`; what it
+ * then does is its own (the mbse-workflow readers must change, TODO residual of
+ * small-defaults S1, before their SYSPROSE_REF moves past this change).
  */
 function valueCell(el: ElementRecord): string {
   const v = str(el.attrs.value);

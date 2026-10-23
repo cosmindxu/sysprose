@@ -2237,6 +2237,35 @@ package P {
     }
   }, 120_000);
 
+  it('verify abstains on a VerificationMethod written beside its case with `about`', () => {
+    // massBench declares `kind = test`. Moved out of the case and written as the
+    // standard's own `metadata VerificationMethod about massBench { … }`, no
+    // reader sees it, and the case would be JUDGED as declaring no method: a pass
+    // for a bench test this tool cannot perform, exit 0. The load degrades instead.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-vm-about-'));
+    try {
+      const src = readFileSync(resolve(process.cwd(), 'examples/uav-isr-verification.sysml'), 'utf8');
+      const carrier = /\n *@VerificationCases::VerificationMethod \{\n *attribute kind = test;\n *\}/;
+      expect(src).toMatch(carrier);
+      const moved = src
+        .replace(carrier, '')
+        .replace(
+          '    verify MassRequirement by massBench;',
+          '    metadata VerificationCases::VerificationMethod about massBench { attribute kind = test; }\n' +
+            '    verify MassRequirement by massBench;',
+        );
+      const file = join(dir, 'moved.sysml');
+      writeFileSync(file, moved);
+      const r = spawnCli(['verify', file, '--engine', 'literal']);
+      expect(r.stdout + r.stderr).toContain('mapper/carrier-about-unread');
+      expect(r.code, 'a verdict was given over a method it could not read').toBe(2);
+      // Degraded, like any load with an error: the exit status is the abstention.
+      expect(r.stderr).toContain('did not load cleanly');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   /**
    * The two flags this commit adds, asserted on what the command prints.
    *

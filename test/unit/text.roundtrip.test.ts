@@ -1070,6 +1070,22 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       // Written inside its target, with no `about`, it is read as ever.
       expect(codes(`package A { state def M { @${t} ${body} } }`)).toEqual([]);
     }
+    // The standard carriers the method gate and the requirement reader take
+    // from their owner are refused too, in every spelling (a VerificationMethod
+    // beside its case would read as "no method declared" and be JUDGED), and so
+    // is an alias whose `kind` names a method.
+    const kind = '{ attribute kind = test; }';
+    for (const src of [
+      `package A { verification def V; metadata VerificationCases::VerificationMethod about V ${kind} }`,
+      `package A { verification def V; metadata VerificationMethod about V ${kind} }`,
+      `package A { verification def V; @VerificationCases::VerificationMethod about V ${kind} }`,
+      `package A { verification def V; alias VM for VerificationCases::VerificationMethod; metadata VM about V ${kind} }`,
+      `package A { requirement def R; metadata RequirementMetadata about R { attribute status = "open"; } }`,
+    ]) {
+      expect(codes(src)).toEqual(['mapper/carrier-about-unread']);
+    }
+    // Written inside its owner, with no `about`, the method is read as ever.
+    expect(codes(`package A { verification def V { @VerificationCases::VerificationMethod ${kind} } }`)).toEqual([]);
     // Another annotation type keeps its `about`.
     expect(codes('package A { state def M; metadata Safety about M { level = 3; } }')).toEqual([]);
   });
