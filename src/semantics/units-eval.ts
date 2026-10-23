@@ -64,6 +64,7 @@ import {
   statedAgainstBoundSomewhere,
   definedAgainstBoundIn,
   defaultGivesWaySomewhere,
+  writesStandingDefault,
   failedReadingSentence,
   namesDefinedBy,
   rebaseInstance,
@@ -2075,7 +2076,8 @@ export function definitionDerivation(
   const feat = model.get(featureId);
   const name = feat ? passOf(model, memo).definitions.nameOf(feat) : undefined;
   const context = contextId ?? feat?.ownerId;
-  if (!feat || !name || context == null) return undefined;
+  // A feature that writes a `default` has no asserted equation for its definition (`writesStandingDefault`).
+  if (!feat || !name || context == null || writesStandingDefault(model, feat)) return undefined;
   const { definitions } = passOf(model, memo);
   const candidates = definitions.of(site ?? context, name);
   if (candidates.length === 0) {
@@ -2138,7 +2140,8 @@ export function featuresDefinedBy(
   for (const name of namesDefinedBy(constraint)) {
     const feature = definitions.feature(constraint.ownerId, name);
     const candidates = definitions.of(constraint.ownerId, name);
-    if (!feature || candidates.length === 0 || out.some((f) => f.id === feature.id)) continue;
+    // Not one that writes a `default` a binding made give way: no assert defines it (`writesStandingDefault`).
+    if (!feature || candidates.length === 0 || out.some((f) => f.id === feature.id) || writesStandingDefault(model, feature)) continue;
     const d = definitionOf(model, feature.id, name, candidates, memo, constraint.ownerId, new Map());
     if (d.definedBy === constraint.id) out.push({ id: feature.id, derivation: d });
   }
@@ -2165,7 +2168,8 @@ function stoppedOnFreeInput(
   const { definitions } = passOf(model, memo);
   const name = d.detail;
   const feature = definitions.feature(context, name);
-  if (!feature || seen.has(feature.id)) return false;
+  // One that writes a `default` a binding made give way is held by that binding: no design freedom.
+  if (!feature || seen.has(feature.id) || writesStandingDefault(model, feature)) return false;
   seen.add(feature.id);
   const here = definitions.of(context, name);
   if (here.length > 0) {
@@ -2339,22 +2343,25 @@ function definedQuantity(
     }
     return found === undefined ? undefined : unknownQ('contradiction', name, `"${name}" cannot be derived: ${found.sentence}`);
   };
+  // A feature that writes a `default` is no feature an asserted equation defines (decision 14 amended,
+  // `writesStandingDefault`): where a binding makes that default give way, it reads the binding's value alone.
   if (name.includes('.')) {
     const end = definitions.chainDefinition([contextId], name);
-    if (!end) return undefined;
+    if (!end || writesStandingDefault(model, end.feature)) return undefined;
     return against(end.feature) ?? read(end.feature.id, definitions.nameOf(end.feature)!, end.site, end.at);
   }
   const feature = definitions.feature(contextId, name);
   if (!feature) return undefined;
-  const refused = against(feature);
+  const defines = !writesStandingDefault(model, feature);
+  const refused = defines ? against(feature) : undefined;
   if (refused !== undefined) return refused;
-  const candidates = definitions.of(contextId, name);
+  const candidates = defines ? definitions.of(contextId, name) : [];
   if (candidates.length === 0) {
-    const inherited = definitions.definitionReadIn(contextId, name);
+    const inherited = defines ? definitions.definitionReadIn(contextId, name) : undefined;
     if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
     // An enclosing context's asserted equation that defines it by its dotted
     // path (`assert constraint { p.x == 3.0 }` over `part p : P`), read here.
-    const reaching = definitions.reachingAssert(contextId, name);
+    const reaching = defines ? definitions.reachingAssert(contextId, name) : undefined;
     if (reaching !== undefined) {
       const d = definitionOf(model, feature.id, reaching.path, reaching.equations, memo, contextId, inFlight, true);
       note(reads, d);
@@ -2506,10 +2513,10 @@ function definedAt(model: Model, root: ElementId, path: string, memo: Derivation
   if (path.includes('.')) {
     const end = definitions.chainDefinition([root], path);
     const own = end ? definitions.nameOf(end.feature) : undefined;
-    return end && own !== undefined ? derive(end.feature, own, end.site, end.at) : undefined;
+    return end && own !== undefined && !writesStandingDefault(model, end.feature) ? derive(end.feature, own, end.site, end.at) : undefined;
   }
   const feature = definitions.feature(root, path);
-  if (!feature) return undefined;
+  if (!feature || writesStandingDefault(model, feature)) return undefined;
   if (definitions.of(root, path).length > 0) return derive(feature, path, root, root);
   const inherited = definitions.definitionReadIn(root, path);
   return inherited !== undefined ? derive(feature, path, inherited.site, inherited.at) : undefined;

@@ -127,7 +127,8 @@ describe('solve — a relation a usage owns, read otherwise in an instance a bin
   it('reads the goal a context is listed for by a member’s own value alone at its instance, beside the axioms it had', async () => {
     // Q2's K makes Q's asserted L Q2's own 50 (FanS): QB's cq is read in Q2 at Q2's own instance (E7), on
     // every surface. The axioms read in Q2 are the ones filed before (Q2's defL and binding rows, and the
-    // assert those reach).
+    // assert those reach). The binding joins that 50 to P's `load default = 1.0`, which no assertion replaces
+    // (decision 14 amended 2026-10-22): two values, so cq's goal there is not encoded, and not read.
     const { model: m } = await loadModelText(`package FanS {
       part def P { attribute load : ScalarValues::Real default = 1.0; }
       part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
@@ -139,7 +140,16 @@ describe('solve — a relation a usage owns, read otherwise in an instance a bin
     const inQ2 = rows.filter((o) => o.instance?.contextId === m!.all().find((e) => m!.qualifiedName(e.id) === 'FanS::Q2')!.id);
     expect(inQ2.map((o) => [o.element.qualifiedName, o.role, o.encodable])).toEqual([
       ['FanS::Q::defL in FanS::Q2', 'axiom', true],
-      ['FanS::QB::cq in FanS::Q2', 'obligation', true],
+      [
+        'FanS::QB::cq in FanS::Q2',
+        'obligation',
+        {
+          reason: 'unread-definition',
+          detail:
+            'the relation is read in FanS::Q2, and a binding joins what it reads to a value FanS::Q2 reads as its own and to ' +
+            'another value the model states there: this tool reads neither of two values, so it is not carried',
+        },
+      ],
       ['FanS::QB::«BindingConnectorAsUsage» in FanS::Q2', 'axiom', true],
       ['FanS::QB::ca in FanS::Q2', 'axiom', true],
     ]);
@@ -148,7 +158,7 @@ describe('solve — a relation a usage owns, read otherwise in an instance a bin
     const numeric = checkConstraintsNumeric(m!).find((r) => r.id.endsWith(`@${inQ2[0]!.instance!.contextId}`) && r.id.startsWith(
       m!.all().find((e) => m!.qualifiedName(e.id) === 'FanS::QB::cq')!.id,
     ))!;
-    expect(numeric.result).toBe('violated');
+    expect(numeric.result).toBe('unknown');
   });
 
   it('keeps the unit gates on a bound partner whose value it reads in no instance (G271)', async () => {

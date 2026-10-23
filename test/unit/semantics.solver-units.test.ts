@@ -2122,14 +2122,17 @@ describe('a system the check reads one definition at a time is still solved', ()
     expect(checkConstraintsNumeric(m).find((r) => r.name === 'chk')!.result).toBe('satisfied');
   });
 
-  // H5 (plan J decision 14): each `default` gives way to the asserted equation that defines it, so the
-  // chain is the one above — and nothing is derived inside a body's own scope to reach it (F's invariant b).
-  it('solves a chain of defaults, each overridden by a local assert, nested past the cap', () => {
+  // H5 made each `default` give way to the asserted equation that defines it, so the chain was the one above.
+  // Since decision 14 was amended (2026-10-22) no assertion replaces a default: a 70-long chain of asserts
+  // replaces none of them, nothing is derived to reach x70, and each assert is checked against the defaults.
+  it('reads a chain of defaults past the local asserts over them, nested past the cap', () => {
     let body = 'attribute x0 = 1.0;\n';
     for (let i = 1; i <= 70; i++) body += `attribute x${i} default = 0.0; assert constraint d${i} { x${i} == x${i - 1} + 1.0 }\n`;
     const m = parse(`package DeepD { ${body} constraint chk { x70 <= 80.0 } }\n`);
-    expect(solvedOf(m, 'x70')).toBe(71);
-    expect(checkConstraintsNumeric(m).find((r) => r.name === 'chk')!.result).toBe('satisfied');
+    expect(solvedOf(m, 'x70')).toBe(0);
+    const rows = checkConstraintsNumeric(m);
+    expect(rows.find((r) => r.name === 'chk')!.result).toBe('satisfied');
+    expect(rows.filter((r) => /^d\d+$/.test(r.name) && r.result !== 'violated')).toEqual([]);
   });
 });
 

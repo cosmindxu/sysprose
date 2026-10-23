@@ -52,7 +52,7 @@ import {
 } from '@core/index';
 import { isBindingEdge } from './connectors';
 import { readRefusalOf, unreadDependenciesOf, unreadValuesOf, type ReadRefusal } from './evaluate-model';
-import { defaultGivesWay, sharedDefinitions, shadowedNamesOf, shadowedSentence } from './defining-equation';
+import { defaultGivesWay, givenWayUnvalued, isAsserted, sharedDefinitions, shadowedNamesOf, shadowedSentence } from './defining-equation';
 import { evaluate, type ExprNode } from './expr';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import {
@@ -970,6 +970,30 @@ export function gateRelation(
     : undefined;
   if (read) {
     return refused(expression, { reason: READ_REFUSALS[read.reason], detail: read.detail }, null, variables, sortPerVar);
+  }
+  // An asserted relation over a `default` a binding made give way and gives no value is no axiom: no assertion
+  // gives a default a value (decision 14 amended 2026-10-22), and the check, the literal engine and the numeric
+  // surface read none there. Carried, it fixed the symbol, and a goal over it was PROVED on this lane alone.
+  const givenWay =
+    readBy && readBy.binding !== true && isAsserted(readBy.el) && readBy.el.ownerId != null
+      ? pathsOf(node)
+          .filter((p) => !markers.has(p))
+          .map((p) => ({ p, why: givenWayUnvalued(model, readBy.el.ownerId!, p) }))
+          .find((x) => x.why !== undefined)
+      : undefined;
+  if (givenWay) {
+    return refused(
+      expression,
+      {
+        reason: 'unread-definition',
+        detail:
+          `the axiom reads \`${givenWay.p}\`, a \`default\` a binding makes give way and gives no value (${givenWay.why}); no ` +
+          'assertion gives a default a value, so the axiom is not carried',
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
   }
 
   const collection = varIds.find((id) => admitsMany(model.get(id)?.attrs.multiplicity));
