@@ -35,6 +35,95 @@ maintainer says `awaits user decision U<n>` and names the question.
       that a hang keeps the async mutex held until reload is gone (the lock is per module now). Also
       make the soak repeatable from the repository: the header of `test/campaign/z3-soak.soak.ts`
       carries the invocation. [z3-bump, review]
+- [ ] **Decide whether a binding the check reports violated contradicts, for the literal engine, the
+      values it joins.** Q4 covers asserts only, so the literal engine still decides these rows
+      beside SMT X. Re-derived after the seed fix, these files have no violated assert, only a
+      violated binding row (the contradiction of decision 1): AM and AMD ctlF and ctlT; M2a ctlA,
+      negT and posF; M7Y::Q::c (d1plain-own); EB4::P::c and EB4::P::c in Q::p; EB5::P::c, in Q::p
+      and in R::q::p; FanS2::QB::cq; SG2F::u1; SW4B::c3; SRU::kL1; RBB::P::c and RBB::top2;
+      RBL4::t2; T4E c5, cF and cT in both spellings; X3F::P::c; X5::P::c and X5::P::c in Q::p;
+      X6::P::c and X6::P::c in Q::p. Two more rows have no violated row on the check at all, yet SMT
+      reports X: UB6::cT (unit-blind assert) and W4o::c5 (w4-plain). BND and T4C/T4D are no longer
+      on this list. Seeding from violated bind axiom rows would be a few lines in contradictionsOf.
+- [ ] **s type for an instance whose binding sits in an enclosing instance (GI, next to RB5).**
+      Model: part s2 : S { bind q.g = K; } with G's assert constraint ca { g <= 10.0 } and K = 50.
+      The worklist files ca only for S::q and s1::q, so the SMT engine proves GI::t2 and GI::tk
+      (T/X/T/T, cv-gi), while the check reports ca violated in s2::q. The literal engine fails
+      closed there since S1. Done when SMT reads cv-gi's rows inconsistent-axioms and the literal
+      engine places the contradiction instead of reaching every relation.
+- [ ] **s contradiction reach to the instance the violated assert reads.** Since S1, table rows with
+      a decided ref abstain on the literal engine as they do on SMT (T/X/T/X). An assert in one
+      instance reads the symbol shared by every instance it does not tell apart: refute-r1 P::c and
+      q2's p, R1D, Sh7, H1C, H1F2, R1U, Q4B, PIN2/3/5, PA, PA4, PL2/5T/6/7, HQ, HQ2, SFW, N4T, N5,
+      H5B, T4D::c5, SP2::kq and R27F::Q::c. A sum also ties a sibling (CVSIB::tb). Narrowing needs
+      the SMT instance split (plan section 1.5). Done when those rows read their ref on the literal
+      engine and no contradicted row reads decided.
+- [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.** A
+      requirement def with an assert-only body (R1::R), and a requirement usage that writes its own
+      assert (requirement r { subject s : P = x; assert constraint ca { s.L == 50.0 } }), file no
+      requirement row on obligations or verify. obligations.ts adds the owner to withClause, and the
+      no-formal-clause sweep skips it. contracts' emptyClauseLine (scripts/sysprose.ts:1322-1324)
+      prints 'no formal clause: prose only, nothing to encode' for R1::R, R1::r and RU::r.
+      noFormalClauseDetail already names the asserts. When this closes, re-word the USER-GUIDE
+      status-column paragraph to match.
+- [ ] **Decide whether check and numeric also abstain over a contradicted value (ruling wanted).**
+      Under Q4(b) as decided, `check` and the numeric surface still decide rows over a contradicted
+      value (T/X/T/X, F/X/F/X), because the `check` exit code stays; only the two verify engines
+      refuse. If the rule that a row decided on one surface and refused on another is a defect is
+      meant to cover this case, check and numeric must abstain there too, which changes the app's
+      Problems panel. Minor, documented: an obligation whose assumption is false at a contradicted
+      point stays `verification/vacuous-pass`, not `inconsistent-axioms` (both exit 2).
+      [contradicted-value S1]
+- [ ] **Read two asserted equations on the two ends of one binding as one feature's two values.**
+      Since contradicted-value S2, two asserted equations that give one feature with no value two
+      values leave every reading of it undecided (`contradictedDefinitions` in
+      defining-equation.ts), but two on the two ends of one binding are not read as one: in `part
+      def P { attribute L; attribute K; bind L = K; assert constraint cl { L == 50.0 } assert
+      constraint ck { K == 60.0 } }` with `part p : P`, the check reports the `#bind` row violated,
+      yet `t50 { p.L == 50.0 }` reads T/T/?/X and `k50 { p.K == 50.0 }` F/F/?/X, the literal engine
+      exits 1, and the two swap with the values (the SMT engine's axioms are inconsistent; the same
+      at f1f5ca5). Fix: where a binding joins two features of one element, compare the equations of
+      both as one feature's (`joinedTo`), or have a bind conflict decided from two asserted
+      equations seed `contradictedTaint` with both ends; pin it with its twin in the four-surface
+      table. [contradicted-value S2 review, probe rv-s2-correct/v/bnd2-ab.sysml]
+- [ ] **Leave out the value of a feature two asserted equations give two values in every reader of
+      `evaluateFeatureValue`.** contradicted-value S2 takes such a feature out of the check, the
+      literal engine and the numeric surface, and the literal and SMT witnesses print none
+      (`readsContradictedDefinition`), but `evaluateFeatureValue` still returns the first equation
+      written: the FMI export writes it as the variable's `start` (`startOf` in
+      src/interop/fmi/model-description.ts: `reconcile/n-ab.sysml` start 50, `n-ba.sysml` start 60),
+      and `evaluateMoEs` in solver.ts falls back to it. Route both through
+      `readsContradictedDefinition` (no start, no MoE value), then drop the FMI limit sentence from
+      USER-GUIDE's 'Two asserted equations that disagree'. [contradicted-value S2 review]
+- [ ] **Narrow the abstention over two disagreeing asserted equations (optional).**
+      contradicted-value S2 leaves undecided every reading of the feature, in every instance, and
+      every value an asserted relation reads beside it (`contradictedTaint` taints by feature): one
+      equation in P and one in `part p : P { … }` leave p2 : P's L, which P's equation alone
+      defines, undecided (`q5-f1`'s `u50`); `assert constraint { L + N >= K }` leaves K's stated
+      value undecided; and a pair found in P (`L == a * 2.0`, a = 30, beside `L == 50.0`) stays
+      undecided in a usage whose `:>> a = 25.0` makes the two agree. It also abstains where it
+      cannot compare: a bare `L == 50.0` beside `L == 50.0 [kg]` (`q5-unitagree`, T on all four
+      surfaces at f1f5ca5), and a side over a name a binding joins. Sound, but readings are lost.
+      Taint only the instance where they meet, keeping the feature-wide taint where they meet in the
+      feature's owner; read a bare literal in the feature's declared unit. [contradicted-value S2]
+- [ ] **s assert in an instance whose binding gives the value it reads.** Probe
+      contradicted-value-scratch/fix/p/vc.sysml: `part def P { attribute load : Real; assert
+      constraint a2 { load <= 10.0 } }`, `part def Q { attribute L : Real = 50.0; part p : P; bind
+      p.load = L; }`, `part q : Q`, `constraint k { q.L >= 0.0 }`. check files only an info for
+      P::a2 ('evaluated per specialisation: p::load'), so nothing reads a2 violated in q's p. The
+      literal engine says k holds-at-values ('unconditional', exit 0) and SMT proves it (exit 0), on
+      a model that contradicts itself (50 > 10). The four surfaces read T/T/T/T, the same as at
+      f1f5ca5.
+- [ ] **Read apart an undecided asserted-equation pair whose side is read in another element than
+      the one that writes it.** contradictedApart (src/semantics/evaluate-model.ts) judges a side
+      the unit-aware and scalar readings do not read (for example one over a bound name) only where
+      the equation is read in the element that writes it (site.at === owner). Otherwise the pair
+      stays info and `--strict` passes. A side over a value another pair leaves undecided also reads
+      nothing, by design. No probe was written for the first case.
+- [ ] **Say the pair's sentence on the numeric surface.** On the numeric surface a pair's own
+      equation rows keep 'the solve did not converge: L is where it stopped ...' rather than the
+      pair's sentence (`numericRows` in solver.ts); the guide was reworded instead. Optional, low.
+      [contradicted-value review]
 - [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
       the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
       `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
@@ -361,22 +450,6 @@ true values. What follows is what that branch and the review of it left open; en
       `instanceGroups`, `readInContexts` and the obligations lane's `instanceRows` all ask it. A
       failed asserts listing is kept for the revision, so every row abstains until the next edit,
       even after a transient throw. [per-instance-rest S3, A.2.9]
-- [ ] **Mark an obligation over a contradicted value inconclusive, and settle two disagreeing
-      asserted equations.** DECIDED (analysis Q4 and Q5). (1) When an assertion contradicts a value
-      (`=` or a `default`), `verify --engine literal` calls the pass
-      "unconditional" and exits 0, and `check` exits 0 with one warning; only the SMT engine fails
-      (exit 2; `soft-hard-defaults/p2/a1-hard-exit.sysml`). The literal engine marks every
-      obligation over the contradicted values inconclusive (exit 2) and names the violated
-      assertion; the `check` exit code stays. v9 must not move (its blocking gate admits no
-      constraint violation; re-run it). (2) Two asserted equations that give one valueless feature
-      different values are settled by position: the first written, or the local one, wins; swapping
-      them flips `t50` between `T/T/?/X` with literal exit 0 and `F/F/?/X` with exit 1
-      (`reconcile/n-ab.sysml`, `n-ba.sysml`; F1 and M8), and two asserts, one in P and one in `p`,
-      read T with `check` silent. Warn, name both equations, and abstain on every reading of that
-      feature (`=` is order-free). (3) M11: an `assert` inside a requirement def files an abstention
-      sentence beside a decided `t50` `F/F/F/X`. (4) One contradiction makes every SMT row of the
-      file `X`: say so in the guide. Same file as the entry above: run after it. Opus, critical;
-      about 50M. [soft-hard analysis Q4, Q5]
 - [ ] **Say why on an instance row, and through a binding, when a violated assert leaves a default
       standing.** `standingDefaultSentence` is printed only on `check`'s message for a violated
       `assert` that is an equation naming the `default`'s feature alone on one side, in the assert's
@@ -442,7 +515,7 @@ true values. What follows is what that branch and the review of it left open; en
       behaviour, not a change made here. Check whether the binding should be an SMT axiom.
       [default-stands S1] Two more cases: (1) the `=` twin of h5-m3t (`L = 1.0`): the check reports
       `P2::a2 in Q3::p` violated, yet SMT proves `k`, and the literal engine and SMT both exit 0;
-      with `default`, SMT exits 2. (2) The M-generator's `g_assert_*_encl_d{1,2}_pd1_*` and
+      with `default`, SMT exits 2. (Since contradicted-value S1 the literal engine exits 2 on case (1); only the SMT T remains.) (2) The M-generator's `g_assert_*_encl_d{1,2}_pd1_*` and
       `g_assert_*_pkg_d2_*` (12 files) read F/F/F/F with SMT `refuted` on a self-contradictory
       model; the other 68 placements read X.
 - [ ] **Carry no asserted value through a package head's slot into a `default` that gave way to
