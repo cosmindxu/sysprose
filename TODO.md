@@ -45,19 +45,20 @@ maintainer says `awaits user decision U<n>` and names the question.
       X6::P::c and X6::P::c in Q::p. Two more rows have no violated row on the check at all, yet SMT
       reports X: UB6::cT (unit-blind assert) and W4o::c5 (w4-plain). BND and T4C/T4D are no longer
       on this list. Seeding from violated bind axiom rows would be a few lines in contradictionsOf.
-- [ ] **s type for an instance whose binding sits in an enclosing instance (GI, next to RB5).**
-      Model: part s2 : S { bind q.g = K; } with G's assert constraint ca { g <= 10.0 } and K = 50.
-      The worklist files ca only for S::q and s1::q, so the SMT engine proves GI::t2 and GI::tk
-      (T/X/T/T, cv-gi), while the check reports ca violated in s2::q. The literal engine fails
-      closed there since S1. Done when SMT reads cv-gi's rows inconsistent-axioms and the literal
-      engine places the contradiction instead of reaching every relation.
-- [ ] **s contradiction reach to the instance the violated assert reads.** Since S1, table rows with
-      a decided ref abstain on the literal engine as they do on SMT (T/X/T/X). An assert in one
-      instance reads the symbol shared by every instance it does not tell apart: refute-r1 P::c and
-      q2's p, R1D, Sh7, H1C, H1F2, R1U, Q4B, PIN2/3/5, PA, PA4, PL2/5T/6/7, HQ, HQ2, SFW, N4T, N5,
-      H5B, T4D::c5, SP2::kq and R27F::Q::c. A sum also ties a sibling (CVSIB::tb). Narrowing needs
-      the SMT instance split (plan section 1.5). Done when those rows read their ref on the literal
-      engine and no contradicted row reads decided.
+- [ ] **File the assert of a bound feature's type for an instance whose binding sits in an enclosing
+      instance (GI, next to RB5).** Model: part s2 : S { bind q.g = K; } with G's assert constraint
+      ca { g <= 10.0 } and K = 50. The worklist files ca only for S::q and s1::q, so the SMT engine
+      proves GI::t2 and GI::tk (T/X/T/T, cv-gi), while the check reports ca violated in s2::q. The
+      literal engine fails closed there since S1. Done when SMT reads cv-gi's rows
+      inconsistent-axioms and the literal engine places the contradiction instead of reaching every
+      relation.
+- [ ] **Narrow the literal engine's contradiction reach to the instance the violated assert reads.**
+      Since S1, table rows with a decided ref abstain on the literal engine as they do on SMT
+      (T/X/T/X). An assert in one instance reads the symbol shared by every instance it does not
+      tell apart: refute-r1 P::c and q2's p, R1D, Sh7, H1C, H1F2, R1U, Q4B, PIN2/3/5, PA, PA4,
+      PL2/5T/6/7, HQ, HQ2, SFW, N4T, N5, H5B, T4D::c5, SP2::kq and R27F::Q::c. A sum also ties a
+      sibling (CVSIB::tb). Narrowing needs the SMT instance split (plan section 1.5). Done when
+      those rows read their ref on the literal engine and no contradicted row reads decided.
 - [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.** A
       requirement def with an assert-only body (R1::R), and a requirement usage that writes its own
       assert (requirement r { subject s : P = x; assert constraint ca { s.L == 50.0 } }), file no
@@ -98,7 +99,7 @@ maintainer says `awaits user decision U<n>` and names the question.
       surfaces at f1f5ca5), and a side over a name a binding joins. Sound, but readings are lost.
       Taint only the instance where they meet, keeping the feature-wide taint where they meet in the
       feature's owner; read a bare literal in the feature's declared unit. [contradicted-value S2]
-- [ ] **s assert in an instance whose binding gives the value it reads.** Probe
+- [ ] **Read a definition's assert in an instance whose binding gives the value it reads.** Probe
       contradicted-value-scratch/fix/p/vc.sysml: `part def P { attribute load : Real; assert
       constraint a2 { load <= 10.0 } }`, `part def Q { attribute L : Real = 50.0; part p : P; bind
       p.load = L; }`, `part q : Q`, `constraint k { q.L >= 0.0 }`. check files only an info for
@@ -129,26 +130,26 @@ maintainer says `awaits user decision U<n>` and names the question.
       here` with the copyable command.
 - [ ] **Hold the same timeout floor on the hooks of the differential table.** The budget-aware guard
       `ui-small` S5 added covers `test/campaign/verification.test.ts`. The two `beforeAll` hooks of
-      `test/integration/verification.differential.test.ts` (600_000 and 1_800_000 ms) drive z3 across
-      the whole corpus, and the `withZ3` wrappers of that file and of `smt-z3.integration` refuse only
-      a timeout under 40 s at declaration time; neither file has a counter-backed last case. A shared
-      helper over `z3BudgetWatch()` would cover them. [ui-small S5, review]
+      `test/integration/verification.differential.test.ts` (600_000 and 1_800_000 ms) drive z3
+      across the whole corpus, and the `withZ3` wrappers of that file and of `smt-z3.integration`
+      refuse only a timeout under 40 s at declaration time; neither file has a counter-backed last
+      case. A shared helper over `z3BudgetWatch()` would cover them. [ui-small S5, review]
 - [ ] **Decide whether a collaboration room's copy counts as saved for the tab's close question
       (optional).** Since `ui-small` S1 the tab asks before closing over text or boxes not saved
-      (`askBeforeLeaving`, `leaveUnsaved`). In a collaboration room a peer's edit makes the text read
-      unsaved while the relay and y-indexeddb hold the room's copy, so every collaborator gets the
-      question on close. It only errs toward asking. Decide whether the room's copy counts as saved.
-      [ui-small S1, review]
+      (`askBeforeLeaving`, `leaveUnsaved`). In a collaboration room a peer's edit makes the text
+      read unsaved while the relay and y-indexeddb hold the room's copy, so every collaborator gets
+      the question on close. It only errs toward asking. Decide whether the room's copy counts as
+      saved. [ui-small S1, review]
 - [ ] **Give the focus somewhere safe when the Requirements table's reference picker closes.** Since
       `ui-small` S2 `Escape` in the Explorer's rename, the context menu's and a Requirements cell
       leaves the focus on Save (`cancelAndFocusSave`, `src/ui/commands.ts`). `Escape` in the picker
-      (`req-ref-picker`) and `Enter` on a candidate close it with the focus dropped to the page, and a
-      pick selects the requirement row, so the next `Backspace` deletes the requirement just linked.
-      Route the keydown paths (not the blur, which cancels) through `cancelAndFocusSave` /
+      (`req-ref-picker`) and `Enter` on a candidate close it with the focus dropped to the page, and
+      a pick selects the requirement row, so the next `Backspace` deletes the requirement just
+      linked. Route the keydown paths (not the blur, which cancels) through `cancelAndFocusSave` /
       `commitAndFocusSave`. Check the Regroup view's bundle-label and port-name boxes
       (`RegroupView.tsx`, the Enter and Escape handlers that call `blur()`), which from code reading
-      also leave the focus on the page. Done when `Escape` and `Enter` in the picker leave a following
-      `Backspace` harmless, with a test. [ui-small S2, review]
+      also leave the focus on the page. Done when `Escape` and `Enter` in the picker leave a
+      following `Backspace` harmless, with a test. [ui-small S2, review]
 - [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
       checks in the page behind a queue and a mutex. Left: Cancel drops the answer but cannot stop
       z3, so the check ends at its own time budget and a Run started meanwhile queues behind it; a
@@ -270,13 +271,6 @@ headings.
       a part or a structured value; (3) a `satisfy R by p1` beside `requirement r1 : R { subject s
       = p1; }`, where both subjects stand for one instance: r1's literal and SMT rows abstain with
       "the numeric surface never gathered this relation" (SAT2). [O9 S1]
-- [ ] **Abstain on a self-contradictory model, or keep the pin.** LE (`P::c` and `P::c in Q::p`) and
-      K1T (`P::c in K1T::q3::p`, which abstained at aac38fd and which `readAt` now decides) read
-      T/T/T/X: true where they are read (x reads its `default = 2.0` there, which P's `own { x == 3.0 }` and q1's tie are both checked against), beside a whole-model contradiction the SMT
-      reports. Ruled at the merge: a permanent `I7_ALLOWED` pin with the LE wording, as for R8. The
-      alternative is to abstain on every row of a model the enclosing rule finds contradictory (or
-      where an element's assert gives the feature two values anywhere in the group). Optional.
-      [O9 S2, ruling]
 - [ ] **Name an unnamed nested redefinition's context row alike on every surface.** A context that
       is an unnamed redefinition is named `... in q::«PartUsage»` by the check and numeric surfaces
       and `... in q::r` / `q::p` by the literal and SMT engines (RF, RF2, RF3, CI1; the new
@@ -507,7 +501,8 @@ true values. What follows is what that branch and the review of it left open; en
       behaviour, not a change made here. Check whether the binding should be an SMT axiom.
       [default-stands S1] Two more cases: (1) the `=` twin of h5-m3t (`L = 1.0`): the check reports
       `P2::a2 in Q3::p` violated, yet SMT proves `k`, and the literal engine and SMT both exit 0;
-      with `default`, SMT exits 2. (Since contradicted-value S1 the literal engine exits 2 on case (1); only the SMT T remains.) (2) The M-generator's `g_assert_*_encl_d{1,2}_pd1_*` and
+      with `default`, SMT exits 2. (Since contradicted-value S1 the literal engine exits 2 on case
+      (1); only the SMT T remains.) (2) The M-generator's `g_assert_*_encl_d{1,2}_pd1_*` and
       `g_assert_*_pkg_d2_*` (12 files) read F/F/F/F with SMT `refuted` on a self-contradictory
       model; the other 68 placements read X.
 - [ ] **Carry no asserted value through a package head's slot into a `default` that gave way to
@@ -622,8 +617,9 @@ true values. What follows is what that branch and the review of it left open; en
       meaning in the standard (KerML 7.4.13), so a tool without the tag reads the value as hard; it
       must (M1-M5) gate both index builders and the binding route, be inherited by a redefinition
       that does not repeat it with an explicit opt-out (Q6 = inherited), be identified by its
-      package (ask `hasKeyword` for its qualified name, as `#exceptional` is since small-defaults S3), and be read in every `@`, `#` and `about` form. v9 and the
-      six Sysprose examples use no `default`. Opus; about 45M. [soft-hard analysis Q2, Q3, Q6]
+      package (ask `hasKeyword` for its qualified name, as `#exceptional` is since small-defaults
+      S3), and be read in every `@`, `#` and `about` form. v9 and the six Sysprose examples use no
+      `default`. Opus; about 45M. [soft-hard analysis Q2, Q3, Q6]
 - [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations --element`
       (and the app's scoped checks) filters by the relation's own element only (`scopeFilter` in
       `obligations.ts`), so a relation read per instance in the scoped element lists none of its
@@ -657,14 +653,15 @@ true values. What follows is what that branch and the review of it left open; en
       extra = 20.0; }` under `load + extra <= 10.0`) the finding points at `:>> L = 2.0` and names
       `load = 2`, though putting load back to 1 still misses (1 + 20 > 10) and `extra = 20.0` breaks
       it. Pinned in the PI-2 S1 test (G5) as the current, honest behaviour.
-- [ ] **Say when a Save applies typed text over a field's change in the two cases that stay silent.**
-      The in-browser Save, the offline Save and Export say so since `ui-small` S3 (`fieldOverTyped`,
-      `over-changes`). (1) A Save to an attached Google Drive file with unsaved changes (`runSave`
-      then `driveSave`, `payloadNow`) applies the text over a change `typedTextFirst` kept back and the
-      strip says nothing: it needs a Drive-strip message that survives the save's own notice. (2) The
-      guard's Save (`saveBeforeReplacing`, the Save and continue of New, Open, Import, Switch branch,
-      Merge or Join room) does the same and says nothing, because the guarded command replaces the
-      model next: it needs a sentence that does not promise one Undo (it takes two). [ui-small S3]
+- [ ] **Say when a Save applies typed text over a field's change in the two cases that stay
+      silent.** The in-browser Save, the offline Save and Export say so since `ui-small` S3
+      (`fieldOverTyped`, `over-changes`). (1) A Save to an attached Google Drive file with unsaved
+      changes (`runSave` then `driveSave`, `payloadNow`) applies the text over a change
+      `typedTextFirst` kept back and the strip says nothing: it needs a Drive-strip message that
+      survives the save's own notice. (2) The guard's Save (`saveBeforeReplacing`, the Save and
+      continue of New, Open, Import, Switch branch, Merge or Join room) does the same and says
+      nothing, because the guarded command replaces the model next: it needs a sentence that does
+      not promise one Undo (it takes two). [ui-small S3]
 - [ ] **Keep the project's name across an undo of an apply.** `undo` and `redo` (`src/ui/store.ts`)
       re-derive `projectName` from the first package (`deriveProjectName`). After a package rename,
       or after an Undo of a Save's apply, the next Save writes another project and can overwrite a
@@ -672,83 +669,84 @@ true values. What follows is what that branch and the review of it left open; en
       typed text, a field change, Save, Undo, Save leaves the open project holding the text-only
       version and writes the other project. The S3 note now invites the Undo. Optional one-line fix:
       keep `projectName` across undo and redo of an apply. [ui-small S3, review]
-- [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small` S4
-      an edit's recompute yields to the page between its steps (`recomputeSteps`), but three tasks
-      stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root in a
-      single pass: 40 to 90 ms at load about 4, up to about 180 ms at load 25. The edit's own task
-      (the undo snapshot `model.toJSONWhere` plus the SDK update) takes 54 to 109 ms warm, up to about
-      296 ms at load 25, and 238 ms on the session's first edit when cold. The last step (the results
-      set plus the synchronous `buildDiagram`) takes 90 to 156 ms at load 25. Fix: a step-wise
-      serializer, or moving the undo snapshot and the diagram build apart. Not done by design:
-      incremental validation (unsound for cross-element rules) and the text in a worker (a model
-      transfer per edit costs about what the write does). Done when no task of an edit and its
+- [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small`
+      S4 an edit's recompute yields to the page between its steps (`recomputeSteps`), but three
+      tasks stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root
+      in a single pass: 40 to 90 ms at load about 4, up to about 180 ms at load 25. The edit's own
+      task (the undo snapshot `model.toJSONWhere` plus the SDK update) takes 54 to 109 ms warm, up
+      to about 296 ms at load 25, and 238 ms on the session's first edit when cold. The last step
+      (the results set plus the synchronous `buildDiagram`) takes 90 to 156 ms at load 25. Fix: a
+      step-wise serializer, or moving the undo snapshot and the diagram build apart. Not done by
+      design: incremental validation (unsound for cross-element rules) and the text in a worker (a
+      model transfer per edit costs about what the write does). Done when no task of an edit and its
       recompute is over 200 ms at load 25. The `palette-checks` step 4 bound (200 ms) has a thin
       margin on slower CI cores: if the first CI run is red, make the assertion relative. [ui-small
       S4, review 2026-10-14 D-3]
-- [ ] **List what a load binds later in the order a terminal binds it, on the page and on every peer of
-      a room.** After an edit the page lists the user's declarations in the order the text gives them
-      (`Model.adoptSerialOrder`, `src/core/model.ts`), and each owner's children come in one order on
-      every peer of a room (`src/collab/model-doc.ts`). But a typing, specialisation, redefinition or
-      implicit feature keeps its place among the others: one made in the app (Properties' Type field, a
-      line drawn with the palette) is listed after every one the model had; one whose element a drag
-      puts elsewhere in the text, or that a project, model JSON or branch stored in another order,
-      stays where it was. A terminal over the saved text binds them in the order their declarations
-      come. In a room, a peer that joins lists them in the order the room's document lists its keys,
-      and a peer present after a reset (Apply, Import, Undo, Redo) keeps them where it had them. So a
-      check that goes by them (`where-used` over a definition) can list its rows in another order than
-      a terminal, and than another peer. Probes: (a) `package X { part def D { attribute a = 1;
-      constraint c { a <= 0 } } part u1; part u2 : D; }`, type `u1` as `D` in Properties: the page
-      gives u2, u1 and a terminal u1, u2; (b) `package X { part def D {...} package A { part u1 : D; }
-      package B { part u2 : D; } }`, drag A out and back in: the page gives [u1, u2] and a terminal
-      [u2, u1], and the same after the stored project is reopened (the same at 87e8c0f). Fix: list
-      them in the order the parser's binding pass makes them (`:>`-family first, then `:` typings, then
-      connector chains, each in the order of their declarations), measured to leave every load where it
-      is, or order such rows by the text; carry that order in the room's document too. Done when the
-      probes' page, terminal and peer rows come in one order. [review 2026-10-14 D-1, collab-order]
-- [ ] **Resolve two peers' moves that hold two elements in each other.** In a collaboration room, two
-      peers who at the same moment each move one of two elements into the other (`X` into `Y` on one
-      peer, `Y` into `X` on the other) leave the room's document holding `X` under `Y` and `Y` under
-      `X`. Each peer refuses the move that would close the cycle (`Model.reparent`,
-      `reconcileModelFromDoc` in `src/collab/model-doc.ts`): one holds `X` under `Y` with `Y` at the top
-      level, the other `Y` under `X` with `X` at the top level. A page that joins as the app joins
-      (`connectCollab`: its own model bound to a new document, then the room synced in) holds the pair
-      as one of the two does. A model bound to a document that already holds the room (the API's
-      `bindModelToDoc`, through `serializeFromDoc`) holds each under the other, reachable from no root:
-      neither shows in its tree, and its text drops both and all they hold. Moving either element
-      again does not end it: the peer that refused keeps its own reading, because its own edit is never
-      taken back in from the document. An Apply, Import, Undo or Redo by any peer brings every peer to
-      that peer's tree (USER-GUIDE section 9 states it). Fix: break such a cycle the same way on every
-      peer and on a join, for instance by putting the member with the lowest id at the top level. Done
-      when both peers, a page that joins and a model bound to the room's document hold the pair alike,
-      both in the tree. [collab-order S2]
-- [ ] **Keep the collaboration relay up on a model with the full library.** `scripts/collab-server.ts`
-      caps a message at 10 MiB and sets no `error` handler on a socket, so a larger message kills the
-      relay process (`RangeError: Max payload size exceeded`, an unhandled `error` event) and drops
-      every room on it. A peer's first message carries the whole document, standard library included.
-      For the drone-swarm v9 model that is 10,769,168 bytes at 87e8c0f and 10,845,744 bytes with the
-      places `collab-order` adds; a probe on a scratch port confirmed that a v9 room kills the relay.
-      The app's sample model with the library is 9,799,148 bytes, about 686 KB under the cap, which is
-      why the children of the library's owners get no place until one of them moves. Fix: on a socket
-      error close only the offending connection, and keep the standard library out of the room's
-      document (every peer loads it), or raise the cap, or split the message. Done when a room over v9
-      syncs between two pages (E2E). USER-GUIDE section 9 states the limit. Pre-existing. [collab-order
-      S2]
-- [ ] **Make a reset in a collaboration room cost what it changes (optional, measure first).** An Undo,
-      Redo, Apply or Import in a room clears the room's document and writes every element again,
-      library included. On v9 with its library, the editing peer's reseed plus one other peer's
-      reconcile take about 28 to 30 s in node on a quiet machine (80 to 100 s at load 30 to 35), at
-      87e8c0f and at `collab-order` alike. The whole document goes as one message, which runs into the
-      relay cap above. Fix: write only what the reset changed (a diff of the snapshot against the
-      document), with the library kept out. Pre-existing. [collab-order S2]
+- [ ] **List what a load binds later in the order a terminal binds it, on the page and on every peer
+      of a room.** After an edit the page lists the user's declarations in the order the text gives
+      them (`Model.adoptSerialOrder`, `src/core/model.ts`), and each owner's children come in one
+      order on every peer of a room (`src/collab/model-doc.ts`). But a typing, specialisation,
+      redefinition or implicit feature keeps its place among the others: one made in the app
+      (Properties' Type field, a line drawn with the palette) is listed after every one the model
+      had; one whose element a drag puts elsewhere in the text, or that a project, model JSON or
+      branch stored in another order, stays where it was. A terminal over the saved text binds them
+      in the order their declarations come. In a room, a peer that joins lists them in the order the
+      room's document lists its keys, and a peer present after a reset (Apply, Import, Undo, Redo)
+      keeps them where it had them. So a check that goes by them (`where-used` over a definition)
+      can list its rows in another order than a terminal, and than another peer. Probes: (a)
+      `package X { part def D { attribute a = 1; constraint c { a <= 0 } } part u1; part u2 : D; }`,
+      type `u1` as `D` in Properties: the page gives u2, u1 and a terminal u1, u2; (b) `package X {
+      part def D {...} package A { part u1 : D; } package B { part u2 : D; } }`, drag A out and back
+      in: the page gives [u1, u2] and a terminal [u2, u1], and the same after the stored project is
+      reopened (the same at 87e8c0f). Fix: list them in the order the parser's binding pass makes
+      them (`:>`-family first, then `:` typings, then connector chains, each in the order of their
+      declarations), measured to leave every load where it is, or order such rows by the text; carry
+      that order in the room's document too. Done when the probes' page, terminal and peer rows come
+      in one order. [review 2026-10-14 D-1, collab-order]
+- [ ] **Resolve two peers' moves that hold two elements in each other.** In a collaboration room,
+      two peers who at the same moment each move one of two elements into the other (`X` into `Y` on
+      one peer, `Y` into `X` on the other) leave the room's document holding `X` under `Y` and `Y`
+      under `X`. Each peer refuses the move that would close the cycle (`Model.reparent`,
+      `reconcileModelFromDoc` in `src/collab/model-doc.ts`): one holds `X` under `Y` with `Y` at the
+      top level, the other `Y` under `X` with `X` at the top level. A page that joins as the app
+      joins (`connectCollab`: its own model bound to a new document, then the room synced in) holds
+      the pair as one of the two does. A model bound to a document that already holds the room (the
+      API's `bindModelToDoc`, through `serializeFromDoc`) holds each under the other, reachable from
+      no root: neither shows in its tree, and its text drops both and all they hold. Moving either
+      element again does not end it: the peer that refused keeps its own reading, because its own
+      edit is never taken back in from the document. An Apply, Import, Undo or Redo by any peer
+      brings every peer to that peer's tree (USER-GUIDE section 9 states it). Fix: break such a
+      cycle the same way on every peer and on a join, for instance by putting the member with the
+      lowest id at the top level. Done when both peers, a page that joins and a model bound to the
+      room's document hold the pair alike, both in the tree. [collab-order S2]
+- [ ] **Keep the collaboration relay up on a model with the full library.**
+      `scripts/collab-server.ts` caps a message at 10 MiB and sets no `error` handler on a socket,
+      so a larger message kills the relay process (`RangeError: Max payload size exceeded`, an
+      unhandled `error` event) and drops every room on it. A peer's first message carries the whole
+      document, standard library included. For the drone-swarm v9 model that is 10,769,168 bytes at
+      87e8c0f and 10,845,744 bytes with the places `collab-order` adds; a probe on a scratch port
+      confirmed that a v9 room kills the relay. The app's sample model with the library is 9,799,148
+      bytes, about 686 KB under the cap, which is why the children of the library's owners get no
+      place until one of them moves. Fix: on a socket error close only the offending connection, and
+      keep the standard library out of the room's document (every peer loads it), or raise the cap,
+      or split the message. Done when a room over v9 syncs between two pages (E2E). USER-GUIDE
+      section 9 states the limit. Pre-existing. [collab-order S2]
+- [ ] **Make a reset in a collaboration room cost what it changes (optional, measure first).** An
+      Undo, Redo, Apply or Import in a room clears the room's document and writes every element
+      again, library included. On v9 with its library, the editing peer's reseed plus one other
+      peer's reconcile take about 28 to 30 s in node on a quiet machine (80 to 100 s at load 30 to
+      35), at 87e8c0f and at `collab-order` alike. The whole document goes as one message, which
+      runs into the relay cap above. Fix: write only what the reset changed (a diff of the snapshot
+      against the document), with the library kept out. Pre-existing. [collab-order S2]
 - [ ] **Save a binding to an unnamed redefinition under a name a terminal can read.** Save writes a
       binding whose end is an anonymous redefinition by a placeholder name: for the verdict-corpus
       model `07f3a4f30d1d-d4-usage-redef-default-bound`, `part p : P { attribute :>> load default =
       30.0; } bind p.load = L;` is saved as `bind D4::Q::p::«AttributeUsage» = L;`, which a terminal
-      reads back as `Connector ... has 1 endpoint(s)`. In `r14-bind` and `r14-bind-dflt` the constraint
-      over it then abstains for another reason ("w has no value anywhere" instead of "cannot be
-      derived: ... contradicts ..."), and `k4a-contra-units-same-number` shows the same pattern. The
-      page and a terminal over the original text agree, and every verdict seen abstains, so no false
-      verdict was found. Pre-existing at 87e8c0f. [collab-order S1]
+      reads back as `Connector ... has 1 endpoint(s)`. In `r14-bind` and `r14-bind-dflt` the
+      constraint over it then abstains for another reason ("w has no value anywhere" instead of
+      "cannot be derived: ... contradicts ..."), and `k4a-contra-units-same-number` shows the same
+      pattern. The page and a terminal over the original text agree, and every verdict seen
+      abstains, so no false verdict was found. Pre-existing at 87e8c0f. [collab-order S1]
 
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
@@ -757,18 +755,18 @@ merge. The branch `behaviour-sound` (merged by `e0d8040`) closed the completion 
 `state def`, the method text and the completion livelock (C1, H2, C3, H1, M3, M1, U1); the entries
 tagged `[O1 …]` are what its steps and reviews left open.
 
-- [ ] **Walk a step written over inherited states.** Since `e0d8040` a control edge written outside a
-      machine's region that touches one of its states refuses the machine (`machine-boundary`,
+- [ ] **Walk a step written over inherited states.** Since `e0d8040` a control edge written outside
+      a machine's region that touches one of its states refuses the machine (`machine-boundary`,
       `docs/06` §8.6). A specialisation that adds a step over inherited states (`package W2 { state
       def Base { state a; state b; state c; transition ab first a accept go then b; } state def
       Derived :> Base { transition bc first b accept more then c; } }`), or a typed usage that does,
-      therefore refuses both `Base` and `Derived`, where `5943654` walked `Base` alone. Fail-closed by
-      design. Fix: a reading that walks the two together. [O1 S3]
+      therefore refuses both `Base` and `Derived`, where `5943654` walked `Base` alone. Fail-closed
+      by design. Fix: a reading that walks the two together. [O1 S3]
 - [ ] **Compare the stack in the witness replay, not only the leaf (optional).** `replayWitness`
       (`src/semantics/mc/patterns.ts`) compares each step's resting leaf. The interpreter does not
-      expose its stack: `activeStates` is the final leaves, and `visited` records what a step enters,
-      never what it exits, so a stack rebuilt from them cannot catch a state the walk keeps and the
-      interpreter left. Fix: `runHierRegion` records each fire's active stack (an optional
+      expose its stack: `activeStates` is the final leaves, and `visited` records what a step
+      enters, never what it exits, so a stack rebuilt from them cannot catch a state the walk keeps
+      and the interpreter left. Fix: `runHierRegion` records each fire's active stack (an optional
       `StateFire.stack`, which moves `executionReport`'s payload), and the replay compares it with
       the trace's `stack`. The differential CASES' three flat-path machines catch such a split
       today. [O8 S1, review; behaviour-rest S2]
@@ -781,13 +779,13 @@ tagged `[O1 …]` are what its steps and reviews left open.
       search still refuses the step past the budget (`completion`, inconclusive). Done when such a
       search carries the chase position and offers the clock advance where a chase stops, or the
       refusal is documented as permanent. [behaviour-rest S1]
-- [ ] **Say in the bounds sentence that `maxDepth` counts events (optional).** Since `behaviour-rest`
-      S1 the depth bound counts the events a run takes from the opening, not its steps
-      (`DEFAULT_MAX_DEPTH`, docs/06 §8.12), while the `depth` figure beside it still counts steps,
-      so `reach` can print `depth 260` beside `maxDepth 200` (four stacked completion cycles). The
-      guide and the code say so; the printed bounds sentence does not. Rewording it (for example
-      `maxDepth 200 events`) re-records every qualification string in every report and pin, so it
-      is its own step, with the corpus diff named. [behaviour-rest S1]
+- [ ] **Say in the bounds sentence that `maxDepth` counts events (optional).** Since
+      `behaviour-rest` S1 the depth bound counts the events a run takes from the opening, not its
+      steps (`DEFAULT_MAX_DEPTH`, docs/06 §8.12), while the `depth` figure beside it still counts
+      steps, so `reach` can print `depth 260` beside `maxDepth 200` (four stacked completion
+      cycles). The guide and the code say so; the printed bounds sentence does not. Rewording it
+      (for example `maxDepth 200 events`) re-records every qualification string in every report and
+      pin, so it is its own step, with the corpus diff named. [behaviour-rest S1]
 - [ ] **Name every region's refusal on a parallel machine (optional).** Since `behaviour-rest` S1 a
       step into the machine's root or under an action stops only the region it came in on a
       parallel machine (`attrs.parallel`, API only; `refusedStepSentence`, `SimRefusal.stopsRun`),
@@ -831,21 +829,6 @@ code or value changed, and the claimed gains reproduce. These three are what it 
 
 User guide and tutorials that are wrong, and what waits on something outside the code.
 
-- [ ] **Re-record tutorials 1, 3, 4 and 5 and correct the caption that is false.** The workflow
-      repo's tutorials were recorded on Sysprose 8581721; the site pins 5943654, where the hub-led
-      layout (d60cd5d) and the column-header band (ea0d807) changed the views they show.
-      `docs/tutorials/scenarios/3-oa.json:48` and `3-oa.vtt:16` say memberA's 14 activities are "on
-      its left"; the live OA view draws all 14 to the right of the hub. Videos 1 and 4 also say
-      "left to right" (`1-start-here.json:187`, `4-sa.json:36`) and video 1 "Fit shrinks them to
-      specks" (`:108`). The same words stand in `3-oa.json:39` ("read left to right") and
-      `5-la.json:39` ("left to right"), which the review did not flag: OA and LA are hub-led views
-      too, so read them against the new stills and change them if they no longer hold. Videos 2, 6
-      and 7 are unaffected. Fix `3-oa.json` cue 3 first, build at the pin and copy the v9 model
-      into `dist/model`, record 1, 3, 4 and 5 with `scripts/record-tutorial.mjs`, review a contact
-      sheet of every still (the header band, the hub-led OA, SA and LA, the `check` producer chip
-      in video 5), run `make-page.py` and check the live site. Done when the four videos and their
-      captions match the app at the pin. [review 2026-10-14 D-6] Awaits user decision U9
-      (re-record at the pin bump after the behaviour fix, or once after H5).
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
       groups.** The rule (`src/validation/rules.ts:1096`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
