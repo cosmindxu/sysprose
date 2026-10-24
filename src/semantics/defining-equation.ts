@@ -3612,6 +3612,16 @@ export function hasStatedValue(model: Model, f: ElementRecord): boolean {
 }
 
 /**
+ * Does `f` state a value of its own — one written with `=` or as a `default`, on it or on a feature it redefines
+ * ({@link hasStatedValue})? Such a feature is checked against, whatever its asserted equations: two that define
+ * it are no pair ({@link contradictedDefinitions}), and no value they leave undecided taints it but through its
+ * own value expression ({@link spreadContradiction}).
+ */
+export function statesOwnValue(model: Model, f: ElementRecord): boolean {
+  return hasStatedValue(model, f) || [f, ...redefinedClosure(model, f)].some((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+}
+
+/**
  * The ends of the model's binding connectors, and the features whose
  * `default` gives way to one ({@link heldDefaults}), once per model revision.
  */
@@ -4401,13 +4411,17 @@ function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
  * into; {@link contradictedTaint}'s values are attributes, whose holders carry none); every feature whose value
  * reads through one; the first link of each name an asserted relation reads beside one (`sources` aside: an
  * asserted equation that is a source itself taints what it names); what redefines or subsets one; an equated part
- * whose partner is one; and a `satisfy` of one.
+ * whose partner is one; and a `satisfy` of one. With `stated`, neither the binding step nor the asserted-relation
+ * step taints an element `stated` holds (a feature that states its own value, {@link spreadContradiction}), and the
+ * asserted-relation step taints the feature each name denotes, not its first link, where the name is dotted and
+ * that feature is one: a part above it holds features that state their own values.
  */
 function spreadTaint(
   model: Model,
   sources: ReadonlySet<ElementId>,
   seed: (add: (e: ElementRecord, b: ElementRecord, holder?: ElementId) => void) => void,
   holders = true,
+  stated?: (e: ElementRecord) => boolean,
 ): Map<ElementId, ElementRecord> {
   const parts = equatedParts(model);
   const taint = new Map<ElementId, ElementRecord>();
@@ -4440,7 +4454,7 @@ function spreadTaint(
       const hit = ends
         .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
         .find((x) => x !== undefined);
-      if (hit) for (const e of ends) add(e, hit, holders ? b.ownerId! : undefined);
+      if (hit) for (const e of ends) if (!stated?.(e)) add(e, hit, holders ? b.ownerId! : undefined);
     }
     for (const f of valued) {
       const hit = namesOfValue(f.attrs.value as string)
@@ -4457,8 +4471,16 @@ function spreadTaint(
       for (const n of names) {
         const head = n.split('.')[0]!;
         for (const r of roots) {
+          if (stated) {
+            const whole = defs.denote(r).get(n)?.feature;
+            if (whole && stated(whole)) continue;
+            if (whole && n.includes('.')) {
+              add(whole, hit);
+              continue;
+            }
+          }
           const d = defs.denote(r).get(head);
-          if (d) add(d.feature, hit);
+          if (d && !stated?.(d.feature)) add(d.feature, hit);
         }
       }
     }
@@ -4990,6 +5012,12 @@ export interface ContradictedDefinition {
   why?: 'unit' | 'names' | 'form';
   /** The features no reading of which is decided: that feature, and the one each equation names where it is written. */
   features: readonly ElementRecord[];
+  /**
+   * Where each equation's defining side is read, in the order of `equations`: the element its names are read in,
+   * the name it defines as written from there, and the feature that name denotes there. An `undecided` set is
+   * read there by the check's own evaluator (`definitionConflicts` of ./evaluate-model).
+   */
+  sites: ReadonlyArray<{ equation: DefiningEquation; at: ElementId; name: string; feature: ElementRecord }>;
 }
 
 /** {@link contradictedDefinitions}' entry, once per revision. */
@@ -5000,6 +5028,8 @@ interface ContradictedDefinitions {
   bySource: ReadonlyMap<ElementId, ContradictedDefinition>;
   /** {@link contradictedTaint}, built on first ask. */
   taint?: ReadonlyMap<ElementId, ElementRecord>;
+  /** {@link contradictedTaint} of each set alone, built on first ask ({@link contradictedSideReadsAnother}). */
+  taintOf?: Map<ContradictedDefinition, ReadonlyMap<ElementId, ElementRecord>>;
   /** Set where listing them threw (A.2.9): the sentence every row that reads a name abstains in. */
   failed?: string;
 }
@@ -5112,8 +5142,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       }
     }
   }
-  const statesValue = (f: ElementRecord): boolean =>
-    hasStatedValue(model, f) || [f, ...redefinedClosure(model, f)].some((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+  const statesValue = (f: ElementRecord): boolean => statesOwnValue(model, f);
   const slots = new Map<ElementId, ReadonlySet<ElementId>>();
   const slotOf = (f: ElementRecord): ReadonlySet<ElementId> => {
     let hit = slots.get(f.id);
@@ -5131,15 +5160,16 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
    * element nested in one of them whose name resolves to the feature there, read where it is written. Each must
    * name `feature`, or a feature that shares with it one they override ({@link overriddenBy}).
    */
-  const gather = (x: ElementRecord, path: string, feature: ElementRecord): Array<{ eq: DefiningEquation; named: ElementRecord; at: ElementId }> => {
-    const out: Array<{ eq: DefiningEquation; named: ElementRecord; at: ElementId }> = [];
-    const push = (eq: DefiningEquation, f: ElementRecord | undefined, at: ElementId): void => {
+  type Gathered = { eq: DefiningEquation; named: ElementRecord; at: ElementId; name: string; readAs: ElementRecord };
+  const gather = (x: ElementRecord, path: string, feature: ElementRecord): Gathered[] => {
+    const out: Gathered[] = [];
+    const push = (eq: DefiningEquation, f: ElementRecord | undefined, at: ElementId, name: string): void => {
       if (out.some((c) => c.eq.constraint.id === eq.constraint.id)) return;
-      if (f && sameSlot(feature, f)) out.push({ eq, named: f, at });
+      if (f && sameSlot(feature, f)) out.push({ eq, named: f, at, name, readAs: named(at, name) ?? f });
     };
     const take = (owner: ElementRecord, name: string, at: ElementId): void => {
-      for (const eq of byOwner.get(owner.id)?.get(name) ?? []) push(eq, named(owner.id, name), at);
-      for (const l of lexical.get(owner.id)?.get(name) ?? []) push(l.eq, l.named, l.eq.constraint.ownerId!);
+      for (const eq of byOwner.get(owner.id)?.get(name) ?? []) push(eq, named(owner.id, name), at, name);
+      for (const l of lexical.get(owner.id)?.get(name) ?? []) push(l.eq, l.named, l.eq.constraint.ownerId!, name);
     };
     for (const y of [x, ...generalOf(x.id)]) take(y, path, x.id);
     const segments = path.split('.');
@@ -5331,7 +5361,9 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
         }
       }
       if (verdict === undefined) continue;
-      const equations = [...competing.map((c) => c.eq.constraint)].sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+      const ordered = [...competing].sort((a, b) => order.get(a.eq.constraint.id)! - order.get(b.eq.constraint.id)!);
+      const equations = ordered.map((c) => c.eq.constraint);
+      const sites = ordered.map((c) => ({ equation: c.eq, at: c.at, name: c.name, feature: c.readAs }));
       const features = [...new Map([feature, ...competing.map((c) => c.named)].map((f) => [f.id, f])).values()];
       const key = equations.map((c) => c.id).join(' ');
       const met = found.get(key) ?? [];
@@ -5339,7 +5371,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       // One it was met in already that X specialises keeps it; any it was met in that specialises X gives it up.
       if (met.some((m) => mine.has(m.set.context.id))) continue;
       const kept = met.filter((m) => !m.general.has(x.id));
-      kept.push({ set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features }, general: mine });
+      kept.push({ set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features, sites }, general: mine });
       found.set(key, kept);
     }
   }
@@ -5362,35 +5394,80 @@ function contradictedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> 
   const index = contradictedDefinitions(model);
   if (index.taint) return index.taint;
   if (index.sets.length === 0) return (index.taint = new Map());
-  const sources = new Set(index.sets.flatMap((s) => s.equations.map((c) => c.id)));
-  index.taint = spreadTaint(model, sources, (add) => {
-    for (const set of index.sets) {
-      const first = set.equations[0]!;
-      for (const c of set.equations) add(c, first);
-      for (const f of set.features) add(f, first);
-    }
-  }, false);
+  index.taint = instanceIndexSeam.spreadContradiction(model, index, index.sets);
   return index.taint;
+}
+
+/**
+ * {@link contradictedTaint} from `sets` alone. A feature that states its own value is never tainted by the step that
+ * carries the taint across a binding, nor by the one that carries it to a name an asserted relation reads beside a
+ * tainted one ({@link statesOwnValue}): a value written with `=` (or a `default`) is read whatever its asserts and
+ * bindings, and an assert over it alone — `M <= 10.0` beside `s { L >= 0.0 [kg] or M >= 0.0 }` — is still judged
+ * at it, and reported violated. It is tainted where its value expression reads a tainted name.
+ */
+function spreadContradiction(
+  model: Model,
+  index: ContradictedDefinitions,
+  sets: readonly ContradictedDefinition[],
+): ReadonlyMap<ElementId, ElementRecord> {
+  const sources = new Set(index.sets.flatMap((s) => s.equations.map((c) => c.id)));
+  return spreadTaint(
+    model,
+    sources,
+    (add) => {
+      for (const set of sets) {
+        const first = set.equations[0]!;
+        for (const c of set.equations) add(c, first);
+        for (const f of set.features) add(f, first);
+      }
+    },
+    false,
+    (e) => isUsage(e.eClass) && statesOwnValue(model, e),
+  );
+}
+
+/**
+ * Does the defining side of `site`, one equation of `set`, read a value another set of the model leaves undecided
+ * ({@link contradictedTaint} of every other set)? The check reads such a value as the first of ITS equations written
+ * defines it, so a reading of `set` over it would turn on the order of the text: `definitionConflicts` of
+ * ./evaluate-model does not read `set` apart over it. A throw reads as `true`.
+ */
+export function contradictedSideReadsAnother(model: Model, set: ContradictedDefinition, site: ContradictedDefinition['sites'][number]): boolean {
+  const index = contradictedDefinitions(model);
+  if (index.failed !== undefined) return true;
+  const others = index.sets.filter((s) => s !== set);
+  if (others.length === 0) return false;
+  try {
+    index.taintOf ??= new Map();
+    const taints = others.map((o) => {
+      let t = index.taintOf!.get(o);
+      if (!t) index.taintOf!.set(o, (t = instanceIndexSeam.spreadContradiction(model, index, [o])));
+      return t;
+    });
+    const roots = [site.at, site.equation.constraint.id];
+    return refsIn(site.equation.definition, site.equation.literals).some((n) =>
+      taints.some((t) => readsTainted(model, t, roots, n) !== undefined),
+    );
+  } catch {
+    return true;
+  }
 }
 
 /**
  * Is `featureId` a feature two asserted equations give two values, or one whose value is tied to one ({@link
  * contradictedTaint})? No value of it is printed (`modelBindings` of ./engines/literal): the evaluators still
- * derive the first equation written, which is no value the model states. True too where listing them threw.
+ * derive the first equation written, which is no value the model states. True too where listing them, or this
+ * reading, threw (A.2.9).
  */
 export function readsContradictedDefinition(model: Model, featureId: ElementId): boolean {
   const index = contradictedDefinitions(model);
   if (index.failed !== undefined) return true;
   if (index.sets.length === 0) return false;
-  return taintedAt(model, contradictedTaint(model), model.get(featureId)) !== undefined;
-}
-
-/**
- * Did listing the features two asserted equations give two values throw ({@link contradictedDefinitions}'
- * `failed`, A.2.9)? Every row {@link contradictedDefinitionRefusal} refuses then abstains as `internal`.
- */
-export function contradictedDefinitionsFailed(model: Model): boolean {
-  return contradictedDefinitions(model).failed !== undefined;
+  try {
+    return taintedAt(model, contradictedTaint(model), model.get(featureId)) !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -5412,55 +5489,73 @@ export function contradictedDefinitionRefusal(
 }
 
 /**
- * {@link contradictedDefinitionRefusal}, with what the set it names is: `differs` where the model states two
- * values (an instance row's cause `two-values`), `undecided` where this tool cannot compare them, `failed` where
- * listing them threw.
+ * {@link contradictedDefinitionRefusal}, with the set it names and what that set is: `differs` where the model
+ * states two values (an instance row's cause `two-values`), `undecided` where this tool cannot compare them
+ * exactly, `failed` where listing them, or reading this row against them, threw (A.2.9: the row abstains as
+ * `internal`, and nothing else is lost).
  */
 export function contradictedDefinitionRefusalOf(
   model: Model,
   relationId: ElementId,
   expression: string,
   at?: { contextId: ElementId; path?: string },
-): { sentence: string; verdict: ContradictedDefinition['verdict'] | 'failed' } | undefined {
+): { sentence: string; verdict: ContradictedDefinition['verdict'] | 'failed'; set?: ContradictedDefinition } | undefined {
   const index = contradictedDefinitions(model);
   if (index.failed === undefined && index.sets.length === 0) return undefined;
   const names = relationNamesOf(expression);
   if (index.failed !== undefined) {
     return names.length > 0 ? { sentence: `${index.failed}, so no relation that may read one is read`, verdict: 'failed' } : undefined;
   }
-  const taint = contradictedTaint(model);
-  const rel = model.get(relationId);
-  const context = at ? model.get(at.contextId) : rel;
-  const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
-  let b = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
-  b ??= taintedAt(model, taint, context) ?? taintedAt(model, taint, rel);
-  if (!b && at?.path !== undefined) {
-    const frames = sharedDefinitions(model).framesAbove(at.path);
-    b =
-      frames === undefined
-        ? index.sets[0]!.equations[0]
-        : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
+  try {
+    const taint = contradictedTaint(model);
+    const rel = model.get(relationId);
+    const context = at ? model.get(at.contextId) : rel;
+    const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
+    let b = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
+    b ??= taintedAt(model, taint, context) ?? taintedAt(model, taint, rel);
+    if (!b && at?.path !== undefined) {
+      const frames = sharedDefinitions(model).framesAbove(at.path);
+      b =
+        frames === undefined
+          ? index.sets[0]!.equations[0]
+          : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
+    }
+    const set = b ? index.bySource.get(b.id) : undefined;
+    return set ? { sentence: contradictedDefinitionSentence(model, set), verdict: set.verdict, set } : undefined;
+  } catch (e) {
+    // A.2.9: a reading that throws is this row's, reported — never a throw out of the sweep.
+    return names.length > 0
+      ? {
+          sentence:
+            'this relation could not be read against the asserted equations that give one feature with no value two ' +
+            `values: the reading failed (${e instanceof Error ? e.constructor.name : 'error'}); reported, not dropped`,
+          verdict: 'failed',
+        }
+      : undefined;
   }
-  const set = b ? index.bySource.get(b.id) : undefined;
-  return set ? { sentence: contradictedDefinitionSentence(model, set), verdict: set.verdict } : undefined;
 }
 
 /** The clause every sentence about `set` opens with: its equations, where they meet, and what they give. */
 function contradictedDefinitionClause(model: Model, set: ContradictedDefinition): string {
-  const named = set.equations.map((c) => `\`${String(c.attrs.expression ?? '').trim()}\` (${effectiveQualifiedName(model, c.id)})`);
-  const listed = named.length <= 2 ? named.join(' and ') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]!}`;
   const what =
     set.verdict === 'differs'
       ? 'two different values'
       : set.why === 'names'
-        ? 'two values this tool does not compare (one reads other names)'
+        ? 'two values this tool does not compare exactly (one reads other names)'
         : set.why === 'form'
           ? 'two values this tool cannot compare exactly (one is not a number over `+ - * /`)'
-          : 'two values this tool cannot compare (one is written with a unit, the other without)';
-  return (
-    `the asserted ${listed} each define \`${set.path}\` in ${effectiveQualifiedName(model, set.context.id)}, ` +
-    `which states no value, and give it ${what}`
-  );
+          : 'two values this tool cannot compare exactly (one is written with a unit, the other without)';
+  return `${contradictedDefinitionNaming(model, set)}, which states no value, and give it ${what}`;
+}
+
+/**
+ * `set`'s equations and where they meet, as every sentence about it names them: "the asserted `L == 50.0` (P::c1)
+ * and `L == 60.0` (P::c2) each define `L` in P" (`contradictedDetail` of ./engines/literal too).
+ */
+export function contradictedDefinitionNaming(model: Model, set: ContradictedDefinition): string {
+  const named = set.equations.map((c) => `\`${String(c.attrs.expression ?? '').trim()}\` (${effectiveQualifiedName(model, c.id)})`);
+  const listed = named.length <= 2 ? named.join(' and ') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]!}`;
+  return `the asserted ${listed} each define \`${set.path}\` in ${effectiveQualifiedName(model, set.context.id)}`;
 }
 
 /** Why a row {@link contradictedDefinitionRefusal} refuses is not read: the feature, and the equations that give it two values. */
@@ -5475,16 +5570,20 @@ export function contradictedDefinitionSentence(model: Model, set: ContradictedDe
 
 /**
  * The sentence of the check that reports `set` where its equations meet (`definitionConflicts` of
- * ./evaluate-model): what they give, why that is a contradiction, and what is left undecided.
+ * ./evaluate-model): what they give, why that is a contradiction, and what is left undecided. `apart`, for an
+ * `undecided` set: what the check's own evaluator reads each defining side at, where two of those readings
+ * differ — the model then states two values, as for `differs`.
  */
-export function contradictedDefinitionConflict(model: Model, set: ContradictedDefinition): string {
+export function contradictedDefinitionConflict(model: Model, set: ContradictedDefinition, apart?: readonly string[]): string {
   const name = effectiveNameOf(model, set.feature) ?? set.path;
-  return set.verdict === 'differs'
-    ? `${contradictedDefinitionClause(model, set)} — an asserted equation is a fact of every instance it holds of, ` +
-        `so the model states both values and contradicts itself, whichever is written first; no relation that may ` +
-        `read ${name} is decided`
-    : `${contradictedDefinitionClause(model, set)}, so this tool reads neither, and no relation that may read ` +
-        `${name} is decided`;
+  const contradicts =
+    ' — an asserted equation is a fact of every instance it holds of, so the model states both values and ' +
+    `contradicts itself, whichever is written first; no relation that may read ${name} is decided`;
+  if (set.verdict === 'differs') return `${contradictedDefinitionClause(model, set)}${contradicts}`;
+  if (apart !== undefined) {
+    return `${contradictedDefinitionClause(model, set)}, which differ at the model's values (${apart.join(', ')})${contradicts}`;
+  }
+  return `${contradictedDefinitionClause(model, set)}, so this tool reads neither, and no relation that may read ${name} is decided`;
 }
 
 /** The indexes over the model's binding readings ({@link BindingIndex}), built once per revision. */
@@ -10876,9 +10975,10 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
  * (A.2.9) — inside {@link instanceGroups} (a usage's sites, and the asserted
  * equations the coverage guard reads, {@link readFeatures}), in {@link
  * equatedParts} (the asserted equations no surface reads), in {@link
- * satisfierTaint} (what an instance reads otherwise) and in {@link
+ * satisfierTaint} (what an instance reads otherwise), in {@link
  * contradictedDefinitions} (two asserted equations that give one feature two
- * values) — made through this
+ * values) and in {@link contradictedTaint} (what they leave undecided, asked
+ * per row: a throw refuses that row, `internal`) — made through this
  * object, never directly: the seam a test makes one of them throw through
  * (`vi.spyOn`), since a module-level stub reaches only the calls another
  * module makes. Each is the function it names; nothing else changes them.
@@ -10887,6 +10987,11 @@ export const instanceIndexSeam = {
   enclosingAsserts: (model: Model): EnclosingAsserts => enclosingAsserts(model),
   satisfiersOtherwise: (model: Model): SatisfiersOtherwise => satisfiersOtherwise(model),
   contradictedDefinitions: (model: Model): ContradictedDefinitions => contradictedDefinitionsUncached(model),
+  spreadContradiction: (
+    model: Model,
+    index: ContradictedDefinitions,
+    sets: readonly ContradictedDefinition[],
+  ): ReadonlyMap<ElementId, ElementRecord> => spreadContradiction(model, index, sets),
   assertHeldInSome: (model: Model, f: ElementRecord): boolean => assertHeldInSome(model, f),
   instanceSitesOf: (definitions: DefiningEquations, usage: ElementRecord): ReturnType<typeof instanceSitesOf> =>
     instanceSitesOf(definitions, usage),

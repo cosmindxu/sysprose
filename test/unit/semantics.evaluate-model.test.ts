@@ -36,6 +36,7 @@ import {
   lookupsOf,
   lookupsWhile,
   pastCapEnd,
+  readsContradictedDefinition,
   readsOtherwise,
   recordingLookups,
   replayLookups,
@@ -2162,8 +2163,10 @@ describe('checkConstraints — two asserted equations that give one feature two 
       ['INV::p#equations', 'violated'],
       ['INV::t50', 'unknown'],
     ]);
-    // A name this tool does not read exactly (a, which a binding joins to K): the pair is info, and its instance
-    // rows carry no `two-values` cause, for the model may state one value.
+    // A name this tool does not read exactly (a, which a binding joins to K): the check reads the side with its
+    // own evaluator, the other side's 50 bound to L as f1f5ca5 judged the later equation (a is K's 30, so 60
+    // against 50), so the pair is the warning in both orders (the S2 branch review), and its instance rows carry
+    // the `two-values` cause.
     const bound = `package BND {
       part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real; attribute K : ScalarValues::Real = 30.0;
         bind a = K;
@@ -2173,16 +2176,18 @@ describe('checkConstraints — two asserted equations that give one feature two 
       constraint t50 { p.L == 50.0 }
     }`;
     expect((await bothOrders(bound)).filter(([n]) => !n.includes('#bind'))).toEqual([
-      ['BND::P#equations', 'unknown'],
+      ['BND::P#equations', 'violated'],
       ['BND::P::c2a', 'unknown'],
       ['BND::P::c50', 'unknown'],
       ['BND::t50', 'unknown'],
     ]);
     const { model: m } = await loadModelText(bound);
-    expect(checkOf(m!, 'BND::t50').message).toContain('give it two values this tool does not compare (one reads other names)');
+    expect(checkOf(m!, 'BND::t50').message).toContain('give it two values this tool does not compare exactly (one reads other names)');
+    const pair = checkConstraints(m!).find((c) => c.conflict === 'equations')!;
+    expect(pair.message).toContain("which differ at the model's values (`L == a * 2.0` is false where L is 50, `50.0` is 50)");
     const each = checkConstraints(m!).flatMap((c) => (c.conflict === undefined ? (c.instances ?? []) : []));
     expect(each.length).toBeGreaterThan(0);
-    expect(each.every((i) => i.result === 'unknown' && i.cause === undefined)).toBe(true);
+    expect(each.every((i) => i.result === 'unknown' && i.cause === 'two-values')).toBe(true);
   });
 
   it('two Booleans, and two sides that read no name in a form this tool does not compute, are no value either', async () => {
@@ -2200,7 +2205,12 @@ describe('checkConstraints — two asserted equations that give one feature two 
       ['BOO::P::c2', 'unknown'],
       ['BOO::tt', 'unknown'],
     ]);
-    for (const [side, other] of [['2.0 ^ 3', '9.0'], ['10 % 3', '2.0']] as const) {
+    // Such a side the check's own evaluator reads: 8 beside 9 and 1 beside 2 are the warning, 8 beside 8 the info.
+    for (const [side, other, pair] of [
+      ['2.0 ^ 3', '9.0', 'violated'],
+      ['10 % 3', '2.0', 'violated'],
+      ['2.0 ^ 3', '8.0', 'unknown'],
+    ] as const) {
       expect(
         await bothOrders(`package POW {
           part def P { attribute L : ScalarValues::Real;
@@ -2209,9 +2219,9 @@ describe('checkConstraints — two asserted equations that give one feature two 
           part p : P;
           constraint t { p.L == 8.0 }
         }`),
-        side,
+        `${side} beside ${other}`,
       ).toEqual([
-        ['POW::P#equations', 'unknown'],
+        ['POW::P#equations', pair],
         ['POW::P::ca', 'unknown'],
         ['POW::P::cb', 'unknown'],
         ['POW::t', 'unknown'],
@@ -2275,7 +2285,7 @@ describe('checkConstraints — two asserted equations that give one feature two 
     ]);
   });
 
-  it('two values a unit makes incomparable are no value either, and the pair is reported as info', async () => {
+  it('two values a unit makes incomparable exactly are no value either, and the pair is the warning where the check reads them apart', async () => {
     const text = `package UND {
       part def P { attribute L : ISQ::MassValue;
         /*A*/ assert constraint c50 { L == 50.0 }
@@ -2283,17 +2293,34 @@ describe('checkConstraints — two asserted equations that give one feature two 
       part p : P;
       constraint t60 { p.L == 60.0 [kg] }
     }`;
+    // The bare 50 is read in L's declared kind (the bare-literal contract): 50 kg beside 60 kg, which `check
+    // --strict` warned of at f1f5ca5 in either order, and does again (the S2 branch review's RD).
     expect(await bothOrders(text)).toEqual([
-      ['UND::P#equations', 'unknown'],
+      ['UND::P#equations', 'violated'],
       ['UND::P::c50', 'unknown'],
       ['UND::P::ck', 'unknown'],
       ['UND::t60', 'unknown'],
     ]);
     const { model: m } = await loadModelText(text);
     const pair = validate(m!).filter((d) => d.ruleId === 'constraint-violation' && m!.qualifiedName(d.elementId!) === 'UND::P');
-    expect(pair.map((d) => [d.severity, d.message.includes('two values this tool cannot compare (one is written with a unit, the other without)')])).toEqual([
-      ['info', true],
+    expect(pair.map((d) => [d.severity, d.message])).toEqual([
+      [
+        'warning',
+        'Constraint violated: the asserted `L == 50.0` (UND::P::c50) and `L == 60.0 [kg]` (UND::P::ck) each define `L` in UND::P, which ' +
+          "states no value, and give it two values this tool cannot compare exactly (one is written with a unit, the other without), which differ at the model's values " +
+          '(`50.0` is 50 [kg], `60.0 [kg]` is 60 [kg]) — an asserted equation is a fact of every instance it holds of, so the model states both values and ' +
+          'contradicts itself, whichever is written first; no relation that may read L is decided',
+      ],
     ]);
+    // 50 beside 50 kg may be one value: the pair is info, in either order.
+    const alike = text.replace('60.0 [kg] }', '50.0 [kg] }');
+    expect((await bothOrders(alike))[0]).toEqual(['UND::P#equations', 'unknown']);
+    const { model: a } = await loadModelText(alike);
+    expect(
+      validate(a!)
+        .filter((d) => d.ruleId === 'constraint-violation' && a!.qualifiedName(d.elementId!) === 'UND::P')
+        .map((d) => d.severity),
+    ).toEqual(['info']);
   });
 });
 
@@ -3487,7 +3514,8 @@ describe('checkConstraints — a default stands against an asserted equation (de
     for (const q of ['BND::top1', 'BND::top2', 'BND::P::c', 'BND::P::c in BND::q2::p']) {
       expect(contradicted(bnd.row(q)), q).toEqual(X);
     }
-    expect(bnd.row('BND::top2').detail).toContain('the asserted `p.x == 50.0` (BND::Q::tie) is false at them');
+    // Read on its own row and in q2, the assert is named once (the branch review).
+    expect(bnd.row('BND::top2').detail).toContain('the asserted `p.x == 50.0` (BND::Q::tie, and in 1 instance(s)) is false at them');
     // An instance's own value row is joined to its feature, so the binding filed for the feature in Q carries
     // the contradiction of `a2 in Q3::p` (load 1 against 50) to q3's L, and to every Q's L read as one symbol.
     const sp2 = await literal(`package SP2 {
@@ -3527,6 +3555,40 @@ describe('checkConstraints — a default stands against an asserted equation (de
     }`);
     expect(contradicted(kc.row('KC::t1'))).toEqual(X);
     expect(kc.row('KC::t1').detail).toContain('the asserted `1.0 == 2.0` (KC::never) reads no feature and is false whatever the values');
+  });
+
+  it('marks an obligation over a name two disagreeing asserted equations read inconclusive on the literal engine, naming both (Q4, Q5)', async () => {
+    // The S2 branch review: the pair's own rows are no longer read violated, so the literal engine found no assert to
+    // seed from, and read `ta` "unconditional" with exit 0 beside the SMT engine's inconsistent axioms.
+    const e1 = 'assert constraint e1 { L == a * 2.0 }';
+    const e2 = 'assert constraint e2 { L == 50.0 }';
+    for (const [x, y] of [[e1, e2], [e2, e1]]) {
+      const { model: m } = await loadModelText(`package RA {
+        part def P { attribute a : ScalarValues::Real = 30.0; attribute L : ScalarValues::Real; ${x} ${y} }
+        part p : P;
+        constraint ta { p.a == 30.0 }
+      }`);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      const r = report.results.find((row) => row.clause.qualifiedName === 'RA::ta')!;
+      expect([r.claim, r.code]).toEqual(['inconclusive', 'verification/inconsistent-axioms']);
+      expect(r.detail).toContain('each define `L` in RA::P and give it two values that differ, and this relation reads `p.a`');
+      expect(report.exitCode).toBe(2);
+      // The check still reads a's stated 30.
+      expect(checkOf(m!, 'RA::ta').result).toBe('satisfied');
+    }
+    // A value written with `=` that an asserted relation reads beside L is read whatever L's pair: `cm` over M alone
+    // is the warning at M's 20 (it read 'L is not read', and `--strict` passed), and `s`, which reads L, abstains.
+    const { model: m } = await loadModelText(`package RF {
+      part def P { attribute L : ISQ::MassValue; attribute M : ScalarValues::Real = 20.0;
+        assert constraint e1 { L == 50.0 } assert constraint e2 { L == 50.0 [kg] }
+        assert constraint s { L >= 0.0 [kg] or M >= 0.0 }
+        assert constraint cm { M <= 10.0 } }
+      part p : P;
+    }`);
+    expect([checkOf(m!, 'RF::P::cm').result, checkOf(m!, 'RF::P::s').result]).toEqual(['violated', 'unknown']);
+    expect(validate(m!).filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning').map((d) => m!.qualifiedName(d.elementId!))).toEqual([
+      'RF::P::cm',
+    ]);
   });
 
   it('says that an `assert` a requirement def writes is a fact a usage typed by it does not check (M11)', async () => {
@@ -7658,6 +7720,36 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       ]);
       // The numeric surface reads the same refusal.
       expect(checkConstraintsNumeric(m!).filter((r) => r.result !== 'unknown')).toEqual([]);
+    });
+
+    it('a walk of what two asserted equations leave undecided that throws refuses the row it was asked for, never the sweep (contradictedTaint)', async () => {
+      vi.spyOn(instanceIndexSeam, 'spreadContradiction').mockImplementation(() => {
+        throw new RangeError('spreadContradiction, planted to throw');
+      });
+      const { model: m, report } = await loadModelText(`package CT0 {
+        part def P { attribute L : ScalarValues::Real; assert constraint c50 { L == 50.0 } assert constraint c60 { L == 60.0 } }
+        part p : P;
+        attribute K : ScalarValues::Real = 3.0;
+        constraint plain { K <= 5.0 }
+      }`);
+      expect(m).toBeDefined();
+      expect(report.diagnostics.filter((d) => d.code === 'import/internal-error')).toEqual([]);
+      const sentence =
+        'this relation could not be read against the asserted equations that give one feature with no value two values: ' +
+        'the reading failed (RangeError); reported, not dropped';
+      // Which rows the pair reaches is unknown, so no row that reads a name is decided — `plain` included — and the
+      // pair itself, which the walk does not read, is still the warning.
+      const checks = checkConstraints(m!);
+      expect(checks.map((c) => [c.conflict ? `${m!.qualifiedName(c.ownerId!)}#${c.conflict}` : m!.qualifiedName(c.id), c.result])).toEqual([
+        ['CT0::P::c50', 'unknown'],
+        ['CT0::P::c60', 'unknown'],
+        ['CT0::plain', 'unknown'],
+        ['CT0::P#equations', 'violated'],
+      ]);
+      for (const c of checks.filter((x) => x.conflict === undefined)) expect(c.message).toBe(`Could not evaluate: ${sentence}`);
+      // The numeric surface reads the same refusal, and `verify` prints no value of a name it cannot place.
+      expect(checkConstraintsNumeric(m!).filter((r) => r.result !== 'unknown' && r.conflict === undefined)).toEqual([]);
+      expect(readsContradictedDefinition(m!, m!.all().find((e) => m!.qualifiedName(e.id) === 'CT0::K')!.id)).toBe(true);
     });
 
     it('listing what an instance reads otherwise that throws leaves every row unknown, never the load (satisfierTaint)', async () => {

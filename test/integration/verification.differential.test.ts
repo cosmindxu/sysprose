@@ -3736,6 +3736,14 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     [`${name}-ab`]: probe(text('50.0', '60.0'), rows),
     [`${name}-ba`]: probe(text('60.0', '50.0'), rows),
   });
+  /**
+   * A probe whose two asserted equations `a` and `b` are written in that order (`${name}-ab`), and its twin with
+   * the two written the other way round (`${name}-ba`), pinned alike: I14 reads each pair row for row.
+   */
+  const ordered = (name: string, a: string, b: string, text: (eqs: string) => string, rows: Record<string, [string, Ref]>) => ({
+    [`${name}-ab`]: probe(text(`${a} ${b}`), rows),
+    [`${name}-ba`]: probe(text(`${b} ${a}`), rows),
+  });
   /** big-bind-N: N definitions Qk binding their p's load to their L, each Qk's usage qk setting L to k. */
   const bigBind = (n: number) =>
     [
@@ -7475,16 +7483,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Q5R::tV': ['?/?/?/X', null],
       'Q5R::tz': ['T/T/T/X', 'T'],
     }),
-    // Two values one written with a unit and one without (a bare 50 beside 60 kg) are no value either: the pair's
-    // row is `?`, and every reading of L abstains on three surfaces in either order. The SMT engine's own gate
-    // refuses the bare literal against a mass derived by the other equation in one order (the `?`), and finds
-    // the axioms inconsistent in the other: inconclusive both.
+    // Two values one written with a unit and one without (a bare 50 beside 60 kg) are no value either: every
+    // reading of L abstains on three surfaces in either order. The check reads each side with its own evaluator,
+    // the bare 50 in L's declared kind, so 50 kg beside 60 kg is the pair's warning (`F`), as at f1f5ca5 in either
+    // order (the branch review's RD). The SMT engine's own gate refuses the bare literal against a mass derived by
+    // the other equation in one order (the `?`), and finds the axioms inconsistent in the other: inconclusive both.
     'q5-units-ab': probe(`package Q5U {
         part def P { attribute L : ISQ::MassValue; assert constraint c1 { L == 50.0 } assert constraint c2 { L == 60.0 [kg] } }
         part p : P;
         constraint t60 { p.L == 60.0 [kg] }
       }`, {
-      'Q5U::P::L in Q5U::P#equations': ['?/-/?/-', null],
+      'Q5U::P::L in Q5U::P#equations': ['F/-/F/-', 'F'],
       'Q5U::P::c1': ['?/-/?/-', null],
       'Q5U::P::c2': ['?/-/?/-', null],
       'Q5U::t60': ['?/?/?/X', null],
@@ -7494,7 +7503,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t60 { p.L == 60.0 [kg] }
       }`, {
-      'Q5U::P::L in Q5U::P#equations': ['?/-/?/-', null],
+      'Q5U::P::L in Q5U::P#equations': ['F/-/F/-', 'F'],
       'Q5U::P::c1': ['?/-/?/-', null],
       'Q5U::P::c2': ['?/-/?/-', null],
       'Q5U::t60': ['?/?/?/?', null],
@@ -7535,8 +7544,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Q5N::t50': ['?/?/?/X', null],
     }),
     // Two Booleans that differ are two values (the pair `F`); a side that reads no name in a form this tool does not
-    // compute exactly (`2.0 ^ 3`) cannot be compared (the pair `?`). Each read in both orders; at f1f5ca5 the check
-    // let the first written define the feature, so tt and t8 flipped with the order.
+    // compute exactly (`2.0 ^ 3`) is not compared exactly, but the check's own evaluator reads it 8 beside 9: the
+    // pair `F` too (the branch review). Each read in both orders; at f1f5ca5 the check let the first written define
+    // the feature, so tt and t8 flipped with the order.
     'q5-bool-ab': probe(`package Q5B {
         part def P { attribute f : ScalarValues::Boolean; assert constraint c1 { f == true } assert constraint c2 { f == false } }
         part p : P;
@@ -7562,7 +7572,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t8 { p.L == 8.0 }
       }`, {
-      'Q5W::P::L in Q5W::P#equations': ['?/-/?/-', null],
+      'Q5W::P::L in Q5W::P#equations': ['F/-/F/-', 'F'],
       'Q5W::P::ca': ['?/-/?/-', null],
       'Q5W::P::cb': ['?/-/?/-', null],
       'Q5W::t8': ['?/?/?/X', null],
@@ -7572,7 +7582,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t8 { p.L == 8.0 }
       }`, {
-      'Q5W::P::L in Q5W::P#equations': ['?/-/?/-', null],
+      'Q5W::P::L in Q5W::P#equations': ['F/-/F/-', 'F'],
       'Q5W::P::ca': ['?/-/?/-', null],
       'Q5W::P::cb': ['?/-/?/-', null],
       'Q5W::t8': ['?/?/?/X', null],
@@ -7657,6 +7667,116 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Q5UA::P::c1': ['?/-/?/-', null],
       'Q5UA::P::c2': ['?/-/?/-', null],
       'Q5UA::t50': ['?/?/?/?', null],
+    }),
+    // Q4 for two asserted equations (the S2 branch review): the pair's own rows are no longer read violated, so the
+    // literal engine seeds from the pair `check` reports, and the names a defining side reads join its component: a
+    // relation over `a` (CV-RA), over the K `bind a = K` joins to a (CV-RB, a pair the check reads apart: a is K's
+    // 30), or over the m beside a package's g (CV-RC, 19.62 beside 20) is inconclusive on the literal engine,
+    // naming both equations, where it read "unconditional" and exited 0 — read at the stated values by the check
+    // and the numeric surface, the SMT engine's axioms inconsistent. In either order.
+    ...ordered('cv-ra', 'assert constraint e1 { L == a * 2.0 }', 'assert constraint e2 { L == 50.0 }', (eqs) => `package CVRA {
+        part def P { attribute a : ScalarValues::Real = 30.0; attribute L : ScalarValues::Real; ${eqs} }
+        part p : P;
+        constraint ta { p.a == 30.0 }
+        constraint t50 { p.L == 50.0 }
+      }`, {
+      'CVRA::P::L in CVRA::P#equations': ['F/-/F/-', 'F'],
+      'CVRA::P::e1': ['?/-/?/-', null],
+      'CVRA::P::e2': ['?/-/?/-', null],
+      'CVRA::t50': ['?/?/?/X', null],
+      'CVRA::ta': ['T/X/T/X', null],
+    }),
+    ...ordered('cv-rb', 'assert constraint e1 { L == a * 2.0 }', 'assert constraint e2 { L == 50.0 }', (eqs) => `package CVRB {
+        part def P { attribute K : ScalarValues::Real = 30.0; attribute a : ScalarValues::Real; attribute L : ScalarValues::Real;
+          bind a = K; ${eqs} }
+        part p : P;
+        constraint tk { p.K == 30.0 }
+        constraint ta { p.a == 30.0 }
+      }`, {
+      'CVRB::P::L in CVRB::P#equations': ['F/-/F/-', 'F'],
+      'CVRB::P::e1': ['?/-/?/-', null],
+      'CVRB::P::e1 in CVRB::p': ['?/-/?/-', null],
+      'CVRB::P::e2': ['?/-/?/-', null],
+      'CVRB::P::e2 in CVRB::p': ['?/-/?/-', null],
+      'CVRB::ta': ['T/X/?/X', null],
+      'CVRB::tk': ['T/X/T/X', null],
+    }),
+    ...ordered('cv-rc', 'assert constraint e1 { W == m * g }', 'assert constraint e2 { W == 20.0 }', (eqs) => `package CVRC {
+        attribute g : ScalarValues::Real = 9.81;
+        part def P { attribute m : ScalarValues::Real = 2.0; attribute W : ScalarValues::Real; ${eqs} }
+        part p : P;
+        constraint tm { p.m == 2.0 }
+      }`, {
+      'CVRC::P::W in CVRC::P#equations': ['F/-/F/-', 'F'],
+      'CVRC::P::e1': ['?/-/?/-', null],
+      'CVRC::P::e2': ['?/-/?/-', null],
+      'CVRC::tm': ['T/X/T/X', null],
+    }),
+    // A value written with `=` is read whatever its asserts (the branch review): M, which `s` reads beside L, is not
+    // left undecided by L's pair, so `cm { M <= 10.0 }` is the warning at M's stated 20 — beside a pair this tool
+    // reads alike (CV-RF: 50 beside 50 kg, info) and beside one that differs (CV-RG) — and a relation over M is read
+    // there by the check and the numeric surface, and inconclusive on the literal engine, naming cm (Q4).
+    'cv-rf': probe(`package CVRF {
+        part def P { attribute L : ISQ::MassValue; attribute M : ScalarValues::Real = 20.0;
+          assert constraint e1 { L == 50.0 } assert constraint e2 { L == 50.0 [kg] }
+          assert constraint s { L >= 0.0 [kg] or M >= 0.0 }
+          assert constraint cm { M <= 10.0 } }
+        part p : P;
+        constraint tM { p.M == 20.0 }
+      }`, {
+      'CVRF::P::L in CVRF::P#equations': ['?/-/?/-', null],
+      'CVRF::P::cm': ['F/-/F/-', 'F'],
+      'CVRF::P::e1': ['?/-/?/-', null],
+      'CVRF::P::e2': ['?/-/?/-', null],
+      'CVRF::P::s': ['?/-/?/-', null],
+      'CVRF::tM': ['T/X/T/X', null],
+    }),
+    'cv-rg': probe(`package CVRG {
+        part def P { attribute L : ISQ::MassValue; attribute M : ScalarValues::Real = 20.0;
+          assert constraint e1 { L == 50.0 [kg] } assert constraint e2 { L == 60.0 [kg] }
+          assert constraint s { L >= 0.0 [kg] or M >= 0.0 }
+          assert constraint cm { M <= 10.0 } }
+        part p : P;
+        constraint tM { p.M == 20.0 }
+      }`, {
+      'CVRG::P::L in CVRG::P#equations': ['F/-/F/-', 'F'],
+      'CVRG::P::cm': ['F/-/F/-', 'F'],
+      'CVRG::P::e1': ['?/-/?/-', null],
+      'CVRG::P::e2': ['?/-/?/-', null],
+      'CVRG::P::s': ['?/-/?/-', null],
+      'CVRG::tM': ['T/X/T/X', null],
+    }),
+    // CV-SP2 with no relation over q3's p (the branch review): the worklist files `a2 in Q3::p` alone, over Q3's p's
+    // own symbol, and no q3 row. That symbol is joined to the feature it reads (Q's p's load), so the contradiction
+    // reaches Q's `bind p.load = L` and q3's L (k), and qq's (one symbol, an abstention); so does a chain of two
+    // bindings to K (CV-V3). The literal engine read k "unconditional" and exited 0; the SMT engine still proves it
+    // (TODO: the `=` twin of h5-m3t).
+    'cv-sp2-nokp': probe(`package SP2N {
+        part def P { attribute load : ScalarValues::Real; }
+        part def P2 :> P { assert constraint a2 { load == 50.0 } }
+        part def Q { attribute L : ScalarValues::Real = 1.0; part p : P; bind p.load = L; }
+        part def Q3 :> Q { part :>> p : P2; }
+        part q3 : Q3;
+        part qq : Q;
+        constraint k { q3.L <= 10.0 }
+        constraint kq { qq.L <= 10.0 }
+      }`, {
+      'SP2N::P2::a2': ['T/-/T/-', null],
+      'SP2N::P2::a2 in SP2N::Q3::«PartUsage»': ['F/-/F/-', 'F'],
+      'SP2N::k': ['T/X/T/T', null],
+      'SP2N::kq': ['T/X/T/T', 'T'],
+    }),
+    'cv-v3': probe(`package V3 {
+        part def P { attribute load : ScalarValues::Real; }
+        part def P2 :> P { assert constraint a2 { load == 50.0 } }
+        part def Q { attribute K : ScalarValues::Real = 1.0; attribute L : ScalarValues::Real; part p : P; bind p.load = L; bind L = K; }
+        part def Q3 :> Q { part :>> p : P2; }
+        part q3 : Q3;
+        constraint k { q3.K <= 10.0 }
+      }`, {
+      'V3::P2::a2': ['T/-/T/-', null],
+      'V3::P2::a2 in V3::Q3::«PartUsage»': ['F/-/F/-', 'F'],
+      'V3::k': ['T/X/T/T', null],
     }),
     // The order of the text (the soft/hard analysis' S2use and S1 eqMd cells, default-stands S2): an assert written
     // in a usage of the default's owner (SU), and `L == M` over two defaults (SEM), each beside the same text with its
@@ -10832,11 +10952,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       // for that feature in the definition (q3's L in M3T, as CV-SP2; R27F's Q's c).
       'h5-m3t | M3T::k',
       'name-r27f | R27F::Q::c',
+      // A value written with `=` that an asserted relation reads beside a contradicted one is read, and the assert over
+      // it alone is violated (CV-RF, CV-RG; the branch review).
+      'cv-rf | CVRF::tM',
+      'cv-rg | CVRG::tM',
     ].map(
       (key) =>
         [
           key,
           'an assert the model holds false at its values contradicts a value this row reads, or one the model’s values, bindings and assertions tie to it: the literal engine and the SMT engine report the axioms inconsistent, naming the assert, beside the check’s and the numeric surface’s reading of the value',
+        ] as const,
+    ),
+    // Q4 for two asserted equations `check` reports giving one feature two values (the branch review): a value one
+    // of them reads on its other side, or one bound to that value.
+    ...['cv-ra-ab | CVRA::ta', 'cv-ra-ba | CVRA::ta', 'cv-rb-ab | CVRB::ta', 'cv-rb-ab | CVRB::tk', 'cv-rb-ba | CVRB::ta', 'cv-rb-ba | CVRB::tk', 'cv-rc-ab | CVRC::tm', 'cv-rc-ba | CVRC::tm'].map(
+      (key) =>
+        [
+          key,
+          'two asserted equations that give one feature with no value two values, which `check` reports, read a value this row reads on their other side, or one the model’s values and bindings tie to it: the literal engine and the SMT engine report the axioms inconsistent, naming both equations, beside the check’s and the numeric surface’s reading of the value',
         ] as const,
     ),
     ...['cv-iso | ISO_Y::t1', 'cv-sib | CVSIB::tc', 'cv-ins | CVINS::tp', 'q5-reach-ab | Q5R::tz', 'q5-reach-ba | Q5R::tz'].map(
@@ -11017,7 +11150,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['stand-eqmd', 'stand-eqmd-alleq'],
     ['stand-hlx', 'stand-hlx-eqx'],
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
-    ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest'].map(
+    ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc'].map(
       (k) => [`${k}-ab`, `${k}-ba`] as const,
     ),
   ] as const;

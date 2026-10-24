@@ -49,7 +49,15 @@
 
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
-import { isFailedReading, isShadowedBody, readsContradictedDefinition } from '../defining-equation';
+import {
+  contradictedDefinitionNaming,
+  contradictedDefinitions,
+  isFailedReading,
+  isShadowedBody,
+  readsContradictedDefinition,
+  type ContradictedDefinition,
+} from '../defining-equation';
+import { redefinedClosure } from '../inheritance';
 import { evaluateFeatureValue, featuresWithoutValue, valueAtPath } from '../evaluate-model';
 import { rowElement, type Obligation } from '../obligations';
 import {
@@ -328,6 +336,11 @@ interface ContradictingAssert {
 interface ContradictedRead {
   /** The `assert` rows the check holds false at the model's values, in the worklist's order. */
   asserts: ContradictingAssert[];
+  /**
+   * The asserted equations that give one feature with no value two values the check reports apart (`definitionConflicts`
+   * of ../evaluate-model): each is a contradiction of the model's whose equations' own rows the check no longer reads.
+   */
+  sets: ContradictedDefinition[];
   /** The paths the relation itself reads that those asserts' contradiction reaches. */
   paths: string[];
   /** The assumptions it stands on that read a path that contradiction reaches, each with those paths. */
@@ -340,9 +353,13 @@ interface ContradictedRead {
  * that assert for — so no axiom row says which values it reads there. Either contradicts every point.
  */
 interface UnplacedContradiction extends ContradictingAssert {
-  /** `constant`: it reads no feature; `unread`: the check's instance (`where`) has no worklist row. */
-  kind: 'constant' | 'unread';
+  /**
+   * `constant`: it reads no feature; `unread`: the check's instance (`where`) has no worklist row; `equations`: two
+   * asserted equations the check reports giving one feature two values (`set`), none of which the worklist files.
+   */
+  kind: 'constant' | 'unread' | 'equations';
   where?: string;
+  set?: ContradictedDefinition;
 }
 
 /**
@@ -370,8 +387,14 @@ interface UnplacedContradiction extends ContradictingAssert {
  * The seeds fail closed. An assert the check reports violated anywhere — on its own row or in any instance
  * — seeds every worklist row of it that the check does not hold true under that row's own id: a row read
  * for an instance the check reads alike with another (BND's `tie in q2`, read as the generic row) has no
- * check entry of its own, and its contradiction is the generic row's. A violated assert this engine cannot
- * place ({@link UnplacedContradiction}) reaches every relation.
+ * check entry of its own, and its contradiction is the generic row's. So does every worklist row of two asserted
+ * equations the check reports giving one feature with no value two values (`definitionConflicts` of
+ * ../evaluate-model): their own rows are no longer read violated, and the names their defining sides read (`a`
+ * of `L == a * 2.0`, the package's `g` of `W == m * g`) join the feature's component through them. An instance's
+ * symbol in an axiom row (`SP2::Q3::p::load`, Q3's p's) is joined to the feature it reads and to every feature
+ * that one redefines (`SP2::Q::p::load`), so a contradiction there reaches the bindings and values filed for the
+ * feature in the definition (Q's `bind p.load = L`, whose L is `= 1.0`), whether or not another relation reads
+ * the instance. A violated assert this engine cannot place ({@link UnplacedContradiction}) reaches every relation.
  */
 function contradictionsOf(
   model: Model,
@@ -401,7 +424,12 @@ function contradictionsOf(
     }
   }
   for (const v of violatedAt) violatedAnywhere.add(v.assert.id);
-  if (violatedAnywhere.size === 0) return none;
+  // The asserted equations the check reports giving one feature two values, by each equation's id.
+  const apartKeys = new Set(raw.filter((c) => c.conflict === 'equations' && c.result === 'violated').map((c) => c.id));
+  const apartBy = new Map<ElementId, ContradictedDefinition>();
+  const apartSets = contradictedDefinitions(model).sets.filter((set) => apartKeys.has(`${set.feature.id}@${set.context.id}`));
+  for (const set of apartSets) for (const c of set.equations) if (!apartBy.has(c.id)) apartBy.set(c.id, set);
+  if (violatedAnywhere.size === 0 && apartSets.length === 0) return none;
 
   const symbolOf = (v: ContractVariable): string => v.symbol ?? v.qualifiedName;
   const parent = new Map<string, string>();
@@ -422,6 +450,8 @@ function contradictionsOf(
   };
   const baseOf = (row: Obligation): ElementId => row.instance?.baseId ?? row.element.id;
   const seeds: Obligation[] = [];
+  const setOf = new Map<Obligation, ContradictedDefinition>();
+  const filed = new Set<ContradictedDefinition>();
   const unplaced: UnplacedContradiction[] = [];
   const named = (row: Obligation): ContradictingAssert => ({
     expression: row.expression,
@@ -440,11 +470,38 @@ function contradictionsOf(
         if (id !== undefined) union(symbols[0]!, model.qualifiedName(id));
       }
     }
+    // An instance's symbol is joined to the feature it reads, and to every one that feature redefines: Q3's p's
+    // `load` to Q's p's, where Q's binding is filed (CV-SP2 without a relation over q3's p).
+    row.vars.forEach((v, k) => {
+      if (v.instance === undefined) return;
+      const f = model.get(v.featureId as ElementId);
+      if (!f) return;
+      for (const g of [f, ...redefinedClosure(model, f)]) union(symbols[k]!, model.qualifiedName(g.id));
+    });
     if (row.source !== 'assert') continue;
     assertRowIds.add(row.element.id);
+    const set = apartBy.get(baseOf(row));
+    if (set !== undefined) {
+      filed.add(set);
+      if (symbols.length > 0) {
+        seeds.push(row);
+        setOf.set(row, set);
+      }
+      continue;
+    }
     if (!violatedAnywhere.has(baseOf(row)) || checks.get(row.element.id)?.result === 'satisfied') continue;
     if (symbols.length > 0) seeds.push(row);
     else if (checks.get(row.element.id)?.result === 'violated') unplaced.push({ ...named(row), kind: 'constant' });
+  }
+  // Two asserted equations the check reports apart, none of which the worklist files: what they read is not known.
+  for (const set of apartSets) {
+    if (filed.has(set)) continue;
+    unplaced.push({
+      expression: set.equations.map((c) => String(c.attrs.expression ?? '').trim()).join(' and '),
+      qualifiedName: model.qualifiedName(set.context.id),
+      kind: 'equations',
+      set,
+    });
   }
   // A violated reading the worklist files no row of the assert for: what it reads there is not known.
   for (const v of violatedAt) {
@@ -481,9 +538,33 @@ function contradictionsOf(
         .map((p) => ({ expression: p.expression, paths: reached(p.vars, asserts) }))
         .filter((p) => p.paths.length > 0);
       if (asserts.size === 0) return undefined;
-      return { asserts: seeds.filter((a) => asserts.has(a)).map(named), paths, premises: onPremises };
+      const hit = seeds.filter((a) => asserts.has(a));
+      const sets = [...new Set(hit.flatMap((a) => setOf.get(a) ?? []))];
+      return { asserts: namedOnce(model, hit.filter((a) => !setOf.has(a))), sets, paths, premises: onPremises };
     },
   };
+}
+
+/**
+ * The asserts of `rows` as a contradicted row names them, once each: an assert seeded on its own row and in N
+ * instances (`L == a * 2.0` read in P and in p) is "`L == a * 2.0` (P::e1, and in 1 instance(s))", one seeded in
+ * one row alone keeps that row's name (`INS::P::ca in INS::q1`).
+ */
+function namedOnce(model: Model, rows: readonly Obligation[]): ContradictingAssert[] {
+  const byBase = new Map<ElementId, Obligation[]>();
+  for (const r of rows) {
+    const base = r.instance?.baseId ?? r.element.id;
+    byBase.set(base, [...(byBase.get(base) ?? []), r]);
+  }
+  return [...byBase].map(([base, group]) => {
+    if (group.length === 1) return { expression: group[0]!.expression, qualifiedName: group[0]!.element.qualifiedName };
+    const generic = group.find((r) => r.instance === undefined);
+    const n = group.filter((r) => r.instance !== undefined).length;
+    return {
+      expression: (generic ?? group[0]!).expression,
+      qualifiedName: `${model.qualifiedName(base)}, ${generic ? 'and ' : ''}in ${n} instance(s)`,
+    };
+  });
 }
 
 /** `` `a` `` and `` `b` ``: paths as a sentence lists them. */
@@ -502,42 +583,52 @@ function namedAsserts(asserts: readonly ContradictingAssert[]): string {
 }
 
 /** The close of every contradicted sentence: what the relation does at the point, and why that decides nothing. */
-const contradictedTail = (holds: boolean): string =>
+const contradictedTail = (holds: boolean, pair = false): string =>
   `The relation ${holds ? 'holds' : 'is false'} at these values, but a point the model contradicts is no point ` +
-  'at which a pass or a failure is unconditional: reconcile the assertion, which the check reports violated, ' +
-  'with the value it contradicts';
+  'at which a pass or a failure is unconditional: ' +
+  (pair
+    ? 'reconcile the asserted equations, which the check reports giving the feature two values'
+    : 'reconcile the assertion, which the check reports violated, with the value it contradicts');
 
 /**
  * The sentence of a `contradicted` row: the assert the model holds false at its values (and how many
  * more), what the relation — or an assumption it stands on — reads that the contradiction reaches, and what
  * the relation does at that point.
  */
-function contradictedDetail(read: ContradictedRead, holds: boolean): string {
+function contradictedDetail(model: Model, read: ContradictedRead, holds: boolean): string {
   const reads = [
     ...(read.paths.length > 0 ? [`this relation reads ${quotedPaths(read.paths)}`] : []),
     ...read.premises.map((p) => `its assumption \`${p.expression}\` reads ${quotedPaths(p.paths)}`),
   ].join(', and ');
+  const what = [
+    ...read.sets.map((set) => `${contradictedDefinitionNaming(model, set)} and give it two values that differ`),
+    ...(read.asserts.length > 0 ? [`the asserted ${namedAsserts(read.asserts)}`] : []),
+  ].join('; ');
   return (
-    `not judged at the model's values: the model contradicts itself there — the asserted ${namedAsserts(read.asserts)}, ` +
+    `not judged at the model's values: the model contradicts itself there — ${what}, ` +
     `and ${reads}, which that contradiction reaches: the assertion reads it, or reads it in another instance ` +
     "this tool reads as one value with it, or the model's values, bindings and assertions tie it to one the " +
-    `assertion reads. ${contradictedTail(holds)}`
+    `assertion reads. ${contradictedTail(holds, read.asserts.length === 0)}`
   );
 }
 
 /** The sentence of a row a contradiction this engine cannot place reaches ({@link UnplacedContradiction}). */
-function unplacedDetail(unplaced: readonly UnplacedContradiction[], holds: boolean): string {
+function unplacedDetail(model: Model, unplaced: readonly UnplacedContradiction[], holds: boolean): string {
   const [first] = unplaced;
   const why =
     first!.kind === 'constant'
       ? `the asserted \`${first!.expression}\` (${first!.qualifiedName}) reads no feature and is false whatever ` +
         "the values, so the model contradicts itself at every point, this relation's among them"
+      : first!.kind === 'equations' && first!.set !== undefined
+        ? `${contradictedDefinitionNaming(model, first!.set)} and give it two values that differ, and the worklist ` +
+          'files no row of them, so this tool does not read which values that contradiction reaches, and takes it to ' +
+          'reach every relation of the model, this one among them'
       : `the check reports the asserted \`${first!.expression}\` (${first!.qualifiedName}) false in ` +
         `${first!.where ?? 'an instance'}, an instance the worklist files no row of that assertion for, so this ` +
         'tool does not read which values that contradiction reaches there, and takes it to reach every relation of ' +
         'the model, this one among them';
   const more = unplaced.length > 1 ? ` (and ${unplaced.length - 1} other such assertion(s))` : '';
-  return `not judged at the model's values: the model contradicts itself — ${why}${more}. ${contradictedTail(holds)}`;
+  return `not judged at the model's values: the model contradicts itself — ${why}${more}. ${contradictedTail(holds, first!.kind === 'equations')}`;
 }
 
 /**
@@ -643,10 +734,10 @@ function judgeOne(
   if (check?.result === 'satisfied' || check?.result === 'violated') {
     const holds = check.result === 'satisfied';
     if (contradicted.unplaced.length > 0) {
-      return { ...base, outcome: 'contradicted', detail: unplacedDetail(contradicted.unplaced, holds) };
+      return { ...base, outcome: 'contradicted', detail: unplacedDetail(model, contradicted.unplaced, holds) };
     }
     const against = contradicted.reach(row, premises);
-    if (against !== undefined) return { ...base, outcome: 'contradicted', detail: contradictedDetail(against, holds) };
+    if (against !== undefined) return { ...base, outcome: 'contradicted', detail: contradictedDetail(model, against, holds) };
   }
 
   if (check?.result === 'satisfied') {

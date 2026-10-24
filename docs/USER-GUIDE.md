@@ -1359,7 +1359,8 @@ deciding nothing: a value the assert reads, one derived from it or bound to it,
 one an assumption of the relation reads (the sentence then names the
 assumption), one a single relation sums with it (`b` beside `total = a + b`,
 under an assert over `a`), an instance's own value of a feature it reaches (with
-the binding that carries that value there), and the same feature in another
+the binding that carries that value there, whether or not another relation reads
+that instance: Q3's p's `load` reaches Q's `bind p.load = L` and q3's L), and the same feature in another
 instance this tool reads as one value with it (q1's `assert constraint { p.x ==
 50.0 }` over P's `x default = 2.0` reaches P's own x and q2's p's too, as it
 does for the SMT engine); the row names the assert, which `check` reports
@@ -1516,14 +1517,25 @@ or one in an element nested in the one that declares L whose `L` resolves to
 that one (in a part's body, a nested package, or a definition in the package) —
 is a model that contradicts itself, whichever is written first, and no surface
 that judges a relation reads it. Every relation over L, or over a value tied to
-it (derived from it, bound to it, or read beside it by an asserted relation), is
-*could not be evaluated* on the check, the literal engine and the numeric
-surface — the equations' own rows included, in every instance of the feature,
-P's own L and every P's — in a sentence naming each equation (*L is not read:
-the asserted `L == 50.0` (…::P::c50) and `L == 60.0` (…::P::c60) each define
-`L` in …::P, which states no value, and give it two different values — the
-model contradicts itself there, whichever is written first …*), and `verify`
-exits 2 on either engine, its rows printing no value for L (nor an SI pair).
+it (derived from it, bound to it, or read beside it by an asserted relation —
+but not a value written with `=` or as a `default`, which is read whatever its
+asserts), is *could not be evaluated* on the check and the literal engine, and
+unknown on the numeric surface — the equations' own rows included, in every
+instance of the feature, P's own L and every P's — in a sentence naming each
+equation (*L is not read: the asserted `L == 50.0` (…::P::c50) and `L == 60.0`
+(…::P::c60) each define `L` in …::P, which states no value, and give it two
+different values — the model contradicts itself there, whichever is written
+first …*; on the numeric surface a row the solve could not judge keeps its own
+sentence, such as *the solve did not converge*), and `verify` exits 2 on either
+engine, its rows printing no value for L (nor an SI pair). A relation over a
+name a defining side reads, or one tied to it (`a` of `L == a * 2.0` with `a =
+30.0`, a package's `g` of `W == m * g`, the K that `bind a = K` joins to a), is
+read by the check and the numeric surface at the value the model states, and
+the literal engine marks it inconclusive under `verification/inconsistent-axioms`,
+naming both equations (*… the asserted `L == a * 2.0` (…::P::e1) and `L == 50.0`
+(…::P::e2) each define `L` in …::P and give it two values that differ, and this
+relation reads `p.a`, which that contradiction reaches …*), as the SMT engine
+finds its axioms inconsistent.
 `check` reports the pair once, a `validation/constraint-violation` warning at
 the element where the equations meet (P; p, for one in P and one in p; the
 definition that specialises the two types; the package, or the definition, for
@@ -1542,18 +1554,29 @@ none give, while they agree. So `L == a * 2.0` with `a = 30.0` beside `L ==
 50.0` is the warning, `L == 50.0 [kg]` and `50000.0 [g] == L` agree, and define
 it, as two equal ones always did, and so do `x == y * 2.0` beside `x == 6.0`
 with `y == 3.0`; `f == true` beside `f == false` is the warning. Two this tool
-cannot compare are *could not be evaluated* the same way, the pair's own row an
-info that says why, unless they are the same expression: a number with a unit
-beside one without (`L == 50.0` beside `L == 50.0 [kg]`, which may be one
-value), a side in another form (`L == 2.0 ^ 3`, `L == 10 % 3`), and a side over
-a name this tool does not read exactly (one a binding joins, one read around
-the element, one defined where it is not read). A side that gives no value — it
+cannot compare exactly — unless they are the same expression: a number with a
+unit beside one without, a side in another form (`L == 2.0 ^ 3`, `L == 10 %
+3`), and a side over a name this tool does not read exactly (one a binding
+joins, one read around the element, one defined where it is not read) — are
+*could not be evaluated* the same way, and the check reads each side with its
+own evaluator, where it is read. Two that differ there, beyond the tie rule,
+are the warning, its sentence giving each reading: `L == 50.0` beside `L ==
+60.0 [kg]`, the bare 50 read in L's declared kind (*… which differ at the
+model's values (`50.0` is 50 [kg], `60.0 [kg]` is 60 [kg]) …*); `L == a * 2.0`
+over `bind a = K` with `K = 30.0`, beside `L == 50.0`; `W == m * g` over the
+package's `g = 9.81`, beside `W == 20.0`. Two it reads alike or within the tie
+rule (`L == 50.0` beside `L == 50.0 [kg]`, which may be one value; `L == 2.0 ^
+3` beside `L == 8.0`), a side it reads no value of, and a side over a value
+another such pair leaves undecided leave the pair's own row an info that says
+why. A side that gives no value — it
 reads a name nothing gives one, as a design equation `L == m * g` over a free
 `m` does, or reads the feature back, as an alias's `b == a` read as a's
 definition beside `a == 2.0` does — is left aside: every evaluator tries the
 other first, in any order, and the model reads as before. A value
 written with `=` (`L = 1.0`) is read whatever its asserts, which are checked
-against it, in any order. Limits of this tool: two asserted equations on the two
+against it, in any order; so is one an asserted relation reads beside L (`M =
+20.0` in `L >= 0.0 [kg] or M >= 0.0`), and an assert over it alone (`M <=
+10.0`) is still the warning. Limits of this tool: two asserted equations on the two
 ends of one binding (`bind L = K` with `L == 50.0` and `K == 60.0`) are the
 binding's violated pair, but each end's readings stand; and an FMI export's
 `start` still reads the first equation written.
@@ -1919,11 +1942,11 @@ strongest row wins, in the order refuted → design-admitted → undecided.
 | Claim | Which engine can reach it | The exact condition | The run's exit code |
 |---|---|---|---|
 | `proved` | `smt` only, and it is the only claim `smt` counts as a discharge | `A ∧ P ∧ ¬G` is **unsat** — over an axiom set itself checked satisfiable, with the assumptions satisfiable, inside the timeout, with no freed feature left unbounded | **0** when every row is discharged |
-| `holds-at-values` | `literal` only, and `literal` can reach nothing stronger | The relation evaluates true with every feature at the value your model binds it to — one point of an infinite space, and one no `assert` the model holds false there contradicts on a value the relation reads | **0** under `--engine literal`, because you asked for a point evaluation by name; it is **not** a discharge under `smt` or `auto` |
-| `refuted` | both | `literal`: false at your values, where no `assert` the model holds false contradicts a value the relation reads. `smt`: `A ∧ P ∧ ¬G` **sat**, with the witness re-confirmed through this tool's own evaluator before you see it | **1** — and `--allow-inconclusive` does not reach it |
+| `holds-at-values` | `literal` only, and `literal` can reach nothing stronger | The relation evaluates true with every feature at the value your model binds it to — one point of an infinite space, and one no contradiction of the model's reaches through a value the relation reads: no `assert` the model holds false there, nor two asserted equations `check` reports giving one feature two values | **0** under `--engine literal`, because you asked for a point evaluation by name; it is **not** a discharge under `smt` or `auto` |
+| `refuted` | both | `literal`: false at your values, where no such contradiction reaches a value the relation reads. `smt`: `A ∧ P ∧ ¬G` **sat**, with the witness re-confirmed through this tool's own evaluator before you see it | **1** — and `--allow-inconclusive` does not reach it |
 | `design-admitted` | `smt` | A refutation reached only **after** `--free` released a value your model states, so it is a design your model admits rather than a violation of it | **2**, never 1 |
 | `vacuous` | both | `literal`: the `assume` clause is false at your values (`verification/vacuous-pass`). `smt`: `A ∧ P` is unsat, so nothing at all satisfies the premises (`verification/vacuous`) | **2**, with `--strict-vacuity` and without it — the flag changes the code and the severity and nothing else |
-| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms (on the literal engine: a relation over a value an `assert` false at your values contradicts), unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
+| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms (on the literal engine: a relation over a value an `assert` false at your values, or two asserted equations that give one feature two values, contradicts), unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
 | `holds-structurally`, `holds-within-bound` | none in this build | Declared in the evidence vocabulary and in `schemas/evidence-record.schema.json`, reserved for a structural argument and for a bounded walk. **No engine here writes either**, so a record carrying one did not come from this build | — |
 
 Two readings that table is defending. `holds-at-values` discharging a run is
@@ -2094,7 +2117,7 @@ that renders these members carries it itself.
 
 | The row says | What happened | `--allow-inconclusive`? |
 |---|---|---|
-| `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement is prose with no constraint body | **Yes** — lowered to exit 0 |
+| `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement states no `require` or `assume` clause (prose, or only an `assert`, which the row names as a fact of the model) | **Yes** — lowered to exit 0 |
 | `verification/timeout` | The solver ran out of time — raise it with `--timeout MS` | **Yes** |
 | `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm — or it reads a value that a binding, a value or an asserted equation carries and this tool does not read through (`unread-binding`: a limit of this tool, the relation is well formed), or it reads a value this tool does not read where the model states it (`unread-definition`: a limit of this tool too, closed in that sentence — a per-instance reading it cannot enumerate, a definition written in another context, a body whose names its own parameters shadow (its sentence says the body is over a parameter of its own, which may state no value), a parameterised calculation, more instance rows than a run reads; a reading that failed inside the tool says so) | No |
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
