@@ -570,26 +570,6 @@ true values. What follows is what that branch and the review of it left open; en
       (sysml.txt:10180-10181; parse/no-viable-alt), and the visibility-prefixed `public metadata T
       about A;` and `public @T about A;` (BNF MemberPrefix with AnnotatingElement, kebnf:74-78,
       130-136, 180-183). [small-defaults S2]
-- [ ] **Read `default <number>` in every reader of `ElementRow.value` in mbse-workflow-public
-      (mirrored to ../mbse-workflow).** Old row forms: `value` '1.2' and CLI text ` = 1.2` for a
-      default and a bound value alike. New forms (Sysprose small-defaults S1): `value` 'default 1.2'
-      for a default and '1.2' for a bound value, both through `--json` and the in-process buildGrid
-      path (src/sysprose/inprocess.ts copies r.cells.value); CLI text `default 1.2` for a default
-      and unchanged ` = 1.2` for a bound value. Readers and their behaviour on 'default 0.92' once
-      SYSPROSE_REF moves past S1: (1) src/check/checker.ts:432 `literal()` does not abstain, because
-      its regex fails and it falls back to the solver's two-sided point(qn); (2)
-      src/check/predicates.ts:567 `moe.dutyCycleBound` does Number.parseFloat(row.value), gets NaN
-      and returns []: the blocking gate goes silent for a `#Estimate ... default = 0.92` above the
-      bound, a FALSE PASS; (3) predicates.ts:645 `moe.estimated`: when the solver refused a point, a
-      stated default fails as if derived, with the false reason "is derived, but the solver's value
-      for it could not be confirmed"; (4) src/realization/adapter.ts:210 relabels a stated default
-      estimate as kind: 'derived' and takes the solver's value; (5) src/prompts/context.ts:129
-      writes `x = default 0.92` into the authoring prompt. Each must read `default <number>` as the
-      stated number. That number is hard against assertions once the decision-14 amendment lands,
-      and only a redefinition overrides it. One test per reader, following
-      test/unit/moe-duty-cycle.test.ts with value: 'default 0.92'. SYSPROSE_REF must not be bumped
-      past the small-defaults merge (this merge) until these land: they land in the same pin-bump
-      commit. A silent false pass in `moe.dutyCycleBound` otherwise. Sonnet, budget.
 - [ ] **Show `:=` (an initial value, not a binding) and the value's unit in `elements` and the grid;
       the workflow readers then read them (optional).** Today `init := 4.0` prints `= 4`, `softInit
       default := 3.0` prints `default 3`, and `= 7 [kg]` prints `= 7`. These predate small-defaults
