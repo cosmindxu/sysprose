@@ -22,11 +22,8 @@ maintainer says `awaits user decision U<n>` and names the question.
       whether to shorten it (for example `z3 5.3.1.0`) or keep the commit as provenance, re-pin any
       golden that quotes it, and update README lines 243 and 247 (`decided by z3 Z3 5.1.0.0, seed
       0`). Done when decided and the text is stable. [z3-bump]
-- [ ] **One outcome for `bounds --free all` on a nonlinear unbounded case.** z3 5.3.1 answers `oo`
-      where 5.2.0 timed out: 36 corpus models and 4 v9 rows move from inconclusive/timeout to
-      bound-without-optimality (`verification/optimality-not-established`, value null; exit 2 in
-      both). Re-run the v9 audit and the tutorial stills if they show that row, and decide whether
-      the engine should keep one outcome for the nonlinear unbounded case. [z3-bump]
+      DECIDED 2026-10-24 (D2): sentences say `decided by z3 5.3.1, seed 0`; the full string with the
+      commit stays in the evidence record's metadata; README's two quotes follow. Wave 3 run 5.
 - [ ] **Exercise a z3 death in a real browser.** The USER-GUIDE says a z3 that dies mid-session ends
       that Run with a `checks/internal-error` row and the next Run starts a fresh z3, 'not yet
       exercised in a real browser'; the bridge's `onAbort` rejection of a worker-thread trap is
@@ -45,6 +42,9 @@ maintainer says `awaits user decision U<n>` and names the question.
       X6::P::c and X6::P::c in Q::p. Two more rows have no violated row on the check at all, yet SMT
       reports X: UB6::cT (unit-blind assert) and W4o::c5 (w4-plain). BND and T4C/T4D are no longer
       on this list. Seeding from violated bind axiom rows would be a few lines in contradictionsOf.
+      DECIDED 2026-10-24 (D1): yes, as an assertion since Q4: the literal engine marks the
+      obligations over the values a violated binding joins inconclusive (exit 2) and names the
+      binding; `check` keeps deciding beside it. Wave 3 run 4 S3.
 - [ ] **File the assert of a bound feature's type for an instance whose binding sits in an enclosing
       instance (GI, next to RB5).** Model: part s2 : S { bind q.g = K; } with G's assert constraint
       ca { g <= 10.0 } and K = 50. The worklist files ca only for S::q and s1::q, so the SMT engine
