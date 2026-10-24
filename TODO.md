@@ -66,14 +66,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       prints 'no formal clause: prose only, nothing to encode' for R1::R, R1::r and RU::r.
       noFormalClauseDetail already names the asserts. When this closes, re-word the USER-GUIDE
       status-column paragraph to match.
-- [ ] **Decide whether check and numeric also abstain over a contradicted value (ruling wanted).**
-      Under Q4(b) as decided, `check` and the numeric surface still decide rows over a contradicted
-      value (T/X/T/X, F/X/F/X), because the `check` exit code stays; only the two verify engines
-      refuse. If the rule that a row decided on one surface and refused on another is a defect is
-      meant to cover this case, check and numeric must abstain there too, which changes the app's
-      Problems panel. Minor, documented: an obligation whose assumption is false at a contradicted
-      point stays `verification/vacuous-pass`, not `inconsistent-axioms` (both exit 2).
-      [contradicted-value S1]
 - [ ] **Read two asserted equations on the two ends of one binding as one feature's two values.**
       Since contradicted-value S2, two asserted equations that give one feature with no value two
       values leave every reading of it undecided (`contradictedDefinitions` in
