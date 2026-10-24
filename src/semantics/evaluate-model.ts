@@ -45,6 +45,10 @@ import {
   enclosingAssertOn,
   equatedPartsFailed,
   equatedPartsRefusal,
+  contradictedDefinitionConflict,
+  contradictedDefinitionRefusal,
+  contradictedDefinitionRefusalOf,
+  contradictedDefinitions,
   failedReadingSentence,
   hasUndecidedPartners,
   joinedTo,
@@ -1325,9 +1329,11 @@ export interface ConstraintCheck {
    * the model states different values for ({@link bindingConflicts}). Its
    * `id` is the redefinition's, `<the other feature's id>@<the context's
    * id>`, or the connector's — `<its id>@<the context's id>` in a context
-   * that specialises its owner.
+   * that specialises its owner — and `equations` for asserted equations that
+   * give one feature with no value two values ({@link definitionConflicts}),
+   * `<the feature's id>@<the id of the element they meet in>`.
    */
-  conflict?: 'binding' | 'clash' | 'bind';
+  conflict?: 'binding' | 'clash' | 'bind' | 'equations';
   /**
    * Set on an `unknown` that is a comparison whose two sides are equal within
    * the evaluators' tolerance and that no exact reading decides (the tie rule
@@ -1607,9 +1613,69 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       delete i.sides;
     }
   }
+  // A feature with no value that two asserted equations give two values (contradictedDefinitionRefusal): no
+  // decided row that may read it, or a value tied to it, is decided — whichever equation is written first, the
+  // equations' own rows included. A row that abstains already keeps its sentence. An instance row's cause is
+  // `two-values` where the model states two (`differs`), none where this tool cannot compare them, and, where
+  // listing them threw (A.2.9), `internal`.
+  for (const c of out) {
+    const own = c.result === 'unknown' ? undefined : contradictedDefinitionRefusal(model, c.id, c.expression);
+    if (own !== undefined) {
+      c.result = 'unknown';
+      c.message = `Could not evaluate: ${own}`;
+      delete c.tie;
+      delete c.reads;
+      delete c.sides;
+    }
+    for (const i of c.instances ?? []) {
+      if (i.result === 'unknown') continue;
+      const each = contradictedDefinitionRefusalOf(model, c.id, c.expression, { contextId: i.contextId, path: i.instance });
+      if (each === undefined) continue;
+      i.result = 'unknown';
+      i.message = `Could not evaluate: ${each.sentence}`;
+      i.detail = i.message;
+      const cause = each.verdict === 'failed' ? 'internal' : each.verdict === 'differs' ? 'two-values' : undefined;
+      if (cause) {
+        i.abstention = cause;
+        i.cause = cause;
+      } else {
+        delete i.abstention;
+        delete i.cause;
+      }
+      delete i.reads;
+      delete i.sides;
+    }
+  }
   out.push(...contradictions(model, pass));
   out.push(...bindingConflicts(model, pass));
+  out.push(...definitionConflicts(model));
   return out;
+}
+
+/**
+ * One check per feature with no value that two asserted equations give two values where they meet ({@link
+ * contradictedDefinitions}), anchored at the element they meet in, in a sentence that names every equation:
+ * `violated` where two constants differ — an asserted equation is a fact of every instance it holds of, so the
+ * model states both values, as a binding to two does ({@link bindingConflicts}) — and `unknown` where two cannot
+ * be compared. Its `id` is `<the feature's id>@<that element's id>`, its `expression` the equations joined by
+ * `and`. Every reading of the feature is left undecided beside it ({@link contradictedDefinitionRefusal}): the
+ * first equation written no longer defines it, and the others no longer read violated against it.
+ */
+function definitionConflicts(model: Model): ConstraintCheck[] {
+  const { sets, failed } = contradictedDefinitions(model);
+  if (failed !== undefined) return [];
+  return sets.map((set) => {
+    const sentence = contradictedDefinitionConflict(model, set);
+    const differs = set.verdict === 'differs';
+    return {
+      id: `${set.feature.id}@${set.context.id}`,
+      ownerId: set.context.id,
+      expression: set.equations.map((c) => String(c.attrs.expression ?? '').trim()).join(' and '),
+      result: differs ? 'violated' : 'unknown',
+      message: differs ? `Constraint violated: ${sentence}` : `Could not evaluate: ${sentence}`,
+      conflict: 'equations' as const,
+    };
+  });
 }
 
 /**
@@ -2328,6 +2394,9 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
         // = K` beside P's `L == M`: p2's M is K's 9, which the equation makes
         // p2's L too, where M was read from L's default 2 and the pair reported.
         if (!against && result === 'violated') unread = equatedPartsRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
+        // So is a pair read at an end two asserted equations give two values (contradictedDefinitionRefusal), decided
+        // or not: the first equation written gave the end its value, so the pair was reported in one order only.
+        if (!against) unread ??= contradictedDefinitionRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
       } catch (e) {
         // A.2.9: a reading that throws is this row's, reported — never a throw
         // out of the sweep, which emptied the Problems view.

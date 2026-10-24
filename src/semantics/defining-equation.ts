@@ -31,7 +31,7 @@
  * ({@link shadowedNamesOf}).
  */
 
-import { type AttrValue, type ElementId, type ElementRecord, type Model, TEXTUAL_KEYWORD, isDefinition, isUsage } from '@core/index';
+import { type AttrValue, type ElementId, type ElementRecord, type Model, TEXTUAL_KEYWORD, isDefinition, isTypingSpecialization, isUsage } from '@core/index';
 import {
   effectiveFeatures,
   effectiveNameOf,
@@ -97,7 +97,11 @@ export function shadowedEquation(model: Model, eq: DefiningEquation): readonly s
  * a = b = 2 m. Two equations that fix the same name to DIFFERENT values
  * (`x == 1.0` and `2.0 == x`) are a model at odds with itself; the one that
  * defines is the first in this order that gives a value — so `x == 1.0` in
- * either order — and the other is judged against it, and violated.
+ * either order — and the other is judged against it, and violated. Where two
+ * give it values that differ, or that this tool cannot compare (an equation
+ * over other names that may give it a value among them), no surface that
+ * judges a relation reads either, nor any relation over the name ({@link
+ * contradictedDefinitions}): which comes first would decide its verdicts.
  */
 export function definingEquationsFor(model: Model, ownerId: ElementId, name: string): DefiningEquation[] {
   return equationsByName(model, ownerId).get(name) ?? [];
@@ -4371,8 +4375,42 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
 function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
   const parts = equatedParts(model);
   if (parts.taint) return parts.taint;
+  if (parts.unread.length === 0) return (parts.taint = new Map());
+  // An asserted equation that is a source itself ({@link EnclosingAsserts.unreadAsserts}) taints what it names, not
+  // the first link of each path it reads.
+  const sources = new Set(parts.unread.filter((b) => isAsserted(b)).map((b) => b.id));
+  parts.taint = spreadTaint(model, sources, (add) => {
+    for (const b of parts.unread) {
+      if (isBindingConnector(b)) {
+        for (const id of [b.source?.[0], b.target?.[0]]) {
+          const end = id !== undefined ? model.get(id) : undefined;
+          if (end) add(end, b, b.ownerId!);
+        }
+      } else add(b, b);
+      // A valued one's partner, as a binding's other end ({@link equatedParts}).
+      for (const p of parts.partners.get(b.id) ?? []) add(p, b);
+    }
+  });
+  return parts.taint;
+}
+
+/**
+ * The fixpoint of {@link equatedTaint}, from what `seed` adds (each element with the source it is tainted by),
+ * shared with {@link contradictedTaint}: the ends of every binding one end of which is, or is read through, a
+ * tainted element (and, with `holders`, each usage above such an end: a part an equated part's value is carried
+ * into; {@link contradictedTaint}'s values are attributes, whose holders carry none); every feature whose value
+ * reads through one; the first link of each name an asserted relation reads beside one (`sources` aside: an
+ * asserted equation that is a source itself taints what it names); what redefines or subsets one; an equated part
+ * whose partner is one; and a `satisfy` of one.
+ */
+function spreadTaint(
+  model: Model,
+  sources: ReadonlySet<ElementId>,
+  seed: (add: (e: ElementRecord, b: ElementRecord, holder?: ElementId) => void) => void,
+  holders = true,
+): Map<ElementId, ElementRecord> {
+  const parts = equatedParts(model);
   const taint = new Map<ElementId, ElementRecord>();
-  if (parts.unread.length === 0) return (parts.taint = taint);
   const defs = sharedDefinitions(model);
   const ownerOf = (e: ElementRecord): ElementRecord | undefined => (e.ownerId != null ? model.get(e.ownerId) : undefined);
   let grew = true;
@@ -4392,19 +4430,7 @@ function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
   const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string');
   const asserted = users.filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string');
   const narrowing = [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')];
-  // An asserted equation that is a source itself ({@link EnclosingAsserts.unreadAsserts}) taints what it names, not
-  // the first link of each path it reads.
-  const sources = new Set(parts.unread.filter((b) => isAsserted(b)).map((b) => b.id));
-  for (const b of parts.unread) {
-    if (isBindingConnector(b)) {
-      for (const id of [b.source?.[0], b.target?.[0]]) {
-        const end = id !== undefined ? model.get(id) : undefined;
-        if (end) add(end, b, b.ownerId!);
-      }
-    } else add(b, b);
-    // A valued one's partner, as a binding's other end ({@link equatedParts}).
-    for (const p of parts.partners.get(b.id) ?? []) add(p, b);
-  }
+  seed(add);
   const endsOf = (b: ElementRecord): ElementRecord[] =>
     [b.source?.[0], b.target?.[0]].flatMap((id) => (id !== undefined ? (model.get(id) ?? []) : []));
   while (grew) {
@@ -4414,7 +4440,7 @@ function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
       const hit = ends
         .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
         .find((x) => x !== undefined);
-      if (hit) for (const e of ends) add(e, hit, b.ownerId!);
+      if (hit) for (const e of ends) add(e, hit, holders ? b.ownerId! : undefined);
     }
     for (const f of valued) {
       const hit = namesOfValue(f.attrs.value as string)
@@ -4453,7 +4479,6 @@ function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
       if (hit) add(rel, hit);
     }
   }
-  parts.taint = taint;
   return taint;
 }
 
@@ -4938,6 +4963,528 @@ function equatedSentence(model: Model, b: ElementRecord): string {
     'this tool reads such a binding only where one says nothing of its own and is bound once, as the other, and ' +
     'neither is here'
   );
+}
+
+/* ───── Two asserted equations that give one feature with no value two values (the soft/hard analysis, Q5) ───── */
+
+/**
+ * A feature with no value that two or more asserted equations each define where they meet, two of them with
+ * constant sides that differ ({@link contradictedDefinitions}).
+ */
+export interface ContradictedDefinition {
+  /** The element every instance of which each equation holds of: where they meet. */
+  context: ElementRecord;
+  /** The name they define there, as written from it: `L`, or `p.L` in an element around p. */
+  path: string;
+  /** The feature that name denotes there. */
+  feature: ElementRecord;
+  /** Every asserted equation that defines it there, in the model's order. */
+  equations: readonly ElementRecord[];
+  /** `differs`: two constant sides differ, or two Boolean ones; `undecided`: two this tool cannot compare. */
+  verdict: 'differs' | 'undecided';
+  /**
+   * Why two cannot be compared, where `undecided`: `unit`, one number is written with a unit and the other
+   * without; `names`, one side reads other names that may give it a value; `form`, one side reads no name but is
+   * not a number over `+ - * /` and `[unit]` literals (`2.0 ^ 3`, `10 % 3`), or a Boolean beside a number.
+   */
+  why?: 'unit' | 'names' | 'form';
+  /** The features no reading of which is decided: that feature, and the one each equation names where it is written. */
+  features: readonly ElementRecord[];
+}
+
+/** {@link contradictedDefinitions}' entry, once per revision. */
+interface ContradictedDefinitions {
+  rev: number;
+  sets: readonly ContradictedDefinition[];
+  /** Each equation of a set by its id: the set a row it reaches is refused for. */
+  bySource: ReadonlyMap<ElementId, ContradictedDefinition>;
+  /** {@link contradictedTaint}, built on first ask. */
+  taint?: ReadonlyMap<ElementId, ElementRecord>;
+  /** Set where listing them threw (A.2.9): the sentence every row that reads a name abstains in. */
+  failed?: string;
+}
+
+const CONTRADICTED_DEFINITIONS = new WeakMap<Model, ContradictedDefinitions>();
+
+/**
+ * The features with no value that two asserted equations give two values, once per revision (the soft/hard
+ * defaults analysis, Q5, decided 2026-10-22). Every evaluator takes the FIRST of a name's defining equations that
+ * gives a value ({@link chooseDefinition}) — the element's own before one it inherits or one an element around it
+ * writes ({@link DefiningEquations.definitionReadIn}, {@link DefiningEquations.reachingAssert}) — and judges the
+ * others against it: `L == 50.0` and `L == 60.0` in P read `t50 { p.L == 50.0 }` true, with the literal engine's
+ * exit 0, and swapped false, with exit 1 (M8); one in P and one in `part p : P { … }` read both true, `check`
+ * silent (F1). An asserted equation is a fact of every instance it holds of, so such a model states both values
+ * and contradicts itself, whichever is written first: no reading of the feature is decided on any surface that
+ * reads values ({@link contradictedDefinitionRefusal}), the SMT engine finds its axioms inconsistent, and the check
+ * reports the equations where they meet (`definitionConflicts` of ./evaluate-model).
+ *
+ * Where they meet: each element X — a definition, a usage, a package — and each name N an asserted equation
+ * defines in X or in an element X specialises ({@link generalizationsOf}: its types and supertypes, what it
+ * redefines or subsets), with every equation of theirs that defines N, and, for a dotted N (`p.L` in K), every
+ * equation of the usage each prefix names, and of what that usage specialises, that defines the rest (`L` in p's
+ * own body and in P). So is an equation written in an element nested in one of them whose name that element does
+ * not answer and KerML resolves to the feature it names there (`L == 60.0` in `part p : R { … }` written in Q,
+ * which declares L; one in a package nested in the one that declares L). Each must name the feature N denotes in
+ * X, or one that shares with it a feature they override ({@link overriddenBy}): one it redefines, one it masks by
+ * name, or the one two redefinitions X inherits together redefine. That feature must state no value and write no
+ * `default`: one that does is checked against, whatever its equations, and `=` reads alike in any order. A set
+ * met in X and again in an element that specialises X is X's alone.
+ *
+ * Compared, exactly ({@link exactConstant}): each defining side is read as a number over `+ - * /` and `[unit]`
+ * literals, or a Boolean, its names read where it is read — a value written, or what the asserted equations that
+ * define a name with none give, while they agree — and two that differ make the set `differs` (`L == a * 2.0`
+ * with a = 30 beside `L == 50.0`). Else two this tool cannot compare make it `undecided`, unless their sides are
+ * the same expression ({@link sameBody}): a number written with a unit beside one without, a side that reads no
+ * name in another form (`2.0 ^ 3`, `10 % 3`), and a side over names it does not read exactly (one a binding
+ * joins, one read around the element, one defined where it is not read), which may give L a value the other
+ * does not. A side that gives no value — it reads a name nothing gives one, or reads back the feature it
+ * defines, as an alias's `b == a` read as a's definition does — is left out: every evaluator tries another
+ * first, in either order.
+ */
+export function contradictedDefinitions(model: Model): ContradictedDefinitions {
+  const hit = CONTRADICTED_DEFINITIONS.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  let fresh: ContradictedDefinitions;
+  try {
+    fresh = instanceIndexSeam.contradictedDefinitions(model);
+  } catch (e) {
+    fresh = {
+      rev: model.rev,
+      sets: [],
+      bySource: new Map(),
+      failed:
+        'the asserted equations that give one feature with no value two values could not be listed: the reading ' +
+        `failed (${e instanceof Error ? e.constructor.name : 'error'}); reported, not dropped`,
+    };
+  }
+  CONTRADICTED_DEFINITIONS.set(model, fresh);
+  return fresh;
+}
+
+/** {@link contradictedDefinitions}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. */
+function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions {
+  const empty: ContradictedDefinitions = { rev: model.rev, sets: [], bySource: new Map() };
+  // Each owner of an asserted equation, with its equations by the name each defines: the index every evaluator
+  // reads (`equationsByName`), so a name whose feature writes a `default` is none of them.
+  const byOwner = new Map<ElementId, Map<string, DefiningEquation[]>>();
+  let count = 0;
+  for (const c of model.all()) {
+    if (c.attrs.isLibrary === true || c.ownerId == null || byOwner.has(c.ownerId) || !isAsserted(c)) continue;
+    const index = equationsByName(model, c.ownerId);
+    byOwner.set(c.ownerId, index);
+    for (const list of index.values()) count += list.length;
+  }
+  if (count < 2) return empty;
+  const namedMemo = new Map<string, ElementRecord | undefined>();
+  const named = (at: ElementId, name: string): ElementRecord | undefined => {
+    const key = `${at} ${name}`;
+    if (!namedMemo.has(key)) namedMemo.set(key, featureNamedBelow(model, at, name));
+    return namedMemo.get(key);
+  };
+  const generalMemo = new Map<ElementId, ElementRecord[]>();
+  const generalOf = (id: ElementId): ElementRecord[] => {
+    let hit = generalMemo.get(id);
+    if (!hit) generalMemo.set(id, (hit = generalizationsOf(model, id)));
+    return hit;
+  };
+  // Each equation whose name its owner does not answer but an element around it declares, under that element by
+  // the name as it reads there, with the feature it names: as KerML resolves it, unless an import or an alias
+  // answers it first.
+  const lexical = new Map<ElementId, Map<string, Array<{ eq: DefiningEquation; named: ElementRecord }>>>();
+  for (const [ownerId, index] of byOwner) {
+    for (const [name, list] of index) {
+      if (named(ownerId, name)) continue;
+      const head = name.split('.')[0]!;
+      const seen = new Set<ElementId>([ownerId]);
+      for (let id = model.get(ownerId)?.ownerId ?? null; id != null && !seen.has(id); id = model.get(id)?.ownerId ?? null) {
+        seen.add(id);
+        if (model.get(id)?.attrs.isLibrary === true) break;
+        const declared = named(id, head);
+        if (!declared) continue;
+        const f = named(id, name);
+        const resolved = resolveFullName(model, head, ownerId);
+        if (f && (!resolved || resolved.id === declared.id)) {
+          const into = lexical.get(id) ?? new Map<string, Array<{ eq: DefiningEquation; named: ElementRecord }>>();
+          lexical.set(id, into);
+          into.set(name, [...(into.get(name) ?? []), ...list.map((eq) => ({ eq, named: f }))]);
+        }
+        break;
+      }
+    }
+  }
+  const statesValue = (f: ElementRecord): boolean =>
+    hasStatedValue(model, f) || [f, ...redefinedClosure(model, f)].some((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+  const slots = new Map<ElementId, ReadonlySet<ElementId>>();
+  const slotOf = (f: ElementRecord): ReadonlySet<ElementId> => {
+    let hit = slots.get(f.id);
+    if (!hit) slots.set(f.id, (hit = new Set([f.id, ...overriddenBy(model, f).map((g) => g.id)])));
+    return hit;
+  };
+  const sameSlot = (f: ElementRecord, g: ElementRecord): boolean => {
+    const mine = slotOf(f);
+    return [...slotOf(g)].some((id) => mine.has(id));
+  };
+  /**
+   * The asserted equations that define `path` read in X (`feature`, there), each with the element the names its
+   * defining side reads are read in: X's own and those of what it specialises, read in X; for a dotted path, those
+   * of the usage each prefix names and of what that usage specialises, read in that usage; and one written in an
+   * element nested in one of them whose name resolves to the feature there, read where it is written. Each must
+   * name `feature`, or a feature that shares with it one they override ({@link overriddenBy}).
+   */
+  const gather = (x: ElementRecord, path: string, feature: ElementRecord): Array<{ eq: DefiningEquation; named: ElementRecord; at: ElementId }> => {
+    const out: Array<{ eq: DefiningEquation; named: ElementRecord; at: ElementId }> = [];
+    const push = (eq: DefiningEquation, f: ElementRecord | undefined, at: ElementId): void => {
+      if (out.some((c) => c.eq.constraint.id === eq.constraint.id)) return;
+      if (f && sameSlot(feature, f)) out.push({ eq, named: f, at });
+    };
+    const take = (owner: ElementRecord, name: string, at: ElementId): void => {
+      for (const eq of byOwner.get(owner.id)?.get(name) ?? []) push(eq, named(owner.id, name), at);
+      for (const l of lexical.get(owner.id)?.get(name) ?? []) push(l.eq, l.named, l.eq.constraint.ownerId!);
+    };
+    for (const y of [x, ...generalOf(x.id)]) take(y, path, x.id);
+    const segments = path.split('.');
+    for (let k = 1; k < segments.length; k++) {
+      const u = named(x.id, segments.slice(0, k).join('.'));
+      if (!u) break;
+      const rest = segments.slice(k).join('.');
+      for (const y of [u, ...generalOf(u.id)]) take(y, rest, u.id);
+    }
+    return out;
+  };
+  // Every asserted equation by each feature it may define (the one its name names where it is written, and every
+  // one that feature overrides): what may give a name read beside it a value.
+  const definers = new Map<ElementId, Set<ElementId>>();
+  const defines = (f: ElementRecord, c: ElementRecord): void => {
+    for (const id of slotOf(f)) definers.set(id, (definers.get(id) ?? new Set<ElementId>()).add(c.id));
+  };
+  for (const [ownerId, index] of byOwner) {
+    for (const [name, list] of index) {
+      const f = named(ownerId, name);
+      if (f) for (const eq of list) defines(f, eq.constraint);
+    }
+  }
+  for (const into of lexical.values()) for (const list of into.values()) for (const l of list) defines(l.named, l.eq.constraint);
+  const definersOf = (g: ElementRecord): ReadonlySet<ElementId> => {
+    const out = new Set<ElementId>();
+    for (const id of slotOf(g)) for (const c of definers.get(id) ?? []) out.add(c);
+    return out;
+  };
+  const bound = (g: ElementRecord): boolean => [g, ...redefinedClosure(model, g)].some((h) => joinedTo(model, h.id).size > 1);
+  /**
+   * An exact reading of a defining side, or why there is none: `free`, it gives no value — it reads a name with
+   * none that nothing gives one, or one whose every definition reads back a feature in flight (the one it defines
+   * among them), which every evaluator passes over, or one nested past the depth every evaluator refuses a
+   * derivation at; `opaque`, it may give one this tool does not read exactly — a name bound, read around the
+   * element, defined where it is not read, or past the work this reading is allowed. A name with a value written
+   * reads that value; one without reads what its asserted equations give where it is read, when every one that
+   * may give it one is among them and those that give one agree.
+   */
+  type Exact = { k: Constant } | { bool: boolean } | 'free' | 'opaque';
+  let budget = 0;
+  const sameExact = (a: Exact, b: Exact): boolean =>
+    typeof a === 'object' && typeof b === 'object'
+      ? 'k' in a && 'k' in b
+        ? compareConstants(a.k, b.k) === 'same'
+        : 'bool' in a && 'bool' in b && a.bool === b.bool
+      : false;
+  const exactName = (at: ElementId, n: string, flight: ReadonlySet<ElementId>, depth: number): Exact => {
+    // Past the depth every evaluator refuses a derivation at, a side gives no value on any surface.
+    if (depth > MAX_DERIVATION_DEPTH) return 'free';
+    if (--budget < 0) return 'opaque';
+    const g = named(at, n);
+    if (!g) return 'opaque';
+    if (flight.has(g.id)) return 'free';
+    if (bound(g)) return 'opaque';
+    const inner = new Set(flight);
+    for (const id of slotOf(g)) inner.add(id);
+    if (statesValue(g)) {
+      const v = statedValueOf(model, g);
+      if (typeof v === 'boolean') return { bool: v };
+      if (typeof v === 'number') {
+        const k = constantOf(g);
+        return k ? { k } : 'opaque';
+      }
+      if (typeof v !== 'string' || isQuoted(v.trim()) || g.ownerId == null) return 'opaque';
+      const body = parseRelationBody(v.trim());
+      if (!body || (body.hadUnit && !body.resolved)) return 'opaque';
+      return exactSide(body.node, body.literals, g.ownerId, inner, depth + 1);
+    }
+    const sides = gather(model.get(at)!, n, g);
+    const considered = new Set(sides.map((s) => s.eq.constraint.id));
+    if ([...definersOf(g)].some((id) => !considered.has(id))) return 'opaque';
+    let out: Exact = 'free';
+    for (const s of sides) {
+      const r = exactSide(s.eq.definition, s.eq.literals, s.at, inner, depth + 1);
+      if (r === 'free') continue;
+      if (r === 'opaque') return 'opaque';
+      if (out === 'free') out = r;
+      else if (!sameExact(out, r)) return 'opaque';
+    }
+    return out;
+  };
+  /** Does `n`, read in `at`, name a feature with no value, no binding, and no asserted equation that defines it? */
+  const plainlyFree = (at: ElementId, n: string): boolean => {
+    const g = named(at, n);
+    return g !== undefined && !statesValue(g) && !bound(g) && definersOf(g).size === 0;
+  };
+  const exactSide = (node: ExprNode, literals: MarkerDimensions, at: ElementId, flight: ReadonlySet<ElementId>, depth: number): Exact => {
+    const names = [...new Set(refsIn(node, literals))];
+    if (names.length === 0) {
+      const k = exactConstant(node, literals);
+      return k ? { k } : node.kind === 'bool' ? { bool: node.value } : 'opaque';
+    }
+    // A name nothing gives a value first: such a side gives none, whatever its other names give.
+    if (names.some((n) => plainlyFree(at, n))) return 'free';
+    const read = names.map((n) => [n, exactName(at, n, flight, depth)] as const);
+    if (read.some(([, r]) => r === 'free')) return 'free';
+    if (read.some(([, r]) => r === 'opaque')) return 'opaque';
+    if (node.kind === 'ref' && read.length === 1) return read[0]![1];
+    const env = new Map<string, Constant>();
+    for (const [n, r] of read) {
+      if (typeof r !== 'object' || !('k' in r)) return 'opaque';
+      env.set(n, r.k);
+    }
+    const k = exactConstant(node, literals, env);
+    return k ? { k } : 'opaque';
+  };
+  type Side = { kind: 'constant'; k: Constant } | { kind: 'bool'; value: boolean } | { kind: 'other'; why: 'names' | 'form' };
+  const sideOf = (eq: DefiningEquation, at: ElementId, flight: ReadonlySet<ElementId>): Side | undefined => {
+    budget = 4096;
+    const r = exactSide(eq.definition, eq.literals, at, flight, 0);
+    if (r === 'free') return undefined;
+    if (r === 'opaque') return { kind: 'other', why: refsIn(eq.definition, eq.literals).length > 0 ? 'names' : 'form' };
+    return 'k' in r ? { kind: 'constant', k: r.k } : { kind: 'bool', value: r.bool };
+  };
+  const compare = (
+    a: { eq: DefiningEquation; side: Side },
+    b: { eq: DefiningEquation; side: Side },
+  ): { v: WrittenComparison; why?: ContradictedDefinition['why'] } => {
+    if (a.side.kind === 'constant' && b.side.kind === 'constant') {
+      const v = compareConstants(a.side.k, b.side.k);
+      return v === 'undecided' ? { v, why: 'unit' } : { v };
+    }
+    if (a.side.kind === 'bool' && b.side.kind === 'bool') return { v: a.side.value === b.side.value ? 'same' : 'differs' };
+    if (sameBody(a.eq.definition, a.eq.literals, b.eq.definition, b.eq.literals)) return { v: 'same' };
+    const why = a.side.kind === 'other' && a.side.why === 'names' ? 'names' : b.side.kind === 'other' ? b.side.why : 'form';
+    return { v: 'undecided', why };
+  };
+  const order = new Map<ElementId, number>();
+  model.all().forEach((e, i) => order.set(e.id, i));
+  // Where equations may meet: each owner, each element around an equation that declares the name it defines,
+  // and every element that specialises one ({@link generalizationsOf} read backwards, once), in the model's order.
+  const specific = new Map<ElementId, ElementId[]>();
+  for (const r of model.all()) {
+    if (!isTypingSpecialization(r.eClass)) continue;
+    for (const g of r.target ?? []) {
+      const list = specific.get(g) ?? [];
+      list.push(...(r.source ?? []));
+      specific.set(g, list);
+    }
+  }
+  const anchors = new Set<ElementId>();
+  for (const queue = [...byOwner.keys(), ...lexical.keys()]; queue.length > 0; ) {
+    const id = queue.pop()!;
+    if (anchors.has(id)) continue;
+    anchors.add(id);
+    queue.push(...(specific.get(id) ?? []));
+  }
+  const holds = (y: ElementRecord): boolean => byOwner.has(y.id) || lexical.has(y.id);
+  const countOf = (y: ElementRecord, path: string): number =>
+    (byOwner.get(y.id)?.get(path)?.length ?? 0) + (lexical.get(y.id)?.get(path)?.length ?? 0);
+  // The sets found, by the equations each holds: met again in an element that specialises the one it was met in,
+  // a set is that element's; met in two unrelated elements, it is each one's.
+  const found = new Map<string, Array<{ set: ContradictedDefinition; general: ReadonlySet<ElementId> }>>();
+  for (const x of model.all()) {
+    if (x.attrs.isLibrary === true || !anchors.has(x.id)) continue;
+    if (!holds(x) && !isUsage(x.eClass) && !isDefinition(x.eClass)) continue;
+    const general = generalizationsOf(model, x.id);
+    const owners = [x, ...general].filter(holds);
+    if (owners.length === 0) continue;
+    const paths = owners.flatMap((y) => [...(byOwner.get(y.id)?.keys() ?? []), ...(lexical.get(y.id)?.keys() ?? [])]);
+    for (const path of new Set(paths)) {
+      // One equation of a bare name among the owners meets no other: only a dotted one reads more, below.
+      if (!path.includes('.') && owners.reduce((n, y) => n + countOf(y, path), 0) < 2) continue;
+      const feature = featureNamedBelow(model, x.id, path);
+      if (!feature || statesValue(feature)) continue;
+      const competing = gather(x, path, feature);
+      if (competing.length < 2) continue;
+      // The feature, and every one it overrides, is in flight: a side that reads it back gives it no value.
+      const flight = new Set(competing.flatMap((c) => [...slotOf(c.named)]));
+      const sides = competing.flatMap((c) => {
+        const side = sideOf(c.eq, c.at, flight);
+        return side ? [{ eq: c.eq, side }] : [];
+      });
+      let verdict: ContradictedDefinition['verdict'] | undefined;
+      let why: ContradictedDefinition['why'];
+      for (let i = 0; i < sides.length && verdict !== 'differs'; i++) {
+        for (let j = i + 1; j < sides.length; j++) {
+          const c = compare(sides[i]!, sides[j]!);
+          if (c.v === 'differs') {
+            verdict = 'differs';
+            why = undefined;
+            break;
+          }
+          if (c.v === 'undecided' && verdict === undefined) {
+            verdict = 'undecided';
+            why = c.why;
+          }
+        }
+      }
+      if (verdict === undefined) continue;
+      const equations = [...competing.map((c) => c.eq.constraint)].sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+      const features = [...new Map([feature, ...competing.map((c) => c.named)].map((f) => [f.id, f])).values()];
+      const key = equations.map((c) => c.id).join(' ');
+      const met = found.get(key) ?? [];
+      const mine = new Set(general.map((g) => g.id));
+      // One it was met in already that X specialises keeps it; any it was met in that specialises X gives it up.
+      if (met.some((m) => mine.has(m.set.context.id))) continue;
+      const kept = met.filter((m) => !m.general.has(x.id));
+      kept.push({ set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features }, general: mine });
+      found.set(key, kept);
+    }
+  }
+  const sets = [...found.values()].flat().map((m) => m.set);
+  if (sets.length === 0) return empty;
+  sets.sort((a, b) => order.get(a.context.id)! - order.get(b.context.id)! || a.path.localeCompare(b.path));
+  const bySource = new Map<ElementId, ContradictedDefinition>();
+  for (const set of sets) for (const c of set.equations) if (!bySource.has(c.id)) bySource.set(c.id, set);
+  return { rev: model.rev, sets, bySource };
+}
+
+/**
+ * What a {@link ContradictedDefinition} decides nothing of, each with the first equation of its set: its
+ * equations, its features, and from them, to the fixpoint {@link equatedTaint} reaches (a binding's other end, a
+ * feature whose value reads one, what an asserted relation over one reads beside it, what redefines or subsets
+ * one), every value tied to them — a binding's end alone, not the part that holds it (`bind k.K = p.L` leaves
+ * k's own W read). Once per revision.
+ */
+function contradictedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
+  const index = contradictedDefinitions(model);
+  if (index.taint) return index.taint;
+  if (index.sets.length === 0) return (index.taint = new Map());
+  const sources = new Set(index.sets.flatMap((s) => s.equations.map((c) => c.id)));
+  index.taint = spreadTaint(model, sources, (add) => {
+    for (const set of index.sets) {
+      const first = set.equations[0]!;
+      for (const c of set.equations) add(c, first);
+      for (const f of set.features) add(f, first);
+    }
+  }, false);
+  return index.taint;
+}
+
+/**
+ * Is `featureId` a feature two asserted equations give two values, or one whose value is tied to one ({@link
+ * contradictedTaint})? No value of it is printed (`modelBindings` of ./engines/literal): the evaluators still
+ * derive the first equation written, which is no value the model states. True too where listing them threw.
+ */
+export function readsContradictedDefinition(model: Model, featureId: ElementId): boolean {
+  const index = contradictedDefinitions(model);
+  if (index.failed !== undefined) return true;
+  if (index.sets.length === 0) return false;
+  return taintedAt(model, contradictedTaint(model), model.get(featureId)) !== undefined;
+}
+
+/**
+ * Did listing the features two asserted equations give two values throw ({@link contradictedDefinitions}'
+ * `failed`, A.2.9)? Every row {@link contradictedDefinitionRefusal} refuses then abstains as `internal`.
+ */
+export function contradictedDefinitionsFailed(model: Model): boolean {
+  return contradictedDefinitions(model).failed !== undefined;
+}
+
+/**
+ * Why a relation row of `model` is not read ({@link contradictedDefinitions}), or `undefined`: a name of
+ * `expression` read in its context (`at.contextId`; for its own row, where the relation is written) reaches a
+ * feature two asserted equations give two values, or a value tied to one ({@link contradictedTaint}), or the
+ * row is one of those equations. Every surface that reads values leaves a decided row undecided in this sentence
+ * (`checkConstraints` and `bindingConflicts` of ./evaluate-model, `numericRows` of ./solver); the obligations
+ * lane encodes such a row as before, and the SMT engine, whose axioms hold both equations, finds them
+ * inconsistent (`verification/inconsistent-axioms`), naming both in its core.
+ */
+export function contradictedDefinitionRefusal(
+  model: Model,
+  relationId: ElementId,
+  expression: string,
+  at?: { contextId: ElementId; path?: string },
+): string | undefined {
+  return contradictedDefinitionRefusalOf(model, relationId, expression, at)?.sentence;
+}
+
+/**
+ * {@link contradictedDefinitionRefusal}, with what the set it names is: `differs` where the model states two
+ * values (an instance row's cause `two-values`), `undecided` where this tool cannot compare them, `failed` where
+ * listing them threw.
+ */
+export function contradictedDefinitionRefusalOf(
+  model: Model,
+  relationId: ElementId,
+  expression: string,
+  at?: { contextId: ElementId; path?: string },
+): { sentence: string; verdict: ContradictedDefinition['verdict'] | 'failed' } | undefined {
+  const index = contradictedDefinitions(model);
+  if (index.failed === undefined && index.sets.length === 0) return undefined;
+  const names = relationNamesOf(expression);
+  if (index.failed !== undefined) {
+    return names.length > 0 ? { sentence: `${index.failed}, so no relation that may read one is read`, verdict: 'failed' } : undefined;
+  }
+  const taint = contradictedTaint(model);
+  const rel = model.get(relationId);
+  const context = at ? model.get(at.contextId) : rel;
+  const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
+  let b = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
+  b ??= taintedAt(model, taint, context) ?? taintedAt(model, taint, rel);
+  if (!b && at?.path !== undefined) {
+    const frames = sharedDefinitions(model).framesAbove(at.path);
+    b =
+      frames === undefined
+        ? index.sets[0]!.equations[0]
+        : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
+  }
+  const set = b ? index.bySource.get(b.id) : undefined;
+  return set ? { sentence: contradictedDefinitionSentence(model, set), verdict: set.verdict } : undefined;
+}
+
+/** The clause every sentence about `set` opens with: its equations, where they meet, and what they give. */
+function contradictedDefinitionClause(model: Model, set: ContradictedDefinition): string {
+  const named = set.equations.map((c) => `\`${String(c.attrs.expression ?? '').trim()}\` (${effectiveQualifiedName(model, c.id)})`);
+  const listed = named.length <= 2 ? named.join(' and ') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]!}`;
+  const what =
+    set.verdict === 'differs'
+      ? 'two different values'
+      : set.why === 'names'
+        ? 'two values this tool does not compare (one reads other names)'
+        : set.why === 'form'
+          ? 'two values this tool cannot compare exactly (one is not a number over `+ - * /`)'
+          : 'two values this tool cannot compare (one is written with a unit, the other without)';
+  return (
+    `the asserted ${listed} each define \`${set.path}\` in ${effectiveQualifiedName(model, set.context.id)}, ` +
+    `which states no value, and give it ${what}`
+  );
+}
+
+/** Why a row {@link contradictedDefinitionRefusal} refuses is not read: the feature, and the equations that give it two values. */
+export function contradictedDefinitionSentence(model: Model, set: ContradictedDefinition): string {
+  const name = effectiveNameOf(model, set.feature) ?? set.path;
+  return set.verdict === 'differs'
+    ? `${name} is not read: ${contradictedDefinitionClause(model, set)} — the model contradicts itself there, ` +
+        'whichever is written first, and this tool reads neither value, so no relation that may read it is decided'
+    : `${name} is not read: ${contradictedDefinitionClause(model, set)}, so this tool reads neither, and no ` +
+        'relation that may read it is decided';
+}
+
+/**
+ * The sentence of the check that reports `set` where its equations meet (`definitionConflicts` of
+ * ./evaluate-model): what they give, why that is a contradiction, and what is left undecided.
+ */
+export function contradictedDefinitionConflict(model: Model, set: ContradictedDefinition): string {
+  const name = effectiveNameOf(model, set.feature) ?? set.path;
+  return set.verdict === 'differs'
+    ? `${contradictedDefinitionClause(model, set)} — an asserted equation is a fact of every instance it holds of, ` +
+        `so the model states both values and contradicts itself, whichever is written first; no relation that may ` +
+        `read ${name} is decided`
+    : `${contradictedDefinitionClause(model, set)}, so this tool reads neither, and no relation that may read ` +
+        `${name} is decided`;
 }
 
 /** The indexes over the model's binding readings ({@link BindingIndex}), built once per revision. */
@@ -10328,8 +10875,10 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
  * The calls the instance index makes to itself where a throw is contained
  * (A.2.9) — inside {@link instanceGroups} (a usage's sites, and the asserted
  * equations the coverage guard reads, {@link readFeatures}), in {@link
- * equatedParts} (the asserted equations no surface reads) and in {@link
- * satisfierTaint} (what an instance reads otherwise) — made through this
+ * equatedParts} (the asserted equations no surface reads), in {@link
+ * satisfierTaint} (what an instance reads otherwise) and in {@link
+ * contradictedDefinitions} (two asserted equations that give one feature two
+ * values) — made through this
  * object, never directly: the seam a test makes one of them throw through
  * (`vi.spyOn`), since a module-level stub reaches only the calls another
  * module makes. Each is the function it names; nothing else changes them.
@@ -10337,6 +10886,7 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
 export const instanceIndexSeam = {
   enclosingAsserts: (model: Model): EnclosingAsserts => enclosingAsserts(model),
   satisfiersOtherwise: (model: Model): SatisfiersOtherwise => satisfiersOtherwise(model),
+  contradictedDefinitions: (model: Model): ContradictedDefinitions => contradictedDefinitionsUncached(model),
   assertHeldInSome: (model: Model, f: ElementRecord): boolean => assertHeldInSome(model, f),
   instanceSitesOf: (definitions: DefiningEquations, usage: ElementRecord): ReturnType<typeof instanceSitesOf> =>
     instanceSitesOf(definitions, usage),
@@ -10916,8 +11466,11 @@ function constantOf(f: ElementRecord): Constant | undefined {
   return exactConstant(body.node, body.literals);
 }
 
-/** A name-free expression evaluated exactly, or `undefined` where it reads a name or leaves `+ - * /`. */
-function exactConstant(n: ExprNode, literals: MarkerDimensions): Constant | undefined {
+/**
+ * A name-free expression evaluated exactly, or `undefined` where it reads a name or leaves `+ - * /` — with `env`,
+ * the names it gives an exact value read as that value.
+ */
+function exactConstant(n: ExprNode, literals: MarkerDimensions, env?: ReadonlyMap<string, Constant>): Constant | undefined {
   switch (n.kind) {
     case 'num': {
       const r = decimalRational(String(n.value));
@@ -10925,18 +11478,19 @@ function exactConstant(n: ExprNode, literals: MarkerDimensions): Constant | unde
     }
     case 'ref': {
       const lit = literals.get(n.path.join('.'));
-      const m = lit ? decimalRational(lit.magnitude) : undefined;
-      if (!lit || !m) return undefined;
+      if (!lit) return env?.get(n.path.join('.'));
+      const m = decimalRational(lit.magnitude);
+      if (!m) return undefined;
       return { si: multiplyRationals(m, scaleRational(lit.factor, lit.factorTerms)), dimension: lit.dimension };
     }
     case 'unary': {
       if (n.op === 'not') return undefined;
-      const x = exactConstant(n.operand, literals);
+      const x = exactConstant(n.operand, literals, env);
       return x && n.op === '-' ? { si: { num: -x.si.num, den: x.si.den }, dimension: x.dimension } : x;
     }
     case 'binary': {
-      const l = exactConstant(n.left, literals);
-      const r = exactConstant(n.right, literals);
+      const l = exactConstant(n.left, literals, env);
+      const r = exactConstant(n.right, literals, env);
       if (!l || !r) return undefined;
       const dims = (d: (x: Dimension, y: Dimension) => Dimension): Dimension | undefined =>
         l.dimension === undefined ? r.dimension : r.dimension === undefined ? l.dimension : d(l.dimension, r.dimension);
@@ -11401,7 +11955,10 @@ export interface CandidateOutcome {
  * feature's, decided whether `a == d + b` (with `b` unfixed) or `d == a`
  * defined `a`. Every candidate that answers now answers the same in a model
  * whose equations agree, so which one comes first decides nothing there; in
- * one at odds with itself, the first in the order above decides.
+ * one at odds with itself, the first in the order above decides — for no row
+ * a surface judges where two asserted equations give a feature with no value
+ * values that differ, or that this tool cannot compare ({@link
+ * contradictedDefinitions}).
  *
  * One failure does end the search: a candidate whose definitions nest past
  * {@link MAX_DERIVATION_DEPTH} is the answer, refused for it. The cap is met

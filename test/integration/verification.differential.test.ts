@@ -3726,6 +3726,16 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     [name]: probe(text, rows),
     [`${name}-eq`]: probe(text.replaceAll('default = 1.0', '= 1.0'), rows),
   });
+  /**
+   * A probe whose two asserted equations give a feature the values `x` and `y` (`${name}-ab`: 50 then 60), and its
+   * twin with the two exchanged (`${name}-ba`: the 60 written first, or where the 50 was), pinned alike: which
+   * value is written where, and first, decides nothing (Q5 of the soft/hard analysis). I14 reads each pair row
+   * for row.
+   */
+  const exchanged = (name: string, text: (x: string, y: string) => string, rows: Record<string, [string, Ref]>) => ({
+    [`${name}-ab`]: probe(text('50.0', '60.0'), rows),
+    [`${name}-ba`]: probe(text('60.0', '50.0'), rows),
+  });
   /** big-bind-N: N definitions Qk binding their p's load to their L, each Qk's usage qk setting L to k. */
   const bigBind = (n: number) =>
     [
@@ -6892,11 +6902,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           constraint pLoad { p.load >= 10.0 }
           constraint pM2 { p.m2 >= 0.0 }
       }`, {
-      'R8::P::dl': ['T/-/T/-', null],
-      'R8::P::dl in R8::p': ['F/-/F/-', null],
-      'R8::p::d50': ['T/-/?/-', null],
-      'R8::pLoad': ['T/X/?/X', null],
-      'R8::pM2': ['F/X/F/X', null],
+      // Q5 of the soft/hard analysis (decided 2026-10-22): P's `dl` and p's `d50` give p's load two values. The
+      // check read p's own 50 (d50 holds, pLoad true, I7) and P's dl in p violated; neither is read now, P's own
+      // load included, and the pair is one row at p (`#equations`).
+      'R8::P::dl': ['?/-/?/-', null],
+      'R8::P::dl in R8::p': ['?/-/?/-', null],
+      'R8::p::d50': ['?/-/?/-', null],
+      'R8::p::«AttributeUsage» in R8::p#equations': ['F/-/F/-', 'F'],
+      'R8::pLoad': ['?/?/?/X', null],
+      'R8::pM2': ['?/?/?/X', null],
     }),
     n2: probe(`package N2 {
         attribute x;
@@ -6906,10 +6920,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c { y == x + 1.0 }
         constraint lim { x >= 5.0 }
       }`, {
-      'N2::a1': ['T/-/?/-', null],
-      'N2::a2': ['F/-/?/-', null],
+      // Q5: a1 defined x (1) and a2 read violated against it, lim false at 1 (I7); neither is read now.
+      'N2::a1': ['?/-/?/-', null],
+      'N2::a2': ['?/-/?/-', null],
       'N2::c': ['?/?/?/X', null],
-      'N2::lim': ['F/X/?/X', null],
+      'N2::lim': ['?/?/?/X', null],
+      'N2::x in N2#equations': ['F/-/F/-', 'F'],
     }),
     // E9, open: `%` has no encoding yet, so z's axiom is refused and SMT's witness is not the model's point.
     fx4: probe(`package Fx4 {
@@ -7360,6 +7376,287 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'KC::never': ['F/-/F/-', 'F'],
       'KC::t1': ['T/X/T/X', null],
+    }),
+    // Q5 of the soft/hard analysis (decided 2026-10-22): two asserted equations that give a feature with no value
+    // two values. The first written, or the element's own, defined it and the other read violated: Q5M8's t50 read
+    // T/T/?/X with the literal engine's exit 0, and F/F/?/X with exit 1 with the two exchanged (M8; the analysis'
+    // `reconcile/n-ab.sysml`, `n-ba.sysml`), and one in P beside one in p read both T, the check silent (F1). Every
+    // reading of the feature now abstains on the check, the literal engine and the numeric surface — the equations'
+    // own rows, every instance's (Q5F1's p2), and a value derived from it, bound to it or read beside it by an
+    // asserted relation (Q5R) — and the SMT engine's axioms are inconsistent; the pair is one `#equations` row where
+    // the equations meet: P, p, the definition specialising both types, Q around p, the package. A value nothing
+    // ties to the feature (Q5R's tz) is read as before. Each is pinned with its twin.
+    ...exchanged('q5-m8', (x, y) => `package Q5M8 {
+        part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == ${x} } assert constraint c2 { L == ${y} } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t60 { p.L == 60.0 }
+      }`, {
+      'Q5M8::P::L in Q5M8::P#equations': ['F/-/F/-', 'F'],
+      'Q5M8::P::c1': ['?/-/?/-', null],
+      'Q5M8::P::c2': ['?/-/?/-', null],
+      'Q5M8::t50': ['?/?/?/X', null],
+      'Q5M8::t60': ['?/?/?/X', null],
+    }),
+    ...exchanged('q5-f1', (x, y) => `package Q5F1 {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+        part p : P { assert constraint cb { L == ${y} } }
+        part p2 : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t60 { p.L == 60.0 }
+        constraint u50 { p2.L == 50.0 }
+      }`, {
+      'Q5F1::P::L in Q5F1::p#equations': ['F/-/F/-', 'F'],
+      'Q5F1::P::ca': ['?/-/?/-', null],
+      'Q5F1::p::cb': ['?/-/?/-', null],
+      'Q5F1::t50': ['?/?/?/X', null],
+      'Q5F1::t60': ['?/?/?/X', null],
+      'Q5F1::u50': ['?/?/?/X', null],
+    }),
+    ...exchanged('q5-types', (x, y) => `package Q5T {
+        part def T0 { attribute L : ScalarValues::Real; }
+        part def T1 :> T0 { assert constraint c1 { L == ${x} } }
+        part def T2 :> T0 { assert constraint c2 { L == ${y} } }
+        part def X :> T1, T2;
+        part x : X;
+        part t1 : T1;
+        constraint tx { x.L == 50.0 }
+        constraint tt { t1.L == 50.0 }
+      }`, {
+      'Q5T::T0::L in Q5T::X#equations': ['F/-/F/-', 'F'],
+      'Q5T::T1::c1': ['?/-/?/-', null],
+      'Q5T::T1::c1 in Q5T::X': ['?/-/?/-', null],
+      'Q5T::T2::c2': ['?/-/?/-', null],
+      'Q5T::T2::c2 in Q5T::X': ['?/-/?/-', null],
+      'Q5T::tt': ['?/?/?/X', null],
+      'Q5T::tx': ['?/?/?/X', null],
+    }),
+    ...exchanged('q5-around', (x, y) => `package Q5A {
+        part def P { attribute L : ScalarValues::Real; assert constraint cp { L == ${x} } }
+        part def Q { part p : P; assert constraint cq { p.L == ${y} } }
+        part q : Q;
+        constraint t50 { q.p.L == 50.0 }
+      }`, {
+      'Q5A::P::L in Q5A::Q#equations': ['F/-/F/-', 'F'],
+      'Q5A::P::cp': ['?/-/?/-', null],
+      'Q5A::Q::cq': ['?/-/?/-', null],
+      'Q5A::t50': ['?/?/?/X', null],
+    }),
+    ...exchanged('q5-pkg', (x, y) => `package Q5P {
+        part def P { attribute L : ScalarValues::Real; assert constraint cp { L == ${x} } }
+        part p : P;
+        assert constraint ck { p.L == ${y} }
+        constraint t50 { p.L == 50.0 }
+      }`, {
+      'Q5P::P::L in Q5P#equations': ['F/-/F/-', 'F'],
+      'Q5P::P::cp': ['?/-/?/-', null],
+      'Q5P::ck': ['?/-/?/-', null],
+      'Q5P::t50': ['?/?/?/X', null],
+    }),
+    ...exchanged('q5-reach', (x, y) => `package Q5R {
+        part def P { attribute L : ScalarValues::Real; attribute M : ScalarValues::Real; attribute V : ScalarValues::Real = L * 2.0;
+          attribute K : ScalarValues::Real; bind L = K;
+          assert constraint c1 { L == ${x} } assert constraint c2 { L == ${y} }
+          assert constraint dm { M == L * 2.0 } }
+        part p : P;
+        attribute Z : ScalarValues::Real = 3.0;
+        constraint tM { p.M == 100.0 }
+        constraint tV { p.V == 100.0 }
+        constraint tK { p.K == 50.0 }
+        constraint tz { Z == 3.0 }
+      }`, {
+      'Q5R::P::L in Q5R::P#equations': ['F/-/F/-', 'F'],
+      'Q5R::P::c1': ['?/-/?/-', null],
+      'Q5R::P::c2': ['?/-/?/-', null],
+      'Q5R::P::dm': ['?/-/?/-', null],
+      'Q5R::P::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'Q5R::tK': ['?/?/?/X', null],
+      'Q5R::tM': ['?/?/?/X', null],
+      'Q5R::tV': ['?/?/?/X', null],
+      'Q5R::tz': ['T/T/T/X', 'T'],
+    }),
+    // Two values one written with a unit and one without (a bare 50 beside 60 kg) are no value either: the pair's
+    // row is `?`, and every reading of L abstains on three surfaces in either order. The SMT engine's own gate
+    // refuses the bare literal against a mass derived by the other equation in one order (the `?`), and finds
+    // the axioms inconsistent in the other: inconclusive both.
+    'q5-units-ab': probe(`package Q5U {
+        part def P { attribute L : ISQ::MassValue; assert constraint c1 { L == 50.0 } assert constraint c2 { L == 60.0 [kg] } }
+        part p : P;
+        constraint t60 { p.L == 60.0 [kg] }
+      }`, {
+      'Q5U::P::L in Q5U::P#equations': ['?/-/?/-', null],
+      'Q5U::P::c1': ['?/-/?/-', null],
+      'Q5U::P::c2': ['?/-/?/-', null],
+      'Q5U::t60': ['?/?/?/X', null],
+    }),
+    'q5-units-ba': probe(`package Q5U {
+        part def P { attribute L : ISQ::MassValue; assert constraint c2 { L == 60.0 [kg] } assert constraint c1 { L == 50.0 } }
+        part p : P;
+        constraint t60 { p.L == 60.0 [kg] }
+      }`, {
+      'Q5U::P::L in Q5U::P#equations': ['?/-/?/-', null],
+      'Q5U::P::c1': ['?/-/?/-', null],
+      'Q5U::P::c2': ['?/-/?/-', null],
+      'Q5U::t60': ['?/?/?/?', null],
+    }),
+    // Not a contradiction: one value in two units, and either side, defines L as two equal equations always did.
+    'q5-agree': probe(`package Q5G {
+        part def P { attribute L : ISQ::MassValue; assert constraint ck { L == 50.0 [kg] } assert constraint cg { 50000.0 [g] == L } }
+        part p : P;
+        constraint t50 { p.L == 50.0 [kg] }
+      }`, {
+      'Q5G::P::cg': ['T/-/T/-', 'T'],
+      'Q5G::P::ck': ['T/-/T/-', 'T'],
+      'Q5G::t50': ['T/T/T/T', 'T'],
+    }),
+    // An equation over other names (`L == a * 2.0`, a = 30) beside `L == 50.0`: the first the evaluators tried
+    // defined L and the other read violated, t50 T in one order and F in the other on the check. Read exactly it
+    // gives 60, so the pair is `F` and every reading abstains in both orders.
+    'q5-names-ab': probe(`package Q5N {
+        part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real = 30.0;
+          assert constraint c50 { L == 50.0 } assert constraint c2a { L == a * 2.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+      }`, {
+      'Q5N::P::L in Q5N::P#equations': ['F/-/F/-', 'F'],
+      'Q5N::P::c2a': ['?/-/?/-', null],
+      'Q5N::P::c50': ['?/-/?/-', null],
+      'Q5N::t50': ['?/?/?/X', null],
+    }),
+    'q5-names-ba': probe(`package Q5N {
+        part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real = 30.0;
+          assert constraint c2a { L == a * 2.0 } assert constraint c50 { L == 50.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+      }`, {
+      'Q5N::P::L in Q5N::P#equations': ['F/-/F/-', 'F'],
+      'Q5N::P::c2a': ['?/-/?/-', null],
+      'Q5N::P::c50': ['?/-/?/-', null],
+      'Q5N::t50': ['?/?/?/X', null],
+    }),
+    // Two Booleans that differ are two values (the pair `F`); a side that reads no name in a form this tool does not
+    // compute exactly (`2.0 ^ 3`) cannot be compared (the pair `?`). Each read in both orders; at f1f5ca5 the check
+    // let the first written define the feature, so tt and t8 flipped with the order.
+    'q5-bool-ab': probe(`package Q5B {
+        part def P { attribute f : ScalarValues::Boolean; assert constraint c1 { f == true } assert constraint c2 { f == false } }
+        part p : P;
+        constraint tt { p.f == true }
+      }`, {
+      'Q5B::P::f in Q5B::P#equations': ['F/-/F/-', 'F'],
+      'Q5B::P::c1': ['?/-/?/-', null],
+      'Q5B::P::c2': ['?/-/?/-', null],
+      'Q5B::tt': ['?/?/?/X', null],
+    }),
+    'q5-bool-ba': probe(`package Q5B {
+        part def P { attribute f : ScalarValues::Boolean; assert constraint c2 { f == false } assert constraint c1 { f == true } }
+        part p : P;
+        constraint tt { p.f == true }
+      }`, {
+      'Q5B::P::f in Q5B::P#equations': ['F/-/F/-', 'F'],
+      'Q5B::P::c1': ['?/-/?/-', null],
+      'Q5B::P::c2': ['?/-/?/-', null],
+      'Q5B::tt': ['?/?/?/X', null],
+    }),
+    'q5-pow-ab': probe(`package Q5W {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 2.0 ^ 3 } assert constraint cb { L == 9.0 } }
+        part p : P;
+        constraint t8 { p.L == 8.0 }
+      }`, {
+      'Q5W::P::L in Q5W::P#equations': ['?/-/?/-', null],
+      'Q5W::P::ca': ['?/-/?/-', null],
+      'Q5W::P::cb': ['?/-/?/-', null],
+      'Q5W::t8': ['?/?/?/X', null],
+    }),
+    'q5-pow-ba': probe(`package Q5W {
+        part def P { attribute L : ScalarValues::Real; assert constraint cb { L == 9.0 } assert constraint ca { L == 2.0 ^ 3 } }
+        part p : P;
+        constraint t8 { p.L == 8.0 }
+      }`, {
+      'Q5W::P::L in Q5W::P#equations': ['?/-/?/-', null],
+      'Q5W::P::ca': ['?/-/?/-', null],
+      'Q5W::P::cb': ['?/-/?/-', null],
+      'Q5W::t8': ['?/?/?/X', null],
+    }),
+    // Where the two meet is read as the check reads the equations: a usage that declares L anew with no `:>>`
+    // (Q5K: the check read P's c50 in p over p's L), two redefinitions of T0's L a definition inherits together
+    // (Q5D), and an equation in an element nested in Q, or in a package or a definition nested in the one that
+    // declares L, whose L KerML resolves to the outer one (Q5L, Q5O): the local one, or the outer one, alone defined
+    // L before, so the verdicts flipped with where each value is written.
+    ...exchanged('q5-mask', (x, y) => `package Q5K {
+        part def P { attribute L : ScalarValues::Real; assert constraint c50 { L == ${x} } }
+        part p : P { attribute L : ScalarValues::Real; assert constraint c60 { L == ${y} } }
+        constraint t50 { p.L == 50.0 }
+      }`, {
+      'Q5K::P::c50': ['?/-/?/-', null],
+      'Q5K::P::c50 in Q5K::p': ['?/-/?/-', null],
+      'Q5K::p::L in Q5K::p#equations': ['F/-/F/-', 'F'],
+      'Q5K::p::c60': ['?/-/?/-', null],
+      'Q5K::t50': ['?/?/?/X', null],
+    }),
+    ...exchanged('q5-dia', (x, y) => `package Q5D {
+        part def T0 { attribute L : ScalarValues::Real; }
+        part def T1 :> T0 { attribute :>> L; assert constraint c1 { L == ${x} } }
+        part def T2 :> T0 { attribute :>> L; assert constraint c2 { L == ${y} } }
+        part def X :> T1, T2;
+        part x : X;
+        constraint tx { x.L == 50.0 }
+      }`, {
+      'Q5D::T1::c1': ['?/-/?/-', null],
+      'Q5D::T1::«AttributeUsage» in Q5D::X#equations': ['F/-/F/-', 'F'],
+      'Q5D::T2::c2': ['?/-/?/-', null],
+      'Q5D::T2::c2 in Q5D::X': ['?/-/?/-', null],
+      'Q5D::tx': ['?/?/?/X', null],
+    }),
+    ...exchanged('q5-lex', (x, y) => `package Q5L {
+        part def R { attribute w : ScalarValues::Real = 1.0; }
+        part def Q { attribute L : ScalarValues::Real; assert constraint c1 { L == ${x} } part p : R { assert constraint c2 { L == ${y} } } }
+        part q : Q;
+        constraint t50 { q.L == 50.0 }
+      }`, {
+      'Q5L::Q::L in Q5L::Q#equations': ['F/-/F/-', 'F'],
+      'Q5L::Q::c1': ['?/-/?/-', null],
+      'Q5L::Q::p::c2': ['?/-/?/-', null],
+      'Q5L::t50': ['?/?/?/?', null],
+    }),
+    ...exchanged('q5-nest', (x, y) => `package Q5O {
+        attribute L : ScalarValues::Real;
+        assert constraint c1 { L == ${x} }
+        package Inner { assert constraint c2 { L == ${y} } }
+        part def A { assert constraint c3 { L == ${x} } constraint ta { L == 50.0 } }
+        part a : A;
+        constraint t50 { L == 50.0 }
+      }`, {
+      'Q5O::A::c3': ['?/-/?/-', null],
+      'Q5O::A::c3 in Q5O::a': ['?/-/?/-', null],
+      'Q5O::A::ta': ['?/?/?/X', null],
+      'Q5O::A::ta in Q5O::a': ['?/?/?/X', null],
+      'Q5O::Inner::c2': ['?/-/?/-', null],
+      'Q5O::L in Q5O#equations': ['F/-/F/-', 'F'],
+      'Q5O::c1': ['?/-/?/-', null],
+      'Q5O::t50': ['?/?/?/X', null],
+    }),
+    // A bare 50 beside 50 kg may be one value (the bare-literal contract), and this tool does not compare them: the
+    // readings the check, the literal engine and the numeric surface made of L (T at f1f5ca5) are lost, in both
+    // orders. The SMT engine's own gate reads t50 T in one order and refuses the bare literal in the other.
+    'q5-unitagree-ab': probe(`package Q5UA {
+        part def P { attribute L : ISQ::MassValue; assert constraint c1 { L == 50.0 } assert constraint c2 { L == 50.0 [kg] } }
+        part p : P;
+        constraint t50 { p.L == 50.0 [kg] }
+      }`, {
+      'Q5UA::P::L in Q5UA::P#equations': ['?/-/?/-', null],
+      'Q5UA::P::c1': ['?/-/?/-', null],
+      'Q5UA::P::c2': ['?/-/?/-', null],
+      'Q5UA::t50': ['?/?/?/T', null],
+    }),
+    'q5-unitagree-ba': probe(`package Q5UA {
+        part def P { attribute L : ISQ::MassValue; assert constraint c2 { L == 50.0 [kg] } assert constraint c1 { L == 50.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 [kg] }
+      }`, {
+      'Q5UA::P::L in Q5UA::P#equations': ['?/-/?/-', null],
+      'Q5UA::P::c1': ['?/-/?/-', null],
+      'Q5UA::P::c2': ['?/-/?/-', null],
+      'Q5UA::t50': ['?/?/?/?', null],
     }),
     // The order of the text (the soft/hard analysis' S2use and S1 eqMd cells, default-stands S2): an assert written
     // in a usage of the default's owner (SU), and `L == M` over two defaults (SEM), each beside the same text with its
@@ -10165,18 +10462,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   ]);
   /**
    * I7's exceptions: an SMT `inconsistent-axioms` beside a T or F elsewhere, `probe | row` → reason.
-   * Checked on every probe, not only those with `bind` or `default`: three of the reviewed entries (n4,
-   * sound-C r8, n2) are models whose asserts alone admit no value. sound-C r8's two variants are one
-   * text, so it is one probe here, and its `pM2` sits beside `pLoad` for the same reason.
+   * Checked on every probe, not only those with `bind` or `default`: one of the reviewed entries (n4) is a
+   * model whose asserts alone admit no value. sound-C r8 and n2, two asserted equations that give one
+   * feature two values, left the list with Q5 of the soft/hard analysis: neither is read there now.
    */
   /** The I7 reason of the `part :>> p { assert … }` redefinitions (SRU, SRS) and their `=` twins. */
   const REDEF_ASSERT =
     'a `part :>> p` redefinition’s asserted `load == 50.0` gives q2’s p’s load, which Q’s binding joins to L’s 1 — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or a value written with `=` — a second value: the model contradicts itself, which the SMT engine reports; the check and the literal engine read neither value of load, the numeric surface the binding’s 1';
   const I7_ALLOWED = new Map<string, string>([
     ['n4 | N4::zl', 'an asserted `x * x == -1.0` admits no model; the numeric surface reads z apart from it (out of scope)'],
-    ['soundC-r8 | R8::pLoad', 'P’s asserted `load == 1.0` and p’s asserted `load == 50.0` contradict; the check reads p’s'],
-    ['soundC-r8 | R8::pM2', 'the same contradiction, read through m2'],
-    ['n2 | N2::lim', 'two asserts give x two values; the check reads one'],
     ['h5-hp | HP::c', 'L’s plain `= 2.0` against the asserted `L == 5.0`: the strict-KerML contradiction (decision 1); the check reads L’s value'],
     ['h5-rbind | RB::top', 'q’s plain `L = 4.0`, bound to q.p.x, against the asserted `q.p.x == 3.0`: the contradiction of decision 1'],
     ...['rf | RF::P::c', 'rf2 | RF2::P::c', 'rf3 | RF3::P::c', 'rf3 | RF3::t0'].map(
@@ -10545,7 +10839,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           'an assert the model holds false at its values contradicts a value this row reads, or one the model’s values, bindings and assertions tie to it: the literal engine and the SMT engine report the axioms inconsistent, naming the assert, beside the check’s and the numeric surface’s reading of the value',
         ] as const,
     ),
-    ...['cv-iso | ISO_Y::t1', 'cv-sib | CVSIB::tc', 'cv-ins | CVINS::tp'].map(
+    ...['cv-iso | ISO_Y::t1', 'cv-sib | CVSIB::tc', 'cv-ins | CVINS::tp', 'q5-reach-ab | Q5R::tz', 'q5-reach-ba | Q5R::tz'].map(
       (key) =>
         [
           key,
@@ -10693,8 +10987,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * I14's pairs: each `default` probe and its `=` twin ({@link standing}) — and the spellings of one model, whose
    * rows of the same name read alike: the asserted conjunction and its two parts (G1), `L == 50.0` and its two
    * inequalities (G3), two asserts that disagree written in either order (M8), a model and the same text with
-   * its members in the reverse order (SU, SEM), SEM with both its defaults written `=`, and HLX with extra's
-   * written `=` (the `standing` twin rewrites only `default = 1.0`).
+   * its members in the reverse order (SU, SEM), SEM with both its defaults written `=`, HLX with extra's
+   * written `=` (the `standing` twin rewrites only `default = 1.0`), and two asserted equations that give a feature
+   * with no value two values, with the two exchanged ({@link exchanged}) or written in the other order (Q5).
    */
   const STAND_TWINS = [
     'stand-g1s', 'stand-g1c', 'stand-g2', 'stand-g2f', 'stand-g3b', 'stand-g3e', 'stand-m8ab', 'stand-m8ba', 'stand-use',
@@ -10721,6 +11016,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['stand-eqmd', 'stand-eqmd-rev'],
     ['stand-eqmd', 'stand-eqmd-alleq'],
     ['stand-hlx', 'stand-hlx-eqx'],
+    // Q5: two asserted equations that give one feature two values, with the two exchanged.
+    ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest'].map(
+      (k) => [`${k}-ab`, `${k}-ba`] as const,
+    ),
   ] as const;
   withZ3('I14: a `default` reads as its `=` twin against every assertion, whatever the assertion’s spelling or order', () => {
     const apart: string[] = [];

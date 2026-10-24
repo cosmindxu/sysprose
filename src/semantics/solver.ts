@@ -85,6 +85,7 @@ import {
   defaultStandsIn,
   enclosedBindingFrame,
   equatedPartsRefusal,
+  contradictedDefinitionRefusal,
   hasEnclosedBindings,
   hasPastCapBindings,
   hasStatedValue,
@@ -501,9 +502,10 @@ export interface NumericConstraintResult {
   /**
    * Set on a row that is a value the model states twice, not a relation
    * (`ConstraintCheck.conflict` of ./evaluate-model) — a binding connector's
-   * two ends among them (`bind`).
+   * two ends among them (`bind`), and asserted equations that give one feature
+   * with no value two values (`equations`).
    */
-  conflict?: 'binding' | 'clash' | 'bind';
+  conflict?: 'binding' | 'clash' | 'bind' | 'equations';
 }
 
 /** Options for {@link solveFeasible}. */
@@ -4930,6 +4932,21 @@ function numericRows(
     r.amount = 0;
     r.reason = equated;
     delete r.cause;
+  }
+  // A feature with no value that two asserted equations give two values (contradictedDefinitionRefusal): no
+  // decided row that may read it, or a value tied to it, is judged, as the validation surface judges none — the
+  // solve takes one equation as its design equation, and the point it reaches holds the first written. A row
+  // already unknown keeps its sentence.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const contradicted = contradictedDefinitionRefusal(model, r.context?.baseId ?? r.id, r.raw, r.context);
+    if (contradicted === undefined) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason = contradicted;
+    delete r.cause;
+    delete r.imposed;
   }
   // A relation over a `default` an asserted equation sets equal to another
   // (undecidedPartnersRead, U7): neither has a value, so the point the solve

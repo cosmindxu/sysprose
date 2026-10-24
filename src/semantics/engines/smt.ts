@@ -60,7 +60,7 @@
  */
 
 import { type ElementId, type Model } from '@core/index';
-import { hasStatedValue, sharedDefinitions } from '../defining-equation';
+import { hasStatedValue, readsContradictedDefinition, sharedDefinitions } from '../defining-equation';
 import {
   checkConstraints,
   checksByRow,
@@ -1881,6 +1881,10 @@ function quantities(
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
   // A value a binding carried in was compared as the quantity it is: those are the sides.
   if (check?.sides) return check.sides;
+  // A path two asserted equations give two values has none (`readsContradictedDefinition`): the evaluators'
+  // first equation written is no point of the model's, and its sides were 100 vs 100 in one order, 120 vs 100 in
+  // the other.
+  if (row.vars.some((v) => readsContradictedDefinition(model, v.featureId))) return {};
   const el = rowElement(model, row);
   if (!el) return {};
   const q = evaluateConstraintQuantityDetailed(model, el, {

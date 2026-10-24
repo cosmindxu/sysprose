@@ -979,8 +979,10 @@ const constraintViolation: ValidationRule = {
     const mk = diagBuilder(this.id, this.severity);
     const out: Diagnostic[] = [];
     for (const check of sweepConstraints(model)) {
-      // A clash, or a binding's conflict read in a context: anchored at that context.
-      const inContext = check.conflict === 'clash' || (check.conflict === 'bind' && model.get(check.id) === undefined);
+      // A clash, a binding's conflict read in a context, or asserted equations that give one feature two values:
+      // anchored at that context (for the equations, the element they meet in).
+      const inContext =
+        check.conflict === 'clash' || check.conflict === 'equations' || (check.conflict === 'bind' && model.get(check.id) === undefined);
       const el = model.get(inContext && check.ownerId != null ? check.ownerId : check.id);
       if (!el || isLibraryElement(el)) continue;
       if (isNonNormativeStatement(model, el.id)) continue;

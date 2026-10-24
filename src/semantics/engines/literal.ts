@@ -49,7 +49,7 @@
 
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
-import { isFailedReading, isShadowedBody } from '../defining-equation';
+import { isFailedReading, isShadowedBody, readsContradictedDefinition } from '../defining-equation';
 import { evaluateFeatureValue, featuresWithoutValue, valueAtPath } from '../evaluate-model';
 import { rowElement, type Obligation } from '../obligations';
 import {
@@ -776,7 +776,9 @@ export function modelBindings(model: Model, row: Obligation, check?: ConstraintC
     // carries into it, as the check read it.
     const read = check?.reads?.find((x) => x.path === v.path);
     let raw: unknown = null;
-    if (abstains) {
+    // Nor does a path two asserted equations give two values print one: the first written is no value the model
+    // states (`readsContradictedDefinition`).
+    if (abstains || readsContradictedDefinition(model, v.featureId)) {
       raw = null;
     } else if (!v.instance) {
       const r = evaluateFeatureValue(model, v.featureId);
