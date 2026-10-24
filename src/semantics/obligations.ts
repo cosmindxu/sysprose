@@ -268,6 +268,34 @@ export interface Obligation {
 }
 
 /**
+ * Why a requirement that states no `require` or `assume` clause has nothing to encode.
+ *
+ * Prose, as a rule. But an `assert constraint` written in the requirement, or in a definition it is typed
+ * by (`requirement def R { subject s : P; assert constraint ca { s.L == 50.0 } }`), is a body all the same:
+ * a fact of the model, filed as an axiom row (`axioms`, the worklist so far) the SMT engine asserts and the
+ * check judges — reported violated where it is false — and no clause of the requirement (SysML §7.20.1).
+ * Saying the requirement "carries prose and no constraint body" there denied the body the check had just
+ * judged, so the sentence names it.
+ */
+function noFormalClauseDetail(model: Model, requirementId: ElementId, axioms: readonly Obligation[]): string {
+  const owners = new Set<ElementId>([requirementId, ...generalizationsOf(model, requirementId).map((t) => t.id)]);
+  const asserted = axioms.filter(
+    (o) =>
+      o.role === 'axiom' &&
+      o.source === 'assert' &&
+      o.instance === undefined &&
+      owners.has(model.get(o.element.id as ElementId)?.ownerId as ElementId),
+  );
+  if (asserted.length === 0) return 'the requirement carries prose and no constraint body, so there is nothing to encode';
+  return (
+    'the requirement states no `require` or `assume` clause, so there is nothing to encode — ' +
+    `${asserted.map((o) => `its asserted \`${o.expression}\` (${o.element.qualifiedName})`).join(', ')} ` +
+    `${asserted.length === 1 ? 'is a fact of the model, an axiom' : 'are facts of the model, axioms'} the check ` +
+    'judges and the SMT engine asserts, not a clause of the requirement'
+  );
+}
+
+/**
  * The encodability of an AXIOM row that reads a name the validation surface
  * reads no value for in its context — refused, whatever the gates said.
  *
@@ -746,7 +774,7 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
       scaled: false,
       encodable: {
         reason: 'no-formal-clause',
-        detail: 'the requirement carries prose and no constraint body, so there is nothing to encode',
+        detail: noFormalClauseDetail(model, contract.id, out),
       },
       nonlinear: false,
       verifiedBy: contract.verifiedBy,

@@ -2989,6 +2989,194 @@ describe('checkConstraints — a default stands against an asserted equation (de
     }
   });
 
+  it('marks every obligation over a value a violated assert contradicts inconclusive on the literal engine, naming the assert (Q4)', async () => {
+    // A1 of the soft/hard analysis: `verify --engine literal` called t1's pass "unconditional" and exited 0 beside
+    // the violated assert; only the SMT engine failed. Now the point the model contradicts decides nothing there.
+    const literal = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      const row = (q: string) => report.results.find((r) => r.clause.qualifiedName === q)!;
+      return { m: m!, report, row, check: (q: string) => checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === q)!.result };
+    };
+    for (const value of ['= 1.0', 'default = 1.0']) {
+      const a1 = await literal(`package A1 {
+        part def P { attribute L : ScalarValues::Real ${value}; attribute m2 : ScalarValues::Real = 10.0 - L; assert constraint ca { L == 50.0 } }
+        part p : P;
+        constraint t1 { p.L == 1.0 }
+        constraint kF { p.m2 >= 100.0 }
+      }`);
+      for (const [q, path, at] of [
+        ['A1::t1', 'p.L', 'holds'],
+        // A value derived from the contradicted one is reached through its own axiom row.
+        ['A1::kF', 'p.m2', 'is false'],
+      ] as const) {
+        const r = a1.row(q);
+        expect([r.claim, r.code, r.discharged], `${value} ${q}`).toEqual(['inconclusive', 'verification/inconsistent-axioms', false]);
+        expect(r.detail).toContain('the asserted `L == 50.0` (A1::P::ca) is false at them');
+        expect(r.detail).toContain(`this relation reads \`${path}\``);
+        expect(r.detail).toContain(`The relation ${at} at these values`);
+        expect(r.detail).not.toContain('unconditional at these values');
+      }
+      expect(a1.report.exitCode, value).toBe(2);
+      // The check still reads the values, and reports the assert violated: its exit code is unchanged.
+      expect([a1.check('A1::P::ca'), a1.check('A1::t1'), a1.check('A1::kF')]).toEqual(['violated', 'satisfied', 'violated']);
+      // Nothing forgives it: a contradictory model is a finding, not an undecided shape.
+      const forgiving = await verifyModel(a1.m, { engine: 'literal', allowInconclusive: true });
+      expect([forgiving.exitCode, forgiving.forgiven], value).toEqual([2, 0]);
+    }
+    // Only the values the contradiction reaches: ISO_Y's own p is another model's point, and still holds there.
+    const iso = await literal(`package ISO_X {
+      part def P { attribute L : ScalarValues::Real = 1.0; assert constraint a { L == 50.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+    }
+    package ISO_Y {
+      part def P { attribute L : ScalarValues::Real default = 1.0; }
+      part p : P;
+      constraint t1 { p.L == 1.0 }
+    }`);
+    expect([iso.row('ISO_X::t50').claim, iso.row('ISO_X::t50').code]).toEqual(['inconclusive', 'verification/inconsistent-axioms']);
+    expect(iso.row('ISO_Y::t1').claim).toBe('holds-at-values');
+    expect(iso.report.exitCode).toBe(2);
+    // An instance's own value that meets the assert there is no contradicted value: q1's L of 50 misses P's
+    // `L <= 10.0`, and p's L of 1 meets it.
+    const ins = await literal(`package INS {
+      part def P { attribute L : ScalarValues::Real default = 1.0; assert constraint ca { L <= 10.0 } }
+      part p : P;
+      part q1 : P { attribute :>> L = 50.0; }
+      constraint tq { q1.L == 50.0 }
+      constraint tp { p.L == 1.0 }
+    }`);
+    expect(ins.row('INS::tq').code).toBe('verification/inconsistent-axioms');
+    expect(ins.row('INS::tq').detail).toContain('the asserted `L <= 10.0` (INS::P::ca in INS::q1) is false at them');
+    expect(ins.row('INS::tp').claim).toBe('holds-at-values');
+    // An assumption over a contradicted value: the guarantee stands on a point the model contradicts.
+    const asm = await literal(`package ASM {
+      part def P { attribute L : ScalarValues::Real = 1.0; attribute K : ScalarValues::Real = 2.0; assert constraint ca { L == 50.0 } }
+      part p : P;
+      requirement def R { subject s : P; assume constraint a1 { s.L >= 0.0 } require constraint g { s.K == 2.0 } }
+      requirement r : R { subject s = p; }
+      satisfy r by p;
+    }`);
+    expect(asm.row('ASM::R::g').code).toBe('verification/inconsistent-axioms');
+    // The sentence names the assumption that reads it, not the relation, which reads only s.K.
+    expect(asm.row('ASM::R::g').detail).toContain('and its assumption `s.L >= 0.0` reads `s.L`, which that contradiction reaches');
+    expect(asm.row('ASM::R::g').detail).not.toContain('this relation reads');
+    // With no violated assert the sentence is as it was.
+    const clean = await literal(`package OK {
+      part def P { attribute L : ScalarValues::Real = 1.0; assert constraint ca { L == 1.0 } }
+      part p : P;
+      constraint t1 { p.L == 1.0 }
+    }`);
+    expect([clean.row('OK::t1').claim, clean.row('OK::t1').detail, clean.report.exitCode]).toEqual([
+      'holds-at-values',
+      "holds at the model's values (no assumptions — the pass is unconditional at these values)",
+      0,
+    ]);
+  });
+
+  it('fails closed where the worklist does not say what a violated assert reads (Q4)', async () => {
+    const literal = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      return { report, row: (q: string) => report.results.find((r) => r.clause.qualifiedName === q)! };
+    };
+    const contradicted = (r: { claim: string; code?: string | null }) => [r.claim, r.code];
+    const X = ['inconclusive', 'verification/inconsistent-axioms'];
+    // An instance the check reads alike with the generic row has no check entry of its own: Q's `tie` is
+    // violated there (q2's p's x is P's 2), so top2 and P's c read in q2's p are over the contradicted value.
+    const bnd = await literal(`package BND {
+      part def P { attribute x : ScalarValues::Real default = 2.0; constraint c { x <= 10.0 } }
+      part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+      part q1 : Q { attribute K : ScalarValues::Real = 7.0; bind p.x = K; }
+      part q2 : Q;
+      constraint top1 { q1.p.x <= 10.0 }
+      constraint top2 { q2.p.x <= 10.0 }
+    }`);
+    for (const q of ['BND::top1', 'BND::top2', 'BND::P::c', 'BND::P::c in BND::q2::p']) {
+      expect(contradicted(bnd.row(q)), q).toEqual(X);
+    }
+    expect(bnd.row('BND::top2').detail).toContain('the asserted `p.x == 50.0` (BND::Q::tie) is false at them');
+    // An instance's own value row is joined to its feature, so the binding filed for the feature in Q carries
+    // the contradiction of `a2 in Q3::p` (load 1 against 50) to q3's L, and to every Q's L read as one symbol.
+    const sp2 = await literal(`package SP2 {
+      part def P { attribute load : ScalarValues::Real; }
+      part def P2 :> P { assert constraint a2 { load == 50.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part def Q3 :> Q { part :>> p : P2; }
+      part q3 : Q3;
+      constraint k { q3.L <= 10.0 }
+      constraint kp { q3.p.load <= 10.0 }
+    }`);
+    for (const q of ['SP2::k', 'SP2::kp']) expect(contradicted(sp2.row(q)), q).toEqual(X);
+    expect(sp2.report.exitCode).toBe(2);
+    // The check reports G's ca violated in s2's q, whose binding sits in s2, and the worklist files no row of
+    // ca there: what that contradiction reaches is not read, so it reaches every relation of the model.
+    const gi = await literal(`package GI {
+      part def G { attribute g : ScalarValues::Real default = 1.0; assert constraint ca { g <= 10.0 } }
+      part def S { part q : G; }
+      attribute K : ScalarValues::Real = 50.0;
+      part s1 : S;
+      part s2 : S { bind q.g = K; }
+      constraint t2 { s2.q.g == 50.0 }
+      constraint tk { K == 50.0 }
+    }`);
+    for (const q of ['GI::t2', 'GI::tk']) {
+      expect(contradicted(gi.row(q)), q).toEqual(X);
+      expect(gi.row(q).detail, q).toContain(
+        'the check reports the asserted `g <= 10.0` (GI::G::ca) false in GI::s2::q, an instance the worklist files no row of that assertion for',
+      );
+    }
+    expect(gi.report.exitCode).toBe(2);
+    // An assert that reads no feature is false at every point.
+    const kc = await literal(`package KC {
+      attribute L : ScalarValues::Real = 1.0;
+      assert constraint never { 1.0 == 2.0 }
+      constraint t1 { L == 1.0 }
+    }`);
+    expect(contradicted(kc.row('KC::t1'))).toEqual(X);
+    expect(kc.row('KC::t1').detail).toContain('the asserted `1.0 == 2.0` (KC::never) reads no feature and is false whatever the values');
+  });
+
+  it('says that an `assert` a requirement def writes is a fact a usage typed by it does not check (M11)', async () => {
+    // M11 of the soft/hard analysis: the check filed an abstention sentence under decision 14 beside a decided
+    // `t50`; the requirement's verify row said it "carries prose and no constraint body" over the body the check
+    // judged. The assert is a fact of the model (an axiom), checked against x's default, which it does not change.
+    const { model: m } = await loadModelText(`package R1 {
+      part def P { attribute L : ScalarValues::Real default = 1.0; }
+      part x : P;
+      requirement def R { subject s : P; assert constraint ca { s.L == 50.0 } }
+      requirement r : R { subject s = x; }
+      satisfy r by x;
+      constraint t1 { x.L == 1.0 }
+      constraint t50 { x.L == 50.0 }
+    }`);
+    const checks = checkConstraints(m!);
+    const check = (q: string) => checks.find((c) => m!.qualifiedName(c.id) === q)!;
+    expect(check('R1::R::ca').result).toBe('violated');
+    expect(check('R1::R::ca').message).toMatch(/^Constraint violated: s\.L == 50\.0 — P::L's `default = 1\.0` is not changed by an assertion/);
+    expect([check('R1::t1').result, check('R1::t50').result]).toEqual(['satisfied', 'violated']);
+    const report = await verifyModel(m!, { engine: 'literal' });
+    const row = (q: string) => report.results.find((r) => r.clause.qualifiedName === q)!;
+    expect(row('R1::r').detail).toBe(
+      'nothing to evaluate: the requirement states no `require` or `assume` clause, so there is nothing to encode — its ' +
+        'asserted `s.L == 50.0` (R1::R::ca) is a fact of the model, an axiom the check judges and the SMT engine asserts, ' +
+        'not a clause of the requirement',
+    );
+    for (const q of ['R1::t1', 'R1::t50']) {
+      expect(row(q).code, q).toBe('verification/inconsistent-axioms');
+      expect(row(q).detail, q).toContain('the asserted `s.L == 50.0` (R1::R::ca) is false at them');
+    }
+    expect(report.exitCode).toBe(2);
+    // The definition itself files no requirement row: its assert is an axiom and nothing more.
+    expect(report.results.some((r) => r.clause.qualifiedName === 'R1::R')).toBe(false);
+    // A requirement with prose alone still says so.
+    const { model: p } = await loadModelText('package PR { requirement r { doc /* the mass is low */ } }');
+    expect((await verifyModel(p!, { engine: 'literal' })).results[0]!.detail).toBe(
+      'nothing to evaluate: the requirement carries prose and no constraint body, so there is nothing to encode',
+    );
+  });
+
   it('defines a side with no value from the other, and checks two values against each other (e, U7)', async () => {
     // M has no value: the equation defines M from L's default, which stands.
     const { model: o } = await loadModelText(`package OR {

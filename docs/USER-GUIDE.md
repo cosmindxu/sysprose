@@ -1342,8 +1342,37 @@ beside `assert constraint qa { L == 5.0 }` is L = 2 on every surface, as `attrib
 L = 2.0;` is (as the maintainer decided on 2026-10-22, after the standard's
 text: a default gives way to another value given for it, and an assertion that
 does not hold is an inconsistency for tooling to flag).
-The assert is reported violated, `L <= 3.0` is read at 2, and the solver lane
-finds its axioms inconsistent, as beside `L = 2.0`. Where the assert is an
+The assert is reported violated, and `L <= 3.0` is read at 2 by the check and
+the numeric surface, as beside `L = 2.0`. The model contradicts itself there,
+so `verify` decides no relation over it, and exits 2. The SMT engine finds its
+axioms inconsistent, and a contradiction among the facts it encodes makes
+**every** SMT row of the file `verification/inconsistent-axioms` — a relation in
+another package, over values nothing ties to the contradiction, included. One
+through a relation a gate refuses (`L % 4.0 == 3.0`) is reported only on the
+rows whose proof context holds that relation, and a relation in another package
+is proved as usual. The literal engine marks `L <= 3.0` inconclusive under the
+same code and names the assert (*not judged at the model's values: the model
+contradicts itself there — the asserted `L == 5.0` (…::qa) is false at them,
+and this relation reads `L`, which that contradiction reaches …*), where it once
+called the pass unconditional and exited 0. "Reaches" is wide, and errs toward
+deciding nothing: a value the assert reads, one derived from it or bound to it,
+one an assumption of the relation reads (the sentence then names the
+assumption), one a single relation sums with it (`b` beside `total = a + b`,
+under an assert over `a`), an instance's own value of a feature it reaches (with
+the binding that carries that value there), and the same feature in another
+instance this tool reads as one value with it (q1's `assert constraint { p.x ==
+50.0 }` over P's `x default = 2.0` reaches P's own x and q2's p's too, as it
+does for the SMT engine); the row names the assert, which `check` reports
+violated. An assert the check reports violated anywhere is taken as violated
+in every instance `verify` reads it in, except where the check reads it true
+there. Two kinds of violated assert this tool cannot place reach every relation
+of the file: one that reads no feature (`1.0 == 2.0`), and one the check
+reports violated in an instance for which `verify`'s worklist files no row of
+it (the row names the instance and says so). A relation over values the contradiction does not reach — another
+package's, or an instance whose own value meets the assert — is judged at them
+as before. A binding that joins two different values is reported on the
+binding's own row instead (above), and the literal engine does not count it as a
+contradiction here. Where the assert is an
 equation that names the default's feature alone on one side, its other side
 reading neither it nor another `default` — the shape that once defined it — the
 sentence also says why the default stood and how to write the value it meant to
@@ -1565,9 +1594,23 @@ subject does, and adds no row. `refine` reads a component's contract at the
 part that satisfies it.
 
 The status column says what is **stored**, never what is true. `open` means
-nothing has been shown yet; `no formal clause` means the requirement is prose
-with no constraint body; `not encodable` means a gate refused the relation and
-names which. `discharged` and `stale` are read back from an evidence record, so
+nothing has been shown yet; `no formal clause` means the requirement states no
+`require` or `assume` clause — prose, as a rule; `not encodable` means a gate
+refused the relation and names which. An `assert constraint` written in a
+requirement, or in the definition it is typed by (`requirement def R { subject
+s : P; assert constraint ca { s.L == 50.0 } }`), is no clause of it: it is a
+fact of the model, an axiom row the check judges — reported violated where it
+is false, against `s.L`'s default too — and the SMT engine asserts. A usage
+typed by a definition whose only body is such an assert (`requirement r : R {
+subject s = x; }`) is `no formal clause`, and its sentence names the assert
+rather than calling the requirement prose (*the requirement states no `require`
+or `assume` clause, so there is nothing to encode — its asserted `s.L == 50.0`
+(…::R::ca) is a fact of the model …*). The definition itself, and a requirement
+whose own body is only such an assert, file no requirement row at all: the
+assert is an axiom and nothing more, and `contracts` lists each of them as *no
+formal clause: prose only*. A relation over the value the assert contradicts is
+decided by neither engine of `verify` (see *A `default` stands against every
+assertion*, above). `discharged` and `stale` are read back from an evidence record, so
 nothing is ever discharged here today.
 
 A `requirement massOk : MassLimit;` usage owns no clause of its own — the
@@ -1823,11 +1866,11 @@ strongest row wins, in the order refuted → design-admitted → undecided.
 | Claim | Which engine can reach it | The exact condition | The run's exit code |
 |---|---|---|---|
 | `proved` | `smt` only, and it is the only claim `smt` counts as a discharge | `A ∧ P ∧ ¬G` is **unsat** — over an axiom set itself checked satisfiable, with the assumptions satisfiable, inside the timeout, with no freed feature left unbounded | **0** when every row is discharged |
-| `holds-at-values` | `literal` only, and `literal` can reach nothing stronger | The relation evaluates true with every feature at the value your model binds it to — one point of an infinite space | **0** under `--engine literal`, because you asked for a point evaluation by name; it is **not** a discharge under `smt` or `auto` |
-| `refuted` | both | `literal`: false at your values. `smt`: `A ∧ P ∧ ¬G` **sat**, with the witness re-confirmed through this tool's own evaluator before you see it | **1** — and `--allow-inconclusive` does not reach it |
+| `holds-at-values` | `literal` only, and `literal` can reach nothing stronger | The relation evaluates true with every feature at the value your model binds it to — one point of an infinite space, and one no `assert` the model holds false there contradicts on a value the relation reads | **0** under `--engine literal`, because you asked for a point evaluation by name; it is **not** a discharge under `smt` or `auto` |
+| `refuted` | both | `literal`: false at your values, where no `assert` the model holds false contradicts a value the relation reads. `smt`: `A ∧ P ∧ ¬G` **sat**, with the witness re-confirmed through this tool's own evaluator before you see it | **1** — and `--allow-inconclusive` does not reach it |
 | `design-admitted` | `smt` | A refutation reached only **after** `--free` released a value your model states, so it is a design your model admits rather than a violation of it | **2**, never 1 |
 | `vacuous` | both | `literal`: the `assume` clause is false at your values (`verification/vacuous-pass`). `smt`: `A ∧ P` is unsat, so nothing at all satisfies the premises (`verification/vacuous`) | **2**, with `--strict-vacuity` and without it — the flag changes the code and the severity and nothing else |
-| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms, unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
+| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms (on the literal engine: a relation over a value an `assert` false at your values contradicts), unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
 | `holds-structurally`, `holds-within-bound` | none in this build | Declared in the evidence vocabulary and in `schemas/evidence-record.schema.json`, reserved for a structural argument and for a bounded walk. **No engine here writes either**, so a record carrying one did not come from this build | — |
 
 Two readings that table is defending. `holds-at-values` discharging a run is
@@ -1857,7 +1900,13 @@ $ echo $?
 - **Is the model's own axiom set satisfiable?** Asked once per run. If your file
   contradicts itself, *every* negation is unsat and every obligation would print
   as proved — so instead every row is `verification/inconsistent-axioms` with
-  the colliding facts named, and nothing is decided.
+  the colliding facts named, and nothing is decided. Every row of the *file*:
+  the axiom set is one, so a contradiction in one package makes a relation in
+  another, which reads nothing the contradiction touches, `inconsistent-axioms`
+  too. A contradiction through a relation a gate refuses (`%`) leaves the axiom
+  set this step encodes satisfiable, and is reported only on the rows whose
+  proof context holds that relation. `--engine literal` narrows it to the
+  relations over a value the contradiction reaches (above).
 - **Is the negation unsatisfiable?** Unsat ⇒ the obligation holds everywhere
   your axioms and assumptions allow. Sat ⇒ a counterexample, which is checked
   before it is printed (below).
@@ -1998,7 +2047,7 @@ that renders these members carries it itself.
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
 | `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
 | `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |
-| `verification/inconsistent-axioms` | Your model's own facts collide, so nothing can be proved from them | No |
+| `verification/inconsistent-axioms` | Your model's own facts collide, so nothing can be proved from them — on every SMT row of the file (only on the rows whose context holds the colliding relation, where a gate refuses it); on the literal engine, on a relation over a value an `assert` false at your values contradicts, the assert named | No |
 | `verification/free-variable-unbounded` | A feature you freed is not confined on both sides, so a witness could come from outside the physical domain | No |
 | `verification/tool-absent` | No engine ran | No |
 | `verification/design-admitted` | Refuted only after `--free` released a value your model states | No |
