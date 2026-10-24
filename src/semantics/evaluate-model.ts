@@ -45,6 +45,12 @@ import {
   enclosingAssertOn,
   equatedPartsFailed,
   equatedPartsRefusal,
+  contradictedDefinitionConflict,
+  contradictedDefinitionRefusal,
+  contradictedDefinitionRefusalOf,
+  contradictedDefinitions,
+  contradictedSideReadsAnother,
+  type ContradictedDefinition,
   failedReadingSentence,
   hasUndecidedPartners,
   joinedTo,
@@ -90,7 +96,7 @@ import {
   type NameClash,
 } from './defining-equation';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
-import { compareRationals, evaluateDecided, statedRational, tieSentence, type ExactScope, type Rational } from './exact';
+import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
 import { evaluate, parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
   NO_MARKERS,
@@ -107,7 +113,7 @@ import {
   valueFaultOf,
   type MarkerDimensions,
 } from './relations';
-import { DIMENSIONLESS, dimEqual, dimToString, resolveUnit } from './units';
+import { DIMENSIONLESS, dimEqual, dimToString, resolveUnit, type Dimension } from './units';
 import {
   boundDerivation,
   boundSourceQuantity,
@@ -1325,9 +1331,11 @@ export interface ConstraintCheck {
    * the model states different values for ({@link bindingConflicts}). Its
    * `id` is the redefinition's, `<the other feature's id>@<the context's
    * id>`, or the connector's — `<its id>@<the context's id>` in a context
-   * that specialises its owner.
+   * that specialises its owner — and `equations` for asserted equations that
+   * give one feature with no value two values ({@link definitionConflicts}),
+   * `<the feature's id>@<the id of the element they meet in>`.
    */
-  conflict?: 'binding' | 'clash' | 'bind';
+  conflict?: 'binding' | 'clash' | 'bind' | 'equations';
   /**
    * Set on an `unknown` that is a comparison whose two sides are equal within
    * the evaluators' tolerance and that no exact reading decides (the tie rule
@@ -1607,9 +1615,210 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       delete i.sides;
     }
   }
+  // A feature with no value that two asserted equations give two values (contradictedDefinitionRefusal): no
+  // decided row that may read it, or a value tied to it, is decided — whichever equation is written first, the
+  // equations' own rows included. A row that abstains already keeps its sentence. An instance row's cause is
+  // `two-values` where the model states two (`differs`, or read apart: contradictedApart), none where this tool
+  // cannot compare them, and, where listing them or reading the row against them threw (A.2.9), `internal`.
+  const apart = contradictedApart(model, pass);
+  for (const c of out) {
+    const own = c.result === 'unknown' ? undefined : contradictedDefinitionRefusal(model, c.id, c.expression);
+    if (own !== undefined) {
+      c.result = 'unknown';
+      c.message = `Could not evaluate: ${own}`;
+      delete c.tie;
+      delete c.reads;
+      delete c.sides;
+    }
+    for (const i of c.instances ?? []) {
+      if (i.result === 'unknown') continue;
+      const each = contradictedDefinitionRefusalOf(model, c.id, c.expression, { contextId: i.contextId, path: i.instance });
+      if (each === undefined) continue;
+      i.result = 'unknown';
+      i.message = `Could not evaluate: ${each.sentence}`;
+      i.detail = i.message;
+      const cause =
+        each.verdict === 'failed'
+          ? 'internal'
+          : each.verdict === 'differs' || (each.set !== undefined && apart.has(each.set))
+            ? 'two-values'
+            : undefined;
+      if (cause) {
+        i.abstention = cause;
+        i.cause = cause;
+      } else {
+        delete i.abstention;
+        delete i.cause;
+      }
+      delete i.reads;
+      delete i.sides;
+    }
+  }
   out.push(...contradictions(model, pass));
   out.push(...bindingConflicts(model, pass));
+  out.push(...definitionConflicts(model, apart));
   return out;
+}
+
+/**
+ * One check per feature with no value that two asserted equations give two values where they meet ({@link
+ * contradictedDefinitions}), anchored at the element they meet in, in a sentence that names every equation:
+ * `violated` where two constants differ, or where the check's own evaluator reads two defining sides apart at the
+ * model's values ({@link contradictedApart}) — an asserted equation is a fact of every instance it holds of, so the
+ * model states both values, as a binding to two does ({@link bindingConflicts}) — and `unknown` where two cannot
+ * be compared, or read alike. Its `id` is `<the feature's id>@<that element's id>`, its `expression` the equations
+ * joined by `and`. Every reading of the feature is left undecided beside it ({@link contradictedDefinitionRefusal}):
+ * the first equation written no longer defines it, and the others no longer read violated against it.
+ */
+function definitionConflicts(model: Model, apart: ReadonlyMap<ContradictedDefinition, readonly string[]>): ConstraintCheck[] {
+  const { sets, failed } = contradictedDefinitions(model);
+  if (failed !== undefined) return [];
+  return sets.map((set) => {
+    const read = apart.get(set);
+    const sentence = contradictedDefinitionConflict(model, set, read);
+    const differs = set.verdict === 'differs' || read !== undefined;
+    return {
+      id: `${set.feature.id}@${set.context.id}`,
+      ownerId: set.context.id,
+      expression: set.equations.map((c) => String(c.attrs.expression ?? '').trim()).join(' and '),
+      result: differs ? 'violated' : 'unknown',
+      message: differs ? `Constraint violated: ${sentence}` : `Could not evaluate: ${sentence}`,
+      conflict: 'equations' as const,
+    };
+  });
+}
+
+/** What the check's own evaluator reads one defining side of an `undecided` set at ({@link contradictedApart}). */
+interface SideReading {
+  value: number | boolean;
+  exact?: Rational;
+  dimension: Dimension;
+  /** The quantity, where the side was read unit-aware. */
+  quantity?: Quantity;
+  /** The value as a sentence prints it: `19.62`, `50 [kg]`. */
+  display: string;
+  /** The side and its value as the sentence prints them: "`m * g` is 19.62". */
+  shown: string;
+}
+
+/**
+ * The `undecided` sets of {@link contradictedDefinitions} whose defining sides the check's own evaluator reads
+ * apart at the model's values, each with what it reads every side at — the reading f1f5ca5 judged the later
+ * equation against, made of every side, so that no order of the text decides it. Each side is read where its
+ * names are read: unit-aware, in coherent SI (a bare number in the feature's declared kind, the bare-literal
+ * contract), else — for a dimensionless feature and a side with no `[unit]` literal — by the scalar scope, which
+ * reads a name a binding joins to a value (`a` of `bind a = K`). Two of one dimension differ when their exact
+ * values differ, or, read only as doubles, when they differ beyond the tie rule ({@link withinTolerance}); two
+ * Booleans when they differ. A side that reads no value, one of another dimension, one read only within the tie
+ * rule, and one over a value another set leaves undecided ({@link contradictedSideReadsAnother}) decide nothing,
+ * and the set stays `unknown`. No solver value is read (decision 3).
+ */
+function contradictedApart(model: Model, pass: ScalarPass): ReadonlyMap<ContradictedDefinition, readonly string[]> {
+  const out = new Map<ContradictedDefinition, readonly string[]>();
+  const { sets, failed } = contradictedDefinitions(model);
+  if (failed !== undefined) return out;
+  for (const set of sets) {
+    if (set.verdict !== 'undecided') continue;
+    try {
+      const read = set.sites.map((site) => readSide(model, pass, set, site));
+      const shown = new Map<number, string>();
+      for (let i = 0; i < read.length; i++) {
+        for (let j = 0; j < read.length; j++) {
+          const [a, b] = [read[i], read[j]];
+          if (i === j || !a) continue;
+          if (b) {
+            if (i < j && sidesDiffer(a, b)) {
+              shown.set(i, a.shown);
+              shown.set(j, b.shown);
+            }
+            continue;
+          }
+          // A side the readings above do not read (`a * 2.0` over `bind a = K`): the equation judged by the check
+          // with the name it defines bound to the other side's reading, as f1f5ca5 judged the later equation
+          // against the first — only where it is read where it is written, the element the check reads it in.
+          const site = set.sites[j]!;
+          const el = site.equation.constraint;
+          const expr = String(el.attrs.expression ?? '');
+          if (site.at !== el.ownerId || contradictedSideReadsAnother(model, set, site)) continue;
+          const judged = judgeConstraint(model, el, expr, pass, new Map([[site.name, boundOfReading(site.feature, a)]]));
+          if (judged.result !== 'violated') continue;
+          shown.set(i, a.shown);
+          shown.set(j, `\`${expr.trim()}\` is false where ${site.name} is ${a.display}`);
+        }
+      }
+      if (shown.size > 0) out.set(set, [...shown].sort(([x], [y]) => x - y).map(([, t]) => t));
+    } catch {
+      // A.2.9: a reading that throws reads nothing apart; the set stays `unknown`, its rows refused.
+    }
+  }
+  return out;
+}
+
+/** Do two readings of {@link contradictedApart} differ? `false` where either is missing or they do not compare. */
+function sidesDiffer(a: SideReading | undefined, b: SideReading | undefined): boolean {
+  if (!a || !b) return false;
+  if (typeof a.value === 'boolean' || typeof b.value === 'boolean') {
+    return typeof a.value === 'boolean' && typeof b.value === 'boolean' && a.value !== b.value;
+  }
+  if (!dimEqual(a.dimension, b.dimension)) return false;
+  if (a.exact && b.exact) return compareRationals(a.exact, b.exact) !== 0;
+  return !withinTolerance(a.value, b.value as number);
+}
+
+/** A reading of {@link contradictedApart} as the value a binding gives the name an equation defines ({@link judgeConstraint}). */
+function boundOfReading(feature: ElementRecord, r: SideReading): Bound {
+  const exact = r.exact ? { exact: r.exact } : {};
+  if (typeof r.value === 'boolean') return { featureId: feature.id, value: r.value };
+  return {
+    featureId: feature.id,
+    value: r.value,
+    ...exact,
+    quantity: r.quantity ?? { magnitude: r.value, dimension: DIMENSIONLESS, ...exact },
+  };
+}
+
+/** One defining side of `set`, read where its names are read ({@link contradictedApart}), or `undefined`. */
+function readSide(
+  model: Model,
+  pass: ScalarPass,
+  set: ContradictedDefinition,
+  site: ContradictedDefinition['sites'][number],
+): SideReading | undefined {
+  if (contradictedSideReadsAnother(model, set, site)) return undefined;
+  const expr = String(site.equation.constraint.attrs.expression ?? '');
+  // The defining side as written: the one across the first `==` (or `=`) from the name it defines.
+  const text = expr.trim();
+  const eq = /==|(?<![<>!=])=(?!=)/.exec(text);
+  const side = eq ? (site.equation.left ? text.slice(eq.index + eq[0].length) : text.slice(0, eq.index)).trim() : text;
+  const shown = (v: SideReading['value'], q?: Quantity): { display: string; shown: string } => {
+    const d = displayOf({ featureId: site.feature.id, value: v, ...(q ? { quantity: q } : {}) });
+    const display = `${String(d.value)}${d.unit ? ` [${d.unit}]` : ''}`;
+    return { display, shown: `\`${side}\` is ${display}` };
+  };
+  const d = equationDerivation(model, site.feature.id, expr, pass.memo, site.at, site.name.includes('.') ? site.name : undefined);
+  if (d.q) {
+    const v = siValue(d.q);
+    if (v === undefined || !Number.isFinite(v)) return undefined;
+    const exact = siExact(d.q);
+    return { value: v, ...(exact ? { exact } : {}), dimension: d.q.dimension, quantity: d.q, ...shown(v, d.q) };
+  }
+  if (typeof d.b === 'boolean') return { value: d.b, dimension: DIMENSIONLESS, ...shown(d.b) };
+  // The scalar scope is unit-blind: it stands in only where the feature and the side are dimensionless.
+  if (site.equation.literals.size > 0) return undefined;
+  const kind = quantityKindOf(model, site.feature.id);
+  if (kind.dimension && !dimEqual(kind.dimension, DIMENSIONLESS)) return undefined;
+  const { chosen } = chooseDefinition(
+    pass.inFlight,
+    site.feature.id,
+    [site.equation],
+    (equation) => byEquation(model, site.at, site.feature, site.name, equation, pass),
+    (a) => ({ answered: a.value !== undefined, deep: a.deep === true, contact: a.contact, cause: a.cause }),
+  );
+  if (!chosen || chosen.deep || chosen.contact) return undefined;
+  const v = chosen.value;
+  if (typeof v === 'boolean') return { value: v, dimension: DIMENSIONLESS, ...shown(v) };
+  if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
+  return { value: v, ...(chosen.exact ? { exact: chosen.exact } : {}), dimension: DIMENSIONLESS, ...shown(v) };
 }
 
 /**
@@ -2328,6 +2537,9 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
         // = K` beside P's `L == M`: p2's M is K's 9, which the equation makes
         // p2's L too, where M was read from L's default 2 and the pair reported.
         if (!against && result === 'violated') unread = equatedPartsRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
+        // So is a pair read at an end two asserted equations give two values (contradictedDefinitionRefusal), decided
+        // or not: the first equation written gave the end its value, so the pair was reported in one order only.
+        if (!against) unread ??= contradictedDefinitionRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
       } catch (e) {
         // A.2.9: a reading that throws is this row's, reported — never a throw
         // out of the sweep, which emptied the Problems view.

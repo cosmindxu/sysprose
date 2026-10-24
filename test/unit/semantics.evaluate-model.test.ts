@@ -36,6 +36,7 @@ import {
   lookupsOf,
   lookupsWhile,
   pastCapEnd,
+  readsContradictedDefinition,
   readsOtherwise,
   recordingLookups,
   replayLookups,
@@ -1786,19 +1787,22 @@ describe('checkConstraints — the defining equation does not depend on the orde
     );
   });
 
-  it('takes `x == <expr>` over `<expr> == x` when two equations fix a name to different values, in either order', () => {
-    // A model at odds with itself: which equation defines decided by
-    // declaration order alone before, so swapping the lines swapped the value
-    // and which of the two read as violated.
+  it('reads a name two equations fix to different constants nowhere, in either order, and reports the pair once', () => {
+    // A model at odds with itself: which equation defined it was decided by declaration order alone at first,
+    // then by the `x == <expr>` form tried first (x == 1.0 in either order, `2.0 == x` violated, `x >= 1.5`
+    // violated at 1). Since the soft/hard analysis' Q5 neither defines it: every reading abstains, whichever
+    // is written first, and the check reports the pair where the two meet.
     const pair = ['assert constraint { 2.0 == x }', 'assert constraint { x == 1.0 }'];
     for (const order of [pair, swapped(pair)]) {
       const m = model(`package C { attribute x : Real; ${order.join(' ')} constraint t { x >= 1.5 } }`);
-      expect(scopeFor(m, named(m, 'C').id)('x'), order[0]).toBe(1);
-      const by = (e: string) => checkConstraints(m).find((c) => c.expression === e)!;
-      expect([by('x == 1.0').message, by('2.0 == x').result, by('x >= 1.5').result], order[0]).toEqual([
-        'Constraint satisfied: defines x = 1',
-        'violated',
-        'violated',
+      const checks = checkConstraints(m);
+      const by = (e: string) => checks.find((c) => c.expression === e && c.conflict === undefined)!;
+      expect([by('x == 1.0').result, by('2.0 == x').result, by('x >= 1.5').result], order[0]).toEqual(['unknown', 'unknown', 'unknown']);
+      expect(by('x >= 1.5').message, order[0]).toMatch(
+        /^Could not evaluate: x is not read: the asserted `(2\.0 == x|x == 1\.0)` \(C::.*\) and `(2\.0 == x|x == 1\.0)` \(C::.*\) each define `x` in C, which states no value, and give it two different values — the model contradicts itself there/,
+      );
+      expect(checks.filter((c) => c.conflict === 'equations').map((c) => [c.result, m.qualifiedName(c.ownerId!)]), order[0]).toEqual([
+        ['violated', 'C'],
       ]);
     }
   });
@@ -1903,6 +1907,420 @@ describe('checkConstraints — the defining equation does not depend on the orde
         'Constraint satisfied',
       ]);
     }
+  });
+});
+
+/*
+ * Two asserted equations that give a feature with no value two different values (the soft/hard defaults
+ * analysis, Q5, decided 2026-10-22). The first written, or the element's own, defined it and the other read
+ * violated against it: `L == 50.0` and `L == 60.0` in P read `t50 { p.L == 50.0 }` true with the literal engine's
+ * exit 0, and swapped false with exit 1 (M8, the analysis' `reconcile/n-ab.sysml` and `n-ba.sysml`); one in P and
+ * one in `part p : P { … }` read both true, the check silent (F1). Neither defines it now, whichever is written
+ * first: every reading of the feature abstains, and the check reports the pair once, where the two meet. Each
+ * case is read in both orders, and the two read alike row for row.
+ */
+describe('checkConstraints — two asserted equations that give one feature two values decide nothing, in either order', () => {
+  /** Every check of `text` as `[name, result]`, a pair's own row by where it is reported (`… #equations`), sorted. */
+  const rows = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    return checkConstraints(m!)
+      .map((c) => [c.conflict ? `${m!.qualifiedName(c.ownerId!)}#${c.conflict}` : m!.qualifiedName(c.id), c.result] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  /** `text` with the two `/*A*\/` and `/*B*\/` asserts of one element swapped: the reversed twin. */
+  const twin = (text: string) => {
+    const [a, b] = ['A', 'B'].map((k) => new RegExp(`/\\*${k}\\*/ (assert constraint \\w+ \\{[^{}]*\\})`).exec(text)![1]!);
+    return text.replace(`/*A*/ ${a}`, `/*A*/ ${b!}`).replace(`/*B*/ ${b!}`, `/*B*/ ${a}`);
+  };
+  /** The rows of `text` and of its twin, which must be one list. */
+  const bothOrders = async (text: string) => {
+    const [ab, ba] = [await rows(text), await rows(twin(text))];
+    expect(ba).toEqual(ab);
+    return ab;
+  };
+  /** The rows of `text` with its two values written as 50 and 60, and with the two exchanged: one list. */
+  const exchanged = async (text: (x: string, y: string) => string) => {
+    const [ab, ba] = [await rows(text('50.0', '60.0')), await rows(text('60.0', '50.0'))];
+    expect(ba).toEqual(ab);
+    return ab;
+  };
+
+  it('in one element (M8): every reading of L abstains, and the pair is one warning at P naming both', async () => {
+    const text = `package RN {
+      part def P { attribute L : ScalarValues::Real;
+        /*A*/ assert constraint c50 { L == 50.0 }
+        /*B*/ assert constraint c60 { L == 60.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+    }`;
+    expect(await bothOrders(text)).toEqual([
+      ['RN::P#equations', 'violated'],
+      ['RN::P::c50', 'unknown'],
+      ['RN::P::c60', 'unknown'],
+      ['RN::t50', 'unknown'],
+    ]);
+    for (const order of [text, twin(text)]) {
+      const { model: m } = await loadModelText(order);
+      const [first, second] = order.indexOf('c50') < order.indexOf('c60') ? ['50', '60'] : ['60', '50'];
+      const named = `the asserted \`L == ${first}.0\` (RN::P::c${first}) and \`L == ${second}.0\` (RN::P::c${second}) each define \`L\` in RN::P, which states no value, and give it two different values`;
+      expect(checkOf(m!, 'RN::t50').message).toBe(
+        `Could not evaluate: L is not read: ${named} — the model contradicts itself there, whichever is written first, and this tool reads neither value, so no relation that may read it is decided`,
+      );
+      const warned = validate(m!).filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning');
+      expect(warned.map((d) => [m!.qualifiedName(d.elementId!), d.message])).toEqual([
+        [
+          'RN::P',
+          `Constraint violated: ${named} — an asserted equation is a fact of every instance it holds of, so the model states both values and contradicts itself, whichever is written first; no relation that may read L is decided`,
+        ],
+      ]);
+      // `verify` decides nothing over it on either engine: the literal engine reads the check, the SMT engine
+      // finds its axioms inconsistent. Before, `--engine literal` exited 0 in one order and 1 in the other. The
+      // row prints no value of p.L: it printed the first equation's, 50 in one order and 60 in the other.
+      const literal = await verifyModel(m!, { engine: 'literal' });
+      expect(literal.exitCode).toBe(2);
+      expect(literal.results.find((r) => r.clause.qualifiedName === 'RN::t50')!.bindings.map((b) => [b.path, b.value])).toEqual([['p.L', null]]);
+    }
+  });
+
+  it('in an element and a usage of it (F1), in two types a definition specialises, and around the instance', async () => {
+    // The two in two elements: the twins exchange the values, so each row keeps its name.
+    expect(
+      await exchanged((x, y) => `package F1 {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+        part p : P { assert constraint cb { L == ${y} } }
+        part p2 : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t60 { p.L == 60.0 }
+        constraint u50 { p2.L == 50.0 }
+      }`),
+    ).toEqual([
+      ['F1::P::ca', 'unknown'],
+      ['F1::p#equations', 'violated'],
+      ['F1::p::cb', 'unknown'],
+      ['F1::t50', 'unknown'],
+      ['F1::t60', 'unknown'],
+      // Every reading of the feature: p2's L, which only P's equation defines, too.
+      ['F1::u50', 'unknown'],
+    ]);
+    expect(
+      await exchanged((x, y) => `package DIA {
+        part def T0 { attribute L : ScalarValues::Real; }
+        part def T1 :> T0 { assert constraint c1 { L == ${x} } }
+        part def T2 :> T0 { assert constraint c2 { L == ${y} } }
+        part def X :> T1, T2;
+        part x : X;
+        constraint tx { x.L == 50.0 }
+      }`),
+    ).toContainEqual(['DIA::X#equations', 'violated']);
+    // An element around the instance: Q's `p.L == …` beside P's own.
+    expect(
+      await exchanged((x, y) => `package ENQ {
+        part def P { attribute L : ScalarValues::Real; assert constraint cp { L == ${x} } }
+        part def Q { part p : P; assert constraint cq { p.L == ${y} } }
+        part q : Q;
+        constraint t50 { q.p.L == 50.0 }
+      }`),
+    ).toEqual([
+      ['ENQ::P::cp', 'unknown'],
+      ['ENQ::Q#equations', 'violated'],
+      ['ENQ::Q::cq', 'unknown'],
+      ['ENQ::t50', 'unknown'],
+    ]);
+  });
+
+  it('reaches a value derived from it, bound to it, or read beside it by an asserted relation — and no other', async () => {
+    expect(
+      await bothOrders(`package DER {
+        part def P { attribute L : ScalarValues::Real; attribute M : ScalarValues::Real; attribute V : ScalarValues::Real = L * 2.0;
+          attribute K : ScalarValues::Real; bind L = K;
+          /*A*/ assert constraint c50 { L == 50.0 }
+          /*B*/ assert constraint c60 { L == 60.0 }
+          assert constraint dm { M == L * 2.0 } }
+        part p : P;
+        attribute Z : ScalarValues::Real = 3.0;
+        constraint tM { p.M == 100.0 }
+        constraint tV { p.V == 100.0 }
+        constraint tK { p.K == 50.0 }
+        constraint tz { Z == 3.0 }
+      }`),
+    ).toEqual([
+      ['DER::P#bind', 'unknown'],
+      ['DER::P#equations', 'violated'],
+      ['DER::P::c50', 'unknown'],
+      ['DER::P::c60', 'unknown'],
+      ['DER::P::dm', 'unknown'],
+      ['DER::tK', 'unknown'],
+      ['DER::tM', 'unknown'],
+      ['DER::tV', 'unknown'],
+      // A value nothing ties to L is read as before.
+      ['DER::tz', 'satisfied'],
+    ]);
+  });
+
+  it('leaves two that agree, a value written with `=`, an alias and an equation over a free name as they read', async () => {
+    // One value in two units (and either side): it defines L, as two equal equations always did.
+    expect(
+      await bothOrders(`package UAG {
+        part def P { attribute L : ISQ::MassValue;
+          /*A*/ assert constraint ck { L == 50.0 [kg] }
+          /*B*/ assert constraint cg { 50000.0 [g] == L } }
+        part p : P;
+        constraint t50 { p.L == 50.0 [kg] }
+      }`),
+    ).toEqual([
+      ['UAG::P::cg', 'satisfied'],
+      ['UAG::P::ck', 'satisfied'],
+      ['UAG::t50', 'satisfied'],
+    ]);
+    // `=` is read whatever its asserts: each is checked against it, in either order (unchanged).
+    expect(
+      await bothOrders(`package REQ {
+        part def P { attribute L : ScalarValues::Real = 1.0;
+          /*A*/ assert constraint c50 { L == 50.0 }
+          /*B*/ assert constraint c60 { L == 60.0 } }
+        part p : P;
+        constraint t1 { p.L == 1.0 }
+      }`),
+    ).toEqual([
+      ['REQ::P::c50', 'violated'],
+      ['REQ::P::c60', 'violated'],
+      ['REQ::t1', 'satisfied'],
+    ]);
+    // An alias (`b == a`, which is also a's equation, over a b only it defines) and a design equation over a free
+    // m give L no value of their own: every evaluator tries the constant one first, in either order, and the
+    // model reads as before.
+    expect(
+      await bothOrders(`package ALI {
+        part def P { attribute a : ScalarValues::Real; attribute b : ScalarValues::Real;
+          /*A*/ assert constraint cb { b == a }
+          /*B*/ assert constraint ca { a == 2.0 } }
+        part p : P;
+        constraint tb { p.b == 2.0 }
+      }`),
+    ).toEqual([
+      ['ALI::P::ca', 'satisfied'],
+      ['ALI::P::cb', 'satisfied'],
+      ['ALI::tb', 'satisfied'],
+    ]);
+    expect(
+      await bothOrders(`package DSG {
+        part def P { attribute L : ScalarValues::Real; attribute m : ScalarValues::Real; attribute g : ScalarValues::Real = 10.0;
+          /*A*/ assert constraint cg { L == m * g }
+          /*B*/ assert constraint c50 { L == 50.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+      }`),
+    ).toEqual([
+      ['DSG::P::c50', 'satisfied'],
+      ['DSG::P::cg', 'unknown'],
+      ['DSG::t50', 'satisfied'],
+    ]);
+    // Two over names that agree, read exactly: x == y * 2.0 with y == 3.0 is the 6.0 the other gives.
+    expect(
+      await bothOrders(`package CHN {
+        part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; assert constraint cy { y == 3.0 }
+          /*A*/ assert constraint cx { x == y * 2.0 }
+          /*B*/ assert constraint c6 { x == 6.0 } }
+        part p : P;
+        constraint t6 { p.x == 6.0 }
+      }`),
+    ).toEqual([
+      ['CHN::P::c6', 'satisfied'],
+      ['CHN::P::cx', 'satisfied'],
+      ['CHN::P::cy', 'satisfied'],
+      ['CHN::t6', 'satisfied'],
+    ]);
+  });
+
+  it('reads an equation over other names exactly where they have values, and compares it with none where they may', async () => {
+    // `L == a * 2.0` with a = 30 beside `L == 50.0`: the first the evaluators tried defined L and the other read
+    // violated, t50 true in one order and false in the other. Read exactly, it gives 60: two values.
+    const res = `package RES {
+      part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real = 30.0;
+        /*A*/ assert constraint c50 { L == 50.0 }
+        /*B*/ assert constraint c2a { L == a * 2.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+    }`;
+    expect(await bothOrders(res)).toEqual([
+      ['RES::P#equations', 'violated'],
+      ['RES::P::c2a', 'unknown'],
+      ['RES::P::c50', 'unknown'],
+      ['RES::t50', 'unknown'],
+    ]);
+    // A name a usage gives a value makes it such an equation there: p's m, not P's free one.
+    expect(
+      await bothOrders(`package INV {
+        part def P { attribute L : ScalarValues::Real; attribute m : ScalarValues::Real;
+          /*A*/ assert constraint cm { L == m * 2.0 }
+          /*B*/ assert constraint c50 { L == 50.0 } }
+        part p : P { attribute :>> m = 30.0; }
+        constraint t50 { p.L == 50.0 }
+      }`),
+    ).toEqual([
+      ['INV::P::c50', 'unknown'],
+      ['INV::P::cm', 'unknown'],
+      ['INV::p#equations', 'violated'],
+      ['INV::t50', 'unknown'],
+    ]);
+    // A name this tool does not read exactly (a, which a binding joins to K): the check reads the side with its
+    // own evaluator, the other side's 50 bound to L as f1f5ca5 judged the later equation (a is K's 30, so 60
+    // against 50), so the pair is the warning in both orders (the S2 branch review), and its instance rows carry
+    // the `two-values` cause.
+    const bound = `package BND {
+      part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real; attribute K : ScalarValues::Real = 30.0;
+        bind a = K;
+        /*A*/ assert constraint c2a { L == a * 2.0 }
+        /*B*/ assert constraint c50 { L == 50.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+    }`;
+    expect((await bothOrders(bound)).filter(([n]) => !n.includes('#bind'))).toEqual([
+      ['BND::P#equations', 'violated'],
+      ['BND::P::c2a', 'unknown'],
+      ['BND::P::c50', 'unknown'],
+      ['BND::t50', 'unknown'],
+    ]);
+    const { model: m } = await loadModelText(bound);
+    expect(checkOf(m!, 'BND::t50').message).toContain('give it two values this tool does not compare exactly (one reads other names)');
+    const pair = checkConstraints(m!).find((c) => c.conflict === 'equations')!;
+    expect(pair.message).toContain("which differ at the model's values (`L == a * 2.0` is false where L is 50, `50.0` is 50)");
+    const each = checkConstraints(m!).flatMap((c) => (c.conflict === undefined ? (c.instances ?? []) : []));
+    expect(each.length).toBeGreaterThan(0);
+    expect(each.every((i) => i.result === 'unknown' && i.cause === 'two-values')).toBe(true);
+  });
+
+  it('two Booleans, and two sides that read no name in a form this tool does not compute, are no value either', async () => {
+    expect(
+      await bothOrders(`package BOO {
+        part def P { attribute f : ScalarValues::Boolean;
+          /*A*/ assert constraint c1 { f == true }
+          /*B*/ assert constraint c2 { f == false } }
+        part p : P;
+        constraint tt { p.f == true }
+      }`),
+    ).toEqual([
+      ['BOO::P#equations', 'violated'],
+      ['BOO::P::c1', 'unknown'],
+      ['BOO::P::c2', 'unknown'],
+      ['BOO::tt', 'unknown'],
+    ]);
+    // Such a side the check's own evaluator reads: 8 beside 9 and 1 beside 2 are the warning, 8 beside 8 the info.
+    for (const [side, other, pair] of [
+      ['2.0 ^ 3', '9.0', 'violated'],
+      ['10 % 3', '2.0', 'violated'],
+      ['2.0 ^ 3', '8.0', 'unknown'],
+    ] as const) {
+      expect(
+        await bothOrders(`package POW {
+          part def P { attribute L : ScalarValues::Real;
+            /*A*/ assert constraint ca { L == ${side} }
+            /*B*/ assert constraint cb { L == ${other} } }
+          part p : P;
+          constraint t { p.L == 8.0 }
+        }`),
+        `${side} beside ${other}`,
+      ).toEqual([
+        ['POW::P#equations', pair],
+        ['POW::P::ca', 'unknown'],
+        ['POW::P::cb', 'unknown'],
+        ['POW::t', 'unknown'],
+      ]);
+    }
+  });
+
+  it('meets a feature a usage masks by name, two redefinitions a definition inherits together, and a name read from inside', async () => {
+    // p declares L anew, with no `:>>`: the check read P's equation in p over p's L.
+    expect(
+      await exchanged((x, y) => `package MSK {
+        part def P { attribute L : ScalarValues::Real; assert constraint c50 { L == ${x} } }
+        part p : P { attribute L : ScalarValues::Real; assert constraint c60 { L == ${y} } }
+        constraint t50 { p.L == 50.0 }
+      }`),
+    ).toEqual([
+      ['MSK::P::c50', 'unknown'],
+      ['MSK::p#equations', 'violated'],
+      ['MSK::p::c60', 'unknown'],
+      ['MSK::t50', 'unknown'],
+    ]);
+    expect(
+      await exchanged((x, y) => `package DI2 {
+        part def T0 { attribute L : ScalarValues::Real; }
+        part def T1 :> T0 { attribute :>> L; assert constraint c1 { L == ${x} } }
+        part def T2 :> T0 { attribute :>> L; assert constraint c2 { L == ${y} } }
+        part def X :> T1, T2;
+        part x : X;
+        constraint tx { x.L == 50.0 }
+      }`),
+    ).toContainEqual(['DI2::X#equations', 'violated']);
+    // An equation in an element nested in Q, or in a package nested in the one that declares L, whose L KerML
+    // resolves to Q's, or the package's: the outer one alone defined it.
+    expect(
+      await exchanged((x, y) => `package LEX {
+        part def R { attribute w : ScalarValues::Real = 1.0; }
+        part def Q { attribute L : ScalarValues::Real; assert constraint c1 { L == ${x} } part p : R { assert constraint c2 { L == ${y} } } }
+        part q : Q;
+        constraint t50 { q.L == 50.0 }
+      }`),
+    ).toEqual([
+      ['LEX::Q#equations', 'violated'],
+      ['LEX::Q::c1', 'unknown'],
+      ['LEX::Q::p::c2', 'unknown'],
+      ['LEX::t50', 'unknown'],
+    ]);
+    expect(
+      await exchanged((x, y) => `package NST {
+        attribute L : ScalarValues::Real;
+        assert constraint c1 { L == ${x} }
+        package Inner { assert constraint c2 { L == ${y} } }
+        part def A { assert constraint c3 { L == ${x} } }
+        constraint t50 { L == 50.0 }
+      }`),
+    ).toEqual([
+      ['NST#equations', 'violated'],
+      ['NST::A::c3', 'unknown'],
+      ['NST::Inner::c2', 'unknown'],
+      ['NST::c1', 'unknown'],
+      ['NST::t50', 'unknown'],
+    ]);
+  });
+
+  it('two values a unit makes incomparable exactly are no value either, and the pair is the warning where the check reads them apart', async () => {
+    const text = `package UND {
+      part def P { attribute L : ISQ::MassValue;
+        /*A*/ assert constraint c50 { L == 50.0 }
+        /*B*/ assert constraint ck { L == 60.0 [kg] } }
+      part p : P;
+      constraint t60 { p.L == 60.0 [kg] }
+    }`;
+    // The bare 50 is read in L's declared kind (the bare-literal contract): 50 kg beside 60 kg, which `check
+    // --strict` warned of at f1f5ca5 in either order, and does again (the S2 branch review's RD).
+    expect(await bothOrders(text)).toEqual([
+      ['UND::P#equations', 'violated'],
+      ['UND::P::c50', 'unknown'],
+      ['UND::P::ck', 'unknown'],
+      ['UND::t60', 'unknown'],
+    ]);
+    const { model: m } = await loadModelText(text);
+    const pair = validate(m!).filter((d) => d.ruleId === 'constraint-violation' && m!.qualifiedName(d.elementId!) === 'UND::P');
+    expect(pair.map((d) => [d.severity, d.message])).toEqual([
+      [
+        'warning',
+        'Constraint violated: the asserted `L == 50.0` (UND::P::c50) and `L == 60.0 [kg]` (UND::P::ck) each define `L` in UND::P, which ' +
+          "states no value, and give it two values this tool cannot compare exactly (one is written with a unit, the other without), which differ at the model's values " +
+          '(`50.0` is 50 [kg], `60.0 [kg]` is 60 [kg]) — an asserted equation is a fact of every instance it holds of, so the model states both values and ' +
+          'contradicts itself, whichever is written first; no relation that may read L is decided',
+      ],
+    ]);
+    // 50 beside 50 kg may be one value: the pair is info, in either order.
+    const alike = text.replace('60.0 [kg] }', '50.0 [kg] }');
+    expect((await bothOrders(alike))[0]).toEqual(['UND::P#equations', 'unknown']);
+    const { model: a } = await loadModelText(alike);
+    expect(
+      validate(a!)
+        .filter((d) => d.ruleId === 'constraint-violation' && a!.qualifiedName(d.elementId!) === 'UND::P')
+        .map((d) => d.severity),
+    ).toEqual(['info']);
   });
 });
 
@@ -2989,6 +3407,229 @@ describe('checkConstraints — a default stands against an asserted equation (de
     }
   });
 
+  it('marks every obligation over a value a violated assert contradicts inconclusive on the literal engine, naming the assert (Q4)', async () => {
+    // A1 of the soft/hard analysis: `verify --engine literal` called t1's pass "unconditional" and exited 0 beside
+    // the violated assert; only the SMT engine failed. Now the point the model contradicts decides nothing there.
+    const literal = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      const row = (q: string) => report.results.find((r) => r.clause.qualifiedName === q)!;
+      return { m: m!, report, row, check: (q: string) => checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === q)!.result };
+    };
+    for (const value of ['= 1.0', 'default = 1.0']) {
+      const a1 = await literal(`package A1 {
+        part def P { attribute L : ScalarValues::Real ${value}; attribute m2 : ScalarValues::Real = 10.0 - L; assert constraint ca { L == 50.0 } }
+        part p : P;
+        constraint t1 { p.L == 1.0 }
+        constraint kF { p.m2 >= 100.0 }
+      }`);
+      for (const [q, path, at] of [
+        ['A1::t1', 'p.L', 'holds'],
+        // A value derived from the contradicted one is reached through its own axiom row.
+        ['A1::kF', 'p.m2', 'is false'],
+      ] as const) {
+        const r = a1.row(q);
+        expect([r.claim, r.code, r.discharged], `${value} ${q}`).toEqual(['inconclusive', 'verification/inconsistent-axioms', false]);
+        expect(r.detail).toContain('the asserted `L == 50.0` (A1::P::ca) is false at them');
+        expect(r.detail).toContain(`this relation reads \`${path}\``);
+        expect(r.detail).toContain(`The relation ${at} at these values`);
+        expect(r.detail).not.toContain('unconditional at these values');
+      }
+      expect(a1.report.exitCode, value).toBe(2);
+      // The check still reads the values, and reports the assert violated: its exit code is unchanged.
+      expect([a1.check('A1::P::ca'), a1.check('A1::t1'), a1.check('A1::kF')]).toEqual(['violated', 'satisfied', 'violated']);
+      // Nothing forgives it: a contradictory model is a finding, not an undecided shape.
+      const forgiving = await verifyModel(a1.m, { engine: 'literal', allowInconclusive: true });
+      expect([forgiving.exitCode, forgiving.forgiven], value).toEqual([2, 0]);
+    }
+    // Only the values the contradiction reaches: ISO_Y's own p is another model's point, and still holds there.
+    const iso = await literal(`package ISO_X {
+      part def P { attribute L : ScalarValues::Real = 1.0; assert constraint a { L == 50.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+    }
+    package ISO_Y {
+      part def P { attribute L : ScalarValues::Real default = 1.0; }
+      part p : P;
+      constraint t1 { p.L == 1.0 }
+    }`);
+    expect([iso.row('ISO_X::t50').claim, iso.row('ISO_X::t50').code]).toEqual(['inconclusive', 'verification/inconsistent-axioms']);
+    expect(iso.row('ISO_Y::t1').claim).toBe('holds-at-values');
+    expect(iso.report.exitCode).toBe(2);
+    // An instance's own value that meets the assert there is no contradicted value: q1's L of 50 misses P's
+    // `L <= 10.0`, and p's L of 1 meets it.
+    const ins = await literal(`package INS {
+      part def P { attribute L : ScalarValues::Real default = 1.0; assert constraint ca { L <= 10.0 } }
+      part p : P;
+      part q1 : P { attribute :>> L = 50.0; }
+      constraint tq { q1.L == 50.0 }
+      constraint tp { p.L == 1.0 }
+    }`);
+    expect(ins.row('INS::tq').code).toBe('verification/inconsistent-axioms');
+    expect(ins.row('INS::tq').detail).toContain('the asserted `L <= 10.0` (INS::P::ca in INS::q1) is false at them');
+    expect(ins.row('INS::tp').claim).toBe('holds-at-values');
+    // An assumption over a contradicted value: the guarantee stands on a point the model contradicts.
+    const asm = await literal(`package ASM {
+      part def P { attribute L : ScalarValues::Real = 1.0; attribute K : ScalarValues::Real = 2.0; assert constraint ca { L == 50.0 } }
+      part p : P;
+      requirement def R { subject s : P; assume constraint a1 { s.L >= 0.0 } require constraint g { s.K == 2.0 } }
+      requirement r : R { subject s = p; }
+      satisfy r by p;
+    }`);
+    expect(asm.row('ASM::R::g').code).toBe('verification/inconsistent-axioms');
+    // The sentence names the assumption that reads it, not the relation, which reads only s.K.
+    expect(asm.row('ASM::R::g').detail).toContain('and its assumption `s.L >= 0.0` reads `s.L`, which that contradiction reaches');
+    expect(asm.row('ASM::R::g').detail).not.toContain('this relation reads');
+    // With no violated assert the sentence is as it was.
+    const clean = await literal(`package OK {
+      part def P { attribute L : ScalarValues::Real = 1.0; assert constraint ca { L == 1.0 } }
+      part p : P;
+      constraint t1 { p.L == 1.0 }
+    }`);
+    expect([clean.row('OK::t1').claim, clean.row('OK::t1').detail, clean.report.exitCode]).toEqual([
+      'holds-at-values',
+      "holds at the model's values (no assumptions — the pass is unconditional at these values)",
+      0,
+    ]);
+  });
+
+  it('fails closed where the worklist does not say what a violated assert reads (Q4)', async () => {
+    const literal = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      return { report, row: (q: string) => report.results.find((r) => r.clause.qualifiedName === q)! };
+    };
+    const contradicted = (r: { claim: string; code?: string | null }) => [r.claim, r.code];
+    const X = ['inconclusive', 'verification/inconsistent-axioms'];
+    // An instance the check reads alike with the generic row has no check entry of its own: Q's `tie` is
+    // violated there (q2's p's x is P's 2), so top2 and P's c read in q2's p are over the contradicted value.
+    const bnd = await literal(`package BND {
+      part def P { attribute x : ScalarValues::Real default = 2.0; constraint c { x <= 10.0 } }
+      part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+      part q1 : Q { attribute K : ScalarValues::Real = 7.0; bind p.x = K; }
+      part q2 : Q;
+      constraint top1 { q1.p.x <= 10.0 }
+      constraint top2 { q2.p.x <= 10.0 }
+    }`);
+    for (const q of ['BND::top1', 'BND::top2', 'BND::P::c', 'BND::P::c in BND::q2::p']) {
+      expect(contradicted(bnd.row(q)), q).toEqual(X);
+    }
+    // Read on its own row and in q2, the assert is named once (the branch review).
+    expect(bnd.row('BND::top2').detail).toContain('the asserted `p.x == 50.0` (BND::Q::tie, and in 1 instance(s)) is false at them');
+    // An instance's own value row is joined to its feature, so the binding filed for the feature in Q carries
+    // the contradiction of `a2 in Q3::p` (load 1 against 50) to q3's L, and to every Q's L read as one symbol.
+    const sp2 = await literal(`package SP2 {
+      part def P { attribute load : ScalarValues::Real; }
+      part def P2 :> P { assert constraint a2 { load == 50.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part def Q3 :> Q { part :>> p : P2; }
+      part q3 : Q3;
+      constraint k { q3.L <= 10.0 }
+      constraint kp { q3.p.load <= 10.0 }
+    }`);
+    for (const q of ['SP2::k', 'SP2::kp']) expect(contradicted(sp2.row(q)), q).toEqual(X);
+    expect(sp2.report.exitCode).toBe(2);
+    // The check reports G's ca violated in s2's q, whose binding sits in s2, and the worklist files no row of
+    // ca there: what that contradiction reaches is not read, so it reaches every relation of the model.
+    const gi = await literal(`package GI {
+      part def G { attribute g : ScalarValues::Real default = 1.0; assert constraint ca { g <= 10.0 } }
+      part def S { part q : G; }
+      attribute K : ScalarValues::Real = 50.0;
+      part s1 : S;
+      part s2 : S { bind q.g = K; }
+      constraint t2 { s2.q.g == 50.0 }
+      constraint tk { K == 50.0 }
+    }`);
+    for (const q of ['GI::t2', 'GI::tk']) {
+      expect(contradicted(gi.row(q)), q).toEqual(X);
+      expect(gi.row(q).detail, q).toContain(
+        'the check reports the asserted `g <= 10.0` (GI::G::ca) false in GI::s2::q, an instance the worklist files no row of that assertion for',
+      );
+    }
+    expect(gi.report.exitCode).toBe(2);
+    // An assert that reads no feature is false at every point.
+    const kc = await literal(`package KC {
+      attribute L : ScalarValues::Real = 1.0;
+      assert constraint never { 1.0 == 2.0 }
+      constraint t1 { L == 1.0 }
+    }`);
+    expect(contradicted(kc.row('KC::t1'))).toEqual(X);
+    expect(kc.row('KC::t1').detail).toContain('the asserted `1.0 == 2.0` (KC::never) reads no feature and is false whatever the values');
+  });
+
+  it('marks an obligation over a name two disagreeing asserted equations read inconclusive on the literal engine, naming both (Q4, Q5)', async () => {
+    // The S2 branch review: the pair's own rows are no longer read violated, so the literal engine found no assert to
+    // seed from, and read `ta` "unconditional" with exit 0 beside the SMT engine's inconsistent axioms.
+    const e1 = 'assert constraint e1 { L == a * 2.0 }';
+    const e2 = 'assert constraint e2 { L == 50.0 }';
+    for (const [x, y] of [[e1, e2], [e2, e1]]) {
+      const { model: m } = await loadModelText(`package RA {
+        part def P { attribute a : ScalarValues::Real = 30.0; attribute L : ScalarValues::Real; ${x} ${y} }
+        part p : P;
+        constraint ta { p.a == 30.0 }
+      }`);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      const r = report.results.find((row) => row.clause.qualifiedName === 'RA::ta')!;
+      expect([r.claim, r.code]).toEqual(['inconclusive', 'verification/inconsistent-axioms']);
+      expect(r.detail).toContain('each define `L` in RA::P and give it two values that differ, and this relation reads `p.a`');
+      expect(report.exitCode).toBe(2);
+      // The check still reads a's stated 30.
+      expect(checkOf(m!, 'RA::ta').result).toBe('satisfied');
+    }
+    // A value written with `=` that an asserted relation reads beside L is read whatever L's pair: `cm` over M alone
+    // is the warning at M's 20 (it read 'L is not read', and `--strict` passed), and `s`, which reads L, abstains.
+    const { model: m } = await loadModelText(`package RF {
+      part def P { attribute L : ISQ::MassValue; attribute M : ScalarValues::Real = 20.0;
+        assert constraint e1 { L == 50.0 } assert constraint e2 { L == 50.0 [kg] }
+        assert constraint s { L >= 0.0 [kg] or M >= 0.0 }
+        assert constraint cm { M <= 10.0 } }
+      part p : P;
+    }`);
+    expect([checkOf(m!, 'RF::P::cm').result, checkOf(m!, 'RF::P::s').result]).toEqual(['violated', 'unknown']);
+    expect(validate(m!).filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning').map((d) => m!.qualifiedName(d.elementId!))).toEqual([
+      'RF::P::cm',
+    ]);
+  });
+
+  it('says that an `assert` a requirement def writes is a fact a usage typed by it does not check (M11)', async () => {
+    // M11 of the soft/hard analysis: the check filed an abstention sentence under decision 14 beside a decided
+    // `t50`; the requirement's verify row said it "carries prose and no constraint body" over the body the check
+    // judged. The assert is a fact of the model (an axiom), checked against x's default, which it does not change.
+    const { model: m } = await loadModelText(`package R1 {
+      part def P { attribute L : ScalarValues::Real default = 1.0; }
+      part x : P;
+      requirement def R { subject s : P; assert constraint ca { s.L == 50.0 } }
+      requirement r : R { subject s = x; }
+      satisfy r by x;
+      constraint t1 { x.L == 1.0 }
+      constraint t50 { x.L == 50.0 }
+    }`);
+    const checks = checkConstraints(m!);
+    const check = (q: string) => checks.find((c) => m!.qualifiedName(c.id) === q)!;
+    expect(check('R1::R::ca').result).toBe('violated');
+    expect(check('R1::R::ca').message).toMatch(/^Constraint violated: s\.L == 50\.0 — P::L's `default = 1\.0` is not changed by an assertion/);
+    expect([check('R1::t1').result, check('R1::t50').result]).toEqual(['satisfied', 'violated']);
+    const report = await verifyModel(m!, { engine: 'literal' });
+    const row = (q: string) => report.results.find((r) => r.clause.qualifiedName === q)!;
+    expect(row('R1::r').detail).toBe(
+      'nothing to evaluate: the requirement states no `require` or `assume` clause, so there is nothing to encode — its ' +
+        'asserted `s.L == 50.0` (R1::R::ca) is a fact of the model, an axiom the check judges and the SMT engine asserts, ' +
+        'not a clause of the requirement',
+    );
+    for (const q of ['R1::t1', 'R1::t50']) {
+      expect(row(q).code, q).toBe('verification/inconsistent-axioms');
+      expect(row(q).detail, q).toContain('the asserted `s.L == 50.0` (R1::R::ca) is false at them');
+    }
+    expect(report.exitCode).toBe(2);
+    // The definition itself files no requirement row: its assert is an axiom and nothing more.
+    expect(report.results.some((r) => r.clause.qualifiedName === 'R1::R')).toBe(false);
+    // A requirement with prose alone still says so.
+    const { model: p } = await loadModelText('package PR { requirement r { doc /* the mass is low */ } }');
+    expect((await verifyModel(p!, { engine: 'literal' })).results[0]!.detail).toBe(
+      'nothing to evaluate: the requirement carries prose and no constraint body, so there is nothing to encode',
+    );
+  });
+
   it('defines a side with no value from the other, and checks two values against each other (e, U7)', async () => {
     // M has no value: the equation defines M from L's default, which stands.
     const { model: o } = await loadModelText(`package OR {
@@ -3318,11 +3959,14 @@ describe('checkConstraints — a default stands against an asserted equation (de
       constraint top { p.x <= 3.5 }
     }`);
     expect(sharedDefinitions(t!).reachingAssert(named(t!, 'TWO::p').id, 'x')).toBeUndefined();
-    expect(verdicts(t!)).toEqual([
+    const two = checkConstraints(t!);
+    expect(two.filter((c) => c.conflict === undefined).map((c) => [t!.qualifiedName(c.id), c.result])).toEqual([
       ['TWO::a1', 'unknown'],
       ['TWO::a2', 'unknown'],
       ['TWO::top', 'unknown'],
     ]);
+    // And, since the soft/hard analysis' Q5, the pair is reported once, where the two meet: the package.
+    expect(two.filter((c) => c.conflict === 'equations').map((c) => [t!.qualifiedName(c.ownerId!), c.result])).toEqual([['TWO', 'violated']]);
   });
 });
 
@@ -7050,6 +7694,62 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       expect(found.filter((d) => d.ruleId === 'unresolved-import').length).toBe(1);
       expect(found.filter((d) => d.ruleId === 'constraint-violation').map((d) => d.severity)).toEqual(['info', 'info']);
       expect(obligationsOf(m!).filter((o) => o.role !== 'axiom' && o.encodable === true)).toEqual([]);
+    });
+
+    it('listing the features two asserted equations give two values that throws leaves every row unknown, never the load (contradictedDefinitions)', async () => {
+      vi.spyOn(instanceIndexSeam, 'contradictedDefinitions').mockImplementation(() => {
+        throw new RangeError('contradictedDefinitions, planted to throw');
+      });
+      const { model: m, report } = await loadModelText(`package CD0 {
+        part def P { attribute L : ScalarValues::Real; assert constraint c50 { L == 50.0 } assert constraint c60 { L == 60.0 } }
+        part p : P;
+        attribute K : ScalarValues::Real = 3.0;
+        constraint plain { K <= 5.0 }
+      }`);
+      expect(m).toBeDefined();
+      expect(report.diagnostics.filter((d) => d.code === 'import/internal-error')).toEqual([]);
+      const sentence =
+        'the asserted equations that give one feature with no value two values could not be listed: the reading failed ' +
+        '(RangeError); reported, not dropped, so no relation that may read one is read';
+      // Which rows the pair reaches is unknown, so no row is decided from an empty list — `plain` included.
+      const checks = checkConstraints(m!);
+      expect(checks.map((c) => [m!.qualifiedName(c.id), c.result, c.message])).toEqual([
+        ['CD0::P::c50', 'unknown', `Could not evaluate: ${sentence}`],
+        ['CD0::P::c60', 'unknown', `Could not evaluate: ${sentence}`],
+        ['CD0::plain', 'unknown', `Could not evaluate: ${sentence}`],
+      ]);
+      // The numeric surface reads the same refusal.
+      expect(checkConstraintsNumeric(m!).filter((r) => r.result !== 'unknown')).toEqual([]);
+    });
+
+    it('a walk of what two asserted equations leave undecided that throws refuses the row it was asked for, never the sweep (contradictedTaint)', async () => {
+      vi.spyOn(instanceIndexSeam, 'spreadContradiction').mockImplementation(() => {
+        throw new RangeError('spreadContradiction, planted to throw');
+      });
+      const { model: m, report } = await loadModelText(`package CT0 {
+        part def P { attribute L : ScalarValues::Real; assert constraint c50 { L == 50.0 } assert constraint c60 { L == 60.0 } }
+        part p : P;
+        attribute K : ScalarValues::Real = 3.0;
+        constraint plain { K <= 5.0 }
+      }`);
+      expect(m).toBeDefined();
+      expect(report.diagnostics.filter((d) => d.code === 'import/internal-error')).toEqual([]);
+      const sentence =
+        'this relation could not be read against the asserted equations that give one feature with no value two values: ' +
+        'the reading failed (RangeError); reported, not dropped';
+      // Which rows the pair reaches is unknown, so no row that reads a name is decided — `plain` included — and the
+      // pair itself, which the walk does not read, is still the warning.
+      const checks = checkConstraints(m!);
+      expect(checks.map((c) => [c.conflict ? `${m!.qualifiedName(c.ownerId!)}#${c.conflict}` : m!.qualifiedName(c.id), c.result])).toEqual([
+        ['CT0::P::c50', 'unknown'],
+        ['CT0::P::c60', 'unknown'],
+        ['CT0::plain', 'unknown'],
+        ['CT0::P#equations', 'violated'],
+      ]);
+      for (const c of checks.filter((x) => x.conflict === undefined)) expect(c.message).toBe(`Could not evaluate: ${sentence}`);
+      // The numeric surface reads the same refusal, and `verify` prints no value of a name it cannot place.
+      expect(checkConstraintsNumeric(m!).filter((r) => r.result !== 'unknown' && r.conflict === undefined)).toEqual([]);
+      expect(readsContradictedDefinition(m!, m!.all().find((e) => m!.qualifiedName(e.id) === 'CT0::K')!.id)).toBe(true);
     });
 
     it('listing what an instance reads otherwise that throws leaves every row unknown, never the load (satisfierTaint)', async () => {

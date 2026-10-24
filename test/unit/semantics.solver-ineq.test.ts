@@ -302,9 +302,12 @@ describe('solveFeasible', () => {
     };
     // Two asserted values of one feature, and an asserted equation with no
     // real root: the plain solve stopped off them, and that point was
-    // reported a verified feasible one.
+    // reported a verified feasible one. The first is a value the model states
+    // twice (Q5 of the soft/hard analysis), which no point meets: decided
+    // infeasible, the pair its violation, as a binding to two values is.
+    const two = solveFeasible(model([['a == 3.0', true], ['a == 5.0', true], ['a <= 10.0', false]]));
+    expect([two.feasible, two.decided, two.violations.map((v) => [v.name, Number.isNaN(v.amount)])]).toEqual([false, true, [['', true]]]);
     for (const m of [
-      model([['a == 3.0', true], ['a == 5.0', true], ['a <= 10.0', false]]),
       model([['x * x == -4.0', true], ['x <= 10.0', false]]),
       // No point meets both (x / (1 + x²) is at most 0.5): the search drifts
       // along the plateau to x = −1e22, where a gate scaled by x * x took a

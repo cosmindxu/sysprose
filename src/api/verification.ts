@@ -1046,6 +1046,11 @@ const LITERAL_CLAIM: Record<LiteralOutcome, { claim: EvidenceClaim; code: string
   // The construct is outside the fragment this lane encodes at all. Forgivable,
   // because it says nothing about whether the requirement holds.
   unsupported: { claim: 'inconclusive', code: 'verification/unsupported-construct' },
+  // A relation over a value an `assert` the model holds false at its values
+  // reaches: the point is one the model contradicts. The SMT engine's code for
+  // the same model, which it files on every row of the file (on the rows whose
+  // context holds the assert, where a gate refuses it); NOT forgivable.
+  contradicted: { claim: 'inconclusive', code: 'verification/inconsistent-axioms' },
 };
 
 /**
