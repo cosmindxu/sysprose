@@ -117,6 +117,38 @@ maintainer says `awaits user decision U<n>` and names the question.
       equation rows keep 'the solve did not converge: L is where it stopped ...' rather than the
       pair's sentence (`numericRows` in solver.ts); the guide was reworded instead. Optional, low.
       [contradicted-value review]
+- [ ] **Abstain over a feature an own-sibling redefinition values (Opus, moves verdicts).**
+      `validation/redefinition-own-sibling` reports `part def Battery { attribute mass default =
+      1.2; attribute :>> mass = 0.8; }`, but the surfaces still read it. (a) default + value: check,
+      literal and numeric read b.mass = 0.8 (`heavy` refuted, `light` held) while SMT answers
+      inconsistent-axioms; (b) value + value: every surface already abstains, with a check conflict
+      row; (c) a valueless redefinition over a default: all four read the default; (d) a valueless
+      declared feature with a valued redefinition: all four read the redefinition's value. In (c)
+      and (d) the four agree, so no cross-check can catch it. Make check, literal and numeric
+      abstain with their own sentence wherever an own-sibling redefinition values the feature read,
+      and pin every shape in `verification.differential.test.ts`. Identical at 2218b84.
+      [small-wording S1, review]
+- [ ] **Give the own-sibling finding its own validation rule.** The Problems panel
+      (`src/ui/panels/BottomPanel.tsx:221`) labels the row `redefinition-conformance` while the CLI
+      prints `validation/redefinition-own-sibling`, and `excludeRuleIds:
+      ['redefinition-conformance']` also drops it. Add the rule `redefinition-own-sibling` so ruleId
+      and code match, and update the pinned rule counts in the same commit: docs/FEATURE-PARITY.md
+      lines 80 and 134 (27 to 28), docs/UI-ROADMAP.md, docs/USER-GUIDE.md near :703,
+      docs/architecture/05-data-flow.md and 06-sequence-diagrams.md, the `src/ui/store.ts` RECOMPUTE
+      comment, the rule count in docs/AGENT-AUTHORING-CAMPAIGN.md, and the pins in
+      validation.rules.test.ts and docs-counts. Optional, with it: raise the finding from warning to
+      error, as `validation/duplicate-name` is (a warning exits 0 and mbse-workflow never routes it
+      to repair; the corpus and v9 have 0 hits). [small-wording S1]
+- [ ] **`bounds`: map `VerifyOptionError` to a usage refusal.** `bounds --measure <name that
+      resolves to nothing>` prints `sysprose: internal error: VerifyOptionError ...` with four stack
+      frames (exit 2, also on a clean model); `verify` maps it to a `UsageError`
+      (`scripts/sysprose.ts`, near `reportVerify`'s mapping). Map it the same way and assert
+      `not.toContain("internal error")` in the existing `--measure` test in
+      `test/campaign/cli.sysprose.test.ts`. [small-wording S3, review]
+- [ ] **Mark a degraded load in the non-judging subcommands that print verdict-like lines
+      (optional).** `evidence-status` and its kind print such lines on a degraded load and get no
+      `degraded` header; small-wording S3 covered only the judging report's `pass` lines.
+      [small-wording S3]
 - [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
       the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
       `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
@@ -480,11 +512,6 @@ true values. What follows is what that branch and the review of it left open; en
       evaluate-model.ts near :4109 ('which gives way to an asserted equation') and :4836 ('(an
       asserted equation overrides a default)'), and defining-equation.ts near :6764 and :6797
       ('under decision 14 the equation stands over ...').
-- [ ] **Give the shared-reason I7_ALLOWED keys their own reasons.** About 188 keys share one reason
-      in test/integration/verification.differential.test.ts ('an assert contradicts a value that
-      stands …'): default-stands S1's and its review's (W4X5, stand-w4a/w4b and their twins,
-      stand-x3f, stand-x5, stand-x6). Split them by probe family, so that a later move is attributed
-      to its cause. [default-stands S1]
 - [ ] **Read `bind L = L0` over a valueless L as `L = L0` is read, so H2f decides as H2.** The
       maintainer decided that H2f reads as H2 (analysis G2; KerML 8.4.4.11 makes `L = L0` and `bind
       L = L0` one construct). Since default-stands S1, H2f reads as its own `=` twin and never reads
@@ -554,11 +581,6 @@ true values. What follows is what that branch and the review of it left open; en
       written first, and `P::ca in p` when p is, with the same verdict. This shows in H3, H6 and the
       24 S3 spec cells of the soft-hard analysis with their members reversed (the M-generator prints
       them RENAMED, 27 pairs). File the row under P2 wherever it is declared. [default-stands S2]
-- [ ] **Report a feature that redefines its own sibling.** `part def Battery { attribute mass
-      default = 1.2; attribute :>> mass = 0.8; … }` gets 0 findings. KerML lets a feature redefine
-      only features its owner inherits, not one its own owner declares. Add a validation finding,
-      with a code and a range, plus a catalogue entry and `npm run codes`. Probe:
-      default-stands-scratch/review-s2/p/msg-own-fix.sysml. [default-stands S2 review]
 - [ ] **Parse the rest of the `about` forms.** `metadata T about A, B { ... }` parses since
       small-defaults S2. Still failing: the named and typed form from SysML 7.27.2, `metadata
       securityDesignAnnotation : SecurityRelated about SecurityRequirements, SecurityDesign;`
@@ -593,10 +615,6 @@ true values. What follows is what that branch and the review of it left open; en
       annotation, so the standard's own `ref :>> approved` example files
       `ref/unresolved-specialization` warnings. Resolve `:>> name` against the metadata definition T
       the annotation names (old behaviour of the `@` form). [small-defaults S2]
-- [ ] **Print a degraded load's verdicts as such on stdout (optional).** A load that degrades (any
-      error) still prints the full verdict report, including `verdict pass` lines, on stdout; only
-      the exit status 2 and the stderr line abstain. Say so on stdout too if wanted. [small-defaults
-      review]
 - [ ] **Ask FailureMode by its qualified name when it ships.** `machineFailureModes`
       (src/semantics/fault-tree.ts) counts a model's own FailureMode through `hasKeyword(..., {
       anyPackage: true })` because the definition is not in SysproseVerification yet. When the
@@ -830,7 +848,7 @@ code or value changed, and the claimed gains reproduce. These three are what it 
 User guide and tutorials that are wrong, and what waits on something outside the code.
 
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
-      groups.** The rule (`src/validation/rules.ts:1096`, the 27th) is non-blocking, with a
+      groups.** The rule (`src/validation/rules.ts:1118`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
       run on a model that has instance groups, and the drone-swarm v9 has none (its `sysml-check`
       output holds 49 diagnostics, none `constraint-by-instance`). Done when one workflow run on a
