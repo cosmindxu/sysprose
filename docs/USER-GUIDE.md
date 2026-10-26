@@ -1889,7 +1889,9 @@ whose exit code you should read before anything else. It has its own exit-code
 contract, and it is not the other two: **0** every obligation discharged **and
 there was at least one to discharge**, **1** at least one obligation
 **refuted**, **2** usage, I/O, a degraded model, a model that states no
-obligation at all, or **any** inconclusive.
+obligation at all, or **any** inconclusive. On a degraded model the text report
+still prints its verdict lines, so it opens with a `degraded` line: they were
+read over what parsed, and none of them is a verdict on the model.
 
 The summary line leads with the **inconclusive** count, on purpose: it is the
 figure that decides the exit code, and a line that opened with the green number

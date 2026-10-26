@@ -41,14 +41,17 @@
  * For a subcommand that JUDGES — `verify` — 1 means the obligation was
  * **refuted** with every feature at its model value, and every inconclusive
  * (including an absent solver) is 2, as is a degraded model: a verdict over
- * half a model is not a verdict. The two contracts are opposites at 1, which is
- * why every judging run also publishes a top-level `verdict` block under
- * `--json` rather than leaving a consumer to guess which contract it is reading.
+ * half a model is not a verdict (its text report opens with a `degraded` line,
+ * since it still prints the answers it read). The two contracts are opposites
+ * at 1, which is why every judging run also publishes a top-level `verdict`
+ * block under `--json` rather than leaving a consumer to guess which contract
+ * it is reading.
  *
  * The report goes to stdout and everything about the FILE goes to stderr, for
- * every exit code: a file that parsed with warnings still had something wrong
- * with it, and a reader who is never told is a reader confidently analysing a
- * file the tool did not recognise.
+ * every exit code (the one exception is that `degraded` line on a judging
+ * report): a file that parsed with warnings still had something wrong with it,
+ * and a reader who is never told is a reader confidently analysing a file the
+ * tool did not recognise.
  *
  * FAIL DIRECTION. Three refusals, each replacing an answer that would read as
  * true: a model that PARSED and produced no elements exits 2 rather than
@@ -3918,7 +3921,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         null,
         2,
       )
-    : built.text;
+    : // A judging report on a degraded load keeps its full text, `pass` lines and
+      // all, so the FIRST line says what the exit status 2 and the stderr banner
+      // say: the answers below were read over what parsed, and none is a verdict
+      // on the model. (`--json` carries the same fact as `degraded` and `verdict`.)
+      degraded && verdict
+      ? `${DEGRADED_VERDICT_HEADER(name, report.summary.errors, report.summary.warnings)}\n${built.text}`
+      : built.text;
 
   const out = flagValue(parsed, 'out');
   if (out !== undefined) {
@@ -3969,6 +3978,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   if (verdict) return verdict.exitCode;
   return degraded ? 1 : 0;
 }
+
+/** The first stdout line of a judging report over a degraded load. */
+const DEGRADED_VERDICT_HEADER = (name: string, errors: number, warnings: number): string =>
+  `degraded — ${name} did not load cleanly (${errors} error(s), ${warnings} warning(s)); ` +
+  `the answers below are over what parsed; none is a verdict on the model (exit 2)`;
 
 /**
  * Only when this file was RUN — the guard `scripts/gen-cli-reference.ts` and
