@@ -258,7 +258,7 @@ A name did not resolve. These are WARNINGS: the textual name is preserved in the
 
 ## Model validation
 
-The file parsed, but the model it describes breaks a rule. Each code matches a rule id in `src/validation/rules.ts`.
+The file parsed, but the model it describes breaks a rule. Each code matches a rule id in `src/validation/rules.ts`, except `redefinition-own-sibling`, which the `redefinition-conformance` rule raises.
 
 ### `validation/unresolved-import`
 
@@ -413,6 +413,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Source:** validation
 - **Fires when:** A redefining feature’s type does not conform to the redefined feature’s type.
 - **Hint given:** Type the redefining feature with the redefined type or a specialization of it.
+
+### `validation/redefinition-own-sibling`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A redefinition names a feature that the redefining feature’s own owner declares (`attribute mass default = 1.2; attribute :>> mass = 0.8;` in one `part def`). KerML lets a feature redefine only a feature its owner inherits, so it is not a legal redefinition. The finding is read from the shape alone, no value, and no verdict over that feature should be trusted until it is fixed: where both sides give a value and one is a `default` (as here) the check, the literal engine and the numeric surface read the redefinition’s value while the solver lane finds the two values inconsistent; where both are plain values every surface abstains, and where one side has no value all four read the other side’s. It is a warning like the rule that raises it (`redefinition-conformance`).
+- **Hint given:** Give the value on the feature where it is declared (`attribute mass = 0.8;`), or redefine it in a specialisation or a usage typed by the owner (`part b : Battery { attribute :>> mass = 0.8; }`).
 
 ### `validation/constraint-violation`
 
@@ -929,4 +936,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*119 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*120 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

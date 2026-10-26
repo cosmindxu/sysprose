@@ -2782,6 +2782,22 @@ package P {
       const degraded = await run(['verify', broken, '--engine', 'literal']);
       expect(degraded.code).toBe(2);
       expect(degraded.stderr).toContain('nothing is judged over half a model');
+      // The stdout report keeps its verdict lines, so it SAYS what stderr and the
+      // exit status say, on its first line; a clean run carries no such line.
+      expect(degraded.stdout.split('\n')[0]).toMatch(
+        /^degraded — .*broken\.sysml did not load cleanly \(\d+ error\(s\), \d+ warning\(s\)\); the answers below are over what parsed; none is a verdict on the model \(exit 2\)$/,
+      );
+      expect(degraded.stdout).toContain('discharged');
+      expect(refuted.stdout).not.toContain('degraded');
+      // The header is for the judging contract only, and for the text form only:
+      // a reporting subcommand and `--json` carry none.
+      const consistency = await run(['consistency', broken]);
+      expect(consistency.stdout.split('\n')[0]).toMatch(/^degraded — .*broken\.sysml did not load cleanly/);
+      const stats = await run(['stats', broken]);
+      expect(stats.code).toBe(1);
+      expect(stats.stdout).not.toMatch(/^degraded/);
+      const asJson = await run(['verify', broken, '--engine', 'literal', '--json']);
+      expect(JSON.parse(asJson.stdout).degraded).toBeTruthy();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

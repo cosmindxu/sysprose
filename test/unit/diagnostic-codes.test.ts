@@ -17,6 +17,9 @@ import {
 } from '@api/index';
 import type { UndeterminedGuardRow } from '@api/index';
 import { CHECK_META_CODES } from '../../src/ui/checks';
+import { RULES_BY_ID, RULE_IDS } from '@validation/index';
+import { loadModelText } from '@text/load';
+import { parseModel } from '@text/index';
 
 const DOC = readFileSync(resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md'), 'utf8');
 const documented = new Set([...DOC.matchAll(/^### `([^`]+)`$/gm)].map((m) => m[1]));
@@ -169,5 +172,52 @@ describe('diagnostic-code catalogue', () => {
     expect(diagnosticCode('parse/mismatched-token')?.source).toBe('parser');
     expect(diagnosticCode('nope/not-a-code')).toBeUndefined();
     expect(isKnownCode('nope/not-a-code')).toBe(false);
+  });
+});
+
+describe('validation/redefinition-own-sibling (carried by the redefinition-conformance rule)', () => {
+  const OWN = 'validation/redefinition-own-sibling';
+  const ownFindings = async (body: string) =>
+    (await loadModelText(`package P {\n${body}\n}`)).report.diagnostics.filter((d) => d.code === OWN);
+
+  it('reports a feature that redefines a feature its own owner declares, with a code and a range', async () => {
+    const found = await ownFindings(
+      'part def Battery {\n    attribute mass default = 1.2;\n    attribute :>> mass = 0.8;\n}',
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe('warning');
+    expect(found[0].elementName).toBe('mass');
+    expect(found[0].range?.start.line).toBe(4);
+    expect(found[0].message).toContain('Battery declares itself');
+    // The sibling written after the redefinition is the same shape.
+    expect(
+      await ownFindings('part def B { attribute :>> w = 2; attribute w default = 1; }'),
+    ).toHaveLength(1);
+    // It is also found in a usage's body, where the owner has no name of its own.
+    const anon = await ownFindings('part def Q {} part : Q { attribute w = 1; attribute :>> w = 2; }');
+    expect(anon).toHaveLength(1);
+    expect(anon[0].message).toMatch(/in P::«PartUsage» names a feature P::«PartUsage» declares itself/);
+  });
+
+  it('is silent for a redefinition of an inherited feature, in a specialisation or a typed usage', async () => {
+    expect(
+      await ownFindings(`part def Base { attribute mass default = 1.2; }
+        part def Battery :> Base { attribute :>> mass = 0.8; }
+        part b : Base { attribute :>> mass = 0.5; }
+        part c : Battery { attribute m2 :>> mass = 0.1; }`),
+    ).toEqual([]);
+  });
+
+  it('is silent for a subsetting of the owner’s own feature, which is legal', async () => {
+    expect(
+      await ownFindings('part def B { attribute mass default = 1.2; attribute heavy :> mass = 3; }'),
+    ).toEqual([]);
+  });
+
+  it('is raised by the redefinition-conformance rule, so the rule count does not move', () => {
+    const m = parseModel('package P { part def B { attribute mass default = 1.2; attribute :>> mass = 0.8; } }').model;
+    const diags = RULES_BY_ID.get('redefinition-conformance')!.run(m);
+    expect(diags.map((d) => d.code)).toEqual([OWN]);
+    expect(RULE_IDS).not.toContain('redefinition-own-sibling');
   });
 });

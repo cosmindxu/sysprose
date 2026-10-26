@@ -946,6 +946,15 @@ reaches it. Whether it may have a value of its own depends on how P wrote `m`:
   inconsistent. Write `default` where a
   usage is meant to override.
 
+A feature redefines only what its owner **inherits**. In one definition, `attribute
+mass default = 1.2; attribute :>> mass = 0.8;` is not a legal redefinition: the second
+`mass` names the first, which the same owner declares. The check reports it as a warning,
+`validation/redefinition-own-sibling`, at the redefinition. Trust no verdict over that
+feature until it is fixed: the check, the literal engine and the numeric surface read the
+redefinition's `0.8`, while the solver lane finds the two values inconsistent. Put the value where `mass` is
+declared (`attribute mass = 0.8;`), or redefine it in a specialisation or a usage
+typed by the owner (`part b : Battery { attribute :>> mass = 0.8; }`).
+
 The two values are compared as values, not as spelled: `1000.0 [g]` restates
 `1.0 [kg]`, `10.0-k` restates `10.0 - k`, and `2.0 * 0.5` restates `1.0` — none
 of them contradicts anything. A pair only an evaluation could compare
@@ -1880,7 +1889,9 @@ whose exit code you should read before anything else. It has its own exit-code
 contract, and it is not the other two: **0** every obligation discharged **and
 there was at least one to discharge**, **1** at least one obligation
 **refuted**, **2** usage, I/O, a degraded model, a model that states no
-obligation at all, or **any** inconclusive.
+obligation at all, or **any** inconclusive. On a degraded model the text report
+still prints its verdict lines, so it opens with a `degraded` line: they were
+read over what parsed, and none of them is a verdict on the model.
 
 The summary line leads with the **inconclusive** count, on purpose: it is the
 figure that decides the exit code, and a line that opened with the green number
@@ -4333,7 +4344,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:562-579`, `974-999` (the two rules that ask),
+`src/validation/rules.ts:562-579`, `996-1021` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

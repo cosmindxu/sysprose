@@ -921,10 +921,19 @@ const valueTypeMismatch: ValidationRule = {
  * to (specialize) the redefined feature's declared type — the KerML rule that a
  * redefining feature may only narrow, never widen or diverge from, the type of
  * the feature it redefines. Skipped when either type is unresolved.
+ *
+ * It also reports a redefinition whose target is a feature the redefining
+ * feature's OWN owner declares (`part def B { attribute mass default = 1.2;
+ * attribute :>> mass = 0.8; }`): KerML lets a feature redefine only what its
+ * owner INHERITS, so the second `mass` redefines nothing legal. That finding
+ * is `validation/redefinition-own-sibling`, carried by this rule so the rule
+ * count (pinned in the docs) stays what it is; it is a structural fact of the
+ * graph (same owner, different features), read from no value.
  */
 const redefinitionConformance: ValidationRule = {
   id: 'redefinition-conformance',
-  description: "Redefining feature's type does not conform to the redefined feature's type.",
+  description:
+    "Redefining feature's type does not conform to the redefined feature's type, or the redefined feature is one its own owner declares.",
   severity: 'warning',
   run(model) {
     const mk = diagBuilder(this.id, this.severity);
@@ -935,6 +944,19 @@ const redefinitionConformance: ValidationRule = {
       const redefinedId = el.target?.[0];
       if (!redefiningId || !redefinedId || !model.has(redefiningId) || !model.has(redefinedId)) {
         continue;
+      }
+      const redefiningOwner = model.require(redefiningId).ownerId;
+      if (redefiningId !== redefinedId && redefiningOwner !== null && redefiningOwner === model.require(redefinedId).ownerId) {
+        const owner = model.get(redefiningOwner);
+        const target = model.require(redefinedId);
+        const ownerName = owner?.declaredName ?? owner?.declaredShortName ?? (owner ? label(model, owner) : 'its owner');
+        out.push({
+          ...mk(
+            `Redefinition of "${target.declaredName ?? target.declaredShortName ?? redefinedId}" in ${ownerName} names a feature ${ownerName} declares itself: a feature redefines only a feature its owner inherits.`,
+            redefiningId,
+          ),
+          code: 'validation/redefinition-own-sibling',
+        });
       }
       const redefiningType = declaredTypeElementId(model, redefiningId);
       const redefinedType = declaredTypeElementId(model, redefinedId);
