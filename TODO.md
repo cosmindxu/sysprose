@@ -149,6 +149,73 @@ maintainer says `awaits user decision U<n>` and names the question.
       (optional).** `evidence-status` and its kind print such lines on a degraded load and get no
       `degraded` header; small-wording S3 covered only the judging report's `pass` lines.
       [small-wording S3]
+- [ ] **Read a usage that subsets a feature an instance reads otherwise in that instance.** Since
+      subsetting-pass, every row read through W's `part p2 :> p1;` abstains wherever any context of
+      W reads p1 otherwise (`subsettingOtherwise`, `subsettingTaint` in
+      src/semantics/defining-equation.ts). So does every row read in such a usage (`T1::tc in W::p2`
+      for `part p2 : T1 :> p1;`), and the own row of a relation nested in its type
+      (`subsettingAround`: TC8's `T1::sub::tc`, for every T1's sub). The taint is on the usage, not
+      on the instance, so true rows abstain too: W's own rows (sa7's `W::c`, T at W's values); a
+      sibling `w0 : W` that changes nothing (`w0.p2.load <= 5.0` ?/?/?/? on all four surfaces, its
+      sentence naming w); an instance that changes only a feature of p1 that nothing reads through
+      p2 (V7: `part :>> p1 { attribute :>> tag = 9.0; }`); TC8R's `T1::sub::tc` (`v >= 5.0`, F at
+      T1's own values at 84fb971) for T1's own sub; a package's `satisfy RF by v.p2` for a `v : W`
+      that changes nothing (O2); a requirement's own row where only a `satisfy` context that
+      abstains for its own reason lists the subsetted feature (RQ4); R's own row standing for
+      package `satisfy R by p50` / `by p1` over R's `part q :> s;`, which file no row of their own
+      (SA3S, RE3); `refine` and `fault-tree`, which go from decided to inconclusive (RFN: `satisfy
+      Top by w` reads `s.p2.load` beside W's `satisfy RF by p2`; 84fb971 gave `refined` with exit 0,
+      and `{RF}` as a single point of failure with a confirmed witness and exit 1, both true; both
+      now exit 2, because the unread-binding refusal reaches those lanes); and, since the asserted
+      step, the first link of every other name of an asserted relation that reads through any
+      satisfierTaint element (AE3: a package's `w.x == w.p2.load` taints w, so `w.p1.load`, true F,
+      abstains; AE4: W's `p1.load == p2.load` taints W's p1). Reading them needs the walk to read a
+      subsetting usage in an instance as one of that instance's subsetted feature (as it re-roots a
+      bound subject), keeping its own features, with a value both state read as two values; and the
+      asserted step to taint the defined feature rather than its first link where that feature is
+      not a shared definition feature. Done when sa7's `W::c` reads T, `W::c in w` F, `k` F and
+      `w0.p2.load` T, and TC8's `T1::sub::tc` reads T for T1's own sub and F for w's p2's. Sound,
+      only weaker. [subsetting-pass S1, branch review]
+- [ ] **Report a model that contradicts itself through a subsetting usage.** Take W's `assert
+      constraint a { p2.load <= 5.0 }` over `part p2 :> p1;` beside w's `part :>> p1 { attribute :>>
+      load = 50.0; }`. Every w's p2 is one of w's p1s, so the model contradicts itself. Since
+      subsetting-pass, `a`'s row abstains (it read T), but the SMT axiom still reads W's own p2 (1).
+      So other rows are decided (v11: `w.x <= 5.0` T, `w.x >= 5.0` F) where decision 1 says the
+      axioms are inconsistent, and nothing reports the contradiction. The model with `assert
+      constraint a { p2.load >= 40.0 }` holds for its only instance w (50) (AI, in
+      subsetting-pass-scratch/wbr/ai.sysml). There the check abstains on `a` (?/-/?/-) and strict is
+      OK, while SMT reads W's own p2 (1) and reports inconsistent-axioms on every row (`k`, `k2`
+      T/T/T/X): an X the check no longer explains. [subsetting-pass S1, branch review]
+- [ ] **Read the subsetted feature where an instance redefines a usage that subsets it.** RV1: `part
+      def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }` with `part w :
+      W { part :>> p2 { attribute :>> load = 50.0; } }`. w's p2 is its only p1, so `w.p1.load <=
+      5.0` is false, but it reads T/T/T/T; W::c reads T, the reversed `k1R` reads F/F/F/F, and
+      strict reports a false violation. This was already so at 84fb971 (probe
+      subsetting-pass-scratch/wbr/rv1.sysml). Taint p1 where an instance reads a usage that subsets
+      it otherwise and p1's upper multiplicity is 1, or abstain. This needs a multiplicity ruling,
+      which also bears on corpus model e1-subset (`part q9 :> q { attribute :>> L = 50.0; }`).
+      [subsetting-pass branch review]
+- [ ] **Resolve a satisfier path written in a nested package through the owning namespaces.** NQ1
+      (`satisfy RF by NQ1::w.p1;`) and NQ2 (`satisfy RF by w.p1;`), each in `package Inner`, file no
+      row. The mapper resolves the source to `W::p1` with chain `w.p1`. RF's own row (T) stands for
+      the satisfy, and `verify --engine smt` exits 0 although w's p1.load is 50 (true F). The same
+      satisfy written in the top package (NQ3) files an F row. This is unrelated to subsetting and
+      was already so at 84fb971 (probes in subsetting-pass-scratch/wbr/nq1.sysml, nq2.sysml,
+      nq3.sysml). Resolve the path, or file the row and abstain. [subsetting-pass branch review]
+- [ ] **Spell a chained subsetting target as written in the subsetting sentence.** For W's `part p2
+      :> q.p1;`, the mapper records the Subsetting with target `Q::p1` and no chain (unlike a
+      Satisfy's `sourceChain`). So the sentence says "subsets `p1` … through SC::Q's own `p1`, never
+      as one of what `p1` is in SC::w::q", which is accurate but does not spell `q.p1`. Recording
+      the chain on the Subsetting in the mapper (src/text) would let it. It would also let the
+      instance test run in W with the path `q.p1` rather than in Q, which over-abstains where only
+      an unrelated Q instance changes p1. [subsetting-pass S1 review]
+- [ ] **Read a reference subsetting (`::>`) as a feature of what it subsets, or say the limit is the
+      tool's in every surface; follow it in `spreadTaint` too.**
+- [ ] **Name a bounds measure by the path asked.** `bounds --measure w.p2.load` names the measure
+      `SA7::T0::load` (the definition's shared feature) in its sentences, not `w.p2.load`. 84fb971
+      printed "max `SA7::T0::load` = 1 exactly" with exit 0; since subsetting-pass the run is
+      correctly refused (exit 2), but the refusal sentence still names T0::load. [subsetting-pass
+      branch review]
 - [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
       the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
       `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
@@ -262,16 +329,6 @@ headings.
       reference redefinition read at the redefined value, or the walk reading such a copy as what
       the reference it copies names. Done when sd0, sbj0, SM1, cown2, RC7, VR1 and RBB4K read F for
       w on all four surfaces. [per-instance-rest S1]
-- [ ] **Read a subsetting usage in an instance that redefines what it subsets.** `part def W { part
-      p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 } }` with `part w : W { part :>> p1 {
-      attribute :>> load = 50.0; } }`: every w's p2 is one of w's p1s (load 50), but the walk reads
-      w's p2 as W's own, a fresh T0 (1). So `W::c` files no row for w, and `constraint k { w.p2.load
-      <= 5.0 }` reads T/T/T/T. A `satisfy RF by p2` written in W files no row for w either, and
-      `verify` exits 0 (sa7, sa3 in per-instance-rest-scratch/branch-review/p; SA5's W-level reading
-      is F). Read p2 through what the instance's p1 is, or put a usage that subsets a feature an
-      instance redefines into `satisfierTaint`'s narrowing (and `satisfierOtherwise` for a
-      satisfier) so that its rows abstain. Done when sa7's k and `W::c in w`, and sa3's satisfaction
-      in w, read F or abstain on all four surfaces. A false pass. [per-instance-rest review]
 - [ ] **Resolve an unnamed `:>> x` in a usage to the most specific inherited feature.** The mapper
       resolves `attribute :>> M;` in `part s : Q2` to Q's M, not to Q2's `:>> M default = 2.0` that
       redefines it. So s's M reads Q's 1, and `s.M == 2.0` is refuted on all four surfaces (MI7,
