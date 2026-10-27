@@ -275,26 +275,38 @@ export interface InstanceReading {
  * reference whose value resolves in an element around it, read at the values
  * of the element its path is resolved in while an instance of that element
  * reads it otherwise ({@link DefiningEquations.satisfierOtherwise}, {@link
- * DefiningEquations.referenceOtherwise}).
+ * DefiningEquations.referenceOtherwise}); or a usage that subsets a feature
+ * an instance reads otherwise (`part p2 :> p1;`, {@link
+ * DefiningEquations.subsettingOtherwise}), and a `satisfy` or a subject read
+ * through one (`via`).
  */
 export interface ReadOtherwise {
   /**
    * `valueless`: a reference redefinition that states no value of the valued
    * reference it redefines (`ref part :>> r;` over `ref part r : T0 = x`),
    * which the walk reads as a fresh instance of its type, never as what `x`
-   * names ({@link satisfierTaint}).
+   * names ({@link satisfierTaint}). `subsetting`: a usage that subsets a
+   * feature an instance reads otherwise (`part p2 :> p1;` in W beside w's
+   * `part :>> p1 { … }`), which the walk reads as the element's own, never
+   * as one of what that instance's feature is ({@link
+   * DefiningEquations.subsettingOtherwise}).
    */
-  kind: 'satisfy' | 'subject' | 'reference' | 'valueless';
-  /** The `satisfy` relationship, the requirement usage, the reference, or the valueless redefinition. */
+  kind: 'satisfy' | 'subject' | 'reference' | 'valueless' | 'subsetting';
+  /** The `satisfy` relationship, the requirement usage, the reference, the valueless redefinition, or the subsetting usage. */
   written: ElementRecord;
-  /** The element the path is resolved in, at whose own values it is read; for `valueless`, the redefinition's owner. */
+  /**
+   * The element the path is resolved in, at whose own values it is read; for `valueless`, the redefinition's
+   * owner; for `subsetting`, the element the subsetted feature is a feature of.
+   */
   scope: ElementRecord;
-  /** The path as written: the satisfier's (`top.a`), the subject's value (`p1`), the reference's value. */
+  /** The path as written: the satisfier's (`top.a`), the subject's value (`p1`), the reference's value, the subsetted feature's name. */
   path: string;
   /** The context that reads it otherwise — `undefined` past a binding cap, and for `valueless`. */
   instance: ElementRecord | undefined;
-  /** For `valueless`: the valued reference it redefines. */
+  /** For `valueless`: the valued reference it redefines; for `subsetting`: the feature it subsets. */
   redefined?: ElementRecord;
+  /** For `satisfy` and `subject`: the subsetting usage the satisfier is read through, where that is why ({@link subsettingTaint}). */
+  via?: ReadOtherwise;
 }
 
 /**
@@ -383,6 +395,8 @@ export class DefiningEquations {
   private readonly subjectAsked = new Map<ElementId, ReadOtherwise | null>();
   /** The contexts {@link satisfierOtherwise} is answering, for its re-entry guard. */
   private readonly satisfierAsking = new Set<ElementId>();
+  /** {@link subsettingOtherwise} per usage (`null`: read as written). */
+  private readonly subsettingAsked = new Map<ElementId, ReadOtherwise | null>();
 
   constructor(readonly model: Model) {
     this.rev = model.rev;
@@ -1508,7 +1522,10 @@ export class DefiningEquations {
    * followed so), read otherwise in a context that specialises W ({@link
    * changingContexts}), or — W a usage below another instance — through a
    * binding above it ({@link boundAbove}). Satisfied in a package, or read
-   * alike in every instance (`part w : W;`), it reads as written.
+   * alike in every instance (`part w : W;`), it reads as written — save where
+   * a name below the satisfier reads through a usage that subsets a feature an
+   * instance reads otherwise (`via`, {@link subsettingTaint}), in a package
+   * too.
    */
   satisfierOtherwise(contextId: ElementId): ReadOtherwise | undefined {
     const hit = this.satisfierAsked.get(contextId);
@@ -1561,7 +1578,15 @@ export class DefiningEquations {
         }
       }
     }
-    if (path === undefined || !VALUE_PATH.test(path) || !scope || isPackage(scope)) return undefined;
+    if (path === undefined || !VALUE_PATH.test(path) || !scope) return undefined;
+    // Resolved in a package, the satisfier is one instance, read alike wherever
+    // it is read — save through a usage that subsets a feature an instance
+    // reads otherwise ({@link subsettingTaint}): a package's `satisfy RF by
+    // w.p2`, or `requirement r : RF { subject s = w.p2; }`, over W's `part p2 :>
+    // p1;` read W's own p2 (1) where w's p2 is one of w's p1s (50), filed no row
+    // of its own, and `verify` exited 0.
+    const inPackage = isPackage(scope);
+    if (inPackage && subsettingTaint(this.model).taint.size === 0) return undefined;
     if (equatedParts(this.model).unread.some((u) => u.id === written.id || u.id === subject.id)) return undefined;
     // R's clauses' names through the subject, spelled through the satisfier —
     // and, for a feature of R's own a clause reads, the names its value or an
@@ -1638,8 +1663,24 @@ export class DefiningEquations {
       for (const k of this.denote(scope.id).keys()) if (k === path || k.startsWith(`${path}.`)) add(k);
     }
     if (names.length === 0) return undefined;
-    const otherwise = this.instanceReadingOtherwise(`${written.id} satisfier`, scope, names);
-    return otherwise ? { kind: satisfied ? 'satisfy' : 'subject', written, scope, path, instance: otherwise.instance } : undefined;
+    const kind = satisfied ? 'satisfy' : 'subject';
+    const otherwise = inPackage ? undefined : this.instanceReadingOtherwise(`${written.id} satisfier`, scope, names);
+    if (otherwise) return { kind, written, scope, path, instance: otherwise.instance };
+    // A name below the satisfier read through a usage that subsets a feature an
+    // instance reads otherwise ({@link subsettingOtherwise}): the test above reads
+    // such a usage as the element's own in every instance, so it found none.
+    // sa3's `satisfy RF by p2` over W's `part p2 :> p1;` read W's p2 (1) for every
+    // W, where w's `part :>> p1 { attribute :>> load = 50.0; }` makes w's p2 one of
+    // w's p1s (50): no row was filed for w, and `verify` exited 0. So in a
+    // package, which the test above does not ask.
+    const subsetting = subsettingTaint(this.model);
+    if (subsetting.taint.size === 0) return undefined;
+    for (const n of names) {
+      const b = readsTainted(this.model, subsetting.taint, [scope.id], n);
+      const via = b ? subsetting.why.get(b.id) : undefined;
+      if (via) return { kind, written, scope, path, instance: via.instance, via };
+    }
+    return undefined;
   }
 
   /**
@@ -1708,6 +1749,59 @@ export class DefiningEquations {
     const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
     const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} ${kind}`, scope, names) : undefined;
     return otherwise ? { kind, written, scope, path, instance: otherwise.instance } : undefined;
+  }
+
+  /**
+   * Where the usage `f` SUBSETS a feature (`part p2 :> p1;` in `part def W`)
+   * that an instance of the element it is a feature of reads otherwise (`part
+   * w : W { part :>> p1 { attribute :>> load = 50.0; } }`): what it answers,
+   * that instance first; else `undefined`. Every w's p2 is one of w's p1s, so
+   * its load is 50, but the walk reads p2 in w as W's own — its features are
+   * W's p2's, through W's p1 ({@link walk}) — never as one of what w's p1 is:
+   * `constraint k { w.p2.load <= 5.0 }` and W's `c { p2.load <= 5.0 }` read
+   * T0's 1, true on all four surfaces, and no row was filed for w (sa7). So
+   * each reading through `f` abstains ({@link satisfierTaint}), W's own too,
+   * which stands for every W. The test is {@link pathOtherwise}'s: the names
+   * below the subsetted feature, read in the element it is a feature of — the
+   * first namespace outward from `f`'s owner that has it, else the feature's
+   * own owner — read otherwise in a context that specialises that element
+   * ({@link instanceReadingOtherwise}). A feature of a package is one instance
+   * (v9's `attribute x :> Common::x`), read alike wherever it is read. Asked
+   * once per usage, by {@link subsettingTaint} alone.
+   */
+  subsettingOtherwise(f: ElementRecord): ReadOtherwise | undefined {
+    const hit = this.subsettingAsked.get(f.id);
+    if (hit !== undefined) return hit ?? undefined;
+    const answer = f.attrs.isLibrary !== true && f.ownerId != null && isUsage(f.eClass) ? this.subsettingOtherwiseOf(f) : undefined;
+    this.subsettingAsked.set(f.id, answer ?? null);
+    return answer;
+  }
+
+  /** {@link subsettingOtherwise}, worked out: the first feature `f` subsets that a context reads otherwise. */
+  private subsettingOtherwiseOf(f: ElementRecord): ReadOtherwise | undefined {
+    for (const r of this.model.relationshipsFrom(f.id)) {
+      if (r.eClass !== 'Subsetting' && r.eClass !== 'ReferenceSubsetting') continue;
+      for (const t of r.target ?? []) {
+        const g = this.model.get(t);
+        const path = g ? this.nameOf(g) : undefined;
+        if (!g || g.id === f.id || g.attrs.isLibrary === true || !isUsage(g.eClass) || path === undefined) continue;
+        let scope: ElementRecord | undefined;
+        const seen = new Set<ElementId>();
+        for (let cur: ElementId | null = f.ownerId; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+          seen.add(cur);
+          if (this.features(cur).some((x) => x.id === g.id)) {
+            scope = this.model.get(cur);
+            break;
+          }
+        }
+        scope ??= g.ownerId != null ? this.model.get(g.ownerId) : undefined;
+        if (!scope || isPackage(scope)) continue;
+        const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
+        const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} subsetting`, scope, names) : undefined;
+        if (otherwise) return { kind: 'subsetting', written: f, scope, path, instance: otherwise.instance, redefined: g };
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -4592,8 +4686,10 @@ export function equatedPartsFailed(model: Model): boolean {
  * any other read through that subject (`w.q.s.load`); and a row read through
  * a reference valued with a feature around it that an instance reads
  * otherwise, or through a reference redefinition that states no value of the
- * valued one it redefines — or through a value or a binding that reads
- * through either.
+ * valued one it redefines, or through a usage that subsets a feature an
+ * instance reads otherwise (`part p2 :> p1;`, {@link
+ * DefiningEquations.subsettingOtherwise}) — or through a value, a binding or
+ * an asserted equation that reads through any of them.
  */
 export function equatedPartsRefusal(
   model: Model,
@@ -4613,12 +4709,15 @@ export function equatedPartsRefusal(
  * reference, which every read through it reaches; and the requirement usage
  * whose subject it is, whose clauses and features read through that subject
  * by names no link of which is the subject (`m` over `attribute m = s.load`)
- * — with that answer. Then, to a fixpoint, as {@link equatedTaint} follows an
+ * — with that answer; and the usages that subset a feature an instance reads
+ * otherwise ({@link subsettingTaint}: `part p2 :> p1;`), with what reads
+ * through them. Then, to a fixpoint, as {@link equatedTaint} follows an
  * unread binding: every usage whose value reads through one (RC7's `attribute
  * m = r.load` in W's `part sub { ref part r : T0 = p1; }`, read as `sub.m` and
  * `w.sub.m`), the ends of a binding one end of which is one or reads through
- * one, and what redefines or subsets one (`ref part :>> r;` in an instance),
- * each with the answer of what it reads through. The taint stopped at the
+ * one, what else an asserted relation that reads through one names (`x == r.load`),
+ * and what redefines or subsets one (`ref part :>> r;` in an instance, a `::>`
+ * too), each with the answer of what it reads through. The taint stopped at the
  * reference, so `sub.m <= 5.0` read W's own p1 (1) for every W, where w's is
  * 50: true on all four surfaces. What they name is read per instance as any
  * feature is. `grouped` leaves the references themselves out: a group's
@@ -4656,7 +4755,7 @@ function satisfierTaint(model: Model): SatisfiersOtherwise {
       grouped: new Map(),
       why: new Map(),
       failed:
-        'the satisfactions, subjects and references an instance reads otherwise could not be listed: the reading failed ' +
+        'the satisfactions, subjects, references and subsetting usages an instance reads otherwise could not be listed: the reading failed ' +
         `(${e instanceof Error ? e.constructor.name : 'error'}); reported, not dropped`,
     };
   }
@@ -4724,46 +4823,146 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
     taint.set(source.id, source);
     why.set(source.id, { kind: 'valueless', written: source, scope, path: String(valued.attrs.value).trim(), instance: undefined, redefined: valued });
   }
-  if (taint.size > 0) {
-    const users = model.all().filter((el) => el.attrs.isLibrary !== true);
-    const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string' && el.ownerId != null);
-    const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
-    const narrowing = [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')];
-    const endsOf = (b: ElementRecord): ElementRecord[] =>
-      [b.source?.[0], b.target?.[0]].flatMap((id) => (id !== undefined ? (model.get(id) ?? []) : []));
-    let grew = true;
-    const join = (e: ElementRecord, source: ElementRecord): void => {
-      if (taint.has(e.id) || e.attrs.isLibrary === true) return;
-      taint.set(e.id, source);
-      grew = true;
-    };
-    while (grew) {
-      grew = false;
-      for (const f of valued) {
-        if (taint.has(f.id)) continue;
-        const hit = namesOfValue(f.attrs.value as string)
-          .map((n) => readsTainted(model, taint, [f.ownerId!], n))
-          .find((x) => x !== undefined);
-        if (hit) join(f, hit);
-      }
-      for (const b of bindings) {
-        const ends = endsOf(b);
-        const hit = ends
-          .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
-          .find((x) => x !== undefined);
-        if (hit) for (const e of ends) join(e, hit);
-      }
-      for (const r of narrowing) {
-        const target = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
-        const source = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
-        const hit = target ? taint.get(target.id) : undefined;
-        if (hit && source) join(source, hit);
-      }
-    }
-  }
+  // A usage that subsets a feature an instance reads otherwise ({@link subsettingTaint}), with what reads through it.
+  const subsetting = subsettingTaint(model);
+  for (const [id, source] of subsetting.taint) if (!taint.has(id)) taint.set(id, source);
+  for (const [id, answer] of subsetting.why) if (!why.has(id)) why.set(id, answer);
+  // What subsets one by reference (`ref part r2 ::> r;`) too, as {@link subsettingTaint} follows.
+  if (taint.size > 0) spreadOtherwise(model, taint, [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting', 'ReferenceSubsetting')]);
   // Only a reference itself is left to a group's own re-resolution: what reads through it is not.
   const grouped = new Map([...taint].filter(([id, source]) => !(id === source.id && why.get(id)?.kind === 'reference')));
   return { rev: model.rev, taint, grouped, why };
+}
+
+/**
+ * {@link satisfierTaint}'s fixpoint, in place: every usage whose value reads through an element of `taint`, the
+ * ends of a binding one end of which is one or reads through one, the first link of each other name an asserted
+ * relation reads beside one (as {@link spreadTaint}'s step: decision 14, an asserted equation defines what it
+ * names), and the source of each of `narrowing` (the redefinitions and subsettings) whose target is one, each with
+ * the source of what it reads through.
+ */
+function spreadOtherwise(model: Model, taint: Map<ElementId, ElementRecord>, narrowing: readonly ElementRecord[]): void {
+  const users = model.all().filter((el) => el.attrs.isLibrary !== true);
+  const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string' && el.ownerId != null);
+  const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
+  const asserted = users.filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string' && el.ownerId != null);
+  const defs = sharedDefinitions(model);
+  const endsOf = (b: ElementRecord): ElementRecord[] =>
+    [b.source?.[0], b.target?.[0]].flatMap((id) => (id !== undefined ? (model.get(id) ?? []) : []));
+  let grew = true;
+  const join = (e: ElementRecord, source: ElementRecord): void => {
+    if (taint.has(e.id) || e.attrs.isLibrary === true) return;
+    taint.set(e.id, source);
+    grew = true;
+  };
+  while (grew) {
+    grew = false;
+    for (const f of valued) {
+      if (taint.has(f.id)) continue;
+      const hit = namesOfValue(f.attrs.value as string)
+        .map((n) => readsTainted(model, taint, [f.ownerId!], n))
+        .find((x) => x !== undefined);
+      if (hit) join(f, hit);
+    }
+    for (const b of bindings) {
+      const ends = endsOf(b);
+      const hit = ends
+        .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
+        .find((x) => x !== undefined);
+      if (hit) for (const e of ends) join(e, hit);
+    }
+    // An asserted equation that reads through one gives what else it names that value (decision 14): W's `assert
+    // constraint { x == p2.load }`, or a package's `y == w.p2.load`, over W's `part p2 :> p1;` made `w.x <= 5.0`
+    // read W's own p2 (1) where w's is 50, true on all four surfaces, and `bounds` claimed "1 exactly". A name that
+    // reads through one itself is left out: its first link (the package's w) holds what is read alike.
+    for (const a of asserted) {
+      const roots = [a.ownerId!, a.id];
+      const names = relationNamesOf(a.attrs.expression as string);
+      const through = names.map((n) => readsTainted(model, taint, roots, n));
+      const hit = through.find((x) => x !== undefined);
+      if (!hit) continue;
+      names.forEach((n, i) => {
+        if (through[i] !== undefined) return;
+        const head = n.split('.')[0]!;
+        for (const r of roots) {
+          const d = defs.denote(r).get(head);
+          if (d) join(d.feature, hit);
+        }
+      });
+    }
+    for (const r of narrowing) {
+      const target = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+      const source = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+      const hit = target ? taint.get(target.id) : undefined;
+      if (hit && source) join(source, hit);
+    }
+  }
+}
+
+/**
+ * The usages that subset a feature an instance of the element it is a feature
+ * of reads otherwise ({@link DefiningEquations.subsettingOtherwise}) — each by
+ * its own id, with that answer — and, to {@link spreadOtherwise}'s fixpoint,
+ * what reads through one: a usage whose value does, a binding's ends, and what
+ * redefines or subsets one (`part p3 :> p2;`, a reference subsetting `::>`
+ * too), once per revision. {@link satisfierTaint} takes it whole; it is kept
+ * apart because a `satisfy` whose satisfier is read through one is answered
+ * from it ({@link DefiningEquations.satisfierOtherwise}), and that answer is
+ * one {@link satisfierTaint} is built from. Asked again while it is built,
+ * it throws, uncached: the asker lists that context, read and contained on
+ * its own (A.2.9), rather than read it from part of the answer. The path
+ * there is the instance test of a subsetted feature whose element a `satisfy`
+ * specialises (R's `part q :> s;`) asking each `satisfy` of R: the one whose
+ * question started the listing is met by {@link
+ * DefiningEquations.satisfierOtherwise}'s own re-entry guard, a second one
+ * written in a package by this throw (two package `satisfy R by …`, RE3);
+ * both are listed, and q's rows abstain. A throw out of the listing itself
+ * is contained where {@link satisfierTaint} is: every row it may reach
+ * abstains, `internal`.
+ */
+const SUBSETTINGS_OTHERWISE = new WeakMap<Model, SubsettingsOtherwise>();
+/** The models whose {@link subsettingTaint} is being built. */
+const SUBSETTINGS_LISTING = new WeakSet<Model>();
+
+/** {@link SUBSETTINGS_OTHERWISE}' entry. */
+interface SubsettingsOtherwise {
+  rev: number;
+  taint: ReadonlyMap<ElementId, ElementRecord>;
+  why: ReadonlyMap<ElementId, ReadOtherwise>;
+}
+
+function subsettingTaint(model: Model): SubsettingsOtherwise {
+  const hit = SUBSETTINGS_OTHERWISE.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  if (SUBSETTINGS_LISTING.has(model)) throw new Error('the subsettings an instance reads otherwise are being listed');
+  SUBSETTINGS_LISTING.add(model);
+  try {
+    const fresh = instanceIndexSeam.subsettingsOtherwise(model);
+    SUBSETTINGS_OTHERWISE.set(model, fresh);
+    return fresh;
+  } finally {
+    SUBSETTINGS_LISTING.delete(model);
+  }
+}
+
+/** {@link subsettingTaint}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. */
+function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
+  const taint = new Map<ElementId, ElementRecord>();
+  const why = new Map<ElementId, ReadOtherwise>();
+  const subsettings = model.ofKind('Subsetting', 'ReferenceSubsetting').filter((r) => r.attrs.isLibrary !== true);
+  if (subsettings.length > 0) {
+    const defs = sharedDefinitions(model);
+    for (const r of subsettings) {
+      const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+      if (!f || taint.has(f.id)) continue;
+      const answer = defs.subsettingOtherwise(f);
+      if (!answer) continue;
+      taint.set(f.id, f);
+      why.set(f.id, answer);
+    }
+    if (taint.size > 0) spreadOtherwise(model, taint, [...model.ofKind('Redefinition'), ...subsettings]);
+  }
+  return { rev: model.rev, taint, why };
 }
 
 /** {@link equatedPartsRefusal} for a row read in, or through, what {@link satisfierTaint} holds. */
@@ -4836,11 +5035,12 @@ function unreadRefusal(
  * exactly" where `bind pp = top.a` makes it top's a's 50, and `top.a.load`,
  * resolved to T0's own `load` (no relation reads top's a's), was bounded at
  * T0's 1 where pp's `load = 50.0` makes it 50. So for a measure read in, or
- * through, a `satisfy`, a subject, a reference or a valueless reference
- * redefinition an instance reads otherwise ({@link satisfierTaint}): `w.q.s.load`
- * resolved to T0's own load, `w.sub.m` to W's own sub's m and `w.r.load` over
- * w's `ref part :>> r;` to T0's load were each bounded "1 exactly" where w's is
- * 50.
+ * through, a `satisfy`, a subject, a reference, a valueless reference
+ * redefinition or a subsetting usage an instance reads otherwise ({@link
+ * satisfierTaint}): `w.q.s.load` resolved to T0's own load, `w.sub.m` to W's
+ * own sub's m, `w.r.load` over w's `ref part :>> r;` to T0's load and
+ * `w.p2.load` over W's `part p2 :> p1;` to T0's load were each bounded "1
+ * exactly" where w's is 50.
  */
 export function equatedPartsMeasureRefusal(
   model: Model,
@@ -4899,9 +5099,14 @@ function unreadMeasureRefusal(model: Model, featureId: ElementId, symbol: string
  * the element its satisfier is resolved in, it holds of no instance that
  * reads the satisfier otherwise, and this tool reads it in none. So for a
  * reference valued with a feature around it ({@link
- * DefiningEquations.referenceOtherwise}), and for a reference redefinition
+ * DefiningEquations.referenceOtherwise}), for a reference redefinition
  * that states no value of the valued one it redefines (`valueless`), which
- * the walk reads as a fresh instance of its type.
+ * the walk reads as a fresh instance of its type, and for a usage that
+ * subsets a feature an instance reads otherwise (`subsetting`, {@link
+ * DefiningEquations.subsettingOtherwise}), which the walk reads through that
+ * feature as its element has it — named too where a `satisfy` or a subject
+ * is read through one (`via`; in a package, one instance, the sentence's
+ * only reason).
  */
 function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): string {
   const where = effectiveQualifiedName(model, s.scope.id);
@@ -4917,7 +5122,17 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
     return `${what}: this tool reads it as a fresh instance of its type, never as what \`${s.path}\` names${so('no relation that reads through it')}`;
   }
   const who = s.instance ? effectiveQualifiedName(model, s.instance.id) : `an instance of ${where}`;
+  if (s.kind === 'subsetting') {
+    const name = effectiveNameOf(model, s.written) ?? s.written.id;
+    const at = s.written.ownerId != null ? effectiveQualifiedName(model, s.written.ownerId) : where;
+    return `\`${name}\` in ${at} subsets \`${s.path}\`, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: ${subsettingRead(model, s)}${so('no relation that reads through it')}`;
+  }
   const tail = `is read at ${where}'s own values only, never in each instance of it, and ${who} reads`;
+  // A satisfier or a subject read through such a subsetting usage says which ({@link subsettingTaint}); resolved in
+  // a package, one instance, it is read otherwise through that usage alone.
+  const through = s.via ? `through \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\`, which subsets \`${s.via.path}\`: ${subsettingRead(model, s.via)}` : '';
+  const inPackage = s.via !== undefined && isPackage(s.scope);
+  const via = through && !inPackage ? `, ${through}` : '';
   if (s.kind === 'reference') {
     const name = effectiveNameOf(model, s.written) ?? s.written.id;
     const at = effectiveQualifiedName(model, s.written.ownerId!);
@@ -4926,11 +5141,45 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   if (s.kind === 'satisfy') {
     const requirement = s.written.target?.[0] !== undefined ? model.get(s.written.target[0]) : undefined;
     const req = requirement ? (effectiveNameOf(model, requirement) ?? effectiveQualifiedName(model, requirement.id)) : '…';
-    return `\`satisfy ${req} by ${s.path || '…'}\` in ${where} ${tail} its satisfier otherwise${so('no relation it requires of the satisfier')}`;
+    const head = `\`satisfy ${req} by ${s.path || '…'}\` in ${where}`;
+    if (inPackage) return `${head} reads its satisfier ${through}${so('no relation it requires of the satisfier')}`;
+    return `${head} ${tail} its satisfier otherwise${via}${so('no relation it requires of the satisfier')}`;
   }
   const subject = effectiveFeatures(model, s.written.id).find((f) => f.attrs.requirementRole === 'subject');
   const spelled = subject ? `\`subject ${effectiveNameOf(model, subject) ?? subject.id} = ${s.path || '…'}\`` : 'its subject';
-  return `${spelled} in ${effectiveQualifiedName(model, s.written.id)} ${tail} what it names otherwise${so('no relation it requires of the subject')}`;
+  const head = `${spelled} in ${effectiveQualifiedName(model, s.written.id)}`;
+  if (inPackage) return `${head} reads what it names ${through}${so('no relation it requires of the subject')}`;
+  return `${head} ${tail} what it names otherwise${via}${so('no relation it requires of the subject')}`;
+}
+
+/**
+ * How this tool reads a usage that subsets a feature an instance reads
+ * otherwise ({@link DefiningEquations.subsettingOtherwise}), for {@link
+ * satisfierSentence}: through the subsetted feature as the element it is a
+ * feature of has it (`s.scope`: W's own p1, Q's own p1 for `p2 :> q.p1`),
+ * never as one of what that feature is in the instance that reads it
+ * otherwise. The usage is named in its own owner by the sentence's head:
+ * W for W's p2, w for a `part p3 :> p1;` w writes.
+ */
+function subsettingRead(model: Model, s: ReadOtherwise): string {
+  const name = effectiveNameOf(model, s.written) ?? s.written.id;
+  const where = effectiveQualifiedName(model, s.scope.id);
+  return `this tool reads \`${name}\` through ${where}'s own \`${s.path}\`, never as one of what \`${s.path}\` is in ${contextSpelling(model, s.instance) ?? 'that instance'}`;
+}
+
+/**
+ * A context as a sentence names it: a `satisfy` as written (`satisfy R by p50` in its owner) — its qualified name
+ * is the relationship's `«Satisfy»` — any other element by its qualified name; `undefined` for none.
+ */
+function contextSpelling(model: Model, el: ElementRecord | undefined): string | undefined {
+  if (!el) return undefined;
+  if (el.eClass !== 'Satisfy') return effectiveQualifiedName(model, el.id);
+  const requirement = el.target?.[0] !== undefined ? model.get(el.target[0]) : undefined;
+  const satisfier = el.source?.[0] !== undefined ? model.get(el.source[0]) : undefined;
+  const chain = el.attrs.sourceChain ?? el.attrs.sourceRef;
+  const by = typeof chain === 'string' ? chain.trim() : satisfier ? (effectiveNameOf(model, satisfier) ?? satisfier.id) : '…';
+  const req = requirement ? (effectiveNameOf(model, requirement) ?? effectiveQualifiedName(model, requirement.id)) : '…';
+  return `\`satisfy ${req} by ${by}\`${el.ownerId != null ? ` in ${effectiveQualifiedName(model, el.ownerId)}` : ''}`;
 }
 
 /** What the unread binding, value or satisfaction `b` ({@link equatedParts}) is, and why this tool does not read through it. */
@@ -10975,7 +11224,8 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
  * (A.2.9) — inside {@link instanceGroups} (a usage's sites, and the asserted
  * equations the coverage guard reads, {@link readFeatures}), in {@link
  * equatedParts} (the asserted equations no surface reads), in {@link
- * satisfierTaint} (what an instance reads otherwise), in {@link
+ * satisfierTaint} (what an instance reads otherwise, the subsetting usages of
+ * {@link subsettingTaint} among it), in {@link
  * contradictedDefinitions} (two asserted equations that give one feature two
  * values) and in {@link contradictedTaint} (what they leave undecided, asked
  * per row: a throw refuses that row, `internal`) — made through this
@@ -10986,6 +11236,7 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
 export const instanceIndexSeam = {
   enclosingAsserts: (model: Model): EnclosingAsserts => enclosingAsserts(model),
   satisfiersOtherwise: (model: Model): SatisfiersOtherwise => satisfiersOtherwise(model),
+  subsettingsOtherwise: (model: Model): SubsettingsOtherwise => subsettingsOtherwise(model),
   contradictedDefinitions: (model: Model): ContradictedDefinitions => contradictedDefinitionsUncached(model),
   spreadContradiction: (
     model: Model,
