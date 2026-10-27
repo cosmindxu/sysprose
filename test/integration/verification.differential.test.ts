@@ -10761,8 +10761,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'VB::kx': ['?/?/?/?', 'F'],
     }),
     // A subsetting usage an instance writes (GI: w's `part p3 :> p1;`) and one that subsets through a chain (SC: W's
-    // `part p2 :> q.p1;`, which w's q changes): read as before through the subsetted feature's own element, true on
-    // all four surfaces where w's is 50; each abstains, its sentence naming the usage's owner.
+    // `part p2 :> q.p1;`, which w's q changes): read as before through the subsetted feature's own element, `k` read T
+    // on all four surfaces, where w's load is 50 (true F); each abstains, its sentence naming the usage's owner.
     'sub-inst-gi': probe(`package GI {
         part def T0 { attribute load : ScalarValues::Real default = 1.0; }
         part def W { part p1 : T0; }
@@ -10785,6 +10785,45 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'SC::k': ['?/?/?/?', 'F'],
       'SC::kR': ['?/?/?/?', 'T'],
     }),
+    // A relation of the definition that types such a usage, read IN it (the branch review of subsetting-pass): W's
+    // `part p2 : T1 :> p1;` read T1's `tc { load <= 5.0 }` at T1's 1, as T1 does, so no row was filed for W's p2 and
+    // T1's own row (T on all four surfaces) stood for w's p2, whose load is 50, with `verify` and `sysml-check
+    // --strict` passing; W's `c { p2.load <= 5.0 }`, over the same value, abstained. W's p2 is a context of its own
+    // now, which abstains; T1's own row reads T1's 1. A relation nested in T1 (TC8: `part sub { attribute v = load;
+    // constraint tc { v <= 5.0 } }`) has no element that stands for w's p2's sub: its own row, which stands for every
+    // T1's sub, abstains. The refs of the rows that stand for w's p2 are w's (50).
+    ...Object.fromEntries(
+      (
+        [
+          ['', '<=', 'F', 'T'],
+          ['-rev', '>=', 'T', 'F'],
+        ] as const
+      ).flatMap(([twin, op, ref, own]) => [
+        [
+          `sub-type-tc3${twin}`,
+          probe(`package TC3 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 :> T0 { constraint tc { load ${op} 5.0 } }
+        part def W { part p1 : T0; part p2 : T1 :> p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      }`, {
+            'TC3::T1::tc': [own === 'T' ? 'T/T/T/T' : 'F/F/F/F', own],
+            'TC3::T1::tc in TC3::W::p2': ['?/?/?/?', ref],
+          }),
+        ],
+        [
+          `sub-type-nested-tc8${twin}`,
+          probe(`package TC8 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 :> T0 { part sub { attribute v : ScalarValues::Real = load; constraint tc { v ${op} 5.0 } } }
+        part def W { part p1 : T0; part p2 : T1 :> p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      }`, {
+            'TC8::T1::sub::tc': ['?/?/?/?', ref],
+          }),
+        ],
+      ]),
+    ),
   };
 
   /**

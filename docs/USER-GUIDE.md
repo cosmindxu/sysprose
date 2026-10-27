@@ -1224,7 +1224,12 @@ one of w's, so each row read through p2 — W's own `constraint c { p2.load <=
 binding, an asserted equation (`x == p2.load`) or a further subsetting reads
 through it — is *could not be evaluated*, in a sentence that names p2, the
 element whose own p1 it is read through and w, and `bounds` claims no bound of
-a measure read so — a limit of this tool. Where no instance reads p1
+a measure read so — a limit of this tool. So is a relation of p2's type read
+in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
+W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
+nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
+has no element that stands for w's p2's sub, so its row, which stands for every
+T1's sub, is *could not be evaluated*. Where no instance reads p1
 otherwise, or p1 is a feature of a package, it reads as written. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not

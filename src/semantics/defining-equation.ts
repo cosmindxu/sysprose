@@ -2839,7 +2839,9 @@ export class DefiningEquations {
     el: Pick<ElementRecord, 'id' | 'ownerId'>,
     names: readonly string[],
   ): { listed: ElementRecord[]; plain: ReadonlySet<ElementId> } {
-    const key = `${el.id} ${el.ownerId ?? ''} ${names.join(' ')}`;
+    // An answer worked out while the subsetting usages are listed reads none of them ({@link
+    // subsettingsBeingListed}): it is kept apart from the one read once they are.
+    const key = `${el.id} ${el.ownerId ?? ''} ${names.join(' ')}${subsettingsBeingListed(this.model) ? ' ~listing' : ''}`;
     const hit = this.changing.get(key);
     if (hit) return hit;
     const answer = this.contextsUncached(el, names);
@@ -2875,6 +2877,19 @@ export class DefiningEquations {
     const ownTainted = new Map<string, boolean>();
     // What the relation reads, with what the bindings it reads through read ({@link partnerReads}), once asked.
     let partnered: ReadonlySet<ElementId> | undefined;
+    // The usages that subset a feature an instance reads otherwise, with what
+    // reads through them ({@link subsettingTaint}) — none asked while they are
+    // being listed: their own test is this walk ({@link
+    // instanceReadingOtherwise}). `null`: listing them threw.
+    let subsetting: ReadonlyMap<ElementId, ElementRecord> | null | undefined;
+    if (!subsettingsBeingListed(this.model)) {
+      try {
+        const t = subsettingTaint(this.model).taint;
+        subsetting = t.size > 0 ? t : undefined;
+      } catch {
+        subsetting = null;
+      }
+    }
     for (const x of contexts) {
       if (x.id === owner || x.id === el.id) continue;
       const all = this.scope(x.id, 'all');
@@ -2896,6 +2911,19 @@ export class DefiningEquations {
       if (satisfierElsewhere) {
         changed = true;
         reading.push(`satisfier~${x.id}`);
+      }
+      // A context at or below a usage that subsets a feature an instance reads
+      // otherwise ({@link subsettingTaint}), which the walk reads as its
+      // element's own in every instance: W's `part p2 : T1 :> p1;` beside w's
+      // `part :>> p1 { attribute :>> load = 50.0; }` reads T1's `tc { load <=
+      // 5.0 }` at T1's 1, as T1 does, so it was left to T1's own row — true on
+      // all four surfaces, where every w's p2 is one of w's p1s (50). Listed,
+      // its row is its own and abstains ({@link satisfierRefusal}), as W's `c {
+      // p2.load <= 5.0 }` does. A throw lists it, its row read and contained on
+      // its own (A.2.9).
+      if (subsetting === null || (subsetting !== undefined && taintedAt(this.model, subsetting, x) !== undefined)) {
+        changed = true;
+        reading.push(`subsetting~${x.id}`);
       }
       for (const n of names) {
         const idT = ownAll.get(n);
@@ -4924,6 +4952,14 @@ const SUBSETTINGS_OTHERWISE = new WeakMap<Model, SubsettingsOtherwise>();
 /** The models whose {@link subsettingTaint} is being built. */
 const SUBSETTINGS_LISTING = new WeakSet<Model>();
 
+/**
+ * Is {@link subsettingTaint} being built for `model`? The per-instance walk then lists no context for being at or
+ * below one of its usages ({@link DefiningEquations.changingContexts}): the listing's own test is that walk.
+ */
+function subsettingsBeingListed(model: Model): boolean {
+  return SUBSETTINGS_LISTING.has(model);
+}
+
 /** {@link SUBSETTINGS_OTHERWISE}' entry. */
 interface SubsettingsOtherwise {
   rev: number;
@@ -4988,9 +5024,42 @@ function satisfierRefusal(
   const b =
     relationNamesOf(expression)
       .map((n) => readsTainted(model, taint, roots, n))
-      .find((x) => x !== undefined) ?? taintedAt(model, taint, context);
+      .find((x) => x !== undefined) ??
+    taintedAt(model, taint, context) ??
+    subsettingAround(model, at ? context : rel?.ownerId != null ? model.get(rel.ownerId) : undefined);
   const answer = b ? why.get(b.id) : undefined;
   return answer ? satisfierSentence(model, answer) : undefined;
+}
+
+/**
+ * The usage of {@link subsettingTaint} at or below a context that specialises
+ * an element the usage `el` — a row's context, or the owner of the relation an
+ * own row reads — is nested in, from its owner outward to the first
+ * definition; else `undefined`. Such a context has its own instance of `el`,
+ * which no element names, so no context row is listed for it ({@link
+ * DefiningEquations.changingContexts} lists those of `el` itself), and the
+ * walk reads it as `el` reads, at the element's own values: TC8's T1 `part sub
+ * { attribute v = load; constraint tc { v <= 5.0 } }`, under W's `part p2 :
+ * T1 :> p1;` beside w's `part :>> p1 { attribute :>> load = 50.0; }`, read T1's
+ * 1 for every T1's sub — true on all four surfaces, where w's p2's sub reads
+ * 50. So the row abstains.
+ */
+function subsettingAround(model: Model, el: ElementRecord | undefined): ElementRecord | undefined {
+  const { taint } = subsettingTaint(model);
+  if (taint.size === 0) return undefined;
+  const defs = sharedDefinitions(model);
+  const seen = new Set<ElementId>();
+  for (let cur = el; cur && isUsage(cur.eClass) && cur.ownerId != null && !seen.has(cur.id); ) {
+    seen.add(cur.id);
+    const owner = model.get(cur.ownerId);
+    if (!owner || isPackage(owner)) return undefined;
+    for (const s of defs.specialisersOf(owner.id)) {
+      const hit = taintedAt(model, taint, s);
+      if (hit) return hit;
+    }
+    cur = owner;
+  }
+  return undefined;
 }
 
 /** {@link equatedPartsRefusal} for what {@link equatedParts} leaves unread. */

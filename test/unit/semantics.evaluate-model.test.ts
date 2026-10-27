@@ -5318,6 +5318,57 @@ describe('a value, a reference and a binding that equate two parts or structured
     expect(goal(re!, 'RE3::R::«ConstraintUsage»').encodable).toMatchObject({ reason: 'unread-binding' });
     expect(reReport.diagnostics.filter((d) => d.code === 'import/internal-error')).toEqual([]);
   });
+
+  it('abstains on a relation of the definition that types such a usage, read in it (subsetting-pass branch review)', async () => {
+    const T0 = 'part def T0 { attribute load : ScalarValues::Real default = 1.0; }';
+    const W = (w: string) => `part def W { part p1 : T0; part p2 : T1 :> p1; } ${w}`;
+    const p50 = 'part w : W { part :>> p1 { attribute :>> load = 50.0; } }';
+    const said = (pkg: string) => `\`p2\` in ${pkg}::W subsets \`p1\`, which ${pkg}::w reads otherwise`;
+    const loud = (r: { diagnostics: readonly { severity: string; message: string }[] }) =>
+      r.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message);
+    for (const op of ['<=', '>='] as const) {
+      // T1's `tc` read in W's `part p2 : T1 :> p1;` read T1's 1, as T1 does: no row was filed for W's p2, and T1's own
+      // row (T on all four surfaces) stood for w's p2, whose load is 50; `verify` and `sysml-check --strict` passed.
+      // W's p2 is a context of its own now, which abstains on every surface; T1's own row reads T1's 1.
+      const { model: x, report } = await loadModelText(`package TC3 { ${T0} part def T1 :> T0 { constraint tc { load ${op} 5.0 } } ${W(p50)} }`, {
+        fileName: 'TC3.sysml',
+        strict: true,
+      });
+      const c = check(x!, 'TC3::T1::tc');
+      expect([c.result, c.instances!.map((i) => [x!.qualifiedName(i.contextId), i.result])], op).toEqual([
+        op === '<=' ? 'satisfied' : 'violated',
+        [['TC3::W::p2', 'unknown']],
+      ]);
+      expect(c.instances![0]!.message, op).toContain(said('TC3'));
+      expect(numericIn(x!, 'TC3::T1::tc', 'TC3::W::p2'), op).toBe('unknown');
+      const g = obligationsOf(x!).find((o) => o.role !== 'axiom' && o.instance?.contextId === c.instances![0]!.contextId)!;
+      expect(g.encodable, op).toMatchObject({ reason: 'unread-binding' });
+      expect(loud(report), op).toEqual(op === '<=' ? [] : ['Constraint violated: load >= 5.0']);
+      // A relation nested in T1 has no element that stands for w's p2's sub, so its own row — every T1's sub — abstains.
+      const { model: n, report: nReport } = await loadModelText(
+        `package TC8 { ${T0} part def T1 :> T0 { part sub { attribute v : ScalarValues::Real = load; constraint tc { v ${op} 5.0 } } } ${W(p50)} }`,
+        { fileName: 'TC8.sysml', strict: true },
+      );
+      const s = check(n!, 'TC8::T1::sub::tc');
+      expect([s.result, s.instances ?? [], numeric(n!, 'TC8::T1::sub::tc'), goal(n!, 'TC8::T1::sub::tc').encodable], op).toMatchObject([
+        'unknown',
+        [],
+        'unknown',
+        { reason: 'unread-binding' },
+      ]);
+      expect(s.message, op).toContain(said('TC8'));
+      expect(loud(nReport), op).toEqual([]);
+    }
+    // An instance that changes nothing p1 reads (`part w : W;`) leaves every T1 read as written: no row for W's p2.
+    const { model: same } = await loadModelText(`package TC10 { ${T0}
+      part def T1 :> T0 { constraint tc { load <= 5.0 } part sub { attribute v : ScalarValues::Real = load; constraint tc { v <= 5.0 } } }
+      ${W('part w : W;')}
+    }`);
+    for (const rel of ['TC10::T1::tc', 'TC10::T1::sub::tc']) {
+      const c = check(same!, rel);
+      expect([c.result, c.instances ?? [], numeric(same!, rel)], rel).toEqual(['satisfied', [], 'satisfied']);
+    }
+  });
 });
 
 describe('an enclosing equation read through a binding or a reference, and a relation read through one (O9 S2)', () => {
