@@ -1201,8 +1201,9 @@ nested in W writes is read in each instance of W a path reaches it through
 one valued with a feature around that usage (`ref part r : T0 = p1`, W's p1)
 is read at W's own values only, so where an instance of W reads that feature
 otherwise (w's `part :>> p1 { … }`), every row read through it — or through a
-value or a binding that reads through it, as `sub.m` over `attribute m =
-r.load` — is *could not be evaluated*, naming that instance, but for the rows
+value, a binding or an asserted equation that reads through it, as `sub.m` over
+`attribute m = r.load` or `x == r.load` — is *could not be evaluated*, naming
+that instance, but for the rows
 of a group that reads each instance, which re-resolve the reference itself
 there as above (Q's `part p : P { ref part :>> r = s; }` beside Q's `bind
 p.load = L`). A reference redefinition that states no value (`ref part :>>
@@ -1213,7 +1214,23 @@ w makes of W's valued reference (w's `bind m = pp.load` over W's `ref part pp :
 T0 = top.a`), and every row read through it (`w.m`). Through either kind, `bounds` claims no
 bound of a measure (`w.sub.m`, `w.r.load`). One redefined over a reference written
 with `=` (`ref part :>> r1 = p2` in w, over W's `ref part r1 = p1`) states a
-second value, and a row read through it is *could not be evaluated*. A
+second value, and a row read through it is *could not be evaluated*. A usage
+that subsets a feature an instance reads otherwise is read alike: beside w's
+`part :>> p1 { attribute :>> load = 50.0; }`, every w's p2 of W's `part p2 :>
+p1;` is one of w's p1s, but this tool reads p2 through W's own p1, never as
+one of w's, so each row read through p2 — W's own `constraint c { p2.load <=
+5.0 }`, the package's `w.p2.load`, a `satisfy R by p2` W writes or a package's
+`satisfy R by w.p2` (a subject's value `= w.p2` too), and what a value, a
+binding, an asserted equation (`x == p2.load`) or a further subsetting reads
+through it — is *could not be evaluated*, in a sentence that names p2, the
+element whose own p1 it is read through and w, and `bounds` claims no bound of
+a measure read so — a limit of this tool. So is a relation of p2's type read
+in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
+W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
+nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
+has no element that stands for w's p2's sub, so its row, which stands for every
+T1's sub, is *could not be evaluated*. Where no instance reads p1
+otherwise, or p1 is a feature of a package, it reads as written. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A relation of Q read in a usage or a specialisation
@@ -1281,7 +1298,7 @@ row and finding stands — on the verify lane too, where the goal row is refused
 that sentence and closed as a failure of the tool, not a defect in the relation. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
 sentence; one while it lists the asserted equations over a `default` it does not
-read, or the satisfactions, subjects and references an instance reads otherwise,
+read, or the satisfactions, subjects, references and subsetting usages an instance reads otherwise,
 leaves every row *could not be evaluated* (*… could not be listed: the reading
 failed (RangeError); reported, not dropped*), since which rows they reach is
 then unknown — and every other rule's findings stand. A value a binding carries is read in the unit
