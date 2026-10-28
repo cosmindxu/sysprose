@@ -47,7 +47,7 @@ import {
   type Model,
 } from '@core/index';
 import { generalizationsWithImplicit } from './featuring';
-import { effectiveNameOf, mostSpecificOwned, ownFeatures, redefinedClosure } from './inheritance';
+import { effectiveNameOf, mostSpecificOwned, ownFeatures, redefinedBy, redefinedClosure } from './inheritance';
 import { resolveName } from './resolve-names';
 
 /** Options for {@link resolveFullName}. */
@@ -298,7 +298,8 @@ function mostSpecificRedefining(
   anchor: ElementRecord,
   featureId: ElementId,
 ): ElementRecord {
-  const owners = new Set<ElementId>(generals.map((g) => g.id));
+  const owners = new Set<ElementId>();
+  for (const g of generals) owners.add(g.id);
   if (anchor.ownerId === null || !owners.has(anchor.ownerId)) return anchor;
   // Walk the redefinitions back from `anchor` (the edge index), through the general types' features only.
   const hits: ElementRecord[] = [];
@@ -306,30 +307,73 @@ function mostSpecificRedefining(
   const queue: ElementRecord[] = [anchor];
   for (let i = 0; i < queue.length; i++) {
     const g = queue[i];
-    for (const r of model.relationshipsTo(g.id)) {
-      if (r.eClass !== 'Redefinition') continue;
-      for (const id of r.source ?? []) {
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const f = model.get(id);
-        if (!f || f.ownerId === null || !owners.has(f.ownerId)) continue;
-        queue.push(f);
-        hits.push(f);
-      }
+    for (const id of redefinerIds(model, g.id)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const f = model.get(id);
+      if (!f || f.ownerId === null || !owners.has(f.ownerId)) continue;
+      queue.push(f);
+      hits.push(f);
     }
   }
   if (hits.length === 0) return anchor;
   // A hit is the most specific when no other hit redefines it, through any number of redefinitions: asking each hit
   // for its redefiners stops at the first hit found, so a chain of depth D over one feature costs D, not D cubed, on
   // every `:>>` of a usage typed by its deepest general.
-  const hitIds = new Set<ElementId>(hits.map((h) => h.id));
-  const most = hits.filter((h) => {
-    let redefined = false;
-    redefinersOf(model, h.id, (x) => (redefined = hitIds.has(x)));
-    return !redefined;
-  });
+  const hitIds = new Set<ElementId>();
+  for (const h of hits) hitIds.add(h.id);
+  const most = hits.length === 1 ? hits : hits.filter((h) => !redefinedByOneOf(model, h.id, hitIds));
   const one = mostSpecificOwned(model, most);
   return one !== undefined && !joinsTwo(model, owners, anchor, one, featureId) ? one : anchor;
+}
+
+/**
+ * What {@link mostSpecificRedefining} and {@link joinsTwo} ask of the model's edges and children again and again, kept
+ * for one revision of the model: a chain of D definitions, each redefining the one above, makes D such calls over D
+ * features, and a lookup per ask made a parse of it cost D cubed.
+ */
+interface BindMemo {
+  rev: number;
+  /** A feature → the ids of the features that redefine it directly, in the edge index's order. */
+  redefiners: Map<ElementId, ElementId[]>;
+  /** A feature → every feature that redefines it, through any number of redefinitions. */
+  allRedefiners: Map<ElementId, ReadonlySet<ElementId>>;
+  /** An owner → its children by declared name, in order. */
+  names: Map<ElementId, Map<string, ElementRecord[]>>;
+  /** An owner → its features by effective name ({@link effectiveNameOf}), in order. */
+  effectiveNames: Map<ElementId, Map<string, ElementRecord[]>>;
+  /** An owner → its children that can lie on a line of redefinitions: a declared name, or a redefinition of their own. */
+  bearers: Map<ElementId, { list: ElementRecord[]; ids: Set<ElementId> }>;
+}
+const bindMemos = new WeakMap<Model, BindMemo>();
+function memoOf(model: Model): BindMemo {
+  let memo = bindMemos.get(model);
+  if (memo === undefined || memo.rev !== model.rev) {
+    memo = {
+      rev: model.rev,
+      redefiners: new Map(),
+      allRedefiners: new Map(),
+      names: new Map(),
+      effectiveNames: new Map(),
+      bearers: new Map(),
+    };
+    bindMemos.set(model, memo);
+  }
+  return memo;
+}
+
+/** The ids of the features that redefine `id` DIRECTLY — the sources of the Redefinitions that target it. */
+function redefinerIds(model: Model, id: ElementId): readonly ElementId[] {
+  const memo = memoOf(model);
+  let ids = memo.redefiners.get(id);
+  if (ids === undefined) {
+    ids = [];
+    for (const r of model.relationshipsTo(id)) {
+      if (r.eClass === 'Redefinition') for (const x of r.source ?? []) ids.push(x);
+    }
+    memo.redefiners.set(id, ids);
+  }
+  return ids;
 }
 
 /**
@@ -341,17 +385,36 @@ function redefinersOf(model: Model, id: ElementId, stop?: (found: ElementId) => 
   const queue: ElementId[] = [id];
   while (queue.length > 0) {
     const g = queue.pop()!;
-    for (const r of model.relationshipsTo(g)) {
-      if (r.eClass !== 'Redefinition') continue;
-      for (const x of r.source ?? []) {
-        if (x === id || out.has(x) || !model.get(x)) continue;
-        out.add(x);
-        if (stop?.(x)) return out;
-        queue.push(x);
-      }
+    for (const x of redefinerIds(model, g)) {
+      if (x === id || out.has(x) || !model.get(x)) continue;
+      out.add(x);
+      if (stop?.(x)) return out;
+      queue.push(x);
     }
   }
   return out;
+}
+
+/** {@link redefinersOf} without a stop: every `:>>` of a usage asks it of one anchor. */
+function allRedefinersOf(model: Model, id: ElementId): ReadonlySet<ElementId> {
+  const memo = memoOf(model);
+  let all = memo.allRedefiners.get(id);
+  if (all === undefined) {
+    all = redefinersOf(model, id);
+    memo.allRedefiners.set(id, all);
+  }
+  return all;
+}
+
+/**
+ * Does any of `among` redefine `id`, through any number of redefinitions? A direct redefiner, nearly always the
+ * answer, is looked at first.
+ */
+function redefinedByOneOf(model: Model, id: ElementId, among: ReadonlySet<ElementId>): boolean {
+  for (const x of redefinerIds(model, id)) if (x !== id && among.has(x) && model.get(x)) return true;
+  let found = false;
+  redefinersOf(model, id, (x) => (found = among.has(x)));
+  return found;
 }
 
 /**
@@ -392,50 +455,53 @@ function joinsTwo(
   const above = redefinedClosure(model, hit);
   const anchorLine = new Set<ElementId>([anchor.id, ...redefinedClosure(model, anchor).map((g) => g.id)]);
   // A feature `hit` redefines is on the line when it is `anchor` or below it, or redefines `anchor` itself.
-  const redefinersOfAnchor = redefinersOf(model, anchor.id);
+  const redefinersOfAnchor = allRedefinersOf(model, anchor.id);
   if (above.some((g) => !anchorLine.has(g.id) && !redefinersOfAnchor.has(g.id))) return true;
   const ownerId = model.get(featureId)?.ownerId ?? null;
   if (ownerId === null) return false;
   const line = [hit, ...above];
-  const names = new Set<string>(line.flatMap((g) => (g.declaredName !== undefined ? [g.declaredName] : [])));
-  // Every feature of the general types that bears one of those names, with what each redefines: a sibling that
-  // redefines any of them lies in a line the hit's meets (at a feature the one redefines or is, the other the same).
-  const reach = new Set<ElementId>();
-  for (const id of owners) {
-    for (const name of names) {
-      for (const f of childrenNamed(model, id, name)) {
-        if (!isUsage(f.eClass)) continue;
-        reach.add(f.id);
-        for (const g of redefinedClosure(model, f)) reach.add(g.id);
-      }
-    }
-  }
-  for (const g of line) {
-    reach.add(g.id);
-    for (const u of redefinedClosure(model, g)) reach.add(u.id);
-  }
-  const renamed = effectiveNameOf(model, hit);
+  const renamed = hit.declaredName ?? above.find((g) => g.declaredName !== undefined)?.declaredName;
   if (renamed !== undefined && renamed !== effectiveNameOf(model, anchor)) {
     const onLine = new Set<ElementId>([...line.map((g) => g.id), ...anchorLine, ...redefinersOfAnchor]);
     for (const id of owners) {
-      if (ownFeatures(model, id).some((f) => !onLine.has(f.id) && effectiveNameOf(model, f) === renamed)) return true;
+      if (featuresNamed(model, id, renamed).some((f) => !onLine.has(f.id))) return true;
     }
   }
+  // What is left asks about the owner's other features: an owner with none that bears a name or redefines something
+  // (the definitions of a chain, each holding one `:>>`) joins nothing, and its line is not walked. The guard must
+  // name every kind of sibling the tests below it can find (a Redefinition's source, a declared name): a third kind
+  // added below has to be added to {@link bearersOf} too, or this returns before it is asked.
+  if (!hasOtherBearer(model, ownerId, featureId, among)) return false;
+  const names = new Set<string>(line.flatMap((g) => (g.declaredName !== undefined ? [g.declaredName] : [])));
+  // Every feature of the general types that bears one of those names, with what each redefines: a sibling that
+  // redefines any of them lies in a line the hit's meets (at a feature the one redefines or is, the other the same).
+  // One walk from all of them, each feature met once: a closure per feature made a deep chain cost its depth cubed.
+  const reach = new Set<ElementId>();
+  const toExpand: ElementRecord[] = [];
+  const reachFrom = (f: ElementRecord): void => {
+    if (reach.has(f.id)) return;
+    reach.add(f.id);
+    toExpand.push(f);
+  };
+  for (const id of owners) {
+    for (const name of names) {
+      for (const f of childrenNamed(model, id, name)) if (isUsage(f.eClass)) reachFrom(f);
+    }
+  }
+  for (const g of line) reachFrom(g);
+  while (toExpand.length > 0) for (const g of redefinedBy(model, toExpand.pop()!)) reachFrom(g);
   // A sibling whose line meets the hit's redefines (through any number of redefinitions) a feature in `reach`, or
   // one that does: asked of the redefiners of `reach`, whose few edges are looked up, never of each of the usage's
   // features in turn.
   const queue = [...reach];
   const seen = new Set<ElementId>(reach);
   while (queue.length > 0) {
-    for (const r of model.relationshipsTo(queue.pop()!)) {
-      if (r.eClass !== 'Redefinition') continue;
-      for (const x of r.source ?? []) {
-        if (seen.has(x)) continue;
-        seen.add(x);
-        queue.push(x);
-        const f = model.get(x);
-        if (f && f.ownerId === ownerId && f.id !== featureId && f.attrs.implicit !== true && (!among || among.has(f.id))) return true;
-      }
+    for (const x of redefinerIds(model, queue.pop()!)) {
+      if (seen.has(x)) continue;
+      seen.add(x);
+      queue.push(x);
+      const f = model.get(x);
+      if (f && f.ownerId === ownerId && f.id !== featureId && f.attrs.implicit !== true && (!among || among.has(f.id))) return true;
     }
   }
   // A sibling declared under one of those names.
@@ -447,17 +513,13 @@ function joinsTwo(
 }
 
 /**
- * The children of `ownerId` declared under `name`, in order — an index of the owner's children by declared name,
- * kept for the model's revision. {@link joinsTwo} asks it once per name of the line for each `:>>` it reads, where
- * a scan of the owner's features per call made a usage of N redefinitions cost N squared.
+ * The children of `ownerId` declared under `name`, in order — an index of the owner's children by declared name.
+ * {@link joinsTwo} asks it once per name of the line for each `:>>` it reads, where a scan of the owner's features
+ * per call made a usage of N redefinitions cost N squared.
  */
 function childrenNamed(model: Model, ownerId: ElementId, name: string): readonly ElementRecord[] {
-  let cache = nameIndexes.get(model);
-  if (cache === undefined || cache.rev !== model.rev) {
-    cache = { rev: model.rev, byOwner: new Map() };
-    nameIndexes.set(model, cache);
-  }
-  let index = cache.byOwner.get(ownerId);
+  const memo = memoOf(model);
+  let index = memo.names.get(ownerId);
   if (index === undefined) {
     index = new Map();
     for (const c of model.children(ownerId)) {
@@ -466,11 +528,66 @@ function childrenNamed(model: Model, ownerId: ElementId, name: string): readonly
       if (same === undefined) index.set(c.declaredName, [c]);
       else same.push(c);
     }
-    cache.byOwner.set(ownerId, index);
+    memo.names.set(ownerId, index);
   }
   return index.get(name) ?? [];
 }
-const nameIndexes = new WeakMap<Model, { rev: number; byOwner: Map<ElementId, Map<string, ElementRecord[]>> }>();
+
+/**
+ * The features `ownerId` owns whose effective name is `name`, in order — the effective names of an owner's features
+ * are asked once per owner, where each ask walked the redefinitions of every one of them.
+ */
+function featuresNamed(model: Model, ownerId: ElementId, name: string): readonly ElementRecord[] {
+  const memo = memoOf(model);
+  let index = memo.effectiveNames.get(ownerId);
+  if (index === undefined) {
+    index = new Map();
+    for (const f of ownFeatures(model, ownerId)) {
+      const effective = effectiveNameOf(model, f);
+      if (effective === undefined) continue;
+      const same = index.get(effective);
+      if (same === undefined) index.set(effective, [f]);
+      else same.push(f);
+    }
+    memo.effectiveNames.set(ownerId, index);
+  }
+  return index.get(name) ?? [];
+}
+
+/**
+ * The children of `ownerId` {@link joinsTwo} can find on a line of redefinitions: one that is not an implicit end
+ * copy and bears a declared name, or redefines something (is the source of a Redefinition).
+ */
+function bearersOf(model: Model, ownerId: ElementId): { list: ElementRecord[]; ids: Set<ElementId> } {
+  const memo = memoOf(model);
+  let bearers = memo.bearers.get(ownerId);
+  if (bearers === undefined) {
+    const list = model
+      .children(ownerId)
+      .filter(
+        (c) =>
+          c.attrs.implicit !== true &&
+          (c.declaredName !== undefined || model.relationshipsFrom(c.id).some((r) => r.eClass === 'Redefinition')),
+      );
+    bearers = { list, ids: new Set(list.map((c) => c.id)) };
+    memo.bearers.set(ownerId, bearers);
+  }
+  return bearers;
+}
+
+/**
+ * Does `ownerId` hold a {@link bearersOf bearer} other than `featureId`, one of `among` when given? The editor asks
+ * with the few features an edit touched, of a usage that may hold a thousand `:>>`: the smaller of the two is walked,
+ * so a settle of N redefinitions does not cost N squared here.
+ */
+function hasOtherBearer(model: Model, ownerId: ElementId, featureId: ElementId, among?: ReadonlySet<ElementId>): boolean {
+  const { list, ids } = bearersOf(model, ownerId);
+  if (among !== undefined && among.size < list.length) {
+    for (const id of among) if (id !== featureId && ids.has(id)) return true;
+    return false;
+  }
+  return list.some((c) => c.id !== featureId && (!among || among.has(c.id)));
+}
 
 /**
  * Give every import its `target` (and `source`) so `resolveName`'s import walk

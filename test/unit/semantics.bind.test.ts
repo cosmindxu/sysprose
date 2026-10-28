@@ -6,10 +6,10 @@
  * and a resolver tested only on hand-built models would not prove that the
  * mapper asks it the same questions the notation does.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { parseModel } from '@text/index';
 import { resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '../../src/semantics/bind';
-import type { Model } from '@core/index';
+import { Model, ModelFactory } from '@core/index';
 
 /** Parse, then hand back the model plus a name→element lookup. */
 function parsed(src: string): { model: Model; id: (name: string) => string } {
@@ -289,6 +289,62 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
     expect(sharesLineWithSibling(model, r, redefining('v'), new Set([redefining('v')]))).toBe(false);
   });
 
+  // The names of a line reach only its named features; a feature written straight at an unnamed one (the editor and
+  // the SDK can, the text cannot) is found through the line itself.
+  it('finds a sibling that redefines an unnamed feature of the line, which no name on it reaches', () => {
+    const { model, id } = parsed(`package P {
+      part def Q { attribute M default = 1.0; }
+      part def Q2 :> Q { attribute :>> M default = 2.0; }
+      part v : Q2 { attribute :>> M = 5.0; }
+    }`);
+    const hit = model.children(id('Q2')).find((c) => c.eClass === 'AttributeUsage')!;
+    const redefining = model.children(id('v')).find((c) => c.eClass === 'AttributeUsage')!;
+    expect(sharesLineWithSibling(model, hit, redefining.id)).toBe(false);
+    const sibling = model.create('AttributeUsage', { ownerId: id('v') });
+    new ModelFactory(model).redefinition(sibling.id, hit.id);
+    expect(sharesLineWithSibling(model, hit, redefining.id)).toBe(true);
+    // Among the features an edit touched, the sibling counts only if it is one of them.
+    expect(sharesLineWithSibling(model, hit, redefining.id, new Set([redefining.id]))).toBe(false);
+    expect(sharesLineWithSibling(model, hit, redefining.id, new Set([sibling.id]))).toBe(true);
+  });
+
+  it('finds a sibling on a line of features no name reaches at all', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('Anon');
+    const p = f.partDef('P', pkg.id);
+    const q = f.partDef('Q', pkg.id);
+    f.subclassification(q.id, p.id);
+    const top = model.create('AttributeUsage', { ownerId: p.id });
+    const hit = model.create('AttributeUsage', { ownerId: q.id });
+    f.redefinition(hit.id, top.id);
+    const v = f.part('v', pkg.id, q.id);
+    const redefining = model.create('AttributeUsage', { ownerId: v.id });
+    f.redefinition(redefining.id, hit.id);
+    expect(sharesLineWithSibling(model, hit, redefining.id)).toBe(false);
+    const sibling = model.create('AttributeUsage', { ownerId: v.id });
+    f.redefinition(sibling.id, hit.id);
+    expect(sharesLineWithSibling(model, hit, redefining.id)).toBe(true);
+  });
+
+  // Q3's unnamed `:>> M2` is what a Q3 has for M, and it is known as M2: a usage's `:>> M` would take that name beside
+  // the M2 S brings, so it keeps the name's own feature, as it does where Q2's `M2 redefines M` is written plainly.
+  it('keeps the named feature where an unnamed redefinition of a renamed feature would put a name on two', () => {
+    const { model, id } = parsed(`package P {
+      part def Q { attribute M default = 1.0; }
+      part def Q2 :> Q { attribute M2 redefines M default = 2.0; }
+      part def Q3 :> Q2 { attribute :>> M2 default = 3.0; }
+      part def S { attribute M2 default = 7.0; }
+      part v : Q3, S { attribute :>> M = 5.0; }
+      part w : Q3 { attribute :>> M = 5.0; }
+    }`);
+    const redefinedBy = (owner: string): string[] | undefined =>
+      model.children(model.children(id(owner)).find((c) => c.eClass === 'AttributeUsage')!.id).find((c) => c.eClass === 'Redefinition')!.target;
+    const feature = (def: string): string => model.children(id(def)).find((c) => c.eClass === 'AttributeUsage')!.id;
+    expect(redefinedBy('v')).toEqual([feature('Q')]);
+    expect(redefinedBy('w')).toEqual([feature('Q3')]);
+  });
+
   it('falls back to ordinary resolution for a qualified redefinition target', () => {
     const { model, id } = parsed(`package P {
       part def Other { part z; }
@@ -299,5 +355,96 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
     expect(model.qualifiedName(resolveRedefinedFeature(model, 'Other::z', c.id, car)!.id)).toBe(
       'P::Other::z',
     );
+  });
+});
+
+// The cost of a deep line of redefinitions. A chain of definitions each redefining the one above, and a lattice of
+// them each specialising the two above, are asked for the same lines again at every `:>>` of every usage below: the
+// parse took the depth cubed (a chain of 300, 6 s against 0.4 s without the rule), and a lattice of 160 levels 12 s.
+// The edge lookups a parse makes are counted, so the test does not depend on how loaded the machine is.
+describe('resolveRedefinedFeature — a deep line of redefinitions costs its depth, not more', () => {
+  const chain = (depth: number): string => {
+    const lines = ['package PC {', '  part def Q0 { attribute M default = 0.0; }'];
+    for (let k = 1; k <= depth; k++) lines.push(`  part def Q${k} :> Q${k - 1} { attribute :>> M default = ${k}.0; }`);
+    for (let u = 0; u < 2; u++) lines.push(`  part u${u} : Q${depth} { attribute :>> M; }`);
+    return [...lines, '}'].join('\n');
+  };
+  const lattice = (depth: number): string => {
+    const lines = ['package PL {', '  part def A0 { attribute M default = 0.0; }', '  part def B0 { attribute N default = 0.0; }'];
+    for (let k = 1; k <= depth; k++) {
+      lines.push(`  part def A${k} :> A${k - 1}, B${k - 1} { attribute :>> M default = ${k}.0; }`);
+      lines.push(`  part def B${k} :> A${k - 1}, B${k - 1} { attribute :>> M default = ${k}.5; }`);
+    }
+    for (let u = 0; u < 2; u++) lines.push(`  part u${u} : A${depth} { attribute :>> M; }`);
+    return [...lines, '}'].join('\n');
+  };
+  /** The redefinition each unnamed feature makes, as `Owner->Owner.name` (`?` where the target is unnamed too). */
+  const targets = (model: Model): string[] => {
+    const label = (id: string): string => {
+      const e = model.get(id)!;
+      return `${e.ownerId ? model.get(e.ownerId)!.declaredName : ''}.${e.declaredName ?? '?'}`;
+    };
+    return model
+      .all()
+      .filter((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && e.attrs.implicit !== true)
+      .map((r) => `${label(r.source![0]!)}->${label(r.target![0]!)}`);
+  };
+  /** How often a parse asks the model for the edges of one element. */
+  const edgeLookups = (src: string): number => {
+    const from = vi.spyOn(Model.prototype, 'relationshipsFrom');
+    const to = vi.spyOn(Model.prototype, 'relationshipsTo');
+    try {
+      parsed(src);
+      return from.mock.calls.length + to.mock.calls.length;
+    } finally {
+      from.mockRestore();
+      to.mockRestore();
+    }
+  };
+
+  it('lands each redefinition on the one above in a chain, and on the anchor where a lattice has no one most specific', () => {
+    expect(targets(parsed(chain(6)).model)).toEqual([
+      'Q1.?->Q0.M', 'Q2.?->Q1.?', 'Q3.?->Q2.?', 'Q4.?->Q3.?', 'Q5.?->Q4.?', 'Q6.?->Q5.?', 'u0.?->Q6.?', 'u1.?->Q6.?',
+    ]);
+    // A level's two definitions each redefine the anchor (neither is below the other); a usage typed by the last
+    // level redefines that level's own.
+    expect(targets(parsed(lattice(3)).model)).toEqual([
+      'A1.?->A0.M', 'B1.?->A0.M', 'A2.?->A0.M', 'B2.?->A0.M', 'A3.?->A0.M', 'B3.?->A0.M', 'u0.?->A3.?', 'u1.?->A3.?',
+    ]);
+  });
+
+  it('asks the model for edges in proportion to the depth of a chain and of a lattice', () => {
+    for (const shape of [chain, lattice]) {
+      const shallow = edgeLookups(shape(30));
+      const deep = edgeLookups(shape(60));
+      // Twice the depth is twice the lookups (a square would be four times, a cube eight), and a few per level.
+      expect(deep / shallow, shape.name).toBeLessThan(2.6);
+      expect(deep, shape.name).toBeLessThan(60 * 20);
+    }
+  });
+});
+
+// The editor settles a usage of N `:>>` after an edit by asking, for each, whether a feature the edit touched shares
+// its line (`among`). The answer for a usage whose siblings are not among the few touched is no, and it is reached
+// from the touched ones, not by looking at every sibling again for every `:>>`: a settle took N squared of these
+// before (a thousand and a half `:>>`, a retype 30 ms to 100 ms).
+describe('sharesLineWithSibling — a usage of many redefinitions, asked of a few touched features', () => {
+  it('looks at the touched features, not at every sibling, for each redefinition', () => {
+    const n = 300;
+    const base = Array.from({ length: n }, (_, k) => `attribute a${k} default = 1.0;`).join(' ');
+    const redefs = Array.from({ length: n }, (_, k) => `attribute :>> a${k} = 2.0;`).join(' ');
+    const { model, id } = parsed(`package W { part def B { ${base} } part s : B { ${redefs} } }`);
+    const features = model.children(id('s')).filter((c) => c.eClass === 'AttributeUsage');
+    expect(features).toHaveLength(n);
+    // The edit retyped `s`: it is the one feature touched, and none of its `:>>` is.
+    const touched = new Set<string>([id('s')]);
+    const has = vi.spyOn(touched, 'has');
+    for (const f of features) {
+      const rel = model.children(f.id).find((c) => c.eClass === 'Redefinition')!;
+      const hit = model.get(rel.target![0]!)!;
+      // None of the siblings is among the touched, so none counts.
+      expect(sharesLineWithSibling(model, hit, f.id, touched), f.declaredName).toBe(false);
+    }
+    expect(has.mock.calls.length).toBeLessThan(n * 10);
   });
 });

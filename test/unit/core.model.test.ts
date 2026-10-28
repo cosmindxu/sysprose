@@ -157,6 +157,23 @@ describe('Model core', () => {
     expect(m.typesOf(vehicle!.id).map((t) => t.declaredName)).toContain('Vehicle');
   });
 
+  // The walk of a type's generals asks this once per type it meets; it reads the edge index without copying it.
+  it('typesOf gives the targets of the typing and specialization relationships, in order, and no other', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const [a, b, c, x] = ['A', 'B', 'C', 'X'].map((n) => f.partDef(n));
+    f.subclassification(c!.id, a!.id);
+    const typing = m.create('FeatureTyping', { ownerId: c!.id, source: [c!.id], target: ['gone', b!.id] });
+    f.allocate(c!.id, x!.id);
+    expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A', 'B']);
+    expect(m.typesOf(a!.id)).toEqual([]);
+    // It follows an edit of the edges, and a removal.
+    m.update(typing.id, { target: [x!.id, b!.id] });
+    expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A', 'X', 'B']);
+    m.remove(typing.id);
+    expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A']);
+  });
+
   it('round-trips through JSON without loss', () => {
     const m = buildSampleModel();
     const json = m.toJSON();

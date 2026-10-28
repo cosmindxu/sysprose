@@ -442,9 +442,18 @@ export class Model {
    * targets). Returns resolved target elements where they exist in-model.
    */
   typesOf(id: ElementId): ElementRecord[] {
-    return this.relationshipsFrom(id)
-      .filter((r) => isTypingSpecialization(r.eClass))
-      .flatMap((r) => (r.target ?? []).map((t) => this.elements.get(t)).filter(Boolean) as ElementRecord[]);
+    // One pass over the edge index, no copy of it: every walk of the generals of a type asks this once per type it
+    // meets, so on a deep lattice the copies and filters were most of a parse.
+    this.ensureEdgeIndex();
+    const out: ElementRecord[] = [];
+    for (const r of this._sourceIndex.get(id) ?? []) {
+      if (!isRelationship(r.eClass) || !isTypingSpecialization(r.eClass)) continue;
+      for (const t of r.target ?? []) {
+        const general = this.elements.get(t);
+        if (general) out.push(general);
+      }
+    }
+    return out;
   }
 
   /* ─────────────────────────────── Update ─────────────────────────────── */
