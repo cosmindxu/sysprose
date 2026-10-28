@@ -7494,8 +7494,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GI::G::ca in GI::s2::q': ['F/-/F/-', 'F'],
       // s1's q's g, whose default the numeric surface does not read at that instance (the binding in s2 makes it give
       // way by feature), is held by G's asserted `g <= 10.0`: t1 is no design equation for it (text-order S1; it was
-      // imposed, `t`).
-      'GI::t1': ['T/T/t/X', null],
+      // imposed, `t`; the merge with contradictory-models re-pins it `?` in cv-gi, cv-gi-pkg and cv-gi-ok).
+      'GI::t1': ['T/T/?/X', null],
       'GI::t2': ['T/X/T/X', null],
       'GI::tk': ['T/X/T/X', null],
     }),
@@ -7514,7 +7514,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GIP::G::ca in GIP::S::q': ['T/-/T/-', 'T'],
       'GIP::G::ca in GIP::s1::q': ['T/-/T/-', 'T'],
       'GIP::G::ca in GIP::s2::q': ['F/-/F/-', 'F'],
-      'GIP::t1': ['T/T/t/X', null],
+      'GIP::t1': ['T/T/?/X', null],
       'GIP::t2': ['T/X/T/X', null],
       'GIP::tk': ['T/X/T/X', null],
     }),
@@ -7532,7 +7532,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GIO::G::ca in GIO::S::q': ['T/-/T/-', 'T'],
       'GIO::G::ca in GIO::s1::q': ['T/-/T/-', 'T'],
       'GIO::G::ca in GIO::s2::q': ['T/-/T/-', 'T'],
-      'GIO::t1': ['T/T/t/?', null],
+      'GIO::t1': ['T/T/?/?', null],
       'GIO::t2': ['T/T/T/T', 'T'],
       'GIO::tk': ['T/T/T/T', 'T'],
     }),
