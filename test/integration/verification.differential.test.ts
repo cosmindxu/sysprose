@@ -11163,8 +11163,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // The root of a curved plain equation (`x * x == 4.0`, two roots) beside another plain equation was the one place the
     // order of the text still showed: written above `b { x == -2.0 }` it took the root 2 and left both unjudged, written
     // below it took −2 and imposed both. The pair is contested in both orders now — the roots are not compared, so
-    // `x == 2.0`, where one root agrees, reads alike (ROOT2) — and a lone curved equation, or one beside inequalities,
-    // is still imposed (ROOT1). UPR: an asserted relation the parser rejects (`M == max(L, 20.0)`) still constrains
+    // `x == 2.0`, where one root agrees, reads alike (ROOT2) — and a lone curved equation is still imposed (ROOT1), though an
+    // inequality over it is not judged (numeric-curved S1: it read T at 2, where −2 breaks it). UPR: an asserted relation the parser rejects (`M == max(L, 20.0)`) still constrains
     // what it names, so `t1 { p.M == 3.0 }` is no design equation over a feature it holds (it was imposed, `?/?/t/?`).
     ...reversed(
       'order-root',
@@ -11188,7 +11188,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package ROOT1 { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint k { x >= 0.0 } }`,
       {
         'ROOT1::a': ['?/?/t/?', '?'],
-        'ROOT1::k': ['?/?/T/?', null],
+        'ROOT1::k': ['?/?/?/?', '?'],
       },
     ),
     'order-upr': probe(
@@ -11202,6 +11202,246 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'UPR::P::e': ['?/-/?/-', null],
         'UPR::P::g': ['?/-/?/-', null],
         'UPR::t1': ['?/?/?/?', '?'],
+      },
+    ),
+    // A curved equation reads no value beside another plain constraint, or an inequality judged over it, in every order and
+    // whether or not an equation was left unused (numeric-curved S1; the text-order re-review's C11, V8, AA1, W, Y, M5 and
+    // F7x130, each beside its members in the reverse order, `-rev`, which I14 reads alike).
+    // CV1: `x * x == 4.0`, `y == x + 1.0` and `y <= 0.0` are all met by (−2, −1); the root the solve found, (2, 3), broke
+    // `c2`, a false F (`?/?/F/-`); CV2 the same for a product system, `x * y == 4.0` beside `x == y` ((−2, −2) meets all
+    // three); CV3 an asserted curved equation beside a plain `p.x == -2.0` — the assert fixed x at 2 and `b` read F.
+    ...reversed(
+      'order-curved-sys',
+      `package CV1 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real;
+        constraint c0 { x * x == 4.0 } constraint c1 { y == x + 1.0 } constraint c2 { y <= 0.0 } }`,
+      `package CV1 { constraint c2 { y <= 0.0 } constraint c1 { y == x + 1.0 } constraint c0 { x * x == 4.0 }
+        attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CV1::c0': ['?/?/?/?', '?'],
+        'CV1::c1': ['?/?/?/?', '?'],
+        'CV1::c2': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-prod',
+      `package CV2 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real;
+        constraint c0 { x * y == 4.0 } constraint c1 { x == y } constraint c2 { x <= 0.0 } }`,
+      `package CV2 { constraint c2 { x <= 0.0 } constraint c1 { x == y } constraint c0 { x * y == 4.0 }
+        attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CV2::c0': ['?/?/?/?', '?'],
+        'CV2::c1': ['?/?/?/?', '?'],
+        'CV2::c2': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-assert',
+      `package CV3 { part def P { attribute x : ScalarValues::Real; assert constraint a { x * x == 4.0 } }
+        part p : P; constraint b { p.x == -2.0 } }`,
+      `package CV3 { constraint b { p.x == -2.0 } part p : P;
+        part def P { assert constraint a { x * x == 4.0 } attribute x : ScalarValues::Real; } }`,
+      {
+        'CV3::P::a': ['?/-/T/-', null],
+        'CV3::b': ['?/?/?/?', '?'],
+      },
+    ),
+    // CW and CY: the second root comes from the model's own equation — a stated `s = x * x`, an asserted `s == x * x` — beside
+    // `c0 { s == 4.0 }` and `c1 { x == -2.0 }`, which agree at x = −2: written c0 first the solve took the root 2 and read
+    // them as plain constraints that disagree (`?/?/?/?`, a false reason), written c1 first it imposed both (`?/?/t/?`).
+    ...reversed(
+      'order-curved-stated',
+      `package CV4 { attribute x : ScalarValues::Real; attribute s : ScalarValues::Real = x * x;
+        constraint c0 { s == 4.0 } constraint c1 { x == -2.0 } }`,
+      `package CV4 { constraint c1 { x == -2.0 } constraint c0 { s == 4.0 }
+        attribute s : ScalarValues::Real = x * x; attribute x : ScalarValues::Real; }`,
+      {
+        'CV4::c0': ['?/?/?/?', '?'],
+        'CV4::c1': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-asserted',
+      `package CV5 { attribute x : ScalarValues::Real; attribute s : ScalarValues::Real; assert constraint d { s == x * x }
+        constraint c0 { s == 4.0 } constraint c1 { x == -2.0 } }`,
+      `package CV5 { constraint c1 { x == -2.0 } constraint c0 { s == 4.0 } assert constraint d { s == x * x }
+        attribute s : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CV5::c0': ['?/?/?/?', '?'],
+        'CV5::c1': ['?/?/?/?', '?'],
+        'CV5::d': ['?/-/?/-', null],
+      },
+    ),
+    // CM and CX: a curved equation reached through a product — `z * z == y` beside `z == x * y` and the plain pair on x that
+    // disagree: the root the solve found made z and y free, the pair on x was read apart from it, and `c2` was imposed one way
+    // round and withheld the other (CM); CX the same with `x % 3.0 == 2.0`.
+    ...reversed(
+      'order-curved-chain',
+      `package CV6 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real;
+        constraint c0 { x == -2.0 } constraint c1 { z == x * y } constraint c2 { z * z == y } constraint c3 { x == 5.0 } }`,
+      `package CV6 { constraint c3 { x == 5.0 } constraint c2 { z * z == y } constraint c1 { z == x * y } constraint c0 { x == -2.0 }
+        attribute z : ScalarValues::Real; attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CV6::c0': ['?/?/?/?', '?'],
+        'CV6::c1': ['?/?/?/?', '?'],
+        'CV6::c2': ['?/?/?/?', '?'],
+        'CV6::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-mod',
+      `package CV7 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real;
+        constraint c0 { x % 3.0 == 2.0 } constraint c1 { z * z == y } constraint c2 { x == -2.0 } constraint c3 { z == x * y } }`,
+      `package CV7 { constraint c3 { z == x * y } constraint c2 { x == -2.0 } constraint c1 { z * z == y } constraint c0 { x % 3.0 == 2.0 }
+        attribute z : ScalarValues::Real; attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CV7::c0': ['?/U/?/U', null],
+        'CV7::c1': ['?/?/?/?', '?'],
+        'CV7::c2': ['?/?/?/?', '?'],
+        'CV7::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    // CV8: a lone curved plain equation is imposed at the root found (ROOT1), and an inequality over it, either way, is not
+    // judged: `k { x <= 0.0 }` read F at 2 where −2 meets both, `m { x >= 0.0 }` read T where −2 breaks it.
+    ...reversed(
+      'order-curved-ineq',
+      `package CV8 { attribute x : ScalarValues::Real;
+        constraint a { x * x == 4.0 } constraint k { x <= 0.0 } constraint m { x >= 0.0 } }`,
+      `package CV8 { constraint m { x >= 0.0 } constraint k { x <= 0.0 } constraint a { x * x == 4.0 }
+        attribute x : ScalarValues::Real; }`,
+      {
+        'CV8::a': ['?/?/t/?', '?'],
+        'CV8::k': ['?/?/?/?', '?'],
+        'CV8::m': ['?/?/?/?', '?'],
+      },
+    ),
+    // CV10: the elimination that finds the features the equations leave free took, of two rows with the same entry in a column,
+    // the earlier — in the text's order: `x * y == z` above `x == 1.0` and `x == 3.0` freed x (and so left c0 and c1 imposed,
+    // `?/?/t/-`), below them it did not. The rows are taken fewest features first.
+    ...reversed(
+      'order-curved-free',
+      `package CV10 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real;
+        constraint c0 { x * y == z } constraint c1 { x == 1.0 } constraint c2 { x == 3.0 } constraint c3 { x >= 1.5 } }`,
+      `package CV10 { constraint c3 { x >= 1.5 } constraint c2 { x == 3.0 } constraint c1 { x == 1.0 } constraint c0 { x * y == z }
+        attribute z : ScalarValues::Real; attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CV10::c0': ['?/?/?/?', '?'],
+        'CV10::c1': ['?/?/?/?', '?'],
+        'CV10::c2': ['?/?/?/?', '?'],
+        'CV10::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    // CV9: what the other equations fix one at a time is still read beside a curved one — `z == x * x` over `x == 3.0` has the
+    // one root, in either order (the design-equation reading of k is out of the decisions' scope: null).
+    ...reversed(
+      'order-curved-sq',
+      `package CV9 { attribute x : ScalarValues::Real; attribute z : ScalarValues::Real;
+        constraint e { z == x * x } constraint c { x == 3.0 } constraint k { z <= 5.0 } }`,
+      `package CV9 { constraint k { z <= 5.0 } constraint c { x == 3.0 } constraint e { z == x * x }
+        attribute z : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CV9::c': ['?/?/t/?', '?'],
+        'CV9::e': ['?/?/t/?', '?'],
+        'CV9::k': ['?/?/F/?', null],
+      },
+    ),
+    // CL: the definitions close a loop of more than one root (numeric-curved S1 review). `x == y * y + 1.0` beside `y == 3.0 - x` is
+    // (2, 1) or (5, −2): the definitions bind x and y, the solve found the first, and no plain constraint over them was read for the
+    // root — `e { x == 5.0 }` read F at 2 (CL1, a false F: (5, −2) meets every equation), `j { x >= 4.0 }` F and `k { x <= 2.5 }` T
+    // beside `a` and `b` (CL2), `x == y * y` beside `y == x * x` the roots (0, 0) and (1, 1): `j { x <= 0.9 }` F (CL3). CL4 the same loop as
+    // stated values (the plain pair F/F). The asserted equations hold at every root: read T where no plain equation reads them.
+    ...reversed(
+      'order-curved-loop',
+      `package CL1 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real;
+        assert constraint a { x == y * y + 1.0 } assert constraint b { y == 3.0 - x } constraint e { x == 5.0 } }`,
+      `package CL1 { constraint e { x == 5.0 } assert constraint b { y == 3.0 - x } assert constraint a { x == y * y + 1.0 }
+        attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CL1::a': ['?/-/?/-', null],
+        'CL1::b': ['?/-/?/-', null],
+        'CL1::e': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-loopin',
+      `package CL2 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real;
+        assert constraint a { x == y * y + 1.0 } assert constraint b { y == 3.0 - x } constraint k { x <= 2.5 } constraint j { x >= 4.0 } }`,
+      `package CL2 { constraint j { x >= 4.0 } constraint k { x <= 2.5 } assert constraint b { y == 3.0 - x } assert constraint a { x == y * y + 1.0 }
+        attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CL2::a': ['?/-/T/-', null],
+        'CL2::b': ['?/-/T/-', null],
+        'CL2::j': ['?/?/?/?', '?'],
+        'CL2::k': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-cyc',
+      `package CL3 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real;
+        assert constraint a { x == y * y } assert constraint b { y == x * x } constraint j { x <= 0.9 } }`,
+      `package CL3 { constraint j { x <= 0.9 } assert constraint b { y == x * x } assert constraint a { x == y * y }
+        attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CL3::a': ['?/-/T/-', null],
+        'CL3::b': ['?/-/T/-', null],
+        'CL3::j': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-stloop',
+      `package CL4 { attribute x : ScalarValues::Real = y * y + 1.0; attribute y : ScalarValues::Real = 3.0 - x;
+        constraint j { x >= 4.0 } constraint e { x == 5.0 } }`,
+      `package CL4 { constraint e { x == 5.0 } constraint j { x >= 4.0 }
+        attribute y : ScalarValues::Real = 3.0 - x; attribute x : ScalarValues::Real = y * y + 1.0; }`,
+      {
+        'CL4::e': ['?/?/?/?', '?'],
+        'CL4::j': ['?/?/?/?', '?'],
+      },
+    ),
+    // CL5 and CL6: what another equation reads from such a loop — `z - x == 1.0` is no definition, and `n { z == 3.0 }` was taken as the
+    // design equation for z, imposed at the root 2 (CL5); a plain `w == x + 1.0` the same, `m { w <= 3.5 }` T (CL6).
+    ...reversed(
+      'order-curved-dep',
+      `package CL5 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real;
+        assert constraint a { x == y * y + 1.0 } assert constraint b { y == 3.0 - x } assert constraint c { z - x == 1.0 }
+        constraint n { z == 3.0 } constraint m { z <= 3.5 } }`,
+      `package CL5 { constraint m { z <= 3.5 } constraint n { z == 3.0 }
+        assert constraint c { z - x == 1.0 } assert constraint b { y == 3.0 - x } assert constraint a { x == y * y + 1.0 }
+        attribute z : ScalarValues::Real; attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CL5::a': ['?/-/?/-', null],
+        'CL5::b': ['?/-/?/-', null],
+        'CL5::c': ['?/-/?/-', null],
+        'CL5::m': ['?/?/?/?', '?'],
+        'CL5::n': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-plaindep',
+      `package CL6 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute w : ScalarValues::Real;
+        assert constraint a { x == y * y + 1.0 } assert constraint b { y == 3.0 - x } constraint d { w == x + 1.0 } constraint m { w <= 3.5 } }`,
+      `package CL6 { constraint m { w <= 3.5 } constraint d { w == x + 1.0 }
+        assert constraint b { y == 3.0 - x } assert constraint a { x == y * y + 1.0 }
+        attribute w : ScalarValues::Real; attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CL6::a': ['?/-/?/-', null],
+        'CL6::b': ['?/-/?/-', null],
+        'CL6::d': ['?/?/?/?', '?'],
+        'CL6::m': ['?/?/?/?', '?'],
+      },
+    ),
+    // CQ1: a quotient design equation (`v == d / t`) has the one root, whatever it is set equal to: it is read, as it was, in either order.
+    ...reversed(
+      'order-curved-quot',
+      `package CQ1 { attribute d : ScalarValues::Real; attribute t : ScalarValues::Real; attribute v : ScalarValues::Real;
+        constraint e0 { v == d / t } constraint e1 { d == 100.0 } constraint e2 { v == 20.0 } constraint lim { t <= 6.0 } constraint lim2 { t >= 6.0 } }`,
+      `package CQ1 { constraint lim2 { t >= 6.0 } constraint lim { t <= 6.0 } constraint e2 { v == 20.0 } constraint e1 { d == 100.0 } constraint e0 { v == d / t }
+        attribute v : ScalarValues::Real; attribute t : ScalarValues::Real; attribute d : ScalarValues::Real; }`,
+      {
+        'CQ1::e0': ['?/?/t/?', '?'],
+        'CQ1::e1': ['?/?/t/?', '?'],
+        'CQ1::e2': ['?/?/t/?', '?'],
+        'CQ1::lim': ['?/?/T/?', null],
+        'CQ1::lim2': ['?/?/F/?', null],
       },
     ),
   };
@@ -12063,6 +12303,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // text-order S1: a model and its members in the reverse order ({@link reversed}).
     ...['s1n-and', 's1kn-and', 's2enc-and', 's2spec-and', 's2use-and', 's1n-plain', 's1n-eqmn', 'x3k', 'pg', 'lk', 'pl2', 'dup', 'z125', 'k1', 'root', 'root2'].map(
       (k) => [`order-${k}`, `order-${k}-rev`] as const,
+    ),
+    // numeric-curved S1: a curved equation, plain or the model's own, beside another plain constraint or an inequality.
+    ...['sys', 'prod', 'assert', 'stated', 'asserted', 'chain', 'mod', 'ineq', 'free', 'sq', 'loop', 'loopin', 'cyc', 'stloop', 'dep', 'plaindep', 'quot'].map(
+      (k) => [`order-curved-${k}`, `order-curved-${k}-rev`] as const,
     ),
   ] as const;
   withZ3('I14: a `default` reads as its `=` twin against every assertion, whatever the assertion’s spelling or order', () => {

@@ -731,27 +731,50 @@ Two names worth separating:
   whose stated value expression those facts determine (`y = x * 2.0` over an
   asserted `x`): `y == 7.0` beside it is violated, never the value y is
   solved to, wherever the check is written: the model's own equations are
-  solved first, and a check fixes only what they leave. The test is local: of
-  two separate roots (`x * x == 4.0`) the one the solver found is still the
-  one judged. **No design equation turns on the order of the text**, bar the second root a
-  model equation gives and a curved equation reached through a product (open).
-  Two plain
+  solved first, and a check fixes only what they leave. The test is local: each
+  of two separate roots (`x * x == 4.0`) reads as determined, not free.
+  **No design equation turns on the order of the text.** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
   `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
   taken, and every relation over that value is *unjudged* (*… only plain
   constraints that disagree (t50 and t60): which of them holds would turn on the
   one the solve took first as its design equation, so none does …*); Solve
-  lists no value for it. So do two plain equations one of which has more than
-  one root (`a { x * x == 4.0 }` beside `b { x == -2.0 }`, and beside `b { x ==
-  2.0 }`, where one root agrees): the root the solve takes, and so whether the
-  other holds, would turn on which of the two it took first, so neither is
-  (*… only plain constraints, one of them with more than one root (a and b) …*).
-  A lone equation of two roots is still *imposed*, at the root the solver found,
-  and a product of two unknowns (`mass == density * volume`) is no such
-  equation once the others are fixed. A curved system that leaves no plain equation unused (`x * x == 4.0`,
-  `y == x + 1.0`, `y <= 0.0`) is still decided at the root the solver found:
-  trust no verdict over such a system (open). A feature with no value that an `assert`
+  lists no value for it. So does an equation of more than one root beside a
+  plain constraint: a curved one (`x * x == 4.0`, `x ^ 2.0 == 4.0`, `x % 3.0 == 2.0`), a
+  stated value (`attribute s = x * x`) or an assert (`s == x * x`) as much as a
+  plain one, or a product of two unknowns that the other equations still link
+  (`x * y == 4.0` beside `x == y`). `a { x * x == 4.0 }` beside `b { x == -2.0 }`,
+  and beside `b { x == 2.0 }`, where one root agrees; `c0 { s == 4.0 }` beside
+  `c1 { x == -2.0 }` over that stated `s`, which agree at −2; `c0 { x * x ==
+  4.0 }`, `c1 { y == x + 1.0 }` and `c2 { y <= 0.0 }`, where the root (2, 3)
+  breaks c2 and (−2, −1) meets all three: the root the solve takes, and so
+  whether the others hold, would turn on which equation it took first or on the
+  root itself, so none is read, whether or not a plain constraint was left
+  unused (*… only plain constraints, one of them with more than one root (a and
+  b) …*, or, with the model's own equation among them, *… and the equations over
+  it leave more than one root (`s = x * x`) …*). The features the equations link
+  are one, those the solve left free among them. What the other equations fix
+  one at a time has the one root and is read as before: `z == x * x` over `x ==
+  3.0`, and `mass == density * volume` over the two it multiplies; and `z == x *
+  y` beside `z == 9.0` leaves x and y free along the curve, not two roots. So does
+  an equation one to one in the feature it fixes, a quotient or an exponential
+  (`v == d / t` beside `d == 100.0` and `v == 20.0` is t = 5): a plain one is
+  still withheld beside a plain constraint that was left unused, as it was. A loop
+  of definitions is read the same way: the asserts `x == y * y + 1.0` and `y ==
+  3.0 - x`, or the two as stated values (`x = y * y + 1.0`, `y = 3.0 - x`), have
+  the roots (2, 1) and (5, −2), and the definitions bind x and y at the one the
+  solve found, so a plain constraint over them (`e { x == 5.0 }`, `k { x <= 2.5 }`),
+  or over a feature another equation or a plain constraint takes from them
+  (`z - x == 1.0`, `w == x + 1.0`), is *unjudged* (*… and the equations over it
+  leave more than one root (a) …*); a loop with the one root (`x == 2.0 * y +
+  1.0` beside `y == 3.0 - x`) and a chain of definitions off a stated value
+  (`z == x * x` over `x == 3.0`) are read as before. A lone curved
+  plain constraint is still *imposed*, at the root the solver found; an
+  inequality, or any relation the solve gathers no equation from, over its value
+  is *unjudged* (*… and the equations over it leave more than one root (a) …*),
+  since the other root may break it; `solveFeasible` searches such a root as a
+  freedom, so `x * x == 4.0` beside `x <= 0.0` is undecided, not infeasible. A feature with no value that an `assert`
   constrains in a form the solve does not read — an inequality, a conjunction
   (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
   (`M == max(L, 20.0)`, which the model reports) — is no design freedom for a

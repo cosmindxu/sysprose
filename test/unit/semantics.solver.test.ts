@@ -349,8 +349,9 @@ describe('solve — coupled systems', () => {
     const x = f.attribute('x', p.id, { type: 'Real' });
     const y = f.attribute('y', p.id, { type: 'Real' });
     f.attribute('big', p.id, { type: 'Real', value: 1000000 }); // unrelated large sibling
-    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'x + y = 0.03' } });
-    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'x * y = 0.0002' } });
+    // Asserted: the model's own equations. Plain, the pair has two roots (a product beside a sum) and no value is read.
+    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'x + y = 0.03', requirementRole: 'assert' } });
+    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'x * y = 0.0002', requirementRole: 'assert' } });
 
     const res = solve(m);
     expect(res.converged).toBe(true);
@@ -835,14 +836,199 @@ describe('solve — the order of the text decides no design equation', () => {
   });
 
   it('still imposes a curved plain equation alone, and a product of two unknowns once the others are fixed', async () => {
-    const lone = await rows('package SG { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint k { x >= 0.0 } }');
-    expect([lone.get('a')!.imposed, lone.get('k')!.result]).toEqual([true, 'satisfied']);
+    const lone = await rows('package SG { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } }');
+    expect([lone.get('a')!.result, lone.get('a')!.imposed]).toEqual(['satisfied', true]);
     // `mass == density * volume` is affine in the one it is solved for once the others are fixed: c4 is judged beside it.
     const D = 'attribute mass : ScalarValues::Real; attribute volume : ScalarValues::Real; attribute density : ScalarValues::Real;';
     const C = ['constraint c1 { mass == density * volume }', 'constraint c2 { volume == 2.0 }', 'constraint c3 { density == 5.0 }', 'constraint c4 { mass == 10.0 }'];
     for (const text of [`package MVD { ${C.join(' ')} ${D} }`, `package MVD { ${[...C].reverse().join(' ')} ${D} }`]) {
       const r = await rows(text);
       expect(['c1', 'c2', 'c3', 'c4'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual(Array(4).fill(['satisfied', true]));
+    }
+  });
+
+  /** Every order of `members`, as the text of a package over `decl` (declarations of its features). */
+  const inEveryOrder = (decl: string, members: readonly string[]): string[] => {
+    const out: string[] = [];
+    const go = (rest: readonly string[], acc: readonly string[]): void => {
+      if (rest.length === 0) out.push(`package K { ${decl} ${acc.join(' ')} }`);
+      for (let i = 0; i < rest.length; i++) go([...rest.slice(0, i), ...rest.slice(i + 1)], [...acc, rest[i]!]);
+    };
+    go(members, []);
+    return out;
+  };
+  const X = 'attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real;';
+
+  it('withholds a curved system that leaves no plain constraint unused, and the inequality over it, in every order', async () => {
+    // `c0 { x * x == 4.0 }`, `c1 { y == x + 1.0 }` and `c2 { y <= 0.0 }` are all met by (−2, −1), and the root the solve found, (2, 3),
+    // broke c2: F on a model that is consistent. A product system (`x * y == 4.0` beside `x == y`) has the two roots (2, 2) and (−2, −2).
+    const roots = 'only plain constraints, one of them with more than one root (c0 and c1)';
+    for (const members of [
+      ['constraint c0 { x * x == 4.0 }', 'constraint c1 { y == x + 1.0 }', 'constraint c2 { y <= 0.0 }'],
+      ['constraint c0 { x * y == 4.0 }', 'constraint c1 { x == y }', 'constraint c2 { x <= 0.0 }'],
+    ]) {
+      for (const text of inEveryOrder(X, members)) {
+        const r = await rows(text);
+        expect(['c0', 'c1', 'c2'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual(Array(3).fill(['unknown', undefined]));
+        expect(r.get('c2')!.reason, text).toContain(roots);
+        const { model: m } = await loadModelText(text);
+        expect(solve(m!).values.size, text).toBe(0);
+      }
+    }
+  });
+
+  it('takes the second root a model equation gives into the rule, in every order', async () => {
+    // A stated `s = x * x`, or an asserted `s == x * x`, beside `c0 { s == 4.0 }` and `c1 { x == -2.0 }`: these agree at x = −2, yet written
+    // c0 first the solve took the root 2 and said they disagree, and c1 first it imposed both.
+    const WS = 'attribute x : ScalarValues::Real; attribute s : ScalarValues::Real = x * x;';
+    const YS = 'attribute x : ScalarValues::Real; attribute s : ScalarValues::Real; assert constraint d { s == x * x }';
+    for (const [decl, text] of [
+      [WS, '`s = x * x`'],
+      [YS, 'd'],
+    ] as const) {
+      for (const t of inEveryOrder(decl, ['constraint c0 { s == 4.0 }', 'constraint c1 { x == -2.0 }'])) {
+        const r = await rows(t);
+        expect(['c0', 'c1'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), t).toEqual(Array(2).fill(['unknown', undefined]));
+        expect(r.get('c0')!.reason, t).toContain(`and the equations over it leave more than one root (${text})`);
+        expect(r.get('c0')!.reason, t).not.toContain('disagree');
+      }
+    }
+    // And an asserted curved equation fixes no value a plain constraint beside it is judged at: `b { x == -2.0 }` was violated at the 2.
+    for (const t of inEveryOrder('attribute x : ScalarValues::Real; assert constraint a { x * x == 4.0 }', ['constraint b { x == -2.0 }', 'constraint k { x <= 0.0 }'])) {
+      const r = await rows(t);
+      expect(['b', 'k'].map((n) => r.get(n)!.result), t).toEqual(['unknown', 'unknown']);
+    }
+  });
+
+  it('reaches a curved plain equation through the equations that link it, a product and a feature left free included', async () => {
+    // `z * z == y` beside `z == x * y`: the root the solve found makes z and y free, and the pair of plain constraints on x
+    // that disagree was read apart from it — c2 imposed one way round, withheld the other.
+    const members = ['constraint c0 { x == -2.0 }', 'constraint c1 { z == x * y }', 'constraint c2 { z * z == y }', 'constraint c3 { x == 5.0 }'];
+    for (const text of inEveryOrder(X, members)) {
+      const r = await rows(text);
+      expect(['c0', 'c1', 'c2', 'c3'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual(Array(4).fill(['unknown', undefined]));
+    }
+  });
+
+  it('frees the same features in every order: the elimination takes its rows by their features, not the text’s order', async () => {
+    // `x * y == z` above `x == 1.0` and `x == 3.0` freed x (c0 and c1 imposed); below them it did not.
+    const members = ['constraint c0 { x * y == z }', 'constraint c1 { x == 1.0 }', 'constraint c2 { x == 3.0 }', 'constraint c3 { x >= 1.5 }'];
+    for (const text of inEveryOrder(X, members)) {
+      const r = await rows(text);
+      expect(['c0', 'c1', 'c2', 'c3'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual(Array(4).fill(['unknown', undefined]));
+    }
+  });
+
+  it('does not judge an inequality over the lone root of a curved plain equation, in either order', async () => {
+    // `x * x == 4.0` is imposed at 2, and `k { x <= 0.0 }` read violated there, where −2 meets both.
+    for (const members of [
+      ['constraint a { x * x == 4.0 }', 'constraint k { x <= 0.0 }'],
+      ['constraint k { x <= 0.0 }', 'constraint a { x * x == 4.0 }'],
+      ['constraint a { x * x == 4.0 }', 'constraint k { x >= 0.0 }'],
+    ]) {
+      const text = `package SG { ${X} ${members.join(' ')} }`;
+      const r = await rows(text);
+      expect([r.get('a')!.result, r.get('a')!.imposed, r.get('k')!.result]).toEqual(['satisfied', true, 'unknown']);
+      // Nor is the model infeasible: held at 2, `x <= 0.0` broke, where −2 meets both. The root is a freedom to the search.
+      if (members.some((n) => n.includes('x <= 0.0'))) {
+        const { model: m } = await loadModelText(text);
+        expect(solveFeasible(m!).decided).toBe(false);
+      }
+      expect(r.get('k')!.reason).toBe(
+        'no value the model states fixes x, and the equations over it leave more than one root (a): which root the solve took is ' +
+          'no value the model states, and whether this relation holds turns on it, so none is read, and this relation is not judged',
+      );
+    }
+  });
+
+  it('reads a curve of solutions as a freedom, not as two roots', async () => {
+    // `z == x * y` beside `z == 9.0` leaves x and y free along the hyperbola: nothing to take a root of, and z is imposed.
+    for (const text of inEveryOrder(X, ['constraint c0 { z == x * y }', 'constraint c1 { z == 9.0 }'])) {
+      const r = await rows(text);
+      expect(['c0', 'c1'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual(Array(2).fill(['satisfied', true]));
+    }
+  });
+
+  it('still decides what the other equations fix one at a time, beside a curved one', async () => {
+    // `z == x * x` over `x == 3.0` is affine in the z it fixes: one root, whatever the order.
+    for (const text of inEveryOrder(X, ['constraint e { z == x * x }', 'constraint c { x == 3.0 }', 'constraint k { z <= 5.0 }'])) {
+      const r = await rows(text);
+      expect(['e', 'c', 'k'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual([
+        ['satisfied', true],
+        ['satisfied', true],
+        ['violated', undefined],
+      ]);
+    }
+  });
+
+  it('withholds what a loop of definitions has more than one root of, in every order', async () => {
+    // `x == y * y + 1.0` beside `y == 3.0 - x` has the two roots (2, 1) and (5, −2): the definitions close it, the solve found one, and
+    // `e { x == 5.0 }` read violated at the 2 where (5, −2) meets every equation. `x == y * y` beside `y == x * x` has (0, 0) and (1, 1).
+    const asserted = ['assert constraint a { x == y * y + 1.0 }', 'assert constraint b { y == 3.0 - x }'];
+    const cycle = ['assert constraint a { x == y * y }', 'assert constraint b { y == x * x }'];
+    const stated = 'attribute x : ScalarValues::Real = y * y + 1.0; attribute y : ScalarValues::Real = 3.0 - x; attribute z : ScalarValues::Real;';
+    for (const [decl, defs, plain] of [
+      [X, asserted, ['constraint e { x == 5.0 }', 'constraint k { x <= 2.5 }']],
+      [X, cycle, ['constraint j { x <= 0.9 }', 'constraint k { x >= 0.5 }']],
+      [stated, [], ['constraint e { x == 5.0 }', 'constraint k { x <= 2.5 }', 'constraint j { x >= 4.0 }']],
+    ] as const) {
+      for (const text of inEveryOrder(decl, [...defs, ...plain])) {
+        const r = await rows(text);
+        const names = plain.map((c) => /constraint (\w+)/.exec(c)![1]!);
+        expect(names.map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual(names.map(() => ['unknown', undefined]));
+        expect(r.get(names[0]!)!.reason, text).toContain('the equations over it leave more than one root');
+        // Beside a plain equation (`e`) the value is no one the model states; beside inequalities only, as for an asserted curved equation, it is still published.
+        if (plain.some((c) => c.includes('=='))) {
+          const { model: m } = await loadModelText(text);
+          expect(solve(m!).values.has(m!.all().find((el) => el.declaredName === 'x')!.id), text).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('withholds what another equation reads from such a loop, and what a plain constraint takes from it', async () => {
+    // `z - x == 1.0` is no definition: z is z = 3 at the root 2 and 6 at 5, and `n { z == 3.0 }` was taken as the design equation for it.
+    const loop = ['assert constraint a { x == y * y + 1.0 }', 'assert constraint b { y == 3.0 - x }'];
+    for (const members of [
+      [...loop, 'assert constraint c { z - x == 1.0 }', 'constraint n { z == 3.0 }', 'constraint m { z <= 3.5 }'],
+      [...loop, 'assert constraint c { z == x + 1.0 }', 'constraint m { z <= 3.5 }'],
+      [...loop, 'constraint d { z == x + 1.0 }', 'constraint m { z <= 3.5 }'],
+    ]) {
+      for (const text of [`package K { ${X} ${members.join(' ')} }`, `package K { ${X} ${[...members].reverse().join(' ')} }`]) {
+        const r = await rows(text);
+        for (const n of ['n', 'd', 'm']) if (r.has(n)) expect([r.get(n)!.result, r.get(n)!.imposed], `${n} in ${text}`).toEqual(['unknown', undefined]);
+      }
+    }
+  });
+
+  it('still reads a loop of definitions with the one root, and a chain off a value the model states', async () => {
+    // `x == 2.0 * y + 1.0` beside `y == 3.0 - x` is x = 7/3 and nothing else; `z == x * x` over an asserted `x == 3.0` is 9.
+    const one = ['assert constraint a { x == 2.0 * y + 1.0 }', 'assert constraint b { y == 3.0 - x }', 'constraint e { x == 5.0 }', 'constraint k { x <= 2.5 }'];
+    for (const text of inEveryOrder(X, one)) {
+      const r = await rows(text);
+      expect([r.get('e')!.result, r.get('k')!.result], text).toEqual(['violated', 'satisfied']);
+    }
+    const chain = ['assert constraint a { z == x * x }', 'assert constraint b { x == 3.0 }', 'constraint k { z <= 5.0 }', 'constraint e { z == 9.0 }'];
+    for (const text of inEveryOrder(X, chain)) {
+      const r = await rows(text);
+      expect([r.get('k')!.result, r.get('e')!.result], text).toEqual(['violated', 'satisfied']);
+    }
+  });
+
+  it('still decides a quotient or an exponential design equation, which has the one root', async () => {
+    // `v == d / t` over `d == 100.0` and `v == 20.0` is t = 5; one to one in t, it is no second root, whichever way it is written.
+    const members = [
+      'constraint e0 { v == d / t }',
+      'constraint e1 { d == 100.0 }',
+      'constraint e2 { v == 20.0 }',
+      'constraint lim { t <= 6.0 }',
+      'constraint lim2 { t >= 6.0 }',
+    ];
+    const Q = 'attribute d : ScalarValues::Real; attribute t : ScalarValues::Real; attribute v : ScalarValues::Real;';
+    for (const list of [members, [...members].reverse()]) {
+      const r = await rows(`package K { ${Q} ${list.join(' ')} }`);
+      expect(['e0', 'e1', 'e2'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual(Array(3).fill(['satisfied', true]));
+      expect([r.get('lim')!.result, r.get('lim2')!.result]).toEqual(['satisfied', 'violated']);
     }
   });
 
@@ -903,7 +1089,8 @@ describe('solve — a finite-difference probe leaves the working map as it found
     const f = new ModelFactory(m);
     const p = f.partDef('Implicit');
     const vars = ['a', 'b'].slice(0, exprs.length > 1 ? 2 : 1).map((n) => f.attribute(n, p.id, { type: 'Real' }));
-    for (const expression of exprs) m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression } });
+    // Asserted: the model's own equations. A plain pair with a product in it has two roots, and none is read.
+    for (const expression of exprs) m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression, requirementRole: 'assert' } });
     return { m, vars };
   };
   /** A depth-3 tree of instances over free leaves; `top` is held to `rhs`. */

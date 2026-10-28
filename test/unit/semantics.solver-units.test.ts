@@ -571,10 +571,11 @@ describe('a scaled relation is solved and judged relative to its own SI scale', 
     attribute x : ISQ::LengthValue;
     attribute y : ISQ::LengthValue;
     attribute k : ISQ::LengthValue = 2.0 [nm];
-    constraint c1 { x * x == k * y }
-    constraint c2 { y == x + k }
+    assert constraint c1 { x * x == k * y }
+    assert constraint c2 { y == x + k }
 }
 `);
+    // Asserted: the model's own equations. As plain constraints the pair has two roots and none is read (x = k·(1 ± √5)/2).
     // x² = k(x + k) ⇒ x = k·(1 + √5)/2.
     const exact = 2e-9 * ((1 + Math.sqrt(5)) / 2);
     const x = solvedOf(m, 'x')!;
@@ -2712,7 +2713,9 @@ describe('a design freedom no relation fixes is never judged at the solver’s p
 }
 `);
       expect(freeNames(m), body).toEqual(['x']);
-      expect(solvedOf(m, 'z'), body).toBe(5000000);
+      // z comes from `dz` alone, but the relation that links it to x has more than one root beside a plain constraint:
+      // the component is withheld whole (it was published, 5000000).
+      expect(solvedOf(m, 'z'), body).toBeUndefined();
       expect(byName(m).get('lim'), body).toBe('unknown');
     }
     // Asserted definitions stopped on a step, or where a slope cannot be read,
@@ -2829,7 +2832,7 @@ describe('a design freedom no relation fixes is never judged at the solver’s p
     const m = parse(`package E4 {
     attribute x;
     attribute y;
-    constraint e1 { x + y == 5.0 }
+    assert constraint e1 { x + y == 5.0 }
     assert constraint e2 { y == 2.0 / (x - 1.0) }
     constraint lim { x >= 5.0 }
 }
@@ -2838,10 +2841,11 @@ describe('a design freedom no relation fixes is never judged at the solver’s p
     expect([solved.converged, solved.free]).toEqual([true, []]);
     const x = solvedOf(m, 'x')!;
     expect(Math.min(Math.abs(x - (3 + Math.SQRT2)), Math.abs(x - (3 - Math.SQRT2)))).toBeLessThan(1e-6);
-    expect([byName(m).get('e2'), byName(m).get('lim')]).toEqual(['satisfied', 'violated']);
+    // Asserted: the model's own equations. The pair has the two roots, and `lim` is not judged at the one the solve took
+    // (both break it, which no root is read to say): it was violated, and the model decided infeasible.
+    expect([byName(m).get('e2'), byName(m).get('lim')]).toEqual(['satisfied', 'unknown']);
     const feasible = solveFeasible(m);
-    expect([feasible.feasible, feasible.decided]).toEqual([false, true]);
-    expect(feasible.violations.map((v) => v.name)).toEqual(['lim']);
+    expect([feasible.feasible, feasible.decided]).toEqual([false, false]);
   });
 
   it('Newton writes back only what it drives, and an undrivable equation no longer ends it (p16, p17, p12, p19)', () => {
