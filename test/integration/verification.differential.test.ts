@@ -6051,7 +6051,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // A redefinition under another name (Q2's `M2 redefines M`) is what a Q2 has for M: every surface reads t.M as
     // t's M2. s's and v's `:>> M` redefined Q's M beside it, so s.M read Q's 1 and v.M2 Q2's 2 where v.M is 5 (s1,
-    // vm2 T; s2, vm5 F). They redefine M2 now, and are known by its name (Save writes `:>> M2`).
+    // vm2 T; s2, vm5 F). They redefine M2 now, and are known by its name (Save writes the name they were written by,
+    // `:>> M`, which the load takes to M2 again).
     'redef-target-renamed': probe(`package MI12 {
         part def Q { attribute M default = 1.0; }
         part def Q2 :> Q { attribute M2 redefines M default = 2.0; }
@@ -6157,6 +6158,68 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'CLR::vM25': ['F/F/F/F', 'F'],
       'CLR::vM29': ['T/T/T/T', 'T'],
       'CLR::vM5': ['T/T/T/T', 'T'],
+    }),
+    // The rename shapes of the editor, in both text orders. Renaming v's other feature INTO the name its `:>> M` is
+    // known by gives the two rows above (the file keeps `:>> M` on Q's M beside `M2`, which Save writes as `:>> M`).
+    // Renamed AWAY from it (`Z`), written by hand, the join is gone and `:>> M` is R's M2 again (vM25 T, vM22 F). The
+    // editor keeps the redefinition on Q's M it had, and Save writes that feature by its path: the `-q` rows read as
+    // the page does after the rename (vM25 F, vM22 T), a redefinition of Q's M named in full, which the rule takes as
+    // written. The page and the file agree either way.
+    'redef-target-renamed-away': probe(`package RA {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part v : R { attribute :>> M = 5.0; attribute Z = 9.0; }
+        constraint vM5 { v.M == 5.0 }
+        constraint vZ9 { v.Z == 9.0 }
+        constraint vM25 { v.M2 == 5.0 }
+        constraint vM22 { v.M2 == 2.0 }
+      }`, {
+      'RA::vM22': ['F/F/F/F', 'F'],
+      'RA::vM25': ['T/T/T/T', 'T'],
+      'RA::vM5': ['T/T/T/T', 'T'],
+      'RA::vZ9': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-renamed-away-rev': probe(`package RAR {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part v : R { attribute Z = 9.0; attribute :>> M = 5.0; }
+        constraint vM5 { 5.0 == v.M }
+        constraint vZ9 { 9.0 == v.Z }
+        constraint vM25 { 5.0 == v.M2 }
+        constraint vM22 { 2.0 == v.M2 }
+      }`, {
+      'RAR::vM22': ['F/F/F/F', 'F'],
+      'RAR::vM25': ['T/T/T/T', 'T'],
+      'RAR::vM5': ['T/T/T/T', 'T'],
+      'RAR::vZ9': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-renamed-away-q': probe(`package RAQ {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part v : R { attribute :>> RAQ::Q::M = 5.0; attribute Z = 9.0; }
+        constraint vM5 { v.M == 5.0 }
+        constraint vZ9 { v.Z == 9.0 }
+        constraint vM25 { v.M2 == 5.0 }
+        constraint vM22 { v.M2 == 2.0 }
+      }`, {
+      'RAQ::vM22': ['T/T/T/T', 'T'],
+      'RAQ::vM25': ['F/F/F/F', 'F'],
+      'RAQ::vM5': ['T/T/T/T', 'T'],
+      'RAQ::vZ9': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-renamed-away-q-rev': probe(`package RAQR {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part v : R { attribute Z = 9.0; attribute :>> RAQR::Q::M = 5.0; }
+        constraint vM5 { 5.0 == v.M }
+        constraint vZ9 { 9.0 == v.Z }
+        constraint vM25 { 5.0 == v.M2 }
+        constraint vM22 { 2.0 == v.M2 }
+      }`, {
+      'RAQR::vM22': ['T/T/T/T', 'T'],
+      'RAQR::vM25': ['F/F/F/F', 'F'],
+      'RAQR::vM5': ['T/T/T/T', 'T'],
+      'RAQR::vZ9': ['T/T/T/T', 'T'],
     }),
     // Two of a usage's features that would take ONE name (`part v : R, S`: R's `M2 redefines M`, S's `M2 redefines K`):
     // `:>> M` and `:>> K` both became v's M2, one symbol to the SMT engine, and `v.M2` read the first of the two

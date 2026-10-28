@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as Y from 'yjs';
-import { Model } from '@core/index';
+import { Model, isRelationship } from '@core/index';
 import { bindModelToDoc } from '../../src/collab/model-doc';
 
 // The store kicks off an async standard-library merge at module load; stub it so
@@ -109,15 +109,17 @@ import {
 } from '@persistence/index';
 import * as textApi from '@text/index';
 import * as validationApi from '@validation/index';
-import { parseModel, serializeModel, serializeUserModelSignals } from '@text/index';
+import { parseModel, serializeElement, serializeModel, serializeUserModelSignals, settleRedefinitions } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   checkConstraints,
+  checkConstraintsNumeric,
   getRequirementAttr,
   requirementShortId,
   statementKindOf,
 } from '@semantics/index';
 import { initialSubstate } from '@semantics/mc/config';
+import { verifyModel } from '../../src/api/verification';
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
 import { commandById, handlePageKey, handleShortcut, runExportSysml, runSave } from '../../src/ui/commands';
@@ -1851,6 +1853,599 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       const q2m = st().model.children(byName('Q2').id).find((c) => c.eClass === 'AttributeUsage')!.id;
       st().deleteElement(q2m);
       expect(serializeModel(st().model)).toMatch(/part t : Q2 \{\s*attribute :>> M = 5\.0;\s*\}/);
+    });
+  });
+
+  // EVERY command that edits the model settles the redefinitions it leaves, in its one undo step. The listening is in
+  // `pushUndo` and `afterMutation`, which each of them goes through, so none names what it changes and none can
+  // forget it. Each case below is a probe of the second review of S1: the page's four surfaces (check, literal,
+  // numeric, SMT) read what the file it saves reads, the page's redefinitions are those of the reloaded file, the
+  // command is one undo step, and Undo puts every target back.
+  describe('every command settles the redefinitions it leaves — the page reads what its saved file reads', { timeout: 120_000 }, () => {
+    const LETTER = { satisfied: 'T', violated: 'F', unknown: '?' } as const;
+    /** check / literal / numeric / SMT, per constraint, as the differential table writes them. */
+    async function surfaces(m: Model): Promise<Record<string, string>> {
+      const rows = new Map<string, string[]>();
+      const put = (k: string, s: number, l: string): void => {
+        const r = rows.get(k) ?? ['-', '-', '-', '-'];
+        r[s] = l;
+        rows.set(k, r);
+      };
+      for (const c of checkConstraints(m)) if (!c.conflict) put(m.qualifiedName(c.id), 0, LETTER[c.result as keyof typeof LETTER] ?? '?');
+      for (const r of checkConstraintsNumeric(m)) {
+        if (!r.conflict) put(m.qualifiedName(r.id), 2, r.imposed ? 't' : (LETTER[r.result as keyof typeof LETTER] ?? '?'));
+      }
+      const letter = (r: { claim?: string; code?: string | null }): string =>
+        r.claim === 'proved' || r.claim === 'holds-at-values'
+          ? 'T'
+          : r.claim === 'refuted'
+            ? 'F'
+            : r.code === 'verification/inconsistent-axioms'
+              ? 'X'
+              : '?';
+      const sourceText = serializeModel(m);
+      for (const [s, engine] of [[1, 'literal'], [3, 'smt']] as const) {
+        const rep = await verifyModel(m, { engine, sourceText });
+        for (const r of rep.results) put(r.clause.qualifiedName.replace(/ \([^()]*'s own\)$/, ''), s, letter(r));
+      }
+      return Object.fromEntries([...rows].sort().map(([k, v]) => [k, v.join('/')]));
+    }
+    /** Where an element sits, whatever its id: the owner's name and its place among the owner's features. */
+    const place = (m: Model, id: string): string => {
+      const e = m.get(id);
+      if (!e) return '?';
+      const at = e.ownerId === null ? 0 : m.children(e.ownerId).filter((c) => !isRelationship(c.eClass)).findIndex((c) => c.id === id);
+      return `${e.ownerId === null ? '' : m.qualifiedName(e.ownerId)}#${at}${e.declaredName === undefined ? '' : `:${e.declaredName}`}`;
+    };
+    /** Every explicit redefinition the text holds: the feature, and the feature it redefines. */
+    const targets = (m: Model): string[] =>
+      m
+        .all()
+        .filter((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && e.attrs.implicit !== true)
+        .map((r) => `${place(m, r.source![0]!)} -> ${(r.target ?? []).map((t) => place(m, t)).join(',')}`)
+        .sort();
+    const reopened = (m: Model): Model => parseModel(serializeModel(m)).model;
+    /** What the page reads on every surface is what the file it saves reads, and the redefinitions are the same. */
+    async function pageIsFile(note: string): Promise<void> {
+      const page = st().model;
+      const file = reopened(page);
+      expect(targets(page), `${note}: redefinitions`).toEqual(targets(file));
+      expect(await surfaces(page), `${note}: four surfaces`).toEqual(await surfaces(file));
+    }
+    /** The command is one undo step, and Undo puts every redefinition target back (Redo, too). */
+    function oneStep(note: string, run: () => void): void {
+      const before = targets(st().model);
+      const undos = st().undoStack.length;
+      run();
+      expect(st().undoStack.length, `${note}: one undo step`).toBe(undos + 1);
+      const after = targets(st().model);
+      st().undo();
+      expect(targets(st().model), `${note}: undo`).toEqual(before);
+      st().redo();
+      expect(targets(st().model), `${note}: redo`).toEqual(after);
+    }
+    const typingOf = (name: string): string =>
+      st().model.relationshipsFrom(byName(name).id).find((r) => r.eClass === 'FeatureTyping')!.id;
+    const feature = (owner: string, at = 0): string =>
+      st().model.children(byName(owner).id).filter((c) => c.eClass === 'AttributeUsage')[at]!.id;
+    const satisfied = (m: Model): string[] =>
+      checkConstraints(m)
+        .filter((c) => c.result === 'satisfied')
+        .map((c) => m.qualifiedName(c.id).replace(/^[A-Z0-9]+::/, ''))
+        .sort();
+
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q3 :> Q;
+  part def Q4 :> Q2 { attribute :>> M default = 4.0; }
+  part t : Q2 { attribute :>> M; }
+  constraint t1 { t.M == 1.0 }
+  constraint t2 { t.M == 2.0 }
+  constraint t4 { t.M == 4.0 }
+}`;
+
+    it('Delete on a typing (deleteSelection: the Delete key, the palette button, the multi-select menu)', async () => {
+      load(src);
+      expect(satisfied(st().model)).toEqual(['t2']);
+      st().setSelection([typingOf('t')]);
+      oneStep('delete', () => st().deleteSelection());
+      // t is untyped: its `:>> M` is Q's M, the name the saved file writes finds (the page kept Q2's, read 2).
+      expect(satisfied(st().model)).toEqual(['t1']);
+      await pageIsFile('delete');
+    });
+
+    it('Delete on several elements at once settles them together, in one undo step', async () => {
+      load(src);
+      // The typing and Q4 (nobody's general here), one selection.
+      st().setSelection([typingOf('t'), byName('Q4').id]);
+      oneStep('multi delete', () => st().deleteSelection());
+      expect(st().model.all().some((e) => e.declaredName === 'Q4')).toBe(false);
+      await pageIsFile('multi delete');
+      // The type itself: Q2 and its unnamed feature go, and t is typed by nothing.
+      load(src);
+      st().setSelection([byName('Q2').id]);
+      oneStep('delete the type', () => st().deleteSelection());
+      await pageIsFile('delete the type');
+    });
+
+    it('an Explorer drag of the feature a redefinition targets (reparent, reparentMany) settles it', async () => {
+      // Q2's unnamed `:>> M` dragged into Q3, which is no general of t: t no longer inherits it.
+      load(src);
+      oneStep('drag', () => st().reparent(feature('Q2'), byName('Q3').id));
+      expect(satisfied(st().model)).toEqual(['t1']);
+      await pageIsFile('drag');
+      load(src);
+      oneStep('drag many', () => st().reparentMany([feature('Q2'), feature('Q4')], byName('Q3').id));
+      await pageIsFile('drag many');
+      // And back: the redefinition is Q2's again, on the page and in the file.
+      load(src);
+      st().reparent(feature('Q2'), byName('Q3').id);
+      st().reparent(feature('Q3'), byName('Q2').id);
+      await pageIsFile('dragged back');
+    });
+
+    describe('a rename (updateElement on declaredName or declaredShortName)', () => {
+      /** v's `:>> M` is R's `M2 redefines M`; v's other feature is named `other`. */
+      const text = (order: 'forward' | 'reversed', other: string): string => {
+        const body =
+          order === 'forward' ? `attribute :>> M = 5.0; attribute ${other} = 9.0;` : `attribute ${other} = 9.0; attribute :>> M = 5.0;`;
+        const c = order === 'forward' ? ['v.M == 5.0', 'v.M2 == 9.0', 'v.M2 == 5.0'] : ['5.0 == v.M', '9.0 == v.M2', '5.0 == v.M2'];
+        return `package RN {
+  part def Q { attribute M default = 1.0; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part v : R { ${body} }
+  constraint vM5 { ${c[0]} }
+  constraint vM29 { ${c[1]} }
+  constraint vM25 { ${c[2]} }
+}`;
+      };
+      const sibling = (name: string): string => st().model.children(byName('v').id).find((c) => c.declaredName === name)!.id;
+      for (const order of ['forward', 'reversed'] as const) {
+        it(`into the name v's \`:>> M\` is known by keeps the two features apart (text order ${order})`, async () => {
+          load(text(order, 'Z'));
+          // v's `:>> M` is R's M2 (v.M2 is the 5); v's other feature is named Z.
+          expect(satisfied(st().model)).toEqual(['vM25', 'vM5']);
+          oneStep('rename', () => st().updateElement(sibling('Z'), { declaredName: 'M2' }));
+          // The sibling is M2 now, and `:>> M` stays Q's M, as the file says it: M2 is the 9, M the 5 (the table's
+          // `redef-target-own-name`), not two features of one name.
+          expect(satisfied(st().model)).toEqual(['vM29', 'vM5']);
+          expect(serializeModel(st().model)).toMatch(/attribute :>> M = 5\.0;/);
+          await pageIsFile('rename');
+          // ...which is the same text written by hand.
+          expect(await surfaces(st().model)).toEqual(await surfaces(parseModel(text(order, 'M2')).model));
+        });
+        it(`away from it keeps v's \`:>> M\` where it was, and the file reads alike (text order ${order})`, async () => {
+          load(text(order, 'M2'));
+          expect(satisfied(st().model)).toEqual(['vM29', 'vM5']);
+          oneStep('rename away', () => st().updateElement(sibling('M2'), { declaredName: 'Z' }));
+          // Q's M stays redefined, now named by its path: the page and the file keep the 5 on M, and R's M2 its 2.
+          await pageIsFile('rename away');
+          expect(serializeModel(st().model)).toMatch(/attribute :>> RN::Q::M = 5\.0;/);
+        });
+      }
+      it('a short name is a rename too', async () => {
+        load(text('forward', 'Z'));
+        oneStep('short name', () => st().updateElement(sibling('Z'), { declaredShortName: 'M2' }));
+        await pageIsFile('short name');
+      });
+
+      it('an edit made through the SDK settles too (it has no undo step of its own)', async () => {
+        const model = st().api.model;
+        model.resetPreserving(parseModel(text('forward', 'Z')).model.toJSON(), (el) => el.attrs.isLibrary === true);
+        useAppStore.setState({ model, undoStack: [], redoStack: [], selectionId: null, selectionIds: [] });
+        st().api.update(sibling('Z'), { declaredName: 'M2' });
+        expect(satisfied(st().model)).toEqual(['vM29', 'vM5']);
+        await pageIsFile('sdk rename');
+        model.resetPreserving(new Model().toJSON(), () => false);
+      });
+    });
+
+    it('deleting a feature that skips a level of the chain lands the redefinition where the name finds it now', async () => {
+      // Q4's `M4 redefines Q::M` skips Q2's unnamed `:>> M`; s's `:>> M` redefines M4. Without M4 the text reads Q2's.
+      const da = `package DA {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q4 :> Q2 { attribute M4 redefines Q::M default = 4.0; }
+  part s : Q4 { attribute :>> M; }
+  constraint s1 { s.M == 1.0 }
+  constraint s2 { s.M == 2.0 }
+  constraint s4 { s.M == 4.0 }
+}`;
+      load(da);
+      expect(satisfied(st().model)).toEqual(['s4']);
+      oneStep('delete M4', () => st().deleteElement(byName('M4').id));
+      expect(satisfied(st().model)).toEqual(['s2']);
+      // The user's `:>> M` stays: not a qualified name nobody wrote.
+      expect(serializeModel(st().model)).toMatch(/part s : Q4 \{\s*attribute :>> M;\s*\}/);
+      await pageIsFile('delete M4');
+      // The Delete key takes the same way.
+      load(da);
+      st().setSelection([byName('M4').id]);
+      oneStep('delete M4 (selection)', () => st().deleteSelection());
+      expect(satisfied(st().model)).toEqual(['s2']);
+      await pageIsFile('delete M4 (selection)');
+    });
+
+    it('the same delete made through the SDK, or on the model itself, lands the redefinition where the name finds it', async () => {
+      const da = `package DA {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q4 :> Q2 { attribute M4 redefines Q::M default = 4.0; }
+  part s : Q4 { attribute :>> M; }
+  constraint s1 { s.M == 1.0 }
+  constraint s2 { s.M == 2.0 }
+  constraint s4 { s.M == 4.0 }
+}`;
+      const model = st().api.model;
+      const fromSdk = (): void => {
+        model.resetPreserving(parseModel(da).model.toJSON(), (el) => el.attrs.isLibrary === true);
+        useAppStore.setState({ model, undoStack: [], redoStack: [], selectionId: null, selectionIds: [] });
+      };
+      for (const [how, remove] of [
+        ['window.sysml.delete', (id: string): unknown => st().api.delete(id)],
+        ['window.sysml.model.remove', (id: string): unknown => st().api.model.remove(id)],
+        ['window.sysml.commit(delete)', (id: string): unknown => st().api.commit(() => st().api.delete(id))],
+      ] as const) {
+        fromSdk();
+        expect(satisfied(st().model), how).toEqual(['s4']);
+        remove(byName('M4').id);
+        // Q2's unnamed `:>> M` is the most specific `M` Q4 has now; the user's `:>> M` is not a qualified name.
+        expect(satisfied(st().model), how).toEqual(['s2']);
+        expect(serializeModel(st().model), how).toMatch(/part s : Q4 \{\s*attribute :>> M;\s*\}/);
+        await pageIsFile(how);
+        // ...which is the text without M4.
+        expect(await surfaces(st().model), how).toEqual(
+          await surfaces(parseModel(da.replace('attribute M4 redefines Q::M default = 4.0;', '')).model),
+        );
+      }
+      model.resetPreserving(new Model().toJSON(), () => false);
+    });
+
+    it('a feature dragged where no path can name it takes along the redefinitions that named it by one', async () => {
+      // w's `:>> A::a` names a feature of a type w does not specialise, by its path; in the unnamed part there is no path.
+      load(`package G {
+  part def A { attribute a default = 1.0; }
+  part w { attribute :>> A::a = 5.0; }
+  part z { part { attribute y = 1.0; } }
+}`);
+      expect(targets(st().model)).toHaveLength(1);
+      const inner = st().model.children(byName('z').id).find((c) => c.eClass === 'PartUsage')!;
+      oneStep('drag into an unnamed part', () => st().reparent(byName('a').id, inner.id));
+      await pageIsFile('drag into an unnamed part');
+      // and into a named one, where the path is written anew
+      load(`package G {
+  part def A { attribute a default = 1.0; }
+  part w { attribute :>> A::a = 5.0; }
+  part z;
+}`);
+      oneStep('drag into a named part', () => st().reparent(byName('a').id, byName('z').id));
+      expect(serializeModel(st().model)).toMatch(/attribute :>> G::z::a = 5\.0;/);
+      await pageIsFile('drag into a named part');
+    });
+
+    it('an edit that cannot move a redefinition does not ask every one a type the edit touched has below it', () => {
+      // 100 usages of D2, which specialises D and redefines D's 12 attributes, each usage redefining 12 in turn: 1200
+      // redefinitions below D. Renaming D's `a0`, or adding a feature to D, moves only those known by `a0`'s line.
+      const A = 12;
+      const U = 100;
+      const attrs = Array.from({ length: A }, (_, i) => `attribute a${i} default = ${i}.0;`).join(' ');
+      const re = Array.from({ length: A }, (_, i) => `attribute :>> a${i} default = ${i + 1}.0;`).join(' ');
+      const uses = Array.from(
+        { length: U },
+        (_, j) => `part u${j} : D2 { ${Array.from({ length: A }, (_, i) => `attribute :>> a${i} = ${j}.0;`).join(' ')} }`,
+      ).join('\n');
+      load(`package G { part def D { ${attrs} } part def D2 :> D { ${re} } ${uses} }`);
+      const m = st().model;
+      const a0 = m.children(byName('D').id).find((c) => c.declaredName === 'a0')!;
+      const all = m.all().filter((e) => e.attrs.isLibrary !== true && !isRelationship(e.eClass)).map((e) => e.id);
+      const time = (f: () => void): number => {
+        const t = performance.now();
+        f();
+        return performance.now() - t;
+      };
+      // The measure: every redefinition of the model asked once (nothing moves).
+      const full = time(() => settleRedefinitions(m, all));
+      const rename = time(() => st().updateElement(a0.id, { declaredName: 'a0x' }));
+      const create = time(() => st().createElement('AttributeUsage', byName('D').id, 'zz'));
+      expect(rename, `rename ${rename.toFixed(0)} ms against a full settle ${full.toFixed(0)} ms`).toBeLessThan(full / 2);
+      expect(create, `create ${create.toFixed(0)} ms against a full settle ${full.toFixed(0)} ms`).toBeLessThan(full / 2);
+      // What the rename did ask, it settled: the redefinitions of the renamed line follow it, and the file agrees.
+      expect(targets(m)).toEqual(targets(reopened(m)));
+      expect(serializeModel(m)).toMatch(/attribute :>> a0x = 0\.0;/);
+    }, 120_000);
+
+    it('a redefinition nested in a redefined part follows an edit of the base, the part or its type', async () => {
+      // w's nested `part :>> p { attribute :>> load; }` resolves `load` through the part it redefines, whose own type
+      // redefines P's load in turn: each edit below moves the part, or the feature, and the nested one with it.
+      const nested = `package G {
+  part def P { attribute load default = 1.0; }
+  part def P2 :> P { attribute :>> load default = 2.0; }
+  part def H { part p : P; }
+  part def H2 :> H { part :>> p : P2; }
+  part w : H2 { part :>> p { attribute :>> load = 5.0; } }
+  constraint c1 { w.p.load == 1.0 }
+  constraint c5 { w.p.load == 5.0 }
+}`;
+      load(nested);
+      expect(targets(st().model)).toHaveLength(4);
+      await pageIsFile('loaded');
+      const p = byName('P').id;
+      const feature = (owner: string) => st().model.children(byName(owner).id).find((c) => c.eClass === 'AttributeUsage')!.id;
+      oneStep('rename the base', () => st().updateElement(st().model.children(p).find((c) => c.declaredName === 'load')!.id, { declaredName: 'power' }));
+      await pageIsFile('rename the base');
+      load(nested);
+      oneStep('retype w', () => st().bindType(byName('w').id, 'H'));
+      await pageIsFile('retype w');
+      load(nested);
+      oneStep('delete P2', () => st().deleteElement(byName('P2').id));
+      await pageIsFile('delete P2');
+      load(nested);
+      oneStep('drag the unnamed load out', () => st().reparent(feature('P2'), byName('H').id));
+      await pageIsFile('drag the unnamed load out');
+    });
+
+    it('a paste and a duplicate settle what they bring', async () => {
+      // t's `:>> M` pasted into u, a Q: the copy redefines Q2's unnamed feature, which u does not inherit.
+      load(src.replace('constraint t1', 'part u : Q;\n  constraint t1'));
+      st().setSelection([feature('t')]);
+      st().copySelection();
+      oneStep('paste', () => {
+        expect(st().pasteClipboard(byName('u').id)).toHaveLength(1);
+      });
+      await pageIsFile('paste');
+      load(src);
+      oneStep('duplicate', () => {
+        expect(st().duplicateElement(feature('Q2'))).not.toBeNull();
+      });
+      await pageIsFile('duplicate');
+    });
+
+    // A few hundred random edit sequences over small random redefinition models (the generator of the review's
+    // differential: definitions that specialise one or two earlier, with unnamed and renamed redefinitions and a
+    // merged `:>> a, b`; usages that redefine what they inherit). After EACH command the page's redefinitions are
+    // those of the file it saves, and the command is one undo step that Undo and Redo walk exactly.
+    describe('random edit sequences (property)', () => {
+      /** A seeded generator (mulberry32). */
+      const seeded = (seed: number): (() => number) => {
+        let a = seed >>> 0;
+        return () => {
+          a = (a + 0x6d2b79f5) >>> 0;
+          let t = a;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      };
+      const NAMES = ['M2', 'N2', 'K2', 'X'];
+      function randomModel(rnd: () => number): string {
+        const int = (lo: number, hi: number): number => lo + Math.floor(rnd() * (hi - lo + 1));
+        const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
+        let value = 10;
+        const v = (): string => `${++value}.0`;
+        const defs: Array<{ name: string; generals: string[]; features: string[] }> = [
+          { name: 'Q0', generals: [], features: [`attribute M default = ${v()};`, `attribute N default = ${v()};`] },
+        ];
+        const visible: Record<string, Set<string>> = { Q0: new Set(['M', 'N']) };
+        if (rnd() < 0.5) {
+          defs.push({ name: 'T0', generals: [], features: [`attribute K default = ${v()};`] });
+          visible.T0 = new Set(['K']);
+        }
+        const unionOf = (names: string[]): Set<string> => new Set(names.flatMap((g) => [...visible[g]!]));
+        for (let i = 1, n = int(2, 5); i <= n; i++) {
+          const name = `D${i}`;
+          const earlier = defs.map((d) => d.name);
+          const generals = [...earlier].sort(() => rnd() - 0.5).slice(0, rnd() < 0.6 ? 1 : 2);
+          let seen = unionOf(generals);
+          const used = new Set<string>();
+          const features: string[] = [];
+          for (let k = int(0, 2); k > 0; k--) {
+            const choices = [...seen].filter((x) => !used.has(x)).sort();
+            if (choices.length === 0) break;
+            const x = pick(choices);
+            const r = rnd();
+            const fresh = NAMES.filter((y) => !seen.has(y) && !used.has(y));
+            if (r < 0.55) {
+              features.push(`attribute :>> ${x} default = ${v()};`);
+              used.add(x);
+            } else if (r < 0.8 && fresh.length > 0) {
+              const y = pick(fresh);
+              features.push(`attribute ${y} redefines ${x} default = ${v()};`);
+              used.add(x).add(y);
+              seen = new Set([...seen, y]);
+            } else if (r < 0.9 && choices.length >= 2 && fresh.length > 0) {
+              const [a, b] = [...choices].sort(() => rnd() - 0.5);
+              const y = pick(fresh);
+              features.push(`attribute ${y} :>> ${a}, ${b} default = ${v()};`);
+              used.add(a!).add(b!).add(y);
+              seen = new Set([...seen, y]);
+            } else if (fresh.length > 0) {
+              const y = pick(fresh);
+              features.push(`attribute ${y} default = ${v()};`);
+              used.add(y);
+              seen = new Set([...seen, y]);
+            }
+          }
+          visible[name] = seen;
+          defs.push({ name, generals, features });
+        }
+        const usages: Array<{ name: string; generals: string[]; features: string[] }> = [];
+        for (let j = 0, n = int(1, 3); j < n; j++) {
+          const generals = defs.map((d) => d.name).sort(() => rnd() - 0.5).slice(0, rnd() < 0.7 ? 1 : 2);
+          const seen = unionOf(generals);
+          const used = new Set<string>();
+          const features: string[] = [];
+          for (let k = int(1, 3); k > 0; k--) {
+            const choices = [...seen].filter((x) => !used.has(x)).sort();
+            if (choices.length === 0) break;
+            const x = pick(choices);
+            const r = rnd();
+            if (r < 0.35) features.push(`attribute :>> ${x};`);
+            else if (r < 0.8) features.push(`attribute :>> ${x} = ${v()};`);
+            else features.push(`attribute Z${k} = ${v()};`);
+            used.add(x);
+          }
+          usages.push({ name: `u${j}`, generals, features });
+        }
+        const decl = (kw: string, op: string, d: { name: string; generals: string[]; features: string[] }): string =>
+          `  ${kw} ${d.name}${d.generals.length > 0 ? ` ${op} ${d.generals.join(', ')}` : ''} { ${d.features.join(' ')} }`;
+        return [
+          'package G {',
+          ...defs.map((d) => decl('part def', ':>', d)),
+          ...usages.map((u) => decl('part', ':', u)),
+          '}',
+        ].join('\n');
+      }
+
+      it('300 sequences of 4 commands: after each, the page holds the redefinitions its saved file holds', () => {
+        // SYSPROSE_RT_SEQUENCES / _STEPS / _FIRST widen the search for a soak; the defaults are the gate's.
+        const SEQUENCES = Number(process.env.SYSPROSE_RT_SEQUENCES ?? 300);
+        const STEPS = Number(process.env.SYSPROSE_RT_STEPS ?? 4);
+        const FIRST = Number(process.env.SYSPROSE_RT_FIRST ?? 0);
+        const failures: string[] = [];
+        let handChecks = 0;
+        for (let seq = FIRST; seq < FIRST + SEQUENCES && failures.length < 3; seq++) {
+          const rnd = seeded(seq * 7919 + 13);
+          const pick = <T,>(xs: readonly T[]): T | undefined => xs[Math.floor(rnd() * xs.length)];
+          const text = randomModel(rnd);
+          load(text);
+          const log: string[] = [];
+          for (let step = 0; step < STEPS; step++) {
+            const m = st().model;
+            const user = m.all().filter((e) => e.attrs.isLibrary !== true && e.attrs.implicit !== true);
+            const defs = user.filter((e) => e.eClass === 'PartDefinition');
+            const usages = user.filter((e) => e.eClass === 'PartUsage');
+            const features = user.filter((e) => e.eClass === 'AttributeUsage');
+            const typings = user.filter((e) => e.eClass === 'FeatureTyping' || e.eClass === 'Subclassification' || e.eClass === 'Specialization');
+            const owners = [...defs, ...usages];
+            const before = targets(m);
+            const undos = st().undoStack.length;
+            const kind = Math.floor(rnd() * 12);
+            let did = '';
+            let handText: string | null = null;
+            let watchedSources: string[] = [];
+            if (kind === 0 && usages.length > 0) {
+              const u = pick(usages)!;
+              const d = pick(defs)!;
+              did = `bindType ${u.declaredName} ${d.declaredName}`;
+              st().bindType(u.id, d.declaredName!);
+            } else if (kind === 1 && typings.length > 0) {
+              const t = pick(typings)!;
+              // Not to a type that specialises the relationship's own source: a cycle of generals is a model error.
+              const reaches = (from: string, to: string, seen = new Set<string>()): boolean =>
+                from === to || (!seen.has(from) && (seen.add(from), m.typesOf(from).some((g) => reaches(g.id, to, seen))));
+              const d = pick(defs.filter((x) => !reaches(x.id, t.source![0]!)));
+              if (d === undefined) continue;
+              did = `retarget ${place(m, t.id)} to ${d.declaredName}`;
+              st().updateElement(t.id, { target: [d.id] });
+            } else if (kind === 2 && typings.length > 0) {
+              const t = pick(typings)!;
+              did = `delete ${t.eClass} ${place(m, t.id)}`;
+              st().deleteElement(t.id);
+            } else if (kind === 3 && features.length > 0) {
+              const f = pick(features)!;
+              did = `delete ${place(m, f.id)}`;
+              // The saved text with the feature's own line cut out, as an author would cut it: where that line is the
+              // only one of its kind and nothing else in the text names the feature.
+              const saved = serializeModel(m);
+              const line = serializeElement(m, f.id, 0).trim();
+              watchedSources = m
+                .relationshipsTo(f.id)
+                .filter((r) => r.eClass === 'Redefinition' && r.attrs.implicit !== true)
+                .flatMap((r) => r.source ?? []);
+              if (line !== '' && !line.includes('\n') && saved.split(`\n`).filter((l) => l.trim() === line).length === 1) {
+                const withoutIt = saved.split('\n').filter((l) => l.trim() !== line).join('\n');
+                if (f.declaredName === undefined || !new RegExp(`\\b${f.declaredName}\\b`).test(withoutIt)) handText = withoutIt;
+              }
+              st().deleteElement(f.id);
+            } else if (kind === 4 && features.length > 0 && owners.length > 0) {
+              const f = pick(features)!;
+              const o = pick(owners.filter((x) => x.id !== f.ownerId))!;
+              did = `reparent ${place(m, f.id)} into ${o.declaredName}`;
+              st().reparent(f.id, o.id);
+            } else if (kind === 5 && features.length > 1 && owners.length > 0) {
+              const fs = [...features].sort(() => rnd() - 0.5).slice(0, 2);
+              const o = pick(owners)!;
+              did = `reparentMany ${fs.map((f) => place(m, f.id)).join(' ')} into ${o.declaredName}`;
+              st().reparentMany(fs.map((f) => f.id), o.id);
+            } else if (kind === 6 && features.length > 0) {
+              const f = pick(features)!;
+              // A name some feature of the model bears already, most often: the collisions are there.
+              const name = pick([...features.flatMap((x) => (x.declaredName === undefined ? [] : [x.declaredName])), 'M', 'N', 'K', ...NAMES])!;
+              did = `rename ${place(m, f.id)} to ${name}`;
+              st().updateElement(f.id, { declaredName: name });
+            } else if (kind >= 10 && features.length > 0) {
+              const f = pick(features)!;
+              const name = pick([...features.flatMap((x) => (x.declaredName === undefined ? [] : [x.declaredName])), 'M', 'N', 'K', ...NAMES])!;
+              did = `rename ${place(m, f.id)} to ${name}`;
+              st().updateElement(f.id, { declaredName: name });
+            } else if (kind === 7 && owners.length > 0) {
+              const o = pick(owners)!;
+              const name = pick([...features.flatMap((x) => (x.declaredName === undefined ? [] : [x.declaredName])), 'M', 'N', 'K', ...NAMES])!;
+              did = `create ${name} in ${o.declaredName}`;
+              st().createElement('AttributeUsage', o.id, name);
+            } else if (kind === 8 && features.length > 0) {
+              const f = pick(features)!;
+              did = `duplicate ${place(m, f.id)}`;
+              st().duplicateElement(f.id);
+            } else if (kind === 9 && features.length > 0 && owners.length > 0) {
+              const f = pick(features)!;
+              const o = pick(owners)!;
+              did = `paste ${place(m, f.id)} into ${o.declaredName}`;
+              st().setSelection([f.id]);
+              st().copySelection();
+              st().pasteClipboard(o.id);
+            }
+            if (did === '') continue;
+            log.push(did);
+            const page = st().model;
+            // Two features of one owner under one declared name cannot be told apart by any text that names them:
+            // the saved file finds the first. Whatever follows is outside what a name can say.
+            if (page.all().some((e) => page.children(e.id).some((c, i, kids) => c.declaredName !== undefined && !isRelationship(c.eClass) && kids.findIndex((o) => o.declaredName === c.declaredName && !isRelationship(o.eClass)) !== i))) break;
+            const after = targets(page);
+            const file = targets(reopened(page));
+            const problems: string[] = [];
+            if (after.join('\n') !== file.join('\n')) problems.push(`page ≠ file:\n${after.join('\n')}\n---\n${file.join('\n')}`);
+            // The edit asked only what it could move (the lines its names are in): a full settle of the model finds
+            // nothing left to move.
+            const left = settleRedefinitions(
+              page,
+              page.all().filter((e) => e.attrs.isLibrary !== true && !isRelationship(e.eClass)).map((e) => e.id),
+            );
+            if (left > 0) problems.push(`a full settle of the page still moved ${left} redefinition(s)`);
+            // And a delete lands the redefinitions that targeted the feature as the text without it reads them: not only
+            // as the file this page saves does. Where a feature is known by a name of its own (`M2 redefines N`), a
+            // sibling on its line may have kept a redefinition off a more specific feature that the delete frees: the
+            // name the author wrote is not kept, and the TODO says so. Those models are outside this oracle.
+            const nameKept = page
+              .all()
+              .some((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && page.get((e.source ?? [])[0] ?? '')?.declaredName !== undefined);
+            if (handText !== null && !nameKept && parseModel(handText).diagnostics.length === 0) {
+              const watched = watchedSources.map((id) => `${place(page, id)} -> `);
+              const only = (xs: string[]): string => xs.filter((x) => watched.some((w) => x.startsWith(w))).join('\n');
+              const hand = only(targets(parseModel(handText).model));
+              if (watched.length > 0) handChecks++;
+              if (hand !== only(after)) {
+                problems.push(`page ≠ the text without it:\n${only(after)}\n---\n${hand}\nthe text without it:\n${handText}\nthe page's:\n${serializeModel(page)}`);
+              }
+            }
+            if (st().undoStack.length > undos + 1) problems.push('more than one undo step');
+            if (st().undoStack.length === undos + 1) {
+              st().undo();
+              if (targets(st().model).join('\n') !== before.join('\n')) problems.push('undo');
+              st().redo();
+              if (targets(st().model).join('\n') !== after.join('\n')) problems.push('redo');
+            }
+            if (problems.length > 0) {
+              failures.push(`sequence ${seq} step ${step}: ${log.join(' ; ')}\n${text}\n${problems.join('\n')}`);
+              break;
+            }
+          }
+        }
+        expect(failures).toEqual([]);
+        // The second oracle ran: some deletes were compared with the text without the feature.
+        if (SEQUENCES >= 100) expect(handChecks).toBeGreaterThan(0);
+      }, 600_000);
     });
   });
 

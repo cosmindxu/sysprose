@@ -78,8 +78,8 @@ import {
   pasteSubtrees,
   isRelationship,
   isRequirement,
-  isTypingSpecialization,
   type AttrValue,
+  type ChangeEvent,
   type ClipboardPayload,
   type CreateElementOptions,
   type ElementId,
@@ -102,6 +102,9 @@ import {
   parseModel,
   retractResolvedSpecializationWarnings,
   serializeUserModelSignals,
+  redefinitionsDirtiedBy,
+  redefinitionsToRetarget,
+  retargetRedefinitions,
   settleRedefinitions,
   resolveConnectorFeatureChains,
   type MeasuredText,
@@ -2001,6 +2004,92 @@ export function proveInTerminalHint(command: string): string {
 
 export const useAppStore = create<AppState>((set, get) => {
   /**
+   * THE ONE PLACE A USER EDIT IS SETTLED. A redefinition may target a feature the saved text cannot name: Save
+   * writes `:>> M`, and the next load lands that on the most specific `M` its owner then inherits. Any edit that
+   * changes what that name lands on (a retype, a typing drawn or deleted, a feature moved, renamed, added or
+   * removed, a paste) leaves the page apart from the file it saves, and the page can then prove what the reloaded
+   * file refutes. So every command that edits the model — it takes its undo snapshot with {@link pushUndo} and ends
+   * in {@link afterMutation}, or is a call of the SDK, which ends in {@link afterSdkEdit} — has the model's changes
+   * in between listened to here, and the end of the command moves the redefinitions they left where the saved text
+   * puts them ({@link settleRedefinitions}), in the same undo step. No command names what it changes, so none can
+   * forget it.
+   *
+   * A REMOVAL is also followed on the model itself, whoever removes: the redefinitions that stay and whose target
+   * goes are landed on the feature the name they are saved by finds now ({@link retargetRedefinitions}), where
+   * `Model.remove`'s walk up the removed target's redefinitions would skip a level. That holds for the SDK, a REST
+   * call and a peer's edit as for a command, and for a call that goes to the model directly.
+   */
+  let editEvents: ChangeEvent[] = [];
+  let editOpen = false;
+  let editWatch: { model: Model; unsubscribe: () => void; unplan: () => void } | null = null;
+
+  /** Listen to `model` for the changes of the commands that edit it, and follow its removals. */
+  function watchModel(model: Model): void {
+    if (editWatch?.model === model) return;
+    editWatch?.unsubscribe();
+    editWatch?.unplan();
+    editWatch = {
+      model,
+      unsubscribe: model.subscribe((events) => {
+        if (!editOpen) return;
+        for (const ev of events) {
+          // The model replaced whole is the text or the snapshot it was made from: nothing it holds is to settle.
+          if (ev.type === 'reset') endEdit();
+          else if (ev.type !== 'order' && ev.element?.attrs.isLibrary !== true) editEvents.push(ev);
+        }
+      }),
+      unplan: model.addRemovalPlanner((going) => {
+        try {
+          const listed = redefinitionsToRetarget(model, going);
+          if (listed.length === 0) return undefined;
+          return () => {
+            try {
+              retargetRedefinitions(model, listed);
+            } catch (err) {
+              console.error('retargetRedefinitions failed', err);
+            }
+          };
+        } catch (err) {
+          // The removal goes on as `Model.remove` walks it: the page may differ from its file, not be lost.
+          console.error('redefinitionsToRetarget failed', err);
+          return undefined;
+        }
+      }),
+    };
+  }
+
+  /** Start listening to `model` for the changes of the command that is beginning. */
+  function beginEdit(model: Model): void {
+    watchModel(model);
+    editEvents = [];
+    editOpen = true;
+  }
+
+  /** Stop listening: the command is over, or the model was replaced whole. */
+  function endEdit(): void {
+    editOpen = false;
+    editEvents = [];
+  }
+
+  /** End the command's listening, and settle what its changes left (one undo step with them). */
+  function settleEdit(model: Model): void {
+    if (!editOpen) return;
+    const events = editEvents;
+    endEdit();
+    if (events.length === 0) return;
+    try {
+      const dirtied = redefinitionsDirtiedBy(model, events);
+      withCommandMutation(() => {
+        if (dirtied.types.size > 0) settleRedefinitions(model, dirtied.types, dirtied.touched);
+        if (dirtied.named.size > 0) settleRedefinitions(model, dirtied.named, dirtied.touched, dirtied.names);
+      });
+    } catch (err) {
+      // A settle that fails leaves the edit as it stood: the page may differ from its file, not be lost.
+      console.error('settleRedefinitions failed', err);
+    }
+  }
+
+  /**
    * Snapshot the current model onto the undo stack and clear redo. A command
    * that replaces the hand-placed boxes along with the model (New, Open,
    * Import, an apply of text) passes `pins`: its Undo then puts back the boxes
@@ -2009,6 +2098,7 @@ export const useAppStore = create<AppState>((set, get) => {
    */
   function pushUndo(opts: { pins?: boolean } = {}): void {
     const { model, undoStack } = get();
+    beginEdit(model);
     // Snapshot only the USER model — the ~38.8 k-element standard library is
     // immutable and shared, so cloning it on every edit (up to UNDO_LIMIT deep
     // copies) was the dominant undo cost (finding C6). Restores re-attach the
@@ -2184,6 +2274,7 @@ export const useAppStore = create<AppState>((set, get) => {
    */
   function afterMutation(keepTyped = false): void {
     get().model.adoptSerialOrder();
+    settleEdit(get().model);
     if (keepTyped) fieldOverTyped = true;
     set({ rev: get().rev + 1 });
     scheduleRecompute(!keepTyped);
@@ -2222,6 +2313,7 @@ export const useAppStore = create<AppState>((set, get) => {
    */
   function afterSdkEdit(typed: boolean): void {
     get().model.adoptSerialOrder();
+    settleEdit(get().model);
     if (autoRecomputeSuppressed) return;
     if (collabRuntime !== null) {
       if (!typed) scheduleRecompute(true);
@@ -2360,6 +2452,7 @@ export const useAppStore = create<AppState>((set, get) => {
         if (sdkDepth > 0 || model !== get().model) return call();
         const from = model.rev;
         const typed = typedTextUnapplied();
+        beginEdit(model);
         sdkDepth++;
         try {
           return call();
@@ -2368,11 +2461,17 @@ export const useAppStore = create<AppState>((set, get) => {
           if (model.rev !== from) {
             sdkEditCount++;
             afterSdkEdit(typed);
+          } else {
+            // A call that changed nothing has nothing to settle.
+            endEdit();
           }
         }
       },
     });
   }
+
+  // The model on screen follows its removals from the start: a call that goes to it directly is followed too.
+  watchModel(initialModel);
 
   return {
     model: initialModel,
@@ -3008,12 +3107,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const typed = 'source' in patch || 'target' in patch ? null : typedTextFirst([id]);
       if (typed === 'applied') return get().updateElement(id, patch);
       pushUndo();
-      const specialized = isTypingSpecialization(el.eClass) ? [...(el.source ?? [])] : [];
-      model.transaction(() => {
-        model.update(id, patch);
-        // A relationship's end moved: what its source inherits changed.
-        if (specialized.length > 0) for (const x of [...specialized, ...(model.get(id)?.source ?? [])]) settleRedefinitions(model, x);
-      });
+      model.update(id, patch);
       afterMutation(typed === 'kept');
     },
 
@@ -3047,8 +3141,6 @@ export const useAppStore = create<AppState>((set, get) => {
         model.transaction(() => {
           for (const t of typings) model.remove(t.id);
           if (targetId) model.create('FeatureTyping', { ownerId: id, source: [id], target: [targetId] });
-          // What the usage inherits changed: its explicit redefinitions land where the saved text puts them.
-          settleRedefinitions(model, id);
         }),
       );
       afterMutation(typed === 'kept');
@@ -3252,19 +3344,8 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model } = get();
       if (!model.has(id)) return;
       pushUndo();
-      // The elements that lose a typing, specialization or subsetting with this one: their redefinitions follow.
-      const generalsLost = new Set<ElementId>();
-      for (const g of [model.get(id)!, ...model.descendants(id)]) {
-        if (isTypingSpecialization(g.eClass)) for (const x of g.source ?? []) generalsLost.add(x);
-        for (const r of model.relationshipsTo(g.id)) {
-          if (isTypingSpecialization(r.eClass)) for (const x of r.source ?? []) generalsLost.add(x);
-        }
-      }
       const removed = model.remove(id);
       const removedSet = new Set(removed);
-      model.transaction(() => {
-        for (const x of generalsLost) if (model.has(x)) settleRedefinitions(model, x);
-      });
       set((s) => {
         const selectionIds = s.selectionIds.filter((x) => !removedSet.has(x));
         const selectionId =
@@ -3415,8 +3496,6 @@ export const useAppStore = create<AppState>((set, get) => {
         source: [sourceId],
         target: [targetId],
       });
-      // A typing or specialization drawn: what its source inherits changed.
-      if (isTypingSpecialization(kind)) settleRedefinitions(model, sourceId);
       set(singleSel(edge.id));
       afterMutation();
       if (placed.refused) sayNotIntoLibrary('new');

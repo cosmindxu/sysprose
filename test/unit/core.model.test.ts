@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Model, ModelFactory, buildSampleModel } from '@core/index';
+import { Model, ModelFactory, buildSampleModel, type ChangeEvent } from '@core/index';
 
 describe('Model core', () => {
   it('creates and indexes containment', () => {
@@ -88,6 +88,56 @@ describe('Model core', () => {
     m2.remove(d3.id);
     expect(m2.has(e3.id)).toBe(false);
     expect(m2.has(u.id)).toBe(true);
+  });
+
+  // A listener that follows what an element inherits (the editor, which settles redefinitions after an edit) passes
+  // over a change of `attrs` alone, and asks the ends a relationship had when one moved.
+  it('names what an update changed, and the ends a relationship had', () => {
+    const m = new Model();
+    const a = m.create('PartDefinition', { declaredName: 'A' });
+    const b = m.create('PartDefinition', { declaredName: 'B' });
+    const rel = m.create('Specialization', { ownerId: a.id, source: [a.id], target: [b.id] });
+    const events: ChangeEvent[] = [];
+    m.subscribe((evs) => events.push(...evs));
+    m.update(a.id, { declaredName: 'A2' });
+    m.update(a.id, { attrs: { note: 'x' } });
+    m.setAttrs(a.id, { note: 'y' });
+    m.setShortName(a.id, 'a');
+    m.update(rel.id, { source: [b.id], target: [a.id] });
+    expect(events.map((e) => e.fields)).toEqual([['declaredName'], ['attrs'], ['attrs'], ['declaredShortName'], ['source', 'target']]);
+    expect(events.map((e) => e.previousSource)).toEqual([undefined, undefined, undefined, undefined, [a.id]]);
+    // ...and the names it had (a rename's old name is no longer in the model), and the target a relationship had.
+    expect(events.map((e) => e.previousNames)).toEqual([['A'], undefined, undefined, [], undefined]);
+    expect(events.map((e) => e.previousTarget)).toEqual([undefined, undefined, undefined, undefined, [b.id]]);
+    m.update(a.id, { declaredName: 'A3' });
+    expect(events[events.length - 1]!.previousNames).toEqual(['A2', 'a']);
+  });
+
+  // `Model.remove` leaves to its planners what it cannot decide itself: each sees what is about to go, before any is
+  // gone, and what it returns runs once they are, in the removal's own notification.
+  it('lets a removal planner see what goes and follow it, in the removal\'s own notification', () => {
+    const m = new Model();
+    const a = m.create('PartDefinition', { declaredName: 'A' });
+    const f = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'f' });
+    const g = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'g' });
+    const seen: string[] = [];
+    const off = m.addRemovalPlanner((going) => {
+      seen.push(`going ${[...going].map((x) => m.get(x)?.declaredName).sort().join(',')}`);
+      return () => {
+        seen.push(`gone ${m.has(f.id)}`);
+        m.update(g.id, { declaredName: 'g2' });
+      };
+    });
+    const batches: ChangeEvent[][] = [];
+    m.subscribe((evs) => batches.push(evs));
+    expect(m.remove(f.id)).toEqual([f.id]);
+    expect(seen).toEqual(['going f', 'gone false']);
+    expect(m.get(g.id)!.declaredName).toBe('g2');
+    // The removal and what the planner did are one notification.
+    expect(batches.map((b) => b.map((e) => e.type))).toEqual([['remove', 'update']]);
+    off();
+    m.remove(g.id);
+    expect(seen).toHaveLength(2);
   });
 
   it('prevents containment cycles on reparent', () => {

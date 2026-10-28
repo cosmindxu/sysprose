@@ -40,6 +40,7 @@
 
 import {
   isRelationship,
+  isUsage,
   refSegments,
   type ElementId,
   type ElementRecord,
@@ -219,7 +220,7 @@ export function resolveRedefinedFeature(
     // owner, so `part c : Engine { part p :>> port1; }` finds Engine's feature —
     // then the full closure (transitive generals + implicit library bases).
     const seen = new Set<ElementId>();
-    const ordered = [...model.typesOf(owningType), ...generalizationsWithImplicit(model, owningType)];
+    const ordered = redefinitionGenerals(model, owningType);
     for (const general of ordered) {
       if (seen.has(general.id)) continue;
       seen.add(general.id);
@@ -233,6 +234,31 @@ export function resolveRedefinedFeature(
   }
 
   return resolveFullName(model, ref, scopeId, { exclude: featureId });
+}
+
+/** The types whose features `:>>` is read against in `owningType`: its explicit generals, then the full closure. */
+function redefinitionGenerals(model: Model, owningType: ElementId): ElementRecord[] {
+  return [...model.typesOf(owningType), ...generalizationsWithImplicit(model, owningType)];
+}
+
+/**
+ * Does the owner of `featureId` hold another feature on `hit`'s line, or one that bears a name `hit` or what it
+ * redefines bears? That is what makes {@link resolveRedefinedFeature} keep the base feature a name finds instead of
+ * `hit` (a name two of the usage's features would bear, or one feature that two names would take): the part of
+ * {@link joinsTwo} a feature's OWN name meets once the name is `hit`'s. With `among`, only those siblings count: the
+ * editor asks it of the features an edit has just touched, to tell a collision the edit made (a sibling renamed
+ * into `hit`'s name) from one the text was loaded with, which it leaves as written.
+ */
+export function sharesLineWithSibling(
+  model: Model,
+  hit: ElementRecord,
+  featureId: ElementId,
+  among?: ReadonlySet<ElementId>,
+): boolean {
+  const ownerId = model.get(featureId)?.ownerId ?? null;
+  if (ownerId === null) return false;
+  const owners = new Set<ElementId>(redefinitionGenerals(model, ownerId).map((g) => g.id));
+  return joinsTwo(model, owners, hit, hit, featureId, among);
 }
 
 /**
@@ -361,6 +387,7 @@ function joinsTwo(
   anchor: ElementRecord,
   hit: ElementRecord,
   featureId: ElementId,
+  among?: ReadonlySet<ElementId>,
 ): boolean {
   const above = redefinedClosure(model, hit);
   const anchorLine = new Set<ElementId>([anchor.id, ...redefinedClosure(model, anchor).map((g) => g.id)]);
@@ -375,10 +402,12 @@ function joinsTwo(
   // redefines any of them lies in a line the hit's meets (at a feature the one redefines or is, the other the same).
   const reach = new Set<ElementId>();
   for (const id of owners) {
-    for (const f of ownFeatures(model, id)) {
-      if (f.declaredName === undefined || !names.has(f.declaredName)) continue;
-      reach.add(f.id);
-      for (const g of redefinedClosure(model, f)) reach.add(g.id);
+    for (const name of names) {
+      for (const f of childrenNamed(model, id, name)) {
+        if (!isUsage(f.eClass)) continue;
+        reach.add(f.id);
+        for (const g of redefinedClosure(model, f)) reach.add(g.id);
+      }
     }
   }
   for (const g of line) {
@@ -405,15 +434,43 @@ function joinsTwo(
         seen.add(x);
         queue.push(x);
         const f = model.get(x);
-        if (f && f.ownerId === ownerId && f.id !== featureId && f.attrs.implicit !== true) return true;
+        if (f && f.ownerId === ownerId && f.id !== featureId && f.attrs.implicit !== true && (!among || among.has(f.id))) return true;
       }
     }
   }
   // A sibling declared under one of those names.
-  return model.children(ownerId).some(
-    (sib) => sib.id !== featureId && sib.attrs.implicit !== true && sib.declaredName !== undefined && names.has(sib.declaredName),
-  );
+  for (const name of names) {
+    const bearing = childrenNamed(model, ownerId, name);
+    if (bearing.some((sib) => sib.id !== featureId && sib.attrs.implicit !== true && (!among || among.has(sib.id)))) return true;
+  }
+  return false;
 }
+
+/**
+ * The children of `ownerId` declared under `name`, in order — an index of the owner's children by declared name,
+ * kept for the model's revision. {@link joinsTwo} asks it once per name of the line for each `:>>` it reads, where
+ * a scan of the owner's features per call made a usage of N redefinitions cost N squared.
+ */
+function childrenNamed(model: Model, ownerId: ElementId, name: string): readonly ElementRecord[] {
+  let cache = nameIndexes.get(model);
+  if (cache === undefined || cache.rev !== model.rev) {
+    cache = { rev: model.rev, byOwner: new Map() };
+    nameIndexes.set(model, cache);
+  }
+  let index = cache.byOwner.get(ownerId);
+  if (index === undefined) {
+    index = new Map();
+    for (const c of model.children(ownerId)) {
+      if (c.declaredName === undefined) continue;
+      const same = index.get(c.declaredName);
+      if (same === undefined) index.set(c.declaredName, [c]);
+      else same.push(c);
+    }
+    cache.byOwner.set(ownerId, index);
+  }
+  return index.get(name) ?? [];
+}
+const nameIndexes = new WeakMap<Model, { rev: number; byOwner: Map<ElementId, Map<string, ElementRecord[]>> }>();
 
 /**
  * Give every import its `target` (and `source`) so `resolveName`'s import walk

@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parseModel } from '@text/index';
-import { resolveFullName, resolveRedefinedFeature } from '../../src/semantics/bind';
+import { resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '../../src/semantics/bind';
 import type { Model } from '@core/index';
 
 /** Parse, then hand back the model plus a name→element lookup. */
@@ -267,6 +267,26 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
       model.children(model.children(id(owner)).find((c) => c.eClass === 'AttributeUsage')!.id).find((c) => c.eClass === 'Redefinition')!.target;
     expect(redefined('s')).toEqual([model.children(id('Q23')).find((c) => c.eClass === 'AttributeUsage')!.id]);
     expect(redefined('q')).toEqual([model.children(id('Q')).find((c) => c.eClass === 'AttributeUsage')!.id]);
+  });
+
+  // The check a name meets once it is a redefined feature's own: does another feature of the usage bear a name of
+  // its line? With `among`, only the features an edit touched count, to tell a collision the edit made from one the
+  // text was loaded with.
+  it('tells whether a sibling bears a name on the redefined feature\'s line, among the features asked', () => {
+    const { model, id } = parsed(`package P {
+      part def Q { attribute M default = 1.0; }
+      part def R :> Q { attribute M2 redefines M default = 2.0; }
+      part v : R { attribute :>> M = 5.0; attribute M2 = 9.0; }
+      part w : R { attribute :>> M = 5.0; attribute Z = 9.0; }
+    }`);
+    const r = model.children(id('R')).find((c) => c.declaredName === 'M2')!;
+    const redefining = (owner: string): string => model.children(id(owner)).find((c) => c.declaredName === undefined)!.id;
+    const sibling = (owner: string, name: string): string => model.children(id(owner)).find((c) => c.declaredName === name)!.id;
+    expect(sharesLineWithSibling(model, r, redefining('v'))).toBe(true);
+    expect(sharesLineWithSibling(model, r, redefining('w'))).toBe(false);
+    expect(sharesLineWithSibling(model, r, redefining('v'), new Set([sibling('v', 'M2')]))).toBe(true);
+    // Another feature touched, not the colliding one: the collision is not the edit's.
+    expect(sharesLineWithSibling(model, r, redefining('v'), new Set([redefining('v')]))).toBe(false);
   });
 
   it('falls back to ordinary resolution for a qualified redefinition target', () => {

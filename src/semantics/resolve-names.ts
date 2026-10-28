@@ -97,6 +97,56 @@ function aliasNameOf(rel: ElementRecord): string | undefined {
 /* ───────────────────────────── member enumeration ───────────────────────── */
 
 /**
+ * The members of a LARGE scope by name, for one model revision: its non-relationship children by own name and short
+ * name, and its alias memberships by the name they expose, each in child order — what {@link resolveOwned}'s two
+ * passes find, without a walk of every child for every name. A usage of fifteen hundred redefinitions asks one name
+ * of the same type each, and the walk made that fifteen hundred squared. A scope of a few children is walked, as
+ * the index would cost more than it saves; `undefined` says so.
+ */
+interface ScopeIndex {
+  own: Map<string, ElementRecord[]>;
+  alias: Map<string, ElementRecord[]>;
+}
+const INDEXED_FROM = 24;
+const scopeIndexes = new WeakMap<Model, { rev: number; byScope: Map<ElementId | null, ScopeIndex | null> }>();
+function scopeIndex(model: Model, scopeId: ElementId | null): ScopeIndex | undefined {
+  let cache = scopeIndexes.get(model);
+  if (cache === undefined || cache.rev !== model.rev) {
+    cache = { rev: model.rev, byScope: new Map() };
+    scopeIndexes.set(model, cache);
+  }
+  const known = cache.byScope.get(scopeId);
+  if (known !== undefined) return known ?? undefined;
+  const children = scopeId === null ? model.roots() : model.children(scopeId);
+  if (children.length < INDEXED_FROM) {
+    cache.byScope.set(scopeId, null);
+    return undefined;
+  }
+  const index: ScopeIndex = { own: new Map(), alias: new Map() };
+  const add = (map: Map<string, ElementRecord[]>, key: string | undefined, child: ElementRecord): void => {
+    if (key === undefined) return;
+    const same = map.get(key);
+    if (same === undefined) map.set(key, [child]);
+    else if (same[same.length - 1] !== child) same.push(child);
+  };
+  for (const child of children) {
+    if (!isRelationship(child.eClass)) {
+      add(index.own, child.declaredName, child);
+      add(index.own, child.declaredShortName, child);
+    } else if (child.eClass === 'Membership') {
+      const alias = aliasNameOf(child);
+      if (alias !== undefined) add(index.alias, alias, child);
+      else {
+        add(index.alias, child.declaredName, child);
+        add(index.alias, child.declaredShortName, child);
+      }
+    }
+  }
+  cache.byScope.set(scopeId, index);
+  return index;
+}
+
+/**
  * Resolve `name` among the OWNED members of `scopeId` (its non-relationship
  * children, plus alias `Membership` children). When `publicOnly` is set, private
  * members are skipped (used when looking across an inheritance/import boundary).
@@ -108,6 +158,19 @@ function resolveOwned(
   name: string,
   publicOnly: boolean,
 ): ElementRecord | undefined {
+  const index = scopeIndex(model, scopeId);
+  if (index !== undefined) {
+    for (const child of index.own.get(name) ?? []) {
+      if (!publicOnly || isPublic(child)) return child;
+    }
+    for (const child of index.alias.get(name) ?? []) {
+      if (publicOnly && !isPublic(child)) continue;
+      const targetId = (child.target ?? [])[0];
+      const target = targetId ? model.get(targetId) : undefined;
+      if (target) return target;
+    }
+    return undefined;
+  }
   const children = scopeId === null ? model.roots() : model.children(scopeId);
   // First pass: direct (owned) members by their own name.
   for (const child of children) {

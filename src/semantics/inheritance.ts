@@ -96,13 +96,33 @@ export function mostSpecificOwned(model: Model, features: readonly ElementRecord
   if (features.length <= 1) return features[0];
   for (const f of features) {
     if (f.ownerId === null) continue;
-    const generals = new Set<ElementId>(generalizationsOf(model, f.ownerId).map((g) => g.id));
+    const generals = generalIdsOf(model, f.ownerId);
     if (features.every((o) => o === f || (o.ownerId !== null && o.ownerId !== f.ownerId && generals.has(o.ownerId)))) {
       return f;
     }
   }
   return undefined;
 }
+
+/**
+ * The ids {@link generalizationsOf} gives for `typeId`, kept for the model's revision: a lattice of definitions each
+ * specialising the ones above asks for the same closure at every `:>>` of every usage typed below it, and a walk per
+ * ask made a parse of such a lattice (160 levels) cost 12 s.
+ */
+function generalIdsOf(model: Model, typeId: ElementId): ReadonlySet<ElementId> {
+  let cache = generalIdCaches.get(model);
+  if (cache === undefined || cache.rev !== model.rev) {
+    cache = { rev: model.rev, byType: new Map() };
+    generalIdCaches.set(model, cache);
+  }
+  let ids = cache.byType.get(typeId);
+  if (ids === undefined) {
+    ids = new Set<ElementId>(generalizationsOf(model, typeId).map((g) => g.id));
+    cache.byType.set(typeId, ids);
+  }
+  return ids;
+}
+const generalIdCaches = new WeakMap<Model, { rev: number; byType: Map<ElementId, ReadonlySet<ElementId>> }>();
 
 /**
  * The features `f` masks BY NAME in its owner's effective feature set

@@ -41,7 +41,16 @@ export {
 } from './langium/diagnostic-codes';
 export type { DiagnosticCode } from './langium/diagnostic-codes';
 
-export { serializeModel, serializeElement, settleRedefinitions, UnwritableRequirementRefError } from './serializer';
+export {
+  serializeModel,
+  serializeElement,
+  settleRedefinitions,
+  redefinitionsDirtiedBy,
+  redefinitionsToRetarget,
+  retargetRedefinitions,
+  UnwritableRequirementRefError,
+} from './serializer';
+export type { DirtiedRedefinitions, RedefinitionToRetarget } from './serializer';
 export { measureTextHealth, serializeUserModelSignals } from './health';
 export type { MeasuredText, TextSignals } from './health';
 export { lex } from './lexer';

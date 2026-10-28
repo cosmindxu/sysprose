@@ -1008,16 +1008,45 @@ re-parse will use, which for a `:>>` is §8.2.3.5.1 and not full resolution, or
 the shorter spelling would silently retarget the Redefinition on the next load.
 So a binding reached by import or inheritance re-emits as the simple name the
 author wrote (`part w : Widget;`, not `part w : Lib::Widget;`; `part w :>> w;`,
-not `part w :>> P::Base::w;`). A redefinition whose target declares no name
-(`attribute :>> M;` over Q2's unnamed `:>> M`) is written by the name the rule
-finds it by, where Save used to write `attribute;` and drop the redefinition;
-after an edit retypes the owner, by the named feature the target redefines
-where the rule still lands in the same line, else by that feature's qualified
-name (`redefinitionRef`; pinned by the retype case in `text.roundtrip.test.ts`).
-The editor moves the redefinition itself the same way when an edit changes what
-its owner inherits (a retype, a typing drawn or deleted, `settleRedefinitions`),
-and when the feature it redefines is deleted (`Model.remove`, to the nearest
-feature that stays), so the page reads what the saved file reads.
+not `part w :>> P::Base::w;`). A redefinition is written by a NAME, and the rule
+lands a simple name on the most specific feature the owner inherits for it, so
+the name is a choice (`redefinitionForm`, pinned by `text.roundtrip.test.ts`):
+for a feature that declares no name of its own, the name of the named feature the
+target redefines where the rule lands it on the target (`attribute :>> M = 5.0;`
+over R's `M2 redefines M` is saved as written, and the load runs the check that
+keeps two of the usage's features from one name, which `:>> M2` would not); the
+target's own name where the rule lands it there; for a target that declares no
+name (`attribute :>> M;` over Q2's unnamed `:>> M`, where Save used to write
+`attribute;` and drop the redefinition), a base name where the rule lands in the
+same line; else the feature's qualified name.
+The editor keeps the page at what the saved file reads. Every command that edits
+the model goes through `pushUndo` and `afterMutation` (an SDK call, through
+`afterSdkEdit`), and the model's changes in between are listened to there
+(`beginEdit`, `settleEdit` in `store.ts`): the redefinitions of the types an edit
+changed, and of what specialises them, are moved to where the written form lands,
+in the same undo step (`settleRedefinitions`, `redefinitionsDirtiedBy`) — a retype,
+a typing drawn or deleted, a feature renamed, moved by drag, added, pasted or
+removed. What a typing, a move or a paste changed asks every redefinition below
+the types it names; a feature added, removed or renamed, or a redefinition drawn
+or erased, asks those whose target's line bears one of the names it changed (the
+names an element has and had, `previousNames`; the lines a redefinition joins or
+parts), so an edit of a base type with thousands of redefinitions below it does
+not read them all. No command names what it changes, so none can forget it; the
+property test in `store.reducers.test.ts` runs random edit sequences over random
+redefinition models and compares the page's redefinitions with those of its
+reloaded file after each, and finds nothing left for a settle of the whole model
+to move. A sibling renamed into the name a `:>> M` is known by moves it back to
+the base feature, as the file with both keeps them apart; one the text was loaded
+with stays as written. A removal is followed on the model itself: when the
+feature a redefinition targets is deleted, the store's removal planner
+(`Model.addRemovalPlanner`, installed on the model on screen) lands it on the
+feature the name it is written by finds now (`redefinitionsToRetarget`,
+`retargetRedefinitions`), whoever deletes — a command, `window.sysml`, a REST call
+on the page's model, or a peer's edit. `Model.remove`'s walk up the removed
+target's redefinitions to the nearest feature that stays is the fallback for a
+model nobody watches (the command line), and that walk can skip a level the name
+does not. One whose target keeps no name to write goes, as Save writes the feature
+without it.
 The UI keeps the last parse result and retracts
 the warnings the library binder resolved, so the Problems panel and `checkText`
 finally agree — and forgets it on every path that replaces the model without
