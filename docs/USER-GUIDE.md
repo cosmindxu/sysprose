@@ -1557,7 +1557,16 @@ equation (*L is not read: the asserted `L == 50.0` (…::P::c50) and `L == 60.0`
 different values — the model contradicts itself there, whichever is written
 first …*; on the numeric surface a row the solve could not judge keeps its own
 sentence, such as *the solve did not converge*), and `verify` exits 2 on either
-engine, its rows printing no value for L (nor an SI pair). A relation over a
+engine, its rows printing no value for L (nor an SI pair). No export reads one
+either, whichever equation is written first: the FMI `start` of such an L, or
+of a value tied to it, is the type's default (`0`, `false` for a Boolean, the
+empty string for a String) as for a feature with no value, a placeholder FMI
+requires and no value of the model; a `local` has none; a co-simulation holds
+no input at it, so the outputs over it read NaN; and Solve lists a measure of
+effectiveness that is one as *(unknown)*. A value written as a number, a
+Boolean or a String keeps its start. As wide as the rest of this abstention,
+this is by feature: P's own `load` falls to the default too where P's equation
+is consistent and a `part p : P` elsewhere writes the second. A relation over a
 name a defining side reads, or one tied to it (`a` of `L == a * 2.0` with `a =
 30.0`, a package's `g` of `W == m * g`, the K that `bind a = K` joins to a), is
 read by the check and the numeric surface at the value the model states, and
@@ -1608,8 +1617,10 @@ against it, in any order; so is one an asserted relation reads beside L (`M =
 20.0` in `L >= 0.0 [kg] or M >= 0.0`), and an assert over it alone (`M <=
 10.0`) is still the warning. Limits of this tool: two asserted equations on the two
 ends of one binding (`bind L = K` with `L == 50.0` and `K == 60.0`) are the
-binding's violated pair, but each end's readings stand; and an FMI export's
-`start` still reads the first equation written.
+binding's violated pair, but each end's readings stand; and `K == L`, a bare
+name on each side, is not read as tying K to such an L, so K's FMI `start`, its
+measure of effectiveness and a check over it still turn on the order of the two
+equations (`K == L + 0.0`, `K == 2.0 * L` and `bind K = L` are read as tied).
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -

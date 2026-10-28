@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Model, ModelFactory } from '@core/index';
 import {
   gatherConstraints,
@@ -12,7 +12,7 @@ import {
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
-import { defaultStandsIn } from '../../src/semantics/defining-equation';
+import { defaultStandsIn, instanceIndexSeam } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -423,6 +423,56 @@ describe('evaluateMoEs', () => {
     });
     const measures = evaluateMoEs(m);
     expect(measures.some((x) => x.id === eff.id && x.value === 0.9)).toBe(true);
+  });
+});
+
+/*
+ * text-order S2: a measure two asserted equations give two values has none. `evaluateFeatureValue` returns the
+ * first equation written, so `totalMeasure` read 100 where the text wrote `lengthMeasure == 50.0` first and 120
+ * where it wrote `== 60.0` first (the soft/hard analysis' `reconcile/n-ab.sysml`, `n-ba.sysml`).
+ */
+describe('evaluateMoEs — a measure two asserted equations give two values', () => {
+  const AB = 'assert constraint c50 { lengthMeasure == 50.0 } assert constraint c60 { lengthMeasure == 60.0 }';
+  const BA = 'assert constraint c60 { lengthMeasure == 60.0 } assert constraint c50 { lengthMeasure == 50.0 }';
+  const measures = (eqs: string) => {
+    const { model: m, diagnostics } = parseModel(`package MC {
+      part def P {
+        attribute lengthMeasure : ScalarValues::Real;
+        attribute totalMeasure : ScalarValues::Real;
+        attribute rateMeasure : ScalarValues::Real = 3.0;
+        attribute otherMeasure : ScalarValues::Real;
+        ${eqs}
+        assert constraint ct { totalMeasure == 2.0 * lengthMeasure }
+        assert constraint co { otherMeasure == 5.0 }
+      }
+    }`);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    return Object.fromEntries(evaluateMoEs(m).map((x) => [x.name, x.value]));
+  };
+
+  it('has no value, nor has one tied to it, in either order', () => {
+    for (const eqs of [AB, BA]) {
+      expect(measures(eqs)).toEqual({ lengthMeasure: null, totalMeasure: null, rateMeasure: 3, otherMeasure: 5 });
+    }
+  });
+
+  it('reads a written measure and no derived one where the listing of the equations threw', () => {
+    vi.spyOn(instanceIndexSeam, 'contradictedDefinitions').mockImplementation(() => {
+      throw new RangeError('contradictedDefinitions, planted to throw');
+    });
+    try {
+      // Which measures the pair reaches is unknown: each an equation gives its value is read as one with none.
+      expect(measures(AB)).toEqual({ lengthMeasure: null, totalMeasure: null, rateMeasure: 3, otherMeasure: null });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('still reads a measure from one equation, or from equations that agree', () => {
+    expect(measures('assert constraint c50 { lengthMeasure == 50.0 }')).toMatchObject({ lengthMeasure: 50, totalMeasure: 100 });
+    expect(
+      measures('assert constraint c50 { lengthMeasure == 50.0 } assert constraint c25 { lengthMeasure == 25.0 * 2.0 }'),
+    ).toMatchObject({ lengthMeasure: 50, totalMeasure: 100 });
   });
 });
 

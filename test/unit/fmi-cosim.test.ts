@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Model } from '@core/index';
 import { CoSimMaster, analyticFmu, sysmlBlockInstance } from '@interop/index';
+import { parseModel } from '@text/index';
 
 /** An FMU that integrates its input: y' = u  ⇒  y += u·dt. */
 function integrator(name = 'integ') {
@@ -292,5 +293,44 @@ describe('sysmlBlockInstance — a SysML block co-simulates as an FMU', () => {
     expect(inst.getReal(vr('u'))).toBeNaN(); // input preserved as NaN
     expect(inst.getReal(vr('y'))).toBeNaN(); // NOT a fabricated finite value
     expect(inst.converged!()).toBe(false);
+  });
+
+  it('holds no input at the placeholder start of a feature two asserted equations give two values', () => {
+    // text-order S2: the export writes such a feature the type's default (FMI requires a start), which is no model
+    // value; held as an input it gave W = 2 * L = 0 in either order, with converged() false. Now L and W are NaN.
+    const AB = 'assert constraint c50 { L == 50.0 } assert constraint c60 { L == 60.0 }';
+    const BA = 'assert constraint c60 { L == 60.0 } assert constraint c50 { L == 50.0 }';
+    for (const eqs of [AB, BA]) {
+      const { model: m } = parseModel(
+        `package RN { part def P { attribute L : ScalarValues::Real; out attribute W : ScalarValues::Real; ${eqs} assert constraint w { W == 2.0 * L } } }`,
+      );
+      const p = m.all().find((e) => e.eClass === 'PartDefinition' && e.declaredName === 'P')!;
+      const inst = sysmlBlockInstance(m, p.id);
+      const vr = (n: string) => inst.variables.find((v) => v.name === n)!.valueReference;
+      inst.initialize();
+      inst.doStep(0, 1);
+      expect(inst.getReal(vr('L'))).toBeNaN();
+      expect(inst.getReal(vr('W'))).toBeNaN();
+      expect(inst.converged!()).toBe(false);
+      // A value the caller sets is held, as for any input.
+      inst.setReal(vr('L'), 4);
+      inst.doStep(1, 1);
+      expect(inst.getReal(vr('L'))).toBe(4);
+    }
+  });
+
+  it('still holds the start of a feature one equation, or equations that agree, give', () => {
+    for (const eqs of ['assert constraint c50 { L == 50.0 }', 'assert constraint c50 { L == 50.0 } assert constraint c50b { L == 50.0 }']) {
+      const { model: m } = parseModel(
+        `package RN { part def P { attribute L : ScalarValues::Real; out attribute W : ScalarValues::Real; ${eqs} assert constraint w { W == 2.0 * L } } }`,
+      );
+      const p = m.all().find((e) => e.eClass === 'PartDefinition' && e.declaredName === 'P')!;
+      const inst = sysmlBlockInstance(m, p.id);
+      const vr = (n: string) => inst.variables.find((v) => v.name === n)!.valueReference;
+      inst.initialize();
+      inst.doStep(0, 1);
+      expect(inst.getReal(vr('L'))).toBe(50);
+      expect(inst.getReal(vr('W'))).toBe(100);
+    }
   });
 });

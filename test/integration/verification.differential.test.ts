@@ -50,7 +50,8 @@
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ElementId, Model } from '@core/index';
+import type { ElementId, ElementRecord, Model } from '@core/index';
+import { fmiVariablesOf } from '@interop/index';
 import {
   ALLOW_INCONCLUSIVE_CODES,
   analysisReport,
@@ -70,9 +71,10 @@ import {
   type ConstraintCheck,
   type SpecialisationInstance,
 } from '@semantics/evaluate-model';
+import { contradictedDefinitions, readsContradictedDefinition } from '@semantics/defining-equation';
 import { effectiveQualifiedName } from '@semantics/inheritance';
 import { obligationsOf, type Obligation } from '@semantics/obligations';
-import { checkConstraintsNumeric, solveFeasible } from '@semantics/solver';
+import { checkConstraintsNumeric, evaluateMoEs, solveFeasible } from '@semantics/solver';
 import { resolveFreeFeatures } from '@semantics/engines/smt';
 import {
   DEAD_MODULE_MARGIN_MS,
@@ -3420,6 +3422,9 @@ describe('a redefinition is the feature in its context, and a value written with
  *  I13 an instance row the SMT engine refutes with nothing freed, and the check decides otherwise — the
  *      witness the same-point gate demotes to `inconclusive` — only where listed, with the reason: both
  *      read the model's own point, so one of them is wrong (it was the signature of Sh1's false T).
+ *  I15 a feature two asserted equations give two values, or one tied to such a feature, has no FMI `start`
+ *      and, flagged as a measure of effectiveness, no value (text-order S2): the first equation written is
+ *      no value the model states.
  *
  * Letters, in the order check / literal / numeric / SMT: T holds (the literal engine's
  * `holds-at-values`), F violated or refuted, ? abstains, X inconsistent axioms, V vacuous, U a construct
@@ -3475,6 +3480,45 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   const copied = new Map<string, string[]>();
   /** I12: the relations each probe's copy run compared, so the invariant is not vacuous. */
   let copiedRelations = 0;
+  /** I15: per probe, each exported value of a feature two asserted equations give two values. */
+  const exported = new Map<string, string[]>();
+  /** I15: the features whose exported values were read, so the invariant is not vacuous. */
+  let exportedFeatures = 0;
+
+  /**
+   * I15 (text-order S2): the FMI `start` of a feature two asserted equations give two values, or one tied to such a
+   * feature (`readsContradictedDefinition`), is the type's default for a parameter or input and none for a local, and
+   * its value as a measure of effectiveness (the feature flagged one, in a copy of the model) is none: the first
+   * equation written is no value the model states, and it turned on the order of the text. A value written as a
+   * number or a Boolean reads no equation and is not read here.
+   */
+  function exportedValues(m: Model, pkg: string): void {
+    if (contradictedDefinitions(m).sets.length === 0) return;
+    const written = (f: ElementRecord) => typeof f.attrs.value === 'number' || typeof f.attrs.value === 'boolean';
+    const features = m
+      .all()
+      .filter(
+        (f) =>
+          f.eClass === 'AttributeUsage' && f.attrs.isLibrary !== true && f.ownerId != null && !written(f) && readsContradictedDefinition(m, f.id),
+      );
+    const out: string[] = [];
+    for (const owner of new Set(features.map((f) => f.ownerId!))) {
+      const kind = m.get(owner)?.eClass;
+      if (kind !== 'PartDefinition' && kind !== 'PartUsage') continue;
+      for (const v of fmiVariablesOf(m, owner)) {
+        if (!features.some((f) => f.id === v.featureId)) continue;
+        exportedFeatures++;
+        const none = v.causality === 'parameter' || v.causality === 'input' ? (v.type === 'Boolean' ? 'false' : v.type === 'String' ? '' : '0') : undefined;
+        if (v.start !== none) out.push(`${m.qualifiedName(v.featureId)}: FMI start ${v.start ?? 'none'}, want ${none ?? 'none'}`);
+      }
+    }
+    const flagged = m.clone();
+    for (const f of features) flagged.setAttrs(f.id, { isMoe: true });
+    for (const r of evaluateMoEs(flagged)) {
+      if (r.value !== null && features.some((f) => f.id === r.id)) out.push(`${m.qualifiedName(r.id)}: measure value ${r.value}, want none`);
+    }
+    if (out.length > 0) exported.set(pkg, out);
+  }
 
   /**
    * I12: `text` with every one-line relation `constraint c { … }` (not an `assert`, `assume` or `require`)
@@ -3563,6 +3607,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     if (differ.length > 0 || shared.length !== full.length) unshared.set(pkg, differ.length > 0 ? differ : ['a different number of rows']);
     // I12: the same model with each relation's body copied beside it under another name.
     await copiedRows(text, pkg);
+    // I15: what an FMI export and the measures of effectiveness read of a feature its equations contradict.
+    exportedValues(m, pkg);
     for (const c of checks) {
       put(c.conflict ? `${key(c.id)}#${c.conflict}` : key(c.id), 0, POINT[c.result]!, c.id, c.message);
       for (const i of c.instances ?? []) {
@@ -11696,6 +11742,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     expect(apart).toEqual([]);
     // Not vacuous: every pair shares its obligations.
     for (const [a, b] of STAND_ALIKE) expect([...seen.get(a)!.keys()].filter((r) => seen.get(b)!.has(r)).length, a).toBeGreaterThan(0);
+  });
+
+  withZ3('I15: a feature two asserted equations give two values has no FMI start and no measure value, in either order', () => {
+    expect([...exported].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+    // Not vacuous: the table holds such features, and each of its q5 / cv pairs reads in both orders.
+    expect(exportedFeatures).toBeGreaterThan(20);
   });
 
   // PI-1: a usage-owned relation's one other instance (pi1-r17's q1::p) was refuted by verify while

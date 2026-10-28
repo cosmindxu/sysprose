@@ -10,7 +10,8 @@
  *  - a directionless PortUsage      → `local`;
  *  - the feature's declared type    → FMI type (Real→Float64, Integer→Int64,
  *    Boolean→Boolean, String→String; default Float64);
- *  - `attrs.value`                  → the variable `start`;
+ *  - `attrs.value`                  → the variable `start` (none for a feature two
+ *    asserted equations give two values: it reads as one with no value);
  *  - the feature's unit (via {@link dimensionalFacets}) → a Unit definition +
  *    the variable's `unit` reference, with a `<BaseUnit>` carrying the SI base
  *    exponents when the dimension is known and the `factor` / `offset` of the
@@ -23,6 +24,7 @@
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { evaluateFeatureValue } from '@semantics/index';
+import { readsContradictedDefinition } from '@semantics/defining-equation';
 import { dimensionalFacets } from '@semantics/units-eval';
 import { resolveUnit, type Dimension } from '@semantics/units';
 import { PRODUCT_NAME } from '../../branding';
@@ -41,6 +43,12 @@ export interface FmiVariable {
   variability: 'fixed' | 'continuous' | 'discrete';
   /** Start value (always present for parameter/input; omitted for calculated outputs). */
   start?: string;
+  /**
+   * Set where the model gives this parameter or input no start because two asserted equations give its feature two
+   * values, or its value is tied to such a feature: `start` is then the type's default, which FMI requires and the
+   * model does not state. A co-simulation holds no input at it.
+   */
+  startWithheld?: true;
   /** Explicit `initial` — set to `exact` only for a `local` that carries a start. */
   initial?: 'exact';
   /** Referenced Unit name (Float64 only). */
@@ -107,6 +115,33 @@ function fmiTypeOf(model: Model, feat: ElementRecord): FmiType {
   return 'Float64'; // Real / Number / unknown → the safe numeric default
 }
 
+/**
+ * Does the value written on `feat` read no name — a number, a Boolean or a quoted String? Such a value is the
+ * feature's own whatever the asserted equations beside it: no equation reaches it.
+ */
+function writesLiteral(feat: ElementRecord): boolean {
+  const written = feat.attrs.value;
+  return (
+    typeof written === 'number' ||
+    typeof written === 'boolean' ||
+    (typeof written === 'string' && /^"[^"]*"$/.test(written.trim()))
+  );
+}
+
+/**
+ * Is the start of `feat` withheld (`FmiVariable.startWithheld`)? It is for a feature two asserted equations give two
+ * values, or whose value is tied to such a feature (`readsContradictedDefinition`): `evaluateFeatureValue` returns the
+ * first equation written, which is no value the model states, and it was the start — 50 or 60 by the order of the
+ * text. A parameter or input is then given the type's default below, as one the model gives no value, and a `local`
+ * carries none. A literal written on the feature keeps its start (`writesLiteral`), even where the listing of the
+ * equations failed, which reads every feature as one: any other written value is withheld there, since what it reads
+ * is unknown. The withholding is as wide as the abstention's, which is by feature, not by instance: a definition
+ * whose own equation is consistent loses its start while a usage of it in another element writes the second.
+ */
+function withholdsStart(model: Model, feat: ElementRecord): boolean {
+  return !writesLiteral(feat) && readsContradictedDefinition(model, feat.id);
+}
+
 /** Format a feature's value as an FMI `start` string for the given type, or undefined. */
 function startOf(model: Model, feat: ElementRecord, type: FmiType): string | undefined {
   const r = evaluateFeatureValue(model, feat.id);
@@ -171,7 +206,8 @@ export function fmiVariablesOf(model: Model, blockId: ElementId): FmiVariable[] 
     // FMI 3.0: outputs are calculated (no start); parameter & input REQUIRE a
     // start (fall back to a type default); a local carries a start only when the
     // feature has a value, and then needs an explicit initial="exact".
-    let start = causality === 'output' ? undefined : startOf(model, feat, type);
+    const withheld = causality !== 'output' && withholdsStart(model, feat);
+    let start = causality === 'output' || withheld ? undefined : startOf(model, feat, type);
     if (start === undefined && (causality === 'parameter' || causality === 'input')) {
       start = defaultStart(type);
     }
@@ -186,6 +222,7 @@ export function fmiVariablesOf(model: Model, blockId: ElementId): FmiVariable[] 
       causality,
       variability,
       start,
+      ...(withheld && (causality === 'parameter' || causality === 'input') ? { startWithheld: true as const } : {}),
       initial,
       unit,
       description: feat.declaredShortName || undefined,

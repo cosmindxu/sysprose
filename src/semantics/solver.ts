@@ -95,6 +95,7 @@ import {
   MAX_INSTANCE_RELATIONS,
   outsideBindingsOf,
   pastCapEnd,
+  readsContradictedDefinition,
   relationNamesOf,
   shadowedNamesOf,
   shadowedSentence,
@@ -3872,7 +3873,10 @@ const MOE_NAME_RE = /moe|measure|objective/i;
  * values (falling back to its own literal/expression value), with its unit and
  * physical dimension where the quantity engine can derive them. A measure the
  * equations leave free ({@link SolveResult.free}) is `null`: the point the
- * solve stopped at along a freedom is no value of it.
+ * solve stopped at along a freedom is no value of it. So is a value two asserted
+ * equations give two values, or one tied to such a feature
+ * ({@link readsContradictedDefinition}): the first equation written is no value
+ * the model states, and it turned on the order of the text.
  */
 export function evaluateMoEs(model: Model): MeasureResult[] {
   const solved = solve(model);
@@ -3886,17 +3890,21 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
     if (!isMoeFeature(model, el)) continue;
     seen.add(el.id);
 
-    let value: number | undefined = solved.values.get(el.id);
+    // A value two asserted equations give two values, or one tied to it, is read from no equation: not the solve's,
+    // nor `evaluateFeatureValue`'s or `evaluateQuantity`'s, which derive the first one written. A value written
+    // reads none, so its seed stands.
+    const contradicted = readsContradictedDefinition(model, el.id);
+    let value: number | undefined = contradicted ? undefined : solved.values.get(el.id);
     // WHERE the number came from decides whether it may be labelled: only the
     // solver reads a value unit-awarely. The fallbacks below are raw magnitudes.
     const fromSolver = value !== undefined;
     if (value === undefined) value = numericSeedOf(model, el, seeds);
-    if (value === undefined) {
+    if (value === undefined && !contradicted) {
       const r = evaluateFeatureValue(model, el.id);
       if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) value = r.value;
     }
 
-    const q = evaluateQuantity(model, el.id);
+    const q = contradicted ? undefined : evaluateQuantity(model, el.id);
     const res: MeasureResult = {
       id: el.id,
       name: el.declaredName ?? '',
