@@ -574,15 +574,34 @@ function holdVar(held: Map<ElementId, ElementId[]>, v: ElementId, by: ElementId)
  * of its own keyed to that instance's variable ({@link keyedNames}),
  * `instance` re-rooting the reading for one of its owner's instances — whatever
  * the shape of its body: a conjunction's, a disjunction's or an inequality's
- * names, which no equation of the solve carries.
+ * names, which no equation of the solve carries — and the names a body that
+ * does not parse writes ({@link writtenNames}): the model carries the parse
+ * diagnostic, and what the text names it constrains all the same.
  */
 function relationReads(model: Model, el: ElementRecord, instance?: string): ElementId[] {
   const raw = el.attrs.expression;
-  const body = typeof raw === 'string' ? parseRelationBody(raw) : undefined;
-  if (!body) return [];
+  if (typeof raw !== 'string') return [];
+  const node = parseRelationBody(raw)?.node ?? writtenNames(raw);
+  if (!node) return [];
   const scope = relationScope(model, el);
-  const keyed = keyedNames(model, el, body.node, scope, instance);
-  return relationVarsOf(body.node, keyed?.nameToId ?? scope);
+  const keyed = keyedNames(model, el, node, scope, instance);
+  return relationVarsOf(node, keyed?.nameToId ?? scope);
+}
+
+/**
+ * The names a relation body that does not parse writes (`M == max(L, 20.0)`,
+ * `M == L ** 2.0`) — every dotted identifier in its text, a numeral's exponent
+ * excluded — as one node that reads them all, or `undefined` for none. A name
+ * that denotes no feature is read by nothing downstream, so a function's own
+ * name costs nothing: the set errs wide, never narrow.
+ */
+function writtenNames(raw: string): ExprNode | undefined {
+  let node: ExprNode | undefined;
+  for (const text of new Set(raw.match(/(?<![\w.])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g) ?? [])) {
+    const ref: ExprNode = { kind: 'ref', path: text.split('.') };
+    node = node ? { kind: 'binary', op: '+', left: node, right: ref } : ref;
+  }
+  return node;
 }
 
 /**
@@ -1824,6 +1843,12 @@ interface SolveCore {
    * judged at it.
    */
   contested: Map<ElementId, ElementId[]>;
+  /**
+   * Those of {@link SolveCore.contested} whose plain constraints include a curved equation ({@link isCurved}) beside
+   * another, which the solve withholds whether they disagree at the root it took or not: the root is no value the
+   * model states.
+   */
+  rival: Set<ElementId>;
   converged: boolean;
   iterations: number;
   residual: number;
@@ -2057,7 +2082,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // two that disagree, the one it took is the one written first, so none holds
   // there; of two that agree, the one written first was imposed and the other
   // judged satisfied, and the other way round — both are design equations.
-  const { contested, agreeing } = designReadings(
+  const { contested, rival, agreeing } = designReadings(
     eqs,
     values,
     tol,
@@ -2070,7 +2095,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     if (imposed.has(el.id) && eq.vars.some((v) => contested.has(v))) imposed.delete(el.id);
     else if (agreeing.has(eq) && !eq.vars.some((v) => contested.has(v))) imposed.add(el.id);
   }
-  return { point: values, free, unsettled, given, relations, imposed, held, contested, converged, iterations, residual };
+  return { point: values, free, unsettled, given, relations, imposed, held, contested, rival, converged, iterations, residual };
 }
 
 /**
@@ -2128,6 +2153,42 @@ function heldByUnreadAsserts(
   return out;
 }
 
+/** What a node varies as in one unknown: nothing (`const`), a constant multiple of it plus a constant (`affine`), or neither. */
+type Shape = 'const' | 'affine' | 'curved';
+
+function shapeIn(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>, unknown: ElementId): Shape {
+  switch (node.kind) {
+    case 'ref':
+      return nameToId.get(node.path.join('.')) === unknown ? 'affine' : 'const';
+    case 'unary': {
+      const inner = shapeIn(node.operand, nameToId, unknown);
+      return node.op === 'not' && inner !== 'const' ? 'curved' : inner;
+    }
+    case 'binary': {
+      const l = shapeIn(node.left, nameToId, unknown);
+      const r = shapeIn(node.right, nameToId, unknown);
+      if (l === 'curved' || r === 'curved') return 'curved';
+      if (l === 'const' && r === 'const') return 'const';
+      if (node.op === '+' || node.op === '-') return 'affine';
+      if (node.op === '*') return l === 'const' || r === 'const' ? 'affine' : 'curved';
+      return node.op === '/' && r === 'const' ? 'affine' : 'curved';
+    }
+    case 'if':
+      return [node.cond, node.then, node.else].every((n) => shapeIn(n, nameToId, unknown) === 'const') ? 'const' : 'curved';
+    default:
+      return 'const';
+  }
+}
+
+/**
+ * Is `eq` CURVED in one of its `unknowns` — not an affine function of it with the others held (`x * x`, `1.0 / x`,
+ * `x ^ 2.0`, a `%` or an `if` over it)? Solved for that unknown it may have more than one root. A product of two
+ * unknowns (`mass == density * volume`) is not: once the others are fixed it is affine in the one left.
+ */
+function isCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
+  return unknowns.some((u) => shapeIn(eq.lhs, eq.nameToId, u) === 'curved' || shapeIn(eq.rhs, eq.nameToId, u) === 'curved');
+}
+
 /**
  * What the plain equations (`isCheck`) read where a plain constraint the solve
  * took as a design equation (`used`) fixed the value: over the values the
@@ -2151,6 +2212,14 @@ function heldByUnreadAsserts(
  * the solve produced it, is no design component's: a check over it is judged
  * (`assert constraint s { x + y == 10.0 }` with y stated: a plain `x == 9.0`
  * is violated, beside `w == x + 1.0` that the solve took).
+ *
+ * A component with a CURVED plain equation ({@link isCurved}) beside another
+ * plain equation reads no value at all: the equation has more than one root,
+ * the solve takes the one it finds, and that one agrees with the other
+ * equation or not by which of the two it oriented first — of `a { x * x ==
+ * 4.0 }` and `b { x == -2.0 }` the root 2 when `a` is written first, −2 when
+ * `b` is. Whether the roots agree is not read: the pair is contested in both
+ * orders.
  */
 function designReadings(
   eqs: readonly Equation[],
@@ -2160,9 +2229,10 @@ function designReadings(
   isCheck: (eq: Equation) => boolean,
   used: ReadonlySet<Equation>,
   relationOf: ReadonlyMap<Equation, ElementRecord>,
-): { contested: Map<ElementId, ElementId[]>; agreeing: Set<Equation> } {
+): { contested: Map<ElementId, ElementId[]>; rival: Set<ElementId>; agreeing: Set<Equation> } {
   const produced = (v: ElementId): boolean => values.has(v) && !settled(v);
   const contested = new Map<ElementId, ElementId[]>();
+  const rival = new Set<ElementId>();
   const agreeing = new Set<Equation>();
   const unused: Equation[] = [];
   let took = false;
@@ -2171,7 +2241,7 @@ function designReadings(
     if (used.has(eq)) took = true;
     else if (eq.vars.every((v) => values.has(v))) unused.push(eq);
   }
-  if (!took || unused.length === 0) return { contested, agreeing };
+  if (!took || unused.length === 0) return { contested, rival, agreeing };
   const parent = new Map<ElementId, ElementId>();
   const find = (a: ElementId): ElementId => {
     let root = a;
@@ -2196,18 +2266,29 @@ function designReadings(
   // The design components: those a plain constraint the solve took fixes a value of.
   const design = new Set<ElementId>();
   for (const eq of used) if (isCheck(eq) && eq.vars.some(produced)) design.add(rootOf(eq));
+  // Those with a curved plain equation, beside another: the root the solve took is no value of the model's.
+  const plain = new Map<ElementId, number>();
+  const curved = new Set<ElementId>();
+  for (const eq of eqs) {
+    if (!isCheck(eq) || !eq.vars.some(produced) || !(used.has(eq) || eq.vars.every((v) => values.has(v)))) continue;
+    const root = rootOf(eq);
+    plain.set(root, (plain.get(root) ?? 0) + 1);
+    if (isCurved(eq, eq.vars.filter(produced))) curved.add(root);
+  }
   const missed = new Set<Equation>();
   const roots = new Set<ElementId>();
   for (const eq of unused) {
-    if (!design.has(rootOf(eq))) continue;
+    const root = rootOf(eq);
+    if (!design.has(root)) continue;
     const r = residualOf(eq, values);
-    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol)) agreeing.add(eq);
-    else {
+    if (!(curved.has(root) && plain.get(root)! > 1) && r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol)) {
+      agreeing.add(eq);
+    } else {
       missed.add(eq);
-      roots.add(rootOf(eq));
+      roots.add(root);
     }
   }
-  if (roots.size === 0) return { contested, agreeing };
+  if (roots.size === 0) return { contested, rival, agreeing };
   // Per component, the plain constraints over it that the solve took, missed or found agreeing — each one the
   // component's whichever of them was written first: the ones a sentence names.
   const named = new Map<ElementId, ElementId[]>();
@@ -2220,8 +2301,13 @@ function designReadings(
     if (!list.includes(el.id)) list.push(el.id);
     named.set(root, list);
   }
-  for (const v of parent.keys()) if (roots.has(find(v))) contested.set(v, named.get(find(v)) ?? []);
-  return { contested, agreeing };
+  for (const v of parent.keys()) {
+    const root = find(v);
+    if (!roots.has(root)) continue;
+    contested.set(v, named.get(root) ?? []);
+    if (curved.has(root) && plain.get(root)! > 1) rival.add(v);
+  }
+  return { contested, rival, agreeing };
 }
 
 /**
@@ -4358,6 +4444,7 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
     imposed: new Set(),
     held: new Map(),
     contested: new Map(),
+    rival: new Set(),
     converged: true,
     iterations,
     residual: 0,
@@ -5079,7 +5166,12 @@ function numericRows(
       row.reason =
         readsHeld.length > 0
           ? heldSentence(model, readsHeld, readsHeld.flatMap((id) => core.held.get(id) ?? []))
-          : contestedSentence(model, readsContested, readsContested.flatMap((id) => core.contested.get(id) ?? []));
+          : contestedSentence(
+              model,
+              readsContested,
+              readsContested.flatMap((id) => core.contested.get(id) ?? []),
+              readsContested.some((id) => core.rival.has(id)),
+            );
     } else if (contract && 'value' in contract && typeof contract.value === 'boolean') {
       row.result = contract.value ? 'satisfied' : 'violated';
     } else if (contract && 'tie' in contract && contract.tie !== undefined) {
@@ -5377,13 +5469,19 @@ function heldSentence(model: Model, ids: readonly ElementId[], asserts: readonly
 /**
  * Why a relation over a value plain constraints that disagree gave is not
  * judged ({@link SolveCore.contested}) — in the register of {@link freedomSentence}.
+ * `rival`: one of them has more than one root ({@link SolveCore.rival}), so
+ * they need not disagree, and the sentence says what is true of the pair
+ * whichever way round it is written.
  */
-function contestedSentence(model: Model, ids: readonly ElementId[], checks: readonly ElementId[]): string {
-  return (
-    `no value the model states fixes ${nameList(model, ids)}, only plain constraints that disagree ` +
-    `(${relationNameList(model, checks, 'constraint')}): which of them holds would turn on the one the solve took first as its ` +
-    'design equation, so none does, and this relation is not judged'
-  );
+function contestedSentence(model: Model, ids: readonly ElementId[], checks: readonly ElementId[], rival: boolean): string {
+  const list = relationNameList(model, checks, 'constraint');
+  return rival
+    ? `no value the model states fixes ${nameList(model, ids)}, only plain constraints, one of them with more than one root ` +
+        `(${list}): which root the solve took, and so whether the others hold, would turn on which constraint it took first as ` +
+        'its design equation, so none does, and this relation is not judged'
+    : `no value the model states fixes ${nameList(model, ids)}, only plain constraints that disagree ` +
+        `(${list}): which of them holds would turn on the one the solve took first as its ` +
+        'design equation, so none does, and this relation is not judged';
 }
 
 /**

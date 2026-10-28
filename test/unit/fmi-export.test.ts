@@ -282,7 +282,11 @@ describe('fmiModelDescription — a feature two asserted equations give two valu
     // Apart from the token each export draws.
     const bare = (xml: string) => xml.replace(/instantiationToken="[^"]*"/, '');
     expect(bare(ba.xml)).toBe(bare(ab.xml));
-    expect(ab.xml).toContain('<Float64 name="L" valueReference="0" causality="parameter" variability="fixed" start="0"');
+    // The placeholder says what it is: FMI requires a start, and the model states none.
+    expect(ab.xml).toContain(
+      '<Float64 name="L" valueReference="0" causality="parameter" variability="fixed" description="start is the type default, ' +
+        'not a model value: asserted equations give this feature, or one it is tied to, two values" start="0"',
+    );
   });
 
   it('gives a value tied to it none either: derived from it, or an input', () => {
@@ -330,8 +334,10 @@ describe('fmiModelDescription — a feature two asserted equations give two valu
     const md = describeP(`${L} attribute K : ScalarValues::Real = 7.0; inout attribute T : ScalarValues::Real; ${AB} assert constraint ct { T == 2.0 * L }`);
     const by = Object.fromEntries(md.variables.map((v) => [v.name, v]));
     expect(by.L).toMatchObject({ start: '0', startWithheld: true });
-    // A written value and a local carry no flag; a local carries no start either.
+    expect(by.L.description).toContain('start is the type default, not a model value');
+    // A written value and a local carry no flag, nor the note; a local carries no start either.
     expect('startWithheld' in by.K).toBe(false);
+    expect([by.K.description, by.T.description]).toEqual([undefined, undefined]);
     expect(by.T).toMatchObject({ causality: 'local', start: undefined });
     expect('startWithheld' in by.T).toBe(false);
   });

@@ -142,6 +142,13 @@ function withholdsStart(model: Model, feat: ElementRecord): boolean {
   return !writesLiteral(feat) && readsContradictedDefinition(model, feat.id);
 }
 
+/**
+ * The description of a variable whose `start` is the type's default only because FMI requires one
+ * ({@link FmiVariable.startWithheld}): a reader of the XML must not take it for a value of the model.
+ */
+const START_WITHHELD_NOTE =
+  'start is the type default, not a model value: asserted equations give this feature, or one it is tied to, two values';
+
 /** Format a feature's value as an FMI `start` string for the given type, or undefined. */
 function startOf(model: Model, feat: ElementRecord, type: FmiType): string | undefined {
   const r = evaluateFeatureValue(model, feat.id);
@@ -211,6 +218,8 @@ export function fmiVariablesOf(model: Model, blockId: ElementId): FmiVariable[] 
     if (start === undefined && (causality === 'parameter' || causality === 'input')) {
       start = defaultStart(type);
     }
+    // The start FMI requires, in place of one the model does not state: marked, and said so in the description.
+    const startWithheld = withheld && (causality === 'parameter' || causality === 'input');
     const initial = causality === 'local' && start !== undefined ? ('exact' as const) : undefined;
     const unit =
       type === 'Float64' ? dimensionalFacets(model, feat.id).unit ?? undefined : undefined;
@@ -222,10 +231,12 @@ export function fmiVariablesOf(model: Model, blockId: ElementId): FmiVariable[] 
       causality,
       variability,
       start,
-      ...(withheld && (causality === 'parameter' || causality === 'input') ? { startWithheld: true as const } : {}),
+      ...(startWithheld ? { startWithheld: true as const } : {}),
       initial,
       unit,
-      description: feat.declaredShortName || undefined,
+      description: startWithheld
+        ? [feat.declaredShortName, START_WITHHELD_NOTE].filter(Boolean).join('; ')
+        : feat.declaredShortName || undefined,
     });
   }
   return out;

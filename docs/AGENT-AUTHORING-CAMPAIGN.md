@@ -3017,18 +3017,17 @@ is taken back in once the step has moved off it. An equation the solve imposed
 holds along the freedom and stays `satisfied`; a PLAIN constraint (no `assert`)
 the solve took as a design equation to fix a value is `satisfied` with
 `imposed: true` and the reason *imposed by the solve* — it holds because the
-solve made it hold, not as a check passed. Which one it takes turns on nothing
-the order of the text decides — bar the root a nonlinear plain equation gives
-(`x * x == 4.0` written above `x == -2.0` takes 2 and leaves both unjudged;
-below it, −2 and both imposed): the model's own equations are solved first and
-a check fixes only what they leave; plain equalities that agree over a value only
-they fix are all imposed; ones that disagree leave that value withheld — no
-value, every relation over it `unknown` (*… only plain constraints that
-disagree …*), searched as a freedom by `solveFeasible`; and a feature with no
-value that an `assert` constrains in a form the solve does not read (an
-inequality, a conjunction, a disjunction) is solved for by no check (`unknown`,
-*… has no value, and an assert constrains it in a form the numeric solve does
-not read …*).
+solve made it hold, not as a check passed. No design equation turns on the order
+of the text: the model's own equations are solved first and a check fixes only
+what they leave; plain equalities that agree over a value only they fix are all
+imposed; ones that disagree, or one of which has more than one root (`x * x ==
+4.0` beside `x == -2.0` or `x == 2.0`), leave that value withheld — no value,
+every relation over it `unknown` (*… only plain constraints that disagree …*,
+*… one of them with more than one root …*), searched as a freedom by
+`solveFeasible`; and a feature with no value that an `assert` constrains in a
+form the solve does not read (an inequality, a conjunction, a disjunction, a body
+that does not parse) is solved for by no check (`unknown`, *… has no value, and
+an assert constrains it in a form the numeric solve does not read …*).
 
 **`solveFeasible` claims a witness only where it has one.** Its point must meet
 every asserted equation, binding and feature value, and every plain equation

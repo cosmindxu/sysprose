@@ -10841,21 +10841,48 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'K1::s': ['?/-/T/-', 'T'],
       },
     ),
-    // The root of a nonlinear plain equation is the one place the order of the text still shows (TODO): `a { x * x ==
-    // 4.0 }` written above `b { x == -2.0 }` takes the root 2 and leaves both unjudged, written below it takes −2 and
-    // imposes both. Neither is a false verdict; the pair is pinned apart, outside I14's STAND_ALIKE.
-    'order-root-ab': probe(
+    // The root of a curved plain equation (`x * x == 4.0`, two roots) beside another plain equation was the one place the
+    // order of the text still showed: written above `b { x == -2.0 }` it took the root 2 and left both unjudged, written
+    // below it took −2 and imposed both. The pair is contested in both orders now — the roots are not compared, so
+    // `x == 2.0`, where one root agrees, reads alike (ROOT2) — and a lone curved equation, or one beside inequalities,
+    // is still imposed (ROOT1). UPR: an asserted relation the parser rejects (`M == max(L, 20.0)`) still constrains
+    // what it names, so `t1 { p.M == 3.0 }` is no design equation over a feature it holds (it was imposed, `?/?/t/?`).
+    ...reversed(
+      'order-root',
       `package ROOT { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint b { x == -2.0 } }`,
+      `package ROOT { constraint b { x == -2.0 } constraint a { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
       {
         'ROOT::a': ['?/?/?/?', '?'],
         'ROOT::b': ['?/?/?/?', '?'],
       },
     ),
-    'order-root-ba': probe(
-      `package ROOT { constraint b { x == -2.0 } constraint a { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
+    ...reversed(
+      'order-root2',
+      `package ROOT2 { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint b { x == 2.0 } }`,
+      `package ROOT2 { constraint b { x == 2.0 } constraint a { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
       {
-        'ROOT::a': ['?/?/t/?', '?'],
-        'ROOT::b': ['?/?/t/?', '?'],
+        'ROOT2::a': ['?/?/?/?', '?'],
+        'ROOT2::b': ['?/?/?/?', '?'],
+      },
+    ),
+    'order-root1': probe(
+      `package ROOT1 { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint k { x >= 0.0 } }`,
+      {
+        'ROOT1::a': ['?/?/t/?', '?'],
+        'ROOT1::k': ['?/?/T/?', null],
+      },
+    ),
+    'order-upr': probe(
+      `package UPR {
+        part def P { attribute M : ScalarValues::Real; attribute L : ScalarValues::Real;
+          assert constraint e { M == max(L, 20.0) } assert constraint g { L >= 5.0 and L <= 100.0 } }
+        part p : P;
+        constraint t1 { p.M == 3.0 }
+      }`,
+      {
+        'UPR::P::e': ['?/-/?/-', null],
+        'UPR::P::g': ['?/-/?/-', null],
+        'UPR::t1': ['?/?/?/?', '?'],
       },
     ),
   };
@@ -11715,7 +11742,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       (k) => [`${k}-ab`, `${k}-ba`] as const,
     ),
     // text-order S1: a model and its members in the reverse order ({@link reversed}).
-    ...['s1n-and', 's1kn-and', 's2enc-and', 's2spec-and', 's2use-and', 's1n-plain', 's1n-eqmn', 'x3k', 'pg', 'lk', 'pl2', 'dup', 'z125', 'k1'].map(
+    ...['s1n-and', 's1kn-and', 's2enc-and', 's2spec-and', 's2use-and', 's1n-plain', 's1n-eqmn', 'x3k', 'pg', 'lk', 'pl2', 'dup', 'z125', 'k1', 'root', 'root2'].map(
       (k) => [`order-${k}`, `order-${k}-rev`] as const,
     ),
   ] as const;

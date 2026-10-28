@@ -731,30 +731,34 @@ Two names worth separating:
   whose stated value expression those facts determine (`y = x * 2.0` over an
   asserted `x`): `y == 7.0` beside it is violated, never the value y is
   solved to, wherever the check is written: the model's own equations are
-  solved first, and a check fixes only what they leave. **No design equation
-  turns on the order of the text** (bar the root of a nonlinear one, below). Two plain equalities that agree (`a { x ==
-  3.0 }`, `b { x == 3.0 }` over a valueless `x`) are both *imposed by the
-  solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
+  solved first, and a check fixes only what they leave. The test is local: of
+  two separate roots (`x * x == 4.0`) the one the solver found is still the
+  one judged. **No design equation turns on the order of the text.** Two plain
+  equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
+  `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
   taken, and every relation over that value is *unjudged* (*… only plain
   constraints that disagree (t50 and t60): which of them holds would turn on the
   one the solve took first as its design equation, so none does …*); Solve
-  lists no value for it. A feature with no value that an `assert` constrains
-  in a form the solve does not read — an inequality, a conjunction (`L == 50.0
-  and L >= 0.0`), a disjunction — is no design freedom for a check: no plain
-  constraint is solved for it — `t1 { p.L == 1.0 }` does not fix p's L at 1
-  beside an assert that makes it 50 — and a relation over it is *unjudged*
-  (*… has no value, and an assert constrains it in a form the numeric solve
-  does not read (ca, a conjunction) …*). The model's own equations still solve
-  it, and the freedom is read off them alone: a stated `e = x * 2.0` leaves x a
-  freedom, and so does an asserted `M == L * 2.0` beside `tM { p.M == 100.0 }`,
-  which fixes neither M nor L. The test is local: of
-  two separate roots (`x * x == 4.0`) the one the solver found is still the
-  one judged — so `a { x * x == 4.0 }` written above `b { x == -2.0 }` takes
-  the root 2 and leaves both *unjudged* (they disagree there), where `b`
-  written first takes −2 and both are *imposed by the solve*: neither is ever
-  refuted, but the text order still shows in which of the two you read. A constraint of a definition read in a usage is judged at the
-  values the model states; with any of them `fixed` by an API caller,
+  lists no value for it. So do two plain equations one of which has more than
+  one root (`a { x * x == 4.0 }` beside `b { x == -2.0 }`, and beside `b { x ==
+  2.0 }`, where one root agrees): the root the solve takes, and so whether the
+  other holds, would turn on which of the two it took first, so neither is
+  (*… only plain constraints, one of them with more than one root (a and b) …*).
+  A lone equation of two roots is still *imposed*, at the root the solver found,
+  and a product of two unknowns (`mass == density * volume`) is no such
+  equation once the others are fixed. A feature with no value that an `assert`
+  constrains in a form the solve does not read — an inequality, a conjunction
+  (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
+  (`M == max(L, 20.0)`, which the model reports) — is no design freedom for a
+  check: no plain constraint is solved for it — `t1 { p.L == 1.0 }` does not fix
+  p's L at 1 beside an assert that makes it 50 — and a relation over it is
+  *unjudged* (*… has no value, and an assert constrains it in a form the
+  numeric solve does not read (ca, a conjunction) …*). The model's own
+  equations still solve it, and the freedom is read off them alone: a stated `e
+  = x * 2.0` leaves x a freedom, and so does an asserted `M == L * 2.0` beside
+  `tM { p.M == 100.0 }`, which fixes neither M nor L. A constraint of a
+  definition read in a usage is judged at the values the model states; with any of them `fixed` by an API caller,
   `solveFeasible` leaves it unjudged (`decided: false`), and so does the
   numeric check (`unknown`). Every other relation is read at the fixed point,
   every feature the point moves at the value it has there — `y != 18.0` over
@@ -1561,7 +1565,8 @@ engine, its rows printing no value for L (nor an SI pair). No export reads one
 either, whichever equation is written first: the FMI `start` of such an L, or
 of a value tied to it, is the type's default (`0`, `false` for a Boolean, the
 empty string for a String) as for a feature with no value, a placeholder FMI
-requires and no value of the model; a `local` has none; a co-simulation holds
+requires and no value of the model (the variable's `description` says so:
+*start is the type default, not a model value …*); a `local` has none; a co-simulation holds
 no input at it, so the outputs over it read NaN; and Solve lists a measure of
 effectiveness that is one as *(unknown)*. A value written as a number, a
 Boolean or a String keeps its start. As wide as the rest of this abstention,
