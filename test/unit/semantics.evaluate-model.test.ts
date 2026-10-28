@@ -12,6 +12,7 @@ import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, ancho
 import { featureIdsFor, unreadValuesOf, valueAtPath, valueKey, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
+  DefiningEquations,
   assertDefinitionsIn,
   assertHeldInSome,
   bindingCapOf,
@@ -21,6 +22,7 @@ import {
   boundPartnerSafe,
   boundSourceIn,
   classified,
+  contradictedDefinitions,
   defaultGivesWay,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
@@ -44,6 +46,7 @@ import {
   sharedDefinitions,
 } from '../../src/semantics/defining-equation';
 import { obligationsOf } from '../../src/semantics/obligations';
+import * as obligationsModule from '../../src/semantics/obligations';
 import { refusalHead, refusalTail } from '../../src/semantics/engines/literal';
 import { checkConstraintsNumeric, solveFeasible } from '../../src/semantics/solver';
 import { DIMENSIONLESS } from '../../src/semantics/units';
@@ -2285,6 +2288,170 @@ describe('checkConstraints — two asserted equations that give one feature two 
     ]);
   });
 
+  it('two on the two ends of one binding are one feature’s two values (`bind L = K`): the pair is one warning, every reading abstains, in either order', async () => {
+    // Wave 3 contradictory-models S3 (C6). `L == 50.0` and `K == 60.0` each define a feature with no value, and `bind L = K`
+    // says the two are one value in every P: the check read the first equation written for both (`t50` true and `k50`
+    // false, or the reverse), reporting the binding violated and each reading of either end beside it.
+    const text = `package BB {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind L = K;
+        /*A*/ assert constraint cl { L == 50.0 }
+        /*B*/ assert constraint ck { K == 60.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+      constraint k50 { p.K == 50.0 }
+    }`;
+    const expected = [
+      ['BB::P#bind', 'unknown'],
+      ['BB::P#equations', 'violated'],
+      ['BB::P::ck', 'unknown'],
+      ['BB::P::cl', 'unknown'],
+      ['BB::k50', 'unknown'],
+      ['BB::t50', 'unknown'],
+    ];
+    expect(await bothOrders(text)).toEqual(expected);
+    // The values exchanged: `L == 60.0` and `K == 50.0` read alike.
+    expect(await exchanged((x, y) => text.replace('L == 50.0', `L == ${x}`).replace('K == 60.0', `K == ${y}`))).toEqual(expected);
+    for (const order of [text, twin(text)]) {
+      const { model: m } = await loadModelText(order);
+      const lFirst = order.indexOf('constraint cl') < order.indexOf('constraint ck');
+      const [first, second] = lFirst ? ['L == 50.0', 'K == 60.0'] : ['K == 60.0', 'L == 50.0'];
+      const [firstId, secondId] = lFirst ? ['cl', 'ck'] : ['ck', 'cl'];
+      const named = `the asserted \`${first}\` (BB::P::${firstId}) and \`${second}\` (BB::P::${secondId}) each define \`L\` (joined to \`K\` by \`bind L = K\`) in BB::P, which states no value, and give it two different values`;
+      expect(checkOf(m!, 'BB::t50').message).toBe(
+        `Could not evaluate: L is not read: ${named} — the model contradicts itself there, whichever is written first, and this tool reads neither value, so no relation that may read it is decided`,
+      );
+      // One warning, at P: the binding row and each reading of either end no longer report a pair of their own.
+      const warned = validate(m!).filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning');
+      expect(warned.map((d) => m!.qualifiedName(d.elementId!))).toEqual(['BB::P']);
+      // `verify` decides nothing over it on either engine: the literal engine reads the check, the SMT engine finds its axioms inconsistent.
+      const literal = await verifyModel(m!, { engine: 'literal' });
+      expect(literal.exitCode).toBe(2);
+      expect(literal.results.filter((r) => r.clause.qualifiedName.startsWith('BB::') && r.clause.qualifiedName !== 'BB::P').map((r) => [r.clause.qualifiedName, r.code])).toEqual([
+        ['BB::t50', 'verification/not-evaluable'],
+        ['BB::k50', 'verification/not-evaluable'],
+      ]);
+      expect(literal.results.find((r) => r.clause.qualifiedName === 'BB::t50')!.bindings.map((b) => [b.path, b.value])).toEqual([['p.L', null]]);
+      const smt = await verifyModel(m!, { engine: 'smt' });
+      expect(smt.results.filter((r) => r.clause.qualifiedName === 'BB::t50' || r.clause.qualifiedName === 'BB::k50').map((r) => r.code)).toEqual([
+        'verification/inconsistent-axioms',
+        'verification/inconsistent-axioms',
+      ]);
+    }
+  }, 60_000);
+
+  it('through a chain of bindings, in a usage of the element, and in a type that specialises it; two that agree, and a side that reads the other end back, read as they did', async () => {
+    // A name in the middle of the chain defines nothing, and the ends are one value: `bind L = M; bind M = K`.
+    const chain = await rows(`package BC {
+      part def P { attribute L : ScalarValues::Real; attribute M : ScalarValues::Real; attribute K : ScalarValues::Real; bind L = M; bind M = K;
+        assert constraint cl { L == 50.0 } assert constraint ck { K == 60.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+      constraint m50 { p.M == 50.0 }
+    }`);
+    expect(chain.find(([k]) => k === 'BC::P#equations')).toEqual(['BC::P#equations', 'violated']);
+    expect(chain.filter(([k]) => ['BC::t50', 'BC::m50', 'BC::P#bind'].includes(k) || k.startsWith('BC::P::')).map(([, r]) => r)).toEqual(Array(chain.length - 1).fill('unknown'));
+    // One of the two written in a usage of P, or in a type that specialises it: the pair meets in that usage or type.
+    const use = await rows(`package BU {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind L = K; assert constraint cl { L == 50.0 } }
+      part def P2 :> P { assert constraint ck { K == 60.0 } }
+      part p : P2 { }
+      part r : P { assert constraint cr { K == 60.0 } }
+      constraint t50 { p.L == 50.0 }
+      constraint u50 { r.L == 50.0 }
+    }`);
+    expect(use.filter(([k]) => k.endsWith('#equations'))).toEqual([['BU::P2#equations', 'violated'], ['BU::r#equations', 'violated']]);
+    expect(use.filter(([k]) => k === 'BU::t50' || k === 'BU::u50')).toEqual([['BU::t50', 'unknown'], ['BU::u50', 'unknown']]);
+    // Two that agree are read as before; so is a side that reads the other end back (the binding row reports its pair).
+    const agree = await rows(`package BA {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind L = K;
+        assert constraint cl { L == 50.0 } assert constraint ck { K == 50.0 } }
+      part p : P;
+      constraint t50 { p.L == 50.0 }
+    }`);
+    expect(agree.every(([k, r]) => !k.endsWith('#equations') && r === 'satisfied'), JSON.stringify(agree)).toBe(true);
+    const back = await rows(`package BS {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind L = K;
+        assert constraint cl { L == K * 2.0 } assert constraint ck { K == 5.0 } }
+      part p : P;
+      constraint k5 { p.K == 5.0 }
+    }`);
+    expect(back.find(([k]) => k === 'BS::P#bind')).toEqual(['BS::P#bind', 'violated']);
+    expect(back.some(([k]) => k.endsWith('#equations'))).toBe(false);
+  });
+
+  it('through a chain across a specialisation, each hop where it is crossed: a middle that states nothing is still one value, and a name the specialisation masks is no hop', async () => {
+    // P's `bind K = L` and P2's `bind N = K` make L, K and N one value in every P2 (P2's own K redefines P's), so P's
+    // `L == 50.0` and P2's `N == 70.0` give one feature two values although K, the middle, states nothing. The end-to-end
+    // test of the first reading missed it: P2's N is joined to P2's K, and only P's K is joined to P's L.
+    const chain = (x: string, y: string) => `package G3 {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == ${x} } }
+      part def P2 :> P { attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == ${y} } }
+      part p : P2;
+      constraint t { p.L == 50.0 }
+      constraint v { p.N == 50.0 }
+      constraint w { p.K == 50.0 }
+    }`;
+    const warnings = (m: Model) =>
+      validate(m)
+        .filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning')
+        .map((d) => m.qualifiedName(d.elementId!))
+        .sort();
+    for (const [x, y] of [['50.0', '70.0'], ['70.0', '50.0']] as const) {
+      const { model: m } = await loadModelText(chain(x, y));
+      // One warning, at P2, naming the feature declared first and the two bindings that join it to the other end.
+      expect(warnings(m!)).toEqual(['G3::P2']);
+      expect(checkOf(m!, 'G3::t').message).toContain('each define `L` (joined to `N` by `bind K = L` and `bind N = K`) in G3::P2');
+      expect(['G3::t', 'G3::v', 'G3::w'].map((q) => checkOf(m!, q).result)).toEqual(['unknown', 'unknown', 'unknown']);
+      const literal = await verifyModel(m!, { engine: 'literal' });
+      expect(literal.exitCode).toBe(2);
+      expect(literal.results.filter((r) => /^G3::[tvw]$/.test(r.clause.qualifiedName)).map((r) => r.code)).toEqual(Array(3).fill('verification/not-evaluable'));
+    }
+    // The pair written in the usage rather than the type, and the middle carrying an equation of its own: the three
+    // equations meet once at P2, beside the pair at P — not a second, smaller set named by the other end.
+    const usage = await loadModelText(`package G4 {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+      part def P2 :> P { attribute N : ScalarValues::Real; bind N = K; }
+      part p : P2 { assert constraint cn { N == 70.0 } }
+      constraint t { p.L == 50.0 }
+    }`);
+    expect(warnings(usage.model!)).toEqual(['G4::p']);
+    expect(checkOf(usage.model!, 'G4::t').result).toBe('unknown');
+    const middle = await loadModelText(`package G2 {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L;
+        assert constraint cl { L == 50.0 } assert constraint ck { K == 60.0 } }
+      part def P2 :> P { attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+      part p : P2;
+      constraint t { p.N == 70.0 }
+    }`);
+    expect(warnings(middle.model!)).toEqual(['G2::P', 'G2::P2']);
+    const set = contradictedDefinitions(middle.model!).sets.find((d) => middle.model!.qualifiedName(d.context.id) === 'G2::P2')!;
+    expect(set.equations.map((e) => middle.model!.qualifiedName(e.id))).toEqual(['G2::P::cl', 'G2::P::ck', 'G2::P2::cn']);
+    expect(checkOf(middle.model!, 'G2::t').result).toBe('unknown');
+    // P2 masks K with a feature of its own (no `:>>`): its `bind N = K` joins N to that K, not to P's, which `bind K = L` joins to L.
+    // N and L are two values, and the two equations are two facts: nothing is read as a pair, and the relations are decided.
+    const masked = await loadModelText(`package G8 {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+      part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+      part p : P2;
+      constraint t { p.L == 50.0 }
+      constraint v { p.N == 70.0 }
+    }`);
+    expect(warnings(masked.model!)).toEqual([]);
+    expect(['G8::t', 'G8::v'].map((q) => checkOf(masked.model!, q).result)).toEqual(['satisfied', 'satisfied']);
+    // The two bindings of a chain in one type, written in either order, read alike.
+    for (const binds of ['bind K = L; bind N = K;', 'bind N = K; bind K = L;']) {
+      const { model: m } = await loadModelText(`package G6 {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; ${binds}
+          assert constraint cl { L == 50.0 } assert constraint cn { N == 70.0 } }
+        part p : P;
+        constraint t { p.L == 50.0 }
+        constraint v { p.N == 70.0 }
+      }`);
+      expect(warnings(m!), binds).toEqual(['G6::P']);
+      expect(['G6::t', 'G6::v'].map((q) => checkOf(m!, q).result), binds).toEqual(['unknown', 'unknown']);
+    }
+  }, 60_000);
+
   it('two values a unit makes incomparable exactly are no value either, and the pair is the warning where the check reads them apart', async () => {
     const text = `package UND {
       part def P { attribute L : ISQ::MassValue;
@@ -3529,24 +3696,35 @@ describe('checkConstraints — a default stands against an asserted equation (de
     }`);
     for (const q of ['SP2::k', 'SP2::kp']) expect(contradicted(sp2.row(q)), q).toEqual(X);
     expect(sp2.report.exitCode).toBe(2);
-    // The check reports G's ca violated in s2's q, whose binding sits in s2, and the worklist files no row of
-    // ca there: what that contradiction reaches is not read, so it reaches every relation of the model.
-    const gi = await literal(`package GI {
+    // The check reports G's ca violated in s2's q, whose binding sits in s2; the worklist files its row there
+    // (contradictory-models S2, GI). One that lacks the row — planted here, the row dropped from every worklist the
+    // engine reads — leaves what that contradiction reaches unknown, so it reaches every relation of the model.
+    const giText = `package GI {
       part def G { attribute g : ScalarValues::Real default = 1.0; assert constraint ca { g <= 10.0 } }
       part def S { part q : G; }
       attribute K : ScalarValues::Real = 50.0;
       part s1 : S;
       part s2 : S { bind q.g = K; }
       constraint t2 { s2.q.g == 50.0 }
+      constraint t1 { s1.q.g == 1.0 }
       constraint tk { K == 50.0 }
-    }`);
-    for (const q of ['GI::t2', 'GI::tk']) {
-      expect(contradicted(gi.row(q)), q).toEqual(X);
-      expect(gi.row(q).detail, q).toContain(
-        'the check reports the asserted `g <= 10.0` (GI::G::ca) false in GI::s2::q, an instance the worklist files no row of that assertion for',
-      );
+    }`;
+    const filed = obligationsModule.obligationsOf;
+    const dropped = vi
+      .spyOn(obligationsModule, 'obligationsOf')
+      .mockImplementation((m, o) => filed(m, o).filter((r) => r.element.qualifiedName !== 'GI::G::ca in GI::s2::q'));
+    try {
+      const gi = await literal(giText);
+      for (const q of ['GI::t1', 'GI::t2', 'GI::tk']) {
+        expect(contradicted(gi.row(q)), q).toEqual(X);
+        expect(gi.row(q).detail, q).toContain(
+          'the check reports the asserted `g <= 10.0` (GI::G::ca) false in GI::s2::q, an instance the worklist files no row of that assertion for',
+        );
+      }
+      expect(gi.report.exitCode).toBe(2);
+    } finally {
+      dropped.mockRestore();
     }
-    expect(gi.report.exitCode).toBe(2);
     // An assert that reads no feature is false at every point.
     const kc = await literal(`package KC {
       attribute L : ScalarValues::Real = 1.0;
@@ -5140,7 +5318,10 @@ describe('a value, a reference and a binding that equate two parts or structured
     const k = check(rbb!, 'RBB4K::k');
     expect([k.result, numeric(rbb!, 'RBB4K::k'), goal(rbb!, 'RBB4K::k').encodable]).toMatchObject(['unknown', 'unknown', { reason: 'unread-binding' }]);
     expect(k.message).toContain("the copy of RBB4K::W::pp (`= top.a`) that a binding's end makes in RBB4K::w as `pp` states no value of its own");
-    expect([check(rbb!, 'RBB4K::W::pF').result, check(rbb!, 'RBB4K::W::pF').instances ?? []]).toEqual(['unknown', []]);
+    // W's own m has no value; w's own binding gives w one (contradictory-models S1), so pF files a row of w's, which
+    // abstains for the same reason as k.
+    const pF = check(rbb!, 'RBB4K::W::pF');
+    expect([pF.result, (pF.instances ?? []).map((i) => [i.context, i.result])]).toEqual(['unknown', [['w', 'unknown']]]);
     // The same nested, over an outward reference: w's sub's row was T on the engines (a new row of S1's), k T.
     const { model: nested } = await loadModelText(`package COWN7 { ${T0}
       part def W { part p1 : T0; part sub { ref part r : T0 = p1; constraint c { r.load <= 5.0 } } }
@@ -5465,21 +5646,18 @@ describe('an enclosing equation read through a binding or a reference, and a rel
     };
     // Each read the default against the assert (RB3: 4, violated; RB5: 9, held; RF: 2, held) — and abstained on
     // every surface while decision 14 gave 3, 50 and 50. No assertion replaces a default since it was amended
-    // (2026-10-22): RB3 and RF read their default again, on every surface. RB5's K stands at 9 too, but Q's
-    // assert, which holds at q1 and is violated there, is read for q1 by no surface: read without it, K's 9 was
-    // held everywhere and the model passed unreported, so every reading of the pair abstains, an unread binding.
-    const read = { RB3: 'violated', RB5: 'unknown', RF: 'satisfied' } as const;
+    // (2026-10-22): RB3 and RF read their default again, on every surface. RB5's K stands at 9 too, and Q's assert,
+    // which is violated at q1, is read for q1 (contradictory-models S1): K's 9 is held on the check and the numeric
+    // surface, beside the violated assert.
+    const read = { RB3: 'violated', RB5: 'satisfied', RF: 'satisfied' } as const;
     for (const [name, body] of Object.entries(texts)) {
       const { model: m } = await loadModelText(`package ${name} { ${body} }`);
       const want = read[name as keyof typeof read];
       expect([check(m!, `${name}::top`).result, numeric(m!, `${name}::top`)], name).toEqual([want, want]);
-      if (want === 'unknown') expect(goal(m!, `${name}::top`).encodable, name).toMatchObject({ reason: 'unread-binding' });
-      else expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
+      expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
     }
     const { model: rb5 } = await loadModelText(`package RB5 { ${texts.RB5} }`);
-    expect(check(rb5!, 'RB5::top').message).toContain(
-      'is not read where `bind p.x = K` in RB5::q1 joins p.x to a `default`, which no assertion replaces',
-    );
+    expect(check(rb5!, 'RB5::Q::tie').instances!.map((i) => [i.context, i.result])).toEqual([['q1', 'violated']]);
   });
 
   it('reads a relation in a context below which an assert, or a usage valuing a name, constrains what it reads, at its default', async () => {
@@ -5552,18 +5730,17 @@ describe('an enclosing equation read through a binding or a reference, and a rel
     // Each read the binding's default against the assert (RB5*'s K 9, held; RBS*'s L 4, the assert reported
     // violated; PJ's K 1, held on the numeric surface), and abstained on every surface while decision 14 gave 50,
     // 3 and 7. No assertion replaces a default since it was amended (2026-10-22): RBS*'s L 4 is read again, and
-    // RBS*'s assert reported violated against the 4. RB5*'s K stands at 9, against Q's assert at q1, which no
-    // surface reads there: every reading of the pair abstains, an unread binding, as in RB5. PJ's binding joins
+    // RBS*'s assert reported violated against the 4. RB5*'s K stands at 9, against Q's assert at q1, which is read
+    // there since contradictory-models S1 (violated; top is held beside it, as in RB5). PJ's binding joins
     // q's p's L default 2 to K's 1, two that differ: neither is read on any surface — not the 7 P's `L == M`
     // would carry into L at p's M (the numeric surface solved it so, and read K at P's own 2 across the binding,
     // `topK` T).
-    const read = { RB5C: 'unknown', RB5D: 'unknown', RB5F: 'unknown', RBS1: 'violated', RBS2: 'violated', RBS5: 'violated', PJ: 'unknown' };
+    const read = { RB5C: 'satisfied', RB5D: 'satisfied', RB5F: 'satisfied', RBS1: 'violated', RBS2: 'violated', RBS5: 'violated', PJ: 'unknown' };
     for (const [name, body] of Object.entries(texts)) {
       const { model: m } = await loadModelText(`package ${name} { ${body} }`, { fileName: `${name}.sysml`, strict: true });
       const want = read[name as keyof typeof read];
       expect([check(m!, `${name}::top`).result, numeric(m!, `${name}::top`)], name).toEqual([want, want]);
-      if (name.startsWith('RB5')) expect(goal(m!, `${name}::top`).encodable, name).toMatchObject({ reason: 'unread-binding' });
-      else if (name !== 'PJ') expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
+      if (name !== 'PJ') expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
     }
     const { model: pj } = await loadModelText(`package PJ { ${texts.PJ} }`);
     expect([check(pj!, 'PJ::topK').result, numeric(pj!, 'PJ::topK')]).toEqual(['unknown', 'unknown']);
@@ -8041,5 +8218,550 @@ describe('the per-instance memo key (A-L2)', () => {
     expect(valueKey('f')).toBe('f');
     expect(valueKey('f', undefined, 'ctx1')).toBe('f@ctx1');
     expect(valueKey('f', 'M::q::p')).toBe('f@M::q::p');
+  });
+});
+
+describe('a violated assert is read in the instance a binding gives the value it reads (wave 3 contradictory-models S1)', () => {
+  const load = async (text: string) => (await loadModelText(text)).model!;
+  const check = (m: Model, rel: string) => checkConstraints(m).find((k) => m.qualifiedName(k.id) === rel)!;
+  const instanceRow = (m: Model, rel: string, where: string) =>
+    check(m, rel).instances?.find((i) => (i.instance ?? m.qualifiedName(i.contextId)) === where);
+  const numeric = (m: Model, rel: string, where: string) =>
+    checkConstraintsNumeric(m).find(
+      (r) => r.id.includes('@') && m.qualifiedName(r.id.split('@')[0]!) === rel && m.qualifiedName(r.id.split('@')[1]!) === where,
+    )?.result;
+  const axioms = (m: Model) => obligationsOf(m).filter((o) => o.role === 'axiom' && o.source === 'assert').map((o) => o.element.qualifiedName);
+  const letters = async (m: Model, engine: 'literal' | 'smt') =>
+    (await verifyModel(m, { engine })).results.map((r) => [r.clause.qualifiedName, r.claim, r.code]);
+  const VC = (extra = '', l = '50.0') => `package VC {
+    part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+    part def Q { attribute L : ScalarValues::Real ${l === 'default' ? 'default = 50.0' : `= ${l}`}; part p : P; bind p.load = L; }
+    part q : Q;${extra}
+    constraint k { q.L >= 0.0 }
+  }`;
+
+  it('files P’s assert violated in Q’s p, where Q’s binding gives p’s load the value (VC)', async () => {
+    const m = await load(VC());
+    // The check reads Q’s p at the 50 the binding carries, in a row of its own at the line stating it: a finding of the
+    // instance (`via`, constraint-by-instance), not a target’s.
+    const row = instanceRow(m, 'VC::P::a2', 'VC::Q::p')!;
+    expect([row.result, row.via, row.message]).toEqual([
+      'violated',
+      true,
+      'p::load = 50 misses P::a2 (load <= 10.0)',
+    ]);
+    expect(m.qualifiedName(row.anchorId!)).toBe('VC::Q::L');
+    // P’s own row has no value to read (no instance of P is the one Q’s binding fills), and says so.
+    expect(check(m, 'VC::P::a2').result).toBe('unknown');
+    expect(check(m, 'VC::k').result).toBe('satisfied');
+    // The numeric surface decides the instance too; the worklist files it as an axiom for the SMT engine, beside the
+    // generic one.
+    expect(numeric(m, 'VC::P::a2', 'VC::Q::p')).toBe('violated');
+    expect(axioms(m)).toEqual(['VC::P::a2', 'VC::P::a2 in VC::Q::p']);
+    const found = validate(m).filter((d) => d.ruleId === 'constraint-by-instance' || d.ruleId === 'target-by-specialisation');
+    expect(found.map((d) => [d.ruleId, d.severity, d.message])).toEqual([
+      ['constraint-by-instance', 'warning', 'p::load = 50 misses P::a2 (load <= 10.0)'],
+    ]);
+  });
+
+  it('marks a relation over the contradicted value inconclusive on the literal engine, and decides it on the check', async () => {
+    const m = await load(VC());
+    const literal = (await verifyModel(m, { engine: 'literal' })).results.filter((r) => r.clause.qualifiedName === 'VC::k');
+    expect(literal.map((r) => r.code)).toEqual(['verification/inconsistent-axioms']);
+    expect(literal[0]!.detail).toContain('the asserted `load <= 10.0` (VC::P::a2 in VC::Q::p) is false at them');
+    expect(literal[0]!.detail).toContain('this relation reads `q.L`');
+    expect((await verifyModel(m, { engine: 'literal' })).exitCode).toBe(2);
+    // …and the check keeps deciding it, beside the violated assert (ruling 2026-10-24).
+    expect(check(m, 'VC::k').result).toBe('satisfied');
+  });
+
+  it('holds the assert in the instance as an SMT axiom, so the axioms read inconsistent', async () => {
+    const m = await load(VC());
+    const smt = (await verifyModel(m, { engine: 'smt' })).results.filter((r) => r.clause.qualifiedName === 'VC::k');
+    expect(smt.map((r) => r.code)).toEqual(['verification/inconsistent-axioms']);
+    expect(smt[0]!.detail).toContain('axiom:VC::P::a2 in VC::Q::p');
+  });
+
+  it('reads the same row as the redefinition that states the value with `=`, and a satisfied assert as satisfied (twins)', async () => {
+    const twin = await load(`package VC {
+      part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real = 50.0; part p : P { attribute :>> load = 50.0; } }
+      part q : Q;
+      constraint k { q.L >= 0.0 }
+    }`);
+    expect(instanceRow(twin, 'VC::P::a2', 'VC::Q::p')!.result).toBe('violated');
+    // Q’s L of 5.0 meets the assert: the row is satisfied, the model does not contradict itself and every surface decides.
+    const ok = await load(VC('', '5.0'));
+    expect(instanceRow(ok, 'VC::P::a2', 'VC::Q::p')!.result).toBe('satisfied');
+    expect(numeric(ok, 'VC::P::a2', 'VC::Q::p')).toBe('satisfied');
+    expect((await letters(ok, 'literal')).map((r) => r[1])).toEqual(['holds-at-values']);
+    expect((await letters(ok, 'smt')).map((r) => r[1])).toEqual(['proved']);
+    // …and the finding is the info of a met instance, never a warning.
+    expect(validate(ok).filter((d) => d.ruleId === 'constraint-by-instance').map((d) => [d.severity, d.message])).toEqual([
+      ['info', 'p::load = 5 meets P::a2 (load <= 10.0)'],
+    ]);
+  });
+
+  it('reads each instance a binding gives its own value (a default that one instance redefines, two usages of P)', async () => {
+    const m = await load(`package VC {
+      part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 50.0; part p : P; bind p.load = L; }
+      part q : Q;
+      part q2 : Q { attribute :>> L = 5.0; }
+      constraint k { q.L >= 0.0 }
+      part def R { attribute L : ScalarValues::Real = 50.0; attribute M : ScalarValues::Real = 3.0; part p1 : P; part p2 : P; bind p1.load = L; bind p2.load = M; }
+      part r : R;
+    }`);
+    // q’s p reads Q’s 50 and q2’s p its own 5, in a row each; the generic p, Q’s own, reads the default.
+    expect(check(m, 'VC::P::a2').instances!.map((i) => [i.instance ?? m.qualifiedName(i.contextId), i.result])).toEqual([
+      ['VC::Q::p', 'violated'],
+      ['VC::q::p', 'violated'],
+      ['VC::q2::p', 'satisfied'],
+      ['VC::R::p1', 'violated'],
+      ['VC::R::p2', 'satisfied'],
+    ]);
+    // …and the worklist files the usage’s row of each definition as an axiom for the SMT engine.
+    expect(axioms(m)).toEqual(expect.arrayContaining(['VC::P::a2 in VC::Q::p', 'VC::P::a2 in VC::R::p1', 'VC::P::a2 in VC::R::p2']));
+  });
+
+  it('reads a plain constraint in the instance too, and a value in a unit', async () => {
+    const m = await load(`package VCC {
+      part def P { attribute load : ISQ::MassValue; constraint c { load <= 10.0 [kg] } }
+      part def Q { attribute L : ISQ::MassValue = 50.0 [kg]; part p : P; bind p.load = L; }
+      part q : Q;
+    }`);
+    expect(instanceRow(m, 'VCC::P::c', 'VCC::Q::p')!.result).toBe('violated');
+    expect((await letters(m, 'literal')).filter((r) => r[0] === 'VCC::P::c in VCC::Q::p').map((r) => r[1])).toEqual(['refuted']);
+  });
+
+  it('keeps a context a binding gives no value this tool reads unlisted (two defaults that differ)', async () => {
+    const m = await load(`package VCD {
+      part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 50.0; attribute M : ScalarValues::Real default = 3.0; part p : P; bind p.load = L; bind p.load = M; }
+      part q : Q;
+    }`);
+    expect(check(m, 'VCD::P::a2').instances ?? []).toEqual([]);
+    const named = (qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+    expect(sharedDefinitions(m).valuedByBinding(named('VCD::Q::p').id, named('VCD::P').id, ['load'])).toBe(false);
+  });
+
+  /** RB5's four spellings of the binding that joins q1's `p.x` to K (`k` is K's value as written): the text and the instance it reads Q's assert in. */
+  const spelled = (k: string): Array<[string, string, string]> => {
+    const head = `package RB5 {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }`;
+    const K = `attribute K : ScalarValues::Real ${k};`;
+    return [
+      ['in q1', `${head} part q1 : Q { ${K} bind p.x = K; } constraint top { q1.p.x <= 10.0 } }`, 'RB5::q1'],
+      ['in q1’s `part :>> p`', `${head} part q1 : Q { part :>> p { ${K} bind x = K; } } constraint top { q1.p.x <= 10.0 } }`, 'RB5::q1'],
+      ['in the package', `${head} part q1 : Q; ${K} bind q1.p.x = K; constraint top { q1.p.x <= 10.0 } }`, 'RB5::q1'],
+      ['in a definition around q1', `${head} part def W { part q1 : Q; ${K} bind q1.p.x = K; } part w : W; constraint top { w.q1.p.x <= 10.0 } }`, 'RB5::W::q1'],
+    ];
+  };
+
+  it('reads Q’s assert in the instance whose own binding joins the asserted path to a value, however the binding is written (RB5)', async () => {
+    // K’s `= 9.0` and its `default = 9.0`, which stands against every assertion, read alike: 9 is not 50.
+    for (const k of ['= 9.0', 'default = 9.0']) {
+      for (const [name, text, where] of spelled(k)) {
+        const m = await load(text);
+        const row = instanceRow(m, 'RB5::Q::tie', where);
+        expect([name, k, row?.result, row?.abstention], `${name} ${k}`).toEqual([name, k, 'violated', undefined]);
+        expect(check(m, 'RB5::top').result, `${name} ${k}`).toBe('satisfied');
+        // Q’s own row, with no value for p.x, is the assert as it defines it: it holds.
+        expect(check(m, 'RB5::Q::tie').result, `${name} ${k}`).toBe('satisfied');
+        expect(axioms(m).some((a) => a === `RB5::Q::tie in ${where}`), `${name} ${k}`).toBe(true);
+        const literal = (await verifyModel(m, { engine: 'literal' })).results.find((r) => r.clause.qualifiedName === 'RB5::top')!;
+        expect([name, k, literal.code]).toEqual([name, k, 'verification/inconsistent-axioms']);
+      }
+    }
+  });
+
+  it('keeps the abstention where the binding gives q1 no value this tool reads (two defaults that differ, RB5)', async () => {
+    const m = await load(`package RB5D {
+      part def P { attribute x : ScalarValues::Real; }
+      part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+      part q1 : Q { attribute K : ScalarValues::Real default = 9.0; attribute J : ScalarValues::Real default = 8.0; bind p.x = K; bind p.x = J; }
+      constraint top { q1.p.x <= 10.0 }
+    }`);
+    expect(check(m, 'RB5D::top').result).toBe('unknown');
+    expect(check(m, 'RB5D::top').message).toContain('joins defaults that differ or are not constants');
+    expect((await verifyModel(m, { engine: 'literal' })).exitCode).toBe(2);
+  });
+
+  it('answers which contexts a binding gives a value alike whichever surface asks first (the memo is filled while the enclosing asserts are built)', async () => {
+    // The answer is kept per context (`valuedByBinding`), and `standingUnderInstance` asks it while `enclosingAsserts` is still
+    // being built: the abstention it drops and the context the check lists must be the one answer, whichever asks first.
+    const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+    const rows = (m: Model) =>
+      checkConstraints(m).map((k) => [m.qualifiedName(k.id), k.result, (k.instances ?? []).map((i) => [i.instance ?? m.qualifiedName(i.contextId), i.result])]);
+    const shapes: Array<[string, string, string, string, string[]]> = [
+      ['VC', VC(), 'VC::Q::p', 'VC::P', ['load']],
+      ...['= 9.0', 'default = 9.0'].flatMap((k) =>
+        spelled(k).map(([name, text, where]): [string, string, string, string, string[]] => [`RB5 ${name} ${k}`, text, where, 'RB5::Q', ['p.x']]),
+      ),
+    ];
+    for (const [name, text, where, owner, names] of shapes) {
+      // A surface that checks first: the answer is the one computed while the enclosing asserts were built, kept.
+      const checked = await load(text);
+      const rowsChecked = rows(checked);
+      const kept = sharedDefinitions(checked).valuedByBinding(named(checked, where).id, named(checked, owner).id, names);
+      // One that asks which contexts a binding gives a value before anything else.
+      const asked = await load(text);
+      const first = sharedDefinitions(asked).valuedByBinding(named(asked, where).id, named(asked, owner).id, names);
+      expect([name, first, kept]).toEqual([name, true, true]);
+      expect(rows(asked), name).toEqual(rowsChecked);
+      // …and a reading against the finished indexes, by a reader with no memo, is the answer the memo kept.
+      expect(new DefiningEquations(checked).valuedByBinding(named(checked, where).id, named(checked, owner).id, names), name).toBe(kept);
+    }
+  });
+
+  describe('through the instance index’s seam', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('a question of which contexts a binding gives a value that throws lists the context, and its row is read all the same (valuedByBinding)', async () => {
+      vi.spyOn(instanceIndexSeam, 'bindingValued').mockImplementation(() => {
+        throw new RangeError('bindingValued, planted to throw');
+      });
+      const m = await load(VC());
+      expect(instanceRow(m, 'VC::P::a2', 'VC::Q::p')!.result).toBe('violated');
+      expect(check(m, 'VC::k').result).toBe('satisfied');
+      // …and a caller that would drop an abstention on the answer meets the throw itself, never an answer.
+      const q = m.all().find((e) => m.qualifiedName(e.id) === 'VC::Q::p')!;
+      const p = m.all().find((e) => m.qualifiedName(e.id) === 'VC::P')!;
+      expect(() => sharedDefinitions(m).valuedByBinding(q.id, p.id, ['load'], false)).toThrow(RangeError);
+    });
+  });
+});
+
+describe('a contradiction the check reports is an axiom of the instance it holds in, so the SMT engine never proves from it (wave 3 contradictory-models S2)', () => {
+  const load = async (text: string) => (await loadModelText(text)).model!;
+  const check = (m: Model, rel: string) => checkConstraints(m).find((k) => m.qualifiedName(k.id) === rel)!;
+  const asserts = (m: Model) => obligationsOf(m).filter((o) => o.role === 'axiom' && o.source === 'assert').map((o) => o.element.qualifiedName);
+  const smt = async (m: Model, ...rows: string[]) => {
+    const report = await verifyModel(m, { engine: 'smt' });
+    return rows.map((r) => {
+      const row = report.results.find((x) => x.clause.qualifiedName === r)!;
+      return [r, row.claim, row.code] as const;
+    });
+  };
+  const literal = async (m: Model, ...rows: string[]) => {
+    const report = await verifyModel(m, { engine: 'literal' });
+    return rows.map((r) => {
+      const row = report.results.find((x) => x.clause.qualifiedName === r)!;
+      return [r, row.claim, row.code, row.detail] as const;
+    });
+  };
+  const GI = (k = '50.0', pkg = false) => `package GI {
+    part def G { attribute g : ScalarValues::Real default = 1.0; assert constraint ca { g <= 10.0 } }
+    part def S { part q : G; }
+    attribute K : ScalarValues::Real = ${k};
+    part s1 : S;
+    part s2 : S${pkg ? ';' : ' { bind q.g = K; }'}${pkg ? ' bind s2.q.g = K;' : ''}
+    constraint t2 { s2.q.g == ${k} }
+    constraint t1 { s1.q.g == 1.0 }
+    constraint tk { K == ${k} }
+  }`;
+
+  it('files the assert of a bound feature’s type for the instance whose binding sits in an enclosing instance (GI), written in it or in the package', async () => {
+    for (const pkg of [false, true]) {
+      const m = await load(GI('50.0', pkg));
+      // The check reports `ca` violated in s2’s q — a copy the binding makes, which no relation reads by a symbol of its own.
+      expect(check(m, 'GI::G::ca').instances!.map((i) => [i.instance ?? m.qualifiedName(i.contextId), i.result]), String(pkg)).toEqual([
+        ['GI::S::q', 'satisfied'],
+        ['GI::s1::q', 'satisfied'],
+        ['GI::s2::q', 'violated'],
+      ]);
+      // …and the worklist files it there as an axiom, over the copy’s own symbol.
+      expect(asserts(m), String(pkg)).toEqual(expect.arrayContaining(['GI::G::ca in GI::s2::q', 'GI::G::ca in GI::s1::q']));
+      const row = obligationsOf(m).find((o) => o.element.qualifiedName === 'GI::G::ca in GI::s2::q')!;
+      expect([row.encodable, row.vars.map((v) => v.qualifiedName)], String(pkg)).toEqual([true, ['GI::s2::q::g']]);
+    }
+  });
+
+  it('reads cv-gi’s rows inconsistent on the SMT engine, and places the contradiction on the literal engine (GI)', async () => {
+    const m = await load(GI());
+    const rows = await smt(m, 'GI::t1', 'GI::t2', 'GI::tk');
+    expect(rows.map((r) => [r[1], r[2]])).toEqual(Array(3).fill(['inconclusive', 'verification/inconsistent-axioms']));
+    const report = await verifyModel(m, { engine: 'smt' });
+    expect(report.results.find((x) => x.clause.qualifiedName === 'GI::t2')!.detail).toContain('axiom:GI::G::ca in GI::s2::q');
+    // The literal engine reads the assert’s instance: t2 and tk reach it (s2’s g, and K it is bound to), t1 reads s1’s g, which it does not.
+    const lit = await literal(m, 'GI::t1', 'GI::t2', 'GI::tk');
+    expect(lit.map((r) => [r[0], r[2]])).toEqual([
+      ['GI::t1', null],
+      ['GI::t2', 'verification/inconsistent-axioms'],
+      ['GI::tk', 'verification/inconsistent-axioms'],
+    ]);
+    expect(lit[1]![3]).toContain('(GI::G::ca in GI::s2::q) is false at them');
+    expect(lit[1]![3]).not.toContain('files no row of that assertion');
+    expect((await verifyModel(m, { engine: 'literal' })).exitCode).toBe(2);
+  });
+
+  it('reads no contradiction where the binding gives the instance a value the assert meets (GI, K = 5)', async () => {
+    const m = await load(GI('5.0'));
+    expect(check(m, 'GI::G::ca').instances!.map((i) => i.result)).toEqual(['satisfied', 'satisfied', 'satisfied']);
+    expect(asserts(m)).toContain('GI::G::ca in GI::s2::q');
+    expect((await smt(m, 'GI::t2', 'GI::tk')).map((r) => r[1])).toEqual(['proved', 'proved']);
+    expect((await literal(m, 'GI::t1', 'GI::t2', 'GI::tk')).map((r) => r[1])).toEqual(Array(3).fill('holds-at-values'));
+  });
+
+  /** G340: the binding written at the top, over the implicit copy of r’s q; `kind` is how P’s `load` is written (`default` or `=`). */
+  const G340 = (kind: string) => `package G340 {
+    part def P { attribute load : ScalarValues::Real ${kind} = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+    part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
+    part def Q2 :> Q { attribute :>> K = 25.0; }
+    part def R { part q : Q2; }
+    part r : R;
+    part def R0 { part q : Q; }
+    part r0 : R0;
+    bind r.q.p.load = r.q.L;
+    constraint negT { r.q.p.m2 <= 0.0 }
+    constraint posF { r.q.p.m2 >= 0.0 }
+    constraint ctlA { r0.q.p.m2 >= 8.5 }
+  }`;
+
+  it('reads a top-level binding the check reports violated as inconsistent axioms, where it decided negT and posF (G340)', async () => {
+    for (const kind of ['default', '']) {
+      const m = await load(G340(kind));
+      expect(check(m, 'G340::«BindingConnectorAsUsage»').result, kind).toBe('violated');
+      // The implicit copy of Q2’s q the binding makes holds Q’s `L == 2.0 * K`, at Q2’s K of 25.
+      expect(asserts(m), kind).toContain('G340::Q::defL in G340::r::q');
+      expect((await smt(m, 'G340::negT', 'G340::posF', 'G340::ctlA')).map((r) => [r[1], r[2]]), kind).toEqual(
+        Array(3).fill(['inconclusive', 'verification/inconsistent-axioms']),
+      );
+      expect((await verifyModel(m, { engine: 'smt' })).exitCode, kind).toBe(2);
+    }
+  });
+
+  it('holds a binding written in a usage of the enclosing definition in the instance of that definition (R’s `part q : Q { bind p.load = L; }`)', async () => {
+    const text = (spec: boolean) => `package ENC {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q { part p : P; }
+      part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part q : Q { bind p.load = L; } }
+      ${spec ? 'part def R2 :> R { attribute :>> K = 25.0; }' : ''}
+      part r : ${spec ? 'R2' : 'R { attribute :>> K = 25.0; }'};
+      part r0 : R;
+      constraint negT { r.q.p.m2 <= 0.0 }
+      constraint posF { r.q.p.m2 >= 0.0 }
+      constraint ctlA { r0.q.p.m2 >= 8.5 }
+    }`;
+    for (const spec of [false, true]) {
+      const m = await load(text(spec));
+      // The check reports the binding violated in r (or R2), and the worklist files it for the instance, over r’s L.
+      const bindings = obligationsOf(m).filter((o) => o.role === 'axiom' && o.source === 'bind').map((o) => o.element.qualifiedName);
+      expect(bindings.some((b) => b.startsWith('ENC::R::q::«BindingConnectorAsUsage» in ENC::') && !b.endsWith('::R')), String(spec)).toBe(true);
+      expect((await smt(m, 'ENC::negT', 'ENC::posF', 'ENC::ctlA')).map((r) => [r[1], r[2]]), String(spec)).toEqual(
+        Array(3).fill(['inconclusive', 'verification/inconsistent-axioms']),
+      );
+    }
+  });
+
+  it('holds the bindings of the instances enclosing a read instance, whether or not one joins an enclosing instance’s feature (the `=` twin of h5-m3t)', async () => {
+    // Q3’s p asserts 50 of a load Q’s binding gives L’s 1, written with `=` (a `default` is the redefinition’s own value row).
+    const text = (l: string) => `package SP2N {
+      part def P { attribute load : ScalarValues::Real; }
+      part def P2 :> P { assert constraint a2 { load == 50.0 } }
+      part def Q { attribute L : ScalarValues::Real ${l} = 1.0; part p : P; bind p.load = L; }
+      part def Q3 :> Q { part :>> p : P2; }
+      part q3 : Q3;
+      part qq : Q;
+      constraint k { q3.L <= 10.0 }
+      constraint kq { qq.L <= 10.0 }
+    }`;
+    for (const l of ['', 'default']) {
+      const m = await load(text(l));
+      expect((await smt(m, 'SP2N::k', 'SP2N::kq')).map((r) => [r[1], r[2]]), l).toEqual(Array(2).fill(['inconclusive', 'verification/inconsistent-axioms']));
+    }
+    const m = await load(text(''));
+    expect(obligationsOf(m).some((o) => o.role === 'axiom' && o.source === 'bind' && o.element.qualifiedName === 'SP2N::Q::«BindingConnectorAsUsage» in SP2N::Q3')).toBe(true);
+  });
+
+  it('files a written redefinition’s assert once, as the context it is read in, and its binding in the enclosing instance', async () => {
+    const m = await load(`package WR {
+      part def G { attribute g : ScalarValues::Real default = 1.0; assert constraint ca { g <= 10.0 } }
+      part def S { part q : G; }
+      attribute K : ScalarValues::Real = 50.0;
+      part s3 : S { part :>> q { attribute :>> g = 7.0; } }
+      bind s3.q.g = K;
+      constraint t3 { s3.q.g == 50.0 }
+    }`);
+    expect(asserts(m)).toEqual(['WR::G::ca', 'WR::G::ca in WR::s3::q']);
+    expect((await smt(m, 'WR::t3')).map((r) => [r[1], r[2]])).toEqual([['inconclusive', 'verification/inconsistent-axioms']]);
+  });
+
+  /** Definitions that each hold a usage typed by the next, writing a binding to a feature of the instance enclosing it: `a0` of the root gives every `a<i>`. */
+  const CHAIN = (n: number, a0: string) => `package Deep {
+    ${Array.from({ length: n + 1 }, (_, k) => n - k)
+      .map((i) => {
+        const own = `attribute a${i} : ScalarValues::Real; attribute b${i} : ScalarValues::Real = a${i};`;
+        return `part def H${i} { ${own} ${i < n ? `part u${i + 1} : H${i + 1} { bind a${i + 1} = b${i}; }` : `assert constraint cap { a${i} <= 10.0 }`} }`;
+      })
+      .join('\n    ')}
+    part root : H0 { attribute :>> a0 = ${a0}; }
+    constraint t { root.a0 >= 0.0 }
+  }`;
+
+  it('reads a chain of bindings each written one instance below the last, to the end of the chain (10 deep)', async () => {
+    // The root’s 50 reaches the assert of the 10th instance below it, which the definitions never meet: only the instance holds it false.
+    expect((await smt(await load(CHAIN(10, '50.0')), 'Deep::t')).map((r) => [r[1], r[2]])).toEqual([['inconclusive', 'verification/inconsistent-axioms']]);
+    expect((await smt(await load(CHAIN(10, '5.0')), 'Deep::t')).map((r) => r[1])).toEqual(['proved']);
+  });
+
+  it('files the bindings of definitions that hold each other no deeper than the cap, and reads nothing it left unfiled', async () => {
+    // A’s b holds B, B’s a holds A: each binding is read for the instance below the last, without end.
+    const m = await load(`package Rec {
+      part def A { attribute La : ScalarValues::Real; attribute Ma : ScalarValues::Real; part b : B { bind xb = La; } }
+      part def B { attribute xb : ScalarValues::Real; attribute yb : ScalarValues::Real; part a : A { bind La = yb; } assert constraint c { yb <= 10.0 } }
+      part ra : A { attribute :>> La = 50.0; }
+      constraint t { ra.La >= 0.0 }
+    }`);
+    const rows = obligationsOf(m);
+    const binds = rows.filter((o) => o.role === 'axiom' && o.source === 'bind');
+    // Bounded by the depth, not by the 16384 relations of the instance walk (which took minutes here).
+    expect(binds.length).toBeGreaterThan(20);
+    expect(binds.length).toBeLessThan(200);
+    const refused = binds.filter((o) => o.encodable !== true).map((o) => (o.encodable as { detail: string }).detail);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused[0]).toContain('more than 32 bindings below the first');
+    // A proof beside a binding left out is not claimed.
+    const [row] = await smt(m, 'Rec::t');
+    expect(row![1]).not.toBe('proved');
+    expect(row![2]).toBe('verification/not-evaluable');
+  });
+
+  it('carries no asserted value through a package head’s slot into a default that gave way, whichever text comes first (E1)', async () => {
+    const text = (first: boolean) => {
+      const asserted = 'attribute L : ScalarValues::Real; assert constraint fix { L == 5.0 } part p2 : P; bind p2.load = L;';
+      const head = 'attribute M : ScalarValues::Real default = 9.0; bind P::load = M; part p4 : P { attribute :>> load default = 7.0; }';
+      return `package E1 {
+        part def P { attribute load : ScalarValues::Real; }
+        ${first ? head + asserted : asserted + head}
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+      }`;
+    };
+    for (const first of [true, false]) {
+      const m = await load(text(first));
+      expect(
+        (await smt(m, 'E1::c3T', 'E1::c3F')).map((r) => [r[1], r[2]]),
+        String(first),
+      ).toEqual(Array(2).fill(['inconclusive', 'verification/not-evaluable']));
+      expect((await literal(m, 'E1::c3T', 'E1::c3F')).map((r) => r[2]), String(first)).toEqual(Array(2).fill('verification/not-evaluable'));
+    }
+  });
+});
+
+describe('a binding the check reports violated contradicts the values it joins on the literal engine, as an assertion does (wave 3 contradictory-models S3)', () => {
+  const load = async (text: string) => (await loadModelText(text)).model!;
+  const check = (m: Model, rel: string) => checkConstraints(m).find((k) => m.qualifiedName(k.id) === rel)!;
+  const literal = async (m: Model, ...rows: string[]) => {
+    const report = await verifyModel(m, { engine: 'literal' });
+    return {
+      report,
+      rows: rows.map((r) => {
+        const row = report.results.find((x) => x.clause.qualifiedName === r)!;
+        return { name: r, claim: row.claim, code: row.code, detail: row.detail };
+      }),
+    };
+  };
+  // Q's `L` is 1 by the asserted equation, and p's `load` is P's `default = 3.0`, which no assertion replaces: the binding joins 3 to 1.
+  const AMD = `package AMD {
+    part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+    part def Q { attribute L : ScalarValues::Real; assert constraint defL { L == 1.0 } part p : P; bind p.load = L; }
+    part q0 : Q;
+    constraint ctlT { q0.p.m2 >= 8.5 }
+    constraint ctlF { q0.p.m2 <= 8.0 }
+  }
+  package OTHER {
+    attribute N : ScalarValues::Real = 3.0;
+    constraint n { N == 3.0 }
+  }`;
+  const X = ['inconclusive', 'verification/inconsistent-axioms'];
+
+  it('marks a relation over a value the violated binding joins inconclusive, naming the binding, and keeps deciding it on the check (AMD)', async () => {
+    const m = await load(AMD);
+    // The check reports the binding violated (3 against 1) and keeps reading the values: ctlT and ctlF are the answers at 3.
+    expect(check(m, 'AMD::Q::«BindingConnectorAsUsage»').result).toBe('violated');
+    expect([check(m, 'AMD::ctlT').result, check(m, 'AMD::ctlF').result]).toEqual(['violated', 'satisfied']);
+    const { report, rows } = await literal(m, 'AMD::ctlT', 'AMD::ctlF', 'OTHER::n');
+    // It called ctlF "unconditional" and refuted ctlT, exit 1, beside the SMT engine's inconsistent axioms.
+    for (const r of rows.slice(0, 2)) {
+      expect([r.claim, r.code], r.name).toEqual(X);
+      expect(r.detail, r.name).toContain("the model contradicts itself there — AMD::Q's `bind p.load = L` joins two values that differ");
+      expect(r.detail, r.name).toContain('this relation reads `q0.p.m2`');
+      expect(r.detail, r.name).toContain('which that contradiction reaches: the binding joins it, or joins it in another instance');
+      expect(r.detail, r.name).toContain('reconcile the binding, which the check reports violated, with the values it joins');
+      expect(r.detail, r.name).not.toContain('reconcile the assertion');
+      expect(r.detail, r.name).not.toContain('is false at them');
+    }
+    expect(rows[0]!.detail).toContain('The relation is false at these values');
+    expect(rows[1]!.detail).toContain('The relation holds at these values');
+    // A relation over a value the binding does not reach is judged at it, as it was.
+    expect([rows[2]!.claim, rows[2]!.code]).toEqual(['holds-at-values', null]);
+    expect(report.exitCode).toBe(2);
+    // Nothing forgives it: a contradictory model is a finding, not an undecided shape.
+    const forgiving = await verifyModel(m, { engine: 'literal', allowInconclusive: true });
+    expect([forgiving.exitCode, forgiving.forgiven]).toEqual([2, 0]);
+    // The SMT engine says the same, of the same rows.
+    const smt = await verifyModel(m, { engine: 'smt' });
+    expect(['AMD::ctlT', 'AMD::ctlF'].map((q) => smt.results.find((r) => r.clause.qualifiedName === q)!.code)).toEqual(Array(2).fill(X[1]));
+  }, 60_000);
+
+  it('names the context where the binding is violated only there, and reaches the instances that read the same feature (M2a)', async () => {
+    // Q's `L == 2.0 * K` is 1 in q0 (K = 0.5) and 50 in q (K = 25), where P's `load default = 1.0` meets the binding at 50.
+    const m = await load(`package M2a {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K }
+        part p : P; bind p.load = L; }
+      part q : Q { attribute :>> K = 25.0; }
+      part q0 : Q;
+      constraint negT { q.p.m2 <= 0.0 }
+      constraint ctlA { q0.p.m2 >= 8.5 }
+    }`);
+    const violated = checkConstraints(m).filter((k) => k.conflict === 'bind' && k.result === 'violated');
+    expect(violated.map((k) => m.qualifiedName(k.ownerId!))).toEqual(['M2a::q']);
+    const { rows } = await literal(m, 'M2a::negT', 'M2a::ctlA');
+    for (const r of rows) {
+      expect([r.claim, r.code], r.name).toEqual(X);
+      expect(r.detail, r.name).toContain("M2a::Q's `bind p.load = L` joins two values that differ in M2a::q, and this relation reads");
+    }
+    // q0's own binding holds (1 against 1), and the check decides ctlA; the SMT engine's one symbol per feature puts q0 in the same contradiction.
+    expect(check(m, 'M2a::ctlA').result).toBe('satisfied');
+  }, 60_000);
+
+  it('fails closed where the worklist files no row of the violated binding that reads a feature', async () => {
+    const m = await load(AMD);
+    const filed = obligationsModule.obligationsOf;
+    const dropped = vi.spyOn(obligationsModule, 'obligationsOf').mockImplementation((mm, o) => filed(mm, o).filter((r) => r.source !== 'bind'));
+    try {
+      const { report, rows } = await literal(m, 'AMD::ctlT', 'OTHER::n');
+      for (const r of rows) {
+        expect([r.claim, r.code], r.name).toEqual(X);
+        expect(r.detail, r.name).toContain(
+          "the check reports AMD::Q's `bind p.load = L` violated, and the worklist files no row of it that reads a feature, so this tool does not read which values that binding joins, and takes the contradiction to reach every relation of the model, this one among them",
+        );
+        expect(r.detail, r.name).toContain('reconcile the binding, which the check reports violated, with the values it joins');
+      }
+      expect(report.exitCode).toBe(2);
+    } finally {
+      dropped.mockRestore();
+    }
+  });
+
+  it('leaves a model whose bindings the check holds as it was, and a relation in a package the binding does not touch', async () => {
+    const m = await load(`package OK {
+      part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q { attribute L : ScalarValues::Real; assert constraint defL { L == 3.0 } part p : P; bind p.load = L; }
+      part q0 : Q;
+      constraint ctlT { q0.p.m2 >= 6.5 }
+      constraint ctlF { q0.p.m2 <= 6.0 }
+    }`);
+    expect(checkConstraints(m).filter((k) => k.conflict === 'bind').map((k) => k.result)).toEqual([]);
+    const { report, rows } = await literal(m, 'OK::ctlT', 'OK::ctlF');
+    expect(rows.map((r) => [r.claim, r.code])).toEqual([
+      ['holds-at-values', null],
+      ['refuted', 'verification/refuted'],
+    ]);
+    expect(report.exitCode).toBe(1);
   });
 });

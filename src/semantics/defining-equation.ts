@@ -366,6 +366,8 @@ export class DefiningEquations {
   private readonly reaching = new Map<string, { site: ElementId; path: string; equations: readonly DefiningEquation[] } | null>();
   /** {@link boundAbove} per context and names (`null`: none above) — every instance row of a group asks it of the usage. */
   private readonly aboveBound = new Map<string, BoundAbove | null>();
+  /** {@link valuedByBinding} per context and names. */
+  private readonly valuedByBindingMemo = new Map<string, boolean>();
   /** {@link lexicalNames} per context. */
   private readonly lexical = new Map<
     ElementId,
@@ -2890,6 +2892,9 @@ export class DefiningEquations {
         subsetting = null;
       }
     }
+    // A binding's own row is the pair its two ends state (`bindingConflicts`): no value a binding gives lists a context for it.
+    const relation = this.model.get(el.id);
+    const relationIsBinding = relation !== undefined && isBindingConnector(relation);
     for (const x of contexts) {
       if (x.id === owner || x.id === el.id) continue;
       const all = this.scope(x.id, 'all');
@@ -3046,6 +3051,15 @@ export class DefiningEquations {
           listed = true;
         }
       }
+      // A usage whose instance a binding gives a value the relation reads that the feature states nowhere (VC's
+      // `bind p.load = L` over P's `assert constraint { load <= 10.0 }` and Q's `L = 50.0`; RB5's `bind p.x = K` in q1
+      // under Q's `assert constraint tie { p.x == 50.0 }`), where the relation's owner reads none of it through a
+      // binding of its own (those are the contexts above): the model states that value of the instance, so the
+      // relation is read there, at it — a violated assert is a model that contradicts itself.
+      if (!listed && !plain.has(x.id) && !relationIsBinding && this.valuedByBinding(x.id, owner, names)) {
+        plain.add(x.id);
+        listed = true;
+      }
       // A usage one instance of which a binding written in its own element
       // reads otherwise (A7's q2: `bind p.extra = E` makes q2's p a copy of
       // Q's p): nothing it reads is another feature, and no binding of an
@@ -3059,6 +3073,59 @@ export class DefiningEquations {
       if (listed || plain.has(x.id)) out.push(x);
     }
     return { listed: out, plain };
+  }
+
+  /**
+   * Does a binding give a name `names` read, in the usage `contextId`, a value the feature it denotes states nowhere —
+   * not it, and not a feature it redefines, as a value or as a `default`? P's `load`, which P's `assert constraint {
+   * load <= 10.0 }` reads in Q's `part p : P`, over Q's `bind p.load = L` and `L = 50.0` (VC); Q's `p.x`, which Q's
+   * `assert constraint tie { p.x == 50.0 }` reads in `part q1 : Q { … bind p.x = K; }` — the binding written in the
+   * instance, in a usage below it, in a package or in a definition around it (RB5). No reading of the context lists it
+   * for what it states ({@link changingContexts}), and the relation was read where the feature has none, or not at
+   * all: the model contradicts itself in an instance no row read. Only where a binding of the model gives the
+   * instance's symbol a source this tool reads ({@link boundSourceIn}): one that abstains (`defaults-differ`,
+   * `two-values`, `free`, a cap) gives the instance no value to read. A feature with a value, or a `default`, anywhere
+   * on its chain is listed by what it states (a `default` a binding overrides, {@link boundOverDefault}). A throw is
+   * `true`: the context is read, and contained as its own row (A.2.9) — unless the caller drops an abstention on the
+   * answer (`contained` false), which then meets the throw itself: a context that may not be read is no reason to
+   * read nothing of it.
+   *
+   * The answer is kept per context, and {@link standingUnderInstance} asks it while {@link enclosingAsserts} is still
+   * being built (to drop an abstention): the answer that abstention was dropped on is the one the check lists the
+   * context by, whichever surface asks first. So nothing {@link valuedAbove} and the calls below it make may read
+   * `unread`, `partners` or the taint of {@link equatedParts} — until the index is built they hold the sweep's
+   * sources alone, and an answer computed then and kept could differ from one computed after (the unit test
+   * `answers which contexts a binding gives a value alike whichever surface asks first` holds the two together).
+   */
+  valuedByBinding(contextId: ElementId, ownerId: ElementId, names: readonly string[], contained = true): boolean {
+    const x = this.model.get(contextId);
+    if (!x || !isUsage(x.eClass) || !hasUserBindings(this.model)) return false;
+    const key = `${contextId} ${ownerId} ${names.join('\u0000')}`;
+    let hit = this.valuedByBindingMemo.get(key);
+    if (hit === undefined) {
+      if (contained) {
+        try {
+          hit = this.valuedAbove(x, ownerId, names);
+        } catch {
+          return true;
+        }
+      } else {
+        hit = this.valuedAbove(x, ownerId, names);
+      }
+      this.valuedByBindingMemo.set(key, hit);
+    }
+    return hit;
+  }
+
+  /**
+   * {@link valuedByBinding}, worked out — through the seam a test makes it throw through, and only where the relation's
+   * owner `ownerId` reads none of what `names` read through a binding of its own: the contexts of those are listed
+   * by {@link changingContexts}, as they were (M7's q2, whose K the owner's `bind load = L` carries).
+   */
+  private valuedAbove(x: ElementRecord, ownerId: ElementId, names: readonly string[]): boolean {
+    const reads = this.boundReads(ownerId, names);
+    if (reads.size > 0 && bindingReadingIn(this.model, ownerId, ownerId, reads) !== undefined) return false;
+    return instanceIndexSeam.bindingValued(this, x, names);
   }
 
   /**
@@ -4029,6 +4096,17 @@ export function bindingEndsOf(model: Model): ReadonlySet<ElementId> {
  */
 export function hasEnclosedBindings(model: Model): boolean {
   return bindingEnds(model).enclosed.size > 0;
+}
+
+/**
+ * The user's bindings that join a feature of an instance enclosing where they are written ({@link
+ * hasEnclosedBindings}), in the model's order — R's `bind p.load = L` in `part q : Q { … }`. Each holds of
+ * every instance of the enclosing definition, below the one that writes it.
+ */
+export function enclosedBindingsOf(model: Model): readonly ElementRecord[] {
+  const { enclosed, connectors } = bindingEnds(model);
+  if (enclosed.size === 0) return [];
+  return connectors.filter((b) => (b.source?.[0] !== undefined && enclosed.has(b.source[0])) || (b.target?.[0] !== undefined && enclosed.has(b.target[0])));
 }
 
 /**
@@ -5331,6 +5409,12 @@ export interface ContradictedDefinition {
   /** The features no reading of which is decided: that feature, and the one each equation names where it is written. */
   features: readonly ElementRecord[];
   /**
+   * Where equations of features a `bind` joins to `feature` are among `equations` (`bind L = K` beside `L == 50.0`
+   * and `K == 60.0`): the joined name and the binding, as a sentence names them (``to `K` by `bind L = K` ``). The
+   * binding states the two features are one value, so the equations define one feature twice.
+   */
+  joined?: readonly string[];
+  /**
    * Where each equation's defining side is read, in the order of `equations`: the element its names are read in,
    * the name it defines as written from there, and the feature that name denotes there. An `undecided` set is
    * read there by the check's own evaluator (`definitionConflicts` of ./evaluate-model).
@@ -5388,6 +5472,16 @@ const CONTRADICTED_DEFINITIONS = new WeakMap<Model, ContradictedDefinitions>();
  * does not. A side that gives no value — it reads a name nothing gives one, or reads back the feature it
  * defines, as an alias's `b == a` read as a's definition does — is left out: every evaluator tries another
  * first, in either order.
+ *
+ * Two equations on the two ends of one binding are the same pair: `bind L = K` in P says L and K are one value in
+ * every P, so `L == 50.0` and `K == 60.0` define it twice (wave 3 contradictory-models S3). The equations of every
+ * name the bindings that hold in X — written in it or in what it specialises — join N to, through one another too
+ * (`bind L = M; bind M = K`), are gathered with N's, each name a feature of X itself (not through a part: `bind p.L =
+ * M` would leave P's L undecided in every P), each hop one the binding really joins there ({@link joinedTo}) — a
+ * chain across a specialisation (`bind K = L` in P, `bind N = K` in P2) too. They count
+ * only where the comparison decides two of them differ: a side over another name, a unit or a form this tool cannot
+ * compare leaves the binding's own row to report the pair, as before. The set is named by the feature declared
+ * first, whichever equation is written first, and its `joined` says which binding joins the others.
  */
 export function contradictedDefinitions(model: Model): ContradictedDefinitions {
   const hit = CONTRADICTED_DEFINITIONS.get(model);
@@ -5518,6 +5612,52 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     return out;
   };
   const bound = (g: ElementRecord): boolean => [g, ...redefinedClosure(model, g)].some((h) => joinedTo(model, h.id).size > 1);
+  // The user's bindings by the element each holds in, with its ends as that element spells them: `bind L = K` in P
+  // says L and K are one value in every P, so the equations of either define both.
+  const joins = new Map<ElementId, Array<{ left: string; right: string; text: string }>>();
+  for (const b of bindingEnds(model).connectors) {
+    const read = bindingHolder(model, b);
+    if (!read || read.left === undefined || read.right === undefined || read.left === read.right) continue;
+    const list = joins.get(read.holder.id) ?? [];
+    list.push({ left: read.left, right: read.right, text: `bind ${read.left} = ${read.right}` });
+    joins.set(read.holder.id, list);
+  }
+  /** Does a binding join `a` (or what it redefines) to `b` (or what it redefines)? */
+  const joinedAmong = (a: ElementRecord, b: ElementRecord): boolean => {
+    const ids = new Set([b, ...redefinedClosure(model, b)].map((h) => h.id));
+    return [a, ...redefinedClosure(model, a)].some((h) => [...joinedTo(model, h.id)].some((id) => ids.has(id)));
+  };
+  /** Words for a list: `a`, `a and b`, `a, b and c`. */
+  const listed = (items: readonly string[]): string =>
+    items.length <= 2 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]!}`;
+  /**
+   * The ends of the bindings that hold in every `x` — those written in `x` or in what it specialises
+   * ({@link generalizationsOf}) — crossed from `path` outward, through one another too (`bind L = M; bind M = K;`):
+   * each as the name it is crossed from, the name it reaches, and the binding. A name reached by two bindings is
+   * listed by both. Features of `x` itself only: a name through a part (`p.L`) is a feature of every instance of that
+   * part's type, which a contradiction read here would leave undecided wherever it is read.
+   */
+  type Crossing = { from: string; path: string; text: string };
+  const crossings = (holders: readonly ElementRecord[], path: string): Crossing[] => {
+    const out: Crossing[] = [];
+    if (path.includes('.') || !holders.some((h) => joins.has(h.id))) return out;
+    const seen = new Set([path]);
+    for (const queue = [path]; queue.length > 0; ) {
+      const at = queue.shift()!;
+      for (const h of holders) {
+        for (const j of joins.get(h.id) ?? []) {
+          const other = j.left === at ? j.right : j.right === at ? j.left : undefined;
+          if (other === undefined || other.includes('.')) continue;
+          out.push({ from: at, path: other, text: j.text });
+          if (!seen.has(other)) {
+            seen.add(other);
+            queue.push(other);
+          }
+        }
+      }
+    }
+    return out;
+  };
   /**
    * An exact reading of a defining side, or why there is none: `free`, it gives no value — it reads a name with
    * none that nothing gives one, or one whose every definition reads back a feature in flight (the one it defines
@@ -5649,36 +5789,87 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     const owners = [x, ...general].filter(holds);
     if (owners.length === 0) continue;
     const paths = owners.flatMap((y) => [...(byOwner.get(y.id)?.keys() ?? []), ...(lexical.get(y.id)?.keys() ?? [])]);
+    const holders = [x, ...general];
+    const joining = holders.some((h) => joins.has(h.id));
     for (const path of new Set(paths)) {
-      // One equation of a bare name among the owners meets no other: only a dotted one reads more, below.
-      if (!path.includes('.') && owners.reduce((n, y) => n + countOf(y, path), 0) < 2) continue;
+      // One equation of a bare name among the owners meets no other: only a dotted one reads more, below, and one a
+      // binding joins to a name that has equations of its own.
+      if (!path.includes('.') && !joining && owners.reduce((n, y) => n + countOf(y, path), 0) < 2) continue;
       const feature = featureNamedBelow(model, x.id, path);
       if (!feature || statesValue(feature)) continue;
-      const competing = gather(x, path, feature);
-      if (competing.length < 2) continue;
-      // The feature, and every one it overrides, is in flight: a side that reads it back gives it no value.
-      const flight = new Set(competing.flatMap((c) => [...slotOf(c.named)]));
-      const sides = competing.flatMap((c) => {
-        const side = sideOf(c.eq, c.at, flight);
-        return side ? [{ eq: c.eq, side }] : [];
-      });
-      let verdict: ContradictedDefinition['verdict'] | undefined;
-      let why: ContradictedDefinition['why'];
-      for (let i = 0; i < sides.length && verdict !== 'differs'; i++) {
-        for (let j = i + 1; j < sides.length; j++) {
-          const c = compare(sides[i]!, sides[j]!);
-          if (c.v === 'differs') {
-            verdict = 'differs';
-            why = undefined;
-            break;
-          }
-          if (c.v === 'undecided' && verdict === undefined) {
-            verdict = 'undecided';
-            why = c.why;
+      const own = gather(x, path, feature);
+      // The equations of every name a binding joins it to, which the binding makes one value with it: `bind L = K`
+      // beside `L == 50.0` and `K == 60.0`. Added only where they decide a contradiction (below), so that a pair
+      // this tool reads otherwise — `L == K` beside `bind L = K`, which reads K back — is read as before.
+      const partners: Array<{ eq: Gathered; via: readonly string[]; path: string }> = [];
+      // Each hop is checked where it is crossed: the feature a name denotes in x must be the one the binding joins
+      // (or one that redefines it) to the feature the name before it denotes there — an element that masks a name with
+      // a feature of its own is joined to nothing here — and a chain goes on through a hop only once that hop holds
+      // (`bind N = K` in P2 beside `bind K = L` in P, whose K P2's own K redefines). A name that states a value or
+      // has no equation of its own is still crossed, giving no equation.
+      const reach = new Map<string, { feature: ElementRecord; via: readonly string[] }>([[path, { feature, via: [] }]]);
+      const crossed = crossings(holders, path);
+      for (let grew = crossed.length > 0; grew; ) {
+        grew = false;
+        for (const j of crossed) {
+          const from = reach.get(j.from);
+          if (from === undefined || reach.has(j.path)) continue;
+          const g = named(x.id, j.path);
+          if (!g || !joinedAmong(from.feature, g)) continue;
+          const via = [...from.via, j.text];
+          reach.set(j.path, { feature: g, via });
+          grew = true;
+          if (statesValue(g)) continue;
+          for (const eq of gather(x, j.path, g)) {
+            if (!own.some((c) => c.eq.constraint.id === eq.eq.constraint.id) && !partners.some((c) => c.eq.eq.constraint.id === eq.eq.constraint.id)) {
+              partners.push({ eq, via, path: j.path });
+            }
           }
         }
       }
-      if (verdict === undefined) continue;
+      if (own.length < 2 && partners.length === 0) continue;
+      /** The verdict of `competing`'s sides compared pair by pair, or `undefined` where there is none to give. */
+      const judge = (
+        competing: readonly Gathered[],
+      ): { verdict: ContradictedDefinition['verdict']; why?: ContradictedDefinition['why'] } | undefined => {
+        // The feature, and every one it overrides, is in flight: a side that reads it back gives it no value.
+        const flight = new Set(competing.flatMap((c) => [...slotOf(c.named)]));
+        const sides = competing.flatMap((c) => {
+          const side = sideOf(c.eq, c.at, flight);
+          return side ? [{ eq: c.eq, side }] : [];
+        });
+        let verdict: ContradictedDefinition['verdict'] | undefined;
+        let why: ContradictedDefinition['why'];
+        for (let i = 0; i < sides.length && verdict !== 'differs'; i++) {
+          for (let j = i + 1; j < sides.length; j++) {
+            const c = compare(sides[i]!, sides[j]!);
+            if (c.v === 'differs') {
+              verdict = 'differs';
+              why = undefined;
+              break;
+            }
+            if (c.v === 'undecided' && verdict === undefined) {
+              verdict = 'undecided';
+              why = c.why;
+            }
+          }
+        }
+        return verdict === undefined ? undefined : { verdict, ...(why ? { why } : {}) };
+      };
+      let competing: readonly Gathered[] = own;
+      let judged = own.length >= 2 ? judge(own) : undefined;
+      let joined: string[] = [];
+      if (partners.length > 0) {
+        const all = [...own, ...partners.map((p) => p.eq)];
+        const together = judge(all);
+        if (together?.verdict === 'differs') {
+          competing = all;
+          judged = together;
+          joined = [...new Set(partners.map((p) => `to \`${p.path}\` by ${listed(p.via.map((t) => `\`${t}\``))}`))];
+        }
+      }
+      if (judged === undefined || competing.length < 2) continue;
+      const { verdict, why } = judged;
       const ordered = [...competing].sort((a, b) => order.get(a.eq.constraint.id)! - order.get(b.eq.constraint.id)!);
       const equations = ordered.map((c) => c.eq.constraint);
       const sites = ordered.map((c) => ({ equation: c.eq, at: c.at, name: c.name, feature: c.readAs }));
@@ -5686,10 +5877,17 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       const key = equations.map((c) => c.id).join(' ');
       const met = found.get(key) ?? [];
       const mine = new Set(general.map((g) => g.id));
-      // One it was met in already that X specialises keeps it; any it was met in that specialises X gives it up.
+      // One it was met in already that X specialises keeps it; any it was met in that specialises X gives it up. One
+      // met in X again, under another name a binding joins to the first (`L`, then `K`), is the same set, named by
+      // the feature declared first — not the equation written first, whose order decides nothing.
       if (met.some((m) => mine.has(m.set.context.id))) continue;
-      const kept = met.filter((m) => !m.general.has(x.id));
-      kept.push({ set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features, sites }, general: mine });
+      const again = met.find((m) => m.set.context.id === x.id);
+      if (again !== undefined && order.get(again.set.feature.id)! <= order.get(feature.id)!) continue;
+      const kept = met.filter((m) => m !== again && !m.general.has(x.id));
+      kept.push({
+        set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features, sites, ...(joined.length > 0 ? { joined } : {}) },
+        general: mine,
+      });
       found.set(key, kept);
     }
   }
@@ -5873,7 +6071,8 @@ function contradictedDefinitionClause(model: Model, set: ContradictedDefinition)
 export function contradictedDefinitionNaming(model: Model, set: ContradictedDefinition): string {
   const named = set.equations.map((c) => `\`${String(c.attrs.expression ?? '').trim()}\` (${effectiveQualifiedName(model, c.id)})`);
   const listed = named.length <= 2 ? named.join(' and ') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]!}`;
-  return `the asserted ${listed} each define \`${set.path}\` in ${effectiveQualifiedName(model, set.context.id)}`;
+  const joined = set.joined !== undefined && set.joined.length > 0 ? ` (joined ${set.joined.join(', ')})` : '';
+  return `the asserted ${listed} each define \`${set.path}\`${joined} in ${effectiveQualifiedName(model, set.context.id)}`;
 }
 
 /** Why a row {@link contradictedDefinitionRefusal} refuses is not read: the feature, and the equations that give it two values. */
@@ -7827,10 +8026,14 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
  * source (`unreadAsserts`): every reading the binding's end may change
  * abstains, the definition's own reading of the assert too. K's default stands
  * against the assert (decision 14 amended), so q1's p.x is 9 and the assert is
- * violated at q1 — but no surface reads Q's assert at q1 (TODO), and read
- * without it, q1's p.x and K read 9 on every surface (`top`, `topK` T) and
- * `sysml-check` and both engines passed a model that contradicts itself. The
- * same model with `K = 9.0` files no row either (a known gap). An assert
+ * violated at q1. Only where this tool does NOT read the assert at q1: an
+ * instance a binding gives a value this tool reads is a context the assert is
+ * read in ({@link DefiningEquations.valuedByBinding}), where its row says
+ * whether it holds — violated, the model contradicts itself — and the defaults
+ * the binding carries are read as they stand. What is left is the component
+ * that gives q1 no value (`defaults-differ`, `two-values`, `free`, a cap): the
+ * assert is not read there, the model may contradict itself unreported, and
+ * every reading the binding's end may change abstains. An assert
  * written above or beside the binding — the package's `q.p.x == 3.0` over Q's
  * binding (RB3, RB4), a specialiser's or a usage's of the binding's owner
  * (RBS1, RBS5) — reads the binding there, and is checked against the default.
@@ -7870,14 +8073,14 @@ function standingUnderInstance(
     if (!owner || !isDefinition(owner.eClass) || isPackage(owner)) continue;
     // An instance of the definition: a usage it, or a definition that specialises it, types.
     const instanceOfOwner = (x: ElementRecord): boolean => isUsage(x.eClass) && generalizationsOf(model, x.id).some((t) => t.id === o);
-    // Is the binding written in an instance of the definition, below one, or on a path through one?
-    const underInstance = (b: ElementRecord, e: ElementRecord): boolean => {
+    // The instance of the definition the binding is written in, below, or on a path through, or `undefined`.
+    const underInstance = (b: ElementRecord, e: ElementRecord): ElementRecord | undefined => {
       for (let x = b.ownerId != null ? model.get(b.ownerId) : undefined; x; x = x.ownerId != null ? model.get(x.ownerId) : undefined) {
-        if (instanceOfOwner(x)) return true;
+        if (instanceOfOwner(x)) return x;
       }
       const spelled = bindingEndPath(model, e.id, b.ownerId!);
       const along = spelled !== undefined ? featuresAlong(b.ownerId!, spelled.split('.')) : undefined;
-      return along !== undefined && along.slice(0, -1).some(instanceOfOwner);
+      return along?.slice(0, -1).find(instanceOfOwner);
     };
     for (const [path, equations] of equationsByName(model, o)) {
       const full = featuresAlong(o, path.split('.'));
@@ -7896,7 +8099,13 @@ function standingUnderInstance(
         const v = [e, ...redefinedClosure(model, e)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
         return own === e || v === undefined;
       };
-      const hit = standingEndsOf(full[full.length - 1]!).find(({ b, e }) => !readByBinding(b, e) && underInstance(b, e) && meets(b, e, o, full));
+      const definitions = sharedDefinitions(model);
+      const hit = standingEndsOf(full[full.length - 1]!).find(({ b, e }) => {
+        if (readByBinding(b, e)) return false;
+        const instance = underInstance(b, e);
+        // An instance the assert is read in, at the value the binding carries (RB5): its row says whether it holds there.
+        return instance !== undefined && meets(b, e, o, full) && !definitions.valuedByBinding(instance.id, o, [path], false);
+      });
       if (!hit) continue;
       const at = hit.b.ownerId!;
       const sides = [hit.b.source?.[0], hit.b.target?.[0]].map((id) => (id !== undefined ? (bindingEndPath(model, id, at) ?? '…') : '…'));
@@ -11289,6 +11498,26 @@ function boundPartPhrase(bound: NonNullable<GuardReading['bound']>, where: strin
 const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly InstanceGroup[] }>();
 
 /**
+ * {@link DefiningEquations.valuedByBinding}, worked out: does a name of `names`, read in the usage `x`, denote a
+ * feature of one of its instances that states no value and whose instance symbol a binding gives a source this tool
+ * reads ({@link boundSourceIn})? A name read in an instance of the context's own, never one an owning namespace
+ * answers.
+ */
+function bindingValued(definitions: DefiningEquations, x: ElementRecord, names: readonly string[]): boolean {
+  const denoted = definitions.denote(x.id);
+  const here = definitions.instanceNameOf(x.id);
+  for (const n of names) {
+    const d = denoted.get(n);
+    if (!d || !(d.instance === here || d.instance.startsWith(`${here}::`))) continue;
+    // A value, or a `default`, anywhere on the redefinition chain is read by the rules that list a context for what it states.
+    if (statesOwnValue(definitions.model, d.feature)) continue;
+    const source = boundSourceIn(definitions.model, definitions.symbolOf(d));
+    if (source !== undefined && !('abstain' in source)) return true;
+  }
+  return false;
+}
+
+/**
  * The calls the instance index makes to itself where a throw is contained
  * (A.2.9) — inside {@link instanceGroups} (a usage's sites, and the asserted
  * equations the coverage guard reads, {@link readFeatures}), in {@link
@@ -11296,11 +11525,14 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
  * satisfierTaint} (what an instance reads otherwise, the subsetting usages of
  * {@link subsettingTaint} among it), in {@link
  * contradictedDefinitions} (two asserted equations that give one feature two
- * values) and in {@link contradictedTaint} (what they leave undecided, asked
- * per row: a throw refuses that row, `internal`) — made through this
- * object, never directly: the seam a test makes one of them throw through
- * (`vi.spyOn`), since a module-level stub reaches only the calls another
- * module makes. Each is the function it names; nothing else changes them.
+ * values), in {@link contradictedTaint} (what they leave undecided, asked
+ * per row: a throw refuses that row, `internal`) and in {@link
+ * DefiningEquations.valuedByBinding} (the contexts a binding gives a value:
+ * a throw lists the context, to be read and contained as its own row) —
+ * made through this object, never directly: the seam a test makes one of
+ * them throw through (`vi.spyOn`), since a module-level stub reaches only the
+ * calls another module makes. Each is the function it names; nothing else
+ * changes them.
  */
 export const instanceIndexSeam = {
   enclosingAsserts: (model: Model): EnclosingAsserts => enclosingAsserts(model),
@@ -11315,6 +11547,8 @@ export const instanceIndexSeam = {
   assertHeldInSome: (model: Model, f: ElementRecord): boolean => assertHeldInSome(model, f),
   instanceSitesOf: (definitions: DefiningEquations, usage: ElementRecord): ReturnType<typeof instanceSitesOf> =>
     instanceSitesOf(definitions, usage),
+  bindingValued: (definitions: DefiningEquations, x: ElementRecord, names: readonly string[]): boolean =>
+    bindingValued(definitions, x, names),
 };
 
 /**

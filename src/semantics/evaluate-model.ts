@@ -2712,7 +2712,11 @@ function readInContexts(
     // load`), whose row the binding's value is unread in ({@link renamedIn}):
     // routed as a target's, mbse-workflow reported it and never blocked on it.
     const renamed = renamedIn(model, pass, owner, x.id, bodyNames);
-    const carried = above !== undefined || renamed !== undefined || pass.definitions.readsThroughBinding(el, names, x.id);
+    const carried =
+      above !== undefined ||
+      renamed !== undefined ||
+      pass.definitions.readsThroughBinding(el, names, x.id) ||
+      pass.definitions.valuedByBinding(x.id, owner, names);
     const readAs = carried ? pass.definitions.instanceNameOf(x.id) : undefined;
     const here =
       !cap && !via && pass.definitions.readsBoundOnly(el, names, x.id)

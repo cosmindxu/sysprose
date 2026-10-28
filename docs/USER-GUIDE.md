@@ -1319,11 +1319,65 @@ p.m2 >= 0.0 }`), is that instance's reading: a
 `validation/constraint-by-instance` finding at the member of the context stating
 the carried value (q's `:>> L`) or renaming the bound end (q2's `ld :>> load`),
 else at the context itself, never a target's
-`validation/target-by-specialisation` verdict. A per-instance reading that fails
-inside the tool makes the row it was read for *could not be evaluated*, in a
-sentence naming the failure (`… the per-instance reading failed (RangeError);
-reported, not dropped`; a group's roll-up counts it *not read*), and every other
-row and finding stands — on the verify lane too, where the goal row is refused in
+`validation/target-by-specialisation` verdict. A definition's relation over a
+feature that states no value, and reads that feature itself, is read in the
+instance whose binding gives it one:
+P's `assert constraint a2 { load <= 10.0 }` over P's `attribute load`, in Q's
+`part p : P` under Q's `bind p.load = L` and `L = 50.0`, is read in Q's p at the
+50 the binding carries — the row `part p : P { attribute :>> load = 50.0; }`
+gives — and is violated there (*p::load = 50 misses P::a2 (load <= 10.0)*, at
+Q's `L = 50.0`): a model that contradicts itself. The check and the numeric
+surface report it and keep deciding the relations beside it; the literal engine
+marks a relation over a value the violated assert reaches (Q's `L`, tied to p's
+load by the binding) inconclusive, naming the assert, and the SMT engine holds
+the assert in that instance as an axiom, so its axioms are inconsistent. Where
+Q's instances give the binding different values (`L default = 50.0`, `q2 : Q {
+attribute :>> L = 5.0; }`) each reads its own, in a row of its own. P's own
+row, which has no value to read, is *could not be evaluated*. A plain `constraint
+a2` of P is read in the same instance and is refuted on every surface. Two
+shapes are not read, and the violation in them goes unreported. A relation that
+reads `load` only through a value derived from it (`attribute m2 :
+ScalarValues::Real = 10.0 - load` under `assert constraint c { m2 >= 0.0 }`) is
+not read in Q's p, though it is where the instance redefines `load` itself
+(`part p : P { attribute :>> load = 50.0; }`: *p::m2 = -40 misses P::c*). And
+where Q's `L` states no value at all, not even a `default`, and only an instance
+gives it one (`part q : Q { attribute :>> L = 50.0; }`), neither an `assert` nor
+a plain `constraint` of P is read in q's p. In both the check lists no row for
+the instance and reports nothing of the violation, and the numeric surface and
+the literal engine decide the relations beside it at the values they read; the
+SMT engine reports its axioms inconsistent only for the `assert` over the
+instance-supplied value (it files that assert in q's p as an axiom), and for the
+derived shape proves the relations beside it. A binding that gives the instance
+no value this tool reads (two defaults that differ) lists no such row: whatever
+reads that value is *could not be evaluated*. The binding
+need not be written in the definition around the instance: one written in an
+enclosing instance (`part s2 : S { bind q.g = K; }` over S's `part q : G`, or
+`bind s2.q.g = K;` in the package) makes s2's q and its g copies of S's, and a
+copy holds every assert its types and the instances around it hold. G's `assert
+constraint ca { g <= 10.0 }` is read in s2's q at the K of 50 the binding
+carries, over a `g default = 1.0` that gives way to it, and is violated there; the
+worklist files it as an axiom of that instance, so the SMT engine reads every
+row of the file *inconsistent axioms* (it had proved `s2.q.g == 50.0` and `K ==
+50.0`), and the literal engine places the contradiction at s2's q and its K —
+and decides the relation over s1's g — where it read the assert in an instance
+the worklist filed no row of, and judged no relation at all. The same holds for a
+binding written at the top over the copy of a usage a specialising definition
+types (`bind r.q.p.load = r.q.L`, over Q's `L == 2.0 * K` at Q2's `K = 25.0`:
+the L of 50 against p's load of 1, which the check reports on the binding), for
+one a usage of the enclosing definition writes (R's `part q : Q { bind p.load =
+L; }`, read in `part r : R { attribute :>> K = 25.0; }` and in a definition that
+specialises R), and for a binding a general definition writes over the
+redefinition of its usage (Q's `bind p.load = L` with `L = 1.0`, over Q3's `part
+:>> p : P2` whose assert gives p's load 50): the SMT engine decided or proved a
+relation beside each, and now reports the axioms inconsistent. Such bindings are
+read as deep as 32 of them below one another (definitions that hold each other go
+on without end); a row that reads what a binding beyond that joins is *could not
+be evaluated*, in a sentence that names the depth, and a proof is not claimed
+over it. A per-instance
+reading that fails inside the tool makes the row it was read for
+*could not be evaluated*, in a sentence naming the failure (`… the per-instance
+reading failed (RangeError); reported, not dropped`; a group's roll-up counts it
+*not read*), and every other row and finding stands — on the verify lane too, where the goal row is refused in
 that sentence and closed as a failure of the tool, not a defect in the relation. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
 sentence; one while it lists the asserted equations over a `default` it does not
@@ -1426,9 +1480,23 @@ of the file: one that reads no feature (`1.0 == 2.0`), and one the check
 reports violated in an instance for which `verify`'s worklist files no row of
 it (the row names the instance and says so). A relation over values the contradiction does not reach — another
 package's, or an instance whose own value meets the assert — is judged at them
-as before. A binding that joins two different values is reported on the
-binding's own row instead (above), and the literal engine does not count it as a
-contradiction here. Where the assert is an
+as before. A binding that joins two different values is the same kind of
+contradiction, since a binding holds in every instance as an assertion does:
+`bind p.load = L` over p's load `default = 3.0`, which no assertion replaces, and
+Q's `assert constraint { L == 1.0 }`. The check reports it on the binding's own
+row (above) and keeps deciding the values beside it, and the literal engine
+marks a relation over a value the binding joins inconclusive under the same code,
+naming the binding (*the model contradicts itself there — AMD::Q's `bind p.load
+= L` joins two values that differ, and this relation reads `q0.p.m2`, which that
+contradiction reaches: the binding joins it …*), with the reach of an assert's:
+the values the binding joins, what is derived from them or tied to them by other
+bindings and asserts, and the same feature in another instance this tool reads as
+one value with it. A binding the check reports violated only in an instance that
+redefines what it joins (*… joins two values that differ in M2a::q*) counts as
+violated in every instance, as an assert does. One the worklist files no row of
+that reads a feature reaches every relation of the file, and the row says so.
+A relation over values the contradiction does not reach (an instance whose own value
+meets the binding) is judged at them as before. Where the assert is an
 equation that names the default's feature alone on one side, its other side
 reading neither it nor another `default` — the shape that once defined it — the
 sentence also says why the default stood and how to write the value it meant to
@@ -1552,14 +1620,20 @@ carries there, L's value written with `=` or its `default`: 4, and the assert is
 reported violated. One written in the binding's type over an instance that
 writes the binding (Q's `p.x == 50.0` over `part q1 : Q { bind p.x = K; }`, or
 in q1's `part :>> p`, the package's `bind q1.p.x = K`, a definition's around
-q1) is not read for q1 (a known gap). Over K's `default = 9.0`, which stands,
-every reading of the pair — K, q1's p's x, the assert's own rows — is *could
-not be evaluated*, in a sentence naming the assert and the binding (*… is not
-read where `bind p.x = K` in R::q1 joins p.x to a `default`, which no assertion
-replaces: the assert holds in that instance too, and this tool does not read it
-there, so the model may contradict itself unreported …*), and `verify` exits 2.
-With `K = 9.0` written with `=` the readings stand, and the model contradicts
-itself unreported.
+q1) is read for q1, at the value the binding carries: K's 9, written with `=`
+or as its `default`, which stands (above), is not 50, so the assert is violated
+in q1 (*p::x = 9 misses Q::tie (p.x == 50.0)*) and the model contradicts
+itself. The check and the numeric surface report it and read `q1.p.x` and `K`
+at 9; the literal engine and the SMT engine decide neither (inconsistent
+axioms), and `verify` exits 2. Q's own row, where p's x has no value and the
+assert defines it, holds. Where the binding gives q1's p's x no value this tool
+reads (`K default = 9.0` and `J default = 8.0`, both joined), the assert is not
+read in q1: every reading of the pair — J, K, q1's p's x, the assert's own rows
+— is *could not be evaluated*, in a sentence naming the assert and the binding
+(*… is not read where `bind p.x = K` in R::q1 joins p.x to a `default`, which no
+assertion replaces: the assert holds in that instance too, and this tool does
+not read it there, so the model may contradict itself unreported …*), and
+`verify` exits 2.
 
 **Two asserted equations that disagree.** A feature declared without a value
 that two asserted equations define with two different values — `assert
@@ -1569,7 +1643,16 @@ anew without `:>>`, or neither; two in two types a definition specialises, or in
 two that each redefine L; P's beside one written around the instance (`assert
 constraint { p.L == 60.0 }` in the package, or in a definition whose part p is);
 or one in an element nested in the one that declares L whose `L` resolves to
-that one (in a part's body, a nested package, or a definition in the package) —
+that one (in a part's body, a nested package, or a definition in the package); or
+one on each of two features of an element that a `bind` of it joins (`bind L = K`
+beside `L == 50.0` and `K == 60.0` in P, through a chain `bind L = M; bind M = K`
+too, which may run across a specialisation — `bind K = L` in P and `bind N = K` in
+P2, joining P2's N to P's L through P2's own K, which redefines P's — whether or not the
+middle of the chain states anything; either equation may be written in a usage
+of P or in a type that specialises it) — a binding says the two ends are one
+value, so the equations define one feature twice, and the sentence names the
+binding or bindings that join them (*each define `L` (joined to `K` by `bind L =
+K`) in …::P*) —
 is a model that contradicts itself, whichever is written first, and no surface
 that judges a relation reads it. Every relation over L, or over a value tied to
 it (derived from it, bound to it, or read beside it by an asserted relation —
@@ -1642,11 +1725,20 @@ written with `=` (`L = 1.0`) is read whatever its asserts, which are checked
 against it, in any order; so is one an asserted relation reads beside L (`M =
 20.0` in `L >= 0.0 [kg] or M >= 0.0`), and an assert over it alone (`M <=
 10.0`) is still the warning. Limits of this tool: two asserted equations on the two
-ends of one binding (`bind L = K` with `L == 50.0` and `K == 60.0`) are the
-binding's violated pair, but each end's readings stand; and `K == L`, a bare
-name on each side, is not read as tying K to such an L, so K's FMI `start`, its
-measure of effectiveness and a check over it still turn on the order of the two
-equations (`K == L + 0.0`, `K == 2.0 * L` and `bind K = L` are read as tied).
+ends of a binding that reaches one end through a part (`bind p.L = M`, `L == 50.0`
+in p's type and `M == 60.0` in the element) are still only the binding's violated
+pair, each end's readings standing, and the pair only joins features of the element
+that holds the binding; an FMI export's `start` of such a feature still reads the first
+equation written; `K == L`, a bare name on each side, is not read as tying K to such
+an L, so K's FMI `start`, its measure of effectiveness and a check over it still turn on
+the order of the two equations (`K == L + 0.0`, `K == 2.0 * L` and `bind K = L` are
+read as tied); and the SMT engine holds one symbol for a feature across the usages of
+one definition, so two usages that each assert one end of a binding the
+definition writes (`bind L = K` in P, `part a : P { assert constraint ea { L ==
+50.0 } }`, `part b : P { assert constraint eb { K == 60.0 } }`) read *inconsistent
+axioms* on its rows though neither instance contradicts itself — the literal
+engine decides those rows, and the numeric surface does not judge them (*the
+solve did not converge*).
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
@@ -2015,7 +2107,7 @@ strongest row wins, in the order refuted → design-admitted → undecided.
 | `refuted` | both | `literal`: false at your values, where no such contradiction reaches a value the relation reads. `smt`: `A ∧ P ∧ ¬G` **sat**, with the witness re-confirmed through this tool's own evaluator before you see it | **1** — and `--allow-inconclusive` does not reach it |
 | `design-admitted` | `smt` | A refutation reached only **after** `--free` released a value your model states, so it is a design your model admits rather than a violation of it | **2**, never 1 |
 | `vacuous` | both | `literal`: the `assume` clause is false at your values (`verification/vacuous-pass`). `smt`: `A ∧ P` is unsat, so nothing at all satisfies the premises (`verification/vacuous`) | **2**, with `--strict-vacuity` and without it — the flag changes the code and the severity and nothing else |
-| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms (on the literal engine: a relation over a value an `assert` false at your values, or two asserted equations that give one feature two values, contradicts), unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
+| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms (on the literal engine: a relation over a value an `assert` false at your values, a `bind` the check reports violated, or two asserted equations that give one feature two values, contradicts), unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
 | `holds-structurally`, `holds-within-bound` | none in this build | Declared in the evidence vocabulary and in `schemas/evidence-record.schema.json`, reserved for a structural argument and for a bounded walk. **No engine here writes either**, so a record carrying one did not come from this build | — |
 
 Two readings that table is defending. `holds-at-values` discharging a run is
@@ -2192,7 +2284,7 @@ that renders these members carries it itself.
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
 | `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
 | `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |
-| `verification/inconsistent-axioms` | Your model's own facts collide, so nothing can be proved from them — on every SMT row of the file (only on the rows whose context holds the colliding relation, where a gate refuses it); on the literal engine, on a relation over a value an `assert` false at your values contradicts, the assert named | No |
+| `verification/inconsistent-axioms` | Your model's own facts collide, so nothing can be proved from them — on every SMT row of the file (only on the rows whose context holds the colliding relation, where a gate refuses it); on the literal engine, on a relation over a value an `assert` false at your values, or a `bind` the check reports violated, contradicts, the assert or the binding named | No |
 | `verification/free-variable-unbounded` | A feature you freed is not confined on both sides, so a witness could come from outside the physical domain | No |
 | `verification/tool-absent` | No engine ran | No |
 | `verification/design-admitted` | Refuted only after `--free` released a value your model states | No |
