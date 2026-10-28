@@ -28,7 +28,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
-import { runStateMachine } from '@semantics/index';
+import { refusedStepSentence, runStateMachine } from '@semantics/index';
 import { loadModelText } from '@text/load';
 import { parseModel, resolveConnectorFeatureChains } from '@text/index';
 import { isKnownCode } from '@text/langium/diagnostic-codes';
@@ -700,8 +700,8 @@ describe('a nested state def: the machine that holds it, and a transition across
    */
   it('refuses both machines of a one-way crossing, from either side, and decides no property over them', async () => {
     for (const [text, edge, far, run] of [
-      [INTO_ONLY, 'IntoOnly::Outer::az', 'IntoOnly::Outer::Inner', { machine: 'IntoOnly::Outer', events: ['e'], ends: 'IntoOnly::Outer::Inner::z' }],
-      [OUT_ONLY, 'OutOnly::Outer::Inner::yb', 'OutOnly::Outer', { machine: 'OutOnly::Outer::Inner', events: ['go', 'back'], ends: 'OutOnly::Outer::b' }],
+      [INTO_ONLY, 'IntoOnly::Outer::az', 'IntoOnly::Outer::Inner', { machine: 'IntoOnly::Outer', events: ['e'], stands: 'IntoOnly::Outer::a' }],
+      [OUT_ONLY, 'OutOnly::Outer::Inner::yb', 'OutOnly::Outer', { machine: 'OutOnly::Outer::Inner', events: ['go', 'back'], stands: 'OutOnly::Outer::Inner::y' }],
       [INNER_EDGE, 'InnerEdge::Outer::Inner::ab2', 'InnerEdge::Outer', null],
     ] as const) {
       const model = await modelOf(text);
@@ -726,11 +726,14 @@ describe('a nested state def: the machine that holds it, and a transition across
       }
       // The far machine has the carrier: it is refused rather than passed.
       expect(behaviourReport(model, { machineId: idOf(model, far) }).exitCode, far).toBe(2);
-      // The run the reviewer's oracle found, which the far side's walk had ignored.
+      // The run the reviewer's oracle found, which the far side's walk had ignored:
+      // the simulator refuses the step the walk refuses (docs/06 §8.14), so it
+      // stops where it stands and never stands in the far state.
       if (run !== null) {
-        expect(model.qualifiedName(runStateMachine(model, idOf(model, run.machine), [...run.events]).finalState!)).toBe(
-          run.ends,
-        );
+        const res = runStateMachine(model, idOf(model, run.machine), [...run.events]);
+        expect(res.refused && model.qualifiedName(res.refused.transitionId), edge).toBe(edge);
+        expect(model.qualifiedName(res.finalState!), edge).toBe(run.stands);
+        expect(res.complete, edge).toBe(false);
       }
     }
   });
@@ -750,7 +753,15 @@ describe('a nested state def: the machine that holds it, and a transition across
     expect(r.machines[0].unsupported[0].detail).toContain('out of this machine, into `TopCross::B`, a machine of its own');
     expect(r.machines[1].unsupported[0].detail).toContain('is written outside this machine, in `TopCross::A`');
     expect(behaviourReport(model, { machineId: idOf(model, 'TopCross::B') }).properties[0].claim).toBe('inconclusive');
-    expect(model.qualifiedName(runStateMachine(model, idOf(model, 'TopCross::A'), ['e']).finalState!)).toBe('TopCross::B::z');
+    const run = runStateMachine(model, idOf(model, 'TopCross::A'), ['e']);
+    expect(run.refused && model.qualifiedName(run.refused.transitionId)).toBe('TopCross::A::ab');
+    expect(model.qualifiedName(run.finalState!)).toBe('TopCross::A::a0');
+    expect(refusedStepSentence(model, idOf(model, 'TopCross::A'), run.refused!.transitionId)).toBe(
+      '`TopCross::A::ab` leads from `TopCross::A::a0` to `TopCross::B::z`, and `TopCross::B::z` lies outside this ' +
+        'machine’s region, a state of `TopCross::B`, a machine of its own. Each machine steps only by its own ' +
+        'transitions, so what a step across that boundary exits and enters is not defined here: the run stops where ' +
+        'it stands without taking it, and takes no step after it.',
+    );
   });
 
   /*
@@ -793,6 +804,15 @@ describe('a nested state def: the machine that holds it, and a transition across
         expect(detail).toContain('A transition added over inherited states is not walked as part of either machine');
         expect(detail).not.toContain('Keep each transition inside the machine whose states it joins');
       }
+      // WHY NO WALK PUTS THE TWO TOGETHER (docs/06 §8.6): the interpreter does not
+      // either. It reads a machine's own region only, so a run of `Base` never
+      // takes the added step and a run of the specialisation has no state at all;
+      // a walk of the pair would claim runs no simulator takes.
+      const onBaseRun = runStateMachine(model, idOf(model, base), ['go', 'more']);
+      expect(onBaseRun.fired.map((q) => model.qualifiedName(q.transitionId))).toEqual([`${base}::ab`]);
+      expect(model.qualifiedName(onBaseRun.finalState!)).toBe(`${base}::b`);
+      const onSubRun = runStateMachine(model, idOf(model, sub), ['go', 'more']);
+      expect([onSubRun.visited, onSubRun.fired, onSubRun.finalState]).toEqual([[], [], null]);
     }
   });
 
@@ -816,10 +836,13 @@ describe('a nested state def: the machine that holds it, and a transition across
       'leads from `ToDef::Outer::a` to `ToDef::Outer::Inner`, into the nested `state def` `ToDef::Outer::Inner`',
     );
     const outerId = idOf(model, 'ToDef::Outer');
-    expect(runStateMachine(model, outerId, ['e']).visited.map((id) => model.qualifiedName(id))).toEqual([
-      'ToDef::Outer::a',
-      'ToDef::Outer::Inner',
-    ]);
+    // The simulator refuses the step too, where it used to enter `Inner` and stay.
+    const crossed = runStateMachine(model, outerId, ['e']);
+    expect(crossed.visited.map((id) => model.qualifiedName(id))).toEqual(['ToDef::Outer::a']);
+    expect(crossed.refused && model.qualifiedName(crossed.refused.transitionId)).toBe('ToDef::Outer::ai');
+    expect(refusedStepSentence(model, outerId, crossed.refused!.transitionId)).toContain(
+      '`ToDef::Outer::Inner` lies outside this machine’s region, a machine of its own.',
+    );
     const row = behaviourReport(model, { machineId: outerId, pattern: 'pattern=absence, scope=globally, p=state b' });
     expect(row.properties[0].claim).toBe('inconclusive');
     expect(row.exitCode).toBe(2);
@@ -857,9 +880,10 @@ describe('a nested state def: the machine that holds it, and a transition across
     const replay = replayWitness(model, outerId, witness, MAX_COMPLETION);
     expect(replay.replays).toBe(false);
     expect(replay.step).toBe(1);
+    // The interpreter no longer takes the step at all (docs/06 §8.14), so the
+    // witness departs at the transition.
     expect(replay.reason).toBe(
-      'at step 1 the witness fires `ToDef::Outer::ai` and enters `ToDef::Outer::Inner::x`, and the interpreter fires ' +
-        'it and enters `ToDef::Outer::Inner`',
+      'at step 1 the witness fires `ai (a -> Inner)` on `e` and the interpreter fires nothing more',
     );
     // A departure at the trigger names the transition by its endpoints, without
     // its trigger, so the message carries no nested backticks.
@@ -901,12 +925,13 @@ describe('a nested state def: the machine that holds it, and a transition across
     expect(forged.reason).toBe(
       'at step 1 the witness fires `b -> c` on `e` and the interpreter fires `a -> b` on `e`',
     );
-    // The same witness ending where the run rests replays.
+    // Nor does one ending where the run used to rest: the interpreter takes no
+    // step across the boundary now, so no witness of it replays.
     const resting: TraceStep[] = [
       witness[0],
       { ...witness[1], leaf: ref('ToDef::Outer::Inner'), stack: [ref('ToDef::Outer::Inner')] },
     ];
-    expect(replayWitness(model, outerId, resting, MAX_COMPLETION).replays).toBe(true);
+    expect(replayWitness(model, outerId, resting, MAX_COMPLETION).replays).toBe(false);
   });
 
   /*
@@ -2257,8 +2282,9 @@ describe('a step exits to the least common ancestor of its source and its target
         expect(run.complete).toBe(false);
       }
     }
-    // A step across a machine's boundary is not one of them: the interpreter
-    // still reads it as docs/06 §8.6 says, and takes it.
+    // A step across a machine's boundary is refused by the same interpreter
+    // (`stepAcrossBoundary`, docs/06 §8.14), on a different predicate: it stops
+    // where it stands, as for the steps above, and does not enter `Inner::x`.
     const nest = (await loadModelText(
       'package Nest2 { state def Outer { state a; state b;\n' +
         '  state def Inner { state x; state y; transition xy first x accept go then y; }\n' +
@@ -2268,8 +2294,9 @@ describe('a step exits to the least common ancestor of its source and its target
     const outer = stateMachinesIn(nest).find((s) => s.declaredName === 'Outer')!;
     expect(reachReport(nest).machines.find((x) => x.machine.id === outer.id)!.unsupported.map((u) => u.construct)).toContain('machine-boundary');
     const crossed = runStateMachine(nest, outer.id, ['e']);
-    expect(crossed.refused).toBeUndefined();
-    expect(name(nest, crossed.finalState)).toBe('x');
+    expect(crossed.refused && nest.qualifiedName(crossed.refused.transitionId)).toBe('Nest2::Outer::ax');
+    expect(name(nest, crossed.finalState)).toBe('a');
+    expect(crossed.complete).toBe(false);
   });
 });
 

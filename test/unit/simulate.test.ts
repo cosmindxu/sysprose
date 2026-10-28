@@ -525,6 +525,49 @@ describe('SimulationSession — a step into the machine itself is not taken (doc
     expect(alone.refused?.sentence).not.toContain('the machine itself');
   });
 
+  it('a composite run on its own that steps out of itself, to its holding machine, stops there like the walk’s refusal (docs/06 §8.14)', () => {
+    // `C`'s `out` leads to `M`'s root and `leave` to `a`, a sibling of `C`. In `M`
+    // the second is an ordinary step (exit `C`, enter `a`) and the first is a
+    // step into the machine's root, which both sides refuse. Run alone, `C` has
+    // no `a` and no `M` in its region: the step used to be taken the old way,
+    // entering the far state on top of `C`; it stops now, with the boundary
+    // sentence.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('M');
+    const a = f.state('a', sm.id);
+    const c = f.state('C', sm.id);
+    const c1 = f.state('c1', c.id);
+    const c2 = f.state('c2', c.id);
+    f.transition(a.id, c.id, { ownerId: sm.id, trigger: 'enter' });
+    f.transition(c1.id, c2.id, { ownerId: c.id, trigger: 'go' });
+    const leave = f.transition(c2.id, a.id, { ownerId: c.id, trigger: 'leave' });
+    const out = f.transition(c2.id, sm.id, { ownerId: c.id, trigger: 'out' });
+    expect(reachReport(m).machines.map((x) => x.unsupported.map((u) => u.construct))).toEqual([['step-outside-states']]);
+    // The machine itself takes the step to `a`, and stops at the one into its root.
+    const whole = runStateMachine(m, sm.id, ['enter', 'go', 'leave', 'enter', 'go', 'out']);
+    expect(whole.fired.map((q) => q.transitionId)).toContain(leave.id);
+    expect(whole.refused?.transitionId).toBe(out.id);
+    const alone = executionReport(m).stateMachines.find((r) => r.stateMachine.id === c.id)!;
+    for (const [trigger, edge, far] of [
+      ['leave', leave, ', a state of `M`, a machine of its own'],
+      ['out', out, ', a machine of its own'],
+    ] as const) {
+      const run = runStateMachine(m, c.id, ['go', trigger]);
+      expect(run.refused?.transitionId, trigger).toBe(edge.id);
+      expect(run.finalState, trigger).toBe(c2.id);
+      expect(run.complete, trigger).toBe(false);
+      const sentence = refusedStepSentence(m, c.id, edge.id);
+      expect(sentence, trigger).toContain(`lies outside this machine’s region${far}.`);
+      expect(sentence, trigger).toContain('the run stops where it stands without taking it');
+    }
+    // The report and the session read it the same way.
+    expect(alone.refused?.sentence).toContain('lies outside this machine’s region');
+    const s = new SimulationSession(m, c.id);
+    s.inject('go');
+    expect(s.inject('leave').refused?.sentence).toBe(refusedStepSentence(m, c.id, leave.id));
+  });
+
   it('a composite no machine holds is the machine itself, whatever state or lone definition is written above it', () => {
     // The whole-branch review's H1 and H2: the state above `C` owns no
     // transition, so `C` is the machine (`stateMachinesIn`) and no machine

@@ -2104,7 +2104,9 @@ them.
   `.sysml` under `test/` and `examples/`, and v9) `nest2-into` is the only model
   that holds such an edge, and the region reading moves the atoms of the seven
   machines that hold a nested definition and the properties of none.
-- **How it stands to the simulator.** The interpreter is unchanged: it reads the
+- **How it stands to the simulator.** (§8.14 changed this: the interpreter now
+  refuses such a step too; what follows is how it stood when this step landed.)
+  The interpreter was unchanged: it reads the
   same relation (`regionTransitions`, and, since review B's M3 was fixed,
   `regionDescendants` for its states and its start), so a run of `Outer` on
   `[e]` takes `ax` into `Inner::x` and stays there whatever follows, a run of
@@ -2145,6 +2147,21 @@ them.
   inheritance and gives its own remedy: the nested-definition one, keep the
   transition in the machine whose states it joins, would move `Derived`'s step
   into `Base` and change `Base`.
+
+  *Why the two are not walked together (§8.14).* A joint walk would have to read
+  `Derived` as `Base`'s states and transitions plus its own, and the interpreter
+  reads no such thing: `regionDescendants` and `regionTransitions` list what a
+  machine owns, so a run of `Derived` has no state at all (`visited`, `fired` and
+  `finalState` empty on `[go, more]`), a run of `Base` never takes `bc`, and a
+  typed usage `exhibit state m : Modes { … }` is the same. A walk of the pair
+  would publish runs, and absences, about a machine no simulator runs; changing
+  only the walk breaks the invariant that every published witness replays
+  through `runStateMachine`. Reading inherited members in both is a feature, not
+  a fix: a region that lists inherited states and transitions (with their ids,
+  `hierarchyPath`, the atoms and the edge census), what a redefined state or
+  transition means, the properties a base carries, and the names a report prints
+  for them. So the refusal stands, on both machines, until that feature is
+  made.
 
 ### 8.7 The method text — O1 `behaviour-sound`, 2026-10-15
 
@@ -2520,9 +2537,10 @@ atom on it holding, and every round trip stacked one more state.
   the census's `refused` bucket. Before, `then M` stacked to the depth bound, and
   a step into `act::inner` was walked over the old reading and printed a `no way
   out` row there. A step across a machine's boundary was already refused
-  (`machine-boundary`, §8.6) and is read by the interpreter as §8.6 says.
+  (`machine-boundary`, §8.6) and was read by the interpreter as §8.6 said.
   (§8.12: the interpreter no longer takes a step into the root or under an
-  action either; it stops before it and says so.)
+  action either; it stops before it and says so. §8.14: nor a step across a
+  machine's boundary.)
 - **What moved.** On the TODO's machine (`Idle -go-> C0`, `C0 { a -x-> b; b
   -back-> Idle }`) `reach` walks 3 configurations to the end; it stopped at the
   depth bound after 201 and withheld every list. `check-behaviour --pattern
@@ -2735,8 +2753,8 @@ wave 2.
   a completion. One predicate decides it, `stepOutsideStates` (`config.ts`),
   read by the walk's `stepsOutsideStates` and by the interpreter; it is the
   walk's old filter (an end outside the region's nodes is a crossing, and a
-  crossing is not this). A step across a machine's boundary is not refused:
-  the interpreter still reads it as §8.6 says. The refusal reaches every
+  crossing is not this). A step across a machine's boundary was not refused
+  here: the interpreter still read it as §8.6 said (§8.14 refuses it too). The refusal reaches every
   surface. `SimSample.refused` drives the Simulation tab's Stopped line
   (`sim-refused`), `executionReport`'s `refused` carries the sentence
   (`refusedStepSentence`) that the app's Simulate trace prints on its header,
@@ -2821,8 +2839,9 @@ interpreter left — the very shape §8.10 fixed.
   a step to an ancestor and a step from a composite into one of its own
   substates exit that state and enter it again, that a step into the machine's
   own root or under an action is taken by neither side (§8.12),
-  and that a step across the machine's boundary, which the walk refuses, is
-  still taken the old way by the interpreter (§8.6). It is one constant
+  and that a step across the machine's boundary, which the walk refuses, was
+  still taken the old way by the interpreter (§8.6; §8.14 reworded the field:
+  neither side takes it). It is one constant
   rendered into both reports (trap 57), so it moves every `reach` and
   `check-behaviour` text and JSON payload by one profile row, and that is the
   re-record: the three field arrays (`semantics.mc.reach.test.ts` and the two
@@ -2922,3 +2941,78 @@ interpreter left — the very shape §8.10 fixed.
   there, in the repository's examples and fixtures, or v9 holds a lone
   definition that carries a property, so the resolution of a reference moves
   nowhere on them.
+
+### 8.14 A step over inherited states, and a step across a machine's boundary — `behaviour-small`, 2026-10-28
+
+TODO "Walk a step written over inherited states" (O1 S3) and "Take a step
+across a machine's boundary alike in the walk and the simulator" (behaviour-rest
+S1, observation); `wave3-plan.md`, the maintainer's decision on the second:
+where the walk refuses a step across a machine's boundary, the simulator
+refuses it too, unless this plan and UML make a reading clear.
+
+- **The inherited step stays refused, and §8.6 now says why.** The goal was a
+  reading that walks `Base` and `Derived` together. It needs the walk and the
+  interpreter to read the pair the same way, and they cannot yet: the
+  interpreter reads a machine's own region only (`regionDescendants`,
+  `regionTransitions`), so on `state def Base { state a; state b; state c;
+  transition ab first a accept go then b; } state def Derived :> Base {
+  transition bc first b accept more then c; }` a run of `Base` on `[go, more]`
+  fires `ab` and rests in `b`, never taking `bc`, and a run of `Derived` has no
+  state (`visited`, `fired` and `finalState` empty); a typed usage `exhibit state
+  m : Modes { … }` reads the same. A joint walk would publish `c` reachable, or
+  `no way out b` removed, about runs no simulator takes, and walking only one
+  side would give up the invariant that every published witness replays through
+  `runStateMachine` (§8.5). The reading that closes it puts inherited states and
+  transitions in a machine's region for both engines (their ids and
+  `hierarchyPath`, the atoms, the edge census, what a redefined state or
+  transition means, the properties a base carries, the names a report prints),
+  which is a feature and is left as the residual TODO entry. Nothing changes in
+  the refusal's text; `semantics.mc.reach.test.ts` ('names the inheritance …')
+  now pins the interpreter's side of the argument beside the walk's.
+- **The simulator refuses a step across the machine's boundary.** The walk's
+  `machine-boundary` (§8.6) is a step edge with an end outside the nodes of the
+  machine's region: into a nested `state def` (a machine of its own or a
+  definition no walk enters), into another machine, or out of one. The
+  interpreter took such a step the old way (exit down to the source's level,
+  enter the target on top) and stayed in the far state, and a composite the
+  Simulate button runs on its own took a step out of itself to a state of the
+  machine that holds it the same way. Neither reading is the model's: UML has no
+  transition between regions of different machines, §8.6 found that neither
+  reading of a nested definition's edge is the model's, and a composite run
+  alone has nothing above it to exit to. So `stepAcrossBoundary`
+  (`config.ts`: an end that is not a region node, `isRegionNode`, the test
+  `boundaryCrossings` applies) is read by both interpreter paths beside
+  `stepOutsideStates`, and a run that comes to such a step stops where it stands
+  without taking it, takes no step after it, and is not `complete`
+  (`StateRunResult.refused`, §8.12). The refusal reaches the Simulation tab's
+  Stopped line, the Simulate trace and the witness replay through
+  `refusedStepSentence`, which words this step for what it is (`` `…::ai` leads
+  from `…::a` to `…::Inner`, and `…::Inner` lies outside this machine’s region,
+  a machine of its own. Each machine steps only by its own transitions … ``).
+  The two predicates are disjoint, so a step into the machine's own root keeps
+  its §8.12 wording, and a composite that steps into itself keeps the holder
+  sentence. A step written outside a machine's region (`foreign` in
+  `boundaryCrossings`) is in no interpreter's relation and was never taken.
+- **The `exits` field says so.** The semantic profile's `exits` reading no longer
+  says the interpreter takes a step across the boundary the old way; it says
+  neither side takes it, and its provenance names `stepAcrossBoundary`. The
+  field is one constant rendered into both reports, so it moves every `reach`
+  and `check-behaviour` payload by that row (below). `stepConfig`'s old
+  null-path branch (a target with no chain of states) has no caller left and
+  stays as the code that would read it.
+- **What moved.** Against `b635385`: the verdict differential, 637 of 637 models
+  identical; v9, 25 of 25 surfaces identical (neither runs `reach`,
+  `check-behaviour` or the simulator); `reach` and `check-behaviour`, JSON and
+  text, on the 54 state-bearing models and v9: 55 of 55 differ, every one by the
+  `exits` row alone (the reading and the provenance in the JSON, one row in the
+  text), and `check-behaviour --element` on each of their 79 machines, JSON and
+  text: 49 of the 55 models differ, by the `exits` row alone on every machine,
+  and the 6 with no machine are identical. No verdict, code, exit status,
+  witness or figure moved. Over the 857-file survey of §8.6 (the gate corpus,
+  every `.sysml` under `test/` and `examples/`, and v9), checking every element
+  that owns a transition, not only the machines `reach` walks, the only step
+  `stepAcrossBoundary` holds is `nest2-into`'s two (`ax` and `yb`), on machines
+  both sides refuse; no composite the Simulate button would run on its own steps
+  out of itself to a state outside its region. The Simulation tab's Stopped line
+  is the one place a user sees the change, and only on a model that writes such
+  a step.

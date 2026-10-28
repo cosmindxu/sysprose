@@ -72,10 +72,9 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
       'it again. A step whose target sits in no chain ' +
       "of the machine's states — its own root, or a node under an action — has no such ancestor and " +
       'is taken by neither side: the explorer refuses the machine and the interpreter stops before ' +
-      "the step. A step across the machine's boundary, which the explorer refuses too, the " +
-      "interpreter still takes the old way: it exits down to the source's level and enters the " +
-      'target on top.',
-    provenance: 'src/semantics/mc/config.ts — stepConfig, hierarchyPath, stepOutsideStates',
+      "the step. So is a step across the machine's boundary — into a nested `state def`, into " +
+      'another machine, or out of a composite run on its own, into the machine that holds it.',
+    provenance: 'src/semantics/mc/config.ts — stepConfig, hierarchyPath, stepOutsideStates, stepAcrossBoundary',
   },
   {
     field: 'history',

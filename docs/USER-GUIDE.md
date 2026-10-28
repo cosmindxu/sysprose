@@ -3200,7 +3200,8 @@ prints for the same step. On a parallel machine, which only the API makes, each
 region runs on its own over the whole script, so the step stops only its own
 region, the other regions run on, and the sentence says so. The simulator used
 to take it the old way, standing at the machine itself or at the node under the
-action, or restarting under the source's composite. Until 2026-10-21 a step
+action, or restarting under the source's composite. A step across a machine's
+boundary, below, stops a run the same way. Until 2026-10-21 a step
 exited only down to its source's level and entered the target on top, so a
 composite stayed active after a step out of it, each round trip stacked one more
 state, and a property could be refuted on a composite the run had left.
@@ -3542,9 +3543,16 @@ the states it inherits (`state def Derived :> Base { transition … }`, `exhibit
 state m : Modes { transition … }`) crosses the same way, and both machines are
 refused with the inheritance named: no walk here puts the two together, so write
 the machine you mean out whole, its states and every transition it steps by, in
-one definition. A simulator run still takes such a transition — into the far
-state, where it then stays, since none of that state's own transitions are the
-run's — which is what the Simulation tab shows, not a verdict.
+one definition. The simulator reads neither machine as the pair either: it steps
+only by the transitions written in a machine's own region and reads no inherited
+state, so a run of the base never takes the added step and a run of the
+specialisation has no state at all. A step across the boundary is stopped there
+too: a run that comes to one stops where it stands without taking it, takes no
+step after it, and is not complete, and the **Stopped** line (`sim-refused`) says
+the step's far end lies outside the machine's region, as for a step into the
+machine's own root (above). The same holds for a composite the Simulate button
+runs on its own that steps out of itself to a state of the machine that holds it.
+It used to enter the far state and stay there.
 
 `check-behaviour --element Outer` checks `Outer` itself, also when a `state def`
 written inside it makes it hold a second machine: a reference that is a machine

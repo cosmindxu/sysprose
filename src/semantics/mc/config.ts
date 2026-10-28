@@ -970,11 +970,11 @@ function labelFor(tr: ElementRecord, input: StepInput): string {
  * it, or sits under an element between it and the region that is not a
  * `StateUsage` — a nested `state def`, which is a machine of its own
  * ({@link regionDescendants}), or an action. A step into such a target has no
- * least common ancestor to exit to. Across the machine's boundary,
- * {@link stepConfig} reads it as it read every step before (`docs/06` §8.10);
- * into the machine's root or a node under an action, no reader takes it
- * ({@link stepOutsideStates}). The walk refuses a machine that holds either
- * (`./explore.ts`, `unsupportedConstructs`).
+ * least common ancestor to exit to. Across the machine's boundary
+ * ({@link stepAcrossBoundary}), into the machine's root or into a node under an
+ * action ({@link stepOutsideStates}), no reader takes it: the walk refuses a
+ * machine that holds either (`./explore.ts`, `unsupportedConstructs`) and the
+ * interpreter stops before the step (`docs/06` §8.14).
  */
 export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId): ElementId[] | null {
   if (id === regionId) return null;
@@ -1031,6 +1031,29 @@ export function stepOutsideStates(model: Model, machineId: ElementId, edge: Elem
 }
 
 /**
+ * Is `edge` a step across the machine's boundary: an end of it sits outside the
+ * nodes the machine's region is made of ({@link isRegionNode}) — in a nested
+ * `state def`, which is a machine of its own or a definition no walk enters, in
+ * another machine, or in the machine that holds a composite the interpreter runs
+ * on its own?
+ *
+ * Each machine steps only by its own transitions, so what such a step exits and
+ * enters is defined by nothing here. The walk refuses both machines it joins
+ * (`machine-boundary`, `boundaryCrossings` in `./explore.ts`, whose test for an
+ * end is this one) and the interpreter stops before taking it, like a step into
+ * the root or under an action ({@link stepOutsideStates}): ONE predicate for the
+ * interpreter's side, disjoint from that one, so the two together are the steps
+ * the interpreter does not take (`docs/06` §8.14). Until then it took the step
+ * the old way, exiting down to the source's level and entering the target alone.
+ */
+export function stepAcrossBoundary(model: Model, machineId: ElementId, edge: ElementRecord): boolean {
+  const from = edge.source?.[0];
+  const to = edge.target?.[0];
+  if (from === undefined || to === undefined) return false;
+  return !isRegionNode(model, machineId, from) || !isRegionNode(model, machineId, to);
+}
+
+/**
  * Where a {@link stepOutsideStates} edge leads, in the words both refusals
  * print: the machine's own root, or the element above its target that is not a
  * state.
@@ -1069,12 +1092,11 @@ export function outsideStatesSentence(model: Model, machineId: ElementId, edge: 
  * (`docs/06` §8.9, §8.10).
  *
  * A target with no chain of states ({@link hierarchyPath} is `null`) is stepped
- * as before: exit down to the source's level, enter the target on top. The one
- * such step a caller takes is a step across a machine's boundary, which the
- * interpreter reads that way (`docs/06` §8.6) and the walk refuses, so no
- * verdict stands on it. A step into the machine's own root or into a node under
- * an action ({@link stepOutsideStates}) reaches no call here: the walk refuses
- * the machine and the interpreter stops before it (`docs/06` §8.12).
+ * as before: exit down to the source's level, enter the target on top. No
+ * caller reaches it: a step across the machine's boundary
+ * ({@link stepAcrossBoundary}), into the machine's own root or into a node under
+ * an action ({@link stepOutsideStates}) is refused by the walk and stopped
+ * before by the interpreter (`docs/06` §8.12, §8.14).
  *
  * `choice` must have come from {@link enabledTransitions} on THIS configuration:
  * the level it names is where the source sits on the stack, and a choice from
