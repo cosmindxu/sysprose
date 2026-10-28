@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildSampleModel, Model, ModelFactory, type ElementRecord } from '@core/index';
 import { parseModel, serializeModel } from '@text/index';
 import { validate } from '@validation/index';
-import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError } from '@semantics/index';
+import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError, checkConstraints, effectiveNameOf } from '@semantics/index';
 import { parseDocument } from '@text/langium/module';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
@@ -694,6 +694,74 @@ describe('serializer — the reference form the resolver agrees with', () => {
     const red = model.all().find((e) => e.eClass === 'Redefinition')!;
     expect(model.qualifiedName((red.target ?? [])[0])).toBe('P::Base::w');
     expect(model.qualifiedName((red.source ?? [])[0])).toBe('P::Car::w');
+  });
+
+  it('writes a redefinition of an UNNAMED feature by the name the redefinition rule finds it by', () => {
+    // s's `:>> M` redefines Q2's unnamed `:>> M` (the most specific feature s inherits for M), whose only name is
+    // its effective one: with no printable form, Save would drop the reference and write `attribute;`.
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part s : Q2 { attribute :>> M; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part v : R { attribute :>> M = 5.0; }
+}`;
+    const target = (m: Model, owner: string): string => {
+      const o = m.all().find((e) => e.declaredName === owner)!;
+      const f = m.children(o.id).find((c) => c.eClass === 'AttributeUsage')!;
+      const red = m.children(f.id).find((c) => c.eClass === 'Redefinition')!;
+      const t = m.get((red.target ?? [])[0])!;
+      return `${m.qualifiedName(t.ownerId!)}::${t.declaredName ?? `:>> ${effectiveNameOf(m, t)}`}`;
+    };
+    const m1 = parseModel(src).model;
+    expect([target(m1, 's'), target(m1, 'v')]).toEqual(['P::Q2:::>> M', 'P::R::M2']);
+    const t1 = serializeModel(m1);
+    expect(t1).toMatch(/part s : Q2 \{\s*attribute :>> M;\s*\}/);
+    // A target under another name is written by its own name: the same feature on the next load.
+    expect(t1).toMatch(/part v : R \{\s*attribute :>> M2 = 5\.0;\s*\}/);
+    const m2 = parseModel(t1).model;
+    expect([target(m2, 's'), target(m2, 'v')]).toEqual(['P::Q2:::>> M', 'P::R::M2']);
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  it('keeps a redefinition of an UNNAMED feature after an edit retypes its owner', () => {
+    // The Properties panel's type field (`bindType`) replaces s's FeatureTyping and the text is written from the
+    // model. s's `:>> M = 5.0` still redefines Q2's unnamed `:>> M`, which the rule no longer answers for `M` in
+    // the retyped s, and which has no name to write: Save dropped the `:>> M`, so the page read s5 satisfied and
+    // the reopened file violated. `M` is written wherever the rule lands in the same line (Q4's and Q3's `:>> M`
+    // redefine Q's M too; Q's M itself), and the next load redefines the feature of the edited context.
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q3 :> Q { attribute :>> M default = 3.0; }
+  part def Q4 :> Q2 { attribute :>> M default = 4.0; }
+  part def Z { attribute M default = 7.0; }
+  part s : Q2 { attribute :>> M = 5.0; }
+  constraint s5 { s.M == 5.0 }
+}`;
+    const s5 = (m: Model): string | undefined =>
+      checkConstraints(m).find((c) => m.qualifiedName(c.id) === 'P::s5')?.result;
+    for (const [to, written, lands] of [
+      ['Q4', ':>> M', 'P::Q4'],
+      ['Q3', ':>> M', 'P::Q3'],
+      ['Q', ':>> M', 'P::Q'],
+      // Z's own M is no feature of that line: the redefined feature is written by its qualified name, from the
+      // root (`refTo`'s form for a name the scope does not reach), which the next load takes as written.
+      ['Z', ':>> P::Q::M', 'P::Q'],
+    ] as const) {
+      const m = parseModel(src).model;
+      const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
+      for (const t of m.relationshipsFrom(id('s')).filter((r) => r.eClass === 'FeatureTyping')) m.remove(t.id);
+      m.create('FeatureTyping', { ownerId: id('s'), source: [id('s')], target: [id(to)] });
+      const text = serializeModel(m);
+      expect(text, to).toContain(`part s : ${to} {\n        attribute ${written} = 5.0;`);
+      const reopened = parseModel(text).model;
+      const s = reopened.all().find((e) => e.declaredName === 's')!;
+      const f = reopened.children(s.id).find((c) => c.eClass === 'AttributeUsage')!;
+      const red = reopened.children(f.id).find((c) => c.eClass === 'Redefinition')!;
+      expect(reopened.get((red.target ?? [])[0])!.ownerId, to).toBe(reopened.all().find((e) => reopened.qualifiedName(e.id) === lands)!.id);
+      expect([s5(m), s5(reopened)], to).toEqual(['satisfied', 'satisfied']);
+    }
   });
 
   it('still qualifies a reference the simple name would not reach', () => {

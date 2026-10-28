@@ -146,6 +146,80 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
     );
   });
 
+  // The name finds Q's declared `M`, but Q2's unnamed `attribute :>> M default = 2.0` redefines it: that one is
+  // Q2's `M`, and a redefinition of Q's read Q's 1 in s on every surface (MI7). The rule is the end copy's (U10).
+  it('lands on the MOST SPECIFIC feature the owning type inherits for the name', () => {
+    const { model, id } = parsed(`package P {
+      part def Q { attribute M default = 1.0; }
+      part def Q2 :> Q { attribute :>> M default = 2.0; }
+      part def Q3 :> Q2 { attribute :>> M default = 3.0; }
+      part def Q4 :> Q3;
+      part def R :> Q { attribute M2 redefines M default = 2.0; }
+      part s : Q2 { attribute :>> M; }
+      part s4 : Q4 { attribute :>> M; }
+      part v : R { attribute :>> M; }
+    }`);
+    const own = (owner: string) => model.children(id(owner)).find((c) => c.eClass === 'AttributeUsage')!;
+    const target = (owner: string) => resolveRedefinedFeature(model, 'M', own(owner).id, id(owner))!.id;
+    expect(target('s')).toBe(own('Q2').id);
+    // Through a general type that adds nothing, past Q3's redefinition of Q2's.
+    expect(target('s4')).toBe(own('Q3').id);
+    // A redefinition under another name is what an R has for M (every surface reads `r.M` as r's M2).
+    expect(target('v')).toBe(id('M2'));
+    // The mapper asked the same question: each usage's Redefinition holds the answer.
+    const redefined = (owner: string) => model.children(own(owner).id).find((c) => c.eClass === 'Redefinition')!.target;
+    expect(redefined('s')).toEqual([own('Q2').id]);
+    expect(redefined('s4')).toEqual([own('Q3').id]);
+    expect(redefined('v')).toEqual([id('M2')]);
+  });
+
+  it('keeps the named feature where no ONE feature is most specific, and a qualified name as written', () => {
+    const { model, id } = parsed(`package P {
+      part def Q { attribute L; }
+      part def Q2 :> Q { attribute :>> L = 50.0; }
+      part def Q3 :> Q { attribute :>> L = 60.0; }
+      part q : Q2, Q3 { attribute :>> L; }
+      part r : Q2 { attribute :>> Q::L; }
+    }`);
+    const own = (owner: string) => model.children(id(owner)).find((c) => c.eClass === 'AttributeUsage')!;
+    // Q2's and Q3's each redefine Q's L and neither the other: neither is q's (MI3, the end copy's MI1).
+    expect(model.qualifiedName(resolveRedefinedFeature(model, 'L', own('q').id, id('q'))!.id)).toBe('P::Q::L');
+    expect(model.qualifiedName(resolveRedefinedFeature(model, 'Q::L', own('r').id, id('r'))!.id)).toBe('P::Q::L');
+  });
+
+  // Taking the most specific feature must not make two of one usage's features one (MU, CL in the four-surface
+  // table): each keeps the feature its name finds, whichever of the two is written first.
+  it('keeps the named feature where the most specific one would make two features one', () => {
+    for (const flip of [false, true]) {
+      const pair = (a: string, b: string): string => (flip ? `${b} ${a}` : `${a} ${b}`);
+      const { model, id } = parsed(`package P {
+        part def Q { attribute M default = 1.0; attribute N default = 1.0; }
+        part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
+        part def Q3 :> Q { attribute :>> M, N default = 3.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part s : Q2 { ${pair('attribute :>> M = 1.0;', 'attribute :>> N = 2.0;')} }
+        part u : Q3 { attribute :>> N = 2.0; }
+        part v : R { ${pair('attribute :>> M = 5.0;', 'attribute M2 = 9.0;')} }
+        part w : R { ${pair('attribute :>> M = 5.0;', 'attribute :>> M2 = 9.0;')} }
+        part x : R { attribute :>> M = 5.0; }
+      }`);
+      const redefines = (owner: string): string[] =>
+        model
+          .children(id(owner))
+          .flatMap((f) => model.children(f.id).filter((c) => c.eClass === 'Redefinition'))
+          .map((r) => model.qualifiedName((r.target ?? [])[0]!))
+          .sort();
+      // X (and Q3's unnamed feature) redefines M and N together: a merge, never the one feature for M or N.
+      expect(redefines('s'), `flip ${flip}`).toEqual(['P::Q::M', 'P::Q::N']);
+      expect(redefines('u'), `flip ${flip}`).toEqual(['P::Q::N']);
+      // R's M2 is what an R has for M, but v declares an M2 and w redefines R's: v's and w's `:>> M` keep Q's M.
+      expect(redefines('v'), `flip ${flip}`).toEqual(['P::Q::M']);
+      expect(redefines('w'), `flip ${flip}`).toEqual(['P::Q::M', 'P::R::M2']);
+      // Alone, `:>> M` in an R redefines R's M2 (MI12).
+      expect(redefines('x'), `flip ${flip}`).toEqual(['P::R::M2']);
+    }
+  });
+
   it('falls back to ordinary resolution for a qualified redefinition target', () => {
     const { model, id } = parsed(`package P {
       part def Other { part z; }

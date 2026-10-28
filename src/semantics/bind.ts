@@ -46,6 +46,7 @@ import {
   type Model,
 } from '@core/index';
 import { generalizationsWithImplicit } from './featuring';
+import { redefinedBy, redefinedClosure } from './inheritance';
 import { resolveName } from './resolve-names';
 
 /** Options for {@link resolveFullName}. */
@@ -192,6 +193,14 @@ export function resolveFullName(
  *
  * The redefining feature is excluded throughout, so a redefinition can never be
  * its own target.
+ *
+ * A simple name lands on the MOST SPECIFIC feature the owning type inherits
+ * for it ({@link mostSpecificRedefining}): in `part s : Q2 { attribute :>> M;
+ * }`, `M` finds Q's declared `M` by name, but Q2's unnamed `attribute :>> M
+ * default = 2.0` redefines it and is Q2's `M` (KerML's effective name) — a
+ * redefinition of Q's `M` read Q's 1 in s, so `s.M == 2.0` was refuted on
+ * every surface. The implicit end copy of a usage-body binding takes the same
+ * feature (`resolveChainEnd` in the text mapper, U10).
  */
 export function resolveRedefinedFeature(
   model: Model,
@@ -216,12 +225,140 @@ export function resolveRedefinedFeature(
       seen.add(general.id);
       const anchor = resolveName(model, general.id, head);
       if (!anchor) continue;
-      const hit = rest.length === 0 ? anchor : descendFrom(model, anchor, rest);
+      // A qualified or dotted name (`:>> Q::M`) says which feature it means.
+      const hit =
+        rest.length === 0 ? mostSpecificRedefining(model, ordered, anchor, featureId) : descendFrom(model, anchor, rest);
       if (hit && hit.id !== featureId) return hit;
     }
   }
 
   return resolveFullName(model, ref, scopeId, { exclude: featureId });
+}
+
+/**
+ * The feature that stands for `anchor` in a type whose general types are
+ * `generals`: the one most specific among `anchor` and the features of those
+ * types that redefine it, transitively — the rule the text mapper's
+ * `findTypeFeature` gives the implicit end copy (U10). Name resolution matches
+ * declared names only, so it finds Q's `M` past `attribute :>> M default =
+ * 2.0` in `part def Q2 :> Q`, which KerML calls `M` and which hides Q's from
+ * everything Q2 types. A redefinition under another name is taken too:
+ * `attribute M2 redefines M` is what a Q2 has for M (every surface reads `t.M`
+ * as t's M2 in `part t : Q2`), so `attribute :>> M = 5.0` in a Q2 redefines
+ * M2 and is known by its name — Save writes it `:>> M2` — and `v.M2` reads
+ * that 5, where it read Q2's default beside it.
+ *
+ * Only the ONE most specific: where two general types each redefine it and
+ * neither the other (`part q : Q2, Q3`, or `part def Q23 :> Q2, Q3`), neither
+ * is, and `anchor` is kept, as the end copy keeps it (MI1, MI3). An `anchor`
+ * the general types do not own (an imported one) is kept as found.
+ *
+ * `anchor` is kept too where the one most specific feature would make TWO
+ * features one ({@link joinsTwo}): Q2's `attribute X :>> M, N` would take both
+ * `:>> M = 1.0` and `:>> N = 2.0` of `part s : Q2`, and the SMT engine read
+ * X's two values as inconsistent axioms beside a check that refuted `s.N ==
+ * 2.0` (MU); `attribute :>> M = 5.0` would take the name M2 beside `attribute
+ * M2 = 9.0` in the same `part v : R` (CL). Each keeps the feature its name
+ * finds, as before, which every surface reads alike.
+ */
+function mostSpecificRedefining(
+  model: Model,
+  generals: readonly ElementRecord[],
+  anchor: ElementRecord,
+  featureId: ElementId,
+): ElementRecord {
+  const owners = new Set<ElementId>(generals.map((g) => g.id));
+  if (anchor.ownerId === null || !owners.has(anchor.ownerId)) return anchor;
+  // Walk the redefinitions back from `anchor` (the edge index), through the general types' features only.
+  const hits: ElementRecord[] = [];
+  const seen = new Set<ElementId>([anchor.id]);
+  const queue: ElementRecord[] = [anchor];
+  for (let i = 0; i < queue.length; i++) {
+    const g = queue[i];
+    for (const r of model.relationshipsTo(g.id)) {
+      if (r.eClass !== 'Redefinition') continue;
+      for (const id of r.source ?? []) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const f = model.get(id);
+        if (!f || f.ownerId === null || !owners.has(f.ownerId)) continue;
+        queue.push(f);
+        hits.push(f);
+      }
+    }
+  }
+  if (hits.length === 0) return anchor;
+  // A hit is the most specific when no other hit redefines it, through any number of redefinitions: asking each hit
+  // for its redefiners stops at the first hit found, so a chain of depth D over one feature costs D, not D cubed, on
+  // every `:>>` of a usage typed by its deepest general.
+  const hitIds = new Set<ElementId>(hits.map((h) => h.id));
+  const most = hits.filter((h) => {
+    let redefined = false;
+    redefinersOf(model, h.id, (x) => (redefined = hitIds.has(x)));
+    return !redefined;
+  });
+  return most.length === 1 && !joinsTwo(model, anchor, most[0], featureId) ? most[0] : anchor;
+}
+
+/**
+ * Every feature that redefines `id`, through any number of redefinitions — the reverse of `redefinedClosure`, over
+ * the same edges. `stop` is asked about each as it is found and ends the walk early on `true`.
+ */
+function redefinersOf(model: Model, id: ElementId, stop?: (found: ElementId) => boolean): Set<ElementId> {
+  const out = new Set<ElementId>();
+  const queue: ElementId[] = [id];
+  while (queue.length > 0) {
+    const g = queue.pop()!;
+    for (const r of model.relationshipsTo(g)) {
+      if (r.eClass !== 'Redefinition') continue;
+      for (const x of r.source ?? []) {
+        if (x === id || out.has(x) || !model.get(x)) continue;
+        out.add(x);
+        if (stop?.(x)) return out;
+        queue.push(x);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Would redefining `hit`, the most specific feature for `anchor`, make two
+ * features one? Either:
+ *
+ *  - `hit` MERGES: it also redefines a feature outside `anchor`'s line (Q2's
+ *    `attribute X :>> M, N`, found from M, redefines N too), so a usage's
+ *    `:>> M` and `:>> N` would both land on X; or
+ *  - the redefining feature's owner already has a feature of that line: one
+ *    declared under a name `hit` or what it redefines bears (`attribute M2 =
+ *    9.0` beside `attribute :>> M = 5.0`, when `hit` is R's `M2 redefines M`),
+ *    or one that redefines a feature of the line (`attribute :>> M2 = 9.0`
+ *    there, or a second `:>> M`).
+ *
+ * Order-independent, so the mapper's rounds settle: an owner's other feature
+ * is judged by its declared name and by what it redefines, and whatever it
+ * redefines lies in the line either way. Implicit end copies are left out:
+ * the mapper makes them after its rounds, so the serializer's re-parse test
+ * must not see them either.
+ */
+function joinsTwo(model: Model, anchor: ElementRecord, hit: ElementRecord, featureId: ElementId): boolean {
+  const above = redefinedClosure(model, hit);
+  const anchorLine = new Set<ElementId>([anchor.id, ...redefinedClosure(model, anchor).map((g) => g.id)]);
+  // A feature `hit` redefines is on the line when it is `anchor` or below it, or redefines `anchor` itself.
+  const redefinersOfAnchor = redefinersOf(model, anchor.id);
+  if (above.some((g) => !anchorLine.has(g.id) && !redefinersOfAnchor.has(g.id))) return true;
+  const ownerId = model.get(featureId)?.ownerId ?? null;
+  if (ownerId === null) return false;
+  const line = new Set<ElementId>([hit.id, ...above.map((g) => g.id)]);
+  const names = new Set<string>([hit, ...above].flatMap((g) => (g.declaredName !== undefined ? [g.declaredName] : [])));
+  const redefinersOfHit = redefinersOf(model, hit.id);
+  return model.children(ownerId).some(
+    (sib) =>
+      sib.id !== featureId &&
+      sib.attrs.implicit !== true &&
+      ((sib.declaredName !== undefined && names.has(sib.declaredName)) ||
+        redefinedBy(model, sib).some((t) => line.has(t.id) || redefinersOfHit.has(t.id))),
+  );
 }
 
 /**

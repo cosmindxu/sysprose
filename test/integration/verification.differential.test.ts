@@ -5833,6 +5833,329 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'ME9::P::c in ME9::S::p': ['?/?/?/?', 'F'],
       'ME9::P::c in ME9::s::p': ['?/?/?/?', 'F'],
     }),
+    // A usage's own valueless redefinition (`attribute :>> L;`) of a feature a specialising definition redefines
+    // without a name (Q2's `:>> L = 50.0`), found by per-instance-rest S3's finish: the mapper resolved `L` to Q's
+    // declared L by name, past Q2's, so r's L read Q's value (none, or a `default` 1) and P's default stood for r's
+    // p's load — MI6's r50 F/F/F/F, MI7's s2 F/F/F/F, the true value T on both, identical since 7565eb2. The
+    // redefinition now lands on the MOST SPECIFIC feature r inherits for the name (redefinition-target S1), as the
+    // end copy of a usage-body binding already did (U10, `q` here); each probe has its reversed or `=` twin.
+    'redef-target-mi6': probe(`package MI6 {
+        part def P { attribute load default = 1.0; }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part q : Q2 { bind p.load = L; }
+        part r : Q2 { attribute :>> L; bind p.load = L; }
+        constraint t50 { q.p.load == 50.0 }
+        constraint r50 { r.p.load == 50.0 }
+      }`, {
+      'MI6::r50': ['T/T/T/T', 'T'],
+      'MI6::t50': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-mi6-rev': probe(`package MI6R {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part q : Q2 { bind L = p.load; }
+        part r : Q2 { attribute :>> L; bind L = p.load; }
+        constraint t50 { 50.0 == q.p.load }
+        constraint r50 { 50.0 == r.p.load }
+        constraint rm2 { r.p.m2 <= 0.0 }
+        constraint r1 { r.p.load == 1.0 }
+      }`, {
+      'MI6R::r1': ['F/F/F/F', 'F'],
+      'MI6R::r50': ['T/T/T/T', 'T'],
+      'MI6R::rm2': ['T/T/T/T', 'T'],
+      'MI6R::t50': ['T/T/T/T', 'T'],
+    }),
+    // Q2's L a `default` 50 the binding joins to P's default 1: two defaults that differ, no value (A.4). r's L read
+    // Q's (none) and P's 1 stood: F/F/F/F on r50 and rL, T/T/T/T on rm2 and rL1. The check, the literal engine and
+    // SMT now abstain on all four; the numeric surface imposes one row as a design equation and judges the others at
+    // that point (rm2 T, rL1 F: KNOWN_FALSE), as it does on the end copy's twin below with no `:>> L` (identical at
+    // 84fb971).
+    'redef-target-mi6-dflt': probe(`package MI6D {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L default = 50.0; }
+        part r : Q2 { attribute :>> L; bind p.load = L; }
+        constraint r50 { r.p.load == 50.0 }
+        constraint rL { r.L == 50.0 }
+        constraint rm2 { r.p.m2 <= 0.0 }
+        constraint rL1 { r.L == 1.0 }
+      }`, {
+      'MI6D::r50': ['?/?/t/?', '?'],
+      'MI6D::rL': ['?/?/t/?', '?'],
+      'MI6D::rL1': ['?/?/F/?', '?'],
+      'MI6D::rm2': ['?/?/T/?', '?'],
+    }),
+    'redef-target-copy-dflt': probe(`package CP {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L default = 50.0; }
+        part r : Q2 { bind p.load = L; }
+        constraint r50 { r.p.load == 50.0 }
+        constraint rL { r.L == 50.0 }
+        constraint rm2 { r.p.m2 <= 0.0 }
+        constraint rL1 { r.L == 1.0 }
+      }`, {
+      'CP::r50': ['?/?/t/?', '?'],
+      'CP::rL': ['?/?/t/?', '?'],
+      'CP::rL1': ['?/?/F/?', '?'],
+      'CP::rm2': ['?/?/T/?', '?'],
+    }),
+    'redef-target-mi7': probe(`package MI7 {
+        part def Q { attribute L; attribute M default = 1.0; }
+        part def Q2 :> Q { attribute :>> L = 50.0; attribute :>> M default = 2.0; }
+        part r : Q2 { attribute :>> L; }
+        part s : Q2 { attribute :>> M; }
+        constraint r50 { r.L == 50.0 }
+        constraint s2 { s.M == 2.0 }
+      }`, {
+      'MI7::r50': ['T/T/T/T', 'T'],
+      'MI7::s2': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-mi7-eq': probe(`package MI7E {
+        part def Q { attribute L; attribute M; }
+        part def Q2 :> Q { attribute :>> L = 50.0; attribute :>> M = 2.0; }
+        part r : Q2 { attribute :>> L; }
+        part s : Q2 { attribute :>> M; }
+        constraint r50 { r.L == 50.0 }
+        constraint s2 { s.M == 2.0 }
+        constraint s2r { 2.0 == s.M }
+        constraint s1 { s.M == 1.0 }
+      }`, {
+      'MI7E::r50': ['T/T/T/T', 'T'],
+      'MI7E::s1': ['F/F/F/F', 'F'],
+      'MI7E::s2': ['T/T/T/T', 'T'],
+      'MI7E::s2r': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-mi7-rev': probe(`package MI7R {
+        part def Q { attribute L; attribute M default = 1.0; }
+        part def Q2 :> Q { attribute :>> L = 50.0; attribute :>> M default = 2.0; }
+        part r : Q2 { attribute :>> L; }
+        part s : Q2 { attribute :>> M; }
+        constraint r50 { 50.0 == r.L }
+        constraint s2 { 2.0 == s.M }
+        constraint s1 { 1.0 == s.M }
+        constraint r1 { r.L <= 1.0 }
+      }`, {
+      'MI7R::r1': ['F/F/F/F', 'F'],
+      'MI7R::r50': ['T/T/T/T', 'T'],
+      'MI7R::s1': ['F/F/F/F', 'F'],
+      'MI7R::s2': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-mi7-kg': probe(`package MI7K {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute m2 : ISQ::MassValue = 10.0 [SI::kg] - load; }
+        part def Q { attribute L : ISQ::MassValue; attribute M : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0 [SI::kg]; attribute :>> M default = 2.0 [SI::kg]; }
+        part r : Q2 { attribute :>> L; bind p.load = L; }
+        part s : Q2 { attribute :>> M; }
+        constraint r50 { r.p.load == 50.0 [SI::kg] }
+        constraint rm2 { r.p.m2 <= 0.0 [SI::kg] }
+        constraint s2 { s.M == 2.0 [SI::kg] }
+        constraint s1 { s.M == 1.0 [SI::kg] }
+      }`, {
+      'MI7K::r50': ['T/T/T/T', 'T'],
+      'MI7K::rm2': ['T/T/T/T', 'T'],
+      'MI7K::s1': ['F/F/F/F', 'F'],
+      'MI7K::s2': ['T/T/T/T', 'T'],
+    }),
+    // Q's `M = 1.0` and Q2's `:>> M = 2.0`: the model contradicts itself (Q2's `#binding`), and s's M, which
+    // redefines Q2's, reads neither value. It redefined Q's, whose 1 the check, the literal engine and the numeric
+    // surface read (s1 T/T/T/X, s2 F/F/F/X).
+    'redef-target-mi7-contra': probe(`package MI7X {
+        part def Q { attribute M = 1.0; }
+        part def Q2 :> Q { attribute :>> M = 2.0; }
+        part s : Q2 { attribute :>> M; }
+        constraint s2 { s.M == 2.0 }
+        constraint s1 { s.M == 1.0 }
+      }`, {
+      'MI7X::Q2::«AttributeUsage»#binding': ['F/-/F/-', 'F'],
+      'MI7X::s1': ['?/?/?/?', '?'],
+      'MI7X::s2': ['?/?/?/?', '?'],
+    }),
+    // The same through a general type that adds nothing (Q4 :> Q3), past two unnamed redefinitions (Q3's of Q2's):
+    // s's M is Q3's 3 (s3 was F/F/F/F).
+    'redef-target-deep': probe(`package MI8 {
+        part def Q { attribute M default = 1.0; }
+        part def Q2 :> Q { attribute :>> M default = 2.0; }
+        part def Q3 :> Q2 { attribute :>> M default = 3.0; }
+        part def Q4 :> Q3;
+        part s : Q4 { attribute :>> M; }
+        part t : Q3;
+        constraint s3 { s.M == 3.0 }
+        constraint s2 { s.M == 2.0 }
+        constraint t3 { t.M == 3.0 }
+      }`, {
+      'MI8::s2': ['F/F/F/F', 'F'],
+      'MI8::s3': ['T/T/T/T', 'T'],
+      'MI8::t3': ['T/T/T/T', 'T'],
+    }),
+    // A definition's chain, contradictory: Q3's `:>> M default = 3.0` now redefines Q2's `:>> M = 2.0`, which a
+    // redefinition may not override (Q3's `#binding`). t read nothing already; s's M redefined Q's and read its 1
+    // (s3 F/F/F/X), and reads nothing now, as t.
+    'redef-target-defs': probe(`package MI14 {
+        part def Q { attribute M default = 1.0; }
+        part def Q2 :> Q { attribute :>> M = 2.0; }
+        part def Q3 :> Q2 { attribute :>> M default = 3.0; }
+        part t : Q3;
+        part s : Q3 { attribute :>> M; }
+        constraint t3 { t.M == 3.0 }
+        constraint t2 { t.M == 2.0 }
+        constraint s3 { s.M == 3.0 }
+      }`, {
+      'MI14::Q3::«AttributeUsage»#binding': ['F/-/F/-', 'F'],
+      'MI14::s3': ['?/?/?/?', '?'],
+      'MI14::t2': ['?/?/?/?', '?'],
+      'MI14::t3': ['?/?/?/?', '?'],
+    }),
+    // A named redefinition (`attribute M :>> M;`) and the keyword form (`attribute redefines M;`) resolve alike.
+    'redef-target-named': probe(`package MI9 {
+        part def Q { attribute M default = 1.0; }
+        part def Q2 :> Q { attribute :>> M default = 2.0; }
+        part s : Q2 { attribute M :>> M; }
+        part u : Q2 { attribute redefines M; }
+        constraint s2 { s.M == 2.0 }
+        constraint u2 { u.M == 2.0 }
+        constraint s1 { s.M == 1.0 }
+      }`, {
+      'MI9::s1': ['F/F/F/F', 'F'],
+      'MI9::s2': ['T/T/T/T', 'T'],
+      'MI9::u2': ['T/T/T/T', 'T'],
+    }),
+    // Nested: q's `part :>> p` redefines Q2's `part :>> p`, so its `:>> load` is Q2's p's 50 (t50 was F/F/F/F).
+    'redef-target-nested': probe(`package MI10 {
+        part def P { attribute load default = 1.0; }
+        part def Q { part p : P; }
+        part def Q2 :> Q { part :>> p { attribute :>> load default = 50.0; } }
+        part q : Q2 { part :>> p { attribute :>> load; } }
+        part q0 : Q2;
+        constraint t50 { q.p.load == 50.0 }
+        constraint t1 { q.p.load == 1.0 }
+        constraint z50 { q0.p.load == 50.0 }
+      }`, {
+      'MI10::t1': ['F/F/F/F', 'F'],
+      'MI10::t50': ['T/T/T/T', 'T'],
+      'MI10::z50': ['T/T/T/T', 'T'],
+    }),
+    // A usage that subsets a usage of Q2 (`part s2 :> s`) inherits Q2's M through it.
+    'redef-target-subset': probe(`package MI11 {
+        part def Q { attribute M default = 1.0; }
+        part def Q2 :> Q { attribute :>> M default = 2.0; }
+        part s : Q2;
+        part s2 :> s { attribute :>> M; }
+        constraint s22 { s2.M == 2.0 }
+        constraint s21 { s2.M == 1.0 }
+      }`, {
+      'MI11::s21': ['F/F/F/F', 'F'],
+      'MI11::s22': ['T/T/T/T', 'T'],
+    }),
+    // A redefinition under another name (Q2's `M2 redefines M`) is what a Q2 has for M: every surface reads t.M as
+    // t's M2. s's and v's `:>> M` redefined Q's M beside it, so s.M read Q's 1 and v.M2 Q2's 2 where v.M is 5 (s1,
+    // vm2 T; s2, vm5 F). They redefine M2 now, and are known by its name (Save writes `:>> M2`).
+    'redef-target-renamed': probe(`package MI12 {
+        part def Q { attribute M default = 1.0; }
+        part def Q2 :> Q { attribute M2 redefines M default = 2.0; }
+        part s : Q2 { attribute :>> M; }
+        part t : Q2;
+        part v : Q2 { attribute :>> M = 5.0; }
+        constraint s2 { s.M == 2.0 }
+        constraint s1 { s.M == 1.0 }
+        constraint t2 { t.M == 2.0 }
+        constraint v5 { v.M == 5.0 }
+        constraint vm5 { v.M2 == 5.0 }
+        constraint vm2 { v.M2 == 2.0 }
+      }`, {
+      'MI12::s1': ['F/F/F/F', 'F'],
+      'MI12::s2': ['T/T/T/T', 'T'],
+      'MI12::t2': ['T/T/T/T', 'T'],
+      'MI12::v5': ['T/T/T/T', 'T'],
+      'MI12::vm2': ['F/F/F/F', 'F'],
+      'MI12::vm5': ['T/T/T/T', 'T'],
+    }),
+    // Relations a usage writes over its own redefinition by the bare name (w::d was F/F/F/F; v::c2, vp abstained).
+    'redef-target-bare': probe(`package MI12C {
+        part def P { attribute load default = 1.0; }
+        part def Q { attribute M default = 1.0; part p : P; }
+        part def Q2 :> Q { attribute M2 redefines M default = 2.0; }
+        part v : Q2 { attribute :>> M = 5.0; constraint c { M == 5.0 } constraint c2 { M2 == 5.0 } bind p.load = M; }
+        part w : Q2 { attribute :>> M; constraint d { M == 2.0 } constraint d2 { M2 == 2.0 } }
+        constraint vp { v.p.load == 5.0 }
+      }`, {
+      'MI12C::v::c': ['T/T/T/T', 'T'],
+      'MI12C::v::c2': ['T/T/T/T', 'T'],
+      'MI12C::vp': ['T/T/T/T', 'T'],
+      'MI12C::w::d': ['T/T/T/T', 'T'],
+      'MI12C::w::d2': ['T/T/T/T', 'T'],
+    }),
+    // The unnamed twin of redef-target-bare, and a binding that joins s's M (Q2's default 2) to P's default 1:
+    // two defaults that differ, no value (vp was F/F/F/F).
+    'redef-target-bare-unnamed': probe(`package MI7C {
+        part def P { attribute load default = 1.0; }
+        part def Q { attribute M default = 1.0; part p : P; }
+        part def Q2 :> Q { attribute :>> M default = 2.0; }
+        part w : Q2 { attribute :>> M; constraint d { M == 2.0 } }
+        part v : Q2 { attribute :>> M; bind p.load = M; }
+        constraint vp { v.p.load == 2.0 }
+      }`, {
+      'MI7C::vp': ['?/?/t/?', '?'],
+      'MI7C::w::d': ['T/T/t/T', 'T'],
+    }),
+    // Where the most specific feature would make TWO of a usage's features one, each keeps the feature its name finds,
+    // as at 84fb971. Q2's X redefines M and N together: s's `:>> M` and `:>> N` both took X (two axioms on one symbol,
+    // SMT X beside a check that refuted `s.N == 2.0`); each redefines Q's again. The twin merges them in an unnamed
+    // `:>> M, N`, with the two features and each relation written the other way round. These rows pin that UNCHANGED
+    // behaviour (each reads its named feature's value, as at the base), not the KerML reading, under which both
+    // `:>> M` and `:>> N` redefine X, one feature: the shape stays unmodelled (TODO: the merge shape).
+    'redef-target-merge': probe(`package MU {
+        part def Q { attribute M default = 1.0; attribute N default = 1.0; }
+        part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
+        part s : Q2 { attribute :>> M = 1.0; attribute :>> N = 2.0; }
+        constraint sM1 { s.M == 1.0 }
+        constraint sN2 { s.N == 2.0 }
+        constraint sN1 { s.N == 1.0 }
+      }`, {
+      'MU::sM1': ['T/T/T/T', 'T'],
+      'MU::sN1': ['F/F/F/F', 'F'],
+      'MU::sN2': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-merge-rev': probe(`package MUR {
+        part def Q { attribute M default = 1.0; attribute N default = 1.0; }
+        part def Q2 :> Q { attribute :>> M, N default = 3.0; }
+        part s : Q2 { attribute :>> N = 2.0; attribute :>> M = 1.0; }
+        constraint sM1 { 1.0 == s.M }
+        constraint sN2 { 2.0 == s.N }
+        constraint sN1 { 1.0 == s.N }
+      }`, {
+      'MUR::sM1': ['T/T/T/T', 'T'],
+      'MUR::sN1': ['F/F/F/F', 'F'],
+      'MUR::sN2': ['T/T/T/T', 'T'],
+    }),
+    // R's M2 redefines M, and v declares an M2 of its own beside `:>> M = 5.0`: taking R's M2 named v's M M2 too
+    // (two axioms on v's M2; `v.M2 == 9.0` refuted). The twin writes the M2 first and each relation reversed.
+    'redef-target-own-name': probe(`package CL {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part v : R { attribute :>> M = 5.0; attribute M2 = 9.0; }
+        constraint vM5 { v.M == 5.0 }
+        constraint vM29 { v.M2 == 9.0 }
+        constraint vM25 { v.M2 == 5.0 }
+      }`, {
+      'CL::vM25': ['F/F/F/F', 'F'],
+      'CL::vM29': ['T/T/T/T', 'T'],
+      'CL::vM5': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-own-name-rev': probe(`package CLR {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part v : R { attribute M2 = 9.0; attribute :>> M = 5.0; }
+        constraint vM5 { 5.0 == v.M }
+        constraint vM29 { 9.0 == v.M2 }
+        constraint vM25 { 5.0 == v.M2 }
+      }`, {
+      'CLR::vM25': ['F/F/F/F', 'F'],
+      'CLR::vM29': ['T/T/T/T', 'T'],
+      'CLR::vM5': ['T/T/T/T', 'T'],
+    }),
     // Found by F2's review (identical before F1): a bound partner's default RESTATED, equal to the partner
     // definition's own, in a redefinition (`part :>> p { attribute :>> a default = 50.0; }`). The restated
     // default is held, so q4's p.a reads nothing, but p.b is read at P::b over P::a's own default — and the
@@ -10507,6 +10830,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
   };
 
+  /** The NO-STEP reason of a row the numeric surface decides over two defaults a binding joins (MI6D, CP). */
+  const NUMERIC_JOINED_DEFAULTS =
+    'NO STEP (TODO “Keep the numeric surface from deciding a relation over a feature a binding joins to a default that differs”): Q2’s `:>> L default = 50.0`, joined by `bind p.load = L` to P’s `load default = 1.0`, gives no value (A.4), and the check, the literal engine and SMT abstain; the numeric surface imposes one row as a design equation (r50 or rL: L = 50) and judges the others at that point (solver.ts)';
+
   /**
    * I2's exceptions: the rows a surface decides FALSELY today, `probe | row` → why, and the step that
    * corrects it.
@@ -10550,8 +10877,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * F1b corrected the rows where two defaults a binding joins were agreed by their TEXT (`2.0 * K` read in
    * two instances, R3a–c) though their values differ (2 vs 10; 2 vs 50): no value exists, and no
    * contradiction (their `#bind`); every surface now abstains on them.
+   *
+   * redefinition-target S1 pinned the rows of a `default` a binding joins to a default that differs (MI6D, and CP,
+   * its end-copy twin), where the numeric surface alone still decides: identical on CP at 84fb971, and on MI6D since
+   * the explicit `:>> L` reads as the copy does (F/F/F/F and T/T/T/T before).
    */
-  const KNOWN_FALSE = new Map<string, string>([]);
+  const KNOWN_FALSE = new Map<string, string>([
+    ['redef-target-mi6-dflt | MI6D::rm2', NUMERIC_JOINED_DEFAULTS],
+    ['redef-target-mi6-dflt | MI6D::rL1', NUMERIC_JOINED_DEFAULTS],
+    ['redef-target-copy-dflt | CP::rm2', NUMERIC_JOINED_DEFAULTS],
+    ['redef-target-copy-dflt | CP::rL1', NUMERIC_JOINED_DEFAULTS],
+  ]);
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,
    * refute-r19's three, sound-C r8's p, d1plain's two, assert-min-def's two, u-witness's p2.k): every one a

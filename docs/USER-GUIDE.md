@@ -946,6 +946,24 @@ reaches it. Whether it may have a value of its own depends on how P wrote `m`:
   inconsistent. Write `default` where a
   usage is meant to override.
 
+A `:>>` with a simple name redefines the **most specific** feature its owner
+inherits under that name, as the copy a binding makes of the name does (below).
+In `part s : Q2 { attribute :>> M; }`, where `part def Q2 :> Q` writes `attribute
+:>> M default = 2.0;` over Q's `M default = 1.0`, s's M redefines Q2's, and
+every surface reads `s.M` as 2 — through a general type that adds nothing, a
+named (`attribute M :>> M;`) or keyword (`attribute redefines M;`) redefinition,
+a nested `part :>> p { attribute :>> load; }` and a binding to s's M alike. A
+redefinition under another name (Q2's `attribute M2 redefines M`) is what a Q2
+has for M, as `t.M` reads t's M2: `attribute :>> M = 5.0;` in a Q2 redefines
+M2, takes its name (`v.M2` is that 5), and Save writes it `:>> M2`. A qualified
+name (`:>> Q::M`) redefines what it names. Where two general types each
+redefine the name and neither the other, the redefinition keeps the feature
+the name finds, and the diamond below says what is read there. It keeps that
+feature too where the most specific one would make two features of the usage
+one: a general type's `attribute X :>> M, N` would take both the `:>> M` and the
+`:>> N` of `part s : Q2`, and `part v : R { attribute :>> M = 5.0; attribute M2
+= 9.0; }` would name the first M2 beside the second.
+
 A feature redefines only what its owner **inherits**. In one definition, `attribute
 mass default = 1.2; attribute :>> mass = 0.8;` is not a legal redefinition: the second
 `mass` names the first, which the same owner declares. The check reports it as a warning,

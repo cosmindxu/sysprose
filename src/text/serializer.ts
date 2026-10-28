@@ -25,6 +25,7 @@ import {
   type ElementRecord,
 } from '@core/index';
 import { resolveFullName, resolveRedefinedFeature } from '@semantics/bind';
+import { redefinedClosure } from '@semantics/inheritance';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
 
 const INDENT = '    ';
@@ -438,7 +439,10 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
     // The re-parse of an inlined `:>>` uses the redefinition rule and excludes
     // the redefining feature; every other operator uses full resolution with
     // the same exclusion the mapper applies.
-    const ref = refTo(model, targetId, el.ownerId, specResolver(model, rel.eClass, el.id));
+    const ref =
+      rel.eClass === 'Redefinition'
+        ? redefinitionRef(model, targetId, el.ownerId, el.id)
+        : refTo(model, targetId, el.ownerId, specResolver(model, rel.eClass, el.id));
     const op = operatorFor(rel.eClass);
     // Do not restate a typing the display string already expresses. After the
     // library binder runs, an attribute carries BOTH `attrs.type = 'Real'` and a
@@ -1179,6 +1183,46 @@ function refTo(
   const rel = relativePath(model, targetId, scopeOwnerId);
   if (rel) return rel;
   return qualifiedRef(model, targetId);
+}
+
+/**
+ * {@link refTo} for the target of `sourceId`'s Redefinition, under the
+ * redefinition rule — and, for a target that declares no name, by the name of
+ * the nearest NAMED feature it redefines (its effective name,
+ * `effectiveNameOf`), which is the only name it has.
+ *
+ * `part s : Q2 { attribute :>> M = 5.0; }` redefines Q2's unnamed `attribute
+ * :>> M default = 2.0`, the most specific feature s inherits for M
+ * (`resolveRedefinedFeature`). Such a target has no printable form of its own,
+ * so without this Save would write `attribute = 5.0;` and drop the
+ * redefinition. The name is written where the rule, re-parsing it, lands in
+ * the same line: on the target, or, after an edit changed what s inherits
+ * (the Properties panel's type field retypes s to Q4 :> Q2, whose own `:>> M`
+ * is then the most specific), on another feature that redefines the same
+ * named one, which the next load redefines in the edited context. Elsewhere
+ * (s retyped to an unrelated type that has an `M` of its own, or none) the
+ * named feature itself is written, by {@link refTo}: a qualified name
+ * redefines what it names. Every other reference to an unnamed element stays
+ * unprintable, as full resolution matches declared names only.
+ */
+function redefinitionRef(
+  model: Model,
+  targetId: ElementId,
+  scopeOwnerId: ElementId | null,
+  sourceId: ElementId,
+): string {
+  const resolve = specResolver(model, 'Redefinition', sourceId);
+  const ref = refTo(model, targetId, scopeOwnerId, resolve);
+  const target = model.get(targetId);
+  if (!unprintableRef(ref) || !target || nameOf(target)) return ref;
+  const named = redefinedClosure(model, target).find((g) => g.declaredName !== undefined);
+  if (!named) return ref;
+  const simple = quoteName(named.declaredName!);
+  const answer = resolve(simple, scopeOwnerId);
+  if (answer && (answer.id === named.id || redefinedClosure(model, answer).some((g) => g.id === named.id))) {
+    return simple;
+  }
+  return refTo(model, named.id, scopeOwnerId, resolve);
 }
 
 /**
