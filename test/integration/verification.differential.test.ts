@@ -3744,6 +3744,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     [`${name}-ab`]: probe(text(`${a} ${b}`), rows),
     [`${name}-ba`]: probe(text(`${b} ${a}`), rows),
   });
+  /**
+   * A probe and its twin `${name}-rev`, the same model with the members of its package, part definitions and part
+   * usages written in the reverse order (`rev`), pinned alike: no verdict turns on the order of the text (text-order
+   * S1). I14 reads each pair row for row.
+   */
+  const reversed = (name: string, text: string, rev: string, rows: Record<string, [string, Ref]>) => ({
+    [name]: probe(text, rows),
+    [`${name}-rev`]: probe(rev, rows),
+  });
   /** big-bind-N: N definitions Qk binding their p's load to their L, each Qk's usage qk setting L to k. */
   const bigBind = (n: number) =>
     [
@@ -7373,7 +7382,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GI::G::ca in GI::S::q': ['T/-/T/-', 'T'],
       'GI::G::ca in GI::s1::q': ['T/-/T/-', 'T'],
       'GI::G::ca in GI::s2::q': ['F/-/F/-', 'F'],
-      'GI::t1': ['T/X/t/?', null],
+      // s1's q's g, whose default the numeric surface does not read at that instance (the binding in s2 makes it give
+      // way by feature), is held by G's asserted `g <= 10.0`: t1 is no design equation for it (text-order S1; it was
+      // imposed, `t`).
+      'GI::t1': ['T/X/?/?', null],
       'GI::t2': ['T/X/T/T', null],
       'GI::tk': ['T/X/T/T', null],
     }),
@@ -10505,6 +10517,301 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'BA::P::c': ['T/T/T/T', 'T'],
       'BA::top': ['F/F/F/F', 'F'],
     }),
+    // The order of the text decides no design equation (text-order S1; the soft/hard analysis' S1_N_and, S1_KN_and,
+    // S2enc_N_and, S2spec_N_and, S2use_N_and, S1_N_plain and S1_N_eqMn, each beside its members written in the reverse
+    // order, `-rev`, which I14 reads alike). The numeric solve took the first plain equality over a valueless L, in text
+    // order, as its design equation and judged the others at it: t50 imposed and t1, t60 refuted, and reversed t60
+    // imposed and t1, t50 refuted — beside P's asserted `L == 50.0 and L >= 0.0`, from which SMT proves t50, a false F
+    // (`?/?/F/T`), and p's own assert in S2use read violated (`?/-/F/-`). An assert the solve reads no equation from now
+    // makes L no design freedom, and plain equalities that disagree over a value only they fix leave it unread: the
+    // numeric surface abstains, in either order. X3K and PG are the single-check shapes: P's conjunction beside `t1 {
+    // p.L == 1.0 }` alone, and a package's `assert { L >= 5.0 }`: t1 fixed L at 1, and `p.L <= 10.0` read satisfied
+    // where L is 50 (X3K), the assert read violated and `L <= 10.0` satisfied where L is free above 5 (PG). PL2: plain
+    // `x == 3.0`, `x == y`, `y == 5.0` over two valueless features, a or c refuted by the order. DUP: two plain `x ==
+    // 3.0` that agree are both design equations (imposed), whichever is written first; `k { x <= 5.0 }` is judged at
+    // the point they reach (the design-equation reading, out of the decisions' scope: null). Z125: the requirement's
+    // `s.d == 3.0E15` written above P's `d = a * b` was oriented for d before d's own value was read (`T/T/t/T`).
+    ...reversed(
+      'order-s1n-and',
+      `package S1_N_and {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 50.0 and L >= 0.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint t60 { p.L == 60.0 }
+      }`,
+      `package S1_N_and { constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 } part p : P;
+        part def P { assert constraint ca { L == 50.0 and L >= 0.0 } attribute L : ScalarValues::Real; } }`,
+      {
+        'S1_N_and::P::ca': ['?/-/?/-', null],
+        'S1_N_and::t1': ['?/?/?/?', 'F'],
+        'S1_N_and::t50': ['?/?/?/T', 'T'],
+        'S1_N_and::t60': ['?/?/?/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-s1kn-and',
+      `package S1_KN_and {
+        part def P { attribute L : ISQ::MassValue; assert constraint ca { L == 50.0 [kg] and L >= 0.0 [kg] } }
+        part p : P;
+        constraint t50 { p.L == 50.0 [kg] }
+        constraint t1 { p.L == 1.0 [kg] }
+        constraint t60 { p.L == 60.0 [kg] }
+      }`,
+      `package S1_KN_and { constraint t60 { p.L == 60.0 [kg] } constraint t1 { p.L == 1.0 [kg] } constraint t50 { p.L == 50.0 [kg] }
+        part p : P; part def P { assert constraint ca { L == 50.0 [kg] and L >= 0.0 [kg] } attribute L : ISQ::MassValue; } }`,
+      {
+        'S1_KN_and::P::ca': ['?/-/?/-', null],
+        'S1_KN_and::t1': ['?/?/?/?', 'F'],
+        'S1_KN_and::t50': ['?/?/?/T', 'T'],
+        'S1_KN_and::t60': ['?/?/?/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-s2enc-and',
+      `package S2enc_N_and {
+        part def P { attribute L : ScalarValues::Real; }
+        part def W { part p : P; assert constraint ca { p.L == 50.0 and p.L >= 0.0 } }
+        part w : W;
+        constraint t50 { w.p.L == 50.0 }
+        constraint t1 { w.p.L == 1.0 }
+        constraint t60 { w.p.L == 60.0 }
+      }`,
+      `package S2enc_N_and { constraint t60 { w.p.L == 60.0 } constraint t1 { w.p.L == 1.0 } constraint t50 { w.p.L == 50.0 } part w : W;
+        part def W { assert constraint ca { p.L == 50.0 and p.L >= 0.0 } part p : P; } part def P { attribute L : ScalarValues::Real; } }`,
+      {
+        'S2enc_N_and::W::ca': ['?/-/?/-', null],
+        'S2enc_N_and::t1': ['?/?/?/?', 'F'],
+        'S2enc_N_and::t50': ['?/?/?/T', 'T'],
+        'S2enc_N_and::t60': ['?/?/?/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-s2spec-and',
+      `package S2spec_N_and {
+        part def P { attribute L : ScalarValues::Real; }
+        part def P2 :> P { assert constraint ca { L == 50.0 and L >= 0.0 } }
+        part p : P2;
+        part q : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint t60 { p.L == 60.0 }
+        constraint q1 { q.L == 1.0 }
+      }`,
+      `package S2spec_N_and { constraint q1 { q.L == 1.0 } constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 }
+        part q : P; part p : P2; part def P2 :> P { assert constraint ca { L == 50.0 and L >= 0.0 } } part def P { attribute L : ScalarValues::Real; } }`,
+      {
+        'S2spec_N_and::P2::ca': ['?/-/?/-', null],
+        'S2spec_N_and::q1': ['?/?/t/?', '?'],
+        'S2spec_N_and::t1': ['?/?/?/?', 'F'],
+        'S2spec_N_and::t50': ['?/?/?/T', 'T'],
+        'S2spec_N_and::t60': ['?/?/?/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-s2use-and',
+      `package S2use_N_and {
+        part def P { attribute L : ScalarValues::Real; }
+        part p : P { assert constraint ca { L == 50.0 and L >= 0.0 } }
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint t60 { p.L == 60.0 }
+      }`,
+      `package S2use_N_and { constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 }
+        part p : P { assert constraint ca { L == 50.0 and L >= 0.0 } } part def P { attribute L : ScalarValues::Real; } }`,
+      {
+        'S2use_N_and::p::ca': ['?/-/?/-', null],
+        'S2use_N_and::t1': ['?/?/?/?', 'F'],
+        'S2use_N_and::t50': ['?/?/?/T', 'T'],
+        'S2use_N_and::t60': ['?/?/?/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-s1n-plain',
+      `package S1_N_plain {
+        part def P { attribute L : ScalarValues::Real; constraint ca { L == 50.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint t60 { p.L == 60.0 }
+      }`,
+      `package S1_N_plain { constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 } part p : P;
+        part def P { constraint ca { L == 50.0 } attribute L : ScalarValues::Real; } }`,
+      {
+        'S1_N_plain::P::ca': ['?/?/t/?', '?'],
+        'S1_N_plain::t1': ['?/?/?/?', '?'],
+        'S1_N_plain::t50': ['?/?/?/?', '?'],
+        'S1_N_plain::t60': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-s1n-eqmn',
+      `package S1_N_eqMn {
+        part def P { attribute L : ScalarValues::Real; attribute M : ScalarValues::Real; assert constraint ca { L == M } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint t60 { p.L == 60.0 }
+        constraint tM50 { p.M == 50.0 }
+        constraint tM1 { p.M == 1.0 }
+      }`,
+      `package S1_N_eqMn { constraint tM1 { p.M == 1.0 } constraint tM50 { p.M == 50.0 } constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 }
+        constraint t50 { p.L == 50.0 } part p : P;
+        part def P { assert constraint ca { L == M } attribute M : ScalarValues::Real; attribute L : ScalarValues::Real; } }`,
+      {
+        'S1_N_eqMn::P::ca': ['?/-/T/-', null],
+        'S1_N_eqMn::t1': ['?/?/?/?', '?'],
+        'S1_N_eqMn::t50': ['?/?/?/?', '?'],
+        'S1_N_eqMn::t60': ['?/?/?/?', '?'],
+        'S1_N_eqMn::tM1': ['?/?/?/?', '?'],
+        'S1_N_eqMn::tM50': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-x3k',
+      `package X3K {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 50.0 and L >= 0.0 } }
+        part p : P;
+        constraint t1 { p.L == 1.0 }
+        constraint k { p.L <= 10.0 }
+      }`,
+      `package X3K { constraint k { p.L <= 10.0 } constraint t1 { p.L == 1.0 } part p : P;
+        part def P { assert constraint ca { L == 50.0 and L >= 0.0 } attribute L : ScalarValues::Real; } }`,
+      {
+        'X3K::P::ca': ['?/-/?/-', null],
+        'X3K::k': ['?/?/?/?', 'F'],
+        'X3K::t1': ['?/?/?/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-pg',
+      `package PG {
+        attribute L : ScalarValues::Real;
+        assert constraint ca { L >= 5.0 }
+        constraint t1 { L == 1.0 }
+        constraint k { L <= 10.0 }
+      }`,
+      `package PG { constraint k { L <= 10.0 } constraint t1 { L == 1.0 } assert constraint ca { L >= 5.0 } attribute L : ScalarValues::Real; }`,
+      {
+        'PG::ca': ['?/-/?/-', null],
+        'PG::k': ['?/?/?/?', '?'],
+        'PG::t1': ['?/?/?/?', 'F'],
+      },
+    ),
+    // LK: what an assert holds reaches M through P's asserted `M == L * 2.0`: `tM { p.M == 100.0 }` fixed M at 100
+    // and so L at 50, against `L <= 1.0`, and `k { p.L <= 0.5 }` read violated there, where L is free in [0, 1].
+    ...reversed(
+      'order-lk',
+      `package LK {
+        part def P {
+          attribute L : ScalarValues::Real;
+          attribute M : ScalarValues::Real;
+          assert constraint ca { L >= 0.0 and L <= 1.0 }
+          assert constraint d { M == L * 2.0 }
+        }
+        part p : P;
+        constraint tM { p.M == 100.0 }
+        constraint k { p.L <= 0.5 }
+      }`,
+      `package LK { constraint k { p.L <= 0.5 } constraint tM { p.M == 100.0 } part p : P;
+        part def P { assert constraint d { M == L * 2.0 } assert constraint ca { L >= 0.0 and L <= 1.0 }
+        attribute M : ScalarValues::Real; attribute L : ScalarValues::Real; } }`,
+      {
+        'LK::P::ca': ['?/-/?/-', null],
+        'LK::P::d': ['?/-/T/-', null],
+        'LK::k': ['?/?/?/?', '?'],
+        'LK::tM': ['?/?/?/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-pl2',
+      `package PL2 {
+        attribute x : ScalarValues::Real;
+        attribute y : ScalarValues::Real;
+        constraint a { x == 3.0 }
+        constraint b { x == y }
+        constraint c { y == 5.0 }
+      }`,
+      `package PL2 { constraint c { y == 5.0 } constraint b { x == y } constraint a { x == 3.0 }
+        attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'PL2::a': ['?/?/?/?', '?'],
+        'PL2::b': ['?/?/?/?', '?'],
+        'PL2::c': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-dup',
+      `package DUP {
+        attribute x : ScalarValues::Real;
+        constraint a { x == 3.0 }
+        constraint b { x == 3.0 }
+        constraint k { x <= 5.0 }
+      }`,
+      `package DUP { constraint k { x <= 5.0 } constraint b { x == 3.0 } constraint a { x == 3.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'DUP::a': ['?/?/t/?', '?'],
+        'DUP::b': ['?/?/t/?', '?'],
+        'DUP::k': ['?/?/T/?', null],
+      },
+    ),
+    ...reversed(
+      'order-z125',
+      `package Z125 {
+        part def P {
+          attribute a : ScalarValues::Real = 0.3;
+          attribute b : ScalarValues::Real = 10000000000000000.0;
+          attribute d : ScalarValues::Real = a * b;
+        }
+        part p : P;
+        requirement def R { subject s : P; require constraint { s.d == 3000000000000000.0 } }
+        satisfy R by p;
+      }`,
+      `package Z125 { satisfy R by p; requirement def R { subject s : P; require constraint { s.d == 3000000000000000.0 } } part p : P;
+        part def P { attribute d : ScalarValues::Real = a * b; attribute b : ScalarValues::Real = 10000000000000000.0;
+        attribute a : ScalarValues::Real = 0.3; } }`,
+      {
+        'Z125::R::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      },
+    ),
+    // K1 (text-order S1's review): an asserted equation that does not `define` the feature fixes it all the same —
+    // `s { x + y == 10.0 }` with y stated makes x 6 — and a plain check over it is judged, not made a design
+    // component's: `d { x == 9.0 }` violated, written above `b { w == x + 1.0 }` (the design equation for w) or below.
+    ...reversed(
+      'order-k1',
+      `package K1 {
+        attribute y : ScalarValues::Real = 4.0;
+        attribute x : ScalarValues::Real;
+        attribute w : ScalarValues::Real;
+        assert constraint s { x + y == 10.0 }
+        constraint b { w == x + 1.0 }
+        constraint d { x == 9.0 }
+      }`,
+      `package K1 { constraint d { x == 9.0 } constraint b { w == x + 1.0 } assert constraint s { x + y == 10.0 }
+        attribute w : ScalarValues::Real; attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = 4.0; }`,
+      {
+        'K1::b': ['?/?/t/?', '?'],
+        'K1::d': ['?/?/F/?', 'F'],
+        'K1::s': ['?/-/T/-', 'T'],
+      },
+    ),
+    // The root of a nonlinear plain equation is the one place the order of the text still shows (TODO): `a { x * x ==
+    // 4.0 }` written above `b { x == -2.0 }` takes the root 2 and leaves both unjudged, written below it takes −2 and
+    // imposes both. Neither is a false verdict; the pair is pinned apart, outside I14's STAND_ALIKE.
+    'order-root-ab': probe(
+      `package ROOT { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint b { x == -2.0 } }`,
+      {
+        'ROOT::a': ['?/?/?/?', '?'],
+        'ROOT::b': ['?/?/?/?', '?'],
+      },
+    ),
+    'order-root-ba': probe(
+      `package ROOT { constraint b { x == -2.0 } constraint a { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'ROOT::a': ['?/?/t/?', '?'],
+        'ROOT::b': ['?/?/t/?', '?'],
+      },
+    ),
   };
 
   /**
@@ -11327,7 +11634,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * I14's pairs: each `default` probe and its `=` twin ({@link standing}) — and the spellings of one model, whose
    * rows of the same name read alike: the asserted conjunction and its two parts (G1), `L == 50.0` and its two
    * inequalities (G3), two asserts that disagree written in either order (M8), a model and the same text with
-   * its members in the reverse order (SU, SEM), SEM with both its defaults written `=`, HLX with extra's
+   * its members in the reverse order (SU, SEM, and the design equations of text-order S1, {@link reversed}), SEM
+   * with both its defaults written `=`, HLX with extra's
    * written `=` (the `standing` twin rewrites only `default = 1.0`), and two asserted equations that give a feature
    * with no value two values, with the two exchanged ({@link exchanged}) or written in the other order (Q5).
    */
@@ -11359,6 +11667,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
     ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc'].map(
       (k) => [`${k}-ab`, `${k}-ba`] as const,
+    ),
+    // text-order S1: a model and its members in the reverse order ({@link reversed}).
+    ...['s1n-and', 's1kn-and', 's2enc-and', 's2spec-and', 's2use-and', 's1n-plain', 's1n-eqmn', 'x3k', 'pg', 'lk', 'pl2', 'dup', 'z125', 'k1'].map(
+      (k) => [`order-${k}`, `order-${k}-rev`] as const,
     ),
   ] as const;
   withZ3('I14: a `default` reads as its `=` twin against every assertion, whatever the assertion’s spelling or order', () => {
