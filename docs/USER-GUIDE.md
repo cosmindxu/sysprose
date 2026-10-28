@@ -1437,9 +1437,23 @@ of the file: one that reads no feature (`1.0 == 2.0`), and one the check
 reports violated in an instance for which `verify`'s worklist files no row of
 it (the row names the instance and says so). A relation over values the contradiction does not reach — another
 package's, or an instance whose own value meets the assert — is judged at them
-as before. A binding that joins two different values is reported on the
-binding's own row instead (above), and the literal engine does not count it as a
-contradiction here. Where the assert is an
+as before. A binding that joins two different values is the same kind of
+contradiction, since a binding holds in every instance as an assertion does:
+`bind p.load = L` over p's load `default = 3.0`, which no assertion replaces, and
+Q's `assert constraint { L == 1.0 }`. The check reports it on the binding's own
+row (above) and keeps deciding the values beside it, and the literal engine
+marks a relation over a value the binding joins inconclusive under the same code,
+naming the binding (*the model contradicts itself there — AMD::Q's `bind p.load
+= L` joins two values that differ, and this relation reads `q0.p.m2`, which that
+contradiction reaches: the binding joins it …*), with the reach of an assert's:
+the values the binding joins, what is derived from them or tied to them by other
+bindings and asserts, and the same feature in another instance this tool reads as
+one value with it. A binding the check reports violated only in an instance that
+redefines what it joins (*… joins two values that differ in M2a::q*) counts as
+violated in every instance, as an assert does. One the worklist files no row of
+that reads a feature reaches every relation of the file, and the row says so.
+A relation over values the contradiction does not reach (an instance whose own value
+meets the binding) is judged at them as before. Where the assert is an
 equation that names the default's feature alone on one side, its other side
 reading neither it nor another `default` — the shape that once defined it — the
 sentence also says why the default stood and how to write the value it meant to
@@ -1586,7 +1600,16 @@ anew without `:>>`, or neither; two in two types a definition specialises, or in
 two that each redefine L; P's beside one written around the instance (`assert
 constraint { p.L == 60.0 }` in the package, or in a definition whose part p is);
 or one in an element nested in the one that declares L whose `L` resolves to
-that one (in a part's body, a nested package, or a definition in the package) —
+that one (in a part's body, a nested package, or a definition in the package); or
+one on each of two features of an element that a `bind` of it joins (`bind L = K`
+beside `L == 50.0` and `K == 60.0` in P, through a chain `bind L = M; bind M = K`
+too, which may run across a specialisation — `bind K = L` in P and `bind N = K` in
+P2, joining P2's N to P's L through P2's own K, which redefines P's — whether or not the
+middle of the chain states anything; either equation may be written in a usage
+of P or in a type that specialises it) — a binding says the two ends are one
+value, so the equations define one feature twice, and the sentence names the
+binding or bindings that join them (*each define `L` (joined to `K` by `bind L =
+K`) in …::P*) —
 is a model that contradicts itself, whichever is written first, and no surface
 that judges a relation reads it. Every relation over L, or over a value tied to
 it (derived from it, bound to it, or read beside it by an asserted relation —
@@ -1649,9 +1672,11 @@ written with `=` (`L = 1.0`) is read whatever its asserts, which are checked
 against it, in any order; so is one an asserted relation reads beside L (`M =
 20.0` in `L >= 0.0 [kg] or M >= 0.0`), and an assert over it alone (`M <=
 10.0`) is still the warning. Limits of this tool: two asserted equations on the two
-ends of one binding (`bind L = K` with `L == 50.0` and `K == 60.0`) are the
-binding's violated pair, but each end's readings stand; and an FMI export's
-`start` still reads the first equation written.
+ends of a binding that reaches one end through a part (`bind p.L = M`, `L == 50.0`
+in p's type and `M == 60.0` in the element) are still only the binding's violated
+pair, each end's readings standing, and the pair only joins features of the element
+that holds the binding; and an FMI export's `start` still reads the first equation
+written.
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
@@ -2197,7 +2222,7 @@ that renders these members carries it itself.
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
 | `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
 | `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |
-| `verification/inconsistent-axioms` | Your model's own facts collide, so nothing can be proved from them — on every SMT row of the file (only on the rows whose context holds the colliding relation, where a gate refuses it); on the literal engine, on a relation over a value an `assert` false at your values contradicts, the assert named | No |
+| `verification/inconsistent-axioms` | Your model's own facts collide, so nothing can be proved from them — on every SMT row of the file (only on the rows whose context holds the colliding relation, where a gate refuses it); on the literal engine, on a relation over a value an `assert` false at your values, or a `bind` the check reports violated, contradicts, the assert or the binding named | No |
 | `verification/free-variable-unbounded` | A feature you freed is not confined on both sides, so a witness could come from outside the physical domain | No |
 | `verification/tool-absent` | No engine ran | No |
 | `verification/design-admitted` | Refuted only after `--free` released a value your model states | No |

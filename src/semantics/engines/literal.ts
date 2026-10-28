@@ -31,7 +31,9 @@
  *    `contradicted` — inconclusive, exit 2, the SMT engine's
  *    `verification/inconsistent-axioms` — naming the assertion
  *    ({@link contradictionsOf}). The check still reads the values, and reports
- *    the assertion violated.
+ *    the assertion violated. So is a binding the check reports violated — a
+ *    `bind` whose two ends the model gives values that differ — over the values
+ *    it joins (D1): a binding holds in every instance, as an assertion does.
  *
  * WHY IT WRAPS `checkConstraints` RATHER THAN RE-EVALUATING. The numeric
  * surface a person already sees in the app is `checkConstraints`, and the
@@ -50,14 +52,16 @@
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
 import {
+  bindingHolder,
   contradictedDefinitionNaming,
   contradictedDefinitions,
   isFailedReading,
   isShadowedBody,
   readsContradictedDefinition,
+  sharedDefinitions,
   type ContradictedDefinition,
 } from '../defining-equation';
-import { redefinedClosure } from '../inheritance';
+import { effectiveQualifiedName, redefinedClosure } from '../inheritance';
 import { evaluateFeatureValue, featuresWithoutValue, valueAtPath } from '../evaluate-model';
 import { rowElement, type Obligation } from '../obligations';
 import {
@@ -341,6 +345,11 @@ interface ContradictedRead {
    * of ../evaluate-model): each is a contradiction of the model's whose equations' own rows the check no longer reads.
    */
   sets: ContradictedDefinition[];
+  /**
+   * The bindings the check reports violated (`bindingConflicts` of ../evaluate-model), each as a sentence names it:
+   * Q's `bind p.load = L`, and the contexts it is violated in where only a context changes what it joins.
+   */
+  bindings: NamedBinding[];
   /** The paths the relation itself reads that those asserts' contradiction reaches. */
   paths: string[];
   /** The assumptions it stands on that read a path that contradiction reaches, each with those paths. */
@@ -355,9 +364,11 @@ interface ContradictedRead {
 interface UnplacedContradiction extends ContradictingAssert {
   /**
    * `constant`: it reads no feature; `unread`: the check's instance (`where`) has no worklist row; `equations`: two
-   * asserted equations the check reports giving one feature two values (`set`), none of which the worklist files.
+   * asserted equations the check reports giving one feature two values (`set`), none of which the worklist files;
+   * `binding`: a binding the check reports violated (`expression` and `qualifiedName` name it), of which the
+   * worklist files no row that reads a feature.
    */
-  kind: 'constant' | 'unread' | 'equations';
+  kind: 'constant' | 'unread' | 'equations' | 'binding';
   where?: string;
   set?: ContradictedDefinition;
 }
@@ -395,6 +406,15 @@ interface UnplacedContradiction extends ContradictingAssert {
  * that one redefines (`SP2::Q::p::load`), so a contradiction there reaches the bindings and values filed for the
  * feature in the definition (Q's `bind p.load = L`, whose L is `= 1.0`), whether or not another relation reads
  * the instance. A violated assert this engine cannot place ({@link UnplacedContradiction}) reaches every relation.
+ *
+ * So does a binding the check reports violated (`bindingConflicts` of ../evaluate-model, D1): a `bind` whose two ends
+ * the model gives values that differ is a model that contradicts itself as much as an assert held false — a binding
+ * holds in every instance, as an assertion does (decision 1) — and the SMT engine's axioms for it are inconsistent.
+ * Its axiom rows (`source: 'bind'`: the connector's own, and its reading in each context that changes what it joins)
+ * seed the component the same way, so what the binding joins, and everything the model's values, bindings and
+ * assertions tie to it, is read by no verdict. A binding is violated anywhere as an assert is: every row of it is a
+ * seed, as the SMT engine holds every one as an axiom. The check keeps deciding the values beside it. A violated
+ * binding the worklist files no row of that reads a feature reaches every relation.
  */
 function contradictionsOf(
   model: Model,
@@ -429,7 +449,20 @@ function contradictionsOf(
   const apartBy = new Map<ElementId, ContradictedDefinition>();
   const apartSets = contradictedDefinitions(model).sets.filter((set) => apartKeys.has(`${set.feature.id}@${set.context.id}`));
   for (const set of apartSets) for (const c of set.equations) if (!apartBy.has(c.id)) apartBy.set(c.id, set);
-  if (violatedAnywhere.size === 0 && apartSets.length === 0) return none;
+  // The bindings the check reports violated anywhere, by the connector (a reading of one in a context is
+  // `<connector id>@<context id>`): the worklist's bind axiom rows of it are read in contexts of their own (an
+  // enclosed binding, in the instance it holds in), which the check's reading need not name.
+  const violatedBinds = new Map<ElementId, ViolatedBinding>();
+  for (const c of raw) {
+    if (c.conflict !== 'bind' || c.result !== 'violated') continue;
+    const read = c.ownerId != null && c.id.endsWith(`@${c.ownerId}`);
+    const base = read ? c.id.slice(0, c.id.length - c.ownerId!.length - 1) : c.id;
+    const at = violatedBinds.get(base) ?? { check: c, generic: false, contexts: [] };
+    if (read) at.contexts.push(c.ownerId!);
+    else at.generic = true;
+    violatedBinds.set(base, at);
+  }
+  if (violatedAnywhere.size === 0 && apartSets.length === 0 && violatedBinds.size === 0) return none;
 
   const symbolOf = (v: ContractVariable): string => v.symbol ?? v.qualifiedName;
   const parent = new Map<string, string>();
@@ -451,6 +484,10 @@ function contradictionsOf(
   const baseOf = (row: Obligation): ElementId => row.instance?.baseId ?? row.element.id;
   const seeds: Obligation[] = [];
   const setOf = new Map<Obligation, ContradictedDefinition>();
+  /** The seeds that are a violated binding's own row (the connector, whichever reading of it). */
+  const bindingSeeds = new Set<Obligation>();
+  /** The violated bindings the worklist files a row of that reads a feature. */
+  const placedBinds = new Set<ElementId>();
   const filed = new Set<ContradictedDefinition>();
   const unplaced: UnplacedContradiction[] = [];
   const named = (row: Obligation): ContradictingAssert => ({
@@ -478,6 +515,14 @@ function contradictionsOf(
       if (!f) return;
       for (const g of [f, ...redefinedClosure(model, f)]) union(symbols[k]!, model.qualifiedName(g.id));
     });
+    if (row.source === 'bind') {
+      if (violatedBinds.has(baseOf(row)) && symbols.length > 0) {
+        placedBinds.add(baseOf(row));
+        seeds.push(row);
+        bindingSeeds.add(row);
+      }
+      continue;
+    }
     if (row.source !== 'assert') continue;
     assertRowIds.add(row.element.id);
     const set = apartBy.get(baseOf(row));
@@ -502,6 +547,12 @@ function contradictionsOf(
       kind: 'equations',
       set,
     });
+  }
+  // A violated binding the worklist files no row of that reads a feature: what it joins there is not known.
+  for (const [base, at] of violatedBinds) {
+    if (placedBinds.has(base)) continue;
+    const named = bindingNamed(model, base, at);
+    unplaced.push({ expression: at.check.expression, qualifiedName: named.text + named.where, kind: 'binding' });
   }
   // A violated reading the worklist files no row of the assert for: what it reads there is not known.
   for (const v of violatedAt) {
@@ -540,8 +591,48 @@ function contradictionsOf(
       if (asserts.size === 0) return undefined;
       const hit = seeds.filter((a) => asserts.has(a));
       const sets = [...new Set(hit.flatMap((a) => setOf.get(a) ?? []))];
-      return { asserts: namedOnce(model, hit.filter((a) => !setOf.has(a))), sets, paths, premises: onPremises };
+      return {
+        asserts: namedOnce(model, hit.filter((a) => !setOf.has(a) && !bindingSeeds.has(a))),
+        sets,
+        bindings: [...new Set(hit.filter((a) => bindingSeeds.has(a)).map(baseOf))].map((base) => bindingNamed(model, base, violatedBinds.get(base))),
+        paths,
+        premises: onPremises,
+      };
     },
+  };
+}
+
+/** A binding the check reports violated: one of its readings, whether it is violated where it is written, and the contexts it is read violated in. */
+interface ViolatedBinding {
+  check: ConstraintCheck;
+  generic: boolean;
+  contexts: ElementId[];
+}
+
+/** A binding as a contradicted row names it: `text`, and `where` it is violated if only in contexts that change what it joins. */
+interface NamedBinding {
+  text: string;
+  where: string;
+}
+
+/**
+ * A binding connector as a contradicted row names it: the element it is written in and the `bind` it is there
+ * (`Q's \`bind p.load = L\``) — the words the check's own finding uses (`bindingConflicts` of ../evaluate-model) —
+ * and, where the check reports it violated only in the contexts that change what it joins (q2's, where Q's `L`
+ * is redefined), which.
+ */
+function bindingNamed(model: Model, bindingId: ElementId, violated?: ViolatedBinding): NamedBinding {
+  const b = model.get(bindingId);
+  const read = b ? bindingHolder(model, b) : undefined;
+  const bind = read?.left !== undefined && read.right !== undefined ? `\`bind ${read.left} = ${read.right}\`` : 'a `bind`';
+  const holder = read ? effectiveQualifiedName(model, read.holder.id) : undefined;
+  const names = (violated?.contexts ?? []).map((id) => sharedDefinitions(model).contextName(id));
+  return {
+    text: `${holder !== undefined ? `${holder}'s ` : ''}${bind}`,
+    where:
+      violated === undefined || violated.generic || names.length === 0
+        ? ''
+        : ` in ${names.slice(0, 2).join(' and ')}${names.length > 2 ? ` and ${names.length - 2} other context(s)` : ''}`,
   };
 }
 
@@ -582,13 +673,19 @@ function namedAsserts(asserts: readonly ContradictingAssert[]): string {
   return `${named(first!)} is false at them${more}`;
 }
 
-/** The close of every contradicted sentence: what the relation does at the point, and why that decides nothing. */
-const contradictedTail = (holds: boolean, pair = false): string =>
+/**
+ * The close of every contradicted sentence: what the relation does at the point, and why that decides nothing.
+ * `what` is the kind of contradiction it names: an assertion held false, a pair of asserted equations, or a
+ * binding (an assertion beside it is the one it names first).
+ */
+const contradictedTail = (holds: boolean, what: 'assert' | 'pair' | 'binding' = 'assert'): string =>
   `The relation ${holds ? 'holds' : 'is false'} at these values, but a point the model contradicts is no point ` +
   'at which a pass or a failure is unconditional: ' +
-  (pair
+  (what === 'pair'
     ? 'reconcile the asserted equations, which the check reports giving the feature two values'
-    : 'reconcile the assertion, which the check reports violated, with the value it contradicts');
+    : what === 'binding'
+      ? 'reconcile the binding, which the check reports violated, with the values it joins'
+      : 'reconcile the assertion, which the check reports violated, with the value it contradicts');
 
 /**
  * The sentence of a `contradicted` row: the assert the model holds false at its values (and how many
@@ -603,13 +700,30 @@ function contradictedDetail(model: Model, read: ContradictedRead, holds: boolean
   const what = [
     ...read.sets.map((set) => `${contradictedDefinitionNaming(model, set)} and give it two values that differ`),
     ...(read.asserts.length > 0 ? [`the asserted ${namedAsserts(read.asserts)}`] : []),
+    ...(read.bindings.length > 0 ? [namedBindings(read.bindings)] : []),
   ].join('; ');
+  // What reads the value: the assertion, or, where only a binding contradicts it, the binding that joins it.
+  const byBinding = read.asserts.length === 0 && read.sets.length === 0 && read.bindings.length > 0;
+  const [reader, readsIn] = byBinding ? ['binding joins', 'joins'] : ['assertion reads', 'reads'];
   return (
     `not judged at the model's values: the model contradicts itself there — ${what}, ` +
-    `and ${reads}, which that contradiction reaches: the assertion reads it, or reads it in another instance ` +
+    `and ${reads}, which that contradiction reaches: the ${reader} it, or ${readsIn} it in another instance ` +
     "this tool reads as one value with it, or the model's values, bindings and assertions tie it to one the " +
-    `assertion reads. ${contradictedTail(holds, read.asserts.length === 0)}`
+    `${reader}. ${contradictedTail(holds, read.asserts.length > 0 ? 'assert' : read.sets.length > 0 ? 'pair' : 'binding')}`
   );
+}
+
+/** The bindings a contradicted row names: the first, and up to two more, then a count. */
+function namedBindings(bindings: readonly NamedBinding[]): string {
+  const [first, ...rest] = bindings;
+  const more =
+    rest.length === 0
+      ? ''
+      : `, as ${rest.length === 1 ? 'does' : 'do'} ${rest
+          .slice(0, 2)
+          .map((b) => b.text + b.where)
+          .join(' and ')}` + (rest.length > 2 ? ` and ${rest.length - 2} other binding(s)` : '');
+  return `${first!.text} joins two values that differ${first!.where}${more}`;
 }
 
 /** The sentence of a row a contradiction this engine cannot place reaches ({@link UnplacedContradiction}). */
@@ -623,12 +737,19 @@ function unplacedDetail(model: Model, unplaced: readonly UnplacedContradiction[]
         ? `${contradictedDefinitionNaming(model, first!.set)} and give it two values that differ, and the worklist ` +
           'files no row of them, so this tool does not read which values that contradiction reaches, and takes it to ' +
           'reach every relation of the model, this one among them'
+      : first!.kind === 'binding'
+        ? `the check reports ${first!.qualifiedName} violated, and the worklist files no row of it that reads a ` +
+          'feature, so this tool does not read which values that binding joins, and takes the contradiction to reach ' +
+          'every relation of the model, this one among them'
       : `the check reports the asserted \`${first!.expression}\` (${first!.qualifiedName}) false in ` +
         `${first!.where ?? 'an instance'}, an instance the worklist files no row of that assertion for, so this ` +
         'tool does not read which values that contradiction reaches there, and takes it to reach every relation of ' +
         'the model, this one among them';
-  const more = unplaced.length > 1 ? ` (and ${unplaced.length - 1} other such assertion(s))` : '';
-  return `not judged at the model's values: the model contradicts itself — ${why}${more}. ${contradictedTail(holds, first!.kind === 'equations')}`;
+  const more = unplaced.length > 1 ? ` (and ${unplaced.length - 1} other such ${unplaced.every((u) => u.kind === 'binding') ? 'binding' : 'assertion'}(s))` : '';
+  return (
+    `not judged at the model's values: the model contradicts itself — ${why}${more}. ` +
+    contradictedTail(holds, first!.kind === 'equations' ? 'pair' : first!.kind === 'binding' ? 'binding' : 'assert')
+  );
 }
 
 /**

@@ -5409,6 +5409,12 @@ export interface ContradictedDefinition {
   /** The features no reading of which is decided: that feature, and the one each equation names where it is written. */
   features: readonly ElementRecord[];
   /**
+   * Where equations of features a `bind` joins to `feature` are among `equations` (`bind L = K` beside `L == 50.0`
+   * and `K == 60.0`): the joined name and the binding, as a sentence names them (``to `K` by `bind L = K` ``). The
+   * binding states the two features are one value, so the equations define one feature twice.
+   */
+  joined?: readonly string[];
+  /**
    * Where each equation's defining side is read, in the order of `equations`: the element its names are read in,
    * the name it defines as written from there, and the feature that name denotes there. An `undecided` set is
    * read there by the check's own evaluator (`definitionConflicts` of ./evaluate-model).
@@ -5466,6 +5472,16 @@ const CONTRADICTED_DEFINITIONS = new WeakMap<Model, ContradictedDefinitions>();
  * does not. A side that gives no value — it reads a name nothing gives one, or reads back the feature it
  * defines, as an alias's `b == a` read as a's definition does — is left out: every evaluator tries another
  * first, in either order.
+ *
+ * Two equations on the two ends of one binding are the same pair: `bind L = K` in P says L and K are one value in
+ * every P, so `L == 50.0` and `K == 60.0` define it twice (wave 3 contradictory-models S3). The equations of every
+ * name the bindings that hold in X — written in it or in what it specialises — join N to, through one another too
+ * (`bind L = M; bind M = K`), are gathered with N's, each name a feature of X itself (not through a part: `bind p.L =
+ * M` would leave P's L undecided in every P), each hop one the binding really joins there ({@link joinedTo}) — a
+ * chain across a specialisation (`bind K = L` in P, `bind N = K` in P2) too. They count
+ * only where the comparison decides two of them differ: a side over another name, a unit or a form this tool cannot
+ * compare leaves the binding's own row to report the pair, as before. The set is named by the feature declared
+ * first, whichever equation is written first, and its `joined` says which binding joins the others.
  */
 export function contradictedDefinitions(model: Model): ContradictedDefinitions {
   const hit = CONTRADICTED_DEFINITIONS.get(model);
@@ -5596,6 +5612,52 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     return out;
   };
   const bound = (g: ElementRecord): boolean => [g, ...redefinedClosure(model, g)].some((h) => joinedTo(model, h.id).size > 1);
+  // The user's bindings by the element each holds in, with its ends as that element spells them: `bind L = K` in P
+  // says L and K are one value in every P, so the equations of either define both.
+  const joins = new Map<ElementId, Array<{ left: string; right: string; text: string }>>();
+  for (const b of bindingEnds(model).connectors) {
+    const read = bindingHolder(model, b);
+    if (!read || read.left === undefined || read.right === undefined || read.left === read.right) continue;
+    const list = joins.get(read.holder.id) ?? [];
+    list.push({ left: read.left, right: read.right, text: `bind ${read.left} = ${read.right}` });
+    joins.set(read.holder.id, list);
+  }
+  /** Does a binding join `a` (or what it redefines) to `b` (or what it redefines)? */
+  const joinedAmong = (a: ElementRecord, b: ElementRecord): boolean => {
+    const ids = new Set([b, ...redefinedClosure(model, b)].map((h) => h.id));
+    return [a, ...redefinedClosure(model, a)].some((h) => [...joinedTo(model, h.id)].some((id) => ids.has(id)));
+  };
+  /** Words for a list: `a`, `a and b`, `a, b and c`. */
+  const listed = (items: readonly string[]): string =>
+    items.length <= 2 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]!}`;
+  /**
+   * The ends of the bindings that hold in every `x` — those written in `x` or in what it specialises
+   * ({@link generalizationsOf}) — crossed from `path` outward, through one another too (`bind L = M; bind M = K;`):
+   * each as the name it is crossed from, the name it reaches, and the binding. A name reached by two bindings is
+   * listed by both. Features of `x` itself only: a name through a part (`p.L`) is a feature of every instance of that
+   * part's type, which a contradiction read here would leave undecided wherever it is read.
+   */
+  type Crossing = { from: string; path: string; text: string };
+  const crossings = (holders: readonly ElementRecord[], path: string): Crossing[] => {
+    const out: Crossing[] = [];
+    if (path.includes('.') || !holders.some((h) => joins.has(h.id))) return out;
+    const seen = new Set([path]);
+    for (const queue = [path]; queue.length > 0; ) {
+      const at = queue.shift()!;
+      for (const h of holders) {
+        for (const j of joins.get(h.id) ?? []) {
+          const other = j.left === at ? j.right : j.right === at ? j.left : undefined;
+          if (other === undefined || other.includes('.')) continue;
+          out.push({ from: at, path: other, text: j.text });
+          if (!seen.has(other)) {
+            seen.add(other);
+            queue.push(other);
+          }
+        }
+      }
+    }
+    return out;
+  };
   /**
    * An exact reading of a defining side, or why there is none: `free`, it gives no value — it reads a name with
    * none that nothing gives one, or one whose every definition reads back a feature in flight (the one it defines
@@ -5727,36 +5789,87 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     const owners = [x, ...general].filter(holds);
     if (owners.length === 0) continue;
     const paths = owners.flatMap((y) => [...(byOwner.get(y.id)?.keys() ?? []), ...(lexical.get(y.id)?.keys() ?? [])]);
+    const holders = [x, ...general];
+    const joining = holders.some((h) => joins.has(h.id));
     for (const path of new Set(paths)) {
-      // One equation of a bare name among the owners meets no other: only a dotted one reads more, below.
-      if (!path.includes('.') && owners.reduce((n, y) => n + countOf(y, path), 0) < 2) continue;
+      // One equation of a bare name among the owners meets no other: only a dotted one reads more, below, and one a
+      // binding joins to a name that has equations of its own.
+      if (!path.includes('.') && !joining && owners.reduce((n, y) => n + countOf(y, path), 0) < 2) continue;
       const feature = featureNamedBelow(model, x.id, path);
       if (!feature || statesValue(feature)) continue;
-      const competing = gather(x, path, feature);
-      if (competing.length < 2) continue;
-      // The feature, and every one it overrides, is in flight: a side that reads it back gives it no value.
-      const flight = new Set(competing.flatMap((c) => [...slotOf(c.named)]));
-      const sides = competing.flatMap((c) => {
-        const side = sideOf(c.eq, c.at, flight);
-        return side ? [{ eq: c.eq, side }] : [];
-      });
-      let verdict: ContradictedDefinition['verdict'] | undefined;
-      let why: ContradictedDefinition['why'];
-      for (let i = 0; i < sides.length && verdict !== 'differs'; i++) {
-        for (let j = i + 1; j < sides.length; j++) {
-          const c = compare(sides[i]!, sides[j]!);
-          if (c.v === 'differs') {
-            verdict = 'differs';
-            why = undefined;
-            break;
-          }
-          if (c.v === 'undecided' && verdict === undefined) {
-            verdict = 'undecided';
-            why = c.why;
+      const own = gather(x, path, feature);
+      // The equations of every name a binding joins it to, which the binding makes one value with it: `bind L = K`
+      // beside `L == 50.0` and `K == 60.0`. Added only where they decide a contradiction (below), so that a pair
+      // this tool reads otherwise — `L == K` beside `bind L = K`, which reads K back — is read as before.
+      const partners: Array<{ eq: Gathered; via: readonly string[]; path: string }> = [];
+      // Each hop is checked where it is crossed: the feature a name denotes in x must be the one the binding joins
+      // (or one that redefines it) to the feature the name before it denotes there — an element that masks a name with
+      // a feature of its own is joined to nothing here — and a chain goes on through a hop only once that hop holds
+      // (`bind N = K` in P2 beside `bind K = L` in P, whose K P2's own K redefines). A name that states a value or
+      // has no equation of its own is still crossed, giving no equation.
+      const reach = new Map<string, { feature: ElementRecord; via: readonly string[] }>([[path, { feature, via: [] }]]);
+      const crossed = crossings(holders, path);
+      for (let grew = crossed.length > 0; grew; ) {
+        grew = false;
+        for (const j of crossed) {
+          const from = reach.get(j.from);
+          if (from === undefined || reach.has(j.path)) continue;
+          const g = named(x.id, j.path);
+          if (!g || !joinedAmong(from.feature, g)) continue;
+          const via = [...from.via, j.text];
+          reach.set(j.path, { feature: g, via });
+          grew = true;
+          if (statesValue(g)) continue;
+          for (const eq of gather(x, j.path, g)) {
+            if (!own.some((c) => c.eq.constraint.id === eq.eq.constraint.id) && !partners.some((c) => c.eq.eq.constraint.id === eq.eq.constraint.id)) {
+              partners.push({ eq, via, path: j.path });
+            }
           }
         }
       }
-      if (verdict === undefined) continue;
+      if (own.length < 2 && partners.length === 0) continue;
+      /** The verdict of `competing`'s sides compared pair by pair, or `undefined` where there is none to give. */
+      const judge = (
+        competing: readonly Gathered[],
+      ): { verdict: ContradictedDefinition['verdict']; why?: ContradictedDefinition['why'] } | undefined => {
+        // The feature, and every one it overrides, is in flight: a side that reads it back gives it no value.
+        const flight = new Set(competing.flatMap((c) => [...slotOf(c.named)]));
+        const sides = competing.flatMap((c) => {
+          const side = sideOf(c.eq, c.at, flight);
+          return side ? [{ eq: c.eq, side }] : [];
+        });
+        let verdict: ContradictedDefinition['verdict'] | undefined;
+        let why: ContradictedDefinition['why'];
+        for (let i = 0; i < sides.length && verdict !== 'differs'; i++) {
+          for (let j = i + 1; j < sides.length; j++) {
+            const c = compare(sides[i]!, sides[j]!);
+            if (c.v === 'differs') {
+              verdict = 'differs';
+              why = undefined;
+              break;
+            }
+            if (c.v === 'undecided' && verdict === undefined) {
+              verdict = 'undecided';
+              why = c.why;
+            }
+          }
+        }
+        return verdict === undefined ? undefined : { verdict, ...(why ? { why } : {}) };
+      };
+      let competing: readonly Gathered[] = own;
+      let judged = own.length >= 2 ? judge(own) : undefined;
+      let joined: string[] = [];
+      if (partners.length > 0) {
+        const all = [...own, ...partners.map((p) => p.eq)];
+        const together = judge(all);
+        if (together?.verdict === 'differs') {
+          competing = all;
+          judged = together;
+          joined = [...new Set(partners.map((p) => `to \`${p.path}\` by ${listed(p.via.map((t) => `\`${t}\``))}`))];
+        }
+      }
+      if (judged === undefined || competing.length < 2) continue;
+      const { verdict, why } = judged;
       const ordered = [...competing].sort((a, b) => order.get(a.eq.constraint.id)! - order.get(b.eq.constraint.id)!);
       const equations = ordered.map((c) => c.eq.constraint);
       const sites = ordered.map((c) => ({ equation: c.eq, at: c.at, name: c.name, feature: c.readAs }));
@@ -5764,10 +5877,17 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       const key = equations.map((c) => c.id).join(' ');
       const met = found.get(key) ?? [];
       const mine = new Set(general.map((g) => g.id));
-      // One it was met in already that X specialises keeps it; any it was met in that specialises X gives it up.
+      // One it was met in already that X specialises keeps it; any it was met in that specialises X gives it up. One
+      // met in X again, under another name a binding joins to the first (`L`, then `K`), is the same set, named by
+      // the feature declared first — not the equation written first, whose order decides nothing.
       if (met.some((m) => mine.has(m.set.context.id))) continue;
-      const kept = met.filter((m) => !m.general.has(x.id));
-      kept.push({ set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features, sites }, general: mine });
+      const again = met.find((m) => m.set.context.id === x.id);
+      if (again !== undefined && order.get(again.set.feature.id)! <= order.get(feature.id)!) continue;
+      const kept = met.filter((m) => m !== again && !m.general.has(x.id));
+      kept.push({
+        set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features, sites, ...(joined.length > 0 ? { joined } : {}) },
+        general: mine,
+      });
       found.set(key, kept);
     }
   }
@@ -5951,7 +6071,8 @@ function contradictedDefinitionClause(model: Model, set: ContradictedDefinition)
 export function contradictedDefinitionNaming(model: Model, set: ContradictedDefinition): string {
   const named = set.equations.map((c) => `\`${String(c.attrs.expression ?? '').trim()}\` (${effectiveQualifiedName(model, c.id)})`);
   const listed = named.length <= 2 ? named.join(' and ') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]!}`;
-  return `the asserted ${listed} each define \`${set.path}\` in ${effectiveQualifiedName(model, set.context.id)}`;
+  const joined = set.joined !== undefined && set.joined.length > 0 ? ` (joined ${set.joined.join(', ')})` : '';
+  return `the asserted ${listed} each define \`${set.path}\`${joined} in ${effectiveQualifiedName(model, set.context.id)}`;
 }
 
 /** Why a row {@link contradictedDefinitionRefusal} refuses is not read: the feature, and the equations that give it two values. */
