@@ -941,6 +941,40 @@ describe('solve — the order of the text decides no design equation', () => {
     }
   });
 
+  it('finds the witness beside a curved plain equation in either order, from where the other equations put the value', async () => {
+    // `c0 { x * x == 4.0 }` above `c1 { x == -2.0 }`: the root the solve took, 2, stalled the descent beside c1 (decided: false), and
+    // written the other way round the solve took −2 and the descent met both (decided: true). The descent now begins a second time
+    // from where the equations that are not curved put the value, the same point in either order.
+    const witness = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const f = solveFeasible(m!);
+      const at = (n: string) => f.values.get(m!.all().find((el) => el.declaredName === n)!.id);
+      return { decided: f.decided, feasible: f.feasible, x: at('x'), y: at('y') };
+    };
+    for (const text of inEveryOrder(X, ['constraint c0 { x * x == 4.0 }', 'constraint c1 { x == -2.0 }'])) {
+      const w = await witness(text);
+      expect([w.decided, w.feasible], text).toEqual([true, true]);
+      expect(w.x, text).toBeCloseTo(-2, 6);
+    }
+    // Through a second equation that links them: (−2, −1) meets all four.
+    const linked = ['constraint c0 { x * x == 4.0 }', 'constraint c1 { x == -2.0 }', 'constraint c2 { y == x + 1.0 }', 'constraint c3 { y <= 0.0 }'];
+    for (const text of inEveryOrder(X, linked)) {
+      const w = await witness(text);
+      expect([w.decided, w.feasible], text).toEqual([true, true]);
+      expect([w.x, w.y].map((v) => Math.round(v! * 1e6) / 1e6), text).toEqual([-2, -1]);
+    }
+    // A model that has no such point stays undecided in both orders, never feasible: the second start claims nothing the gates do not.
+    for (const members of [
+      ['constraint c0 { x * x == 4.0 }', 'constraint c1 { x == 3.0 }'],
+      ['constraint c0 { x * x == 4.0 }', 'constraint c1 { x == -2.0 }', 'constraint c2 { x >= 0.0 }'],
+    ]) {
+      for (const text of inEveryOrder(X, members)) {
+        const w = await witness(text);
+        expect([w.decided, w.feasible], text).toEqual([false, false]);
+      }
+    }
+  });
+
   it('reads a curve of solutions as a freedom, not as two roots', async () => {
     // `z == x * y` beside `z == 9.0` leaves x and y free along the hyperbola: nothing to take a root of, and z is imposed.
     for (const text of inEveryOrder(X, ['constraint c0 { z == x * y }', 'constraint c1 { z == 9.0 }'])) {
@@ -1029,6 +1063,61 @@ describe('solve — the order of the text decides no design equation', () => {
       const r = await rows(`package K { ${Q} ${list.join(' ')} }`);
       expect(['e0', 'e1', 'e2'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual(Array(3).fill(['satisfied', true]));
       expect([r.get('lim')!.result, r.get('lim2')!.result]).toEqual(['satisfied', 'violated']);
+    }
+  });
+
+  it('reads a quotient by a value other plain equations fix as the one root it has, in every order', async () => {
+    // `x / y == 3.0` beside `y == 2.0` and `x == 6.0`: a constant over an affine function of y has one root, so whichever equation the
+    // solve leaves unused agrees and is imposed like the others, where it was withheld for being "curved". The density form is the same.
+    const imposed = (r: Awaited<ReturnType<typeof rows>>, names: readonly string[]) => names.map((n) => [r.get(n)!.result, r.get(n)!.imposed]);
+    for (const text of inEveryOrder(X, ['constraint c0 { x / y == 3.0 }', 'constraint c1 { y == 2.0 }', 'constraint c2 { x == 6.0 }'])) {
+      expect(imposed(await rows(text), ['c0', 'c1', 'c2']), text).toEqual(Array(3).fill(['satisfied', true]));
+    }
+    // The values it gives are read: x = 6 breaks `k`, y = 2 meets `j`; and a second equation linking them does not change the root.
+    const judged = ['constraint c0 { x / y == 3.0 }', 'constraint c1 { y == x - 4.0 }', 'constraint c2 { x == 6.0 }', 'constraint k { x <= 5.0 }', 'constraint j { y >= 1.0 }'];
+    for (const list of [judged, [...judged].reverse()]) {
+      const r = await rows(`package K { ${X} ${list.join(' ')} }`);
+      expect(imposed(r, ['c0', 'c1', 'c2']), list.join(' ')).toEqual(Array(3).fill(['satisfied', true]));
+      expect([r.get('k')!.result, r.get('j')!.result], list.join(' ')).toEqual(['violated', 'satisfied']);
+    }
+    const D = 'attribute m : ScalarValues::Real; attribute v : ScalarValues::Real; attribute d : ScalarValues::Real;';
+    for (const text of inEveryOrder(D, ['constraint c0 { m / v == d }', 'constraint c1 { m == 100.0 }', 'constraint c2 { v == 20.0 }', 'constraint c3 { d == 5.0 }'])) {
+      expect(imposed(await rows(text), ['c0', 'c1', 'c2', 'c3']), text).toEqual(Array(4).fill(['satisfied', true]));
+    }
+    // One that disagrees with the quotient (x = 7 beside 7 / 2 != 3) is still withheld, in every order: the plain constraints disagree.
+    for (const text of inEveryOrder(X, ['constraint c0 { x / y == 3.0 }', 'constraint c1 { y == 2.0 }', 'constraint c2 { x == 7.0 }'])) {
+      const r = await rows(text);
+      expect(imposed(r, ['c0', 'c1', 'c2']), text).toEqual(Array(3).fill(['unknown', undefined]));
+      expect(r.get('c0')!.reason, text).toContain('only plain constraints that disagree');
+    }
+  });
+
+  it('does not take a pole for the root of a quotient, so no order of the text leaves it unsolved', async () => {
+    // `24.0 / (x - y) == 3.0` once `y` is 4 has its pole at x = 4, the middle of the bracket the root-find opens: closing on it gave 4 as
+    // the root of the equation, where `x == 3.0 * y` (x = 12) was written after it. Six orders, one answer: the pole is no root.
+    const members = ['constraint c0 { 12.0 / (y + 1.0) == 2.4 }', 'constraint c1 { x == 3.0 * y }', 'constraint c2 { 24.0 / (x - y) == 3.0 }', 'constraint k { y <= 3.0 }'];
+    const orders = new Set<string>();
+    for (const text of inEveryOrder(X, members)) {
+      const r = await rows(text);
+      orders.add(['c0', 'c1', 'c2', 'k'].map((n) => `${r.get(n)!.result}/${r.get(n)!.imposed}`).join(' '));
+    }
+    expect([...orders]).toEqual(['satisfied/true satisfied/true satisfied/true violated/undefined']);
+  });
+
+  it('does not read the symbol of a unit, or a string, in an asserted body that does not parse as a feature', async () => {
+    // `M ** 2.0 == 4.0 [m]` constrains M, and the `m` is a metre: read as the feature `m` it held p's m as one the assert constrains,
+    // and `t1 { p.m == 3.0 }` was not solved for. A name written outside the brackets is still read.
+    const P = (e: string) => `package US { part def P { attribute L : ScalarValues::Real; attribute m : ScalarValues::Real; attribute M : ScalarValues::Real;
+      assert constraint e { ${e} } } part p : P; constraint t1 { p.m == 3.0 } constraint t2 { p.M == 1.0 } }`;
+    for (const e of ['M ** 2.0 == 4.0 [m]', 'M == max(L, 4.0 [m])', 'M ** 2.0 == 4.0 and "m" != "n"', "M ** 2.0 == 4.0 and 'm' != 'n'", 'M ** 2.0 == 4.0 [m] + 2.0 [m]']) {
+      const r = await rows(P(e));
+      expect([r.get('t1')!.result, r.get('t1')!.imposed], e).toEqual(['satisfied', true]);
+      expect([r.get('t2')!.result, r.get('t2')!.imposed], e).toEqual(['unknown', undefined]);
+      expect(r.get('t2')!.reason, e).toContain('an assert constrains it in a form the numeric solve does not read');
+    }
+    for (const e of ['m ** 2.0 == 4.0 [m]', 'M ** 2.0 == m']) {
+      const r = await rows(P(e));
+      expect([r.get('t1')!.result, r.get('t1')!.imposed], e).toEqual(['unknown', undefined]);
     }
   });
 

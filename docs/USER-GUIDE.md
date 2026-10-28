@@ -759,8 +759,11 @@ Two names worth separating:
   3.0`, and `mass == density * volume` over the two it multiplies; and `z == x *
   y` beside `z == 9.0` leaves x and y free along the curve, not two roots. So does
   an equation one to one in the feature it fixes, a quotient or an exponential
-  (`v == d / t` beside `d == 100.0` and `v == 20.0` is t = 5): a plain one is
-  still withheld beside a plain constraint that was left unused, as it was. A loop
+  (`v == d / t` beside `d == 100.0` and `v == 20.0` is t = 5; `x / y == 3.0`
+  beside `y == 2.0` and `x == 6.0` agrees with both, and all three are *imposed
+  by the solve* in any order, as is the density form `m / v == d`): a quotient
+  by a value another equation fixes has the one root. One that disagrees with the
+  values the others fix (`x == 7.0` beside them) is withheld with them. A loop
   of definitions is read the same way: the asserts `x == y * y + 1.0` and `y ==
   3.0 - x`, or the two as stated values (`x = y * y + 1.0`, `y = 3.0 - x`), have
   the roots (2, 1) and (5, −2), and the definitions bind x and y at the one the
@@ -774,10 +777,16 @@ Two names worth separating:
   inequality, or any relation the solve gathers no equation from, over its value
   is *unjudged* (*… and the equations over it leave more than one root (a) …*),
   since the other root may break it; `solveFeasible` searches such a root as a
-  freedom, so `x * x == 4.0` beside `x <= 0.0` is undecided, not infeasible. A feature with no value that an `assert`
+  freedom, so `x * x == 4.0` beside `x <= 0.0` is undecided, not infeasible. Where
+  its first search finds no witness it searches again from where the plain
+  equations that are not curved put the value, so `x * x == 4.0` beside `x ==
+  -2.0` is feasible with x = −2 in either order of the text; where that finds
+  none either, the answer stays undecided. A feature with no value that an `assert`
   constrains in a form the solve does not read — an inequality, a conjunction
   (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
-  (`M == max(L, 20.0)`, which the model reports) — is no design freedom for a
+  (`M == max(L, 20.0)`, which the model reports; it constrains the names it
+  writes outside its strings and `[unit]` literals, so the `m` of `M ** 2.0 ==
+  4.0 [m]` is a metre, not the feature `m`) — is no design freedom for a
   check: no plain constraint is solved for it — `t1 { p.L == 1.0 }` does not fix
   p's L at 1 beside an assert that makes it 50 — and a relation over it is
   *unjudged* (*… has no value, and an assert constrains it in a form the

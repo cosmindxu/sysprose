@@ -3029,12 +3029,28 @@ used or not), leave that value withheld — no value, every relation over it
 `unknown` (*… only plain constraints that disagree …*,
 *… one of them with more than one root …*, *… the equations over it leave more than
 one root …*); a lone curved plain constraint is imposed at the root found and an
-inequality over its value is `unknown`; and a feature with no value that an `assert` constrains in a
+inequality over its value is `unknown`; an equation one to one in the feature it
+fixes (a quotient by a value another equation fixes, `x / y == 3.0` beside `y ==
+2.0` and `x == 6.0`; an exponential) has the one root and is read as a plain
+one, in every order (the root-find never takes a pole of the quotient for its root:
+`24.0 / (x - y) == 3.0` beside `y == 4.0` has its pole at x = 4, and a bisection that
+closed on it gave 4 where `x == 3.0 * y` written after it gave 12); and a feature with no value that an `assert` constrains in a
 form the solve does not read (an inequality, a conjunction, a disjunction, a body
 that does not parse) is solved for by no check (`unknown`, *… has no value, and
-an assert constrains it in a form the numeric solve does not read …*).
+an assert constrains it in a form the numeric solve does not read …*): the names
+such a body constrains are those it writes outside its strings and `[unit]`
+literals (the `m` of `4.0 [m]` is a metre).
 
-**`solveFeasible` claims a witness only where it has one.** Its point must meet
+**`solveFeasible` claims a witness only where it has one.** The roots of an equation
+of more than one root are apart, and its descent is local: begun at the root the solve
+took (2, for `c0 { x * x == 4.0 }` written above `c1 { x == -2.0 }`) it stalls beside
+`c1`, and the model is feasible all the same. Where the first search neither finds a
+witness nor decides anything it searches again from where the equations that are not
+curved put those values (−2, for the pair), the same point in either order of the text,
+and every gate below is run again there. Where no such equation puts a value
+(`x * x == 4.0` beside `x <= 0.0`) it stays undecided, and where they leave it
+open the search is as local as it was: it can find the witness in one order of
+the text and stop short in another, never claim a point that is none. Its point must meet
 every asserted equation, binding and feature value, and every plain equation
 the solve took as a design equation, under a gate no wider than the rounding
 the equation's own evaluation can make there: a search that drifted along a
@@ -3050,8 +3066,9 @@ solve did not impose stays outside the question, as before. `optimize` leaves
 a freedom.
 
 **The freedom test is local.** It reads the rank of the equations at the point
-the solve found, so of two isolated roots (`x * x == 4.0`, `x >= 0.0`) the one
-found is the one judged, and a combination of free features the equations do
+the solve found, so of two isolated roots (`x * x == 4.0`) each reads as
+determined, and an inequality over the one found (`x >= 0.0`) is `unknown`, the
+other root may break it; a combination of free features the equations do
 fix (`a + b <= 11.0` beside `a + b == 10.0`) is `unknown` rather than judged.
 
 **A point the solve stopped at without converging is no solution, and what
