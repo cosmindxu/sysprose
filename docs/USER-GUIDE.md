@@ -486,11 +486,11 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
-(the grouping); `src/ui/store.ts:323-336` (`diagramRootId`, the diagram
-scope), `1562-1717` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2650-2667` (`pinNodePositions`: the move itself), `2254-2311`
+(the grouping); `src/ui/store.ts:325-338` (`diagramRootId`, the diagram
+scope), `1564-1719` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2652-2669` (`pinNodePositions`: the move itself), `2256-2313`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4378-4420` (`openText`: a file opened as text starts afresh).
+`4400-4442` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -676,15 +676,15 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1759-1878` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `2021-2163` (`recomputeSteps`, `flushRecomputeImpl`:
-the steps of a recompute), `2172-2353` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
+**Source of truth:** `src/ui/store.ts:1761-1880` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `2023-2165` (`recomputeSteps`, `flushRecomputeImpl`:
+the steps of a recompute), `2174-2355` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
 edit, each listing the model in the order its text gives it; `typedTextFirst`, `applyParsed`: a
-field's change over typed text), `908-965` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `2945-2976`
-(`createElement`: a new element), `3265-3332` (`reparent`, `reparentMany`: a
-move), `5088-5149` (`libraryNote`: the note that says so), `3773-3786`
-(`applyText`), `4232-4278` (`undo`, `redo`), `5177-5235`
+field's change over typed text), `910-967` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2947-2978`
+(`createElement`: a new element), `3285-3352` (`reparent`, `reparentMany`: a
+move), `5110-5171` (`libraryNote`: the note that says so), `3795-3808`
+(`applyText`), `4254-4300` (`undo`, `redo`), `5199-5257`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/core/model.ts` (`adoptSerialOrder`: the order the text gives),
 `src/collab/model-doc.ts` (`bindModelToDoc`: a room, and a peer that joins it);
@@ -953,16 +953,29 @@ In `part s : Q2 { attribute :>> M; }`, where `part def Q2 :> Q` writes `attribut
 every surface reads `s.M` as 2 — through a general type that adds nothing, a
 named (`attribute M :>> M;`) or keyword (`attribute redefines M;`) redefinition,
 a nested `part :>> p { attribute :>> load; }` and a binding to s's M alike. A
-redefinition under another name (Q2's `attribute M2 redefines M`) is what a Q2
-has for M, as `t.M` reads t's M2: `attribute :>> M = 5.0;` in a Q2 redefines
-M2, takes its name (`v.M2` is that 5), and Save writes it `:>> M2`. A qualified
-name (`:>> Q::M`) redefines what it names. Where two general types each
-redefine the name and neither the other, the redefinition keeps the feature
-the name finds, and the diamond below says what is read there. It keeps that
-feature too where the most specific one would make two features of the usage
-one: a general type's `attribute X :>> M, N` would take both the `:>> M` and the
-`:>> N` of `part s : Q2`, and `part v : R { attribute :>> M = 5.0; attribute M2
-= 9.0; }` would name the first M2 beside the second.
+redefinition under another name (`part def R :> Q { attribute M2 redefines M
+default = 2.0; }`) is what an R has for M, as `t.M` reads t's M2 in `part t : R`:
+`attribute :>> M = 5.0;` in a `part v : R` redefines M2, takes its name (`v.M2`
+is that 5), and Save writes it `:>> M2`. A qualified name (`:>> Q::M`) redefines
+what it names. Where two general types each redefine the name and neither the
+other, the redefinition keeps the feature the name finds, and the diamond below
+says what is read there; a type below both that redefines the name itself
+(`part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }`) resolves it, and a usage
+typed by Q23 redefines that M — `s.M` in `part s : Q23 { attribute :>> M; }`,
+and the copy a binding makes of the name, read the 5 that `t.M` reads in `part t
+: Q23;`.
+
+The redefinition keeps the feature the name finds too where the most specific
+one would make two features of the usage one, or give two the same name:
+
+- a general type's `attribute X :>> M, N` would take both the `:>> M` and the
+  `:>> N` of `part s : Q2`. Trust no verdict over those two features: the model
+  gives X, one feature, two values, and every surface reads two features;
+- in `part v : R { attribute :>> M = 5.0; attribute M2 = 9.0; }` the first would
+  be named M2 beside the second;
+- in `part v : R, S`, where S writes `attribute M2 redefines K`, a `:>> M` and a
+  `:>> K` would both be v's M2, and so would a `:>> M` beside an `M2` S writes
+  of its own. `v.M2` is a name two features bear there, and no surface reads it.
 
 A feature redefines only what its owner **inherits**. In one definition, `attribute
 mass default = 1.2; attribute :>> mass = 0.8;` is not a legal redefinition: the second
@@ -4119,8 +4132,8 @@ makes many edits makes them in one `commit(fn)`, which lists the model once
 for the elements it adds; each `reparent` lists it at its own call, inside a
 `commit(fn)` too.
 
-**Source of truth:** `src/ui/store.ts:3456-3638` (`runValidation`,
-`solveParametric`: the four buttons), `2165-2353` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3478-3660` (`runValidation`,
+`solveParametric`: the four buttons), `2167-2355` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -4485,17 +4498,17 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:826-844` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3790-3887` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `4134-4203` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `4999-5009` (`mergeLoads`: a merge that loads),
-`5011-5149` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+`src/ui/store.ts:828-846` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3812-3909` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `4156-4225` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `5021-5031` (`mergeLoads`: a merge that loads),
+`5033-5171` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-106`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
 `leaveBeforeUnload`: the tab's question), `1399-1466` (the question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:181-191` (the page's listener),
-`src/ui/store.ts:4989-4997` (`askBeforeLeaving`),
+`src/ui/store.ts:5011-5019` (`askBeforeLeaving`),
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
 
@@ -4749,9 +4762,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:234`
-(`UNDO_LIMIT`: undo is bounded), `1759-1789` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5324-5447` (`mergeLibrary`, `loadStandardLibraryAsync`:
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:236`
+(`UNDO_LIMIT`: undo is bounded), `1761-1791` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `5346-5469` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:200-312`.
 

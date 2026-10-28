@@ -85,6 +85,26 @@ export function redefinedClosure(model: Model, f: ElementRecord): ElementRecord[
 }
 
 /**
+ * The one of `features` whose owner specialises the owner of every other — the
+ * feature a type that inherits them all has for their name, as its effective
+ * feature set has it: `part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }` over
+ * Q2's and Q3's own `:>> M` (it redefines Q's `M` and neither of theirs, the
+ * name finding no more specific). `features` of one gives that one; `undefined`
+ * where no owner is below all the others, or two of the features share one.
+ */
+export function mostSpecificOwned(model: Model, features: readonly ElementRecord[]): ElementRecord | undefined {
+  if (features.length <= 1) return features[0];
+  for (const f of features) {
+    if (f.ownerId === null) continue;
+    const generals = new Set<ElementId>(generalizationsOf(model, f.ownerId).map((g) => g.id));
+    if (features.every((o) => o === f || (o.ownerId !== null && o.ownerId !== f.ownerId && generals.has(o.ownerId)))) {
+      return f;
+    }
+  }
+  return undefined;
+}
+
+/**
  * The features `f` masks BY NAME in its owner's effective feature set
  * ({@link effectiveFeatures}) — every feature of a general type of `f`'s owner
  * with `f`'s effective name that `f` does not redefine — with what each of

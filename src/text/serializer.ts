@@ -21,6 +21,7 @@ import {
   isMembership,
   isRequirement,
   isSpecialization,
+  isTypingSpecialization,
   type ElementId,
   type ElementRecord,
 } from '@core/index';
@@ -1223,6 +1224,61 @@ function redefinitionRef(
     return simple;
   }
   return refTo(model, named.id, scopeOwnerId, resolve);
+}
+
+/**
+ * Move the explicit redefinitions of the features of `changedId`, and of everything that specialises it, to the
+ * feature the saved text puts them on when it is read again: each is written as {@link redefinitionRef} writes it,
+ * and resolved by the redefinition rule as the next parse resolves it. An edit that changes what an element
+ * inherits (the Properties panel's type field, a line drawn from it to a type, a typing deleted) leaves a
+ * redefinition on a feature it no longer has: `part s : Q2 { attribute :>> M; }` retyped to Q kept its `:>> M` on
+ * Q2's unnamed `:>> M default = 2.0`, which Save writes as `:>> M` and the next load lands on Q's `M` — the page
+ * read 2 and the file 1. A redefinition the text cannot express (an unprintable name), or whose written form lands
+ * on its own target, stays.
+ *
+ * @returns how many redefinitions moved.
+ */
+export function settleRedefinitions(model: Model, changedId: ElementId): number {
+  // The element, and what specialises it through any number of typings, specializations and subsettings.
+  const affected: ElementId[] = [changedId];
+  const seenIds = new Set<ElementId>(affected);
+  for (let i = 0; i < affected.length; i++) {
+    for (const r of model.relationshipsTo(affected[i]!)) {
+      if (!isTypingSpecialization(r.eClass)) continue;
+      for (const x of r.source ?? []) {
+        if (seenIds.has(x) || !model.has(x)) continue;
+        seenIds.add(x);
+        affected.push(x);
+      }
+    }
+  }
+  let moved = 0;
+  // Parent first: a nested `:>> load` resolves through the target its parent's `part :>> p` has just taken. A few
+  // rounds settle a chain the text would take rounds over too.
+  for (let round = 0; round < 4; round++) {
+    let changed = 0;
+    for (const id of affected) {
+      const stack = [...model.children(id)].reverse();
+      while (stack.length > 0) {
+        const f = stack.pop()!;
+        // The text leaves an implicit end copy out, and the next parse makes it anew.
+        if (f.attrs.isLibrary === true || f.attrs.implicit === true) continue;
+        for (const rel of model.children(f.id)) {
+          if (rel.eClass !== 'Redefinition' || (rel.source ?? [])[0] !== f.id || (rel.target ?? []).length !== 1) continue;
+          const ref = redefinitionRef(model, rel.target![0]!, f.ownerId, f.id);
+          if (unprintableRef(ref)) continue;
+          const hit = resolveRedefinedFeature(model, ref, f.id, f.ownerId);
+          if (hit === undefined || hit.id === rel.target![0] || hit.id === f.id) continue;
+          model.update(rel.id, { target: [hit.id] });
+          changed++;
+        }
+        stack.push(...[...model.children(f.id)].reverse());
+      }
+    }
+    moved += changed;
+    if (changed === 0) break;
+  }
+  return moved;
 }
 
 /**

@@ -50,7 +50,7 @@ import {
   resolveRedefinedFeature,
 } from '@semantics/bind';
 import { generalizationsWithImplicit } from '@semantics/featuring';
-import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
+import { effectiveNameOf, mostSpecificOwned, redefinedClosure } from '@semantics/inheritance';
 import {
   EVIDENCE_DEFINITION,
   EVIDENCE_QUALIFIED_NAME,
@@ -437,8 +437,9 @@ function findTypeFeature(model: Model, el: ElementRecord, seg: string, unique = 
     if (hit && !hits.includes(hit)) hits.push(hit);
   }
   const most = hits.filter((h) => !hits.some((o) => o !== h && redefinedClosure(model, o).includes(h)));
-  // `unique`: none where two types each redefine it and neither the other (Q2's and Q3's `:>> L`, both general to Q23).
-  if (unique) return most.length === 1 ? most[0] : undefined;
+  // `unique`: none where two types each redefine it and neither the other (Q2's and Q3's `:>> L`, both general to Q23)
+  // — unless one is owned by a type below the others' owners (Q23's own `:>> L`, which a Q23 has for L).
+  if (unique) return mostSpecificOwned(model, most);
   return most[0] ?? hits[0];
 }
 

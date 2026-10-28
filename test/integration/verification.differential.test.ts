@@ -5868,7 +5868,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'MI6R::t50': ['T/T/T/T', 'T'],
     }),
     // Q2's L a `default` 50 the binding joins to P's default 1: two defaults that differ, no value (A.4). r's L read
-    // Q's (none) and P's 1 stood: F/F/F/F on r50 and rL, T/T/T/T on rm2 and rL1. The check, the literal engine and
+    // Q's (none) and P's 1 stood: F/F/F/F on r50, rL and rm2, T/T/T/T on rL1. The check, the literal engine and
     // SMT now abstain on all four; the numeric surface imposes one row as a design equation and judges the others at
     // that point (rm2 T, rL1 F: KNOWN_FALSE), as it does on the end copy's twin below with no `:>> L` (identical at
     // 84fb971).
@@ -6104,8 +6104,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // as at 84fb971. Q2's X redefines M and N together: s's `:>> M` and `:>> N` both took X (two axioms on one symbol,
     // SMT X beside a check that refuted `s.N == 2.0`); each redefines Q's again. The twin merges them in an unnamed
     // `:>> M, N`, with the two features and each relation written the other way round. These rows pin that UNCHANGED
-    // behaviour (each reads its named feature's value, as at the base), not the KerML reading, under which both
-    // `:>> M` and `:>> N` redefine X, one feature: the shape stays unmodelled (TODO: the merge shape).
+    // behaviour (each reads its named feature's value, as at the base), which is NOT the right reading: both `:>> M`
+    // and `:>> N` redefine X, one feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref
+    // `?`. Every decided verdict is listed false (KNOWN_FALSE, no step yet): the shape stays unmodelled.
     'redef-target-merge': probe(`package MU {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
         part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
@@ -6114,9 +6115,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { s.N == 2.0 }
         constraint sN1 { s.N == 1.0 }
       }`, {
-      'MU::sM1': ['T/T/T/T', 'T'],
-      'MU::sN1': ['F/F/F/F', 'F'],
-      'MU::sN2': ['T/T/T/T', 'T'],
+      'MU::sM1': ['T/T/T/T', '?'],
+      'MU::sN1': ['F/F/F/F', '?'],
+      'MU::sN2': ['T/T/T/T', '?'],
     }),
     'redef-target-merge-rev': probe(`package MUR {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
@@ -6126,12 +6127,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { 2.0 == s.N }
         constraint sN1 { 1.0 == s.N }
       }`, {
-      'MUR::sM1': ['T/T/T/T', 'T'],
-      'MUR::sN1': ['F/F/F/F', 'F'],
-      'MUR::sN2': ['T/T/T/T', 'T'],
+      'MUR::sM1': ['T/T/T/T', '?'],
+      'MUR::sN1': ['F/F/F/F', '?'],
+      'MUR::sN2': ['T/T/T/T', '?'],
     }),
     // R's M2 redefines M, and v declares an M2 of its own beside `:>> M = 5.0`: taking R's M2 named v's M M2 too
-    // (two axioms on v's M2; `v.M2 == 9.0` refuted). The twin writes the M2 first and each relation reversed.
+    // (two axioms on v's M2; `v.M2 == 9.0` refuted). The twin writes the M2 first and each relation reversed. Each
+    // name denotes the feature written under it, as at 84fb971: v's M is the 5, v's own M2 the 9.
     'redef-target-own-name': probe(`package CL {
         part def Q { attribute M default = 1.0; }
         part def R :> Q { attribute M2 redefines M default = 2.0; }
@@ -6155,6 +6157,140 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'CLR::vM25': ['F/F/F/F', 'F'],
       'CLR::vM29': ['T/T/T/T', 'T'],
       'CLR::vM5': ['T/T/T/T', 'T'],
+    }),
+    // Two of a usage's features that would take ONE name (`part v : R, S`: R's `M2 redefines M`, S's `M2 redefines K`):
+    // `:>> M` and `:>> K` both became v's M2, one symbol to the SMT engine, and `v.M2` read the first of the two
+    // by text order on the others (F/F/F/X in one order, T/T/T/X in the other). Each keeps the feature its name finds,
+    // as at 84fb971, and `v.M2`, a name two of v's features bear, is read by no surface. The twin writes `:>> K` first
+    // and each relation reversed.
+    'redef-target-two-names': probe(`package A2S {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part def T { attribute K default = 7.0; }
+        part def S :> T { attribute M2 redefines K default = 8.0; }
+        part v : R, S { attribute :>> M = 5.0; attribute :>> K = 9.0; }
+        constraint a5 { v.M == 5.0 }
+        constraint b9 { v.K == 9.0 }
+        constraint c9 { v.M2 == 9.0 }
+      }`, {
+      'A2S::a5': ['T/T/T/T', 'T'],
+      'A2S::b9': ['T/T/T/T', 'T'],
+      'A2S::c9': ['?/?/?/?', '?'],
+    }),
+    'redef-target-two-names-rev': probe(`package A2SR {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part def T { attribute K default = 7.0; }
+        part def S :> T { attribute M2 redefines K default = 8.0; }
+        part v : R, S { attribute :>> K = 9.0; attribute :>> M = 5.0; }
+        constraint a5 { 5.0 == v.M }
+        constraint b9 { 9.0 == v.K }
+        constraint c9 { 9.0 == v.M2 }
+      }`, {
+      'A2SR::a5': ['T/T/T/T', 'T'],
+      'A2SR::b9': ['T/T/T/T', 'T'],
+      'A2SR::c9': ['?/?/?/?', '?'],
+    }),
+    // The qualified twin: `:>> S::M2 = 9.0` names S's own M2 (no redefinition of K), so v's `:>> M` is R's M2 or Q's M
+    // by the rule, and `v.M2` is v's feature of that name. Read as at 84fb971, in either order.
+    'redef-target-qualified-name': probe(`package QNM {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part def S { attribute M2 default = 7.0; }
+        part v : R, S { attribute :>> M = 5.0; attribute :>> S::M2 = 9.0; }
+        constraint a5 { v.M == 5.0 }
+        constraint b9 { v.M2 == 9.0 }
+        constraint c5 { v.M2 == 5.0 }
+      }`, {
+      'QNM::a5': ['T/T/T/T', 'T'],
+      'QNM::b9': ['T/T/T/T', 'T'],
+      'QNM::c5': ['F/F/F/F', 'F'],
+    }),
+    'redef-target-qualified-name-rev': probe(`package QNMR {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part def S { attribute M2 default = 7.0; }
+        part v : R, S { attribute :>> S::M2 = 9.0; attribute :>> M = 5.0; }
+        constraint a5 { 5.0 == v.M }
+        constraint b9 { 9.0 == v.M2 }
+        constraint c5 { 5.0 == v.M2 }
+      }`, {
+      'QNMR::a5': ['T/T/T/T', 'T'],
+      'QNMR::b9': ['T/T/T/T', 'T'],
+      'QNMR::c5': ['F/F/F/F', 'F'],
+    }),
+    // An M2 of S's own, inherited off R's line, is no feature the renamed `:>> M` may mask: taking R's M2 named v's M
+    // M2, and `v.M2` read the 5 where the base abstained over the two M2s it inherits. The name stays unread.
+    'redef-target-inherited-name': probe(`package INH {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part def S { attribute M2 default = 7.0; }
+        part v : R, S { attribute :>> M = 5.0; }
+        constraint a5 { v.M == 5.0 }
+        constraint b7 { v.M2 == 7.0 }
+        constraint c5 { v.M2 == 5.0 }
+      }`, {
+      'INH::a5': ['T/T/T/T', 'T'],
+      'INH::b7': ['?/?/?/?', '?'],
+      'INH::c5': ['?/?/?/?', '?'],
+    }),
+    // Q23's own `:>> M = 5.0` redefines Q's M past Q2's and Q3's (a diamond there), and is what a Q23 has for M, which
+    // `t.M` reads as 5: a usage typed by Q23 redefines it, whether it writes the redefinition (s) or the binding's end
+    // copy makes it (u), where both took Q's M and read 1 (sM1 T/T/T/T, sM5 and u5 F/F/F/F). The twin reverses each
+    // relation and the binding.
+    'redef-target-diamond': probe(`package A8B {
+        part def P { attribute load default = 1.0; }
+        part def Q { attribute M default = 1.0; part p : P; }
+        part def Q2 :> Q { attribute :>> M default = 2.0; }
+        part def Q3 :> Q { attribute :>> M default = 3.0; }
+        part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }
+        part s : Q23 { attribute :>> M; bind p.load = M; }
+        part u : Q23 { bind p.load = M; }
+        part t : Q23;
+        constraint s5 { s.p.load == 5.0 }
+        constraint u5 { u.p.load == 5.0 }
+        constraint sM5 { s.M == 5.0 }
+        constraint sM1 { s.M == 1.0 }
+        constraint tM5 { t.M == 5.0 }
+      }`, {
+      'A8B::s5': ['T/T/T/T', 'T'],
+      'A8B::sM1': ['F/F/F/F', 'F'],
+      'A8B::sM5': ['T/T/T/T', 'T'],
+      'A8B::tM5': ['T/T/T/T', 'T'],
+      'A8B::u5': ['T/T/T/T', 'T'],
+    }),
+    'redef-target-diamond-rev': probe(`package A8BR {
+        part def P { attribute load default = 1.0; }
+        part def Q { attribute M default = 1.0; part p : P; }
+        part def Q2 :> Q { attribute :>> M default = 2.0; }
+        part def Q3 :> Q { attribute :>> M default = 3.0; }
+        part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }
+        part s : Q23 { attribute :>> M; bind M = p.load; }
+        part u : Q23 { bind M = p.load; }
+        part t : Q23;
+        constraint s5 { 5.0 == s.p.load }
+        constraint u5 { 5.0 == u.p.load }
+        constraint sM5 { 5.0 == s.M }
+        constraint sM1 { 1.0 == s.M }
+        constraint tM5 { 5.0 == t.M }
+      }`, {
+      'A8BR::s5': ['T/T/T/T', 'T'],
+      'A8BR::sM1': ['F/F/F/F', 'F'],
+      'A8BR::sM5': ['T/T/T/T', 'T'],
+      'A8BR::tM5': ['T/T/T/T', 'T'],
+      'A8BR::u5': ['T/T/T/T', 'T'],
+    }),
+    // Neither Q2's nor Q3's M is below the other when a usage is typed by both: Q's M, as the name finds it (MI1, MI3).
+    'redef-target-diamond-open': probe(`package A8Q {
+        part def Q { attribute M default = 1.0; }
+        part def Q2 :> Q { attribute :>> M default = 2.0; }
+        part def Q3 :> Q { attribute :>> M default = 3.0; }
+        part q : Q2, Q3 { attribute :>> M; }
+        constraint q1 { q.M == 1.0 }
+        constraint q2 { q.M == 2.0 }
+      }`, {
+      'A8Q::q1': ['?/?/?/?', '?'],
+      'A8Q::q2': ['?/?/?/?', '?'],
     }),
     // Found by F2's review (identical before F1): a bound partner's default RESTATED, equal to the partner
     // definition's own, in a redefinition (`part :>> p { attribute :>> a default = 50.0; }`). The restated
@@ -10834,6 +10970,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   const NUMERIC_JOINED_DEFAULTS =
     'NO STEP (TODO “Keep the numeric surface from deciding a relation over a feature a binding joins to a default that differs”): Q2’s `:>> L default = 50.0`, joined by `bind p.load = L` to P’s `load default = 1.0`, gives no value (A.4), and the check, the literal engine and SMT abstain; the numeric surface imposes one row as a design equation (r50 or rL: L = 50) and judges the others at that point (solver.ts)';
 
+  /** The NO-STEP reason of a row over a feature that redefines two features of one line (MU, MUR). */
+  const REDEFINES_TWO_FEATURES =
+    'NO STEP (TODO “Model a feature that redefines two features of one line”): Q2’s `attribute X :>> M, N` is the one feature for M and for N, and s’s `:>> M = 1.0` beside `:>> N = 2.0` gives it two values; each surface reads the two as two features (s’s M and s’s N, each redefining Q’s), as at 84fb971, and decides';
+
   /**
    * I2's exceptions: the rows a surface decides FALSELY today, `probe | row` → why, and the step that
    * corrects it.
@@ -10880,13 +11020,21 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    *
    * redefinition-target S1 pinned the rows of a `default` a binding joins to a default that differs (MI6D, and CP,
    * its end-copy twin), where the numeric surface alone still decides: identical on CP at 84fb971, and on MI6D since
-   * the explicit `:>> L` reads as the copy does (F/F/F/F and T/T/T/T before).
+   * the explicit `:>> L` reads as the copy does (rm2 F/F/F/F and rL1 T/T/T/T before). It listed the rows of a
+   * feature that redefines two features of one line (MU, MUR) as false too: unchanged from 84fb971, where every
+   * surface reads the two as two features although the one feature has two values.
    */
   const KNOWN_FALSE = new Map<string, string>([
     ['redef-target-mi6-dflt | MI6D::rm2', NUMERIC_JOINED_DEFAULTS],
     ['redef-target-mi6-dflt | MI6D::rL1', NUMERIC_JOINED_DEFAULTS],
     ['redef-target-copy-dflt | CP::rm2', NUMERIC_JOINED_DEFAULTS],
     ['redef-target-copy-dflt | CP::rL1', NUMERIC_JOINED_DEFAULTS],
+    ['redef-target-merge | MU::sM1', REDEFINES_TWO_FEATURES],
+    ['redef-target-merge | MU::sN1', REDEFINES_TWO_FEATURES],
+    ['redef-target-merge | MU::sN2', REDEFINES_TWO_FEATURES],
+    ['redef-target-merge-rev | MUR::sM1', REDEFINES_TWO_FEATURES],
+    ['redef-target-merge-rev | MUR::sN1', REDEFINES_TWO_FEATURES],
+    ['redef-target-merge-rev | MUR::sN2', REDEFINES_TWO_FEATURES],
   ]);
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,

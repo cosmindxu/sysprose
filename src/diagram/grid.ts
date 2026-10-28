@@ -12,6 +12,7 @@
 
 import type { ElementId, ElementRecord } from '@core/index';
 import { Model, isAnnotation, isRelationship } from '@core/index';
+import { effectiveNameOf } from '@semantics/inheritance';
 import type { GridModel } from './types';
 
 /* ─────────────────────────────── helpers ───────────────────────────────── */
@@ -62,13 +63,16 @@ function typeCell(model: Model, el: ElementRecord): string {
   return str(el.attrs.type);
 }
 
-/** Elements this element redefines, as a display string. */
+/**
+ * Elements this element redefines, as a display string. A target that declares no name (`attribute :>> M` over Q2's
+ * unnamed `:>> M default = 2.0`, which a usage's `:>> M` redefines) is shown by the name it is known by.
+ */
 function redefinesCell(model: Model, el: ElementRecord): string {
   const targets = model
     .relationshipsFrom(el.id)
     .filter((r) => r.eClass === 'Redefinition')
     .flatMap((r) => (r.target ?? []).map((t) => model.get(t)).filter(Boolean) as ElementRecord[])
-    .map((t) => labelOf(t));
+    .map((t) => (t.declaredName === undefined && t.declaredShortName === undefined ? effectiveNameOf(model, t) : undefined) ?? labelOf(t));
   return targets.join(', ');
 }
 

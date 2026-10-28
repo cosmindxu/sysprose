@@ -220,6 +220,55 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
     }
   });
 
+  // Two of a usage's features must not take one NAME either: v's `:>> M` and `:>> K` each have a most specific
+  // feature named M2 (R's, S's), so both would be v's M2, and the SMT engine merged them into one symbol while the
+  // other surfaces read the first by text order (p2s, p2sr). A sibling is judged by the names of the line it lies in,
+  // never by the feature it has taken, so the answer cannot depend on which is decided first. An M2 of S2's own,
+  // inherited off the line, is masked by the renamed feature just the same (p3).
+  it('keeps the named feature where two features, or an inherited one, would bear the renamed name', () => {
+    for (const flip of [false, true]) {
+      const pair = (a: string, b: string): string => (flip ? `${b} ${a}` : `${a} ${b}`);
+      const { model, id } = parsed(`package P {
+        part def Q { attribute M default = 1.0; }
+        part def R :> Q { attribute M2 redefines M default = 2.0; }
+        part def T { attribute K default = 7.0; }
+        part def S :> T { attribute M2 redefines K default = 8.0; }
+        part def S2 { attribute M2 default = 7.0; }
+        part v : R, S { ${pair('attribute :>> M = 5.0;', 'attribute :>> K = 9.0;')} }
+        part y : R, S2 { attribute :>> M = 5.0; }
+        part z : R { attribute :>> M = 5.0; }
+      }`);
+      const redefines = (owner: string): string[] =>
+        model
+          .children(id(owner))
+          .flatMap((f) => model.children(f.id).filter((c) => c.eClass === 'Redefinition'))
+          .map((r) => model.qualifiedName((r.target ?? [])[0]!))
+          .sort();
+      expect(redefines('v'), `flip ${flip}`).toEqual(['P::Q::M', 'P::T::K']);
+      expect(redefines('y'), `flip ${flip}`).toEqual(['P::Q::M']);
+      // Typed by R alone, `:>> M` is R's M2 (MI12).
+      expect(redefines('z'), `flip ${flip}`).toEqual(['P::R::M2']);
+    }
+  });
+
+  // Q23's own `:>> M = 5.0` redefines Q's M past Q2's and Q3's (they stand in a diamond there), and is what a Q23
+  // has for M: a usage typed by Q23 redefines it, as `t.M` reads it. Typed by Q2 and Q3 themselves, neither is below
+  // the other, and the name's feature stays (p8b).
+  it('takes the feature a type below the others owns where several are most specific', () => {
+    const { model, id } = parsed(`package P {
+      part def Q { attribute M default = 1.0; }
+      part def Q2 :> Q { attribute :>> M default = 2.0; }
+      part def Q3 :> Q { attribute :>> M default = 3.0; }
+      part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }
+      part s : Q23 { attribute :>> M; }
+      part q : Q2, Q3 { attribute :>> M; }
+    }`);
+    const redefined = (owner: string) =>
+      model.children(model.children(id(owner)).find((c) => c.eClass === 'AttributeUsage')!.id).find((c) => c.eClass === 'Redefinition')!.target;
+    expect(redefined('s')).toEqual([model.children(id('Q23')).find((c) => c.eClass === 'AttributeUsage')!.id]);
+    expect(redefined('q')).toEqual([model.children(id('Q')).find((c) => c.eClass === 'AttributeUsage')!.id]);
+  });
+
   it('falls back to ordinary resolution for a qualified redefinition target', () => {
     const { model, id } = parsed(`package P {
       part def Other { part z; }

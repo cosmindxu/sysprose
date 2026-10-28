@@ -546,12 +546,24 @@ export class Model {
     // Also remove dangling EDGES — any element carrying endpoints (KerML
     // Relationships AND endpoint-bearing Usages like ConnectionUsage / Flow /
     // Transition / Succession) that references a removed element.
+    //
+    // A Redefinition whose target goes but whose feature stays is MOVED, not removed, when the target redefined a
+    // feature in turn: the feature then redefines the nearest one that stays, which is where the redefinition rule
+    // lands it on the next parse (`part s : Q2 { attribute :>> M = 5.0; }` over Q2's unnamed `:>> M default = 2.0`,
+    // deleted, redefines Q's `M` — removed with it, the feature saved as `attribute = 5.0;` and the user's `:>> M`
+    // gone).
+    const moved = new Map<ElementId, ElementId[]>();
     for (const r of this.elements.values()) {
       if (toRemove.has(r.id)) continue;
       const refs = [...(r.source ?? []), ...(r.target ?? [])];
-      if (refs.length > 0 && refs.some((ref) => toRemove.has(ref))) toRemove.add(r.id);
+      if (refs.length > 0 && refs.some((ref) => toRemove.has(ref))) {
+        const targets = r.eClass === 'Redefinition' ? this.survivingTargets(r, toRemove) : undefined;
+        if (targets !== undefined) moved.set(r.id, targets);
+        else toRemove.add(r.id);
+      }
     }
     return this.transaction(() => {
+      for (const [rid, target] of moved) this.update(rid, { target });
       const removed: ElementId[] = [];
       for (const rid of toRemove) {
         const rec = this.elements.get(rid);
@@ -564,6 +576,39 @@ export class Model {
       }
       return removed;
     });
+  }
+
+  /**
+   * The targets a Redefinition keeps when `gone` is removed: its own that stay, and for each that goes the nearest
+   * feature it redefines that stays (a breadth-first walk over its Redefinitions). `undefined` when the redefinition
+   * has to go with them: its feature is removed, or a target that goes redefines nothing that stays.
+   */
+  private survivingTargets(r: ElementRecord, gone: ReadonlySet<ElementId>): ElementId[] | undefined {
+    if ((r.source ?? []).some((x) => gone.has(x)) || (r.target ?? []).length === 0) return undefined;
+    const out: ElementId[] = [];
+    for (const t of r.target ?? []) {
+      if (!gone.has(t)) {
+        if (!out.includes(t)) out.push(t);
+        continue;
+      }
+      const seen = new Set<ElementId>([t]);
+      const queue: ElementId[] = [t];
+      let found: ElementId | undefined;
+      for (let i = 0; i < queue.length && found === undefined; i++) {
+        for (const e of this.relationshipsFrom(queue[i]!)) {
+          if (e.eClass !== 'Redefinition') continue;
+          for (const x of e.target ?? []) {
+            if (seen.has(x) || !this.elements.has(x)) continue;
+            seen.add(x);
+            if (gone.has(x)) queue.push(x);
+            else if (found === undefined) found = x;
+          }
+        }
+      }
+      if (found === undefined) return undefined;
+      if (!out.includes(found)) out.push(found);
+    }
+    return out;
   }
 
   /* ─────────────────────────── Index maintenance ──────────────────────── */

@@ -112,6 +112,7 @@ import * as validationApi from '@validation/index';
 import { parseModel, serializeModel, serializeUserModelSignals } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
+  checkConstraints,
   getRequirementAttr,
   requirementShortId,
   statementKindOf,
@@ -1787,6 +1788,70 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
     // One undo step restores the old type.
     st().undo();
     expect(typings(byName('e').id)).toEqual(['Engine']);
+  });
+
+  // The page and the file it saves must read alike. t's `:>> M` redefines Q2's unnamed `:>> M default = 2.0`, which
+  // the text can only write as `:>> M`; once t is no longer a Q2 the next load lands that on another feature, so the
+  // edit moves the page's redefinition there in the same undo step (a retype, a typing deleted or drawn, a delete).
+  describe('an edit that changes what a usage inherits moves its explicit redefinitions where the saved text puts them', () => {
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q3 :> Q { attribute :>> M default = 3.0; }
+  part def Q4 :> Q2 { attribute :>> M default = 4.0; }
+  part t : Q2 { attribute :>> M; }
+  constraint t1 { t.M == 1.0 }
+  constraint t2 { t.M == 2.0 }
+  constraint t3 { t.M == 3.0 }
+  constraint t4 { t.M == 4.0 }
+}`;
+    const reads = (m: Model): string[] =>
+      checkConstraints(m)
+        .filter((c) => c.result === 'satisfied')
+        .map((c) => m.qualifiedName(c.id));
+    /** What the page reads, and what the file it saves reads when it is opened. */
+    const pageAndFile = (): [string[], string[]] => [reads(st().model), reads(parseModel(serializeModel(st().model)).model)];
+
+    it('bindType: a valueless `:>> M` read 2 on the page and 1, 3 or 4 in the reopened file', () => {
+      for (const [to, held] of [['Q4', 'P::t4'], ['Q3', 'P::t3'], ['Q', 'P::t1']] as const) {
+        load(src);
+        expect(reads(st().model)).toEqual(['P::t2']);
+        st().bindType(byName('t').id, to);
+        expect(pageAndFile(), to).toEqual([[held], [held]]);
+        // One undo step brings the old type and the old redefinition back.
+        st().undo();
+        expect(reads(st().model), to).toEqual(['P::t2']);
+      }
+    });
+
+    it('deleting the typing, or the Q2 the usage was typed by, moves it too', () => {
+      load(src);
+      st().deleteElement(st().model.relationshipsFrom(byName('t').id).find((r) => r.eClass === 'FeatureTyping')!.id);
+      // Untyped, the `:>> M` is Q's M (the name the file writes finds): 1, on the page and in the file.
+      expect(pageAndFile()).toEqual([['P::t1'], ['P::t1']]);
+      load(src);
+      st().deleteElement(byName('Q2').id);
+      const [page, file] = pageAndFile();
+      expect(page).toEqual(file);
+    });
+
+    it('a typing drawn from the usage to another type, and a relationship end moved, move it too', () => {
+      load(src);
+      st().connect(byName('t').id, byName('Q4').id, 'FeatureTyping');
+      const [page, file] = pageAndFile();
+      expect(page).toEqual(file);
+      load(src);
+      const typing = st().model.relationshipsFrom(byName('t').id).find((r) => r.eClass === 'FeatureTyping')!.id;
+      st().updateElement(typing, { target: [byName('Q3').id] });
+      expect(pageAndFile()).toEqual([['P::t3'], ['P::t3']]);
+    });
+
+    it('deleting the unnamed feature a redefinition targets leaves the redefinition on the one it redefined', () => {
+      load(src.replace('part t : Q2 { attribute :>> M; }', 'part t : Q2 { attribute :>> M = 5.0; }'));
+      const q2m = st().model.children(byName('Q2').id).find((c) => c.eClass === 'AttributeUsage')!.id;
+      st().deleteElement(q2m);
+      expect(serializeModel(st().model)).toMatch(/part t : Q2 \{\s*attribute :>> M = 5\.0;\s*\}/);
+    });
   });
 
   it('bindType leaves the model alone for an unknown name, and an empty name removes the type', () => {

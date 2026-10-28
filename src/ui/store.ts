@@ -78,6 +78,7 @@ import {
   pasteSubtrees,
   isRelationship,
   isRequirement,
+  isTypingSpecialization,
   type AttrValue,
   type ClipboardPayload,
   type CreateElementOptions,
@@ -101,6 +102,7 @@ import {
   parseModel,
   retractResolvedSpecializationWarnings,
   serializeUserModelSignals,
+  settleRedefinitions,
   resolveConnectorFeatureChains,
   type MeasuredText,
   type ParseDiagnostic,
@@ -3006,7 +3008,12 @@ export const useAppStore = create<AppState>((set, get) => {
       const typed = 'source' in patch || 'target' in patch ? null : typedTextFirst([id]);
       if (typed === 'applied') return get().updateElement(id, patch);
       pushUndo();
-      model.update(id, patch);
+      const specialized = isTypingSpecialization(el.eClass) ? [...(el.source ?? [])] : [];
+      model.transaction(() => {
+        model.update(id, patch);
+        // A relationship's end moved: what its source inherits changed.
+        if (specialized.length > 0) for (const x of [...specialized, ...(model.get(id)?.source ?? [])]) settleRedefinitions(model, x);
+      });
       afterMutation(typed === 'kept');
     },
 
@@ -3040,6 +3047,8 @@ export const useAppStore = create<AppState>((set, get) => {
         model.transaction(() => {
           for (const t of typings) model.remove(t.id);
           if (targetId) model.create('FeatureTyping', { ownerId: id, source: [id], target: [targetId] });
+          // What the usage inherits changed: its explicit redefinitions land where the saved text puts them.
+          settleRedefinitions(model, id);
         }),
       );
       afterMutation(typed === 'kept');
@@ -3243,8 +3252,19 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model } = get();
       if (!model.has(id)) return;
       pushUndo();
+      // The elements that lose a typing, specialization or subsetting with this one: their redefinitions follow.
+      const generalsLost = new Set<ElementId>();
+      for (const g of [model.get(id)!, ...model.descendants(id)]) {
+        if (isTypingSpecialization(g.eClass)) for (const x of g.source ?? []) generalsLost.add(x);
+        for (const r of model.relationshipsTo(g.id)) {
+          if (isTypingSpecialization(r.eClass)) for (const x of r.source ?? []) generalsLost.add(x);
+        }
+      }
       const removed = model.remove(id);
       const removedSet = new Set(removed);
+      model.transaction(() => {
+        for (const x of generalsLost) if (model.has(x)) settleRedefinitions(model, x);
+      });
       set((s) => {
         const selectionIds = s.selectionIds.filter((x) => !removedSet.has(x));
         const selectionId =
@@ -3395,6 +3415,8 @@ export const useAppStore = create<AppState>((set, get) => {
         source: [sourceId],
         target: [targetId],
       });
+      // A typing or specialization drawn: what its source inherits changed.
+      if (isTypingSpecialization(kind)) settleRedefinitions(model, sourceId);
       set(singleSel(edge.id));
       afterMutation();
       if (placed.refused) sayNotIntoLibrary('new');

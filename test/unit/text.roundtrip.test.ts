@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildSampleModel, Model, ModelFactory, type ElementRecord } from '@core/index';
-import { parseModel, serializeModel } from '@text/index';
+import { parseModel, serializeModel, settleRedefinitions } from '@text/index';
 import { validate } from '@validation/index';
 import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError, checkConstraints, effectiveNameOf } from '@semantics/index';
 import { parseDocument } from '@text/langium/module';
@@ -738,9 +738,25 @@ describe('serializer — the reference form the resolver agrees with', () => {
   part def Z { attribute M default = 7.0; }
   part s : Q2 { attribute :>> M = 5.0; }
   constraint s5 { s.M == 5.0 }
+  part t : Q2 { attribute :>> M; }
+  constraint t1 { t.M == 1.0 }
+  constraint t2 { t.M == 2.0 }
+  constraint t3 { t.M == 3.0 }
+  constraint t4 { t.M == 4.0 }
 }`;
     const s5 = (m: Model): string | undefined =>
       checkConstraints(m).find((c) => m.qualifiedName(c.id) === 'P::s5')?.result;
+    // t has no value of its own: what it reads is the feature its `:>> M` redefines, so the page and the reopened
+    // file agree only if the page's redefinition moved to where the saved text puts it (`settleRedefinitions`, which
+    // `bindType` runs in the same undo step).
+    const reads = (m: Model): Record<string, string | undefined> =>
+      Object.fromEntries(
+        checkConstraints(m)
+          .filter((c) => /^P::t\d$/.test(m.qualifiedName(c.id)))
+          .map((c) => [m.qualifiedName(c.id).replace('P::', ''), c.result]),
+      );
+    const satisfied = (m: Model): string[] =>
+      Object.entries(reads(m)).filter(([, r]) => r === 'satisfied').map(([k]) => k);
     for (const [to, written, lands] of [
       ['Q4', ':>> M', 'P::Q4'],
       ['Q3', ':>> M', 'P::Q3'],
@@ -751,8 +767,11 @@ describe('serializer — the reference form the resolver agrees with', () => {
     ] as const) {
       const m = parseModel(src).model;
       const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
-      for (const t of m.relationshipsFrom(id('s')).filter((r) => r.eClass === 'FeatureTyping')) m.remove(t.id);
-      m.create('FeatureTyping', { ownerId: id('s'), source: [id('s')], target: [id(to)] });
+      for (const owner of ['s', 't']) {
+        for (const t of m.relationshipsFrom(id(owner)).filter((r) => r.eClass === 'FeatureTyping')) m.remove(t.id);
+        m.create('FeatureTyping', { ownerId: id(owner), source: [id(owner)], target: [id(to)] });
+        settleRedefinitions(m, id(owner));
+      }
       const text = serializeModel(m);
       expect(text, to).toContain(`part s : ${to} {\n        attribute ${written} = 5.0;`);
       const reopened = parseModel(text).model;
@@ -761,7 +780,41 @@ describe('serializer — the reference form the resolver agrees with', () => {
       const red = reopened.children(f.id).find((c) => c.eClass === 'Redefinition')!;
       expect(reopened.get((red.target ?? [])[0])!.ownerId, to).toBe(reopened.all().find((e) => reopened.qualifiedName(e.id) === lands)!.id);
       expect([s5(m), s5(reopened)], to).toEqual(['satisfied', 'satisfied']);
+      // The page reads what the saved file reads for t: Q4's 4, Q3's 3, Q's 1 (the retyped t redefines Q's M,
+      // which no feature of Z's line replaces), where it read Q2's 2 on the page and the file's value beside it.
+      expect(reads(m), to).toEqual(reads(reopened));
+      if (to !== 'Z') expect(satisfied(m), to).toEqual([{ Q4: 't4', Q3: 't3', Q: 't1' }[to]]);
     }
+  });
+
+  // The Explorer's Delete removes the element and every edge that referenced it. s's `:>> M = 5.0` redefines Q2's
+  // unnamed `:>> M default = 2.0`; with that deleted the cascade removed s's Redefinition as a dangling edge, and Save
+  // wrote `attribute = 5.0;` — the user's `:>> M` gone and s5 violated. It redefines Q's M now, as the text says.
+  it('keeps a redefinition when the unnamed feature it redefines is deleted', () => {
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part s : Q2 { attribute :>> M = 5.0; }
+  part v : R { attribute :>> M = 5.0; }
+  constraint s5 { s.M == 5.0 }
+  constraint v5 { v.M == 5.0 }
+}`;
+    const verdicts = (m: Model): Record<string, string | undefined> =>
+      Object.fromEntries(checkConstraints(m).map((c) => [m.qualifiedName(c.id), c.result]));
+    const m = parseModel(src).model;
+    expect(verdicts(m)).toEqual({ 'P::s5': 'satisfied', 'P::v5': 'satisfied' });
+    for (const owner of ['Q2', 'R']) {
+      const def = m.all().find((e) => e.declaredName === owner)!;
+      const removed = m.remove(m.children(def.id).find((c) => c.eClass === 'AttributeUsage')!.id);
+      // The feature and its own Redefinition; the one from s or v moved.
+      expect(removed, owner).toHaveLength(2);
+    }
+    const text = serializeModel(m);
+    expect(text).toMatch(/part s : Q2 \{\s*attribute :>> M = 5\.0;\s*\}/);
+    expect(text).toMatch(/part v : R \{\s*attribute :>> M = 5\.0;\s*\}/);
+    expect(verdicts(m)).toEqual({ 'P::s5': 'satisfied', 'P::v5': 'satisfied' });
+    expect(verdicts(parseModel(text).model)).toEqual({ 'P::s5': 'satisfied', 'P::v5': 'satisfied' });
   });
 
   it('still qualifies a reference the simple name would not reach', () => {

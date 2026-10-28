@@ -46,7 +46,7 @@ import {
   type Model,
 } from '@core/index';
 import { generalizationsWithImplicit } from './featuring';
-import { redefinedBy, redefinedClosure } from './inheritance';
+import { effectiveNameOf, mostSpecificOwned, ownFeatures, redefinedClosure } from './inheritance';
 import { resolveName } from './resolve-names';
 
 /** Options for {@link resolveFullName}. */
@@ -250,16 +250,21 @@ export function resolveRedefinedFeature(
  *
  * Only the ONE most specific: where two general types each redefine it and
  * neither the other (`part q : Q2, Q3`, or `part def Q23 :> Q2, Q3`), neither
- * is, and `anchor` is kept, as the end copy keeps it (MI1, MI3). An `anchor`
- * the general types do not own (an imported one) is kept as found.
+ * is, and `anchor` is kept, as the end copy keeps it (MI1, MI3) — unless one
+ * of the features is owned by a type that specialises the owners of all the
+ * others (`part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }`, whose own `M`
+ * is what a Q23 has for M, as `t.M` reads it in `part t : Q23`): that one is
+ * ({@link mostSpecificOwned}). An `anchor` the general types do not own (an
+ * imported one) is kept as found.
  *
  * `anchor` is kept too where the one most specific feature would make TWO
  * features one ({@link joinsTwo}): Q2's `attribute X :>> M, N` would take both
  * `:>> M = 1.0` and `:>> N = 2.0` of `part s : Q2`, and the SMT engine read
  * X's two values as inconsistent axioms beside a check that refuted `s.N ==
  * 2.0` (MU); `attribute :>> M = 5.0` would take the name M2 beside `attribute
- * M2 = 9.0` in the same `part v : R` (CL). Each keeps the feature its name
- * finds, as before, which every surface reads alike.
+ * M2 = 9.0` in the same `part v : R` (CL), or beside a `:>> K` that takes the
+ * name M2 as well in `part v : R, S`, or beside an M2 of S's own. Each keeps
+ * the feature its name finds, as before, which every surface reads alike.
  */
 function mostSpecificRedefining(
   model: Model,
@@ -297,7 +302,8 @@ function mostSpecificRedefining(
     redefinersOf(model, h.id, (x) => (redefined = hitIds.has(x)));
     return !redefined;
   });
-  return most.length === 1 && !joinsTwo(model, anchor, most[0], featureId) ? most[0] : anchor;
+  const one = mostSpecificOwned(model, most);
+  return one !== undefined && !joinsTwo(model, owners, anchor, one, featureId) ? one : anchor;
 }
 
 /**
@@ -324,7 +330,7 @@ function redefinersOf(model: Model, id: ElementId, stop?: (found: ElementId) => 
 
 /**
  * Would redefining `hit`, the most specific feature for `anchor`, make two
- * features one? Either:
+ * features one, or put one name on two? Either:
  *
  *  - `hit` MERGES: it also redefines a feature outside `anchor`'s line (Q2's
  *    `attribute X :>> M, N`, found from M, redefines N too), so a usage's
@@ -332,16 +338,30 @@ function redefinersOf(model: Model, id: ElementId, stop?: (found: ElementId) => 
  *  - the redefining feature's owner already has a feature of that line: one
  *    declared under a name `hit` or what it redefines bears (`attribute M2 =
  *    9.0` beside `attribute :>> M = 5.0`, when `hit` is R's `M2 redefines M`),
- *    or one that redefines a feature of the line (`attribute :>> M2 = 9.0`
- *    there, or a second `:>> M`).
+ *    or one whose own line meets it, through what it redefines or what
+ *    redefines that (`attribute :>> M2 = 9.0` there, a second `:>> M`, or a
+ *    `:>> K` in `part v : R, S` whose S has `M2 redefines K`, which would take
+ *    the name M2 as well); or
+ *  - `hit` would RENAME the feature (`M2 redefines M`: `v`'s `:>> M` is then
+ *    known as M2), and the owner inherits another feature of that name off the
+ *    line (S's own `M2 default = 7.0` in `part v : R, S`): `v.M2` read the one
+ *    of v's own and masked S's, where the name stood ambiguous.
  *
- * Order-independent, so the mapper's rounds settle: an owner's other feature
- * is judged by its declared name and by what it redefines, and whatever it
- * redefines lies in the line either way. Implicit end copies are left out:
- * the mapper makes them after its rounds, so the serializer's re-parse test
- * must not see them either.
+ * Order-independent, so the mapper's rounds settle: a sibling is judged by its
+ * declared name and by the line its redefinitions lie in (what they redefine,
+ * and everything of the general types' that redefines that), never by the
+ * feature it has taken this round — that is `hit` or `anchor`, one line
+ * either way, and judging by it let two siblings each give way to the other
+ * and take it back. Implicit end copies are left out: the mapper makes them
+ * after its rounds, so the serializer's re-parse test must not see them either.
  */
-function joinsTwo(model: Model, anchor: ElementRecord, hit: ElementRecord, featureId: ElementId): boolean {
+function joinsTwo(
+  model: Model,
+  owners: ReadonlySet<ElementId>,
+  anchor: ElementRecord,
+  hit: ElementRecord,
+  featureId: ElementId,
+): boolean {
   const above = redefinedClosure(model, hit);
   const anchorLine = new Set<ElementId>([anchor.id, ...redefinedClosure(model, anchor).map((g) => g.id)]);
   // A feature `hit` redefines is on the line when it is `anchor` or below it, or redefines `anchor` itself.
@@ -349,15 +369,49 @@ function joinsTwo(model: Model, anchor: ElementRecord, hit: ElementRecord, featu
   if (above.some((g) => !anchorLine.has(g.id) && !redefinersOfAnchor.has(g.id))) return true;
   const ownerId = model.get(featureId)?.ownerId ?? null;
   if (ownerId === null) return false;
-  const line = new Set<ElementId>([hit.id, ...above.map((g) => g.id)]);
-  const names = new Set<string>([hit, ...above].flatMap((g) => (g.declaredName !== undefined ? [g.declaredName] : [])));
-  const redefinersOfHit = redefinersOf(model, hit.id);
+  const line = [hit, ...above];
+  const names = new Set<string>(line.flatMap((g) => (g.declaredName !== undefined ? [g.declaredName] : [])));
+  // Every feature of the general types that bears one of those names, with what each redefines: a sibling that
+  // redefines any of them lies in a line the hit's meets (at a feature the one redefines or is, the other the same).
+  const reach = new Set<ElementId>();
+  for (const id of owners) {
+    for (const f of ownFeatures(model, id)) {
+      if (f.declaredName === undefined || !names.has(f.declaredName)) continue;
+      reach.add(f.id);
+      for (const g of redefinedClosure(model, f)) reach.add(g.id);
+    }
+  }
+  for (const g of line) {
+    reach.add(g.id);
+    for (const u of redefinedClosure(model, g)) reach.add(u.id);
+  }
+  const renamed = effectiveNameOf(model, hit);
+  if (renamed !== undefined && renamed !== effectiveNameOf(model, anchor)) {
+    const onLine = new Set<ElementId>([...line.map((g) => g.id), ...anchorLine, ...redefinersOfAnchor]);
+    for (const id of owners) {
+      if (ownFeatures(model, id).some((f) => !onLine.has(f.id) && effectiveNameOf(model, f) === renamed)) return true;
+    }
+  }
+  // A sibling whose line meets the hit's redefines (through any number of redefinitions) a feature in `reach`, or
+  // one that does: asked of the redefiners of `reach`, whose few edges are looked up, never of each of the usage's
+  // features in turn.
+  const queue = [...reach];
+  const seen = new Set<ElementId>(reach);
+  while (queue.length > 0) {
+    for (const r of model.relationshipsTo(queue.pop()!)) {
+      if (r.eClass !== 'Redefinition') continue;
+      for (const x of r.source ?? []) {
+        if (seen.has(x)) continue;
+        seen.add(x);
+        queue.push(x);
+        const f = model.get(x);
+        if (f && f.ownerId === ownerId && f.id !== featureId && f.attrs.implicit !== true) return true;
+      }
+    }
+  }
+  // A sibling declared under one of those names.
   return model.children(ownerId).some(
-    (sib) =>
-      sib.id !== featureId &&
-      sib.attrs.implicit !== true &&
-      ((sib.declaredName !== undefined && names.has(sib.declaredName)) ||
-        redefinedBy(model, sib).some((t) => line.has(t.id) || redefinersOfHit.has(t.id))),
+    (sib) => sib.id !== featureId && sib.attrs.implicit !== true && sib.declaredName !== undefined && names.has(sib.declaredName),
   );
 }
 

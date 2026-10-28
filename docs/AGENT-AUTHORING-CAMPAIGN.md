@@ -962,10 +962,14 @@ point, after the whole file is mapped, with the shared `resolveFullName`
    (the generals of the owning type first). `part w :>> w;` used to build a
    Redefinition from a feature to ITSELF. A simple name lands on the MOST
    SPECIFIC feature the owning type inherits for it, as the copy a binding
-   makes does: in `part s : Q2 { attribute :>> M; }`, Q2's unnamed `:>> M
-   default = 2.0` over Q's `M`, not Q's `M`, whose 1 every surface then read
-   for `s.M` (pinned by `semantics.bind.test.ts` and the `redef-target-*` rows
-   of the four-surface table).
+   makes does: in `part s : Q2 { attribute :>> M; }`, `:>> M` redefines Q2's
+   unnamed `:>> M default = 2.0` over Q's `M`, not Q's `M`, whose 1 every
+   surface used to read for `s.M` (pinned by `semantics.bind.test.ts` and the
+   `redef-target-*` rows of the four-surface table). Where several features
+   are most specific, the one a type below the others' owners declares is
+   (`part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }`); otherwise, and where
+   the feature would make two of the usage's features one or give two one
+   name, the feature the name finds stays.
 5. `L3-unresolved-redefinition` — the mirror of (4): `unresolved-type-ref`
    resolves from the element's own scope now, and no longer accepts a library
    FEATURE matched by last segment, so a dangling `:>> w` stops being masked by
@@ -1006,10 +1010,14 @@ So a binding reached by import or inheritance re-emits as the simple name the
 author wrote (`part w : Widget;`, not `part w : Lib::Widget;`; `part w :>> w;`,
 not `part w :>> P::Base::w;`). A redefinition whose target declares no name
 (`attribute :>> M;` over Q2's unnamed `:>> M`) is written by the name the rule
-finds it by, where the base wrote `attribute;` and dropped the redefinition;
+finds it by, where Save used to write `attribute;` and drop the redefinition;
 after an edit retypes the owner, by the named feature the target redefines
 where the rule still lands in the same line, else by that feature's qualified
 name (`redefinitionRef`; pinned by the retype case in `text.roundtrip.test.ts`).
+The editor moves the redefinition itself the same way when an edit changes what
+its owner inherits (a retype, a typing drawn or deleted, `settleRedefinitions`),
+and when the feature it redefines is deleted (`Model.remove`, to the nearest
+feature that stays), so the page reads what the saved file reads.
 The UI keeps the last parse result and retracts
 the warnings the library binder resolved, so the Problems panel and `checkText`
 finally agree — and forgets it on every path that replaces the model without
