@@ -220,6 +220,37 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
     }
   });
 
+  // The parse that made a file never meets the implicit end copies a definition-level `bind` makes, so an explicit
+  // `:>>` is no candidate for them: a settle that landed it on one left the page reading what the file did not (the
+  // re-review's landcopy and defmin probes). The copy itself, an implicit feature, is placed by its own rule.
+  it('lands an explicit :>> on no implicit end copy a definition-level bind made', () => {
+    const { model, id } = parsed(`package P {
+      part def L0 { attribute load default = 11.0; }
+      part def Q { attribute L; part p : L0; }
+      part def Q2 :> Q { attribute :>> L = 15.0; }
+      part def Q3 :> Q2 { bind p.load = L; }
+      part r1 : Q3 { attribute :>> L; }
+      part def E1 { attribute M default = 11.0; }
+      part def D1 :> E1 { attribute :>> M default = 14.0; }
+      part def D2 :> E1 { attribute Zd2; bind Zd2 = M; }
+      part u0 : D1, D2 { attribute :>> M; }
+    }`);
+    // Q3 and D2 do hold an implicit copy named so, which a name lookup in them finds first.
+    const copy = (owner: string, name: string) => model.children(id(owner)).find((c) => c.declaredName === name && c.attrs.implicit === true);
+    expect(copy('Q3', 'L')).toBeDefined();
+    expect(copy('D2', 'M')).toBeDefined();
+    const own = (owner: string) => model.children(id(owner)).find((c) => c.eClass === 'AttributeUsage' && c.attrs.implicit !== true && c.declaredName === undefined)!;
+    const land = (usage: string, name: string) => resolveRedefinedFeature(model, name, own(usage).id, id(usage))!;
+    // r1 : Q3 lands on Q2's unnamed `:>> L`, where Q3's copy would be the most specific.
+    expect(land('r1', 'L').id).toBe(own('Q2').id);
+    // u0 : D1, D2 lands on D1's `:>> M`; D2's copy named M is the feature of E1's M it redefines, to the parse.
+    expect(land('u0', 'M').id).toBe(own('D1').id);
+    // The parse and the resolver agree (the Redefinition the mapper made holds the same answer).
+    const redefined = (usage: string) => model.children(own(usage).id).find((c) => c.eClass === 'Redefinition')!.target;
+    expect(redefined('r1')).toEqual([own('Q2').id]);
+    expect(redefined('u0')).toEqual([own('D1').id]);
+  });
+
   // Two of a usage's features must not take one NAME either: v's `:>> M` and `:>> K` each have a most specific
   // feature named M2 (R's, S's), so both would be v's M2, and the SMT engine merged them into one symbol while the
   // other surfaces read the first by text order (p2s, p2sr). A sibling is judged by the names of the line it lies in,

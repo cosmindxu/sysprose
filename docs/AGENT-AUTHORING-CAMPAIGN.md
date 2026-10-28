@@ -1040,21 +1040,39 @@ to move. The implicit end copy a usage-body binding makes of an inherited featur
 the feature the mapper gives it then (`findTypeFeature`, `endCopyProto` in
 `bind.ts`); the settle moves the existing copy there in place (`endCopyLanding`),
 never removing it, since the binding holds it, and the same test draws such
-bindings and compares the copies the page and its file both hold. What it does
-not reach: two features of one owner under one name (declared, or the one an
-unnamed `:>> M` is known by), a name typed key by key into the Name box (each
-prefix is an edit, and a prefix another feature bears moves the redirect for
-good), and a `window.sysml` call that points a redefinition at a feature no name
-in its scope reaches. A sibling renamed into the name a `:>> M` is known by moves it back to
+bindings (in a usage and in a part definition) and compares the copies the page
+and its file both hold, a copy a definition's binding makes over a general
+definition's copy aside (the mapper lands it by text order). An explicit `:>>`
+is resolved as the parse that wrote the file resolves it, which never meets an
+implicit copy (`resolveRedefinedFeature`). The settle goes on until a round moves
+nothing (a chain of nested redefinitions, or of the hop copies of `bind
+y = n1.n2.n3.n4.x`, takes a round per hop). What it does not reach: two features
+of one owner under one name (declared, or the one an unnamed `:>> M` is known
+by), a name typed key by key into the Name box (each prefix is an edit, and a
+prefix another feature bears moves the redirect for good), and a `window.sysml`
+call that points a redefinition at a feature no name in its scope reaches; and
+six more, each a residual of the end copies and of the routes, listed in the
+user guide: (a) a copy whose name nothing its owner inherits any more stays on
+the feature it redefined, where the saved file has `bind p.load = L` with `L`
+unresolved; (b) a REST commit is settled only for the delete of a Redefinition
+target, not for a FeatureTyping or Specialization deleted or retargeted; (c) a
+delete through `window.sysml.model`, a peer or REST lands the explicit
+redefinitions but leaves a copy where `Model.remove`'s walk put it; (d) deleting
+the feature a part definition's `bind` ends on leaves the copies of that binding
+in the page; (e) renaming the feature a copy redefines leaves the copy under its
+old name; (f) a cycle of redefinitions leaves a self-redefinition when a member
+is deleted. A sibling renamed into the name a `:>> M` is known by moves it back to
 the base feature, as the file with both keeps them apart; one the text was loaded
-with stays as written. A removal is followed on the model itself: when the
-feature a redefinition targets is deleted, a removal planner
-(`Model.addRemovalPlanner`, `followRedefinitionRemovals`) lands it on the feature
-the name it is written by finds now (`redefinitionsToRetarget`,
-`retargetRedefinitions`), whoever deletes — a command, `window.sysml` or a peer's
-edit on the model on screen, or a `POST /projects/{id}/commits` delete, whose
-working copy of the repository's head has the planner too (the page's model is
-not touched by a REST commit). `Model.remove`'s walk up the removed target's
+with stays as written. A removal of a redefinition's target is followed on the model itself:
+a removal planner (`Model.addRemovalPlanner`, `followRedefinitionRemovals`) lands
+the explicit redefinition on the feature the name it is written by finds now
+(`redefinitionsToRetarget`, `retargetRedefinitions`), whoever deletes — a
+command, `window.sysml` or a peer's edit on the model on screen, or a `POST
+/projects/{id}/commits` delete, whose working copy of the repository's head has
+the planner too (the page's model is not touched by a REST commit). That is all
+the planner does: the implicit copies are landed by the settle of a command or
+an SDK call only, and a REST commit settles no other change (a typing or
+specialization deleted or retargeted). `Model.remove`'s walk up the removed target's
 redefinitions to the nearest feature that stays is the fallback for a model nobody
 watches (the command line), and that walk can skip a level the name does not. One whose target keeps no name to write goes, as Save writes the feature
 without it.

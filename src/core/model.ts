@@ -170,7 +170,8 @@ export class Model {
    * Have `planner` follow every {@link remove} of this model: whoever removes from it (a command, the SDK, a peer's
    * edit; a REST commit's working copy has its own) gets what the planner does after the removal, in the removal's
    * own notification. For what the model cannot decide itself: where a redefinition goes when its target does (the
-   * name its text is saved by, `src/text`), which is no business of `src/core`.
+   * name its text is saved by, `src/text`), which is no business of `src/core`. The planner of `src/text` plans that
+   * for the explicit redefinitions only (an implicit end copy stays where {@link remove} puts it).
    */
   addRemovalPlanner(planner: RemovalPlanner): () => void {
     this.removalPlanners.add(planner);
@@ -609,8 +610,9 @@ export class Model {
     // redefinitions of the target, and the redefinition rule lands on the MOST SPECIFIC feature the text's name finds,
     // which skips a level the walk takes (Q4's `M4 redefines Q::M` beside Q2's `:>> M`: the walk lands on Q's `M`, the
     // name `M` on Q2's). A model the app edits has a removal planner (`addRemovalPlanner`) that re-resolves by the
-    // name the saved text writes (`retargetRedefinitions`), so a delete in the app, through the SDK or in a REST
-    // commit, and the same delete in the text agree.
+    // name the saved text writes (`retargetRedefinitions`), so for the explicit redefinitions a delete in the app, through
+    // the SDK, from a peer or in a REST commit, and the same delete in the text agree. It lands no implicit end copy: that
+    // is the store's settle (a command, an SDK call), so a copy stays where this walk puts it for any other route.
     const moved = new Map<ElementId, ElementId[]>();
     for (const r of this.elements.values()) {
       if (toRemove.has(r.id)) continue;

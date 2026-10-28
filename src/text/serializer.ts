@@ -1441,7 +1441,9 @@ function lineNames(model: Model, targetId: ElementId): ReadonlySet<string> {
  * copy off Q2's `:>> L` and onto Q's `L`, and a retype back onto Q2's again. A copy of a name no feature the usage
  * inherits bears (an unnamed `:>> M` is known by it), and a copy in a copy (a hop of a chain, `p` of `p.load`),
  * redefine the feature its owner's types have for the name. `undefined` where the copy stays: where it already is on
- * that feature, or where the next parse would make none (nothing its owner inherits is known by the name).
+ * that feature, or where the next parse would make none (nothing its owner inherits is known by the name): the page
+ * then proves through a copy the saved file does not make, which the Problems panel reports as an unresolved name once
+ * the file is opened again (docs/USER-GUIDE.md, the cases not followed).
  */
 function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): ElementId | undefined {
   const owner = copy.ownerId === null ? undefined : model.get(copy.ownerId);
@@ -1456,6 +1458,9 @@ function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): Ele
   }
   return proto && proto.id !== from && proto.id !== copy.id ? proto.id : undefined;
 }
+
+/** The most rounds {@link settleRedefinitions} makes: it stops at the first that moves nothing, so this only ends a cycle. */
+const MAX_SETTLE_ROUNDS = 64;
 
 /**
  * Move the redefinitions in `changed` (types, or usages: the owners of the features that redefine) and in
@@ -1472,7 +1477,9 @@ function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): Ele
  * Only the redefinitions OWNED by a changed type are asked (a nested one resolves through the target its parent's
  * `part :>> p` has taken, so a parent that moved asks its own children in the next round), and every move of a
  * round is decided before any is made, as the mapper's rounds decide: a sibling is read against the model of the
- * round before it. Four rounds settle a chain the text would take rounds over too.
+ * round before it. A chain of nested redefinitions, or of the copies of a `bind p1.p2.p3.p4.x = ...`, takes a round
+ * per hop, so the rounds go on until one moves nothing ({@link MAX_SETTLE_ROUNDS} is a guard against a cycle of moves,
+ * not the depth that is settled).
  *
  * `touched` are the features the edit changed ({@link redefinitionsDirtiedBy}): where one of them now bears a name
  * on a redefined feature's line, the redefinition goes back to the base feature the load of its base name would
@@ -1497,7 +1504,7 @@ export function settleRedefinitions(
   let shallow: ElementId[] = names === undefined ? [] : first;
   let filter: ReadonlySet<string> | undefined = names;
   let moved = 0;
-  for (let round = 0; round < 4 && deep.length + shallow.length > 0; round++) {
+  for (let round = 0; round < MAX_SETTLE_ROUNDS && deep.length + shallow.length > 0; round++) {
     const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId }> = [];
     const lines = new Map<ElementId, ReadonlySet<string>>();
     const ask = (typeId: ElementId, only: ReadonlySet<string> | undefined): void => {
@@ -1638,8 +1645,10 @@ export function retargetRedefinitions(model: Model, listed: readonly Redefinitio
  * target goes land on the feature the name they are saved by finds now ({@link redefinitionsToRetarget},
  * {@link retargetRedefinitions}), where `Model.remove`'s walk up the removed target's redefinitions would skip a
  * level. For a model somebody removes from: the editor's model on screen (a command, the SDK, a peer's edit), the
- * working copy of a REST commit. A failure leaves the removal as `Model.remove` walks it: a model may differ from
- * its file, not lose the delete. Returns the call that stops following.
+ * working copy of a REST commit. Only the EXPLICIT redefinitions whose target goes are landed: an implicit end copy
+ * stays where `Model.remove` put it (the store's settle moves it, for a command and an SDK call), and a typing or
+ * specialization removed or retargeted is settled by nothing here. A failure leaves the removal as `Model.remove`
+ * walks it: a model may differ from its file, not lose the delete. Returns the call that stops following.
  */
 export function followRedefinitionRemovals(model: Model): () => void {
   return model.addRemovalPlanner((going) => {

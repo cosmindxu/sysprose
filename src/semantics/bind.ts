@@ -215,6 +215,11 @@ export function resolveRedefinedFeature(
   const rest = segs.slice(1);
   const owningType = model.get(featureId)?.ownerId ?? null;
 
+  // An EXPLICIT `:>>` is read as the parse that made its file read it, and that parse never meets the implicit end
+  // copies a definition-level `bind` makes (`part def Q3 :> Q2 { bind p.load = L; }` gives Q3 a valueless `L`): they
+  // are no candidates for it, or one edit would land `part r1 : Q3 { attribute :>> L; }` on Q3's copy where the file
+  // lands it on Q2's `:>> L`. An implicit end copy itself is placed by the editor's own rule (`endCopyProto`).
+  const explicit = model.get(featureId)?.attrs.implicit !== true;
   if (owningType !== null) {
     // Explicit generals first — including the FeatureTyping targets of a usage
     // owner, so `part c : Engine { part p :>> port1; }` finds Engine's feature —
@@ -224,16 +229,36 @@ export function resolveRedefinedFeature(
     for (const general of ordered) {
       if (seen.has(general.id)) continue;
       seen.add(general.id);
-      const anchor = resolveName(model, general.id, head);
+      let anchor = resolveName(model, general.id, head);
+      if (anchor && explicit && anchor.attrs.implicit === true) anchor = resolveWithoutCopies(model, general.id, head);
       if (!anchor) continue;
       // A qualified or dotted name (`:>> Q::M`) says which feature it means.
       const hit =
-        rest.length === 0 ? mostSpecificRedefining(model, ordered, anchor, featureId) : descendFrom(model, anchor, rest);
-      if (hit && hit.id !== featureId) return hit;
+        rest.length === 0
+          ? mostSpecificRedefining(model, ordered, anchor, featureId, explicit)
+          : descendFrom(model, anchor, rest);
+      if (hit && hit.id !== featureId && !(explicit && hit.attrs.implicit === true)) return hit;
     }
   }
 
-  return resolveFullName(model, ref, scopeId, { exclude: featureId });
+  return resolveFullName(model, ref, scopeId, {
+    exclude: featureId,
+    ...(explicit ? { accept: (el: ElementRecord) => el.attrs.implicit !== true } : {}),
+  });
+}
+
+/**
+ * What `resolveName` finds for `head` in `general` when the implicit end copies are left out, as the parse meets it: the
+ * first member named so that is no copy, in `general` and then in each type it specialises, nearest first. A copy the
+ * name finds first is not the answer, nor the feature it redefines: a type further along the line may own one of the
+ * name (`D2`'s new `N2`, past `D3`'s copy of `D1`'s, for a `D4 :> D3, D2`).
+ */
+function resolveWithoutCopies(model: Model, general: ElementId, head: string): ElementRecord | undefined {
+  for (const g of [general, ...generalizationsWithImplicit(model, general).map((x) => x.id)]) {
+    const hit = model.children(g).find((c) => !isRelationship(c.eClass) && c.attrs.implicit !== true && named(c, head) && (g === general || c.attrs.visibility !== 'private'));
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 /** The types whose features `:>>` is read against in `owningType`: its explicit generals, then the full closure. */
@@ -291,12 +316,15 @@ export function sharesLineWithSibling(
  * M2 = 9.0` in the same `part v : R` (CL), or beside a `:>> K` that takes the
  * name M2 as well in `part v : R, S`, or beside an M2 of S's own. Each keeps
  * the feature its name finds, as before, which every surface reads alike.
+ *
+ * With `explicit` (the redefining feature is one the text writes), the implicit end copies of a `bind` are no hit.
  */
 function mostSpecificRedefining(
   model: Model,
   generals: readonly ElementRecord[],
   anchor: ElementRecord,
   featureId: ElementId,
+  explicit = false,
 ): ElementRecord {
   const owners = new Set<ElementId>();
   for (const g of generals) owners.add(g.id);
@@ -312,6 +340,8 @@ function mostSpecificRedefining(
       seen.add(id);
       const f = model.get(id);
       if (!f || f.ownerId === null || !owners.has(f.ownerId)) continue;
+      // An explicit `:>>` meets no implicit end copy ({@link resolveRedefinedFeature}), nor a line through one.
+      if (explicit && f.attrs.implicit === true) continue;
       queue.push(f);
       hits.push(f);
     }

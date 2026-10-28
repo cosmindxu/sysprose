@@ -1014,8 +1014,9 @@ step as the edit, and the page reads what the file it saves reads: the Type fiel
 a line drawn or deleted, a feature renamed, dragged in the Explorer, added, pasted
 or deleted, with the Delete key, the ✕ button or `window.sysml` alike (an edit through
 `window.sysml` is settled the same, and has no Undo step of its own; a call on
-`window.sysml.model` itself is followed only when it removes, which lands the redefinitions
-as a delete in the app does). `t`'s `:>> M` in `part t : Q2`, retyped to Q, is Q's M, which
+`window.sysml.model` itself, a peer's removal and a change committed through the REST API are
+followed only when they remove a feature some `:>>` targets, which lands that `:>>` as a delete
+in the app does, and settle nothing else: see the cases below that are not followed). `t`'s `:>> M` in `part t : Q2`, retyped to Q, is Q's M, which
 Save writes `:>> M` and the next open lands on; deleting Q2's `:>> M` leaves it on
 the feature that name finds now. A feature renamed to the name a `:>> M` is known
 by (`attribute M2 = 9.0;` beside the `:>> M` that took R's M2) moves that `:>> M`
@@ -1031,8 +1032,9 @@ The implicit copy a binding in a usage makes of an inherited feature (`part r : 
 bind p.load = L; }` makes r an `L`) is not written to the file: the next open makes it
 anew, on the feature `L` finds in r then. It is settled with the `:>>`s, in the same
 step: retyped to Q, r's copy of `L` leaves Q2's `:>> L = 50.0` for Q's `L`, and a
-retype back puts it on Q2's, so `r.p.load` reads the value the saved file reads. The
-copy is moved where it stands, not made again: the binding stays on it.
+retype back puts it on Q2's, so `r.p.load` reads the value the saved file reads, as long as
+something r's types hold still bears the name `L`. The copy is moved where it stands, not made
+again: the binding stays on it.
 
 Three things stay outside this. A rename that gives two features of one owner one
 name, the declared one or the one an unnamed `:>> M` is known by (the Problems panel
@@ -1044,6 +1046,27 @@ Save writes it by its path (`:>> P::Q::M`), where the same final names written b
 would not; a name pasted whole is one edit. And a `window.sysml` call that points a
 redefinition at a feature no name in its scope reaches (one in a nested unnamed part):
 the saved file puts it on another.
+
+Six more cases are not followed, and in each the page can read what the saved file does not:
+
+- An implicit copy whose name nothing its owner inherits bears any more (`r` retyped to a type
+  without `L`, or `L` deleted or renamed) stays on the feature it redefined. The page keeps
+  proving through it, while the saved file reads `bind p.load = L;` with `L` unresolved (the
+  file, opened again, reports `ref/unresolved-reference`).
+- A change committed through `POST /projects/{id}/commits` is settled only when it deletes a
+  feature a `:>>` targets. A commit that deletes or retargets a typing or a specialization
+  leaves each `:>>` where it was, and the commit's model can prove what the file it saves refutes.
+- A removal through `window.sysml.model`, from a peer, or in a REST commit lands the explicit
+  `:>>`s but leaves an implicit copy where `Model.remove`'s walk up the chain put it, which
+  may not be where the editor's settle (a command, or a `window.sysml` call) puts it.
+- Deleting the feature a `bind` in a part definition ends on takes the binding, and leaves the
+  copies it made in the page: a usage's copy then redefines that debris, where the saved file
+  redefines the feature itself.
+- Renaming the feature an implicit copy redefines leaves the copy under its old name: a
+  constraint written with the old name (`r.L`) is still read on the page, and the file makes the
+  copy under the new one.
+- A cycle of redefinitions (`a :>> b`, `b :>> a`, already an invalid model): deleting one
+  member leaves the other redefining itself, which the saved text reads as an unresolved name.
 
 A feature redefines only what its owner **inherits**. In one definition, `attribute
 mass default = 1.2; attribute :>> mass = 0.8;` is not a legal redefinition: the second

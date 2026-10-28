@@ -2013,11 +2013,11 @@ export const useAppStore = create<AppState>((set, get) => {
    * puts them ({@link settleRedefinitions}), in the same undo step. No command names what it changes, so none can
    * forget it.
    *
-   * A REMOVAL is also followed on the model itself, whoever removes from it: the redefinitions that stay and whose
-   * target goes are landed on the feature the name they are saved by finds now ({@link followRedefinitionRemovals}),
-   * where `Model.remove`'s walk up the removed target's redefinitions would skip a level. That holds for the SDK
-   * and a peer's edit as for a command, and for a call that goes to the model directly. (A REST commit removes
-   * from a copy of the repository's head, not from this model: the server installs the same follower on that copy.)
+   * A REMOVAL of a redefinition's target is also followed on the model itself, whoever removes from it: the explicit
+   * redefinitions that stay are landed on the feature the name they are saved by finds now
+   * ({@link followRedefinitionRemovals}), where `Model.remove`'s walk up the removed target's redefinitions would skip
+   * a level. That holds for the SDK, a peer's edit and a direct call as for a command; an implicit end copy is landed
+   * by the settle only, and a REST commit (on a copy of the head) follows no more than this (docs/USER-GUIDE.md).
    */
   let editEvents: ChangeEvent[] = [];
   let editOpen = false;
