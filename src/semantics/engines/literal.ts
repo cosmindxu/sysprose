@@ -224,9 +224,11 @@ export function refusalTail(reason: RefusalReason, detail = ''): string {
 export function refusalHead(reason: RefusalReason, detail = ''): string {
   return reason === 'unread-definition' && isFailedReading(detail)
     ? 'this tool failed while reading the relation'
-    : reason === 'unread-binding' || reason === 'unread-definition'
-      ? 'the relation reads a value this tool does not read'
-      : 'the relation itself cannot be read';
+    : reason === 'unread-definition' && isShadowedBody(detail)
+      ? 'the body of the relation is over a name its own element declares, which this tool does not read'
+      : reason === 'unread-binding' || reason === 'unread-definition'
+        ? 'the relation reads a value this tool does not read'
+        : 'the relation itself cannot be read';
 }
 
 /** One assumption, and what it said at the model's values. */

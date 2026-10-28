@@ -6936,7 +6936,11 @@ export function givenWayThroughHead(model: Model, contextId: ElementId, name: st
  * other side reading neither it back nor any other `default` (a pair of
  * defaults gave neither a value, U7) — `mass == 0.8`, `p.x == 2.0 * K`. A
  * dotted name says where the value goes: q1's `p.x == 50.0` reads "write the
- * analysis as the value (`part :>> p { attribute :>> x = …; }` in R::q1)". An
+ * analysis as the value (`part :>> p { attribute :>> x = …; }` in R::q1)". A
+ * name with no value that a binding carries a `default` into (RB3's `q.p.x`)
+ * names that default and the binding ({@link carriedDefaultOf}). Given an
+ * instance's record (the relation read in a context, as `readInContexts` does),
+ * the names are those the instance reads. An
  * inequality never defined a default (U5), and an equation over one on its
  * other side (`mass == 0.2 * cells` beside `cells default = 4.0`) only reads
  * it: either is a requirement checked against the default, and naming the
@@ -6965,8 +6969,23 @@ export function standingDefaultSentence(model: Model, el: ElementRecord): string
     if (reads.includes(n)) continue;
     // The other side over another `default` set the two equal: no definition of either (U7).
     if (reads.some((r) => { const h = denoted.get(r)?.feature; return h !== undefined && valueOf(h)?.attrs.defaultValue === true; })) continue;
-    const f = denoted.get(n)?.feature;
+    const d = denoted.get(n);
+    const f = d?.feature;
     const g = f && valueOf(f);
+    if (d && f && !g) {
+      // A feature with no value that a binding carries a `default` into (RB3's `q.p.x`, joined to q's `L default =
+      // 4.0`): that default is the value the equation was written to give, and it stood.
+      const carried = carriedDefaultOf(model, `${d.instance}::${n.slice(n.lastIndexOf('.') + 1)}`);
+      const h = carried && valueOf(carried);
+      if (carried && h && h.attrs.defaultValue === true && !said.has(h.id) && !defaultGivesWaySomewhere(model, carried) && !defaultGivesWaySomewhere(model, h)) {
+        said.set(
+          h.id,
+          `${writtenName(model, h)}'s \`default = ${writtenValue(h)}\` is carried into ${n} by a binding and is not changed by an ` +
+            `assertion: write the analysis as the value of ${writtenName(model, h)} to replace it`,
+        );
+      }
+      continue;
+    }
     if (!f || !g || g.attrs.defaultValue !== true || said.has(g.id) || replaceableDefaults(model).has(g.id)) continue;
     if (defaultGivesWaySomewhere(model, f) || defaultGivesWaySomewhere(model, g)) continue;
     said.set(
@@ -6976,6 +6995,17 @@ export function standingDefaultSentence(model: Model, el: ElementRecord): string
     );
   }
   return said.size > 0 ? [...said.values()].join('; ') : undefined;
+}
+
+/**
+ * The feature whose `default` a binding carries into the instance `symbol` ({@link boundSourceIn}'s one readable
+ * `default`: no member of the component states a value), or `undefined`.
+ */
+function carriedDefaultOf(model: Model, symbol: string): ElementRecord | undefined {
+  const source = boundSourceIn(model, symbol);
+  if (!source || 'abstain' in source) return undefined;
+  const reading = bindingEnds(model).readings.get(source.root)?.get(source.via.source);
+  return reading ? model.get(reading.feature) : undefined;
 }
 
 /**

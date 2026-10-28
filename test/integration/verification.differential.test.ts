@@ -12429,6 +12429,11 @@ describe('a body that reads a name its own element declares is read by no surfac
           'verification/not-evaluable',
           2,
         ]);
+        // The head does not say the relation reads a value: a parameter of its own may state none.
+        if (name === 'ownParameter') {
+          expect(row.detail, engine).toContain('the body of the relation is over a name its own element declares, which this tool does not read (unread-definition)');
+          expect(row.detail, engine).not.toContain('reads a value this tool does not read');
+        }
       }
       const m = await contextModel(text, name);
       const check = checkConstraints(m).find((c) => c.expression === goal)!;
