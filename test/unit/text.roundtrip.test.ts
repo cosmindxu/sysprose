@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildSampleModel, Model, ModelFactory, type ElementRecord } from '@core/index';
 import { parseModel, serializeModel } from '@text/index';
 import { validate } from '@validation/index';
-import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError } from '@semantics/index';
+import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError, effectiveQualifiedName } from '@semantics/index';
 import { parseDocument } from '@text/langium/module';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
@@ -1629,5 +1629,71 @@ describe('round-trip — a note body cannot inject model structure', () => {
       back.model.all().some((e) => e.declaredName === 'Injected'),
       'still open: a value expression is written verbatim',
     ).toBe(true);
+  });
+});
+
+describe('round-trip — a binding to an unnamed redefinition is saved under a name a terminal reads', () => {
+  // `attribute :>> load = 30.0;` has no name; the end `p.load` reads it by what it redefines. Save wrote
+  // `bind D4::Q::p::«AttributeUsage» = L;`, which a terminal reads as a connector with ONE end.
+  const ends = (m: Model): string[] =>
+    m
+      .all()
+      .filter((e) => e.eClass === 'BindingConnectorAsUsage')
+      .flatMap((e) => [...(e.source ?? []), ...(e.target ?? [])].map((id) => effectiveQualifiedName(m, id)))
+      .sort();
+  const saved = (src: string): { text: string; before: Model; after: Model } => {
+    const before = parseModel(src);
+    expect(before.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const text = serializeModel(before.model);
+    const after = parseModel(text);
+    expect(after.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+    return { text, before: before.model, after: after.model };
+  };
+
+  it('writes the end as p.load, in the owner (d4-usage-redef-default-bound)', () => {
+    const { text, before, after } = saved(`package D4 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; }
+      part def Q { attribute L : ScalarValues::Real = 50.0; part p : P { attribute :>> load default = 30.0; } bind p.load = L; }
+    }`);
+    expect(text).not.toContain('«');
+    expect(text).toContain('bind p.load = L;');
+    expect(ends(after)).toEqual(ends(before));
+    expect(ends(after)).toHaveLength(2);
+  });
+
+  it('writes the end in a package-level bind, either side (r14-bind, k4a-contra-units-same-number)', () => {
+    const { text, before, after } = saved(`package R14 {
+      part def P { attribute load : ScalarValues::Real = 1.0; }
+      part p : P { attribute :>> load = 50.0; }
+      attribute w : ScalarValues::Real;
+      attribute v : ScalarValues::Real;
+      bind w = p.load;
+      bind p.load = v;
+    }`);
+    expect(text).not.toContain('«');
+    expect(text).toContain('bind w = p.load;');
+    expect(text).toContain('bind p.load = v;');
+    expect(ends(after)).toEqual(ends(before));
+    expect(ends(after)).toHaveLength(4);
+  });
+
+  it('writes the path from a scope that is not the owner, through a nested unnamed redefinition', () => {
+    const { text, before, after } = saved(`package N {
+      part def P { part a : A; }
+      part def A { attribute load : ScalarValues::Real = 1.0; }
+      part p : P { part :>> a { attribute :>> load = 5.0; } }
+      attribute w : ScalarValues::Real;
+    }
+    package Elsewhere { attribute z : ScalarValues::Real; bind z = N::p.a.load; }`);
+    expect(text).not.toContain('«');
+    expect(ends(after)).toEqual(ends(before));
+    expect(ends(after)).toHaveLength(2);
+  });
+
+  it('leaves a fully named cross-package reference as it was (A::s::inner, not A::s.inner)', () => {
+    const { text } = saved(`package A { part def Pt { part sub; } part s : Pt { part inner { part deep; } } }
+    package B { part u :> A::s::inner::deep; part def Z { part m : A::s::inner; } }`);
+    expect(text).toContain('part u :> A::s::inner::deep;');
+    expect(text).toContain('part m : A::s::inner;');
   });
 });

@@ -25,6 +25,7 @@ import {
   type ElementRecord,
 } from '@core/index';
 import { resolveFullName, resolveRedefinedFeature } from '@semantics/bind';
+import { effectiveNameOf } from '@semantics/inheritance';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
 
 const INDENT = '    ';
@@ -1178,7 +1179,28 @@ function refTo(
   }
   const rel = relativePath(model, targetId, scopeOwnerId);
   if (rel) return rel;
-  return qualifiedRef(model, targetId);
+  const qn = qualifiedRef(model, targetId);
+  if (!qn.includes('«')) return qn;
+  // An unnamed redefinition on the path (`p.load` for `attribute :>> load = 30.0;` in `p`) is spelled
+  // by its effective name — the name a `bind`/`connect` end reads it by — never as `«AttributeUsage»`.
+  // Only a path that would carry a placeholder takes this spelling; a fully named one is unchanged.
+  return relativePath(model, targetId, scopeOwnerId, true) ?? relativePath(model, targetId, null, true) ?? qn;
+}
+
+/**
+ * The spelling of an unnamed element on a path: the effective name
+ * ({@link effectiveNameOf}) of an unnamed redefinition, when exactly ONE member of its owner
+ * answers to it. A chain end reads the first member of that name (the reparse resolves `p.load`
+ * so; the round-trip tests pin it), so a second one would make the path ambiguous, and an unnamed
+ * head (`load` alone, in its owner's scope) is not read that way.
+ */
+function effectiveSegment(model: Model, el: ElementRecord): string | undefined {
+  const name = effectiveNameOf(model, el);
+  if (name === undefined || el.ownerId === null) return undefined;
+  const answers = model
+    .children(el.ownerId)
+    .filter((c) => !isSpecialization(c.eClass) && (c.declaredName ?? c.declaredShortName ?? effectiveNameOf(model, c)) === name);
+  return answers.length === 1 && answers[0]!.id === el.id ? quoteName(name) : undefined;
 }
 
 /**
@@ -1193,6 +1215,7 @@ function relativePath(
   model: Model,
   targetId: ElementId,
   scope: ElementId | null,
+  effective = false,
 ): string | undefined {
   const names: string[] = [];
   const owners: ElementRecord[] = [];
@@ -1200,11 +1223,12 @@ function relativePath(
   const guard = new Set<ElementId>();
   while (cur && !guard.has(cur.id)) {
     guard.add(cur.id);
-    const nm = nameOf(cur);
+    const head = cur.ownerId === scope;
+    const nm = nameOf(cur) || (effective && !head ? effectiveSegment(model, cur) : undefined);
     if (!nm) return undefined; // anonymous ancestor — cannot path through it
     names.unshift(nm);
     owners.unshift(cur);
-    if (cur.ownerId === scope) {
+    if (head) {
       return names.reduce((path, name, i) => `${path}${owners[i - 1]!.eClass.endsWith('Usage') ? '.' : '::'}${name}`);
     }
     if (cur.ownerId === null) break;
