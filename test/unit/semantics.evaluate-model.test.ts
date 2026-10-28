@@ -12,6 +12,7 @@ import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, ancho
 import { featureIdsFor, unreadValuesOf, valueAtPath, valueKey, withEveryInstanceJudged } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
+  DefiningEquations,
   assertDefinitionsIn,
   assertHeldInSome,
   bindingCapOf,
@@ -5140,7 +5141,10 @@ describe('a value, a reference and a binding that equate two parts or structured
     const k = check(rbb!, 'RBB4K::k');
     expect([k.result, numeric(rbb!, 'RBB4K::k'), goal(rbb!, 'RBB4K::k').encodable]).toMatchObject(['unknown', 'unknown', { reason: 'unread-binding' }]);
     expect(k.message).toContain("the copy of RBB4K::W::pp (`= top.a`) that a binding's end makes in RBB4K::w as `pp` states no value of its own");
-    expect([check(rbb!, 'RBB4K::W::pF').result, check(rbb!, 'RBB4K::W::pF').instances ?? []]).toEqual(['unknown', []]);
+    // W's own m has no value; w's own binding gives w one (contradictory-models S1), so pF files a row of w's, which
+    // abstains for the same reason as k.
+    const pF = check(rbb!, 'RBB4K::W::pF');
+    expect([pF.result, (pF.instances ?? []).map((i) => [i.context, i.result])]).toEqual(['unknown', [['w', 'unknown']]]);
     // The same nested, over an outward reference: w's sub's row was T on the engines (a new row of S1's), k T.
     const { model: nested } = await loadModelText(`package COWN7 { ${T0}
       part def W { part p1 : T0; part sub { ref part r : T0 = p1; constraint c { r.load <= 5.0 } } }
@@ -5465,21 +5469,18 @@ describe('an enclosing equation read through a binding or a reference, and a rel
     };
     // Each read the default against the assert (RB3: 4, violated; RB5: 9, held; RF: 2, held) — and abstained on
     // every surface while decision 14 gave 3, 50 and 50. No assertion replaces a default since it was amended
-    // (2026-10-22): RB3 and RF read their default again, on every surface. RB5's K stands at 9 too, but Q's
-    // assert, which holds at q1 and is violated there, is read for q1 by no surface: read without it, K's 9 was
-    // held everywhere and the model passed unreported, so every reading of the pair abstains, an unread binding.
-    const read = { RB3: 'violated', RB5: 'unknown', RF: 'satisfied' } as const;
+    // (2026-10-22): RB3 and RF read their default again, on every surface. RB5's K stands at 9 too, and Q's assert,
+    // which is violated at q1, is read for q1 (contradictory-models S1): K's 9 is held on the check and the numeric
+    // surface, beside the violated assert.
+    const read = { RB3: 'violated', RB5: 'satisfied', RF: 'satisfied' } as const;
     for (const [name, body] of Object.entries(texts)) {
       const { model: m } = await loadModelText(`package ${name} { ${body} }`);
       const want = read[name as keyof typeof read];
       expect([check(m!, `${name}::top`).result, numeric(m!, `${name}::top`)], name).toEqual([want, want]);
-      if (want === 'unknown') expect(goal(m!, `${name}::top`).encodable, name).toMatchObject({ reason: 'unread-binding' });
-      else expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
+      expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
     }
     const { model: rb5 } = await loadModelText(`package RB5 { ${texts.RB5} }`);
-    expect(check(rb5!, 'RB5::top').message).toContain(
-      'is not read where `bind p.x = K` in RB5::q1 joins p.x to a `default`, which no assertion replaces',
-    );
+    expect(check(rb5!, 'RB5::Q::tie').instances!.map((i) => [i.context, i.result])).toEqual([['q1', 'violated']]);
   });
 
   it('reads a relation in a context below which an assert, or a usage valuing a name, constrains what it reads, at its default', async () => {
@@ -5552,18 +5553,17 @@ describe('an enclosing equation read through a binding or a reference, and a rel
     // Each read the binding's default against the assert (RB5*'s K 9, held; RBS*'s L 4, the assert reported
     // violated; PJ's K 1, held on the numeric surface), and abstained on every surface while decision 14 gave 50,
     // 3 and 7. No assertion replaces a default since it was amended (2026-10-22): RBS*'s L 4 is read again, and
-    // RBS*'s assert reported violated against the 4. RB5*'s K stands at 9, against Q's assert at q1, which no
-    // surface reads there: every reading of the pair abstains, an unread binding, as in RB5. PJ's binding joins
+    // RBS*'s assert reported violated against the 4. RB5*'s K stands at 9, against Q's assert at q1, which is read
+    // there since contradictory-models S1 (violated; top is held beside it, as in RB5). PJ's binding joins
     // q's p's L default 2 to K's 1, two that differ: neither is read on any surface — not the 7 P's `L == M`
     // would carry into L at p's M (the numeric surface solved it so, and read K at P's own 2 across the binding,
     // `topK` T).
-    const read = { RB5C: 'unknown', RB5D: 'unknown', RB5F: 'unknown', RBS1: 'violated', RBS2: 'violated', RBS5: 'violated', PJ: 'unknown' };
+    const read = { RB5C: 'satisfied', RB5D: 'satisfied', RB5F: 'satisfied', RBS1: 'violated', RBS2: 'violated', RBS5: 'violated', PJ: 'unknown' };
     for (const [name, body] of Object.entries(texts)) {
       const { model: m } = await loadModelText(`package ${name} { ${body} }`, { fileName: `${name}.sysml`, strict: true });
       const want = read[name as keyof typeof read];
       expect([check(m!, `${name}::top`).result, numeric(m!, `${name}::top`)], name).toEqual([want, want]);
-      if (name.startsWith('RB5')) expect(goal(m!, `${name}::top`).encodable, name).toMatchObject({ reason: 'unread-binding' });
-      else if (name !== 'PJ') expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
+      if (name !== 'PJ') expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
     }
     const { model: pj } = await loadModelText(`package PJ { ${texts.PJ} }`);
     expect([check(pj!, 'PJ::topK').result, numeric(pj!, 'PJ::topK')]).toEqual(['unknown', 'unknown']);
@@ -8041,5 +8041,217 @@ describe('the per-instance memo key (A-L2)', () => {
     expect(valueKey('f')).toBe('f');
     expect(valueKey('f', undefined, 'ctx1')).toBe('f@ctx1');
     expect(valueKey('f', 'M::q::p')).toBe('f@M::q::p');
+  });
+});
+
+describe('a violated assert is read in the instance a binding gives the value it reads (wave 3 contradictory-models S1)', () => {
+  const load = async (text: string) => (await loadModelText(text)).model!;
+  const check = (m: Model, rel: string) => checkConstraints(m).find((k) => m.qualifiedName(k.id) === rel)!;
+  const instanceRow = (m: Model, rel: string, where: string) =>
+    check(m, rel).instances?.find((i) => (i.instance ?? m.qualifiedName(i.contextId)) === where);
+  const numeric = (m: Model, rel: string, where: string) =>
+    checkConstraintsNumeric(m).find(
+      (r) => r.id.includes('@') && m.qualifiedName(r.id.split('@')[0]!) === rel && m.qualifiedName(r.id.split('@')[1]!) === where,
+    )?.result;
+  const axioms = (m: Model) => obligationsOf(m).filter((o) => o.role === 'axiom' && o.source === 'assert').map((o) => o.element.qualifiedName);
+  const letters = async (m: Model, engine: 'literal' | 'smt') =>
+    (await verifyModel(m, { engine })).results.map((r) => [r.clause.qualifiedName, r.claim, r.code]);
+  const VC = (extra = '', l = '50.0') => `package VC {
+    part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+    part def Q { attribute L : ScalarValues::Real ${l === 'default' ? 'default = 50.0' : `= ${l}`}; part p : P; bind p.load = L; }
+    part q : Q;${extra}
+    constraint k { q.L >= 0.0 }
+  }`;
+
+  it('files P’s assert violated in Q’s p, where Q’s binding gives p’s load the value (VC)', async () => {
+    const m = await load(VC());
+    // The check reads Q’s p at the 50 the binding carries, in a row of its own at the line stating it: a finding of the
+    // instance (`via`, constraint-by-instance), not a target’s.
+    const row = instanceRow(m, 'VC::P::a2', 'VC::Q::p')!;
+    expect([row.result, row.via, row.message]).toEqual([
+      'violated',
+      true,
+      'p::load = 50 misses P::a2 (load <= 10.0)',
+    ]);
+    expect(m.qualifiedName(row.anchorId!)).toBe('VC::Q::L');
+    // P’s own row has no value to read (no instance of P is the one Q’s binding fills), and says so.
+    expect(check(m, 'VC::P::a2').result).toBe('unknown');
+    expect(check(m, 'VC::k').result).toBe('satisfied');
+    // The numeric surface decides the instance too; the worklist files it as an axiom for the SMT engine, beside the
+    // generic one.
+    expect(numeric(m, 'VC::P::a2', 'VC::Q::p')).toBe('violated');
+    expect(axioms(m)).toEqual(['VC::P::a2', 'VC::P::a2 in VC::Q::p']);
+    const found = validate(m).filter((d) => d.ruleId === 'constraint-by-instance' || d.ruleId === 'target-by-specialisation');
+    expect(found.map((d) => [d.ruleId, d.severity, d.message])).toEqual([
+      ['constraint-by-instance', 'warning', 'p::load = 50 misses P::a2 (load <= 10.0)'],
+    ]);
+  });
+
+  it('marks a relation over the contradicted value inconclusive on the literal engine, and decides it on the check', async () => {
+    const m = await load(VC());
+    const literal = (await verifyModel(m, { engine: 'literal' })).results.filter((r) => r.clause.qualifiedName === 'VC::k');
+    expect(literal.map((r) => r.code)).toEqual(['verification/inconsistent-axioms']);
+    expect(literal[0]!.detail).toContain('the asserted `load <= 10.0` (VC::P::a2 in VC::Q::p) is false at them');
+    expect(literal[0]!.detail).toContain('this relation reads `q.L`');
+    expect((await verifyModel(m, { engine: 'literal' })).exitCode).toBe(2);
+    // …and the check keeps deciding it, beside the violated assert (ruling 2026-10-24).
+    expect(check(m, 'VC::k').result).toBe('satisfied');
+  });
+
+  it('holds the assert in the instance as an SMT axiom, so the axioms read inconsistent', async () => {
+    const m = await load(VC());
+    const smt = (await verifyModel(m, { engine: 'smt' })).results.filter((r) => r.clause.qualifiedName === 'VC::k');
+    expect(smt.map((r) => r.code)).toEqual(['verification/inconsistent-axioms']);
+    expect(smt[0]!.detail).toContain('axiom:VC::P::a2 in VC::Q::p');
+  });
+
+  it('reads the same row as the redefinition that states the value with `=`, and a satisfied assert as satisfied (twins)', async () => {
+    const twin = await load(`package VC {
+      part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real = 50.0; part p : P { attribute :>> load = 50.0; } }
+      part q : Q;
+      constraint k { q.L >= 0.0 }
+    }`);
+    expect(instanceRow(twin, 'VC::P::a2', 'VC::Q::p')!.result).toBe('violated');
+    // Q’s L of 5.0 meets the assert: the row is satisfied, the model does not contradict itself and every surface decides.
+    const ok = await load(VC('', '5.0'));
+    expect(instanceRow(ok, 'VC::P::a2', 'VC::Q::p')!.result).toBe('satisfied');
+    expect(numeric(ok, 'VC::P::a2', 'VC::Q::p')).toBe('satisfied');
+    expect((await letters(ok, 'literal')).map((r) => r[1])).toEqual(['holds-at-values']);
+    expect((await letters(ok, 'smt')).map((r) => r[1])).toEqual(['proved']);
+    // …and the finding is the info of a met instance, never a warning.
+    expect(validate(ok).filter((d) => d.ruleId === 'constraint-by-instance').map((d) => [d.severity, d.message])).toEqual([
+      ['info', 'p::load = 5 meets P::a2 (load <= 10.0)'],
+    ]);
+  });
+
+  it('reads each instance a binding gives its own value (a default that one instance redefines, two usages of P)', async () => {
+    const m = await load(`package VC {
+      part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 50.0; part p : P; bind p.load = L; }
+      part q : Q;
+      part q2 : Q { attribute :>> L = 5.0; }
+      constraint k { q.L >= 0.0 }
+      part def R { attribute L : ScalarValues::Real = 50.0; attribute M : ScalarValues::Real = 3.0; part p1 : P; part p2 : P; bind p1.load = L; bind p2.load = M; }
+      part r : R;
+    }`);
+    // q’s p reads Q’s 50 and q2’s p its own 5, in a row each; the generic p, Q’s own, reads the default.
+    expect(check(m, 'VC::P::a2').instances!.map((i) => [i.instance ?? m.qualifiedName(i.contextId), i.result])).toEqual([
+      ['VC::Q::p', 'violated'],
+      ['VC::q::p', 'violated'],
+      ['VC::q2::p', 'satisfied'],
+      ['VC::R::p1', 'violated'],
+      ['VC::R::p2', 'satisfied'],
+    ]);
+    // …and the worklist files the usage’s row of each definition as an axiom for the SMT engine.
+    expect(axioms(m)).toEqual(expect.arrayContaining(['VC::P::a2 in VC::Q::p', 'VC::P::a2 in VC::R::p1', 'VC::P::a2 in VC::R::p2']));
+  });
+
+  it('reads a plain constraint in the instance too, and a value in a unit', async () => {
+    const m = await load(`package VCC {
+      part def P { attribute load : ISQ::MassValue; constraint c { load <= 10.0 [kg] } }
+      part def Q { attribute L : ISQ::MassValue = 50.0 [kg]; part p : P; bind p.load = L; }
+      part q : Q;
+    }`);
+    expect(instanceRow(m, 'VCC::P::c', 'VCC::Q::p')!.result).toBe('violated');
+    expect((await letters(m, 'literal')).filter((r) => r[0] === 'VCC::P::c in VCC::Q::p').map((r) => r[1])).toEqual(['refuted']);
+  });
+
+  it('keeps a context a binding gives no value this tool reads unlisted (two defaults that differ)', async () => {
+    const m = await load(`package VCD {
+      part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 50.0; attribute M : ScalarValues::Real default = 3.0; part p : P; bind p.load = L; bind p.load = M; }
+      part q : Q;
+    }`);
+    expect(check(m, 'VCD::P::a2').instances ?? []).toEqual([]);
+    const named = (qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+    expect(sharedDefinitions(m).valuedByBinding(named('VCD::Q::p').id, named('VCD::P').id, ['load'])).toBe(false);
+  });
+
+  /** RB5's four spellings of the binding that joins q1's `p.x` to K (`k` is K's value as written): the text and the instance it reads Q's assert in. */
+  const spelled = (k: string): Array<[string, string, string]> => {
+    const head = `package RB5 {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }`;
+    const K = `attribute K : ScalarValues::Real ${k};`;
+    return [
+      ['in q1', `${head} part q1 : Q { ${K} bind p.x = K; } constraint top { q1.p.x <= 10.0 } }`, 'RB5::q1'],
+      ['in q1’s `part :>> p`', `${head} part q1 : Q { part :>> p { ${K} bind x = K; } } constraint top { q1.p.x <= 10.0 } }`, 'RB5::q1'],
+      ['in the package', `${head} part q1 : Q; ${K} bind q1.p.x = K; constraint top { q1.p.x <= 10.0 } }`, 'RB5::q1'],
+      ['in a definition around q1', `${head} part def W { part q1 : Q; ${K} bind q1.p.x = K; } part w : W; constraint top { w.q1.p.x <= 10.0 } }`, 'RB5::W::q1'],
+    ];
+  };
+
+  it('reads Q’s assert in the instance whose own binding joins the asserted path to a value, however the binding is written (RB5)', async () => {
+    // K’s `= 9.0` and its `default = 9.0`, which stands against every assertion, read alike: 9 is not 50.
+    for (const k of ['= 9.0', 'default = 9.0']) {
+      for (const [name, text, where] of spelled(k)) {
+        const m = await load(text);
+        const row = instanceRow(m, 'RB5::Q::tie', where);
+        expect([name, k, row?.result, row?.abstention], `${name} ${k}`).toEqual([name, k, 'violated', undefined]);
+        expect(check(m, 'RB5::top').result, `${name} ${k}`).toBe('satisfied');
+        // Q’s own row, with no value for p.x, is the assert as it defines it: it holds.
+        expect(check(m, 'RB5::Q::tie').result, `${name} ${k}`).toBe('satisfied');
+        expect(axioms(m).some((a) => a === `RB5::Q::tie in ${where}`), `${name} ${k}`).toBe(true);
+        const literal = (await verifyModel(m, { engine: 'literal' })).results.find((r) => r.clause.qualifiedName === 'RB5::top')!;
+        expect([name, k, literal.code]).toEqual([name, k, 'verification/inconsistent-axioms']);
+      }
+    }
+  });
+
+  it('keeps the abstention where the binding gives q1 no value this tool reads (two defaults that differ, RB5)', async () => {
+    const m = await load(`package RB5D {
+      part def P { attribute x : ScalarValues::Real; }
+      part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+      part q1 : Q { attribute K : ScalarValues::Real default = 9.0; attribute J : ScalarValues::Real default = 8.0; bind p.x = K; bind p.x = J; }
+      constraint top { q1.p.x <= 10.0 }
+    }`);
+    expect(check(m, 'RB5D::top').result).toBe('unknown');
+    expect(check(m, 'RB5D::top').message).toContain('joins defaults that differ or are not constants');
+    expect((await verifyModel(m, { engine: 'literal' })).exitCode).toBe(2);
+  });
+
+  it('answers which contexts a binding gives a value alike whichever surface asks first (the memo is filled while the enclosing asserts are built)', async () => {
+    // The answer is kept per context (`valuedByBinding`), and `standingUnderInstance` asks it while `enclosingAsserts` is still
+    // being built: the abstention it drops and the context the check lists must be the one answer, whichever asks first.
+    const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+    const rows = (m: Model) =>
+      checkConstraints(m).map((k) => [m.qualifiedName(k.id), k.result, (k.instances ?? []).map((i) => [i.instance ?? m.qualifiedName(i.contextId), i.result])]);
+    const shapes: Array<[string, string, string, string, string[]]> = [
+      ['VC', VC(), 'VC::Q::p', 'VC::P', ['load']],
+      ...['= 9.0', 'default = 9.0'].flatMap((k) =>
+        spelled(k).map(([name, text, where]): [string, string, string, string, string[]] => [`RB5 ${name} ${k}`, text, where, 'RB5::Q', ['p.x']]),
+      ),
+    ];
+    for (const [name, text, where, owner, names] of shapes) {
+      // A surface that checks first: the answer is the one computed while the enclosing asserts were built, kept.
+      const checked = await load(text);
+      const rowsChecked = rows(checked);
+      const kept = sharedDefinitions(checked).valuedByBinding(named(checked, where).id, named(checked, owner).id, names);
+      // One that asks which contexts a binding gives a value before anything else.
+      const asked = await load(text);
+      const first = sharedDefinitions(asked).valuedByBinding(named(asked, where).id, named(asked, owner).id, names);
+      expect([name, first, kept]).toEqual([name, true, true]);
+      expect(rows(asked), name).toEqual(rowsChecked);
+      // …and a reading against the finished indexes, by a reader with no memo, is the answer the memo kept.
+      expect(new DefiningEquations(checked).valuedByBinding(named(checked, where).id, named(checked, owner).id, names), name).toBe(kept);
+    }
+  });
+
+  describe('through the instance index’s seam', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('a question of which contexts a binding gives a value that throws lists the context, and its row is read all the same (valuedByBinding)', async () => {
+      vi.spyOn(instanceIndexSeam, 'bindingValued').mockImplementation(() => {
+        throw new RangeError('bindingValued, planted to throw');
+      });
+      const m = await load(VC());
+      expect(instanceRow(m, 'VC::P::a2', 'VC::Q::p')!.result).toBe('violated');
+      expect(check(m, 'VC::k').result).toBe('satisfied');
+      // …and a caller that would drop an abstention on the answer meets the throw itself, never an answer.
+      const q = m.all().find((e) => m.qualifiedName(e.id) === 'VC::Q::p')!;
+      const p = m.all().find((e) => m.qualifiedName(e.id) === 'VC::P')!;
+      expect(() => sharedDefinitions(m).valuedByBinding(q.id, p.id, ['load'], false)).toThrow(RangeError);
+    });
   });
 });

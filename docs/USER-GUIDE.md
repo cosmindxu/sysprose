@@ -1290,11 +1290,27 @@ p.m2 >= 0.0 }`), is that instance's reading: a
 `validation/constraint-by-instance` finding at the member of the context stating
 the carried value (q's `:>> L`) or renaming the bound end (q2's `ld :>> load`),
 else at the context itself, never a target's
-`validation/target-by-specialisation` verdict. A per-instance reading that fails
-inside the tool makes the row it was read for *could not be evaluated*, in a
-sentence naming the failure (`… the per-instance reading failed (RangeError);
-reported, not dropped`; a group's roll-up counts it *not read*), and every other
-row and finding stands — on the verify lane too, where the goal row is refused in
+`validation/target-by-specialisation` verdict. A definition's relation over a
+feature that states no value is read in the instance whose binding gives it one:
+P's `assert constraint a2 { load <= 10.0 }` over P's `attribute load`, in Q's
+`part p : P` under Q's `bind p.load = L` and `L = 50.0`, is read in Q's p at the
+50 the binding carries — the row `part p : P { attribute :>> load = 50.0; }`
+gives — and is violated there (*p::load = 50 misses P::a2 (load <= 10.0)*, at
+Q's `L = 50.0`): a model that contradicts itself. The check and the numeric
+surface report it and keep deciding the relations beside it; the literal engine
+marks a relation over a value the violated assert reaches (Q's `L`, tied to p's
+load by the binding) inconclusive, naming the assert, and the SMT engine holds
+the assert in that instance as an axiom, so its axioms are inconsistent. Where
+Q's instances give the binding different values (`L default = 50.0`, `q2 : Q {
+attribute :>> L = 5.0; }`) each reads its own, in a row of its own. P's own
+row, which has no value to read, is *could not be evaluated*. A plain `constraint
+a2` of P is read in the same instance and is refuted on every surface. A binding
+that gives the instance no value this tool reads (two defaults that differ) lists
+no such row: whatever reads that value is *could not be evaluated*. A
+per-instance reading that fails inside the tool makes the row it was read for
+*could not be evaluated*, in a sentence naming the failure (`… the per-instance
+reading failed (RangeError); reported, not dropped`; a group's roll-up counts it
+*not read*), and every other row and finding stands — on the verify lane too, where the goal row is refused in
 that sentence and closed as a failure of the tool, not a defect in the relation. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
 sentence; one while it lists the asserted equations over a `default` it does not
@@ -1523,14 +1539,20 @@ carries there, L's value written with `=` or its `default`: 4, and the assert is
 reported violated. One written in the binding's type over an instance that
 writes the binding (Q's `p.x == 50.0` over `part q1 : Q { bind p.x = K; }`, or
 in q1's `part :>> p`, the package's `bind q1.p.x = K`, a definition's around
-q1) is not read for q1 (a known gap). Over K's `default = 9.0`, which stands,
-every reading of the pair — K, q1's p's x, the assert's own rows — is *could
-not be evaluated*, in a sentence naming the assert and the binding (*… is not
-read where `bind p.x = K` in R::q1 joins p.x to a `default`, which no assertion
-replaces: the assert holds in that instance too, and this tool does not read it
-there, so the model may contradict itself unreported …*), and `verify` exits 2.
-With `K = 9.0` written with `=` the readings stand, and the model contradicts
-itself unreported.
+q1) is read for q1, at the value the binding carries: K's 9, written with `=`
+or as its `default`, which stands (above), is not 50, so the assert is violated
+in q1 (*p::x = 9 misses Q::tie (p.x == 50.0)*) and the model contradicts
+itself. The check and the numeric surface report it and read `q1.p.x` and `K`
+at 9; the literal engine and the SMT engine decide neither (inconsistent
+axioms), and `verify` exits 2. Q's own row, where p's x has no value and the
+assert defines it, holds. Where the binding gives q1's p's x no value this tool
+reads (`K default = 9.0` and `J default = 8.0`, both joined), the assert is not
+read in q1: every reading of the pair — J, K, q1's p's x, the assert's own rows
+— is *could not be evaluated*, in a sentence naming the assert and the binding
+(*… is not read where `bind p.x = K` in R::q1 joins p.x to a `default`, which no
+assertion replaces: the assert holds in that instance too, and this tool does
+not read it there, so the model may contradict itself unreported …*), and
+`verify` exits 2.
 
 **Two asserted equations that disagree.** A feature declared without a value
 that two asserted equations define with two different values — `assert

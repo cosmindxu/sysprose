@@ -366,6 +366,8 @@ export class DefiningEquations {
   private readonly reaching = new Map<string, { site: ElementId; path: string; equations: readonly DefiningEquation[] } | null>();
   /** {@link boundAbove} per context and names (`null`: none above) — every instance row of a group asks it of the usage. */
   private readonly aboveBound = new Map<string, BoundAbove | null>();
+  /** {@link valuedByBinding} per context and names. */
+  private readonly valuedByBindingMemo = new Map<string, boolean>();
   /** {@link lexicalNames} per context. */
   private readonly lexical = new Map<
     ElementId,
@@ -2890,6 +2892,9 @@ export class DefiningEquations {
         subsetting = null;
       }
     }
+    // A binding's own row is the pair its two ends state (`bindingConflicts`): no value a binding gives lists a context for it.
+    const relation = this.model.get(el.id);
+    const relationIsBinding = relation !== undefined && isBindingConnector(relation);
     for (const x of contexts) {
       if (x.id === owner || x.id === el.id) continue;
       const all = this.scope(x.id, 'all');
@@ -3046,6 +3051,15 @@ export class DefiningEquations {
           listed = true;
         }
       }
+      // A usage whose instance a binding gives a value the relation reads that the feature states nowhere (VC's
+      // `bind p.load = L` over P's `assert constraint { load <= 10.0 }` and Q's `L = 50.0`; RB5's `bind p.x = K` in q1
+      // under Q's `assert constraint tie { p.x == 50.0 }`), where the relation's owner reads none of it through a
+      // binding of its own (those are the contexts above): the model states that value of the instance, so the
+      // relation is read there, at it — a violated assert is a model that contradicts itself.
+      if (!listed && !plain.has(x.id) && !relationIsBinding && this.valuedByBinding(x.id, owner, names)) {
+        plain.add(x.id);
+        listed = true;
+      }
       // A usage one instance of which a binding written in its own element
       // reads otherwise (A7's q2: `bind p.extra = E` makes q2's p a copy of
       // Q's p): nothing it reads is another feature, and no binding of an
@@ -3059,6 +3073,59 @@ export class DefiningEquations {
       if (listed || plain.has(x.id)) out.push(x);
     }
     return { listed: out, plain };
+  }
+
+  /**
+   * Does a binding give a name `names` read, in the usage `contextId`, a value the feature it denotes states nowhere —
+   * not it, and not a feature it redefines, as a value or as a `default`? P's `load`, which P's `assert constraint {
+   * load <= 10.0 }` reads in Q's `part p : P`, over Q's `bind p.load = L` and `L = 50.0` (VC); Q's `p.x`, which Q's
+   * `assert constraint tie { p.x == 50.0 }` reads in `part q1 : Q { … bind p.x = K; }` — the binding written in the
+   * instance, in a usage below it, in a package or in a definition around it (RB5). No reading of the context lists it
+   * for what it states ({@link changingContexts}), and the relation was read where the feature has none, or not at
+   * all: the model contradicts itself in an instance no row read. Only where a binding of the model gives the
+   * instance's symbol a source this tool reads ({@link boundSourceIn}): one that abstains (`defaults-differ`,
+   * `two-values`, `free`, a cap) gives the instance no value to read. A feature with a value, or a `default`, anywhere
+   * on its chain is listed by what it states (a `default` a binding overrides, {@link boundOverDefault}). A throw is
+   * `true`: the context is read, and contained as its own row (A.2.9) — unless the caller drops an abstention on the
+   * answer (`contained` false), which then meets the throw itself: a context that may not be read is no reason to
+   * read nothing of it.
+   *
+   * The answer is kept per context, and {@link standingUnderInstance} asks it while {@link enclosingAsserts} is still
+   * being built (to drop an abstention): the answer that abstention was dropped on is the one the check lists the
+   * context by, whichever surface asks first. So nothing {@link valuedAbove} and the calls below it make may read
+   * `unread`, `partners` or the taint of {@link equatedParts} — until the index is built they hold the sweep's
+   * sources alone, and an answer computed then and kept could differ from one computed after (the unit test
+   * `answers which contexts a binding gives a value alike whichever surface asks first` holds the two together).
+   */
+  valuedByBinding(contextId: ElementId, ownerId: ElementId, names: readonly string[], contained = true): boolean {
+    const x = this.model.get(contextId);
+    if (!x || !isUsage(x.eClass) || !hasUserBindings(this.model)) return false;
+    const key = `${contextId} ${ownerId} ${names.join('\u0000')}`;
+    let hit = this.valuedByBindingMemo.get(key);
+    if (hit === undefined) {
+      if (contained) {
+        try {
+          hit = this.valuedAbove(x, ownerId, names);
+        } catch {
+          return true;
+        }
+      } else {
+        hit = this.valuedAbove(x, ownerId, names);
+      }
+      this.valuedByBindingMemo.set(key, hit);
+    }
+    return hit;
+  }
+
+  /**
+   * {@link valuedByBinding}, worked out — through the seam a test makes it throw through, and only where the relation's
+   * owner `ownerId` reads none of what `names` read through a binding of its own: the contexts of those are listed
+   * by {@link changingContexts}, as they were (M7's q2, whose K the owner's `bind load = L` carries).
+   */
+  private valuedAbove(x: ElementRecord, ownerId: ElementId, names: readonly string[]): boolean {
+    const reads = this.boundReads(ownerId, names);
+    if (reads.size > 0 && bindingReadingIn(this.model, ownerId, ownerId, reads) !== undefined) return false;
+    return instanceIndexSeam.bindingValued(this, x, names);
   }
 
   /**
@@ -7827,10 +7894,14 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
  * source (`unreadAsserts`): every reading the binding's end may change
  * abstains, the definition's own reading of the assert too. K's default stands
  * against the assert (decision 14 amended), so q1's p.x is 9 and the assert is
- * violated at q1 — but no surface reads Q's assert at q1 (TODO), and read
- * without it, q1's p.x and K read 9 on every surface (`top`, `topK` T) and
- * `sysml-check` and both engines passed a model that contradicts itself. The
- * same model with `K = 9.0` files no row either (a known gap). An assert
+ * violated at q1. Only where this tool does NOT read the assert at q1: an
+ * instance a binding gives a value this tool reads is a context the assert is
+ * read in ({@link DefiningEquations.valuedByBinding}), where its row says
+ * whether it holds — violated, the model contradicts itself — and the defaults
+ * the binding carries are read as they stand. What is left is the component
+ * that gives q1 no value (`defaults-differ`, `two-values`, `free`, a cap): the
+ * assert is not read there, the model may contradict itself unreported, and
+ * every reading the binding's end may change abstains. An assert
  * written above or beside the binding — the package's `q.p.x == 3.0` over Q's
  * binding (RB3, RB4), a specialiser's or a usage's of the binding's owner
  * (RBS1, RBS5) — reads the binding there, and is checked against the default.
@@ -7870,14 +7941,14 @@ function standingUnderInstance(
     if (!owner || !isDefinition(owner.eClass) || isPackage(owner)) continue;
     // An instance of the definition: a usage it, or a definition that specialises it, types.
     const instanceOfOwner = (x: ElementRecord): boolean => isUsage(x.eClass) && generalizationsOf(model, x.id).some((t) => t.id === o);
-    // Is the binding written in an instance of the definition, below one, or on a path through one?
-    const underInstance = (b: ElementRecord, e: ElementRecord): boolean => {
+    // The instance of the definition the binding is written in, below, or on a path through, or `undefined`.
+    const underInstance = (b: ElementRecord, e: ElementRecord): ElementRecord | undefined => {
       for (let x = b.ownerId != null ? model.get(b.ownerId) : undefined; x; x = x.ownerId != null ? model.get(x.ownerId) : undefined) {
-        if (instanceOfOwner(x)) return true;
+        if (instanceOfOwner(x)) return x;
       }
       const spelled = bindingEndPath(model, e.id, b.ownerId!);
       const along = spelled !== undefined ? featuresAlong(b.ownerId!, spelled.split('.')) : undefined;
-      return along !== undefined && along.slice(0, -1).some(instanceOfOwner);
+      return along?.slice(0, -1).find(instanceOfOwner);
     };
     for (const [path, equations] of equationsByName(model, o)) {
       const full = featuresAlong(o, path.split('.'));
@@ -7896,7 +7967,13 @@ function standingUnderInstance(
         const v = [e, ...redefinedClosure(model, e)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
         return own === e || v === undefined;
       };
-      const hit = standingEndsOf(full[full.length - 1]!).find(({ b, e }) => !readByBinding(b, e) && underInstance(b, e) && meets(b, e, o, full));
+      const definitions = sharedDefinitions(model);
+      const hit = standingEndsOf(full[full.length - 1]!).find(({ b, e }) => {
+        if (readByBinding(b, e)) return false;
+        const instance = underInstance(b, e);
+        // An instance the assert is read in, at the value the binding carries (RB5): its row says whether it holds there.
+        return instance !== undefined && meets(b, e, o, full) && !definitions.valuedByBinding(instance.id, o, [path], false);
+      });
       if (!hit) continue;
       const at = hit.b.ownerId!;
       const sides = [hit.b.source?.[0], hit.b.target?.[0]].map((id) => (id !== undefined ? (bindingEndPath(model, id, at) ?? '…') : '…'));
@@ -11289,6 +11366,26 @@ function boundPartPhrase(bound: NonNullable<GuardReading['bound']>, where: strin
 const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly InstanceGroup[] }>();
 
 /**
+ * {@link DefiningEquations.valuedByBinding}, worked out: does a name of `names`, read in the usage `x`, denote a
+ * feature of one of its instances that states no value and whose instance symbol a binding gives a source this tool
+ * reads ({@link boundSourceIn})? A name read in an instance of the context's own, never one an owning namespace
+ * answers.
+ */
+function bindingValued(definitions: DefiningEquations, x: ElementRecord, names: readonly string[]): boolean {
+  const denoted = definitions.denote(x.id);
+  const here = definitions.instanceNameOf(x.id);
+  for (const n of names) {
+    const d = denoted.get(n);
+    if (!d || !(d.instance === here || d.instance.startsWith(`${here}::`))) continue;
+    // A value, or a `default`, anywhere on the redefinition chain is read by the rules that list a context for what it states.
+    if (statesOwnValue(definitions.model, d.feature)) continue;
+    const source = boundSourceIn(definitions.model, definitions.symbolOf(d));
+    if (source !== undefined && !('abstain' in source)) return true;
+  }
+  return false;
+}
+
+/**
  * The calls the instance index makes to itself where a throw is contained
  * (A.2.9) — inside {@link instanceGroups} (a usage's sites, and the asserted
  * equations the coverage guard reads, {@link readFeatures}), in {@link
@@ -11296,11 +11393,14 @@ const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly Insta
  * satisfierTaint} (what an instance reads otherwise, the subsetting usages of
  * {@link subsettingTaint} among it), in {@link
  * contradictedDefinitions} (two asserted equations that give one feature two
- * values) and in {@link contradictedTaint} (what they leave undecided, asked
- * per row: a throw refuses that row, `internal`) — made through this
- * object, never directly: the seam a test makes one of them throw through
- * (`vi.spyOn`), since a module-level stub reaches only the calls another
- * module makes. Each is the function it names; nothing else changes them.
+ * values), in {@link contradictedTaint} (what they leave undecided, asked
+ * per row: a throw refuses that row, `internal`) and in {@link
+ * DefiningEquations.valuedByBinding} (the contexts a binding gives a value:
+ * a throw lists the context, to be read and contained as its own row) —
+ * made through this object, never directly: the seam a test makes one of
+ * them throw through (`vi.spyOn`), since a module-level stub reaches only the
+ * calls another module makes. Each is the function it names; nothing else
+ * changes them.
  */
 export const instanceIndexSeam = {
   enclosingAsserts: (model: Model): EnclosingAsserts => enclosingAsserts(model),
@@ -11315,6 +11415,8 @@ export const instanceIndexSeam = {
   assertHeldInSome: (model: Model, f: ElementRecord): boolean => assertHeldInSome(model, f),
   instanceSitesOf: (definitions: DefiningEquations, usage: ElementRecord): ReturnType<typeof instanceSitesOf> =>
     instanceSitesOf(definitions, usage),
+  bindingValued: (definitions: DefiningEquations, x: ElementRecord, names: readonly string[]): boolean =>
+    bindingValued(definitions, x, names),
 };
 
 /**
