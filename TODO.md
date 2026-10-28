@@ -32,26 +32,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       that a hang keeps the async mutex held until reload is gone (the lock is per module now). Also
       make the soak repeatable from the repository: the header of `test/campaign/z3-soak.soak.ts`
       carries the invocation. [z3-bump, review]
-- [ ] **Decide whether a binding the check reports violated contradicts, for the literal engine, the
-      values it joins.** Q4 covers asserts only, so the literal engine still decides these rows
-      beside SMT X. Re-derived after the seed fix, these files have no violated assert, only a
-      violated binding row (the contradiction of decision 1): AM and AMD ctlF and ctlT; M2a ctlA,
-      negT and posF; M7Y::Q::c (d1plain-own); EB4::P::c and EB4::P::c in Q::p; EB5::P::c, in Q::p
-      and in R::q::p; FanS2::QB::cq; SG2F::u1; SW4B::c3; SRU::kL1; RBB::P::c and RBB::top2;
-      RBL4::t2; T4E c5, cF and cT in both spellings; X3F::P::c; X5::P::c and X5::P::c in Q::p;
-      X6::P::c and X6::P::c in Q::p. Two more rows have no violated row on the check at all, yet SMT
-      reports X: UB6::cT (unit-blind assert) and W4o::c5 (w4-plain). BND and T4C/T4D are no longer
-      on this list. Seeding from violated bind axiom rows would be a few lines in contradictionsOf.
-      DECIDED 2026-10-24 (D1): yes, as an assertion since Q4: the literal engine marks the
-      obligations over the values a violated binding joins inconclusive (exit 2) and names the
-      binding; `check` keeps deciding beside it. Wave 3 run 4 S3.
-- [ ] **File the assert of a bound feature's type for an instance whose binding sits in an enclosing
-      instance (GI, next to RB5).** Model: part s2 : S { bind q.g = K; } with G's assert constraint
-      ca { g <= 10.0 } and K = 50. The worklist files ca only for S::q and s1::q, so the SMT engine
-      proves GI::t2 and GI::tk (T/X/T/T, cv-gi), while the check reports ca violated in s2::q. The
-      literal engine fails closed there since S1. Done when SMT reads cv-gi's rows
-      inconsistent-axioms and the literal engine places the contradiction instead of reaching every
-      relation.
 - [ ] **Narrow the literal engine's contradiction reach to the instance the violated assert reads.**
       Since S1, table rows with a decided ref abstain on the literal engine as they do on SMT
       (T/X/T/X). An assert in one instance reads the symbol shared by every instance it does not
@@ -59,6 +39,18 @@ maintainer says `awaits user decision U<n>` and names the question.
       PL2/5T/6/7, HQ, HQ2, SFW, N4T, N5, H5B, T4D::c5, SP2::kq and R27F::Q::c. A sum also ties a
       sibling (CVSIB::tb). Narrowing needs the SMT instance split (plan section 1.5). Done when
       those rows read their ref on the literal engine and no contradicted row reads decided.
+      More probes (contradictory-models): in `bound-vc-inst` k2 (q2's L = 5) and kr (R's M = 3),
+      `bound-vc-spec` VCS::k (`Q2 :> Q { :>> L = 5.0 }`, T/X/T/? with SMT undecided) and
+      `h5-rb5-ineq` RB5I::top2 (T/T/T/X) the literal engine reads the same feature in another
+      instance as one value with the violated one, though the relation's own instance meets the
+      assert. A pair or a violated binding in one instance also makes the literal engine, and the
+      SMT engine file-wide, inconclusive on relations about another, consistent instance:
+      review-2026-10-14/wave3-probes/contradictory-models/g5.sysml (`part a : P` consistent, `part b
+      : P { assert constraint ck { K == 60.0 } }`: `a.L == 50.0` is `?` on the check and X on the
+      literal engine and SMT), g4.sysml (p3 consistent, t3 `?`/X) and a1.sysml (q2's `L = 5.0` meets
+      the assert, yet k2 is X). The numeric surface says 'the solve did not converge' for the paired
+      equations instead of naming the contradiction. All sound, none false. [contradictory-models
+      S1, S3, review]
 - [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.** A
       requirement def with an assert-only body (R1::R), and a requirement usage that writes its own
       assert (requirement r { subject s : P = x; assert constraint ca { s.L == 50.0 } }), file no
@@ -67,18 +59,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       prints 'no formal clause: prose only, nothing to encode' for R1::R, R1::r and RU::r.
       noFormalClauseDetail already names the asserts. When this closes, re-word the USER-GUIDE
       status-column paragraph to match.
-- [ ] **Read two asserted equations on the two ends of one binding as one feature's two values.**
-      Since contradicted-value S2, two asserted equations that give one feature with no value two
-      values leave every reading of it undecided (`contradictedDefinitions` in
-      defining-equation.ts), but two on the two ends of one binding are not read as one: in `part
-      def P { attribute L; attribute K; bind L = K; assert constraint cl { L == 50.0 } assert
-      constraint ck { K == 60.0 } }` with `part p : P`, the check reports the `#bind` row violated,
-      yet `t50 { p.L == 50.0 }` reads T/T/?/X and `k50 { p.K == 50.0 }` F/F/?/X, the literal engine
-      exits 1, and the two swap with the values (the SMT engine's axioms are inconsistent; the same
-      at f1f5ca5). Fix: where a binding joins two features of one element, compare the equations of
-      both as one feature's (`joinedTo`), or have a bind conflict decided from two asserted
-      equations seed `contradictedTaint` with both ends; pin it with its twin in the four-surface
-      table. [contradicted-value S2 review, probe rv-s2-correct/v/bnd2-ab.sysml]
 - [ ] **Narrow the abstention over two disagreeing asserted equations (optional).**
       contradicted-value S2 leaves undecided every reading of the feature, in every instance, and
       every value an asserted relation reads beside it (`contradictedTaint` taints by feature): one
@@ -91,14 +71,12 @@ maintainer says `awaits user decision U<n>` and names the question.
       Taint only the instance where they meet, keeping the feature-wide taint where they meet in the
       feature's owner; read a bare literal in the feature's declared unit. [contradicted-value S2]
       The FMI `start` and the Solve measure value inherit this breadth (text-order S2): `part def P { attribute load; assert constraint c1 { load == 1.0 } }` with `part def Q { part p : P { attribute :>> load; assert constraint c50 { load == 50.0 } } }` takes P::load's start from 1 to the type default 0 (marked in the variable's description) while only an instance elsewhere contradicts it (also r8-redef-novalue-assert-dflt, S4_N_PP, S4_N_PU). A literal written beside a contradicted pair keeps its start in both orders (`attribute L : Real = 5.0;` beside `L == 50.0` and `L == 60.0`); decision 14's removal in wave 3b settles whether an asserted equation overrides a written value for an export. [text-order S2]
-- [ ] **Read a definition's assert in an instance whose binding gives the value it reads.** Probe
-      contradicted-value-scratch/fix/p/vc.sysml: `part def P { attribute load : Real; assert
-      constraint a2 { load <= 10.0 } }`, `part def Q { attribute L : Real = 50.0; part p : P; bind
-      p.load = L; }`, `part q : Q`, `constraint k { q.L >= 0.0 }`. check files only an info for
-      P::a2 ('evaluated per specialisation: p::load'), so nothing reads a2 violated in q's p. The
-      literal engine says k holds-at-values ('unconditional', exit 0) and SMT proves it (exit 0), on
-      a model that contradicts itself (50 > 10). The four surfaces read T/T/T/T, the same as at
-      f1f5ca5.
+      A pair on the two ends of a binding (contradictory-models S3) taints both features in every
+      instance, as a pair on one feature does: in `part def P { attribute L; attribute K; bind L =
+      K; assert constraint cl { L == 50.0 } } part p : P { assert constraint ck { K == 60.0 } } part
+      p2 : P;` p2.L, which only P's equation defines, reads ?
+      (review-2026-10-14/wave3-probes/contradictory-models/c6-use.sysml). The same holds for a pair
+      filed at P beside the larger set at a specialisation P2 (G2). [contradictory-models S3]
 - [ ] **Read apart an undecided asserted-equation pair whose side is read in another element than
       the one that writes it.** contradictedApart (src/semantics/evaluate-model.ts) judges a side
       the unit-aware and scalar readings do not read (for example one over a bound name) only where
@@ -283,8 +261,9 @@ abstain on or read false in the four-surface table
 (`test/integration/verification.differential.test.ts`). The branch `h5` (merged by `755352c`) made
 an asserted equation override a `default` on every surface, read definition-feature and part-valued
 bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open.
-Since per-instance-rest (merged by `ca4992c`), `KNOWN_FALSE` is empty (it held 20 rows at 3c54ae0),
-so the plan's "Done means" item is met, and no allowlist entry is tagged `no step yet`. Since
+Since per-instance-rest (merged by `ca4992c`), `KNOWN_FALSE` was empty (it held 20 rows at 3c54ae0), and
+contradictory-models (merged by 1653271) pins two rows in it again, tagged `NO STEP`: E1E::c3F and E1E::c3T,
+the numeric solve carrying an asserted value through a package head's slot (entry below). Since
 default-stands (decision 14 amended 2026-10-22) a `default` stands against every assertion; only a
 feature without a value is defined by an asserted equation. The residuals are the entries below. The
 false verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
@@ -577,6 +556,101 @@ headings.
       searched as a freedom by `solveFeasible`. Not false. Probes:
       review-2026-10-14/wave3-probes/text-order/C1out_0.sysml, C1out_1.sysml. [text-order re-review]
 
+- [ ] **Keep the numeric solve from carrying an asserted value through a package head's slot when
+      the assert sits in a definition (E1's enclosed twin).** `package E1E { part def P { attribute
+      load; } attribute M default = 9.0; bind P::load = M; part p4 : P { attribute :>> load default
+      = 7.0; } part def W { attribute L; assert constraint fix { L == 5.0 } part p2 : P; bind
+      p2.load = L; } part w : W; part p3 : P; constraint c3T { p3.load <= 6.0 } constraint c3F {
+      p3.load >= 6.0 } }`: M gives way, and the check, the literal engine and SMT read p3's load
+      with no value, but the numeric solve sets M = 5 and p3 = 5 and reads c3T T and c3F F. The
+      package-level L (E1) abstains on all four. Cause: `givenWayDefaults` in solver.ts keys on the
+      variables the asserted equation reads directly and does not follow the binding into M; leave
+      free any variable `givenWayThroughHead` names, as the SMT lane does. Pinned as probe
+      `stand-gw-e1-encl` with rows E1E::c3F and E1E::c3T in KNOWN_FALSE (NO STEP); delete both when
+      it is fixed. Probe:
+      review-2026-10-14/wave3-probes/contradictory-models/stand-gw-e1-encl.sysml. Done when it reads
+      ?/?/?/?. [contradictory-models S2]
+- [ ] **Read Q's assert at an instance whose binding joins the asserted path to defaults that differ
+      (RB5E).** `part q1 : Q { attribute K default = 9.0; attribute J default = 8.0; bind p.x = K;
+      bind p.x = J; }` under Q's `assert constraint tie { p.x == 50.0 }` gives q1's p.x no value to
+      read (`defaults-differ`), so `Q::tie` is not read in q1 and every reading of the pair abstains
+      (`unread-binding`, `standingUnderInstance`); the model may contradict itself unreported.
+      Pinned as `h5-rb5-differ`
+      (review-2026-10-14/wave3-probes/contradictory-models/h5-rb5-differ.sysml). Done when the
+      assert is filed in q1 with the cause, or the two defaults are read. [contradictory-models S1]
+- [ ] **Read a definition's assert in an instance whose value an INSTANCE of the binding's owner
+      gives (VC, instance side).** `part def Q { attribute L : Real; part p : P; bind p.load = L; }`
+      with `part q : Q { attribute :>> L = 50.0; }` under P's `assert constraint a2 { load <= 10.0
+      }`: `readingContexts` lists no context for P::a2 (Q's p gets no value from a binding in Q), so
+      the check files no `P::a2 in q::p` row, `sysml-check --strict` passes, and the literal engine
+      and the numeric surface read a relation over q.L at T (exit 0); SMT files the axiom and reads
+      kL X (exit 2). A plain constraint of P is not read there either. A silent self-contradiction,
+      unchanged from the base. Pinned as `bound-vc-ivalue` (P::a2 `?/-/?/-`, kL `T/T/T/X` in
+      I7_ALLOWED); probes review-2026-10-14/wave3-probes/contradictory-models/bound-vc-ivalue.sysml,
+      j3.sysml, k2p-ivalue.sysml, i1.sysml (q2 = 5), i2.sysml (q3 valueless). Done when a group is
+      made for a usage whose value comes from its instances and q::p files its row. Neighbour of the
+      C3 case. [contradictory-models S1, review]
+- [ ] **Read a relation over a derived feature of a valueless feature a binding supplies.** `package
+      I5 { part def P { attribute load; attribute m2 = 10.0 - load; assert constraint c { m2 >= 0.0
+      } } part def Q { attribute L = 50.0; part p : P; bind p.load = L; } part q : Q; constraint k {
+      q.L >= 0.0 } }` is a silent pass on all four surfaces (identical at 71aa37a): no row `P::c in
+      Q::p`, k holds, SMT proves k; the twin `part p : P { attribute :>> load = 50.0; }` reports
+      `p::m2 = -40 misses P::c`. `bindingValued` skips features that state their own value and
+      `valuedByBinding` lists no context for a derived name. Pinned as `bound-vc-derived` (I5::P::c
+      ?/-/?/-, I5::k T/T/T/T). Options: list the context through the derivation's inputs, or abstain
+      on the row with its own sentence. Probes
+      review-2026-10-14/wave3-probes/contradictory-models/i5.sysml, i4.sysml. [contradictory-models
+      S1 review]
+- [ ] **Read `assert not constraint c { ... }` as the negation.** `part def P { attribute load :
+      Real = 50.0; assert not constraint c { load > 10.0 } }` reads T on all four surfaces, but `c`
+      holds at load = 50, so the negated assert is violated; the instance row of P::c in a
+      binding-carried instance reads T the same way. A silent pass of a model that contradicts
+      itself, identical at the base. Probes
+      review-2026-10-14/wave3-probes/contradictory-models/h1.sysml, h2.sysml. Done when the negated
+      assert is checked, or the form is refused with its own finding. [contradictory-models S1
+      review]
+- [ ] **File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine
+      can seed from it.** Since contradictory-models S3 the literal engine marks the rows over the
+      values a binding the check reports violated joins inconclusive. Two rows still decide on the
+      literal engine beside SMT X because the check files no violated row for their contradiction:
+      unit-blind-assert UB6::cT (q's asserted p.load >= 1000.0 reads the 50 kg a binding carries
+      into an untyped load as 50 in SI) and w4-plain W4o::c5 (p4's own load = 7.0 against the
+      package's bind P::load = L: no binding finding reports a package head's pair; the USER-GUIDE
+      says so). Done when the check files the row and the literal engine marks both inconclusive, or
+      the rows are ruled permanent. [contradictory-models S3]
+- [ ] **Seed the literal engine from the check's other violated binding rows (optional).** Only bind
+      rows (conflict "bind", a connector) seed the literal engine's contradictions. The check's
+      binding rows (a redefinition's value against the binding it overrides: r14) and clash rows
+      (two bindings a context inherits: mapper-mi1, mi1d, mi3) do not. Every row of those four
+      probes abstains on the literal engine today, so no false verdict is known. Seed them if a
+      model decides a row beside one. [contradictory-models S3]
+- [ ] **Read two asserted equations on the two ends of a binding that reaches an end through a part
+      as one feature's two values.** S3 reads the pair only where both ends are undotted features of
+      the element that holds the binding (the equations in it, in a usage of it or in a type it
+      specialises; through a chain too, across a specialisation too). In `part def Q { part p : P;
+      attribute M; bind p.L = M; assert constraint cm { M == 60.0 } }` with P's `assert constraint
+      cl { L == 50.0 }`, q.p.L == 50.0 and q.M == 50.0 read T and F on the check and the numeric
+      surface (one quantity by the binding; E5 is the two-ends-through-parts variant, T on the
+      check, ? numeric, X literal and SMT); the literal engine marks both inconclusive since D1.
+      Reading it as a set would leave P's L undecided in every P, so decide the scope first (taint
+      only the instance where they meet; see the optional abstention entry). Probe
+      review-2026-10-14/wave3-probes/contradictory-models/c6-nested-swap.sysml. Done when the
+      readings abstain together or agree on all surfaces. [contradictory-models S3]
+- [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
+      itself.** One symbol per feature across the usages of one definition: `part def P { attribute
+      L; attribute K; bind L = K; } part a : P { assert constraint ea { L == 50.0 } } part b : P {
+      assert constraint eb { K == 60.0 } }` reads `verification/inconsistent-axioms` though neither
+      instance contradicts itself (the literal engine discharges, the numeric surface does not
+      converge; review-2026-10-14/wave3-probes/contradictory-models/c6a.sysml). And a chain a
+      specialisation masks: `part def P { L; K; bind K = L; assert constraint cl { L == 50.0 } }
+      part def P2 :> P { attribute K; attribute N; bind N = K; assert constraint cn { N == 70.0 } }
+      part p : P2;` (P2's K masks P's without `:>>`, so N is joined to P2's K and not to L): the
+      check and the literal engine decide p.L == 50.0 and p.N == 70.0 T, correctly, and SMT reads
+      the axioms inconsistent (T/T/T/X;
+      review-2026-10-14/wave3-probes/contradictory-models/g8.sysml). No false T or F, only a false
+      inconsistent-axioms claim; unchanged from the base and in the USER-GUIDE limits. Done when SMT
+      keys a symbol by instance, or the shapes are pinned in I7_ALLOWED with this reason.
+      [contradictory-models S3, review]
 ## Per-instance soundness — review 2026-10-14
 
 From the soundness review of F3–F8 and 3e3b0ff (Sysprose 5943654 against 7277a97). The branch
@@ -630,18 +704,6 @@ true values. What follows is what that branch and the review of it left open; en
       P::load's `default = 1.0` stood. And a default the assert reaches only through a binding
       (RB3's tie). The instance row needs the instance's own reading: naming Q::L's `default = 1.0`
       where q writes `L = 50.0` would mislead. [default-stands S1]
-- [ ] **Read an assert in the binding's type at an instance whose binding joins the asserted path to
-      a value (RB5).** No surface reads Q's `assert constraint tie { p.x == 50.0 }` for an instance
-      whose own binding joins p.x to a value: `part q1 : Q { bind p.x = K; }`, q1's `part :>> p {
-      bind x = K; }`, the package's `bind q1.p.x = K`, or a definition's around q1 (RB5F). With K's
-      `default = 9.0`, every reading of the pair now abstains (`standingUnderInstance` in
-      defining-equation.ts, `unread-binding`): verify exits 2 and check prints 4 infos. With `K =
-      9.0` the model, which contradicts itself, passes silently on every surface (check OK, literal
-      and SMT exit 0). File `Q::tie in q1` as violated on the check and the numeric surface, and as
-      an axiom for SMT so its axioms read inconsistent. Then read K's 9 again under the default and
-      drop the abstention. [default-stands S1] Q's own `tie` row abstains too: it reads ?/-/?/- in
-      RB5, RB5C, RB5D and RB5F (ref T), because p.x has no value in Q and the assert defines it (the
-      last case of the closed 'Taint the instance ...' entry).
 - [ ] **Word the abstention for two defaults a binding joins in one instance (GA6).** `bind p.load =
       L` joins P's `load default = 7.0` and Q's `L default = 5.0`. Reading neither is correct (two
       defaults that differ), but the row of Q's asserted `L == 5.0` abstains with 'L has no value
@@ -675,28 +737,6 @@ true values. What follows is what that branch and the review of it left open; en
       defines it and the binding gives it a second value. Read a binding from a valueless end to a
       valued feature as giving that end the value, as `=` does. Then H2f decides as H2 on all four
       surfaces, and its `=` twin as H2's; pin all four with I14. [default-stands S1, G2]
-- [ ] **SMT decides beside a violated top-level binding (G340, ref null).** In G340, `bind
-      r.q.p.load = r.q.L` reads F/-/F/-: load stands at 1.0, and L = 50 from Q's assert at K = 25.
-      Yet SMT decides (negT F, posF T) rather than reporting inconsistent axioms, as it does for
-      h2e's enclosing assert. The `=` twin reads the same on 414ba14, so this is the existing `=`
-      behaviour, not a change made here. Check whether the binding should be an SMT axiom.
-      [default-stands S1] Two more cases: (1) the `=` twin of h5-m3t (`L = 1.0`): the check reports
-      `P2::a2 in Q3::p` violated, yet SMT proves `k`, and the literal engine and SMT both exit 0;
-      with `default`, SMT exits 2. (Since contradicted-value S1 the literal engine exits 2 on case
-      (1); only the SMT T remains.) (2) The M-generator's `g_assert_*_encl_d{1,2}_pd1_*` and
-      `g_assert_*_pkg_d2_*` (12 files) read F/F/F/F with SMT `refuted` on a self-contradictory
-      model; the other 68 placements read X.
-- [ ] **Carry no asserted value through a package head's slot into a `default` that gave way to
-      another default (E1).** `bind P::load = M` (M `default = 9.0`) beside `part p4 : P { attribute
-      :>> load default = 7.0; }`: the two defaults differ, so M gives way (decision 10). Add
-      `attribute L; assert constraint fix { L == 5.0 }; bind p2.load = L;` and `constraint c3T {
-      p3.load <= 6.0 }`. c3T then reads ?/?/?/T: the check, literal and numeric surfaces abstain,
-      but SMT proves it from L's 5, carried through p2's slot into M and on to p3's load. M has no
-      value, and no assertion should give it one. `definedAgainstHead` skips a head whose component
-      holds only defaults that give way. Make that head's slot abstain, or refuse the axiom on the
-      verification lane, as `gateRelation` does for a default named directly. It holds on the
-      implementer's tree too, so it is not a regression. Probe:
-      default-stands-scratch/fin/np/edge1.sysml. [default-stands S1 review]
 - [ ] **Carry an asserted inequality over a `default` a binding makes give way with no value, on the
       SMT lane.** Since default-stands S1, `gateRelation` refuses every asserted relation over such
       a default (`givenWayUnvalued`), inequalities included. perf9b (per-instance/rv) goes from 2 to
