@@ -5152,6 +5152,223 @@ describe('a value, a reference and a binding that equate two parts or structured
       expect(o.encodable, o.instance?.contextId ?? 'own').toMatchObject({ reason: 'unread-binding' });
     }
   });
+
+  it('abstains on a relation read through a usage that subsets a feature an instance reads otherwise (sa7, sa3)', async () => {
+    const T0 = 'part def T0 { attribute load : ScalarValues::Real default = 1.0; }';
+    const p50 = 'part :>> p1 { attribute :>> load = 50.0; }';
+    // Every w's p2 is one of w's p1s (load 50), but the walk read w's p2 as W's own, a T0 of load 1: W's `c` filed no
+    // row for w, and `w.p2.load <= 5.0` held on all four surfaces (the review of per-instance-rest), its reverse
+    // refuted. Each row read through p2 abstains now, W's own too, naming w, on every surface; `w.p1.load` reads as
+    // written. So when what changes p1 is a definition W2 specialises, p2 is nested in W, or reached through a
+    // second subsetting, an attribute subsets one, or w binds p1's load.
+    for (const [name, W, w, read, who] of [
+      ['SA7', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', `part w : W { ${p50} }`, 'w.p2.load', 'w'],
+      ['SA7D', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', `part def W2 :> W { ${p50} } part w : W2;`, 'w.p2.load', 'W2'],
+      ['SA7N', 'part p1 : T0; part sub { part p2 :> p1; constraint c { p2.load <= 5.0 } }', `part w : W { ${p50} }`, 'w.sub.p2.load', 'w'],
+      ['SA7C', 'part p1 : T0; part p2 :> p1; part p3 :> p2; constraint c { p3.load <= 5.0 }', `part w : W { ${p50} }`, 'w.p3.load', 'w'],
+      ['SA7B', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', 'part w : W { attribute K : ScalarValues::Real = 50.0; bind p1.load = K; }', 'w.p2.load', 'w'],
+    ] as const) {
+      const { model: x, report } = await loadModelText(`package ${name} { ${T0} part def W { ${W} } ${w}
+        constraint k { ${read} <= 5.0 } constraint kR { ${read} >= 5.0 } }`, { fileName: `${name}.sysml`, strict: true });
+      const c = name === 'SA7N' ? `${name}::W::sub::c` : `${name}::W::c`;
+      for (const rel of [c, `${name}::k`, `${name}::kR`]) {
+        const row = check(x!, rel);
+        expect([row.result, row.instances ?? [], numeric(x!, rel), goal(x!, rel).encodable], rel).toMatchObject([
+          'unknown',
+          [],
+          'unknown',
+          { reason: 'unread-binding' },
+        ]);
+        expect(row.message, rel).toContain(`\`p2\` in ${name}::W${name === 'SA7N' ? '::sub' : ''} subsets \`p1\`, which ${name}::${who} reads otherwise`);
+        expect(row.message, rel).toContain(`this tool reads \`p2\` through ${name}::W's own \`p1\`, never as one of what \`p1\` is in ${name}::${who}`);
+      }
+      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), name).toEqual([]);
+    }
+    const { model: sa7 } = await loadModelText(`package SA7 { ${T0} part def W { part p1 : T0; part p2 :> p1; } part w : W { ${p50} }
+      constraint k1 { w.p1.load <= 5.0 } }`);
+    expect([check(sa7!, 'SA7::k1').result, numeric(sa7!, 'SA7::k1'), goal(sa7!, 'SA7::k1').encodable]).toEqual(['violated', 'violated', true]);
+    // An attribute that subsets one w gives a value of its own.
+    const { model: attr } = await loadModelText(`package SA7A {
+      part def W { attribute a1 : ScalarValues::Real default = 1.0; attribute a2 :> a1; constraint c { a2 <= 5.0 } }
+      part w : W { attribute :>> a1 = 50.0; }
+      constraint k { w.a2 <= 5.0 }
+    }`);
+    for (const rel of ['SA7A::W::c', 'SA7A::k']) expect([check(attr!, rel).result, numeric(attr!, rel)], rel).toEqual(['unknown', 'unknown']);
+    // A `satisfy` written in W whose satisfier is p2 filed no row for w, and `verify` exited 0 (sa3); a requirement
+    // usage whose subject is p2 read W's p2 too. Each row abstains now, naming p2 and w.
+    const RF = 'requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }';
+    for (const [name, W, ctx, said] of [
+      ['SA3', 'part p1 : T0; part p2 :> p1; satisfy RF by p2;', 'SA3::W::«Satisfy»', 'SA3::w reads its satisfier otherwise, through `p2`, which subsets `p1`'],
+      ['SA3Q', 'part p1 : T0; part p2 :> p1; requirement q : RF { subject s = p2; }', 'SA3Q::W::q', 'SA3Q::w reads what it names otherwise, through `p2`, which subsets `p1`'],
+    ] as const) {
+      const { model: x, report } = await loadModelText(`package ${name} { ${T0} ${RF} part def W { ${W} } part w : W { ${p50} } }`, {
+        fileName: `${name}.sysml`,
+        strict: true,
+      });
+      const rows = check(x!, `${name}::RF::«ConstraintUsage»`).instances!;
+      expect(rows.map((i) => [x!.qualifiedName(i.contextId), i.result]), name).toEqual([[ctx, 'unknown']]);
+      expect(rows[0]!.message, name).toContain(said);
+      expect(numericIn(x!, `${name}::RF::«ConstraintUsage»`, ctx), name).toBe('unknown');
+      const g = obligationsOf(x!).find((o) => o.role !== 'axiom' && o.instance?.contextId === rows[0]!.contextId)!;
+      expect(g.encodable, name).toMatchObject({ reason: 'unread-binding' });
+      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), name).toEqual([]);
+    }
+    // A part a requirement subsets its subject with (`part q :> s;`) read RF's own s, never the satisfier (50).
+    const { model: subj } = await loadModelText(`package SA3S { ${T0}
+      requirement def R { subject s : T0; part q :> s; require constraint { q.load <= 5.0 } }
+      part p50 : T0 { attribute :>> load = 50.0; }
+      satisfy R by p50;
+    }`);
+    const r = check(subj!, 'SA3S::R::«ConstraintUsage»');
+    expect([r.result, r.instances ?? []]).toEqual(['unknown', []]);
+    expect(r.message).toContain('`q` in SA3S::R subsets `s`, which `satisfy R by p50` in SA3S reads otherwise');
+    // An instance that changes nothing p1 reads — none at all, a redefinition that states nothing, another part —
+    // reads p2 as W does; and a feature of a package is one instance, read as written (50, violated).
+    const { model: same } = await loadModelText(`package SA7S { ${T0}
+      part def W { part p1 : T0; part p2 :> p1; part q : T0; constraint c { p2.load <= 5.0 } }
+      part w0 : W;
+      part w1 : W { part :>> q { attribute :>> load = 50.0; } }
+      part w2 : W { part :>> p1; }
+      constraint k { w2.p2.load <= 5.0 }
+    }`);
+    for (const rel of ['SA7S::W::c', 'SA7S::k']) expect([check(same!, rel).result, numeric(same!, rel)], rel).toEqual(['satisfied', 'satisfied']);
+    const { model: pkg } = await loadModelText(`package SA7P { ${T0}
+      part p1 : T0 { attribute :>> load = 50.0; }
+      part def W { part p2 :> p1; constraint c { p2.load <= 5.0 } }
+      part w : W;
+    }`);
+    expect([check(pkg!, 'SA7P::W::c').result, numeric(pkg!, 'SA7P::W::c')]).toEqual(['violated', 'violated']);
+  });
+
+  it('abstains on a package’s satisfaction, a subject and an asserted equation read through such a usage (subsetting-pass S1 review)', async () => {
+    const T0 = 'part def T0 { attribute load : ScalarValues::Real default = 1.0; }';
+    const W = 'part def W { part p1 : T0; part p2 :> p1; } part w : W { part :>> p1 { attribute :>> load = 50.0; } }';
+    const RF = (op: string) => `requirement def RF { subject s : T0; require constraint { s.load ${op} 5.0 } }`;
+    const said = (pkg: string) => `through \`p2\`, which subsets \`p1\`: this tool reads \`p2\` through ${pkg}::W's own \`p1\`, never as one of what \`p1\` is in ${pkg}::w`;
+    // A `satisfy` or a subject's value written in a package is one instance, so it was never asked: `satisfy RF by
+    // w.p2` and `subject s = w.p2` filed no row of their own, RF's own row (T) stood for them on all four surfaces,
+    // `verify` exited 0, where w's p2 is one of w's p1s (50). Each files its row now, which abstains; `w.p1` reads F.
+    for (const op of ['<=', '>='] as const) {
+      const { model: x, report } = await loadModelText(`package IP { ${T0} ${RF(op)} ${W} satisfy RF by w.p2; requirement r : RF { subject s = w.p2; } }`, {
+        fileName: 'IP.sysml',
+        strict: true,
+      });
+      const rows = check(x!, 'IP::RF::«ConstraintUsage»').instances!;
+      expect(rows.map((i) => [x!.qualifiedName(i.contextId), i.result]), op).toEqual([
+        ['IP::«Satisfy»', 'unknown'],
+        ['IP::r', 'unknown'],
+      ]);
+      expect(rows[0]!.message, op).toContain(`\`satisfy RF by w.p2\` in IP reads its satisfier ${said('IP')}, so no relation it requires of the satisfier is read`);
+      expect(rows[1]!.message, op).toContain(`\`subject s = w.p2\` in IP::r reads what it names ${said('IP')}, so no relation it requires of the subject is read`);
+      for (const i of rows) {
+        expect(numericIn(x!, 'IP::RF::«ConstraintUsage»', x!.qualifiedName(i.contextId)), op).toBe('unknown');
+        const g = obligationsOf(x!).find((o) => o.role !== 'axiom' && o.instance?.contextId === i.contextId)!;
+        expect(g.encodable, op).toMatchObject({ reason: 'unread-binding' });
+      }
+      // RF's own row reads RF's own subject (1): reversed, it is violated there, as sa3's twin.
+      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), op).toEqual(op === '<=' ? [] : ['Constraint violated: s.load >= 5.0']);
+    }
+    const { model: plain } = await loadModelText(`package IQ { ${T0} ${RF('<=')} ${W} satisfy RF by w.p1; }`);
+    expect(check(plain!, 'IQ::RF::«ConstraintUsage»').instances!.map((i) => i.result)).toEqual(['violated']);
+    // An asserted equation that reads through p2 gives what else it names w's 50 (decision 14): W's `x == p2.load`
+    // and a package's `y == w.p2.load` made `w.x` and `y` read W's own p2 (1) on all four surfaces, `<= 5.0` T and
+    // `>= 5.0` F. So through a reference W's sub values with p1 (`x == r.load`).
+    for (const [name, text, read] of [
+      ['AX', `part def W { part p1 : T0; part p2 :> p1; attribute x : ScalarValues::Real; assert constraint ax { x == p2.load } } part w : W { part :>> p1 { attribute :>> load = 50.0; } }`, 'w.x'],
+      ['PX', `${W} attribute y : ScalarValues::Real; assert constraint ay { y == w.p2.load }`, 'y'],
+      ['RA', `part def W { part p1 : T0; part sub { ref part r : T0 = p1; attribute x : ScalarValues::Real; assert constraint ax { x == r.load } } } part w : W { part :>> p1 { attribute :>> load = 50.0; } }`, 'w.sub.x'],
+    ] as const) {
+      const { model: x, report } = await loadModelText(`package ${name} { ${T0} ${text} constraint k { ${read} <= 5.0 } constraint kR { ${read} >= 5.0 } }`, {
+        fileName: `${name}.sysml`,
+        strict: true,
+      });
+      for (const rel of [`${name}::k`, `${name}::kR`]) {
+        const c = check(x!, rel);
+        expect([c.result, numeric(x!, rel), goal(x!, rel).encodable], rel).toMatchObject(['unknown', 'unknown', { reason: 'unread-binding' }]);
+        expect(c.message, rel).toContain(name === 'RA' ? '`r = p1` in RA::W::sub names a feature of RA::W' : `\`p2\` in ${name}::W subsets \`p1\`, which ${name}::w reads otherwise`);
+      }
+      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), name).toEqual([]);
+    }
+    // The sentence names the usage in its own owner, and the subsetted feature as its element has it: w's `part p3
+    // :> p1;` is w's (it said "as GI::W's own"), and `p2 :> q.p1` reads Q's own p1, never what w's q makes it.
+    for (const [name, text, read, sentence] of [
+      ['GI', 'part def W { part p1 : T0; } part w : W { part :>> p1 { attribute :>> load = 50.0; } part p3 :> p1; }', 'w.p3.load',
+        '`p3` in GI::w subsets `p1`, which GI::w reads otherwise: this tool reads `p3` through GI::W\'s own `p1`, never as one of what `p1` is in GI::w'],
+      ['SC', 'part def Q { part p1 : T0; } part def W { part q : Q; part p2 :> q.p1; } part w : W { part :>> q { part :>> p1 { attribute :>> load = 50.0; } } }', 'w.p2.load',
+        '`p2` in SC::W subsets `p1`, which SC::w::q reads otherwise: this tool reads `p2` through SC::Q\'s own `p1`, never as one of what `p1` is in SC::w::q'],
+    ] as const) {
+      const { model: x } = await loadModelText(`package ${name} { ${T0} ${text} constraint k { ${read} <= 5.0 } }`);
+      const c = check(x!, `${name}::k`);
+      expect([c.result, numeric(x!, `${name}::k`)], name).toEqual(['unknown', 'unknown']);
+      expect(c.message, name).toBe(`Could not evaluate: ${sentence}, so no relation that reads through it is read`);
+    }
+    // Two `satisfy`s a package writes of a requirement whose `part q :> s;` subsets its subject: listing the
+    // subsetting usages asks each, and the second one asks the listing again, which is refused and lists that
+    // `satisfy` (the re-entry guard). R's row abstains; no throw reaches the load, and no row reads `internal`.
+    const { model: re, report: reReport } = await loadModelText(`package RE3 { ${T0}
+      requirement def R { subject s : T0; part q :> s; require constraint { q.load <= 5.0 } }
+      part p50 : T0 { attribute :>> load = 50.0; }
+      part p1 : T0;
+      satisfy R by p50;
+      satisfy R by p1;
+    }`);
+    const r = check(re!, 'RE3::R::«ConstraintUsage»');
+    expect([r.result, r.instances ?? [], numeric(re!, 'RE3::R::«ConstraintUsage»')]).toEqual(['unknown', [], 'unknown']);
+    expect(r.message).toContain('`q` in RE3::R subsets `s`, which `satisfy R by p50` in RE3 reads otherwise');
+    expect(goal(re!, 'RE3::R::«ConstraintUsage»').encodable).toMatchObject({ reason: 'unread-binding' });
+    expect(reReport.diagnostics.filter((d) => d.code === 'import/internal-error')).toEqual([]);
+  });
+
+  it('abstains on a relation of the definition that types such a usage, read in it (subsetting-pass branch review)', async () => {
+    const T0 = 'part def T0 { attribute load : ScalarValues::Real default = 1.0; }';
+    const W = (w: string) => `part def W { part p1 : T0; part p2 : T1 :> p1; } ${w}`;
+    const p50 = 'part w : W { part :>> p1 { attribute :>> load = 50.0; } }';
+    const said = (pkg: string) => `\`p2\` in ${pkg}::W subsets \`p1\`, which ${pkg}::w reads otherwise`;
+    const loud = (r: { diagnostics: readonly { severity: string; message: string }[] }) =>
+      r.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message);
+    for (const op of ['<=', '>='] as const) {
+      // T1's `tc` read in W's `part p2 : T1 :> p1;` read T1's 1, as T1 does: no row was filed for W's p2, and T1's own
+      // row (T on all four surfaces) stood for w's p2, whose load is 50; `verify` and `sysml-check --strict` passed.
+      // W's p2 is a context of its own now, which abstains on every surface; T1's own row reads T1's 1.
+      const { model: x, report } = await loadModelText(`package TC3 { ${T0} part def T1 :> T0 { constraint tc { load ${op} 5.0 } } ${W(p50)} }`, {
+        fileName: 'TC3.sysml',
+        strict: true,
+      });
+      const c = check(x!, 'TC3::T1::tc');
+      expect([c.result, c.instances!.map((i) => [x!.qualifiedName(i.contextId), i.result])], op).toEqual([
+        op === '<=' ? 'satisfied' : 'violated',
+        [['TC3::W::p2', 'unknown']],
+      ]);
+      expect(c.instances![0]!.message, op).toContain(said('TC3'));
+      expect(numericIn(x!, 'TC3::T1::tc', 'TC3::W::p2'), op).toBe('unknown');
+      const g = obligationsOf(x!).find((o) => o.role !== 'axiom' && o.instance?.contextId === c.instances![0]!.contextId)!;
+      expect(g.encodable, op).toMatchObject({ reason: 'unread-binding' });
+      expect(loud(report), op).toEqual(op === '<=' ? [] : ['Constraint violated: load >= 5.0']);
+      // A relation nested in T1 has no element that stands for w's p2's sub, so its own row — every T1's sub — abstains.
+      const { model: n, report: nReport } = await loadModelText(
+        `package TC8 { ${T0} part def T1 :> T0 { part sub { attribute v : ScalarValues::Real = load; constraint tc { v ${op} 5.0 } } } ${W(p50)} }`,
+        { fileName: 'TC8.sysml', strict: true },
+      );
+      const s = check(n!, 'TC8::T1::sub::tc');
+      expect([s.result, s.instances ?? [], numeric(n!, 'TC8::T1::sub::tc'), goal(n!, 'TC8::T1::sub::tc').encodable], op).toMatchObject([
+        'unknown',
+        [],
+        'unknown',
+        { reason: 'unread-binding' },
+      ]);
+      expect(s.message, op).toContain(said('TC8'));
+      expect(loud(nReport), op).toEqual([]);
+    }
+    // An instance that changes nothing p1 reads (`part w : W;`) leaves every T1 read as written: no row for W's p2.
+    const { model: same } = await loadModelText(`package TC10 { ${T0}
+      part def T1 :> T0 { constraint tc { load <= 5.0 } part sub { attribute v : ScalarValues::Real = load; constraint tc { v <= 5.0 } } }
+      ${W('part w : W;')}
+    }`);
+    for (const rel of ['TC10::T1::tc', 'TC10::T1::sub::tc']) {
+      const c = check(same!, rel);
+      expect([c.result, c.instances ?? [], numeric(same!, rel)], rel).toEqual(['satisfied', [], 'satisfied']);
+    }
+  });
 });
 
 describe('an enclosing equation read through a binding or a reference, and a relation read through one (O9 S2)', () => {
@@ -7769,8 +7986,8 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       expect(m).toBeDefined();
       expect(report.diagnostics.filter((d) => d.code === 'import/internal-error')).toEqual([]);
       const sentence =
-        'the satisfactions, subjects and references an instance reads otherwise could not be listed: the reading failed ' +
-        '(RangeError); reported, not dropped, so no relation that may read one is read';
+        'the satisfactions, subjects, references and subsetting usages an instance reads otherwise could not be listed: ' +
+        'the reading failed (RangeError); reported, not dropped, so no relation that may read one is read';
       const checks = checkConstraints(m!);
       expect(rowOf(m!, checks, 'SD0B::plain').message).toBe(`Could not evaluate: ${sentence}`);
       const rf = checks.find((c) => m!.qualifiedName(c.id) === 'SD0B::RF::«ConstraintUsage»')!;
@@ -7780,9 +7997,36 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       expect(obligationsOf(m!).filter((o) => o.role !== 'axiom' && o.encodable === true)).toEqual([]);
       const k = m!.all().find((e) => m!.qualifiedName(e.id) === 'SD0B::K')!;
       expect(equatedPartsMeasureRefusal(m!, k.id, 'SD0B::K', 'K')).toBe(
-        'the satisfactions, subjects and references an instance reads otherwise could not be listed: the reading failed ' +
-          '(RangeError); reported, not dropped, so no bound of a value read through one is claimed',
+        'the satisfactions, subjects, references and subsetting usages an instance reads otherwise could not be listed: ' +
+          'the reading failed (RangeError); reported, not dropped, so no bound of a value read through one is claimed',
       );
+    });
+
+    it('listing the subsetting usages an instance reads otherwise that throws leaves every row unknown, never the load (subsettingTaint)', async () => {
+      vi.spyOn(instanceIndexSeam, 'subsettingsOtherwise').mockImplementation(() => {
+        throw new RangeError('subsettingsOtherwise, planted to throw');
+      });
+      // Asked from a `satisfy` W writes (sa3), from the instance test of a context, and from the listing of what an
+      // instance reads otherwise: each throw is contained, and every row abstains in that listing's sentence.
+      const { model: m, report } = await loadModelText(`package SA3T {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; part p2 :> p1; satisfy RF by p2; constraint c { p2.load <= 5.0 } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        attribute K : ScalarValues::Real = 3.0;
+        constraint plain { K <= 5.0 }
+        constraint k { w.p2.load <= 5.0 }
+      }`);
+      expect(m).toBeDefined();
+      expect(report.diagnostics.filter((d) => d.code === 'import/internal-error')).toEqual([]);
+      const sentence =
+        'the satisfactions, subjects, references and subsetting usages an instance reads otherwise could not be listed: ' +
+        'the reading failed (RangeError); reported, not dropped, so no relation that may read one is read';
+      const checks = checkConstraints(m!);
+      for (const q of ['SA3T::plain', 'SA3T::k', 'SA3T::W::c']) expect([rowOf(m!, checks, q).result, rowOf(m!, checks, q).message], q).toEqual(['unknown', `Could not evaluate: ${sentence}`]);
+      expect(checks.flatMap((c) => c.instances ?? []).filter((i) => i.result !== 'unknown' || i.abstention !== 'internal')).toEqual([]);
+      expect(checkConstraintsNumeric(m!).filter((r) => r.result !== 'unknown')).toEqual([]);
+      expect(obligationsOf(m!).filter((o) => o.role !== 'axiom' && o.encodable === true)).toEqual([]);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Model, ModelFactory } from '@core/index';
 import {
   gatherConstraints,
@@ -12,7 +12,7 @@ import {
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
-import { defaultStandsIn } from '../../src/semantics/defining-equation';
+import { defaultStandsIn, instanceIndexSeam } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -426,6 +426,56 @@ describe('evaluateMoEs', () => {
   });
 });
 
+/*
+ * text-order S2: a measure two asserted equations give two values has none. `evaluateFeatureValue` returns the
+ * first equation written, so `totalMeasure` read 100 where the text wrote `lengthMeasure == 50.0` first and 120
+ * where it wrote `== 60.0` first (the soft/hard analysis' `reconcile/n-ab.sysml`, `n-ba.sysml`).
+ */
+describe('evaluateMoEs — a measure two asserted equations give two values', () => {
+  const AB = 'assert constraint c50 { lengthMeasure == 50.0 } assert constraint c60 { lengthMeasure == 60.0 }';
+  const BA = 'assert constraint c60 { lengthMeasure == 60.0 } assert constraint c50 { lengthMeasure == 50.0 }';
+  const measures = (eqs: string) => {
+    const { model: m, diagnostics } = parseModel(`package MC {
+      part def P {
+        attribute lengthMeasure : ScalarValues::Real;
+        attribute totalMeasure : ScalarValues::Real;
+        attribute rateMeasure : ScalarValues::Real = 3.0;
+        attribute otherMeasure : ScalarValues::Real;
+        ${eqs}
+        assert constraint ct { totalMeasure == 2.0 * lengthMeasure }
+        assert constraint co { otherMeasure == 5.0 }
+      }
+    }`);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    return Object.fromEntries(evaluateMoEs(m).map((x) => [x.name, x.value]));
+  };
+
+  it('has no value, nor has one tied to it, in either order', () => {
+    for (const eqs of [AB, BA]) {
+      expect(measures(eqs)).toEqual({ lengthMeasure: null, totalMeasure: null, rateMeasure: 3, otherMeasure: 5 });
+    }
+  });
+
+  it('reads a written measure and no derived one where the listing of the equations threw', () => {
+    vi.spyOn(instanceIndexSeam, 'contradictedDefinitions').mockImplementation(() => {
+      throw new RangeError('contradictedDefinitions, planted to throw');
+    });
+    try {
+      // Which measures the pair reaches is unknown: each an equation gives its value is read as one with none.
+      expect(measures(AB)).toEqual({ lengthMeasure: null, totalMeasure: null, rateMeasure: 3, otherMeasure: null });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('still reads a measure from one equation, or from equations that agree', () => {
+    expect(measures('assert constraint c50 { lengthMeasure == 50.0 }')).toMatchObject({ lengthMeasure: 50, totalMeasure: 100 });
+    expect(
+      measures('assert constraint c50 { lengthMeasure == 50.0 } assert constraint c25 { lengthMeasure == 25.0 * 2.0 }'),
+    ).toMatchObject({ lengthMeasure: 50, totalMeasure: 100 });
+  });
+});
+
 /* ───────────────────────────── optimization ──────────────────────────── */
 
 describe('optimize', () => {
@@ -594,6 +644,234 @@ describe('solve — a value a binding past a cap holds is no design freedom', ()
     expect(check.message).toBe(`Could not evaluate: ${row('c6').reason}`);
     const feasibility = solveFeasible(m!);
     expect([feasibility.decided, feasibility.free]).toEqual([false, []]);
+  });
+});
+
+/* ───────── the order of the text decides no design equation (text-order S1) ───────── */
+
+/**
+ * The numeric solve took the first plain equality over a valueless feature, in TEXT order, as its design equation
+ * and judged every other at the point it fixed — beside an assert it reads no equation from (`L == 50.0 and L >=
+ * 0.0`), a false F one way round and a false T on a check beside it. Each model here is read in both orders.
+ */
+describe('solve — the order of the text decides no design equation', () => {
+  /** The numeric rows of `text`, by declared name: result, imposed, reason. */
+  async function rows(text: string): Promise<Map<string, { result: string; imposed?: true; reason?: string }>> {
+    const { model: m } = await loadModelText(text);
+    return new Map(checkConstraintsNumeric(m!).map((r) => [r.name, { result: r.result, imposed: r.imposed, reason: r.reason }]));
+  }
+
+  it('takes no plain constraint as a design equation over a feature an assert holds in a form it does not read', async () => {
+    const P = 'part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 50.0 and L >= 0.0 } }';
+    for (const text of [
+      `package X3K { ${P} part p : P; constraint t1 { p.L == 1.0 } constraint k { p.L <= 10.0 } }`,
+      `package X3K { constraint k { p.L <= 10.0 } constraint t1 { p.L == 1.0 } part p : P; ${P} }`,
+    ]) {
+      const r = await rows(text);
+      // t1 fixed p's L at 1, and k read satisfied where the assert makes L 50.
+      expect([r.get('t1')!.result, r.get('k')!.result, r.get('t1')!.imposed]).toEqual(['unknown', 'unknown', undefined]);
+      expect(r.get('k')!.reason).toBe(
+        'X3K::p::L has no value, and an assert constrains it in a form the numeric solve does not read (ca, a ' +
+          'conjunction), so it is no design freedom: no plain constraint is solved for it, and this relation is not judged',
+      );
+      const { model: m } = await loadModelText(text);
+      expect([...solve(m!).values.keys()].map((id) => id.split('@')[1])).not.toContain('X3K::p::L');
+    }
+  });
+
+  it('reads the freedom off the model’s own equations alone, never off a check it may not take', async () => {
+    // P's asserted `M == L * 2.0` carries what `L >= 0.0 and L <= 1.0` holds to M: `tM` may not fix M at 100 (and L
+    // at 50), and the freedom L and M keep is no point to judge `k { p.L <= 0.5 }` at.
+    const r = await rows(`package LK {
+      part def P { attribute L : ScalarValues::Real; attribute M : ScalarValues::Real;
+        assert constraint ca { L >= 0.0 and L <= 1.0 } assert constraint d { M == L * 2.0 } }
+      part p : P;
+      constraint tM { p.M == 100.0 }
+      constraint k { p.L <= 0.5 }
+    }`);
+    expect([r.get('tM')!.result, r.get('tM')!.imposed, r.get('k')!.result]).toEqual(['unknown', undefined, 'unknown']);
+    expect(r.get('k')!.reason).toContain('LK::p::L is left free by the equations');
+  });
+
+  it('leaves a value plain constraints that disagree give unread, whichever is written first', async () => {
+    for (const text of [
+      'package PL2 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; constraint a { x == 3.0 } constraint b { x == y } constraint c { y == 5.0 } }',
+      'package PL2 { constraint c { y == 5.0 } constraint b { x == y } constraint a { x == 3.0 } attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }',
+    ]) {
+      const r = await rows(text);
+      // Written in this order, a was imposed and c refuted; the other way round c imposed and a refuted.
+      expect(['a', 'b', 'c'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual([
+        ['unknown', undefined],
+        ['unknown', undefined],
+        ['unknown', undefined],
+      ]);
+      expect(r.get('a')!.reason).toBe(
+        'no value the model states fixes x, only plain constraints that disagree (a, b and c): which of them holds ' +
+          'would turn on the one the solve took first as its design equation, so none does, and this relation is not judged',
+      );
+      const { model: m } = await loadModelText(text);
+      expect(solve(m!).values.size).toBe(0);
+      expect(solveFeasible(m!).decided).toBe(false);
+    }
+  });
+
+  it('reads two plain equations that agree as design equations both, whichever is written first', async () => {
+    for (const text of [
+      'package DUP { attribute x : ScalarValues::Real; constraint a { x == 3.0 } constraint b { x == 3.0 } constraint k { x <= 5.0 } }',
+      'package DUP { constraint k { x <= 5.0 } constraint b { x == 3.0 } constraint a { x == 3.0 } attribute x : ScalarValues::Real; }',
+    ]) {
+      const r = await rows(text);
+      expect(['a', 'b', 'k'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual([
+        ['satisfied', true],
+        ['satisfied', true],
+        ['satisfied', undefined],
+      ]);
+    }
+  });
+
+  it('orients the model’s own equations before a check: a requirement written above a value expression is judged', async () => {
+    const P =
+      'part def P { attribute a : ScalarValues::Real = 0.3; attribute b : ScalarValues::Real = 10000000000000000.0; attribute d : ScalarValues::Real = a * b; }';
+    const R = 'requirement def R { subject s : P; require constraint { s.d == 3000000000000000.0 } }';
+    for (const text of [`package Z125 { ${P} part p : P; ${R} satisfy R by p; }`, `package Z125 { satisfy R by p; ${R} part p : P; ${P} }`]) {
+      const { model: m } = await loadModelText(text);
+      const row = checkConstraintsNumeric(m!).find((x) => x.raw.includes('s.d'))!;
+      // Written above `d = a * b`, the requirement fixed d itself: imposed by the solve.
+      expect([row.result, row.imposed]).toEqual(['satisfied', undefined]);
+    }
+  });
+
+  it('judges a plain constraint over a value an asserted equation fixes, whichever is written first, beside one the solve takes', async () => {
+    // `s { x + y == 10.0 }` is asserted and does not `define` x, but y is stated: x is 6 whatever the checks do. `d` is
+    // violated at it, and `b { w == x + 1.0 }` is the design equation for w. The checks that disagree are not b and d.
+    const S = 'assert constraint s { x + y == 10.0 }';
+    const D = 'attribute y : ScalarValues::Real = 4.0; attribute x : ScalarValues::Real; attribute w : ScalarValues::Real;';
+    for (const text of [
+      `package K1 { ${D} ${S} constraint b { w == x + 1.0 } constraint d { x == 9.0 } constraint c { x == 6.0 } }`,
+      `package K1 { constraint c { x == 6.0 } constraint d { x == 9.0 } constraint b { w == x + 1.0 } ${S} ${D} }`,
+    ]) {
+      const r = await rows(text);
+      expect(['s', 'b', 'd', 'c'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual([
+        ['satisfied', undefined],
+        ['satisfied', true],
+        ['violated', undefined],
+        ['satisfied', undefined],
+      ]);
+      const { model: m } = await loadModelText(text);
+      const x = [...solve(m!).values].find(([id]) => m!.qualifiedName(id) === 'K1::x');
+      expect(x?.[1]).toBeCloseTo(6, 6);
+    }
+  });
+
+  it('keeps a value an asserted equation derives from a design value in the design component, in either order', async () => {
+    // y comes only from the plain `a` and `b`, which disagree; x = 10 − y is the asserted equation's, moves with it, and
+    // is no value to publish or judge `e { x == 3.0 }` at.
+    for (const text of [
+      'package K3 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; assert constraint s { x + y == 10.0 } constraint a { y == 7.0 } constraint b { y == 8.0 } constraint e { x == 3.0 } }',
+      'package K3 { constraint b { y == 8.0 } constraint a { y == 7.0 } constraint e { x == 3.0 } assert constraint s { x + y == 10.0 } attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }',
+    ]) {
+      const r = await rows(text);
+      expect(['s', 'a', 'b', 'e'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual(Array(4).fill(['unknown', undefined]));
+      expect(r.get('a')!.reason).toContain('only plain constraints that disagree (a, b and e)');
+      const { model: m } = await loadModelText(text);
+      expect(solve(m!).values.size).toBe(0);
+    }
+  });
+
+  it('gives the same reason in either order: the facts are read after each check, before the next', async () => {
+    // The asserted `f { y == x * 2.0 }` reads y once c1 fixed it: in text order c1, c2 the check c2 took x first, and the
+    // solve stopped off f ("did not converge"); c2, c1 it stopped on the checks that disagree.
+    const F = 'attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; assert constraint f { y == x * 2.0 }';
+    const reasons = new Set<string>();
+    for (const text of [
+      `package B1 { ${F} constraint c1 { y == 7.0 } constraint c2 { x + y == 10.0 } }`,
+      `package B1 { ${F} constraint c2 { x + y == 10.0 } constraint c1 { y == 7.0 } }`,
+      `package B1 { constraint c2 { x + y == 10.0 } constraint c1 { y == 7.0 } ${F} }`,
+    ]) {
+      const r = await rows(text);
+      for (const n of ['c1', 'c2']) {
+        expect(r.get(n)!.result).toBe('unknown');
+        reasons.add(`${n}: ${r.get(n)!.reason}`);
+      }
+    }
+    expect([...reasons].sort()).toEqual([
+      expect.stringContaining('c1: no value the model states fixes y, only plain constraints that disagree (c1 and c2)'),
+      expect.stringContaining('c2: no value the model states fixes x and y, only plain constraints that disagree (c1 and c2)'),
+    ]);
+  });
+
+  it('names an assert with no name of its own by what it is, never by the usage’s qualified name', async () => {
+    const r = await rows(`package G2 {
+      part def P { attribute L : ScalarValues::Real; assert constraint { L >= 0.0 } assert constraint { L <= 9.0 } }
+      part p : P;
+      constraint t2 { p.L == 20.0 }
+    }`);
+    const reason = r.get('t2')!.reason!;
+    expect(reason).toContain('asserts constrain it in a form the numeric solve does not read (2 unnamed asserts, an inequality)');
+    expect(reason).not.toContain('«');
+  });
+
+  it('leaves the root of a curved plain equation unread beside another plain equation, whichever is written first', async () => {
+    // `x * x == 4.0` has two roots: written above `x == -2.0` the solve took 2 and left both unjudged, below it took −2 and
+    // imposed both (neither refuted, but the text order showed). The pair is contested in both orders, with one sentence.
+    const SAME =
+      'no value the model states fixes x, only plain constraints, one of them with more than one root (a and b): which root ' +
+      'the solve took, and so whether the others hold, would turn on which constraint it took first as its design equation, ' +
+      'so none does, and this relation is not judged';
+    for (const [a, b] of [['x * x == 4.0', 'x == -2.0'], ['x * x == 4.0', 'x == 2.0'], ['x * x == 4.0', 'x == 5.0']] as const) {
+      for (const text of [
+        `package ROOT { attribute x : ScalarValues::Real; constraint a { ${a} } constraint b { ${b} } }`,
+        `package ROOT { constraint b { ${b} } constraint a { ${a} } attribute x : ScalarValues::Real; }`,
+      ]) {
+        const r = await rows(text);
+        expect(['a', 'b'].map((n) => [r.get(n)!.result, r.get(n)!.imposed, r.get(n)!.reason]), text).toEqual([
+          ['unknown', undefined, SAME],
+          ['unknown', undefined, SAME],
+        ]);
+        const { model: m } = await loadModelText(text);
+        expect(solve(m!).values.size).toBe(0);
+      }
+    }
+  });
+
+  it('still imposes a curved plain equation alone, and a product of two unknowns once the others are fixed', async () => {
+    const lone = await rows('package SG { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint k { x >= 0.0 } }');
+    expect([lone.get('a')!.imposed, lone.get('k')!.result]).toEqual([true, 'satisfied']);
+    // `mass == density * volume` is affine in the one it is solved for once the others are fixed: c4 is judged beside it.
+    const D = 'attribute mass : ScalarValues::Real; attribute volume : ScalarValues::Real; attribute density : ScalarValues::Real;';
+    const C = ['constraint c1 { mass == density * volume }', 'constraint c2 { volume == 2.0 }', 'constraint c3 { density == 5.0 }', 'constraint c4 { mass == 10.0 }'];
+    for (const text of [`package MVD { ${C.join(' ')} ${D} }`, `package MVD { ${[...C].reverse().join(' ')} ${D} }`]) {
+      const r = await rows(text);
+      expect(['c1', 'c2', 'c3', 'c4'].map((n) => [r.get(n)!.result, r.get(n)!.imposed])).toEqual(Array(4).fill(['satisfied', true]));
+    }
+  });
+
+  it('holds the names an asserted relation that does not parse writes, as one it reads no equation from', async () => {
+    // `e` is a parse error, and still constrains M and L (M = max(L, 20.0) >= 20): `t1 { p.M == 3.0 }` was imposed by the solve.
+    for (const e of ['M == max(L, 20.0)', 'M == L ** 2.0']) {
+      const r = await rows(`package UP {
+        part def P { attribute M : ScalarValues::Real; attribute L : ScalarValues::Real;
+          assert constraint e { ${e} } assert constraint g { L >= 5.0 and L <= 100.0 } }
+        part p : P;
+        constraint t1 { p.M == 3.0 }
+      }`);
+      expect([r.get('t1')!.result, r.get('t1')!.imposed], e).toEqual(['unknown', undefined]);
+      expect(r.get('t1')!.reason, e).toBe(
+        'UP::p::M has no value, and an assert constrains it in a form the numeric solve does not read (e, an equation it ' +
+          'cannot read), so it is no design freedom: no plain constraint is solved for it, and this relation is not judged',
+      );
+    }
+  });
+
+  it('still imposes a lone plain equation, and leaves a feature only asserted inequalities touch a design freedom', async () => {
+    const r = await rows('package ONE { attribute x : ScalarValues::Real; constraint a { x == 3.0 } constraint k { x <= 5.0 } }');
+    expect([r.get('a')!.imposed, r.get('k')!.result]).toEqual([true, 'satisfied']);
+    // The model's own equations (`e = x * 2.0`) still solve x as a freedom: no value, free, every relation over it unjudged.
+    const text = 'package Q3 { part def P { attribute x : ScalarValues::Real; attribute e = x * 2.0; assert constraint lo { x >= 0.0 } } }';
+    const { model: m } = await loadModelText(text);
+    const s = solve(m!);
+    expect([s.converged, s.free.map((id) => m!.qualifiedName(id)).sort()]).toEqual([true, ['Q3::P::e', 'Q3::P::x']]);
+    expect((await rows(text)).get('lo')!.reason).toContain('is left free by the equations');
   });
 });
 

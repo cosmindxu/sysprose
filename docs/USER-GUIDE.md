@@ -731,10 +731,39 @@ Two names worth separating:
   plain constraint over it is judged, never imposed — and so is a feature
   whose stated value expression those facts determine (`y = x * 2.0` over an
   asserted `x`): `y == 7.0` beside it is violated, never the value y is
-  solved to. The test is local: of
+  solved to, wherever the check is written: the model's own equations are
+  solved first, and a check fixes only what they leave. The test is local: of
   two separate roots (`x * x == 4.0`) the one the solver found is still the
-  one judged. A constraint of a definition read in a usage is judged at the
-  values the model states; with any of them `fixed` by an API caller,
+  one judged. **No design equation turns on the order of the text**, bar the second root a
+  model equation gives and a curved equation reached through a product (open).
+  Two plain
+  equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
+  `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
+  fix no value: the one taken would be the one written first, so neither is
+  taken, and every relation over that value is *unjudged* (*… only plain
+  constraints that disagree (t50 and t60): which of them holds would turn on the
+  one the solve took first as its design equation, so none does …*); Solve
+  lists no value for it. So do two plain equations one of which has more than
+  one root (`a { x * x == 4.0 }` beside `b { x == -2.0 }`, and beside `b { x ==
+  2.0 }`, where one root agrees): the root the solve takes, and so whether the
+  other holds, would turn on which of the two it took first, so neither is
+  (*… only plain constraints, one of them with more than one root (a and b) …*).
+  A lone equation of two roots is still *imposed*, at the root the solver found,
+  and a product of two unknowns (`mass == density * volume`) is no such
+  equation once the others are fixed. A curved system that leaves no plain equation unused (`x * x == 4.0`,
+  `y == x + 1.0`, `y <= 0.0`) is still decided at the root the solver found:
+  trust no verdict over such a system (open). A feature with no value that an `assert`
+  constrains in a form the solve does not read — an inequality, a conjunction
+  (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
+  (`M == max(L, 20.0)`, which the model reports) — is no design freedom for a
+  check: no plain constraint is solved for it — `t1 { p.L == 1.0 }` does not fix
+  p's L at 1 beside an assert that makes it 50 — and a relation over it is
+  *unjudged* (*… has no value, and an assert constrains it in a form the
+  numeric solve does not read (ca, a conjunction) …*). The model's own
+  equations still solve it, and the freedom is read off them alone: a stated `e
+  = x * 2.0` leaves x a freedom, and so does an asserted `M == L * 2.0` beside
+  `tM { p.M == 100.0 }`, which fixes neither M nor L. A constraint of a
+  definition read in a usage is judged at the values the model states; with any of them `fixed` by an API caller,
   `solveFeasible` leaves it unjudged (`decided: false`), and so does the
   numeric check (`unknown`). Every other relation is read at the fixed point,
   every feature the point moves at the value it has there — `y != 18.0` over
@@ -1271,8 +1300,9 @@ nested in W writes is read in each instance of W a path reaches it through
 one valued with a feature around that usage (`ref part r : T0 = p1`, W's p1)
 is read at W's own values only, so where an instance of W reads that feature
 otherwise (w's `part :>> p1 { … }`), every row read through it — or through a
-value or a binding that reads through it, as `sub.m` over `attribute m =
-r.load` — is *could not be evaluated*, naming that instance, but for the rows
+value, a binding or an asserted equation that reads through it, as `sub.m` over
+`attribute m = r.load` or `x == r.load` — is *could not be evaluated*, naming
+that instance, but for the rows
 of a group that reads each instance, which re-resolve the reference itself
 there as above (Q's `part p : P { ref part :>> r = s; }` beside Q's `bind
 p.load = L`). A reference redefinition that states no value (`ref part :>>
@@ -1283,7 +1313,23 @@ w makes of W's valued reference (w's `bind m = pp.load` over W's `ref part pp :
 T0 = top.a`), and every row read through it (`w.m`). Through either kind, `bounds` claims no
 bound of a measure (`w.sub.m`, `w.r.load`). One redefined over a reference written
 with `=` (`ref part :>> r1 = p2` in w, over W's `ref part r1 = p1`) states a
-second value, and a row read through it is *could not be evaluated*. A
+second value, and a row read through it is *could not be evaluated*. A usage
+that subsets a feature an instance reads otherwise is read alike: beside w's
+`part :>> p1 { attribute :>> load = 50.0; }`, every w's p2 of W's `part p2 :>
+p1;` is one of w's p1s, but this tool reads p2 through W's own p1, never as
+one of w's, so each row read through p2 — W's own `constraint c { p2.load <=
+5.0 }`, the package's `w.p2.load`, a `satisfy R by p2` W writes or a package's
+`satisfy R by w.p2` (a subject's value `= w.p2` too), and what a value, a
+binding, an asserted equation (`x == p2.load`) or a further subsetting reads
+through it — is *could not be evaluated*, in a sentence that names p2, the
+element whose own p1 it is read through and w, and `bounds` claims no bound of
+a measure read so — a limit of this tool. So is a relation of p2's type read
+in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
+W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
+nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
+has no element that stands for w's p2's sub, so its row, which stands for every
+T1's sub, is *could not be evaluated*. Where no instance reads p1
+otherwise, or p1 is a feature of a package, it reads as written. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A relation of Q read in a usage or a specialisation
@@ -1351,7 +1397,7 @@ row and finding stands — on the verify lane too, where the goal row is refused
 that sentence and closed as a failure of the tool, not a defect in the relation. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
 sentence; one while it lists the asserted equations over a `default` it does not
-read, or the satisfactions, subjects and references an instance reads otherwise,
+read, or the satisfactions, subjects, references and subsetting usages an instance reads otherwise,
 leaves every row *could not be evaluated* (*… could not be listed: the reading
 failed (RangeError); reported, not dropped*), since which rows they reach is
 then unknown — and every other rule's findings stand. A value a binding carries is read in the unit
@@ -1606,7 +1652,17 @@ equation (*L is not read: the asserted `L == 50.0` (…::P::c50) and `L == 60.0`
 different values — the model contradicts itself there, whichever is written
 first …*; on the numeric surface a row the solve could not judge keeps its own
 sentence, such as *the solve did not converge*), and `verify` exits 2 on either
-engine, its rows printing no value for L (nor an SI pair). A relation over a
+engine, its rows printing no value for L (nor an SI pair). No export reads one
+either, whichever equation is written first: the FMI `start` of such an L, or
+of a value tied to it, is the type's default (`0`, `false` for a Boolean, the
+empty string for a String) as for a feature with no value, a placeholder FMI
+requires and no value of the model (the variable's `description` says so:
+*start is the type default, not a model value …*); a `local` has none; a co-simulation holds
+no input at it, so the outputs over it read NaN; and Solve lists a measure of
+effectiveness that is one as *(unknown)*. A value written as a number, a
+Boolean or a String keeps its start. As wide as the rest of this abstention,
+this is by feature: P's own `load` falls to the default too where P's equation
+is consistent and a `part p : P` elsewhere writes the second. A relation over a
 name a defining side reads, or one tied to it (`a` of `L == a * 2.0` with `a =
 30.0`, a package's `g` of `W == m * g`, the K that `bind a = K` joins to a), is
 read by the check and the numeric surface at the value the model states, and
@@ -1657,8 +1713,10 @@ against it, in any order; so is one an asserted relation reads beside L (`M =
 20.0` in `L >= 0.0 [kg] or M >= 0.0`), and an assert over it alone (`M <=
 10.0`) is still the warning. Limits of this tool: two asserted equations on the two
 ends of one binding (`bind L = K` with `L == 50.0` and `K == 60.0`) are the
-binding's violated pair, but each end's readings stand; and an FMI export's
-`start` still reads the first equation written.
+binding's violated pair, but each end's readings stand; and `K == L`, a bare
+name on each side, is not read as tying K to such an L, so K's FMI `start`, its
+measure of effectiveness and a check over it still turn on the order of the two
+equations (`K == L + 0.0`, `K == 2.0 * L` and `bind K = L` are read as tied).
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
