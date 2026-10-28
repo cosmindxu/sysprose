@@ -5930,10 +5930,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'MI6R::t50': ['T/T/T/T', 'T'],
     }),
     // Q2's L a `default` 50 the binding joins to P's default 1: two defaults that differ, no value (A.4). r's L read
-    // Q's (none) and P's 1 stood: F/F/F/F on r50, rL and rm2, T/T/T/T on rL1. The check, the literal engine and
-    // SMT now abstain on all four; the numeric surface imposes one row as a design equation and judges the others at
-    // that point (rm2 T, rL1 F: KNOWN_FALSE), as it does on the end copy's twin below with no `:>> L` (identical at
-    // 84fb971).
+    // Q's (none) and P's 1 stood: F/F/F/F on r50, rL and rm2, T/T/T/T on rL1. Every surface abstains on all four, as on
+    // the end copy's twin below with no `:>> L`: since text-order the numeric surface imposes no design equation over
+    // the two defaults.
     'redef-target-mi6-dflt': probe(`package MI6D {
         part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }
         part def Q { attribute L; part p : P; }
@@ -5944,10 +5943,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint rm2 { r.p.m2 <= 0.0 }
         constraint rL1 { r.L == 1.0 }
       }`, {
-      'MI6D::r50': ['?/?/t/?', '?'],
-      'MI6D::rL': ['?/?/t/?', '?'],
-      'MI6D::rL1': ['?/?/F/?', '?'],
-      'MI6D::rm2': ['?/?/T/?', '?'],
+      'MI6D::r50': ['?/?/?/?', '?'],
+      'MI6D::rL': ['?/?/?/?', '?'],
+      'MI6D::rL1': ['?/?/?/?', '?'],
+      'MI6D::rm2': ['?/?/?/?', '?'],
     }),
     'redef-target-copy-dflt': probe(`package CP {
         part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }
@@ -5959,10 +5958,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint rm2 { r.p.m2 <= 0.0 }
         constraint rL1 { r.L == 1.0 }
       }`, {
-      'CP::r50': ['?/?/t/?', '?'],
-      'CP::rL': ['?/?/t/?', '?'],
-      'CP::rL1': ['?/?/F/?', '?'],
-      'CP::rm2': ['?/?/T/?', '?'],
+      'CP::r50': ['?/?/?/?', '?'],
+      'CP::rL': ['?/?/?/?', '?'],
+      'CP::rL1': ['?/?/?/?', '?'],
+      'CP::rm2': ['?/?/?/?', '?'],
     }),
     'redef-target-mi7': probe(`package MI7 {
         part def Q { attribute L; attribute M default = 1.0; }
@@ -11728,10 +11727,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ),
   };
 
-  /** The NO-STEP reason of a row the numeric surface decides over two defaults a binding joins (MI6D, CP). */
-  const NUMERIC_JOINED_DEFAULTS =
-    'NO STEP (TODO “Keep the numeric surface from deciding a relation over a feature a binding joins to a default that differs”): Q2’s `:>> L default = 50.0`, joined by `bind p.load = L` to P’s `load default = 1.0`, gives no value (A.4), and the check, the literal engine and SMT abstain; the numeric surface imposes one row as a design equation (r50 or rL: L = 50) and judges the others at that point (solver.ts)';
-
   /** The NO-STEP reason of a row over a feature that redefines two features of one line (MU, MUR). */
   const REDEFINES_TWO_FEATURES =
     'NO STEP (TODO “Model a feature that redefines two features of one line”): Q2’s `attribute X :>> M, N` is the one feature for M and for N, and s’s `:>> M = 1.0` beside `:>> N = 2.0` gives it two values; each surface reads the two as two features (s’s M and s’s N, each redefining Q’s), as at 84fb971, and decides';
@@ -11781,16 +11776,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * contradiction (their `#bind`); every surface now abstains on them.
    *
    * redefinition-target S1 pinned the rows of a `default` a binding joins to a default that differs (MI6D, and CP,
-   * its end-copy twin), where the numeric surface alone still decides: identical on CP at 84fb971, and on MI6D since
-   * the explicit `:>> L` reads as the copy does (rm2 F/F/F/F and rL1 T/T/T/T before). It listed the rows of a
-   * feature that redefines two features of one line (MU, MUR) as false too: unchanged from 84fb971, where every
-   * surface reads the two as two features although the one feature has two values.
+   * its end-copy twin): every surface abstains on them (the numeric surface alone decided them until text-order).
+   * It listed the rows of a feature that redefines two features of one line (MU, MUR) as false: unchanged from
+   * 84fb971, where every surface reads the two as two features although the one feature has two values.
    */
   const KNOWN_FALSE = new Map<string, string>([
-    ['redef-target-mi6-dflt | MI6D::rm2', NUMERIC_JOINED_DEFAULTS],
-    ['redef-target-mi6-dflt | MI6D::rL1', NUMERIC_JOINED_DEFAULTS],
-    ['redef-target-copy-dflt | CP::rm2', NUMERIC_JOINED_DEFAULTS],
-    ['redef-target-copy-dflt | CP::rL1', NUMERIC_JOINED_DEFAULTS],
     ['redef-target-merge | MU::sM1', REDEFINES_TWO_FEATURES],
     ['redef-target-merge | MU::sN1', REDEFINES_TWO_FEATURES],
     ['redef-target-merge | MU::sN2', REDEFINES_TWO_FEATURES],
