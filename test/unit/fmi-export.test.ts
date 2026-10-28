@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { Model, ModelFactory } from '@core/index';
 import { fmiModelDescription, exportFmu, zipStore, crc32 } from '@interop/index';
+import { instanceIndexSeam } from '../../src/semantics/defining-equation';
+import { parseModel } from '@text/index';
 
 /** Vehicle block: an input port, an output port, and a parameter attribute. */
 function vehicleBlock() {
@@ -248,5 +250,121 @@ describe('fmiModelDescription — <BaseUnit> carries the conversion, not just th
     // `m/SI::s` is a speed. Cutting the whole string at its last `::` used to
     // export it as `<BaseUnit s="1"/>` — a duration.
     expect(md.xml).toContain('<Unit name="m/SI::s"><BaseUnit m="1" s="-1"/></Unit>');
+  });
+});
+
+/*
+ * text-order S2: a feature two asserted equations give two values has no start of its own. `evaluateFeatureValue`
+ * returns the first equation written, so the export wrote 50 or 60 as `L`'s start by the order of the text
+ * (the soft/hard analysis' `reconcile/n-ab.sysml` and `n-ba.sysml`), and a value tied to it the arithmetic over
+ * that: 100 or 120.
+ */
+describe('fmiModelDescription — a feature two asserted equations give two values', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const GEN = { generationDate: '2026-01-01T00:00:00Z' };
+  /** The description of part def P in `body`'s package. */
+  const describeP = (body: string) => {
+    const { model: m, diagnostics } = parseModel(`package RN { part def P { ${body} } }`);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const p = m.all().find((e) => e.eClass === 'PartDefinition' && e.declaredName === 'P')!;
+    return fmiModelDescription(m, p.id, GEN);
+  };
+  const starts = (md: ReturnType<typeof describeP>) => Object.fromEntries(md.variables.map((v) => [v.name, v.start]));
+  const L = 'attribute L : ScalarValues::Real;';
+  const AB = 'assert constraint c50 { L == 50.0 } assert constraint c60 { L == 60.0 }';
+  const BA = 'assert constraint c60 { L == 60.0 } assert constraint c50 { L == 50.0 }';
+
+  it('gives L the type default in either order, the same description', () => {
+    const ab = describeP(`${L} ${AB}`);
+    const ba = describeP(`${L} ${BA}`);
+    expect(starts(ab)).toEqual({ L: '0' });
+    expect(starts(ba)).toEqual({ L: '0' });
+    // Apart from the token each export draws.
+    const bare = (xml: string) => xml.replace(/instantiationToken="[^"]*"/, '');
+    expect(bare(ba.xml)).toBe(bare(ab.xml));
+    // The placeholder says what it is: FMI requires a start, and the model states none.
+    expect(ab.xml).toContain(
+      '<Float64 name="L" valueReference="0" causality="parameter" variability="fixed" description="start is the type default, ' +
+        'not a model value: asserted equations give this feature, or one it is tied to, two values" start="0"',
+    );
+  });
+
+  it('gives a value tied to it none either: derived from it, or an input', () => {
+    for (const eqs of [AB, BA]) {
+      const md = describeP(
+        `${L} attribute W : ScalarValues::Real; in attribute I : ScalarValues::Real; ${eqs} ` +
+          'assert constraint cw { W == 2.0 * L } assert constraint ci { I == L + 1.0 }',
+      );
+      expect(starts(md)).toEqual({ L: '0', W: '0', I: '0' });
+    }
+  });
+
+  it('leaves a local without a start and without initial="exact"', () => {
+    for (const eqs of [AB, BA]) {
+      const md = describeP(`inout attribute L : ScalarValues::Real; ${eqs}`);
+      expect(md.variables[0]).toMatchObject({ name: 'L', causality: 'local', start: undefined, initial: undefined });
+    }
+  });
+
+  it('gives a Boolean pair the type default in either order', () => {
+    for (const eqs of ['assert constraint a { f == true } assert constraint b { f == false }', 'assert constraint b { f == false } assert constraint a { f == true }']) {
+      const md = describeP(`attribute f : ScalarValues::Boolean; ${eqs}`);
+      expect(md.variables[0]).toMatchObject({ name: 'f', type: 'Boolean', start: 'false' });
+    }
+  });
+
+  it('keeps the start of a feature the equations do not reach, and of one that is written', () => {
+    for (const eqs of [AB, BA]) {
+      const md = describeP(`${L} attribute K : ScalarValues::Real = 7.0; attribute B : ScalarValues::Boolean = true; ${eqs}`);
+      expect(starts(md)).toEqual({ L: '0', K: '7', B: 'true' });
+    }
+  });
+
+  it('still reads the start from equations that agree or from one', () => {
+    for (const body of [
+      `${L} assert constraint c50 { L == 50.0 }`,
+      `${L} assert constraint c50 { L == 50.0 } assert constraint c50b { L == 50.0 }`,
+      `${L} assert constraint c50 { L == 50.0 } assert constraint c25 { L == 25.0 * 2.0 }`,
+    ]) {
+      expect(starts(describeP(body)), body).toEqual({ L: '50' });
+    }
+  });
+
+  it('flags a withheld start, so a co-simulation holds no input at the placeholder', () => {
+    const md = describeP(`${L} attribute K : ScalarValues::Real = 7.0; inout attribute T : ScalarValues::Real; ${AB} assert constraint ct { T == 2.0 * L }`);
+    const by = Object.fromEntries(md.variables.map((v) => [v.name, v]));
+    expect(by.L).toMatchObject({ start: '0', startWithheld: true });
+    expect(by.L.description).toContain('start is the type default, not a model value');
+    // A written value and a local carry no flag, nor the note; a local carries no start either.
+    expect('startWithheld' in by.K).toBe(false);
+    expect([by.K.description, by.T.description]).toEqual([undefined, undefined]);
+    expect(by.T).toMatchObject({ causality: 'local', start: undefined });
+    expect('startWithheld' in by.T).toBe(false);
+  });
+
+  it('falls to the default in a definition whose own equation is consistent while a usage elsewhere contradicts it', () => {
+    // The abstention is by feature, not by instance (TODO: narrow it): P::load keeps no start although P alone
+    // states load == 1.0, and nothing else says so. A lost reading, never a value that turns on the text.
+    const { model: m } = parseModel(
+      'package RN { part def P { attribute load : ScalarValues::Real; assert constraint c1 { load == 1.0 } } ' +
+        'part def Q { part p : P { attribute :>> load; assert constraint c50 { load == 50.0 } } } }',
+    );
+    const p = m.all().find((e) => e.eClass === 'PartDefinition' && e.declaredName === 'P')!;
+    expect(fmiModelDescription(m, p.id, GEN).variables.map((v) => [v.name, v.start, v.startWithheld])).toEqual([['load', '0', true]]);
+  });
+
+  it('keeps a written literal where the listing of the equations threw, and withholds the rest', () => {
+    vi.spyOn(instanceIndexSeam, 'contradictedDefinitions').mockImplementation(() => {
+      throw new RangeError('contradictedDefinitions, planted to throw');
+    });
+    const md = describeP(
+      `${L} attribute M : ScalarValues::Real; attribute K : ScalarValues::Real = 7.0; attribute B : ScalarValues::Boolean = true; ` +
+        `attribute S : ScalarValues::String = "abc"; attribute X : ScalarValues::Real = 2.0 * 3.0; ` +
+        `${AB} assert constraint cm { M == 3.0 }`,
+    );
+    // Which features the pair reaches is unknown, so each an equation gives its value is read as one with no
+    // value (not the first equation written); a number, a Boolean or a quoted String written reads no name, so
+    // no equation reaches it. An expression written is withheld there: what it reads is unknown.
+    expect(starts(md)).toEqual({ L: '0', M: '0', K: '7', B: 'true', S: 'abc', X: '0' });
   });
 });

@@ -95,6 +95,7 @@ import {
   MAX_INSTANCE_RELATIONS,
   outsideBindingsOf,
   pastCapEnd,
+  readsContradictedDefinition,
   relationNamesOf,
   shadowedNamesOf,
   shadowedSentence,
@@ -552,6 +553,55 @@ interface GatheredSystem {
   unreadable: Set<ElementId>;
   /** The constraint or calculation usage each relation-body equation is the body of. */
   relationOf: Map<Equation, ElementRecord>;
+  /**
+   * The variables an ASSERTED relation reads that the solve gathers no
+   * equation from — an inequality, a conjunction, a disjunction (`L == 50.0
+   * and L >= 0.0`) — each with the asserts that read it: the model constrains
+   * them in a form the solve does not read ({@link heldByUnreadAsserts}).
+   */
+  held: Map<ElementId, ElementId[]>;
+}
+
+/** Record that the asserted relation `by` reads the variable `v` ({@link GatheredSystem.held}). */
+function holdVar(held: Map<ElementId, ElementId[]>, v: ElementId, by: ElementId): void {
+  const list = held.get(v);
+  if (!list) held.set(v, [by]);
+  else if (!list.includes(by)) list.push(by);
+}
+
+/**
+ * The variables the relation `el` reads — each path read through an instance
+ * of its own keyed to that instance's variable ({@link keyedNames}),
+ * `instance` re-rooting the reading for one of its owner's instances — whatever
+ * the shape of its body: a conjunction's, a disjunction's or an inequality's
+ * names, which no equation of the solve carries — and the names a body that
+ * does not parse writes ({@link writtenNames}): the model carries the parse
+ * diagnostic, and what the text names it constrains all the same.
+ */
+function relationReads(model: Model, el: ElementRecord, instance?: string): ElementId[] {
+  const raw = el.attrs.expression;
+  if (typeof raw !== 'string') return [];
+  const node = parseRelationBody(raw)?.node ?? writtenNames(raw);
+  if (!node) return [];
+  const scope = relationScope(model, el);
+  const keyed = keyedNames(model, el, node, scope, instance);
+  return relationVarsOf(node, keyed?.nameToId ?? scope);
+}
+
+/**
+ * The names a relation body that does not parse writes (`M == max(L, 20.0)`,
+ * `M == L ** 2.0`) — every dotted identifier in its text, a numeral's exponent
+ * excluded — as one node that reads them all, or `undefined` for none. A name
+ * that denotes no feature is read by nothing downstream, so a function's own
+ * name costs nothing: the set errs wide, never narrow.
+ */
+function writtenNames(raw: string): ExprNode | undefined {
+  let node: ExprNode | undefined;
+  for (const text of new Set(raw.match(/(?<![\w.])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g) ?? [])) {
+    const ref: ExprNode = { kind: 'ref', path: text.split('.') };
+    node = node ? { kind: 'binary', op: '+', left: node, right: ref } : ref;
+  }
+  return node;
 }
 
 /**
@@ -581,6 +631,7 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
   const eqs: Equation[] = [];
   const unreadable = new Set<ElementId>();
   const relationOf = new Map<Equation, ElementRecord>();
+  const held = new Map<ElementId, ElementId[]>();
   const memo: DerivationMemo = new Map();
 
   for (const el of model.all()) {
@@ -599,6 +650,9 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
         if (hasStatedValue(model, el) || isParameterisedCalculation(model, el)) unreadable.add(el.id);
         for (const { id } of featuresDefinedBy(model, el, memo)) unreadable.add(id);
       });
+      // An assert the solve reads no equation from still constrains what it
+      // reads ({@link heldByUnreadAsserts}).
+      if (!eq && isAsserted(el)) for (const v of relationReads(model, el)) holdVar(held, v, el.id);
       if (!eq) continue;
       const defines = definitionsOf(model, el, memo);
       if (isAsserted(el)) {
@@ -685,6 +739,7 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
   // `assert constraint { sub.x == 10.0 }` made p.sub.x 1).
   const instances = instanceSystem(model, scopeId);
   for (const id of instances.unreadable) unreadable.add(id);
+  for (const [v, by] of instances.held) for (const id of by) holdVar(held, v, id);
   const all = [...instances.eqs, ...eqs];
   // An instance's variable of a feature an assert typed by an equation's
   // definition may define is no freedom either, however the instances reached
@@ -720,7 +775,7 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
     }
   }
   pastCapUnreadable(model, all, unreadable, scopeId);
-  return { eqs: all, unreadable, relationOf };
+  return { eqs: all, unreadable, relationOf, held };
 }
 
 /**
@@ -1292,6 +1347,11 @@ interface InstanceSystem {
   ineqs: Inequality[];
   /** Instance variables whose relations were not read (past {@link MAX_INSTANCE_RELATIONS}): nothing is solved for them. */
   unreadable: Set<ElementId>;
+  /**
+   * Instance variables an assert of the instance's types reads in a form the
+   * solve gathers no equation from, each with those asserts ({@link GatheredSystem.held}).
+   */
+  held: Map<ElementId, ElementId[]>;
 }
 
 /**
@@ -1322,7 +1382,7 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
   const inScope = scopeFilter(model, scopeId);
   const definitions = sharedDefinitions(model);
   const memo: DerivationMemo = new Map();
-  const system: InstanceSystem = { eqs: [], ineqs: [], unreadable: new Set() };
+  const system: InstanceSystem = { eqs: [], ineqs: [], unreadable: new Set(), held: new Map() };
   const pending: InstanceVariable[] = [];
   const seen = new Set<string>();
   const seed = (el: ElementRecord, text: string, skipHeld = false): void => {
@@ -1393,6 +1453,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
             system.ineqs.push(iq);
             enqueue(iq);
           }
+          // One the solve reads no equation from — an inequality, a conjunction —
+          // constrains the instance's variables all the same.
+          if (!eq) for (const v of iq?.vars ?? relationReads(model, read, instance)) holdVar(system.held, v, c.id);
         } else if (isBindingEdge(c)) {
           enqueue(instanceBindingEquation(model, c, holder, reader, instance, memo, system));
         }
@@ -1760,10 +1823,32 @@ interface SolveCore {
   relations: Set<ElementId>;
   /**
    * The PLAIN constraints (no `assert`) the solve took as design equations: it
-   * oriented one to fix a value, or drove one in a Newton step. Each holds
-   * because the solve made it hold.
+   * oriented one to fix a value, or drove one in a Newton step — and a plain
+   * equation that holds only because one it took fixed what it reads
+   * ({@link designReadings}). Each holds because the solve made it hold.
    */
   imposed: Set<ElementId>;
+  /**
+   * The features with no value that an assert constrains in a form the solve
+   * reads no equation from, each with those asserts ({@link
+   * heldByUnreadAsserts}): no design freedom for a check. Those the model's
+   * own equations leave without a value ({@link SolveCore.point}) are never
+   * solved for; a check over any of them is no equation of the solve's own.
+   */
+  held: Map<ElementId, ElementId[]>;
+  /**
+   * The values the solve produced from plain constraints that disagree, each
+   * with those constraints ({@link designReadings}): which one holds there
+   * turns on which the solve took first, so none is published and nothing is
+   * judged at it.
+   */
+  contested: Map<ElementId, ElementId[]>;
+  /**
+   * Those of {@link SolveCore.contested} whose plain constraints include a curved equation ({@link isCurved}) beside
+   * another, which the solve withholds whether they disagree at the root it took or not: the root is no value the
+   * model states.
+   */
+  rival: Set<ElementId>;
   converged: boolean;
   iterations: number;
   residual: number;
@@ -1771,11 +1856,14 @@ interface SolveCore {
 
 /**
  * A solve's {@link SolveCore.point} without the values along a design freedom,
- * nor those it stopped at without converging ({@link SolveCore.unsettled}).
+ * nor those it stopped at without converging ({@link SolveCore.unsettled}), nor
+ * those plain constraints that disagree gave it ({@link SolveCore.contested}).
  */
 function determinedValues(core: SolveCore): Map<ElementId, number> {
   const out = new Map<ElementId, number>();
-  for (const [id, v] of core.point) if (!core.free.has(id) && !core.unsettled.has(id)) out.set(id, v);
+  for (const [id, v] of core.point) {
+    if (!core.free.has(id) && !core.unsettled.has(id) && !core.contested.has(id)) out.set(id, v);
+  }
   return out;
 }
 
@@ -1836,7 +1924,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // moves with that value, and taken as known it was published and judged.
   const known = new Set<ElementId>(values.keys());
 
-  const { eqs, unreadable, relationOf } = gatherSystem(model, opts.scopeId);
+  const { eqs, unreadable, relationOf, held: readByAsserts } = gatherSystem(model, opts.scopeId);
   const defined = definedFeatures(eqs, unreadable);
   // A `default` a binding made give way is fixed by that binding alone, or
   // stays free: never solved from an assert or a check ({@link givenWayDefaults}).
@@ -1846,11 +1934,27 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // orients what they define, nor a feature whose stated value expression
   // they determine. One that leaves a design freedom binds nothing, and a
   // check fixes the freedom by propagation, as it always did.
-  const binding = new Set<ElementId>([
-    ...unreadable,
-    ...closedByDefinitions(eqs, defined, (v) => values.has(v), values, unreadable, true),
-    ...givenWay,
-  ]);
+  const closed = closedByDefinitions(eqs, defined, (v) => values.has(v), values, unreadable, true);
+  // A PLAIN constraint (no `assert`; a `require` or an `assume` among them) is
+  // a check, never a fact of the model's: what it may fix is a design freedom.
+  const isCheck = (eq: Equation): boolean => {
+    const el = relationOf.get(eq);
+    return el !== undefined && el.eClass === 'ConstraintUsage' && !isAsserted(el);
+  };
+  // A feature with no value that an assert constrains in a form the solve does
+  // not read is no design freedom for a check either ({@link heldByUnreadAsserts}).
+  const held = heldByUnreadAsserts(eqs, readByAsserts, isCheck, (v) => values.has(v) || closed.has(v) || unreadable.has(v));
+  const binding = new Set<ElementId>([...unreadable, ...closed, ...givenWay, ...held.keys()]);
+  // The model's own equations orient first, each sweep to their fixpoint, and a
+  // check only what they leave: oriented in TEXT order beside them, the
+  // requirement `s.d == 3.0E15` written above P's `d = a * b` was taken as a
+  // design equation for d ("imposed by the solve") and below it judged
+  // satisfied — a verdict that turned on where the requirement was written.
+  const facts = eqs.filter((eq) => !isCheck(eq));
+  const checks = eqs.filter(isCheck);
+  // The equations the solve may drive and read a freedom off: never a check
+  // over what an assert holds in a form it does not read.
+  const own = held.size === 0 ? eqs : eqs.filter((eq) => !isCheck(eq) || !eq.vars.some((v) => held.has(v)));
   // Numeric binding-propagated values (seed additional equalities) — never a
   // value that contradicts a binding it overrides, which nothing here reads.
   const propagated = numericPropagation(model);
@@ -1864,6 +1968,39 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // The equations the solve fixed a value from — for which plain constraints
   // it IMPOSED rather than judged.
   const used = new Set<Equation>();
+  // The values a fact of the model fixed (an asserted equation, a binding, a
+  // definition) from values the model states or other facts fixed — however
+  // the plain constraints are written: no design equation's, though the solve
+  // produced them. A fact that reads a value a check fixed gives one that moves
+  // with it, and is not among them ({@link designReadings}).
+  const factFixed = new Set<ElementId>();
+  // Fix the one unknown `eq` reads, where it may: whether it did.
+  const orient = (eq: Equation): boolean => {
+    const unknowns = eq.vars.filter((v) => !values.has(v));
+    if (unknowns.length !== 1) return false;
+    const u = unknowns[0];
+    if (fixedIds.has(u) || !mayOrient(eq, u, binding)) return false;
+    const val = solveForSingle(eq, u, values, tol);
+    if (val === undefined || !Number.isFinite(val)) return false;
+    values.set(u, val);
+    used.add(eq);
+    if (!isCheck(eq) && eq.vars.every((v) => v === u || known.has(v) || factFixed.has(v))) factFixed.add(u);
+    return true;
+  };
+  // The facts to their fixpoint: after every check that fixes a value as well,
+  // so a fact the check unblocks is read before the next check is — in the
+  // text order of two checks, the one written first reached a value the fact
+  // would have given (a requirement's `x + y == 10.0` beside the asserted `y ==
+  // x * 2.0`) and the solve stopped off the model's own equation, or on the
+  // checks that disagree, whichever came first.
+  const orientFacts = (): boolean => {
+    let any = false;
+    for (let more = true; more; ) {
+      more = false;
+      for (const eq of facts) if (orient(eq)) more = any = true;
+    }
+    return any;
+  };
 
   let iterations = 0;
   let progressing = true;
@@ -1885,27 +2022,25 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
         }
       }
 
-      for (const eq of eqs) {
-        const unknowns = eq.vars.filter((v) => !values.has(v));
-        if (unknowns.length !== 1) continue;
-        const u = unknowns[0];
-        if (fixedIds.has(u) || !mayOrient(eq, u, binding)) continue;
-        const val = solveForSingle(eq, u, values, tol);
-        if (val !== undefined && Number.isFinite(val)) {
-          values.set(u, val);
-          used.add(eq);
+      for (const eq of facts) if (orient(eq)) changed = true;
+      if (!changed) {
+        for (const eq of checks) {
+          if (!orient(eq)) continue;
           changed = true;
+          orientFacts();
         }
       }
       if (changed) progressing = true;
     }
 
     // Remaining coupled unknowns → one bounded Newton solve. A feature whose
-    // own value cannot be read is no unknown to solve for.
+    // own value cannot be read is no unknown to solve for. One an assert holds
+    // in a form the solve does not read is solved from the model's own
+    // equations alone: no check that reads it is driven.
     const unknowns = remainingUnknowns(eqs, values, fixedIds).filter((v) => !unreadable.has(v) && !givenWay.has(v));
     if (unknowns.length === 0) break;
     iterations++;
-    const moved = newtonSolve(eqs, unknowns, values, fixedIds, tol, maxIter, defined, unreadable, used);
+    const moved = newtonSolve(own, unknowns, values, fixedIds, tol, maxIter, defined, unreadable, used);
     if (moved) progressing = true;
     else break;
   }
@@ -1937,13 +2072,242 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
       });
   const free =
     unsettled.size === 0
-      ? freeFeatures(eqs, values, stated)
+      ? freeFeatures(own, values, stated)
       : freeFeatures(
-          eqs.filter((eq) => !eq.vars.some((v) => unsettled.has(v))),
+          own.filter((eq) => !eq.vars.some((v) => unsettled.has(v))),
           values,
           (v) => stated(v) || unsettled.has(v),
         );
-  return { point: values, free, unsettled, given, relations, imposed, converged, iterations, residual };
+  // The plain equations over what a design equation the solve took fixed: of
+  // two that disagree, the one it took is the one written first, so none holds
+  // there; of two that agree, the one written first was imposed and the other
+  // judged satisfied, and the other way round — both are design equations.
+  const { contested, rival, agreeing } = designReadings(
+    eqs,
+    values,
+    tol,
+    (v) => given.has(v) || free.has(v) || unsettled.has(v) || factFixed.has(v),
+    isCheck,
+    used,
+    relationOf,
+  );
+  for (const [eq, el] of relationOf) {
+    if (imposed.has(el.id) && eq.vars.some((v) => contested.has(v))) imposed.delete(el.id);
+    else if (agreeing.has(eq) && !eq.vars.some((v) => contested.has(v))) imposed.add(el.id);
+  }
+  return { point: values, free, unsettled, given, relations, imposed, held, contested, rival, converged, iterations, residual };
+}
+
+/**
+ * The variables of `eqs` with no value (`stopped` is false of them) that an
+ * ASSERTED relation the solve reads no equation from constrains (`readBy`,
+ * {@link GatheredSystem.held}) — an inequality, a conjunction, a disjunction —
+ * and every one the model's own equations (a value, a binding, an asserted
+ * equation: never a check, `isCheck`) link to one of those through variables
+ * with no value, each with the asserts that hold it. None is a design freedom
+ * for a check: the model says what it may be, and the solve does not read it,
+ * so no check may fix it ({@link mayOrient}), nor a Newton step fit it to one —
+ * the model's own equations alone solve it, or leave it free. Free to them,
+ * `constraint t1 { p.L == 1.0 }` fixed p's L at 1 beside P's asserted `L ==
+ * 50.0 and L >= 0.0`, and `p.L <= 10.0` read satisfied where L is 50 — and of
+ * `t50` and `t60` the one written first was imposed and the other refuted.
+ */
+function heldByUnreadAsserts(
+  eqs: readonly Equation[],
+  readBy: ReadonlyMap<ElementId, ElementId[]>,
+  isCheck: (eq: Equation) => boolean,
+  stopped: (v: ElementId) => boolean,
+): Map<ElementId, ElementId[]> {
+  const out = new Map<ElementId, ElementId[]>();
+  for (const [v, by] of readBy) if (!stopped(v)) out.set(v, [...by]);
+  if (out.size === 0) return out;
+  const factsOf = new Map<ElementId, Equation[]>();
+  for (const eq of eqs) {
+    if (isCheck(eq)) continue;
+    for (const v of eq.vars) {
+      const list = factsOf.get(v);
+      if (list) list.push(eq);
+      else factsOf.set(v, [eq]);
+    }
+  }
+  const queue = [...out.keys()];
+  while (queue.length > 0) {
+    const v = queue.pop()!;
+    const by = out.get(v)!;
+    for (const eq of factsOf.get(v) ?? []) {
+      for (const u of eq.vars) {
+        if (stopped(u)) continue;
+        const had = out.get(u);
+        if (had === undefined) {
+          out.set(u, [...by]);
+          queue.push(u);
+        } else {
+          const more = by.filter((id) => !had.includes(id));
+          if (more.length === 0) continue;
+          had.push(...more);
+          queue.push(u);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** What a node varies as in one unknown: nothing (`const`), a constant multiple of it plus a constant (`affine`), or neither. */
+type Shape = 'const' | 'affine' | 'curved';
+
+function shapeIn(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>, unknown: ElementId): Shape {
+  switch (node.kind) {
+    case 'ref':
+      return nameToId.get(node.path.join('.')) === unknown ? 'affine' : 'const';
+    case 'unary': {
+      const inner = shapeIn(node.operand, nameToId, unknown);
+      return node.op === 'not' && inner !== 'const' ? 'curved' : inner;
+    }
+    case 'binary': {
+      const l = shapeIn(node.left, nameToId, unknown);
+      const r = shapeIn(node.right, nameToId, unknown);
+      if (l === 'curved' || r === 'curved') return 'curved';
+      if (l === 'const' && r === 'const') return 'const';
+      if (node.op === '+' || node.op === '-') return 'affine';
+      if (node.op === '*') return l === 'const' || r === 'const' ? 'affine' : 'curved';
+      return node.op === '/' && r === 'const' ? 'affine' : 'curved';
+    }
+    case 'if':
+      return [node.cond, node.then, node.else].every((n) => shapeIn(n, nameToId, unknown) === 'const') ? 'const' : 'curved';
+    default:
+      return 'const';
+  }
+}
+
+/**
+ * Is `eq` CURVED in one of its `unknowns` — not an affine function of it with the others held (`x * x`, `1.0 / x`,
+ * `x ^ 2.0`, a `%` or an `if` over it)? Solved for that unknown it may have more than one root. A product of two
+ * unknowns (`mass == density * volume`) is not: once the others are fixed it is affine in the one left.
+ */
+function isCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
+  return unknowns.some((u) => shapeIn(eq.lhs, eq.nameToId, u) === 'curved' || shapeIn(eq.rhs, eq.nameToId, u) === 'curved');
+}
+
+/**
+ * What the plain equations (`isCheck`) read where a plain constraint the solve
+ * took as a design equation (`used`) fixed the value: over the values the
+ * solve PRODUCED (`settled` is false of them: no value the model states, none
+ * its definitions determine or a fact of the model fixed from those, no
+ * freedom, nothing it stopped at unconverged),
+ * linked by the equations to a value such a constraint fixed — a DESIGN
+ * component. Which of its plain equations is taken turns on which comes first,
+ * in TEXT order, so:
+ *  - `contested`: the values of a design component one of whose plain
+ *    equations the solve did not take and the point misses, each with the
+ *    plain equations taken and missed there. Of `t50 { p.L == 50.0 }` and `t60
+ *    { p.L == 60.0 }` over a valueless L, written in that order t50 was imposed
+ *    and t60 refuted, and the other way round t60 imposed and t50 refuted: none
+ *    of those values is published, and nothing is judged at it.
+ *  - `agreeing`: a plain equation of a design component the solve did not take
+ *    that holds at the point — as much a design equation as the one it took:
+ *    of `a { x == 3.0 }` and `b { x == 3.0 }` over a valueless x the one
+ *    written first was imposed and the other judged satisfied.
+ * A value a fact of the model fixes (an asserted equation, a binding), though
+ * the solve produced it, is no design component's: a check over it is judged
+ * (`assert constraint s { x + y == 10.0 }` with y stated: a plain `x == 9.0`
+ * is violated, beside `w == x + 1.0` that the solve took).
+ *
+ * A component with a CURVED plain equation ({@link isCurved}) beside another
+ * plain equation reads no value at all: the equation has more than one root,
+ * the solve takes the one it finds, and that one agrees with the other
+ * equation or not by which of the two it oriented first — of `a { x * x ==
+ * 4.0 }` and `b { x == -2.0 }` the root 2 when `a` is written first, −2 when
+ * `b` is. Whether the roots agree is not read: the pair is contested in both
+ * orders.
+ */
+function designReadings(
+  eqs: readonly Equation[],
+  values: Map<ElementId, number>,
+  tol: number,
+  settled: (v: ElementId) => boolean,
+  isCheck: (eq: Equation) => boolean,
+  used: ReadonlySet<Equation>,
+  relationOf: ReadonlyMap<Equation, ElementRecord>,
+): { contested: Map<ElementId, ElementId[]>; rival: Set<ElementId>; agreeing: Set<Equation> } {
+  const produced = (v: ElementId): boolean => values.has(v) && !settled(v);
+  const contested = new Map<ElementId, ElementId[]>();
+  const rival = new Set<ElementId>();
+  const agreeing = new Set<Equation>();
+  const unused: Equation[] = [];
+  let took = false;
+  for (const eq of eqs) {
+    if (!isCheck(eq) || !eq.vars.some(produced)) continue;
+    if (used.has(eq)) took = true;
+    else if (eq.vars.every((v) => values.has(v))) unused.push(eq);
+  }
+  if (!took || unused.length === 0) return { contested, rival, agreeing };
+  const parent = new Map<ElementId, ElementId>();
+  const find = (a: ElementId): ElementId => {
+    let root = a;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (a !== root) {
+      const next = parent.get(a)!;
+      parent.set(a, root);
+      a = next;
+    }
+    return root;
+  };
+  for (const eq of eqs) {
+    const vs = eq.vars.filter(produced);
+    for (const v of vs) if (!parent.has(v)) parent.set(v, v);
+    for (let i = 1; i < vs.length; i++) {
+      const a = find(vs[0]!);
+      const b = find(vs[i]!);
+      if (a !== b) parent.set(a, b);
+    }
+  }
+  const rootOf = (eq: Equation): ElementId => find(eq.vars.find(produced)!);
+  // The design components: those a plain constraint the solve took fixes a value of.
+  const design = new Set<ElementId>();
+  for (const eq of used) if (isCheck(eq) && eq.vars.some(produced)) design.add(rootOf(eq));
+  // Those with a curved plain equation, beside another: the root the solve took is no value of the model's.
+  const plain = new Map<ElementId, number>();
+  const curved = new Set<ElementId>();
+  for (const eq of eqs) {
+    if (!isCheck(eq) || !eq.vars.some(produced) || !(used.has(eq) || eq.vars.every((v) => values.has(v)))) continue;
+    const root = rootOf(eq);
+    plain.set(root, (plain.get(root) ?? 0) + 1);
+    if (isCurved(eq, eq.vars.filter(produced))) curved.add(root);
+  }
+  const missed = new Set<Equation>();
+  const roots = new Set<ElementId>();
+  for (const eq of unused) {
+    const root = rootOf(eq);
+    if (!design.has(root)) continue;
+    const r = residualOf(eq, values);
+    if (!(curved.has(root) && plain.get(root)! > 1) && r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol)) {
+      agreeing.add(eq);
+    } else {
+      missed.add(eq);
+      roots.add(root);
+    }
+  }
+  if (roots.size === 0) return { contested, rival, agreeing };
+  // Per component, the plain constraints over it that the solve took, missed or found agreeing — each one the
+  // component's whichever of them was written first: the ones a sentence names.
+  const named = new Map<ElementId, ElementId[]>();
+  for (const eq of eqs) {
+    const el = relationOf.get(eq);
+    if (!el || !isCheck(eq) || !(used.has(eq) || missed.has(eq) || agreeing.has(eq)) || !eq.vars.some(produced)) continue;
+    const root = rootOf(eq);
+    if (!roots.has(root)) continue;
+    const list = named.get(root) ?? [];
+    if (!list.includes(el.id)) list.push(el.id);
+    named.set(root, list);
+  }
+  for (const v of parent.keys()) {
+    const root = find(v);
+    if (!roots.has(root)) continue;
+    contested.set(v, named.get(root) ?? []);
+    if (curved.has(root) && plain.get(root)! > 1) rival.add(v);
+  }
+  return { contested, rival, agreeing };
 }
 
 /**
@@ -3595,7 +3959,10 @@ const MOE_NAME_RE = /moe|measure|objective/i;
  * values (falling back to its own literal/expression value), with its unit and
  * physical dimension where the quantity engine can derive them. A measure the
  * equations leave free ({@link SolveResult.free}) is `null`: the point the
- * solve stopped at along a freedom is no value of it.
+ * solve stopped at along a freedom is no value of it. So is a value two asserted
+ * equations give two values, or one tied to such a feature
+ * ({@link readsContradictedDefinition}): the first equation written is no value
+ * the model states, and it turned on the order of the text.
  */
 export function evaluateMoEs(model: Model): MeasureResult[] {
   const solved = solve(model);
@@ -3609,17 +3976,21 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
     if (!isMoeFeature(model, el)) continue;
     seen.add(el.id);
 
-    let value: number | undefined = solved.values.get(el.id);
+    // A value two asserted equations give two values, or one tied to it, is read from no equation: not the solve's,
+    // nor `evaluateFeatureValue`'s or `evaluateQuantity`'s, which derive the first one written. A value written
+    // reads none, so its seed stands.
+    const contradicted = readsContradictedDefinition(model, el.id);
+    let value: number | undefined = contradicted ? undefined : solved.values.get(el.id);
     // WHERE the number came from decides whether it may be labelled: only the
     // solver reads a value unit-awarely. The fallbacks below are raw magnitudes.
     const fromSolver = value !== undefined;
     if (value === undefined) value = numericSeedOf(model, el, seeds);
-    if (value === undefined) {
+    if (value === undefined && !contradicted) {
       const r = evaluateFeatureValue(model, el.id);
       if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) value = r.value;
     }
 
-    const q = evaluateQuantity(model, el.id);
+    const q = contradicted ? undefined : evaluateQuantity(model, el.id);
     const res: MeasureResult = {
       id: el.id,
       name: el.declaredName ?? '',
@@ -3967,15 +4338,16 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
   // the solve could not read left q's p's m2 at 9 beside equations within
   // tolerance, and held there it decided `q.p.m2 <= 0.0` violated, where q's
   // L of 50 gives −40.
-  const settled = (id: ElementId): boolean => !base.free.has(id) && !base.unsettled.has(id);
+  // Nor one plain constraints that disagree gave it ({@link SolveCore.contested}).
+  const settled = (id: ElementId): boolean => !base.free.has(id) && !base.unsettled.has(id) && !base.contested.has(id);
   if (residualSummary(eqs, base.point, tol).withinTol) {
     for (const id of base.point.keys()) if (settled(id)) pinned.add(id);
   }
   // A value the equations leave FREE is never held, whatever single equation
   // pinned it: one stopped on an `if`'s step (`r == (if x >= 1.0 then 1.0
   // else 0.0)`, at x = 1) was held there, and `x >= 2.0` decided infeasible.
-  // Nor one the solve did not settle.
-  for (const id of [...base.free, ...base.unsettled]) if (!fixedIds.has(id)) pinned.delete(id);
+  // Nor one the solve did not settle, nor one it took from a check that another disagrees with.
+  for (const id of [...base.free, ...base.unsettled, ...base.contested.keys()]) if (!fixedIds.has(id)) pinned.delete(id);
 
   // Free variables: everything in an equality/inequality the equalities don't
   // pin — but never a feature whose stated value the solver lane cannot read
@@ -4070,6 +4442,9 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
     given: new Set(values.keys()),
     relations: new Set(),
     imposed: new Set(),
+    held: new Map(),
+    contested: new Map(),
+    rival: new Set(),
     converged: true,
     iterations,
     residual: 0,
@@ -4743,6 +5118,16 @@ function numericRows(
       body !== undefined && core.unsettled.size > 0
         ? (iq?.vars ?? eq?.vars ?? relationVarsOf(body.node, keys)).filter((id) => core.unsettled.has(id))
         : [];
+    // Those an assert holds in a form the solve does not read, and those plain
+    // constraints that disagree gave a value ({@link SolveCore.held}, {@link SolveCore.contested}).
+    const readsHeld =
+      body !== undefined && core.held.size > 0
+        ? (iq?.vars ?? eq?.vars ?? relationVarsOf(body.node, keys)).filter((id) => core.held.has(id) && !core.point.has(id))
+        : [];
+    const readsContested =
+      body !== undefined && core.contested.size > 0
+        ? (iq?.vars ?? eq?.vars ?? relationVarsOf(body.node, keys)).filter((id) => core.contested.has(id))
+        : [];
     if (detailed.verdict !== 'unknown' && !read) {
       row.result = detailed.verdict;
       if (row.result === 'satisfied') row.amount = 0;
@@ -4770,6 +5155,23 @@ function numericRows(
       row.amount = 0;
       delete row.slackUnit;
       row.reason = unsettledSentence(model, readsUnsettled);
+    } else if ((readsHeld.length > 0 || readsContested.length > 0) && !read && !isRefusalReason(detailed.reason)) {
+      // A value no equation of the solve may give — an assert holds it in a
+      // form the solve does not read — or one plain constraints that disagree
+      // gave it, whichever the solve took first: no point the solve reached
+      // answers a relation over it.
+      row.slack = null;
+      row.amount = 0;
+      delete row.slackUnit;
+      row.reason =
+        readsHeld.length > 0
+          ? heldSentence(model, readsHeld, readsHeld.flatMap((id) => core.held.get(id) ?? []))
+          : contestedSentence(
+              model,
+              readsContested,
+              readsContested.flatMap((id) => core.contested.get(id) ?? []),
+              readsContested.some((id) => core.rival.has(id)),
+            );
     } else if (contract && 'value' in contract && typeof contract.value === 'boolean') {
       row.result = contract.value ? 'satisfied' : 'violated';
     } else if (contract && 'tie' in contract && contract.tie !== undefined) {
@@ -4785,8 +5187,11 @@ function numericRows(
       // when it holds at the one the solve stopped at — the freedom is a
       // direction that moves none of them; nothing else read over a free
       // feature is decided by that point.
-      const atPoint =
-        eq && !isNe && (isEq || isCalcBody) && core.relations.has(el.id) ? residualOf(eq, core.point) : undefined;
+      // A check that reads what an assert holds was no equation of the solve's ({@link heldByUnreadAsserts}).
+      const ownEquation =
+        core.relations.has(el.id) &&
+        !(el.eClass === 'ConstraintUsage' && !isAsserted(el) && (eq?.vars ?? []).some((v) => core.held.has(v)));
+      const atPoint = eq && !isNe && (isEq || isCalcBody) && ownEquation ? residualOf(eq, core.point) : undefined;
       if (atPoint !== undefined && Math.abs(atPoint) <= convergenceGate(eq!, core.point, tol)) {
         row.result = 'satisfied';
         row.slack = atPoint;
@@ -4998,6 +5403,85 @@ function unsettledSentence(model: Model, ids: readonly ElementId[]): string {
     'that misses an equation of the model it solved, so that point is no solution and this relation is not ' +
     'judged at it'
   );
+}
+
+/**
+ * The names of the relations `ids` of one kind (`noun`: an `assert`, a
+ * `constraint`), each once, sorted: a sentence lists them alike whatever the
+ * order of the text. Those with no name of their own are counted, never listed
+ * by the qualified name the model gives an unnamed usage (`«ConstraintUsage»`).
+ */
+function relationNameList(model: Model, ids: readonly ElementId[], noun: string): string {
+  const named = new Set<string>();
+  let unnamed = 0;
+  for (const id of new Set(ids)) {
+    const name = model.get(id)?.declaredName;
+    if (name) named.add(name);
+    else unnamed++;
+  }
+  const names = [...named].sort();
+  if (unnamed === 1) names.push(`an unnamed ${noun}`);
+  else if (unnamed > 1) names.push(`${unnamed} unnamed ${noun}s`);
+  return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * Why a relation over a feature an assert holds in a form the solve does not
+ * read is not judged ({@link SolveCore.held}) — in the register of {@link freedomSentence}.
+ */
+function heldSentence(model: Model, ids: readonly ElementId[], asserts: readonly ElementId[]): string {
+  const one = ids.length === 1;
+  // One entry per named assert and the form it takes; the unnamed ones are
+  // counted by form, never listed by the qualified name of an unnamed usage.
+  const named = new Set<string>();
+  const unnamed = new Map<string, number>();
+  const distinct = new Set(asserts);
+  for (const id of distinct) {
+    const el = model.get(id);
+    const node = parseRelationBody(String(el?.attrs.expression ?? ''))?.node;
+    const op = node?.kind === 'binary' ? node.op : undefined;
+    const shape =
+      op === 'and'
+        ? 'a conjunction'
+        : op === 'or' || op === 'xor'
+          ? 'a disjunction'
+          : op === 'implies'
+            ? 'an implication'
+            : op !== undefined && isInequalityOp(op)
+              ? 'an inequality'
+              : op === '!='
+                ? 'a `!=`'
+                : 'an equation it cannot read';
+    if (el?.declaredName) named.add(`${el.declaredName}, ${shape}`);
+    else unnamed.set(shape, (unnamed.get(shape) ?? 0) + 1);
+  }
+  const each = [
+    ...[...named].sort(),
+    ...[...unnamed].map(([shape, n]) => `${n === 1 ? 'an unnamed assert' : `${n} unnamed asserts`}, ${shape}`).sort(),
+  ];
+  return (
+    `${nameList(model, ids)} ${one ? 'has' : 'have'} no value, and ${distinct.size > 1 ? 'asserts constrain' : 'an assert constrains'} ` +
+    `${one ? 'it' : 'them'} in a form the numeric solve does not read (${each.join('; ')}), so ${one ? 'it is' : 'they are'} ` +
+    `no design freedom: no plain constraint is solved for ${one ? 'it' : 'them'}, and this relation is not judged`
+  );
+}
+
+/**
+ * Why a relation over a value plain constraints that disagree gave is not
+ * judged ({@link SolveCore.contested}) — in the register of {@link freedomSentence}.
+ * `rival`: one of them has more than one root ({@link SolveCore.rival}), so
+ * they need not disagree, and the sentence says what is true of the pair
+ * whichever way round it is written.
+ */
+function contestedSentence(model: Model, ids: readonly ElementId[], checks: readonly ElementId[], rival: boolean): string {
+  const list = relationNameList(model, checks, 'constraint');
+  return rival
+    ? `no value the model states fixes ${nameList(model, ids)}, only plain constraints, one of them with more than one root ` +
+        `(${list}): which root the solve took, and so whether the others hold, would turn on which constraint it took first as ` +
+        'its design equation, so none does, and this relation is not judged'
+    : `no value the model states fixes ${nameList(model, ids)}, only plain constraints that disagree ` +
+        `(${list}): which of them holds would turn on the one the solve took first as its ` +
+        'design equation, so none does, and this relation is not judged';
 }
 
 /**
