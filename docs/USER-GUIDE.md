@@ -2036,7 +2036,7 @@ examples/uav-isr.sysml: 0 inconclusive, 2 discharged, 0 refuted — engine smt
   negation-unsat under a satisfiable axiom set — `proved` means exactly that, at 5000 ms per check, with every feature value bound as the model states it
   UAVSurveillanceSystem::EnduranceRequirement  uav.endurance >= 45.0 [min]
     proved: A ∧ P ∧ ¬G unsat, QF_NRA, 4 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
-    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.69… vs 2700 in T, coherent SI; decided by z3 5.3.1.0 ac9156f97cb44e56472e1c841f7a2beb1e976b24 z3-5.3.1, seed 0
+    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.69… vs 2700 in T, coherent SI; decided by z3 5.3.1, seed 0
   ...
 $ echo $?
 0
@@ -2210,7 +2210,9 @@ whole requirement set passes while meaning nothing — so this tool says
 
 **`--record PATH` writes the evidence.** One record per obligation: the claim,
 the engine, the tool and its version, the bound the claim holds within, the
-witness (your own values), the flags that changed what was shown, and two
+witness (your own values), the flags that changed what was shown (an `smt` record's
+`flags.solver` carries z3's full build string, commit included, which the
+verdict lines shorten to `z3 5.3.1`), and two
 digests — one for the obligation's normal form, one for your model. Records
 carry **no timestamp**, so two runs over an unchanged file produce byte-identical
 files and a `diff` answers "did anything change?". The model digest is taken
