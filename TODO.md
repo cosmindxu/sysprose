@@ -263,7 +263,9 @@ an asserted equation override a `default` on every surface, read definition-feat
 bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open.
 Since per-instance-rest (merged by `ca4992c`), `KNOWN_FALSE` was empty (it held 20 rows at 3c54ae0), and
 contradictory-models (merged by 1653271) pins two rows in it again, tagged `NO STEP`: E1E::c3F and E1E::c3T,
-the numeric solve carrying an asserted value through a package head's slot (entry below). Since
+the numeric solve carrying an asserted value through a package head's slot (entry below);
+redefinition-target (merged by 64d149d) adds six more tagged `NO STEP`, for a feature that
+redefines two features of one line (MU, MUR; entry below). Since
 default-stands (decision 14 amended 2026-10-22) a `default` stands against every assertion; only a
 feature without a value is defined by an asserted equation. The residuals are the entries below. The
 false verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
@@ -300,15 +302,6 @@ headings.
       reference redefinition read at the redefined value, or the walk reading such a copy as what
       the reference it copies names. Done when sd0, sbj0, SM1, cown2, RC7, VR1 and RBB4K read F for
       w on all four surfaces. [per-instance-rest S1]
-- [ ] **Resolve an unnamed `:>> x` in a usage to the most specific inherited feature.** The mapper
-      resolves `attribute :>> M;` in `part s : Q2` to Q's M, not to Q2's `:>> M default = 2.0` that
-      redefines it. So s's M reads Q's 1, and `s.M == 2.0` is refuted on all four surfaces (MI7,
-      true T). Likewise `part r : Q2 { attribute :>> L; bind p.load = L; }` over Q2's `L = 50.0`
-      reads P's default 1 for r's p's load (MI6's `r50` F/F/F/F, true T). U10 (O6 S2) made the
-      implicit end copy redefine the most specific inherited feature; an explicit unnamed
-      redefinition needs the same where the redefinition target is resolved (src/core or the text
-      mapper), gated on the verdict differential and a v9 capture. Identical at 7565eb2.
-      [per-instance-rest S3 finish]
 - [ ] **Read a group's row through a reference its usage writes, now the walk reads it per
       instance.** cown3's `W::sub::c in w::sub` abstains (`not-enumerated`: "this tool resolves what
       a reference stands for only where its value is written"), while since per-instance-rest S1 the
@@ -651,6 +644,124 @@ headings.
       inconsistent-axioms claim; unchanged from the base and in the USER-GUIDE limits. Done when SMT
       keys a symbol by instance, or the shapes are pinned in I7_ALLOWED with this reason.
       [contradictory-models S3, review]
+- [ ] **Model a feature that redefines two features of one line (`attribute X :>> M, N`) when a
+      usage redefines both.** `part def Q2 :> Q { attribute X :>> M, N default = 3.0; }` with `part
+      s : Q2 { attribute :>> M = 1.0; attribute :>> N = 2.0; }`: both of s's redefinitions are of X,
+      one feature that then has two values (no value, ref ?). Every surface instead reads s's M and
+      s's N as two features, each redefining Q's, and decides: MU sM1 and sN2 T/T/T/T, sN1 F/F/F/F;
+      MUR is the reversed twin. Six KNOWN_FALSE rows (`REDEFINES_TWO_FEATURES`), unchanged from
+      84fb971, and the guide says to trust no verdict over those two features. Opus class. Done when
+      those rows abstain on all four surfaces or report the contradiction. [redefinition-target S1
+      review]
+- [ ] **Name an unnamed redefinition by its effective name in the numeric surface sentences.**
+      `nameList` (solver.ts) prints the raw element id for `attribute :>> L;` ("fixes 12ac9de4-…",
+      "did not converge: f4bded69-… is where it stopped"); use `effectiveNameOf` or
+      `effectiveQualifiedName`. Wording only. [redefinition-target S1]
+- [ ] **Keep a redefinition on the more specific feature when an edit dissolves the join that kept
+      it off it.** A redefinition kept off a more specific feature by a join an edit dissolves stays
+      on the base feature, written by its path; the same names written by hand land on the more
+      specific one, so page and file differ. Cases: a sibling renamed away from the name a `:>> M`
+      is known by, a typing changed, a sibling on the redefinition's line deleted, a named redefiner
+      (`M2 redefines N`) whose blocking sibling is deleted, and an explicit `:>> M2` that a feature
+      renamed into `M2` moves to Q::M (Save writes it as `:>> M`; the hand reading of that collision
+      itself depends on text order). Needs the name the author wrote kept on the Redefinition edge
+      so an edit re-resolves it. An unnamed `:>> K2` over a named redefiner is also saved as the
+      farthest base name (`:>> N`), as prescribed: 105 of 400 random models change text, targets
+      identical. A redefinition whose target has no printable name left is dropped on settle
+      (deliberate; decide whether to keep the edge and abstain with a reason sentence instead). Rows
+      redef-target-renamed-away(-rev)(-q). Seen by the property oracle: sequences 184 and 5068 of
+      the store.reducers generator. [redefinition-target S2]
+- [ ] **Commit a name typed in the Properties box on blur or Enter, not per keystroke.**
+      `Properties.tsx` calls `updateElement` on every keystroke, so an unrelated sibling typed Z, M,
+      M2, M2x passes through a prefix that collides with a `:>> M`; the settle moves it to Q's M for
+      good and the final names no longer match the same names written by hand. Model: `part def Q {
+      attribute M default = 1.0; } part def R :> Q { attribute M2 redefines M default = 2.0; } part
+      v : R { attribute :>> M = 5.0; attribute Z = 9.0; }`, vM25 reads violated on the page and in
+      the saved file (`attribute :>> RA::Q::M = 5.0`) but satisfied written by hand. Probe:
+      review-2026-10-14/wave3-probes/redefinition-target/keys.probe.ts. Done when a name typed key
+      by key reads as the same names written by hand (commit on blur or Enter, or leave intermediate
+      names unhealed). Documented as a limit meanwhile. [redefinition-target review]
+- [ ] **Settle an implicit end copy through its whole life, not only on a retype.** The store's
+      settle moves an implicit end copy in place on a retype (`endCopyLanding`), and these cases
+      still differ between page and file: (a) a copy whose name nothing its owner inherits bears any
+      more (after a retype, delete or rename) stays on the feature it redefined, so the page keeps
+      proving through it while the saved file reads `bind p.load = L` with L unresolved (dropping
+      the relationship alone is not enough: a later retype back onto a type that has the name makes
+      the file re-create it while the page copy has none); (b) deleting the feature a
+      definition-level `bind` ends on removes the binding but leaves its copies (Q1::p,
+      Q1::p::load), and usage copies then redefine the debris where the file has Q::p and P::load
+      (review-2026-10-14/wave3-probes/redefinition-target/debris.sysml; fuzz sequences 1024, 1254,
+      1314, 1372 of FZ_DEFBIND=1 FZ_FIRST=1000 FZ_N=400 FZ_STEPS=4); (c) renaming the feature a copy
+      redefines leaves the copy under its old name (page r0::L -> Q1::Zz, the file makes r0::Zz;
+      review-2026-10-14/wave3-probes/redefinition-target/rncopy.sysml, rncopy2.sysml; sequence
+      1360); (d) the mapper lands the copy of a definition's bind over a general definition's copy
+      by text order (D2 :> D3 both with `bind ... = N`: D3's copy if D3 is written first, Q0's N if
+      D2 is), so page and file cannot agree for both orders; decide which order the mapper takes.
+      Fix direction: settle the copy to the name the mapper gives it or drop a copy no binding
+      holds. Probes: review-2026-10-14/wave3-probes/redefinition-target/probe-stay.test.ts,
+      probe-stay2.test.ts, probe-copy.test.ts. [redefinition-target review, re-review]
+- [ ] **Settle a redefinition on the routes that skip the store.** The store follows a removal on
+      every route (Delete key, palette, `deleteElement`, `window.sysml.delete`/`commit`,
+      `model.remove`, a peer's removal in `reconcileModelFromDoc`) for an explicit redefinition, and
+      a REST commit follows the delete of a Redefinition target (`followRedefinitionRemovals`). Not
+      followed: (a) a REST commit that deletes or retargets a FeatureTyping or Specialization leaves
+      each `:>>` where it was (fix: in `createCommit` collect the working copy's events and call
+      `redefinitionsDirtiedBy` and `settleRedefinitions` once after `applyChange`; probe
+      review-2026-10-14/wave3-probes/redefinition-target/probe-resttyping.test.ts); (b) a delete
+      through `window.sysml.model`, a peer or a REST commit leaves an implicit end copy where
+      `Model.remove`'s walk put it, where the store's settle would put it elsewhere (Q3's L deleted
+      under `part r : Q2, Q3 { bind p.load = L; }`: page reads r1, the file r50; probe
+      review-2026-10-14/wave3-probes/redefinition-target/probe-copy.test.ts); (c) raw
+      `window.sysml.model.update/create/reparent` calls are not settled at all; (d) a collaboration
+      peer does not settle its own model and relies on the sender's settle events arriving as edits
+      (not exercised with two live clients). Done when the planner's after-step runs the shared
+      settle (copies included) and a REST commit settles every edit. [redefinition-target S2,
+      re-review]
+- [ ] **Make a rename that gives two features of one owner one name, or a retarget the text cannot
+      name, page-equals-file.** Two features of one owner under one declared (or effective) name
+      cannot be told apart by any text that names them: a redefinition aimed at the second is saved
+      by a path that finds the first, so page and file can differ, and the editor does not refuse or
+      rename. The same holds for an SDK `updateElement` that retargets a Redefinition edge to a
+      feature the text cannot name from its scope (a nested anonymous part; seeds 5001 and 5439 of
+      the extended generator, rc2/prop.probe.ts), and for the settle of an implicit copy reached by
+      a chain through an explicit owner, which uses the mapper's head rule where the mapper used the
+      non-unique chain rule (they differ only where two unrelated types of the owner each bear the
+      name; not once in 8,000 sequences). The property test stops at such a state. Done when the
+      editor refuses or renames, or the reading is ruled permanent with a sentence.
+      [redefinition-target S2]
+- [ ] **Save an implicit end copy under a name the next open reads back.** Save writes an implicit
+      end copy by the name of the feature it redefines: `part u0 : D4, D3 { bind Zb = M; }` where D1
+      has `attribute N2 redefines M` is saved `bind Zb = N2`, which the next open resolves to D2's
+      declared N2, so the saved file reads another feature than the text the user wrote (seed 2373
+      of the extended property soak, SYSPROSE_RT_FIRST=1500 SYSPROSE_RT_STEPS=5). The property test
+      reloads such a model without its bindings. Related and tracked in 'Save a binding to an
+      unnamed redefinition under a name a terminal can read': an unnamed explicit redefinition is
+      written `EX::r::«AttributeUsage»`
+      (review-2026-10-14/wave3-probes/redefinition-target/endcopy.probe.ts). [redefinition-target
+      review]
+- [ ] **Stop a deleted Redefinition cycle member leaving a self-redefinition (low).** A cycle a -> b
+      -> a: deleting a leaves `b :>> b` (the saved text `attribute b :>> b;` reads Unresolved
+      reference). Fix: in `Model.survivingTargets` treat a found target equal to the redefining
+      feature as no survivor. A cycle is already an invalid model. Probe:
+      review-2026-10-14/wave3-probes/redefinition-target/probe-selfred.test.ts. [redefinition-target
+      re-review]
+- [ ] **Take the dangling-edge scan out of `Model.remove` (core cost).** `Model.remove` scans every
+      element for dangling edges, so a settle that drops many redefinitions one remove at a time
+      costs O(N) each: deleting a base attribute that 300 redefinitions end in costs about 0.9 s on
+      a 12.7k-element model. Find the dangling edges through the edge indexes, keeping the removal
+      and event order. Also: a 300-deep chain with two named siblings per definition parses at 1.16
+      to 1.30x of 84fb971 (`chainsib300`; skip `joinsTwo`'s reach walk when no sibling redefines
+      anything), and a retype on a usage of 1500 `:>>` settles in 343 to 453 ms.
+      [redefinition-target S2, S3]
+- [ ] **Widen the random edit generator of the store property test (optional).**
+      `store.reducers.test.ts` draws `bind` in definitions and usages since the re-review fixes.
+      Still to add: nested `part :>> p { attribute :>> load; }`, standalone `redefinition`
+      statements, a user retarget of a redefinition (Properties, `updateElement` on the edge), the
+      SDK edits, and the duplicate-name stop; a verdict oracle (a copy bound to a valueless Zb plus
+      `u.Zb == v` constraints, definite check and numeric contradictions between page and reopened
+      file) and a count of the sequences that fell back to the binding-free model; the hand-text
+      oracle is thin (1 comparison in the 300 x 4 gate window); compare the four-surface verdicts in
+      a subset of the sequences. [redefinition-target S2, re-review]
 ## Per-instance soundness — review 2026-10-14
 
 From the soundness review of F3–F8 and 3e3b0ff (Sysprose 5943654 against 7277a97). The branch
