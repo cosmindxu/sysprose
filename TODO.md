@@ -79,15 +79,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       both as one feature's (`joinedTo`), or have a bind conflict decided from two asserted
       equations seed `contradictedTaint` with both ends; pin it with its twin in the four-surface
       table. [contradicted-value S2 review, probe rv-s2-correct/v/bnd2-ab.sysml]
-- [ ] **Leave out the value of a feature two asserted equations give two values in every reader of
-      `evaluateFeatureValue`.** contradicted-value S2 takes such a feature out of the check, the
-      literal engine and the numeric surface, and the literal and SMT witnesses print none
-      (`readsContradictedDefinition`), but `evaluateFeatureValue` still returns the first equation
-      written: the FMI export writes it as the variable's `start` (`startOf` in
-      src/interop/fmi/model-description.ts: `reconcile/n-ab.sysml` start 50, `n-ba.sysml` start 60),
-      and `evaluateMoEs` in solver.ts falls back to it. Route both through
-      `readsContradictedDefinition` (no start, no MoE value), then drop the FMI limit sentence from
-      USER-GUIDE's 'Two asserted equations that disagree'. [contradicted-value S2 review]
 - [ ] **Narrow the abstention over two disagreeing asserted equations (optional).**
       contradicted-value S2 leaves undecided every reading of the feature, in every instance, and
       every value an asserted relation reads beside it (`contradictedTaint` taints by feature): one
@@ -99,6 +90,7 @@ maintainer says `awaits user decision U<n>` and names the question.
       surfaces at f1f5ca5), and a side over a name a binding joins. Sound, but readings are lost.
       Taint only the instance where they meet, keeping the feature-wide taint where they meet in the
       feature's owner; read a bare literal in the feature's declared unit. [contradicted-value S2]
+      The FMI `start` and the Solve measure value inherit this breadth (text-order S2): `part def P { attribute load; assert constraint c1 { load == 1.0 } }` with `part def Q { part p : P { attribute :>> load; assert constraint c50 { load == 50.0 } } }` takes P::load's start from 1 to the type default 0 (marked in the variable's description) while only an instance elsewhere contradicts it (also r8-redef-novalue-assert-dflt, S4_N_PP, S4_N_PU). A literal written beside a contradicted pair keeps its start in both orders (`attribute L : Real = 5.0;` beside `L == 50.0` and `L == 60.0`); decision 14's removal in wave 3b settles whether an asserted equation overrides a written value for an export. [text-order S2]
 - [ ] **Read a definition's assert in an instance whose binding gives the value it reads.** Probe
       contradicted-value-scratch/fix/p/vc.sysml: `part def P { attribute load : Real; assert
       constraint a2 { load <= 10.0 } }`, `part def Q { attribute L : Real = 50.0; part p : P; bind
@@ -479,6 +471,111 @@ headings.
       rows; `DP33::negT` reads ?/?/T/T and `posF` ?/?/F/?). Sound, only weaker than it could be.
       Raise the cap or make the instance walk iterative. Done when those rows decide on all four
       surfaces. [review 2026-10-14 E10]
+- [ ] **Read a binding past the 32-usage cap whatever the order of the text.** The corpus models
+      cap1-per-binding and cap2-per-binding-valueless (gate-tools corpus a75dc2b9f417,
+      20544bc6c8f2), written with the members of the package and of every part definition in the
+      reverse order, read `yT { Y >= 40.0 }` F/F/F/X, `negT` F/F/F/X and `yF { Y <= 5.0 }` T/T/T/X,
+      where X's 50 reaches Y and top's load through T1's binding at the chain's end (written in
+      order: ?/?/T/T, ?/?/T/T, ?/?/F/?). A false verdict on the check, the literal engine and the
+      numeric surface that turns on the text order, in the past-cap reading in defining-equation.ts;
+      the same at 84fb971. Pin both with their reversed twins in the four-surface table. Probes:
+      review-2026-10-14/wave3-probes/text-order/cap1r.sysml and cap2r.sysml (forward: cap1f, cap2f).
+      [text-order S1]
+- [ ] **File a usage-owned group's context rows whatever the declaration order.** e5-renamed (corpus
+      65a411ed2025) with its members reversed files no `E5::P::c in E5::Q::p` and no `E5::P::c in
+      E5::q::p` row on any surface (T/T/T/T written in order); the same at 84fb971. Probe:
+      review-2026-10-14/wave3-probes/text-order/65a411ed2025-e5-renamed.rev.sysml. [text-order S1
+      measurement]
+- [ ] **Read the equation an asserted conjunction gives on the numeric surface (optional).** Since
+      text-order S1 a valueless feature that an asserted `L == 50.0 and L >= 0.0` constrains is no
+      design freedom, so the numeric surface reads `t50 { p.L == 50.0 }` unknown, which SMT proves,
+      and t1, t60 unknown, both F. The check and the literal engine abstain too. Reading the
+      conjunction's equation part as L's definition would decide them. Pinned: order-s1n-and,
+      -s1kn-and, -s2enc-and, -s2spec-and, -s2use-and and their -rev twins. [text-order S1]
+- [ ] **Hold a feature an assert typed by an inequality-only constraint definition constrains.**
+      `assert constraint ca : Cd { in x = L; }` with `Cd = x >= 0.0 and x <= 100.0` is neither
+      collected as held (the usage carries no expression, so the numeric solve reads nothing from
+      it) nor named by `typedAssertNames` (typedAssertHolding keeps only definitions that hold an
+      equation). Two plain checks beside it abstain through the contested rule (t1, t2 unknown); a
+      lone `t1 { p.L == 1.0 }` is still imposed as a design equation, as at 84fb971. Fix: read the
+      typed assert's definition body, with the `in x = L` binding, in relationReads or in the
+      assertHeld index. Probe: review-2026-10-14/wave3-probes/text-order/g1.sysml (G1). [text-order
+      S1 review]
+- [ ] **Judge a lone plain check beside a satisfied requirement's require/assume.** A requirement
+      clause is a goal in this tool (USER-GUIDE: clauses are goals), not an assert, so a lone plain
+      check beside it is still taken as a design equation (RQK: `t1` and the requirement's own
+      constraint both read imposed, k satisfied). The multi-check order cases are closed by the
+      contested rule; this one does not turn on the order. Decide whether a satisfied requirement's
+      clause is a fact for the design-equation choice. Probe:
+      review-2026-10-14/wave3-probes/text-order/reqk.sysml. [text-order S1 review]
+- [ ] **Tie K to a contradicted L through a bare-name equation `K == L` (`contradictedTaint`,
+      defining-equation.ts).** `attribute L; attribute measureK; L == 50.0 and L == 60.0` in either
+      order, `assert constraint x { K == L }`, a `part p : P` and `constraint kk { p.K >= 55.0 }`:
+      `contradictedTaint` does not tie K to the contradicted L, so K's FMI start and its measure
+      value are 50 or 60 by the order of the two equations, and `kk` reads F/X/F/X in one order and
+      T/X/T/X in the other on the check and the numeric surface. A local tied by `T == L` keeps the
+      same order-dependent start; `K == L + 0.0`, `K == 2.0 * L` and `bind K = L` are withheld
+      correctly. Not caused by text-order; add its twin to the four-surface table with the fix and
+      drop the USER-GUIDE limit sentence ('`K == L`, a bare name on each side, is not read as tying
+      K') when it closes. Probes: review-2026-10-14/wave3-probes/text-order/tie-ab.sysml,
+      tie-ba.sysml. [text-order S2]
+- [ ] **Route the three direct readers of `evaluateFeatureValue` left through
+      `readsContradictedDefinition`.** `objectiveValue` and the `optimize` `scoreOf` fallback in
+      solver.ts and the String-valued stated read in refinement.ts (~l.2882) still return the first
+      equation written for a contradicted feature. No probe reaches the optimize fallback (11 shapes
+      return NaN or the stated value on 84fb971 and on text-order: the solve marks the objective
+      unsettled first), so this is unverified, not known false. [text-order S2 review]
+- [ ] **Do not seed a valueless parameter's FMI start into a co-simulation as a fixed 0
+      (optional).** `seedInputs` in src/interop/fmi/cosim.ts still seeds a parameter or input whose
+      start is the type default as a fixed override into `solve`, so outputs are computed from an
+      invented 0; text-order S2 stopped it only for a withheld contradicted start
+      (`FmiVariable.startWithheld`). The same flag could mark a valueless parameter. [text-order S2]
+- [ ] **Solve the plain equations of a design component jointly over all roots (optional).** Since
+      text-order the curved-root rule withholds `x * x == 4.0` beside `x == 2.0` in both orders
+      where one root agrees (it read t/t before); a finer rule would solve the plain equations
+      together over every root and keep the agreeing one. Sound as is, only weaker. [text-order S1
+      review]
+- [ ] **Withhold the value of a curved component that has no unused equation.** The numeric surface
+      decides F on a consistent model when a curved system leaves no equation unused: `c0 { p.x *
+      p.x == 4.0 }`, `c1 { p.y == p.x + 1.0 }`, `c2 { p.y <= 0.0 }` read c0 t, c1 t, c2 F in every
+      order, yet x = -2, y = -1 satisfies all three; likewise a product system (`p.x * p.y == 4.0`,
+      `p.x == p.y`, `p.x <= 0.0`: c2 F, though (-2, -2) satisfies them) and an asserted curved
+      equation (`assert { x * x == 4.0 }` beside plain `p.x == -2.0`: b F). Not order-dependent and
+      identical at 84fb971; designReadings returns early on `!took || unused.length === 0` before
+      the rival rule applies. Apply the rival rule there too (a component with a curved equation,
+      plain or model, beside another plain equation, or an inequality judged over it, reads no
+      value), count a coupled product system as curved, and correct the USER-GUIDE sentence 'A
+      component with a curved plain equation beside another plain equation reads no value at all'
+      until it does. Opus class (a false verdict on a consistent model). Probes:
+      review-2026-10-14/wave3-probes/text-order/C11out_0.sysml, V8out_0.sysml, AA1_0.sysml.
+      [text-order re-review]
+- [ ] **Take the second root a model equation gives into the curved-root rule.** `designReadings`
+      looks for a curved equation among the PLAIN ones only. A stated `attribute s = x * x` or an
+      asserted `s == x * x` beside plain `c0 { p.s == 4.0 }`, `c1 { p.x == -2.0 }` reads c0, c1 ?/?
+      ('only plain constraints that disagree (c0 and c1)', false: they agree at x = -2) when c0 is
+      written first and t/t when c1 is, where 84fb971 read t/t in both orders. Likewise a curved
+      plain equation whose component reaches a disagreeing pair through a product (`c0 { p.x == -2.0
+      }`, `c1 { p.z == p.x * p.y }`, `c2 { p.z * p.z == p.y }`, `c3 { p.x == 5.0 }`: c2 ?/?/t/? when
+      c0 precedes c3, ? in the other order). Compute `curved` over every equation of the component
+      that reads a produced value, model equations included, and union every plain equation's
+      variables into the component once any of them is produced; pin W, Y and M5 in every order.
+      Sound (an abstention in one order, imposed in the other), but the guide's 'no design equation
+      turns on the order of the text' holds only bar these. Probes:
+      review-2026-10-14/wave3-probes/text-order/W_0.sysml, W_1, Y_0, Y_1, M5out_0.sysml,
+      M5out_3.sysml, F7x130_0.sysml, F7x130_1.sysml. [text-order re-review]
+- [ ] **Do not withhold a quotient by a value another plain equation fixes, and do not hold a unit
+      symbol as a feature (optional).** `isCurved` treats `x / y == 3.0` beside `y == 2.0` and `x ==
+      6.0` (and the density form `m / v == d`) as curved, withholding rows 271df65 read t; and
+      `writtenNames` (the regex over an unparsed asserted body) reads `[m]` in `M ** 2.0 == 4.0 [m]`
+      as the feature `m`, so `constraint t1 { p.m == 3.0 }` goes from t to ?. Both sound, only
+      weaker. Treat `const / affine-in-u` as single-root, and run the regex over
+      `lowerUnitLiterals(raw).text` or strip `[...]` and string literals first. Probes:
+      review-2026-10-14/wave3-probes/text-order/G5out_0.sysml, U3.sysml. [text-order re-review]
+- [ ] **Make `solveFeasible` treat a rival curved pair as a freedom in both orders (optional).** `c0
+      { p.x * p.x == 4.0 }` above `c1 { p.x == -2.0 }` gives {decided: false}, the other way round
+      {decided: true, feasible: true} (the model is feasible); the campaign doc says such a value is
+      searched as a freedom by `solveFeasible`. Not false. Probes:
+      review-2026-10-14/wave3-probes/text-order/C1out_0.sysml, C1out_1.sysml. [text-order re-review]
 
 ## Per-instance soundness — review 2026-10-14
 
@@ -620,19 +717,6 @@ true values. What follows is what that branch and the review of it left open; en
       X6N::w::q::p`. The witness gate then demotes it to 'witness not confirmed', because the
       numeric surface reads 3. It is safe, but a reading is lost. Identical at 414ba14. Probe:
       default-stands-scratch/branch-review/p4/x6n.sysml. [default-stands review]
-- [ ] **Keep the numeric solve off a feature an assertion constrains in a form it does not read.**
-      Take a feature with no value that an assertion constrains in a form the solve does not read:
-      an asserted conjunction `L == 50.0 and L >= 0.0`, an inequality, a disjunction, or a
-      requirement's `require`/`assume`. The numeric surface then takes the first plain equality over
-      the feature, in TEXT ORDER, as its design equation, and reads every other at that point.
-      Beside the conjunction, from which SMT proves t50, the reversed text reads t50 F on the
-      numeric surface and T on SMT: a false F. The shapes are the soft-hard analysis' S1_N_and,
-      S1_KN_and, S2enc_N_and, S2spec_N_and and S2use_N_and, each with its members reversed. In all,
-      38 N/KN cells flip with the order of the text. Fix: take no design equation over such a
-      feature (the numeric surface then reads `?`), or read the conjunction's equation part. Measure
-      the corpus and v9 first. Then drop SH_CLASH_KNOWN and the SH_NUM entries of SH_ORDER_APART in
-      the M-generator (canonical copy ~/Work/sysprose-soundness-artifacts/per-instance/gen/gen.py,
-      once copied back). [default-stands S2]
 - [ ] **File a definition's context row under one name whatever the declaration order.** A relation
       of P read in a specialisation P2 :> P whose one usage is p is filed `P::ca in P2` when P2 is
       written first, and `P::ca in p` when p is, with the same verdict. This shows in H3, H6 and the

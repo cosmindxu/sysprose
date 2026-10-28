@@ -733,7 +733,9 @@ Two names worth separating:
   solved to, wherever the check is written: the model's own equations are
   solved first, and a check fixes only what they leave. The test is local: of
   two separate roots (`x * x == 4.0`) the one the solver found is still the
-  one judged. **No design equation turns on the order of the text.** Two plain
+  one judged. **No design equation turns on the order of the text**, bar the second root a
+  model equation gives and a curved equation reached through a product (open).
+  Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
   `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
@@ -747,7 +749,9 @@ Two names worth separating:
   (*… only plain constraints, one of them with more than one root (a and b) …*).
   A lone equation of two roots is still *imposed*, at the root the solver found,
   and a product of two unknowns (`mass == density * volume`) is no such
-  equation once the others are fixed. A feature with no value that an `assert`
+  equation once the others are fixed. A curved system that leaves no plain equation unused (`x * x == 4.0`,
+  `y == x + 1.0`, `y <= 0.0`) is still decided at the root the solver found:
+  trust no verdict over such a system (open). A feature with no value that an `assert`
   constrains in a form the solve does not read — an inequality, a conjunction
   (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
   (`M == max(L, 20.0)`, which the model reports) — is no design freedom for a
