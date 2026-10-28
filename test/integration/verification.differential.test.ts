@@ -5926,7 +5926,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'M2a::negT': ['F/F/F/X', null],
       'M2a::posF': ['T/T/T/X', null],
     }),
-    G340: probe(`package G340 {
+    // contradictory-models S2 (C5): a binding written at the top, `bind r.q.p.load = r.q.L`, joins r's q's p's load, which
+    // stands at P's 1, to r's q's L, the 50 Q's `L == 2.0 * K` gives at Q2's K of 25: the model contradicts itself, and the
+    // check reports the binding. The implicit copy of q the binding makes in the package's r holds what Q asserts of its
+    // L, so the SMT engine read r's L at 50 beside the binding's 1 — it read L as an unconstrained symbol, and decided
+    // negT F and posF T (and ctlA, another instance's) instead of reporting inconsistent axioms. The literal engine still
+    // decides them (S3 of this branch: a violated binding, for it, is a contradiction as an assertion is).
+    ...standing('G340', `package G340 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
         part def Q2 :> Q { attribute :>> K = 25.0; }
@@ -5941,10 +5947,50 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'G340::Q::defL': ['T/-/T/-', 'T'],
       'G340::Q::defL in G340::Q2': ['T/-/T/-', 'T'],
-      'G340::ctlA': ['T/T/T/T', 'T'],
-      'G340::negT': ['F/F/F/F', null],
-      'G340::posF': ['T/T/T/T', null],
+      'G340::ctlA': ['T/T/T/X', 'T'],
+      'G340::negT': ['F/F/F/X', null],
+      'G340::posF': ['T/T/T/X', null],
       'G340::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    // The same contradiction with the binding written in the enclosing definition around the usage that makes the
+    // copy (`encl`: R's `part q : Q { bind p.load = L; }`, L a feature of R): r's L is the 50 R's `L == 2.0 * K` gives
+    // at r's K of 25, and the binding joins it to p's load 1 — in a definition R2 that specialises R too. The binding
+    // holds of r's q, an instance no relation reads by a symbol of its own (P's m2 is read at P's one 1): the worklist
+    // filed it for neither, and the SMT engine decided negT F and posF T beside it.
+    ...standing('cv-encl', `package ENC {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { part p : P; }
+        part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part q : Q { bind p.load = L; } }
+        part r : R { attribute :>> K = 25.0; }
+        part r0 : R;
+        constraint negT { r.q.p.m2 <= 0.0 }
+        constraint posF { r.q.p.m2 >= 0.0 }
+        constraint ctlA { r0.q.p.m2 >= 8.5 }
+      }`, {
+      'ENC::R::defL': ['T/-/T/-', 'T'],
+      'ENC::R::defL in ENC::r': ['?/-/?/-', null],
+      'ENC::R::q::«BindingConnectorAsUsage» in ENC::r#bind': ['F/-/F/-', 'F'],
+      'ENC::ctlA': ['T/T/T/X', 'T'],
+      'ENC::negT': ['F/F/F/X', null],
+      'ENC::posF': ['T/T/T/X', null],
+    }),
+    ...standing('cv-encl-spec', `package ENS {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { part p : P; }
+        part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part q : Q { bind p.load = L; } }
+        part def R2 :> R { attribute :>> K = 25.0; }
+        part r : R2;
+        part r0 : R;
+        constraint negT { r.q.p.m2 <= 0.0 }
+        constraint posF { r.q.p.m2 >= 0.0 }
+        constraint ctlA { r0.q.p.m2 >= 8.5 }
+      }`, {
+      'ENS::R::defL': ['T/-/T/-', 'T'],
+      'ENS::R::defL in ENS::R2': ['?/-/?/-', null],
+      'ENS::R::q::«BindingConnectorAsUsage» in ENS::R2#bind': ['F/-/F/-', 'F'],
+      'ENS::ctlA': ['T/T/T/X', 'T'],
+      'ENS::negT': ['F/F/F/X', null],
+      'ENS::posF': ['T/T/T/X', null],
     }),
     // E9: q's binding `p.load == L` is read as a binding there, not refused by gate (e) as a bare copy against
     // the derived mass L, so SMT reads q's p's m2 at −40 [kg] and its witness is the model's point.
@@ -7351,9 +7397,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // review). CV-SP2: Q3's p's load is filed as an instance value row of its own (`load == 1`), beside Q's one
     // `bind p.load = L`, so that row is joined to the feature it is a value of, and the contradiction of `a2 in
     // Q3::p` reaches q3's L, and qq's (one symbol, an abstention). CV-GI: the check reports G's `ca` violated in
-    // s2's q, whose binding sits in s2, and the worklist files no row of `ca` there: the literal engine cannot read
-    // what that contradiction reaches, and decides no relation of the file; the SMT engine, which never sees it,
-    // proves t2 and tk (TODO). CV-KC: an assert that reads no feature is false at every point.
+    // s2's q, whose binding sits in s2 (contradictory-models S2, C3). The binding makes s2's q and its g implicit
+    // copies, which no relation reads by a symbol of its own, so the worklist filed no row of `ca` there: the literal
+    // engine could not read what that contradiction reaches and decided no relation of the file, and the SMT engine,
+    // which never saw it, proved t2 and tk. A copy a binding makes holds what its types and the instances around it
+    // assert, as an instance read by a symbol of its own does: `ca` is an axiom of s2's q, the axioms are
+    // inconsistent (t2, tk, and t1, which the contradiction reaches nowhere the literal engine reads), and the literal
+    // engine places the contradiction — t1, in the other instance, is decided. The binding written in the package
+    // (`cv-gi-pkg`) reads alike, and a g the binding does not contradict (`cv-gi-ok`) reads true. CV-KC: an assert
+    // that reads no feature is false at every point.
     'cv-sp2': probe(`package SP2 {
         part def P { attribute load : ScalarValues::Real; }
         part def P2 :> P { assert constraint a2 { load == 50.0 } }
@@ -7385,9 +7437,46 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GI::G::ca in GI::S::q': ['T/-/T/-', 'T'],
       'GI::G::ca in GI::s1::q': ['T/-/T/-', 'T'],
       'GI::G::ca in GI::s2::q': ['F/-/F/-', 'F'],
-      'GI::t1': ['T/X/t/?', null],
-      'GI::t2': ['T/X/T/T', null],
-      'GI::tk': ['T/X/T/T', null],
+      'GI::t1': ['T/T/t/X', null],
+      'GI::t2': ['T/X/T/X', null],
+      'GI::tk': ['T/X/T/X', null],
+    }),
+    'cv-gi-pkg': probe(`package GIP {
+        part def G { attribute g : ScalarValues::Real default = 1.0; assert constraint ca { g <= 10.0 } }
+        part def S { part q : G; }
+        attribute K : ScalarValues::Real = 50.0;
+        part s1 : S;
+        part s2 : S;
+        bind s2.q.g = K;
+        constraint t2 { s2.q.g == 50.0 }
+        constraint t1 { s1.q.g == 1.0 }
+        constraint tk { K == 50.0 }
+      }`, {
+      'GIP::G::ca': ['T/-/T/-', 'T'],
+      'GIP::G::ca in GIP::S::q': ['T/-/T/-', 'T'],
+      'GIP::G::ca in GIP::s1::q': ['T/-/T/-', 'T'],
+      'GIP::G::ca in GIP::s2::q': ['F/-/F/-', 'F'],
+      'GIP::t1': ['T/T/t/X', null],
+      'GIP::t2': ['T/X/T/X', null],
+      'GIP::tk': ['T/X/T/X', null],
+    }),
+    'cv-gi-ok': probe(`package GIO {
+        part def G { attribute g : ScalarValues::Real default = 1.0; assert constraint ca { g <= 10.0 } }
+        part def S { part q : G; }
+        attribute K : ScalarValues::Real = 5.0;
+        part s1 : S;
+        part s2 : S { bind q.g = K; }
+        constraint t2 { s2.q.g == 5.0 }
+        constraint t1 { s1.q.g == 1.0 }
+        constraint tk { K == 5.0 }
+      }`, {
+      'GIO::G::ca': ['T/-/T/-', 'T'],
+      'GIO::G::ca in GIO::S::q': ['T/-/T/-', 'T'],
+      'GIO::G::ca in GIO::s1::q': ['T/-/T/-', 'T'],
+      'GIO::G::ca in GIO::s2::q': ['T/-/T/-', 'T'],
+      'GIO::t1': ['T/T/t/?', null],
+      'GIO::t2': ['T/T/T/T', 'T'],
+      'GIO::tk': ['T/T/T/T', 'T'],
     }),
     'cv-kc': probe(`package KC {
         attribute L : ScalarValues::Real = 1.0;
@@ -7761,8 +7850,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // CV-SP2 with no relation over q3's p (the branch review): the worklist files `a2 in Q3::p` alone, over Q3's p's
     // own symbol, and no q3 row. That symbol is joined to the feature it reads (Q's p's load), so the contradiction
     // reaches Q's `bind p.load = L` and q3's L (k), and qq's (one symbol, an abstention); so does a chain of two
-    // bindings to K (CV-V3). The literal engine read k "unconditional" and exited 0; the SMT engine still proves it
-    // (TODO: the `=` twin of h5-m3t).
+    // bindings to K (CV-V3). The literal engine read k "unconditional" and exited 0. The SMT engine proved k (and kq,
+    // another instance's) until contradictory-models S2: Q's `bind p.load = L` was filed for Q's p alone, and nothing
+    // joined Q3's p's load, the 50 the assert gives it, to the L of 1 it is bound to — the `=` twin of h5-m3t, whose
+    // `default` the redefinition reads through its own value row. The instances enclosing a read instance hold the
+    // bindings their types write, whether or not one of them joins an enclosing instance's feature (Q3 holds Q's
+    // binding, over Q3's p's load): the axioms are inconsistent, and the SMT engine reads k and kq so.
     'cv-sp2-nokp': probe(`package SP2N {
         part def P { attribute load : ScalarValues::Real; }
         part def P2 :> P { assert constraint a2 { load == 50.0 } }
@@ -7775,8 +7868,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'SP2N::P2::a2': ['T/-/T/-', null],
       'SP2N::P2::a2 in SP2N::Q3::«PartUsage»': ['F/-/F/-', 'F'],
-      'SP2N::k': ['T/X/T/T', null],
-      'SP2N::kq': ['T/X/T/T', 'T'],
+      'SP2N::k': ['T/X/T/X', null],
+      'SP2N::kq': ['T/X/T/X', 'T'],
     }),
     'cv-v3': probe(`package V3 {
         part def P { attribute load : ScalarValues::Real; }
@@ -7788,7 +7881,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'V3::P2::a2': ['T/-/T/-', null],
       'V3::P2::a2 in V3::Q3::«PartUsage»': ['F/-/F/-', 'F'],
-      'V3::k': ['T/X/T/T', null],
+      'V3::k': ['T/X/T/X', null],
     }),
     // The order of the text (the soft/hard analysis' S2use and S1 eqMd cells, default-stands S2): an assert written
     // in a usage of the default's owner (SU), and `L == M` over two defaults (SEM), each beside the same text with its
@@ -8143,6 +8236,51 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'E1::c3F': ['?/?/?/?', '?'],
       'E1::c3T': ['?/?/?/?', '?'],
       'E1::fix': ['T/-/T/-', 'T'],
+    }),
+    // contradictory-models S2 (C4): the same with the binding and the assert written before the package's head and
+    // p4 — which text comes first decides nothing — and p2's and p4's own loads beside p3's. The SMT engine carries
+    // the asserted 5 into no default that gave way.
+    'stand-gw-e1-rev': probe(`package E1A {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute L : ScalarValues::Real;
+        assert constraint fix { L == 5.0 }
+        part p2 : P;
+        bind p2.load = L;
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint c2T { p2.load <= 6.0 }
+        constraint c4 { p4.load <= 8.0 }
+      }`, {
+      'E1A::c2T': ['T/T/T/?', null],
+      'E1A::c3F': ['?/?/?/?', '?'],
+      'E1A::c3T': ['?/?/?/?', '?'],
+      'E1A::c4': ['?/?/?/?', '?'],
+      'E1A::fix': ['T/-/T/-', 'T'],
+    }),
+    // The same with the asserted L and the binding to p2's load written in a definition (W's `bind p2.load = L`): w's p2
+    // is the head's slot, and the numeric surface carries W's asserted 5 through the package's head into M, which
+    // gave way, and so into p3's load (F and T), where the check, the literal engine and the SMT engine read no value
+    // there, as they do beside the package's own L (E1). Left as it is: the solve is the numeric surface's (TODO).
+    'stand-gw-e1-encl': probe(`package E1E {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W { attribute L : ScalarValues::Real; assert constraint fix { L == 5.0 } part p2 : P; bind p2.load = L; }
+        part w : W;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint c2T { w.p2.load <= 6.0 }
+      }`, {
+      'E1E::W::fix': ['T/-/T/-', 'T'],
+      'E1E::c2T': ['T/T/T/?', null],
+      'E1E::c3F': ['?/?/F/?', '?'],
+      'E1E::c3T': ['?/?/T/?', '?'],
     }),
     // default-stands S2's review. A `part :>> p` redefinition whose assert defines a valueless feature that a
     // binding of the general definition joins to a `default` — in a usage (SRU: q2's `part :>> p`) or in a
@@ -11029,7 +11167,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * two instances, R3a–c) though their values differ (2 vs 10; 2 vs 50): no value exists, and no
    * contradiction (their `#bind`); every surface now abstains on them.
    */
-  const KNOWN_FALSE = new Map<string, string>([]);
+  const KNOWN_FALSE = new Map<string, string>([
+    ...['E1E::c3F', 'E1E::c3T'].map(
+      (row) =>
+        [
+          `stand-gw-e1-encl | ${row}`,
+          'NO STEP: the numeric surface carries the 5 W’s asserted `L == 5.0` gives w’s p2’s load (`bind p2.load = L` in W) through the package’s `bind P::load = M` — M’s `default = 9.0` gives way to p4’s `default = 7.0`, so M has no value — into p3’s load, which the check, the literal engine and the SMT engine read with no value (the package’s own L, E1, abstains on all four)',
+        ] as const,
+    ),
+  ]);
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,
    * refute-r19's three, sound-C r8's p, d1plain's two, assert-min-def's two, u-witness's p2.k): every one a
@@ -11672,6 +11818,30 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         [
           key,
           'an assert the model holds false at its values contradicts a value this row reads, or one the model’s values, bindings and assertions tie to it: the literal engine and the SMT engine report the axioms inconsistent, naming the assert, beside the check’s and the numeric surface’s reading of the value',
+        ] as const,
+    ),
+    // contradictory-models S2: a binding the check reports violated, or an assert it reports violated in an instance, that
+    // the worklist now files in the instance it holds in (C3, C5): the SMT engine's axioms are inconsistent on every row of
+    // the file, beside the check's reading of the values (the literal engine's too, where the row reads a value the
+    // contradiction reaches — S1 — and its own of a violated binding is S3).
+    ...[
+      'cv-gi | GI::t1',
+      'cv-gi | GI::t2',
+      'cv-gi | GI::tk',
+      'cv-gi-pkg | GIP::t1',
+      'cv-gi-pkg | GIP::t2',
+      'cv-gi-pkg | GIP::tk',
+      'cv-sp2-nokp | SP2N::k',
+      'cv-sp2-nokp | SP2N::kq',
+      'cv-v3 | V3::k',
+      ...['G340', 'G340-eq'].flatMap((probe) => ['G340::ctlA', 'G340::negT', 'G340::posF'].map((row) => `${probe} | ${row}`)),
+      ...['cv-encl', 'cv-encl-eq'].flatMap((probe) => ['ENC::ctlA', 'ENC::negT', 'ENC::posF'].map((row) => `${probe} | ${row}`)),
+      ...['cv-encl-spec', 'cv-encl-spec-eq'].flatMap((probe) => ['ENS::ctlA', 'ENS::negT', 'ENS::posF'].map((row) => `${probe} | ${row}`)),
+    ].map(
+      (key) =>
+        [
+          key,
+          'a violated binding, or a violated assert in an instance a binding gives its value, which the worklist files in that instance as an axiom: the SMT engine reports the axioms inconsistent on every row of the file, beside the check’s and the numeric surface’s reading of the values this row reads, which the contradiction does not reach (or, where the literal engine reads a value it reaches, beside its own inconsistent axioms)',
         ] as const,
     ),
     // Q4 for two asserted equations `check` reports giving one feature two values (the branch review): a value one

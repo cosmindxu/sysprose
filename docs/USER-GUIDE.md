@@ -1306,8 +1306,32 @@ attribute :>> L = 5.0; }`) each reads its own, in a row of its own. P's own
 row, which has no value to read, is *could not be evaluated*. A plain `constraint
 a2` of P is read in the same instance and is refuted on every surface. A binding
 that gives the instance no value this tool reads (two defaults that differ) lists
-no such row: whatever reads that value is *could not be evaluated*. A
-per-instance reading that fails inside the tool makes the row it was read for
+no such row: whatever reads that value is *could not be evaluated*. The binding
+need not be written in the definition around the instance: one written in an
+enclosing instance (`part s2 : S { bind q.g = K; }` over S's `part q : G`, or
+`bind s2.q.g = K;` in the package) makes s2's q and its g copies of S's, and a
+copy holds every assert its types and the instances around it hold. G's `assert
+constraint ca { g <= 10.0 }` is read in s2's q at the K of 50 the binding
+carries, over a `g default = 1.0` that gives way to it, and is violated there; the
+worklist files it as an axiom of that instance, so the SMT engine reads every
+row of the file *inconsistent axioms* (it had proved `s2.q.g == 50.0` and `K ==
+50.0`), and the literal engine places the contradiction at s2's q and its K —
+and decides the relation over s1's g — where it read the assert in an instance
+the worklist filed no row of, and judged no relation at all. The same holds for a
+binding written at the top over the copy of a usage a specialising definition
+types (`bind r.q.p.load = r.q.L`, over Q's `L == 2.0 * K` at Q2's `K = 25.0`:
+the L of 50 against p's load of 1, which the check reports on the binding), for
+one a usage of the enclosing definition writes (R's `part q : Q { bind p.load =
+L; }`, read in `part r : R { attribute :>> K = 25.0; }` and in a definition that
+specialises R), and for a binding a general definition writes over the
+redefinition of its usage (Q's `bind p.load = L` with `L = 1.0`, over Q3's `part
+:>> p : P2` whose assert gives p's load 50): the SMT engine decided or proved a
+relation beside each, and now reports the axioms inconsistent. Such bindings are
+read as deep as 32 of them below one another (definitions that hold each other go
+on without end); a row that reads what a binding beyond that joins is *could not
+be evaluated*, in a sentence that names the depth, and a proof is not claimed
+over it. A per-instance
+reading that fails inside the tool makes the row it was read for
 *could not be evaluated*, in a sentence naming the failure (`… the per-instance
 reading failed (RangeError); reported, not dropped`; a group's roll-up counts it
 *not read*), and every other row and finding stands — on the verify lane too, where the goal row is refused in

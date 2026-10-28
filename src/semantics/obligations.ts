@@ -94,9 +94,9 @@ import {
   defaultStandsIn,
   standsAgainstAssertsIn,
   enclosedBindingFrame,
+  enclosedBindingsOf,
   equatedPartsRefusal,
   failedReadingSentence,
-  hasEnclosedBindings,
   hasUserBindings,
   hasStatedValue,
   isAsserted,
@@ -1925,6 +1925,15 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
 }
 
 /**
+ * How many bindings that join a feature of an enclosing instance are filed one below the other, each for the
+ * instance of the usage that writes it inside the last ({@link instanceRelationRows}): definitions that hold each
+ * other go on without end. One left unfiled past it that no later row of the worklist files is not carried, and the
+ * rows that read what it joins are refused. The depth at which a binding is no longer read for a path of usages
+ * (`MAX_BINDING_SEGMENTS` of the defining equations).
+ */
+const MAX_NESTED_BINDING_DEPTH = 32;
+
+/**
  * The relations an INSTANCE with symbols of its own holds
  * ({@link ContractVariable.instance}): for each feature a row reads through an
  * instance, the value it has there (`R::p::m2 == 10.0 - R::p::load`), and
@@ -1979,8 +1988,24 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
     budget--;
     read(row.vars);
   };
+  // The usages that write a binding joining a feature of an instance enclosing them (R's `part q : Q { bind p.load =
+  // L; }`), and those on the way down to one: such a binding holds of every instance of the enclosing definition,
+  // though no row reads the usage's instance below it (the contradiction of G424's r: q's p's load is 1, r's L 50).
+  const writers = new Map<ElementId, ElementRecord[]>();
+  const leading = new Set<ElementId>();
+  for (const b of enclosedBindingsOf(model)) {
+    const owner = b.ownerId != null ? model.get(b.ownerId) : undefined;
+    if (!owner || !isUsage(owner.eClass)) continue;
+    const list = writers.get(owner.id);
+    if (list) list.push(b);
+    else writers.set(owner.id, [b]);
+    for (let u: ElementRecord | undefined = owner; u && isUsage(u.eClass) && !leading.has(u.id); u = u.ownerId != null ? model.get(u.ownerId) : undefined) {
+      leading.add(u.id);
+    }
+  }
   // Every assert and binding of `reader`'s types, read for the instance `path`
-  // — its bindings alone (`bindings`) for a usage whose own feature a row reads.
+  // — its bindings alone (`bindings`) for a usage the model writes whose own
+  // feature a row reads.
   const hold = (path: string, reader: ElementId, bindings = false): void => {
     const heldKey = `held${bindings ? ' bindings' : ''} ${reader} ${path}`;
     if (done.has(heldKey) || done.has(`held ${reader} ${path}`)) return;
@@ -2009,6 +2034,36 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
         done.add(key);
         file(instanceBindRow(model, binding, holder, context, path, memo, ends));
       }
+      // So does a binding a usage below the holder writes that joins one of the holder's own features, in the usage's
+      // instance below this one.
+      if (leading.size > 0) nested(holder, path, filedAt.get(path) ?? 0);
+    }
+  };
+  // How many bindings deep the instance a binding is filed for is, along the chain of instances that led to it: a
+  // definition that holds a usage typed by one that holds the first again (A's `part b : B { bind xb = La; }` in B's
+  // `part a : A { bind La = yb; }`) goes on without end, each binding read for the instance below the last. Past
+  // MAX_NESTED_BINDING_DEPTH the binding is left unfiled: where no row of the worklist files it by other means, the
+  // rows that read what it joins are refused below.
+  const filedAt = new Map<string, number>();
+  const beyond: { key: string; path: string; frame: string; usage: ElementId }[] = [];
+  const nested = (owner: ElementRecord, at: string, depth: number): void => {
+    for (const u of model.children(owner.id)) {
+      if (!leading.has(u.id)) continue;
+      const name = effectiveNameOf(model, u);
+      if (name === undefined) continue;
+      const here = `${at}::${name}`;
+      const written = (writers.get(u.id) ?? []).flatMap((b) => {
+        const frame = enclosedBindingFrame(model, b, u, here);
+        return frame ? [{ key: `${b.id} ${here}`, path: here, frame: frame.instance, usage: u.id }] : [];
+      });
+      if (written.length > 0) {
+        if (depth >= MAX_NESTED_BINDING_DEPTH) beyond.push(...written);
+        else {
+          filedAt.set(here, Math.min(filedAt.get(here) ?? Infinity, depth + 1));
+          hold(here, u.id, true);
+        }
+      }
+      nested(u, here, depth);
     }
   };
   while ((pending.length > 0 || owned.length > 0) && budget > 0) {
@@ -2023,8 +2078,14 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
     if (pending.length === 0) {
       const usage = owned.shift()!;
       const path = definitions.instanceNameOf(usage);
-      for (const e of definitions.framesAbove(path) ?? []) hold(e.instance, e.reader, true);
-      hold(path, usage, true);
+      // An implicit connector-end copy is the instance a binding written in an enclosing instance makes of a
+      // usage the model never writes there (GI's `bind q.g = K` in s2, G340's `bind r.q.p.load = r.q.L`): it
+      // holds every assert its types and the instances around it hold, as an instance read through a symbol of
+      // its own does. A usage the model writes (a redefinition with a value) has its asserts read in it as a
+      // context ({@link instanceRows}): its bindings alone are held here.
+      const writtenOnly = model.get(usage)?.attrs.implicit !== true;
+      for (const e of definitions.framesAbove(path) ?? []) hold(e.instance, e.reader, writtenOnly);
+      hold(path, usage, writtenOnly);
       continue;
     }
     const v = pending.shift()!;
@@ -2041,18 +2102,23 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
     // Sys's `bind p.load = q.load` of `s.q.load`, P's `assert sub.x <= 10.0`
     // of `p.sub.x`. Read for the instance alone, it was a value nothing
     // constrained. One read through a usage's own walk (a group's row) has
-    // none of the frames above that usage; where a binding joins a feature of
-    // an enclosing instance, those are its frames ({@link hasEnclosedBindings}).
-    const frames = enclosing.length === 0 && hasEnclosedBindings(model) ? (definitions.framesAbove(path) ?? []) : enclosing;
+    // none of the frames above that usage: those are its frames, whether or
+    // not a binding joins a feature of an enclosing instance (Q3's p, read
+    // for the 50 its assert gives, holds Q's `bind p.load = L` over Q3's own
+    // load, and the axioms are inconsistent beside L's 1).
+    const frames = enclosing.length === 0 ? (definitions.framesAbove(path) ?? []) : enclosing;
     for (const e of frames) hold(e.instance, e.reader);
     hold(path, reader);
   }
-  if (pending.length > 0 || owned.length > 0) {
+  const unfiled = beyond.filter((b) => !done.has(b.key));
+  if (pending.length > 0 || owned.length > 0 || unfiled.length > 0) {
     // The budget ran out: every row that reads an instance left unread — or an
-    // own feature of a usage whose bindings were not filed — is refused.
+    // own feature of a usage whose bindings were not filed — is refused. So is
+    // every row that reads an instance a binding too many instances down was
+    // not filed for, or the enclosing instance it joins.
     const unread = new Set(pending.map((v) => v.instance!.path));
     const unheld = new Set(owned);
-    for (const row of [...rows, ...out]) refuseUnreadInstances(model, row, unread, unheld);
+    for (const row of [...rows, ...out]) refuseUnreadInstances(model, row, unread, unheld, unfiled);
   }
   return out;
 }
@@ -2273,20 +2339,44 @@ function pathBelow(model: Model, id: ElementId | undefined, ownerId: ElementId):
 
 /**
  * Refuse `row` when it reads an instance whose relations were not read
- * ({@link MAX_INSTANCE_RELATIONS}): over a symbol nothing constrains, a proof
- * would rest on less than the model states.
+ * ({@link MAX_INSTANCE_RELATIONS}), or one a binding was not filed for
+ * ({@link MAX_NESTED_BINDING_DEPTH} bindings down, `beyond`): over a symbol nothing
+ * constrains, a proof would rest on less than the model states.
  */
-function refuseUnreadInstances(model: Model, row: Obligation, unread: ReadonlySet<string>, unheld: ReadonlySet<ElementId>): void {
+function refuseUnreadInstances(
+  model: Model,
+  row: Obligation,
+  unread: ReadonlySet<string>,
+  unheld: ReadonlySet<ElementId>,
+  beyond: readonly { path: string; frame: string; usage: ElementId }[] = [],
+): void {
   if (row.encodable !== true) return;
   const hit = row.vars.filter((v) =>
     v.instance ? unread.has(v.instance.path) : unheld.size > 0 && unheld.has(model.get(v.featureId)?.ownerId ?? ''),
   );
-  if (hit.length === 0) return;
+  if (hit.length > 0) {
+    row.encodable = {
+      reason: 'unread-definition',
+      detail:
+        `the relation reads ${hit.map((v) => `\`${v.path}\``).join(', ')} in an instance nested deeper than this tool ` +
+        `reads the relations of (more than ${MAX_INSTANCE_RELATIONS}), so what the model states of it is not carried`,
+    };
+    row.status = statusOf(row.encodable);
+    return;
+  }
+  const lost = row.vars.filter((v) =>
+    beyond.some((b) =>
+      v.instance
+        ? v.instance.path === b.path || v.instance.path.startsWith(`${b.path}::`) || v.instance.path === b.frame
+        : model.get(v.featureId)?.ownerId === b.usage,
+    ),
+  );
+  if (lost.length === 0) return;
   row.encodable = {
     reason: 'unread-definition',
     detail:
-      `the relation reads ${hit.map((v) => `\`${v.path}\``).join(', ')} in an instance nested deeper than this tool ` +
-      `reads the relations of (more than ${MAX_INSTANCE_RELATIONS}), so what the model states of it is not carried`,
+      `the relation reads ${lost.map((v) => `\`${v.path}\``).join(', ')} in an instance a binding joins that lies more than ` +
+      `${MAX_NESTED_BINDING_DEPTH} bindings below the first, deeper than this tool reads the bindings of, so what the model states of it is not carried`,
   };
   row.status = statusOf(row.encodable);
 }

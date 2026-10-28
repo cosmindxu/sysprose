@@ -4099,6 +4099,17 @@ export function hasEnclosedBindings(model: Model): boolean {
 }
 
 /**
+ * The user's bindings that join a feature of an instance enclosing where they are written ({@link
+ * hasEnclosedBindings}), in the model's order — R's `bind p.load = L` in `part q : Q { … }`. Each holds of
+ * every instance of the enclosing definition, below the one that writes it.
+ */
+export function enclosedBindingsOf(model: Model): readonly ElementRecord[] {
+  const { enclosed, connectors } = bindingEnds(model);
+  if (enclosed.size === 0) return [];
+  return connectors.filter((b) => (b.source?.[0] !== undefined && enclosed.has(b.source[0])) || (b.target?.[0] !== undefined && enclosed.has(b.target[0])));
+}
+
+/**
  * Does the user's model hold a binding connector of its own? The library
  * carries dozens (82 `BindingConnectorAsUsage` in the full one), and no
  * surface reads them as the model's: a model that writes none — v9 — reads
