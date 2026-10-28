@@ -18,6 +18,7 @@ import {
   Model,
   TEXTUAL_KEYWORD,
   isControlNode,
+  isDefinition,
   isMembership,
   isRelationship,
   isRequirement,
@@ -27,8 +28,9 @@ import {
   type ElementId,
   type ElementRecord,
 } from '@core/index';
-import { resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
+import { endCopyProto, findTypeFeature, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
 import { redefinedClosure } from '@semantics/inheritance';
+import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
 
 const INDENT = '    ';
@@ -1432,10 +1434,35 @@ function lineNames(model: Model, targetId: ElementId): ReadonlySet<string> {
 }
 
 /**
- * Move the explicit redefinitions in `changed` (types, or usages: the owners of the features that redefine) and in
+ * Where the next parse puts the implicit end copy `copy` of a usage-body binding that redefines `from` (`part r : Q2 {
+ * bind p.load = L; }` makes `r::L`): on the feature the mapper gives it then, by the rule that made it. A copy in an
+ * explicit usage redefines what the name finds among the features the usage inherits, or the one most specific
+ * feature its types have for it where that redefines it ({@link endCopyProto}, U10): a retype of `r` to Q takes the
+ * copy off Q2's `:>> L` and onto Q's `L`, and a retype back onto Q2's again. A copy of a name no feature the usage
+ * inherits bears (an unnamed `:>> M` is known by it), and a copy in a copy (a hop of a chain, `p` of `p.load`),
+ * redefine the feature its owner's types have for the name. `undefined` where the copy stays: where it already is on
+ * that feature, or where the next parse would make none (nothing its owner inherits is known by the name).
+ */
+function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): ElementId | undefined {
+  const owner = copy.ownerId === null ? undefined : model.get(copy.ownerId);
+  const name = copy.declaredName;
+  if (!owner || name === undefined || name === '') return undefined;
+  let proto: ElementRecord | undefined;
+  const hit = owner.attrs.implicit === true ? undefined : resolveInherited(model, owner.id, name);
+  if (hit === undefined) proto = findTypeFeature(model, owner, name);
+  // Only a feature is mirrored: a definition or a package the name finds is bound to directly.
+  else if (!isDefinition(hit.eClass) && !isRelationship(hit.eClass) && hit.eClass !== 'Package' && hit.eClass !== 'LibraryPackage') {
+    proto = endCopyProto(model, owner, name, hit);
+  }
+  return proto && proto.id !== from && proto.id !== copy.id ? proto.id : undefined;
+}
+
+/**
+ * Move the redefinitions in `changed` (types, or usages: the owners of the features that redefine) and in
  * everything that specialises them to the feature the saved text puts them on when it is read again: each is
  * written as {@link redefinitionForm} writes it, and resolved by the redefinition rule as the next parse resolves
- * it. An edit that changes what a type inherits or has (the Properties panel's type field, a line drawn from it
+ * it; the implicit end copy of a usage-body binding, which the text leaves out, goes where the next parse makes it
+ * ({@link endCopyLanding}). An edit that changes what a type inherits or has (the Properties panel's type field, a line drawn from it
  * to a type, a typing deleted, a feature moved, renamed or removed) leaves a redefinition on a feature it no
  * longer has: `part s : Q2 { attribute :>> M; }` retyped to Q kept its `:>> M` on Q2's unnamed `:>> M default =
  * 2.0`, which Save writes as `:>> M` and the next load lands on Q's `M` — the page read 2 and the file 1. A
@@ -1477,13 +1504,24 @@ export function settleRedefinitions(
       const type = model.get(typeId);
       if (!type || type.attrs.isLibrary === true) return;
       for (const f of model.children(typeId)) {
-        // The text leaves an implicit end copy out, and the next parse makes it anew.
-        if (f.attrs.isLibrary === true || f.attrs.implicit === true) continue;
+        if (f.attrs.isLibrary === true) continue;
+        // The text leaves an implicit end copy out, and the next parse makes it anew: on the feature the mapper gives
+        // it then, which is where the page puts it now.
+        const copy = f.attrs.implicit === true;
         for (const rel of model.children(f.id)) {
           if (rel.eClass !== 'Redefinition' || (rel.source ?? [])[0] !== f.id || (rel.target ?? []).length !== 1) continue;
           const from = rel.target![0]!;
           let line = lines.get(from);
           if (line === undefined) lines.set(from, (line = lineNames(model, from)));
+          if (copy) {
+            // Moved in place, never removed and made again: a binding holds the copy, and removing it would take the
+            // binding along. A copy the next parse would not make (nothing its owner inherits is named so) stays.
+            // It is known by its own name, which the line of the feature it redefines may not bear (`M2` for `X :>> M`).
+            if (only !== undefined && !(f.declaredName !== undefined && only.has(f.declaredName)) && ![...line].some((n) => only.has(n))) continue;
+            const to = endCopyLanding(model, f, from);
+            if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId });
+            continue;
+          }
           // A target with no name the text can write (the feature it redefined is gone, and it has none of its own):
           // Save writes the feature without the redefinition, so the page does too.
           if (line.size === 0) {
@@ -1593,6 +1631,33 @@ export function retargetRedefinitions(model: Model, listed: readonly Redefinitio
     }
   });
   return moved;
+}
+
+/**
+ * Have `model` follow every removal made in it as the saved text reads it: the redefinitions that stay and whose
+ * target goes land on the feature the name they are saved by finds now ({@link redefinitionsToRetarget},
+ * {@link retargetRedefinitions}), where `Model.remove`'s walk up the removed target's redefinitions would skip a
+ * level. For a model somebody removes from: the editor's model on screen (a command, the SDK, a peer's edit), the
+ * working copy of a REST commit. A failure leaves the removal as `Model.remove` walks it: a model may differ from
+ * its file, not lose the delete. Returns the call that stops following.
+ */
+export function followRedefinitionRemovals(model: Model): () => void {
+  return model.addRemovalPlanner((going) => {
+    try {
+      const listed = redefinitionsToRetarget(model, going);
+      if (listed.length === 0) return undefined;
+      return () => {
+        try {
+          retargetRedefinitions(model, listed);
+        } catch (err) {
+          console.error('retargetRedefinitions failed', err);
+        }
+      };
+    } catch (err) {
+      console.error('redefinitionsToRetarget failed', err);
+      return undefined;
+    }
+  });
 }
 
 /**

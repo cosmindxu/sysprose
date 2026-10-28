@@ -48,6 +48,7 @@ export {
   redefinitionsDirtiedBy,
   redefinitionsToRetarget,
   retargetRedefinitions,
+  followRedefinitionRemovals,
   UnwritableRequirementRefError,
 } from './serializer';
 export type { DirtiedRedefinitions, RedefinitionToRetarget } from './serializer';

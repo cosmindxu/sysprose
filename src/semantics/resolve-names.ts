@@ -208,7 +208,7 @@ function resolveOwned(
  * members of each of its general types (explicit generals + implicit library
  * base). Cycle-safe via {@link generalizationsWithImplicit} (itself memoised).
  */
-function resolveInherited(
+export function resolveInherited(
   model: Model,
   scopeId: ElementId,
   name: string,

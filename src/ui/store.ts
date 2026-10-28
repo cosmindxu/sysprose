@@ -103,8 +103,7 @@ import {
   retractResolvedSpecializationWarnings,
   serializeUserModelSignals,
   redefinitionsDirtiedBy,
-  redefinitionsToRetarget,
-  retargetRedefinitions,
+  followRedefinitionRemovals,
   settleRedefinitions,
   resolveConnectorFeatureChains,
   type MeasuredText,
@@ -2014,10 +2013,11 @@ export const useAppStore = create<AppState>((set, get) => {
    * puts them ({@link settleRedefinitions}), in the same undo step. No command names what it changes, so none can
    * forget it.
    *
-   * A REMOVAL is also followed on the model itself, whoever removes: the redefinitions that stay and whose target
-   * goes are landed on the feature the name they are saved by finds now ({@link retargetRedefinitions}), where
-   * `Model.remove`'s walk up the removed target's redefinitions would skip a level. That holds for the SDK, a REST
-   * call and a peer's edit as for a command, and for a call that goes to the model directly.
+   * A REMOVAL is also followed on the model itself, whoever removes from it: the redefinitions that stay and whose
+   * target goes are landed on the feature the name they are saved by finds now ({@link followRedefinitionRemovals}),
+   * where `Model.remove`'s walk up the removed target's redefinitions would skip a level. That holds for the SDK
+   * and a peer's edit as for a command, and for a call that goes to the model directly. (A REST commit removes
+   * from a copy of the repository's head, not from this model: the server installs the same follower on that copy.)
    */
   let editEvents: ChangeEvent[] = [];
   let editOpen = false;
@@ -2038,23 +2038,7 @@ export const useAppStore = create<AppState>((set, get) => {
           else if (ev.type !== 'order' && ev.element?.attrs.isLibrary !== true) editEvents.push(ev);
         }
       }),
-      unplan: model.addRemovalPlanner((going) => {
-        try {
-          const listed = redefinitionsToRetarget(model, going);
-          if (listed.length === 0) return undefined;
-          return () => {
-            try {
-              retargetRedefinitions(model, listed);
-            } catch (err) {
-              console.error('retargetRedefinitions failed', err);
-            }
-          };
-        } catch (err) {
-          // The removal goes on as `Model.remove` walks it: the page may differ from its file, not be lost.
-          console.error('redefinitionsToRetarget failed', err);
-          return undefined;
-        }
-      }),
+      unplan: followRedefinitionRemovals(model),
     };
   }
 
@@ -3201,6 +3185,7 @@ export const useAppStore = create<AppState>((set, get) => {
         // under a faulted declaration, is refused whole), so there is nothing
         // to undo: drop the snapshot, keep the redo.
         console.error('setRequirementShortId failed', err);
+        endEdit();
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
       }
     },
@@ -3234,6 +3219,7 @@ export const useAppStore = create<AppState>((set, get) => {
         // drop the snapshot and put the redo stack back. Surfacing the reason
         // is the panel's job — the store's job is not to leave a phantom step.
         console.error('setRequirementAttr failed', err);
+        endEdit();
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
       }
     },
@@ -3336,6 +3322,7 @@ export const useAppStore = create<AppState>((set, get) => {
         // `setStatementKind` validates before it mutates (it refuses a notation
         // with nowhere to put the keyword), so there is nothing to undo.
         console.error('setStatementKind failed', err);
+        endEdit();
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
       }
     },
@@ -3422,6 +3409,7 @@ export const useAppStore = create<AppState>((set, get) => {
         // Illegal reparent (cycle / self): roll the snapshot back off the stack
         // and restore the redo stack pushUndo cleared (don't destroy redo history).
         console.error('reparent failed', err);
+        endEdit();
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
       }
     },
@@ -3466,6 +3454,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (moved === 0) {
         // Nothing actually changed — drop the snapshot we just pushed and
         // restore the redo stack pushUndo cleared.
+        endEdit();
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
         return;
       }
@@ -4046,6 +4035,7 @@ export const useAppStore = create<AppState>((set, get) => {
         afterMutation();
       } catch (err) {
         console.error('FMI import failed', err);
+        endEdit();
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
       }
     },

@@ -26,6 +26,7 @@
  */
 
 import type { ElementRecord, Model } from '@core/index';
+import { followRedefinitionRemovals } from '@text/serializer';
 import { validateRequestBody, type RequestBodyKind } from './request-schemas';
 import { ModelApi, type OmgElementJSON } from './sdk';
 import { evaluateQuery, modelCommitId, type Query, type QueryResult } from './query';
@@ -484,6 +485,9 @@ export class SysmlApiServer {
     if (!branch || branch.projectId !== projectId) return notFound(`No such branch: ${branchId}`);
 
     const working = this.repo.getModelAtCommit(branch.headCommitId);
+    // A delete in the commit lands the redefinitions that targeted the element where the text the model is saved as
+    // reads them, as a delete on the editor's page does: the working copy is not that model, and has no follower of its own.
+    followRedefinitionRemovals(working);
     const expectedHead = b.baseCommit ?? b.baseCommitId;
     try {
       working.transaction(() => {

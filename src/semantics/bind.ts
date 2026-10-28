@@ -264,8 +264,8 @@ export function sharesLineWithSibling(
 /**
  * The feature that stands for `anchor` in a type whose general types are
  * `generals`: the one most specific among `anchor` and the features of those
- * types that redefine it, transitively — the rule the text mapper's
- * `findTypeFeature` gives the implicit end copy (U10). Name resolution matches
+ * types that redefine it, transitively — the rule {@link findTypeFeature}
+ * gives the implicit end copy the text mapper makes (U10). Name resolution matches
  * declared names only, so it finds Q's `M` past `attribute :>> M default =
  * 2.0` in `part def Q2 :> Q`, which KerML calls `M` and which hides Q's from
  * everything Q2 types. A redefinition under another name is taken too:
@@ -325,6 +325,99 @@ function mostSpecificRedefining(
   const most = hits.length === 1 ? hits : hits.filter((h) => !redefinedByOneOf(model, h.id, hitIds));
   const one = mostSpecificOwned(model, most);
   return one !== undefined && !joinsTwo(model, owners, anchor, one, featureId) ? one : anchor;
+}
+
+/**
+ * {@link named}, or — for a feature that declares no name — whether it is
+ * a redefinition of a feature named `seg` (KerML's effective name):
+ * `attribute :>> load = 50.0` in `part p` is p's `load`. A connector or `bind`
+ * end `p.load` then lands on that explicit redefinition, not on an implicit
+ * copy materialised beside it — a second, valueless `p::load` the binding held
+ * while every scope read the redefinition.
+ */
+function memberNamed(model: Model, e: ElementRecord, seg: string): boolean {
+  if (named(e, seg)) return true;
+  return e.declaredName === undefined && e.declaredShortName === undefined && effectiveNameOf(model, e) === seg;
+}
+
+/**
+ * The child of `ownerId` a chain segment `seg` names: one {@link memberNamed}
+ * `seg`, else one that REDEFINES a feature named `seg` under another name —
+ * `attribute heavy redefines load = 50.0` is p's `load` too, as the feature it
+ * redefines is no member of p beside it. Read as no child, `bind w = p.load`
+ * materialised an implicit, valueless `p::load` next to `heavy`, and the
+ * binding held the copy while every scope read `heavy`'s 50.
+ */
+export function childNamed(model: Model, ownerId: ElementId, seg: string): ElementRecord | undefined {
+  const kids = model.children(ownerId);
+  return (
+    kids.find((e) => memberNamed(model, e, seg)) ??
+    kids.find((e) => !isRelationship(e.eClass) && redefinedClosure(model, e).some((g) => named(g, seg)))
+  );
+}
+
+/**
+ * Transitive specialization closure of `el`: every element reachable through
+ * resolved specialization relationships (FeatureTyping / Subsetting /
+ * Redefinition / Subclassification) plus still-textual `attrs.typeRef` strings
+ * (resolved in-model, read-only — this never binds a typeRef; that stays
+ * `resolveTypeReferences`' job). Cycle-safe (A :> B :> A terminates).
+ */
+function typeClosure(model: Model, el: ElementRecord): ElementRecord[] {
+  const out: ElementRecord[] = [];
+  const seen = new Set<ElementId>([el.id]);
+  const stack: ElementRecord[] = [el];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    const next: ElementRecord[] = [...model.typesOf(cur.id)];
+    const typeRef = cur.attrs.typeRef;
+    if (typeof typeRef === 'string') {
+      const t = resolveFullName(model, typeRef, cur.ownerId, { exclude: cur.id });
+      if (t) next.push(t);
+    }
+    for (const n of next) {
+      if (!seen.has(n.id)) {
+        seen.add(n.id);
+        out.push(n);
+        stack.push(n);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Feature named `seg` inherited from `el`'s type closure (not a direct child)
+ * — by its effective name ({@link childNamed}), and the most specific one: a
+ * feature another type of the closure redefines is not inherited beside it.
+ * `part def S :> P { attribute :>> load = 5.0; }` gives `s : S` S's load; the
+ * walk took P's by declared name, and the implicit copy it materialised for
+ * `bind w = s.load` redefined P's `load` — masking S's 5 in `s` itself.
+ */
+export function findTypeFeature(model: Model, el: ElementRecord, seg: string, unique = false): ElementRecord | undefined {
+  const hits: ElementRecord[] = [];
+  for (const t of typeClosure(model, el)) {
+    const hit = childNamed(model, t.id, seg);
+    if (hit && !hits.includes(hit)) hits.push(hit);
+  }
+  const most = hits.filter((h) => !hits.some((o) => o !== h && redefinedClosure(model, o).includes(h)));
+  // `unique`: none where two types each redefine it and neither the other (Q2's and Q3's `:>> L`, both general to Q23)
+  // — unless one is owned by a type below the others' owners (Q23's own `:>> L`, which a Q23 has for L).
+  if (unique) return mostSpecificOwned(model, most);
+  return most[0] ?? hits[0];
+}
+
+/**
+ * The feature the implicit end copy of a usage-body binding redefines when the name `head` finds `hit` among the
+ * features the usage `scopeEl` inherits: the ONE most specific feature its types have for the name where that
+ * redefines `hit` (`part q : Q2 { bind p.load = L; }` finds Q's declared `L`, but Q2's `attribute :>> L = 50.0` is
+ * what a Q2 has for it — a copy redefining Q's `L` read the general value in q, MI6), else `hit`. The text mapper
+ * makes the copy by it ({@link findTypeFeature}); the editor moves a copy to it when an edit changed what the usage
+ * inherits, so the page holds the copy the saved file makes anew.
+ */
+export function endCopyProto(model: Model, scopeEl: ElementRecord, head: string, hit: ElementRecord): ElementRecord {
+  const special = findTypeFeature(model, scopeEl, head, true);
+  return special && special !== hit && redefinedClosure(model, special).includes(hit) ? special : hit;
 }
 
 /**

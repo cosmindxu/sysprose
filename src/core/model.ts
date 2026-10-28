@@ -52,7 +52,8 @@ export type ChangeListener = (events: ChangeEvent[]) => void;
 /**
  * Something that follows a removal beyond the removal itself. It is called with the ids a {@link Model.remove}
  * is about to take away (the element, what it owns, and the edges that reference them), BEFORE any is gone, and
- * returns what to do once they are, or nothing.
+ * returns what to do once they are, or nothing. It is asked only of a removal that leaves a Redefinition standing
+ * whose target goes (the one thing it plans for): a delete that meets none costs it nothing.
  */
 export type RemovalPlanner = (going: ReadonlySet<ElementId>) => (() => void) | void;
 
@@ -166,10 +167,10 @@ export class Model {
   }
 
   /**
-   * Have `planner` follow every {@link remove} of this model: whoever removes (a command, the SDK, a REST call, a
-   * peer's edit) gets what the planner does after the removal, in the removal's own notification. For what the
-   * model cannot decide itself: where a redefinition goes when its target does (the name its text is saved by,
-   * `src/text`), which is no business of `src/core`.
+   * Have `planner` follow every {@link remove} of this model: whoever removes from it (a command, the SDK, a peer's
+   * edit; a REST commit's working copy has its own) gets what the planner does after the removal, in the removal's
+   * own notification. For what the model cannot decide itself: where a redefinition goes when its target does (the
+   * name its text is saved by, `src/text`), which is no business of `src/core`.
    */
   addRemovalPlanner(planner: RemovalPlanner): () => void {
     this.removalPlanners.add(planner);
@@ -608,8 +609,8 @@ export class Model {
     // redefinitions of the target, and the redefinition rule lands on the MOST SPECIFIC feature the text's name finds,
     // which skips a level the walk takes (Q4's `M4 redefines Q::M` beside Q2's `:>> M`: the walk lands on Q's `M`, the
     // name `M` on Q2's). A model the app edits has a removal planner (`addRemovalPlanner`) that re-resolves by the
-    // name the saved text writes (`retargetRedefinitions`), so a delete in the app, through the SDK or a REST call,
-    // and the same delete in the text agree.
+    // name the saved text writes (`retargetRedefinitions`), so a delete in the app, through the SDK or in a REST
+    // commit, and the same delete in the text agree.
     const moved = new Map<ElementId, ElementId[]>();
     for (const r of this.elements.values()) {
       if (toRemove.has(r.id)) continue;
@@ -621,9 +622,11 @@ export class Model {
       }
     }
     const afterwards: Array<() => void> = [];
-    for (const plan of this.removalPlanners) {
-      const after = plan(toRemove);
-      if (after) afterwards.push(after);
+    if (moved.size > 0) {
+      for (const plan of this.removalPlanners) {
+        const after = plan(toRemove);
+        if (after) afterwards.push(after);
+      }
     }
     return this.transaction(() => {
       for (const [rid, target] of moved) this.update(rid, { target });

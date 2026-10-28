@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as Y from 'yjs';
-import { Model, isRelationship } from '@core/index';
+import { Model, isRelationship, type ElementRecord } from '@core/index';
 import { bindModelToDoc } from '../../src/collab/model-doc';
 
 // The store kicks off an async standard-library merge at module load; stub it so
@@ -118,6 +118,7 @@ import {
   requirementShortId,
   statementKindOf,
 } from '@semantics/index';
+import { effectiveNameOf } from '@semantics/inheritance';
 import { initialSubstate } from '@semantics/mc/config';
 import { verifyModel } from '../../src/api/verification';
 import React from 'react';
@@ -1897,32 +1898,53 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       const at = e.ownerId === null ? 0 : m.children(e.ownerId).filter((c) => !isRelationship(c.eClass)).findIndex((c) => c.id === id);
       return `${e.ownerId === null ? '' : m.qualifiedName(e.ownerId)}#${at}${e.declaredName === undefined ? '' : `:${e.declaredName}`}`;
     };
+    /** The implicit end copy a usage-body binding made: the text leaves it out. */
+    const isCopy = (m: Model, redefinition: ElementRecord): boolean => m.get(redefinition.source![0]!)?.attrs.implicit === true;
     /** Every explicit redefinition the text holds: the feature, and the feature it redefines. */
     const targets = (m: Model): string[] =>
       m
         .all()
-        .filter((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && e.attrs.implicit !== true)
+        .filter((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && !isCopy(m, e))
         .map((r) => `${place(m, r.source![0]!)} -> ${(r.target ?? []).map((t) => place(m, t)).join(',')}`)
         .sort();
+    /** The implicit end copies a usage-body binding made (the text leaves them out), by where each sits and what it redefines. */
+    const copies = (m: Model): Map<string, string> =>
+      new Map(
+        m
+          .all()
+          .filter((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && isCopy(m, e))
+          .map((r) => [m.qualifiedName(r.source![0]!), (r.target ?? []).map((t) => place(m, t)).join(',')] as const),
+      );
+    /**
+     * The copies the page and its file both hold that redefine another feature on each. The file makes a copy anew
+     * for every binding it can read; one it cannot (the name is no longer inherited) is a reference the Problems panel
+     * reports, not a redefinition to compare.
+     */
+    const copiesApart = (page: Model, file: Model): string[] => {
+      const there = copies(file);
+      return [...copies(page)].filter(([k, v]) => there.has(k) && there.get(k) !== v).map(([k, v]) => `${k} -> ${v}, the file: ${there.get(k)}`);
+    };
+    const held = (m: Model): string[] => [...targets(m), ...[...copies(m)].map(([k, v]) => `(implicit) ${k} -> ${v}`).sort()];
     const reopened = (m: Model): Model => parseModel(serializeModel(m)).model;
     /** What the page reads on every surface is what the file it saves reads, and the redefinitions are the same. */
     async function pageIsFile(note: string): Promise<void> {
       const page = st().model;
       const file = reopened(page);
       expect(targets(page), `${note}: redefinitions`).toEqual(targets(file));
+      expect(copiesApart(page, file), `${note}: implicit end copies`).toEqual([]);
       expect(await surfaces(page), `${note}: four surfaces`).toEqual(await surfaces(file));
     }
     /** The command is one undo step, and Undo puts every redefinition target back (Redo, too). */
     function oneStep(note: string, run: () => void): void {
-      const before = targets(st().model);
+      const before = held(st().model);
       const undos = st().undoStack.length;
       run();
       expect(st().undoStack.length, `${note}: one undo step`).toBe(undos + 1);
-      const after = targets(st().model);
+      const after = held(st().model);
       st().undo();
-      expect(targets(st().model), `${note}: undo`).toEqual(before);
+      expect(held(st().model), `${note}: undo`).toEqual(before);
       st().redo();
-      expect(targets(st().model), `${note}: redo`).toEqual(after);
+      expect(held(st().model), `${note}: redo`).toEqual(after);
     }
     const typingOf = (name: string): string =>
       st().model.relationshipsFrom(byName(name).id).find((r) => r.eClass === 'FeatureTyping')!.id;
@@ -2201,6 +2223,47 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       await pageIsFile('duplicate');
     });
 
+    it('the implicit end copy a usage-body binding makes follows a retype: Q2 to Q, and back', async () => {
+      // `bind p.load = L` in `part r : Q2` makes r an implicit `L`, which redefines what the name finds in r's type: Q2's
+      // `:>> L = 50.0`. The saved file leaves the copy out and makes it anew, on Q's `L` once r is a Q.
+      const ec = `package EC {
+  part def P { attribute load default = 1.0; }
+  part def Q { attribute L; part p : P; }
+  part def Q2 :> Q { attribute :>> L = 50.0; }
+  part r : Q2 { bind p.load = L; }
+  constraint r50 { r.p.load == 50.0 }
+  constraint r1 { r.p.load == 1.0 }
+}`;
+      const landsOn = (): string | undefined => copies(st().model).get('EC::r::L');
+      const l = (owner: string): string => place(st().model, st().model.children(byName(owner).id).find((c) => c.eClass === 'AttributeUsage')!.id);
+      load(ec);
+      expect(satisfied(st().model)).toEqual(['r50']);
+      expect(landsOn()).toBe(l('Q2'));
+      oneStep('retype r to Q', () => st().bindType(byName('r').id, 'Q'));
+      // The copy is the one the binding holds, moved: it redefines Q's `L` now, and the page reads Q's value.
+      expect(landsOn()).toBe(l('Q'));
+      expect(satisfied(st().model)).toEqual(['r1']);
+      await pageIsFile('retype r to Q');
+      oneStep('retype r back to Q2', () => st().bindType(byName('r').id, 'Q2'));
+      expect(landsOn()).toBe(l('Q2'));
+      expect(satisfied(st().model)).toEqual(['r50']);
+      await pageIsFile('retype r back to Q2');
+      // Typed by Q from the start, and retyped the other way.
+      load(ec.replace('part r : Q2', 'part r : Q'));
+      expect(satisfied(st().model)).toEqual(['r1']);
+      oneStep('retype r to Q2', () => st().bindType(byName('r').id, 'Q2'));
+      expect(satisfied(st().model)).toEqual(['r50']);
+      await pageIsFile('retype r to Q2');
+      // The same without the retype: Q2's unnamed `:>> L` deleted, r's copy goes to Q's `L` as the name finds it.
+      load(ec);
+      const bindings = (): number => st().model.all().filter((e) => e.eClass === 'BindingConnectorAsUsage' && e.attrs.isLibrary !== true).length;
+      const before = bindings();
+      oneStep('delete Q2\'s L', () => st().deleteElement(st().model.children(byName('Q2').id).find((c) => c.eClass === 'AttributeUsage')!.id));
+      expect(bindings()).toBe(before);
+      expect(satisfied(st().model)).toEqual(['r1']);
+      await pageIsFile('delete Q2\'s L');
+    });
+
     // A few hundred random edit sequences over small random redefinition models (the generator of the review's
     // differential: definitions that specialise one or two earlier, with unnamed and renamed redefinitions and a
     // merged `:>> a, b`; usages that redefine what they inherit). After EACH command the page's redefinitions are
@@ -2218,7 +2281,11 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         };
       };
       const NAMES = ['M2', 'N2', 'K2', 'X'];
-      function randomModel(rnd: () => number): string {
+      /**
+       * `bind` draws the usage-body bindings (`attribute Zb = 1.0; bind Zb = M;`) from a stream of their own, so the
+       * models the other draws make are the ones they always were: each makes the usage an implicit end copy of `M`.
+       */
+      function randomModel(rnd: () => number, bind?: () => number): string {
         const int = (lo: number, hi: number): number => lo + Math.floor(rnd() * (hi - lo + 1));
         const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
         let value = 10;
@@ -2285,6 +2352,10 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
             else features.push(`attribute Z${k} = ${v()};`);
             used.add(x);
           }
+          if (bind !== undefined && bind() < 0.6) {
+            const free = [...seen].filter((x) => !used.has(x)).sort();
+            if (free.length > 0) features.push(`attribute Zb = 1.0; bind Zb = ${free[Math.floor(bind() * free.length)]!};`);
+          }
           usages.push({ name: `u${j}`, generals, features });
         }
         const decl = (kw: string, op: string, d: { name: string; generals: string[]; features: string[] }): string =>
@@ -2307,8 +2378,15 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         for (let seq = FIRST; seq < FIRST + SEQUENCES && failures.length < 3; seq++) {
           const rnd = seeded(seq * 7919 + 13);
           const pick = <T,>(xs: readonly T[]): T | undefined => xs[Math.floor(rnd() * xs.length)];
-          const text = randomModel(rnd);
+          let text = randomModel(rnd, seeded(seq * 104729 + 31));
           load(text);
+          // A binding the file does not read back onto the copy the page made at the load (the serializer writes the copy
+          // by the name of the feature it redefines: `bind Zb = N2` for `bind Zb = M`) is a limit of the text, not of the
+          // edit: the sequence runs on the model without the bindings.
+          if (copiesApart(st().model, reopened(st().model)).length > 0) {
+            text = randomModel(seeded(seq * 7919 + 13));
+            load(text);
+          }
           const log: string[] = [];
           for (let step = 0; step < STEPS; step++) {
             const m = st().model;
@@ -2400,12 +2478,20 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
             log.push(did);
             const page = st().model;
             // Two features of one owner under one declared name cannot be told apart by any text that names them:
-            // the saved file finds the first. Whatever follows is outside what a name can say.
-            if (page.all().some((e) => page.children(e.id).some((c, i, kids) => c.declaredName !== undefined && !isRelationship(c.eClass) && kids.findIndex((o) => o.declaredName === c.declaredName && !isRelationship(o.eClass)) !== i))) break;
+            // the saved file finds the first. Whatever follows is outside what a name can say. For an implicit end
+            // copy the name is also the one an unnamed `:>> M` is known by (a feature renamed `M` beside it): the
+            // mapper takes the first of the two there too.
+            const bears = (c: ElementRecord): string | undefined =>
+              c.declaredName ?? (copies(page).size > 0 ? effectiveNameOf(page, c) : undefined);
+            if (page.all().some((e) => page.children(e.id).some((c, i, kids) => !isRelationship(c.eClass) && bears(c) !== undefined && kids.findIndex((o) => !isRelationship(o.eClass) && bears(o) === bears(c)) !== i))) break;
             const after = targets(page);
-            const file = targets(reopened(page));
+            const reread = reopened(page);
+            const file = targets(reread);
             const problems: string[] = [];
             if (after.join('\n') !== file.join('\n')) problems.push(`page ≠ file:\n${after.join('\n')}\n---\n${file.join('\n')}`);
+            // The implicit end copies of the bindings too: the file makes them anew, on what their names find.
+            const apart = copiesApart(page, reread);
+            if (apart.length > 0) problems.push(`implicit end copies, page ≠ file:\n${apart.join('\n')}\nthe page's text:\n${serializeModel(page)}`);
             // The edit asked only what it could move (the lines its names are in): a full settle of the model finds
             // nothing left to move.
             const left = settleRedefinitions(

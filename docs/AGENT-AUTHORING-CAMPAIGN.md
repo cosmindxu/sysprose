@@ -1035,17 +1035,28 @@ not read them all. No command names what it changes, so none can forget it; the
 property test in `store.reducers.test.ts` runs random edit sequences over random
 redefinition models and compares the page's redefinitions with those of its
 reloaded file after each, and finds nothing left for a settle of the whole model
-to move. A sibling renamed into the name a `:>> M` is known by moves it back to
+to move. The implicit end copy a usage-body binding makes of an inherited feature
+(`part r : Q2 { bind p.load = L; }`) is left out of the file and made anew on
+the feature the mapper gives it then (`findTypeFeature`, `endCopyProto` in
+`bind.ts`); the settle moves the existing copy there in place (`endCopyLanding`),
+never removing it, since the binding holds it, and the same test draws such
+bindings and compares the copies the page and its file both hold. What it does
+not reach: two features of one owner under one name (declared, or the one an
+unnamed `:>> M` is known by), a name typed key by key into the Name box (each
+prefix is an edit, and a prefix another feature bears moves the redirect for
+good), and a `window.sysml` call that points a redefinition at a feature no name
+in its scope reaches. A sibling renamed into the name a `:>> M` is known by moves it back to
 the base feature, as the file with both keeps them apart; one the text was loaded
 with stays as written. A removal is followed on the model itself: when the
-feature a redefinition targets is deleted, the store's removal planner
-(`Model.addRemovalPlanner`, installed on the model on screen) lands it on the
-feature the name it is written by finds now (`redefinitionsToRetarget`,
-`retargetRedefinitions`), whoever deletes — a command, `window.sysml`, a REST call
-on the page's model, or a peer's edit. `Model.remove`'s walk up the removed
-target's redefinitions to the nearest feature that stays is the fallback for a
-model nobody watches (the command line), and that walk can skip a level the name
-does not. One whose target keeps no name to write goes, as Save writes the feature
+feature a redefinition targets is deleted, a removal planner
+(`Model.addRemovalPlanner`, `followRedefinitionRemovals`) lands it on the feature
+the name it is written by finds now (`redefinitionsToRetarget`,
+`retargetRedefinitions`), whoever deletes — a command, `window.sysml` or a peer's
+edit on the model on screen, or a `POST /projects/{id}/commits` delete, whose
+working copy of the repository's head has the planner too (the page's model is
+not touched by a REST commit). `Model.remove`'s walk up the removed target's
+redefinitions to the nearest feature that stays is the fallback for a model nobody
+watches (the command line), and that walk can skip a level the name does not. One whose target keeps no name to write goes, as Save writes the feature
 without it.
 The UI keeps the last parse result and retracts
 the warnings the library binder resolved, so the Problems panel and `checkText`

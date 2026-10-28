@@ -114,15 +114,20 @@ describe('Model core', () => {
   });
 
   // `Model.remove` leaves to its planners what it cannot decide itself: each sees what is about to go, before any is
-  // gone, and what it returns runs once they are, in the removal's own notification.
+  // gone, and what it returns runs once they are, in the removal's own notification. It is asked of a removal that
+  // leaves a Redefinition standing whose target goes, and of no other.
   it('lets a removal planner see what goes and follow it, in the removal\'s own notification', () => {
     const m = new Model();
     const a = m.create('PartDefinition', { declaredName: 'A' });
+    const h = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'h' });
     const f = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'f' });
+    m.create('Redefinition', { ownerId: f.id, source: [f.id], target: [h.id] });
     const g = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'g' });
+    const redefinition = m.create('Redefinition', { ownerId: g.id, source: [g.id], target: [f.id] });
+    const k = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'k' });
     const seen: string[] = [];
     const off = m.addRemovalPlanner((going) => {
-      seen.push(`going ${[...going].map((x) => m.get(x)?.declaredName).sort().join(',')}`);
+      seen.push(`going ${[...going].map((x) => m.get(x)?.declaredName).filter((n) => n !== undefined).sort().join(',')}`);
       return () => {
         seen.push(`gone ${m.has(f.id)}`);
         m.update(g.id, { declaredName: 'g2' });
@@ -130,11 +135,18 @@ describe('Model core', () => {
     });
     const batches: ChangeEvent[][] = [];
     m.subscribe((evs) => batches.push(evs));
-    expect(m.remove(f.id)).toEqual([f.id]);
+    // g's redefinition of f stays: f goes, and Model.remove moves it up the chain to h.
+    expect(m.remove(f.id)).toContain(f.id);
     expect(seen).toEqual(['going f', 'gone false']);
     expect(m.get(g.id)!.declaredName).toBe('g2');
+    expect(m.get(redefinition.id)!.target).toEqual([h.id]);
     // The removal and what the planner did are one notification.
-    expect(batches.map((b) => b.map((e) => e.type))).toEqual([['remove', 'update']]);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.map((e) => e.type)).toContain('remove');
+    expect(batches[0]!.filter((e) => e.type === 'update').map((e) => e.element?.declaredName)).toEqual([undefined, 'g2']);
+    // A removal no Redefinition stands over (k is nobody's target) is not asked about.
+    expect(m.remove(k.id)).toEqual([k.id]);
+    expect(seen).toHaveLength(2);
     off();
     m.remove(g.id);
     expect(seen).toHaveLength(2);
