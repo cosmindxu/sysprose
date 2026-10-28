@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Model, ModelFactory } from '@core/index';
+import { Model, ModelFactory, type ElementRecord } from '@core/index';
 import {
   generalizationsOf,
   effectiveFeatures,
@@ -8,7 +8,9 @@ import {
   inheritedNameClashes,
   maskedByName,
   ownFeatures,
+  redefinedBy,
 } from '../../src/semantics/index';
+import { mostSpecificOwned } from '../../src/semantics/inheritance';
 import { parseModel } from '../../src/text/index';
 
 describe('semantics — inheritance', () => {
@@ -175,5 +177,99 @@ describe('semantics — inheritance', () => {
     const own = model.all().find((e) => e.attrs.value === 9)!;
     expect(maskedByName(model, own).map((f) => model.qualifiedName(f.id))).toEqual(['O3::P::load']);
     expect(inheritedNameClashes(model, byName('D').id).size).toBe(0);
+  });
+  // The one of several features whose owner specialises the owner of every other. The answer is the all-pairs
+  // definition (the first feature, in order, whose owner has every other owner among its generals, and no other
+  // feature shares its owner); the search only looks at the owners with the most generals, and this holds it to that
+  // over random graphs of types, with loops and shared owners among them.
+  it('mostSpecificOwned answers as the all-pairs definition does, on random type graphs', () => {
+    const allPairs = (m: Model, features: readonly ElementRecord[]): ElementRecord | undefined => {
+      if (features.length <= 1) return features[0];
+      for (const f of features) {
+        if (f.ownerId === null) continue;
+        const generals = new Set(generalizationsOf(m, f.ownerId).map((g) => g.id));
+        if (features.every((o) => o === f || (o.ownerId !== null && o.ownerId !== f.ownerId && generals.has(o.ownerId)))) return f;
+      }
+      return undefined;
+    };
+    let seed = 12345;
+    const next = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % n;
+    };
+    let found = 0;
+    let none = 0;
+    for (let trial = 0; trial < 400; trial++) {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const types = Array.from({ length: 3 + next(5) }, (_, i) => f.partDef(`T${i}`));
+      const edges = new Set<string>();
+      for (let e = next(types.length * 2); e > 0; e--) {
+        const [a, b] = [next(types.length), next(types.length)];
+        // Mostly downward, so that a type below the others exists; sometimes any way, so that loops do.
+        const [from, to] = a > b || next(5) === 0 ? [a, b] : [b, a];
+        if (from === to || edges.has(`${from}>${to}`)) continue;
+        edges.add(`${from}>${to}`);
+        f.subclassification(types[from]!.id, types[to]!.id);
+      }
+      const features: ElementRecord[] = [];
+      for (let k = 1 + next(5); k > 0; k--) features.push(f.attribute(`a${features.length}`, types[next(types.length)]!.id, { type: 'Real' }));
+      const expected = allPairs(m, features);
+      expect(mostSpecificOwned(m, features), `trial ${trial}`).toBe(expected);
+      if (expected !== undefined && features.length > 1) found++;
+      else if (features.length > 1) none++;
+    }
+    // The comparison is not vacuous: both answers occur.
+    expect(found).toBeGreaterThan(30);
+    expect(none).toBeGreaterThan(30);
+  });
+
+  // A lattice of definitions, each specialising the two above it, is N features none of which is below the others:
+  // asking every owner against every other was N squared reads of the owners, per `:>>`, on a parse.
+  it('mostSpecificOwned reads the owners of a lattice a few times each, not once per pair', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const levels = 80;
+    let above = [f.partDef('A0'), f.partDef('B0')];
+    const features: ElementRecord[] = [];
+    let reads = 0;
+    const counted = (r: ElementRecord): ElementRecord =>
+      new Proxy(r, {
+        get(target, key, receiver) {
+          if (key === 'ownerId') reads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    for (let level = 1; level <= levels; level++) {
+      const here = [f.partDef(`A${level}`), f.partDef(`B${level}`)];
+      for (const t of here) {
+        for (const g of above) f.subclassification(t.id, g.id);
+        features.push(counted(f.attribute(`M${t.declaredName}`, t.id, { type: 'Real' })));
+      }
+      above = here;
+    }
+    expect(mostSpecificOwned(m, features)).toBeUndefined();
+    // 160 features: asking each against the others is some 50,000 reads; a look at each owner and a check of the last level's two is under 2,000.
+    expect(reads).toBeLessThan(features.length * 20);
+  });
+
+  it('redefinedBy follows an edit of the redefinition, and hands out a list of its own', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.partDef('P');
+    const a = f.attribute('a', p.id, { type: 'Real' });
+    const b = f.attribute('b', p.id, { type: 'Real' });
+    const c = f.attribute('c', p.id, { type: 'Real' });
+    const r = f.redefinition(c.id, a.id);
+    expect(redefinedBy(m, c).map((e) => e.id)).toEqual([a.id]);
+    // The list is the caller's: spoiling it spoils nothing the next ask reads.
+    redefinedBy(m, c).length = 0;
+    expect(redefinedBy(m, c).map((e) => e.id)).toEqual([a.id]);
+    m.update(r.id, { target: [b.id] });
+    expect(redefinedBy(m, c).map((e) => e.id)).toEqual([b.id]);
+    m.update(r.id, { target: [a.id, b.id] });
+    expect(redefinedBy(m, c).map((e) => e.id)).toEqual([a.id, b.id]);
+    m.remove(r.id);
+    expect(redefinedBy(m, c)).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@
 export * from './metamodel';
 export * from './ids';
 export { Model, FORMAT_VERSION } from './model';
-export type { ChangeEvent, ChangeListener, CreateElementOptions } from './model';
+export type { ChangeEvent, ChangeListener, CreateElementOptions, RemovalPlanner } from './model';
 export { ModelFactory, buildSampleModel } from './factory';
 export { duplicateSubtree } from './duplicate';
 export { resolveTypeInScopeChain, findLibraryType } from './scope';

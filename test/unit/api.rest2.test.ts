@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildSampleModel } from '@core/index';
+import { buildSampleModel, type Model } from '@core/index';
 import { SysmlApiServer } from '@api/index';
+import { parseModel, serializeModel } from '@text/index';
+import { checkConstraints } from '@semantics/index';
 
 function server() {
   const model = buildSampleModel();
@@ -123,6 +125,34 @@ describe('REST — commits: history, writes and diff', () => {
     expect(diffBody.added.map((e) => e['@id'])).toContain('wheel-1');
     expect(diffBody.removed).toHaveLength(0);
     expect(diffBody.changed).toHaveLength(0);
+  });
+
+  it('lands a redefinition on the feature the saved text finds when a commit deletes its target', () => {
+    // Q4's `M4 redefines Q::M` skips Q2's unnamed `:>> M`; s's `:>> M` redefines M4. Without M4 the text reads Q2's:
+    // the commit's model satisfies s2 and saves `:>> M`, not the qualified `DA::Q::M` the walk up the chain would land.
+    const text = `package DA {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q4 :> Q2 { attribute M4 redefines Q::M default = 4.0; }
+  part s : Q4 { attribute :>> M; }
+  constraint s1 { s.M == 1.0 }
+  constraint s2 { s.M == 2.0 }
+  constraint s4 { s.M == 4.0 }
+}`;
+    const page = parseModel(text).model;
+    const srv = new SysmlApiServer(page);
+    const satisfied = (m: Model): string[] =>
+      checkConstraints(m).filter((c) => c.result === 'satisfied').map((c) => m.qualifiedName(c.id)).sort();
+    const m4 = page.all().find((e) => e.declaredName === 'M4')!;
+    const res = srv.apiFetch('POST', '/projects/project-default/commits', { changes: [{ operation: 'delete', identifier: m4.id }] });
+    expect(res.status).toBe(201);
+    const committed = (res.body as { '@id': string })['@id'];
+    const after = (srv as unknown as { repo: { getModelAtCommit(id: string): Model } }).repo.getModelAtCommit(committed);
+    expect(satisfied(after)).toEqual(['DA::s2']);
+    expect(serializeModel(after)).toMatch(/part s : Q4 \{\s*attribute :>> M;\s*\}/);
+    // The commit is the text without M4, and the page's model is the REST commit's business no more than before.
+    expect(satisfied(after)).toEqual(satisfied(parseModel(text.replace('attribute M4 redefines Q::M default = 4.0;', '')).model));
+    expect(page.has(m4.id)).toBe(true);
   });
 
   it('reads roots at a commit', () => {

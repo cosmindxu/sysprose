@@ -18,13 +18,19 @@ import {
   Model,
   TEXTUAL_KEYWORD,
   isControlNode,
+  isDefinition,
   isMembership,
+  isRelationship,
   isRequirement,
   isSpecialization,
+  isTypingSpecialization,
+  type ChangeEvent,
   type ElementId,
   type ElementRecord,
 } from '@core/index';
-import { resolveFullName, resolveRedefinedFeature } from '@semantics/bind';
+import { endCopyProto, findTypeFeature, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
+import { redefinedClosure } from '@semantics/inheritance';
+import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
 
 const INDENT = '    ';
@@ -438,7 +444,10 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
     // The re-parse of an inlined `:>>` uses the redefinition rule and excludes
     // the redefining feature; every other operator uses full resolution with
     // the same exclusion the mapper applies.
-    const ref = refTo(model, targetId, el.ownerId, specResolver(model, rel.eClass, el.id));
+    const ref =
+      rel.eClass === 'Redefinition'
+        ? redefinitionRef(model, targetId, el.ownerId, el.id)
+        : refTo(model, targetId, el.ownerId, specResolver(model, rel.eClass, el.id));
     const op = operatorFor(rel.eClass);
     // Do not restate a typing the display string already expresses. After the
     // library binder runs, an attribute carries BOTH `attrs.type = 'Real'` and a
@@ -1179,6 +1188,485 @@ function refTo(
   const rel = relativePath(model, targetId, scopeOwnerId);
   if (rel) return rel;
   return qualifiedRef(model, targetId);
+}
+
+/**
+ * {@link refTo} for the target of `sourceId`'s Redefinition, under the redefinition rule: the name that the next
+ * load takes back to the same feature, or to the feature the edited model has for it.
+ *
+ * The text writes a redefinition by a NAME, and the rule (`resolveRedefinedFeature`) lands a simple name on
+ * the MOST SPECIFIC feature the owner inherits for it, so the name a target is written by is a choice:
+ *
+ *  1. For a feature that declares no name of its own, a BASE name — the name of a named feature the target
+ *     redefines (Q's `M` for R's `M2 redefines M`, or for Q2's unnamed `:>> M default = 2.0`), the farthest first —
+ *     where the rule lands it on the target. `part v : R { attribute :>> M = 5.0; }` is written as it was, and the
+ *     load runs the rule's check that two of the usage's features do not come to bear one name
+ *     ({@link sharesLineWithSibling}); written `:>> M2` it would not, and a sibling named `M2` later would leave
+ *     two features of that name.
+ *  2. The target's OWN name, where the rule lands it there.
+ *  3. A target without a name of its own is written by a base name where the rule lands it elsewhere in the same
+ *     line, after an edit changed what the usage inherits (the Properties panel's type field retypes s to Q4 :>
+ *     Q2, whose own `:>> M` is then the most specific); the next load redefines what it lands on, and
+ *     {@link settleRedefinitions} moves the page there.
+ *  4. Elsewhere (s retyped to an unrelated type that has an `M` of its own, or none) the feature itself, by
+ *     {@link refTo}: a qualified name redefines what it names. A target without a name of its own and without a
+ *     base to write is written by the qualified name of the nearest named feature it redefines.
+ *
+ * Every other reference to an unnamed element stays unprintable, as full resolution matches declared names only.
+ *
+ * `lands` is the feature the reference was found to land on, where it was asked.
+ */
+function redefinitionForm(
+  model: Model,
+  targetId: ElementId,
+  scopeOwnerId: ElementId | null,
+  sourceId: ElementId,
+): { ref: string; lands?: ElementId } {
+  const resolve = specResolver(model, 'Redefinition', sourceId);
+  const target = model.get(targetId);
+  if (!target) return { ref: refTo(model, targetId, scopeOwnerId, resolve) };
+  const bases = namedBases(model, target);
+  // A feature that declares no name of its own (`attribute :>> M = 5.0;`) is known by the name it redefines, and the
+  // base name is the one its author wrote. A named one (`attribute M3 redefines M2;`) names what it redefines.
+  if (nameOf(model.get(sourceId) ?? target) === '') {
+    for (const base of bases) {
+      const simple = quoteName(base.declaredName!);
+      if (resolve(simple, scopeOwnerId)?.id === targetId) return { ref: simple, lands: targetId };
+    }
+  }
+  const own = nameOf(target);
+  if (own !== '' && !own.startsWith('«') && resolve(own, scopeOwnerId)?.id === targetId) return { ref: own, lands: targetId };
+  if (own === '') {
+    // The nearest base first.
+    for (const base of [...bases].reverse()) {
+      const simple = quoteName(base.declaredName!);
+      const answer = resolve(simple, scopeOwnerId);
+      if (answer && answer.id !== sourceId && inLineOf(model, answer, base)) return { ref: simple, lands: answer.id };
+    }
+    if (bases.length > 0) return { ref: refTo(model, bases[bases.length - 1]!.id, scopeOwnerId, resolve) };
+  }
+  return { ref: refTo(model, targetId, scopeOwnerId, resolve) };
+}
+
+/** The named features `target` redefines, through any number of redefinitions, the farthest first. */
+function namedBases(model: Model, target: ElementRecord): ElementRecord[] {
+  return redefinedClosure(model, target)
+    .filter((g) => g.declaredName !== undefined && !g.declaredName.startsWith('«'))
+    .reverse();
+}
+
+/** Is `feature` the `base` or a feature that redefines it? */
+function inLineOf(model: Model, feature: ElementRecord, base: ElementRecord): boolean {
+  return feature.id === base.id || redefinedClosure(model, feature).some((g) => g.id === base.id);
+}
+
+/**
+ * Where `sourceId`'s redefinition of `targetId` goes when the edit that has just touched `touched` made a sibling
+ * bear a name on the target's line (a feature renamed `M2` beside a `:>> M` that took R's `M2`): the base feature
+ * the base name lands on, as the load of `:>> M` beside the sibling lands it. Only the features the edit touched
+ * count — a collision the text was loaded with is as written. `undefined` where there is none to move to.
+ */
+function healedLanding(
+  model: Model,
+  targetId: ElementId,
+  scopeOwnerId: ElementId | null,
+  sourceId: ElementId,
+  touched: ReadonlySet<ElementId>,
+): ElementId | undefined {
+  const target = model.get(targetId);
+  if (!target || nameOf(target) === '' || nameOf(model.get(sourceId) ?? target) !== '') return undefined;
+  if (!sharesLineWithSibling(model, target, sourceId, touched)) return undefined;
+  const resolve = specResolver(model, 'Redefinition', sourceId);
+  for (const base of namedBases(model, target)) {
+    const answer = resolve(quoteName(base.declaredName!), scopeOwnerId);
+    if (
+      answer &&
+      answer.id !== sourceId &&
+      answer.id !== targetId &&
+      inLineOf(model, answer, base) &&
+      !sharesLineWithSibling(model, answer, sourceId, touched)
+    ) {
+      return answer.id;
+    }
+  }
+  return undefined;
+}
+
+function redefinitionRef(
+  model: Model,
+  targetId: ElementId,
+  scopeOwnerId: ElementId | null,
+  sourceId: ElementId,
+): string {
+  return redefinitionForm(model, targetId, scopeOwnerId, sourceId).ref;
+}
+
+/** The ends of `ids` and, through any number of typings, specializations, subsettings and redefinitions, what specialises them. */
+function withSpecialisers(model: Model, ids: Iterable<ElementId>): ElementId[] {
+  const out: ElementId[] = [];
+  const seen = new Set<ElementId>();
+  for (const id of ids) if (!seen.has(id) && model.has(id)) (seen.add(id), out.push(id));
+  for (let i = 0; i < out.length; i++) {
+    for (const r of model.relationshipsTo(out[i]!)) {
+      if (!isTypingSpecialization(r.eClass)) continue;
+      for (const x of r.source ?? []) {
+        if (seen.has(x) || !model.has(x)) continue;
+        seen.add(x);
+        out.push(x);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * What the changes in a command's events may have left on a feature the saved text does not put them on, for
+ * {@link settleRedefinitions} to ask.
+ *
+ *  - `types`: the types whose redefinitions are ALL asked. What they inherit changed: the source of a typing,
+ *    specialization or subsetting that came, went or moved; the owners an element was moved between, and the owners of
+ *    the features that redefine what moved (a path to it is another one now); an element that came with its subtree (a
+ *    paste, a duplicate); an element whose kind changed; an import.
+ *  - `named`: the types whose redefinitions are asked when their target's line bears one of `names`. A feature added,
+ *    removed or renamed, or a redefinition drawn or erased, changes only what a NAME finds in the types around it, and
+ *    a redefinition can land elsewhere for it only if it is known by a name its target's line holds (the target's own
+ *    name and those of the features it redefines). `names` are the names the changes name: those an element has and
+ *    had, and those of the lines a redefinition drawn or erased joins or parts.
+ *
+ * A change of an element's `attrs` alone is passed over: no name, owner or relationship moved. `touched` are the
+ * features and types the changes name, which tell a collision of names the edit made from one the text had.
+ */
+export interface DirtiedRedefinitions {
+  types: Set<ElementId>;
+  named: Set<ElementId>;
+  names: Set<string>;
+  touched: Set<ElementId>;
+}
+
+export function redefinitionsDirtiedBy(model: Model, events: readonly ChangeEvent[]): DirtiedRedefinitions {
+  const types = new Set<ElementId>();
+  const named = new Set<ElementId>();
+  const names = new Set<string>();
+  const touched = new Set<ElementId>();
+  // What the events removed: its name outlives it in its record.
+  const removed = new Map<ElementId, ElementRecord>();
+  for (const ev of events) if (ev.type === 'remove' && ev.element) removed.set(ev.element.id, ev.element);
+  const mark = (set: Set<ElementId>, id: ElementId | null | undefined): void => {
+    if (id !== null && id !== undefined && model.has(id)) set.add(id);
+  };
+  const nameOfRecord = (el: ElementRecord): void => {
+    if (el.declaredName !== undefined) names.add(el.declaredName);
+    if (el.declaredShortName !== undefined) names.add(el.declaredShortName);
+  };
+  /** The names of `id` and of every feature it redefines: the line above it. */
+  const addLine = (id: ElementId): void => {
+    const el = model.get(id) ?? removed.get(id);
+    if (!el) return;
+    nameOfRecord(el);
+    if (model.has(id)) for (const g of redefinedClosure(model, el)) nameOfRecord(g);
+  };
+  for (const ev of events) {
+    const el = ev.element;
+    if (ev.type === 'order' || ev.type === 'reset' || !el || el.attrs.isLibrary === true) continue;
+    if (ev.type === 'update' && ev.fields !== undefined && ev.fields.every((f) => f === 'attrs')) continue;
+    if (ev.type === 'reparent') {
+      mark(types, ev.previousOwnerId);
+      mark(types, el.ownerId);
+      touched.add(el.id);
+      // A redefinition that names what moved by its path (an unrelated owner's `w1::a`): the path is another now, or
+      // none (an unnamed owner has no path to write).
+      for (const d of [el, ...model.descendants(el.id)]) {
+        for (const r of model.relationshipsTo(d.id)) {
+          if (r.eClass === 'Redefinition') for (const x of r.source ?? []) mark(types, model.get(x)?.ownerId);
+        }
+      }
+      continue;
+    }
+    if (isRelationship(el.eClass)) {
+      if (el.eClass === 'Redefinition') {
+        const sources = [...(el.source ?? []), ...(ev.previousSource ?? [])];
+        for (const x of sources) {
+          // Its own nested redefinitions resolve through the target it has taken; the features around it are asked
+          // of the names of the lines it joins or parts.
+          mark(types, x);
+          mark(named, model.get(x)?.ownerId);
+          touched.add(x);
+        }
+        for (const x of [...sources, ...(el.target ?? []), ...(ev.previousTarget ?? [])]) addLine(x);
+      } else if (isTypingSpecialization(el.eClass)) {
+        for (const x of [...(el.source ?? []), ...(ev.previousSource ?? [])]) {
+          mark(types, x);
+          touched.add(x);
+        }
+      } else if (el.eClass === 'NamespaceImport' || el.eClass === 'MembershipImport') {
+        mark(types, el.ownerId);
+      }
+      continue;
+    }
+    if (ev.type === 'update' && (ev.fields === undefined || ev.fields.includes('eClass'))) {
+      // The kind of an element is what decides whether it is a feature: everything around it is asked.
+      mark(types, el.ownerId);
+      mark(types, el.id);
+      touched.add(el.id);
+      continue;
+    }
+    // An element added, removed, renamed: what its owner's types hold under its names changed.
+    mark(named, el.ownerId);
+    nameOfRecord(el);
+    for (const n of ev.previousNames ?? []) names.add(n);
+    if (ev.type !== 'remove') touched.add(el.id);
+    // An element that came with its subtree (a paste, a duplicate) is settled whole.
+    if (ev.type === 'add') mark(types, el.id);
+  }
+  for (const id of types) named.delete(id);
+  return { types, named, names, touched };
+}
+
+/** The names the text could write `targetId` by: its own and those of the features it redefines. */
+function lineNames(model: Model, targetId: ElementId): ReadonlySet<string> {
+  const out = new Set<string>();
+  const target = model.get(targetId);
+  if (!target) return out;
+  for (const g of [target, ...redefinedClosure(model, target)]) {
+    for (const n of [g.declaredName, g.declaredShortName]) if (n !== undefined && n !== '' && !n.startsWith('«')) out.add(n);
+  }
+  return out;
+}
+
+/**
+ * Where the next parse puts the implicit end copy `copy` of a usage-body binding that redefines `from` (`part r : Q2 {
+ * bind p.load = L; }` makes `r::L`): on the feature the mapper gives it then, by the rule that made it. A copy in an
+ * explicit usage redefines what the name finds among the features the usage inherits, or the one most specific
+ * feature its types have for it where that redefines it ({@link endCopyProto}, U10): a retype of `r` to Q takes the
+ * copy off Q2's `:>> L` and onto Q's `L`, and a retype back onto Q2's again. A copy of a name no feature the usage
+ * inherits bears (an unnamed `:>> M` is known by it), and a copy in a copy (a hop of a chain, `p` of `p.load`),
+ * redefine the feature its owner's types have for the name. `undefined` where the copy stays: where it already is on
+ * that feature, or where the next parse would make none (nothing its owner inherits is known by the name): the page
+ * then proves through a copy the saved file does not make, which the Problems panel reports as an unresolved name once
+ * the file is opened again (docs/USER-GUIDE.md, the cases not followed).
+ */
+function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): ElementId | undefined {
+  const owner = copy.ownerId === null ? undefined : model.get(copy.ownerId);
+  const name = copy.declaredName;
+  if (!owner || name === undefined || name === '') return undefined;
+  let proto: ElementRecord | undefined;
+  const hit = owner.attrs.implicit === true ? undefined : resolveInherited(model, owner.id, name);
+  if (hit === undefined) proto = findTypeFeature(model, owner, name);
+  // Only a feature is mirrored: a definition or a package the name finds is bound to directly.
+  else if (!isDefinition(hit.eClass) && !isRelationship(hit.eClass) && hit.eClass !== 'Package' && hit.eClass !== 'LibraryPackage') {
+    proto = endCopyProto(model, owner, name, hit);
+  }
+  return proto && proto.id !== from && proto.id !== copy.id ? proto.id : undefined;
+}
+
+/** The most rounds {@link settleRedefinitions} makes: it stops at the first that moves nothing, so this only ends a cycle. */
+const MAX_SETTLE_ROUNDS = 64;
+
+/**
+ * Move the redefinitions in `changed` (types, or usages: the owners of the features that redefine) and in
+ * everything that specialises them to the feature the saved text puts them on when it is read again: each is
+ * written as {@link redefinitionForm} writes it, and resolved by the redefinition rule as the next parse resolves
+ * it; the implicit end copy of a usage-body binding, which the text leaves out, goes where the next parse makes it
+ * ({@link endCopyLanding}). An edit that changes what a type inherits or has (the Properties panel's type field, a line drawn from it
+ * to a type, a typing deleted, a feature moved, renamed or removed) leaves a redefinition on a feature it no
+ * longer has: `part s : Q2 { attribute :>> M; }` retyped to Q kept its `:>> M` on Q2's unnamed `:>> M default =
+ * 2.0`, which Save writes as `:>> M` and the next load lands on Q's `M` — the page read 2 and the file 1. A
+ * redefinition whose written form lands on its own target stays; one the text cannot express at all (its target has
+ * no name and redefines nothing that has) goes, as Save writes the feature without it.
+ *
+ * Only the redefinitions OWNED by a changed type are asked (a nested one resolves through the target its parent's
+ * `part :>> p` has taken, so a parent that moved asks its own children in the next round), and every move of a
+ * round is decided before any is made, as the mapper's rounds decide: a sibling is read against the model of the
+ * round before it. A chain of nested redefinitions, or of the copies of a `bind p1.p2.p3.p4.x = ...`, takes a round
+ * per hop, so the rounds go on until one moves nothing ({@link MAX_SETTLE_ROUNDS} is a guard against a cycle of moves,
+ * not the depth that is settled).
+ *
+ * `touched` are the features the edit changed ({@link redefinitionsDirtiedBy}): where one of them now bears a name
+ * on a redefined feature's line, the redefinition goes back to the base feature the load of its base name would
+ * keep it on, as the text with that name kept the two features apart. A collision of names the text was loaded
+ * with is as written.
+ *
+ * With `names`, the first round asks only the redefinitions whose target's line bears one of them
+ * ({@link DirtiedRedefinitions.named}); the rounds after it ask what the moves of the round before changed.
+ *
+ * @returns how many redefinitions moved.
+ */
+export function settleRedefinitions(
+  model: Model,
+  changed: ElementId | Iterable<ElementId>,
+  touched?: ReadonlySet<ElementId>,
+  names?: ReadonlySet<string>,
+): number {
+  const first = withSpecialisers(model, typeof changed === 'string' ? [changed] : changed);
+  // Two frontiers: the types asked of everything they own (`deep`), and those asked of the lines `filter` names
+  // (`shallow`: a type the moves of the round before left a sibling in).
+  let deep: ElementId[] = names === undefined ? first : [];
+  let shallow: ElementId[] = names === undefined ? [] : first;
+  let filter: ReadonlySet<string> | undefined = names;
+  let moved = 0;
+  for (let round = 0; round < MAX_SETTLE_ROUNDS && deep.length + shallow.length > 0; round++) {
+    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId }> = [];
+    const lines = new Map<ElementId, ReadonlySet<string>>();
+    const ask = (typeId: ElementId, only: ReadonlySet<string> | undefined): void => {
+      const type = model.get(typeId);
+      if (!type || type.attrs.isLibrary === true) return;
+      for (const f of model.children(typeId)) {
+        if (f.attrs.isLibrary === true) continue;
+        // The text leaves an implicit end copy out, and the next parse makes it anew: on the feature the mapper gives
+        // it then, which is where the page puts it now.
+        const copy = f.attrs.implicit === true;
+        for (const rel of model.children(f.id)) {
+          if (rel.eClass !== 'Redefinition' || (rel.source ?? [])[0] !== f.id || (rel.target ?? []).length !== 1) continue;
+          const from = rel.target![0]!;
+          let line = lines.get(from);
+          if (line === undefined) lines.set(from, (line = lineNames(model, from)));
+          if (copy) {
+            // Moved in place, never removed and made again: a binding holds the copy, and removing it would take the
+            // binding along. A copy the next parse would not make (nothing its owner inherits is named so) stays.
+            // It is known by its own name, which the line of the feature it redefines may not bear (`M2` for `X :>> M`).
+            if (only !== undefined && !(f.declaredName !== undefined && only.has(f.declaredName)) && ![...line].some((n) => only.has(n))) continue;
+            const to = endCopyLanding(model, f, from);
+            if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId });
+            continue;
+          }
+          // A target with no name the text can write (the feature it redefined is gone, and it has none of its own):
+          // Save writes the feature without the redefinition, so the page does too.
+          if (line.size === 0) {
+            moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId });
+            continue;
+          }
+          if (only !== undefined && ![...line].some((n) => only.has(n))) continue;
+          const form = redefinitionForm(model, from, f.ownerId, f.id);
+          if (unprintableRef(form.ref)) {
+            moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId });
+            continue;
+          }
+          let to = form.lands ?? resolveRedefinedFeature(model, form.ref, f.id, f.ownerId)?.id;
+          if (to === from && touched !== undefined) to = healedLanding(model, from, f.ownerId, f.id, touched) ?? to;
+          if (to === undefined || to === from || to === f.id) continue;
+          moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId });
+        }
+      }
+    };
+    const deepSet = new Set(deep);
+    for (const typeId of deep) ask(typeId, undefined);
+    for (const typeId of shallow) if (!deepSet.has(typeId)) ask(typeId, filter);
+    if (moves.length === 0) break;
+    // What the moves leave a sibling to meet: the names of the lines they part and join, and of the features that moved.
+    const movedNames = new Set<string>();
+    if (names !== undefined) {
+      const add = (id: ElementId | null): void => {
+        const el = id === null ? undefined : model.get(id);
+        if (!el) return;
+        for (const g of [el, ...redefinedClosure(model, el)]) {
+          if (g.declaredName !== undefined) movedNames.add(g.declaredName);
+          if (g.declaredShortName !== undefined) movedNames.add(g.declaredShortName);
+        }
+      };
+      for (const mv of moves) (add(mv.feature), add(mv.from), add(mv.to));
+    }
+    model.transaction(() => {
+      for (const mv of moves) {
+        if (mv.to === null) model.remove(mv.rel);
+        else model.update(mv.rel, { target: [mv.to] });
+      }
+    });
+    moved += moves.length;
+    // The features that moved ask what is nested in them (it resolves through the target they have taken); the
+    // types around them ask what the moves left them, by the names of the lines that changed.
+    deep = withSpecialisers(model, moves.map((mv) => mv.feature));
+    const owners = withSpecialisers(model, moves.map((mv) => mv.owner));
+    if (names === undefined) {
+      deep = [...new Set([...deep, ...owners])];
+      shallow = [];
+    } else {
+      const deepNext = new Set(deep);
+      shallow = owners.filter((x) => !deepNext.has(x));
+      filter = movedNames;
+    }
+  }
+  return moved;
+}
+
+/** A redefinition whose target is about to go, with the reference the saved text writes it by now. */
+export interface RedefinitionToRetarget {
+  rel: ElementId;
+  ref: string;
+}
+
+/**
+ * The redefinitions that stay when `going` (the elements a removal is about to take, what they own and the edges
+ * that reference them) goes, and whose target does not: each with the reference Save writes it by now (the base
+ * name `M` of a target that redefines Q's `M`, however it is named itself). Taken BEFORE the removal;
+ * {@link retargetRedefinitions} reads it back after.
+ */
+export function redefinitionsToRetarget(model: Model, going: ReadonlySet<ElementId>): RedefinitionToRetarget[] {
+  const out: RedefinitionToRetarget[] = [];
+  for (const g of going) {
+    for (const rel of model.relationshipsTo(g)) {
+      if (rel.eClass !== 'Redefinition' || going.has(rel.id) || (rel.source ?? []).length !== 1 || (rel.target ?? []).length !== 1) continue;
+      const f = model.get(rel.source![0]!);
+      if (!f || going.has(f.id) || rel.ownerId !== f.id || f.attrs.isLibrary === true || f.attrs.implicit === true) continue;
+      const ref = redefinitionRef(model, g, f.ownerId, f.id);
+      if (!unprintableRef(ref)) out.push({ rel: rel.id, ref });
+    }
+  }
+  return out;
+}
+
+/**
+ * After the removal {@link redefinitionsToRetarget} listed for: land each redefinition `Model.remove` moved up the
+ * chain (to the nearest feature that stays) on the feature its reference finds now, where that is below it in
+ * the same line — a level the walk skipped (Q4's `M4 redefines Q::M` beside Q2's `:>> M`: deleted, `part s : Q4 {
+ * attribute :>> M; }` reads Q2's, as the text without M4 does). A reference that lands elsewhere leaves it where
+ * the walk put it.
+ *
+ * @returns how many redefinitions moved.
+ */
+export function retargetRedefinitions(model: Model, listed: readonly RedefinitionToRetarget[]): number {
+  let moved = 0;
+  model.transaction(() => {
+    for (const { rel: relId, ref } of listed) {
+      const rel = model.get(relId);
+      const f = rel ? model.get((rel.source ?? [])[0] ?? '') : undefined;
+      const now = (rel?.target ?? [])[0];
+      if (!rel || !f || now === undefined) continue;
+      const hit = resolveRedefinedFeature(model, ref, f.id, f.ownerId);
+      if (!hit || hit.id === f.id || hit.id === now || !redefinedClosure(model, hit).some((g) => g.id === now)) continue;
+      model.update(relId, { target: [hit.id] });
+      moved++;
+    }
+  });
+  return moved;
+}
+
+/**
+ * Have `model` follow every removal made in it as the saved text reads it: the redefinitions that stay and whose
+ * target goes land on the feature the name they are saved by finds now ({@link redefinitionsToRetarget},
+ * {@link retargetRedefinitions}), where `Model.remove`'s walk up the removed target's redefinitions would skip a
+ * level. For a model somebody removes from: the editor's model on screen (a command, the SDK, a peer's edit), the
+ * working copy of a REST commit. Only the EXPLICIT redefinitions whose target goes are landed: an implicit end copy
+ * stays where `Model.remove` put it (the store's settle moves it, for a command and an SDK call), and a typing or
+ * specialization removed or retargeted is settled by nothing here. A failure leaves the removal as `Model.remove`
+ * walks it: a model may differ from its file, not lose the delete. Returns the call that stops following.
+ */
+export function followRedefinitionRemovals(model: Model): () => void {
+  return model.addRemovalPlanner((going) => {
+    try {
+      const listed = redefinitionsToRetarget(model, going);
+      if (listed.length === 0) return undefined;
+      return () => {
+        try {
+          retargetRedefinitions(model, listed);
+        } catch (err) {
+          console.error('retargetRedefinitions failed', err);
+        }
+      };
+    } catch (err) {
+      console.error('redefinitionsToRetarget failed', err);
+      return undefined;
+    }
+  });
 }
 
 /**

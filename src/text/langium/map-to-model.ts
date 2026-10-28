@@ -45,12 +45,15 @@ import {
   type AttrValue,
 } from '@core/index';
 import {
+  childNamed,
+  endCopyProto,
+  findTypeFeature,
   resolveFullName,
   resolveImportTargets,
   resolveRedefinedFeature,
 } from '@semantics/bind';
 import { generalizationsWithImplicit } from '@semantics/featuring';
-import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
+import { effectiveNameOf } from '@semantics/inheritance';
 import {
   EVIDENCE_DEFINITION,
   EVIDENCE_QUALIFIED_NAME,
@@ -330,35 +333,6 @@ function nameMatches(e: ElementRecord, seg: string): boolean {
 }
 
 /**
- * {@link nameMatches}, or — for a feature that declares no name — whether it is
- * a redefinition of a feature named `seg` (KerML's effective name):
- * `attribute :>> load = 50.0` in `part p` is p's `load`. A connector or `bind`
- * end `p.load` then lands on that explicit redefinition, not on an implicit
- * copy materialised beside it — a second, valueless `p::load` the binding held
- * while every scope read the redefinition.
- */
-function memberNamed(model: Model, e: ElementRecord, seg: string): boolean {
-  if (nameMatches(e, seg)) return true;
-  return e.declaredName === undefined && e.declaredShortName === undefined && effectiveNameOf(model, e) === seg;
-}
-
-/**
- * The child of `ownerId` a chain segment `seg` names: one {@link memberNamed}
- * `seg`, else one that REDEFINES a feature named `seg` under another name —
- * `attribute heavy redefines load = 50.0` is p's `load` too, as the feature it
- * redefines is no member of p beside it. Read as no child, `bind w = p.load`
- * materialised an implicit, valueless `p::load` next to `heavy`, and the
- * binding held the copy while every scope read `heavy`'s 50.
- */
-function childNamed(model: Model, ownerId: ElementId, seg: string): ElementRecord | undefined {
-  const kids = model.children(ownerId);
-  return (
-    kids.find((e) => memberNamed(model, e, seg)) ??
-    kids.find((e) => !isRelationship(e.eClass) && redefinedClosure(model, e).some((g) => nameMatches(g, seg)))
-  );
-}
-
-/**
  * Can a usage-scoped mirror of `el` be materialised for a connector end?
  *
  * Only FEATURES are mirrored. A definition, package or relationship reached
@@ -391,56 +365,6 @@ const CHAIN_CONNECTOR_CLASSES = new Set([
   'Flow',
   'FlowUsage',
 ]);
-
-/**
- * Transitive specialization closure of `el`: every element reachable through
- * resolved specialization relationships (FeatureTyping / Subsetting /
- * Redefinition / Subclassification) plus still-textual `attrs.typeRef` strings
- * (resolved in-model, read-only — this never binds a typeRef; that stays
- * `resolveTypeReferences`' job). Cycle-safe (A :> B :> A terminates).
- */
-function typeClosure(model: Model, el: ElementRecord): ElementRecord[] {
-  const out: ElementRecord[] = [];
-  const seen = new Set<ElementId>([el.id]);
-  const stack: ElementRecord[] = [el];
-  while (stack.length) {
-    const cur = stack.pop()!;
-    const next: ElementRecord[] = [...model.typesOf(cur.id)];
-    const typeRef = cur.attrs.typeRef;
-    if (typeof typeRef === 'string') {
-      const t = resolveFullName(model, typeRef, cur.ownerId, { exclude: cur.id });
-      if (t) next.push(t);
-    }
-    for (const n of next) {
-      if (!seen.has(n.id)) {
-        seen.add(n.id);
-        out.push(n);
-        stack.push(n);
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * Feature named `seg` inherited from `el`'s type closure (not a direct child)
- * — by its effective name ({@link childNamed}), and the most specific one: a
- * feature another type of the closure redefines is not inherited beside it.
- * `part def S :> P { attribute :>> load = 5.0; }` gives `s : S` S's load; the
- * walk took P's by declared name, and the implicit copy it materialised for
- * `bind w = s.load` redefined P's `load` — masking S's 5 in `s` itself.
- */
-function findTypeFeature(model: Model, el: ElementRecord, seg: string, unique = false): ElementRecord | undefined {
-  const hits: ElementRecord[] = [];
-  for (const t of typeClosure(model, el)) {
-    const hit = childNamed(model, t.id, seg);
-    if (hit && !hits.includes(hit)) hits.push(hit);
-  }
-  const most = hits.filter((h) => !hits.some((o) => o !== h && redefinedClosure(model, o).includes(h)));
-  // `unique`: none where two types each redefine it and neither the other (Q2's and Q3's `:>> L`, both general to Q23).
-  if (unique) return most.length === 1 ? most[0] : undefined;
-  return most[0] ?? hits[0];
-}
 
 /**
  * Ensure `owner` has a usage-scoped feature mirroring the type-owned `proto`:
@@ -591,8 +515,7 @@ function resolveChainEnd(
     // `attribute :>> L = 50.0` redefines it, and a copy redefining Q's L read the general value (or
     // none) in q — every surface then let P's default stand where the binding gives 50. Only the ONE
     // most specific: where two general types each redefine it (MI1's Q2 and Q3, a clash), neither is.
-    const special = findTypeFeature(model, scopeEl, head, true);
-    const proto = special && special !== hit && redefinedClosure(model, special).includes(hit) ? special : hit;
+    const proto = endCopyProto(model, scopeEl, head, hit);
     if (!walkChain(model, proto, rest, false)) continue; // dry run before materializing
     const anchor = ensureImplicitFeature(model, scopeEl, proto);
     const end = walkChain(model, anchor, rest, true);

@@ -12,6 +12,7 @@ import { render, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { Model, ModelFactory } from '@core/index';
 import { buildGrid, GridView } from '@diagram/index';
+import { parseModel } from '@text/index';
 
 /** A small model: a part def, a typed part with mass attribute + doc, and a redefinition. */
 function gridModel() {
@@ -96,6 +97,18 @@ describe('buildGrid — columns and rows', () => {
   it('computes the redefines cell from Redefinition relationships', () => {
     const row = grid.rows.find((r) => r.id === ids.heavyMass)!;
     expect(row.cells.redefines).toBe('mass');
+  });
+
+  it('shows a redefined feature that declares no name by the name it is known by', () => {
+    // s's `:>> M` redefines Q2's unnamed `:>> M default = 2.0` (the most specific M s inherits), not Q's `M`.
+    const { model } = parseModel(`package P {
+      part def Q { attribute M default = 1.0; }
+      part def Q2 :> Q { attribute :>> M default = 2.0; }
+      part s : Q2 { attribute :>> M = 5.0; }
+    }`);
+    const s = model.all().find((e) => e.declaredName === 's')!;
+    const own = model.children(s.id).find((c) => c.eClass === 'AttributeUsage')!;
+    expect(buildGrid(model).rows.find((r) => r.id === own.id)!.cells.redefines).toBe('M');
   });
 
   it('reads the doc cell from a Documentation child', () => {

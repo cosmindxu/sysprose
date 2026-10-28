@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Model, ModelFactory, buildSampleModel } from '@core/index';
+import { Model, ModelFactory, buildSampleModel, type ChangeEvent } from '@core/index';
 
 describe('Model core', () => {
   it('creates and indexes containment', () => {
@@ -40,6 +40,118 @@ describe('Model core', () => {
     expect(m.has(b.id)).toBe(true);
   });
 
+  // A Redefinition whose target goes but whose feature stays is not a dangling edge to drop: the feature redefines the
+  // nearest feature the removed one redefined, which is where the redefinition rule lands it on the next parse.
+  it('moves a redefinition off a removed target to the nearest feature that stays', () => {
+    const m = new Model();
+    const pkg = m.create('Package', { declaredName: 'P' });
+    const attr = (name: string | undefined, ownerId: string) => m.create('AttributeUsage', { declaredName: name, ownerId });
+    const redefine = (from: string, to: string) =>
+      m.create('Redefinition', { ownerId: from, source: [from], target: [to] });
+    const q = m.create('PartDefinition', { declaredName: 'Q', ownerId: pkg.id });
+    const q2 = m.create('PartDefinition', { declaredName: 'Q2', ownerId: pkg.id });
+    const q3 = m.create('PartDefinition', { declaredName: 'Q3', ownerId: pkg.id });
+    const base = attr('M', q.id);
+    const mid = attr(undefined, q2.id);
+    const top = attr(undefined, q3.id);
+    redefine(mid.id, base.id);
+    redefine(top.id, mid.id);
+    const s = m.create('PartUsage', { declaredName: 's', ownerId: pkg.id });
+    const own = attr(undefined, s.id);
+    const edge = redefine(own.id, top.id);
+    const targetOf = (id: string) => m.get(id)?.target;
+    // Q3's and Q2's features go in turn: s's redefinition follows the chain down to Q's M.
+    m.remove(top.id);
+    expect(targetOf(edge.id)).toEqual([mid.id]);
+    m.remove(mid.id);
+    expect(targetOf(edge.id)).toEqual([base.id]);
+    // Both go at once, with their definitions: the nearest that stays.
+    const m2 = new Model();
+    const p2 = m2.create('Package', { declaredName: 'P' });
+    const a = m2.create('AttributeUsage', { declaredName: 'M', ownerId: p2.id });
+    const d1 = m2.create('PartDefinition', { declaredName: 'D1', ownerId: p2.id });
+    const d2 = m2.create('PartDefinition', { declaredName: 'D2', ownerId: p2.id });
+    const f1 = m2.create('AttributeUsage', { ownerId: d1.id });
+    const f2 = m2.create('AttributeUsage', { ownerId: d2.id });
+    m2.create('Redefinition', { ownerId: f1.id, source: [f1.id], target: [a.id] });
+    m2.create('Redefinition', { ownerId: f2.id, source: [f2.id], target: [f1.id] });
+    const u = m2.create('AttributeUsage', { ownerId: p2.id });
+    const e2 = m2.create('Redefinition', { ownerId: u.id, source: [u.id], target: [f2.id] });
+    m2.remove(d1.id);
+    expect(m2.get(e2.id)?.target).toEqual([f2.id]);
+    m2.remove(d2.id);
+    expect(m2.get(e2.id)?.target).toEqual([a.id]);
+    // A target that redefined nothing takes the redefinition with it, as before.
+    const d3 = m2.create('PartDefinition', { declaredName: 'D3', ownerId: p2.id });
+    const f3 = m2.create('AttributeUsage', { ownerId: d3.id });
+    const e3 = m2.create('Redefinition', { ownerId: u.id, source: [u.id], target: [f3.id] });
+    m2.remove(d3.id);
+    expect(m2.has(e3.id)).toBe(false);
+    expect(m2.has(u.id)).toBe(true);
+  });
+
+  // A listener that follows what an element inherits (the editor, which settles redefinitions after an edit) passes
+  // over a change of `attrs` alone, and asks the ends a relationship had when one moved.
+  it('names what an update changed, and the ends a relationship had', () => {
+    const m = new Model();
+    const a = m.create('PartDefinition', { declaredName: 'A' });
+    const b = m.create('PartDefinition', { declaredName: 'B' });
+    const rel = m.create('Specialization', { ownerId: a.id, source: [a.id], target: [b.id] });
+    const events: ChangeEvent[] = [];
+    m.subscribe((evs) => events.push(...evs));
+    m.update(a.id, { declaredName: 'A2' });
+    m.update(a.id, { attrs: { note: 'x' } });
+    m.setAttrs(a.id, { note: 'y' });
+    m.setShortName(a.id, 'a');
+    m.update(rel.id, { source: [b.id], target: [a.id] });
+    expect(events.map((e) => e.fields)).toEqual([['declaredName'], ['attrs'], ['attrs'], ['declaredShortName'], ['source', 'target']]);
+    expect(events.map((e) => e.previousSource)).toEqual([undefined, undefined, undefined, undefined, [a.id]]);
+    // ...and the names it had (a rename's old name is no longer in the model), and the target a relationship had.
+    expect(events.map((e) => e.previousNames)).toEqual([['A'], undefined, undefined, [], undefined]);
+    expect(events.map((e) => e.previousTarget)).toEqual([undefined, undefined, undefined, undefined, [b.id]]);
+    m.update(a.id, { declaredName: 'A3' });
+    expect(events[events.length - 1]!.previousNames).toEqual(['A2', 'a']);
+  });
+
+  // `Model.remove` leaves to its planners what it cannot decide itself: each sees what is about to go, before any is
+  // gone, and what it returns runs once they are, in the removal's own notification. It is asked of a removal that
+  // leaves a Redefinition standing whose target goes, and of no other.
+  it('lets a removal planner see what goes and follow it, in the removal\'s own notification', () => {
+    const m = new Model();
+    const a = m.create('PartDefinition', { declaredName: 'A' });
+    const h = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'h' });
+    const f = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'f' });
+    m.create('Redefinition', { ownerId: f.id, source: [f.id], target: [h.id] });
+    const g = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'g' });
+    const redefinition = m.create('Redefinition', { ownerId: g.id, source: [g.id], target: [f.id] });
+    const k = m.create('AttributeUsage', { ownerId: a.id, declaredName: 'k' });
+    const seen: string[] = [];
+    const off = m.addRemovalPlanner((going) => {
+      seen.push(`going ${[...going].map((x) => m.get(x)?.declaredName).filter((n) => n !== undefined).sort().join(',')}`);
+      return () => {
+        seen.push(`gone ${m.has(f.id)}`);
+        m.update(g.id, { declaredName: 'g2' });
+      };
+    });
+    const batches: ChangeEvent[][] = [];
+    m.subscribe((evs) => batches.push(evs));
+    // g's redefinition of f stays: f goes, and Model.remove moves it up the chain to h.
+    expect(m.remove(f.id)).toContain(f.id);
+    expect(seen).toEqual(['going f', 'gone false']);
+    expect(m.get(g.id)!.declaredName).toBe('g2');
+    expect(m.get(redefinition.id)!.target).toEqual([h.id]);
+    // The removal and what the planner did are one notification.
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.map((e) => e.type)).toContain('remove');
+    expect(batches[0]!.filter((e) => e.type === 'update').map((e) => e.element?.declaredName)).toEqual([undefined, 'g2']);
+    // A removal no Redefinition stands over (k is nobody's target) is not asked about.
+    expect(m.remove(k.id)).toEqual([k.id]);
+    expect(seen).toHaveLength(2);
+    off();
+    m.remove(g.id);
+    expect(seen).toHaveLength(2);
+  });
+
   it('prevents containment cycles on reparent', () => {
     const m = new Model();
     const f = new ModelFactory(m);
@@ -55,6 +167,23 @@ describe('Model core', () => {
     const vehicle = m.resolveQualifiedName('VehicleModel::vehicle');
     expect(vehicle).toBeDefined();
     expect(m.typesOf(vehicle!.id).map((t) => t.declaredName)).toContain('Vehicle');
+  });
+
+  // The walk of a type's generals asks this once per type it meets; it reads the edge index without copying it.
+  it('typesOf gives the targets of the typing and specialization relationships, in order, and no other', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const [a, b, c, x] = ['A', 'B', 'C', 'X'].map((n) => f.partDef(n));
+    f.subclassification(c!.id, a!.id);
+    const typing = m.create('FeatureTyping', { ownerId: c!.id, source: [c!.id], target: ['gone', b!.id] });
+    f.allocate(c!.id, x!.id);
+    expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A', 'B']);
+    expect(m.typesOf(a!.id)).toEqual([]);
+    // It follows an edit of the edges, and a removal.
+    m.update(typing.id, { target: [x!.id, b!.id] });
+    expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A', 'X', 'B']);
+    m.remove(typing.id);
+    expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A']);
   });
 
   it('round-trips through JSON without loss', () => {

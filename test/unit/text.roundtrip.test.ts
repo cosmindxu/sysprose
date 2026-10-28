@@ -1,8 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { buildSampleModel, Model, ModelFactory, type ElementRecord } from '@core/index';
-import { parseModel, serializeModel } from '@text/index';
+import { buildSampleModel, Model, ModelFactory, type ChangeEvent, type ElementRecord } from '@core/index';
+import {
+  parseModel,
+  redefinitionsDirtiedBy,
+  redefinitionsToRetarget,
+  retargetRedefinitions,
+  serializeModel,
+  settleRedefinitions,
+} from '@text/index';
 import { validate } from '@validation/index';
-import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError } from '@semantics/index';
+import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError, checkConstraints, effectiveNameOf } from '@semantics/index';
 import { parseDocument } from '@text/langium/module';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
@@ -694,6 +701,318 @@ describe('serializer — the reference form the resolver agrees with', () => {
     const red = model.all().find((e) => e.eClass === 'Redefinition')!;
     expect(model.qualifiedName((red.target ?? [])[0])).toBe('P::Base::w');
     expect(model.qualifiedName((red.source ?? [])[0])).toBe('P::Car::w');
+  });
+
+  it('writes a redefinition of an UNNAMED feature by the name the redefinition rule finds it by', () => {
+    // s's `:>> M` redefines Q2's unnamed `:>> M` (the most specific feature s inherits for M), whose only name is
+    // its effective one: with no printable form, Save would drop the reference and write `attribute;`.
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part s : Q2 { attribute :>> M; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part v : R { attribute :>> M = 5.0; }
+}`;
+    const target = (m: Model, owner: string): string => {
+      const o = m.all().find((e) => e.declaredName === owner)!;
+      const f = m.children(o.id).find((c) => c.eClass === 'AttributeUsage')!;
+      const red = m.children(f.id).find((c) => c.eClass === 'Redefinition')!;
+      const t = m.get((red.target ?? [])[0])!;
+      return `${m.qualifiedName(t.ownerId!)}::${t.declaredName ?? `:>> ${effectiveNameOf(m, t)}`}`;
+    };
+    const m1 = parseModel(src).model;
+    expect([target(m1, 's'), target(m1, 'v')]).toEqual(['P::Q2:::>> M', 'P::R::M2']);
+    const t1 = serializeModel(m1);
+    expect(t1).toMatch(/part s : Q2 \{\s*attribute :>> M;\s*\}/);
+    // A target under another name is written by the name of the feature it redefines (the base name `:>> M`, as the
+    // author wrote it): the same feature on the next load, which runs the check that two of v's features do not
+    // come to bear one name.
+    expect(t1).toMatch(/part v : R \{\s*attribute :>> M = 5\.0;\s*\}/);
+    const m2 = parseModel(t1).model;
+    expect([target(m2, 's'), target(m2, 'v')]).toEqual(['P::Q2:::>> M', 'P::R::M2']);
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  it('keeps a redefinition of an UNNAMED feature after an edit retypes its owner', () => {
+    // The Properties panel's type field (`bindType`) replaces s's FeatureTyping and the text is written from the
+    // model. s's `:>> M = 5.0` still redefines Q2's unnamed `:>> M`, which the rule no longer answers for `M` in
+    // the retyped s, and which has no name to write: Save dropped the `:>> M`, so the page read s5 satisfied and
+    // the reopened file violated. `M` is written wherever the rule lands in the same line (Q4's and Q3's `:>> M`
+    // redefine Q's M too; Q's M itself), and the next load redefines the feature of the edited context.
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q3 :> Q { attribute :>> M default = 3.0; }
+  part def Q4 :> Q2 { attribute :>> M default = 4.0; }
+  part def Z { attribute M default = 7.0; }
+  part s : Q2 { attribute :>> M = 5.0; }
+  constraint s5 { s.M == 5.0 }
+  part t : Q2 { attribute :>> M; }
+  constraint t1 { t.M == 1.0 }
+  constraint t2 { t.M == 2.0 }
+  constraint t3 { t.M == 3.0 }
+  constraint t4 { t.M == 4.0 }
+}`;
+    const s5 = (m: Model): string | undefined =>
+      checkConstraints(m).find((c) => m.qualifiedName(c.id) === 'P::s5')?.result;
+    // t has no value of its own: what it reads is the feature its `:>> M` redefines, so the page and the reopened
+    // file agree only if the page's redefinition moved to where the saved text puts it (`settleRedefinitions`, which
+    // `bindType` runs in the same undo step).
+    const reads = (m: Model): Record<string, string | undefined> =>
+      Object.fromEntries(
+        checkConstraints(m)
+          .filter((c) => /^P::t\d$/.test(m.qualifiedName(c.id)))
+          .map((c) => [m.qualifiedName(c.id).replace('P::', ''), c.result]),
+      );
+    const satisfied = (m: Model): string[] =>
+      Object.entries(reads(m)).filter(([, r]) => r === 'satisfied').map(([k]) => k);
+    for (const [to, written, lands] of [
+      ['Q4', ':>> M', 'P::Q4'],
+      ['Q3', ':>> M', 'P::Q3'],
+      ['Q', ':>> M', 'P::Q'],
+      // Z's own M is no feature of that line: the redefined feature is written by its qualified name, from the
+      // root (`refTo`'s form for a name the scope does not reach), which the next load takes as written.
+      ['Z', ':>> P::Q::M', 'P::Q'],
+    ] as const) {
+      const m = parseModel(src).model;
+      const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
+      for (const owner of ['s', 't']) {
+        for (const t of m.relationshipsFrom(id(owner)).filter((r) => r.eClass === 'FeatureTyping')) m.remove(t.id);
+        m.create('FeatureTyping', { ownerId: id(owner), source: [id(owner)], target: [id(to)] });
+        settleRedefinitions(m, id(owner));
+      }
+      const text = serializeModel(m);
+      expect(text, to).toContain(`part s : ${to} {\n        attribute ${written} = 5.0;`);
+      const reopened = parseModel(text).model;
+      const s = reopened.all().find((e) => e.declaredName === 's')!;
+      const f = reopened.children(s.id).find((c) => c.eClass === 'AttributeUsage')!;
+      const red = reopened.children(f.id).find((c) => c.eClass === 'Redefinition')!;
+      expect(reopened.get((red.target ?? [])[0])!.ownerId, to).toBe(reopened.all().find((e) => reopened.qualifiedName(e.id) === lands)!.id);
+      expect([s5(m), s5(reopened)], to).toEqual(['satisfied', 'satisfied']);
+      // The page reads what the saved file reads for t: Q4's 4, Q3's 3, Q's 1 (the retyped t redefines Q's M,
+      // which no feature of Z's line replaces), where it read Q2's 2 on the page and the file's value beside it.
+      expect(reads(m), to).toEqual(reads(reopened));
+      if (to !== 'Z') expect(satisfied(m), to).toEqual([{ Q4: 't4', Q3: 't3', Q: 't1' }[to]]);
+    }
+  });
+
+  // The Explorer's Delete removes the element and every edge that referenced it. s's `:>> M = 5.0` redefines Q2's
+  // unnamed `:>> M default = 2.0`; with that deleted the cascade removed s's Redefinition as a dangling edge, and Save
+  // wrote `attribute = 5.0;` — the user's `:>> M` gone and s5 violated. It redefines Q's M now, as the text says.
+  it('keeps a redefinition when the unnamed feature it redefines is deleted', () => {
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part s : Q2 { attribute :>> M = 5.0; }
+  part v : R { attribute :>> M = 5.0; }
+  constraint s5 { s.M == 5.0 }
+  constraint v5 { v.M == 5.0 }
+}`;
+    const verdicts = (m: Model): Record<string, string | undefined> =>
+      Object.fromEntries(checkConstraints(m).map((c) => [m.qualifiedName(c.id), c.result]));
+    const m = parseModel(src).model;
+    expect(verdicts(m)).toEqual({ 'P::s5': 'satisfied', 'P::v5': 'satisfied' });
+    for (const owner of ['Q2', 'R']) {
+      const def = m.all().find((e) => e.declaredName === owner)!;
+      const removed = m.remove(m.children(def.id).find((c) => c.eClass === 'AttributeUsage')!.id);
+      // The feature and its own Redefinition; the one from s or v moved.
+      expect(removed, owner).toHaveLength(2);
+    }
+    const text = serializeModel(m);
+    expect(text).toMatch(/part s : Q2 \{\s*attribute :>> M = 5\.0;\s*\}/);
+    expect(text).toMatch(/part v : R \{\s*attribute :>> M = 5\.0;\s*\}/);
+    expect(verdicts(m)).toEqual({ 'P::s5': 'satisfied', 'P::v5': 'satisfied' });
+    expect(verdicts(parseModel(text).model)).toEqual({ 'P::s5': 'satisfied', 'P::v5': 'satisfied' });
+  });
+
+  // The name a redefinition is written by is the BASE name — the name of the named feature the target redefines —
+  // wherever the rule lands it on the target, so the load runs the check that keeps two features from one name;
+  // the target's own name only where the base name lands elsewhere.
+  it('writes a redefinition by the name of the feature it redefines, wherever that lands on the target', () => {
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part def R2 :> R { attribute M3 redefines M2 default = 3.0; }
+  part def S :> Q { attribute S2 redefines M default = 4.0; }
+  part a : R2 { attribute :>> M = 5.0; }
+  part b : R2 { attribute :>> M2 = 5.0; }
+  part c : R2 { attribute :>> M3 = 5.0; }
+  part d : R, S { attribute :>> M2 = 5.0; }
+}`;
+    const m1 = parseModel(src).model;
+    const redefined = (m: Model, owner: string): string => {
+      const f = m.children(m.all().find((e) => e.declaredName === owner)!.id).find((c) => c.eClass === 'AttributeUsage')!;
+      const red = m.children(f.id).find((c) => c.eClass === 'Redefinition')!;
+      return m.qualifiedName((red.target ?? [])[0]!);
+    };
+    // The most specific M3 for a, b and c alike; d's R and S each redefine M, so M2 is R's own.
+    expect(['a', 'b', 'c', 'd'].map((o) => redefined(m1, o))).toEqual(['P::R2::M3', 'P::R2::M3', 'P::R2::M3', 'P::R::M2']);
+    const t1 = serializeModel(m1);
+    // The farthest base name, where the rule lands it on the target; the own name where it does not (d). A feature
+    // that declares its own name keeps the name of what it redefines: R2's `M3 redefines M2`.
+    expect(t1).toMatch(/attribute M3 :>> M2 default = 3\.0;/);
+    for (const o of ['a', 'b', 'c']) expect(t1, o).toMatch(new RegExp(`part ${o} : R2 \\{\\s*attribute :>> M = 5\\.0;\\s*\\}`));
+    expect(t1).toMatch(/part d : R : S \{\s*attribute :>> M2 = 5\.0;\s*\}/);
+    const m2 = parseModel(t1).model;
+    expect(['a', 'b', 'c', 'd'].map((o) => redefined(m2, o))).toEqual(['P::R2::M3', 'P::R2::M3', 'P::R2::M3', 'P::R::M2']);
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  // A sibling renamed into the name `:>> M` is known by (R's `M2 redefines M` taken by v) leaves two features of that
+  // name where the saved file, `:>> M` beside `attribute M2`, keeps Q's M (the CL row of the four-surface table). The
+  // edit's own touched features tell it from a collision the text was loaded with, which stays as written.
+  it('moves a redefinition back to its base feature when an edit gives a sibling the name it is known by', () => {
+    const src = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part v : R { attribute :>> M = 5.0; attribute Z = 9.0; }
+}`;
+    const m = parseModel(src).model;
+    const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
+    const redefinitionOf = (o: string): string => {
+      const f = m.children(id(o)).find((c) => c.declaredName === undefined && c.eClass === 'AttributeUsage')!;
+      return m.qualifiedName((m.children(f.id).find((c) => c.eClass === 'Redefinition')!.target ?? [])[0]!);
+    };
+    expect(redefinitionOf('v')).toBe('P::R::M2');
+    const z = id('Z');
+    m.update(z, { declaredName: 'M2' });
+    // Asked of the whole owner, with nothing named as touched, the loaded collision stays as written: M2 twice.
+    expect(settleRedefinitions(m, id('v'))).toBe(0);
+    expect(redefinitionOf('v')).toBe('P::R::M2');
+    // The edit touched Z: the save puts `:>> M` back on Q's M.
+    expect(settleRedefinitions(m, id('v'), new Set([z]))).toBe(1);
+    expect(redefinitionOf('v')).toBe('P::Q::M');
+    const text = serializeModel(m);
+    expect(text).toMatch(/part v : R \{\s*attribute :>> M = 5\.0;\s*attribute M2 = 9\.0;\s*\}/);
+    const reopened = parseModel(text).model;
+    const again = reopened.children(reopened.all().find((e) => e.declaredName === 'v')!.id).find((c) => c.declaredName === undefined)!;
+    expect(reopened.qualifiedName((reopened.children(again.id).find((c) => c.eClass === 'Redefinition')!.target ?? [])[0]!)).toBe('P::Q::M');
+    expect(serializeModel(reopened)).toBe(text);
+    // And a text that LOADS with the collision (`:>> M2` beside `M2`) saves as it was: no edit touched it.
+    const loaded = parseModel(`package P {
+  part def Q { attribute M default = 1.0; }
+  part def R :> Q { attribute M2 redefines M default = 2.0; }
+  part v : R { attribute :>> M2 = 5.0; attribute M2 = 9.0; }
+}`).model;
+    expect(serializeModel(parseModel(serializeModel(loaded)).model)).toBe(serializeModel(loaded));
+  });
+
+  // The edits `settleRedefinitions` is asked about, as the store's listener names them.
+  it('names the types an edit left redefinitions in, and passes over an edit of attrs alone', () => {
+    const { model: m } = parseModel(`package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q3 :> Q;
+  part t : Q2 { attribute :>> M; }
+}`);
+    const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
+    const record = (edit: () => void): ChangeEvent[] => {
+      const events: ChangeEvent[] = [];
+      const off = m.subscribe((evs) => events.push(...evs));
+      edit();
+      off();
+      return events;
+    };
+    const names = (ids: Iterable<string>): string[] =>
+      [...ids].map((x) => m.get(x)?.declaredName ?? m.get(x)?.eClass ?? '?').sort();
+    // A value, a multiplicity, a tag: nothing a name or an owner or a relationship says.
+    const quiet = redefinitionsDirtiedBy(m, record(() => m.setAttrs(id('t'), { multiplicity: '1' })));
+    expect([quiet.types.size, quiet.named.size, quiet.names.size]).toEqual([0, 0, 0]);
+    // A rename: the owner of the feature (who inherits or masks it) is asked of the names it had and has.
+    const q2m = m.children(id('Q2')).find((c) => c.eClass === 'AttributeUsage')!;
+    const renamed = redefinitionsDirtiedBy(m, record(() => m.update(q2m.id, { declaredName: 'M9' })));
+    expect([names(renamed.types), names(renamed.named), [...renamed.names]]).toEqual([[], ['Q2'], ['M9']]);
+    // ... and a short name is a name.
+    const short = redefinitionsDirtiedBy(m, record(() => m.setShortName(q2m.id, 'S9')));
+    expect([names(short.named), [...short.names].sort()]).toEqual([['Q2'], ['M9', 'S9']]);
+    // A feature added: its owner, by its name, and the feature itself, whole (it may come with a subtree).
+    const added = redefinitionsDirtiedBy(m, record(() => m.create('AttributeUsage', { ownerId: id('Q3'), declaredName: 'Fresh' })));
+    expect([names(added.types), names(added.named), [...added.names]]).toEqual([['Fresh'], ['Q3'], ['Fresh']]);
+    // A move: the owner it left and the one it went to, and the owner of every feature whose redefinition targets what
+    // moved (t's `:>> M`: its path is another now), all asked.
+    const moved = redefinitionsDirtiedBy(m, record(() => m.reparent(q2m.id, id('Q3'))));
+    expect([names(moved.types), names(moved.named)]).toEqual([['Q2', 'Q3', 't'], []]);
+    // A typing moved from one type to another: its source (the usage), whichever end it was.
+    const typing = m.relationshipsFrom(id('t')).find((r) => r.eClass === 'FeatureTyping')!;
+    const retyped = redefinitionsDirtiedBy(m, record(() => m.update(typing.id, { source: [id('Q3')] })));
+    expect([names(retyped.types), names(retyped.named), retyped.names.size]).toEqual([['Q3', 't'], [], 0]);
+  });
+
+  // A redefinition drawn or erased changes what the names of both lines it joins or parts find, so those are the names
+  // the types around it are asked by.
+  it('names the lines a redefinition drawn joins, and those a removal parts', () => {
+    const { model: m } = parseModel(`package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q4 :> Q2 { attribute M4 redefines Q::M default = 4.0; attribute Other default = 9.0; }
+}`);
+    const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
+    const record = (edit: () => void): ChangeEvent[] => {
+      const events: ChangeEvent[] = [];
+      const off = m.subscribe((evs) => events.push(...evs));
+      edit();
+      off();
+      return events;
+    };
+    // A redefinition drawn from Other to M joins two lines: both lines' names are asked.
+    const joined = redefinitionsDirtiedBy(m, record(() => m.create('Redefinition', { ownerId: id('Other'), source: [id('Other')], target: [id('M')] })));
+    expect([...joined.names].sort()).toEqual(['M', 'Other']);
+    // Its source is asked whole (the redefinitions nested in it follow its target); the features around it by name.
+    expect([[...joined.types].map((x) => m.get(x)!.declaredName), [...joined.named].map((x) => m.get(x)!.declaredName)]).toEqual([['Other'], ['Q4']]);
+    // Q2's unnamed `:>> M` removed from the middle of M's line: the names of the line it parted are asked, though it has none.
+    const q2m = m.children(id('Q2')).find((c) => c.eClass === 'AttributeUsage')!;
+    const parted = redefinitionsDirtiedBy(m, record(() => m.remove(q2m.id)));
+    expect([...parted.names].sort()).toEqual(['M']);
+    expect([...parted.named].map((x) => m.get(x)!.declaredName)).toEqual(['Q2']);
+  });
+
+  // A redefinition whose target has no name the text can write — the feature it redefined was deleted, and it has none
+  // of its own — is written as the feature without it (`attribute = 15.0;`): the page goes the same way.
+  it('drops a redefinition the text cannot write after the feature it redefined goes', () => {
+    const { model: m } = parseModel(`package P {
+  part def T { attribute K default = 13.0; }
+  part def D2 :> T { attribute :>> K default = 14.0; }
+  part u1 : D2 { attribute :>> K = 15.0; }
+}`);
+    const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
+    const redefinitions = (): number => m.all().filter((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true).length;
+    expect(redefinitions()).toBe(2);
+    m.remove(m.children(id('T')).find((c) => c.declaredName === 'K')!.id);
+    // D2's own redefinition went with K; u1's followed D2's feature, which has no name.
+    expect(redefinitions()).toBe(1);
+    expect(settleRedefinitions(m, id('u1'))).toBe(1);
+    expect(redefinitions()).toBe(0);
+    expect(serializeModel(parseModel(serializeModel(m)).model)).toBe(serializeModel(m));
+  });
+
+  // `Model.remove` walks UP the removed target's redefinitions, and the rule lands on the MOST SPECIFIC feature its
+  // name finds, which can skip a level of the walk. The store lands the redefinition where the name it is written by
+  // finds a feature now, and the walk is the fallback.
+  it('lands a redefinition on the feature its name finds once the target is removed, past a level the walk skips', () => {
+    const { model: m } = parseModel(`package DA {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part def Q4 :> Q2 { attribute M4 redefines Q::M default = 4.0; }
+  part s : Q4 { attribute :>> M; }
+}`);
+    const id = (n: string): string => m.all().find((e) => e.declaredName === n)!.id;
+    const target = (): string => {
+      const f = m.children(id('s')).find((c) => c.eClass === 'AttributeUsage')!;
+      const t = m.get((m.children(f.id).find((c) => c.eClass === 'Redefinition')!.target ?? [])[0]!)!;
+      return `${m.qualifiedName(t.ownerId!)}::${t.declaredName ?? `:>> ${effectiveNameOf(m, t)}`}`;
+    };
+    expect(target()).toBe('DA::Q4::M4');
+    const listed = redefinitionsToRetarget(m, new Set([id('M4')]));
+    expect(listed.map((l) => l.ref)).toEqual(['M']);
+    m.remove(id('M4'));
+    // The walk up from M4 reaches Q's M.
+    expect(target()).toBe('DA::Q::M');
+    expect(retargetRedefinitions(m, listed)).toBe(1);
+    expect(target()).toBe('DA::Q2:::>> M');
+    const text = serializeModel(m);
+    expect(text).toMatch(/part s : Q4 \{\s*attribute :>> M;\s*\}/);
+    expect(serializeModel(parseModel(text).model)).toBe(text);
   });
 
   it('still qualifies a reference the simple name would not reach', () => {

@@ -960,7 +960,16 @@ point, after the whole file is mapped, with the shared `resolveFullName`
    inherited or imported reported an error on a valid model, forever.
 4. `L3-redefine-inherited` — KerML §8.2.3.5.1 gives a redefinition its own rule
    (the generals of the owning type first). `part w :>> w;` used to build a
-   Redefinition from a feature to ITSELF.
+   Redefinition from a feature to ITSELF. A simple name lands on the MOST
+   SPECIFIC feature the owning type inherits for it, as the copy a binding
+   makes does: in `part s : Q2 { attribute :>> M; }`, `:>> M` redefines Q2's
+   unnamed `:>> M default = 2.0` over Q's `M`, not Q's `M`, whose 1 every
+   surface used to read for `s.M` (pinned by `semantics.bind.test.ts` and the
+   `redef-target-*` rows of the four-surface table). Where several features
+   are most specific, the one a type below the others' owners declares is
+   (`part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }`); otherwise, and where
+   the feature would make two of the usage's features one or give two one
+   name, the feature the name finds stays.
 5. `L3-unresolved-redefinition` — the mirror of (4): `unresolved-type-ref`
    resolves from the element's own scope now, and no longer accepts a library
    FEATURE matched by last segment, so a dangling `:>> w` stops being masked by
@@ -999,7 +1008,75 @@ re-parse will use, which for a `:>>` is §8.2.3.5.1 and not full resolution, or
 the shorter spelling would silently retarget the Redefinition on the next load.
 So a binding reached by import or inheritance re-emits as the simple name the
 author wrote (`part w : Widget;`, not `part w : Lib::Widget;`; `part w :>> w;`,
-not `part w :>> P::Base::w;`). The UI keeps the last parse result and retracts
+not `part w :>> P::Base::w;`). A redefinition is written by a NAME, and the rule
+lands a simple name on the most specific feature the owner inherits for it, so
+the name is a choice (`redefinitionForm`, pinned by `text.roundtrip.test.ts`):
+for a feature that declares no name of its own, the name of the named feature the
+target redefines where the rule lands it on the target (`attribute :>> M = 5.0;`
+over R's `M2 redefines M` is saved as written, and the load runs the check that
+keeps two of the usage's features from one name, which `:>> M2` would not); the
+target's own name where the rule lands it there; for a target that declares no
+name (`attribute :>> M;` over Q2's unnamed `:>> M`, where Save used to write
+`attribute;` and drop the redefinition), a base name where the rule lands in the
+same line; else the feature's qualified name.
+The editor keeps the page at what the saved file reads. Every command that edits
+the model goes through `pushUndo` and `afterMutation` (an SDK call, through
+`afterSdkEdit`), and the model's changes in between are listened to there
+(`beginEdit`, `settleEdit` in `store.ts`): the redefinitions of the types an edit
+changed, and of what specialises them, are moved to where the written form lands,
+in the same undo step (`settleRedefinitions`, `redefinitionsDirtiedBy`) — a retype,
+a typing drawn or deleted, a feature renamed, moved by drag, added, pasted or
+removed. What a typing, a move or a paste changed asks every redefinition below
+the types it names; a feature added, removed or renamed, or a redefinition drawn
+or erased, asks those whose target's line bears one of the names it changed (the
+names an element has and had, `previousNames`; the lines a redefinition joins or
+parts), so an edit of a base type with thousands of redefinitions below it does
+not read them all. No command names what it changes, so none can forget it; the
+property test in `store.reducers.test.ts` runs random edit sequences over random
+redefinition models and compares the page's redefinitions with those of its
+reloaded file after each, and finds nothing left for a settle of the whole model
+to move. The implicit end copy a usage-body binding makes of an inherited feature
+(`part r : Q2 { bind p.load = L; }`) is left out of the file and made anew on
+the feature the mapper gives it then (`findTypeFeature`, `endCopyProto` in
+`bind.ts`); the settle moves the existing copy there in place (`endCopyLanding`),
+never removing it, since the binding holds it, and the same test draws such
+bindings (in a usage and in a part definition) and compares the copies the page
+and its file both hold, a copy a definition's binding makes over a general
+definition's copy aside (the mapper lands it by text order). An explicit `:>>`
+is resolved as the parse that wrote the file resolves it, which never meets an
+implicit copy (`resolveRedefinedFeature`). The settle goes on until a round moves
+nothing (a chain of nested redefinitions, or of the hop copies of `bind
+y = n1.n2.n3.n4.x`, takes a round per hop). What it does not reach: two features
+of one owner under one name (declared, or the one an unnamed `:>> M` is known
+by), a name typed key by key into the Name box (each prefix is an edit, and a
+prefix another feature bears moves the redirect for good), and a `window.sysml`
+call that points a redefinition at a feature no name in its scope reaches; and
+six more, each a residual of the end copies and of the routes, listed in the
+user guide: (a) a copy whose name nothing its owner inherits any more stays on
+the feature it redefined, where the saved file has `bind p.load = L` with `L`
+unresolved; (b) a REST commit is settled only for the delete of a Redefinition
+target, not for a FeatureTyping or Specialization deleted or retargeted; (c) a
+delete through `window.sysml.model`, a peer or REST lands the explicit
+redefinitions but leaves a copy where `Model.remove`'s walk put it; (d) deleting
+the feature a part definition's `bind` ends on leaves the copies of that binding
+in the page; (e) renaming the feature a copy redefines leaves the copy under its
+old name; (f) a cycle of redefinitions leaves a self-redefinition when a member
+is deleted. A sibling renamed into the name a `:>> M` is known by moves it back to
+the base feature, as the file with both keeps them apart; one the text was loaded
+with stays as written. A removal of a redefinition's target is followed on the model itself:
+a removal planner (`Model.addRemovalPlanner`, `followRedefinitionRemovals`) lands
+the explicit redefinition on the feature the name it is written by finds now
+(`redefinitionsToRetarget`, `retargetRedefinitions`), whoever deletes — a
+command, `window.sysml` or a peer's edit on the model on screen, or a `POST
+/projects/{id}/commits` delete, whose working copy of the repository's head has
+the planner too (the page's model is not touched by a REST commit). That is all
+the planner does: the implicit copies are landed by the settle of a command or
+an SDK call only, and a REST commit settles no other change (a typing or
+specialization deleted or retargeted). `Model.remove`'s walk up the removed target's
+redefinitions to the nearest feature that stays is the fallback for a model nobody
+watches (the command line), and that walk can skip a level the name does not. One whose target keeps no name to write goes, as Save writes the feature
+without it.
+The UI keeps the last parse result and retracts
 the warnings the library binder resolved, so the Problems panel and `checkText`
 finally agree — and forgets it on every path that replaces the model without
 parsing text, or a load or branch switch resurrected the previous document's

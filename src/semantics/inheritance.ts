@@ -55,16 +55,27 @@ export function ownFeatures(model: Model, typeId: ElementId): ElementRecord[] {
  * The features `f` redefines DIRECTLY — the targets of its Redefinitions.
  */
 export function redefinedBy(model: Model, f: ElementRecord): ElementRecord[] {
-  const out: ElementRecord[] = [];
-  for (const r of model.relationshipsFrom(f.id)) {
-    if (r.eClass !== 'Redefinition') continue;
-    for (const t of r.target ?? []) {
-      const g = model.get(t);
-      if (g && g.id !== f.id) out.push(g);
-    }
+  let memo = redefinedByMemos.get(model);
+  if (memo === undefined || memo.rev !== model.rev) {
+    memo = { rev: model.rev, byFeature: new Map() };
+    redefinedByMemos.set(model, memo);
   }
-  return out;
+  let found = memo.byFeature.get(f.id);
+  if (found === undefined) {
+    found = [];
+    for (const r of model.relationshipsFrom(f.id)) {
+      if (r.eClass !== 'Redefinition') continue;
+      for (const t of r.target ?? []) {
+        const g = model.get(t);
+        if (g && g.id !== f.id) found.push(g);
+      }
+    }
+    memo.byFeature.set(f.id, found);
+  }
+  return found.slice();
 }
+/** {@link redefinedBy} for the model's revision: a closure walk asks the same feature again at every feature below it. */
+const redefinedByMemos = new WeakMap<Model, { rev: number; byFeature: Map<ElementId, ElementRecord[]> }>();
 
 /**
  * Every feature `f` redefines, through any number of redefinitions, nearest
@@ -83,6 +94,70 @@ export function redefinedClosure(model: Model, f: ElementRecord): ElementRecord[
   }
   return out;
 }
+
+/**
+ * The one of `features` whose owner specialises the owner of every other — the
+ * feature a type that inherits them all has for their name, as its effective
+ * feature set has it: `part def Q23 :> Q2, Q3 { attribute :>> M = 5.0; }` over
+ * Q2's and Q3's own `:>> M` (it redefines Q's `M` and neither of theirs, the
+ * name finding no more specific). `features` of one gives that one; `undefined`
+ * where no owner is below all the others, or two of the features share one.
+ *
+ * Only an owner with as many general types as any other can be below all the others (each of theirs is among its
+ * generals, so theirs are among them too), so only those are checked, against the one set of generals each has, and
+ * the first in `features` order that holds is the answer — a lattice of N features costs N, not N squared.
+ */
+export function mostSpecificOwned(model: Model, features: readonly ElementRecord[]): ElementRecord | undefined {
+  if (features.length <= 1) return features[0];
+  let most = -1;
+  let candidates: ElementRecord[] = [];
+  for (const f of features) {
+    if (f.ownerId === null) continue;
+    const count = generalIdsOf(model, f.ownerId).size;
+    if (count > most) {
+      most = count;
+      candidates = [f];
+    } else if (count === most) candidates.push(f);
+  }
+  for (const f of candidates) {
+    const generals = generalIdsOf(model, f.ownerId!);
+    if (features.every((o) => o === f || (o.ownerId !== null && o.ownerId !== f.ownerId && generals.has(o.ownerId)))) {
+      return f;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The ids {@link generalizationsOf} gives for `typeId`, kept for the model's revision: a lattice of definitions each
+ * specialising the ones above asks for the same closure at every `:>>` of every usage typed below it, and a walk per
+ * ask made a parse of such a lattice (160 levels) cost 12 s.
+ */
+function generalIdsOf(model: Model, typeId: ElementId): ReadonlySet<ElementId> {
+  let cache = generalIdCaches.get(model);
+  if (cache === undefined || cache.rev !== model.rev) {
+    cache = { rev: model.rev, byType: new Map() };
+    generalIdCaches.set(model, cache);
+  }
+  let ids = cache.byType.get(typeId);
+  if (ids === undefined) {
+    // The walk of generalizationsOf, kept as ids: the type itself is never among them, a cycle back to it included.
+    const seen = new Set<ElementId>([typeId]);
+    const queue: ElementId[] = [typeId];
+    for (let i = 0; i < queue.length; i++) {
+      for (const general of model.typesOf(queue[i]!)) {
+        if (seen.has(general.id)) continue;
+        seen.add(general.id);
+        queue.push(general.id);
+      }
+    }
+    seen.delete(typeId);
+    ids = seen;
+    cache.byType.set(typeId, ids);
+  }
+  return ids;
+}
+const generalIdCaches = new WeakMap<Model, { rev: number; byType: Map<ElementId, ReadonlySet<ElementId>> }>();
 
 /**
  * The features `f` masks BY NAME in its owner's effective feature set

@@ -29,6 +29,18 @@ export interface ChangeEvent {
   /** For reparent: the previous owner id. */
   previousOwnerId?: ElementId | null;
   /**
+   * For update: which fields the change set (`eClass`, `declaredName`, `declaredShortName`, `attrs`, `source`,
+   * `target`). A change of `attrs` alone leaves every name, owner and relationship as it was, which is all a
+   * listener that follows what an element inherits needs to know to pass it over.
+   */
+  fields?: readonly string[];
+  /** For an update that moved the relationship's `source`: the ends it had. */
+  previousSource?: readonly ElementId[];
+  /** For an update that moved the relationship's `target`: the ends it had. */
+  previousTarget?: readonly ElementId[];
+  /** For an update of `declaredName` or `declaredShortName`: the names the element had (those it had). */
+  previousNames?: readonly string[];
+  /**
    * For order: the owner whose children are held in another order (`null`: the
    * top level). An `order` names no element: its `id` is undefined.
    */
@@ -36,6 +48,14 @@ export interface ChangeEvent {
 }
 
 export type ChangeListener = (events: ChangeEvent[]) => void;
+
+/**
+ * Something that follows a removal beyond the removal itself. It is called with the ids a {@link Model.remove}
+ * is about to take away (the element, what it owns, and the edges that reference them), BEFORE any is gone, and
+ * returns what to do once they are, or nothing. It is asked only of a removal that leaves a Redefinition standing
+ * whose target goes (the one thing it plans for): a delete that meets none costs it nothing.
+ */
+export type RemovalPlanner = (going: ReadonlySet<ElementId>) => (() => void) | void;
 
 /** Options when creating an element. */
 export interface CreateElementOptions {
@@ -53,6 +73,7 @@ export class Model {
   /** ownerId → ordered child ids. `null` owner ⇒ roots. */
   private childrenIndex = new Map<ElementId | null, ElementId[]>();
   private listeners = new Set<ChangeListener>();
+  private removalPlanners = new Set<RemovalPlanner>();
   /** When >0, change events are buffered and flushed on transaction end. */
   private txnDepth = 0;
   private pending: ChangeEvent[] = [];
@@ -143,6 +164,18 @@ export class Model {
   subscribe(listener: ChangeListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Have `planner` follow every {@link remove} of this model: whoever removes from it (a command, the SDK, a peer's
+   * edit; a REST commit's working copy has its own) gets what the planner does after the removal, in the removal's
+   * own notification. For what the model cannot decide itself: where a redefinition goes when its target does (the
+   * name its text is saved by, `src/text`), which is no business of `src/core`. The planner of `src/text` plans that
+   * for the explicit redefinitions only (an implicit end copy stays where {@link remove} puts it).
+   */
+  addRemovalPlanner(planner: RemovalPlanner): () => void {
+    this.removalPlanners.add(planner);
+    return () => this.removalPlanners.delete(planner);
   }
 
   /** Batch a set of mutations into a single notification. */
@@ -411,9 +444,18 @@ export class Model {
    * targets). Returns resolved target elements where they exist in-model.
    */
   typesOf(id: ElementId): ElementRecord[] {
-    return this.relationshipsFrom(id)
-      .filter((r) => isTypingSpecialization(r.eClass))
-      .flatMap((r) => (r.target ?? []).map((t) => this.elements.get(t)).filter(Boolean) as ElementRecord[]);
+    // One pass over the edge index, no copy of it: every walk of the generals of a type asks this once per type it
+    // meets, so on a deep lattice the copies and filters were most of a parse.
+    this.ensureEdgeIndex();
+    const out: ElementRecord[] = [];
+    for (const r of this._sourceIndex.get(id) ?? []) {
+      if (!isRelationship(r.eClass) || !isTypingSpecialization(r.eClass)) continue;
+      for (const t of r.target ?? []) {
+        const general = this.elements.get(t);
+        if (general) out.push(general);
+      }
+    }
+    return out;
   }
 
   /* ─────────────────────────────── Update ─────────────────────────────── */
@@ -421,15 +463,28 @@ export class Model {
   update(id: ElementId, patch: Partial<Omit<ElementRecord, 'id' | 'ownerId'>>): ElementRecord {
     const el = this.require(id);
     const placing = placingOf(el);
+    const previousNames =
+      patch.declaredName !== undefined || patch.declaredShortName !== undefined
+        ? [el.declaredName, el.declaredShortName].filter((n): n is string => n !== undefined)
+        : undefined;
     if (patch.eClass !== undefined) el.eClass = patch.eClass;
     if (patch.declaredName !== undefined) el.declaredName = patch.declaredName;
     if (patch.declaredShortName !== undefined) el.declaredShortName = patch.declaredShortName;
     if (patch.attrs !== undefined) el.attrs = mergeAttrs(el.attrs, patch.attrs);
     if (el.attrs.isLibrary === true) this._sawLibrary = true;
     if (placingOf(el) !== placing) this.notePlacing(el);
+    const previousSource = patch.source !== undefined ? el.source : undefined;
+    const previousTarget = patch.target !== undefined ? el.target : undefined;
     if (patch.source !== undefined) el.source = [...patch.source];
     if (patch.target !== undefined) el.target = [...patch.target];
-    this.emit({ type: 'update', id, element: el });
+    const fields = (['eClass', 'declaredName', 'declaredShortName', 'attrs', 'source', 'target'] as const).filter(
+      (k) => patch[k] !== undefined,
+    );
+    const event: ChangeEvent = { type: 'update', id, element: el, fields };
+    if (previousSource !== undefined) event.previousSource = previousSource;
+    if (previousTarget !== undefined) event.previousTarget = previousTarget;
+    if (previousNames !== undefined) event.previousNames = previousNames;
+    this.emit(event);
     return el;
   }
 
@@ -440,7 +495,7 @@ export class Model {
     el.attrs = mergeAttrs(el.attrs, attrs);
     if (el.attrs.isLibrary === true) this._sawLibrary = true;
     if (placingOf(el) !== placing) this.notePlacing(el);
-    this.emit({ type: 'update', id, element: el });
+    this.emit({ type: 'update', id, element: el, fields: ['attrs'] });
     return el;
   }
 
@@ -459,8 +514,9 @@ export class Model {
    */
   setShortName(id: ElementId, declaredShortName: string | undefined): ElementRecord {
     const el = this.require(id);
+    const previousNames = el.declaredShortName === undefined ? [] : [el.declaredShortName];
     el.declaredShortName = declaredShortName;
-    this.emit({ type: 'update', id, element: el });
+    this.emit({ type: 'update', id, element: el, fields: ['declaredShortName'], previousNames });
     return el;
   }
 
@@ -546,12 +602,36 @@ export class Model {
     // Also remove dangling EDGES — any element carrying endpoints (KerML
     // Relationships AND endpoint-bearing Usages like ConnectionUsage / Flow /
     // Transition / Succession) that references a removed element.
+    //
+    // A Redefinition whose target goes but whose feature stays is MOVED, not removed, when the target redefined a
+    // feature in turn: the feature then redefines the nearest feature up the chain that stays (`part s : Q2 {
+    // attribute :>> M = 5.0; }` over Q2's unnamed `:>> M default = 2.0`, deleted, redefines Q's `M` — removed with it,
+    // the feature saved as `attribute = 5.0;` and the user's `:>> M` gone). That is a fallback only: it walks UP the
+    // redefinitions of the target, and the redefinition rule lands on the MOST SPECIFIC feature the text's name finds,
+    // which skips a level the walk takes (Q4's `M4 redefines Q::M` beside Q2's `:>> M`: the walk lands on Q's `M`, the
+    // name `M` on Q2's). A model the app edits has a removal planner (`addRemovalPlanner`) that re-resolves by the
+    // name the saved text writes (`retargetRedefinitions`), so for the explicit redefinitions a delete in the app, through
+    // the SDK, from a peer or in a REST commit, and the same delete in the text agree. It lands no implicit end copy: that
+    // is the store's settle (a command, an SDK call), so a copy stays where this walk puts it for any other route.
+    const moved = new Map<ElementId, ElementId[]>();
     for (const r of this.elements.values()) {
       if (toRemove.has(r.id)) continue;
       const refs = [...(r.source ?? []), ...(r.target ?? [])];
-      if (refs.length > 0 && refs.some((ref) => toRemove.has(ref))) toRemove.add(r.id);
+      if (refs.length > 0 && refs.some((ref) => toRemove.has(ref))) {
+        const targets = r.eClass === 'Redefinition' ? this.survivingTargets(r, toRemove) : undefined;
+        if (targets !== undefined) moved.set(r.id, targets);
+        else toRemove.add(r.id);
+      }
+    }
+    const afterwards: Array<() => void> = [];
+    if (moved.size > 0) {
+      for (const plan of this.removalPlanners) {
+        const after = plan(toRemove);
+        if (after) afterwards.push(after);
+      }
     }
     return this.transaction(() => {
+      for (const [rid, target] of moved) this.update(rid, { target });
       const removed: ElementId[] = [];
       for (const rid of toRemove) {
         const rec = this.elements.get(rid);
@@ -562,8 +642,42 @@ export class Model {
         removed.push(rid);
         this.emit({ type: 'remove', id: rid, element: rec });
       }
+      for (const after of afterwards) after();
       return removed;
     });
+  }
+
+  /**
+   * The targets a Redefinition keeps when `gone` is removed: its own that stay, and for each that goes the nearest
+   * feature it redefines that stays (a breadth-first walk over its Redefinitions). `undefined` when the redefinition
+   * has to go with them: its feature is removed, or a target that goes redefines nothing that stays.
+   */
+  private survivingTargets(r: ElementRecord, gone: ReadonlySet<ElementId>): ElementId[] | undefined {
+    if ((r.source ?? []).some((x) => gone.has(x)) || (r.target ?? []).length === 0) return undefined;
+    const out: ElementId[] = [];
+    for (const t of r.target ?? []) {
+      if (!gone.has(t)) {
+        if (!out.includes(t)) out.push(t);
+        continue;
+      }
+      const seen = new Set<ElementId>([t]);
+      const queue: ElementId[] = [t];
+      let found: ElementId | undefined;
+      for (let i = 0; i < queue.length && found === undefined; i++) {
+        for (const e of this.relationshipsFrom(queue[i]!)) {
+          if (e.eClass !== 'Redefinition') continue;
+          for (const x of e.target ?? []) {
+            if (seen.has(x) || !this.elements.has(x)) continue;
+            seen.add(x);
+            if (gone.has(x)) queue.push(x);
+            else if (found === undefined) found = x;
+          }
+        }
+      }
+      if (found === undefined) return undefined;
+      if (!out.includes(found)) out.push(found);
+    }
+    return out;
   }
 
   /* ─────────────────────────── Index maintenance ──────────────────────── */
