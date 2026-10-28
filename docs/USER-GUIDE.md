@@ -1291,7 +1291,8 @@ p.m2 >= 0.0 }`), is that instance's reading: a
 the carried value (q's `:>> L`) or renaming the bound end (q2's `ld :>> load`),
 else at the context itself, never a target's
 `validation/target-by-specialisation` verdict. A definition's relation over a
-feature that states no value is read in the instance whose binding gives it one:
+feature that states no value, and reads that feature itself, is read in the
+instance whose binding gives it one:
 P's `assert constraint a2 { load <= 10.0 }` over P's `attribute load`, in Q's
 `part p : P` under Q's `bind p.load = L` and `L = 50.0`, is read in Q's p at the
 50 the binding carries — the row `part p : P { attribute :>> load = 50.0; }`
@@ -1304,9 +1305,22 @@ the assert in that instance as an axiom, so its axioms are inconsistent. Where
 Q's instances give the binding different values (`L default = 50.0`, `q2 : Q {
 attribute :>> L = 5.0; }`) each reads its own, in a row of its own. P's own
 row, which has no value to read, is *could not be evaluated*. A plain `constraint
-a2` of P is read in the same instance and is refuted on every surface. A binding
-that gives the instance no value this tool reads (two defaults that differ) lists
-no such row: whatever reads that value is *could not be evaluated*. The binding
+a2` of P is read in the same instance and is refuted on every surface. Two
+shapes are not read, and the violation in them goes unreported. A relation that
+reads `load` only through a value derived from it (`attribute m2 :
+ScalarValues::Real = 10.0 - load` under `assert constraint c { m2 >= 0.0 }`) is
+not read in Q's p, though it is where the instance redefines `load` itself
+(`part p : P { attribute :>> load = 50.0; }`: *p::m2 = -40 misses P::c*). And
+where Q's `L` states no value at all, not even a `default`, and only an instance
+gives it one (`part q : Q { attribute :>> L = 50.0; }`), neither an `assert` nor
+a plain `constraint` of P is read in q's p. In both the check lists no row for
+the instance and reports nothing of the violation, and the numeric surface and
+the literal engine decide the relations beside it at the values they read; the
+SMT engine reports its axioms inconsistent only for the `assert` over the
+instance-supplied value (it files that assert in q's p as an axiom), and for the
+derived shape proves the relations beside it. A binding that gives the instance
+no value this tool reads (two defaults that differ) lists no such row: whatever
+reads that value is *could not be evaluated*. The binding
 need not be written in the definition around the instance: one written in an
 enclosing instance (`part s2 : S { bind q.g = K; }` over S's `part q : G`, or
 `bind s2.q.g = K;` in the package) makes s2's q and its g copies of S's, and a
@@ -1675,8 +1689,14 @@ against it, in any order; so is one an asserted relation reads beside L (`M =
 ends of a binding that reaches one end through a part (`bind p.L = M`, `L == 50.0`
 in p's type and `M == 60.0` in the element) are still only the binding's violated
 pair, each end's readings standing, and the pair only joins features of the element
-that holds the binding; and an FMI export's `start` still reads the first equation
-written.
+that holds the binding; an FMI export's `start` still reads the first equation
+written; and the SMT engine holds one symbol for a feature across the usages of
+one definition, so two usages that each assert one end of a binding the
+definition writes (`bind L = K` in P, `part a : P { assert constraint ea { L ==
+50.0 } }`, `part b : P { assert constraint eb { K == 60.0 } }`) read *inconsistent
+axioms* on its rows though neither instance contradicts itself — the literal
+engine decides those rows, and the numeric surface does not judge them (*the
+solve did not converge*).
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
@@ -2045,7 +2065,7 @@ strongest row wins, in the order refuted → design-admitted → undecided.
 | `refuted` | both | `literal`: false at your values, where no such contradiction reaches a value the relation reads. `smt`: `A ∧ P ∧ ¬G` **sat**, with the witness re-confirmed through this tool's own evaluator before you see it | **1** — and `--allow-inconclusive` does not reach it |
 | `design-admitted` | `smt` | A refutation reached only **after** `--free` released a value your model states, so it is a design your model admits rather than a violation of it | **2**, never 1 |
 | `vacuous` | both | `literal`: the `assume` clause is false at your values (`verification/vacuous-pass`). `smt`: `A ∧ P` is unsat, so nothing at all satisfies the premises (`verification/vacuous`) | **2**, with `--strict-vacuity` and without it — the flag changes the code and the severity and nothing else |
-| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms (on the literal engine: a relation over a value an `assert` false at your values, or two asserted equations that give one feature two values, contradicts), unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
+| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms (on the literal engine: a relation over a value an `assert` false at your values, a `bind` the check reports violated, or two asserted equations that give one feature two values, contradicts), unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
 | `holds-structurally`, `holds-within-bound` | none in this build | Declared in the evidence vocabulary and in `schemas/evidence-record.schema.json`, reserved for a structural argument and for a bounded walk. **No engine here writes either**, so a record carrying one did not come from this build | — |
 
 Two readings that table is defending. `holds-at-values` discharging a run is

@@ -5930,8 +5930,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // stands at P's 1, to r's q's L, the 50 Q's `L == 2.0 * K` gives at Q2's K of 25: the model contradicts itself, and the
     // check reports the binding. The implicit copy of q the binding makes in the package's r holds what Q asserts of its
     // L, so the SMT engine read r's L at 50 beside the binding's 1 — it read L as an unconstrained symbol, and decided
-    // negT F and posF T (and ctlA, another instance's) instead of reporting inconsistent axioms. The literal engine still
-    // decides them (S3 of this branch: a violated binding, for it, is a contradiction as an assertion is).
+    // negT F and posF T (and ctlA, another instance's) instead of reporting inconsistent axioms. The literal engine
+    // reads them inconclusive since S3 (a violated binding, for it, is a contradiction as an assertion is).
     ...standing('G340', `package G340 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
@@ -8903,7 +8903,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // in Q) and so files no row of q’s p, and `sysml-check --strict` passes a model that contradicts itself, as at the
     // base. The SMT engine files the assert in q’s p as an axiom, so it reads kL inconsistent (I7_ALLOWED); the literal
     // engine and the numeric surface decide kL at its 50. The row that is not filed reads F. Pinned as it stands: the step
-    // that files it moves this pin.
+    // that files it moves this pin. A plain `constraint` of P is not read in q’s p either (the SMT engine files no axiom
+    // for it, so kL reads 50 on every surface): K2P’s `L default = 1.0` is what lists q.
     'bound-vc-ivalue': probe(`package VCV {
         part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
         part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
@@ -8912,6 +8913,23 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'VCV::P::a2': ['?/-/?/-', '?'],
       'VCV::kL': ['T/T/T/X', null],
+    }),
+    // A known gap (the review of contradictory-models; the derived neighbour of VC): P’s assert reads `load` only through
+    // `m2 = 10.0 - load`, and Q’s `bind p.load = L` gives q’s p the 50 of Q’s L. The context is listed for a name that
+    // denotes a feature with no value that a binding gives one (`bindingValued`), and m2 states a value (its expression),
+    // so q’s p is not read: the check files no row of it and `sysml-check --strict` passes a model whose p::m2 is -40 against
+    // P’s `m2 >= 0.0`, and no surface reports it (k reads 50 on every surface, and holds). The twin that redefines `load`
+    // itself (`part p : P { attribute :>> load = 50.0; }`) reports `p::m2 = -40 misses P::c`, and the literal and the SMT
+    // engine read the relations beside it inconclusive. Pinned as it stands: the step that reads a derived value through a
+    // binding moves this pin.
+    'bound-vc-derived': probe(`package I5 {
+        part def P { attribute load : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; assert constraint c { m2 >= 0.0 } }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; bind p.load = L; }
+        part q : Q;
+        constraint k { q.L >= 0.0 }
+      }`, {
+      'I5::P::c': ['?/-/?/-', '?'],
+      'I5::k': ['T/T/T/T', 'T'],
     }),
     // The assert below or beside the binding's owner: in a definition that specialises it (RBS1), beside it
     // in the package (RBS2), in a usage of it (RBS5). The binding reading read L's default 4 against the
