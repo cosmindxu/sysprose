@@ -552,6 +552,69 @@ describe('Requirements panel — Ctrl/Cmd+S in the reference picker', () => {
 });
 
 /**
+ * Escape and Enter in the reference picker close it under the focus, and a pick
+ * selects the requirement row: the focus fell to the page, and the next
+ * Backspace deleted the requirement just linked. It goes to Save, as after a
+ * cell, where the destructive keys are ignored. A click on a candidate is the
+ * same close.
+ */
+describe('Requirements panel — closing the reference picker', () => {
+  const SRC = `package P {\n    part def Mast;\n    requirement <R1> maxMass;\n}`;
+
+  it.each([
+    ['Escape', (view: ReturnType<typeof mount>, picker: HTMLElement) => fireEvent.keyDown(picker, { key: 'Escape' }), 0],
+    ['Enter on a candidate', (view: ReturnType<typeof mount>, picker: HTMLElement) => fireEvent.keyDown(picker, { key: 'Enter' }), 1],
+    ['a click on a candidate', (view: ReturnType<typeof mount>) => fireEvent.mouseDown(view.getAllByTestId('req-ref-option')[0]!), 1],
+  ])('%s leaves the focus on Save, where Backspace deletes nothing', async (_what, close, linked) => {
+    const save = document.createElement('button');
+    save.dataset.testid = 'tb-save';
+    document.body.appendChild(save);
+    window.addEventListener('keydown', handlePageKey);
+    try {
+      const view = mount(SRC);
+      const row = view.getAllByTestId('req-row').find((r) => rowName(r).includes('maxMass'))!;
+      const id = idOf(view, 'maxMass');
+      fireEvent.click(row.querySelector('[data-testid="req-ref-add"]')!);
+      const picker = view.getByTestId('req-ref-picker') as HTMLInputElement;
+      picker.focus();
+      expect(document.activeElement).toBe(picker);
+      close(view, picker);
+
+      expect(view.queryByTestId('req-ref-picker'), 'the picker closed').toBeNull();
+      expect(view.queryAllByTestId('req-ref-chip')).toHaveLength(linked);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(document.activeElement).toBe(save);
+      act(() => st().select(id));
+      expect(fireEvent.keyDown(document.activeElement!, { key: 'Backspace' }), 'the page did not take the key').toBe(true);
+      expect(st().model.has(id), 'the requirement is still there').toBe(true);
+    } finally {
+      window.removeEventListener('keydown', handlePageKey);
+      save.remove();
+    }
+  });
+
+  it('Enter with no candidate matching leaves the picker open and focused', async () => {
+    const save = document.createElement('button');
+    save.dataset.testid = 'tb-save';
+    document.body.appendChild(save);
+    try {
+      const view = mount(SRC);
+      const row = view.getAllByTestId('req-row').find((r) => rowName(r).includes('maxMass'))!;
+      fireEvent.click(row.querySelector('[data-testid="req-ref-add"]')!);
+      const picker = view.getByTestId('req-ref-picker') as HTMLInputElement;
+      picker.focus();
+      fireEvent.change(picker, { target: { value: 'zzz-no-such' } });
+      fireEvent.keyDown(picker, { key: 'Enter' });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(view.queryByTestId('req-ref-picker'), 'still open').toBe(picker);
+      expect(document.activeElement).toBe(picker);
+    } finally {
+      save.remove();
+    }
+  });
+});
+
+/**
  * Ctrl/Cmd+S in a cell commits it and closes it, as Enter does — a rename, an
  * id, a text — and the save holds what was typed. Left to fall to the page,
  * the focus would make the next keys the page's: Backspace would delete the

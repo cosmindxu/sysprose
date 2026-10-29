@@ -487,10 +487,10 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
 (the grouping); `src/ui/store.ts:327-340` (`diagramRootId`, the diagram
-scope), `1566-1721` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2735-2752` (`pinNodePositions`: the move itself), `2332-2389`
+scope), `1566-1740` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2758-2775` (`pinNodePositions`: the move itself), `2355-2412`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4469-4511` (`openText`: a file opened as text starts afresh).
+`4500-4542` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -676,16 +676,16 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1763-1882` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `2097-2239` (`recomputeSteps`, `flushRecomputeImpl`:
-the steps of a recompute), `2027-2074` (`watchModel`, `beginEdit`, `settleEdit`: an edit's
-redefinitions settled in its one undo step, a removal followed), `2248-2431` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
+**Source of truth:** `src/ui/store.ts:1782-1901` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `2120-2262` (`recomputeSteps`, `flushRecomputeImpl`:
+the steps of a recompute), `2046-2093` (`watchModel`, `beginEdit`, `settleEdit`: an edit's
+redefinitions settled in its one undo step, a removal followed), `2271-2454` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
 edit, each listing the model in the order its text gives it; `typedTextFirst`, `applyParsed`: a
 field's change over typed text), `912-969` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `3030-3061`
-(`createElement`: a new element), `3353-3421` (`reparent`, `reparentMany`: a
-move), `5179-5240` (`libraryNote`: the note that says so), `3863-3876`
-(`applyText`), `4323-4369` (`undo`, `redo`), `5268-5326`
+`sdkIntoLibrary`: nothing added to the standard library), `3053-3084`
+(`createElement`: a new element), `3376-3444` (`reparent`, `reparentMany`: a
+move), `5210-5271` (`libraryNote`: the note that says so), `3886-3899`
+(`applyText`), `4346-4400` (`undo`, `redo`), `5299-5357`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/core/model.ts` (`adoptSerialOrder`: the order the text gives),
 `src/collab/model-doc.ts` (`bindModelToDoc`: a room, and a peer that joins it);
@@ -4344,8 +4344,8 @@ makes many edits makes them in one `commit(fn)`, which lists the model once
 for the elements it adds; each `reparent` lists it at its own call, inside a
 `commit(fn)` too.
 
-**Source of truth:** `src/ui/store.ts:3546-3728` (`runValidation`,
-`solveParametric`: the four buttons), `2241-2431` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3569-3751` (`runValidation`,
+`solveParametric`: the four buttons), `2264-2454` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -4619,7 +4619,11 @@ meet a conflict). Save — the button, or `Ctrl/⌘ + S` from anywhere in the ap
 a field included ([Appendix B](#appendix-b--keyboard-shortcuts)) — stores the
 model, so text typed in the Text view and not yet applied is applied first, as
 **Apply text → model** does, and the save holds what is on screen, still under
-the current project name. Two kinds of typed text are kept back instead: the
+the current project name. That name does not follow the model's first package
+through Undo and Redo: a package renamed in the app, or an Undo of an apply,
+leaves it as it was, so the next Save writes the project that is open and no
+other (an Undo of New, Open, Import or a switch of branch, which a merge ends
+in, gives back the name the project had before it). Two kinds of typed text are kept back instead: the
 model is saved as it stands, the Text view still reads *modified — not yet
 applied*, and, when no Google Drive file is attached, the strip under the
 toolbar says so.
@@ -4711,16 +4715,16 @@ carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
 `src/ui/store.ts:830-848` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3880-3977` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `4225-4294` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `5090-5100` (`mergeLoads`: a merge that loads),
-`5102-5240` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+this browser), `3903-4000` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `4248-4317` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `5121-5131` (`mergeLoads`: a merge that loads),
+`5133-5271` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-106`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
 `leaveBeforeUnload`: the tab's question), `1399-1466` (the question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:181-191` (the page's listener),
-`src/ui/store.ts:5080-5088` (`askBeforeLeaving`),
+`src/ui/store.ts:5111-5119` (`askBeforeLeaving`),
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
 
@@ -4975,8 +4979,8 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:238`
-(`UNDO_LIMIT`: undo is bounded), `1763-1793` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5415-5538` (`mergeLibrary`, `loadStandardLibraryAsync`:
+(`UNDO_LIMIT`: undo is bounded), `1782-1812` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `5446-5569` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:200-312`.
 
@@ -5151,8 +5155,10 @@ an Explorer rename, the canvas context menu's rename box or a Requirements table
 cell it closes the box and leaves the focus on **Save**, so a `Backspace` after
 it deletes nothing. `Escape` closes the same boxes without writing what was
 typed, and the focus goes to **Save** as well (the context menu's rename box
-hands it back to its own *Rename* item). Every other key in a field stays the
-field's own.
+hands it back to its own *Rename* item). The same holds in the Requirements
+table's reference picker — `Enter` on a candidate, a click on one, or `Escape`
+closes it and leaves the focus on **Save** — and in the Regroup view's bundle
+name and port name boxes. Every other key in a field stays the field's own.
 
 `Ctrl/⌘ + S` also first applies what you typed in the Text view, as
 **Apply text → model** does, so the save holds the text on screen — unless the
@@ -5182,4 +5188,4 @@ over the field's change, which one Undo brings back.
 There is no `Ctrl+N`; **New** is a button only.
 
 **Source of truth:** `src/ui/commands.ts:39-106`, `200-435`, `src/ui/App.tsx:143-148`,
-`src/ui/panels/RequirementsTable.tsx:575-646` (the reference picker).
+`src/ui/panels/RequirementsTable.tsx:575-651` (the reference picker).
