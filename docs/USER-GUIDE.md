@@ -1741,7 +1741,8 @@ value to such defaults through a package's binding on a definition's feature
 `default = 9.0` and p4's `:>> load default = 7.0`: p2's load is read at L's 5 on
 the check, and p3's, which only M would carry it to, is read on no surface — the same
 where the equation and the binding are written in a definition W and the slot is w's
-p2, and where the assert fixes the slot itself with no binding at it (`p2.load == 5.0`,
+p2 (the equation may sit in a definition that encloses W and name the feature by a dotted
+path, or in a supertype or a subtype of W), and where the assert fixes the slot itself with no binding at it (`p2.load == 5.0`,
 under the same two defaults that differ): p3's load and M are read on no surface, the
 numeric surface included; that surface alone still reads the slot itself at the assert's 5). An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
@@ -1849,8 +1850,9 @@ requires and no value of the model (the variable's `description` says so:
 no input at it, so the outputs over it read NaN; and Solve lists a measure of
 effectiveness that is one as *(unknown)*. A value written as a number, a
 Boolean or a String keeps its start. A parameter or input the model gives no
-value at all has the same placeholder start (its `description` says *start is
-the type default, not a model value: the model states none*), and a
+value this tool reads (none, or one it cannot evaluate, such as `A + 1.0` over a
+valueless `A`) has the same placeholder start (its `description` says *start is
+the type default, not a model value: the model states none this tool reads*), and a
 co-simulation holds no input at it either: a block's output over a valueless
 input reads NaN until the master or the caller sets that input, never the
 output of an invented 0. As wide as the rest of this abstention,

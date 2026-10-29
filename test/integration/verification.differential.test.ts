@@ -9005,6 +9005,73 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'E1Q::cM': ['?/?/?/?', '?'],
       'E1Q::fix': ['?/-/T/-', null],
     }),
+    // fence-numeric's whole-branch review: an asserted equation that reaches the solve only as a per-instance copy is
+    // fenced as E1E's is. The assert in an ENCLOSING definition over a dotted path (C6: V's `w.L == 5.0`, beside W's
+    // `bind p2.load = L`), in a SUPERTYPE with the binding in the subtype (E1S), and the binding in the supertype with
+    // the assert in the subtype (E2S). The numeric solve read M and p3's load at the 5 there (c3T T, c3F F, cM F), where
+    // the check, the literal engine and the SMT engine read none; the slot itself (c2) keeps each surface's reading.
+    'stand-gw-e1-encl-over': probe(`package C6 {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W { attribute L : ScalarValues::Real; part p2 : P; bind p2.load = L; }
+        part def V { part w : W; assert constraint fix { w.L == 5.0 } }
+        part v : V;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint cM { M >= 6.0 }
+        constraint c2 { v.w.p2.load <= 6.0 }
+      }`, {
+      'C6::c2': ['?/?/T/?', null],
+      'C6::c3F': ['?/?/?/?', '?'],
+      'C6::c3T': ['?/?/?/?', '?'],
+      'C6::cM': ['?/?/?/?', '?'],
+      'C6::V::fix': ['?/-/T/-', null],
+    }),
+    'stand-gw-e1-super': probe(`package E1S {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W0 { attribute L : ScalarValues::Real; assert constraint fix { L == 5.0 } }
+        part def W :> W0 { part p2 : P; bind p2.load = L; }
+        part w : W;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint cM { M >= 6.0 }
+        constraint c2 { w.p2.load <= 6.0 }
+      }`, {
+      'E1S::c2': ['T/T/T/?', null],
+      'E1S::c3F': ['?/?/?/?', '?'],
+      'E1S::c3T': ['?/?/?/?', '?'],
+      'E1S::cM': ['?/?/?/?', '?'],
+      'E1S::W0::fix': ['T/-/T/-', 'T'],
+      'E1S::W0::fix in E1S::W': ['T/-/T/-', 'T'],
+    }),
+    'stand-gw-e2-super': probe(`package E2S {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W0 { attribute L : ScalarValues::Real; part p2 : P; bind p2.load = L; }
+        part def W :> W0 { assert constraint fix { L == 5.0 } }
+        part w : W;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint cM { M >= 6.0 }
+        constraint c2 { w.p2.load <= 6.0 }
+      }`, {
+      'E2S::c2': ['?/?/T/?', null],
+      'E2S::c3F': ['?/?/?/?', '?'],
+      'E2S::c3T': ['?/?/?/?', '?'],
+      'E2S::cM': ['?/?/?/?', '?'],
+      'E2S::W::fix': ['T/-/T/-', 'T'],
+      'E2S::W::fix in E2S::w': ['?/-/?/-', null],
+    }),
     // default-stands S2's review. A `part :>> p` redefinition whose assert defines a valueless feature that a
     // binding of the general definition joins to a `default` — in a usage (SRU: q2's `part :>> p`) or in a
     // specialisation (SRS: Q2's) — gives it two values there, the equation's 50 and the default's 1, as the `=`

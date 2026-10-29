@@ -156,7 +156,7 @@ const START_WITHHELD_NOTE =
   'start is the type default, not a model value: asserted equations give this feature, or one it is tied to, two values';
 
 /** The description of a variable whose `start` is the type's default because the model states none ({@link FmiVariable.startDefaulted}). */
-const START_DEFAULTED_NOTE = 'start is the type default, not a model value: the model states none';
+const START_DEFAULTED_NOTE = 'start is the type default, not a model value: the model states none this tool reads';
 
 /** Format a feature's value as an FMI `start` string for the given type, or undefined. */
 function startOf(model: Model, feat: ElementRecord, type: FmiType): string | undefined {

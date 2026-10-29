@@ -813,7 +813,7 @@ function headBindingsCarrying(model: Model, eqs: readonly Equation[], relationOf
   if (!eqs.some((eq) => eq.head === true)) return out;
   const carried = new Set<ElementId>();
   for (const eq of eqs) {
-    const owner = eq.asserted === true ? relationOf.get(eq)?.ownerId : undefined;
+    const owner = eq.asserted === true ? (relationOf.get(eq)?.ownerId ?? READER_OF.get(eq)) : undefined;
     if (owner == null) continue;
     for (const [name, id] of eq.nameToId) if (givenWayThroughHead(model, owner, name) !== undefined) carried.add(id);
   }
@@ -1225,6 +1225,9 @@ interface InstanceVariable {
 /** The instance variables an equation or inequality reads, for {@link instanceSystem}. */
 const INSTANCES = new WeakMap<Equation | Inequality, InstanceVariable[]>();
 
+/** The definition whose instance an asserted equation was copied for ({@link instanceSystem}'s `hold`): the owner {@link headBindingsCarrying} reads for a copy. */
+const READER_OF = new WeakMap<Equation, ElementId>();
+
 /**
  * `nameToId` with every path `el` reads through an instance of its own keyed
  * to that instance's variable ({@link InstanceVariable}) — `instance`
@@ -1495,6 +1498,7 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           const eq = relationEquation(model, read, memo, false, undefined, instance);
           if (eq) {
             eq.asserted = true;
+            READER_OF.set(eq, reader.id);
             // An asserted equation defines, in the instance, the valueless
             // features it names: the instance's own, never a check's to fix.
             const body = parseRelationBody(String(c.attrs.expression));
