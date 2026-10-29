@@ -114,6 +114,7 @@ import { effectiveNameOf, generalizationsOf, redefinedClosure } from './inherita
 import { isNonNormativeStatement } from './statement-kind';
 import {
   NO_MARKERS,
+  lowerUnitLiterals,
   mergedScope,
   namesReadIn,
   parseRelationBody,
@@ -588,16 +589,24 @@ function relationReads(model: Model, el: ElementRecord, instance?: string): Elem
   return relationVarsOf(node, keyed?.nameToId ?? scope);
 }
 
+/** A string literal in a relation body, either quote (a backslash escapes the next character). */
+const STRING_LITERAL_RE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+
 /**
  * The names a relation body that does not parse writes (`M == max(L, 20.0)`,
  * `M == L ** 2.0`) — every dotted identifier in its text, a numeral's exponent
  * excluded — as one node that reads them all, or `undefined` for none. A name
  * that denotes no feature is read by nothing downstream, so a function's own
- * name costs nothing: the set errs wide, never narrow.
+ * name costs nothing: the set errs wide, never narrow. What is read is the text
+ * without its string literals and `[unit]` literals: the `m` in `M ** 2.0 ==
+ * 4.0 [m]` is a metre, and read as the feature `m` it held that feature as one
+ * the assert constrains.
  */
 function writtenNames(raw: string): ExprNode | undefined {
   let node: ExprNode | undefined;
-  for (const text of new Set(raw.match(/(?<![\w.])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g) ?? [])) {
+  const lowered = lowerUnitLiterals(raw.replace(STRING_LITERAL_RE, ' '));
+  for (const text of new Set(lowered.text.match(/(?<![\w.])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g) ?? [])) {
+    if (lowered.literals.has(text)) continue;
     const ref: ExprNode = { kind: 'ref', path: text.split('.') };
     node = node ? { kind: 'binary', op: '+', left: node, right: ref } : ref;
   }
@@ -1844,11 +1853,19 @@ interface SolveCore {
    */
   contested: Map<ElementId, ElementId[]>;
   /**
-   * Those of {@link SolveCore.contested} whose plain constraints include a curved equation ({@link isCurved}) beside
-   * another, which the solve withholds whether they disagree at the root it took or not: the root is no value the
-   * model states.
+   * Those of {@link SolveCore.contested} over which the equations have more than one root (a curved one, {@link
+   * isCurved}, or a coupled product, {@link isJointlyCurved}) beside a plain constraint, which the solve withholds whether
+   * the constraints disagree at the root it took or not: the root is no value the model states. `plain`: the curved
+   * equation is itself a plain constraint, and so are the others it is beside ({@link SolveCore.contested} lists
+   * them); `model`: one of the equations is the model's own (a stated value, an assert).
    */
-  rival: Set<ElementId>;
+  rival: Map<ElementId, 'plain' | 'model'>;
+  /**
+   * The values of a component with an equation of more than one root, each with the descriptions of those equations
+   * (rival ones too): the root the solve took is what a lone curved plain constraint is imposed at, and a relation the
+   * solve gathers no equation from (an inequality, a conjunction) is not judged at it.
+   */
+  curved: Map<ElementId, string[]>;
   converged: boolean;
   iterations: number;
   residual: number;
@@ -1974,17 +1991,28 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // produced them. A fact that reads a value a check fixed gives one that moves
   // with it, and is not among them ({@link designReadings}).
   const factFixed = new Set<ElementId>();
+  // The values an equation found no root at: what it reads is the same, so is the answer. Every propagation pass asks again of every
+  // equation with one unknown left, and a one-to-one equation that finds no root searches the line for one (203 samples and the
+  // poles among them): in a chain that takes a pass to fix each link, that was once per link per equation.
+  const missedAt = new Map<Equation, string>();
   // Fix the one unknown `eq` reads, where it may: whether it did.
   const orient = (eq: Equation): boolean => {
     const unknowns = eq.vars.filter((v) => !values.has(v));
     if (unknowns.length !== 1) return false;
     const u = unknowns[0];
     if (fixedIds.has(u) || !mayOrient(eq, u, binding)) return false;
+    const reads = eq.vars.map((v) => values.get(v)).join(',');
+    if (missedAt.get(eq) === reads) return false;
     const val = solveForSingle(eq, u, values, tol);
-    if (val === undefined || !Number.isFinite(val)) return false;
+    if (val === undefined || !Number.isFinite(val)) {
+      missedAt.set(eq, reads);
+      return false;
+    }
     values.set(u, val);
     used.add(eq);
-    if (!isCheck(eq) && eq.vars.every((v) => v === u || known.has(v) || factFixed.has(v))) factFixed.add(u);
+    // A root of an equation with more than one is one of several: no value the model fixes ({@link designReadings}); that of an
+    // equation one to one in it (`d / t`, `2.0 ^ y`) is the only.
+    if (!isCheck(eq) && eq.vars.every((v) => v === u || known.has(v) || factFixed.has(v)) && !isCurved(eq, [u])) factFixed.add(u);
     return true;
   };
   // The facts to their fixpoint: after every check that fixes a value as well,
@@ -2070,11 +2098,21 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
         const el = relationOf.get(eq);
         return el === undefined || el.eClass !== 'ConstraintUsage' || isAsserted(el) || imposed.has(el.id);
       });
+  // The rows in an order of their own, not the text's, where it could show: of two rows with the same entry in a column the
+  // elimination takes the earlier, and a row that reads a free feature frees the one it pivots. `x * y == z` above `x ==
+  // 1.0` and `x == 3.0` freed x; below them it did not. The model's own equations first, as they are oriented first, then
+  // the plain constraints, fewest features first and then by the text of the relation.
+  const rows = (list: readonly Equation[]): Equation[] => [
+    ...list.filter((eq) => !isCheck(eq)),
+    ...list
+      .filter(isCheck)
+      .sort((a, b) => a.vars.length - b.vars.length || (a.raw < b.raw ? -1 : a.raw > b.raw ? 1 : 0)),
+  ];
   const free =
     unsettled.size === 0
-      ? freeFeatures(own, values, stated)
+      ? freeFeatures(rows(own), values, stated)
       : freeFeatures(
-          own.filter((eq) => !eq.vars.some((v) => unsettled.has(v))),
+          rows(own.filter((eq) => !eq.vars.some((v) => unsettled.has(v)))),
           values,
           (v) => stated(v) || unsettled.has(v),
         );
@@ -2082,20 +2120,30 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // two that disagree, the one it took is the one written first, so none holds
   // there; of two that agree, the one written first was imposed and the other
   // judged satisfied, and the other way round — both are design equations.
-  const { contested, rival, agreeing } = designReadings(
+  const { contested, rival, curved, agreeing } = designReadings(
     eqs,
     values,
     tol,
-    (v) => given.has(v) || free.has(v) || unsettled.has(v) || factFixed.has(v),
+    (v) => given.has(v) || factFixed.has(v),
+    (v) => free.has(v) || unsettled.has(v),
+    // The features the definitions close that no value the model states or a fact fixes one to one gives.
+    new Set([...closedNow].filter((v) => !known.has(v) && !unreadable.has(v) && !factFixed.has(v))),
     isCheck,
     used,
     relationOf,
+    (eq) => {
+      // By its name where it has one; the text of a stated value, or of an equation an instance holds, otherwise.
+      const name = relationOf.get(eq)?.declaredName;
+      if (name) return name;
+      const feature = eq.states === undefined ? undefined : model.get(baseIdOf(eq.states))?.declaredName;
+      return `\`${feature ? `${feature} = ${eq.raw}` : eq.raw}\``;
+    },
   );
   for (const [eq, el] of relationOf) {
     if (imposed.has(el.id) && eq.vars.some((v) => contested.has(v))) imposed.delete(el.id);
     else if (agreeing.has(eq) && !eq.vars.some((v) => contested.has(v))) imposed.add(el.id);
   }
-  return { point: values, free, unsettled, given, relations, imposed, held, contested, rival, converged, iterations, residual };
+  return { point: values, free, unsettled, given, relations, imposed, held, contested, rival, curved, converged, iterations, residual };
 }
 
 /**
@@ -2153,48 +2201,302 @@ function heldByUnreadAsserts(
   return out;
 }
 
-/** What a node varies as in one unknown: nothing (`const`), a constant multiple of it plus a constant (`affine`), or neither. */
-type Shape = 'const' | 'affine' | 'curved';
+/**
+ * What a node varies as in one unknown: nothing (`const`), a constant multiple of it plus a constant (`affine`), a
+ * one-to-one function of it that is not (`mono`: `2.0 / (x - 1.0)`, `2.0 ^ y`, one root at most when it is set equal to
+ * something that does not vary with it: {@link equationShape} reads the two sides of an equation together), or neither
+ * (`curved`: `x * x`, `1.0 / x + x`, an `if` over it — it may have more than one root: an over-approximation, `x ^ 3.0` has one real root). A constant over an affine function of it
+ * (`2.0 / x`, a quotient by a value the other equations fix) is `mono`, wherever the equation is read.
+ */
+type Shape = 'const' | 'affine' | 'mono' | 'curved';
 
-function shapeIn(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>, unknown: ElementId): Shape {
+/**
+ * The {@link Shape} of `node` in the features `unknown` picks out. With `joint`, those are several at once, and a
+ * function of them that is not affine is curved however it is built: `mono` is a property of one feature.
+ */
+function shapeOver(
+  node: ExprNode,
+  nameToId: ReadonlyMap<string, ElementId>,
+  unknown: (id: ElementId | undefined) => boolean,
+  joint = false,
+): Shape {
   switch (node.kind) {
     case 'ref':
-      return nameToId.get(node.path.join('.')) === unknown ? 'affine' : 'const';
+      return unknown(nameToId.get(node.path.join('.'))) ? 'affine' : 'const';
     case 'unary': {
-      const inner = shapeIn(node.operand, nameToId, unknown);
+      const inner = shapeOver(node.operand, nameToId, unknown, joint);
       return node.op === 'not' && inner !== 'const' ? 'curved' : inner;
     }
     case 'binary': {
-      const l = shapeIn(node.left, nameToId, unknown);
-      const r = shapeIn(node.right, nameToId, unknown);
+      const l = shapeOver(node.left, nameToId, unknown, joint);
+      const r = shapeOver(node.right, nameToId, unknown, joint);
       if (l === 'curved' || r === 'curved') return 'curved';
       if (l === 'const' && r === 'const') return 'const';
-      if (node.op === '+' || node.op === '-') return 'affine';
-      if (node.op === '*') return l === 'const' || r === 'const' ? 'affine' : 'curved';
-      return node.op === '/' && r === 'const' ? 'affine' : 'curved';
+      const flat = (s: Shape): boolean => s === 'const' || s === 'affine';
+      switch (node.op) {
+        case '+':
+        case '-':
+          return flat(l) && flat(r) ? 'affine' : l === 'const' || r === 'const' ? 'mono' : 'curved';
+        case '*':
+          return l === 'const' ? r : r === 'const' ? l : 'curved';
+        case '/':
+          return r === 'const' ? l : l === 'const' && r === 'affine' && !joint ? 'mono' : 'curved';
+        case '^':
+          // A positive base other than 1 raised to an affine function: one to one.
+          return !joint && r === 'affine' && node.left.kind === 'num' && node.left.value > 0 && node.left.value !== 1
+            ? 'mono'
+            : 'curved';
+        default:
+          return 'curved';
+      }
     }
     case 'if':
-      return [node.cond, node.then, node.else].every((n) => shapeIn(n, nameToId, unknown) === 'const') ? 'const' : 'curved';
+      return [node.cond, node.then, node.else].every((n) => shapeOver(n, nameToId, unknown, joint) === 'const')
+        ? 'const'
+        : 'curved';
     default:
       return 'const';
   }
 }
 
 /**
- * Is `eq` CURVED in one of its `unknowns` — not an affine function of it with the others held (`x * x`, `1.0 / x`,
+ * The {@link Shape} of the equation as ONE function, its two sides taken as `lhs - rhs`: not of each side alone. A one-to-one side
+ * set equal to a side that varies with the same feature can cross it twice (`6.0 / y == 5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0`
+ * at 0 and 1, `x == 6.0 / (x + 1.0)` at 2 and −3): only a side that does not vary with it keeps the one root.
+ */
+function equationShape(eq: Equation, unknown: (id: ElementId | undefined) => boolean, joint = false): Shape {
+  return shapeOver({ kind: 'binary', op: '-', left: eq.lhs, right: eq.rhs }, eq.nameToId, unknown, joint);
+}
+
+/**
+ * Is `eq` CURVED in one of its `unknowns` — not an affine function of it with the others held (`x * x`, `1.0 / x + x`,
  * `x ^ 2.0`, a `%` or an `if` over it)? Solved for that unknown it may have more than one root. A product of two
- * unknowns (`mass == density * volume`) is not: once the others are fixed it is affine in the one left.
+ * unknowns (`mass == density * volume`) is not: once the others are fixed it is affine in the one left
+ * ({@link isJointlyCurved} asks it of the two together). Nor is a one-to-one function of it (`2.0 / x`, `v / t` with `v`
+ * fixed by another equation, `2.0 ^ y`): it has one root at most, when the other side of the equation does not vary with the
+ * same unknown (`x == 6.0 / (x + 1.0)` does: 2 and −3).
  */
 function isCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
-  return unknowns.some((u) => shapeIn(eq.lhs, eq.nameToId, u) === 'curved' || shapeIn(eq.rhs, eq.nameToId, u) === 'curved');
+  return unknowns.some((u) => equationShape(eq, (id) => id === u) === 'curved');
+}
+
+/**
+ * Is `eq` curved in its `unknowns` TAKEN TOGETHER — a product or quotient of two of them (`x * y == 4.0`), which is affine in
+ * each with the other held? Solved together with another equation that links them (`x == y`) the pair has more than one
+ * root: (2, 2) and (−2, −2).
+ */
+function isJointlyCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
+  const set = new Set<ElementId>(unknowns);
+  return equationShape(eq, (id) => id !== undefined && set.has(id), true) === 'curved';
+}
+
+/**
+ * Which of the equations over the features `isOpen` can take more than one root ({@link designReadings}): `anyCurved`, whether
+ * one of them is curved at all, and `rooted`, whether one of a component of them does.
+ */
+interface RootReader {
+  openOf: (eq: Equation) => ElementId[];
+  anyCurved: boolean;
+  rooted: (eq: Equation, comp: readonly Equation[]) => boolean;
+}
+
+function rootReader(eqs: readonly Equation[], isOpen: (v: ElementId) => boolean): RootReader {
+  // What each equation reads that is open, and whether it is curved in one of them, are found once: the closures below ask both of
+  // every equation of the component once per curved equation they are asked about.
+  const opens = new Map<Equation, ElementId[]>();
+  const openOf = (eq: Equation): ElementId[] => {
+    let open = opens.get(eq);
+    if (open === undefined) opens.set(eq, (open = eq.vars.filter(isOpen)));
+    return open;
+  };
+  // The equations curved in one unknown of theirs. One to one in it (`v == d / t`, `x / y == 3.0` over a `y` another
+  // equation fixes, `x == 2.0 ^ y`) is not: it has the one root whatever it is set equal to.
+  const curvedAt = new Map<Equation, Map<ElementId, boolean>>();
+  const curvedIn = (eq: Equation, vars: readonly ElementId[]): boolean => {
+    if (vars.length !== 1) return isCurved(eq, vars);
+    let known = curvedAt.get(eq);
+    if (known === undefined) curvedAt.set(eq, (known = new Map()));
+    let c = known.get(vars[0]!);
+    if (c === undefined) known.set(vars[0]!, (c = isCurved(eq, vars)));
+    return c;
+  };
+  const single = new Map<Equation, boolean>();
+  let anyCurved = false;
+  for (const eq of eqs) {
+    const vs = openOf(eq);
+    if (vs.length === 0) continue;
+    const c = curvedIn(eq, vs);
+    single.set(eq, c);
+    if (c || (vs.length > 1 && isJointlyCurved(eq, vs))) anyCurved = true;
+  }
+  // Can the solve take `eq` to a value with more than one root? Not by what the other equations fix one at a time, each
+  // affine in the one left, whatever order the text gives them: `eq` is then affine in what it fixes (`z == x * x` over an
+  // `x == 3.0`, `mass == density * volume` over the two it multiplies), or fixes nothing and holds (`x * y == 6.0`
+  // beside `x == 2.0` and `y == 3.0`) — unless it is curved in a feature it may fix while the others it reads are fixed
+  // without that one (`x * x == 4.0` beside `x == -2.0`: the root 2 when it is taken first). What they leave open it fixes
+  // together: a root, curved in the one left, or a coupled pair (`x * y == 4.0` beside `x == y`).
+  const fixedByOthers = (eq: Equation, comp: readonly Equation[], unavailable?: ElementId): Set<ElementId> => {
+    const fixedBy = new Set<ElementId>();
+    // A worklist, linear in the component whatever the order of its equations: one fixes a feature once it is the only one it
+    // reads that is not fixed yet, and each feature fixed counts down the equations that read it.
+    const readers = new Map<ElementId, Equation[]>();
+    const waiting = new Map<Equation, number>();
+    const ready: Equation[] = [];
+    for (const o of comp) {
+      if (o === eq) continue;
+      const open = openOf(o);
+      waiting.set(o, open.length);
+      if (open.length === 1) ready.push(o);
+      for (const v of open) {
+        const list = readers.get(v);
+        if (list) list.push(o);
+        else readers.set(v, [o]);
+      }
+    }
+    while (ready.length > 0) {
+      const o = ready.pop()!;
+      const u = openOf(o).find((v) => !fixedBy.has(v));
+      if (u === undefined || u === unavailable || curvedIn(o, [u])) continue;
+      fixedBy.add(u);
+      for (const r of readers.get(u)!) {
+        const left = waiting.get(r)! - 1;
+        waiting.set(r, left);
+        if (left === 1) ready.push(r);
+      }
+    }
+    return fixedBy;
+  };
+  const rooted = (eq: Equation, comp: readonly Equation[]): boolean => {
+    const vs = openOf(eq);
+    if (single.get(eq) !== true && (vs.length < 2 || !isJointlyCurved(eq, vs))) return false;
+    // Curved in a feature it may fix while every other it reads is fixed without it: taken first, it takes a root
+    // (`x * x == 4.0` beside `x == -2.0`; `z == x * x` beside `z == 9.0` and `x == 3.0`). Not where the others are only
+    // fixed through that feature (`b == a + (if a >= 1.0 then 0.0 else 1.0)` beside `a == b` and `a == 3.0`: b waits for a).
+    for (const u of vs) {
+      if (!curvedIn(eq, [u])) continue;
+      const known = fixedByOthers(eq, comp, u);
+      if (vs.every((v) => v === u || known.has(v))) return true;
+    }
+    const fixedBy = fixedByOthers(eq, comp);
+    const left = vs.filter((v) => !fixedBy.has(v));
+    if (left.length === 0) return false;
+    if (!(left.length === 1 ? curvedIn(eq, left) : isJointlyCurved(eq, left))) return false;
+    // Only where the equations over them can fix each of them, one apiece: `mass = density * volume` beside `mass ==
+    // 100.0` leaves density and volume a freedom along the curve, not two roots (a matching of the features to the
+    // equations that read them).
+    const over = comp.filter((o) => openOf(o).some((v) => left.includes(v)));
+    const taken = new Map<Equation, ElementId>();
+    const place = (v: ElementId, seen: Set<Equation>): boolean => {
+      for (const o of over) {
+        if (seen.has(o) || !openOf(o).includes(v)) continue;
+        seen.add(o);
+        const held = taken.get(o);
+        if (held === undefined || place(held, seen)) {
+          taken.set(o, v);
+          return true;
+        }
+      }
+      return false;
+    };
+    return left.every((v) => place(v, new Set()));
+  };
+  return { openOf, anyCurved, rooted };
+}
+
+/**
+ * The model's own equations of more than one root among those the DEFINITIONS close ({@link closedByDefinitions}), over the
+ * features of them (`looped`) that no stated value gives, and every feature they leave to the root they take — in the
+ * asserted `x == y * y + 1.0` and `y == 3.0 - x` (x = 2 or 5), a stated `x = y * y + 1.0` beside `y = 3.0 - x`, `x == y * y` beside
+ * `y == x * x`. Closed, the Newton step found one of the roots and the features count as given, so no plain constraint
+ * over them was ever read for the root: `x == 5.0` beside them read violated at x = 2 where (5, −2) meets every equation.
+ * A feature the equations fix one at a time from the stated values and from each other is told apart first (a chain of
+ * definitions, `d2 = d1 * d1` over `d1 = s * s`): one root whatever it is built of, and no part of a loop.
+ */
+function loopedRoots(
+  eqs: readonly Equation[],
+  values: ReadonlyMap<ElementId, number>,
+  looped: ReadonlySet<ElementId>,
+  isCheck: (eq: Equation) => boolean,
+): { features: Set<ElementId>; equations: Set<Equation> } {
+  const features = new Set<ElementId>();
+  const equations = new Set<Equation>();
+  const out = { features, equations };
+  const isOpen = (v: ElementId): boolean => looped.has(v) && values.has(v);
+  // The definitions alone: they read nothing but the stated values and each other (that is what closes them), so the rest of the
+  // features they read are fixed. Another equation of the model's may read a feature a plain constraint gives, which is not.
+  const facts = eqs.filter((eq) => !isCheck(eq) && ((eq.defines?.length ?? 0) > 0 || eq.states !== undefined) && eq.vars.some(isOpen));
+  if (facts.length === 0) return out;
+  const readers = new Map<ElementId, Equation[]>();
+  const waiting = new Map<Equation, number>();
+  const ready: Equation[] = [];
+  for (const eq of facts) {
+    const vs = eq.vars.filter(isOpen);
+    waiting.set(eq, vs.length);
+    if (vs.length === 1) ready.push(eq);
+    for (const v of vs) {
+      const list = readers.get(v);
+      if (list) list.push(eq);
+      else readers.set(v, [eq]);
+    }
+  }
+  const settled = new Set<ElementId>();
+  while (ready.length > 0) {
+    const eq = ready.pop()!;
+    const u = eq.vars.find((v) => isOpen(v) && !settled.has(v));
+    if (u === undefined || isCurved(eq, [u])) continue;
+    settled.add(u);
+    for (const r of readers.get(u)!) {
+      const left = waiting.get(r)! - 1;
+      waiting.set(r, left);
+      if (left === 1) ready.push(r);
+    }
+  }
+  const reader = rootReader(facts, (v) => isOpen(v) && !settled.has(v));
+  if (!reader.anyCurved) return out;
+  const parent = new Map<ElementId, ElementId>();
+  const find = (a: ElementId): ElementId => {
+    let root = a;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (a !== root) {
+      const next = parent.get(a)!;
+      parent.set(a, root);
+      a = next;
+    }
+    return root;
+  };
+  for (const eq of facts) {
+    const vs = reader.openOf(eq);
+    for (const v of vs) if (!parent.has(v)) parent.set(v, v);
+    for (let i = 1; i < vs.length; i++) {
+      const a = find(vs[0]!);
+      const b = find(vs[i]!);
+      if (a !== b) parent.set(a, b);
+    }
+  }
+  const byRoot = new Map<ElementId, Equation[]>();
+  for (const eq of facts) {
+    const vs = reader.openOf(eq);
+    if (vs.length === 0) continue;
+    const root = find(vs[0]!);
+    const list = byRoot.get(root);
+    if (list) list.push(eq);
+    else byRoot.set(root, [eq]);
+  }
+  for (const comp of byRoot.values()) {
+    const rooted = comp.filter((eq) => reader.rooted(eq, comp));
+    if (rooted.length === 0) continue;
+    for (const eq of rooted) equations.add(eq);
+    for (const eq of comp) for (const v of reader.openOf(eq)) features.add(v);
+  }
+  return out;
 }
 
 /**
  * What the plain equations (`isCheck`) read where a plain constraint the solve
  * took as a design equation (`used`) fixed the value: over the values the
- * solve PRODUCED (`settled` is false of them: no value the model states, none
- * its definitions determine or a fact of the model fixed from those, no
- * freedom, nothing it stopped at unconverged),
+ * solve PRODUCED (`fixed` and `loose` are false of them: no value the model
+ * states, none its definitions determine or a fact of the model fixed from
+ * those, no freedom, nothing it stopped at unconverged),
  * linked by the equations to a value such a constraint fixed — a DESIGN
  * component. Which of its plain equations is taken turns on which comes first,
  * in TEXT order, so:
@@ -2211,37 +2513,80 @@ function isCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
  * A value a fact of the model fixes (an asserted equation, a binding), though
  * the solve produced it, is no design component's: a check over it is judged
  * (`assert constraint s { x + y == 10.0 }` with y stated: a plain `x == 9.0`
- * is violated, beside `w == x + 1.0` that the solve took).
+ * is violated, beside `w == x + 1.0` that the solve took). A fact that is
+ * curved in the value it fixed (`assert constraint { x * x == 4.0 }`) fixes
+ * none: its roots are the model's, the one the solve took is not.
  *
- * A component with a CURVED plain equation ({@link isCurved}) beside another
- * plain equation reads no value at all: the equation has more than one root,
- * the solve takes the one it finds, and that one agrees with the other
- * equation or not by which of the two it oriented first — of `a { x * x ==
- * 4.0 }` and `b { x == -2.0 }` the root 2 when `a` is written first, −2 when
- * `b` is. Whether the roots agree is not read: the pair is contested in both
- * orders.
+ * A component whose equations have more than one root reads no value at all
+ * beside a plain constraint ({@link SolveCore.rival}), whether or not any was
+ * left unused: the solve takes the root it finds, and the plain constraints
+ * hold there or not by which equation it oriented first, or by which root.
+ * Of `a { x * x == 4.0 }` and `b { x == -2.0 }` the root 2 when `a` is
+ * written first, −2 when `b` is; of `c0 { x * x == 4.0 }`, `c1 { y == x + 1.0 }`
+ * and `c2 { y <= 0.0 }` the root (2, 3), where (−2, −1) meets all three.
+ * Whether the roots agree is not read: the component is withheld in every
+ * order. The component is every feature the equations link — the plain
+ * constraints' own variables, those the solve left free among them — and its
+ * equations are every one that reads them: the model's own (a stated `s = x *
+ * x`, an assert) as much as a plain constraint. One has more than one root
+ * (`rooted`, in the body) when what the others fix one at a time, each affine in the
+ * one left, leaves it curved in a feature it may then fix instead, or curved in
+ * what it fixes with them together (`x * y == 4.0` beside `x == y`), those the
+ * equations over them fix one apiece; `z == x * x` over `x == 3.0` has the one,
+ * and `mass = density * volume` beside `mass == 100.0` a freedom. A loop of
+ * definitions of more than one root, which {@link closedByDefinitions} binds at
+ * the root found, is open to this reading as well ({@link loopedRoots}), and the
+ * features other equations and plain constraints take from it with them. A lone curved plain constraint is imposed at
+ * the root found, and a relation the solve gathers no equation from over its
+ * value is not judged ({@link SolveCore.curved}). An equation one to one in the
+ * feature it fixes (`v == d / t`, a quotient by a value another equation fixes
+ * as in `x / y == 3.0` beside `y == 2.0` and `x == 6.0`, `2.0 ^ y`), with the
+ * feature on one side of the equation only, has the one root and is no curved
+ * one, plain or not ({@link equationShape}: `x == 6.0 / (x + 1.0)` is). What the
+ * others fix is found in time linear in the component's size, for each equation
+ * that may have more than one root, whatever that size.
  */
 function designReadings(
   eqs: readonly Equation[],
   values: Map<ElementId, number>,
   tol: number,
-  settled: (v: ElementId) => boolean,
+  fixed: (v: ElementId) => boolean,
+  loose: (v: ElementId) => boolean,
+  looped: ReadonlySet<ElementId>,
   isCheck: (eq: Equation) => boolean,
   used: ReadonlySet<Equation>,
   relationOf: ReadonlyMap<Equation, ElementRecord>,
-): { contested: Map<ElementId, ElementId[]>; rival: Set<ElementId>; agreeing: Set<Equation> } {
-  const produced = (v: ElementId): boolean => values.has(v) && !settled(v);
+  describe: (eq: Equation) => string,
+): {
+  contested: Map<ElementId, ElementId[]>;
+  rival: Map<ElementId, 'plain' | 'model'>;
+  curved: Map<ElementId, string[]>;
+  agreeing: Set<Equation>;
+} {
+  // What the definitions close and no stated value gives, in a loop with more than one root, is open as well: the root the
+  // solve found there is one of several ({@link loopedRoots}).
+  const seeded = loopedRoots(eqs, values, looped, isCheck);
+  // The features the equations leave their value to: the produced and those left free or unsettled.
+  const open = (v: ElementId): boolean => values.has(v) && (!fixed(v) || seeded.features.has(v));
+  const produced = (v: ElementId): boolean => open(v) && !loose(v);
   const contested = new Map<ElementId, ElementId[]>();
-  const rival = new Set<ElementId>();
+  const rival = new Map<ElementId, 'plain' | 'model'>();
+  const curved = new Map<ElementId, string[]>();
   const agreeing = new Set<Equation>();
+  const none = { contested, rival, curved, agreeing };
   const unused: Equation[] = [];
+  const touching = new Set<Equation>();
   let took = false;
   for (const eq of eqs) {
-    if (!isCheck(eq) || !eq.vars.some(produced)) continue;
+    if (!eq.vars.some(produced)) continue;
+    touching.add(eq);
+    if (!isCheck(eq)) continue;
     if (used.has(eq)) took = true;
     else if (eq.vars.every((v) => values.has(v))) unused.push(eq);
   }
-  if (!took || unused.length === 0) return { contested, rival, agreeing };
+  if (touching.size === 0) return none;
+  const { openOf, anyCurved, rooted } = rootReader(eqs, open);
+  if (!anyCurved && (!took || unused.length === 0)) return none;
   const parent = new Map<ElementId, ElementId>();
   const find = (a: ElementId): ElementId => {
     let root = a;
@@ -2253,44 +2598,86 @@ function designReadings(
     }
     return root;
   };
-  for (const eq of eqs) {
-    const vs = eq.vars.filter(produced);
+  const link = (vs: readonly ElementId[]): void => {
     for (const v of vs) if (!parent.has(v)) parent.set(v, v);
     for (let i = 1; i < vs.length; i++) {
       const a = find(vs[0]!);
       const b = find(vs[i]!);
       if (a !== b) parent.set(a, b);
     }
+  };
+  for (const eq of touching) link(openOf(eq));
+  // An equation over features left free that links to one of them is as much the component's: `z * z == y` beside
+  // `z == x * y`, where the root the solve found makes z and y free.
+  const members = new Set<Equation>(touching);
+  const rest = eqs.filter((eq) => !touching.has(eq) && eq.vars.some(open));
+  for (let grew = rest.length > 0; grew; ) {
+    grew = false;
+    for (const eq of rest) {
+      if (members.has(eq)) continue;
+      const vs = openOf(eq);
+      if (!vs.some((v) => parent.has(v))) continue;
+      link(vs);
+      members.add(eq);
+      grew = true;
+    }
   }
-  const rootOf = (eq: Equation): ElementId => find(eq.vars.find(produced)!);
+  const rootOf = (eq: Equation): ElementId => find(openOf(eq)[0]!);
+  const byRoot = new Map<ElementId, Equation[]>();
+  for (const eq of members) {
+    const root = rootOf(eq);
+    const list = byRoot.get(root);
+    if (list) list.push(eq);
+    else byRoot.set(root, [eq]);
+  }
   // The design components: those a plain constraint the solve took fixes a value of.
   const design = new Set<ElementId>();
   for (const eq of used) if (isCheck(eq) && eq.vars.some(produced)) design.add(rootOf(eq));
-  // Those with a curved plain equation, beside another: the root the solve took is no value of the model's.
-  const plain = new Map<ElementId, number>();
-  const curved = new Set<ElementId>();
-  for (const eq of eqs) {
-    if (!isCheck(eq) || !eq.vars.some(produced) || !(used.has(eq) || eq.vars.every((v) => values.has(v)))) continue;
-    const root = rootOf(eq);
-    plain.set(root, (plain.get(root) ?? 0) + 1);
-    if (isCurved(eq, eq.vars.filter(produced))) curved.add(root);
+  const rivalRoots = new Map<ElementId, 'plain' | 'model'>();
+  const curvedRoots = new Map<ElementId, Equation[]>();
+  const plainRoots = new Map<ElementId, Equation[]>();
+  for (const [root, comp] of byRoot) {
+    if (!comp.some((eq) => eq.vars.some(produced))) continue;
+    // Beside another plain constraint: the one that is curved is not its own other.
+    const plain = comp.filter((eq) => isCheck(eq) && (used.has(eq) || eq.vars.every((v) => values.has(v))));
+    plainRoots.set(root, plain);
+    // A curved plain constraint (`x * x`: not one to one in a feature it fixes) beside another, with one left unused by a design
+    // equation the solve took, was withheld before the model's own equations and the rest were read: it still is.
+    const asBefore =
+      design.has(root) &&
+      plain.length >= 2 &&
+      plain.some((eq) => unused.includes(eq)) &&
+      plain.some((eq) => touching.has(eq) && isCurved(eq, eq.vars.filter(produced)));
+    const roots = comp.filter((eq) => seeded.equations.has(eq) || rooted(eq, comp));
+    if (roots.length === 0 && !asBefore) continue;
+    if (roots.length > 0) curvedRoots.set(root, roots);
+    const model = roots.some((eq) => !isCheck(eq));
+    if (model ? plain.length >= 1 : plain.length >= 2) rivalRoots.set(root, model ? 'model' : 'plain');
   }
   const missed = new Set<Equation>();
   const roots = new Set<ElementId>();
   for (const eq of unused) {
     const root = rootOf(eq);
-    if (!design.has(root)) continue;
+    if (!design.has(root) || rivalRoots.has(root)) continue;
     const r = residualOf(eq, values);
-    if (!(curved.has(root) && plain.get(root)! > 1) && r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol)) {
+    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol)) {
       agreeing.add(eq);
     } else {
       missed.add(eq);
       roots.add(root);
     }
   }
-  if (roots.size === 0) return { contested, rival, agreeing };
+  if (roots.size === 0 && rivalRoots.size === 0 && curvedRoots.size === 0) return none;
   // Per component, the plain constraints over it that the solve took, missed or found agreeing — each one the
   // component's whichever of them was written first: the ones a sentence names.
+  const idsOf = (list: readonly Equation[]): ElementId[] => {
+    const out: ElementId[] = [];
+    for (const eq of list) {
+      const id = relationOf.get(eq)?.id;
+      if (id !== undefined && !out.includes(id)) out.push(id);
+    }
+    return out;
+  };
   const named = new Map<ElementId, ElementId[]>();
   for (const eq of eqs) {
     const el = relationOf.get(eq);
@@ -2301,13 +2688,23 @@ function designReadings(
     if (!list.includes(el.id)) list.push(el.id);
     named.set(root, list);
   }
+  const descriptions = new Map<ElementId, string[]>();
   for (const v of parent.keys()) {
     const root = find(v);
-    if (!roots.has(root)) continue;
-    contested.set(v, named.get(root) ?? []);
-    if (curved.has(root) && plain.get(root)! > 1) rival.add(v);
+    const kind = rivalRoots.get(root);
+    if (kind !== undefined) {
+      contested.set(v, idsOf(kind === 'plain' ? plainRoots.get(root)! : []));
+      rival.set(v, kind);
+    } else if (roots.has(root)) {
+      contested.set(v, named.get(root) ?? []);
+    }
+    const manyRoots = curvedRoots.get(root);
+    if (manyRoots === undefined || (kind === undefined && !produced(v))) continue;
+    let described = descriptions.get(root);
+    if (described === undefined) descriptions.set(root, (described = [...new Set(manyRoots.map(describe))].sort()));
+    curved.set(v, described);
   }
-  return { contested, rival, agreeing };
+  return { contested, rival, curved, agreeing };
 }
 
 /**
@@ -3151,12 +3548,32 @@ function solveScalar(
   const probeStep = (t: number): number =>
     1e-6 * (scaled ? Math.abs(t) || Math.abs(seed) || 1 : Math.abs(t) + 1);
 
+  // One to one in `u` (an equation read as ONE function, {@link equationShape}): it has the one root whenever it has one, so a root
+  // found anywhere is THE root, and the search below does not stop at the first thing that goes wrong on the way from the seed.
+  const mono = equationShape(eq, (id) => id === u) === 'mono';
+
+  // A one-to-one equation's Newton point must also meet the gate the CALLER judges the root against ({@link convergenceGate}, its scale
+  // taken at the point): `accept` takes its scale at the seed, where an exponential can be huge (`10.0 ^ (2.0 * x + 8.0) == 1.0`
+  // from x = 1 is 1e10, a floor of 1e-4 where the root's own gate is 1e-6), and a root stopped at 6.6e-6 read 'did not converge'.
+  const settled = (t: number, fv: number): boolean => {
+    if (!accept(fv)) return false;
+    if (!mono) return true;
+    const prev = values.get(u);
+    values.set(u, t);
+    try {
+      return Math.abs(fv) <= convergenceGate(eq, values, tol);
+    } finally {
+      if (prev === undefined) values.delete(u);
+      else values.set(u, prev);
+    }
+  };
+
   // Newton with finite-difference derivative.
   let t = seed;
   for (let i = 0; i < 60; i++) {
     const f0 = f(t);
     if (f0 === undefined) break;
-    if (accept(f0)) return t;
+    if (settled(t, f0)) return t;
     const h = probeStep(t);
     const f1 = f(t + h);
     if (f1 === undefined) break;
@@ -3164,36 +3581,95 @@ function solveScalar(
     if (Math.abs(deriv) < 1e-14) break;
     const next = t - f0 / deriv;
     if (!Number.isFinite(next)) break;
-    if (Math.abs(next - t) <= stepGate(t)) return next;
+    if (Math.abs(next - t) <= stepGate(t)) {
+      // A step that small is a root only if the residual is falling for real: `6.0 - 3.0 / (x + 1.0) == 3.0` from x = 1 steps
+      // beside the pole x = −1 (residual 1.5 -> 1.5e6) and the steps there are tiny, with the root at 0 not found; and
+      // `1.0 / (x + 1.0) + 10.0 == 11.0` steps 9e-12 at the pole's flank, the residual 199999.2732 -> 199999.2731 (a finite-difference
+      // slope that straddles the pole), so 'no larger' is not progress: it must be halved, or the point settled.
+      const fn = mono ? f(next) : 0;
+      if (fn === undefined || (!settled(next, fn) && Math.abs(fn) >= 0.5 * Math.abs(f0))) break;
+      return next;
+    }
     t = next;
   }
 
   // Bisection over an expanding bracket around 0.
-  let a = -1;
-  let b = 1;
-  let fa = f(a);
-  let fb = f(b);
-  for (let k = 0; k < 60 && !(fa !== undefined && fb !== undefined && fa * fb < 0); k++) {
-    a *= 2;
-    b *= 2;
-    fa = f(a);
-    fb = f(b);
-  }
-  if (fa === undefined || fb === undefined || fa * fb >= 0) return undefined;
-  for (let k = 0; k < 200; k++) {
-    const m = (a + b) / 2;
-    const fm = f(m);
-    if (fm === undefined) return undefined;
-    if (accept(fm) || (b - a) / 2 <= (scaled ? stepGate(m) : tol)) return m;
-    if (fa * fm < 0) {
-      b = m;
-      fb = fm;
-    } else {
-      a = m;
-      fa = fm;
+  const bracketed = (): number | undefined => {
+    let a = -1;
+    let b = 1;
+    let fa = f(a);
+    let fb = f(b);
+    for (let k = 0; k < 60 && !(fa !== undefined && fb !== undefined && fa * fb < 0); k++) {
+      a *= 2;
+      b *= 2;
+      fa = f(a);
+      fb = f(b);
     }
+    if (fa === undefined || fb === undefined || fa * fb >= 0) return undefined;
+    // A sign change closed on may be a POLE (`24.0 / (x - 4.0) == 3.0` over [-8, 8]), not a root: the residual there is far larger than
+    // at the ends of the bracket it started from, where at a root it has fallen to the floor. Returned, the pole was the value of `x`
+    // beside `y == 4.0` — and written after `x == 3.0 * y` that equation gave 12 first: a verdict that turned on the order of the text.
+    return bisect(a, b, fa, Math.max(Math.abs(fa), Math.abs(fb)), mono);
+  };
+  // `tight`: close on the root to the last digit, not on the width `tol` and a residual under the floor. A sign change between two
+  // samples of the one-to-one search is read for its ROOT, and a quotient's root beside its pole is steep (`1.0 / x == 100.0`,
+  // residual 7e-6 at 1e-9 from x = 0.01): a point closed on at the width `tol` is rejected by the gate the caller judges it by, and a
+  // flat one (`0.5 / (8.0 * x) == -0.0000000625`, slope 6e-14) is under the floor 1.6% away from its root, which was returned.
+  const bisect = (a: number, b: number, fa: number, ends: number, tight = false): number | undefined => {
+    for (let k = 0; k < 200; k++) {
+      const m = (a + b) / 2;
+      const fm = f(m);
+      if (fm === undefined) return undefined;
+      if (tight ? fm === 0 : accept(fm)) return m;
+      if (tight ? m === a || m === b || (b - a) / 2 <= Math.abs(m) * 1e-16 : (b - a) / 2 <= (scaled ? stepGate(m) : tol)) {
+        return Math.abs(fm) <= ends ? m : undefined;
+      }
+      if (fa * fm < 0) b = m;
+      else {
+        a = m;
+        fa = fm;
+      }
+    }
+    return (a + b) / 2;
+  };
+  const found = bracketed();
+  if (found !== undefined || !mono) return found;
+
+  // One to one, and Newton and the bracket around 0 both missed it: a root across a POLE from the seed (`6.0 - 3.0 / (x + 1.0) ==
+  // 3.0`, root 0, pole −1) is on neither side the seed reaches, and the ends of every bracket around 0 have the sign of the
+  // asymptote. Whether the model pins x first or not, it is the same root: the sign changes between samples at 0 and ±2^k are
+  // each closed on, a pole among them rejected as above, and a sample the equation has no value at (the pole itself) splits the
+  // samples into two runs, each side of it looked at apart. Only a sign change is a root: a sample whose residual is small
+  // because the function tends to its asymptote there (`2.0 ^ x == 0.0` at −2^60) is none. No sign change, no root found: an
+  // abstention, never a value.
+  const xs = [0];
+  for (let k = -40; k <= 60; k++) xs.push(2 ** k, -(2 ** k));
+  xs.sort((p, q) => p - q);
+  let prev: [number, number] | undefined;
+  const closeOn = (a: number, fa: number, b: number, fb: number): number | undefined =>
+    fa * fb < 0 ? bisect(a, b, fa, Math.min(Math.abs(fa), Math.abs(fb)), true) : undefined;
+  const side = (x: number): number => 1e-6 * (Math.abs(x) + 1);
+  for (const x of xs) {
+    const v = f(x);
+    if (v === undefined) {
+      const lo = f(x - side(x));
+      const root = prev !== undefined && lo !== undefined ? closeOn(prev[0], prev[1], x - side(x), lo) : undefined;
+      if (root !== undefined) return root;
+      const hi = f(x + side(x));
+      prev = hi === undefined ? undefined : [x + side(x), hi];
+      continue;
+    }
+    // A residual of exactly 0 is a root where it changes sign (the root at the sample), not where it is 0 on both sides.
+    if (v === 0) {
+      const lo = f(x - side(x));
+      const hi = f(x + side(x));
+      if (lo !== undefined && hi !== undefined && lo * hi < 0) return x;
+    }
+    const root = prev !== undefined ? closeOn(prev[0], prev[1], x, v) : undefined;
+    if (root !== undefined) return root;
+    prev = [x, v];
   }
-  return (a + b) / 2;
+  return undefined;
 }
 
 /**
@@ -4293,12 +4769,25 @@ function normalizeBounds(
  * never a violation. Deterministic and bounded.
  */
 export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): FeasibilityResult {
+  return feasibleFrom(model, opts, solveCore(model, opts));
+}
+
+/**
+ * {@link solveFeasible} over the plain solve `base`. With `start`, the descent begins at those values of the freedoms rather
+ * than at the plain solve's: the second attempt it makes when the first neither found a witness nor decided anything, over a
+ * component of more than one root ({@link flatRoots}).
+ */
+function feasibleFrom(
+  model: Model,
+  opts: FeasibilityOptions,
+  base: SolveCore,
+  start?: ReadonlyMap<ElementId, number>,
+): FeasibilityResult {
   const tol = opts.tol ?? 1e-9;
   const feasTol = Math.max(tol, 1e-6);
   const { eqs, unreadable, relationOf } = gatherSystem(model, opts.scopeId);
   const ineqs = gatherInequalities(model, opts.scopeId);
 
-  const base = solveCore(model, opts);
   const values = new Map(base.point);
 
   // Fixed overrides (held constant).
@@ -4338,16 +4827,18 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
   // the solve could not read left q's p's m2 at 9 beside equations within
   // tolerance, and held there it decided `q.p.m2 <= 0.0` violated, where q's
   // L of 50 gives −40.
-  // Nor one plain constraints that disagree gave it ({@link SolveCore.contested}).
-  const settled = (id: ElementId): boolean => !base.free.has(id) && !base.unsettled.has(id) && !base.contested.has(id);
+  // Nor one plain constraints that disagree gave it ({@link SolveCore.contested}), nor a root of equations that have more
+  // than one ({@link SolveCore.curved}): `x * x == 4.0` held at 2 broke `x <= 0.0`, which −2 meets with it.
+  const settled = (id: ElementId): boolean =>
+    !base.free.has(id) && !base.unsettled.has(id) && !base.contested.has(id) && !base.curved.has(id);
   if (residualSummary(eqs, base.point, tol).withinTol) {
     for (const id of base.point.keys()) if (settled(id)) pinned.add(id);
   }
   // A value the equations leave FREE is never held, whatever single equation
   // pinned it: one stopped on an `if`'s step (`r == (if x >= 1.0 then 1.0
   // else 0.0)`, at x = 1) was held there, and `x >= 2.0` decided infeasible.
-  // Nor one the solve did not settle, nor one it took from a check that another disagrees with.
-  for (const id of [...base.free, ...base.unsettled, ...base.contested.keys()]) if (!fixedIds.has(id)) pinned.delete(id);
+  // Nor one the solve did not settle, nor one it took from a check that another disagrees with, nor a root of many.
+  for (const id of [...base.free, ...base.unsettled, ...base.contested.keys(), ...base.curved.keys()]) if (!fixedIds.has(id)) pinned.delete(id);
 
   // Free variables: everything in an equality/inequality the equalities don't
   // pin — but never a feature whose stated value the solver lane cannot read
@@ -4366,6 +4857,7 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
   for (const eq of eqs) for (const v of eq.vars) if (!pinned.has(v) && !defined.has(v)) freeSet.add(v);
   const freeVars = [...freeSet];
   for (const id of freeVars) if (!values.has(id)) values.set(id, 0);
+  if (start !== undefined) for (const [id, v] of start) if (freeSet.has(id)) values.set(id, v);
 
   const sweeps = Math.max(1, opts.sweeps ?? opts.maxIter ?? 60);
   // The penalty is a sum of squared violations, so drive it below feasTol² to
@@ -4444,7 +4936,8 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
     imposed: new Set(),
     held: new Map(),
     contested: new Map(),
-    rival: new Set(),
+    rival: new Map(),
+    curved: new Map(),
     converged: true,
     iterations,
     residual: 0,
@@ -4517,7 +5010,49 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
   }
   const feasible = violations.length === 0 && unresolved.length === 0 && !bent && !missed;
   const decided = feasible ? !unjudged : (violations.length > 0 && !missed) || stated;
+  // A descent is local, and the roots of an equation of more than one root are apart: begun at the one the plain solve took (x = 2 for
+  // `c0 { x * x == 4.0 }` written above `c1 { x == -2.0 }`) it stalls beside the plain equation, and the model is feasible all the same.
+  // Where it neither found a witness nor decided anything, it is made again from where the equations that are not curved put those
+  // values ({@link flatRoots}): the same point in either order of the text for `x == -2.0` beside `x * x == 4.0`. A witness found there
+  // is one all the same: every gate above is run again. Where those equations leave the values open the search is as local as before.
+  if (start === undefined && !feasible && !decided) {
+    const again = flatRoots(eqs, new Set(freeVars.filter((v) => base.curved.has(v))), base.point, tol, unreadable);
+    if (again !== undefined) {
+      const second = feasibleFrom(model, opts, base, again);
+      if (second.feasible && second.decided) return second;
+    }
+  }
   return { values, feasible, violations, unresolved, iterations, decided, free: freeVars };
+}
+
+/**
+ * Where the equations over `over` — the freedoms of a component of more than one root ({@link SolveCore.curved}) — that are NOT
+ * curved in them put those values, the rest held at `point`: `x == -2.0` beside `x * x == 4.0`, `y == x + 1.0` beside it. The
+ * values that differ from `point`, or `undefined` where there are none: no such equation, or the point it moves nothing.
+ */
+function flatRoots(
+  eqs: readonly Equation[],
+  over: ReadonlySet<ElementId>,
+  point: ReadonlyMap<ElementId, number>,
+  tol: number,
+  unreadable: ReadonlySet<ElementId>,
+): Map<ElementId, number> | undefined {
+  if (over.size === 0) return undefined;
+  const flat = eqs.filter((eq) => {
+    const vs = eq.vars.filter((v) => over.has(v));
+    return vs.length > 0 && !isCurved(eq, vs) && !(vs.length > 1 && isJointlyCurved(eq, vs));
+  });
+  const unknowns = [...over].filter((v) => flat.some((eq) => eq.vars.includes(v)));
+  if (unknowns.length === 0) return undefined;
+  const at = new Map(point);
+  const held = new Set<ElementId>([...at.keys()].filter((v) => !unknowns.includes(v)));
+  newtonSolve([...flat], unknowns, at, held, tol, 200, definedFeatures(eqs, unreadable), unreadable);
+  const out = new Map<ElementId, number>();
+  for (const v of unknowns) {
+    const x = at.get(v);
+    if (x !== undefined && Number.isFinite(x) && x !== point.get(v)) out.set(v, x);
+  }
+  return out.size > 0 ? out : undefined;
 }
 
 /**
@@ -5128,7 +5663,37 @@ function numericRows(
       body !== undefined && core.contested.size > 0
         ? (iq?.vars ?? eq?.vars ?? relationVarsOf(body.node, keys)).filter((id) => core.contested.has(id))
         : [];
-    if (detailed.verdict !== 'unknown' && !read) {
+    // And a relation the solve gathers no equation from (an inequality, a conjunction, a `!=`) over a value whose
+    // equations have more than one root: the root the solve took is not the only one it holds at.
+    const readsCurved =
+      body !== undefined && core.curved.size > 0 && !core.relations.has(el.id)
+        ? (iq?.vars ?? eq?.vars ?? relationVarsOf(body.node, keys)).filter((id) => core.curved.has(id) && !core.contested.has(id))
+        : [];
+    // A value no equation of the solve may give — an assert holds it in a form the solve does not read — or one plain
+    // constraints that disagree gave it, whichever the solve took first, or one whose equations have more than one
+    // root: no point the solve reached answers a relation over it.
+    const withhold = (): void => {
+      row.slack = null;
+      row.amount = 0;
+      delete row.slackUnit;
+      if (readsHeld.length > 0) {
+        row.reason = heldSentence(model, readsHeld, readsHeld.flatMap((id) => core.held.get(id) ?? []));
+        return;
+      }
+      // One sentence for the strongest cause among the values it reads, with only the equations of those.
+      const kindOf = (id: ElementId): 'model' | 'plain' | undefined => core.rival.get(id) ?? (core.curved.has(id) ? 'model' : undefined);
+      const ids = [...readsContested, ...readsCurved];
+      const kind = ids.some((id) => kindOf(id) === 'model') ? 'model' : ids.some((id) => kindOf(id) === 'plain') ? 'plain' : undefined;
+      const of = ids.filter((id) => kindOf(id) === kind);
+      row.reason =
+        kind === 'model'
+          ? rootsSentence(model, of, of.flatMap((id) => core.curved.get(id) ?? []))
+          : contestedSentence(model, of, of.flatMap((id) => core.contested.get(id) ?? []), kind === 'plain');
+    };
+    if (readsCurved.length > 0 && !read && !isRefusalReason(detailed.reason)) {
+      // The solved value is one of the roots the equations leave: the unit-aware verdict at it is not asked.
+      withhold();
+    } else if (detailed.verdict !== 'unknown' && !read) {
       row.result = detailed.verdict;
       if (row.result === 'satisfied') row.amount = 0;
     } else if (
@@ -5156,22 +5721,7 @@ function numericRows(
       delete row.slackUnit;
       row.reason = unsettledSentence(model, readsUnsettled);
     } else if ((readsHeld.length > 0 || readsContested.length > 0) && !read && !isRefusalReason(detailed.reason)) {
-      // A value no equation of the solve may give — an assert holds it in a
-      // form the solve does not read — or one plain constraints that disagree
-      // gave it, whichever the solve took first: no point the solve reached
-      // answers a relation over it.
-      row.slack = null;
-      row.amount = 0;
-      delete row.slackUnit;
-      row.reason =
-        readsHeld.length > 0
-          ? heldSentence(model, readsHeld, readsHeld.flatMap((id) => core.held.get(id) ?? []))
-          : contestedSentence(
-              model,
-              readsContested,
-              readsContested.flatMap((id) => core.contested.get(id) ?? []),
-              readsContested.some((id) => core.rival.has(id)),
-            );
+      withhold();
     } else if (contract && 'value' in contract && typeof contract.value === 'boolean') {
       row.result = contract.value ? 'satisfied' : 'violated';
     } else if (contract && 'tie' in contract && contract.tie !== undefined) {
@@ -5491,12 +6041,26 @@ function heldSentence(model: Model, ids: readonly ElementId[], asserts: readonly
 function contestedSentence(model: Model, ids: readonly ElementId[], checks: readonly ElementId[], rival: boolean): string {
   const list = relationNameList(model, checks, 'constraint');
   return rival
-    ? `no value the model states fixes ${nameList(model, ids)}, only plain constraints, one of them with more than one root ` +
+    ? `no value the model states fixes ${nameList(model, ids)}, only plain constraints, one of them that may have more than one root ` +
         `(${list}): which root the solve took, and so whether the others hold, would turn on which constraint it took first as ` +
         'its design equation, so none does, and this relation is not judged'
     : `no value the model states fixes ${nameList(model, ids)}, only plain constraints that disagree ` +
         `(${list}): which of them holds would turn on the one the solve took first as its ` +
         'design equation, so none does, and this relation is not judged';
+}
+
+/**
+ * Why a relation over a value whose equations have more than one root, one of them the model's own (a stated value, an
+ * assert) or nothing to be imposed beside, is not judged ({@link SolveCore.curved}): `roots` describes those equations.
+ */
+function rootsSentence(model: Model, ids: readonly ElementId[], roots: readonly string[]): string {
+  const list = [...new Set(roots)].sort();
+  const names = list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+  return (
+    `no value the model states fixes ${nameList(model, ids)}, and the equations over ${ids.length === 1 ? 'it' : 'them'} may leave more than ` +
+    `one root (${names}): which root the solve took is no value the model states, and whether this relation holds turns on it, ` +
+    'so none is read, and this relation is not judged'
+  );
 }
 
 /**
