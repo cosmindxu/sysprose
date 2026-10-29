@@ -252,6 +252,31 @@ describe('Langium SysML grammar — extended construct families', () => {
     expect(members[0].about).toEqual(['Design', 'Other']);
   });
 
+  it('parses the named and typed keyword annotation and a visibility word before either spelling (SysML 7.27.2, MemberPrefix)', () => {
+    const ast = parseClean(`
+      package M {
+        metadata securityDesignAnnotation : SecurityRelated about SecurityRequirements, SecurityDesign;
+        metadata sa typed by Sec about Design { approved = true; }
+        public metadata Sec about Design;
+        private @Sec about Design, Other;
+        protected metadata n : Sec about Design;
+        metadata Plain : Sec;
+      }
+    `);
+    const members = (
+      ast.members[0] as { body: { members: { $type: string; type?: string; name?: string; visibility?: string; about?: string[] }[] } }
+    ).body.members;
+    expect(members.map((m) => m.$type)).toEqual(['Annotation', 'Annotation', 'Annotation', 'Annotation', 'Annotation', 'Definition']);
+    expect(members.slice(0, 5).map((m) => [m.visibility, m.name, m.type])).toEqual([
+      [undefined, 'securityDesignAnnotation', 'SecurityRelated'],
+      [undefined, 'sa', 'Sec'],
+      ['public', undefined, 'Sec'],
+      ['private', undefined, 'Sec'],
+      ['protected', 'n', 'Sec'],
+    ]);
+    expect(members[0].about).toEqual(['SecurityRequirements', 'SecurityDesign']);
+  });
+
   it('parses flows, accept/send/assign and connector ends with multiplicities', () => {
     parseClean(`
       action def A {

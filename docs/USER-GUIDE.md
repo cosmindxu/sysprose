@@ -4431,7 +4431,11 @@ they simply cannot be told to be anything else. The other way a kind can be
 invisible is the longer metadata form: `@ProseStatement about p1;` (or, with the
 keyword, `metadata ProseStatement about p1;`) parses and round-trips, the keyword
 form printed as the `@` form, but it is not read as a kind, because reading it
-means resolving `about` against scope and this tool does not do that yet.
+means resolving `about` against scope and this tool does not do that yet. The
+named form (`metadata n : ProseStatement about p1;`) and a visibility word
+(`public @ProseStatement about p1;`) parse and round-trip too: the named form
+is saved back as `metadata n : ProseStatement about p1;` and the visibility word
+is kept. None of these forms is read as a kind.
 
 In the app the kind is **Properties → Kind** (`prop-statement-kind`), offered on
 every element that can carry one — not only on requirements, since guidance is

@@ -1742,14 +1742,18 @@ class Mapper {
 
   /**
    * `@Type { … }` or `metadata Type about … { … }` metadata annotation (printed
-   * back as `@Type …`) → a MetadataUsage carrying the type.
+   * back as `@Type …`) → a MetadataUsage carrying the type. A visibility word
+   * and the name of `metadata N : Type about …` are kept on the usage; read
+   * like the unprefixed, unnamed twin.
    */
   private mapAnnotation(node: Annotation, ownerId: ElementId | null): void {
     const attrs: Record<string, AttrValue> = { annotation: true, type: node.type };
     const about = !!(node.about && node.about.length);
     if (about) attrs.about = [...node.about];
+    if (node.visibility) attrs.visibility = node.visibility;
     const el = this.create('MetadataUsage', {
       ownerId: ownerId ?? undefined,
+      declaredName: unquoteName(node.name),
       attrs,
     });
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);

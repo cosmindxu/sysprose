@@ -127,7 +127,7 @@ const CODES = [
     code: 'mapper/carrier-about-unread',
     source: 'mapper',
     severity: 'error',
-    when: 'A carrier a reader takes from the element it is written in (PropertyPattern, Evidence, FaultHypothesis, VerificationMethod or RequirementMetadata, qualified or not, or an `about` annotation whose `kind` names a verification method) is written with `about` (`@T about X` or `metadata T about X`). No reader looks at `about`, so the property would be dropped or read on the wrong element, and a case with a method declared beside it would be judged as declaring none.',
+    when: 'A carrier a reader takes from the element it is written in (PropertyPattern, Evidence, FaultHypothesis, VerificationMethod or RequirementMetadata, qualified or not, or an `about` annotation whose `kind` names a verification method) is written with `about` (`@T about X`, `metadata T about X` or the named `metadata N : T about X`, each with or without a visibility word). No reader looks at `about`, so the property would be dropped or read on the wrong element, and a case with a method declared beside it would be judged as declaring none.',
     hint: 'The carrier {found} is read on the element it is written in, and `about` is not read. Write it as `@Type { … }` inside the element it is about; the load stays degraded and the checks abstain until you do.',
   },
 

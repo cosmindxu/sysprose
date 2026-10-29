@@ -807,11 +807,19 @@ function stateBehaviorLine(model: Model, el: ElementRecord, indent: number): str
   return renderWithBody(model, el, indent, parts.join(' '));
 }
 
-/** `@Type` metadata annotation, with optional `about A, B` and body (also the print of `metadata Type about …`). */
+/** `@Type` metadata annotation, with optional `about A, B` and body (also the print of the unnamed `metadata Type about …`). */
 function annotationLine(model: Model, el: ElementRecord, indent: number): string {
-  const parts = [`@${attrStr(el, 'type')}`];
+  // A named annotation is the keyword spelling (`metadata N : T about …`): `@` has no name slot.
+  // Without `about` that spelling would reparse as a plain usage, so the name is dropped there.
   const about = el.attrs.about;
-  if (Array.isArray(about) && about.length) parts.push('about', about.map(String).join(', '));
+  const hasAbout = Array.isArray(about) && about.length > 0;
+  const parts = [
+    ...visibilityPrefix(el),
+    el.declaredName !== undefined && hasAbout
+      ? `metadata ${quoteName(el.declaredName)} : ${attrStr(el, 'type')}`
+      : `@${attrStr(el, 'type')}`,
+  ];
+  if (Array.isArray(about) && hasAbout) parts.push('about', about.map(String).join(', '));
   return renderWithBody(model, el, indent, parts.join(' '));
 }
 

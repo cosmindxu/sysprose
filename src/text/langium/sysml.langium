@@ -114,11 +114,15 @@ Dependency infers Dependency:
 // it `metadata N { … }` is the long-standing named usage (BaseKeyword), which
 // this rule must not capture. The standard reads a bare `metadata T;` as typed
 // by T (BNF `MetadataUsageDeclaration`); that reading is not built here.
+// BNF `MemberPrefix` lets either spelling start with a visibility word
+// (`public @T about A;`), and `MetadataUsageDeclaration` lets the keyword form
+// name the usage (`metadata N : T about A;`, 7.27.2's `securityDesignAnnotation`).
+// Only the keyword form takes a name: `@N : T` is not parsed.
 Annotation infers Annotation:
-      '@' type=QualifiedName
+      (visibility=Visibility)? '@' type=QualifiedName
       ('about' about+=QualifiedName (',' about+=QualifiedName)*)?
       (body=Body)? ';'?
-    | 'metadata' type=QualifiedName
+    | (visibility=Visibility)? 'metadata' (name=Name (':' | 'typed' 'by'))? type=QualifiedName
       'about' about+=QualifiedName (',' about+=QualifiedName)*
       (body=Body)? ';'?;
 
