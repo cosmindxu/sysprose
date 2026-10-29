@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 5044 total — 5044 passed, 0 failed, 0 skipped
+- **Tests:** 5070 total — 5070 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -136,8 +136,8 @@
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.smt-encode.test.ts | 61 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
-| test/unit/semantics.solver-units.test.ts | 132 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 50 | 0 | 0 |
+| test/unit/semantics.solver-units.test.ts | 133 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 75 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
