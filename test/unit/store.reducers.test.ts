@@ -2359,6 +2359,50 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       expect(targets(st().model)).toEqual(before);
     });
 
+    // An implicit end copy is named by the most specific feature it redefines (`bind Zb = M` in `part u0 : D4, D3` makes
+    // `u0::N2`, D1's `N2 redefines M` that D4 redefines again), and `bind Zb = N2` is read on the next open as D2's
+    // other `N2`: the copy keeps the name the author wrote and Save writes that (seed 2373 of the property soak).
+    it('saves an implicit end copy under the name the author wrote, so the next open makes the same copy', async () => {
+      const text = `package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute N2 redefines M default = 13.0; attribute Zd1; bind Zd1 = N; }
+  part def D2 :> Q0 { attribute X redefines M default = 14.0; attribute N2 default = 15.0; attribute Zd2; bind Zd2 = N; }
+  part def D3 :> Q0, D1 {  }
+  part def D4 :> D3, D2 { attribute :>> N default = 16.0; attribute :>> N2 default = 17.0; }
+  part u0 : D4, D3 { attribute Z1 = 19.0; attribute Zb = 1.0; bind Zb = M; }
+  constraint cM { u0.M == 17.0 }
+  constraint cZ { u0.Zb == 17.0 }
+}`;
+      load(text);
+      const saved = serializeModel(st().model);
+      expect(saved).toContain('bind Zb = M;');
+      expect(saved).not.toContain('bind Zb = N2;');
+      await pageIsFile('seed 2373');
+      // Renamed away, the head no longer names what the copy redefines: the copy goes by its own name, as before.
+      st().updateElement(byName('M').id, { declaredName: 'MM' });
+      expect(serializeModel(st().model)).not.toContain('bind Zb = M;');
+    });
+
+    // The head is kept only while the next open reads it onto the copy's own line: a feature `M` of the usage, or a
+    // closer `M` in a type, would take `bind Zb = M` off the copy, so the copy goes by its own name (the review's probes).
+    it('writes an implicit end copy by its own name where a feature of the usage or a type shadows the head', async () => {
+      const text = `package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute N2 redefines M default = 13.0; }
+  part def D3 :> Q0, D1 {  }
+  part u0 : D3 { attribute Zb = 1.0; bind Zb = M; }
+}`;
+      load(text);
+      expect(serializeModel(st().model)).toContain('bind Zb = M;');
+      st().createElement('AttributeUsage', byName('u0').id, 'M');
+      expect(serializeModel(st().model)).toContain('bind Zb = N2;');
+      await pageIsFile('own M in u0');
+      load(text);
+      st().createElement('AttributeUsage', byName('D3').id, 'M');
+      expect(serializeModel(st().model)).toContain('bind Zb = N2;');
+      await pageIsFile('M in D3');
+    });
+
     // A few hundred random edit sequences over small random redefinition models (the generator of the review's
     // differential: definitions that specialise one or two earlier, with unnamed and renamed redefinitions and a
     // merged `:>> a, b`; usages that redefine what they inherit). After EACH command the page's redefinitions are
@@ -2482,9 +2526,9 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
           const pick = <T,>(xs: readonly T[]): T | undefined => xs[Math.floor(rnd() * xs.length)];
           let text = randomModel(rnd, seeded(seq * 104729 + 31));
           load(text);
-          // A binding the file does not read back onto the copy the page made at the load (the serializer writes the copy
-          // by the name of the feature it redefines: `bind Zb = N2` for `bind Zb = M`) is a limit of the text, not of the
-          // edit: the sequence runs on the model without the bindings.
+          // A binding the file does not read back onto the copy the page made at the load (two bindings that name one copy
+          // by different names, the file writes one of them) is a limit of the text, not of the edit: the sequence runs on
+          // the model without the bindings.
           if (copiesApart(st().model, reopened(st().model)).length > 0) {
             text = randomModel(seeded(seq * 7919 + 13));
             load(text);

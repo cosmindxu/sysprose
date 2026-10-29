@@ -133,5 +133,6 @@ export async function setPropName(page: Page, id: string, name: string): Promise
   const field = page.getByTestId('prop-name');
   await expect(field).toBeVisible();
   await field.fill(name);
+  await field.press('Enter'); // the box applies on Enter or on leaving it, not per keystroke
   await expect.poll(() => nameOf(page, id)).toBe(name);
 }

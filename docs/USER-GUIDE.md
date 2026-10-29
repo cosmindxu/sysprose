@@ -1104,18 +1104,25 @@ anew, on the feature `L` finds in r then. It is settled with the `:>>`s, in the 
 step: retyped to Q, r's copy of `L` leaves Q2's `:>> L = 50.0` for Q's `L`, and a
 retype back puts it on Q2's, so `r.p.load` reads the value the saved file reads, as long as
 something r's types hold still bears the name `L`. The copy is moved where it stands, not made
-again: the binding stays on it.
+again: the binding stays on it. Save writes the copy under the name the binding was written
+with, not the name of the feature the copy redefines: `bind Zb = M;` in `part u0 : D4, D3`,
+where D1 writes `attribute N2 redefines M` and D2 has an `N2` of its own, stays `bind Zb = M;`
+(it would have been `bind Zb = N2;`, which the next open reads as D2's `N2`). A name the
+edit has since renamed away from that feature, or that a feature of r or a type now shadows
+(the next open would read it as that feature), goes back to the copy's own.
 
-Three things stay outside this. A rename that gives two features of one owner one
+The Name and Short name boxes of the Properties panel apply on Enter or on leaving the box,
+not per key (Escape puts the name back, and so does an emptied box: a name is not cleared there), so a name typed key by key is one edit and one Undo
+step: a prefix another feature of the owner bears (typing `M2x` passes through `M2`) no
+longer moves a `:>> M` to the base feature on the way.
+
+Two things stay outside this. A rename that gives two features of one owner one
 name, the declared one or the one an unnamed `:>> M` is known by (the Problems panel
 reports `validation/duplicate-name` for the first): the saved file finds the first of
-them, which may not be the feature the page's `:>>` is on. A name typed in the Name box,
-which is an edit for every key: a prefix that another feature of the owner already bears
-(typing `M2x` passes through `M2`) moves the `:>> M` to the base feature for good, and
-Save writes it by its path (`:>> P::Q::M`), where the same final names written by hand
-would not; a name pasted whole is one edit. And a `window.sysml` call that points a
-redefinition at a feature no name in its scope reaches (one in a nested unnamed part):
-the saved file puts it on another.
+them, which may not be the feature the page's `:>>` is on. And a `window.sysml` call that
+points a redefinition at a feature no name in its scope reaches (one in a nested unnamed
+part): the saved file puts it on another. A rename made by `updateElement` in steps (the SDK,
+not the box) is an edit for every call.
 
 Six more cases are not followed, and in each the page can read what the saved file does not:
 

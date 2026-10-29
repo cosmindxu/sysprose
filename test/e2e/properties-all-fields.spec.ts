@@ -78,12 +78,14 @@ test('properties edits identity/usage/port/requirement/transition/doc/unit field
   await expect(page.getByTestId('prop-name')).toHaveValue('engine');
 
   await page.getByTestId('prop-name').fill('engineCore');
+  await page.getByTestId('prop-name').press('Enter');
   await expect.poll(() => readField(page, engineId, 'declaredName')).toBe('engineCore');
   await expect(
     page.locator(`[data-elementid="${engineId}"]`).getByText('engineCore'),
   ).toBeVisible();
 
   await page.getByTestId('prop-shortName').fill('EC');
+  await page.getByTestId('prop-shortName').press('Enter');
   await expect.poll(() => readField(page, engineId, 'declaredShortName')).toBe('EC');
 
   // The Type field shows the element's real type (engine is `part engine : Engine`)…

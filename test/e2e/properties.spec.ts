@@ -40,6 +40,7 @@ test('properties edits name / direction / value / multiplicity of a port', async
 
   // ── Rename via prop-name; the Explorer row updates too ──
   await page.getByTestId('prop-name').fill('fuelInlet');
+  await page.getByTestId('prop-name').press('Enter');
   await expect
     .poll(() =>
       page.evaluate(

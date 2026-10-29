@@ -283,6 +283,32 @@ function nameOf(el: ElementRecord): string {
   return n !== undefined ? quoteName(n) : '';
 }
 
+/**
+ * The name the author wrote for an implicit end copy (`attrs.endHead`, set where the mapper makes it), while the next
+ * parse still reads it onto the copy's own line: a copy is named by the most specific feature it redefines (`N2` for
+ * `bind Zb = M`), and that name can find another feature on the next open. A head the edit has since renamed away,
+ * shadowed by a feature of the usage, or given a closer feature by a type, is dropped, and the copy goes by its own
+ * name as before ({@link endCopyFeature}).
+ */
+function endHeadOf(model: Model, el: ElementRecord): string | undefined {
+  const head = el.attrs.endHead;
+  if (el.attrs.implicit !== true || typeof head !== 'string' || head === '') return undefined;
+  const from = model.children(el.id).find((r) => r.eClass === 'Redefinition' && (r.source ?? [])[0] === el.id)?.target?.[0];
+  if (from === undefined || !lineNames(model, from).has(head)) return undefined;
+  const owner = el.ownerId === null ? undefined : model.get(el.ownerId);
+  if (!owner) return undefined;
+  if (model.children(owner.id).some((c) => c.id !== el.id && c.attrs.implicit !== true && (c.declaredName === head || c.declaredShortName === head))) {
+    return undefined;
+  }
+  return endCopyFeature(model, owner, head)?.id === from ? head : undefined;
+}
+
+/** The name a path writes `el` by: the name the author wrote for an implicit end copy, else its own. */
+function writtenName(model: Model, el: ElementRecord): string {
+  const head = endHeadOf(model, el);
+  return head !== undefined ? quoteName(head) : nameOf(el);
+}
+
 /** Build the declaration header (keyword, modifiers, name, specializations…). */
 function header(model: Model, el: ElementRecord): string {
   const parts: string[] = [];
@@ -1189,7 +1215,8 @@ function refTo(
   const answer = resolve ?? ((simple: string, scope: ElementId | null) =>
     resolveFullName(model, simple, scope));
   const target = model.get(targetId);
-  const simple = target ? nameOf(target) : undefined;
+  // A copy written under the author's name goes by the path (`writtenName`): its own name may find another feature.
+  const simple = target && endHeadOf(model, target) === undefined ? nameOf(target) : undefined;
   if (simple && !simple.startsWith('«') && answer(simple, scopeOwnerId)?.id === targetId) {
     return simple;
   }
@@ -1476,16 +1503,22 @@ function lineNames(model: Model, targetId: ElementId): ReadonlySet<string> {
  */
 function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): ElementId | undefined {
   const owner = copy.ownerId === null ? undefined : model.get(copy.ownerId);
-  const name = copy.declaredName;
+  // By the name the author wrote for it, where the saved text writes that ({@link endHeadOf}); else by its own.
+  const name = endHeadOf(model, copy) ?? copy.declaredName;
   if (!owner || name === undefined || name === '') return undefined;
-  let proto: ElementRecord | undefined;
-  const hit = owner.attrs.implicit === true ? undefined : resolveInherited(model, owner.id, name);
-  if (hit === undefined) proto = findTypeFeature(model, owner, name);
-  // Only a feature is mirrored: a definition or a package the name finds is bound to directly.
-  else if (!isDefinition(hit.eClass) && !isRelationship(hit.eClass) && hit.eClass !== 'Package' && hit.eClass !== 'LibraryPackage') {
-    proto = endCopyProto(model, owner, name, hit);
-  }
+  const proto = endCopyFeature(model, owner, name);
   return proto && proto.id !== from && proto.id !== copy.id ? proto.id : undefined;
+}
+
+/** The feature the next parse gives the implicit end copy `name` of `owner` to redefine (the rule of {@link endCopyLanding}). */
+function endCopyFeature(model: Model, owner: ElementRecord, name: string): ElementRecord | undefined {
+  const hit = owner.attrs.implicit === true ? undefined : resolveInherited(model, owner.id, name);
+  if (hit === undefined) return findTypeFeature(model, owner, name);
+  // Only a feature is mirrored: a definition or a package the name finds is bound to directly.
+  if (!isDefinition(hit.eClass) && !isRelationship(hit.eClass) && hit.eClass !== 'Package' && hit.eClass !== 'LibraryPackage') {
+    return endCopyProto(model, owner, name, hit);
+  }
+  return undefined;
 }
 
 /** The most rounds {@link settleRedefinitions} makes: it stops at the first that moves nothing, so this only ends a cycle. */
@@ -1719,7 +1752,7 @@ function relativePath(
   while (cur && !guard.has(cur.id)) {
     guard.add(cur.id);
     const head = cur.ownerId === scope;
-    const nm = nameOf(cur) || (effective && !head ? effectiveSegment(model, cur) : undefined);
+    const nm = writtenName(model, cur) || (effective && !head ? effectiveSegment(model, cur) : undefined);
     if (!nm) return undefined; // anonymous ancestor — cannot path through it
     names.unshift(nm);
     owners.unshift(cur);

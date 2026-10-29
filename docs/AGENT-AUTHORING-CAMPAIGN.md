@@ -1039,7 +1039,9 @@ to move. The implicit end copy a usage-body binding makes of an inherited featur
 (`part r : Q2 { bind p.load = L; }`) is left out of the file and made anew on
 the feature the mapper gives it then (`findTypeFeature`, `endCopyProto` in
 `bind.ts`); the settle moves the existing copy there in place (`endCopyLanding`),
-never removing it, since the binding holds it, and the same test draws such
+never removing it, since the binding holds it (Save writes the copy under the name the binding was
+written with, `attrs.endHead`, not the name of the feature it redefines, which the next open can read as
+another feature), and the same test draws such
 bindings (in a usage and in a part definition) and compares the copies the page
 and its file both hold, a copy a definition's binding makes over a general
 definition's copy aside (the mapper lands it by text order). An explicit `:>>`
@@ -1048,9 +1050,7 @@ implicit copy (`resolveRedefinedFeature`). The settle goes on until a round move
 nothing (a chain of nested redefinitions, or of the hop copies of `bind
 y = n1.n2.n3.n4.x`, takes a round per hop). What it does not reach: two features
 of one owner under one name (declared, or the one an unnamed `:>> M` is known
-by), a name typed key by key into the Name box (each prefix is an edit, and a
-prefix another feature bears moves the redirect for good), and a `window.sysml`
-call that points a redefinition at a feature no name in its scope reaches; and
+by), and a `window.sysml` call that points a redefinition at a feature no name in its scope reaches; and
 six more, each a residual of the end copies and of the routes, listed in the
 user guide: (a) a copy whose name nothing its owner inherits any more stays on
 the feature it redefined, where the saved file has `bind p.load = L` with `L`

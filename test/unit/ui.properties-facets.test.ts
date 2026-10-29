@@ -28,7 +28,7 @@ vi.mock('../../src/library/standard-library', () => ({
 import { useAppStore } from '../../src/ui/store';
 import { handlePageKey } from '../../src/ui/commands';
 import { Properties } from '../../src/ui/panels/Properties';
-import { parseModel } from '@text/index';
+import { parseModel, serializeModel } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   getRequirementAttr,
@@ -162,6 +162,81 @@ describe('Properties — the requirement id box', () => {
     const { view } = mount(`package P {\n    part def <V1> Vehicle;\n}`, 'Vehicle');
     expect((view.getByTestId('prop-shortName') as HTMLInputElement).value).toBe('V1');
     expect(view.queryByTestId('prop-reqId')).toBeNull();
+  });
+});
+
+/**
+ * The Name box applies on Enter or on leaving it, as a whole. Each key was an edit, and a prefix another feature of
+ * the owner bears (`M2` on the way to `M2x`) moved a sibling's `:>> M` to the base feature for good, so the final
+ * name no longer read as the same name written by hand.
+ */
+describe('Properties — the Name box', () => {
+  const RA = (z: string) =>
+    `package RA {\n  part def Q { attribute M default = 1.0; }\n  part def R :> Q { attribute M2 redefines M default = 2.0; }\n` +
+    `  part v : R { attribute :>> M = 5.0; attribute ${z} = 9.0; }\n}`;
+  const type = (box: HTMLElement, text: string): void => {
+    for (let i = 1; i <= text.length; i++) act(() => void fireEvent.change(box, { target: { value: text.slice(0, i) } }));
+  };
+
+  it('writes nothing per keystroke, and the name once, on leaving the box, as one undo step', () => {
+    const { view, model, id } = mount(RA('Z'), 'Z');
+    const box = view.getByTestId('prop-name') as HTMLInputElement;
+    type(box, 'M2x');
+    expect(box.value).toBe('M2x');
+    expect(model.require(id).declaredName).toBe('Z');
+    expect(useAppStore.getState().undoStack.length).toBe(0);
+    act(() => void fireEvent.blur(box));
+    expect(model.require(id).declaredName).toBe('M2x');
+    expect(useAppStore.getState().undoStack.length).toBe(1);
+    // The `:>> M` stayed where the same names written by hand have it.
+    const saved = serializeModel(model);
+    expect(saved).toContain('attribute :>> M = 5.0;');
+    expect(saved).toBe(serializeModel(parseModel(RA('M2x')).model));
+  });
+
+  it('applies on Enter, puts the name back on Escape, and writes nothing for an unchanged name', () => {
+    const { view, model, id } = mount(RA('Z'), 'Z');
+    const box = view.getByTestId('prop-name') as HTMLInputElement;
+    type(box, 'Zq');
+    act(() => void fireEvent.keyDown(box, { key: 'Escape' }));
+    expect(box.value).toBe('Z');
+    act(() => void fireEvent.blur(box));
+    expect(model.require(id).declaredName).toBe('Z');
+    expect(useAppStore.getState().undoStack.length).toBe(0);
+    type(box, 'Zq');
+    act(() => void fireEvent.keyDown(box, { key: 'Enter' }));
+    expect(model.require(id).declaredName).toBe('Zq');
+    act(() => void fireEvent.keyDown(box, { key: 'Enter' }));
+    act(() => void fireEvent.blur(box));
+    expect(useAppStore.getState().undoStack.length).toBe(1);
+  });
+
+  it('puts the name back when the box is cleared: a name is not cleared here, and nothing is pushed to undo', () => {
+    const { view, model, id } = mount(RA('Z'), 'Z');
+    const box = view.getByTestId('prop-name') as HTMLInputElement;
+    act(() => void fireEvent.change(box, { target: { value: '' } }));
+    act(() => void fireEvent.blur(box));
+    expect(model.require(id).declaredName).toBe('Z');
+    expect(box.value).toBe('Z');
+    expect(useAppStore.getState().undoStack.length).toBe(0);
+    act(() => void fireEvent.change(box, { target: { value: '' } }));
+    act(() => void fireEvent.keyDown(box, { key: 'Enter' }));
+    expect(box.value).toBe('Z');
+    expect(useAppStore.getState().undoStack.length).toBe(0);
+  });
+
+  it('holds the Short name box to the same rule', () => {
+    const { view, model, id } = mount(`package P {\n    part def <V1> Vehicle;\n}`, 'Vehicle');
+    const box = view.getByTestId('prop-shortName') as HTMLInputElement;
+    type(box, 'V12');
+    expect(model.require(id).declaredShortName).toBe('V1');
+    act(() => void fireEvent.blur(box));
+    expect(model.require(id).declaredShortName).toBe('V12');
+    expect(useAppStore.getState().undoStack.length).toBe(1);
+    act(() => void fireEvent.change(box, { target: { value: '' } }));
+    act(() => void fireEvent.blur(box));
+    expect(box.value).toBe('V12');
+    expect(useAppStore.getState().undoStack.length).toBe(1);
   });
 });
 
