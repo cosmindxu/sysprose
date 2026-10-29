@@ -479,48 +479,65 @@ headings.
       where one root agrees (it read t/t before); a finer rule would solve the plain equations
       together over every root and keep the agreeing one. Sound as is, only weaker. [text-order S1
       review]
-- [ ] **Withhold the value of a curved component that has no unused equation.** The numeric surface
-      decides F on a consistent model when a curved system leaves no equation unused: `c0 { p.x *
-      p.x == 4.0 }`, `c1 { p.y == p.x + 1.0 }`, `c2 { p.y <= 0.0 }` read c0 t, c1 t, c2 F in every
-      order, yet x = -2, y = -1 satisfies all three; likewise a product system (`p.x * p.y == 4.0`,
-      `p.x == p.y`, `p.x <= 0.0`: c2 F, though (-2, -2) satisfies them) and an asserted curved
-      equation (`assert { x * x == 4.0 }` beside plain `p.x == -2.0`: b F). Not order-dependent and
-      identical at 84fb971; designReadings returns early on `!took || unused.length === 0` before
-      the rival rule applies. Apply the rival rule there too (a component with a curved equation,
-      plain or model, beside another plain equation, or an inequality judged over it, reads no
-      value), count a coupled product system as curved, and correct the USER-GUIDE sentence 'A
-      component with a curved plain equation beside another plain equation reads no value at all'
-      until it does. Opus class (a false verdict on a consistent model). Probes:
-      review-2026-10-14/wave3-probes/text-order/C11out_0.sysml, V8out_0.sysml, AA1_0.sysml.
-      [text-order re-review]
-- [ ] **Take the second root a model equation gives into the curved-root rule.** `designReadings`
-      looks for a curved equation among the PLAIN ones only. A stated `attribute s = x * x` or an
-      asserted `s == x * x` beside plain `c0 { p.s == 4.0 }`, `c1 { p.x == -2.0 }` reads c0, c1 ?/?
-      ('only plain constraints that disagree (c0 and c1)', false: they agree at x = -2) when c0 is
-      written first and t/t when c1 is, where 84fb971 read t/t in both orders. Likewise a curved
-      plain equation whose component reaches a disagreeing pair through a product (`c0 { p.x == -2.0
-      }`, `c1 { p.z == p.x * p.y }`, `c2 { p.z * p.z == p.y }`, `c3 { p.x == 5.0 }`: c2 ?/?/t/? when
-      c0 precedes c3, ? in the other order). Compute `curved` over every equation of the component
-      that reads a produced value, model equations included, and union every plain equation's
-      variables into the component once any of them is produced; pin W, Y and M5 in every order.
-      Sound (an abstention in one order, imposed in the other), but the guide's 'no design equation
-      turns on the order of the text' holds only bar these. Probes:
-      review-2026-10-14/wave3-probes/text-order/W_0.sysml, W_1, Y_0, Y_1, M5out_0.sysml,
-      M5out_3.sysml, F7x130_0.sysml, F7x130_1.sysml. [text-order re-review]
-- [ ] **Do not withhold a quotient by a value another plain equation fixes, and do not hold a unit
-      symbol as a feature (optional).** `isCurved` treats `x / y == 3.0` beside `y == 2.0` and `x ==
-      6.0` (and the density form `m / v == d`) as curved, withholding rows 271df65 read t; and
-      `writtenNames` (the regex over an unparsed asserted body) reads `[m]` in `M ** 2.0 == 4.0 [m]`
-      as the feature `m`, so `constraint t1 { p.m == 3.0 }` goes from t to ?. Both sound, only
-      weaker. Treat `const / affine-in-u` as single-root, and run the regex over
-      `lowerUnitLiterals(raw).text` or strip `[...]` and string literals first. Probes:
-      review-2026-10-14/wave3-probes/text-order/G5out_0.sysml, U3.sysml. [text-order re-review]
-- [ ] **Make `solveFeasible` treat a rival curved pair as a freedom in both orders (optional).** `c0
-      { p.x * p.x == 4.0 }` above `c1 { p.x == -2.0 }` gives {decided: false}, the other way round
-      {decided: true, feasible: true} (the model is feasible); the campaign doc says such a value is
-      searched as a freedom by `solveFeasible`. Not false. Probes:
-      review-2026-10-14/wave3-probes/text-order/C1out_0.sysml, C1out_1.sysml. [text-order re-review]
-
+- [ ] **Do not hold a unit symbol as a feature (optional).** `writtenNames` (the regex over an
+      unparsed asserted body) reads `[m]` in `M ** 2.0 == 4.0 [m]` as the feature `m`, so
+      `constraint t1 { p.m == 3.0 }` goes from t to ?. Sound, only weaker. Run the regex over
+      `lowerUnitLiterals(raw).text` or strip `[...]` and string literals first. Probe:
+      review-2026-10-14/wave3-probes/text-order/U3.sysml. The quotient half of this entry is closed
+      by numeric-curved: an equation one to one in the feature it fixes is single-root; what stays
+      withheld is a curved plain constraint beside another left unused, listed in the rollup
+      'Abstentions left in the numeric solver'. [text-order re-review; numeric-curved S2]
+- [ ] **Stop the numeric surface reading an equation with no root, or a flat one, as solved
+      (pre-existing, wrong answer).** Identical at b635385. (1) A one-to-one equation set to a value
+      it never reaches reads t at a far point: `2.0 ^ x == 0.0` beside `x <= 0.0` reads a t, b T at
+      x = -30.74, and `6.0 / (x + 1.0) == 0.0` beside `x >= 0.0` reads ?/? but `solveFeasible`
+      answers feasible, decided, with the witness x about 3e21
+      (review-2026-10-14/wave3-probes/numeric-curved/lens1-r5/N1..N6). (2) An exponential set equal
+      to its asymptote reads t at |f| < 1e-9 (`5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 + 2.0`). (3) `1.0
+      / x == 0.000001` beside `x >= 999999.0` reads k F and `solveFeasible` infeasible
+      (review-2026-10-14/wave3-probes/numeric-curved/p12, R1 and R2): the absolute 1e-9 accept of a
+      flat function in the Newton path. (4) A flat equation beside a wrong pin reads both t when the
+      pin is within the gate. (5) `x / y == 3.0` with `y == 0.0` and `x == 0.0` gives
+      `solveFeasible` a witness near 1e-16 though 0/0 satisfies nothing
+      (review-2026-10-14/wave3-probes/numeric-curved/zero-over-zero-p1.sysml). Fix: withhold or
+      reject a root-find that ends beyond the equation's tolerance only because the function tends
+      to its asymptote (`witnessGate` does so for `x / (1.0 + x * x) == 0.6 + y`), and refuse a
+      witness at which a divisor is within tolerance of zero. [numeric-curved]
+- [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The guide
+      says 'bar four cases'. Each abstains in one text order and reads a value in the other, never a
+      different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
+      0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`) reads t/t equation-first and
+      ?/? pin-first (review-2026-10-14/wave3-probes/numeric-curved/fix3-pm/D1, D2), and a value
+      taken through an affine link by finite differences, accurate to about 3e-11 (fix3-pg/G4 reads
+      ?, G3 and G5..G8 read t); (b) a zero divisor at the Newton start (`c0 { x / y == 3.0 }`, `c2 {
+      w / y == x }`, `c1 { x >= 0.0 }`: qa0..qa5 in review-2026-10-14/wave3-probes/text-order/); (c)
+      two asserted equations sharing a root, written in a usage (`a0 { x == 6.0 / (x + 1.0) }`, `a1
+      { x == -3.0 }`: G8101x099); (d) `y == y` beside `y == 0.5`. Fix: polish the affine Newton step
+      or judge agreement both ways (a); start the root-find away from a zero divisor (b).
+      [numeric-curved]
+- [ ] **Abstentions left in the numeric solver (rollup; sound, only weaker).** Each reads unknown
+      where an answer exists; none gives a wrong answer. (1) designReadings withholds the whole
+      component a curved equation links, where only what its root reaches need be withheld (`z` of
+      `dz { z == 5000000.0 * q }`, `s == 4.0` over a stated `s = x * x`, every feature of a loop of
+      definitions with more than one root). (2) A lone curved equation is still published at the
+      root found (`x * x == 4.0` alone: the FMI start, a measure of effectiveness). (3) A relation
+      over a multi-root component that holds, or fails, at every root reads unknown (E4, n5-damped,
+      y4); `solveFeasible` reads undecided where it was infeasible and the analysis report's
+      `feasible` should then read undecided. (4) The freedom analysis's row order among the model's
+      own equations (G33x067, CV10). (5) A coupled affine subsystem beside a square is not seen as
+      fixing its features (`c0 { a + b == 4.0 }`, `c1 { a - b == 0.0 }`, `q { z == a * a }`, `k { z
+      >= 5.0 }` read all ?, b635385 read k F; a ring `x{i+1} == 0.5 * x{i} + 1.0` beside `z{i} ==
+      x{i} * x{i}`). (6) An odd power is read as curved (`x ^ 3.0 == 8.0` beside `x >= 0.0` and `x
+      <= 1.0` reads ?/?, b635385 read T and F). (7) A root in the same gap as its pole between two
+      of 0 and +-2^k is not found (`1.0 / (x - 5.0) == 2.0`: 175 of 744 sweep equations). (8)
+      `solveFeasible` starts its descent at one root of a curved equation: `x * x == 4.0` beside `x
+      <= 0.0` reads undecided in every order though x = -2 is feasible (CV1, F11x005). (9) A curved
+      plain constraint beside another left unused is withheld (`x / y == 3.0` beside `y == 2.0` and
+      `x == 6.0`). (10) Cost: `fixedByOthers` is rebuilt per curved equation, quadratic per
+      component (about 1.2x b635385 on a chain of 400 with a curved leaf per member), and
+      `optimize()` re-solves without a cache. Probes: review-2026-10-14/wave3-probes/numeric-curved/
+      (lens1-r5, worklist-probes, nc-rereview2-p1, sweeps/),
+      review-2026-10-14/wave3-probes/text-order/. [numeric-curved]
 - [ ] **Keep the numeric solve from carrying an asserted value through a package head's slot when
       the assert sits in a definition (E1's enclosed twin).** `package E1E { part def P { attribute
       load; } attribute M default = 9.0; bind P::load = M; part p4 : P { attribute :>> load default
