@@ -2192,14 +2192,12 @@ function heldByUnreadAsserts(
   return out;
 }
 
-/** The largest component whose equations of more than one root are told apart from those the others fix one at a time ({@link designReadings}). */
-const MAX_ROOT_COMPONENT = 64;
-
 /**
  * What a node varies as in one unknown: nothing (`const`), a constant multiple of it plus a constant (`affine`), a
- * one-to-one function of it that is not (`mono`: `2.0 / (x - 1.0)`, `2.0 ^ y`, one root at most whatever it is set equal
- * to), or neither (`curved`: `x * x`, `1.0 / x + x`, an `if` over it — more than one root). A constant over an affine
- * function of it (`2.0 / x`, a quotient by a value the other equations fix) is `mono`, wherever the equation is read.
+ * one-to-one function of it that is not (`mono`: `2.0 / (x - 1.0)`, `2.0 ^ y`, one root at most when it is set equal to
+ * something that does not vary with it: {@link equationShape} reads the two sides of an equation together), or neither
+ * (`curved`: `x * x`, `1.0 / x + x`, an `if` over it — more than one root). A constant over an affine function of it
+ * (`2.0 / x`, a quotient by a value the other equations fix) is `mono`, wherever the equation is read.
  */
 type Shape = 'const' | 'affine' | 'mono' | 'curved';
 
@@ -2253,17 +2251,24 @@ function shapeOver(
 }
 
 /**
+ * The {@link Shape} of the equation as ONE function, its two sides taken as `lhs - rhs`: not of each side alone. A one-to-one side
+ * set equal to a side that varies with the same feature can cross it twice (`6.0 / y == 5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0`
+ * at 0 and 1, `x == 6.0 / (x + 1.0)` at 2 and −3): only a side that does not vary with it keeps the one root.
+ */
+function equationShape(eq: Equation, unknown: (id: ElementId | undefined) => boolean, joint = false): Shape {
+  return shapeOver({ kind: 'binary', op: '-', left: eq.lhs, right: eq.rhs }, eq.nameToId, unknown, joint);
+}
+
+/**
  * Is `eq` CURVED in one of its `unknowns` — not an affine function of it with the others held (`x * x`, `1.0 / x + x`,
  * `x ^ 2.0`, a `%` or an `if` over it)? Solved for that unknown it may have more than one root. A product of two
  * unknowns (`mass == density * volume`) is not: once the others are fixed it is affine in the one left
  * ({@link isJointlyCurved} asks it of the two together). Nor is a one-to-one function of it (`2.0 / x`, `v / t` with `v`
- * fixed by another equation, `2.0 ^ y`): it has one root at most, whatever it is set equal to.
+ * fixed by another equation, `2.0 ^ y`): it has one root at most, when the other side of the equation does not vary with the
+ * same unknown (`x == 6.0 / (x + 1.0)` does: 2 and −3).
  */
 function isCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
-  return unknowns.some((u) => {
-    const is = (id: ElementId | undefined): boolean => id === u;
-    return shapeOver(eq.lhs, eq.nameToId, is) === 'curved' || shapeOver(eq.rhs, eq.nameToId, is) === 'curved';
-  });
+  return unknowns.some((u) => equationShape(eq, (id) => id === u) === 'curved');
 }
 
 /**
@@ -2273,8 +2278,7 @@ function isCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
  */
 function isJointlyCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
   const set = new Set<ElementId>(unknowns);
-  const is = (id: ElementId | undefined): boolean => id !== undefined && set.has(id);
-  return shapeOver(eq.lhs, eq.nameToId, is, true) === 'curved' || shapeOver(eq.rhs, eq.nameToId, is, true) === 'curved';
+  return equationShape(eq, (id) => id !== undefined && set.has(id), true) === 'curved';
 }
 
 /**
@@ -2309,14 +2313,31 @@ function rootReader(eqs: readonly Equation[], isOpen: (v: ElementId) => boolean)
   // together: a root, curved in the one left, or a coupled pair (`x * y == 4.0` beside `x == y`).
   const fixedByOthers = (eq: Equation, comp: readonly Equation[], unavailable?: ElementId): Set<ElementId> => {
     const fixedBy = new Set<ElementId>();
-    for (let grew = true; grew; ) {
-      grew = false;
-      for (const o of comp) {
-        if (o === eq) continue;
-        const left = openOf(o).filter((v) => !fixedBy.has(v));
-        if (left.length !== 1 || left[0] === unavailable || curvedIn(o, left)) continue;
-        fixedBy.add(left[0]!);
-        grew = true;
+    // A worklist, linear in the component whatever the order of its equations: one fixes a feature once it is the only one it
+    // reads that is not fixed yet, and each feature fixed counts down the equations that read it.
+    const readers = new Map<ElementId, Equation[]>();
+    const waiting = new Map<Equation, number>();
+    const ready: Equation[] = [];
+    for (const o of comp) {
+      if (o === eq) continue;
+      const open = openOf(o);
+      waiting.set(o, open.length);
+      if (open.length === 1) ready.push(o);
+      for (const v of open) {
+        const list = readers.get(v);
+        if (list) list.push(o);
+        else readers.set(v, [o]);
+      }
+    }
+    while (ready.length > 0) {
+      const o = ready.pop()!;
+      const u = openOf(o).find((v) => !fixedBy.has(v));
+      if (u === undefined || u === unavailable || curvedIn(o, [u])) continue;
+      fixedBy.add(u);
+      for (const r of readers.get(u)!) {
+        const left = waiting.get(r)! - 1;
+        waiting.set(r, left);
+        if (left === 1) ready.push(r);
       }
     }
     return fixedBy;
@@ -2324,8 +2345,6 @@ function rootReader(eqs: readonly Equation[], isOpen: (v: ElementId) => boolean)
   const rooted = (eq: Equation, comp: readonly Equation[]): boolean => {
     const vs = openOf(eq);
     if (single.get(eq) !== true && (vs.length < 2 || !isJointlyCurved(eq, vs))) return false;
-    // The reading below is quadratic in the component: a larger one is read as the worse, never skipped.
-    if (comp.length > MAX_ROOT_COMPONENT) return true;
     // Curved in a feature it may fix while every other it reads is fixed without it: taken first, it takes a root
     // (`x * x == 4.0` beside `x == -2.0`; `z == x * x` beside `z == 9.0` and `x == 3.0`). Not where the others are only
     // fixed through that feature (`b == a + (if a >= 1.0 then 0.0 else 1.0)` beside `a == b` and `a == 3.0`: b waits for a).
@@ -2497,8 +2516,11 @@ function loopedRoots(
  * the root found, and a relation the solve gathers no equation from over its
  * value is not judged ({@link SolveCore.curved}). An equation one to one in the
  * feature it fixes (`v == d / t`, a quotient by a value another equation fixes
- * as in `x / y == 3.0` beside `y == 2.0` and `x == 6.0`, `2.0 ^ y`) has the one
- * root and is no curved one, plain or not.
+ * as in `x / y == 3.0` beside `y == 2.0` and `x == 6.0`, `2.0 ^ y`), with the
+ * feature on one side of the equation only, has the one root and is no curved
+ * one, plain or not ({@link equationShape}: `x == 6.0 / (x + 1.0)` is). What the
+ * others fix is found in time linear in the component's size, for each equation
+ * that may have more than one root, whatever that size.
  */
 function designReadings(
   eqs: readonly Equation[],

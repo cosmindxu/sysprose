@@ -11558,6 +11558,87 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'CU::t3': ['?/?/?/?', '?'],
       },
     ),
+    // A one-to-one side (`6.0 / (x + 1.0)`, `2.0 ^ y`) set equal to a side that varies with the same feature can cross it twice, so the
+    // equation is read as a whole and has more than one root (numeric-curved, final review). CV11: `x == 6.0 / (x + 1.0)` is met at 2
+    // and −3: `k { x <= 0.0 }` read F at 2 where −3 meets it, `m { x >= 0.0 }` read T where −3 breaks it; the lone equation is imposed.
+    // CV12 and CV13: `c1 { x == -3.0 }` beside it read t above it and ? below it. CV14: `6.0 / y == 5.0 - y` (2 and 3) beside the
+    // inequalities that split the roots, CV15 the same beside `y == 3.0`, CV16 `2.0 ^ y == y + 1.0` (0 and 1) beside `y == 1.0`, CV17
+    // the asserted form of CV14: the model's own equation, and the inequalities beside it are not judged either.
+    ...reversed(
+      'order-curved-self',
+      `package CV11 { attribute x : ScalarValues::Real;
+        constraint c0 { x == 6.0 / (x + 1.0) } constraint k { x <= 0.0 } constraint m { x >= 0.0 } }`,
+      `package CV11 { constraint m { x >= 0.0 } constraint k { x <= 0.0 } constraint c0 { x == 6.0 / (x + 1.0) }
+        attribute x : ScalarValues::Real; }`,
+      {
+        'CV11::c0': ['?/?/t/?', '?'],
+        'CV11::k': ['?/?/?/?', '?'],
+        'CV11::m': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-selfpair',
+      `package CV12 { attribute x : ScalarValues::Real; constraint c0 { x == 6.0 / (x + 1.0) } constraint c1 { x == -3.0 } }`,
+      `package CV12 { constraint c1 { x == -3.0 } constraint c0 { x == 6.0 / (x + 1.0) } attribute x : ScalarValues::Real; }`,
+      {
+        'CV12::c0': ['?/?/?/?', '?'],
+        'CV12::c1': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-selfthree',
+      `package CV13 { attribute x : ScalarValues::Real;
+        constraint c0 { x == 6.0 / (x + 1.0) } constraint c1 { x == -3.0 } constraint k { x <= -1.0 } }`,
+      `package CV13 { constraint k { x <= -1.0 } constraint c1 { x == -3.0 } constraint c0 { x == 6.0 / (x + 1.0) }
+        attribute x : ScalarValues::Real; }`,
+      {
+        'CV13::c0': ['?/?/?/?', '?'],
+        'CV13::c1': ['?/?/?/?', '?'],
+        'CV13::k': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-cross',
+      `package CV14 { attribute y : ScalarValues::Real;
+        constraint a { 6.0 / y == 5.0 - y } constraint k { y >= 2.5 } constraint k2 { y <= 2.5 } }`,
+      `package CV14 { constraint k2 { y <= 2.5 } constraint k { y >= 2.5 } constraint a { 6.0 / y == 5.0 - y }
+        attribute y : ScalarValues::Real; }`,
+      {
+        'CV14::a': ['?/?/t/?', '?'],
+        'CV14::k': ['?/?/?/?', '?'],
+        'CV14::k2': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-crosspair',
+      `package CV15 { attribute y : ScalarValues::Real; constraint c0 { 6.0 / y == 5.0 - y } constraint c1 { y == 3.0 } }`,
+      `package CV15 { constraint c1 { y == 3.0 } constraint c0 { 6.0 / y == 5.0 - y } attribute y : ScalarValues::Real; }`,
+      {
+        'CV15::c0': ['?/?/?/?', '?'],
+        'CV15::c1': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-crossexp',
+      `package CV16 { attribute y : ScalarValues::Real; constraint c0 { 2.0 ^ y == y + 1.0 } constraint c1 { y == 1.0 } }`,
+      `package CV16 { constraint c1 { y == 1.0 } constraint c0 { 2.0 ^ y == y + 1.0 } attribute y : ScalarValues::Real; }`,
+      {
+        'CV16::c0': ['?/U/?/U', null],
+        'CV16::c1': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-crossassert',
+      `package CV17 { attribute y : ScalarValues::Real;
+        assert constraint a { 6.0 / y == 5.0 - y } constraint k { y >= 2.5 } constraint k2 { y <= 2.5 } }`,
+      `package CV17 { constraint k2 { y <= 2.5 } constraint k { y >= 2.5 } assert constraint a { 6.0 / y == 5.0 - y }
+        attribute y : ScalarValues::Real; }`,
+      {
+        'CV17::a': ['?/-/T/-', null],
+        'CV17::k': ['?/?/?/?', '?'],
+        'CV17::k2': ['?/?/?/?', '?'],
+      },
+    ),
   };
 
   /**
@@ -12419,7 +12500,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       (k) => [`order-${k}`, `order-${k}-rev`] as const,
     ),
     // numeric-curved S1: a curved equation, plain or the model's own, beside another plain constraint or an inequality.
-    ...['sys', 'prod', 'assert', 'stated', 'asserted', 'chain', 'mod', 'ineq', 'free', 'sq', 'loop', 'loopin', 'cyc', 'stloop', 'dep', 'plaindep', 'quot', 'qfix', 'qlink', 'density', 'qclash', 'pole-a', 'pole-b', 'pole-c', 'unit'].map(
+    ...['sys', 'prod', 'assert', 'stated', 'asserted', 'chain', 'mod', 'ineq', 'free', 'sq', 'loop', 'loopin', 'cyc', 'stloop', 'dep', 'plaindep', 'quot', 'qfix', 'qlink', 'density', 'qclash', 'pole-a', 'pole-b', 'pole-c', 'unit', 'self', 'selfpair', 'selfthree', 'cross', 'crosspair', 'crossexp', 'crossassert'].map(
       (k) => [`order-curved-${k}`, `order-curved-${k}-rev`] as const,
     ),
   ] as const;

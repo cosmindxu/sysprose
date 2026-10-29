@@ -3018,7 +3018,7 @@ holds along the freedom and stays `satisfied`; a PLAIN constraint (no `assert`)
 the solve took as a design equation to fix a value is `satisfied` with
 `imposed: true` and the reason *imposed by the solve* — it holds because the
 solve made it hold, not as a check passed. No design equation turns on the order of the
-text: the model's own equations are solved first and a check fixes only
+text, bar two cases of where the solve starts (below): the model's own equations are solved first and a check fixes only
 what they leave; plain equalities that agree over a value only they fix are all
 imposed; ones that disagree, or an equation of more than one root beside a plain
 constraint (a curved one, plain or the model's own — a stated `s = x * x`, an
@@ -3030,16 +3030,26 @@ used or not), leave that value withheld — no value, every relation over it
 *… one of them with more than one root …*, *… the equations over it leave more than
 one root …*); a lone curved plain constraint is imposed at the root found and an
 inequality over its value is `unknown`; an equation one to one in the feature it
-fixes (a quotient by a value another equation fixes, `x / y == 3.0` beside `y ==
-2.0` and `x == 6.0`; an exponential) has the one root and is read as a plain
-one, in every order (the root-find never takes a pole of the quotient for its root:
-`24.0 / (x - y) == 3.0` beside `y == 4.0` has its pole at x = 4, and a bisection that
-closed on it gave 4 where `x == 3.0 * y` written after it gave 12); and a feature with no value that an `assert` constrains in a
+fixes, with the feature on one side of the equation only (a quotient by a value another
+equation fixes, `x / y == 3.0` beside `y == 2.0` and `x == 6.0`; an exponential) has the
+one root and is read as a plain one, in every order (the root-find never takes a pole of
+the quotient for its root: `24.0 / (x - y) == 3.0` beside `y == 4.0` has its pole at
+x = 4, and a bisection that closed on it gave 4 where `x == 3.0 * y` written after it gave
+12); the same quotient or exponential set equal to a side that varies with the same
+feature crosses it twice and is read as an equation of more than one root (`x == 6.0 / (x +
+1.0)` at 2 and −3, `6.0 / y == 5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1),
+whatever the size of its component (a chain of seventy equations beside `z == x0 * x0`
+over `x0 == 3.0` reads as a short one); and a feature with no value that an `assert` constrains in a
 form the solve does not read (an inequality, a conjunction, a disjunction, a body
 that does not parse) is solved for by no check (`unknown`, *… has no value, and
 an assert constrains it in a form the numeric solve does not read …*): the names
 such a body constrains are those it writes outside its strings and `[unit]`
-literals (the `m` of `4.0 [m]` is a metre).
+literals (the `m` of `4.0 [m]` is a metre). What still turns on the order is where the
+solve starts, and the cases known read an abstention in one order where the other reads a
+value, never a different verdict: a divisor that is zero at the starting guess (`c0 { x / y
+== 3.0 }` and `c2 { w / y == x }` beside `c1 { x >= 0.0 }` over a `y` nothing fixes is not
+converged when `c2` is written first), and two asserted equations that share one of their
+roots (`x == 6.0 / (x + 1.0)` beside `x == -3.0`).
 
 **`solveFeasible` claims a witness only where it has one.** The roots of an equation
 of more than one root are apart, and its descent is local: begun at the root the solve

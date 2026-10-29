@@ -584,6 +584,31 @@ describe('a scaled relation is solved and judged relative to its own SI scale', 
     expect(numeric(m)).toEqual(['satisfied', 'satisfied']);
   });
 
+  it('the same coupled system written as plain constraints has two roots, and none is read', () => {
+    // x² = k(x + k) is x = k·(1 ± √5)/2 in the SI scale the pair is read in: as plain constraints they are no model's own equations, the
+    // solve took the root it found, and `numeric` says neither holds. In either order.
+    for (const [c1, c2] of [
+      ['x * x == k * y', 'y == x + k'],
+      ['y == x + k', 'x * x == k * y'],
+    ] as const) {
+      const m = parse(`package P {
+    attribute x : ISQ::LengthValue;
+    attribute y : ISQ::LengthValue;
+    attribute k : ISQ::LengthValue = 2.0 [nm];
+    constraint c1 { ${c1} }
+    constraint c2 { ${c2} }
+}
+`);
+      const rows = checkConstraintsNumeric(m);
+      expect(rows.map((r) => [r.result, r.imposed]), `${c1} ${c2}`).toEqual([
+        ['unknown', undefined],
+        ['unknown', undefined],
+      ]);
+      expect(rows[0]!.reason, `${c1} ${c2}`).toContain('more than one root');
+      expect(solvedOf(m, 'x'), `${c1} ${c2}`).toBeUndefined();
+    }
+  });
+
   it('giving an ordinary model units does not make it infeasible', () => {
     const dimensioned = parse(`package P {
     attribute t : ISQ::DurationValue;

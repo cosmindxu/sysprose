@@ -733,7 +733,8 @@ Two names worth separating:
   solved to, wherever the check is written: the model's own equations are
   solved first, and a check fixes only what they leave. The test is local: each
   of two separate roots (`x * x == 4.0`) reads as determined, not free.
-  **No design equation turns on the order of the text.** Two plain
+  **No design equation turns on the order of the text, bar two cases of where the solve
+  starts (the end of this passage).** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
   `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
@@ -758,12 +759,20 @@ Two names worth separating:
   one at a time has the one root and is read as before: `z == x * x` over `x ==
   3.0`, and `mass == density * volume` over the two it multiplies; and `z == x *
   y` beside `z == 9.0` leaves x and y free along the curve, not two roots. So does
-  an equation one to one in the feature it fixes, a quotient or an exponential
+  an equation one to one in the feature it fixes, with the feature on one side of
+  the equation only, a quotient or an exponential
   (`v == d / t` beside `d == 100.0` and `v == 20.0` is t = 5; `x / y == 3.0`
   beside `y == 2.0` and `x == 6.0` agrees with both, and all three are *imposed
   by the solve* in any order, as is the density form `m / v == d`): a quotient
   by a value another equation fixes has the one root. One that disagrees with the
-  values the others fix (`x == 7.0` beside them) is withheld with them. A loop
+  values the others fix (`x == 7.0` beside them) is withheld with them. Such a
+  quotient or exponential set equal to a side that varies with the same feature
+  can cross it twice, so the equation is read as a whole and has more than one
+  root, like `x * x == 4.0`: `x == 6.0 / (x + 1.0)` is met at 2 and −3, `6.0 / y ==
+  5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1. Beside `c1 { x == -3.0 }`
+  it reads no value, and an inequality over a lone one (`k { x <= 0.0 }`) is
+  unjudged, in either order of the text; the size of the component does not change that (a chain of seventy equations beside
+  `z == x0 * x0` over `x0 == 3.0` reads as a short one). A loop
   of definitions is read the same way: the asserts `x == y * y + 1.0` and `y ==
   3.0 - x`, or the two as stated values (`x = y * y + 1.0`, `y = 3.0 - x`), have
   the roots (2, 1) and (5, −2), and the definitions bind x and y at the one the
@@ -781,7 +790,16 @@ Two names worth separating:
   its first search finds no witness it searches again from where the plain
   equations that are not curved put the value, so `x * x == 4.0` beside `x ==
   -2.0` is feasible with x = −2 in either order of the text; where that finds
-  none either, the answer stays undecided. A feature with no value that an `assert`
+  none either, the answer stays undecided. What still turns on the order of the
+  text is where the solve starts, and the cases known read an abstention in one
+  order where the other reads a value, never a different verdict: a divisor that
+  is zero at its starting guess (`c0 { x / y == 3.0 }` and `c2 { w / y == x }`
+  beside `c1 { x >= 0.0 }`, over a `y` nothing fixes) leaves the solve not
+  converged when `c2` is written first, so all three read *unknown*, where the
+  other order imposes `c0` and `c2`; and two asserted equations that share one of
+  their roots (`a0 { x == 6.0 / (x + 1.0) }` beside `a1 { x == -3.0 }`, in a
+  definition) read a constraint over their value *unknown* in one order and decided
+  in the other. A feature with no value that an `assert`
   constrains in a form the solve does not read — an inequality, a conjunction
   (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
   (`M == max(L, 20.0)`, which the model reports; it constrains the names it
