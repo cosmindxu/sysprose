@@ -5405,7 +5405,7 @@ instead, since the counter cannot tell their checks apart). The file's
 no timeout counting as vitest's 10 s `hookTimeout`; the `withZ3`
 wrappers of `smt-z3.integration` and `verification.differential` refuse a
 timeout under 40 s when a case is declared (they see neither a larger budget
-nor a hook). The campaign file's **79 `withZ3`
+nor a hook). The campaign file's **80 `withZ3`
 cases** and the plain cases that also drive the solver used to share one
 context from the first block to the last; each of its **12 solver blocks** now
 starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per
@@ -5530,7 +5530,7 @@ soak itself, five processes at once beside the same loops, 5.2.0 without the
 check failed 3 of 5 (a module death, changed answers), 5.3.1 passed 5 of 5
 (and 8 of 8 beside sixteen loops). The version z3 reports for itself changed
 shape with the release: `5.3.1.0 <commit> z3-5.3.1`, where 5.2.0 said `Z3
-5.1.0.0`, so a verdict's `decided by z3 …` line names the commit now.
+5.1.0.0`, so a verdict's `decided by z3 …` line named the commit then (superseded: the sentence now names the release alone and the commit lives in the record's `flags.solver`).
 
 **The `recovery` pattern: a branching-time question answered by a branching-time
 algorithm, at the one position where the walk exists and the search has not run

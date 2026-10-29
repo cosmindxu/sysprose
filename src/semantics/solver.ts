@@ -5338,12 +5338,24 @@ function numericRows(
     r.reason = equated;
     delete r.cause;
   }
+  // A relation over a name that two defaults a binding joins leave valueless (GA6's Q's `L == 5.0`): the row is as
+  // unknown as it was, but says what the validation surface says — the binding, and that its defaults differ —
+  // where "L has no value in scope" named neither.
+  for (const r of out) {
+    if (
+      r.conflict !== undefined || r.result !== 'unknown' || r.cause !== undefined || r.context !== undefined ||
+      !isUnresolvedSentence(r.reason ?? '')
+    ) continue;
+    const said = checkVerdictOf(r.id)?.result === 'unknown' ? checkSentence(r.id) : undefined;
+    if (said !== undefined && said.includes(' joins defaults that differ or are not constants ')) r.reason = said;
+  }
   // A feature with no value that two asserted equations give two values (contradictedDefinitionRefusal): no
   // decided row that may read it, or a value tied to it, is judged, as the validation surface judges none — the
   // solve takes one equation as its design equation, and the point it reaches holds the first written. A row
-  // already unknown keeps its sentence.
+  // already unknown keeps its sentence — except one that says the solve did not converge: the pair is why, and the
+  // other surfaces say so.
   for (const r of out) {
-    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    if (r.conflict !== undefined || (r.result === 'unknown' && !(r.reason ?? '').startsWith(UNSETTLED_HEAD))) continue;
     const contradicted = contradictedDefinitionRefusal(model, r.context?.baseId ?? r.id, r.raw, r.context);
     if (contradicted === undefined) continue;
     r.result = 'unknown';
@@ -5392,6 +5404,9 @@ function freedomSentence(model: Model, ids: readonly ElementId[]): string {
   );
 }
 
+/** The head of {@link unsettledSentence}. */
+const UNSETTLED_HEAD = 'the solve did not converge:';
+
 /**
  * Why a relation over a value the solve stopped at without converging is not
  * judged ({@link SolveCore.unsettled}) — in the register of {@link freedomSentence}.
@@ -5399,7 +5414,7 @@ function freedomSentence(model: Model, ids: readonly ElementId[]): string {
 function unsettledSentence(model: Model, ids: readonly ElementId[]): string {
   const one = ids.length === 1;
   return (
-    `the solve did not converge: ${nameList(model, ids)} ${one ? 'is' : 'are'} where it stopped, at a point ` +
+    `${UNSETTLED_HEAD} ${nameList(model, ids)} ${one ? 'is' : 'are'} where it stopped, at a point ` +
     'that misses an equation of the model it solved, so that point is no solution and this relation is not ' +
     'judged at it'
   );

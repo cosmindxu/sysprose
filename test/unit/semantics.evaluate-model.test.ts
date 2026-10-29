@@ -80,6 +80,7 @@ vi.mock('../../src/semantics/defining-equation', async (importOriginal) => {
     enclosingAssertOn: stub('enclosingAssertOn', real.enclosingAssertOn),
     assertDefinitionIn: stub('assertDefinitionIn', real.assertDefinitionIn),
     definedAgainstBoundIn: stub('definedAgainstBoundIn', real.definedAgainstBoundIn),
+    standingDefaultSentence: stub('standingDefaultSentence', real.standingDefaultSentence),
   };
 });
 // The obligations lane's reading of one relation (A.2.9): the same stub, which only `groupGoalRows`' test arms.
@@ -1976,6 +1977,15 @@ describe('checkConstraints — two asserted equations that give one feature two 
           `Constraint violated: ${named} — an asserted equation is a fact of every instance it holds of, so the model states both values and contradicts itself, whichever is written first; no relation that may read L is decided`,
         ],
       ]);
+      // The numeric surface says the pair's sentence on the equations' own rows and the check over L alike, where
+      // it said 'the solve did not converge' (the solve met two equations that disagree).
+      const numeric = checkConstraintsNumeric(m!).filter((r) => r.conflict === undefined);
+      expect(numeric.map((r) => r.result)).toEqual(['unknown', 'unknown', 'unknown']);
+      for (const r of numeric) {
+        expect(r.reason).toBe(
+          `L is not read: ${named} — the model contradicts itself there, whichever is written first, and this tool reads neither value, so no relation that may read it is decided`,
+        );
+      }
       // `verify` decides nothing over it on either engine: the literal engine reads the check, the SMT engine
       // finds its axioms inconsistent. Before, `--engine literal` exited 0 in one order and 1 in the other. The
       // row prints no value of p.L: it printed the first equation's, 50 in one order and 60 in the other.
@@ -3397,6 +3407,12 @@ describe('checkConstraints — defaults a binding joins stand only as one consta
       expect(checks.filter((c) => c.message.includes('defines')), holder).toEqual([]);
       expect(solveFeasible(m!).decided, holder).toBe(false);
     }
+    // The numeric surface says what the check says of Q's `qa` — the binding, and that the defaults differ — where it
+    // said `"L" has no value in scope`.
+    const { model: q } = await loadModelText(`package GA6 { ${P} part def Q { ${L} bind p.load = L; } part q : Q; }`);
+    expect(checkConstraintsNumeric(q!).find((n) => n.name === 'qa' && n.context === undefined)!.reason).toBe(
+      'L has no value in GA6::Q: `bind p.load = L` of GA6::Q joins defaults that differ or are not constants (p.load, L), and the model states neither',
+    );
     // F5 names the defaults that differ (A.9 `defaults-differ`), not "declared without one".
     const { model: r } = await loadModelText(R3A);
     expect(checkConstraints(r!).find((c) => r!.qualifiedName(c.id) === 'R3a::c1')!.message).toMatch(
@@ -3541,6 +3557,32 @@ describe('checkConstraints — a default stands against an asserted equation (de
       "Constraint violated: p.x == 50.0 — P::x's `default = 2.0` is not changed by an assertion: write the analysis as the " +
         'value (`part :>> p { attribute :>> x = …; }` in DT::q1) to replace it',
     );
+    // An instance row says it too, read as the instance reads its names: H2E's q writes `:>> L = 50.0` (no default),
+    // so P's `load default = 1.0` is the one that stood there; Q's own row holds (both defaults 1.0).
+    const { model: h } = await loadModelText(`package H2E {
+      part def P { attribute load : ScalarValues::Real default = 1.0; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; assert constraint tie { p.load == L } }
+      part q : Q { attribute :>> L = 50.0; }
+    }`);
+    const tie = checkConstraints(h!).find((c) => h!.qualifiedName(c.id) === 'H2E::Q::tie')!;
+    expect(tie.message).toBe('Constraint satisfied');
+    expect(tie.instances!.map((i) => i.message)).toEqual([
+      "q::L = 50 misses Q::tie (p.load == L) — P::load's `default = 1.0` is not changed by an assertion: write the analysis as " +
+        'the value (`part :>> p { attribute :>> load = …; }` in H2E::q) to replace it',
+    ]);
+    // Through a binding: RB3's valueless x is joined to q's `L default = 4.0`, which is the value the assert missed.
+    const { model: b } = await loadModelText(`package RB3 {
+      part def P { attribute x : ScalarValues::Real; }
+      part q { part p : P; attribute L : ScalarValues::Real default = 4.0; bind p.x = L; }
+      assert constraint tie { q.p.x == 3.0 }
+      assert constraint lim { q.p.x <= 3.5 }
+    }`);
+    expect(message(b!, 'RB3::tie')).toBe(
+      "Constraint violated: q.p.x == 3.0 — q::L's `default = 4.0` is carried into q.p.x by a binding and is not changed by an " +
+        'assertion: write the analysis as the value of q::L to replace it',
+    );
+    // An inequality never defined anything: it says nothing more.
+    expect(message(b!, 'RB3::lim')).toBe('Constraint violated: q.p.x <= 3.5');
     // A usage inherits the feature, and redefines it; an element that declares the path's first feature itself
     // enters it rather than redefine its own sibling; a name read through an owning namespace (cells' `mass`, of
     // Battery's) is written where it is declared.
@@ -5835,7 +5877,10 @@ describe('an enclosing equation read through a binding or a reference, and a rel
       const { model: m, report } = await loadModelText(`package ${name} { ${body} }`, { fileName: `${name}.sysml`, strict: true });
       expect([check(m!, `${name}::top`).result, numeric(m!, `${name}::top`)], name).toEqual(['satisfied', 'satisfied']);
       expect(goal(m!, `${name}::top`).encodable, name).toBe(true);
-      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), name).toEqual(['p::load = 1 misses P2::a2 (load == 50.0)']);
+      expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), name).toEqual([
+        "p::load = 1 misses P2::a2 (load == 50.0) — Q::L's `default = 1.0` is carried into load by a binding and is not changed by an " +
+          'assertion: write the analysis as the value of Q::L to replace it',
+      ]);
     }
   });
 
@@ -7928,6 +7973,24 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
   });
 
+  it('the sentence of a standing default that throws costs the row nothing (standingDefaultSentence)', async () => {
+    const { model: m } = await loadModelText(`package H2T {
+      import Missing::*;
+      part def P { attribute load : ScalarValues::Real default = 1.0; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; assert constraint tie { p.load == L } }
+      part q : Q { attribute :>> L = 50.0; }
+    }`);
+    const violated = (checks: ConstraintCheck[]) => rowOf(m!, checks, 'H2T::Q::tie').instances!.filter((i) => i.result === 'violated');
+    expect(violated(checkConstraints(m!)).map((i) => i.message)).toEqual([expect.stringContaining('is not changed by an assertion')]);
+    // Thrown for the instance rows only (the stack names the sweep's per-instance reading): the row is read
+    // as before, without its sentence, and the rest of the sweep stands.
+    thrower.armed = () => new Error().stack!.includes('readInContexts');
+    const rows = violated(checkConstraints(m!));
+    expect(rows.length).toBe(1);
+    expect(rows[0].message).not.toContain('is not changed by an assertion');
+    expect(validate(m!).some((d) => d.ruleId === 'unresolved-import')).toBe(true);
+  });
+
   it('a binding’s own reading that throws is its row, reported, and the sweep stands (bindingConflicts)', async () => {
     const { model: m } = await loadModelText(GROUP);
     // The binding's reading sits deeper below the sweep than a stack trace's default ten frames.
@@ -7999,6 +8062,9 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     const shadowed = 'y in own is SH::P::own::y, its own in parameter; this tool reads a body in its owner\'s scope, where `y` is SH::P::y — another feature — so the body is not read';
     expect(refusalTail('unread-definition', shadowed)).toContain('its body is over a parameter of its own');
     expect(refusalTail('unread-definition', shadowed)).not.toContain('the model decides it');
+    // Its head does not say it reads a value: a parameter may state none.
+    expect(refusalHead('unread-definition', shadowed)).toBe('the body of the relation is over a name its own element declares, which this tool does not read');
+    expect(refusalHead('unread-definition', 'T2::P::c is not read in T2::q3::p: why')).toBe('the relation reads a value this tool does not read');
     expect(refusalTail('unresolved-name', 'x')).toContain('This is a defect in the relation');
   });
 

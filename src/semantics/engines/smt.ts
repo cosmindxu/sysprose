@@ -1601,20 +1601,23 @@ function pinnedSymbols(model: Model, rows: readonly EncodedRow[]): Set<string> {
 }
 
 /**
- * Which solver answered, in the words a verdict has to name it by.
+ * Which solver answered, in the words a verdict has to name it by: `z3 5.3.1`,
+ * the release and nothing after it (D2). z3's long form carries the 40-hex
+ * commit (`5.3.1.0 <commit> z3-5.3.1`), which no reader of a sentence can use;
+ * it stays in the evidence record's `flags.solver`, where a replay can name the
+ * exact build.
  *
  * It goes in the BOUND rather than in the claim sentence, and that is
- * deliberate: the evidence record carries the bound, so the solver that ran is
- * recorded — while the golden verdict corpus pins `detail`, and a claim
- * sentence carrying a version string would make every golden a pin on
- * the solver package's release schedule rather than on this tool's behaviour.
+ * deliberate: the golden verdict corpus pins `detail`, and a claim sentence
+ * carrying a version string would make every golden a pin on the solver
+ * package's release schedule rather than on this tool's behaviour.
  * (The package is named nowhere in this file on purpose: the browser-build
  * guard in `test/integration/smt-z3.integration.test.ts` holds every source
  * that names it to the variable-specifier form, and this engine never imports
  * it at all — the backend is passed in.)
  */
 function solverSentence(backend: Z3Backend): string {
-  return `; decided by z3 ${backend.fullVersion}, seed ${backend.seed}`;
+  return `; decided by z3 ${backend.version}, seed ${backend.seed}`;
 }
 
 /**

@@ -1176,6 +1176,23 @@ describe('L8 — every evidence record validates against its schema', () => {
     }
   }, 120_000);
 
+  withZ3('names z3 by its release in the sentence and by its full build in the record (D2)', async () => {
+    const meta = JSON.parse(read('test/fixtures/verification/smt-uav-proved/meta.json')) as Meta;
+    const report = await runCase(meta);
+    expect(report.records.length).toBeGreaterThan(0);
+    for (const record of report.records) {
+      // The line a person reads: `decided by z3 5.3.1, seed 0`, no commit after it.
+      expect(record.bound.detail).toMatch(/; decided by z3 \d+\.\d+\.\d+, seed 0$/);
+      expect(record.bound.detail).not.toMatch(/[0-9a-f]{40}/);
+      // The metadata keeps the long form, commit included.
+      expect(record.flags.solver).toMatch(/^\d+\.\d+\.\d+\.\d+ [0-9a-f]{40} z3-\d+\.\d+\.\d+$/);
+    }
+    const lit = JSON.parse(read('test/fixtures/verification/holds-at-values-uav/meta.json')) as Meta;
+    for (const record of (await runCase(lit)).records) {
+      expect(record.flags, 'no solver ran, so none is named').not.toHaveProperty('solver');
+    }
+  });
+
   it('never leaves a witness that reads as refuting the claim it supports', async () => {
     // THE DERIVED-FEATURE TRAP, pinned by value. `uav.endurance` is computed by
     // the model's own equation and STORES 0.7877 — hours — with no declared

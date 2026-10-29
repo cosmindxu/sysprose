@@ -137,7 +137,7 @@
     },
     "flags": {
       "type": "object",
-      "description": "Every option that changed what was shown — `--free` above all. A proof obtained under a released feature value may not be replayed as though the model had said something it did not.",
+      "description": "Every option that changed what was shown — `--free` above all. A proof obtained under a released feature value may not be replayed as though the model had said something it did not. An `smt` record from a run where z3 loaded also carries `solver`: z3's full build string, commit included, which the verdict sentences shorten to the release.",
       "additionalProperties": {
         "type": ["string", "number", "boolean", "array"],
         "items": { "type": "string" }

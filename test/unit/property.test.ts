@@ -222,6 +222,9 @@ describe('propertyCheck — gate 0, then the four judging gates', () => {
     expect(withZ3.code).toBe('verification/trivial-property');
     expect(withZ3.outcome).toBe('refused');
     expect(withZ3.detail).toMatch(/valid|unsatisfiable/);
+    // D2: the line names the release, never z3's long form with its commit.
+    expect(withZ3.solver.detail).toMatch(/^z3 \d+\.\d+\.\d+ \(WASM\), seed 0$/);
+    expect(withZ3.solver.detail).not.toMatch(/[0-9a-f]{40}/);
 
     const previous = process.env.SYSPROSE_NO_Z3;
     process.env.SYSPROSE_NO_Z3 = '1';

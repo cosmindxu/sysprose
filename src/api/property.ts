@@ -1336,7 +1336,7 @@ async function nonTriviality(
       solver: { version: null, detail: z3.reason },
     };
   }
-  const solver = { version: z3.version, detail: `${z3.fullVersion} (WASM), seed ${z3.seed}` };
+  const solver = { version: z3.version, detail: `z3 ${z3.version} (WASM), seed ${z3.seed}` };
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const script = (term: string): string =>
     encodeScript({

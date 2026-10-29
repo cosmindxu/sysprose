@@ -125,9 +125,9 @@ export interface Z3Absent {
 /** A loaded solver, with everything a verdict line has to name. */
 export interface Z3Backend {
   readonly absent: false;
-  /** z3's own version string, e.g. `5.1.0`. Never empty. */
+  /** z3's release, e.g. `5.3.1` — what a verdict sentence names. Never empty. */
   readonly version: string;
-  /** z3's long form, e.g. `5.3.1.0 <commit> z3-5.3.1`. */
+  /** z3's long form, e.g. `5.3.1.0 <commit> z3-5.3.1` — evidence-record metadata, not a sentence. */
   readonly fullVersion: string;
   /** The seed every solver in this process is pinned to. */
   readonly seed: number;

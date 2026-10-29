@@ -1602,6 +1602,13 @@ since an element may not redefine its own feature; for a dotted name, the
 redefinitions down the path from the deepest feature the element declares
 itself: *(`part :>> p { attribute :>> x = …; }` in R::q1)* over Q's p,
 *(`attribute :>> mass = …;` in M4::Pack::b)* over Pack's own `part b`). An
+instance row says it too, read as that instance reads its names (Q's `assert { p.load == L }`
+over `part q : Q { attribute :>> L = 50.0; }`: *… q::L = 50 misses Q::tie (p.load == L) — P::load's
+`default = 1.0` is not changed by an assertion … (`part :>> p { attribute :>> load = …; }` in
+H2E::q)*), and so does an assert in the package over a feature with no value that a binding
+carries a `default` into (`assert { q.p.x == 3.0 }` over `bind p.x = L` and q's `L default =
+4.0`: *… q::L's `default = 4.0` is carried into q.p.x by a binding and is not changed by an
+assertion: write the analysis as the value of q::L to replace it*). An
 inequality (`mass <= limit` over `limit default = 1.0`),
 or an equation that only reads a default on its other side (`mass == 0.2 *
 cells` over `cells default = 4.0`), is a requirement checked against the
@@ -1756,8 +1763,9 @@ instance of the feature, P's own L and every P's — in a sentence naming each
 equation (*L is not read: the asserted `L == 50.0` (…::P::c50) and `L == 60.0`
 (…::P::c60) each define `L` in …::P, which states no value, and give it two
 different values — the model contradicts itself there, whichever is written
-first …*; on the numeric surface a row the solve could not judge keeps its own
-sentence, such as *the solve did not converge*), and `verify` exits 2 on either
+first …*; the numeric surface says it on the equations' own rows too, where the
+solve, meeting two equations that disagree, did not converge, and a row it could
+not judge for another reason keeps its own sentence), and `verify` exits 2 on either
 engine, its rows printing no value for L (nor an SI pair). No export reads one
 either, whichever equation is written first: the FMI `start` of such an L, or
 of a value tied to it, is the type's default (`0`, `false` for a Boolean, the
@@ -2221,7 +2229,7 @@ examples/uav-isr.sysml: 0 inconclusive, 2 discharged, 0 refuted — engine smt
   negation-unsat under a satisfiable axiom set — `proved` means exactly that, at 5000 ms per check, with every feature value bound as the model states it
   UAVSurveillanceSystem::EnduranceRequirement  uav.endurance >= 45.0 [min]
     proved: A ∧ P ∧ ¬G unsat, QF_NRA, 4 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
-    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.69… vs 2700 in T, coherent SI; decided by z3 5.3.1.0 ac9156f97cb44e56472e1c841f7a2beb1e976b24 z3-5.3.1, seed 0
+    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.69… vs 2700 in T, coherent SI; decided by z3 5.3.1, seed 0
   ...
 $ echo $?
 0
@@ -2395,7 +2403,9 @@ whole requirement set passes while meaning nothing — so this tool says
 
 **`--record PATH` writes the evidence.** One record per obligation: the claim,
 the engine, the tool and its version, the bound the claim holds within, the
-witness (your own values), the flags that changed what was shown, and two
+witness (your own values), the flags that changed what was shown (an `smt` record's
+`flags.solver` carries z3's full build string, commit included, which the
+verdict lines shorten to `z3 5.3.1`), and two
 digests — one for the obligation's normal form, one for your model. Records
 carry **no timestamp**, so two runs over an unchanged file produce byte-identical
 files and a `diff` answers "did anything change?". The model digest is taken

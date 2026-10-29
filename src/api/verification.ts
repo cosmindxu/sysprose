@@ -1524,6 +1524,10 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
         // a record that did not carry the bound could be replayed as the
         // stronger of the two.
         ...(engine === 'smt' ? { timeoutMs } : {}),
+        // WHICH BUILD answered, in z3's long form with the commit (D2): the
+        // sentences name the release alone, so the exact build lives here.
+        // Absent when no solver loaded (the literal engine, or the tool absent).
+        ...(load !== null && !load.absent ? { solver: load.fullVersion } : {}),
         ...(strictVacuity ? { strictVacuity } : {}),
         // WHICH CASE, when one was named. `--case` changes which obligations
         // the record set is about, so a record file that did not carry it

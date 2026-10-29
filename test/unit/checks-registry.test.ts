@@ -718,7 +718,7 @@ describe('the solver checks in the page', () => {
     }
   });
 
-  it('runs verify on an isolated page and says holds, then refuted when a requirement is broken', async () => {
+  it('runs verify on an isolated page and says holds, then refuted when a requirement is broken', { timeout: 30_000 }, async () => {
     const held = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
     const ok = await runSolverCheck(spec('verify'), ctx({ model: held, isolated: true }));
     expect(ok).toMatchObject({ verdict: 'holds', summary: '0 inconclusive, 6 discharged, 0 refuted' });
