@@ -2780,7 +2780,13 @@ function readInContexts(
           : instanceAnchor(model, pass.definitions, readAs, several ? [broke.path] : names, several ? [broke] : judged.reads, undefined, x.id)?.id;
     // A violated `assert` says why a `default` stood at this instance, read as the instance reads its names (the
     // context is the owner): q's `:>> L = 50.0` is no default, and P's `load default = 1.0` is the one that stood.
-    const kept = judged.result === 'violated' ? standingDefaultSentence(model, reading) : undefined;
+    // Only wording, so a failure of it never costs the row (A.2.9).
+    let kept: string | undefined;
+    try {
+      kept = judged.result === 'violated' ? standingDefaultSentence(model, reading) : undefined;
+    } catch {
+      kept = undefined;
+    }
     const said = instanceMessage(model, judged, shown, contextName, target, expr, scope);
     instances.push({
       contextId: x.id,

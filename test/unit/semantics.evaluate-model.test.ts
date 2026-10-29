@@ -77,6 +77,7 @@ vi.mock('../../src/semantics/defining-equation', async (importOriginal) => {
     enclosingAssertOn: stub('enclosingAssertOn', real.enclosingAssertOn),
     assertDefinitionIn: stub('assertDefinitionIn', real.assertDefinitionIn),
     definedAgainstBoundIn: stub('definedAgainstBoundIn', real.definedAgainstBoundIn),
+    standingDefaultSentence: stub('standingDefaultSentence', real.standingDefaultSentence),
   };
 });
 // The obligations lane's reading of one relation (A.2.9): the same stub, which only `groupGoalRows`' test arms.
@@ -7793,6 +7794,24 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
     thrower.armed = (fn) => fn === 'definedAgainstBoundIn' && inside('definedQuantity');
     expect(() => checkConstraints(m!)).not.toThrow();
     expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+  });
+
+  it('the sentence of a standing default that throws costs the row nothing (standingDefaultSentence)', async () => {
+    const { model: m } = await loadModelText(`package H2T {
+      import Missing::*;
+      part def P { attribute load : ScalarValues::Real default = 1.0; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; assert constraint tie { p.load == L } }
+      part q : Q { attribute :>> L = 50.0; }
+    }`);
+    const violated = (checks: ConstraintCheck[]) => rowOf(m!, checks, 'H2T::Q::tie').instances!.filter((i) => i.result === 'violated');
+    expect(violated(checkConstraints(m!)).map((i) => i.message)).toEqual([expect.stringContaining('is not changed by an assertion')]);
+    // Thrown for the instance rows only (the stack names the sweep's per-instance reading): the row is read
+    // as before, without its sentence, and the rest of the sweep stands.
+    thrower.armed = () => new Error().stack!.includes('readInContexts');
+    const rows = violated(checkConstraints(m!));
+    expect(rows.length).toBe(1);
+    expect(rows[0].message).not.toContain('is not changed by an assertion');
+    expect(validate(m!).some((d) => d.ruleId === 'unresolved-import')).toBe(true);
   });
 
   it('a binding’s own reading that throws is its row, reported, and the sweep stands (bindingConflicts)', async () => {
