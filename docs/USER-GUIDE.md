@@ -1739,7 +1739,11 @@ over it, nor over a feature with no value whose bindings carry the equation's
 value to such defaults through a package's binding on a definition's feature
 (`bind p2.load = L` beside `L == 5.0`, under `bind P::load = M` with M's
 `default = 9.0` and p4's `:>> load default = 7.0`: p2's load is read at L's 5 on
-the check, and p3's, which only M would carry it to, is read on no surface). An
+the check, and p3's, which only M would carry it to, is read on no surface — the same
+where the equation and the binding are written in a definition W and the slot is w's
+p2, and where the assert fixes the slot itself with no binding at it (`p2.load == 5.0`,
+under the same two defaults that differ): p3's load and M are read on no surface, the
+numeric surface included; that surface alone still reads the slot itself at the assert's 5). An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
 def Eq { in a; a == 50.0 }`) is read by no surface, and files no row of its own.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
@@ -1844,7 +1848,12 @@ requires and no value of the model (the variable's `description` says so:
 *start is the type default, not a model value …*); a `local` has none; a co-simulation holds
 no input at it, so the outputs over it read NaN; and Solve lists a measure of
 effectiveness that is one as *(unknown)*. A value written as a number, a
-Boolean or a String keeps its start. As wide as the rest of this abstention,
+Boolean or a String keeps its start. A parameter or input the model gives no
+value at all has the same placeholder start (its `description` says *start is
+the type default, not a model value: the model states none*), and a
+co-simulation holds no input at it either: a block's output over a valueless
+input reads NaN until the master or the caller sets that input, never the
+output of an invented 0. As wide as the rest of this abstention,
 this is by feature: P's own `load` falls to the default too where P's equation
 is consistent and a `part p : P` elsewhere writes the second. A relation over a
 name a defining side reads, or one tied to it (`a` of `L == a * 2.0` with `a =

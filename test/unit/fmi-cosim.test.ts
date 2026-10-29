@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Model } from '@core/index';
-import { CoSimMaster, analyticFmu, sysmlBlockInstance } from '@interop/index';
+import { CoSimMaster, analyticFmu, fmiVariablesOf, sysmlBlockInstance } from '@interop/index';
 import { parseModel } from '@text/index';
 
 /** An FMU that integrates its input: y' = u  ⇒  y += u·dt. */
@@ -222,7 +222,9 @@ describe('sysmlBlockInstance — a SysML block co-simulates as an FMU', () => {
   });
 
   it('re-seeds declared start values on reset so re-runs restart cleanly', () => {
+    // fence-numeric: u states its start (a written `= 2.0`); a valueless input no longer starts at a fixed 0 (below).
     const { m, blockId } = gainBlock();
+    m.get(m.children(blockId).find((c) => c.declaredName === 'u')!.id)!.attrs.value = '2.0';
     const inst = sysmlBlockInstance(m, blockId);
     const master = new CoSimMaster().add(inst);
     const vr = (n: string) => inst.variables.find((v) => v.name === n)!.valueReference;
@@ -230,10 +232,30 @@ describe('sysmlBlockInstance — a SysML block co-simulates as an FMU', () => {
     inst.setReal(vr('u'), 5);
     master.step(1);
     expect(master.trace().samples[1].values.Gain.y).toBe(15);
-    // A second reset must restart from the declared default (u start "0"), not u=5.
+    // A second reset must restart from the declared start (u = 2), not u=5.
     const s0 = master.reset();
-    expect(s0.values.Gain.u).toBe(0);
-    expect(s0.values.Gain.y).toBe(0);
+    expect(s0.values.Gain.u).toBe(2);
+    expect(s0.values.Gain.y).toBe(6);
+  });
+
+  it('holds no input at the type default of a valueless input: it is no value the model states', () => {
+    // fence-numeric: `p` states no value, so its FMI start '0' is the type default and the output was computed from an
+    // invented 0 (y = 0, converged). Now p and y read NaN until the caller sets p; a reset restarts without it.
+    const { m, blockId } = gainBlock();
+    const inst = sysmlBlockInstance(m, blockId);
+    const vr = (n: string) => inst.variables.find((v) => v.name === n)!.valueReference;
+    expect(fmiVariablesOf(m, blockId).find((v) => v.name === 'u')).toMatchObject({ start: '0', startDefaulted: true });
+    inst.initialize();
+    inst.doStep(0, 1);
+    expect(inst.getReal(vr('u'))).toBeNaN();
+    expect(inst.getReal(vr('y'))).toBeNaN();
+    expect(inst.converged!()).toBe(false);
+    inst.setReal(vr('u'), 4);
+    inst.doStep(1, 1);
+    expect(inst.getReal(vr('y'))).toBe(12);
+    const master = new CoSimMaster().add(sysmlBlockInstance(m, blockId));
+    master.reset();
+    expect(master.reset().values.Gain.y).toBeNaN();
   });
 
   it('flags an infeasible solve as not-converged and reports NaN, not fabricated data', () => {

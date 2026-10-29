@@ -49,6 +49,12 @@ export interface FmiVariable {
    * model does not state. A co-simulation holds no input at it.
    */
   startWithheld?: true;
+  /**
+   * Set where the model states no start for this parameter or input: `start` is the type's default, which FMI requires
+   * and the model does not state. A co-simulation holds no input at it, as at {@link startWithheld}: its outputs read
+   * back as NaN until the master or the caller sets it.
+   */
+  startDefaulted?: true;
   /** Explicit `initial` — set to `exact` only for a `local` that carries a start. */
   initial?: 'exact';
   /** Referenced Unit name (Float64 only). */
@@ -149,6 +155,9 @@ function withholdsStart(model: Model, feat: ElementRecord): boolean {
 const START_WITHHELD_NOTE =
   'start is the type default, not a model value: asserted equations give this feature, or one it is tied to, two values';
 
+/** The description of a variable whose `start` is the type's default because the model states none ({@link FmiVariable.startDefaulted}). */
+const START_DEFAULTED_NOTE = 'start is the type default, not a model value: the model states none';
+
 /** Format a feature's value as an FMI `start` string for the given type, or undefined. */
 function startOf(model: Model, feat: ElementRecord, type: FmiType): string | undefined {
   const r = evaluateFeatureValue(model, feat.id);
@@ -215,6 +224,8 @@ export function fmiVariablesOf(model: Model, blockId: ElementId): FmiVariable[] 
     // feature has a value, and then needs an explicit initial="exact".
     const withheld = causality !== 'output' && withholdsStart(model, feat);
     let start = causality === 'output' || withheld ? undefined : startOf(model, feat, type);
+    // Not the type's default as a value: the model states none (or none this reads), so a co-simulation holds none.
+    const startDefaulted = start === undefined && !withheld && (causality === 'parameter' || causality === 'input');
     if (start === undefined && (causality === 'parameter' || causality === 'input')) {
       start = defaultStart(type);
     }
@@ -232,11 +243,13 @@ export function fmiVariablesOf(model: Model, blockId: ElementId): FmiVariable[] 
       variability,
       start,
       ...(startWithheld ? { startWithheld: true as const } : {}),
+      ...(startDefaulted ? { startDefaulted: true as const } : {}),
       initial,
       unit,
-      description: startWithheld
-        ? [feat.declaredShortName, START_WITHHELD_NOTE].filter(Boolean).join('; ')
-        : feat.declaredShortName || undefined,
+      description:
+        startWithheld || startDefaulted
+          ? [feat.declaredShortName, startWithheld ? START_WITHHELD_NOTE : START_DEFAULTED_NOTE].filter(Boolean).join('; ')
+          : feat.declaredShortName || undefined,
     });
   }
   return out;
