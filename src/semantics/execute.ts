@@ -817,6 +817,14 @@ export interface StateFire {
   to: ElementId;
   /** The trigger that caused the firing. */
   trigger: string;
+  /**
+   * The active stack the run stands on after this fire, outermost state first
+   * (`MachineConfig.stack`): set by the hierarchical interpreter only, and
+   * absent on the flat path, which tracks no stack. The witness replay
+   * compares it with the trace's own (`replayWitness`), which the leaf alone
+   * cannot: two stacks can share a leaf.
+   */
+  stack?: ElementId[];
 }
 
 /** A behavior (entry/do/exit action) performed while in a state. */
@@ -1505,7 +1513,8 @@ function runHierRegion(
   const apply = (r: { config: MachineConfig; effects: StepEffects }): void => {
     cfg = r.config;
     visited.push(...r.effects.visited);
-    fired.push(...r.effects.fired);
+    // A step fires one transition; the stack it leaves is the config's.
+    fired.push(...r.effects.fired.map((f) => ({ ...f, stack: [...r.config.stack] })));
     performed.push(...r.effects.performed);
     // Written back rather than swapped: `valueStore` is the map the caller gets
     // and the next region reads, so it has to be the same object throughout.

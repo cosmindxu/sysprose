@@ -46,6 +46,7 @@ import {
 } from '../../src/semantics/mc/report-lines';
 import {
   behaviourReport,
+  isLoneDefinition,
   loneCarriersIn,
   propertiesOf,
   replayWitness,
@@ -1151,8 +1152,22 @@ describe('a nested state def: the machine that holds it, and a transition across
       '`T1::Plain::p1` holds no state machine — it is inside `T1::Plain`, a `state def` that owns no transition and ' +
         'is written inside no machine, so no walk stands on its states, and it carries no property',
     ]);
-    // `reach` keeps its words: naming the definition reports nothing there.
-    expect(noMachineRefusal(model, idOf(model, 'T1::Lone::a'))?.message).toBe('`T1::Lone::a` holds no state machine');
+    // `reach` names the definition too, without what only `check-behaviour` reports
+    // (the properties), and with no pick: naming the definition reports nothing to `reach`.
+    const reachInLone = noMachineRefusal(model, idOf(model, 'T1::Lone::a'));
+    expect(reachInLone).toEqual({
+      message:
+        '`T1::Lone::a` holds no state machine — it is inside `T1::Lone`, a `state def` that owns no transition and is ' +
+        'written inside no machine, so no walk stands on its states. The machine written inside it, `T1::Lone::Deep`, ' +
+        'is checked when it is named itself.',
+      holder: null,
+    });
+    expect(noMachineRefusal(model, idOf(model, 'T1::Plain::p1'))).toEqual({
+      message:
+        '`T1::Plain::p1` holds no state machine — it is inside `T1::Plain`, a `state def` that owns no transition and ' +
+        'is written inside no machine, so no walk stands on its states',
+      holder: null,
+    });
 
     // Nested lone definitions: a state in an inner one that carries nothing,
     // inside an outer one that carries a property, names the OUTER one — the
@@ -1223,6 +1238,13 @@ describe('a nested state def: the machine that holds it, and a transition across
         `\`${q}\` holds no state machine — it is inside \`P::Outer::Mach\`, which is one`,
       ]);
     }
+    // `reach` names the machine too, as it always has for a state the machine's region holds.
+    for (const q of ['P::Outer::Mach::Inner2::x', 'P::Outer::Mach::Inner2']) {
+      expect(noMachineRefusal(climb, idOf(climb, q)), q).toEqual({
+        message: `\`${q}\` holds no state machine — it is inside \`P::Outer::Mach\`, which is one`,
+        holder: machId,
+      });
+    }
     const onMach = behaviourReport(climb, { machineId: machId }).properties;
     expect(onMach.map((p) => p.claim)).toEqual(['inconclusive']);
     expect(onMach[0].detail).toContain('this property is carried by `P::Outer::Mach::Inner2`');
@@ -1251,6 +1273,13 @@ describe('a nested state def: the machine that holds it, and a transition across
     const stateCli = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T5::Lone::b']);
     expect(stateCli.code).toBe(2);
     expect(stateCli.stderr).toContain('it is inside `T5::Lone`, a `state def` that owns no transition');
+    // And `reach` says the same of that state (it used to print only "holds no state machine").
+    const reachState = await reachCli(['reach', file, '--no-library', '--element', 'T5::Lone::b']);
+    expect(reachState.code).toBe(2);
+    expect(reachState.stderr).toContain(
+      '`T5::Lone::b` holds no state machine — it is inside `T5::Lone`, a `state def` that owns no transition and is written inside no machine, so no walk stands on its states',
+    );
+    expect(reachState.stderr).not.toContain('reported as not checked');
     // The machine, named, is checked as before.
     const mCli = await reachCli(['check-behaviour', file, '--no-library', '--element', 'T5::M']);
     expect(mCli.code).toBe(0);
@@ -1259,6 +1288,85 @@ describe('a nested state def: the machine that holds it, and a transition across
     const aloneCli = await reachCli(['check-behaviour', aloneFile, '--no-library', '--element', 'T5']);
     expect(aloneCli.code).toBe(2);
     expect(aloneCli.stdout).toContain('T5::Lone — 1 property: 0 pass, 0 fail, 0 vacuous, 1 inconclusive');
+  }, 60_000);
+
+  /*
+   * A `state def` USED AS A STATE'S TYPE STAYS LONE (behaviour-small S2, decided).
+   * `state m2 : Modes` inside machine `M` does not place `Modes`' states in `M`:
+   * the walk and the interpreter read only what a machine owns (`regionDescendants`,
+   * `docs/06` §8.14), so no run of `M` enters `Modes::x`, and a property read
+   * over `x` from `M` would hold of a state nothing visits. The definition
+   * therefore stays a lone carrier and its properties are `not checked`
+   * (`inconclusive`, exit 2): a refusal, never a pass.
+   */
+  it('keeps a state def used as a state’s type a lone definition: its properties are not checked', async () => {
+    const model = await modelOf(`package T {
+      state def Modes {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }
+        state x; state y;
+      }
+      state def M {
+        state m1; state m2 : Modes; state m3;
+        transition t first m1 accept go then m2;
+        transition t2 first m2 accept go2 then m3;
+      }
+    }`);
+    const modesId = idOf(model, 'T::Modes');
+    const mId = idOf(model, 'T::M');
+    expect(isLoneDefinition(model, model.get(modesId)!)).toBe(true);
+    expect(loneCarriersIn(model).map((d) => d.id)).toEqual([modesId]);
+    // The walk of M and the interpreter both leave Modes' states out.
+    const m = reachReport(model).machines.find((r) => r.machine.id === mId)!;
+    expect(m.states.reachable.map((st) => st.name)).toEqual(['m1', 'm2', 'm3']);
+    const names = (ids: readonly ElementId[]): (string | undefined)[] => ids.map((id) => model.get(id)?.declaredName);
+    expect(names(runStateMachine(model, mId, ['go', 'go2']).visited)).toEqual(['m1', 'm2', 'm3']);
+    // Named, the definition is a carrier whose property is not checked.
+    const rows = behaviourReport(model, { machineId: modesId }).properties;
+    expect(rows.map((r) => r.claim)).toEqual(['inconclusive']);
+    expect(rows[0].detail).toContain('`T::Modes` is a `state def` that owns no transition and is written inside no machine');
+    // A state written in it names it, as for any lone definition.
+    const inModes = behaviourMachineFor(model, idOf(model, 'T::Modes::x'));
+    expect(!inModes.ok && inModes.holder).toBe(modesId);
+  }, 60_000);
+
+  /*
+   * THE STACK, NOT ONLY THE LEAF (behaviour-small S2). The interpreter records
+   * the active stack each fire leaves (`StateFire.stack`, hierarchical path) and
+   * the replay compares it with the witness's own: a witness that stands in the
+   * same leaf under other states than the run does is not that run. The leaf
+   * test alone passes such a forgery.
+   */
+  it('compares the stack in the witness replay, not only the leaf', async () => {
+    const model = await modelOf(`package K {
+      state def M {
+        state a;
+        state c { state x; state y; transition xy first x accept next then y; }
+        transition ac first a accept go then c;
+      }
+    }`);
+    const mId = idOf(model, 'K::M');
+    const found = behaviourReport(model, { machineId: mId, pattern: 'pattern=cover, scope=globally, p=state y' });
+    const witness = found.properties[0].witness;
+    expect(found.properties[0].claim).toBe('covered');
+    expect(witness.at(-1)?.leaf?.name).toBe('y');
+    expect(witness.at(-1)?.stack.length).toBeGreaterThan(1);
+    expect(replayWitness(model, mId, witness, MAX_COMPLETION).replays).toBe(true);
+    // The run's own stack on the last fire is the witness's.
+    const run = runStateMachine(model, mId, witness.slice(1).map((st) => st.event));
+    expect(run.fired.at(-1)?.stack).toEqual(witness.at(-1)?.stack.map((st) => st.id));
+    // The same leaf, one state fewer under it: the leaf test passes, the stack test does not.
+    const last = witness.length - 1;
+    const forged = witness.map((st, i) => (i === last ? { ...st, stack: st.stack.slice(1) } : st));
+    expect(forged[last].leaf).toEqual(witness[last].leaf);
+    const parted = replayWitness(model, mId, forged, MAX_COMPLETION);
+    expect(parted.replays).toBe(false);
+    expect(parted.step).toBe(witness[last].index);
+    expect(parted.reason).toMatch(/^at step \d+ the witness stands in `K::M::c::y` and the interpreter in `K::M::c` > `K::M::c::y`$/);
+    // A flat machine keeps no stack in the interpreter: nothing to compare, and it still replays.
+    const flat = await modelOf(`package F { state def M { state a; state b; transition t first a accept go then b; } }`);
+    const flatId = idOf(flat, 'F::M');
+    const flatWitness = behaviourReport(flat, { machineId: flatId, pattern: 'pattern=cover, scope=globally, p=state b' }).properties[0].witness;
+    expect(replayWitness(flat, flatId, flatWitness, MAX_COMPLETION).replays).toBe(true);
   }, 60_000);
 
   /*

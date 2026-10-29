@@ -2891,8 +2891,10 @@ interpreter left — the very shape §8.10 fixed.
   (the branch review's climb probe). The first owner that owns a machine now
   ends the climb, and the machine whose region holds it is named, in
   `noMachine`'s words (*"… — it is inside `P::Outer::Mach`, which is one"*),
-  as for the inner definition itself. `reach` keeps its words there, since naming the definition
-  reports nothing to it. The `--element` help says all of it. In the app, the
+  as for the inner definition itself. `reach` named neither at first, since
+  naming the definition reports nothing to it; since `behaviour-small` S2 it
+  names the same holder in the same words, bar the property clause (§8.15).
+  The `--element` help says all of it. In the app, the
   pick rows with nothing selected list what carries a property, machines and
   such definitions alike, and every machine only when nothing does (the first
   cut fell back to every machine whenever no MACHINE carried one, and listed
@@ -3016,3 +3018,60 @@ refuses it too, unless this plan and UML make a reading clear.
   out of itself to a state outside its region. The Simulation tab's Stopped line
   is the one place a user sees the change, and only on a model that writes such
   a step.
+
+### 8.15 Four optional residuals of the behaviour entries — `behaviour-small`, 2026-10-29
+
+- **A state def used as a state's type is not lone: decided, it stays one.**
+  `state def Modes { state x; state y; }` typed onto `state m2 : Modes` inside
+  machine `M` is still a lone definition (`isLoneDefinition` reads ownership
+  only), and its properties are still `inconclusive`, `… — not checked`, exit 2.
+  Placing it in `M` would need the reading §8.6 and §8.14 argue against for a
+  specialisation: the walk and the interpreter list what a machine OWNS
+  (`regionDescendants`, `regionTransitions`), so no run of `M` ever enters
+  `Modes::x`. A property over `x` read from `M` would be a claim about a state
+  nothing visits: an absence would pass vacuously. Nothing in this plan or in UML makes a typed state's definition
+  part of the typed state's runs, so the refusal is the sound reading until
+  inherited and typed members have a region (the residual entry of §8.14).
+  `semantics.mc.reach.test.ts` pins it: M's walk and the interpreter's visits
+  leave `x` and `y` out, and the definition is a lone carrier.
+- **`reach` names the holder in its refusal.** `reach --element P::Lone::b` and
+  `reach --element P::Outer::Mach::Inner2::x` print the words
+  `check-behaviour` prints (`behaviourNoMachine`, `report-lines.ts`), minus
+  the clause about properties, which `reach` has no use for: *"… holds no state
+  machine — it is inside `P::Lone`, a `state def` that owns no transition and is
+  written inside no machine, so no walk stands on its states"*, with the machines
+  written inside it named, or *"… — it is inside `P::Outer::Mach`, which is
+  one"*. The refusal's `holder` stays a machine or null: naming a definition as
+  a pick would offer `reach` something it reports nothing for. Only stderr text
+  of a usage error (exit 2) changes; no verdict, count or JSON payload does.
+- **The witness replay compares the stack.** `StateFire.stack` is the active
+  stack (outermost first) the hierarchical interpreter leaves after each fire;
+  `replayWitness` compares it with the trace step's `stack` after the leaf test
+  passes, and a run that stands in the witness's leaf under other states is a
+  departure (*"at step N the witness stands in `A::c::y` and the interpreter in
+  `A::c` > `A::c::y`"*). The flat path keeps no stack and compares the leaf as
+  before. The field does not reach `executionReport`, which publishes only the
+  count of fires, nor `SimSample.fired`, which copies four fields; the walk and
+  the interpreter share `stepConfig`, so on the corpus the two stacks agree and
+  no witness is withheld by it. It is a guard for a split the shared relation
+  does not have today, as the differential's three flat-path machines were. The field is optional and set on the hierarchical path only; it is
+  also on the SDK's `runStateMachine` result (`StateRunResult.fired[i].stack`), absent for a flat machine.
+- **Left open: every region's refusal on a parallel machine.** `refused` names
+  the first region's refusal only. Listing the others is not a data change
+  alone: `refusedStepSentence` says the machine's other regions run on, which
+  is false once every region has refused, and `SimRefusal.stopsRun` is true
+  only when the machine is not parallel, so Play would go on over a run that
+  nothing advances. It needs a sentence and a `stopsRun` that read all the
+  regions, and no verdict stands on a parallel machine (the walk refuses it), so
+  it stays a TODO entry.
+- **What moved.** Against `b635385` (this step on top of §8.14): the verdict
+  differential, 637 of 637 models identical; v9, 25 of 25 surfaces identical;
+  `reach` and `check-behaviour`, JSON and text, on the 54 state-bearing models
+  and v9: 55 of 55 differ by §8.14's `exits` row alone, and none by this step;
+  `check-behaviour --element` on each of the 79 machines: byte for byte the
+  same on all 55 files as in a capture made before §8.14's commit, and
+  against `b635385` the 49 files that differ do so by §8.14's `exits` row alone. No model of the corpus or v9 is
+  refused by `reach --element` for a state in a lone definition, so the new
+  words reach no capture; the replay's stack test withholds no witness (the
+  replay sweep of `semantics.mc.differential.test.ts` is green and no
+  `check-behaviour` row on the 55 files changes).

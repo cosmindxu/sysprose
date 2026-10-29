@@ -710,6 +710,10 @@ export function isPropertyCarrier(el: ElementRecord): boolean {
  * machine's text holds it, so no machine's {@link propertiesOf} reads what it
  * carries — unlike a nested definition that owns no transition, whose carriers
  * the machine it is written in reports. A library element is never one.
+ *
+ * OWNERSHIP ONLY, AND A TYPED USE DOES NOT CHANGE IT: `state m2 : Modes` inside
+ * a machine leaves `Modes` lone, because no run of the machine enters the
+ * definition's states (`docs/06` §8.15). Its properties stay `not checked`.
  */
 export function isLoneDefinition(model: Model, el: ElementRecord): boolean {
   if (el.eClass !== 'StateDefinition' || el.attrs.isLibrary === true || ownsMachine(model, el)) return false;
@@ -1598,12 +1602,26 @@ export function replayWitness(
       // witness's stack, so a witness that cascaded from `Inner` into
       // `Inner::x` replayed against a run that stayed at `Inner` — and every
       // atom the row read at that step was read of a state no run entered.
-      if (rests[i] === (want.leaf?.id ?? null)) continue;
-      return {
-        replays: false,
-        step: want.index,
-        reason: `at step ${want.index} the witness fires \`${qn(got.transitionId)}\` and enters \`${qn(want.leaf?.id)}\`, and the interpreter fires it and enters \`${qn(rests[i])}\``,
-      };
+      if (rests[i] !== (want.leaf?.id ?? null)) {
+        return {
+          replays: false,
+          step: want.index,
+          reason: `at step ${want.index} the witness fires \`${qn(got.transitionId)}\` and enters \`${qn(want.leaf?.id)}\`, and the interpreter fires it and enters \`${qn(rests[i])}\``,
+        };
+      }
+      // THE STACK TOO, WHERE THE INTERPRETER KEEPS ONE (`StateFire.stack`, the
+      // hierarchical path): the leaf is the stack's last member, and a run can
+      // stand in the same leaf under other states than the witness's, which
+      // every atom the row reads about those states would then misstate.
+      if (got.stack !== undefined && !sameIds(got.stack, want.stack.map((s) => s.id))) {
+        const path = (ids: readonly ElementId[]): string => (ids.length === 0 ? 'no state' : ids.map((id) => `\`${qn(id)}\``).join(' > '));
+        return {
+          replays: false,
+          step: want.index,
+          reason: `at step ${want.index} the witness stands in ${path(want.stack.map((s) => s.id))} and the interpreter in ${path(got.stack)}`,
+        };
+      }
+      continue;
     }
     // THE ENDPOINT LABEL WITHOUT ITS TRIGGER, on both sides: `transitionLabel`
     // carries its own backticks around the trigger, so wrapping it nests them,
@@ -1625,6 +1643,9 @@ export function replayWitness(
   }
   return { replays: true, step: null, reason: '' };
 }
+
+const sameIds = (a: readonly ElementId[], b: readonly ElementId[]): boolean =>
+  a.length === b.length && a.every((id, i) => id === b[i]);
 
 /**
  * The state a run stands on after each of its fires, read off the

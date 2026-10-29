@@ -3604,7 +3604,13 @@ only its own. A definition like this that carries no property
 resolves as before: refused as holding no state machine when none is written
 inside it, and otherwise the one machine inside it is checked or the several
 are listed; a state written in it is refused with the definition named, *"…, and
-it carries no property"*, and the machines written inside it named. In the app,
+it carries no property"*, and the machines written inside it named. `reach
+--element` on such a state names the same definition (or the machine that holds
+the state) in the same words, without what only `check-behaviour` says of the
+properties. Using such a definition as a state's type (`state m2 : Modes` inside
+a machine) does not place it in that machine: no run of the machine enters the
+definition's states, so it stays a definition no machine holds, and its
+properties are still reported as not checked. In the app,
 select the definition and run **Behaviour properties** for the same rows, with
 a pick row for each machine written inside it. The pick rows with nothing
 selected list what carries a property — the machines that do, then such
