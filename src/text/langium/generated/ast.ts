@@ -407,7 +407,9 @@ export interface Annotation extends langium.AstNode {
     readonly $type: 'Annotation';
     about: Array<QualifiedName>;
     body?: Body;
+    name?: Name;
     type: QualifiedName;
+    visibility?: Visibility;
 }
 
 export const Annotation = 'Annotation';
@@ -1363,7 +1365,9 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     properties: [
                         { name: 'about', defaultValue: [] },
                         { name: 'body' },
-                        { name: 'type' }
+                        { name: 'name' },
+                        { name: 'type' },
+                        { name: 'visibility' }
                     ]
                 };
             }

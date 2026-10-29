@@ -1364,6 +1364,64 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(serializeModel(parseModel(text).model)).toBe(text);
   });
 
+  it('reads the named, typed and visibility-prefixed `about` forms like their unprefixed twins, and saves them back', () => {
+    // SysML 7.27.2 `metadata N : T about A, B;` and BNF MemberPrefix (`public metadata T about A;`, `public @T about A;`).
+    // The annotation is the same element as the twin's; the name and the visibility word are kept, so Save writes them back.
+    const head = 'package A { part def C; part def D; metadata def Sec { attribute level : Integer; } ';
+    const twin = reparse(`${head}@Sec about C, D { level = 3; } }`);
+    const twinAnn = twin.all().find((e) => e.eClass === 'MetadataUsage' && e.attrs.annotation === true)!;
+    const cases: [string, string, string | undefined, string | undefined][] = [
+      ['metadata sa : Sec about C, D { level = 3; }', 'metadata sa : Sec about C, D {', 'sa', undefined],
+      ['metadata sa typed by Sec about C, D { level = 3; }', 'metadata sa : Sec about C, D {', 'sa', undefined],
+      ['public metadata Sec about C, D { level = 3; }', 'public @Sec about C, D {', undefined, 'public'],
+      ['private @Sec about C, D { level = 3; }', 'private @Sec about C, D {', undefined, 'private'],
+      ['protected metadata sa : Sec about C, D { level = 3; }', 'protected metadata sa : Sec about C, D {', 'sa', 'protected'],
+    ];
+    for (const [src, printed, name, vis] of cases) {
+      const m = reparse(`${head}${src} }`);
+      const ann = m.all().find((e) => e.eClass === 'MetadataUsage' && e.attrs.annotation === true)!;
+      expect(ann.attrs.type, src).toBe(twinAnn.attrs.type);
+      expect(ann.attrs.about, src).toEqual(twinAnn.attrs.about);
+      expect(m.children(ann.id).map((c) => [c.declaredName, c.attrs.value]), src).toEqual(
+        twin.children(twinAnn.id).map((c) => [c.declaredName, c.attrs.value]),
+      );
+      expect(ann.declaredName, src).toBe(name);
+      expect(ann.attrs.visibility, src).toBe(vis);
+      const text = serializeModel(m);
+      expect(text, src).toContain(printed);
+      expect(serializeModel(parseModel(text).model), src).toBe(text);
+    }
+    // The unprefixed twin prints as ever.
+    expect(serializeModel(twin)).toContain('@Sec about C, D {');
+    // A name on an annotation with no `about` (a rename in the editor) is not printed: `metadata n : Sec;` would reparse as a plain usage.
+    for (const src of ['@Sec;', '@Sec { level = 3; }']) {
+      const m = reparse(`${head}${src} }`);
+      const ann = m.all().find((e) => e.eClass === 'MetadataUsage' && e.attrs.annotation === true)!;
+      m.update(ann.id, { declaredName: 'nn' });
+      const text = serializeModel(m);
+      expect(text, src).toContain(src.slice(0, 4));
+      expect(text, src).not.toContain('metadata nn');
+      expect(serializeModel(parseModel(text).model), src).toBe(text);
+    }
+  });
+
+  it('refuses a SysproseVerification carrier in the named and visibility-prefixed `about` forms too', () => {
+    const codes = (src: string) =>
+      parseModel(src).diagnostics.filter((d) => d.severity === 'error').map((d) => d.code);
+    const body = '{ attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }';
+    for (const form of [
+      'metadata pp : SysproseVerification::PropertyPattern about M',
+      'public metadata SysproseVerification::PropertyPattern about M',
+      'public @SysproseVerification::Evidence about M',
+      'metadata ev : VerificationCases::VerificationMethod about M',
+      'private @PropertyPattern about M',
+    ]) {
+      expect(codes(`package A { state def M; ${form} ${body} }`), form).toEqual(['mapper/carrier-about-unread']);
+    }
+    // Another type keeps its `about` in these forms.
+    expect(codes('package A { state def M; metadata s : Safety about M { level = 3; } public @Safety about M; }')).toEqual([]);
+  });
+
   it('keeps `metadata N { … }` without `about` as the named usage it has always been', () => {
     // The keyword annotation REQUIRES `about`: `metadata RequirementMetadata { … }`
     // is read by requirements.ts as the usage NAMED RequirementMetadata.
