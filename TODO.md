@@ -196,16 +196,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       read unsaved while the relay and y-indexeddb hold the room's copy, so every collaborator gets
       the question on close. It only errs toward asking. Decide whether the room's copy counts as
       saved. [ui-small S1, review]
-- [ ] **Give the focus somewhere safe when the Requirements table's reference picker closes.** Since
-      `ui-small` S2 `Escape` in the Explorer's rename, the context menu's and a Requirements cell
-      leaves the focus on Save (`cancelAndFocusSave`, `src/ui/commands.ts`). `Escape` in the picker
-      (`req-ref-picker`) and `Enter` on a candidate close it with the focus dropped to the page, and
-      a pick selects the requirement row, so the next `Backspace` deletes the requirement just
-      linked. Route the keydown paths (not the blur, which cancels) through `cancelAndFocusSave` /
-      `commitAndFocusSave`. Check the Regroup view's bundle-label and port-name boxes
-      (`RegroupView.tsx`, the Enter and Escape handlers that call `blur()`), which from code reading
-      also leave the focus on the page. Done when `Escape` and `Enter` in the picker leave a
-      following `Backspace` harmless, with a test. [ui-small S2, review]
 - [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
       checks in the page behind a queue and a mutex. Left: Cancel drops the answer but cannot stop
       z3, so the check ends at its own time budget and a Run started meanwhile queues behind it; a
@@ -959,13 +949,6 @@ true values. What follows is what that branch and the review of it left open; en
       continue of New, Open, Import, Switch branch, Merge or Join room) does the same and says
       nothing, because the guarded command replaces the model next: it needs a sentence that does
       not promise one Undo (it takes two). [ui-small S3]
-- [ ] **Keep the project's name across an undo of an apply.** `undo` and `redo` (`src/ui/store.ts`)
-      re-derive `projectName` from the first package (`deriveProjectName`). After a package rename,
-      or after an Undo of a Save's apply, the next Save writes another project and can overwrite a
-      saved project of that name. Probe: New('NewModel'), rename the package to Drone, Save, then
-      typed text, a field change, Save, Undo, Save leaves the open project holding the text-only
-      version and writes the other project. The S3 note now invites the Undo. Optional one-line fix:
-      keep `projectName` across undo and redo of an apply. [ui-small S3, review]
 - [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small`
       S4 an edit's recompute yields to the page between its steps (`recomputeSteps`), but three
       tasks stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root
@@ -1000,41 +983,29 @@ true values. What follows is what that branch and the review of it left open; en
       declarations), measured to leave every load where it is, or order such rows by the text; carry
       that order in the room's document too. Done when the probes' page, terminal and peer rows come
       in one order. [review 2026-10-14 D-1, collab-order]
-- [ ] **Resolve two peers' moves that hold two elements in each other.** In a collaboration room,
-      two peers who at the same moment each move one of two elements into the other (`X` into `Y` on
-      one peer, `Y` into `X` on the other) leave the room's document holding `X` under `Y` and `Y`
-      under `X`. Each peer refuses the move that would close the cycle (`Model.reparent`,
-      `reconcileModelFromDoc` in `src/collab/model-doc.ts`): one holds `X` under `Y` with `Y` at the
-      top level, the other `Y` under `X` with `X` at the top level. A page that joins as the app
-      joins (`connectCollab`: its own model bound to a new document, then the room synced in) holds
-      the pair as one of the two does. A model bound to a document that already holds the room (the
-      API's `bindModelToDoc`, through `serializeFromDoc`) holds each under the other, reachable from
-      no root: neither shows in its tree, and its text drops both and all they hold. Moving either
-      element again does not end it: the peer that refused keeps its own reading, because its own
-      edit is never taken back in from the document. An Apply, Import, Undo or Redo by any peer
-      brings every peer to that peer's tree (USER-GUIDE section 9 states it). Fix: break such a
-      cycle the same way on every peer and on a join, for instance by putting the member with the
-      lowest id at the top level. Done when both peers, a page that joins and a model bound to the
-      room's document hold the pair alike, both in the tree. [collab-order S2]
-- [ ] **Keep the collaboration relay up on a model with the full library.**
-      `scripts/collab-server.ts` caps a message at 10 MiB and sets no `error` handler on a socket,
-      so a larger message kills the relay process (`RangeError: Max payload size exceeded`, an
-      unhandled `error` event) and drops every room on it. A peer's first message carries the whole
-      document, standard library included. For the drone-swarm v9 model that is 10,769,168 bytes at
-      87e8c0f and 10,845,744 bytes with the places `collab-order` adds; a probe on a scratch port
-      confirmed that a v9 room kills the relay. The app's sample model with the library is 9,799,148
-      bytes, about 686 KB under the cap, which is why the children of the library's owners get no
-      place until one of them moves. Fix: on a socket error close only the offending connection, and
-      keep the standard library out of the room's document (every peer loads it), or raise the cap,
-      or split the message. Done when a room over v9 syncs between two pages (E2E). USER-GUIDE
-      section 9 states the limit. Pre-existing. [collab-order S2]
 - [ ] **Make a reset in a collaboration room cost what it changes (optional, measure first).** An
       Undo, Redo, Apply or Import in a room clears the room's document and writes every element
       again, library included. On v9 with its library, the editing peer's reseed plus one other
       peer's reconcile take about 28 to 30 s in node on a quiet machine (80 to 100 s at load 30 to
       35), at 87e8c0f and at `collab-order` alike. The whole document goes as one message, which
-      runs into the relay cap above. Fix: write only what the reset changed (a diff of the snapshot
+      runs into the relay's message cap (64 MiB since collab-ui S2). Fix: write only what the reset changed (a diff of the snapshot
       against the document), with the library kept out. Pre-existing. [collab-order S2]
+- [ ] **Keep the standard library out of a collaboration room's document.** Every peer's first
+      message and every reset carries the whole library (about 10.8 MB on the drone-swarm v9 model),
+      and the relay takes at most 64 MiB in one message (`scripts/collab-server.ts` MAX_PAYLOAD,
+      USER-GUIDE section 9), so a model several times the size of v9 still cannot be shared. Fix:
+      leave the library elements out of the room's document (every peer loads it) or split the
+      message. Done when the first message of a v9 room carries under 1 MB of library. [collab-ui
+      S2]
+- [ ] **Make peers converge after concurrent removals in a collaboration room (pre-existing).**
+      Three peers that move and remove elements at random points and then exchange their updates end
+      with different trees in about 7 sequences of 100 (33 of 500 on collab-ui, 42 of 500 at
+      227d10c); a cycle is not involved, a removal that reaches one peer before or after a move into
+      the removed owner is. Moves, creates, resets and renames alone converge (0 of 2000). Probe:
+      `ONLY=fuzz.probe.ts N=500 OPS=mr vitest run --config vitest.scratch.config.ts` in
+      `scratchpad/collab-ui-scratch` (copy in
+      `~/Work/sysprose-soundness-artifacts/review-2026-10-14/wave3-probes/collab-ui/`). Wrong-answer
+      class: peers show different models. [collab-ui review]
 - [ ] **Save an end that no name reaches.** Save writes a binding whose end is an unnamed
       redefinition by its effective name (`bind p.load = L;`, `p.a.load`), but where no name reaches
       the end it still writes the `«eClass»` placeholder, which a terminal cannot read back
