@@ -34,8 +34,13 @@ const ALLOWED_ORIGINS = (process.env.COLLAB_ALLOW_ORIGIN ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-/** Cap a single WS frame to 10 MiB (ws defaults to 100 MiB). */
-const MAX_PAYLOAD = 10 * 1024 * 1024;
+/**
+ * Cap a single WS frame to 64 MiB (ws defaults to 100 MiB). A peer's first
+ * message carries the whole document, standard library included: about 10.9 MB
+ * for the drone-swarm example, so 10 MiB stopped the relay on it. A frame over
+ * the cap closes its own connection (code 1009), not the relay.
+ */
+const MAX_PAYLOAD = 64 * 1024 * 1024;
 
 /** Wire message type tags — MUST match the y-websocket client. */
 const messageSync = 0;
@@ -190,6 +195,15 @@ function onMessage(conn: WebSocket, doc: WSSharedDoc, message: Uint8Array): void
 
 function setupConnection(conn: WebSocket, req: http.IncomingMessage): void {
   conn.binaryType = 'arraybuffer';
+  // A socket error (a frame over MAX_PAYLOAD is one: "Max payload size exceeded")
+  // is an `error` event, which kills the process unless a handler is set: close
+  // only this connection, and leave every room and connection alone.
+  conn.on('error', (err: Error) => {
+    console.error(`[collab] socket error, closing the connection: ${err.message}`);
+    // ws has already started the close handshake (1009 for a frame over the cap):
+    // do not terminate the socket, that drops the close frame the peer is owed.
+    for (const doc of docs.values()) if (doc.conns.has(conn)) closeConn(doc, conn);
+  });
   const url = req.url ?? '/';
   // Opt-in shared-secret auth: OFF by default (loopback + Origin allowlist).
   // When COLLAB_TOKEN is set, the client must connect with `?token=<token>`

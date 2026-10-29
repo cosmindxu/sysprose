@@ -253,8 +253,8 @@ flowchart TB
   document, so every peer holds them in that order.
 - The relay is a pure relay — it holds per-room docs and broadcasts. It has
   **no authentication** and binds loopback (`127.0.0.1`) by default (`HOST`), but
-  it now enforces an Origin allowlist (`COLLAB_ALLOW_ORIGIN`), a 10 MiB
-  `maxPayload`, and room/connection caps (`COLLAB_MAX_ROOMS` 512 /
+  it now enforces an Origin allowlist (`COLLAB_ALLOW_ORIGIN`), a 64 MiB
+  `maxPayload` (a frame over it closes only its own connection, with WS 1009), and room/connection caps (`COLLAB_MAX_ROOMS` 512 /
   `COLLAB_MAX_CONNS_PER_ROOM` 256), refusing excess with WS 1013 (finding M4).
 
 ## Analytics / Query / REST flow

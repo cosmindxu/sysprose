@@ -4928,14 +4928,16 @@ Stated plainly, because finding these out by surprise is worse.
   graph view — the greyed control's tooltip says why.
 - **Collaboration needs a relay you start yourself** (`npm run collab`), rooms
   are open with no permissions layer, and your identity is a random per-session
-  name and colour. The relay takes at most 10 MiB in one message, and stops
-  — dropping every room on it — at a larger one; a peer's first message holds
-  the whole model with its standard library, about 10.8 MB for the drone-swarm
-  example, so a room over a model that size stops the relay. Two peers who each
-  drag one of two elements into the other at the same moment are left holding
-  the pair under different owners, and a page that joins then holds it as one
-  of the two does; moving either element again does not end it, but an Apply,
-  Import, Undo or Redo by any peer brings every peer to that peer's tree.
+  name and colour. The relay takes at most 64 MiB in one message, and closes
+  only the connection that sends a larger one: a peer's first message holds the
+  whole model with its standard library, about 10.8 MB for the drone-swarm
+  example, so a room over a model several times that size still fits, and a
+  model past the cap cannot be shared. The standard library travels in the
+  room's document, so every peer's first message carries it again. Two peers
+  who each drag one of two elements into the other at the same moment leave the
+  room's document holding each under the other; every peer, and a page that
+  joins, then reads the one with the lower id at the top level and the other
+  under it, and the document is corrected to say so.
 - **Google Drive, where a site offers it**
   ([§8.1](#81-google-drive-optional)): a sign-in lasts about an hour, and
   renewing it opens a window the browser must allow — so allow pop-ups for the

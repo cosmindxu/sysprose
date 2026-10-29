@@ -92,7 +92,9 @@ npm run collab              # scripts/collab-server.ts, default port 1234
   check can join any room and mutate the shared doc — but it is no longer wide
   open: a `verifyClient` **Origin allowlist** (`COLLAB_ALLOW_ORIGIN`,
   comma-separated; when unset, all browser Origins are allowed and non-browser
-  clients always are), a **`maxPayload` of 10 MiB** per frame, and
+  clients always are), a **`maxPayload` of 64 MiB** per frame (a frame over it closes only its own
+  connection, with WS 1009; one frame is held and copied in memory, so this is
+  also the per-frame memory a peer of an open room can ask of the relay), and
   **room/connection caps** (`COLLAB_MAX_ROOMS`, default 512;
   `COLLAB_MAX_CONNS_PER_ROOM`, default 256 — excess refused with WS close 1013)
   now bound the exposure.
