@@ -733,8 +733,8 @@ Two names worth separating:
   solved to, wherever the check is written: the model's own equations are
   solved first, and a check fixes only what they leave. The test is local: each
   of two separate roots (`x * x == 4.0`) reads as determined, not free.
-  **No design equation turns on the order of the text, bar two cases of where the solve
-  starts (the end of this passage).** Two plain
+  **No design equation turns on the order of the text, bar four cases of where the solve
+  starts or of the digits a value is given to (the end of this passage).** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
   `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
@@ -766,8 +766,15 @@ Two names worth separating:
   (`v == d / t` beside `d == 100.0` and `v == 20.0` is t = 5; `x / y == 3.0`
   beside `y == 2.0` and `x == 6.0` agrees with both, and all three are *imposed
   by the solve* in any order, as is the density form `m / v == d`; and `6.0 - 3.0 / (x + 1.0) == 3.0`,
-  root 0 beside the pole −1, is imposed at 0 whether `x == 0.0` is written before it or after it): a quotient
-  by a value another equation fixes has the one root. One that disagrees with the
+  root 0 beside the pole −1, is imposed at 0 whether `x == 0.0` is written before it or after it, as is
+  `1.0 / x == 100.0` (root 0.01) and `10.0 ^ (2.0 * x + 8.0) == 1.0` (root −4)): a quotient
+  by a value another equation fixes has the one root. Where the solve's own start finds none, the root is
+  searched for along the line, at 0 and ±2^k, for a sign change between neighbours, closed on to the last digit (a
+  pole it closes on is no root). **The limit of that search: a root that lies in the same gap as its pole,
+  between two of those points, is not found** — `1.0 / (x - 5.0) == 2.0` (root 5.5, pole 5, between 4 and 8)
+  and `3.0 / (x + 1.5) == 10.0` (root −1.2, pole −1.5, between −2 and −1) read *unknown* alone, in every
+  order, never a value (a plain constraint that states the value, `x == 5.5`, supplies it, and the equation is
+  then *imposed* beside it in either order). One that disagrees with the
   values the others fix (`x == 7.0` beside them) is withheld with them. Such a
   quotient or exponential set equal to a side that varies with the same feature
   can cross it more than once, so the equation is read as a whole and as if it had more than one
@@ -803,7 +810,16 @@ Two names worth separating:
   other order imposes `c0` and `c2`; and two asserted equations that share one of
   their roots (`a0 { x == 6.0 / (x + 1.0) }` beside `a1 { x == -3.0 }`, in a
   usage) read a constraint over their value *unknown* in one order and decided
-  in the other. A feature with no value that an `assert`
+  in the other; and a steep one-to-one equation (a quotient whose root is close to
+  its pole) judged at a value that another equation gives to fewer digits than its
+  slope needs, in two ways: a pin written to ten digits (`x == 0.000003000000001`
+  beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, whose root is 3.0000000012e-06)
+  reads both *imposed* with the equation written first, and *unknown* with the pin
+  first, where the equation's residual at the pin is over its gate; and a value
+  taken through an affine link, which the solve gets to about 1e-10 (`q1 { y ==
+  1.0014000000014 }`, then `l1 { y == 2.0 * x + 1.0 }`, then `e0 { -3333.33333 ==
+  7.0 / (-3.0 * x) }`) reads *unknown* in that order, and *imposed* in the other five
+  orders of the three. A feature with no value that an `assert`
   constrains in a form the solve does not read — an inequality, a conjunction
   (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
   (`M == max(L, 20.0)`, which the model reports; it constrains the names it

@@ -1991,14 +1991,23 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // produced them. A fact that reads a value a check fixed gives one that moves
   // with it, and is not among them ({@link designReadings}).
   const factFixed = new Set<ElementId>();
+  // The values an equation found no root at: what it reads is the same, so is the answer. Every propagation pass asks again of every
+  // equation with one unknown left, and a one-to-one equation that finds no root searches the line for one (203 samples and the
+  // poles among them): in a chain that takes a pass to fix each link, that was once per link per equation.
+  const missedAt = new Map<Equation, string>();
   // Fix the one unknown `eq` reads, where it may: whether it did.
   const orient = (eq: Equation): boolean => {
     const unknowns = eq.vars.filter((v) => !values.has(v));
     if (unknowns.length !== 1) return false;
     const u = unknowns[0];
     if (fixedIds.has(u) || !mayOrient(eq, u, binding)) return false;
+    const reads = eq.vars.map((v) => values.get(v)).join(',');
+    if (missedAt.get(eq) === reads) return false;
     const val = solveForSingle(eq, u, values, tol);
-    if (val === undefined || !Number.isFinite(val)) return false;
+    if (val === undefined || !Number.isFinite(val)) {
+      missedAt.set(eq, reads);
+      return false;
+    }
     values.set(u, val);
     used.add(eq);
     // A root of an equation with more than one is one of several: no value the model fixes ({@link designReadings}); that of an
@@ -3543,12 +3552,28 @@ function solveScalar(
   // found anywhere is THE root, and the search below does not stop at the first thing that goes wrong on the way from the seed.
   const mono = equationShape(eq, (id) => id === u) === 'mono';
 
+  // A one-to-one equation's Newton point must also meet the gate the CALLER judges the root against ({@link convergenceGate}, its scale
+  // taken at the point): `accept` takes its scale at the seed, where an exponential can be huge (`10.0 ^ (2.0 * x + 8.0) == 1.0`
+  // from x = 1 is 1e10, a floor of 1e-4 where the root's own gate is 1e-6), and a root stopped at 6.6e-6 read 'did not converge'.
+  const settled = (t: number, fv: number): boolean => {
+    if (!accept(fv)) return false;
+    if (!mono) return true;
+    const prev = values.get(u);
+    values.set(u, t);
+    try {
+      return Math.abs(fv) <= convergenceGate(eq, values, tol);
+    } finally {
+      if (prev === undefined) values.delete(u);
+      else values.set(u, prev);
+    }
+  };
+
   // Newton with finite-difference derivative.
   let t = seed;
   for (let i = 0; i < 60; i++) {
     const f0 = f(t);
     if (f0 === undefined) break;
-    if (accept(f0)) return t;
+    if (settled(t, f0)) return t;
     const h = probeStep(t);
     const f1 = f(t + h);
     if (f1 === undefined) break;
@@ -3557,10 +3582,12 @@ function solveScalar(
     const next = t - f0 / deriv;
     if (!Number.isFinite(next)) break;
     if (Math.abs(next - t) <= stepGate(t)) {
-      // A step that small is a root only if the residual is not moving away: `6.0 - 3.0 / (x + 1.0) == 3.0` from x = 1 steps
-      // beside the pole x = −1 (residual 1.5 -> 1.5e6) and the steps there are tiny, with the root at 0 not found.
+      // A step that small is a root only if the residual is falling for real: `6.0 - 3.0 / (x + 1.0) == 3.0` from x = 1 steps
+      // beside the pole x = −1 (residual 1.5 -> 1.5e6) and the steps there are tiny, with the root at 0 not found; and
+      // `1.0 / (x + 1.0) + 10.0 == 11.0` steps 9e-12 at the pole's flank, the residual 199999.2732 -> 199999.2731 (a finite-difference
+      // slope that straddles the pole), so 'no larger' is not progress: it must be halved, or the point settled.
       const fn = mono ? f(next) : 0;
-      if (fn === undefined || (!accept(fn) && Math.abs(fn) >= Math.abs(f0))) break;
+      if (fn === undefined || (!settled(next, fn) && Math.abs(fn) >= 0.5 * Math.abs(f0))) break;
       return next;
     }
     t = next;
@@ -3582,15 +3609,21 @@ function solveScalar(
     // A sign change closed on may be a POLE (`24.0 / (x - 4.0) == 3.0` over [-8, 8]), not a root: the residual there is far larger than
     // at the ends of the bracket it started from, where at a root it has fallen to the floor. Returned, the pole was the value of `x`
     // beside `y == 4.0` — and written after `x == 3.0 * y` that equation gave 12 first: a verdict that turned on the order of the text.
-    return bisect(a, b, fa, Math.max(Math.abs(fa), Math.abs(fb)));
+    return bisect(a, b, fa, Math.max(Math.abs(fa), Math.abs(fb)), mono);
   };
-  const bisect = (a: number, b: number, fa: number, ends: number): number | undefined => {
+  // `tight`: close on the root to the last digit, not on the width `tol` and a residual under the floor. A sign change between two
+  // samples of the one-to-one search is read for its ROOT, and a quotient's root beside its pole is steep (`1.0 / x == 100.0`,
+  // residual 7e-6 at 1e-9 from x = 0.01): a point closed on at the width `tol` is rejected by the gate the caller judges it by, and a
+  // flat one (`0.5 / (8.0 * x) == -0.0000000625`, slope 6e-14) is under the floor 1.6% away from its root, which was returned.
+  const bisect = (a: number, b: number, fa: number, ends: number, tight = false): number | undefined => {
     for (let k = 0; k < 200; k++) {
       const m = (a + b) / 2;
       const fm = f(m);
       if (fm === undefined) return undefined;
-      if (accept(fm)) return m;
-      if ((b - a) / 2 <= (scaled ? stepGate(m) : tol)) return Math.abs(fm) <= ends ? m : undefined;
+      if (tight ? fm === 0 : accept(fm)) return m;
+      if (tight ? m === a || m === b || (b - a) / 2 <= Math.abs(m) * 1e-16 : (b - a) / 2 <= (scaled ? stepGate(m) : tol)) {
+        return Math.abs(fm) <= ends ? m : undefined;
+      }
       if (fa * fm < 0) b = m;
       else {
         a = m;
@@ -3614,7 +3647,7 @@ function solveScalar(
   xs.sort((p, q) => p - q);
   let prev: [number, number] | undefined;
   const closeOn = (a: number, fa: number, b: number, fb: number): number | undefined =>
-    fa * fb < 0 ? bisect(a, b, fa, Math.min(Math.abs(fa), Math.abs(fb))) : undefined;
+    fa * fb < 0 ? bisect(a, b, fa, Math.min(Math.abs(fa), Math.abs(fb)), true) : undefined;
   const side = (x: number): number => 1e-6 * (Math.abs(x) + 1);
   for (const x of xs) {
     const v = f(x);

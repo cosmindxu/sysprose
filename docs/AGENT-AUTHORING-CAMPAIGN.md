@@ -3018,7 +3018,7 @@ holds along the freedom and stays `satisfied`; a PLAIN constraint (no `assert`)
 the solve took as a design equation to fix a value is `satisfied` with
 `imposed: true` and the reason *imposed by the solve* — it holds because the
 solve made it hold, not as a check passed. No design equation turns on the order of the
-text, bar two cases of where the solve starts (below): the model's own equations are solved first and a check fixes only
+text, bar four cases of where the solve starts or of the digits a value is given to (below): the model's own equations are solved first and a check fixes only
 what they leave; plain equalities that agree over a value only they fix are all
 imposed; ones that disagree, or an equation that may have more than one root beside a plain
 constraint (a curved one, plain or the model's own — a stated `s = x * x`, an
@@ -3036,8 +3036,13 @@ equation fixes, `x / y == 3.0` beside `y == 2.0` and `x == 6.0`; an exponential)
 most one root and is read as a plain one, in every order (the root-find never takes a pole of
 the quotient for its root: `24.0 / (x - y) == 3.0` beside `y == 4.0` has its pole at
 x = 4, and a bisection that closed on it gave 4 where `x == 3.0 * y` written after it gave
-12; it looks for the one root on each side of a pole, so `6.0 - 3.0 / (x + 1.0) == 3.0`, root 0 beside the
-pole −1, is read at 0 whether `x == 0.0` is written before it or after it); the same quotient or exponential set equal to a side that varies with the same
+12; where the solve's own start finds none it samples the line at 0 and ±2^k for a sign change between neighbours and
+closes on it to the last digit, a pole it closes on being no root, so `6.0 - 3.0 / (x + 1.0) == 3.0`, root 0 beside the
+pole −1, is read at 0 whether `x == 0.0` is written before it or after it, as are `1.0 / x == 100.0` and
+`10.0 ^ (2.0 * x + 8.0) == 1.0`; the limit of that search: a root in the same gap as its pole between two of
+those points is not found, and the equation alone reads `unknown` in every order, never a value —
+`1.0 / (x - 5.0) == 2.0`, root 5.5, pole 5, between 4 and 8; `3.0 / (x + 1.5) == 10.0`; a plain constraint that
+states the value supplies it, in either order); the same quotient or exponential set equal to a side that varies with the same
 feature can cross it more than once and is read as if it did (`x == 6.0 / (x +
 1.0)` at 2 and −3, `6.0 / y == 5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1; `0.5 ^ x == x`
 crosses once and is read the same),
@@ -3052,7 +3057,12 @@ solve starts, and the cases known read an abstention in one order where the othe
 value, never a different verdict: a divisor that is zero at the starting guess (`c0 { x / y
 == 3.0 }` and `c2 { w / y == x }` beside `c1 { x >= 0.0 }` over a `y` nothing fixes is not
 converged when `c2` is written first), and two asserted equations that share one of their
-roots (`x == 6.0 / (x + 1.0)` beside `x == -3.0`, in a usage).
+roots (`x == 6.0 / (x + 1.0)` beside `x == -3.0`, in a usage), and a steep one-to-one equation (a quotient whose root is close to its
+pole) judged at a value that another equation gives to fewer digits than its slope needs: a pin written to ten digits
+(`x == 0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, root 3.0000000012e-06, reads both imposed with the equation first
+and unknown with the pin first, the equation's residual at the pin being over its gate), and a value taken through an affine link, which
+the solve gets to about 1e-10 (`y == 1.0014000000014`, then `y == 2.0 * x + 1.0`, then `-3333.33333 == 7.0 / (-3.0 * x)`, reads unknown in
+that order and imposed in the other five).
 
 **`solveFeasible` claims a witness only where it has one.** The roots of an equation
 of more than one root are apart, and its descent is local: begun at the root the solve

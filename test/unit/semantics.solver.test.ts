@@ -1147,33 +1147,85 @@ describe('solve — the order of the text decides no design equation', () => {
     }
   });
 
+  // A lone one-to-one equation `e` with its root: read alike with the pin written first or last, beside an inequality the root breaks
+  // (and solveFeasible with it), and alone with the inequalities either side of the root.
+  const lit = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`);
+  const readsItsRoot = async (e: string, root: number): Promise<void> => {
+    const pinned = [`constraint e0 { ${e} }`, `constraint q1 { x == ${lit(root)} }`, `constraint k { x <= ${lit(root - 0.5)} }`];
+    for (const text of inEveryOrder(X, pinned)) {
+      const r = await rows(text);
+      expect(['e0', 'k', 'q1'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual([['satisfied', true], ['violated', undefined], ['satisfied', true]]);
+    }
+    for (const text of [pinned, [...pinned].reverse()].map((list) => `package K { ${X} ${list.join(' ')} }`)) {
+      const f = solveFeasible((await loadModelText(text)).model!);
+      expect([f.feasible, f.decided], text).toEqual([false, true]);
+    }
+    // Alone: the one root is the value, and an inequality over it is judged there.
+    const alone = [pinned[0]!, `constraint k { x >= ${lit(root + 0.5)} }`, `constraint j { x <= ${lit(root + 0.5)} }`];
+    for (const text of [alone, [...alone].reverse()].map((list) => `package K { ${X} ${list.join(' ')} }`)) {
+      const r = await rows(text);
+      expect(['e0', 'k', 'j'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual([['satisfied', true], ['violated', undefined], ['satisfied', undefined]]);
+    }
+  };
+
   it('finds the root of a lone one-to-one equation across its pole, with or without a pin and in every order', async () => {
     // `6.0 - 3.0 / (x + 1.0) == 3.0` has its root at 0 and its pole at −1. Newton from the seed 1 steps beside the pole (1 -> −1.000002)
     // and stops there, and the ends of every bracket around 0 have the sign of the asymptote, so the root-find found nothing: the equation
     // read ? written before `x == 0.0` and t after it (an abstention in one order, a value in the other), and solveFeasible answered
-    // differently. It looks for a sign change either side of the pole, so a one-to-one equation has the one root wherever it starts.
+    // differently. It looks for a sign change between samples either side of the pole, so a root with a sample between it and its pole is found
+    // wherever the solve starts (and one in the same gap as its pole is not: the abstention test below).
     for (const [e, root] of [
       ['6.0 - 3.0 / (x + 1.0) == 3.0', 0],
       ['5.0 - 3.0 / (x + 1.0) == 2.0', 0],
       ['3.0 / (x - 2.0) == 1.0', 5],
       ['24.0 / (x - 4.0) == 3.0', 12],
       ['0.5 ^ x == 4.0', -2],
+      // The root on the far side of a pole SAMPLE (−1): the sign change is between the sample before it and the pole's own left flank.
+      ['3.0 / (x + 1.0) == -6.0', -1.5],
     ] as const) {
-      const pinned = [`constraint e0 { ${e} }`, `constraint q1 { x == ${root}.0 }`, `constraint k { x <= ${root - 0.5} }`];
-      for (const text of inEveryOrder(X, pinned)) {
+      await readsItsRoot(e, root);
+    }
+  });
+
+  it('finds the root of a lone one-to-one equation close to its pole, across it with a coefficient, or from a huge value at the seed', async () => {
+    // Near its pole a quotient's root is steep: the sign change between two samples was closed on to a width of 1e-9, where the residual
+    // is still 7e-6 (`1.0 / x == 100.0`), and the gate the caller judges the root by (1e-6) rejected it: read ? written before `x == 0.01`
+    // and t after it, where the root of the same equation is found at fa187fa in both. It is closed on to the last digit now.
+    // Across a pole with a coefficient (`1.0 / (x + 1.0) + 10.0 == 11.0`, pole −1, root 0) Newton's finite-difference slope straddles the
+    // pole (2e16) and steps 9e-12, the residual falling one part in 1e10: that is no progress, and the root was never searched for.
+    // An exponential is huge at the seed (`10.0 ^ (2.0 * x + 8.0)` is 1e10 at x = 1): the residual floor taken there is 1e-4, and Newton
+    // stopped at 6.6e-6, a point the gate (1e-6, taken at the root) calls unconverged.
+    for (const [e, root] of [
+      ['1.0 / x == 100.0', 0.01],
+      ['1.0 / x == 4000.0', 0.00025],
+      ['3.0 / (x - 2.0) == 100.0', 2.03],
+      ['1.0 / (x + 1.0) + 10.0 == 11.0', 0],
+      ['4.0 / (-10.0 * x - 10.0) == -0.4', 0],
+      ['10.0 ^ (2.0 * x + 8.0) == 1.0', -4],
+      ['5.0 ^ (-x + 16.0) == 1.0', 16],
+      ['(3.0 ^ (7.0 * x + 10.0)) * 8.0 == 216.0', -1],
+    ] as const) {
+      await readsItsRoot(e, root);
+    }
+  });
+
+  it('abstains, never a value, where a one-to-one equation has no sign change to close on, and reads the pin in both orders', async () => {
+    // The search samples 0 and ±2^k and closes on a sign change between neighbours. `1.0 / (x - 5.0) == 2.0` has its root (5.5) and its
+    // pole (5) in the same gap between two samples (4 and 8): no sample between them, no sign change, no root found, whichever way the
+    // equation is written. `2.0 ^ x == -4.0` has no root at all. Both are an abstention alone, and the pin supplies the value.
+    for (const [e, root] of [['1.0 / (x - 5.0) == 2.0', 5.5], ['3.0 / (x + 1.5) == 10.0', -1.2]] as const) {
+      for (const list of [[`constraint e0 { ${e} }`, 'constraint k { x <= 0.0 }'], [`constraint k { x <= 0.0 }`, `constraint e0 { ${e} }`]]) {
+        const r = await rows(`package K { ${X} ${list.join(' ')} }`);
+        expect(['e0', 'k'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), list.join(' ')).toEqual(Array(2).fill(['unknown', undefined]));
+      }
+      for (const text of inEveryOrder(X, [`constraint e0 { ${e} }`, `constraint q1 { x == ${root} }`])) {
         const r = await rows(text);
-        expect(['e0', 'k', 'q1'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual([['satisfied', true], ['violated', undefined], ['satisfied', true]]);
+        expect(['e0', 'q1'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual(Array(2).fill(['satisfied', true]));
       }
-      for (const text of [pinned, [...pinned].reverse()].map((list) => `package K { ${X} ${list.join(' ')} }`)) {
-        const f = solveFeasible((await loadModelText(text)).model!);
-        expect([f.feasible, f.decided], text).toEqual([false, true]);
-      }
-      // Alone: the one root is the value, and an inequality over it is judged there.
-      const alone = [pinned[0]!, `constraint k { x >= ${root + 0.5} }`, `constraint j { x <= ${root + 0.5} }`];
-      for (const text of [alone, [...alone].reverse()].map((list) => `package K { ${X} ${list.join(' ')} }`)) {
-        const r = await rows(text);
-        expect(['e0', 'k', 'j'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual([['satisfied', true], ['violated', undefined], ['satisfied', undefined]]);
-      }
+    }
+    for (const list of [['constraint e0 { 2.0 ^ x == -4.0 }', 'constraint k { x <= 0.0 }'], ['constraint k { x <= 0.0 }', 'constraint e0 { 2.0 ^ x == -4.0 }']]) {
+      const r = await rows(`package K { ${X} ${list.join(' ')} }`);
+      expect(['e0', 'k'].map((n) => r.get(n)!.result), list.join(' ')).toEqual(['unknown', 'unknown']);
     }
   });
 
