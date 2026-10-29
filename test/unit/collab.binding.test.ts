@@ -833,6 +833,94 @@ describe('bindModelToDoc — CRDT convergence', () => {
         expect(m.childIds('R')).toEqual(['y']);
       }
       expect(m2.rootIds()).toEqual(m1.rootIds());
+
+      // A later edit that writes no owner and adds no element (a rename, an attribute) reads the owners as the doc
+      // holds them, without the scan, and leaves the orphans where they stood.
+      m1.update('x', { declaredName: 'x2' });
+      m2.setAttrs('z', { note: 'n' });
+      exchange();
+      for (const m of [m1, m2]) {
+        expect(m.get('x')!.declaredName).toBe('x2');
+        expect(m.get('z')!.attrs.note).toBe('n');
+        expect([...m.rootIds()].sort()).toEqual(['R', 'x', 'z']);
+      }
+    });
+
+    it('two peers who each move one of two elements into the other at once: every peer, a page that joins and a bound model hold the lowest id at the top level', () => {
+      const m1 = new Model();
+      const m2 = new Model();
+      const d1 = new Y.Doc();
+      const d2 = new Y.Doc();
+      bindModelToDoc(m1, d1);
+      bindModelToDoc(m2, d2);
+      m1.create('Package', { id: 'X', declaredName: 'X' });
+      m1.create('Package', { id: 'Y', declaredName: 'Y' });
+      m1.create('PartUsage', { id: 'x1', declaredName: 'x1', ownerId: 'X' });
+      m1.create('PartUsage', { id: 'y1', declaredName: 'y1', ownerId: 'Y' });
+      Y.applyUpdate(d2, Y.encodeStateAsUpdate(d1), 'remote');
+      // Each peer moves one into the other before it hears of the other's move: neither refuses its own.
+      const a2b: Uint8Array[] = [];
+      const b2a: Uint8Array[] = [];
+      d1.on('update', (u: Uint8Array, o: unknown) => o !== 'remote' && a2b.push(u));
+      d2.on('update', (u: Uint8Array, o: unknown) => o !== 'remote' && b2a.push(u));
+      m1.reparent('X', 'Y');
+      m2.reparent('Y', 'X');
+      const exchange = () => {
+        for (let n = 0; n < 3; n++) {
+          a2b.splice(0).forEach((u) => Y.applyUpdate(d2, u, 'remote'));
+          b2a.splice(0).forEach((u) => Y.applyUpdate(d1, u, 'remote'));
+        }
+      };
+      exchange();
+      // X, the lower id, stands at the top level with Y under it, and what each holds comes with it.
+      for (const m of [m1, m2, join(d1), join(d2), appJoin(d1), appJoin(d2, false)]) {
+        expect(m.get('X')!.ownerId).toBeNull();
+        expect(m.get('Y')!.ownerId).toBe('X');
+        expect([...m.rootIds()].filter((id) => id !== 'Mine')).toEqual(['X']);
+        expect(m.childIds('X')).toEqual(['x1', 'Y']);
+        expect(m.childIds('Y')).toEqual(['y1']);
+      }
+      // The cycle is gone from the document, so a move of either element again is read alike by every peer.
+      const els = d1.getMap('elements') as Y.Map<Y.Map<unknown>>;
+      expect([els.get('X')!.get('ownerId'), els.get('Y')!.get('ownerId')]).toEqual([null, 'X']);
+      m2.reparent('Y', null);
+      exchange();
+      for (const m of [m1, m2, join(d1)]) {
+        expect(m.get('X')!.ownerId).toBeNull();
+        expect(m.get('Y')!.ownerId).toBeNull();
+        expect([...m.rootIds()].sort()).toEqual(['X', 'Y']);
+      }
+    });
+
+    it('elements a document holds in a ring of three, or one in itself, read with the lowest id at the top level', () => {
+      const d = new Y.Doc();
+      const els = d.getMap('elements') as Y.Map<Y.Map<unknown>>;
+      d.transact(() => {
+        // C under B under A under C; S under itself; T under S; U under T and V under U (a tail off no ring).
+        for (const [id, owner] of [['A', 'C'], ['B', 'A'], ['C', 'B'], ['S', 'S'], ['T', 'S'], ['U', 'T'], ['V', 'U']] as const) {
+          const ym = new Y.Map<unknown>();
+          els.set(id, ym);
+          ym.set('eClass', 'Package');
+          ym.set('ownerId', owner);
+          ym.set('attrs', new Y.Map());
+        }
+      });
+      const model = new Model();
+      bindModelToDoc(model, d);
+      expect(model.rootIds().sort()).toEqual(['A', 'S']);
+      expect(model.get('B')!.ownerId).toBe('A');
+      expect(model.get('C')!.ownerId).toBe('B');
+      expect(model.get('T')!.ownerId).toBe('S');
+      expect(model.get('V')!.ownerId).toBe('U');
+      expect(model.size).toBe(7);
+      // The binding wrote the reading into the document: the lowest of each ring at the top level.
+      expect(['A', 'S'].map((id) => els.get(id)!.get('ownerId'))).toEqual([null, null]);
+      // A peer that holds them otherwise takes the same reading in when the document changes.
+      const other = new Model();
+      const d2 = new Y.Doc();
+      bindModelToDoc(other, d2);
+      Y.applyUpdate(d2, Y.encodeStateAsUpdate(d), 'remote');
+      for (const id of ['A', 'B', 'C', 'S', 'T', 'U', 'V']) expect(other.get(id)!.ownerId, id).toBe(model.get(id)!.ownerId);
     });
 
     /**
@@ -845,8 +933,7 @@ describe('bindModelToDoc — CRDT convergence', () => {
      * before any hears of the others. One at a time, every peer and a peer or
      * a page that joins hold each owner's children as the peer who made the
      * edit does; at once, every peer and a peer that joins hold them alike once
-     * all have heard — unless the room's document holds two elements in each
-     * other, which two moves made at once can leave (TODO.md).
+     * all have heard.
      */
     it('a sweep over random rooms: every peer, and one that joins, holds each owner\'s children alike', () => {
       let seed = 20261021;
@@ -904,18 +991,6 @@ describe('bindModelToDoc — CRDT convergence', () => {
       }
       const childOrder = (m: Model): string =>
         JSON.stringify(['', ...m.all().map((e) => e.id).sort()].map((o) => m.childIds(o === '' ? null : o)));
-      /** Whether the document holds an element under another that is, up its owners, under it. */
-      const holdsACycle = (d: Y.Doc): boolean => {
-        const owner = new Map([...(d.getMap('elements') as Y.Map<Y.Map<unknown>>).entries()].map(([id, ym]) => [id, ym.get('ownerId') as string | null]));
-        return [...owner.keys()].some((id) => {
-          const seen = new Set<string>();
-          for (let o = owner.get(id); o != null; o = owner.get(o)) {
-            if (o === id || seen.has(o)) return true;
-            seen.add(o);
-          }
-          return false;
-        });
-      };
       let checked = 0;
       for (let trial = 0; trial < 6; trial++) {
         const models = [new Model(), new Model(), new Model()];
@@ -950,7 +1025,6 @@ describe('bindModelToDoc — CRDT convergence', () => {
         for (let round = 0; round < 30; round++) {
           for (const m of models) if (rnd() < 0.6) edit(m);
           hear();
-          if (holdsACycle(docs[0])) continue;
           const want = childOrder(models[0]);
           for (const m of [...models, join(docs[0])]) expect(childOrder(m), `trial ${trial}, at once, round ${round}`).toBe(want);
           checked++;

@@ -82,6 +82,26 @@ test('regroup: a crossing connection exposes an editable delegation-port name', 
   await portInput.blur();
   await expect(page.getByTestId('regroup-boundary')).toContainText('renamedPort');
 
+  // Enter and Escape in the boxes leave the focus on Save, not on the page: a
+  // following Backspace would delete the selected element there.
+  const save = page.getByTestId('tb-save');
+  await portInput.fill('enteredPort');
+  await portInput.press('Enter');
+  await expect(save).toBeFocused();
+  await expect(page.getByTestId('regroup-boundary')).toContainText('enteredPort');
+  await portInput.click();
+  await portInput.fill('abandonedPort');
+  await portInput.press('Escape');
+  await expect(save).toBeFocused();
+  await expect(page.getByTestId('regroup-boundary')).not.toContainText('abandonedPort');
+  const label = page.getByTestId('regroup-bundle-label').first();
+  await label.click();
+  await label.press('Escape');
+  await expect(save).toBeFocused();
+  await label.click();
+  await label.press('Enter');
+  await expect(save).toBeFocused();
+
   await shot(page, '63-regroup-port-rename');
 
   expect(await modelSize(page)).toBe(countBefore); // still preview-only

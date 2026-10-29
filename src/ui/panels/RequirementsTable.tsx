@@ -575,7 +575,8 @@ export function RequirementsTable(): JSX.Element {
 /** A compact metaclass keyword for the chip/name hint. */
 /**
  * Pick one element to link: type to narrow the list, then click one or press
- * Enter for the highlighted one; Escape or leaving the field cancels. Typing
+ * Enter for the highlighted one; Escape or leaving the field cancels. Enter,
+ * Escape and a click leave the focus on Save, as a table cell does. Typing
  * never links anything — the native <select> this replaces linked on its first
  * change, so typing "acknowledgeReports" to find it linked whatever began with
  * "a", and a model with hundreds of candidates was a long list to scroll.
@@ -612,8 +613,10 @@ function RefPicker(props: {
         }}
         onBlur={props.onCancel}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') pick(active);
-          else if (e.key === 'Escape') props.onCancel();
+          // The keys close the picker under the focus (a pick selects the row too): the
+          // focus goes to Save, where the next Backspace deletes nothing. The blur cancels.
+          if (e.key === 'Enter') commitAndFocusSave(e.currentTarget, () => pick(active));
+          else if (e.key === 'Escape') cancelAndFocusSave(e.currentTarget, props.onCancel);
           else if (e.key === 'ArrowDown') setActive((a) => Math.min(a + 1, matches.length - 1));
           else if (e.key === 'ArrowUp') setActive((a) => Math.max(a - 1, 0));
           else return;
@@ -634,7 +637,9 @@ function RefPicker(props: {
             // mousedown, not click: the input's blur would close the list first.
             onMouseDown={(e) => {
               e.preventDefault();
-              props.onPick(c.id);
+              const input = e.currentTarget.closest('.req-ref-picker-wrap')?.querySelector('input');
+              if (input) commitAndFocusSave(input, () => props.onPick(c.id));
+              else props.onPick(c.id);
             }}
           >
             {c.text}

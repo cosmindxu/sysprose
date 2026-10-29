@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as Y from 'yjs';
 import { Model, isRelationship, type ElementRecord } from '@core/index';
+import { LEGACY_STORAGE_DB } from '../../src/branding';
 import { bindModelToDoc } from '../../src/collab/model-doc';
 
 // The store kicks off an async standard-library merge at module load; stub it so
@@ -101,6 +102,7 @@ import {
   FakeDrivePicker,
   InMemoryDriveGateway,
   LocalStorageStore,
+  createDefaultStore,
   createGisPopupAuth,
   exportModel,
   type DriveConfig,
@@ -5810,6 +5812,92 @@ describe('google drive', () => {
       expect(userParts(), 'the other project, untouched').toEqual(['Drone']);
       await st().loadProject('Fleet');
       expect(userParts(), 'the open project holds the typed text').toEqual(['Drone', 'Relay', 'Typed']);
+    });
+
+    /**
+     * Undo and Redo keep the open project's name. They derived it from the
+     * model's first package, so after a package renamed in the app, or an
+     * Undo of an apply, the next Save wrote another project. The steps that
+     * replace the model (New, Open, Import, an apply of text) give back the
+     * name the project had before them, and their Redo the name after.
+     */
+    it('Undo and Redo keep the open project’s name: a package renamed in the app, an apply of text, New', async () => {
+      await model();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+      await st().saveProject('Fleet');
+      const pkg = st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+
+      st().updateElement(pkg, { declaredName: 'Drone' });
+      flushRecompute();
+      st().undo();
+      expect(st().projectName, 'Undo of a rename').toBe('Fleet');
+      st().redo();
+      expect(st().projectName, 'Redo of a rename').toBe('Fleet');
+      st().undo();
+
+      // An apply names the project after its package; its Undo gives the name back, its Redo the new one.
+      st().setTextBuffer(SWARM.replace('Swarm', 'Applied'));
+      st().applyText();
+      expect(st().projectName).toBe('Applied');
+      st().undo();
+      expect(st().projectName, 'Undo of an apply').toBe('Fleet');
+      st().redo();
+      expect(st().projectName, 'Redo of an apply').toBe('Applied');
+      st().undo();
+
+      // A Save that applies typed text keeps the name, and an Undo of a step after it too.
+      st().setTextBuffer(SWARM.replace('part def Drone;', 'part def Drone;\n    part def Typed;'));
+      await commandById('tb-save')!.run();
+      expect(st().projectName).toBe('Fleet');
+      edit('Relay');
+      st().undo();
+      st().undo();
+      expect(st().projectName, 'Undo of the apply a Save made').toBe('Fleet');
+      st().redo();
+      expect(st().projectName).toBe('Fleet');
+
+      // New gives its name, and its Undo the project's before it.
+      st().newProject('Other');
+      expect(st().projectName).toBe('Other');
+      st().undo();
+      expect(st().projectName, 'Undo of New').toBe('Fleet');
+      st().redo();
+      expect(st().projectName, 'Redo of New').toBe('Other');
+    });
+
+    /**
+     * A switch of branch (and a merge, which ends in one) names the project
+     * after the first package of the branch it loads, as an apply does, so its
+     * Undo gives the name back too. What is saved never holds a name: the
+     * snapshot's name is the Undo stack's alone.
+     */
+    it('Undo and Redo of a switch of branch give back the name; a save after them holds no name', async () => {
+      await model();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+      await st().saveProject('Fleet');
+      st().refreshVersions();
+      st().commitVersion('first');
+      const main = st().currentBranchId;
+      st().createBranchCmd('side');
+      const side = st().currentBranchId;
+      const pkg = st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+      st().updateElement(pkg, { declaredName: 'Other' });
+      flushRecompute();
+      st().commitVersion('side work');
+      st().switchBranch(main);
+      expect(st().projectName, 'main holds the first package').toBe('Swarm');
+      st().switchBranch(side);
+      expect(st().projectName, 'side holds the renamed package').toBe('Other');
+
+      st().undo();
+      expect(st().projectName, 'Undo of the switch to side').toBe('Swarm');
+      st().redo();
+      expect(st().projectName, 'Redo of the switch to side').toBe('Other');
+      st().undo();
+      await st().saveProject('Fleet');
+      const saved = await createDefaultStore({ dbName: LEGACY_STORAGE_DB }).loadProject('Fleet');
+      expect(saved, 'saved').not.toBeNull();
+      expect(saved?.meta?.projectName, 'the saved project holds no snapshot name').toBeUndefined();
     });
 
     /**

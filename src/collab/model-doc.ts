@@ -26,7 +26,7 @@
  * gives its children none until one is moved into it, or added to it by other
  * than the batch that made the owner: every peer loads the library in one
  * order, one batch at a time, and places on all of it would add about 7% to a
- * document that holds it (the relay takes one message of at most 10 MiB); a
+ * document that holds it (the relay takes one message of at most 64 MiB); a
  * peer holds the children of such an owner in the order its copy of the doc
  * lists them, the library's load order on every copy ({@link holdPlaces}). An
  * edit that adds an element to an owner, or moves one into it, gives it the
@@ -49,6 +49,12 @@
  * them ({@link Model.orderChildren}); a peer that joins loads every owner so.
  * Two peers that add to one owner at once give equal places, and every peer
  * orders them alike, a member whose kind one changed at that moment too.
+ *
+ * Containment. Two peers who each move one of two elements into the other at
+ * once leave the doc holding each under the other. Every peer, a peer that
+ * joins and a model bound to such a doc read the member of the lowest id of the
+ * cycle at the top level ({@link docOwners}), and write that into the doc
+ * ({@link breakCycles}), so a later edit of either leaves the peers alike.
  *
  * Flow:
  *   local model change  → doc.transact(fn, ORIGIN_LOCAL)   (minimal ops)
@@ -226,8 +232,9 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
   } else if (elements.size > 0) {
     // Doc already has content → load the model from the doc.
     applyingRemote = true;
+    const { owner, broken } = docOwners(elements);
     try {
-      model.reset(serializeFromDoc(elements));
+      model.reset(serializeFromDoc(elements, owner));
       // The doc lists the elements in the order they reached it, not the order
       // their text gives them: list the model as the peers present at those
       // edits list theirs (`Model.adoptSerialOrder`, D-1).
@@ -235,6 +242,7 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     } finally {
       applyingRemote = false;
     }
+    breakCycles(doc, elements, broken);
   }
 
   /* ─────────────────────── Local model → Y.Doc (write) ─────────────────── */
@@ -253,9 +261,13 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     if (txn.origin === ORIGIN_LOCAL) return; // our own write — ignore
     const placed = placedBy(events, elements);
     applyingRemote = true;
+    // The reading of the owners changes only with an owner or the set of elements
+    // (a cycle can arise in no other transaction): a rename or an attribute edit,
+    // the common remote edit, reads each owner as the doc holds it, without the scan.
+    const { owner, broken } = ownersTouched(events, elements) ? docOwners(elements) : { owner: undefined, broken: [] };
     try {
       model.transaction(() => {
-        for (const id of reconcileModelFromDoc(model, elements)) placed.add(id);
+        for (const id of reconcileModelFromDoc(model, elements, owner)) placed.add(id);
         // Each owner the peer's edit added to, moved into or re-placed holds its
         // children as that peer holds them (the header's "Child order").
         holdPlaces(model, elements, placed);
@@ -269,6 +281,7 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     } finally {
       applyingRemote = false;
     }
+    breakCycles(doc, elements, broken);
   };
   elements.observeDeep(observer);
 
@@ -395,14 +408,77 @@ function placeIn(
   ym.set(PLACE_KEY, place);
 }
 
-function serializeFromDoc(elements: Y.Map<ElementYMap>) {
+/**
+ * The owner each element of the doc stands under, as every peer reads it. An
+ * owner the doc lacks (one peer removed it while another added to it or moved
+ * an element into it) reads as the top level. Elements the doc holds in each
+ * other (two peers who each moved one of two elements into the other at once,
+ * or one into itself) read with the member of the lowest id at the top level and
+ * the rest in the chain under it, on every peer, on a join, and on a model bound
+ * to a doc that holds them: no peer's own refusal decides which. `broken` lists
+ * those members: {@link breakCycles} writes the reading into the doc.
+ */
+function docOwners(elements: Y.Map<ElementYMap>): { owner: Map<ElementId, ElementId | null>; broken: ElementId[] } {
+  const owner = new Map<ElementId, ElementId | null>();
+  for (const [id, ym] of elements.entries()) {
+    const ownerId = (ym.get('ownerId') as ElementId | null | undefined) ?? null;
+    owner.set(id, ownerId !== null && !elements.has(ownerId) ? null : ownerId);
+  }
+  const broken: ElementId[] = [];
+  const onPath = new Set<ElementId>();
+  const done = new Set<ElementId>();
+  for (const start of owner.keys()) {
+    const path: ElementId[] = [];
+    let cur: ElementId | null = start;
+    while (cur !== null && !done.has(cur) && !onPath.has(cur)) {
+      onPath.add(cur);
+      path.push(cur);
+      cur = owner.get(cur) ?? null;
+    }
+    if (cur !== null && onPath.has(cur)) {
+      const cycle = path.slice(path.indexOf(cur));
+      const lowest = cycle.reduce((low, id) => (id < low ? id : low));
+      owner.set(lowest, null);
+      broken.push(lowest);
+    }
+    for (const id of path) {
+      onPath.delete(id);
+      done.add(id);
+    }
+  }
+  return { owner, broken };
+}
+
+/** Whether a doc transaction added, replaced or removed an element, or wrote an element's owner: the only edits that change the reading of {@link docOwners}. */
+function ownersTouched(events: Y.YEvent<any>[], elements: Y.Map<ElementYMap>): boolean {
+  for (const ev of events) {
+    if (!(ev instanceof Y.YMapEvent)) continue;
+    if (ev.target === elements ? ev.keysChanged.size > 0 : ev.target.parent === elements && ev.keysChanged.has('ownerId')) return true;
+  }
+  return false;
+}
+
+/**
+ * Write the reading of {@link docOwners} into the doc: the member of lowest id
+ * of each cycle at the top level. Every peer that sees the cycle writes the same
+ * value, so the writes merge; and a peer's own move of either element, made
+ * while the doc holds the cycle, no longer changes how the other reads.
+ */
+function breakCycles(doc: Y.Doc, elements: Y.Map<ElementYMap>, broken: readonly ElementId[]): void {
+  if (broken.length === 0) return;
+  doc.transact(() => {
+    for (const id of broken) elements.get(id)?.set('ownerId', null);
+  }, ORIGIN_LOCAL);
+}
+
+function serializeFromDoc(elements: Y.Map<ElementYMap>, owners: ReadonlyMap<ElementId, ElementId | null>) {
   const records: ElementRecord[] = [];
   // Where in `records` each owner's children are (the top level's under `null`), in the doc's order.
   const at = new Map<ElementId | null, number[]>();
   for (const [id, ym] of elements.entries()) {
     const rec = readRecord(id, ym);
-    // An owner the doc lacks (one peer removed it while another added to it): at the top level, as a peer present holds it.
-    if (rec.ownerId !== null && !elements.has(rec.ownerId)) rec.ownerId = null;
+    // An owner the doc lacks, or one of two elements it holds in each other: at the top level, as a peer present holds it.
+    rec.ownerId = owners.get(id) ?? null;
     const mine = at.get(rec.ownerId);
     if (mine) mine.push(records.length);
     else at.set(rec.ownerId, [records.length]);
@@ -521,15 +597,17 @@ function holdPlaces(model: Model, elements: Y.Map<ElementYMap>, placed: Readonly
  * created or moved: the owners they stand in may now hold their children in
  * another order.
  */
-function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): Set<ElementId> {
+function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>, owners?: ReadonlyMap<ElementId, ElementId | null>): Set<ElementId> {
   const docIds = new Set<ElementId>(elements.keys());
   const moved = new Set<ElementId>();
   // An element whose owner the doc lacks — one peer removed the owner while
   // another added to it or moved an element into it — stands at the top level,
   // on every peer alike, and goes back under that owner should the doc hold it
-  // again (a third peer's reset).
+  // again (a third peer's reset). So does the lowest of two elements the doc
+  // holds in each other ({@link docOwners}), given as `owners` (left out, when the
+  // transaction changed no owner and no element: each reads as the doc holds it).
   const ownerIn = (rec: ElementRecord): ElementId | null =>
-    rec.ownerId !== null && !docIds.has(rec.ownerId) ? null : rec.ownerId;
+    owners !== undefined ? (owners.get(rec.id) ?? null) : rec.ownerId !== null && !docIds.has(rec.ownerId) ? null : rec.ownerId;
 
   // 1) Removals — anything in the model but no longer in the doc. A child the
   //    doc still holds goes to the top level in 3), its owner gone.
@@ -541,7 +619,11 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): Set<
   //    doc's order: a peer's batch reaches it in the order the peer made it.
   let pending: Array<[ElementId, ElementRecord]> = [];
   for (const [id, ym] of elements.entries()) {
-    if (!model.has(id)) pending.push([id, readRecord(id, ym)]);
+    if (!model.has(id)) {
+      const rec = readRecord(id, ym);
+      rec.ownerId = ownerIn(rec);
+      pending.push([id, rec]);
+    }
   }
   let progressed = true;
   while (pending.length && progressed) {
@@ -565,20 +647,6 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): Set<
       progressed = true;
     }
     pending = waiting;
-  }
-  // Fallback for any orphans (missing owner in doc, or owners that hold each other): create at root.
-  for (const [id, rec] of pending) {
-    if (model.has(id)) continue;
-    model.create(rec.eClass, {
-      id,
-      declaredName: rec.declaredName,
-      declaredShortName: rec.declaredShortName,
-      ownerId: null,
-      attrs: rec.attrs,
-      source: rec.source,
-      target: rec.target,
-    });
-    moved.add(id);
   }
 
   // 3) Updates + reparents — patch existing elements to match the doc. A move
@@ -641,7 +709,7 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): Set<
         moved.add(id);
         progressed = true;
       } catch {
-        still.push(id); // a cycle the doc itself holds: two peers' moves at once
+        still.push(id); // waits for another element's move
       }
     }
     refused = still;

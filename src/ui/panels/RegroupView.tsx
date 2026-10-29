@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store';
+import { cancelAndFocusSave, commitAndFocusSave } from '../commands';
 import { RegroupScenarios } from './RegroupScenarios';
 import { proposedPortKey } from '@diagram/index';
 import type {
@@ -127,11 +128,14 @@ function BundleLabel(props: {
         else setDraft(bundle.label);
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur();
+        const box = e.currentTarget;
+        if (e.key === 'Enter') commitAndFocusSave(box, () => box.blur());
         if (e.key === 'Escape') {
-          cancelled.current = true;
-          setDraft(bundle.label);
-          e.currentTarget.blur();
+          cancelAndFocusSave(box, () => {
+            cancelled.current = true;
+            setDraft(bundle.label);
+            box.blur();
+          });
         }
       }}
     />
@@ -174,11 +178,14 @@ function PortNameInput(props: {
         if (draft !== initial) onRename(bundleId, port.insideEndpointId, draft);
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur();
+        const box = e.currentTarget;
+        if (e.key === 'Enter') commitAndFocusSave(box, () => box.blur());
         if (e.key === 'Escape') {
-          cancelled.current = true;
-          setDraft(initial);
-          e.currentTarget.blur();
+          cancelAndFocusSave(box, () => {
+            cancelled.current = true;
+            setDraft(initial);
+            box.blur();
+          });
         }
       }}
     />

@@ -1691,8 +1691,27 @@ function carryPins(
  * the ones it replaced. Never the model's text — the `.sysml` file, the Text
  * view and a Google Drive file are the model alone.
  */
-function withPins(data: SerializedModel, pins: DiagramPins): SerializedModel {
-  return { ...data, meta: { ...data.meta, diagramPins: pins } };
+function withPins(data: SerializedModel, pins?: DiagramPins, projectName?: string): SerializedModel {
+  return {
+    ...data,
+    meta: {
+      ...data.meta,
+      ...(pins === undefined ? {} : { diagramPins: pins }),
+      ...(projectName === undefined ? {} : { projectName }),
+    },
+  };
+}
+
+/**
+ * The project name an Undo step carries, or undefined: only the steps that
+ * replace the model along with the boxes (New, Open, Import, an apply of text),
+ * and a switch of branch (which re-derives the name), hold it — the project's
+ * name before the step, and for its Redo the name after — so an Undo or Redo of
+ * any other step leaves the name be.
+ */
+function projectNameOf(data: SerializedModel): string | undefined {
+  const raw = data.meta?.projectName;
+  return typeof raw === 'string' ? raw : undefined;
 }
 
 /**
@@ -2078,9 +2097,10 @@ export const useAppStore = create<AppState>((set, get) => {
    * that replaces the hand-placed boxes along with the model (New, Open,
    * Import, an apply of text) passes `pins`: its Undo then puts back the boxes
    * of the model it brings back. Moving a box is no step of its own, so no
-   * other Undo touches them.
+   * other Undo touches them. A command that sets the project name from the model
+   * it brings (a switch of branch) passes `name`: its Undo gives the name back.
    */
-  function pushUndo(opts: { pins?: boolean } = {}): void {
+  function pushUndo(opts: { pins?: boolean; name?: boolean } = {}): void {
     const { model, undoStack } = get();
     beginEdit(model);
     // Snapshot only the USER model — the ~38.8 k-element standard library is
@@ -2088,7 +2108,10 @@ export const useAppStore = create<AppState>((set, get) => {
     // copies) was the dominant undo cost (finding C6). Restores re-attach the
     // live library via Model.resetPreserving.
     const user = model.toJSONWhere(isUserEl);
-    const snap = opts.pins ? withPins(user, get().diagramPins) : user;
+    const snap =
+      opts.pins || opts.name
+        ? withPins(user, opts.pins ? get().diagramPins : undefined, get().projectName)
+        : user;
     const next = [...undoStack, snap];
     if (next.length > UNDO_LIMIT) next.splice(0, next.length - UNDO_LIMIT);
     set({ undoStack: next, redoStack: [] });
@@ -4266,7 +4289,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!branch) return;
       if (get().simSession) get().simStop(); // switching branches replaces the model
       cancelRecompute();
-      pushUndo();
+      pushUndo({ name: true });
       get().driveDetach(); // another branch's model is not what the attached Drive file holds
       forgetParseResult(); // the branch head did not come from the open text
       takeDownLibraryNote(true);
@@ -4329,15 +4352,19 @@ export const useAppStore = create<AppState>((set, get) => {
       // A step that replaced the hand-placed boxes (New, Open, Import) puts
       // them back, and its Redo the ones that replaced them.
       const pins = pinsOf(snapshot);
+      const name = projectNameOf(snapshot);
       const user = model.toJSONWhere(isUserEl);
-      const current = pins ? withPins(user, get().diagramPins) : user;
+      const current =
+        pins || name !== undefined
+          ? withPins(user, pins ? get().diagramPins : undefined, name === undefined ? undefined : get().projectName)
+          : user;
       withCommandMutation(() => model.resetPreserving(snapshot, isLibraryEl));
       set((s) => ({
         undoStack: undoStack.slice(0, -1),
         redoStack: [...redoStack, current].slice(-UNDO_LIMIT),
         diagnostics: safeValidate(model),
         ...textView(model, s.textBuffer),
-        projectName: deriveProjectName(model),
+        ...(name === undefined ? {} : { projectName: name }),
         ...validSelection(s, model),
         ...(pins ? { diagramPins: pins } : {}),
         rev: s.rev + 1,
@@ -4352,15 +4379,19 @@ export const useAppStore = create<AppState>((set, get) => {
       cancelRecompute();
       const snapshot = redoStack[redoStack.length - 1];
       const pins = pinsOf(snapshot);
+      const name = projectNameOf(snapshot);
       const user = model.toJSONWhere(isUserEl);
-      const current = pins ? withPins(user, get().diagramPins) : user;
+      const current =
+        pins || name !== undefined
+          ? withPins(user, pins ? get().diagramPins : undefined, name === undefined ? undefined : get().projectName)
+          : user;
       withCommandMutation(() => model.resetPreserving(snapshot, isLibraryEl));
       set((s) => ({
         redoStack: redoStack.slice(0, -1),
         undoStack: [...undoStack, current].slice(-UNDO_LIMIT),
         diagnostics: safeValidate(model),
         ...textView(model, s.textBuffer),
-        projectName: deriveProjectName(model),
+        ...(name === undefined ? {} : { projectName: name }),
         ...validSelection(s, model),
         ...(pins ? { diagramPins: pins } : {}),
         rev: s.rev + 1,
