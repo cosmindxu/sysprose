@@ -309,8 +309,13 @@ export interface ReadOtherwise {
   via?: ReadOtherwise;
   /** For `satisfy`: written outside the definition `scope` whose feature it names, by a path not resolved where it is written. */
   outside?: true;
-  /** For `subsetting` read the other way ({@link DefiningEquations.subsettedOtherwise}): `written` is the subsetted usage, this the usage that subsets it. */
+  /**
+   * For `subsetting` read the other way ({@link DefiningEquations.subsettedOtherwise}): `written` is the subsetted
+   * usage, this the usage that subsets it — the NEAREST one that is read otherwise, or that subsets what is.
+   */
   subsetter?: ElementRecord;
+  /** For `subsetting` read the other way, up a chain or across a usage with two supers: the usage the reading started from, when it is not {@link subsetter}. */
+  root?: ElementRecord;
 }
 
 /**
@@ -1858,10 +1863,12 @@ export class DefiningEquations {
     const scope = this.model.get(f.ownerId);
     const path = this.nameOf(f);
     if (!scope || isPackage(scope) || path === undefined) return undefined;
-    // A subsetter declared in an instance itself (`part w : W { part q :> p1 { attribute :>> load = 50.0; } }`), of a
-    // feature that instance has, and saying something of its own: it is that instance that reads `g` otherwise.
-    if (isUsage(scope.eClass) && f.ownerId !== g.ownerId && this.saysOwn(f) && this.features(scope.id).some((x) => x.id === g.id)) {
-      return { kind: 'subsetting', written: g, scope, path, instance: scope, subsetter: f };
+    // A subsetter that says something of its own, declared where `g` is a feature: in an instance (`part w : W { part q
+    // :> p1 { attribute :>> load = 50.0; } }`; its own subsetters and its own supers' too, so a chain `r :> q :> p1`
+    // it declares reaches p1), in the definition (`part def W { part p1; part q :> p1 { … } }`) or in a specialisation
+    // of it. That instance, or every instance of that definition, reads `g` otherwise; the instance is `scope` itself.
+    if (this.saysOwn(f) && this.features(scope.id).some((x) => x.id === g.id)) {
+      return { kind: 'subsetting', written: g, scope, path, instance: isUsage(scope.eClass) ? scope : undefined, subsetter: f };
     }
     const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
     const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} subsetted`, scope, names) : undefined;
@@ -2458,8 +2465,13 @@ export class DefiningEquations {
   clash(contextId: ElementId, f: ElementRecord): NameClash | undefined {
     const name = this.nameOf(f);
     if (name === undefined) return undefined;
-    const hit = this.clashesIn(contextId).get(name);
-    return hit && hit.kept === f ? hit : undefined;
+    const clashes = this.clashesIn(contextId);
+    // Under every name the feature stands for too: `attribute Y :>> X;` is the line X, M and N are filed under.
+    for (const n of [name, ...this.aliasesOf(f)]) {
+      const hit = clashes.get(n);
+      if (hit && hit.kept === f) return hit.merged && hit.merged.name !== name ? { ...hit, merged: { ...hit.merged, name } } : hit;
+    }
+    return undefined;
   }
 
   /**
@@ -2503,6 +2515,7 @@ export class DefiningEquations {
       }
       for (const [name, shadow] of this.lexicalShadows(contextId)) if (!out.has(name)) out.set(name, shadow);
       for (const [name, merged] of this.mergedLines(contextId)) if (!out.has(name)) out.set(name, merged);
+      for (const [name, twice] of this.redefinedTwice(contextId)) if (!out.has(name)) out.set(name, twice);
       this.clashes.set(contextId, out);
     }
     return out;
@@ -2661,12 +2674,58 @@ export class DefiningEquations {
             this.model.relationshipsFrom(f.id).some((r) => r.eClass === 'Redefinition' && (r.target ?? []).some((t) => ids.has(t))),
         ),
       );
-      if (!another) continue;
+      // A line that states no value, over targets that state different ones (`attribute X :>> M, N;` over M's `default
+      // = 1.0` and N's `= 2.0`), has no one value to read: whichever came first was read, so the target order decided.
+      const differing = line.attrs.value == null ? this.differingSources(targets) : [];
+      if (!another && differing.length === 0) continue;
       for (const g of [line, ...targets]) {
         const name = effectiveNameOf(this.model, g);
         const kept = name !== undefined ? byName.get(name) : undefined;
         if (name === undefined || kept === undefined || out.has(name)) continue;
-        out.set(name, { kept, other: line, keptValue: kept, otherValue: line, contradiction: false, decided: false, merged: { line } });
+        out.set(name, { kept, other: line, keptValue: kept, otherValue: line, contradiction: false, decided: false, merged: { line, name, differing } });
+      }
+    }
+    return out;
+  }
+
+  /** The written values of `targets` that differ (the first pair that does, as sources), or `[]`: a firm one and a default count as different. */
+  private differingSources(targets: readonly ElementRecord[]): ElementRecord[] {
+    const sources = [...new Set(targets.map((t) => valueSourceOf(this.model, t)).filter((x): x is ElementRecord => x !== undefined))];
+    for (const [i, a] of sources.entries()) {
+      for (const b of sources.slice(i + 1)) {
+        if (redefinedClosure(this.model, a).includes(b) || redefinedClosure(this.model, b).includes(a)) continue;
+        if (compareWrittenValues(a, b) !== 'same') return [a, b];
+      }
+    }
+    return [];
+  }
+
+  /**
+   * The names `contextId` gives two values by redefining ONE feature twice (`part s : Q2 { :>> x = 5.0; :>> x = 6.0; }`):
+   * the model states both, the check, literal and numeric surfaces read the first and the SMT one found the axioms
+   * inconsistent. The context reads no such name ({@link NameClash}'s `twice`).
+   */
+  private redefinedTwice(contextId: ElementId): Map<string, NameClash> {
+    const out = new Map<string, NameClash>();
+    const context = this.model.get(contextId);
+    if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
+    const byTarget = new Map<ElementId, ElementRecord[]>();
+    for (const x of this.model.children(contextId)) {
+      if (!isUsage(x.eClass) || x.attrs.implicit === true || x.attrs.value === undefined || x.attrs.value === null) continue;
+      for (const r of this.model.relationshipsFrom(x.id)) {
+        if (r.eClass === 'Redefinition') for (const t of r.target ?? []) byTarget.set(t, [...(byTarget.get(t) ?? []), x]);
+      }
+    }
+    const byName = this.byName(contextId);
+    for (const xs of byTarget.values()) {
+      const pair = xs.flatMap((a, i) => xs.slice(i + 1).filter((b) => compareWrittenValues(a, b) !== 'same').map((b) => [a, b] as const))[0];
+      if (!pair) continue;
+      for (const x of xs) {
+        for (const name of [this.nameOf(x), ...this.aliasesOf(x)]) {
+          const kept = name !== undefined ? byName.get(name) : undefined;
+          if (name === undefined || kept === undefined || out.has(name)) continue;
+          out.set(name, { kept, other: pair[1], keptValue: pair[0], otherValue: pair[1], contradiction: false, decided: false, twice: true });
+        }
       }
     }
     return out;
@@ -5218,46 +5277,81 @@ function subsettingTaint(model: Model): SubsettingsOtherwise {
   }
 }
 
-/** {@link subsettingTaint}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. */
+/**
+ * {@link subsettingTaint}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. A usage a
+ * context reads otherwise, or that subsets one that does, is tainted ({@link DefiningEquations.subsettingOtherwise},
+ * {@link DefiningEquations.subsettedOtherwise}); then, to a fixpoint, every OTHER usage it subsets, whatever its own
+ * answer was (a usage with two supers is both of them: `part u3 :> u1, u2;` beside w's `:>> u2 { … }` makes w's u1 the
+ * valued one too), alternating with {@link spreadOtherwise}, which brings what subsets or reads through a tainted one:
+ * the whole undirected subsetting component of a usage read otherwise abstains, whatever the multiplicities (the
+ * feature the context redefines itself is read as it says). Each usage's sentence is the nearest one's, then the
+ * lowest qualified name — not the order the relations were written in.
+ */
 function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
   const taint = new Map<ElementId, ElementRecord>();
   const why = new Map<ElementId, ReadOtherwise>();
   const subsettings = model.ofKind('Subsetting', 'ReferenceSubsetting').filter((r) => r.attrs.isLibrary !== true);
-  if (subsettings.length > 0) {
-    const defs = sharedDefinitions(model);
-    for (const r of subsettings) {
-      const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
-      if (!f || taint.has(f.id)) continue;
-      const answer = defs.subsettingOtherwise(f);
-      if (!answer) continue;
-      taint.set(f.id, f);
-      why.set(f.id, answer);
+  if (subsettings.length === 0) return { rev: model.rev, taint, why };
+  const defs = sharedDefinitions(model);
+  const pairs = subsettings.flatMap((r) => {
+    const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+    const g = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+    return f && g ? [{ r, f, g, key: `${defs.qualifiedNameOf(f.id)} ${defs.qualifiedNameOf(g.id)}` }] : [];
+  });
+  pairs.sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+  const nameKey = (r: ElementRecord): string => `${defs.qualifiedNameOf(r.source?.[0] ?? '')} ${defs.qualifiedNameOf(r.target?.[0] ?? '')}`;
+  const hops = new Map<ElementId, number>();
+  const offers = new Map<ElementId, { answer: ReadOtherwise; hop: number; key: string }>();
+  const offer = (g: ElementRecord, answer: ReadOtherwise, hop: number): void => {
+    if (taint.has(g.id)) return;
+    const near = answer.subsetter ?? answer.written;
+    const key = `${String(hop).padStart(6, '0')} ${defs.qualifiedNameOf(near.id)} ${defs.qualifiedNameOf((answer.root ?? answer.redefined ?? near).id)}`;
+    const cur = offers.get(g.id);
+    if (!cur || key < cur.key) offers.set(g.id, { answer, hop, key });
+  };
+  /** Take the offers: the best of each usage; whether any is new. */
+  const accept = (): boolean => {
+    let any = false;
+    for (const [id, { answer, hop }] of offers) {
+      const g = model.get(id);
+      if (!g || taint.has(id)) continue;
+      taint.set(id, g);
+      why.set(id, answer);
+      hops.set(id, hop);
+      any = true;
     }
-    // The subsetted usage too, where a usage that subsets it is read otherwise by an instance (RV1): it is the
-    // subsetter's value that fills it there, which the walk reads at the owner's own values.
-    for (const r of subsettings) {
-      const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
-      const g = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
-      if (!f || !g || taint.has(g.id)) continue;
-      const answer = defs.subsettedOtherwise(f, g);
-      if (!answer) continue;
-      taint.set(g.id, g);
-      why.set(g.id, answer);
-    }
-    // ... and the usages IT subsets in turn (p3 :> p2 :> p1), each the same answer: p1 is p3's too.
-    for (let grew = true; grew; ) {
-      grew = false;
-      for (const r of subsettings) {
-        const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
-        const g = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
-        const answer = f ? why.get(f.id) : undefined;
-        if (!g || !answer || !answer.subsetter || taint.has(g.id)) continue;
-        taint.set(g.id, g);
-        why.set(g.id, answer);
-        grew = true;
+    offers.clear();
+    return any;
+  };
+  // The usages that subset a feature an instance reads otherwise, and the subsetted usage of a subsetter that is
+  // (RV1): it is the subsetter's value that fills it there, which the walk reads at the owner's own values.
+  for (const { f, g } of pairs) {
+    const own = defs.subsettingOtherwise(f);
+    if (own) offer(f, own, 0);
+    const other = defs.subsettedOtherwise(f, g);
+    if (other) offer(g, other, 0);
+  }
+  accept();
+  if (taint.size === 0) return { rev: model.rev, taint, why };
+  const narrowing = [...model.ofKind('Redefinition'), ...subsettings].map((r) => ({ r, key: nameKey(r) })).sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0)).map((x) => x.r);
+  const answerOf = (x: ElementRecord): ReadOtherwise | undefined => {
+    const source = taint.get(x.id);
+    return source ? why.get(source.id) : undefined;
+  };
+  for (let grew = true; grew; ) {
+    // Every other usage a tainted one subsets (not the feature the instance itself redefines), nearest first.
+    for (let more = true; more; more = accept()) {
+      for (const { f, g } of pairs) {
+        const a = answerOf(f);
+        if (!a || taint.has(g.id) || g.id === f.id || g.attrs.isLibrary === true || !isUsage(g.eClass) || a.redefined?.id === g.id) continue;
+        const seed = a.root ?? a.subsetter ?? a.written;
+        const scope = g.ownerId != null ? model.get(g.ownerId) : undefined;
+        offer(g, { ...a, written: g, scope: scope ?? a.scope, subsetter: f, root: seed.id === f.id ? undefined : seed }, (hops.get(taint.get(f.id)!.id) ?? 0) + 1);
       }
     }
-    if (taint.size > 0) spreadOtherwise(model, taint, [...model.ofKind('Redefinition'), ...subsettings]);
+    const size = taint.size;
+    spreadOtherwise(model, taint, narrowing);
+    grew = taint.size > size;
   }
   return { rev: model.rev, taint, why };
 }
@@ -5454,10 +5548,14 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   const who = s.instance ? effectiveQualifiedName(model, s.instance.id) : `an instance of ${where}`;
   if (s.kind === 'subsetting' && s.subsetter) {
     const name = effectiveNameOf(model, s.written) ?? s.written.id;
-    const by = effectiveNameOf(model, s.subsetter) ?? s.subsetter.id;
+    const nm = (e: ElementRecord): string => `\`${effectiveNameOf(model, e) ?? e.id}\``;
+    // `subsetter` is the nearest usage that is read otherwise or is read with one (`root`: the one it started from; `redefined`:
+    // the feature that one subsets, where that is what the instance reads otherwise).
+    const by = nm(s.subsetter) + (s.root ? `, which is read together with ${nm(s.root)}` : '') + (s.redefined ? `, which subsets ${nm(s.redefined)}` : '');
+    const held = s.redefined ? nm(s.redefined) : nm(s.root ?? s.subsetter);
     return (
-      `\`${name}\` in ${where} is subsetted by \`${by}\`, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: this tool ` +
-      `reads \`${name}\` at ${where}'s own values, never as the \`${by}\` that instance holds${so(`no relation that reads through \`${name}\` or \`${by}\``)}`
+      `\`${name}\` in ${where} is subsetted by ${by}, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: this tool ` +
+      `reads \`${name}\` at ${where}'s own values, never as the ${held} that instance holds${so(`no relation that reads through \`${name}\` or ${nm(s.subsetter)}`)}`
     );
   }
   if (s.kind === 'subsetting') {
@@ -5468,9 +5566,10 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   const tail = `is read at ${where}'s own values only, never in each instance of it, and ${who} reads`;
   // A satisfier or a subject read through such a subsetting usage says which ({@link subsettingTaint}); resolved in
   // a package, one instance, it is read otherwise through that usage alone.
+  const nmv = (e: ElementRecord): string => `\`${effectiveNameOf(model, e) ?? e.id}\``;
   const through = s.via?.subsetter
-    ? `through \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\`, which \`${effectiveNameOf(model, s.via.subsetter) ?? s.via.subsetter.id}\` subsets: ` +
-      `this tool reads \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\` at ${effectiveQualifiedName(model, s.via.scope.id)}'s own values, never as the \`${effectiveNameOf(model, s.via.subsetter) ?? s.via.subsetter.id}\` that ${contextSpelling(model, s.via.instance) ?? 'that instance'} holds`
+    ? `through ${nmv(s.via.written)}, which ${nmv(s.via.subsetter)} subsets: ` +
+      `this tool reads ${nmv(s.via.written)} at ${effectiveQualifiedName(model, s.via.scope.id)}'s own values, never as the ${nmv(s.via.redefined ?? s.via.root ?? s.via.subsetter)} that ${contextSpelling(model, s.via.instance) ?? 'that instance'} holds`
     : s.via ? `through \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\`, which subsets \`${s.via.path}\`: ${subsettingRead(model, s.via)}` : '';
   const inPackage = s.via !== undefined && isPackage(s.scope);
   const via = through && !inPackage ? `, ${through}` : '';
@@ -12253,7 +12352,9 @@ export interface NameClash {
    * beside a redefinition of one of them in the context ({@link DefiningEquations.mergedLines}): never a
    * contradiction, and `other` is that line.
    */
-  merged?: { line: ElementRecord };
+  merged?: { line: ElementRecord; name: string; differing: ElementRecord[] };
+  /** Set where the context redefines the one feature twice, with values that differ ({@link DefiningEquations.redefinedTwice}): `keptValue` and `otherValue` are the two. */
+  twice?: true;
   /**
    * Set where the two values are the same, and the context's own feature of
    * the name states nothing and redefines neither ({@link
@@ -12288,12 +12389,28 @@ export function clashSentence(model: Model, contextId: ElementId, clash: NameCla
       'cannot give the name both meanings, so neither is read there'
     );
   }
-  if (clash.merged) {
-    const line = clash.merged.line;
-    const names = [...new Set(model.relationshipsFrom(line.id).filter((r) => r.eClass === 'Redefinition').flatMap((r) => r.target ?? []).map((t) => `\`${effectiveNameOf(model, model.require(t)) ?? t}\``))];
+  if (clash.twice) {
     return (
-      `${effectiveQualifiedName(model, line.id)} redefines ${names.join(' and ')} together, so in ${context} they are one feature, ` +
-      `which a redefinition of each can give two values; this tool reads them as separate features, so \`${name}\` is not read there`
+      `${context} redefines \`${name}\` twice, with ${writtenValue(clash.keptValue)} and ${writtenValue(clash.otherValue)}, ` +
+      'so the model states both values for the one feature and neither is read'
+    );
+  }
+  if (clash.merged) {
+    const { line, differing } = clash.merged;
+    const names = [...new Set(model.relationshipsFrom(line.id).filter((r) => r.eClass === 'Redefinition').flatMap((r) => r.target ?? []).map((t) => `\`${effectiveNameOf(model, model.require(t)) ?? t}\``))];
+    const row = clash.merged.name;
+    const spelled = line.declaredName !== undefined ? effectiveQualifiedName(model, line.id) : `the unnamed \`:>> ${names.map((n) => n.slice(1, -1)).join(', ')}\` in ${line.ownerId != null ? effectiveQualifiedName(model, line.ownerId) : '…'}`;
+    const read = row === (effectiveNameOf(model, line) ?? row) ? `\`${row}\`` : `\`${row}\` (a name of the line's one feature)`;
+    if (differing.length > 0) {
+      return (
+        `${spelled} redefines ${names.join(' and ')} together, so in ${context} they are one feature, and what they state differs ` +
+        `(${differing.map((d) => `${writtenName(model, d)} ${d.attrs.defaultValue === true ? 'default ' : ''}= ${writtenValue(d)}`).join(' and ')}); ` +
+        `the one feature has no one value to read (a firm value beats a default, and two of either do not agree), so ${read} is not read there`
+      );
+    }
+    return (
+      `${spelled} redefines ${names.join(' and ')} together, so in ${context} they are one feature, ` +
+      `which a redefinition of each can give two values; this tool reads them as separate features, so ${read} is not read there`
     );
   }
   const both =

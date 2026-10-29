@@ -6262,6 +6262,103 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'MX::uM': ['?/?/?/?', '?'],
       'MX::uN': ['?/?/?/?', '?'],
     }),
+    // A feature that redefines the line (`attribute Y :>> X;`, in a type or in the usage) is the line's one feature under
+    // another name, and the usage's `:>> M = 5.0` gives it its value: M, N, X and Y are one feature with the value 5, and
+    // every name reads it (`sN1` false) — read as the line's default for N, X and Y (T/T/T/T) and refuted wrongly
+    // (strict reported a false violation); it abstains now under every name, with the line's sentence. A usage of Q2
+    // that redefines nothing (`t`) reads the line as written.
+    ...reversed('redef-target-renamed', `package RN {
+        part def Q { attribute M default = 1.0; }
+        part def Q1 { attribute N default = 1.0; }
+        part def Q2 :> Q, Q1 { attribute X :>> M, N; }
+        part def Q3 :> Q2 { attribute Y :>> X; }
+        part s : Q3 { attribute :>> M = 5.0; }
+        part u : Q2 { attribute Y :>> X; attribute :>> M = 5.0; }
+        part t : Q2;
+        constraint sM5 { s.M == 5.0 }
+        constraint sN1 { s.N == 1.0 }
+        constraint sN5 { s.N == 5.0 }
+        constraint sY5 { s.Y == 5.0 }
+        constraint uN1 { u.N == 1.0 }
+        constraint uY5 { u.Y == 5.0 }
+        constraint tN1 { t.N == 1.0 }
+      }`, `package RN {
+        constraint tN1 { t.N == 1.0 }
+        constraint uY5 { u.Y == 5.0 }
+        constraint uN1 { u.N == 1.0 }
+        constraint sY5 { s.Y == 5.0 }
+        constraint sN5 { s.N == 5.0 }
+        constraint sN1 { s.N == 1.0 }
+        constraint sM5 { s.M == 5.0 }
+        part t : Q2;
+        part u : Q2 { attribute :>> M = 5.0; attribute Y :>> X; }
+        part s : Q3 { attribute :>> M = 5.0; }
+        part def Q3 :> Q2 { attribute Y :>> X; }
+        part def Q2 :> Q1, Q { attribute X :>> N, M; }
+        part def Q1 { attribute N default = 1.0; }
+        part def Q { attribute M default = 1.0; }
+      }`, {
+      'RN::sM5': ['?/?/?/?', 'T'],
+      'RN::sN1': ['?/?/?/?', 'F'],
+      'RN::sN5': ['?/?/?/?', 'T'],
+      'RN::sY5': ['?/?/?/?', 'T'],
+      'RN::tN1': ['T/T/T/T', 'T'],
+      'RN::uN1': ['?/?/?/?', 'F'],
+      'RN::uY5': ['?/?/?/?', 'T'],
+    }),
+    // A line that states no value over two features that state different ones (`attribute X :>> M, N;`): the order of its
+    // targets decided the verdict (M first read M's 1, N first N's 2), and a firm value beats a default (N's 2, not M's
+    // 1). It has no one value to read, whichever order the targets are written in, and whether or not a usage redefines
+    // anything of it: every name of the line abstains. Two defaults that differ, and two firm values that differ, are the
+    // same; two that agree are read.
+    ...['MN', 'NM'].reduce(
+      (acc, order) => {
+        const targets = order === 'MN' ? 'M, N' : 'N, M';
+        const mk = (name: string, m: string, n: string) =>
+          `package ${name} {
+        part def Q { attribute M ${m}; }
+        part def Q1 { attribute N ${n}; }
+        part def Q2 :> Q, Q1 { attribute X :>> ${targets}; }
+        part s : Q2;
+        constraint cM { s.M == 1.0 }
+        constraint cN { s.N == 2.0 }
+        constraint cX { s.X == 2.0 }
+      }`;
+        return {
+          ...acc,
+          [`redef-target-valueless-${order}`]: probe(mk('VL', 'default = 1.0', '= 2.0'), { 'VL::cM': ['?/?/?/?', 'F'], 'VL::cN': ['?/?/?/?', 'T'], 'VL::cX': ['?/?/?/?', 'T'] }),
+          [`redef-target-valueless-defaults-${order}`]: probe(mk('VD', 'default = 1.0', 'default = 2.0'), { 'VD::cM': ['?/?/?/?', '?'], 'VD::cN': ['?/?/?/?', '?'], 'VD::cX': ['?/?/?/?', '?'] }),
+          [`redef-target-valueless-firm-${order}`]: probe(mk('VF', '= 1.0', '= 2.0'), { 'VF::cM': ['?/?/?/?', '?'], 'VF::cN': ['?/?/?/?', '?'], 'VF::cX': ['?/?/?/?', '?'] }),
+          [`redef-target-valueless-agree-${order}`]: probe(mk('VA', 'default = 2.0', '= 2.0'), { 'VA::cM': ['F/F/F/F', 'F'], 'VA::cN': ['T/T/T/T', 'T'], 'VA::cX': ['T/T/T/T', 'T'] }),
+        };
+      },
+      {} as Record<string, { text: string; rows: Record<string, [string, Ref]> }>,
+    ),
+    // One feature redefined twice in one usage with values that differ (`:>> x = 5.0; :>> x = 6.0;`): the check, literal and
+    // numeric surfaces read the first and decided, the SMT engine found the axioms inconsistent. The model states both
+    // values: the usage reads no value for it, in either order (the SMT engine still reports its inconsistent axioms).
+    ...reversed('redef-twice', `package TW {
+        part def A { attribute x default = 1.0; }
+        part a : A { attribute :>> x = 5.0; attribute :>> x = 6.0; }
+        constraint c5 { a.x == 5.0 }
+        constraint c6 { a.x == 6.0 }
+      }`, `package TW {
+        constraint c6 { a.x == 6.0 }
+        constraint c5 { a.x == 5.0 }
+        part a : A { attribute :>> x = 6.0; attribute :>> x = 5.0; }
+        part def A { attribute x default = 1.0; }
+      }`, {
+      'TW::c5': ['?/?/?/X', '?'],
+      'TW::c6': ['?/?/?/X', '?'],
+    }),
+    // ... and the same value twice states one: read.
+    'redef-twice-agree': probe(`package TA {
+        part def A { attribute x default = 1.0; }
+        part b : A { attribute :>> x = 5.0; attribute :>> x = 5.0; }
+        constraint b5 { b.x == 5.0 }
+      }`, {
+      'TA::b5': ['T/T/T/T', 'T'],
+    }),
     'redef-target-merge-rev': probe(`package MUR {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
         part def Q2 :> Q { attribute :>> M, N default = 3.0; }
@@ -12566,6 +12663,119 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R4::k1': ['?/?/?/?', 'F'],
       'R4::k2': ['?/?/?/?', 'F'],
     }),
+    // The usage with two supers (`part u3 :> u1, u2;`): u3's element is both u1's and u2's, so w's valued u2 (50) makes
+    // `w.u1.load` 50 as well — it read W's own 1 on all four surfaces, and `satisfy RF by w.u1` held. The whole
+    // undirected subsetting component of the usage read otherwise abstains (`k3`, `k1`); the one the instance
+    // redefines itself is read as written (`k2`, false: 50 beside 5).
+    ...reversed('sub-rv1-diamond', `package DM {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part u1 : T0[1]; part u2 : T0[1]; part u3 :> u1, u2 [1]; }
+        part w : W { part :>> u2 { attribute :>> load = 50.0; } }
+        constraint k1 { w.u1.load <= 5.0 }
+        constraint k2 { w.u2.load <= 5.0 }
+        constraint k3 { w.u3.load <= 5.0 }
+      }`, `package DM {
+        constraint k3 { w.u3.load <= 5.0 }
+        constraint k2 { w.u2.load <= 5.0 }
+        constraint k1 { w.u1.load <= 5.0 }
+        part w : W { part :>> u2 { attribute :>> load = 50.0; } }
+        part def W { part u3 :> u2, u1 [1]; part u2 : T0[1]; part u1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'DM::k1': ['?/?/?/?', 'F'],
+      'DM::k2': ['F/F/F/F', 'F'],
+      'DM::k3': ['?/?/?/?', 'F'],
+    }),
+    // A chain of subsetters the instance declares itself (`q :> p1`, `r :> q`, r valued): r is q is p1, so all three
+    // are 50; p1 and q read the defaults. Every usage of the component abstains, and the sentence a row abstains with
+    // does not turn on the order the members are written in (p1 reads through `q`, the nearest, with `r` the root).
+    ...reversed('sub-rv1-declared-chain', `package DC {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; }
+        part w : W { part q :> p1 [1]; part r :> q [1] { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.q.load <= 5.0 }
+        constraint k3 { w.r.load <= 5.0 }
+      }`, `package DC {
+        constraint k3 { w.r.load <= 5.0 }
+        constraint k2 { w.q.load <= 5.0 }
+        constraint k1 { w.p1.load <= 5.0 }
+        part w : W { part r :> q [1] { attribute :>> load = 50.0; } part q :> p1 [1]; }
+        part def W { part p1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'DC::k1': ['?/?/?/?', 'F'],
+      'DC::k2': ['?/?/?/?', 'F'],
+      'DC::k3': ['?/?/?/?', 'F'],
+    }),
+    // A subsetter that says something of its own, declared in the DEFINITION (`part def W { part p1; part q :> p1 { … } }`)
+    // or in a specialisation of it: every instance has it, so `w.p1.load` is 50 where the walk read T0's 1. The same
+    // text with the subsetter inside the instance was fenced; the usage it subsets abstains wherever it is declared.
+    ...reversed('sub-rv1-def-subsetter', `package DS {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part q :> p1 [1] { attribute :>> load = 50.0; } }
+        part w : W;
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.q.load <= 5.0 }
+      }`, `package DS {
+        constraint k2 { w.q.load <= 5.0 }
+        constraint k1 { w.p1.load <= 5.0 }
+        part w : W;
+        part def W { part q :> p1 [1] { attribute :>> load = 50.0; } part p1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'DS::k1': ['?/?/?/?', 'F'],
+      'DS::k2': ['?/?/?/?', 'F'],
+    }),
+    ...reversed('sub-rv1-spec-subsetter', `package SS {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+        part def W3 :> W { part q :> p2 [1] { attribute :>> load = 50.0; } }
+        part w : W3;
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.p2.load <= 5.0 }
+        constraint k3 { w.q.load <= 5.0 }
+      }`, `package SS {
+        constraint k3 { w.q.load <= 5.0 }
+        constraint k2 { w.p2.load <= 5.0 }
+        constraint k1 { w.p1.load <= 5.0 }
+        part w : W3;
+        part def W3 :> W { part q :> p2 [1] { attribute :>> load = 50.0; } }
+        part def W { part p2 :> p1 [1]; part p1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'SS::k1': ['?/?/?/?', 'F'],
+      'SS::k2': ['?/?/?/?', 'F'],
+      'SS::k3': ['?/?/?/?', 'F'],
+    }),
+    // A subsetting cycle (p1 :> p2 :> p1) is an error of its own (the specialization-cycle rule) and the fixpoint ends:
+    // every row over it abstains. The 40-link chain with the value at its last usage: the fixpoint is linear in the
+    // links, every usage of the chain abstains, the redefined last one too (it subsets a tainted one).
+    'sub-rv1-cycle': probe(`package CY {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1] :> p2 [1]; part p2 : T0[1] :> p1 [1]; part p3 :> p2 [1]; }
+        part w : W { part :>> p3 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.p2.load <= 5.0 }
+      }`, {
+      'CY::k1': ['?/?/?/?', 'F'],
+      'CY::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv1-chain-40': probe(
+      `package C40 {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part u1 : T0[1]; ${Array.from({ length: 39 }, (_, i) => `part u${i + 2} :> u${i + 1} [1];`).join(' ')} }
+        part w : W { part :>> u40 { attribute :>> load = 50.0; } }
+        constraint k1 { w.u1.load <= 5.0 }
+        constraint k20 { w.u20.load <= 5.0 }
+        constraint k40 { w.u40.load <= 5.0 }
+      }`,
+      {
+        'C40::k1': ['?/?/?/?', 'F'],
+        'C40::k20': ['?/?/?/?', 'F'],
+        'C40::k40': ['?/?/?/?', 'F'],
+      },
+    ),
     'sub-rv1-plain': probe(`package RV1P {
         part def T0 { attribute load default = 1.0; }
         part def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }
