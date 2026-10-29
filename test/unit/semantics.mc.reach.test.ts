@@ -947,6 +947,19 @@ describe('a nested state def: the machine that holds it, and a transition across
       'into the nested `state def` `Nm::Outer::Inner`, a definition this walk stops at and no walk enters',
     );
     expect(r.machines[0].unsupported[0].detail).not.toContain('a machine of its own');
+    // The simulator's sentence for a step into a state written in it says so; for a step into the
+    // definition itself it names the definition and does not call it a thing written in one.
+    const outerId = idOf(model, 'Nm::Outer');
+    const ax = runStateMachine(model, outerId, ['e']).refused!.transitionId;
+    expect(refusedStepSentence(model, outerId, ax)).toContain('lies outside this machine’s region, written in a nested `state def`.');
+    const toDef = await modelOf(
+      'package Nd { state def Outer { state a; state def Inner { state x; } transition ai first a accept e then Inner; } }',
+    );
+    const toDefOuter = idOf(toDef, 'Nd::Outer');
+    const ai = runStateMachine(toDef, toDefOuter, ['e']).refused!.transitionId;
+    const sentence = refusedStepSentence(toDef, toDefOuter, ai);
+    expect(sentence).toContain('`Nd::Outer::Inner` lies outside this machine’s region, a nested `state def` that owns no transition.');
+    expect(sentence).not.toContain('written in a nested');
   });
 
   /*
@@ -1159,7 +1172,7 @@ describe('a nested state def: the machine that holds it, and a transition across
       message:
         '`T1::Lone::a` holds no state machine — it is inside `T1::Lone`, a `state def` that owns no transition and is ' +
         'written inside no machine, so no walk stands on its states. The machine written inside it, `T1::Lone::Deep`, ' +
-        'is checked when it is named itself.',
+        'is walked when it is named itself.',
       holder: null,
     });
     expect(noMachineRefusal(model, idOf(model, 'T1::Plain::p1'))).toEqual({

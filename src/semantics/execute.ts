@@ -1082,9 +1082,11 @@ export function refusedStepSentence(model: Model, machineId: ElementId, transiti
         ? ', a machine of its own'
         : holds !== null
           ? `, a state of ${qn(holds)}, a machine of its own`
-          : model.descendants(machineId).some((d) => d.id === far)
-            ? ', written in a nested `state def`'
-            : '';
+          : model.get(far)?.eClass === 'StateDefinition'
+            ? ', a nested `state def` that owns no transition'
+            : model.descendants(machineId).some((d) => d.id === far)
+              ? ', written in a nested `state def`'
+              : '';
     return (
       `${qn(transitionId)} leads from ${qn(edge.source[0])} to ${qn(edge.target[0])}, and ${qn(far)} lies ` +
       `outside this machine’s region${where}. Each machine steps only by its own transitions, so what a step ` +

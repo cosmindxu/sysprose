@@ -761,14 +761,16 @@ export function loneCarriersIn(model: Model, scopeId?: ElementId): ElementRecord
  * are each checked by their own names and never by the definition's: `''` when
  * there is none. Printed on every `not checked` row about the definition, and
  * by the refusal of a state written in it, so a reader has the reference that
- * decides each machine inside (the O8 S2 review's `top3` probe).
+ * decides each machine inside (the O8 S2 review's `top3` probe). `verb` is the
+ * command's own word for what it does to a machine — `check-behaviour` checks,
+ * `reach` walks — so a refusal never speaks for the other command.
  */
-export function machinesInsideSentence(model: Model, definitionId: ElementId): string {
+export function machinesInsideSentence(model: Model, definitionId: ElementId, verb = 'checked'): string {
   const inside = stateMachinesIn(model, definitionId).map((m) => `\`${model.qualifiedName(m.id) || m.id}\``);
   if (inside.length === 0) return '';
   return inside.length === 1
-    ? `The machine written inside it, ${inside[0]}, is checked when it is named itself.`
-    : `The machines written inside it — ${inside.join(', ')} — are each checked when named themselves.`;
+    ? `The machine written inside it, ${inside[0]}, is ${verb} when it is named itself.`
+    : `The machines written inside it — ${inside.join(', ')} — are each ${verb} when named themselves.`;
 }
 
 /**

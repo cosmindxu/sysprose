@@ -188,7 +188,17 @@ function foldRun(model: Model, machineId: ElementId, steps: StateStep[]): Folded
 /** Compare the five fields the plan names, with a message naming the machine. */
 function expectAgreement(label: string, res: StateRunResult, fold: Folded): void {
   expect(res.visited, `${label}: visited`).toEqual(fold.visited);
-  // The flat path (`runRegion`) keeps no stack, so a fire it made is compared without one.
+  // The flat path (`runRegion`) keeps no stack, so a fire it made is compared without one. The
+  // hierarchical path records one on EVERY region fire (the orthogonal join, fired outside any
+  // region, has none): a run that stacked anything, or that any fire of it recorded a stack for,
+  // took that path, and a fire without a stack there is a defect the mask must not hide.
+  const hierarchical =
+    res.fired.some((f) => f.stack !== undefined) || fold.fired.some((f) => (f.stack?.length ?? 0) > 1);
+  if (hierarchical) {
+    fold.fired.forEach((f, i) => {
+      if (f.stack !== undefined) expect(res.fired[i]?.stack, `${label}: fired[${i}] stack`).toBeDefined();
+    });
+  }
   const foldFired = fold.fired.map((f, i) => (res.fired[i]?.stack === undefined ? { ...f, stack: undefined } : f));
   expect(res.fired, `${label}: fired`).toEqual(foldFired);
   expect(res.performed, `${label}: performed`).toEqual(fold.performed);

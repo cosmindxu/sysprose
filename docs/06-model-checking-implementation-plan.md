@@ -2999,7 +2999,12 @@ refuses it too, unless this plan and UML make a reading clear.
   says the interpreter takes a step across the boundary the old way; it says
   neither side takes it, and its provenance names `stepAcrossBoundary`. The
   field is one constant rendered into both reports, so it moves every `reach`
-  and `check-behaviour` payload by that row (below). `stepConfig`'s old
+  and `check-behaviour` payload by that row (below). The row does not carry the
+  Simulate-button case (a composite run on its own stepping out into the machine
+  that holds it): the explorer takes that step as an ordinary one inside the
+  holding machine, so a row printed under "the reading every verdict holds
+  under" must not say the walk refuses it; the case stays in this section and
+  in the guide. `stepConfig`'s old
   null-path branch (a target with no chain of states) has no caller left and
   stays as the code that would read it.
 - **What moved.** Against `b635385`: the verdict differential, 637 of 637 models

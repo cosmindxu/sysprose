@@ -573,7 +573,7 @@ function behaviourNoMachine(
   const def = carrier ?? nearest;
   if (def === undefined) return { ...base, candidates: [] };
   const n = propertiesOf(model, def.id).length;
-  const inside = machinesInsideSentence(model, def.id);
+  const inside = machinesInsideSentence(model, def.id, claims ? 'checked' : 'walked');
   return {
     message:
       `${base.message} — it is inside \`${qname(model, def.id)}\`, a \`state def\` that owns no transition ` +
