@@ -1257,9 +1257,10 @@ interface BoundaryCrossing {
  * initial state, where a run of `Outer` stays at `Inner` itself.
  *
  * The interpreter (`runRegion`, `../execute.ts`) reads the same relation and
- * takes such an edge where the walk would have: the run enters the far state
- * and stays there, since none of that state's transitions are in it. That
- * reading is not a verdict, and `docs/06` §8.6 says how the two stand.
+ * refuses the same step: `stepAcrossBoundary` (`./config.ts`) is its test, and
+ * the run stops where it stands without taking it (`docs/06` §8.14). It used to
+ * enter the far state and stay there, a run the Simulation tab showed and the
+ * walk had refused.
  *
  * Read twice, like {@link danglingTransitions}: by {@link edgeCensus}, for the
  * `refused` bucket, and by {@link unsupportedConstructs}.
@@ -1398,6 +1399,7 @@ function acrossSentence(model: Model, c: BoundaryCrossing, inherited: ElementId 
  * another machine, or written elsewhere and leading into or out of one of its
  * states. Each machine walks only its own transitions, so the step has no
  * meaning here, and neither side's walk is a claim about the model.
+ * The simulator does not take it either (`stepAcrossBoundary`, `./config.ts`).
  *
  * `step-outside-states` is a step edge into the machine's own root, or into a
  * node written under an element that is not a state ({@link stepsOutsideStates}):

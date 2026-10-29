@@ -51,7 +51,7 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
 
 interface Folded {
   visited: ElementId[];
-  fired: Array<{ transitionId: ElementId; from: ElementId; to: ElementId; trigger: string }>;
+  fired: Array<{ transitionId: ElementId; from: ElementId; to: ElementId; trigger: string; stack?: ElementId[] }>;
   performed: Array<{ stateId: ElementId; phase: string; actionId: ElementId; name: string }>;
   store: Map<string, unknown>;
   clock: number;
@@ -92,7 +92,9 @@ function foldRegion(
   const take = (r: { config: MachineConfig; effects: StepEffects }): void => {
     cfg = r.config;
     out.visited.push(...r.effects.visited);
-    out.fired.push(...r.effects.fired);
+    // The interpreter records the stack each fire leaves (`StateFire.stack`, the
+    // witness replay's); the fold takes it from the configuration the same step made.
+    out.fired.push(...r.effects.fired.map((f) => ({ ...f, stack: [...r.config.stack] })));
     out.performed.push(...r.effects.performed);
     for (const [k, v] of r.config.store) out.store.set(k, v);
     out.clock = r.config.clock;
@@ -186,7 +188,19 @@ function foldRun(model: Model, machineId: ElementId, steps: StateStep[]): Folded
 /** Compare the five fields the plan names, with a message naming the machine. */
 function expectAgreement(label: string, res: StateRunResult, fold: Folded): void {
   expect(res.visited, `${label}: visited`).toEqual(fold.visited);
-  expect(res.fired, `${label}: fired`).toEqual(fold.fired);
+  // The flat path (`runRegion`) keeps no stack, so a fire it made is compared without one. The
+  // hierarchical path records one on EVERY region fire (the orthogonal join, fired outside any
+  // region, has none): a run that stacked anything, or that any fire of it recorded a stack for,
+  // took that path, and a fire without a stack there is a defect the mask must not hide.
+  const hierarchical =
+    res.fired.some((f) => f.stack !== undefined) || fold.fired.some((f) => (f.stack?.length ?? 0) > 1);
+  if (hierarchical) {
+    fold.fired.forEach((f, i) => {
+      if (f.stack !== undefined) expect(res.fired[i]?.stack, `${label}: fired[${i}] stack`).toBeDefined();
+    });
+  }
+  const foldFired = fold.fired.map((f, i) => (res.fired[i]?.stack === undefined ? { ...f, stack: undefined } : f));
+  expect(res.fired, `${label}: fired`).toEqual(foldFired);
   expect(res.performed, `${label}: performed`).toEqual(fold.performed);
   expect([...res.valueStore.entries()].sort(), `${label}: store`).toEqual(
     [...fold.store.entries()].sort(),

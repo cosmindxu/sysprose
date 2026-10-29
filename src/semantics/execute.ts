@@ -58,6 +58,7 @@ import {
   isFinalState,
   isHistoryComposite,
   isHistoryPseudostate,
+  isRegionNode,
   isTruthy,
   leafOf,
   literalValueOf,
@@ -66,6 +67,7 @@ import {
   regionTransitions,
   runStatePhase,
   seedStore,
+  stepAcrossBoundary,
   stepConfig,
   stepOutsideStates,
   strAttr,
@@ -815,6 +817,14 @@ export interface StateFire {
   to: ElementId;
   /** The trigger that caused the firing. */
   trigger: string;
+  /**
+   * The active stack the run stands on after this fire, outermost state first
+   * (`MachineConfig.stack`): set by the hierarchical interpreter only, and
+   * absent on the flat path, which tracks no stack. The witness replay
+   * compares it with the trace's own (`replayWitness`), which the leaf alone
+   * cannot: two stacks can share a leaf.
+   */
+  stack?: ElementId[];
 }
 
 /** A behavior (entry/do/exit action) performed while in a state. */
@@ -917,15 +927,19 @@ export interface StateRunResult {
    * A step whose target sits in no chain of the machine's states — into the
    * machine's own root, or into a node written under an action
    * (`stepOutsideStates`, `./mc/config.ts`) — has no least common ancestor to
-   * exit to, and neither UML nor the profile says what it exits and enters. So
-   * the interpreter does not take it, and does not guess at where the run would
-   * stand after it: the run stops where it stands, takes no step after it
-   * whatever it is driven with, and is not `complete`. `from` is the step's
-   * source, which is the state the run stands in or one that holds it. The walk refuses the
-   * machine for the same step (`step-outside-states`), so no verdict stands on
-   * either side of it (`docs/06` §8.12). It used to take the step the way every
-   * step was taken before `docs/06` §8.10 — standing at the root or at the node
-   * under the action, or restarting under the source's composite — a run the
+   * exit to, and neither UML nor the profile says what it exits and enters; nor
+   * does one with an end outside the machine's region, across its boundary into
+   * a nested `state def`, another machine, or the machine that holds a composite
+   * run on its own (`stepAcrossBoundary`, same file). So the interpreter does
+   * not take it, and does not guess at where the run would stand after it: the
+   * run stops where it stands, takes no step after it whatever it is driven
+   * with, and is not `complete`. `from` is the step's source, which is the state
+   * the run stands in or one that holds it. The walk refuses the machine for the
+   * same step (`step-outside-states`, `machine-boundary`), so no verdict stands
+   * on either side of it (`docs/06` §8.12, §8.14). It used to take the step the
+   * way every step was taken before `docs/06` §8.10 — standing at the root or at
+   * the node under the action, restarting under the source's composite, or
+   * entering the far state of a boundary crossing and staying there — a run the
    * Simulation tab showed and nothing defined.
    *
    * ON A PARALLEL MACHINE ({@link runsParallel}, set only through the API) the
@@ -1029,6 +1043,10 @@ export function runsParallel(model: Model, machineId: ElementId): boolean {
  * the walk's own words for where the step leads (`outsideStatesSentence`, which
  * the walk's `step-outside-states` refusal prints too).
  *
+ * A STEP ACROSS THE MACHINE'S BOUNDARY (`stepAcrossBoundary`) is worded for what
+ * it is: an end of it lies outside the machine's region, which the walk refuses
+ * on both machines it joins (`machine-boundary`).
+ *
  * TWO RUNS ARE WORDED APART, because the plain sentence would be false of them:
  * - On a parallel machine ({@link runsParallel}) the step stops its own region,
  *   and the other regions run on; the sentence says so, where "takes no step
@@ -1056,6 +1074,25 @@ export function refusedStepSentence(model: Model, machineId: ElementId, transiti
     ? 'its region stops where it stands without taking it and takes no step after it, while the machine’s ' +
       'other regions, each run on its own over the whole script, run on'
     : 'the run stops where it stands without taking it, and takes no step after it';
+  if (stepAcrossBoundary(model, machineId, edge)) {
+    const far = isRegionNode(model, machineId, edge.target[0]) ? edge.source[0] : edge.target[0];
+    const holds = machineHolding(model, far);
+    const where =
+      holds === far
+        ? ', a machine of its own'
+        : holds !== null
+          ? `, a state of ${qn(holds)}, a machine of its own`
+          : model.get(far)?.eClass === 'StateDefinition'
+            ? ', a nested `state def` that owns no transition'
+            : model.descendants(machineId).some((d) => d.id === far)
+              ? ', written in a nested `state def`'
+              : '';
+    return (
+      `${qn(transitionId)} leads from ${qn(edge.source[0])} to ${qn(edge.target[0])}, and ${qn(far)} lies ` +
+      `outside this machine’s region${where}. Each machine steps only by its own transitions, so what a step ` +
+      `across that boundary exits and enters is not defined here: ${stop}.`
+    );
+  }
   const held = edge.target[0] === machineId ? machineHolding(model, machineId) : null;
   const holder = held !== null && held !== machineId ? held : undefined;
   if (holder !== undefined) {
@@ -1162,7 +1199,8 @@ function runRegion(
   if (!current) return { visited, fired, finalState: null, completionBudgetHit };
   visited.push(current);
   enterState(model, current, store, scope, performed);
-  const outside = (tr: ElementRecord): boolean => stepOutsideStates(model, machineId, tr);
+  const outside = (tr: ElementRecord): boolean =>
+    stepOutsideStates(model, machineId, tr) || stepAcrossBoundary(model, machineId, tr);
   const opening = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion, tie, outside);
   current = opening.current;
   if (opening.exhausted) completionBudgetHit = true;
@@ -1181,8 +1219,9 @@ function runRegion(
     const t = tie.follow === undefined ? head : tieBreak(tie, transitions.filter(accepts), (tr) => tr.id);
     const to = t.target![0];
     // A target in no chain of the region's states — the machine's own root, a
-    // node under an action — is a step nothing here reads: the run stops at
-    // `cur` without taking it (`StateRunResult.refused`).
+    // node under an action — or a step with an end across the machine's
+    // boundary is a step nothing here reads: the run stops at `cur` without
+    // taking it (`StateRunResult.refused`).
     if (outside(t)) {
       refused = { transitionId: t.id, from: cur, to, trigger };
       break;
@@ -1190,9 +1229,7 @@ function runRegion(
     // No composite on this path, and no step whose target is written below one
     // of the region's states (`needsHierarchical`): every target sits directly
     // in the region, so the least common ancestor of a step's two ends is the
-    // region, and `stepConfig`'s exit to it is this one exit. A step across the
-    // machine's boundary enters its target alone, as before `docs/06` §8.10
-    // (§8.6); the walk refuses that machine.
+    // region, and `stepConfig`'s exit to it is this one exit.
     exitState(model, cur, store, scope, performed);
     applyTransitionEffect(t, store, scope);
     fired.push({ transitionId: t.id, from: cur, to, trigger });
@@ -1444,8 +1481,9 @@ function runHierMachine(
  * comes back beside it.
  *
  * A step into the machine's own root or into a node under an action
- * (`stepOutsideStates`, read against `machineId`) is not taken: the run stops
- * where it stands and takes no step after it ({@link StateRunResult.refused}).
+ * (`stepOutsideStates`, read against `machineId`), or one with an end across the
+ * machine's boundary (`stepAcrossBoundary`), is not taken: the run stops where
+ * it stands and takes no step after it ({@link StateRunResult.refused}).
  */
 function runHierRegion(
   model: Model,
@@ -1477,7 +1515,8 @@ function runHierRegion(
   const apply = (r: { config: MachineConfig; effects: StepEffects }): void => {
     cfg = r.config;
     visited.push(...r.effects.visited);
-    fired.push(...r.effects.fired);
+    // A step fires one transition; the stack it leaves is the config's.
+    fired.push(...r.effects.fired.map((f) => ({ ...f, stack: [...r.config.stack] })));
     performed.push(...r.effects.performed);
     // Written back rather than swapped: `valueStore` is the map the caller gets
     // and the next region reads, so it has to be the same object throughout.
@@ -1504,11 +1543,15 @@ function runHierRegion(
 
   /**
    * Take one chosen transition through `stepConfig` — unless it is a step into
-   * the machine's own root or a node under an action, which nothing here reads:
-   * then the run stops where it stands (`refused`), and `false` says so.
+   * the machine's own root or a node under an action, or across the machine's
+   * boundary, which nothing here reads: then the run stops where it stands
+   * (`refused`), and `false` says so.
    */
   const stepOrStop = (choice: EnabledTransition): boolean => {
-    if (stepOutsideStates(model, machineId, choice.transition)) {
+    if (
+      stepOutsideStates(model, machineId, choice.transition) ||
+      stepAcrossBoundary(model, machineId, choice.transition)
+    ) {
       refused = {
         transitionId: choice.transition.id,
         from: choice.transition.source![0],

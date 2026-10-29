@@ -489,7 +489,10 @@ export function noMachineRefusal(
   scopeId: ElementId,
 ): { message: string; holder: ElementId | null } | null {
   if (stateMachinesIn(model, scopeId).length > 0) return null;
-  return noMachine(model, scopeId);
+  // `reach` names the holder in `check-behaviour`'s words, bar what only that
+  // command reports (`behaviourNoMachine`'s `claims`), and offers no pick.
+  const { message, holder } = behaviourNoMachine(model, scopeId, false);
+  return { message, holder };
 }
 
 function noMachine(model: Model, scopeId: ElementId): { message: string; holder: ElementId | null } {
@@ -536,12 +539,15 @@ function noMachine(model: Model, scopeId: ElementId): { message: string; holder:
  * definition above the machine, whose run reports its own carriers and not
  * the nested one's.
  *
- * `reach` keeps {@link noMachine}'s words: naming the definition reports
- * nothing there, since it reports on machines and the definition is none.
+ * `reach` ({@link noMachineRefusal}) names the same holder, with `claims` false:
+ * it says nothing of properties, since it reports on machines and the
+ * definition is none, and its `holder` is a machine only, never a definition
+ * (a pick that reports nothing there).
  */
 function behaviourNoMachine(
   model: Model,
   scopeId: ElementId,
+  claims = true,
 ): { message: string; holder: ElementId | null; candidates: ElementId[] } {
   const base = noMachine(model, scopeId);
   if (base.holder !== null) return { ...base, candidates: [] };
@@ -567,17 +573,19 @@ function behaviourNoMachine(
   const def = carrier ?? nearest;
   if (def === undefined) return { ...base, candidates: [] };
   const n = propertiesOf(model, def.id).length;
-  const inside = machinesInsideSentence(model, def.id);
+  const inside = machinesInsideSentence(model, def.id, claims ? 'checked' : 'walked');
   return {
     message:
       `${base.message} — it is inside \`${qname(model, def.id)}\`, a \`state def\` that owns no transition ` +
       'and is written inside no machine, so no walk stands on its states' +
-      (n === 0
-        ? ', and it carries no property'
-        : `; named itself, its ${n === 1 ? 'property is' : `${n} properties are`} reported as not checked`) +
+      (!claims
+        ? ''
+        : n === 0
+          ? ', and it carries no property'
+          : `; named itself, its ${n === 1 ? 'property is' : `${n} properties are`} reported as not checked`) +
       (inside === '' ? '' : `. ${inside}`),
-    holder: n > 0 ? def.id : null,
-    candidates: n > 0 ? [] : stateMachinesIn(model, def.id).map((m) => m.id),
+    holder: claims && n > 0 ? def.id : null,
+    candidates: claims && n === 0 ? stateMachinesIn(model, def.id).map((m) => m.id) : [],
   };
 }
 
