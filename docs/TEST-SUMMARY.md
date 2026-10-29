@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 5030 total — 5030 passed, 0 failed, 0 skipped
+- **Tests:** 5033 total — 5033 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -124,7 +124,7 @@
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 91 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 122 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 124 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 33 | 0 | 0 |
@@ -141,7 +141,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/simulate.test.ts | 30 | 0 | 0 |
+| test/unit/simulate.test.ts | 31 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
 | test/unit/store.reducers.test.ts | 310 | 0 | 0 |
