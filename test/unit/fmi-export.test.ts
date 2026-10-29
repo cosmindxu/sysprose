@@ -342,6 +342,26 @@ describe('fmiModelDescription — a feature two asserted equations give two valu
     expect('startWithheld' in by.T).toBe(false);
   });
 
+  it('flags a start the model does not state, so a co-simulation holds no input at the type default', () => {
+    const md = describeP(`attribute N : ScalarValues::Real; attribute K : ScalarValues::Real = 7.0; in attribute U : ScalarValues::Real; out attribute Y : ScalarValues::Real; assert constraint cy { Y == 3.0 * U }`);
+    const by = Object.fromEntries(md.variables.map((v) => [v.name, v]));
+    expect(by.N).toMatchObject({ start: '0', startDefaulted: true });
+    expect(by.U).toMatchObject({ start: '0', startDefaulted: true });
+    expect(by.N.description).toContain('start is the type default, not a model value: the model states none this tool reads');
+    // A written value keeps its start; an output has none; neither carries the flag nor the note.
+    expect(by.K).toMatchObject({ start: '7' });
+    expect('startDefaulted' in by.K).toBe(false);
+    expect('startDefaulted' in by.Y).toBe(false);
+    expect([by.K.description, by.Y.description]).toEqual([undefined, undefined]);
+  });
+
+  it('holds a stated value this tool cannot evaluate at the placeholder, and the note says so', () => {
+    const md = describeP(`attribute A : ScalarValues::Real; attribute Bb : ScalarValues::Real = A + 1.0;`);
+    const by = Object.fromEntries(md.variables.map((v) => [v.name, v]));
+    expect(by.Bb).toMatchObject({ start: '0', startDefaulted: true });
+    expect(by.Bb.description).toContain('the model states none this tool reads');
+  });
+
   it('falls to the default in a definition whose own equation is consistent while a usage elsewhere contradicts it', () => {
     // The abstention is by feature, not by instance (TODO: narrow it): P::load keeps no start although P alone
     // states load == 1.0, and nothing else says so. A lost reading, never a value that turns on the text.

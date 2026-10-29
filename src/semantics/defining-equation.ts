@@ -7091,7 +7091,9 @@ export function givenWayUnvalued(model: Model, contextId: ElementId, name: strin
  * that binding's own component holds only defaults that give way — E1's
  * `bind p2.load = L` beside `assert constraint fix { L == 5.0 }`, at P's load,
  * which the package's `bind P::load = M` joins to M's `default = 9.0` and to
- * p4's `:>> load default = 7.0`, two that differ (decision 10). Carried, the
+ * p4's `:>> load default = 7.0`, two that differ (decision 10) — or the
+ * head's own feature read at an instance, which an assert fixes with no
+ * binding at the slot (`assert constraint fix { p2.load == 5.0 }`). Carried, the
  * assert's 5 reached M through p2, and so every P's load: the SMT engine
  * PROVED `p3.load <= 6.0`, where the other surfaces read no value for p3's
  * load. No assertion gives a default a value (decision 14 amended
@@ -7103,7 +7105,7 @@ export function givenWayUnvalued(model: Model, contextId: ElementId, name: strin
 export function givenWayThroughHead(model: Model, contextId: ElementId, name: string): string | undefined {
   if (!hasUserBindings(model)) return undefined;
   const ends = bindingEnds(model);
-  if (ends.headSlots.size === 0) return undefined;
+  if (ends.heads.size === 0) return undefined;
   const d = sharedDefinitions(model).denote(contextId).get(name);
   if (!d || [d.feature, ...redefinedClosure(model, d.feature)].some((g) => g.attrs.value !== undefined && g.attrs.value !== null)) {
     return undefined;
@@ -7111,6 +7113,13 @@ export function givenWayThroughHead(model: Model, contextId: ElementId, name: st
   const symbol = `${d.instance}::${name.slice(name.lastIndexOf('.') + 1)}`;
   const best = outermostReading(model, symbol);
   if (!best) return undefined;
+  // The head's own feature read at an instance (E1's `p2.load == 5.0`, no binding at the slot): the same component.
+  if (best.head !== undefined) {
+    const cls = classified(model, best.root, best.head.component);
+    if (cls.valued.length > 0 || cls.readable.length > 0 || cls.heldDefaults.length === 0) return undefined;
+    const words = componentBindingWords(model, best.root, best.head.component);
+    return `is the slot of ${best.head.path}, which ${words.bind}${words.of} joins to defaults that give way and give it no value (${componentPaths(model, best.root, best.head.component).join(', ')})`;
+  }
   for (const { root: headRoot, head } of ends.headSlots.get(`${best.root} ${best.component}`) ?? []) {
     const cls = classified(model, headRoot, head.component);
     if (cls.valued.length > 0 || cls.readable.length > 0 || cls.heldDefaults.length === 0) continue;

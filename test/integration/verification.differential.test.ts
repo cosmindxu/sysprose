@@ -8916,9 +8916,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'E1A::fix': ['T/-/T/-', 'T'],
     }),
     // The same with the asserted L and the binding to p2's load written in a definition (W's `bind p2.load = L`): w's p2
-    // is the head's slot, and the numeric surface carries W's asserted 5 through the package's head into M, which
+    // is the head's slot, and the numeric surface carried W's asserted 5 through the package's head into M, which
     // gave way, and so into p3's load (F and T), where the check, the literal engine and the SMT engine read no value
-    // there, as they do beside the package's own L (E1). Left as it is: the solve is the numeric surface's (TODO).
+    // there, as they do beside the package's own L (E1). fence-numeric: the value stays where the model's own
+    // equations put it (W's L, w's p2's load: fix and c2T keep their readings) and travels no further than the slot;
+    // M and every P's load stay without one, and the numeric surface abstains on them as it does for E1.
     'stand-gw-e1-encl': probe(`package E1E {
         part def P { attribute load : ScalarValues::Real; }
         attribute M : ScalarValues::Real default = 9.0;
@@ -8933,8 +8935,142 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'E1E::W::fix': ['T/-/T/-', 'T'],
       'E1E::c2T': ['T/T/T/?', null],
-      'E1E::c3F': ['?/?/F/?', '?'],
-      'E1E::c3T': ['?/?/T/?', '?'],
+      'E1E::c3F': ['?/?/?/?', '?'],
+      'E1E::c3T': ['?/?/?/?', '?'],
+    }),
+    // The same in the other text order, with the head's own M and P's load read beside p3's (the numeric solve read M
+    // as 5 too: cM F), and with the assert in the usage and through a derived K (`K == 2.0 * L`, bound to the slot).
+    'stand-gw-e1-encl-rev': probe(`package E1R {
+        part def W { attribute L : ScalarValues::Real; assert constraint fix { L == 5.0 } part p2 : P; bind p2.load = L; }
+        part w : W;
+        part p3 : P;
+        constraint c2T { w.p2.load <= 6.0 }
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint cM { M >= 6.0 }
+        constraint cPl { P::load >= 6.0 }
+        part p4 : P { attribute :>> load default = 7.0; }
+        bind P::load = M;
+        attribute M : ScalarValues::Real default = 9.0;
+        part def P { attribute load : ScalarValues::Real; }
+      }`, {
+      'E1R::W::fix': ['T/-/T/-', 'T'],
+      'E1R::c2T': ['T/T/T/?', null],
+      'E1R::c3F': ['?/?/?/?', '?'],
+      'E1R::c3T': ['?/?/?/?', '?'],
+      'E1R::cM': ['?/?/?/?', '?'],
+      'E1R::cPl': ['?/?/?/?', '?'],
+    }),
+    'stand-gw-e1-encl-usage': probe(`package E1U {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; part p2 : P; bind p2.load = K; }
+        part w : W { assert constraint fix { L == 5.0 } assert constraint k { K == 2.0 * L } }
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint c2T { w.p2.load <= 12.0 }
+        constraint cM { M >= 6.0 }
+      }`, {
+      'E1U::c2T': ['T/T/T/?', null],
+      'E1U::c3F': ['?/?/?/?', '?'],
+      'E1U::c3T': ['?/?/?/?', '?'],
+      'E1U::cM': ['?/?/?/?', '?'],
+      'E1U::w::fix': ['T/-/T/-', 'T'],
+      'E1U::w::k': ['T/-/T/-', 'T'],
+    }),
+    // The asserted value on the head's slot itself (fence-numeric, found beside E1E): `p2.load == 5.0` with no binding at
+    // the slot, and M's default beside p4's that differ. The assert's 5 was carried into M and every P's load on the
+    // numeric and SMT surfaces (c3T and c2T T on both, c3F F), where the check and the literal engine read no value.
+    // Both now abstain on p3's load and M; the numeric surface still reads w's own p2.load at the 5 the assert defines
+    // (c2T), where the check abstains, as it reads W4X5's.
+    'stand-gw-e1-slot': probe(`package E1Q {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part p2 : P;
+        assert constraint fix { p2.load == 5.0 }
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint c2T { p2.load <= 6.0 }
+        constraint cM { M >= 6.0 }
+      }`, {
+      'E1Q::c2T': ['?/?/T/?', null],
+      'E1Q::c3F': ['?/?/?/?', '?'],
+      'E1Q::c3T': ['?/?/?/?', '?'],
+      'E1Q::cM': ['?/?/?/?', '?'],
+      'E1Q::fix': ['?/-/T/-', null],
+    }),
+    // fence-numeric's whole-branch review: an asserted equation that reaches the solve only as a per-instance copy is
+    // fenced as E1E's is. The assert in an ENCLOSING definition over a dotted path (C6: V's `w.L == 5.0`, beside W's
+    // `bind p2.load = L`), in a SUPERTYPE with the binding in the subtype (E1S), and the binding in the supertype with
+    // the assert in the subtype (E2S). The numeric solve read M and p3's load at the 5 there (c3T T, c3F F, cM F), where
+    // the check, the literal engine and the SMT engine read none; the slot itself (c2) keeps each surface's reading.
+    'stand-gw-e1-encl-over': probe(`package C6 {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W { attribute L : ScalarValues::Real; part p2 : P; bind p2.load = L; }
+        part def V { part w : W; assert constraint fix { w.L == 5.0 } }
+        part v : V;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint cM { M >= 6.0 }
+        constraint c2 { v.w.p2.load <= 6.0 }
+      }`, {
+      'C6::c2': ['?/?/T/?', null],
+      'C6::c3F': ['?/?/?/?', '?'],
+      'C6::c3T': ['?/?/?/?', '?'],
+      'C6::cM': ['?/?/?/?', '?'],
+      'C6::V::fix': ['?/-/T/-', null],
+    }),
+    'stand-gw-e1-super': probe(`package E1S {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W0 { attribute L : ScalarValues::Real; assert constraint fix { L == 5.0 } }
+        part def W :> W0 { part p2 : P; bind p2.load = L; }
+        part w : W;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint cM { M >= 6.0 }
+        constraint c2 { w.p2.load <= 6.0 }
+      }`, {
+      'E1S::c2': ['T/T/T/?', null],
+      'E1S::c3F': ['?/?/?/?', '?'],
+      'E1S::c3T': ['?/?/?/?', '?'],
+      'E1S::cM': ['?/?/?/?', '?'],
+      'E1S::W0::fix': ['T/-/T/-', 'T'],
+      'E1S::W0::fix in E1S::W': ['T/-/T/-', 'T'],
+    }),
+    'stand-gw-e2-super': probe(`package E2S {
+        part def P { attribute load : ScalarValues::Real; }
+        attribute M : ScalarValues::Real default = 9.0;
+        bind P::load = M;
+        part p4 : P { attribute :>> load default = 7.0; }
+        part def W0 { attribute L : ScalarValues::Real; part p2 : P; bind p2.load = L; }
+        part def W :> W0 { assert constraint fix { L == 5.0 } }
+        part w : W;
+        part p3 : P;
+        constraint c3T { p3.load <= 6.0 }
+        constraint c3F { p3.load >= 6.0 }
+        constraint cM { M >= 6.0 }
+        constraint c2 { w.p2.load <= 6.0 }
+      }`, {
+      'E2S::c2': ['?/?/T/?', null],
+      'E2S::c3F': ['?/?/?/?', '?'],
+      'E2S::c3T': ['?/?/?/?', '?'],
+      'E2S::cM': ['?/?/?/?', '?'],
+      'E2S::W::fix': ['T/-/T/-', 'T'],
+      'E2S::W::fix in E2S::w': ['?/-/?/-', null],
     }),
     // default-stands S2's review. A `part :>> p` redefinition whose assert defines a valueless feature that a
     // binding of the general definition joins to a `default` — in a usage (SRU: q2's `part :>> p`) or in a
@@ -12632,13 +12768,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * 84fb971, where every surface reads the two as two features although the one feature has two values.
    */
   const KNOWN_FALSE = new Map<string, string>([
-    ...['E1E::c3F', 'E1E::c3T'].map(
-      (row) =>
-        [
-          `stand-gw-e1-encl | ${row}`,
-          'NO STEP: the numeric surface carries the 5 W’s asserted `L == 5.0` gives w’s p2’s load (`bind p2.load = L` in W) through the package’s `bind P::load = M` — M’s `default = 9.0` gives way to p4’s `default = 7.0`, so M has no value — into p3’s load, which the check, the literal engine and the SMT engine read with no value (the package’s own L, E1, abstains on all four)',
-        ] as const,
-    ),
     ['redef-target-merge | MU::sM1', REDEFINES_TWO_FEATURES],
     ['redef-target-merge | MU::sN1', REDEFINES_TWO_FEATURES],
     ['redef-target-merge | MU::sN2', REDEFINES_TWO_FEATURES],

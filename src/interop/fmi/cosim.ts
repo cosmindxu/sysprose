@@ -240,9 +240,9 @@ export function sysmlBlockInstance(model: Model, blockId: ElementId): Fmi3Instan
   const seedInputs = (): void => {
     inputs.clear();
     for (const v of variables) {
-      // A start the model does not state (two asserted equations give the feature two values) is the type's default
-      // and no value to hold: the solve leaves such a feature free, and its outputs read back as NaN.
-      if ((v.causality === 'input' || v.causality === 'parameter') && v.start !== undefined && !v.startWithheld) {
+      // A start the model does not state (two asserted equations give the feature two values, or it gives none) is the
+      // type's default and no value to hold: the solve leaves such a feature free, and its outputs read back as NaN.
+      if ((v.causality === 'input' || v.causality === 'parameter') && v.start !== undefined && !v.startWithheld && !v.startDefaulted) {
         const n = Number(v.start);
         if (Number.isFinite(n)) inputs.set(v.featureId, n);
       }

@@ -85,6 +85,7 @@ import {
   defaultStandsIn,
   enclosedBindingFrame,
   equatedPartsRefusal,
+  givenWayThroughHead,
   contradictedDefinitionRefusal,
   hasEnclosedBindings,
   hasPastCapBindings,
@@ -221,6 +222,12 @@ export interface Equation {
    * givenWayDefaults}).
    */
   asserted?: true;
+  /**
+   * A package's binding on a definition's feature, read at one instance of it
+   * (`bind P::load = M` at w's p2): the head the instance's slot joins to the
+   * package's own feature. See {@link headBindingsCarrying}.
+   */
+  head?: true;
 }
 
 /** Options for {@link solve}. */
@@ -784,7 +791,47 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
     }
   }
   pastCapUnreadable(model, all, unreadable, scopeId);
-  return { eqs: all, unreadable, relationOf, held };
+  const cut = headBindingsCarrying(model, all, relationOf);
+  return { eqs: cut.size === 0 ? all : all.filter((eq) => !cut.has(eq)), unreadable, relationOf, held };
+}
+
+/**
+ * The package-head bindings read at an instance ({@link Equation.head}) whose
+ * slot holds a value an asserted equation gives a feature with no value that
+ * the slot's binding component joins to defaults that give way
+ * ({@link givenWayThroughHead}): E1E's `L == 5.0` in W, carried by W's `bind
+ * p2.load = L` into w's p2's load, and by `bind P::load = M` on into M, which
+ * `default = 9.0` and p4's `default = 7.0` leave without a value, and so into
+ * every P's load. No assertion gives a default a value (decision 14 amended
+ * 2026-10-22): the other surfaces read none at p3's load, and the numeric
+ * solve read 5 there (`p3.load <= 6.0` T, `>= 6.0` F). The value stays where
+ * the model's own equations put it (L, w's p2's load); it is carried no
+ * further than the slot, and what the head joins stays without one.
+ */
+function headBindingsCarrying(model: Model, eqs: readonly Equation[], relationOf: ReadonlyMap<Equation, ElementRecord>): Set<Equation> {
+  const out = new Set<Equation>();
+  if (!eqs.some((eq) => eq.head === true)) return out;
+  const carried = new Set<ElementId>();
+  for (const eq of eqs) {
+    const owner = eq.asserted === true ? (relationOf.get(eq)?.ownerId ?? READER_OF.get(eq)) : undefined;
+    if (owner == null) continue;
+    for (const [name, id] of eq.nameToId) if (givenWayThroughHead(model, owner, name) !== undefined) carried.add(id);
+  }
+  if (carried.size === 0) return out;
+  // What the model's own equations tie to one: never a head, nor a check.
+  const own = (eq: Equation): boolean => {
+    const el = relationOf.get(eq);
+    return eq.head !== true && !(el !== undefined && el.eClass === 'ConstraintUsage' && !isAsserted(el));
+  };
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const eq of eqs) {
+      if (!own(eq) || !eq.vars.some((v) => carried.has(v))) continue;
+      for (const v of eq.vars) if (!carried.has(v)) grew = !!carried.add(v);
+    }
+  }
+  for (const eq of eqs) if (eq.head === true && eq.vars.some((v) => carried.has(v))) out.add(eq);
+  return out;
 }
 
 /**
@@ -1178,6 +1225,9 @@ interface InstanceVariable {
 /** The instance variables an equation or inequality reads, for {@link instanceSystem}. */
 const INSTANCES = new WeakMap<Equation | Inequality, InstanceVariable[]>();
 
+/** The definition whose instance an asserted equation was copied for ({@link instanceSystem}'s `hold`): the owner {@link headBindingsCarrying} reads for a copy. */
+const READER_OF = new WeakMap<Equation, ElementId>();
+
 /**
  * `nameToId` with every path `el` reads through an instance of its own keyed
  * to that instance's variable ({@link InstanceVariable}) — `instance`
@@ -1448,6 +1498,7 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           const eq = relationEquation(model, read, memo, false, undefined, instance);
           if (eq) {
             eq.asserted = true;
+            READER_OF.set(eq, reader.id);
             // An asserted equation defines, in the instance, the valueless
             // features it names: the instance's own, never a check's to fix.
             const body = parseRelationBody(String(c.attrs.expression));
@@ -1599,6 +1650,7 @@ function instanceBindingEquation(
   const defines = boundEnds(model, vars);
   if (defines.length > 0) eq.defines = defines;
   if (keyed && keyed.instances.length > 0) INSTANCES.set(eq, keyed.instances);
+  if (ends !== undefined) eq.head = true;
   system.eqs.push(eq);
   return eq;
 }
