@@ -855,12 +855,6 @@ true values. What follows is what that branch and the review of it left open; en
       written first, and `P::ca in p` when p is, with the same verdict. This shows in H3, H6 and the
       24 S3 spec cells of the soft-hard analysis with their members reversed (the M-generator prints
       them RENAMED, 27 pairs). File the row under P2 wherever it is declared. [default-stands S2]
-- [ ] **Parse the rest of the `about` forms.** `metadata T about A, B { ... }` parses since
-      small-defaults S2. Still failing: the named and typed form from SysML 7.27.2, `metadata
-      securityDesignAnnotation : SecurityRelated about SecurityRequirements, SecurityDesign;`
-      (sysml.txt:10180-10181; parse/no-viable-alt), and the visibility-prefixed `public metadata T
-      about A;` and `public @T about A;` (BNF MemberPrefix with AnnotatingElement, kebnf:74-78,
-      130-136, 180-183). [small-defaults S2]
 - [ ] **Show `:=` (an initial value, not a binding) and the value's unit in `elements` and the grid;
       the workflow readers then read them (optional).** Today `init := 4.0` prints `= 4`, `softInit
       default := 3.0` prints `default 3`, and `= 7 [kg]` prints `= 7`. These predate small-defaults
@@ -885,10 +879,21 @@ true values. What follows is what that branch and the review of it left open; en
       blanket refusal. A keyword annotation's `about` targets are raw qualified names no consumer
       resolves. [small-defaults S2, review]
 - [ ] **Resolve a metadata body redefinition (optional, low).** In `@T about X { ref :>> approved =
-      true; }` and the keyword form the redefined name is looked up with no typing for the
-      annotation, so the standard's own `ref :>> approved` example files
-      `ref/unresolved-specialization` warnings. Resolve `:>> name` against the metadata definition T
-      the annotation names (old behaviour of the `@` form). [small-defaults S2]
+      true; }`, `@T { ref :>> x }` and the keyword form the redefined name is looked up with no
+      typing for the annotation (the MetadataUsage has only the string `attrs.type`, no
+      FeatureTyping), so the standard's own `ref :>> approved` example files
+      `ref/unresolved-specialization` warnings. Resolving it against the metadata definition T (add
+      T to `redefinitionGenerals` in `src/semantics/bind.ts`) makes the cell lose its textual
+      `attrs.redefines`, which `kindCells` in `src/semantics/verify.ts` (and `holdsMethodKind` in
+      the mapper) read for `attribute :>> kind = test` in a VerificationMethod carrier (pinned by
+      test/campaign/verification.test.ts:2410): do the resolution only together with making
+      `kindCells` (and any other reader of a cell's `attrs.redefines` text) follow the Redefinition
+      relationship, and gate on the verdict differential. [parse-and-show S1]
+- [ ] **Parse a short name and the `@` spelling in the named metadata annotation (optional, low).**
+      `metadata <sn> N : T about A;` and `@N : T about A;` (BNF MetadataUsage with Identification,
+      kebnf:1666-1676) still fail with `parse/no-viable-alt`; `metadata N : T about A;`, `public
+      metadata T about A;` and `public @T about A;` parse since parse-and-show S1. [parse-and-show
+      S1]
 - [ ] **Ask FailureMode by its qualified name when it ships.** `machineFailureModes`
       (src/semantics/fault-tree.ts) counts a model's own FailureMode through `hasKeyword(..., {
       anyPackage: true })` because the definition is not in SysproseVerification yet. When the
