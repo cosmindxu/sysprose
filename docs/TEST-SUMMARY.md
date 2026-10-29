@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 5024 total — 5024 passed, 0 failed, 0 skipped
+- **Tests:** 5030 total — 5030 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -13,7 +13,7 @@
 | test/campaign/cli.sysprose.test.ts | 120 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
-| test/campaign/verification.test.ts | 184 | 0 | 0 |
+| test/campaign/verification.test.ts | 185 | 0 | 0 |
 | test/conformance/api-contract.test.ts | 22 | 0 | 0 |
 | test/conformance/corpus.test.ts | 16 | 0 | 0 |
 | test/conformance/oslc-conformance.test.ts | 8 | 0 | 0 |
@@ -112,7 +112,7 @@
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 276 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 277 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
@@ -157,7 +157,7 @@
 | test/unit/text.recovery-honesty.test.ts | 30 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 128 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 132 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
