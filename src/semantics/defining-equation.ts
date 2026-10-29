@@ -2858,7 +2858,17 @@ export class DefiningEquations {
     const plain = new Set<ElementId>();
     const owner = el.ownerId;
     if (owner == null || names.length === 0) return { listed: [], plain };
-    const contexts = this.specialisersOf(owner);
+    // The context with fewer usages around it first, whatever the text put first: only the first context of a reading is listed, and
+    // a renamed redefinition written before its definition (`part p2 :>> p` in an instance of Q, Q declared below)
+    // took the place of Q::p, whose group then was never made (e5-renamed, reversed). A stable sort: ties keep the text order.
+    const usageDepth = (c: ElementRecord): number => {
+      let n = 0;
+      for (let cur = c.ownerId != null ? this.model.get(c.ownerId) : undefined; cur; cur = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined) {
+        if (isUsage(cur.eClass)) n++;
+      }
+      return n;
+    };
+    const contexts = [...this.specialisersOf(owner)].sort((a, b) => usageDepth(a) - usageDepth(b));
     if (contexts.length === 0) return { listed: [], plain };
     const ownAll = this.scope(owner, 'all');
     const ownValue = this.scope(owner, 'value');
@@ -6949,6 +6959,32 @@ function pastCapComponents(
     for (const id of pair) {
       const f = model.get(id);
       if (f) for (const g of redefinedClosure(model, f)) if (ends.has(g.id)) union(id, g.id);
+    }
+  }
+  // The component above joins ends through what they redefine, and what an end redefines turns on the text order
+  // (CAP1's `bind Y = top.a.….a.load` redefines only T0's load when it is written before T1, whose own `bind a.load =
+  // L` has no end copy yet when the chain resolves): an end read through an instance of a definition that owns a
+  // capped end is past that cap too, whichever way the text was written.
+  const cappedDefs = new Map<ElementId, BindingCap>();
+  for (const [cid, met] of overCap) {
+    for (let cur = model.get(cid); cur && cur.ownerId != null; cur = model.get(cur.ownerId)) {
+      const owner = model.get(cur.ownerId);
+      if (owner && isDefinition(owner.eClass)) {
+        cappedDefs.set(owner.id, met);
+        break;
+      }
+    }
+  }
+  if (cappedDefs.size > 0) {
+    for (const id of ends) {
+      if (overCap.has(id)) continue;
+      for (let cur = model.get(model.get(id)?.ownerId ?? ''); cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+        const hit = [cur, ...generalizationsOf(model, cur.id)].find((t) => cappedDefs.has(t.id));
+        if (hit) {
+          overCap.set(id, cappedDefs.get(hit.id)!);
+          break;
+        }
+      }
     }
   }
   const capped = new Map<ElementId, BindingCap>();
@@ -11527,24 +11563,49 @@ function boundPartPhrase(bound: NonNullable<GuardReading['bound']>, where: strin
 /** {@link instanceGroups} per model, keyed on its revision (B.5): nothing survives an edit. */
 const INSTANCE_GROUPS = new WeakMap<Model, { rev: number; groups: readonly InstanceGroup[] }>();
 
+/** The instances of the usage `x` ({@link instanceSitesOf}), once per usage and model revision ({@link bindingValued} asks for every context). */
+const INSTANCE_NAMES = new WeakMap<DefiningEquations, Map<ElementId, string[]>>();
+
+function instanceNamesOf(definitions: DefiningEquations, x: ElementRecord): string[] {
+  let byUsage = INSTANCE_NAMES.get(definitions);
+  if (!byUsage) INSTANCE_NAMES.set(definitions, (byUsage = new Map()));
+  let names = byUsage.get(x.id);
+  if (!names) byUsage.set(x.id, (names = [...instanceIndexSeam.instanceSitesOf(definitions, x).sites.keys()]));
+  return names;
+}
+
 /**
  * {@link DefiningEquations.valuedByBinding}, worked out: does a name of `names`, read in the usage `x`, denote a
  * feature of one of its instances that states no value and whose instance symbol a binding gives a source this tool
  * reads ({@link boundSourceIn})? A name read in an instance of the context's own, never one an owning namespace
- * answers.
+ * answers. The symbol is asked at the context's own instance, and at every other instance of `x` (`q::p` of `Q::p`:
+ * `bind p.load = L` carries `q.L`, which only an instance of Q gives); a feature that states a value it derives
+ * (`m2 = 10.0 - load`) is valued where a name its value reads is (four levels deep).
  */
 function bindingValued(definitions: DefiningEquations, x: ElementRecord, names: readonly string[]): boolean {
   const denoted = definitions.denote(x.id);
   const here = definitions.instanceNameOf(x.id);
-  for (const n of names) {
+  const sourced = (symbol: string): boolean => {
+    const source = boundSourceIn(definitions.model, symbol);
+    return source !== undefined && !('abstain' in source);
+  };
+  let others: string[] | undefined;
+  const valued = (n: string, depth: number): boolean => {
     const d = denoted.get(n);
-    if (!d || !(d.instance === here || d.instance.startsWith(`${here}::`))) continue;
+    if (!d || !(d.instance === here || d.instance.startsWith(`${here}::`))) return false;
     // A value, or a `default`, anywhere on the redefinition chain is read by the rules that list a context for what it states.
-    if (statesOwnValue(definitions.model, d.feature)) continue;
-    const source = boundSourceIn(definitions.model, definitions.symbolOf(d));
-    if (source !== undefined && !('abstain' in source)) return true;
-  }
-  return false;
+    if (statesOwnValue(definitions.model, d.feature)) {
+      const value = statedValueOf(definitions.model, d.feature);
+      if (depth >= 4 || typeof value !== 'string') return false;
+      const beside = n.slice(0, n.lastIndexOf('.') + 1);
+      return namesOfValue(value).some((m) => valued(`${beside}${m}`, depth + 1));
+    }
+    const symbol = definitions.symbolOf(d);
+    if (sourced(symbol)) return true;
+    others ??= instanceNamesOf(definitions, x).filter((i) => i !== here);
+    return symbol.startsWith(here) && others.some((i) => sourced(`${i}${symbol.slice(here.length)}`));
+  };
+  return names.some((n) => valued(n, 0));
 }
 
 /**

@@ -3857,6 +3857,33 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ].join('\n');
   };
 
+  /** CAP1's text (below): chainPkg33 plus `bind Y = top.a.….a.load` over `Y default = 1.0`; CAP2's has no `default`. */
+  const CAP1_TEXT = (valued = true): string =>
+    bindingChainPkg(33)
+      .replace('package DP33 {', `package ${valued ? 'CAP1' : 'CAP2'} {`)
+      .replace(
+        /\n}$/,
+        [
+          '',
+          `  attribute Y : ScalarValues::Real${valued ? ' default = 1.0' : ''};`,
+          `  bind Y = top.${Array.from({ length: 33 }, () => 'a').join('.')}.load;`,
+          '  constraint yT { Y >= 40.0 }',
+          '  constraint yF { Y <= 5.0 }',
+          '}',
+        ].join('\n'),
+      );
+  const CAP2_TEXT = (): string => CAP1_TEXT(false);
+
+  /**
+   * The same package with its members written in the reverse order (the first line is the header, the last the
+   * closing brace): a reading that turns on the text order — what a chain-end copy redefines, which context a
+   * group is filed at — is pinned beside its twin.
+   */
+  const reversedMembers = (text: string): string => {
+    const lines = text.split('\n');
+    return [lines[0], ...lines.slice(1, -1).reverse(), lines[lines.length - 1]].join('\n');
+  };
+
   /**
    * Each probe: its text, and per row `[check/literal/numeric/SMT as they stand, ref]`. The design's names:
    * the binding and default probes of the soundness pass (h2 … w3, r14, the cross-track c3c and c5), the
@@ -5682,27 +5709,36 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // reaches every binding joined to the capped one (O2 S3): the check and the literal engine abstain, the
     // numeric and SMT lanes solve the bindings and decide. It sits beside chainPkg33, the cap's pin here;
     // P4's others are the 33-level chain unit test (CAP1 is pinned beside it too) and r4cap, out of tree.
-    cap1: probe(
-      bindingChainPkg(33)
-        .replace('package DP33 {', 'package CAP1 {')
-        .replace(
-          /\n}$/,
-          [
-            '',
-            '  attribute Y : ScalarValues::Real default = 1.0;',
-            `  bind Y = top.${Array.from({ length: 33 }, () => 'a').join('.')}.load;`,
-            '  constraint yT { Y >= 40.0 }',
-            '  constraint yF { Y <= 5.0 }',
-            '}',
-          ].join('\n'),
-        ),
-      {
-        'CAP1::negT': ['?/?/T/T', 'T'],
-        'CAP1::posF': ['?/?/F/?', 'F'],
-        'CAP1::yT': ['?/?/T/T', 'T'],
-        'CAP1::yF': ['?/?/F/?', 'F'],
-      },
-    ),
+    cap1: probe(CAP1_TEXT(), {
+      'CAP1::negT': ['?/?/T/T', 'T'],
+      'CAP1::posF': ['?/?/F/?', 'F'],
+      'CAP1::yT': ['?/?/T/T', 'T'],
+      'CAP1::yF': ['?/?/F/?', 'F'],
+    }),
+    // CAP1 and CAP2 (Y without a `default`) written in the reverse order (text-order S1, the 2026-10-14 corpus models
+    // cap1-per-binding and cap2-per-binding-valueless reversed): the package's `bind Y = top.a.….a.load` was resolved before
+    // T1's `bind a.load = L` had an end copy, so its chain end redefined only T0's load and was never joined to the capped
+    // binding — yT and negT read F/F/F/X, yF and posF T/T/T/X, where Y is 50 (a false verdict on the check, the literal engine
+    // and the numeric surface that turned on the text order). An end read through an instance of a definition that owns a
+    // capped end is past the cap whichever way the text was written: the rows read as in the written order.
+    cap1rev: probe(reversedMembers(CAP1_TEXT()), {
+      'CAP1::negT': ['?/?/T/T', 'T'],
+      'CAP1::posF': ['?/?/F/?', 'F'],
+      'CAP1::yT': ['?/?/T/T', 'T'],
+      'CAP1::yF': ['?/?/F/?', 'F'],
+    }),
+    cap2: probe(CAP2_TEXT(), {
+      'CAP2::negT': ['?/?/T/T', 'T'],
+      'CAP2::posF': ['?/?/F/?', 'F'],
+      'CAP2::yT': ['?/?/T/T', 'T'],
+      'CAP2::yF': ['?/?/F/?', 'F'],
+    }),
+    cap2rev: probe(reversedMembers(CAP2_TEXT()), {
+      'CAP2::negT': ['?/?/T/T', 'T'],
+      'CAP2::posF': ['?/?/F/?', 'F'],
+      'CAP2::yT': ['?/?/T/T', 'T'],
+      'CAP2::yF': ['?/?/F/?', 'F'],
+    }),
     // CAPU2 (the review of O2 S3): chainPkg33 plus U's own `bind a.load = M` on its `part a : T0`. Both U's end
     // and T1's capped one redefine T0's load, and joined through it U's binding was held past T1's cap: M and
     // the load were free to the numeric lane, which solved `u.a.load == 9.0` as a design equation and refuted
@@ -9142,6 +9178,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RBB::top': ['?/?/T/X', null],
       'RBB::top2': ['T/X/?/X', null],
     }),
+    // P’s tie is read in the instances of its usage group (q’s p, Q’s p): the group is filed at the context with fewer usages
+    // around it, Q’s p (the contexts are listed in that order whatever the text), where it was filed at q’s p; both abstain.
     'h5-rbc': probe(`package RBC {
         part def P { attribute x : ScalarValues::Real; assert constraint tie { x == 3.0 } }
         part q { part p : P; attribute L : ScalarValues::Real = 4.0; bind p.x = L; constraint qc { p.x <= 3.5 } }
@@ -9151,7 +9189,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topq { qq.p.x <= 3.5 }
       }`, {
       'RBC::P::tie': ['T/-/?/-', null],
-      'RBC::P::tie in RBC::q::p': ['?/-/?/-', null],
+      'RBC::P::tie in RBC::Q::p': ['?/-/?/-', null],
       'RBC::Q::dc': ['?/?/T/X', null],
       'RBC::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
       'RBC::q::qc': ['?/?/T/X', null],
@@ -9476,14 +9514,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'VCK::P::a2 in VCK::Q::p': ['F/-/F/-', 'F'],
       'VCK::kp': ['T/X/T/X', null],
     }),
-    // A known gap (the review of contradictory-models S1; the neighbour of the C3 entry): the value is the INSTANCE's, the
-    // binding the definition's. Q’s L has no value, Q’s `bind p.load = L` joins it to p’s load, and q’s `:>> L = 50.0` gives
-    // q’s p the 50 P’s `load <= 10.0` misses — but the check lists no context for P’s a2 (a binding gives Q’s p no value
-    // in Q) and so files no row of q’s p, and `sysml-check --strict` passes a model that contradicts itself, as at the
-    // base. The SMT engine files the assert in q’s p as an axiom, so it reads kL inconsistent (I7_ALLOWED); the literal
-    // engine and the numeric surface decide kL at its 50. The row that is not filed reads F. Pinned as it stands: the step
-    // that files it moves this pin. A plain `constraint` of P is not read in q’s p either (the SMT engine files no axiom
-    // for it, so kL reads 50 on every surface): K2P’s `L default = 1.0` is what lists q.
+    // The value is the INSTANCE's, the binding the definition's (the review of contradictory-models S1; the neighbour of the
+    // C3 entry). Q’s L has no value, Q’s `bind p.load = L` joins it to p’s load, and q’s `:>> L = 50.0` gives q’s p the 50 P’s
+    // `load <= 10.0` misses. A binding gives Q’s own p no value, so no context was listed for P’s a2 and the model passed
+    // `sysml-check --strict`: `bindingValued` now asks for the symbol of every instance of Q’s p as well, so the group is made
+    // and q’s p files its row, F (strict: `constraint-by-instance`, `load = 50 — q.L = 50 through Q’s bind`). Q’s own p, which
+    // nothing gives a value, abstains with the group’s generic row. The SMT engine and the literal engine read kL beside it
+    // inconsistent (I7_ALLOWED), where the check and the numeric surface decide it at its 50. A plain `constraint` of P (K2PV)
+    // is read there too, F on every surface; J3 has an instance that holds (q’s 5) and one that does not (q2’s 50); I2 adds
+    // an instance nothing gives a value (q3).
     'bound-vc-ivalue': probe(`package VCV {
         part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
         part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
@@ -9491,16 +9530,68 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint kL { q.L >= 0.0 }
       }`, {
       'VCV::P::a2': ['?/-/?/-', '?'],
-      'VCV::kL': ['T/T/T/X', null],
+      'VCV::P::a2 in VCV::Q::p': ['?/-/?/-', '?'],
+      'VCV::P::a2 in VCV::q::p': ['F/-/F/-', 'F'],
+      'VCV::kL': ['T/X/T/X', null],
     }),
-    // A known gap (the review of contradictory-models; the derived neighbour of VC): P’s assert reads `load` only through
-    // `m2 = 10.0 - load`, and Q’s `bind p.load = L` gives q’s p the 50 of Q’s L. The context is listed for a name that
-    // denotes a feature with no value that a binding gives one (`bindingValued`), and m2 states a value (its expression),
-    // so q’s p is not read: the check files no row of it and `sysml-check --strict` passes a model whose p::m2 is -40 against
-    // P’s `m2 >= 0.0`, and no surface reports it (k reads 50 on every surface, and holds). The twin that redefines `load`
-    // itself (`part p : P { attribute :>> load = 50.0; }`) reports `p::m2 = -40 misses P::c`, and the literal and the SMT
-    // engine read the relations beside it inconclusive. Pinned as it stands: the step that reads a derived value through a
-    // binding moves this pin.
+    'bound-vc-ivalue-j3': probe(`package J3 {
+        part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 5.0; }
+        part q2 : Q { attribute :>> L = 50.0; }
+        constraint k { q.L >= 0.0 }
+      }`, {
+      'J3::P::a2': ['?/-/?/-', '?'],
+      'J3::P::a2 in J3::Q::p': ['?/-/?/-', '?'],
+      'J3::P::a2 in J3::q::p': ['T/-/T/-', 'T'],
+      'J3::P::a2 in J3::q2::p': ['F/-/F/-', 'F'],
+      'J3::k': ['T/X/T/X', null],
+    }),
+    'bound-vc-ivalue-i2': probe(`package I2 {
+        part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+        part def Q { part p : P; attribute L : ScalarValues::Real; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+        part q2 : Q { attribute :>> L = 5.0; }
+        part q3 : Q;
+      }`, {
+      'I2::P::a2': ['?/-/?/-', '?'],
+      'I2::P::a2 in I2::Q::p': ['?/-/?/-', '?'],
+      'I2::P::a2 in I2::q::p': ['F/-/F/-', 'F'],
+      'I2::P::a2 in I2::q2::p': ['T/-/T/-', 'T'],
+      'I2::P::a2 in I2::q3::p': ['?/-/?/-', '?'],
+    }),
+    'bound-vc-ivalue-plain': probe(`package K2PV {
+        part def P { attribute load : ScalarValues::Real; constraint a2 { load <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+        constraint kL { q.L >= 0.0 }
+      }`, {
+      'K2PV::P::a2': ['?/?/?/?', '?'],
+      'K2PV::P::a2 in K2PV::Q::p': ['?/?/?/?', '?'],
+      'K2PV::P::a2 in K2PV::q::p': ['F/F/F/F', 'F'],
+      'K2PV::kL': ['T/T/T/T', 'T'],
+    }),
+    // A `default` on the instance (q4’s `:>> L default = 50.0`) is the value q4’s p reads, and a plain `constraint qq4` that
+    // contradicts it (q4.L == 4.0) is an F on the check, the numeric surface and the literal exit; the literal engine and the
+    // SMT engine read it as inconsistent axioms beside it (I7_ALLOWED: an F that was F/F/F/X before q4’s p filed its row).
+    'bound-vc-ivalue-default': probe(`package KD {
+        part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+        part q4 : Q { attribute :>> L default = 50.0; }
+        constraint qq4 { q4.L == 4.0 }
+      }`, {
+      'KD::P::a2': ['?/-/?/-', '?'],
+      'KD::P::a2 in KD::Q::p': ['?/-/?/-', '?'],
+      'KD::P::a2 in KD::q4::p': ['F/-/F/-', 'F'],
+      'KD::qq4': ['F/X/F/X', null],
+    }),
+    // The derived neighbour of VC (the review of contradictory-models): P’s assert reads `load` only through `m2 = 10.0 -
+    // load`, and Q’s `bind p.load = L` gives q’s p the 50 of Q’s L. A context is listed for a name that denotes a feature with no
+    // value that a binding gives one (`bindingValued`); m2 states a value (its expression), so q’s p was not read and
+    // `sysml-check --strict` passed a model whose p::m2 is -40 against P’s `m2 >= 0.0`. A feature that states a value it
+    // derives is now valued where a name its value reads is (four levels deep), so q’s p files its row, F, as the twin that
+    // redefines `load` itself (`part p : P { attribute :>> load = 50.0; }`, I4’s) does; k reads beside it inconsistent on the
+    // literal engine and the SMT engine, as I4’s does (I7_ALLOWED).
     'bound-vc-derived': probe(`package I5 {
         part def P { attribute load : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; assert constraint c { m2 >= 0.0 } }
         part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; bind p.load = L; }
@@ -9508,7 +9599,32 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint k { q.L >= 0.0 }
       }`, {
       'I5::P::c': ['?/-/?/-', '?'],
-      'I5::k': ['T/T/T/T', 'T'],
+      'I5::P::c in I5::Q::p': ['F/-/F/-', 'F'],
+      'I5::k': ['T/X/T/X', null],
+    }),
+    // A usage-owned group's context rows, whatever the declaration order (text-order S1 measurement; the corpus model
+    // e5-renamed, 65a411ed2025, reversed): q2 and its renamed redefinition `part p2 :>> p` written BEFORE `part def Q`
+    // listed q2’s p2 first, and only the first context of a reading is listed, so Q’s p got no group: the rows `P::c in Q::p`
+    // and `P::c in q::p` were not filed, and in E5W (q2’s L = 2, q’s 50) a silent pass — `sysml-check --strict` ok, every
+    // engine exit 0 — of a model whose q’s p reads 50 against `load <= 10.0`. The contexts are listed the one with fewer
+    // usages around it first (a stable sort), as the written order has them; the rows read as in the written order.
+    'e5-renamed-rev': probe(`package E5 { part q2 : Q { attribute :>> L = 50.0; part p2 :>> p; } part q : Q { attribute :>> L = 2.0; } part def Q { bind p.load = L; part p : P; attribute L : ScalarValues::Real default = 1.0; } part def P { constraint c { load <= 10.0 } attribute load : ScalarValues::Real default = 1.0; } }`, {
+      'E5::P::c': ['T/T/T/T', 'T'],
+      'E5::P::c in E5::Q::p': ['T/T/T/T', 'T'],
+      'E5::P::c in E5::q2::p2': ['F/F/F/F', 'F'],
+      'E5::P::c in E5::q::p': ['T/T/T/T', 'T'],
+    }),
+    'e5-renamed-silent': probe(`package E5W { part q2 : Q { attribute :>> L = 2.0; part p2 :>> p; } part q : Q { attribute :>> L = 50.0; } part def Q { bind p.load = L; part p : P; attribute L : ScalarValues::Real default = 1.0; } part def P { constraint c { load <= 10.0 } attribute load : ScalarValues::Real default = 1.0; } }`, {
+      'E5W::P::c': ['T/T/T/T', 'T'],
+      'E5W::P::c in E5W::Q::p': ['T/T/T/T', 'T'],
+      'E5W::P::c in E5W::q2::p2': ['T/T/T/T', 'T'],
+      'E5W::P::c in E5W::q::p': ['F/F/F/F', 'F'],
+    }),
+    'e5-renamed': probe(`package E5V { part def P { constraint c { load <= 10.0 } attribute load : ScalarValues::Real default = 1.0; } part def Q { bind p.load = L; part p : P; attribute L : ScalarValues::Real default = 1.0; } part q2 : Q { attribute :>> L = 2.0; part p2 :>> p; } part q : Q { attribute :>> L = 50.0; } }`, {
+      'E5V::P::c': ['T/T/T/T', 'T'],
+      'E5V::P::c in E5V::Q::p': ['T/T/T/T', 'T'],
+      'E5V::P::c in E5V::q2::p2': ['T/T/T/T', 'T'],
+      'E5V::P::c in E5V::q::p': ['F/F/F/F', 'F'],
     }),
     // The assert below or beside the binding's owner: in a definition that specialises it (RBS1), beside it
     // in the package (RBS2), in a usage of it (RBS5). The binding reading read L's default 4 against the
@@ -12235,7 +12351,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['h5-hp | HP::c', 'L’s plain `= 2.0` against the asserted `L == 5.0`: the strict-KerML contradiction (decision 1); the check reads L’s value'],
     ['h5-rbind | RB::top', 'q’s plain `L = 4.0`, bound to q.p.x, against the asserted `q.p.x == 3.0`: the contradiction of decision 1'],
     ['h5-rbind | RB::P::c in RB::q::p', 'q’s plain `L = 4.0`, bound to q.p.x, against the asserted `q.p.x == 3.0`: the contradiction of decision 1; P’s c is read at the binding’s 4'],
-    ['bound-vc-ivalue | VCV::kL', 'q’s p reads the 50 q’s `:>> L = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses: the SMT engine files the assert in q’s p and reads the axioms inconsistent; the check lists no context for it (a known gap, the pinned P::a2 row), and the check, the literal engine and the numeric surface decide kL at its 50'],
+    ['bound-vc-ivalue | VCV::kL', 'q’s p reads the 50 q’s `:>> L = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide kL at its 50'],
+    ['bound-vc-ivalue-j3 | J3::k', 'q2’s p reads the 50 q2’s `:>> L = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q2’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at q’s 5'],
+    ['bound-vc-ivalue-default | KD::qq4', 'q4’s p reads the 50 q4’s `:>> L default = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q4’s p, F): the SMT engine and the literal engine read the axioms inconsistent beside the F the check, the numeric surface and the literal exit give `q4.L == 4.0`'],
+    ['bound-vc-derived | I5::k', 'q’s p reads the 50 Q’s `L = 50.0` gives it through Q’s binding, and its m2 (−40) misses P’s `m2 >= 0.0` (the check files the row of q’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at its 50, as with the twin that redefines `load` itself'],
     ...['rf | RF::P::c', 'rf2 | RF2::P::c', 'rf3 | RF3::P::c', 'rf3 | RF3::t0'].map(
       (key) =>
         [

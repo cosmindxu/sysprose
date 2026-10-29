@@ -1388,7 +1388,10 @@ through a binding joined to such a one, end to end or through a feature an end
 redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33
 usages down that gives that load its value: Y's `default` gives way, and the
 check reads no value for Y), nor through one whose end has no instance in a
-context it holds in (R's nested Q used outside any R). A binding joins such a
+context it holds in (R's nested Q used outside any R); which binding joins which
+does not turn on the order the text is written in (a binding read through an instance
+of a definition that owns a capped end is capped, whichever of the two is written
+first). A binding joins such a
 one through a feature an end redefines only where that feature is itself another
 binding's end: U's `bind a.load = M` on its own `part a : T0` is not joined to
 T1's capped binding by the T0 `load` both redefine. A value held so, which no
@@ -1427,20 +1430,23 @@ the assert in that instance as an axiom, so its axioms are inconsistent. Where
 Q's instances give the binding different values (`L default = 50.0`, `q2 : Q {
 attribute :>> L = 5.0; }`) each reads its own, in a row of its own. P's own
 row, which has no value to read, is *could not be evaluated*. A plain `constraint
-a2` of P is read in the same instance and is refuted on every surface. Two
-shapes are not read, and the violation in them goes unreported. A relation that
-reads `load` only through a value derived from it (`attribute m2 :
-ScalarValues::Real = 10.0 - load` under `assert constraint c { m2 >= 0.0 }`) is
-not read in Q's p, though it is where the instance redefines `load` itself
-(`part p : P { attribute :>> load = 50.0; }`: *p::m2 = -40 misses P::c*). And
-where Q's `L` states no value at all, not even a `default`, and only an instance
-gives it one (`part q : Q { attribute :>> L = 50.0; }`), neither an `assert` nor
-a plain `constraint` of P is read in q's p. In both the check lists no row for
-the instance and reports nothing of the violation, and the numeric surface and
-the literal engine decide the relations beside it at the values they read; the
-SMT engine reports its axioms inconsistent only for the `assert` over the
-instance-supplied value (it files that assert in q's p as an axiom), and for the
-derived shape proves the relations beside it. A binding that gives the instance
+a2` of P is read in the same instance and is refuted on every surface. So is a
+relation that reads `load` only through a value derived from it (`attribute m2 :
+ScalarValues::Real = 10.0 - load` under `assert constraint c { m2 >= 0.0 }`, up to four
+values deep): Q's p is read at the `load` the binding gives it, and violated (*p::m2 = -40
+misses P::c*), as where the instance redefines `load` itself (`part p : P { attribute :>>
+load = 50.0; }`). And so is a feature Q's `L` gives with no value at all, not even a
+`default`, where only an instance gives it one (`part q : Q { attribute :>> L = 50.0; }`):
+neither an `assert` nor a plain `constraint` of P is read in Q's own p, which has no value
+(*could not be evaluated*), but each is read, and violated, in q's p, and a q2 whose `L`
+is 5 holds. The check and the numeric surface keep deciding the relations beside the
+violation (`kL { q.L >= 0.0 }`) at the values they read; the literal engine marks one
+inconclusive where the violated assert reaches it, and the SMT engine, which files that
+assert in q's p as an axiom, reports its axioms inconsistent (a plain `constraint` of P
+files no axiom, so kL reads 50 on every surface). The contexts a relation is filed at do not
+turn on the order the text is written in: a renamed redefinition (`part p2 :>> p` in
+`q2 : Q`) written before `part def Q` leaves Q's p, and every other instance, filed as
+they are when Q comes first. A binding that gives the instance
 no value this tool reads (two defaults that differ) lists no such row: whatever
 reads that value is *could not be evaluated*. The binding
 need not be written in the definition around the instance: one written in an
