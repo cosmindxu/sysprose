@@ -240,11 +240,11 @@ examples/uav-isr.sysml: 0 inconclusive, 2 discharged, 0 refuted — engine smt
   negation-unsat under a satisfiable axiom set — `proved` means exactly that, at 5000 ms per check, with every feature value bound as the model states it
   UAVSurveillanceSystem::EnduranceRequirement  uav.endurance >= 45.0 [min]
     proved: A ∧ P ∧ ¬G unsat, QF_NRA, 4 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
-    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.6923076923076 vs 2700 in T, coherent SI; decided by z3 Z3 5.1.0.0, seed 0
+    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.6923076923076 vs 2700 in T, coherent SI; decided by z3 5.3.1, seed 0
     digest sha256:e4618d6fd278f0b61d3cfb371ee1c3ec8fad02a0cf2ad962e1a34179c845490e
   UAVSurveillanceSystem::MassRequirement  uav.mtow <= 25.0 [kg]
     proved: A ∧ P ∧ ¬G unsat, QF_LRA, 1 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
-    bound: every feature at the value the model binds it to; 1 symbol(s), 0 free; compared as 18.5 vs 25 in M, coherent SI; decided by z3 Z3 5.1.0.0, seed 0
+    bound: every feature at the value the model binds it to; 1 symbol(s), 0 free; compared as 18.5 vs 25 in M, coherent SI; decided by z3 5.3.1, seed 0
     digest sha256:24296a7c6a06b2e66207cc2c3f3dac028f58123a199b55cbf7842f45ef02d545
   model sha256:4b48f0ed02c1e05425881beb3b29f0cce8f3a7cff55605eb12759174ba31e9a2
   sysprose 0.1.0 (git …) · standard library 38761 element(s)

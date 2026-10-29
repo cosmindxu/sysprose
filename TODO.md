@@ -15,15 +15,6 @@ the review's artifact folder, which is not in this repository. Entries tagged `[
 merged branch `behaviour-sound` (the plan's O1) left open, by step. An entry that waits on the
 maintainer says `awaits user decision U<n>` and names the question.
 
-- [ ] **Decide the z3 version string in verdict lines.** z3 5.3.1 reports its full version as
-      `5.3.1.0 ac9156f97cb44e56472e1c841f7a2beb1e976b24 z3-5.3.1` (5.2.0 said `Z3 5.1.0.0`), so
-      every SMT verdict line, evidence record and `decided by z3 ...` text now carries the 40-hex
-      commit (`src/semantics/engines/smt.ts` near :1617, `src/api/property.ts` near :1339). Decide
-      whether to shorten it (for example `z3 5.3.1.0`) or keep the commit as provenance, re-pin any
-      golden that quotes it, and update README lines 243 and 247 (`decided by z3 Z3 5.1.0.0, seed
-      0`). Done when decided and the text is stable. [z3-bump]
-      DECIDED 2026-10-24 (D2): sentences say `decided by z3 5.3.1, seed 0`; the full string with the
-      commit stays in the evidence record's metadata; README's two quotes follow. Wave 3 run 5.
 - [ ] **Exercise a z3 death in a real browser.** The USER-GUIDE says a z3 that dies mid-session ends
       that Run with a `checks/internal-error` row and the next Run starts a fresh z3, 'not yet
       exercised in a real browser'; the bridge's `onAbort` rejection of a worker-thread trap is
@@ -83,10 +74,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       the equation is read in the element that writes it (site.at === owner). Otherwise the pair
       stays info and `--strict` passes. A side over a value another pair leaves undecided also reads
       nothing, by design. No probe was written for the first case.
-- [ ] **Say the pair's sentence on the numeric surface.** On the numeric surface a pair's own
-      equation rows keep 'the solve did not converge: L is where it stopped ...' rather than the
-      pair's sentence (`numericRows` in solver.ts); the guide was reworded instead. Optional, low.
-      [contradicted-value review]
 - [ ] **Abstain over a feature an own-sibling redefinition values (Opus, moves verdicts).**
       `validation/redefinition-own-sibling` reports `part def Battery { attribute mass default =
       1.2; attribute :>> mass = 0.8; }`, but the surfaces still read it. (a) default + value: check,
@@ -308,11 +295,6 @@ headings.
       walk reads W's sub's `ref part r : T0 = x`, reached as `w.sub.r`, in w's sub (cown3's k reads
       F). The coverage guard (`instanceReadsOtherwise`) could read the row in that instance instead.
       Sound, only weaker. [per-instance-rest S1]
-- [ ] **Say the tool limit exactly for a shadowed body.** The shadowed-parameter tail of an
-      `unread-definition` refusal is neutral since reporting-residuals S2, but the refusal head for
-      a shadowed body still reads "the relation reads a value this tool does not read", which is
-      imprecise for a valueless parameter. Wording in `src/semantics/engines/literal.ts`, not a
-      reading change. [reporting-residuals review]
 - [ ] **Read what two steps of standing-for, a call, or a second subject would decide.** All sound,
       all weaker: (1) a shared-usage (group) row read through two steps of standing-for (a reference
       to a reference, or to an equated part, written in the usage's definition) abstains with "this
@@ -807,20 +789,20 @@ true values. What follows is what that branch and the review of it left open; en
       `instanceGroups`, `readInContexts` and the obligations lane's `instanceRows` all ask it. A
       failed asserts listing is kept for the revision, so every row abstains until the next edit,
       even after a transient throw. [per-instance-rest S3, A.2.9]
-- [ ] **Say why on an instance row, and through a binding, when a violated assert leaves a default
-      standing.** `standingDefaultSentence` is printed only on `check`'s message for a violated
-      `assert` that is an equation naming the `default`'s feature alone on one side, in the assert's
-      own element, where no binding makes that default give way. Two cases print no reason. An
-      instance row: h2e-ancestor-assert-eq's `q::L = 50 misses Q::tie (p.load == L)` never says that
-      P::load's `default = 1.0` stood. And a default the assert reaches only through a binding
-      (RB3's tie). The instance row needs the instance's own reading: naming Q::L's `default = 1.0`
-      where q writes `L = 50.0` would mislead. [default-stands S1]
-- [ ] **Word the abstention for two defaults a binding joins in one instance (GA6).** `bind p.load =
-      L` joins P's `load default = 7.0` and Q's `L default = 5.0`. Reading neither is correct (two
-      defaults that differ), but the row of Q's asserted `L == 5.0` abstains with 'L has no value
-      anywhere and nothing specialises it', which names neither the binding nor the two defaults.
-      Say instead that the binding joins two defaults that differ (7.0, 5.0), so neither is read.
-      [default-stands S1]
+- [ ] **Say why a default stood on the rows `standingDefaultSentence` still does not reach.** The
+      check's instance row and a default reached through a binding now say it (`carriedDefaultOf`,
+      save-and-wording S3). Still bare: the rows `groupInstanceRows` (F7 groups) and
+      `readThroughSpecialisers` (specialiser measures) print, the numeric surface's violated rows
+      (H2E: `NUM tie (ctx) violated | p.load == L`), and the carried-default sentence (RB3), which
+      has no redefinition spelling, only "write the analysis as the value of q::L". Optional, low.
+      [save-and-wording S3]
+- [ ] **Print the two defaults' values in the abstention for two defaults a binding joins (GA6).**
+      `bind p.load = L` joins P's `load default = 7.0` and Q's `L default = 5.0`. The sentence now
+      says the binding joins defaults that differ or are not constants (`p.load`, `L`), on the
+      numeric surface as on the check, but names the member paths, not the values (7.0, 5.0).
+      Printing them is a change to `abstentionSentence` in `defining-equation.ts`; the numeric
+      surface repeats the check's sentence, so one change fixes both. Optional, low.
+      [save-and-wording S3]
 - [ ] **Read a `default` that an assert in an enclosing scope names, instead of abstaining (A.2.4
       lexical rule).** `assertAbove` / `enclosingAssertOn` still make a constraint over a `default`
       abstain when an assert in an enclosing scope names that default. Since decision 14 was amended
@@ -1048,15 +1030,25 @@ true values. What follows is what that branch and the review of it left open; en
       35), at 87e8c0f and at `collab-order` alike. The whole document goes as one message, which
       runs into the relay cap above. Fix: write only what the reset changed (a diff of the snapshot
       against the document), with the library kept out. Pre-existing. [collab-order S2]
-- [ ] **Save a binding to an unnamed redefinition under a name a terminal can read.** Save writes a
-      binding whose end is an anonymous redefinition by a placeholder name: for the verdict-corpus
-      model `07f3a4f30d1d-d4-usage-redef-default-bound`, `part p : P { attribute :>> load default =
-      30.0; } bind p.load = L;` is saved as `bind D4::Q::p::«AttributeUsage» = L;`, which a terminal
-      reads back as `Connector ... has 1 endpoint(s)`. In `r14-bind` and `r14-bind-dflt` the
-      constraint over it then abstains for another reason ("w has no value anywhere" instead of
-      "cannot be derived: ... contradicts ..."), and `k4a-contra-units-same-number` shows the same
-      pattern. The page and a terminal over the original text agree, and every verdict seen
-      abstains, so no false verdict was found. Pre-existing at 87e8c0f. [collab-order S1]
+- [ ] **Save an end that no name reaches.** Save writes a binding whose end is an unnamed
+      redefinition by its effective name (`bind p.load = L;`, `p.a.load`), but where no name reaches
+      the end it still writes the `«eClass»` placeholder, which a terminal cannot read back
+      (`unexpected character` on `«` and `»`) and the binding end is lost: two unnamed members of
+      one owner that answer to the same effective name, an unnamed redefinition beside a named
+      member of the same name, an unnamed redefinition as the head segment of the path, a redefined
+      feature with no name. Loud, not a false verdict. Probe: `package T { part def P { attribute
+      load : ScalarValues::Real default = 1.0; } part p : P { attribute :>> load = 50.0; attribute
+      load : ScalarValues::Real; } attribute w : ScalarValues::Real; bind w = p.load; }` is saved as
+      `bind w = T::p::«AttributeUsage»;`. Refuse or skip the binding with a stated reason, or give
+      the redefinition a declared name on Save (`refTo` and `effectiveSegment` in
+      `src/text/serializer.ts`). Also optional: now that an unnamed `:>> x` resolves to the most
+      specific inherited feature, `refTo` could verify the effective path with `resolveFullName`
+      instead of the one-answering-member rule. [save-and-wording S1]
+- [ ] **Contain the own-row `standingDefaultSentence` call like the instance-row one (optional,
+      low).** `readInContexts` wraps the sentence in a try/catch that yields no sentence (the
+      sentence is wording and must not cost the row); the call on a constraint's own row (`standing
+      = standingDefaultSentence(model, el)` in `evaluate-model.ts`) is not wrapped. No reachable
+      throw was found. [save-and-wording review]
 
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
