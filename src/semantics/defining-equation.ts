@@ -307,6 +307,10 @@ export interface ReadOtherwise {
   redefined?: ElementRecord;
   /** For `satisfy` and `subject`: the subsetting usage the satisfier is read through, where that is why ({@link subsettingTaint}). */
   via?: ReadOtherwise;
+  /** For `satisfy`: written outside the definition `scope` whose feature it names, by a path not resolved where it is written. */
+  outside?: true;
+  /** For `subsetting` read the other way ({@link DefiningEquations.subsettedOtherwise}): `written` is the subsetted usage, this the usage that subsets it. */
+  subsetter?: ElementRecord;
 }
 
 /**
@@ -340,6 +344,8 @@ export class DefiningEquations {
   private readonly carried = new Map<string, ElementRecord>();
   private readonly contradicted = new Map<ElementId, BindingConflict | null>();
   private readonly clashes = new Map<ElementId, Map<string, NameClash>>();
+  /** The features that redefine two at once, by feature ({@link mergedLines}), built on first ask. */
+  private redefiningTwo?: Map<ElementId, ElementRecord[]>;
   /** {@link inheritedClashes} per context. */
   private readonly inherited = new Map<ElementId, Map<string, NameClash>>();
   private reportedClashes?: ReadonlyArray<{ context: ElementRecord; name: string; clash: NameClash }>;
@@ -1566,6 +1572,8 @@ export class DefiningEquations {
       const chain = written.attrs.sourceChain ?? written.attrs.sourceRef;
       path = typeof chain === 'string' ? chain.trim() : this.nameOf(satisfied.satisfier);
       scope = written.ownerId != null ? this.model.get(written.ownerId) : undefined;
+      const outside = this.satisfierFromOutside(written, satisfied.satisfier, typeof chain === 'string' ? chain.trim() : undefined);
+      if (outside) return outside;
     } else {
       // A subject's value, from where it is written outward ({@link standsIn}).
       if (typeof subject.attrs.value !== 'string') return undefined;
@@ -1683,6 +1691,34 @@ export class DefiningEquations {
       if (via) return { kind, written, scope, path, instance: via.instance, via };
     }
     return undefined;
+  }
+
+  /**
+   * A `satisfy` written OUTSIDE the definition whose feature it names, by a path that does not resolve where it
+   * is written (`satisfy RF by NQ1::w.p1;` or `by w.p1;` in a package nested in the one that declares `w`, or in a
+   * part body): the mapper records the satisfier as W's own `p1`, and {@link writtenSatisfier} finds w's redefinition
+   * only for a path resolved at the owner, so the row was read at W's values and a requirement w's `part :>> p1 {
+   * attribute :>> load = 50.0; }` breaks held (NQ1, NQ2, NQ5, NQ7; NQ3, written in the package that declares `w`,
+   * files w's row). When an instance of W reads a name below that feature otherwise, the satisfy is read for none:
+   * the answer is of kind `satisfy` with `outside`. A satisfy written in W, in an instance of it or below one reads
+   * as before; so does one no instance reads otherwise (`part w : W;`). `undefined` otherwise.
+   */
+  private satisfierFromOutside(written: ElementRecord, satisfier: ElementRecord, chain: string | undefined): ReadOtherwise | undefined {
+    const owner = written.ownerId;
+    const home = satisfier.ownerId != null ? this.model.get(satisfier.ownerId) : undefined;
+    if (owner == null || !home || !isDefinition(home.eClass) || isPackage(home) || satisfier.attrs.isLibrary === true) return undefined;
+    if (chain !== undefined && VALUE_PATH.test(chain) && featuresAlongValue(this.model, owner, chain)?.scope === owner) return undefined;
+    // In W, in an instance of it, or below one: read where it is written, as before.
+    const seen = new Set<ElementId>();
+    for (let cur: ElementId | null = owner; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+      seen.add(cur);
+      if (cur === home.id || generalizationsOf(this.model, cur).some((g) => g.id === home.id)) return undefined;
+    }
+    const name = this.nameOf(satisfier);
+    if (name === undefined) return undefined;
+    const names = [...this.denote(home.id).keys()].filter((k) => k === name || k.startsWith(`${name}.`));
+    const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${written.id} satisfier`, home, names) : undefined;
+    return otherwise ? { kind: 'satisfy', written, scope: home, path: chain ?? name, instance: otherwise.instance, outside: true } : undefined;
   }
 
   /**
@@ -1804,6 +1840,32 @@ export class DefiningEquations {
       }
     }
     return undefined;
+  }
+
+  /**
+   * The usage `g` is SUBSETTED by a usage `f` of the same owner (`part p2 :> p1;` in `part def W`, `p1` here) that an
+   * instance of that owner reads otherwise (`part w : W { part :>> p2 { attribute :>> load = 50.0; } }`): what it
+   * answers, that instance first; else `undefined`. Every w's p2 is one of w's p1s, and w's only one when both are
+   * `[1]`, so `w.p1.load` is 50; the walk reads p1 at W's own values (`T0`'s 1) and the rows over it — W's `c {
+   * p1.load <= 5.0 }`, a package's `k { w.p1.load <= 5.0 }` and its negation — held on all four surfaces (RV1).
+   * The test is {@link subsettingOtherwiseOf}'s turned round, for a usage of a definition or a part: the names
+   * below the subsetter `f` read otherwise in a context that specialises the owner. Multiplicity is not read, so
+   * a `p1[0..*]` that other members fill is withdrawn too. Asked once per subsetting, by {@link subsettingTaint}.
+   */
+  subsettedOtherwise(f: ElementRecord, g: ElementRecord): ReadOtherwise | undefined {
+    if (f.attrs.isLibrary === true || g.attrs.isLibrary === true || f.id === g.id || f.ownerId == null) return undefined;
+    if (!isUsage(f.eClass) || !isUsage(g.eClass)) return undefined;
+    const scope = this.model.get(f.ownerId);
+    const path = this.nameOf(f);
+    if (!scope || isPackage(scope) || path === undefined) return undefined;
+    // A subsetter declared in an instance itself (`part w : W { part q :> p1 { attribute :>> load = 50.0; } }`), of a
+    // feature that instance has, and saying something of its own: it is that instance that reads `g` otherwise.
+    if (isUsage(scope.eClass) && f.ownerId !== g.ownerId && this.saysOwn(f) && this.features(scope.id).some((x) => x.id === g.id)) {
+      return { kind: 'subsetting', written: g, scope, path, instance: scope, subsetter: f };
+    }
+    const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
+    const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} subsetted`, scope, names) : undefined;
+    return otherwise ? { kind: 'subsetting', written: g, scope, path, instance: otherwise.instance, subsetter: f } : undefined;
   }
 
   /**
@@ -2440,6 +2502,7 @@ export class DefiningEquations {
         }
       }
       for (const [name, shadow] of this.lexicalShadows(contextId)) if (!out.has(name)) out.set(name, shadow);
+      for (const [name, merged] of this.mergedLines(contextId)) if (!out.has(name)) out.set(name, merged);
       this.clashes.set(contextId, out);
     }
     return out;
@@ -2544,6 +2607,65 @@ export class DefiningEquations {
           });
           break;
         }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The names `contextId` reads through ONE feature of a general type that redefines two features at once
+   * (`attribute X :>> M, N default = 3.0;` in Q2) while a feature of the context's own redefines one of them (`part s
+   * : Q2 { attribute :>> M = 1.0; attribute :>> N = 2.0; }`): `M` and `N` are then the one feature `X`, and the usage
+   * gives it two values (MU, MUR). The mapper keeps each of s's redefinitions on the feature its name finds (Q's M, Q's
+   * N: {@link resolveRedefinedFeature}), so every surface read two features, each with its own value (`s.M == 1.0`
+   * and `s.N == 2.0` held on all four, and `s.N == 1.0` was refuted on a feature that is also M). One walk cannot give
+   * the line both readings, so the context reads neither name ({@link NameClash}'s `merged`): weaker, never false.
+   * A single redefinition of one of them (`:>> M = 4.0`) is the same line, and gives way the same.
+   */
+  private mergedLines(contextId: ElementId): Map<string, NameClash> {
+    const out = new Map<string, NameClash>();
+    const context = this.model.get(contextId);
+    if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
+    // The features that redefine two at once, found once; most models hold none.
+    this.redefiningTwo ??= (() => {
+      const byLine = new Map<ElementId, ElementRecord[]>();
+      for (const r of this.model.ofKind('Redefinition')) {
+        const x = r.source?.[0] !== undefined ? this.model.get(r.source[0]) : undefined;
+        if (!x || r.attrs.isLibrary === true || x.attrs.isLibrary === true || !isUsage(x.eClass)) continue;
+        const targets = (r.target ?? []).flatMap((t) => this.model.get(t) ?? []);
+        byLine.set(x.id, [...(byLine.get(x.id) ?? []), ...targets]);
+      }
+      for (const [id, targets] of byLine) if (new Set(targets.map((t) => t.id)).size < 2) byLine.delete(id);
+      return byLine;
+    })();
+    if (this.redefiningTwo.size === 0) return out;
+    const holders = [context, ...generalizationsOf(this.model, contextId)].filter((h) => h.attrs.isLibrary !== true);
+    const lines: Array<{ line: ElementRecord; targets: ElementRecord[] }> = [];
+    for (const h of holders) {
+      for (const x of this.model.children(h.id)) {
+        const targets = this.redefiningTwo.get(x.id);
+        if (targets) lines.push({ line: x, targets: [...new Map(targets.map((t) => [t.id, t])).values()] });
+      }
+    }
+    if (lines.length === 0) return out;
+    const byName = this.byName(contextId);
+    for (const { line, targets } of lines) {
+      const ids = new Set([line.id, ...targets.map((t) => t.id)]);
+      const another = holders.some((h) =>
+        this.model.children(h.id).some(
+          (f) =>
+            f.id !== line.id &&
+            isUsage(f.eClass) &&
+            f.attrs.implicit !== true &&
+            this.model.relationshipsFrom(f.id).some((r) => r.eClass === 'Redefinition' && (r.target ?? []).some((t) => ids.has(t))),
+        ),
+      );
+      if (!another) continue;
+      for (const g of [line, ...targets]) {
+        const name = effectiveNameOf(this.model, g);
+        const kept = name !== undefined ? byName.get(name) : undefined;
+        if (name === undefined || kept === undefined || out.has(name)) continue;
+        out.set(name, { kept, other: line, keptValue: kept, otherValue: line, contradiction: false, decided: false, merged: { line } });
       }
     }
     return out;
@@ -4342,6 +4464,24 @@ function valuePartners(model: Model, e: ElementRecord, value: string): Array<{ p
   return out;
 }
 
+/**
+ * Each user redefinition whose redefining feature and redefined feature are two features of ONE owner, as the pair
+ * (redefiner, redefined): KerML lets a feature redefine only one its owner inherits, and `redefinitionConformance`
+ * of ../validation/rules reports the same condition as `validation/redefinition-own-sibling`.
+ */
+function ownSiblingRedefinitions(model: Model): Array<[ElementRecord, ElementRecord]> {
+  const out: Array<[ElementRecord, ElementRecord]> = [];
+  for (const r of model.ofKind('Redefinition')) {
+    if (r.attrs.isLibrary === true) continue;
+    const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+    const g = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+    if (!f || !g || f.id === g.id || f.ownerId == null || f.ownerId !== g.ownerId) continue;
+    if (f.attrs.isLibrary === true || g.attrs.isLibrary === true || !isUsage(f.eClass) || !isUsage(g.eClass)) continue;
+    out.push([f, g]);
+  }
+  return out;
+}
+
 function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS.get>> {
   const hit = EQUATED_PARTS.get(model);
   if (hit && hit.rev === model.rev) return hit;
@@ -4549,6 +4689,14 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
   for (const e of model.all()) {
     if (e.attrs.isLibrary === true || e.attrs.isRef !== true || typeof e.attrs.value !== 'string') continue;
     if (redefinedClosure(model, e).length > 0 && contradictedBindingOf(model, e) !== undefined) unread.push(e);
+  }
+  // A feature that redefines one its own owner declares (`attribute mass default = 1.2; attribute :>> mass = 0.8;`
+  // in Battery, `validation/redefinition-own-sibling`): the model states the feature twice, and each surface read
+  // whichever value its walk met — the redefinition's `0.8` over the `default`, the `default` over a valueless
+  // redefinition, SMT inconsistent beside the others. An unread pair of its own, the redefiner with the feature.
+  for (const [f, g] of ownSiblingRedefinitions(model)) {
+    if (!unread.includes(f)) unread.push(f);
+    partners.set(f.id, [...new Set([...(partners.get(f.id) ?? []), g])]);
   }
   const fresh: NonNullable<ReturnType<typeof EQUATED_PARTS.get>> = { rev: model.rev, standsFor, unread, partners, unreadEnds, partnerEnds };
   EQUATED_PARTS.set(model, fresh);
@@ -5084,6 +5232,17 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
       taint.set(f.id, f);
       why.set(f.id, answer);
     }
+    // The subsetted usage too, where a usage that subsets it is read otherwise by an instance (RV1): it is the
+    // subsetter's value that fills it there, which the walk reads at the owner's own values.
+    for (const r of subsettings) {
+      const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+      const g = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+      if (!f || !g || taint.has(g.id)) continue;
+      const answer = defs.subsettedOtherwise(f, g);
+      if (!answer) continue;
+      taint.set(g.id, g);
+      why.set(g.id, answer);
+    }
     if (taint.size > 0) spreadOtherwise(model, taint, [...model.ofKind('Redefinition'), ...subsettings]);
   }
   return { rev: model.rev, taint, why };
@@ -5279,6 +5438,14 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
     return `${what}: this tool reads it as a fresh instance of its type, never as what \`${s.path}\` names${so('no relation that reads through it')}`;
   }
   const who = s.instance ? effectiveQualifiedName(model, s.instance.id) : `an instance of ${where}`;
+  if (s.kind === 'subsetting' && s.subsetter) {
+    const name = effectiveNameOf(model, s.written) ?? s.written.id;
+    const by = effectiveNameOf(model, s.subsetter) ?? s.subsetter.id;
+    return (
+      `\`${name}\` in ${where} is subsetted by \`${by}\`, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: this tool ` +
+      `reads \`${name}\` at ${where}'s own values, never as the \`${by}\` that instance holds${so('no relation that reads through it')}`
+    );
+  }
   if (s.kind === 'subsetting') {
     const name = effectiveNameOf(model, s.written) ?? s.written.id;
     const at = s.written.ownerId != null ? effectiveQualifiedName(model, s.written.ownerId) : where;
@@ -5298,6 +5465,13 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   if (s.kind === 'satisfy') {
     const requirement = s.written.target?.[0] !== undefined ? model.get(s.written.target[0]) : undefined;
     const req = requirement ? (effectiveNameOf(model, requirement) ?? effectiveQualifiedName(model, requirement.id)) : '…';
+    if (s.outside) {
+      const at = s.written.ownerId != null ? effectiveQualifiedName(model, s.written.ownerId) : where;
+      return (
+        `\`satisfy ${req} by ${s.path || '…'}\` in ${at} names a feature of ${where} from outside it: this tool reads that path ` +
+        `as ${where}'s own feature, never as the instance it names, and ${who} reads its satisfier otherwise${so('no relation it requires of the satisfier')}`
+      );
+    }
     const head = `\`satisfy ${req} by ${s.path || '…'}\` in ${where}`;
     if (inPackage) return `${head} reads its satisfier ${through}${so('no relation it requires of the satisfier')}`;
     return `${head} ${tail} its satisfier otherwise${via}${so('no relation it requires of the satisfier')}`;
@@ -5364,6 +5538,17 @@ function equatedSentence(model: Model, b: ElementRecord): string {
       'another (a reference, a subject, or a part a binding or a value equates with its partner); this tool reads a ' +
       'requirement written in a definition, or in a usage another specialises, at its own values only, never in each ' +
       'instance of it, and an instance can make that feature stand for another'
+    );
+  }
+  const sibling = ownSiblingRedefinitions(model).find(([f]) => f.id === b.id);
+  if (sibling) {
+    const [f, g] = sibling;
+    const name = effectiveNameOf(model, g) ?? g.id;
+    return (
+      `\`${f.declaredName ? `${f.declaredName} ` : ''}:>> ${name}\` in ${effectiveQualifiedName(model, f.ownerId!)} redefines \`${name}\`, a feature ` +
+      `${model.get(f.ownerId!)?.declaredName ?? 'its owner'} declares itself (a feature redefines only one its owner inherits, ` +
+      '`validation/redefinition-own-sibling`): the model states the feature twice, and this tool reads neither as ' +
+      "the other's value"
     );
   }
   const contradicted = b.attrs.isRef === true ? contradictedBindingOf(model, b) : undefined;
@@ -5486,8 +5671,9 @@ const CONTRADICTED_DEFINITIONS = new WeakMap<Model, ContradictedDefinitions>();
  * Two equations on the two ends of one binding are the same pair: `bind L = K` in P says L and K are one value in
  * every P, so `L == 50.0` and `K == 60.0` define it twice (wave 3 contradictory-models S3). The equations of every
  * name the bindings that hold in X — written in it or in what it specialises — join N to, through one another too
- * (`bind L = M; bind M = K`), are gathered with N's, each name a feature of X itself (not through a part: `bind p.L =
- * M` would leave P's L undecided in every P), each hop one the binding really joins there ({@link joinedTo}) — a
+ * (`bind L = M; bind M = K`), are gathered with N's, each name a feature of X or, through a part, of an instance of its type
+ * (`bind p.L = M` beside `L == 50.0` in P and `M == 60.0` in X: P's L is then undecided in every P, the fence's price
+ * of reading the pair where the binding meets it), each hop one the binding really joins there ({@link joinedTo}) — a
  * chain across a specialisation (`bind K = L` in P, `bind N = K` in P2) too. They count
  * only where the comparison decides two of them differ: a side over another name, a unit or a form this tool cannot
  * compare leaves the binding's own row to report the pair, as before. The set is named by the feature declared
@@ -5644,20 +5830,21 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
    * The ends of the bindings that hold in every `x` — those written in `x` or in what it specialises
    * ({@link generalizationsOf}) — crossed from `path` outward, through one another too (`bind L = M; bind M = K;`):
    * each as the name it is crossed from, the name it reaches, and the binding. A name reached by two bindings is
-   * listed by both. Features of `x` itself only: a name through a part (`p.L`) is a feature of every instance of that
-   * part's type, which a contradiction read here would leave undecided wherever it is read.
+   * listed by both. A name through a part (`p.L`) is a feature of every instance of that part's type, so a
+   * contradiction read here leaves it undecided wherever it is read (fence-readings S2: a pair read there is a pair of
+   * the one feature, whichever end is dotted, and abstains).
    */
   type Crossing = { from: string; path: string; text: string };
   const crossings = (holders: readonly ElementRecord[], path: string): Crossing[] => {
     const out: Crossing[] = [];
-    if (path.includes('.') || !holders.some((h) => joins.has(h.id))) return out;
+    if (!holders.some((h) => joins.has(h.id))) return out;
     const seen = new Set([path]);
     for (const queue = [path]; queue.length > 0; ) {
       const at = queue.shift()!;
       for (const h of holders) {
         for (const j of joins.get(h.id) ?? []) {
           const other = j.left === at ? j.right : j.right === at ? j.left : undefined;
-          if (other === undefined || other.includes('.')) continue;
+          if (other === undefined) continue;
           out.push({ from: at, path: other, text: j.text });
           if (!seen.has(other)) {
             seen.add(other);
@@ -5936,7 +6123,13 @@ function spreadContradiction(
   index: ContradictedDefinitions,
   sets: readonly ContradictedDefinition[],
 ): ReadonlyMap<ElementId, ElementRecord> {
-  const sources = new Set(index.sets.flatMap((s) => s.equations.map((c) => c.id)));
+  // An equation of a set taints the names it reads beside a tainted one only where it ties two features, a bare name
+  // on each side: `K == L` beside `L == 50.0` and `L == 60.0` is a member of the set and still makes K the L it reads,
+  // whichever of the two equations comes first. `L == a * 2.0` defines L and ties a to nothing.
+  const bareTie = /^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*==\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*$/;
+  const sources = new Set(
+    index.sets.flatMap((s) => s.equations.filter((c) => !(typeof c.attrs.expression === 'string' && bareTie.test(c.attrs.expression))).map((c) => c.id)),
+  );
   return spreadTaint(
     model,
     sources,
@@ -12038,6 +12231,12 @@ export interface NameClash {
    */
   shadow?: { writer: ElementRecord; general: ElementRecord };
   /**
+   * Set where the name is one of the features a general type's `line` redefines together (`attribute X :>> M, N;`)
+   * beside a redefinition of one of them in the context ({@link DefiningEquations.mergedLines}): never a
+   * contradiction, and `other` is that line.
+   */
+  merged?: { line: ElementRecord };
+  /**
    * Set where the two values are the same, and the context's own feature of
    * the name states nothing and redefines neither ({@link
    * DefiningEquations.clashesIn}): never a contradiction, and read nowhere,
@@ -12069,6 +12268,14 @@ export function clashSentence(model: Model, contextId: ElementId, clash: NameCla
       `${context} declares \`${name}\` itself, and \`${body}\` in ${effectiveQualifiedName(model, general.id)} reads \`${name}\` as ` +
       `${effectiveQualifiedName(model, clash.other.id)}, as KerML resolves it where it is written; one reading of ${context} ` +
       'cannot give the name both meanings, so neither is read there'
+    );
+  }
+  if (clash.merged) {
+    const line = clash.merged.line;
+    const names = [...new Set(model.relationshipsFrom(line.id).filter((r) => r.eClass === 'Redefinition').flatMap((r) => r.target ?? []).map((t) => `\`${effectiveNameOf(model, model.require(t)) ?? t}\``))];
+    return (
+      `${effectiveQualifiedName(model, line.id)} redefines ${names.join(' and ')} together, so in ${context} they are one feature, ` +
+      `which a redefinition of each can give two values; this tool reads them as separate features, so \`${name}\` is not read there`
     );
   }
   const both =

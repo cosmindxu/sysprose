@@ -6206,10 +6206,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // Where the most specific feature would make TWO of a usage's features one, each keeps the feature its name finds,
     // as at 84fb971. Q2's X redefines M and N together: s's `:>> M` and `:>> N` both took X (two axioms on one symbol,
     // SMT X beside a check that refuted `s.N == 2.0`); each redefines Q's again. The twin merges them in an unnamed
-    // `:>> M, N`, with the two features and each relation written the other way round. These rows pin that UNCHANGED
-    // behaviour (each reads its named feature's value, as at the base), which is NOT the right reading: both `:>> M`
-    // and `:>> N` redefine X, one feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref
-    // `?`. Every decided verdict is listed false (KNOWN_FALSE, no step yet): the shape stays unmodelled.
+    // `:>> M, N`, with the two features and each relation written the other way round. Both `:>> M` and `:>> N` redefine
+    // X, ONE feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref `?`. Reading the two as
+    // two features decided every row (T, F, T on all four) and was false (fence-readings S2 fences it): a usage that
+    // redefines a feature of such a line reads none of the line's names, on every surface, in its own sentence. The
+    // single redefinition (`mu-one`: `:>> M = 4.0`, where `s.N == 4.0` was refuted) is the same line and abstains too;
+    // a usage that redefines nothing of it (`t`) reads X's 3 as before.
     'redef-target-merge': probe(`package MU {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
         part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
@@ -6218,9 +6220,26 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { s.N == 2.0 }
         constraint sN1 { s.N == 1.0 }
       }`, {
-      'MU::sM1': ['T/T/T/T', '?'],
-      'MU::sN1': ['F/F/F/F', '?'],
-      'MU::sN2': ['T/T/T/T', '?'],
+      'MU::sM1': ['?/?/?/?', '?'],
+      'MU::sN1': ['?/?/?/?', '?'],
+      'MU::sN2': ['?/?/?/?', '?'],
+    }),
+    'redef-target-merge-one': probe(`package MU1 {
+        part def Q { attribute M default = 1.0; attribute N default = 1.0; }
+        part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
+        part s : Q2 { attribute :>> M = 4.0; }
+        part t : Q2;
+        constraint sM4 { s.M == 4.0 }
+        constraint sN4 { s.N == 4.0 }
+        constraint sN3 { s.N == 3.0 }
+        constraint tM3 { t.M == 3.0 }
+        constraint tN3 { t.N == 3.0 }
+      }`, {
+      'MU1::sM4': ['?/?/?/?', '?'],
+      'MU1::sN3': ['?/?/?/?', '?'],
+      'MU1::sN4': ['?/?/?/?', '?'],
+      'MU1::tM3': ['T/T/T/T', 'T'],
+      'MU1::tN3': ['T/T/T/T', 'T'],
     }),
     'redef-target-merge-rev': probe(`package MUR {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
@@ -6230,9 +6249,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { 2.0 == s.N }
         constraint sN1 { 1.0 == s.N }
       }`, {
-      'MUR::sM1': ['T/T/T/T', '?'],
-      'MUR::sN1': ['F/F/F/F', '?'],
-      'MUR::sN2': ['T/T/T/T', '?'],
+      'MUR::sM1': ['?/?/?/?', '?'],
+      'MUR::sN1': ['?/?/?/?', '?'],
+      'MUR::sN2': ['?/?/?/?', '?'],
     }),
     // R's M2 redefines M, and v declares an M2 of its own beside `:>> M = 5.0`: taking R's M2 named v's M M2 too
     // (two axioms on v's M2; `v.M2 == 9.0` refuted). The twin writes the M2 first and each relation reversed. Each
@@ -12231,11 +12250,255 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'UPR::t1': ['?/?/?/?', '?'],
       },
     ),
+    // fence-readings S2: six wrong answers fenced, each pinned with its twin. A bare-name equation `K == L` between
+    // a contradicted L and K was a source itself and tainted nothing it names, so `p.K >= 55.0` read F with the two
+    // equations written 50 then 60 and T with them swapped (the check and the numeric surface; SMT's axioms are
+    // inconsistent): K reads neither value now, in either order, as it does through `K == L + 0.0` or `bind K = L`.
+    ...exchanged('tie-bare', (x, y) => `package Tie {
+        part def P {
+          attribute L : ScalarValues::Real;
+          attribute K : ScalarValues::Real;
+          assert constraint c1 { L == ${x} } assert constraint c2 { L == ${y} }
+          assert constraint xk { K == L }
+        }
+        part p : P;
+        constraint kk { p.K >= 55.0 }
+        constraint kl { p.K <= 55.0 }
+      }`, {
+      'Tie::P::L in Tie::P#equations': ['F/-/F/-', 'F'],
+      'Tie::P::c1': ['?/-/?/-', null],
+      'Tie::P::c2': ['?/-/?/-', null],
+      'Tie::P::xk': ['?/-/?/-', null],
+      'Tie::kk': ['?/?/?/X', null],
+      'Tie::kl': ['?/?/?/X', null],
+    }),
+    // Two asserted equations on the two ends of a binding that reaches one end through a part (`bind p.L = M`, `L ==
+    // 50.0` in P, `M == 60.0` in Q) are one feature's two values: q.p.L == 50.0 read T and q.M == 50.0 F, the same
+    // quantity (the check and the numeric surface). The pair is read where the binding meets them, so every P's L is
+    // undecided with it, p2's too (the fence's price: P's own `cl` and p2 read nothing although p2 meets no binding).
+    ...exchanged('bind-through-part', (x, y) => `package BQ {
+        part def P { attribute L : ScalarValues::Real; assert constraint cl { L == ${x} } }
+        part def Q { part p : P; attribute M : ScalarValues::Real; bind p.L = M; assert constraint cm { M == ${y} } }
+        part q : Q;
+        part p2 : P;
+        constraint t50 { q.p.L == 50.0 }
+        constraint m60 { q.M == 60.0 }
+        constraint t60 { q.p.L == 60.0 }
+        constraint m50 { q.M == 50.0 }
+        constraint u50 { p2.L == 50.0 }
+      }`, {
+      'BQ::P::cl in BQ::Q::p': ['?/-/?/-', null],
+      'BQ::P::cl': ['?/-/?/-', null],
+      'BQ::Q::M in BQ::Q#equations': ['F/-/F/-', 'F'],
+      'BQ::Q::cm': ['?/-/?/-', null],
+      'BQ::Q::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'BQ::m50': ['?/?/?/X', null],
+      'BQ::m60': ['?/?/?/X', null],
+      'BQ::t50': ['?/?/?/X', null],
+      'BQ::t60': ['?/?/?/X', null],
+      'BQ::u50': ['?/?/?/X', null],
+    }),
+    // A feature that redefines one its OWN owner declares (`validation/redefinition-own-sibling`) states the feature
+    // twice: the check, literal and numeric surfaces read the redefinition's 0.8 over the `default` (a), the `default`
+    // over a valueless redefinition (c) and the redefinition over a valueless declaration (d), SMT said inconsistent
+    // axioms beside them in (a). All four read neither now, in their own sentence; (b), two values written with `=`,
+    // keeps its conflict row.
+    ...reversed('own-sibling-a', `package OSA {
+        part def Battery { attribute mass : ScalarValues::Real default = 1.2; attribute :>> mass = 0.8; }
+        part b : Battery;
+        constraint heavy { b.mass >= 1.0 }
+        constraint light { b.mass <= 1.0 }
+      }`, `package OSA {
+        constraint light { b.mass <= 1.0 }
+        constraint heavy { b.mass >= 1.0 }
+        part b : Battery;
+        part def Battery { attribute :>> mass = 0.8; attribute mass : ScalarValues::Real default = 1.2; }
+      }`, {
+      'OSA::heavy': ['?/?/?/?', null],
+      'OSA::light': ['?/?/?/?', null],
+    }),
+    'own-sibling-b': probe(`package OSB {
+        part def Battery { attribute mass : ScalarValues::Real = 1.2; attribute :>> mass = 0.8; }
+        part b : Battery;
+        constraint heavy { b.mass >= 1.0 }
+        constraint light { b.mass <= 1.0 }
+      }`, {
+      'OSB::Battery::«AttributeUsage»#binding': ['F/-/F/-', 'F'],
+      'OSB::heavy': ['?/?/?/?', null],
+      'OSB::light': ['?/?/?/?', null],
+    }),
+    'own-sibling-c': probe(`package OSC {
+        part def Battery { attribute mass : ScalarValues::Real default = 1.2; attribute :>> mass; }
+        part b : Battery;
+        constraint heavy { b.mass >= 1.0 }
+        constraint light { b.mass <= 1.0 }
+      }`, {
+      'OSC::heavy': ['?/?/?/?', null],
+      'OSC::light': ['?/?/?/?', null],
+    }),
+    'own-sibling-d': probe(`package OSD {
+        part def Battery { attribute mass : ScalarValues::Real; attribute :>> mass = 0.8; }
+        part b : Battery;
+        constraint heavy { b.mass >= 1.0 }
+        constraint light { b.mass <= 1.0 }
+      }`, {
+      'OSD::heavy': ['?/?/?/?', null],
+      'OSD::light': ['?/?/?/?', null],
+    }),
+    // A `satisfy` written outside the definition whose feature it names, by a path that does not resolve where it is
+    // written (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in the one that declares w; NQ5 without the
+    // subsetting; NQ7 in a part body), recorded W's own p1: a requirement w's 50 breaks held (T, `verify` exit 0). It
+    // abstains for the requirement and for w's p1 now, naming w. NQ3 (the same satisfy in the package that declares
+    // w) files w's F row as before, and NQ8 (no instance reads p1 otherwise) keeps its T.
+    ...reversed('sat-nested-nq1', `package NQ1 {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; part p2 :> p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        package Inner { satisfy RF by NQ1::w.p1; }
+      }`, `package NQ1 {
+        package Inner { satisfy RF by NQ1::w.p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        part def W { part p2 :> p1; part p1 : T0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'NQ1::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'NQ1::RF::«ConstraintUsage» in NQ1::Inner::«Satisfy»': ['?/-/?/-', 'F'],
+      'NQ1::RF::«ConstraintUsage» in NQ1::W::p1': ['-/?/-/?', 'F'],
+    }),
+    ...reversed('sat-nested-nq2', `package NQ2 {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; part p2 :> p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        package Inner { satisfy RF by w.p1; }
+      }`, `package NQ2 {
+        package Inner { satisfy RF by w.p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        part def W { part p2 :> p1; part p1 : T0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'NQ2::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'NQ2::RF::«ConstraintUsage» in NQ2::Inner::«Satisfy»': ['?/-/?/-', 'F'],
+      'NQ2::RF::«ConstraintUsage» in NQ2::W::p1': ['-/?/-/?', 'F'],
+    }),
+    'sat-nested-nq3': probe(`package NQ3 {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; part p2 :> p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        satisfy RF by w.p1;
+      }`, {
+      'NQ3::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'NQ3::RF::«ConstraintUsage» in NQ3::«Satisfy»': ['F/-/F/-', 'F'],
+      'NQ3::RF::«ConstraintUsage» in NQ3::w::p1': ['-/F/-/F', 'F'],
+    }),
+    'sat-nested-nq5': probe(`package NQ5 {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        package Inner { satisfy RF by w.p1; }
+      }`, {
+      'NQ5::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'NQ5::RF::«ConstraintUsage» in NQ5::Inner::«Satisfy»': ['?/-/?/-', 'F'],
+      'NQ5::RF::«ConstraintUsage» in NQ5::W::p1': ['-/?/-/?', 'F'],
+    }),
+    'sat-nested-nq7': probe(`package NQ7 {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        part sys { satisfy RF by w.p1; }
+      }`, {
+      'NQ7::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'NQ7::RF::«ConstraintUsage» in NQ7::sys::«Satisfy»': ['?/-/?/-', 'F'],
+      'NQ7::RF::«ConstraintUsage» in NQ7::W::p1': ['-/?/-/?', 'F'],
+    }),
+    'sat-nested-nq8': probe(`package NQ8 {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W;
+        package Inner { satisfy RF by w.p1; }
+      }`, {
+      'NQ8::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+    }),
+    // A usage that is subsetted by one an instance reads otherwise (RV1): w's p2 is its only p1 (both [1]), so
+    // `w.p1.load` is 50, but p1 was read at W's own T0 (1): W's `c` and `k1` read T and their reverses F, and strict
+    // reported a false violation. Each reading through p1 abstains now, naming w (the multiplicity is not read: a
+    // `p1[0..*]` other members fill abstains too); a W no instance redefines keeps its T (rv1-plain).
+    ...reversed('sub-rv1', `package RV1 {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }
+        part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k1R { w.p1.load >= 5.0 }
+      }`, `package RV1 {
+        constraint k1R { w.p1.load >= 5.0 }
+        constraint k1 { w.p1.load <= 5.0 }
+        part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+        part def W { constraint c { p1.load <= 5.0 } part p2 :> p1 [1]; part p1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'RV1::W::c': ['?/?/?/?', 'T'],
+      'RV1::k1': ['?/?/?/?', 'F'],
+      'RV1::k1R': ['?/?/?/?', 'T'],
+    }),
+    'sub-rv1-ge': probe(`package RV1 {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load >= 5.0 } }
+        part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load >= 5.0 }
+        constraint k1R { w.p1.load <= 5.0 }
+      }`, {
+      'RV1::W::c': ['?/?/?/?', 'F'],
+      'RV1::k1': ['?/?/?/?', 'T'],
+      'RV1::k1R': ['?/?/?/?', 'F'],
+    }),
+    // The subsetter in a specialisation of the definition that has the subsetted usage (w's p2 is its only p1; k1 is
+    // false and k1R true), and a subsetter an instance declares itself (`part q :> p1` in w, with a value of its own):
+    // the same wrong answer, T/T/T/T and a false strict violation, abstains now.
+    ...reversed('sub-rv1-spec', `package RVS {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; }
+        part def W2 :> W { part p2 :> p1 [1]; }
+        part w : W2 { part :>> p2 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k1R { w.p1.load >= 5.0 }
+      }`, `package RVS {
+        constraint k1R { w.p1.load >= 5.0 }
+        constraint k1 { w.p1.load <= 5.0 }
+        part w : W2 { part :>> p2 { attribute :>> load = 50.0; } }
+        part def W2 :> W { part p2 :> p1 [1]; }
+        part def W { part p1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'RVS::k1': ['?/?/?/?', 'F'],
+      'RVS::k1R': ['?/?/?/?', 'T'],
+    }),
+    'sub-rv1-instance-subsetter': probe(`package RVQ {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; }
+        part w : W { part q :> p1 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k1R { w.p1.load >= 5.0 }
+      }`, {
+      'RVQ::k1': ['?/?/?/?', 'F'],
+      'RVQ::k1R': ['?/?/?/?', 'T'],
+    }),
+    'sub-rv1-plain': probe(`package RV1P {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }
+        part w : W;
+        constraint k1 { w.p1.load <= 5.0 }
+      }`, {
+      'RV1P::W::c': ['T/T/T/T', 'T'],
+      'RV1P::k1': ['T/T/T/T', 'T'],
+    }),
   };
-
-  /** The NO-STEP reason of a row over a feature that redefines two features of one line (MU, MUR). */
-  const REDEFINES_TWO_FEATURES =
-    'NO STEP (TODO “Model a feature that redefines two features of one line”): Q2’s `attribute X :>> M, N` is the one feature for M and for N, and s’s `:>> M = 1.0` beside `:>> N = 2.0` gives it two values; each surface reads the two as two features (s’s M and s’s N, each redefining Q’s), as at 84fb971, and decides';
 
   /**
    * I2's exceptions: the rows a surface decides FALSELY today, `probe | row` → why, and the step that
@@ -12284,7 +12547,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * redefinition-target S1 pinned the rows of a `default` a binding joins to a default that differs (MI6D, and CP,
    * its end-copy twin): every surface abstains on them (the numeric surface alone decided them until text-order).
    * It listed the rows of a feature that redefines two features of one line (MU, MUR) as false: unchanged from
-   * 84fb971, where every surface reads the two as two features although the one feature has two values.
+   * 84fb971, where every surface read the two as two features although the one feature has two values.
+   * fence-readings S2 withdrew all six: a usage that redefines a feature of such a line reads none of its names (a
+   * clash with its own sentence), so each row is `?` on all four surfaces.
    */
   const KNOWN_FALSE = new Map<string, string>([
     ...['E1E::c3F', 'E1E::c3T'].map(
@@ -12294,12 +12559,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           'NO STEP: the numeric surface carries the 5 W’s asserted `L == 5.0` gives w’s p2’s load (`bind p2.load = L` in W) through the package’s `bind P::load = M` — M’s `default = 9.0` gives way to p4’s `default = 7.0`, so M has no value — into p3’s load, which the check, the literal engine and the SMT engine read with no value (the package’s own L, E1, abstains on all four)',
         ] as const,
     ),
-    ['redef-target-merge | MU::sM1', REDEFINES_TWO_FEATURES],
-    ['redef-target-merge | MU::sN1', REDEFINES_TWO_FEATURES],
-    ['redef-target-merge | MU::sN2', REDEFINES_TWO_FEATURES],
-    ['redef-target-merge-rev | MUR::sM1', REDEFINES_TWO_FEATURES],
-    ['redef-target-merge-rev | MUR::sN1', REDEFINES_TWO_FEATURES],
-    ['redef-target-merge-rev | MUR::sN2', REDEFINES_TWO_FEATURES],
   ]);
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,
