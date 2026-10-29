@@ -261,7 +261,10 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     if (txn.origin === ORIGIN_LOCAL) return; // our own write — ignore
     const placed = placedBy(events, elements);
     applyingRemote = true;
-    const { owner, broken } = docOwners(elements);
+    // The reading of the owners changes only with an owner or the set of elements
+    // (a cycle can arise in no other transaction): a rename or an attribute edit,
+    // the common remote edit, reads each owner as the doc holds it, without the scan.
+    const { owner, broken } = ownersTouched(events, elements) ? docOwners(elements) : { owner: undefined, broken: [] };
     try {
       model.transaction(() => {
         for (const id of reconcileModelFromDoc(model, elements, owner)) placed.add(id);
@@ -446,6 +449,15 @@ function docOwners(elements: Y.Map<ElementYMap>): { owner: Map<ElementId, Elemen
   return { owner, broken };
 }
 
+/** Whether a doc transaction added, replaced or removed an element, or wrote an element's owner: the only edits that change the reading of {@link docOwners}. */
+function ownersTouched(events: Y.YEvent<any>[], elements: Y.Map<ElementYMap>): boolean {
+  for (const ev of events) {
+    if (!(ev instanceof Y.YMapEvent)) continue;
+    if (ev.target === elements ? ev.keysChanged.size > 0 : ev.target.parent === elements && ev.keysChanged.has('ownerId')) return true;
+  }
+  return false;
+}
+
 /**
  * Write the reading of {@link docOwners} into the doc: the member of lowest id
  * of each cycle at the top level. Every peer that sees the cycle writes the same
@@ -585,15 +597,17 @@ function holdPlaces(model: Model, elements: Y.Map<ElementYMap>, placed: Readonly
  * created or moved: the owners they stand in may now hold their children in
  * another order.
  */
-function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>, owners: ReadonlyMap<ElementId, ElementId | null>): Set<ElementId> {
+function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>, owners?: ReadonlyMap<ElementId, ElementId | null>): Set<ElementId> {
   const docIds = new Set<ElementId>(elements.keys());
   const moved = new Set<ElementId>();
   // An element whose owner the doc lacks — one peer removed the owner while
   // another added to it or moved an element into it — stands at the top level,
   // on every peer alike, and goes back under that owner should the doc hold it
   // again (a third peer's reset). So does the lowest of two elements the doc
-  // holds in each other ({@link docOwners}), given as `owners`.
-  const ownerIn = (rec: ElementRecord): ElementId | null => owners.get(rec.id) ?? null;
+  // holds in each other ({@link docOwners}), given as `owners` (left out, when the
+  // transaction changed no owner and no element: each reads as the doc holds it).
+  const ownerIn = (rec: ElementRecord): ElementId | null =>
+    owners !== undefined ? (owners.get(rec.id) ?? null) : rec.ownerId !== null && !docIds.has(rec.ownerId) ? null : rec.ownerId;
 
   // 1) Removals — anything in the model but no longer in the doc. A child the
   //    doc still holds goes to the top level in 3), its owner gone.

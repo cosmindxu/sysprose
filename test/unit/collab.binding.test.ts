@@ -833,6 +833,17 @@ describe('bindModelToDoc — CRDT convergence', () => {
         expect(m.childIds('R')).toEqual(['y']);
       }
       expect(m2.rootIds()).toEqual(m1.rootIds());
+
+      // A later edit that writes no owner and adds no element (a rename, an attribute) reads the owners as the doc
+      // holds them, without the scan, and leaves the orphans where they stood.
+      m1.update('x', { declaredName: 'x2' });
+      m2.setAttrs('z', { note: 'n' });
+      exchange();
+      for (const m of [m1, m2]) {
+        expect(m.get('x')!.declaredName).toBe('x2');
+        expect(m.get('z')!.attrs.note).toBe('n');
+        expect([...m.rootIds()].sort()).toEqual(['R', 'x', 'z']);
+      }
     });
 
     it('two peers who each move one of two elements into the other at once: every peer, a page that joins and a bound model hold the lowest id at the top level', () => {
