@@ -1001,9 +1001,11 @@ one would make two features of the usage one, or give two the same name:
 - a general type's `attribute X :>> M, N` would take both the `:>> M` and the
   `:>> N` of `part s : Q2`, and the model then gives X, one feature, two values.
   A usage that redefines either (`:>> M = 1.0` beside `:>> N = 2.0`, or `:>> M =
-  4.0` alone) reads neither name: every row over `s.M` or `s.N` is *could not be
-  evaluated*, in a sentence that names X, on every surface. A usage that redefines
-  neither (`part t : Q2;`) reads X's value as written;
+  4.0` alone), or both in one feature (`:>> M, N = 6.0`), reads neither name:
+  every row over `s.M` or `s.N` is *could not be evaluated*, in a sentence that
+  names X, on every surface. A usage that redefines X itself (`:>> X = 5.0`)
+  states one value for the one feature and reads every name of it, and one that
+  redefines neither (`part t : Q2;`) reads X's value as written;
 - in `part v : R { attribute :>> M = 5.0; attribute M2 = 9.0; }` the first would
   be named M2 beside the second;
 - in `part v : R, S`, where S writes `attribute M2 redefines K`, a `:>> M` and a
@@ -1364,7 +1366,11 @@ other side: where an instance reads p2 otherwise (w's `part :>> p2 { attribute
 :>> load = 50.0; }`), w's p2 is its only p1 when both are `[1]`, but this tool
 reads p1 at W's own values, so each row read through p1 — W's own `constraint c
 { p1.load <= 5.0 }`, the package's `w.p1.load` — is *could not be evaluated*,
-in a sentence that names p1, p2 and w. It does not read the multiplicity, so a
+in a sentence that names p1, p2 and w. So does a p1 further up the chain (p3 :>
+p2 :> p1, w's `part :>> p3 { ... }`), and a usage an instance declares that
+subsets p2 (`part q :> p2 { attribute :>> load = 50.0; }` in w). The rows read
+through p2 itself abstain with them, though p2 is the usage that holds the value:
+this tool does not tell the two readings apart. It does not read the multiplicity, so a
 `p1` other members fill abstains too. Where no instance reads p1
 otherwise, or p1 is a feature of a package, it reads as written. A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
@@ -1402,10 +1408,9 @@ through a binding joined to such a one, end to end or through a feature an end
 redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33
 usages down that gives that load its value: Y's `default` gives way, and the
 check reads no value for Y), nor through one whose end has no instance in a
-context it holds in (R's nested Q used outside any R); which binding joins which
-does not turn on the order the text is written in (a binding read through an instance
+context it holds in (R's nested Q used outside any R); a binding read through an instance
 of a definition that owns a capped end is capped, whichever of the two is written
-first). A binding joins such a
+first. A binding joins such a
 one through a feature an end redefines only where that feature is itself another
 binding's end: U's `bind a.load = M` on its own `part a : T0` is not joined to
 T1's capped binding by the T0 `load` both redefine. A value held so, which no

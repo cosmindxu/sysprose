@@ -2620,7 +2620,8 @@ export class DefiningEquations {
    * N: {@link resolveRedefinedFeature}), so every surface read two features, each with its own value (`s.M == 1.0`
    * and `s.N == 2.0` held on all four, and `s.N == 1.0` was refuted on a feature that is also M). One walk cannot give
    * the line both readings, so the context reads neither name ({@link NameClash}'s `merged`): weaker, never false.
-   * A single redefinition of one of them (`:>> M = 4.0`) is the same line, and gives way the same.
+   * A single redefinition of one of them (`:>> M = 4.0`) is the same line, and gives way the same; one of the line
+   * itself (`:>> X = 5.0`) states one value for the one feature, and reads every name of it.
    */
   private mergedLines(contextId: ElementId): Map<string, NameClash> {
     const out = new Map<string, NameClash>();
@@ -2650,7 +2651,7 @@ export class DefiningEquations {
     if (lines.length === 0) return out;
     const byName = this.byName(contextId);
     for (const { line, targets } of lines) {
-      const ids = new Set([line.id, ...targets.map((t) => t.id)]);
+      const ids = new Set(targets.map((t) => t.id));
       const another = holders.some((h) =>
         this.model.children(h.id).some(
           (f) =>
@@ -5243,6 +5244,19 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
       taint.set(g.id, g);
       why.set(g.id, answer);
     }
+    // ... and the usages IT subsets in turn (p3 :> p2 :> p1), each the same answer: p1 is p3's too.
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const r of subsettings) {
+        const f = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+        const g = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+        const answer = f ? why.get(f.id) : undefined;
+        if (!g || !answer || !answer.subsetter || taint.has(g.id)) continue;
+        taint.set(g.id, g);
+        why.set(g.id, answer);
+        grew = true;
+      }
+    }
     if (taint.size > 0) spreadOtherwise(model, taint, [...model.ofKind('Redefinition'), ...subsettings]);
   }
   return { rev: model.rev, taint, why };
@@ -5443,7 +5457,7 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
     const by = effectiveNameOf(model, s.subsetter) ?? s.subsetter.id;
     return (
       `\`${name}\` in ${where} is subsetted by \`${by}\`, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: this tool ` +
-      `reads \`${name}\` at ${where}'s own values, never as the \`${by}\` that instance holds${so('no relation that reads through it')}`
+      `reads \`${name}\` at ${where}'s own values, never as the \`${by}\` that instance holds${so(`no relation that reads through \`${name}\` or \`${by}\``)}`
     );
   }
   if (s.kind === 'subsetting') {
@@ -5454,7 +5468,10 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   const tail = `is read at ${where}'s own values only, never in each instance of it, and ${who} reads`;
   // A satisfier or a subject read through such a subsetting usage says which ({@link subsettingTaint}); resolved in
   // a package, one instance, it is read otherwise through that usage alone.
-  const through = s.via ? `through \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\`, which subsets \`${s.via.path}\`: ${subsettingRead(model, s.via)}` : '';
+  const through = s.via?.subsetter
+    ? `through \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\`, which \`${effectiveNameOf(model, s.via.subsetter) ?? s.via.subsetter.id}\` subsets: ` +
+      `this tool reads \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\` at ${effectiveQualifiedName(model, s.via.scope.id)}'s own values, never as the \`${effectiveNameOf(model, s.via.subsetter) ?? s.via.subsetter.id}\` that ${contextSpelling(model, s.via.instance) ?? 'that instance'} holds`
+    : s.via ? `through \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\`, which subsets \`${s.via.path}\`: ${subsettingRead(model, s.via)}` : '';
   const inPackage = s.via !== undefined && isPackage(s.scope);
   const via = through && !inPackage ? `, ${through}` : '';
   if (s.kind === 'reference') {
@@ -6125,10 +6142,11 @@ function spreadContradiction(
 ): ReadonlyMap<ElementId, ElementRecord> {
   // An equation of a set taints the names it reads beside a tainted one only where it ties two features, a bare name
   // on each side: `K == L` beside `L == 50.0` and `L == 60.0` is a member of the set and still makes K the L it reads,
-  // whichever of the two equations comes first. `L == a * 2.0` defines L and ties a to nothing.
+  // whichever of the two equations comes first (parentheses round a name change nothing: `(K) == (L)`). `L == a * 2.0`
+  // defines L and ties a to nothing.
   const bareTie = /^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*==\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*$/;
   const sources = new Set(
-    index.sets.flatMap((s) => s.equations.filter((c) => !(typeof c.attrs.expression === 'string' && bareTie.test(c.attrs.expression))).map((c) => c.id)),
+    index.sets.flatMap((s) => s.equations.filter((c) => !(typeof c.attrs.expression === 'string' && bareTie.test(c.attrs.expression.replace(/[()]/g, ' ')))).map((c) => c.id)),
   );
   return spreadTaint(
     model,

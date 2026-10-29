@@ -6210,8 +6210,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // X, ONE feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref `?`. Reading the two as
     // two features decided every row (T, F, T on all four) and was false (fence-readings S2 fences it): a usage that
     // redefines a feature of such a line reads none of the line's names, on every surface, in its own sentence. The
-    // single redefinition (`mu-one`: `:>> M = 4.0`, where `s.N == 4.0` was refuted) is the same line and abstains too;
-    // a usage that redefines nothing of it (`t`) reads X's 3 as before.
+    // single redefinition of one of them (`mu-one`: `:>> M = 4.0`, where `s.N == 4.0` was refuted) is the same line and
+    // abstains too, one of the line X itself does not (`redef-target-merge-x`); a usage that redefines nothing of it
+    // (`t`) reads X's 3 as before.
     'redef-target-merge': probe(`package MU {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
         part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
@@ -6240,6 +6241,26 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'MU1::sN4': ['?/?/?/?', '?'],
       'MU1::tM3': ['T/T/T/T', 'T'],
       'MU1::tN3': ['T/T/T/T', 'T'],
+    }),
+    // A usage that redefines the line X itself (`:>> X = 5.0`) states ONE value for the one feature M and N are, and
+    // reads every name of it: s.M and s.N are 5 (`s.N == 1.0` is false), which stood at 5d9e806 and abstained under the
+    // first fence. A usage that redefines M and N in one feature (`u`) still abstains.
+    'redef-target-merge-x': probe(`package MX {
+        part def Q { attribute M default = 1.0; attribute N default = 1.0; }
+        part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
+        part s : Q2 { attribute :>> X = 5.0; }
+        part u : Q2 { attribute :>> M, N = 6.0; }
+        constraint sX { s.X == 5.0 }
+        constraint sM { s.M == 5.0 }
+        constraint sN { s.N == 1.0 }
+        constraint uM { u.M == 6.0 }
+        constraint uN { u.N == 6.0 }
+      }`, {
+      'MX::sM': ['T/T/T/T', 'T'],
+      'MX::sN': ['F/F/F/F', 'F'],
+      'MX::sX': ['T/T/T/T', 'T'],
+      'MX::uM': ['?/?/?/?', '?'],
+      'MX::uN': ['?/?/?/?', '?'],
     }),
     'redef-target-merge-rev': probe(`package MUR {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
@@ -12272,6 +12293,25 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Tie::kk': ['?/?/?/X', null],
       'Tie::kl': ['?/?/?/X', null],
     }),
+    // Parentheses round the two names change nothing: `(K) == (L)` is the same tie, fenced in either order.
+    ...exchanged('tie-bare-paren', (x, y) => `package TieP {
+        part def P {
+          attribute L : ScalarValues::Real;
+          attribute K : ScalarValues::Real;
+          assert constraint c1 { L == ${x} } assert constraint c2 { L == ${y} }
+          assert constraint xk { (K) == (L) }
+        }
+        part p : P;
+        constraint kk { p.K >= 55.0 }
+        constraint kl { p.K <= 55.0 }
+      }`, {
+      'TieP::P::L in TieP::P#equations': ['F/-/F/-', 'F'],
+      'TieP::P::c1': ['?/-/?/-', null],
+      'TieP::P::c2': ['?/-/?/-', null],
+      'TieP::P::xk': ['?/-/?/-', null],
+      'TieP::kk': ['?/?/?/X', null],
+      'TieP::kl': ['?/?/?/X', null],
+    }),
     // Two asserted equations on the two ends of a binding that reaches one end through a part (`bind p.L = M`, `L ==
     // 50.0` in P, `M == 60.0` in Q) are one feature's two values: q.p.L == 50.0 read T and q.M == 50.0 F, the same
     // quantity (the check and the numeric surface). The pair is read where the binding meets them, so every P's L is
@@ -12488,6 +12528,43 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'RVQ::k1': ['?/?/?/?', 'F'],
       'RVQ::k1R': ['?/?/?/?', 'T'],
+    }),
+    // The same one hop further out, which the first fence left: p3 subsets p2 subsets p1 (all [1]), an instance gives p3 a
+    // value, and p1 was still read at W's own values (T/T/T/T where `w.p1.load` is 50); likewise a subsetter an instance
+    // declares of the MIDDLE usage (`part q :> p2`). The subsetted usages up the chain abstain with the one nearest.
+    ...reversed('sub-rv1-chain', `package R5 {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+        part def W3 :> W { part p3 :> p2 [1]; }
+        part w : W3 { part :>> p3 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.p2.load <= 5.0 }
+      }`, `package R5 {
+        constraint k2 { w.p2.load <= 5.0 }
+        constraint k1 { w.p1.load <= 5.0 }
+        part w : W3 { part :>> p3 { attribute :>> load = 50.0; } }
+        part def W3 :> W { part p3 :> p2 [1]; }
+        part def W { part p2 :> p1 [1]; part p1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'R5::k1': ['?/?/?/?', 'F'],
+      'R5::k2': ['?/?/?/?', 'F'],
+    }),
+    ...reversed('sub-rv1-instance-chain', `package R4 {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+        part w : W { part q :> p2 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.p2.load <= 5.0 }
+      }`, `package R4 {
+        constraint k2 { w.p2.load <= 5.0 }
+        constraint k1 { w.p1.load <= 5.0 }
+        part w : W { part q :> p2 { attribute :>> load = 50.0; } }
+        part def W { part p2 :> p1 [1]; part p1 : T0[1]; }
+        part def T0 { attribute load default = 1.0; }
+      }`, {
+      'R4::k1': ['?/?/?/?', 'F'],
+      'R4::k2': ['?/?/?/?', 'F'],
     }),
     'sub-rv1-plain': probe(`package RV1P {
         part def T0 { attribute load default = 1.0; }
