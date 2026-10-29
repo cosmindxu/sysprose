@@ -11558,8 +11558,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'CU::t3': ['?/?/?/?', '?'],
       },
     ),
-    // A one-to-one side (`6.0 / (x + 1.0)`, `2.0 ^ y`) set equal to a side that varies with the same feature can cross it twice, so the
-    // equation is read as a whole and has more than one root (numeric-curved, final review). CV11: `x == 6.0 / (x + 1.0)` is met at 2
+    // A one-to-one side (`6.0 / (x + 1.0)`, `2.0 ^ y`) set equal to a side that varies with the same feature can cross it more than once, so
+    // the equation is read as a whole and as if it had more than one root (numeric-curved, final review). Run these rows alone with
+    // `npx vitest run test/integration/verification.differential.test.ts -t 'I3: |I14: '` (the rows are probe names, not test names). CV11: `x == 6.0 / (x + 1.0)` is met at 2
     // and −3: `k { x <= 0.0 }` read F at 2 where −3 meets it, `m { x >= 0.0 }` read T where −3 breaks it; the lone equation is imposed.
     // CV12 and CV13: `c1 { x == -3.0 }` beside it read t above it and ? below it. CV14: `6.0 / y == 5.0 - y` (2 and 3) beside the
     // inequalities that split the roots, CV15 the same beside `y == 3.0`, CV16 `2.0 ^ y == y + 1.0` (0 and 1) beside `y == 1.0`, CV17
@@ -11637,6 +11638,31 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'CV17::a': ['?/-/T/-', null],
         'CV17::k': ['?/?/?/?', '?'],
         'CV17::k2': ['?/?/?/?', '?'],
+      },
+    ),
+    // A lone one-to-one equation whose root lies across its pole from where the root-find starts (numeric-curved, re-review). CW1:
+    // `6.0 - 3.0 / (x + 1.0) == 3.0` (root 0, pole −1) beside `x == 0.0`: Newton from 1 steps beside the pole and the brackets around 0
+    // have the sign of the asymptote at both ends, so the equation read ? written first and t written after the pin. Both read t, in
+    // either order; CW2 the same with `k { x <= -0.5 }` between them, F at the root.
+    ...reversed(
+      'order-curved-lonepole',
+      `package CW1 { attribute x : ScalarValues::Real; constraint e0 { 6.0 - 3.0 / (x + 1.0) == 3.0 } constraint q1 { x == 0.0 } }`,
+      `package CW1 { constraint q1 { x == 0.0 } constraint e0 { 6.0 - 3.0 / (x + 1.0) == 3.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'CW1::e0': ['?/?/t/?', '?'],
+        'CW1::q1': ['?/?/t/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-curved-lonepolek',
+      `package CW2 { attribute x : ScalarValues::Real;
+        constraint e0 { 6.0 - 3.0 / (x + 1.0) == 3.0 } constraint k { x <= -0.5 } constraint q1 { x == 0.0 } }`,
+      `package CW2 { constraint q1 { x == 0.0 } constraint k { x <= -0.5 } constraint e0 { 6.0 - 3.0 / (x + 1.0) == 3.0 }
+        attribute x : ScalarValues::Real; }`,
+      {
+        'CW2::e0': ['?/?/t/?', '?'],
+        'CW2::k': ['?/?/F/?', null],
+        'CW2::q1': ['?/?/t/?', '?'],
       },
     ),
   };
@@ -12500,7 +12526,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       (k) => [`order-${k}`, `order-${k}-rev`] as const,
     ),
     // numeric-curved S1: a curved equation, plain or the model's own, beside another plain constraint or an inequality.
-    ...['sys', 'prod', 'assert', 'stated', 'asserted', 'chain', 'mod', 'ineq', 'free', 'sq', 'loop', 'loopin', 'cyc', 'stloop', 'dep', 'plaindep', 'quot', 'qfix', 'qlink', 'density', 'qclash', 'pole-a', 'pole-b', 'pole-c', 'unit', 'self', 'selfpair', 'selfthree', 'cross', 'crosspair', 'crossexp', 'crossassert'].map(
+    ...['sys', 'prod', 'assert', 'stated', 'asserted', 'chain', 'mod', 'ineq', 'free', 'sq', 'loop', 'loopin', 'cyc', 'stloop', 'dep', 'plaindep', 'quot', 'qfix', 'qlink', 'density', 'qclash', 'pole-a', 'pole-b', 'pole-c', 'unit', 'self', 'selfpair', 'selfthree', 'cross', 'crosspair', 'crossexp', 'crossassert', 'lonepole', 'lonepolek'].map(
       (k) => [`order-curved-${k}`, `order-curved-${k}-rev`] as const,
     ),
   ] as const;

@@ -741,8 +741,10 @@ Two names worth separating:
   taken, and every relation over that value is *unjudged* (*… only plain
   constraints that disagree (t50 and t60): which of them holds would turn on the
   one the solve took first as its design equation, so none does …*); Solve
-  lists no value for it. So does an equation of more than one root beside a
-  plain constraint: a curved one (`x * x == 4.0`, `x ^ 2.0 == 4.0`, `x % 3.0 == 2.0`), a
+  lists no value for it. So does an equation that may have more than one root beside a
+  plain constraint: a curved one (`x * x == 4.0`, `x ^ 2.0 == 4.0`, `x % 3.0 == 2.0`; the
+  shape is an over-approximation, so an odd power such as `x ^ 3.0 == 8.0`, which has one real root,
+  and a double root such as `x * x == 0.0` are read the same), a
   stated value (`attribute s = x * x`) or an assert (`s == x * x`) as much as a
   plain one, or a product of two unknowns that the other equations still link
   (`x * y == 4.0` beside `x == y`). `a { x * x == 4.0 }` beside `b { x == -2.0 }`,
@@ -752,24 +754,26 @@ Two names worth separating:
   breaks c2 and (−2, −1) meets all three: the root the solve takes, and so
   whether the others hold, would turn on which equation it took first or on the
   root itself, so none is read, whether or not a plain constraint was left
-  unused (*… only plain constraints, one of them with more than one root (a and
+  unused (*… only plain constraints, one of them that may have more than one root (a and
   b) …*, or, with the model's own equation among them, *… and the equations over
-  it leave more than one root (`s = x * x`) …*). The features the equations link
+  it may leave more than one root (`s = x * x`) …*). The features the equations link
   are one, those the solve left free among them. What the other equations fix
   one at a time has the one root and is read as before: `z == x * x` over `x ==
   3.0`, and `mass == density * volume` over the two it multiplies; and `z == x *
   y` beside `z == 9.0` leaves x and y free along the curve, not two roots. So does
-  an equation one to one in the feature it fixes, with the feature on one side of
+  an equation one to one in the feature it fixes, which has at most one root, with the feature on one side of
   the equation only, a quotient or an exponential
   (`v == d / t` beside `d == 100.0` and `v == 20.0` is t = 5; `x / y == 3.0`
   beside `y == 2.0` and `x == 6.0` agrees with both, and all three are *imposed
-  by the solve* in any order, as is the density form `m / v == d`): a quotient
+  by the solve* in any order, as is the density form `m / v == d`; and `6.0 - 3.0 / (x + 1.0) == 3.0`,
+  root 0 beside the pole −1, is imposed at 0 whether `x == 0.0` is written before it or after it): a quotient
   by a value another equation fixes has the one root. One that disagrees with the
   values the others fix (`x == 7.0` beside them) is withheld with them. Such a
   quotient or exponential set equal to a side that varies with the same feature
-  can cross it twice, so the equation is read as a whole and has more than one
+  can cross it more than once, so the equation is read as a whole and as if it had more than one
   root, like `x * x == 4.0`: `x == 6.0 / (x + 1.0)` is met at 2 and −3, `6.0 / y ==
-  5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1. Beside `c1 { x == -3.0 }`
+  5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1 (and `0.5 ^ x == x`, which is
+  met once, is read the same). Beside `c1 { x == -3.0 }`
   it reads no value, and an inequality over a lone one (`k { x <= 0.0 }`) is
   unjudged, in either order of the text; the size of the component does not change that (a chain of seventy equations beside
   `z == x0 * x0` over `x0 == 3.0` reads as a short one). A loop
@@ -779,12 +783,12 @@ Two names worth separating:
   solve found, so a plain constraint over them (`e { x == 5.0 }`, `k { x <= 2.5 }`),
   or over a feature another equation or a plain constraint takes from them
   (`z - x == 1.0`, `w == x + 1.0`), is *unjudged* (*… and the equations over it
-  leave more than one root (a) …*); a loop with the one root (`x == 2.0 * y +
+  may leave more than one root (a) …*); a loop with the one root (`x == 2.0 * y +
   1.0` beside `y == 3.0 - x`) and a chain of definitions off a stated value
   (`z == x * x` over `x == 3.0`) are read as before. A lone curved
   plain constraint is still *imposed*, at the root the solver found; an
   inequality, or any relation the solve gathers no equation from, over its value
-  is *unjudged* (*… and the equations over it leave more than one root (a) …*),
+  is *unjudged* (*… and the equations over it may leave more than one root (a) …*),
   since the other root may break it; `solveFeasible` searches such a root as a
   freedom, so `x * x == 4.0` beside `x <= 0.0` is undecided, not infeasible. Where
   its first search finds no witness it searches again from where the plain
@@ -798,7 +802,7 @@ Two names worth separating:
   converged when `c2` is written first, so all three read *unknown*, where the
   other order imposes `c0` and `c2`; and two asserted equations that share one of
   their roots (`a0 { x == 6.0 / (x + 1.0) }` beside `a1 { x == -3.0 }`, in a
-  definition) read a constraint over their value *unknown* in one order and decided
+  usage) read a constraint over their value *unknown* in one order and decided
   in the other. A feature with no value that an `assert`
   constrains in a form the solve does not read — an inequality, a conjunction
   (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse

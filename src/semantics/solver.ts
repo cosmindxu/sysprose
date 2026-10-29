@@ -2196,7 +2196,7 @@ function heldByUnreadAsserts(
  * What a node varies as in one unknown: nothing (`const`), a constant multiple of it plus a constant (`affine`), a
  * one-to-one function of it that is not (`mono`: `2.0 / (x - 1.0)`, `2.0 ^ y`, one root at most when it is set equal to
  * something that does not vary with it: {@link equationShape} reads the two sides of an equation together), or neither
- * (`curved`: `x * x`, `1.0 / x + x`, an `if` over it — more than one root). A constant over an affine function of it
+ * (`curved`: `x * x`, `1.0 / x + x`, an `if` over it — it may have more than one root: an over-approximation, `x ^ 3.0` has one real root). A constant over an affine function of it
  * (`2.0 / x`, a quotient by a value the other equations fix) is `mono`, wherever the equation is read.
  */
 type Shape = 'const' | 'affine' | 'mono' | 'curved';
@@ -2292,10 +2292,25 @@ interface RootReader {
 }
 
 function rootReader(eqs: readonly Equation[], isOpen: (v: ElementId) => boolean): RootReader {
-  const openOf = (eq: Equation): ElementId[] => eq.vars.filter(isOpen);
-  // The equations curved in one unknown of theirs, found once. One to one in it (`v == d / t`, `x / y == 3.0` over a `y` another
+  // What each equation reads that is open, and whether it is curved in one of them, are found once: the closures below ask both of
+  // every equation of the component once per curved equation they are asked about.
+  const opens = new Map<Equation, ElementId[]>();
+  const openOf = (eq: Equation): ElementId[] => {
+    let open = opens.get(eq);
+    if (open === undefined) opens.set(eq, (open = eq.vars.filter(isOpen)));
+    return open;
+  };
+  // The equations curved in one unknown of theirs. One to one in it (`v == d / t`, `x / y == 3.0` over a `y` another
   // equation fixes, `x == 2.0 ^ y`) is not: it has the one root whatever it is set equal to.
-  const curvedIn = (eq: Equation, vars: readonly ElementId[]): boolean => isCurved(eq, vars);
+  const curvedAt = new Map<Equation, Map<ElementId, boolean>>();
+  const curvedIn = (eq: Equation, vars: readonly ElementId[]): boolean => {
+    if (vars.length !== 1) return isCurved(eq, vars);
+    let known = curvedAt.get(eq);
+    if (known === undefined) curvedAt.set(eq, (known = new Map()));
+    let c = known.get(vars[0]!);
+    if (c === undefined) known.set(vars[0]!, (c = isCurved(eq, vars)));
+    return c;
+  };
   const single = new Map<Equation, boolean>();
   let anyCurved = false;
   for (const eq of eqs) {
@@ -3524,6 +3539,10 @@ function solveScalar(
   const probeStep = (t: number): number =>
     1e-6 * (scaled ? Math.abs(t) || Math.abs(seed) || 1 : Math.abs(t) + 1);
 
+  // One to one in `u` (an equation read as ONE function, {@link equationShape}): it has the one root whenever it has one, so a root
+  // found anywhere is THE root, and the search below does not stop at the first thing that goes wrong on the way from the seed.
+  const mono = equationShape(eq, (id) => id === u) === 'mono';
+
   // Newton with finite-difference derivative.
   let t = seed;
   for (let i = 0; i < 60; i++) {
@@ -3537,41 +3556,87 @@ function solveScalar(
     if (Math.abs(deriv) < 1e-14) break;
     const next = t - f0 / deriv;
     if (!Number.isFinite(next)) break;
-    if (Math.abs(next - t) <= stepGate(t)) return next;
+    if (Math.abs(next - t) <= stepGate(t)) {
+      // A step that small is a root only if the residual is not moving away: `6.0 - 3.0 / (x + 1.0) == 3.0` from x = 1 steps
+      // beside the pole x = −1 (residual 1.5 -> 1.5e6) and the steps there are tiny, with the root at 0 not found.
+      const fn = mono ? f(next) : 0;
+      if (fn === undefined || (!accept(fn) && Math.abs(fn) >= Math.abs(f0))) break;
+      return next;
+    }
     t = next;
   }
 
   // Bisection over an expanding bracket around 0.
-  let a = -1;
-  let b = 1;
-  let fa = f(a);
-  let fb = f(b);
-  for (let k = 0; k < 60 && !(fa !== undefined && fb !== undefined && fa * fb < 0); k++) {
-    a *= 2;
-    b *= 2;
-    fa = f(a);
-    fb = f(b);
-  }
-  if (fa === undefined || fb === undefined || fa * fb >= 0) return undefined;
-  // A sign change closed on may be a POLE (`24.0 / (x - 4.0) == 3.0` over [-8, 8]), not a root: the residual there is far larger than
-  // at the ends of the bracket it started from, where at a root it has fallen to the floor. Returned, the pole was the value of `x`
-  // beside `y == 4.0` — and written after `x == 3.0 * y` that equation gave 12 first: a verdict that turned on the order of the text.
-  const ends = Math.max(Math.abs(fa), Math.abs(fb));
-  for (let k = 0; k < 200; k++) {
-    const m = (a + b) / 2;
-    const fm = f(m);
-    if (fm === undefined) return undefined;
-    if (accept(fm)) return m;
-    if ((b - a) / 2 <= (scaled ? stepGate(m) : tol)) return Math.abs(fm) <= ends ? m : undefined;
-    if (fa * fm < 0) {
-      b = m;
-      fb = fm;
-    } else {
-      a = m;
-      fa = fm;
+  const bracketed = (): number | undefined => {
+    let a = -1;
+    let b = 1;
+    let fa = f(a);
+    let fb = f(b);
+    for (let k = 0; k < 60 && !(fa !== undefined && fb !== undefined && fa * fb < 0); k++) {
+      a *= 2;
+      b *= 2;
+      fa = f(a);
+      fb = f(b);
     }
+    if (fa === undefined || fb === undefined || fa * fb >= 0) return undefined;
+    // A sign change closed on may be a POLE (`24.0 / (x - 4.0) == 3.0` over [-8, 8]), not a root: the residual there is far larger than
+    // at the ends of the bracket it started from, where at a root it has fallen to the floor. Returned, the pole was the value of `x`
+    // beside `y == 4.0` — and written after `x == 3.0 * y` that equation gave 12 first: a verdict that turned on the order of the text.
+    return bisect(a, b, fa, Math.max(Math.abs(fa), Math.abs(fb)));
+  };
+  const bisect = (a: number, b: number, fa: number, ends: number): number | undefined => {
+    for (let k = 0; k < 200; k++) {
+      const m = (a + b) / 2;
+      const fm = f(m);
+      if (fm === undefined) return undefined;
+      if (accept(fm)) return m;
+      if ((b - a) / 2 <= (scaled ? stepGate(m) : tol)) return Math.abs(fm) <= ends ? m : undefined;
+      if (fa * fm < 0) b = m;
+      else {
+        a = m;
+        fa = fm;
+      }
+    }
+    return (a + b) / 2;
+  };
+  const found = bracketed();
+  if (found !== undefined || !mono) return found;
+
+  // One to one, and Newton and the bracket around 0 both missed it: a root across a POLE from the seed (`6.0 - 3.0 / (x + 1.0) ==
+  // 3.0`, root 0, pole −1) is on neither side the seed reaches, and the ends of every bracket around 0 have the sign of the
+  // asymptote. Whether the model pins x first or not, it is the same root: the sign changes between samples at 0 and ±2^k are
+  // each closed on, a pole among them rejected as above, and a sample the equation has no value at (the pole itself) splits the
+  // samples into two runs, each side of it looked at apart. Only a sign change is a root: a sample whose residual is small
+  // because the function tends to its asymptote there (`2.0 ^ x == 0.0` at −2^60) is none. No sign change, no root found: an
+  // abstention, never a value.
+  const xs = [0];
+  for (let k = -40; k <= 60; k++) xs.push(2 ** k, -(2 ** k));
+  xs.sort((p, q) => p - q);
+  let prev: [number, number] | undefined;
+  const closeOn = (a: number, fa: number, b: number, fb: number): number | undefined =>
+    fa * fb < 0 ? bisect(a, b, fa, Math.min(Math.abs(fa), Math.abs(fb))) : undefined;
+  const side = (x: number): number => 1e-6 * (Math.abs(x) + 1);
+  for (const x of xs) {
+    const v = f(x);
+    if (v === undefined) {
+      const lo = f(x - side(x));
+      const root = prev !== undefined && lo !== undefined ? closeOn(prev[0], prev[1], x - side(x), lo) : undefined;
+      if (root !== undefined) return root;
+      const hi = f(x + side(x));
+      prev = hi === undefined ? undefined : [x + side(x), hi];
+      continue;
+    }
+    // A residual of exactly 0 is a root where it changes sign (the root at the sample), not where it is 0 on both sides.
+    if (v === 0) {
+      const lo = f(x - side(x));
+      const hi = f(x + side(x));
+      if (lo !== undefined && hi !== undefined && lo * hi < 0) return x;
+    }
+    const root = prev !== undefined ? closeOn(prev[0], prev[1], x, v) : undefined;
+    if (root !== undefined) return root;
+    prev = [x, v];
   }
-  return (a + b) / 2;
+  return undefined;
 }
 
 /**
@@ -5928,7 +5993,7 @@ function heldSentence(model: Model, ids: readonly ElementId[], asserts: readonly
 function contestedSentence(model: Model, ids: readonly ElementId[], checks: readonly ElementId[], rival: boolean): string {
   const list = relationNameList(model, checks, 'constraint');
   return rival
-    ? `no value the model states fixes ${nameList(model, ids)}, only plain constraints, one of them with more than one root ` +
+    ? `no value the model states fixes ${nameList(model, ids)}, only plain constraints, one of them that may have more than one root ` +
         `(${list}): which root the solve took, and so whether the others hold, would turn on which constraint it took first as ` +
         'its design equation, so none does, and this relation is not judged'
     : `no value the model states fixes ${nameList(model, ids)}, only plain constraints that disagree ` +
@@ -5944,7 +6009,7 @@ function rootsSentence(model: Model, ids: readonly ElementId[], roots: readonly 
   const list = [...new Set(roots)].sort();
   const names = list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
   return (
-    `no value the model states fixes ${nameList(model, ids)}, and the equations over ${ids.length === 1 ? 'it' : 'them'} leave more than ` +
+    `no value the model states fixes ${nameList(model, ids)}, and the equations over ${ids.length === 1 ? 'it' : 'them'} may leave more than ` +
     `one root (${names}): which root the solve took is no value the model states, and whether this relation holds turns on it, ` +
     'so none is read, and this relation is not judged'
   );
