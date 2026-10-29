@@ -1057,21 +1057,17 @@ merge. The branch `behaviour-sound` (merged by `e0d8040`) closed the completion 
 `state def`, the method text and the completion livelock (C1, H2, C3, H1, M3, M1, U1); the entries
 tagged `[O1 …]` are what its steps and reviews left open.
 
-- [ ] **Walk a step written over inherited states.** Since `e0d8040` a control edge written outside
-      a machine's region that touches one of its states refuses the machine (`machine-boundary`,
-      `docs/06` §8.6). A specialisation that adds a step over inherited states (`package W2 { state
-      def Base { state a; state b; state c; transition ab first a accept go then b; } state def
-      Derived :> Base { transition bc first b accept more then c; } }`), or a typed usage that does,
-      therefore refuses both `Base` and `Derived`, where `5943654` walked `Base` alone. Fail-closed
-      by design. Fix: a reading that walks the two together. [O1 S3]
-- [ ] **Compare the stack in the witness replay, not only the leaf (optional).** `replayWitness`
-      (`src/semantics/mc/patterns.ts`) compares each step's resting leaf. The interpreter does not
-      expose its stack: `activeStates` is the final leaves, and `visited` records what a step
-      enters, never what it exits, so a stack rebuilt from them cannot catch a state the walk keeps
-      and the interpreter left. Fix: `runHierRegion` records each fire's active stack (an optional
-      `StateFire.stack`, which moves `executionReport`'s payload), and the replay compares it with
-      the trace's `stack`. The differential CASES' three flat-path machines catch such a split
-      today. [O8 S1, review; behaviour-rest S2]
+- [ ] **Walk a step written over inherited states.** A control edge written outside a machine's
+      region that touches one of its states refuses both machines (`machine-boundary`, `docs/06`
+      §8.6, §8.14): `state def Derived :> Base { transition bc first b accept more then c; }` and
+      `exhibit state m : Modes { transition ... }` refuse `Base`/`Modes` and the specialisation.
+      Kept on purpose: the interpreter reads a machine's own region only, so a run of `Derived` has
+      no state and a run of `Base` never takes `bc`, and a joint walk would claim runs no simulator
+      takes. Done when `regionDescendants` and `regionTransitions` of a specialisation or typed
+      usage list the inherited states and transitions for the walk AND the interpreter together
+      (ids, `hierarchyPath`, atoms, the edge census, what a redefined state or transition means, the
+      properties a base carries, the names a report prints), with the witness replay green over
+      them. [behaviour-small S1]
 - [ ] **Decide a count past the budget where a trigger-less dwell follows (optional).** Since
       `behaviour-rest` S1 a search on a machine that names no trigger ends each run where the chase
       budget stops it (`budgetEndsRun`, `src/semantics/mc/patterns.ts`; docs/06 §8.12). The
@@ -1088,29 +1084,21 @@ tagged `[O1 …]` are what its steps and reviews left open.
       cycles). The guide and the code say so; the printed bounds sentence does not. Rewording it
       (for example `maxDepth 200 events`) re-records every qualification string in every report and
       pin, so it is its own step, with the corpus diff named. [behaviour-rest S1]
-- [ ] **Name every region's refusal on a parallel machine (optional).** Since `behaviour-rest` S1 a
-      step into the machine's root or under an action stops only the region it came in on a
-      parallel machine (`attrs.parallel`, API only; `refusedStepSentence`, `SimRefusal.stopsRun`),
-      and `StateRunResult.refused` names the first region's refusal only, so a second region that
-      also stopped is not named. The walk refuses every parallel machine (`parallel-regions`), so
-      no verdict stands on it. Done when `refused` lists every region's refusal, or the parallel
-      interpreter interleaves its regions. [behaviour-rest S1]
-- [ ] **Name the holder in reach's refusal (optional, low).** `reach --element P::Lone::b` (a state
-      in a lone `state def`) and `reach --element P::Outer::Mach::Inner2::x` (a state of a
-      transition-less definition inside a machine) still print only "... holds no state machine";
-      `check-behaviour` names the lone definition or the machine since `behaviour-rest` S2 and its
-      review fixes (`behaviourNoMachine`, `report-lines.ts`). [behaviour-rest S2, review]
-- [ ] **A state def used as a state's type is not lone (optional).** `isLoneDefinition`
-      (`patterns.ts`) reads only ownership, so `state def Modes` typed by `state m2 : Modes` inside
-      machine `M` is offered as a lone carrier and its properties reported as not checked. It fails
-      closed (a refusal or a `not checked` row, exit 2). Decide whether a typed use places it in
-      `M`. [behaviour-rest S2, review probe]
-- [ ] **Take a step across a machine's boundary alike in the walk and the simulator.** The simulator
-      takes a step across a machine's boundary (`machine-boundary`, docs/06 §8.6) while the walk
-      refuses it, and a composite run on its own in `executionReport` takes a step out of itself
-      into its holding machine's root the old way. Both readings predate `behaviour-rest`; decide
-      whether the simulator refuses them as it now refuses the step into a root. Low.
-      [behaviour-rest S1, observation]
+- [ ] **Name every region's refusal on a parallel machine (optional).** `StateRunResult.refused`
+      names the first region's refusal only. Listing the others needs `refusedStepSentence`
+      reworded, because "the machine's other regions run on" is false once every region has refused;
+      it also needs `SimRefusal.stopsRun` (true only for a non-parallel machine today) to read all
+      the regions, so Play stops when every region has stopped. Done when `refused` lists every
+      region's refusal, with a sentence and `stopsRun` that read all the regions, or the parallel
+      interpreter interleaves its regions. No verdict stands on it, since the walk refuses every
+      parallel machine. [behaviour-rest S1; behaviour-small S2]
+- [ ] **Let the Simulate trace of a composite run on its own step out into its holding machine
+      (optional, low).** Since behaviour-small S1 the Simulate button's trace of a composite run on
+      its own stops at a step that leaves the composite for a state of the machine that holds it (it
+      used to enter that state on top of the composite); the explorer and the holding machine's own
+      run take the same step as an ordinary step (the `exits` row of the semantic profile does not
+      say it, `docs/06` §8.14 does). No corpus, example or v9 model has such a step. Decide whether
+      the Simulate trace should follow the holding machine there. [behaviour-small S1]
 - [ ] **Livelock-pass cost.** `reach` is about 20% slower than at `5943654` on a 9,641-configuration
       machine (about 240 to 290 ms) from the livelock pass (`docs/06` §8.8); measure paired on an
       idle machine and decide whether to accept it. [reporting-residuals S3]
