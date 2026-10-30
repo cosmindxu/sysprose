@@ -15350,7 +15350,8 @@ package L3 {
         expect(e.attrs.expression, `${name}: the body of a negated clause is no expression any reader takes`).toBeUndefined();
         expect(String(e.attrs.unparsedText), name).toMatch(/^(?:assert|require|assume) not\b/);
       }
-      expect([...(seen.get(name)?.keys() ?? [])].filter((row) => /::(?:c|r|a|«ConstraintUsage»)\b/.test(row)), `${name}: a row for a negated clause`).toEqual([]);
+      const refused = kept.map((e) => model!.qualifiedName(e.id));
+      expect([...(seen.get(name)?.keys() ?? [])].filter((row) => refused.some((q) => row === q || row.startsWith(`${q} in `))), `${name}: a row for a negated clause`).toEqual([]);
     }
   });
 

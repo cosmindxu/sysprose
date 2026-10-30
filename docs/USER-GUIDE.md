@@ -1035,12 +1035,13 @@ every real violation in the run into "cannot tell".
 
 **A negated assert is refused.** The published grammar's `assert not constraint c { load > 10.0 }`
 states that the body does *not* hold. This tool reads no negation of a clause, and every other reading
-is wrong: as the plain assert it states the opposite (`c` checked as a fact, T while the body holds, so
+is wrong: as the plain assert it states the opposite (`c` checked as a fact, true while the body holds, so
 a model that contradicts itself passes; its body an axiom), and dropped from a proof it restricts it
 would let a refutation stand that the negation rules out. So the clause is refused with a finding of
 its own, `mapper/negated-assert-unread` (an error, on the clause; `require not` and `assume not`, which
 are no published form, are refused the same way). The load degrades like any load with an error: the
-commands exit 2 (*did not load cleanly*), the app's checks stand down (`checks/degraded`), no surface
+reporting commands exit 1 with the degraded banner, `verify`, `consistency`, `bounds`, `refine` and
+`fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no surface
 files a row for the clause, and the save writes it back as it was read. State the negation in the body
 instead, `assert constraint c { not (load > 10.0) }`, an ordinary assert that this tool reads.
 
