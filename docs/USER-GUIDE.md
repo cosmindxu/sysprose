@@ -488,9 +488,9 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
 (the grouping); `src/ui/store.ts:326-339` (`diagramRootId`, the diagram
 scope), `1565-1739` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2795-2812` (`pinNodePositions`: the move itself), `2390-2449`
+saved project keeps them), `2797-2814` (`pinNodePositions`: the move itself), `2390-2449`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4540-4582` (`openText`: a file opened as text starts afresh).
+`4542-4584` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -682,10 +682,10 @@ the steps of a recompute), `2077-2128` (`watchModel`, `beginEdit`, `settleEdit`:
 redefinitions settled in its one undo step, a removal followed), `2306-2491` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
 edit, each listing the model in the order its text gives it; `typedTextFirst`, `applyParsed`: a
 field's change over typed text), `911-968` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `3090-3121`
-(`createElement`: a new element), `3413-3481` (`reparent`, `reparentMany`: a
-move), `5250-5311` (`libraryNote`: the note that says so), `3923-3936`
-(`applyText`), `4383-4437` (`undo`, `redo`), `5339-5397`
+`sdkIntoLibrary`: nothing added to the standard library), `3092-3123`
+(`createElement`: a new element), `3415-3483` (`reparent`, `reparentMany`: a
+move), `5280-5341` (`libraryNote`: the note that says so), `3925-3938`
+(`applyText`), `4385-4439` (`undo`, `redo`), `5369-5427`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/core/model.ts` (`adoptSerialOrder`: the order the text gives),
 `src/collab/model-doc.ts` (`bindModelToDoc`: a room, and a peer that joins it);
@@ -1165,6 +1165,20 @@ owner one name, the declared one or the one an unnamed `:>> M` is known by (the 
 feature the page's `:>>` is on, and a `window.sysml` call that points a redefinition at a feature its owner
 does not inherit and a name does not reach can leave the page apart from the file. A rename made by
 `updateElement` in steps (the SDK, not the box) is an edit for every call.
+
+A statement whose end no name reaches is not saved. A binding, connection, flow, allocation,
+succession, transition, dependency or alias ends in a feature the saved text has to name: a
+redefinition with no name of its own is named by what it redefines (`bind w = p.load;`), but only
+where exactly one member of its owner answers to that name. Where two do (two unnamed
+redefinitions of `load`, or one beside a named `load`), or the unnamed redefinition is the head of
+the path (`p.a.load` through a `part :>> a`), or a redefined feature has no name, no text a terminal
+reads names the end. Save, Export ▾ SysML and the Text view then write a line comment in the
+statement's place (`// Not saved: a binding whose end no name reaches (T::p::(unnamed
+AttributeUsage)). Name the unnamed redefinition on its path to save it.`) instead of text a
+terminal refuses (`unexpected character`). The file reads cleanly to a model without that
+statement, so it is another model than the one on screen, and `reach` and `check-behaviour` say
+so (`the text a file of it holds reads as another model`); naming the redefinition saves the
+statement. Opened and saved again, the file no longer has the statement or the comment.
 
 Five more cases are not followed, and in each the page can read what the saved file does not:
 
@@ -4550,7 +4564,7 @@ makes many edits makes them in one `commit(fn)`, which lists the model once
 for the elements it adds; each `reparent` lists it at its own call, inside a
 `commit(fn)` too.
 
-**Source of truth:** `src/ui/store.ts:3606-3788` (`runValidation`,
+**Source of truth:** `src/ui/store.ts:3608-3790` (`runValidation`,
 `solveParametric`: the four buttons), `2299-2491` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
@@ -4865,9 +4879,20 @@ attached, the strip says *Saved in this
 browser with the text typed in the Text view applied over changes made in the
 app since you began typing: where the two differ, the text won. Undo brings
 those changes back.* once, and the save is made; the next save that holds the
-model takes the note down. A save to an attached Google Drive file, and the
-**Save and continue** of the question below, apply the text over the change and
-say nothing of it. An SDK edit or a peer's edit made since the typing is not a
+model takes the note down. A save to an attached Google Drive file (**Save**
+with the file unsaved, the strip's **Save to Drive**, **Save to Drive as…**)
+applies the text over the change too, and the Drive strip says *The text typed in
+the Text view was applied over changes made in the app since you began typing:
+where the two differ, the text won. Undo brings those changes back.* under the
+file's row, after the save's own notice (a notice that stands, a failed upload's
+error say, keeps its words and the sentence follows them). The **Save and
+continue** of the question below applies it over the change and, once the command
+has replaced the model, says *Saved with the text typed in the Text view applied
+over changes made in the app since you began typing: where the two differ, the
+text won. It takes two Undos to bring those changes back: New, then the applied
+text.* (the command's name stands for New, Open, Import, Switch branch, Merge or
+Join room): the first Undo brings back the model the command replaced, the second
+takes the apply back. An SDK edit or a peer's edit made since the typing is not a
 field's change: Save applies the text over it as before and says nothing.
 
 **Replacing a model with unsaved work asks first.** **New**, **Open ▾**,
@@ -4928,16 +4953,16 @@ carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
 `src/ui/store.ts:829-847` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3940-4037` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `4285-4354` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `5161-5171` (`mergeLoads`: a merge that loads),
-`5173-5311` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
-a save or an export, or kept back and said so), `src/ui/commands.ts:39-106`
+this browser), `3942-4039` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `4287-4356` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `5163-5173` (`mergeLoads`: a merge that loads),
+`5175-5341` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+a save or an export, or kept back and said so), `src/ui/commands.ts:40-113`
 (Save, and Export ▾ →
-SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
-`leaveBeforeUnload`: the tab's question), `1399-1466` (the question), `src/api/versioning.ts:481-494`,
+SysML), `src/ui/store.drive.ts:429-473` (what reads unsaved), `510-537` (`leaveUnsaved`,
+`leaveBeforeUnload`: the tab's question), `1426-1494` (the question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:181-191` (the page's listener),
-`src/ui/store.ts:5151-5159` (`askBeforeLeaving`),
+`src/ui/store.ts:5153-5161` (`askBeforeLeaving`),
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
 
@@ -5116,8 +5141,8 @@ first, as Save does — one Undo step — unless it has a syntax error or a
 collaboration room is connected ([§8](#8-what-is-kept-and-what-is-not)). It
 names the file after the project, so save it under the name the command uses.
 
-**Source of truth:** `src/ui/store.drive.ts:551-635` (every sentence the
-feature says), `1212-1226` (the content check), `src/persistence/drive/`,
+**Source of truth:** `src/ui/store.drive.ts:557-645` (every sentence the
+feature says), `1230-1244` (the content check), `src/persistence/drive/`,
 `src/ui/panels/DriveMenu.tsx`, `src/ui/panels/DriveStrip.tsx`,
 `test/e2e/drive.spec.ts` (against faked Google services).
 
@@ -5195,9 +5220,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:237`
 (`UNDO_LIMIT`: undo is bounded), `1781-1811` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5486-5609` (`mergeLibrary`, `loadStandardLibraryAsync`:
+derived surfaces lag), `5516-5639` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:200-312`.
+`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:207-319`.
 
 ---
 
@@ -5402,5 +5427,5 @@ over the field's change, which one Undo brings back.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:39-106`, `200-435`, `src/ui/App.tsx:143-148`,
+**Source of truth:** `src/ui/commands.ts:40-113`, `207-442`, `src/ui/App.tsx:143-148`,
 `src/ui/panels/RequirementsTable.tsx:575-651` (the reference picker).

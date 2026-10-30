@@ -88,8 +88,64 @@ export function serializeModel(model: Model): string {
     .join('\n\n');
 }
 
-/** Serialize a single element (and its body) at the given indentation depth. */
+/**
+ * Thrown inside {@link serializeElement} when an end of a statement is reached by no name: the path to it goes
+ * through an unnamed redefinition that {@link effectiveSegment} cannot spell (two members of its owner answer to
+ * its effective name, an unnamed redefinition beside a named member of that name, an unnamed head of the path, a
+ * redefined feature with no name). The placeholder `«AttributeUsage»` the path would carry is no text a terminal
+ * reads (`unexpected character`), and the end is lost on the next load whatever is written there.
+ */
+class NoNameReachesEnd extends Error {
+  constructor(
+    readonly elementId: ElementId,
+    /** The path as the serializer would have written it, the placeholder in it. */
+    readonly ref: string,
+  ) {
+    super(`no name reaches ${ref}`);
+    this.name = 'NoNameReachesEnd';
+  }
+}
+
+/** The word a statement of this metaclass goes by in the note Save writes in its place. */
+const STATEMENT_WORD: Record<string, string> = {
+  BindingConnectorAsUsage: 'binding',
+  ConnectionUsage: 'connection',
+  Connector: 'connection',
+  InterfaceUsage: 'interface',
+  Flow: 'flow',
+  FlowUsage: 'flow',
+  Succession: 'succession',
+  SuccessionFlow: 'succession',
+  Allocation: 'allocation',
+  Dependency: 'dependency',
+  Disjoining: 'disjoining',
+  Membership: 'alias',
+  TransitionUsage: 'transition',
+  TransitionFeature: 'transition',
+};
+
+/**
+ * Serialize a single element (and its body) at the given indentation depth.
+ *
+ * A statement with an end that no name reaches ({@link NoNameReachesEnd}) is not written: Save writes a line
+ * comment in its place that says so, so the file reopens without `unexpected character` and does not lose the
+ * end unsaid. The text then parses to a model without that statement, so it is another model than the one on
+ * screen, which the load health reads (`MeasuredText.rewritten`). Nothing else changes.
+ */
 export function serializeElement(model: Model, id: ElementId, indent = 0): string {
+  try {
+    return serializeElementOf(model, id, indent);
+  } catch (err) {
+    if (!(err instanceof NoNameReachesEnd) || err.elementId !== id) throw err;
+    const word = STATEMENT_WORD[model.require(id).eClass] ?? 'statement';
+    return (
+      `${INDENT.repeat(indent)}// Not saved: a ${word} whose end no name reaches (${err.ref.replace(/«([^»]*)»/g, '(unnamed $1)')}). ` +
+      'Name the unnamed redefinition on its path to save it.'
+    );
+  }
+}
+
+function serializeElementOf(model: Model, id: ElementId, indent: number): string {
   const el = model.require(id);
   const pad = INDENT.repeat(indent);
 
@@ -899,9 +955,22 @@ function bodyMembers(model: Model, el: ElementRecord): ElementRecord[] {
 
 /* ───────────────────────── endpoint statements ────────────────────────── */
 
-function endpoint(model: Model, el: ElementRecord, which: 'source' | 'target'): string {
+/** `ref` without its quoted names: a `«` left in it is the placeholder of an unnamed element on the path. */
+function reachedByNoName(ref: string): boolean {
+  return ref.replace(/'(?:\\.|[^'\\])*'/g, '').includes('«');
+}
+
+/**
+ * The text of one end of a statement. An end no name reaches ({@link NoNameReachesEnd}) refuses the statement,
+ * unless `skipped`: the caller skips a statement whose end is anonymous itself (`relationshipStmtLine`).
+ */
+function endpoint(model: Model, el: ElementRecord, which: 'source' | 'target', skipped = false): string {
   const id = (el[which] ?? [])[0];
-  if (id) return refTo(model, id, el.ownerId);
+  if (id) {
+    const ref = refTo(model, id, el.ownerId);
+    if (!skipped && reachedByNoName(ref)) throw new NoNameReachesEnd(el.id, ref);
+    return ref;
+  }
   const refAttr = which === 'source' ? el.attrs.sourceRef : el.attrs.targetRef;
   return typeof refAttr === 'string' ? refAttr : '';
 }
@@ -1127,8 +1196,8 @@ const RELATIONSHIP_STMT_FORM: Record<string, { kind: string; op: string }> = {
 function relationshipStmtLine(model: Model, el: ElementRecord, pad: string): string {
   const form = RELATIONSHIP_STMT_FORM[el.eClass];
   if (!form) return '';
-  const src = endpoint(model, el, 'source');
-  const tgt = endpoint(model, el, 'target');
+  const src = endpoint(model, el, 'source', true);
+  const tgt = endpoint(model, el, 'target', true);
   if (!src || !tgt || src.includes('«') || tgt.includes('«')) return '';
   return `${pad}${form.kind} ${src} ${form.op} ${tgt};`;
 }
@@ -1142,7 +1211,7 @@ function aliasLine(model: Model, el: ElementRecord, indent: number): string {
   const name = el.declaredName !== undefined ? `${quoteName(el.declaredName)} ` : '';
   const tid = (el.target ?? [])[0];
   const target = tid
-    ? refTo(model, tid, el.ownerId)
+    ? endpoint(model, el, 'target')
     : typeof el.attrs.aliasFor === 'string'
       ? el.attrs.aliasFor
       : '';

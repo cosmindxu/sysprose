@@ -4605,6 +4605,106 @@ describe('google drive', () => {
     });
   });
 
+  /**
+   * Typed text applied over a field's change (the field-change block below, `fieldOverTyped`): a save to
+   * Google Drive applies it as the browser save does, and said nothing. It says so in the strip, after
+   * the save's own notice, in every route that applies the text; the guard's Save, whose command replaces
+   * the model next, does not promise one Undo.
+   */
+  describe('a save that applies typed text over a field’s change says so', () => {
+    /** A part def made after the text was written is not in the typed text; the text typed over it, then a field's change: the text stays over the change. */
+    async function typedOverChange(): Promise<string> {
+      edit('Relay');
+      const relay = st().model.all().find((e) => e.declaredName === 'Relay')!.id;
+      st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Other;'));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      expect(st().textBuffer, 'the text stays over the change').toContain('part def Other;');
+      expect(st().textDirty).toBe(true);
+      return relay;
+    }
+    const note = (message: string) => ({ kind: 'info', message, retryable: false });
+    const named = (name: string) => st().model.all().some((e) => e.declaredName === name);
+
+    it('Save (Ctrl/Cmd+S) with the file unsaved: the file holds the text, the strip says it won, one Undo brings the change back', async () => {
+      const id = await attached();
+      await typedOverChange();
+      await runSave();
+      expect(gateway.textOf(id)).toContain('part def Other;');
+      expect(named('Kite')).toBe(false);
+      expect(drive().notice).toEqual(note(DRIVE_MESSAGES.typedTextAppliedOverChanges));
+      st().undo();
+      expect(named('Kite'), 'Undo brings the change back, as the note says').toBe(true);
+      // The next save that holds the model takes the note down.
+      await runSave();
+      expect(drive().notice).toBeNull();
+    });
+
+    it('Save to Drive from the strip or the menu (the upload applies the text) says so too', async () => {
+      const id = await attached();
+      await typedOverChange();
+      await st().driveSave();
+      expect(gateway.textOf(id)).toContain('part def Other;');
+      expect(drive().notice).toEqual(note(DRIVE_MESSAGES.typedTextAppliedOverChanges));
+    });
+
+    it('Save to Drive as… says so too', async () => {
+      await attached();
+      await typedOverChange();
+      await st().driveSaveAs('Copy');
+      expect(drive().notice).toEqual(note(DRIVE_MESSAGES.typedTextAppliedOverChanges));
+    });
+
+    it('keeps the save’s own notice, and adds the sentence to it', async () => {
+      await attached();
+      await typedOverChange();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, online: false } }));
+      await runSave();
+      expect(drive().notice?.kind).toBe('error');
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.offline);
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.typedTextAppliedOverChanges);
+    });
+
+    it('says nothing when the text was typed over no field’s change', async () => {
+      const id = await attached();
+      st().setTextBuffer(SWARM.replace('Drone', 'Glider'));
+      await runSave();
+      expect(gateway.textOf(id)).toContain('part def Glider;');
+      expect(drive().notice).toBeNull();
+    });
+
+    it('the guard’s Save with the file unsaved: the command goes on, and the strip says it takes two Undos', async () => {
+      const id = await attached();
+      await typedOverChange();
+      const run = vi.fn(() => st().newProject('NewModel'));
+      st().driveGuard('New', 'dirty', run);
+      await st().driveRunPending('save');
+      expect(gateway.textOf(id)).toContain('part def Other;');
+      expect(run).toHaveBeenCalledTimes(1);
+      // New let the file go and said so (`closed`); the sentence is added to that notice, not put over it.
+      expect(drive().notice).toEqual(
+        note(`${DRIVE_MESSAGES.closed('Swarm.sysml')} ${DRIVE_MESSAGES.typedTextSavedOverChangesThenReplaced('New')}`),
+      );
+      expect(DRIVE_MESSAGES.typedTextSavedOverChangesThenReplaced('New')).toContain('two Undos');
+      st().undo();
+      expect(named('Kite'), 'one Undo has not brought the change back').toBe(false);
+      st().undo();
+      expect(named('Kite'), 'the second has').toBe(true);
+    });
+
+    it('the guard’s Save that does not go through (the upload fails) says the plain sentence and the command waits', async () => {
+      await attached();
+      await typedOverChange();
+      const run = vi.fn();
+      st().driveGuard('New', 'dirty', run);
+      gateway.failNext(500, { op: 'get' });
+      await st().driveRunPending('save');
+      expect(run).not.toHaveBeenCalled();
+      expect(drive().notice?.kind).toBe('error');
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.typedTextAppliedOverChanges);
+    });
+  });
+
   describe('Drive’s copy changed: conflicts', () => {
     it('turns a save over changed content (content hash) into a conflict, and writes nothing', async () => {
       const id = await attached();
@@ -7892,7 +7992,7 @@ describe('a field’s change over text typed in the Text view and not applied', 
       expect(note(), 'an export that holds the model takes it down').toBeNull();
     });
 
-    it('the guard’s Save applies it over the change and says nothing: the command replaces the model next', async () => {
+    it('the guard’s Save applies it over the change and, once the command has replaced the model, says it takes two Undos', async () => {
       const relay = await relayModel();
       st().setTextBuffer(OTHER(st().textBuffer));
       st().updateElement(relay, { declaredName: 'Kite' });
@@ -7901,7 +8001,13 @@ describe('a field’s change over text typed in the Text view and not applied', 
       st().driveGuard('New', 'dirty', run);
       await st().driveRunPending('save');
       expect(run).toHaveBeenCalledTimes(1);
-      expect(note(), 'a note about the model the command replaced would mislead').toBeNull();
+      // One Undo would bring back the model the command replaced, not the change: "Undo brings those changes back" would mislead.
+      expect(note()).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextSavedOverChangesThenReplaced('New'), retryable: false });
+      st().undo();
+      expect(named('Kite'), 'the first Undo brings back the model').toBe(false);
+      expect(named('Other')).toBe(true);
+      st().undo();
+      expect(named('Kite'), 'the second brings the change back').toBe(true);
     });
 
     it('says nothing over an SDK edit or a faulted apply, nor once the typed text was applied or replaced', async () => {
@@ -8555,6 +8661,21 @@ describe('the load health never vouches for a text that does not load (review 20
       expect(row, v).not.toContain('exits 1');
       expect(degradedRow('check-behaviour', h).message, v).not.toContain('exits 2');
     }
+  });
+
+  it('reads the note Save writes for an end no name reaches as another model: the file lacks the statement', async () => {
+    // `bind w = p.load` over an unnamed redefinition beside a named member: no name reaches the end, so Save writes
+    // a note where `bind w = T::p::«AttributeUsage»;` (a text a terminal refuses) was written (fence-editor2 S2).
+    reset();
+    await apply(
+      'package T { part def P { attribute load = 1.0; } part p : P { attribute :>> load = 50.0; attribute load; } attribute w; bind w = p.load; }\n',
+    );
+    expect(st().textBuffer).toContain('// Not saved: a binding whose end no name reaches');
+    expect(st().textBuffer).not.toContain('«');
+    const h = loadHealth();
+    expect(h.saved).toMatchObject({ parseErrors: 0, basis: 'parse', otherModel: true });
+    expect(h.otherModel).toBe(true);
+    expect(runCheck(reachSpec, { model: st().model, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: h }).summary).toContain('the text a file of it holds reads as another model');
   });
 
   it('counts only a faulty line the lexer reads as code: one inside a comment, or after a line note, is left to the parse', async () => {

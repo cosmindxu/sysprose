@@ -2596,6 +2596,8 @@ export const useAppStore = create<AppState>((set, get) => {
       lastAppliedText,
       typedTextFaulted,
       applyTypedTextToSave,
+      typedOverChanges,
+      sayTypedTextOverChanges,
       sayWhatTheBrowserKept,
       savedTextNow,
       browserSaving: () => browserSaving,
@@ -5208,8 +5210,9 @@ export type TypedTextNote = TypedTextKept | 'over-changes';
  * text, so the apply drops it: `'over-changes'` is returned, for the save to
  * say so (the strip's info note, once per Save or Export). An SDK edit, a
  * peer's edit and a faulted apply leave the text standing too, but they are no
- * field's change, and say nothing. Nor does the guard's Save say it: the command it
- * guards replaces the model right after.
+ * field's change, and say nothing. The guard's Save says it after the command it
+ * guards has replaced the model (`driveRunPending`), in words that do not promise one Undo; a save
+ * to Google Drive says it in the Drive strip ({@link sayTypedTextOverChanges}).
  *
  * The save writes the project that is open. An apply renames the project
  * after the model's first package (`deriveProjectName`), and the save after
@@ -5235,6 +5238,33 @@ export function applyTypedTextToSave(opts: { replacing?: boolean } = {}): TypedT
   applyText();
   useAppStore.setState({ projectName });
   return over ? 'over-changes' : null;
+}
+
+/** Typed text stands over a field's change ({@link fieldOverTyped}): applying it, as a Drive save does, drops the change. */
+function typedOverChanges(): boolean {
+  return fieldOverTyped && typedTextUnapplied();
+}
+
+/**
+ * After a save to Google Drive applied typed text over a field's change — Save with the attached file
+ * unsaved ({@link applyTypedTextToSave} applied it first), the strip's Save to Drive, Save to Drive as…
+ * (`payloadNow`), the guard's Save — say so in the strip, over the save's own notice: the note goes up
+ * after the save, which clears the notice when it begins. A notice standing (the upload's error, the
+ * offline refusal, a command's own) is kept, and the sentence added to it. `replaced` is the guard's
+ * command, which has replaced the model since: one Undo no longer brings the change back, it takes two.
+ * The next save that holds the model takes the note down, as it does Save's own.
+ */
+export function sayTypedTextOverChanges(replaced?: string): void {
+  const message = replaced === undefined ? DRIVE_MESSAGES.typedTextAppliedOverChanges : DRIVE_MESSAGES.typedTextSavedOverChangesThenReplaced(replaced);
+  const standing = useAppStore.getState().drive.notice;
+  if (standing !== null && standing !== keptBackNote?.notice && standing !== libraryNote?.notice) {
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice: { ...standing, message: `${standing.message} ${message}` } } }));
+    return;
+  }
+  const notice: DriveNotice = { kind: 'info', message, retryable: false };
+  keptBackNote = { notice, by: 'save' };
+  heldExportNote = null;
+  useAppStore.setState((s) => ({ drive: { ...s.drive, notice } }));
 }
 
 /**

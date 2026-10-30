@@ -1341,6 +1341,94 @@ test('a command that would drop unsaved Drive changes asks first; so does an ope
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
+/**
+ * Text typed in the Text view, then an agent's edit through `window.sysml` (so the model has changed since the
+ * typing began), then a rename in the Explorer: a field's change that cannot apply the typed text first, so the
+ * text stays over it. A save applies the text over that change — the file and the model hold the text, where
+ * the two differ the text wins — and the strip has to say so.
+ */
+async function typeOverAFieldChange(page: Page): Promise<void> {
+  await openTab(page, 'tab-text');
+  const editor = page.getByTestId('text-editor');
+  await editor.fill((await editor.inputValue()).replace(/^( *)part def Vehicle;$/m, '$1part def Vehicle;\n$1part def Trailer;'));
+  const vehicle = await findElementId(page, 'PartDefinition', 'Vehicle');
+  await page.evaluate(
+    (id) =>
+      (window as unknown as { sysml: { update(id: string, patch: { declaredName: string }): unknown } }).sysml.update(id, {
+        declaredName: 'Scripted',
+      }),
+    vehicle,
+  );
+  await rename(page, 'Engine', 'Motor');
+  await expect(editor).toHaveValue(/part def Trailer;/); // the text stayed, over both changes
+  await expect(editor).not.toHaveValue(/part def Motor;/);
+  await expect(strip(page)).toHaveAttribute('data-status', 'dirty');
+}
+
+test('a Save to the attached file that applies typed text over a field’s change says so, and one Undo brings the change back', async ({
+  page,
+}) => {
+  const errors = driveErrors(page);
+  const fakes = await configured(page);
+  await signIn(page);
+  const id = await saveAs(page, 'Overtyped');
+  await typeOverAFieldChange(page);
+
+  // Ctrl+S, away from the Text view: Drive and this browser hold the typed text; the changes are gone from both.
+  await page.locator('.react-flow__node').first().focus();
+  await page.keyboard.press('Control+S');
+  await expect.poll(() => fakes.file(id).headRevisionId).toBe('r2');
+  await expect(strip(page)).toHaveAttribute('data-status', 'clean');
+  expect(fakes.file(id).body).toContain('part def Trailer;');
+  expect(fakes.file(id).body).toContain('part def Engine;');
+  expect(fakes.file(id).body).not.toContain('Motor');
+  expect(await hasNamed(page, 'PartDefinition', 'Motor')).toBe(false);
+  // The save's own notice is gone with the save; the strip says what won, under the file's row.
+  await expect(page.getByTestId('drive-strip-note')).toContainText(
+    'The text typed in the Text view was applied over changes made in the app since you began typing: ' +
+      'where the two differ, the text won. Undo brings those changes back.',
+  );
+
+  // One Undo, as the note says.
+  await page.getByTestId('tb-undo').click();
+  await expect.poll(() => hasNamed(page, 'PartDefinition', 'Motor')).toBe(true);
+  expect(await hasNamed(page, 'PartDefinition', 'Scripted')).toBe(true);
+  expect(fakes.unanswered).toEqual([]);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('the guard’s Save and continue over typed text applied over a field’s change says it takes two Undos', async ({
+  page,
+}) => {
+  const errors = driveErrors(page);
+  const fakes = await configured(page);
+  await signIn(page);
+  const id = await saveAs(page, 'Overtyped');
+  await typeOverAFieldChange(page);
+
+  // New asks first; Save and continue saves the file, then replaces the model.
+  await clickNew(page);
+  await expect(strip(page)).toHaveAttribute('data-status', 'guard');
+  await page.getByTestId('drive-guard-save').click();
+  await expect.poll(() => rootNames(page)).toEqual(['NewModel']);
+  await expect.poll(() => fakes.file(id).headRevisionId).toBe('r2');
+  expect(fakes.file(id).body).toContain('part def Trailer;');
+  expect(fakes.file(id).body).not.toContain('Motor');
+  await expect(strip(page)).toContainText(
+    'It takes two Undos to bring those changes back: New, then the applied text.',
+  );
+  await expect(strip(page)).not.toContainText('Undo brings those changes back.');
+
+  // One Undo brings back the model New replaced, with the text applied; the second takes the apply back.
+  await page.getByTestId('tb-undo').click();
+  await expect.poll(() => rootNames(page)).toEqual(['VehicleModel']);
+  expect(await hasNamed(page, 'PartDefinition', 'Motor')).toBe(false);
+  await page.getByTestId('tb-undo').click();
+  await expect.poll(() => hasNamed(page, 'PartDefinition', 'Motor')).toBe(true);
+  expect(fakes.unanswered).toEqual([]);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 test('with Drive configured the toolbar keeps its commands at the e2e viewport', async ({ page }) => {
   const errors = driveErrors(page);
   const fakes = await configured(page);

@@ -227,8 +227,14 @@ export interface DriveActions {
    * the typed text is applied, so both hold the same model; when it does not
    * (no file attached, offline, a question standing), at once, as Save does
    * without Drive.
+   *
+   * A save that applies typed text over a field's change says so in the strip
+   * (`typedTextAppliedOverChanges`), after its own notice. `replacing`: the
+   * caller is the guard's Save, which says it after the command it guards
+   * has replaced the model, in its own words; it is told through
+   * `replacing.over` that the text was applied over a change.
    */
-  driveSave(opts?: { alsoInBrowser?: boolean }): Promise<void>;
+  driveSave(opts?: { alsoInBrowser?: boolean; replacing?: { over: boolean } }): Promise<void>;
   /**
    * The offline row's Save: the project in this browser, and an error notice
    * when the browser refuses it. Text typed in the Text view is applied first,
@@ -612,6 +618,10 @@ export const DRIVE_MESSAGES = {
     `Exported without the text typed in the Text view: it has a syntax error at line ${line}. Fix it, then export again.`,
   typedTextOverChanges:
     'Saved in this browser with the text typed in the Text view applied over changes made in the app since you began typing: where the two differ, the text won. Undo brings those changes back.',
+  typedTextAppliedOverChanges:
+    'The text typed in the Text view was applied over changes made in the app since you began typing: where the two differ, the text won. Undo brings those changes back.',
+  typedTextSavedOverChangesThenReplaced: (label: string) =>
+    `Saved with the text typed in the Text view applied over changes made in the app since you began typing: where the two differ, the text won. It takes two Undos to bring those changes back: ${label}, then the applied text.`,
   typedTextExportedOverChanges:
     'Exported with the text typed in the Text view applied over changes made in the app since you began typing: where the two differ, the text won. Undo brings those changes back.',
   typedTextNotExportedInRoom:
@@ -841,6 +851,10 @@ export interface DriveInternals {
    * was applied over a field's change made since the typing began; else null.
    */
   applyTypedTextToSave(opts?: { replacing?: boolean }): TypedTextNote | null;
+  /** Text typed in the Text view and not applied stands over a field's change: applying it drops the change. */
+  typedOverChanges(): boolean;
+  /** Say in the strip that typed text was applied over a field's change; `replaced` names the command that replaced the model after. */
+  sayTypedTextOverChanges(replaced?: string): void;
   /** After a save in this browser alone: say in the strip what it kept back, or take down an earlier such note. */
   sayWhatTheBrowserKept(kept: TypedTextNote | null): void;
   /** The model's text as it stands, for `savedText` — null when it cannot be written as text. */
@@ -1192,10 +1206,14 @@ export function createDriveActions(
    * in the upload. Typing after the edit takes the force off, and the typed
    * text wins, as it does without Drive.
    */
-  const payloadNow = async (): Promise<string> => {
+  const payloadNow = async (applied: { over: boolean }): Promise<string> => {
     if (internals.forcedRecomputePending()) internals.flushRecompute();
     const s = get();
-    if (s.textDirty && s.textBuffer !== internals.lastAppliedText()) s.applyText();
+    if (s.textDirty && s.textBuffer !== internals.lastAppliedText()) {
+      // Applied over a field's change kept back from it: the save says so (`saveAttached`).
+      if (internals.typedOverChanges()) applied.over = true;
+      s.applyText();
+    }
     // An apply merges the library again, and the refresh after it lays the
     // text out as this app writes it: that is the text to upload. The apply
     // is this one, or one made just before the save — Save and Ctrl/Cmd+S
@@ -1300,12 +1318,17 @@ export function createDriveActions(
    * recovery of that text is not what is on screen, and would overwrite the
    * last good copy in this browser.
    */
-  const saveAttached = (opts: { overwrite: boolean; inBrowser: boolean }): Promise<void> => {
+  const saveAttached = (opts: {
+    overwrite: boolean;
+    inBrowser: boolean;
+    replacing?: { over: boolean };
+  }): Promise<void> => {
     const file = get().drive.file;
     if (file === null) return opts.inBrowser ? saveInBrowser() : Promise.resolve();
     const gen = attachment;
     let savedInBrowser = !opts.inBrowser;
     let browserRefused = false;
+    const applied = { over: false };
     const inBrowser = async (): Promise<void> => {
       savedInBrowser = true;
       if (!(await browserSave())) browserRefused = true;
@@ -1315,7 +1338,7 @@ export function createDriveActions(
       { op: 'save', name: file.name, again: opts.overwrite ? { op: 'save', overwrite: true } : { op: 'save' } },
       async (svc, call, begun) => {
         if (!savedInBrowser && !internals.forcedRecomputePending() && internals.typedTextFaulted()) await inBrowser();
-        const payload = await payloadNow();
+        const payload = await payloadNow(applied);
         if (!savedInBrowser) await inBrowser();
         await writeAttached(svc, call, gen, payload, !opts.overwrite, begun);
       },
@@ -1326,6 +1349,10 @@ export function createDriveActions(
     const done = savedInBrowser ? saving : saving.then(() => (savedInBrowser ? undefined : inBrowser()));
     return done.then(() => {
       if (browserRefused) browserSaveFailed();
+      // The text went over a field's change whatever became of the upload: said after the save's own notice.
+      if (!applied.over) return;
+      if (opts.replacing) opts.replacing.over = true;
+      else internals.sayTypedTextOverChanges();
     });
   };
 
@@ -1459,13 +1486,15 @@ export function createDriveActions(
    * the strip's Save is disabled then. Applied in a collaboration room too,
    * where Save keeps it back: the command replaces the room's model right
    * after. A note that an earlier save kept typed text back goes: this copy
-   * holds it. A text applied over a field's change (`'over-changes'`) says
-   * nothing here: the command replaces the model, and one Undo would bring
-   * back that model, not the change.
+   * holds it. A text applied over a field's change (`'over-changes'`) is
+   * told to the caller through `replacing.over`: it says so once the command
+   * has replaced the model, in words that do not promise one Undo
+   * (`typedTextSavedOverChangesThenReplaced`: it takes two).
    */
-  const saveBeforeReplacing = async (): Promise<boolean> => {
+  const saveBeforeReplacing = async (replacing: { over: boolean }): Promise<boolean> => {
     const note = internals.applyTypedTextToSave({ replacing: true });
     if (note !== null && note !== 'over-changes') return false;
+    if (note === 'over-changes') replacing.over = true;
     const kept = await browserSave();
     if (kept) internals.sayWhatTheBrowserKept(null);
     return kept;
@@ -1649,7 +1678,7 @@ export function createDriveActions(
         patch({ prompt: { kind: 'rewrite' }, notice: null });
         return asked();
       }
-      return saveAttached({ overwrite: false, inBrowser });
+      return saveAttached({ overwrite: false, inBrowser, ...(opts.replacing ? { replacing: opts.replacing } : {}) });
     },
 
     async driveSaveLocal() {
@@ -1681,11 +1710,12 @@ export function createDriveActions(
       }
       const target = driveFileName(name);
       const gen = attachment;
+      const applied = { over: false };
       return attempt(
         'saving',
         { op: 'save-as', name: target, again: { op: 'save-as', arg: target, asCopy } },
         async (svc, call, begun) => {
-          const payload = await payloadNow();
+          const payload = await payloadNow(applied);
           if (attachment !== gen) return; // the model was replaced meanwhile
           const meta = await call(() => svc.gateway.create(target, payload));
           remember(meta, begun);
@@ -1705,7 +1735,9 @@ export function createDriveActions(
           }));
         },
         { prompt: null },
-      );
+      ).then(() => {
+        if (applied.over) internals.sayTypedTextOverChanges();
+      });
     },
 
     driveOpen(ref, from) {
@@ -1953,6 +1985,7 @@ export function createDriveActions(
 
     async driveRunPending(how) {
       const standing = guarded;
+      const replacing = { over: false };
       const prompt = get().drive.prompt;
       guarded = null;
       if (prompt?.kind === 'guard') patch({ prompt: null });
@@ -1962,24 +1995,29 @@ export function createDriveActions(
         // saved: the command waits, and the question stands again, saying
         // why when the browser refused.
         const faulted = internals.typedTextFaulted();
-        if (!(await saveBeforeReplacing())) {
+        if (!(await saveBeforeReplacing(replacing))) {
           if (get().drive.prompt === null) ask({ ...standing.prompt, refused: !faulted }, standing.run);
+          // The command waits and the text is in the model: the plain note.
+          if (replacing.over) internals.sayTypedTextOverChanges();
           return;
         }
       } else if (how === 'save') {
         const parkedBefore = get().drive.pending;
         // Called at once, so its sign-in (if any) opens inside this click.
-        await get().driveSave();
+        await get().driveSave({ replacing });
         const after = get();
         const d = after.drive;
         // Not saved — a conflict, a question, the save parked for a sign-in,
         // a failure: the command waits, and the model stays.
         const parked = d.pending !== null && d.pending !== parkedBefore;
         if (driveDirty(after) || d.conflict !== null || d.prompt !== null || parked || d.notice?.kind === 'error') {
+          if (replacing.over) internals.sayTypedTextOverChanges();
           return;
         }
       }
       await standing.run();
+      // The command has replaced the model: the text was saved over a field's change, and Undo is two steps away.
+      if (replacing.over) internals.sayTypedTextOverChanges(standing.prompt.label);
     },
 
     driveResume() {
