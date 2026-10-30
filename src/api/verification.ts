@@ -79,6 +79,7 @@ import {
   type AxiomCensus,
   type SmtOutcome,
 } from '../semantics/engines/smt';
+import { sharedDefinitions } from '../semantics/defining-equation';
 import { DEFAULT_TIMEOUT_MS, loadZ3, type Z3Load } from '../semantics/smt/z3-bridge';
 import type { WitnessValue } from '../semantics/smt/z3-bridge';
 import {
@@ -1653,8 +1654,26 @@ async function judge(input: {
       free: input.free,
       timeoutMs: input.timeoutMs,
     });
+    // A scope the page leaves unread (a binding the editor parted from a copy) is a scope whose axioms the reopened file
+    // may hold against the rest: a proof or a refutation over this model's axioms is not one the file gives, so none stands.
+    const withheld = sharedDefinitions(model).hasWithheldScope();
     return judged.map(({ row, judgement }) => {
       const { claim, code } = SMT_CLAIM[judgement.outcome];
+      if (withheld && (claim === 'proved' || claim === 'refuted')) {
+        return toVerdict(row, {
+          claim: 'inconclusive',
+          code: 'verification/not-evaluable',
+          detail:
+            'the model holds a binding whose end is a copy the saved file reads as another feature, so the solver’s ' +
+            'axioms are not those of the file until it is saved and opened again: no proof or refutation is read from them',
+          premises: [],
+          bindings: [],
+          bound: { kind: 'none', detail: 'nothing was claimed' },
+          engine,
+          allowInconclusive,
+          strictVacuity,
+        });
+      }
       return toVerdict(row, {
         claim,
         code,

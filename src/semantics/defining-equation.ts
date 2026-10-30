@@ -371,6 +371,12 @@ export class DefiningEquations {
   private readonly asking = new Set<string>();
   private guessed = false;
   private bound?: ReadonlySet<ElementId>;
+  /** The elements that own a binding the editor parted from a copy ({@link partedHolder}), once asked. */
+  private parted?: ReadonlySet<ElementId>;
+  /** Per context, the scopes {@link partedHolder} left unread: the path they are reached by, and their owner. */
+  private readonly withheldIn = new Map<ElementId, Map<string, ElementId>>();
+  /** The types an owner of a binding specialises, for {@link endsInGeneral}. */
+  private readonly generalIds = new Map<ElementId, ReadonlySet<ElementId>>();
   private specialised?: Map<ElementId, ElementRecord[]>;
   private satisfying?: Map<ElementId, { requirement: ElementRecord; satisfier: ElementRecord }>;
   private readonly clauseContexts = new Map<ElementId, ElementRecord[]>();
@@ -895,6 +901,8 @@ export class DefiningEquations {
     // attribute of the same name through).
     let entered = 0;
     let cut = false;
+    const held = new Map<string, ElementId>();
+    this.withheldIn.set(contextId, held);
     // `inCall`: below a calculation with a parameter, whose features are the
     // values of a CALL — its `in y = 100.0` a default nothing invokes, its
     // `return r = y` the result of one — so a value scope reads none of them.
@@ -921,6 +929,11 @@ export class DefiningEquations {
       }
       entered++;
       visited.add(guardKey);
+      // The names of a scope whose binding the editor parted from a copy are not offered ({@link partedHolder}).
+      if (this.partedHolder(ownerId)) {
+        held.set(prefix, ownerId);
+        return;
+      }
       onPath.add(ownerId);
       for (const feat of this.features(ownerId)) {
         const name = this.nameOf(feat);
@@ -4039,6 +4052,68 @@ export class DefiningEquations {
       for (const eq of this.of(site, name)) out.push({ owner: site, names: refsIn(eq.definition, eq.literals) });
     }
     return out.length === 0 && this.boundFeatures().has(f.id) ? undefined : out;
+  }
+
+  /**
+   * Does `id`, or a type it specialises, own a binding the editor set aside because an end of it is a copy a member
+   * of its owner takes the name of (`attrs.partedEnd`, the serializer's markStaleBindings)? The reopened file binds
+   * that member, which the page cannot follow: no name of that scope (the ends, the features the file may join to
+   * them, what is nested below them) is read, so it is unresolved, and a row naming one is not decided on a reading
+   * the file may not give. So is a binding with an end held with no copy in its owner, on a type the owner
+   * specialises (a bound end moved up into the type): the file makes the copy.
+   */
+  private partedHolder(id: ElementId): boolean {
+    const parted = this.partedOwners();
+    return parted.size > 0 && (parted.has(id) || generalizationsOf(this.model, id).some((g) => parted.has(g.id)));
+  }
+
+  /**
+   * Does the model hold a scope {@link partedHolder} leaves unread? The axioms of a solver run are built from every
+   * scope, so a run over such a model proves or refutes on a set the reopened file may find inconsistent
+   * (`verification/inconsistent-axioms`): the SMT lane decides nothing there (./api/verification).
+   */
+  hasWithheldScope(): boolean {
+    return this.partedOwners().size > 0;
+  }
+
+  private partedOwners(): ReadonlySet<ElementId> {
+    if (this.parted === undefined) {
+      const out = new Set<ElementId>();
+      for (const b of this.model.ofKind('BindingConnectorAsUsage', 'BindingConnector')) {
+        if (b.ownerId == null || b.attrs.isLibrary === true) continue;
+        if (b.attrs.partedEnd === true) out.add(b.ownerId);
+        // An end that is a feature of a type its owner specialises, held with no copy of its own in the owner (a bound
+        // end moved up into the type): the saved file makes the copy, which the page does not hold.
+        else if (this.endsInGeneral(b)) out.add(b.ownerId);
+      }
+      this.parted = out;
+    }
+    return this.parted;
+  }
+
+  /**
+   * The owner of the scope that leaves `name` unread when read in `contextId` ({@link partedHolder}), or `undefined`:
+   * the name is the path it was reached by, or goes through it.
+   */
+  withheldOwner(contextId: ElementId, name: string): ElementRecord | undefined {
+    this.denote(contextId);
+    for (const [path, owner] of this.withheldIn.get(contextId) ?? []) {
+      if (path === '' || name === path || name.startsWith(`${path}.`)) return this.model.get(owner);
+    }
+    return undefined;
+  }
+
+  /** Does an end of the binding `b` belong to a type its owner specialises ({@link partedHolder})? */
+  private endsInGeneral(b: ElementRecord): boolean {
+    const owner = b.ownerId!;
+    for (const end of [...(b.source ?? []), ...(b.target ?? [])]) {
+      const home = this.model.get(end)?.ownerId;
+      if (home == null || home === owner) continue;
+      let general = this.generalIds.get(owner);
+      if (general === undefined) this.generalIds.set(owner, (general = new Set(generalizationsOf(this.model, owner).map((g) => g.id))));
+      if (general.has(home)) return true;
+    }
+    return false;
   }
 
   /** Every feature a binding connector touches ({@link bindingEndsOf}). */

@@ -2532,6 +2532,115 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(page['G::c21']).toBe('?/?/?/?');
       });
 
+      // A binding whose end is a copy the saved file does not make AND whose name a member of the owner bears: the file
+      // binds that member (a retype, a rename, a feature made), the page cannot say what it then joins. The scope of
+      // the binding's owner is withheld (DefiningEquations.partedHolder), so a row naming one decides nothing, where
+      // the page used to read the binding set aside (Zb at its own 1.0: F) and the file reads two values joined (??).
+      // Soak seeds 333, 1115, 3034 of review-2026-10-14/wave3-probes/fence-editor/b.test.ts.
+      it('a copy whose name a member of its owner bears parts the binding: the rows of both ends are withheld, as the file reads them', async () => {
+        const cells = (row: string | undefined): string[] => (row ?? '').split('/');
+        /** No cell the page decides (T or F) that the file does not give alike: the file may decide more, never less sure. */
+        const neverMore = (page: Record<string, string>, file: Record<string, string>, note: string): void => {
+          for (const [k, row] of Object.entries(page)) {
+            cells(row).forEach((c, i) => {
+              if (c === 'T' || c === 'F') expect(cells(file[k])[i], `${note}: ${k} lane ${i}`).toBe(c);
+            });
+          }
+        };
+        // (a) The copy is stale after a retype, then a rename gives a member of the owner its name (seed 3034).
+        load(`package PB {
+  part def Q0 { attribute N default = 12.0; }
+  part def D1 :> Q0;
+  part def D4 :> D1 { attribute K2 default = 15.0; }
+  part u1 : D4 { attribute :>> N = 19.0; attribute Zb = 1.0; bind Zb = K2; }
+  constraint cZb { u1.Zb == 11.0 }
+  constraint cN { u1.N == 19.0 }
+  constraint cK { u1.K2 == 15.0 }
+}`);
+        st().bindType(byName('u1').id, 'D1');
+        const retyped = await surfaces(st().model);
+        neverMore(retyped, await surfaces(reopened(st().model)), 'retype u1 to D1');
+        st().updateElement(st().model.children(byName('Q0').id).find((c) => c.declaredName === 'N')!.id, { declaredName: 'K2' });
+        const a = await surfaces(st().model);
+        expect(a['PB::cZb'], 'page: the binding is parted, Zb is not read').toBe('?/?/?/?');
+        const said = checkConstraints(st().model).find((r) => st().model.qualifiedName(r.id) === 'PB::cZb')!;
+        expect(said.message, 'the check says why').toContain('u1.Zb is not read: PB::u1 owns a binding whose end is a copy the saved file reads as another feature');
+        neverMore(a, await surfaces(reopened(st().model)), 'rename Q0::N to K2');
+        // (b) The copy is not stale: the rename gives a member of the owner the name its feature bears (seed 1115).
+        load(`package PC {
+  part def T0 { attribute K default = 13.0; }
+  part def D1 :> T0 { attribute K2 default = 14.0; attribute M2 :>> K default = 15.0; }
+  part u1 : D1 { attribute :>> M2 = 17.0; attribute Zb = 1.0; bind Zb = K2; }
+  constraint cM2 { u1.M2 == 18.0 }
+  constraint cZb { u1.Zb == 14.0 }
+}`);
+        st().updateElement(st().model.children(byName('T0').id).find((c) => c.declaredName === 'K')!.id, { declaredName: 'K2' });
+        const b = await surfaces(st().model);
+        expect(b['PC::cM2'], 'page: u1 is withheld').toBe('?/?/?/?');
+        neverMore(b, await surfaces(reopened(st().model)), 'rename T0::K to K2');
+        // (c) A bound end moved up into a type its owner specialises: the file makes the copy `u0::Zb` the page does
+        // not hold (seed 20290), and reads the two values joined where the page read M at its own 18.0.
+        load(`package PD {
+  part def Q0 { attribute M default = 11.0; }
+  part u0 : Q0 { attribute :>> M = 18.0; attribute Zb = 1.0; bind Zb = M; }
+  constraint cM { u0.M == 18.0 }
+  constraint cZ { u0.Zb == 18.0 }
+}`);
+        st().reparent(byName('Zb').id, byName('Q0').id);
+        const c = await surfaces(st().model);
+        expect(c['PD::cM'], 'page: u0 is withheld').toBe('?/?/?/?');
+        expect(c['PD::cZ']).toBe('?/?/?/?');
+        neverMore(c, await surfaces(reopened(st().model)), 'move u0::Zb up into Q0');
+        // (d) A binding that reaches the parted scope through ANOTHER binding (review of fence-editor2): `v.x` joins
+        // `u1.Zb`, whose own binding is parted, so no lane reads K2 of the owner (default 14.0) or the stated value
+        // through the set-aside binding: the page abstains where the file decides, never the reverse.
+        load(`package PE {
+  part def T0 { attribute K default = 13.0; }
+  part def D1 :> T0 { attribute K2 default = 14.0; attribute M2 :>> K default = 15.0; }
+  part u1 : D1 { attribute :>> M2 = 17.0; attribute Zb default = 1.0; bind Zb = K2; }
+  part v { attribute x; }
+  bind v.x = u1.Zb;
+  constraint cV1 { v.x == 1.0 }
+  constraint cV14 { v.x == 14.0 }
+  constraint cV17 { v.x == 17.0 }
+}`);
+        st().updateElement(st().model.children(byName('T0').id).find((c2) => c2.declaredName === 'K')!.id, { declaredName: 'K2' });
+        const d = await surfaces(st().model);
+        for (const k of ['PE::cV1', 'PE::cV14', 'PE::cV17']) expect(d[k], `page: ${k} chains into a parted scope`).toBe('?/?/?/?');
+        neverMore(d, await surfaces(reopened(st().model)), 'rename T0::K to K2, chained');
+        // (e) A scope is withheld in a model whose other rows do not read it (soak seed 60601): the solver's axioms hold
+        // every scope, and the file finds them inconsistent where the page, without that scope's names, does not. The
+        // SMT lane then proves and refutes nothing on this model, never an F where the file says inconsistent axioms.
+        load(`package PF {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute :>> N default = 13.0; attribute Zd1; bind Zd1 = M; }
+  part def D2 :> D1 { attribute :>> M default = 14.0; attribute K2 :>> N default = 15.0; }
+  part def D3 :> D2 { attribute :>> N default = 16.0; attribute Zd3; bind Zd3 = PF::D3::K2; }
+  part def D4 :> D3;
+  part def D5 :> D1 { attribute X :>> M default = 17.0; attribute K2 default = 18.0; }
+  part u1 : Q0 : D4 { attribute :>> M = 21.0; attribute :>> N; attribute Z1 = 22.0; }
+  constraint c4 { u1.N == 22.0 }
+  constraint c8 { u1.Z1 == 20.0 }
+}`);
+        const kidOf = (owner: string, name: string) => st().model.children(byName(owner).id).find((c2) => c2.declaredName === name)!;
+        st().reparent(kidOf('D1', 'Zd1').id, byName('Q0').id);
+        st().updateElement(kidOf('D5', 'K2').id, { declaredName: 'Z1' });
+        st().updateElement(
+          st().model.children(byName('D4').id).find((c2) => c2.eClass === 'Subclassification')!.id,
+          { target: [byName('Q0').id] },
+        );
+        const e = await surfaces(st().model);
+        const eFile = await surfaces(reopened(st().model));
+        for (const k of ['PF::c4', 'PF::c8']) {
+          expect(cells(e[k])[3], `page: ${k} is not proved or refuted by the solver`).toBe('?');
+          neverMore(e, eFile, 'seed 60601');
+        }
+        // A stale copy no member of its owner bears stays exactly as before: the file reads the end unresolved too.
+        load(EC);
+        st().bindType(byName('r').id, 'Z');
+        expect(await surfaces(st().model)).toEqual(await surfaces(reopened(st().model)));
+      });
+
       it('deleting the feature a definition-level bind ends on leaves no copy the page proves through', async () => {
         load(`package DB {
   part def P { attribute load default = 1.0; }
@@ -4537,6 +4646,119 @@ describe('google drive', () => {
       } finally {
         spy.mockRestore();
       }
+    });
+  });
+
+  /**
+   * Typed text applied over a field's change (the field-change block below, `fieldOverTyped`): a save to
+   * Google Drive applies it as the browser save does, and said nothing. It says so in the strip, after
+   * the save's own notice, in every route that applies the text; the guard's Save, whose command replaces
+   * the model next, does not promise one Undo.
+   */
+  describe('a save that applies typed text over a field’s change says so', () => {
+    /** A part def made after the text was written is not in the typed text; the text typed over it, then a field's change: the text stays over the change. */
+    async function typedOverChange(): Promise<string> {
+      edit('Relay');
+      const relay = st().model.all().find((e) => e.declaredName === 'Relay')!.id;
+      st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Other;'));
+      st().updateElement(relay, { declaredName: 'Kite' });
+      flushRecompute();
+      expect(st().textBuffer, 'the text stays over the change').toContain('part def Other;');
+      expect(st().textDirty).toBe(true);
+      return relay;
+    }
+    const note = (message: string) => ({ kind: 'info', message, retryable: false });
+    const named = (name: string) => st().model.all().some((e) => e.declaredName === name);
+
+    it('Save (Ctrl/Cmd+S) with the file unsaved: the file holds the text, the strip says it won, one Undo brings the change back', async () => {
+      const id = await attached();
+      await typedOverChange();
+      await runSave();
+      expect(gateway.textOf(id)).toContain('part def Other;');
+      expect(named('Kite')).toBe(false);
+      expect(drive().notice).toEqual(note(DRIVE_MESSAGES.typedTextAppliedOverChanges));
+      st().undo();
+      expect(named('Kite'), 'Undo brings the change back, as the note says').toBe(true);
+      // The next save that holds the model takes the note down.
+      await runSave();
+      expect(drive().notice).toBeNull();
+    });
+
+    it('Save to Drive from the strip or the menu (the upload applies the text) says so too', async () => {
+      const id = await attached();
+      await typedOverChange();
+      await st().driveSave();
+      expect(gateway.textOf(id)).toContain('part def Other;');
+      expect(drive().notice).toEqual(note(DRIVE_MESSAGES.typedTextAppliedOverChanges));
+    });
+
+    it('Save to Drive as… says so too', async () => {
+      await attached();
+      await typedOverChange();
+      await st().driveSaveAs('Copy');
+      expect(drive().notice).toEqual(note(DRIVE_MESSAGES.typedTextAppliedOverChanges));
+    });
+
+    it('keeps the save’s own notice, and adds the sentence to it', async () => {
+      await attached();
+      await typedOverChange();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, online: false } }));
+      await runSave();
+      expect(drive().notice?.kind).toBe('error');
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.offline);
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.typedTextAppliedOverChanges);
+    });
+
+    it('says nothing when the text was typed over no field’s change', async () => {
+      const id = await attached();
+      st().setTextBuffer(SWARM.replace('Drone', 'Glider'));
+      await runSave();
+      expect(gateway.textOf(id)).toContain('part def Glider;');
+      expect(drive().notice).toBeNull();
+    });
+
+    it('the guard’s Save with the file unsaved: the command goes on, and the strip says it takes two Undos', async () => {
+      const id = await attached();
+      await typedOverChange();
+      const run = vi.fn(() => st().newProject('NewModel'));
+      st().driveGuard('New', 'dirty', run);
+      await st().driveRunPending('save');
+      expect(gateway.textOf(id)).toContain('part def Other;');
+      expect(run).toHaveBeenCalledTimes(1);
+      // New let the file go and said so (`closed`); the sentence is added to that notice, not put over it.
+      expect(drive().notice).toEqual(
+        note(`${DRIVE_MESSAGES.closed('Swarm.sysml')} ${DRIVE_MESSAGES.typedTextSavedOverChangesThenReplaced('New')}`),
+      );
+      expect(DRIVE_MESSAGES.typedTextSavedOverChangesThenReplaced('New')).toContain('two Undos');
+      st().undo();
+      expect(named('Kite'), 'one Undo has not brought the change back').toBe(false);
+      st().undo();
+      expect(named('Kite'), 'the second has').toBe(true);
+    });
+
+    it('the guard’s Save before Join room says the plain sentence: joining pushes no undo step, one Undo brings the change back', async () => {
+      await attached();
+      await typedOverChange();
+      const run = vi.fn();
+      st().driveGuard('Join room', 'dirty', run);
+      await st().driveRunPending('save');
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.typedTextAppliedOverChanges);
+      expect(drive().notice?.message).not.toContain('two Undos');
+      st().undo();
+      expect(named('Kite'), 'one Undo has').toBe(true);
+    });
+
+    it('the guard’s Save that does not go through (the upload fails) says the plain sentence and the command waits', async () => {
+      await attached();
+      await typedOverChange();
+      const run = vi.fn();
+      st().driveGuard('New', 'dirty', run);
+      gateway.failNext(500, { op: 'get' });
+      await st().driveRunPending('save');
+      expect(run).not.toHaveBeenCalled();
+      expect(drive().notice?.kind).toBe('error');
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.typedTextAppliedOverChanges);
     });
   });
 
@@ -7827,7 +8049,7 @@ describe('a field’s change over text typed in the Text view and not applied', 
       expect(note(), 'an export that holds the model takes it down').toBeNull();
     });
 
-    it('the guard’s Save applies it over the change and says nothing: the command replaces the model next', async () => {
+    it('the guard’s Save applies it over the change and, once the command has replaced the model, says it takes two Undos', async () => {
       const relay = await relayModel();
       st().setTextBuffer(OTHER(st().textBuffer));
       st().updateElement(relay, { declaredName: 'Kite' });
@@ -7836,7 +8058,13 @@ describe('a field’s change over text typed in the Text view and not applied', 
       st().driveGuard('New', 'dirty', run);
       await st().driveRunPending('save');
       expect(run).toHaveBeenCalledTimes(1);
-      expect(note(), 'a note about the model the command replaced would mislead').toBeNull();
+      // One Undo would bring back the model the command replaced, not the change: "Undo brings those changes back" would mislead.
+      expect(note()).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextSavedOverChangesThenReplaced('New'), retryable: false });
+      st().undo();
+      expect(named('Kite'), 'the first Undo brings back the model').toBe(false);
+      expect(named('Other')).toBe(true);
+      st().undo();
+      expect(named('Kite'), 'the second brings the change back').toBe(true);
     });
 
     it('says nothing over an SDK edit or a faulted apply, nor once the typed text was applied or replaced', async () => {
@@ -8490,6 +8718,21 @@ describe('the load health never vouches for a text that does not load (review 20
       expect(row, v).not.toContain('exits 1');
       expect(degradedRow('check-behaviour', h).message, v).not.toContain('exits 2');
     }
+  });
+
+  it('reads the note Save writes for an end no name reaches as another model: the file lacks the statement', async () => {
+    // `bind w = p.load` over an unnamed redefinition beside a named member: no name reaches the end, so Save writes
+    // a note where `bind w = T::p::«AttributeUsage»;` (a text a terminal refuses) was written (fence-editor2 S2).
+    reset();
+    await apply(
+      'package T { part def P { attribute load = 1.0; } part p : P { attribute :>> load = 50.0; attribute load; } attribute w; bind w = p.load; }\n',
+    );
+    expect(st().textBuffer).toContain('// Not saved: a binding whose end no name reaches');
+    expect(st().textBuffer).not.toContain('«');
+    const h = loadHealth();
+    expect(h.saved).toMatchObject({ parseErrors: 0, basis: 'parse', otherModel: true });
+    expect(h.otherModel).toBe(true);
+    expect(runCheck(reachSpec, { model: st().model, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: h }).summary).toContain('the text a file of it holds reads as another model');
   });
 
   it('counts only a faulty line the lexer reads as code: one inside a comment, or after a line note, is left to the parse', async () => {

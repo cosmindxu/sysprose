@@ -13,6 +13,7 @@ import {
   applyTypedTextToSave,
   driveDirty,
   forcedRecomputePending,
+  sayTypedTextOverChanges,
   sayWhatTheBrowserKept,
   sayWhatTheExportKept,
   useAppStore,
@@ -64,12 +65,18 @@ function driveUnsaved(store: AppState): boolean {
  * says the typed text was kept back (`sayWhatTheBrowserKept`). A save to the
  * attached Drive file applies a faulted text for its upload, as Save to Drive
  * does, and keeps the browser copy as the model stood before. A text applied
- * over a field's change kept back from it is said too (`'over-changes'`).
+ * over a field's change kept back from it is said too (`'over-changes'`), with
+ * a Drive file too, after the Drive save's own notice (`sayTypedTextOverChanges`).
  */
 export function runSave(): Promise<void> {
   const kept = applyTypedTextToSave();
   const store = useAppStore.getState();
-  if (driveUnsaved(store)) return store.driveSave({ alsoInBrowser: true });
+  // The text applied over a field's change is in the model whatever the Drive save becomes: said after its notice.
+  if (driveUnsaved(store)) {
+    return store.driveSave({ alsoInBrowser: true }).then(() => {
+      if (kept === 'over-changes') sayTypedTextOverChanges();
+    });
+  }
   return store.saveProject().then(() => sayWhatTheBrowserKept(kept));
 }
 

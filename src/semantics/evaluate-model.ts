@@ -3913,6 +3913,7 @@ function chainCauses(
   // A calculation read outside its owner has its own reason, chain or not.
   const causes = lacking.map(
     (n) =>
+      partedCause(el, n, pass) ??
       clashCause(model, el, n, pass) ??
       contradictionCause(model, el, n, pass) ??
       (n.includes('.') ? chainCause(model, el, n, pass) : undefined) ??
@@ -4196,6 +4197,24 @@ function clashOf(
     if (!d) continue;
     const along = pass.definitions.clashAlong(c, name);
     return along ?? boundClashOf(pass.model, c, name);
+  }
+  return undefined;
+}
+
+/**
+ * Why a name a body reads is left unread: the element it is read through owns a binding whose end is a copy the saved
+ * file reads as another feature ({@link DefiningEquations.withheldOwner}), so the page cannot say what it joins.
+ */
+function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
+  for (const c of [el.ownerId, el.id]) {
+    const owner = c == null ? undefined : pass.definitions.withheldOwner(c, name);
+    if (owner) {
+      const of = pass.definitions.qualifiedNameOf(owner.id);
+      return (
+        `${name} is not read: ${of} owns a binding whose end is a copy the saved file reads as another feature, ` +
+        `so no name of ${of} is read until the file is saved and opened again`
+      );
+    }
   }
   return undefined;
 }

@@ -88,8 +88,69 @@ export function serializeModel(model: Model): string {
     .join('\n\n');
 }
 
-/** Serialize a single element (and its body) at the given indentation depth. */
+/**
+ * Thrown inside {@link serializeElement} when an end of a statement is reached by no name: the path to it goes
+ * through an unnamed redefinition that {@link effectiveSegment} cannot spell (two members of its owner answer to
+ * its effective name, an unnamed redefinition beside a named member of that name, an unnamed head of the path, a
+ * redefined feature with no name). The placeholder `«AttributeUsage»` the path would carry is no text a terminal
+ * reads (`unexpected character`), and the end is lost on the next load whatever is written there.
+ */
+class NoNameReachesEnd extends Error {
+  constructor(
+    readonly elementId: ElementId,
+    /** The path as the serializer would have written it, the placeholder in it. */
+    readonly ref: string,
+  ) {
+    super(`no name reaches ${ref}`);
+    this.name = 'NoNameReachesEnd';
+  }
+}
+
+/** The word a statement of this metaclass goes by in the note Save writes in its place. */
+const STATEMENT_WORD: Record<string, string> = {
+  BindingConnectorAsUsage: 'binding',
+  ConnectionUsage: 'connection',
+  Connector: 'connection',
+  InterfaceUsage: 'interface',
+  Flow: 'flow',
+  FlowUsage: 'flow',
+  Succession: 'succession',
+  SuccessionFlow: 'succession',
+  Allocation: 'allocation',
+  Dependency: 'dependency',
+  Disjoining: 'disjoining',
+  Membership: 'alias',
+  TransitionUsage: 'transition',
+  TransitionFeature: 'transition',
+};
+
+/** What the note written in a statement's place starts with ({@link serializeElement}): a writer that cannot keep the text looks for it. */
+export const NOT_SAVED_MARK = '// Not saved: ';
+
+/**
+ * Serialize a single element (and its body) at the given indentation depth.
+ *
+ * A statement with an end that no name reaches ({@link NoNameReachesEnd}) is not written: Save writes a line
+ * comment in its place that says so, so the file reopens without `unexpected character` and does not lose the
+ * end unsaid. The text then parses to a model without that statement, so it is another model than the one on
+ * screen, which the load health reads (`MeasuredText.rewritten`). Nothing else changes.
+ */
 export function serializeElement(model: Model, id: ElementId, indent = 0): string {
+  try {
+    return serializeElementOf(model, id, indent);
+  } catch (err) {
+    if (!(err instanceof NoNameReachesEnd) || err.elementId !== id) throw err;
+    const word = STATEMENT_WORD[model.require(id).eClass] ?? 'statement';
+    // One line: a name holding a line break must not end the comment and leave the rest to be read as code.
+    const ref = err.ref.replace(/«([^»]*)»/g, '(unnamed $1)').replace(/\s+/g, ' ');
+    return (
+      `${INDENT.repeat(indent)}${NOT_SAVED_MARK}a ${word} whose end no name reaches (${ref}). ` +
+      'Name the unnamed redefinition on its path to save it.'
+    );
+  }
+}
+
+function serializeElementOf(model: Model, id: ElementId, indent: number): string {
   const el = model.require(id);
   const pad = INDENT.repeat(indent);
 
@@ -899,9 +960,22 @@ function bodyMembers(model: Model, el: ElementRecord): ElementRecord[] {
 
 /* ───────────────────────── endpoint statements ────────────────────────── */
 
-function endpoint(model: Model, el: ElementRecord, which: 'source' | 'target'): string {
+/** `ref` without its quoted names: a `«` left in it is the placeholder of an unnamed element on the path. */
+function reachedByNoName(ref: string): boolean {
+  return ref.replace(/'(?:\\.|[^'\\])*'/g, '').includes('«');
+}
+
+/**
+ * The text of one end of a statement. An end no name reaches ({@link NoNameReachesEnd}) refuses the statement,
+ * unless `skipped`: the caller skips a statement whose end is anonymous itself (`relationshipStmtLine`).
+ */
+function endpoint(model: Model, el: ElementRecord, which: 'source' | 'target', skipped = false): string {
   const id = (el[which] ?? [])[0];
-  if (id) return refTo(model, id, el.ownerId);
+  if (id) {
+    const ref = refTo(model, id, el.ownerId);
+    if (!skipped && reachedByNoName(ref)) throw new NoNameReachesEnd(el.id, ref);
+    return ref;
+  }
   const refAttr = which === 'source' ? el.attrs.sourceRef : el.attrs.targetRef;
   return typeof refAttr === 'string' ? refAttr : '';
 }
@@ -1127,8 +1201,8 @@ const RELATIONSHIP_STMT_FORM: Record<string, { kind: string; op: string }> = {
 function relationshipStmtLine(model: Model, el: ElementRecord, pad: string): string {
   const form = RELATIONSHIP_STMT_FORM[el.eClass];
   if (!form) return '';
-  const src = endpoint(model, el, 'source');
-  const tgt = endpoint(model, el, 'target');
+  const src = endpoint(model, el, 'source', true);
+  const tgt = endpoint(model, el, 'target', true);
   if (!src || !tgt || src.includes('«') || tgt.includes('«')) return '';
   return `${pad}${form.kind} ${src} ${form.op} ${tgt};`;
 }
@@ -1142,7 +1216,7 @@ function aliasLine(model: Model, el: ElementRecord, indent: number): string {
   const name = el.declaredName !== undefined ? `${quoteName(el.declaredName)} ` : '';
   const tid = (el.target ?? [])[0];
   const target = tid
-    ? refTo(model, tid, el.ownerId)
+    ? endpoint(model, el, 'target')
     : typeof el.attrs.aliasFor === 'string'
       ? el.attrs.aliasFor
       : '';
@@ -1617,8 +1691,10 @@ export function settleRedefinitions(
   let moved = 0;
   /** The copies the settle made stale or put back: the bindings that end in them are marked after the rounds. */
   const staled = new Set<ElementId>();
+  /** Of those, the copies the saved file merges into another feature of their owner ({@link markStaleBindings}). */
+  const parted = new Set<ElementId>();
   for (let round = 0; round < MAX_SETTLE_ROUNDS && deep.length + shallow.length > 0; round++) {
-    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId; make?: true; copy?: true; rename?: string }> = [];
+    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId; make?: true; copy?: true; parted?: true; rename?: string }> = [];
     const lines = new Map<ElementId, ReadonlySet<string>>();
     const ask = (typeId: ElementId, only: ReadonlySet<string> | undefined): void => {
       const type = model.get(typeId);
@@ -1643,13 +1719,15 @@ export function settleRedefinitions(
             const to = endCopyLanding(model, f, from);
             if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId, ...(to === null ? { copy: true as const } : {}) });
             else {
+              // A copy that stays is asked again whether a member of its owner now bears its name ({@link claimedCopy}).
+              staled.add(f.id);
               // The copy stays on the feature, but the next parse names it by that feature's name now (a renamed
               // `:>> M` makes the copy `Zd3`, not `N2`): the copy takes the name, or, where another feature of the
               // owner bears it, the binding merges into that one and the copy is parted (stale).
               const target = model.get(from);
               const want = target && (target.declaredName ?? target.declaredShortName ?? effectiveNameOf(model, target));
               if (want !== undefined && want !== '' && want !== f.declaredName) {
-                if (otherNamed(model, typeId, want, f.id) !== undefined) moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId, copy: true });
+                if (otherNamed(model, typeId, want, f.id) !== undefined) moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId, copy: true, parted: true });
                 else moves.push({ rel: '', to: from, from, feature: f.id, owner: typeId, rename: want });
               }
             }
@@ -1688,7 +1766,10 @@ export function settleRedefinitions(
           const protoName = proto && (proto.declaredName ?? proto.declaredShortName ?? effectiveNameOf(model, proto));
           const taken = protoName !== undefined && protoName !== name && otherNamed(model, typeId, protoName, f.id) !== undefined;
           if (proto && proto.id !== f.id && !taken) moves.push({ rel: '', to: proto.id, from: proto.id, feature: f.id, owner: typeId, make: true, copy: true });
-          else staled.add(f.id);
+          else {
+            staled.add(f.id);
+            if (taken) parted.add(f.id);
+          }
         }
       }
     };
@@ -1718,7 +1799,11 @@ export function settleRedefinitions(
       }
     });
     moved += moves.length;
-    for (const mv of moves) if (mv.copy) staled.add(mv.feature);
+    for (const mv of moves) {
+      if (!mv.copy) continue;
+      staled.add(mv.feature);
+      if (mv.parted) parted.add(mv.feature);
+    }
     // The features that moved ask what is nested in them (it resolves through the target they have taken); the
     // types around them ask what the moves left them, by the names of the lines that changed.
     deep = withSpecialisers(model, moves.map((mv) => mv.feature));
@@ -1732,32 +1817,63 @@ export function settleRedefinitions(
       filter = movedNames;
     }
   }
-  if (staled.size > 0) markStaleBindings(model, staled);
+  if (staled.size > 0) markStaleBindings(model, staled, parted);
   return moved;
+}
+
+/**
+ * Is `el` an implicit end copy whose owner has a member of its own that bears the copy's name (after a rename, or a
+ * member made, on the line the copy was made for)? The saved file makes no copy there: it binds that member, which
+ * the page does not (a stale copy, or one on another feature), so it cannot say what the file reads of the binding.
+ * A stale copy no member of its owner bears is read by the file as an unresolved end, which binds nothing.
+ */
+function claimedCopy(model: Model, el: ElementRecord): boolean {
+  if (el.attrs.implicit !== true || el.ownerId === null || el.declaredName === undefined || el.declaredName === '') return false;
+  const name = el.declaredName;
+  return model.children(el.ownerId).some(
+    (c) =>
+      c.id !== el.id &&
+      c.attrs.implicit !== true &&
+      !isRelationship(c.eClass) &&
+      [c, ...redefinedClosure(model, c)].some((g) => g.declaredName === name || g.declaredShortName === name),
+  );
 }
 
 /**
  * Mark the bindings that end in a stale copy, or in a feature a stale copy owns (`attrs.staleEnd`), and clear the mark
  * of those that no longer do. The saved file has no such copy, so it reads such a binding with an unresolved end, which
  * binds nothing: every reader of a binding (`isBindingEdge`, `isBindingConnector`) leaves a marked one aside.
+ *
+ * Where a member of the copy's owner bears its name ({@link claimedCopy}) the file binds that member instead, and the
+ * page cannot say which feature the binding joins in the file, or what value it contradicts: the binding is marked
+ * `attrs.partedEnd` too, and the scope of the element that owns it offers no name (DefiningEquations.partedHolder), so
+ * no row naming one is decided (soak seeds 333, 1115 and 3034: the page FF, the file ??).
  */
-function markStaleBindings(model: Model, copies: ReadonlySet<ElementId>): void {
+function markStaleBindings(model: Model, copies: ReadonlySet<ElementId>, parted: ReadonlySet<ElementId>): void {
   const ids: ElementId[] = [...copies];
   for (let i = 0; i < ids.length; i++) for (const c of model.children(ids[i]!)) if (!isRelationship(c.eClass)) ids.push(c.id);
-  const staleChain = (id: ElementId): boolean => {
+  /** 0: no end is a stale or claimed copy; 1: one is stale; 2: one is claimed by a member of its owner. */
+  const staleChain = (id: ElementId): 0 | 1 | 2 => {
+    let out: 0 | 1 = 0;
     for (let o: ElementId | null | undefined = id; o !== null && o !== undefined; o = model.get(o)?.ownerId) {
       const el = model.get(o);
-      if (!el) return false;
-      if (isStaleCopy(model, el)) return true;
+      if (!el) return 0;
+      if (parted.has(el.id) || claimedCopy(model, el)) return 2;
+      if (isStaleCopy(model, el)) out = 1;
     }
-    return false;
+    return out;
   };
   model.transaction(() => {
     for (const id of new Set(ids)) {
       for (const b of model.edgesOf(id)) {
         if (b.attrs.isLibrary === true || isRelationship(b.eClass) || !b.eClass.startsWith('BindingConnector')) continue;
-        const stale = [...(b.source ?? []), ...(b.target ?? [])].some(staleChain);
-        if ((b.attrs.staleEnd === true) !== stale) model.setAttrs(b.id, { staleEnd: stale ? true : undefined });
+        const ends = [...(b.source ?? []), ...(b.target ?? [])].map(staleChain);
+        const stale = ends.some((e) => e === 1);
+        // A copy parted by an earlier settle stays so while it is stale: the name it was merged under is not kept.
+        const apart = ends.includes(2) || (stale && b.attrs.partedEnd === true);
+        if ((b.attrs.staleEnd === true) !== stale || (b.attrs.partedEnd === true) !== apart) {
+          model.setAttrs(b.id, { staleEnd: stale ? true : undefined, partedEnd: apart ? true : undefined });
+        }
       }
     }
   });

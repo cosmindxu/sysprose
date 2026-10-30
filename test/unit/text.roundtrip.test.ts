@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildSampleModel, Model, ModelFactory, type ChangeEvent, type ElementRecord } from '@core/index';
 import {
+  measureTextHealth,
   parseModel,
   redefinitionsDirtiedBy,
   redefinitionsToRetarget,
@@ -2117,6 +2118,57 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
     expect(text).not.toContain('«');
     expect(ends(after)).toEqual(ends(before));
     expect(ends(after)).toHaveLength(2);
+  });
+
+  // The ends no name reaches (`save-and-wording` S1's probe; `fence-editor2` S2): two members of one owner answer
+  // to the same effective name, an unnamed redefinition beside a named member, an unnamed head of the path. Save
+  // wrote `bind w = T::p::«AttributeUsage»;`, which a terminal refuses (`unexpected character`) and loses the end.
+  // It now writes a note in the statement's place that says so; the file reads clean, to a model without the
+  // statement, which the load health reads as another model than the one on screen.
+  describe('an end no name reaches is not written as «…»', () => {
+    const DEF = 'part def P { attribute load : ScalarValues::Real default = 1.0; part a { attribute load : ScalarValues::Real default = 1.0; } } ';
+    const SHAPES: Array<[string, string, string]> = [
+      ['an unnamed redefinition beside a named member', 'attribute :>> load = 50.0; attribute load : ScalarValues::Real;', 'p.load'],
+      ['two unnamed redefinitions', 'attribute :>> load = 50.0; attribute :>> load = 60.0;', 'p.load'],
+      ['an unnamed head of the path', 'part :>> a { attribute :>> load = 3.0; } part a;', 'p.a.load'],
+      ['an unnamed head, another beside it', 'part :>> a { attribute :>> load = 3.0; } part :>> a { attribute :>> load = 4.0; }', 'p.a.load'],
+    ];
+    const STATEMENTS: Array<[string, string, string]> = [
+      ['bind', 'binding', 'attribute w : ScalarValues::Real; bind w = END;'],
+      ['bind, the end first', 'binding', 'attribute w : ScalarValues::Real; bind END = w;'],
+      ['connect', 'connection', 'part y; connect END to y;'],
+      ['flow', 'flow', 'part y; flow from END to y;'],
+    ];
+    for (const [shape, members, end] of SHAPES) {
+      for (const [stmt, word, body] of STATEMENTS) {
+        it(`${stmt}: ${shape}`, () => {
+          const src = `package T { ${DEF}part p : P { ${members} } ${body.replace('END', end)} }`;
+          const before = parseModel(src);
+          const text = serializeModel(before.model);
+          expect(text).not.toContain('«');
+          expect(text).toMatch(new RegExp(`// Not saved: a ${word} whose end no name reaches \\(`));
+          const after = parseModel(text);
+          expect(after.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+          const links = (m: Model): number => m.all().filter((e) => e.eClass === 'BindingConnectorAsUsage' || e.eClass === 'ConnectionUsage' || e.eClass === 'FlowUsage' || e.eClass === 'Flow').length;
+          expect(links(before.model), 'the model on screen has the statement').toBe(1);
+          expect(links(after.model), 'the file does not').toBe(0);
+          // The page reads the file as another model than the one on screen, so a check says so.
+          const measured = measureTextHealth(text, () => {});
+          expect(measured.parseErrors).toBe(0);
+          expect(measured.rewritten).not.toBe(text);
+        });
+      }
+    }
+
+    it('writes an end one name reaches as it did, and a statement with an anonymous relationship end as before', () => {
+      const { text } = saved(`package T {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part p : P { attribute :>> load = 50.0; }
+        attribute w : ScalarValues::Real; bind w = p.load;
+      }`);
+      expect(text).toContain('bind w = p.load;');
+      expect(text).not.toContain('Not saved');
+    });
   });
 
   it('leaves a fully named cross-package reference as it was (A::s::inner, not A::s.inner)', () => {

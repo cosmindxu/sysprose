@@ -186,7 +186,7 @@ import { buildGrid } from '../src/diagram/grid';
 import { buildRequirementsTable } from '../src/diagram/requirements-table';
 import { loadModelText, type CheckReport } from '../src/text/load';
 import type { Diagnostic, TextRange } from '../src/validation/types';
-import { serializeElement } from '../src/text/serializer';
+import { NOT_SAVED_MARK, serializeElement } from '../src/text/serializer';
 import { flagGiven, flagValue, isArgError, parseArgs, type ParsedArgs } from './lib/args';
 import { runMain } from './lib/exit';
 import { isMainModule } from './lib/is-main';
@@ -3044,11 +3044,22 @@ async function reportFaultTree(
  * can write its output back over the file it read.
  */
 function modelText(model: Model): string {
-  return model
+  const text = model
     .rootIds()
     .filter((id) => model.get(id)?.attrs.isLibrary !== true)
     .map((id) => serializeElement(model, id, 0))
     .join('\n\n');
+  // A statement whose end no name reaches is written as a `// Not saved:` note, and the file then loads clean to a model
+  // without it: writing that back over the reader's source would drop the statement with nothing said. Refused instead.
+  const dropped = text.split('\n').filter((line) => line.trimStart().startsWith(NOT_SAVED_MARK));
+  if (dropped.length > 0) {
+    throw new UsageError(
+      `the model cannot be written back as text without losing ${dropped.length === 1 ? 'a statement' : `${dropped.length} statements`}: ` +
+        dropped.map((line) => line.trim().slice(NOT_SAVED_MARK.length).replace(/\. Name the unnamed.*$/, '')).join('; ') +
+        '. Name the unnamed redefinition on its path, then run the command again.',
+    );
+  }
+  return text;
 }
 
 /**
