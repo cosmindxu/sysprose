@@ -132,6 +132,14 @@ const CODES = [
   },
 
   {
+    code: 'mapper/negated-assert-unread',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A clause is written `assert not constraint …` (or `assert not requirement …`), the negation of an assert; `require not` and `assume not`, which are no published form, are refused the same way. No check, engine or solver reads the negation: read as the plain clause it would say the opposite (the constraint checked as a fact, its body asserted as an axiom), and dropped from a proof it restricts it would let a refutation stand that the negation rules out.',
+    hint: 'The negated clause {found} is not read: nothing checks it or asserts it, so the load stays degraded and the checks abstain until it is gone; it is kept as written and re-emitted unchanged on save. State the negation in the body instead, `assert constraint c { not (…) }`, which this tool reads.',
+  },
+
+  {
     code: 'parse/dangling-then',
     source: 'mapper',
     severity: 'error',

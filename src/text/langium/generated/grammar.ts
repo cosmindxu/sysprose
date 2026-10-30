@@ -4236,6 +4236,16 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                   },
                   {
                     "$type": "Assignment",
+                    "feature": "negated",
+                    "operator": "?=",
+                    "terminal": {
+                      "$type": "Keyword",
+                      "value": "not"
+                    },
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Assignment",
                     "feature": "declares",
                     "operator": "=",
                     "terminal": {

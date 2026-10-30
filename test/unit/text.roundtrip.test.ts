@@ -1473,6 +1473,52 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(codes('package A { state def M; metadata Safety about M { level = 3; } }')).toEqual([]);
   });
 
+  it('refuses `assert not constraint c { … }` with a finding of its own, keeps it as written, and reads no body from it', () => {
+    // The negation of an assert (and `require not`, `assume not`, no published form) read as the plain clause says the
+    // opposite: `c` checked as a fact, its body asserted as an axiom. Nothing negates it, so the clause is refused (the
+    // load degrades), kept with no expression, and written back as it was read — the save re-parses to the same finding.
+    const src = (clause: string) => `package A { part def P { attribute load : ScalarValues::Real = 50.0; ${clause} } part p : P; }`;
+    const forms = [
+      'assert not constraint c { load > 10.0 }',
+      'assert not constraint { load > 10.0 }',
+      'assert not c { load > 10.0 }',
+      'assert not requirement q { require constraint z { load > 10.0 } }',
+      'assert not constraint c :> Base { load > 10.0 }',
+      'assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y }',
+      'private assert not constraint c { load > 10.0 }',
+      'require not constraint c { load > 10.0 }',
+      'assume not constraint c { load > 10.0 }',
+    ];
+    for (const form of forms) {
+      const { model, diagnostics } = parseModel(src(form));
+      expect(
+        diagnostics.filter((d) => d.severity === 'error').map((d) => [d.code, d.range !== undefined]),
+        form,
+      ).toEqual([['mapper/negated-assert-unread', true]]);
+      const kept = model.all().filter((e) => e.attrs.negated === true);
+      expect(kept.length, form).toBe(1);
+      expect(kept[0]!.attrs.expression, form).toBeUndefined();
+      expect(kept[0]!.attrs.unparsedText, form).toBe(form);
+      expect(model.all().filter((e) => typeof e.attrs.expression === 'string' && e.eClass === 'ConstraintUsage'), form).toEqual([]);
+      const saved = serializeModel(model);
+      expect(saved, form).toContain(form);
+      const again = parseModel(saved);
+      expect(again.diagnostics.filter((d) => d.severity === 'error').map((d) => d.code), form).toEqual(['mapper/negated-assert-unread']);
+      expect(serializeModel(again.model), form).toBe(saved);
+    }
+    // Written without `not`, the same clause is read as ever, and a constraint or a name that merely starts with `not`
+    // is not a negation.
+    for (const form of ['assert constraint c { load > 10.0 }', 'assert constraint nothing { load > 10.0 }', 'require constraint notable { load > 10.0 }']) {
+      const { model, diagnostics } = parseModel(src(form));
+      expect(diagnostics.filter((d) => d.severity === 'error'), form).toEqual([]);
+      expect(model.all().filter((e) => e.attrs.negated !== undefined), form).toEqual([]);
+    }
+    // The negation spelled in the body is the plain clause, read as it states.
+    const spelled = parseModel(src('assert constraint c { not (load > 10.0) }'));
+    expect(spelled.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(spelled.model.all().find((e) => e.declaredName === 'c')!.attrs.expression).toBe('not (load > 10.0)');
+  });
+
   it('resolves a forward disjoint / subset target and leaves genuine typos unresolved (F4)', () => {
     // Forward disjoint: the Disjoining's target resolves to the later sibling.
     const dj = reparse(`package D { part def A; disjoint A from B; part def B; }`);

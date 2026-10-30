@@ -9681,6 +9681,65 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RB5E::Q::tie in RB5E::q1': ['?/-/?/-', 'F'],
       'RB5E::top': ['?/?/?/?', null],
     }),
+    // fence-assert-not S1: `assert not constraint c { … }` was a parse error whose recovery left `c` a PLAIN constraint,
+    // read T on all four surfaces while it holds (h1; h2 in the instance whose binding carries the value) — the clause
+    // states the opposite. No reader negates it, so the clause is refused with a finding of its own
+    // (`mapper/negated-assert-unread`, an error: the load degrades and the checks abstain) and kept as written: no
+    // surface files a row for `c`, and the rows beside it are what they were. Pinned in either text order and member
+    // order, with a binding-carried instance, then a specialisation, a nested definition, an instance of an instance,
+    // an anonymous clause, and `require not` / `assume not`, which are no published form and are refused the same way.
+    'neg-assert-h1': probe(`package NA1 {
+        part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { load > 10.0 } }
+        part p : P;
+        constraint topT { p.load <= 100.0 }
+        constraint topF { p.load >= 100.0 }
+      }`, {
+      'NA1::topF': ['F/F/F/F', 'F'],
+      'NA1::topT': ['T/T/T/T', 'T'],
+    }),
+    'neg-assert-h1-rev': probe(`package NA1R {
+        constraint topF { p.load >= 100.0 }
+        constraint topT { p.load <= 100.0 }
+        part p : P;
+        part def P { assert not constraint c { load > 10.0 } attribute load : ScalarValues::Real = 50.0; }
+      }`, {
+      'NA1R::topF': ['F/F/F/F', 'F'],
+      'NA1R::topT': ['T/T/T/T', 'T'],
+    }),
+    'neg-assert-h2': probe(`package NA2 {
+        part def P { attribute load : ScalarValues::Real; assert not constraint c { load > 10.0 } }
+        part def Q { part p : P; attribute L : ScalarValues::Real = 50.0; bind p.load = L; }
+        part q : Q;
+        constraint topT { q.p.load <= 100.0 }
+        constraint topF { q.p.load >= 100.0 }
+      }`, {
+      'NA2::topF': ['F/F/F/F', 'F'],
+      'NA2::topT': ['T/T/T/T', 'T'],
+    }),
+    'neg-assert-h2-rev': probe(`package NA2R {
+        constraint topF { q.p.load >= 100.0 }
+        constraint topT { q.p.load <= 100.0 }
+        part q : Q;
+        part def Q { bind p.load = L; attribute L : ScalarValues::Real = 50.0; part p : P; }
+        part def P { assert not constraint c { load > 10.0 } attribute load : ScalarValues::Real; }
+      }`, {
+      'NA2R::topF': ['F/F/F/F', 'F'],
+      'NA2R::topT': ['T/T/T/T', 'T'],
+    }),
+    'neg-assert-family': probe(`package NA5 {
+        part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint { load > 10.0 } require not constraint r { load < 100.0 } }
+        part def P2 :> P { assume not constraint a { load > 0.0 } }
+        part def Outer { part def Inner { attribute load : ScalarValues::Real = 50.0; assert not constraint c { load > 10.0 } } part i : Inner; }
+        part def R { part p : P; }
+        part r : R;
+        part p2 : P2;
+        part o : Outer;
+        constraint topR { r.p.load <= 100.0 }
+        constraint topP2 { p2.load >= 100.0 }
+      }`, {
+      'NA5::topP2': ['F/F/F/F', 'F'],
+      'NA5::topR': ['T/T/T/T', 'T'],
+    }),
     // C1 (contradictory-models S1): a definition's assert read in the instance whose binding gives the value it reads.
     // P's `load` has no value, Q's `bind p.load = L` and `L = 50.0` give Q's p the 50 P's `load <= 10.0` misses: the
     // assert is read in Q's p, as it is where p writes `:>> load = 50.0` itself (the `-eq` twin, I15), and violated
@@ -15274,6 +15333,25 @@ package L3 {
   it('sub-rv1-cycle: the subsetting cycle is reported as a specialization cycle', async () => {
     const { report } = await loadModelText(PROBES['sub-rv1-cycle']!.text, { fileName: 'cycle.sysml', strict: true });
     expect(report.diagnostics.filter((d) => d.code === 'validation/specialization-cycle').length).toBeGreaterThan(0);
+  });
+
+  // fence-assert-not S1: each negated clause of the probes above is one error of its own, with a range, on the file as
+  // written; the clause is kept as a constraint with no expression and the save writes it as it was read.
+  it('neg-assert-*: a negated assert is refused with a finding of its own, and no surface files a row for it', async () => {
+    const wrote = new Map([['neg-assert-h1', 1], ['neg-assert-h1-rev', 1], ['neg-assert-h2', 1], ['neg-assert-h2-rev', 1], ['neg-assert-family', 4]]);
+    for (const [name, count] of wrote) {
+      const { model, report } = await loadModelText(PROBES[name]!.text, { fileName: `${name}.sysml`, strict: true });
+      const found = report.diagnostics.filter((d) => d.code === 'mapper/negated-assert-unread');
+      expect(found.map((d) => [d.severity, d.range !== undefined]), name).toEqual(Array(count).fill(['error', true]));
+      expect(report.ok, name).toBe(false);
+      const kept = model!.all().filter((e) => e.attrs.negated === true);
+      expect(kept.length, name).toBe(count);
+      for (const e of kept) {
+        expect(e.attrs.expression, `${name}: the body of a negated clause is no expression any reader takes`).toBeUndefined();
+        expect(String(e.attrs.unparsedText), name).toMatch(/^(?:assert|require|assume) not\b/);
+      }
+      expect([...(seen.get(name)?.keys() ?? [])].filter((row) => /::(?:c|r|a|«ConstraintUsage»)\b/.test(row)), `${name}: a row for a negated clause`).toEqual([]);
+    }
   });
 
   // PI-1: a usage-owned relation's one other instance (pi1-r17's q1::p) was refuted by verify while
