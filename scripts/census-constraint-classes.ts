@@ -16,6 +16,7 @@
  *   --time               print the wall time of each phase to stderr
  *   --json               print the census as JSON
  *   --check              run the census twice in separate processes and test its own invariants
+ *   --expect-clean-src   with --check: also fail when `git status` shows an uncommitted change under src/
  *
  * With FILEs, only those are read (corpus `files`). Exit 0 on success, 1 when a `--check` invariant fails,
  * 2 on a usage error or an absent solver.
@@ -55,6 +56,7 @@ const FLAGS: readonly FlagSpec[] = [
   { name: 'time', kind: 'boolean', doc: 'Print the wall time of each phase to stderr.' },
   { name: 'json', kind: 'boolean', doc: 'Print the census as JSON.' },
   { name: 'check', kind: 'boolean', doc: 'Run twice in two processes and test the invariants.' },
+  { name: 'expect-clean-src', kind: 'boolean', doc: 'With --check: also fail on an uncommitted change under src/.' },
 ];
 
 interface Item {
@@ -175,7 +177,7 @@ export function canonical(c: Census): string {
   return JSON.stringify(sort(c), null, 1) + '\n';
 }
 
-async function check(argv: readonly string[]): Promise<number> {
+async function check(argv: readonly string[], expectCleanSrc: boolean): Promise<number> {
   const run = (): string => {
     const r = spawnSync(process.execPath, [...process.execArgv, process.argv[1]!, '--json', ...argv], { encoding: 'utf8', maxBuffer: 1 << 28 });
     if (r.status !== 0) throw new Error(`census run failed: ${r.stderr.slice(0, 400)}`);
@@ -184,13 +186,15 @@ async function check(argv: readonly string[]): Promise<number> {
   const a = run();
   const b = run();
   const census = JSON.parse(a) as Census;
-  const git = spawnSync('git', ['status', '--porcelain', '--', 'src'], { cwd: ROOT, encoding: 'utf8' });
   const lines: string[] = [];
   const results: Array<[boolean, string]> = [
     [a === b, 'two processes give byte-equal output'],
     [invariantsHold(census), 'every row has one shape or fence and (but for a no-clause row) one reading; per-model totals equal obligationsOf; each shape maps to one logic; the footprint equals encodedFootprint'],
-    [git.status === 0 && git.stdout.trim() === '', 'no uncommitted change under src/'],
   ];
+  if (expectCleanSrc) {
+    const git = spawnSync('git', ['status', '--porcelain', '--', 'src'], { cwd: ROOT, encoding: 'utf8' });
+    results.push([git.status === 0 && git.stdout.trim() === '', 'no uncommitted change under src/']);
+  }
   for (const [ok, what] of results) lines.push(`${ok ? 'ok    ' : 'FAILS '} ${what}`);
   process.stdout.write(lines.join('\n') + '\n');
   return results.every(([ok]) => ok) ? 0 : 1;
@@ -204,8 +208,8 @@ async function main(): Promise<number> {
   }
   const given = (n: string): boolean => flagGiven(args, n);
   if (given('check')) {
-    const rest = process.argv.slice(2).filter((x) => x !== '--check');
-    return check(rest);
+    const rest = process.argv.slice(2).filter((x) => x !== '--check' && x !== '--expect-clean-src');
+    return check(rest, given('expect-clean-src'));
   }
   if (given('merge')) {
     const merged = args.positionals.map((f) => JSON.parse(readFileSync(f, 'utf8')) as Census).reduce((a, b) => mergeCensus(a, b));

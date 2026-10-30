@@ -1201,6 +1201,9 @@ describe('the constraint-class census sorts a relation by the bytes the encoder 
     ['a / (2.0 * 3.0) > 1.0', 'lra'],
     ['a ^ 1 > 1.0', 'lra'],
     ['a ^ 3 > 1.0', 'nra-poly'],
+    ['a ^ -1 > 1.0', 'nra-div'],
+    ['a ^ -2 > 1.0', 'nra-div'],
+    ['n ^ -1 > 1.0', 'nira'],
   ];
 
   it.each(TABLE)('%s is %s, in the bytes, in the AST, and in the encoder\u2019s own logic line', (body, shape) => {
@@ -1223,7 +1226,7 @@ describe('the constraint-class census sorts a relation by the bytes the encoder 
     expect(e.syntacticNonlinear).toBe(true);
   });
 
-  it('reads the published examples to the counts the plan expects, with its own invariants intact', async () => {
+  it('reads the published examples to the expected counts, with its own invariants intact', async () => {
     const files = ['uav-isr', 'uav-isr-verification', 'vehicle'].map((n) => `examples/${n}.sysml`);
     const { census } = await collect(corpusItems(undefined, files), { verdicts: false, probes: false });
     expect(invariantsHold(census), JSON.stringify(census.checks)).toBe(true);

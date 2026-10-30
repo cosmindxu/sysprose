@@ -250,6 +250,7 @@ function astWalk(n: ExprNode, byPath: ReadonlyMap<string, EncodeVariable>): AstF
         const e = literalExponent(n.right);
         if (e === 0) return { ...none(), refs: l.refs, nl: l.nl, divSide: l.divSide }; // the read is dropped
         if (e !== undefined && e >= 2) return { ...l, nl: l.nl || l.refs };
+        if (e !== undefined && e < 0) return { ...l, nl: l.nl || l.refs, divSide: l.divSide || l.refs }; // 1 / base ^ |e|
         return l;
       }
       return both;
@@ -1056,7 +1057,7 @@ export function renderCensus(c: Census): string {
     return { corpus: corpus!, goal: goal!, script: script!, logic: logic!, search: search!, rank: rank!, dropped: dropped!, verdict: verdict!, basis: basis!, n };
   });
   const nProofs = proofs.reduce((a, p) => a + p.n, 0);
-  line(`  proofs ${nProofs}; script cell outranks every row cell in ${sumProofs(c, (p) => p.rank === 'outranks')} (the plan expects 0 on the corpus)`);
+  line(`  proofs ${nProofs}; script cell outranks every row cell in ${sumProofs(c, (p) => p.rank === 'outranks')} (expected 0 on the corpus)`);
   for (const [title, f] of [['script shape', (p: (typeof proofs)[0]) => (p.search === '-' ? p.script : `${p.script}/${p.search}`)], ['script logic', (p: (typeof proofs)[0]) => p.logic], ['goal cell', (p: (typeof proofs)[0]) => p.goal]] as const) {
     const m = new Map<string, number>();
     for (const p of proofs) m.set(f(p), (m.get(f(p)) ?? 0) + p.n);
@@ -1107,7 +1108,7 @@ export function renderCensus(c: Census): string {
     const shapes = Object.entries(got.shapes).sort().map(([k, n]) => `${n} ${k}`).join(', ');
     const same =
       got.rows === want.rows && got.units === want.units && JSON.stringify(Object.entries(got.shapes).sort()) === JSON.stringify(Object.entries(want.shapes).sort()) && (want.encoded === undefined || got.encoded === want.encoded);
-    line(`  ${same ? 'same   ' : 'DIFFERS'} ${name}: ${got.rows} rows, ${got.encoded} encoded (${shapes}), ${got.units} units rows${same ? '' : `; the plan says ${want.rows} rows, ${JSON.stringify(want.shapes)}, ${want.units} units`}`);
+    line(`  ${same ? 'same   ' : 'DIFFERS'} ${name}: ${got.rows} rows, ${got.encoded} encoded (${shapes}), ${got.units} units rows${same ? '' : `; expected ${want.rows} rows, ${JSON.stringify(want.shapes)}, ${want.units} units`}`);
   }
   line();
 
