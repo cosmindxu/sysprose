@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 5075 total — 5075 passed, 0 failed, 0 skipped
+- **Tests:** 5098 total — 5098 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -55,7 +55,7 @@
 | test/unit/api.query2.test.ts | 9 | 0 | 0 |
 | test/unit/api.request-validation.test.ts | 9 | 0 | 0 |
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
-| test/unit/api.rest2.test.ts | 10 | 0 | 0 |
+| test/unit/api.rest2.test.ts | 11 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 12 | 0 | 0 |
 | test/unit/api.verification.test.ts | 80 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
@@ -107,7 +107,7 @@
 | test/unit/reparent-target.test.ts | 14 | 0 | 0 |
 | test/unit/requirements-table.test.ts | 20 | 0 | 0 |
 | test/unit/scenarios.test.ts | 3 | 0 | 0 |
-| test/unit/semantics.bind.test.ts | 24 | 0 | 0 |
+| test/unit/semantics.bind.test.ts | 26 | 0 | 0 |
 | test/unit/semantics.conformance.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
@@ -144,7 +144,7 @@
 | test/unit/simulate.test.ts | 31 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 312 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 328 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
@@ -160,7 +160,7 @@
 | test/unit/text.roundtrip.test.ts | 134 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
-| test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
+| test/unit/ui.properties-facets.test.ts | 26 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 29 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
