@@ -2017,7 +2017,8 @@ export function createDriveActions(
       }
       await standing.run();
       // The command has replaced the model: the text was saved over a field's change, and Undo is two steps away.
-      if (replacing.over) internals.sayTypedTextOverChanges(standing.prompt.label);
+      // Joining a room pushes no undo step of its own: one Undo takes the apply back, as the plain note says.
+      if (replacing.over) internals.sayTypedTextOverChanges(standing.prompt.label === 'Join room' ? undefined : standing.prompt.label);
     },
 
     driveResume() {

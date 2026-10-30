@@ -2591,6 +2591,50 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(c['PD::cM'], 'page: u0 is withheld').toBe('?/?/?/?');
         expect(c['PD::cZ']).toBe('?/?/?/?');
         neverMore(c, await surfaces(reopened(st().model)), 'move u0::Zb up into Q0');
+        // (d) A binding that reaches the parted scope through ANOTHER binding (review of fence-editor2): `v.x` joins
+        // `u1.Zb`, whose own binding is parted, so no lane reads K2 of the owner (default 14.0) or the stated value
+        // through the set-aside binding: the page abstains where the file decides, never the reverse.
+        load(`package PE {
+  part def T0 { attribute K default = 13.0; }
+  part def D1 :> T0 { attribute K2 default = 14.0; attribute M2 :>> K default = 15.0; }
+  part u1 : D1 { attribute :>> M2 = 17.0; attribute Zb default = 1.0; bind Zb = K2; }
+  part v { attribute x; }
+  bind v.x = u1.Zb;
+  constraint cV1 { v.x == 1.0 }
+  constraint cV14 { v.x == 14.0 }
+  constraint cV17 { v.x == 17.0 }
+}`);
+        st().updateElement(st().model.children(byName('T0').id).find((c2) => c2.declaredName === 'K')!.id, { declaredName: 'K2' });
+        const d = await surfaces(st().model);
+        for (const k of ['PE::cV1', 'PE::cV14', 'PE::cV17']) expect(d[k], `page: ${k} chains into a parted scope`).toBe('?/?/?/?');
+        neverMore(d, await surfaces(reopened(st().model)), 'rename T0::K to K2, chained');
+        // (e) A scope is withheld in a model whose other rows do not read it (soak seed 60601): the solver's axioms hold
+        // every scope, and the file finds them inconsistent where the page, without that scope's names, does not. The
+        // SMT lane then proves and refutes nothing on this model, never an F where the file says inconsistent axioms.
+        load(`package PF {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute :>> N default = 13.0; attribute Zd1; bind Zd1 = M; }
+  part def D2 :> D1 { attribute :>> M default = 14.0; attribute K2 :>> N default = 15.0; }
+  part def D3 :> D2 { attribute :>> N default = 16.0; attribute Zd3; bind Zd3 = PF::D3::K2; }
+  part def D4 :> D3;
+  part def D5 :> D1 { attribute X :>> M default = 17.0; attribute K2 default = 18.0; }
+  part u1 : Q0 : D4 { attribute :>> M = 21.0; attribute :>> N; attribute Z1 = 22.0; }
+  constraint c4 { u1.N == 22.0 }
+  constraint c8 { u1.Z1 == 20.0 }
+}`);
+        const kidOf = (owner: string, name: string) => st().model.children(byName(owner).id).find((c2) => c2.declaredName === name)!;
+        st().reparent(kidOf('D1', 'Zd1').id, byName('Q0').id);
+        st().updateElement(kidOf('D5', 'K2').id, { declaredName: 'Z1' });
+        st().updateElement(
+          st().model.children(byName('D4').id).find((c2) => c2.eClass === 'Subclassification')!.id,
+          { target: [byName('Q0').id] },
+        );
+        const e = await surfaces(st().model);
+        const eFile = await surfaces(reopened(st().model));
+        for (const k of ['PF::c4', 'PF::c8']) {
+          expect(cells(e[k])[3], `page: ${k} is not proved or refuted by the solver`).toBe('?');
+          neverMore(e, eFile, 'seed 60601');
+        }
         // A stale copy no member of its owner bears stays exactly as before: the file reads the end unresolved too.
         load(EC);
         st().bindType(byName('r').id, 'Z');
@@ -4690,6 +4734,19 @@ describe('google drive', () => {
       expect(named('Kite'), 'one Undo has not brought the change back').toBe(false);
       st().undo();
       expect(named('Kite'), 'the second has').toBe(true);
+    });
+
+    it('the guard’s Save before Join room says the plain sentence: joining pushes no undo step, one Undo brings the change back', async () => {
+      await attached();
+      await typedOverChange();
+      const run = vi.fn();
+      st().driveGuard('Join room', 'dirty', run);
+      await st().driveRunPending('save');
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(drive().notice?.message).toContain(DRIVE_MESSAGES.typedTextAppliedOverChanges);
+      expect(drive().notice?.message).not.toContain('two Undos');
+      st().undo();
+      expect(named('Kite'), 'one Undo has').toBe(true);
     });
 
     it('the guard’s Save that does not go through (the upload fails) says the plain sentence and the command waits', async () => {

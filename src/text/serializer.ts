@@ -124,6 +124,9 @@ const STATEMENT_WORD: Record<string, string> = {
   TransitionFeature: 'transition',
 };
 
+/** What the note written in a statement's place starts with ({@link serializeElement}): a writer that cannot keep the text looks for it. */
+export const NOT_SAVED_MARK = '// Not saved: ';
+
 /**
  * Serialize a single element (and its body) at the given indentation depth.
  *
@@ -138,8 +141,10 @@ export function serializeElement(model: Model, id: ElementId, indent = 0): strin
   } catch (err) {
     if (!(err instanceof NoNameReachesEnd) || err.elementId !== id) throw err;
     const word = STATEMENT_WORD[model.require(id).eClass] ?? 'statement';
+    // One line: a name holding a line break must not end the comment and leave the rest to be read as code.
+    const ref = err.ref.replace(/«([^»]*)»/g, '(unnamed $1)').replace(/\s+/g, ' ');
     return (
-      `${INDENT.repeat(indent)}// Not saved: a ${word} whose end no name reaches (${err.ref.replace(/«([^»]*)»/g, '(unnamed $1)')}). ` +
+      `${INDENT.repeat(indent)}${NOT_SAVED_MARK}a ${word} whose end no name reaches (${ref}). ` +
       'Name the unnamed redefinition on its path to save it.'
     );
   }
@@ -1863,7 +1868,7 @@ function markStaleBindings(model: Model, copies: ReadonlySet<ElementId>, parted:
       for (const b of model.edgesOf(id)) {
         if (b.attrs.isLibrary === true || isRelationship(b.eClass) || !b.eClass.startsWith('BindingConnector')) continue;
         const ends = [...(b.source ?? []), ...(b.target ?? [])].map(staleChain);
-        const stale = ends.some((e) => e > 0);
+        const stale = ends.some((e) => e === 1);
         // A copy parted by an earlier settle stays so while it is stale: the name it was merged under is not kept.
         const apart = ends.includes(2) || (stale && b.attrs.partedEnd === true);
         if ((b.attrs.staleEnd === true) !== stale || (b.attrs.partedEnd === true) !== apart) {

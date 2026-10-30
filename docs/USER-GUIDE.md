@@ -4890,9 +4890,10 @@ continue** of the question below applies it over the change and, once the comman
 has replaced the model, says *Saved with the text typed in the Text view applied
 over changes made in the app since you began typing: where the two differ, the
 text won. It takes two Undos to bring those changes back: New, then the applied
-text.* (the command's name stands for New, Open, Import, Switch branch, Merge or
-Join room): the first Undo brings back the model the command replaced, the second
-takes the apply back. An SDK edit or a peer's edit made since the typing is not a
+text.* (the command's name stands for New, Open, Import, Switch branch or a Merge
+that resolves): the first Undo brings back the model the command replaced, the second
+takes the apply back. Join room replaces no model in this browser, so after it the
+strip says the plain sentence, *Undo brings those changes back*, and one Undo does. An SDK edit or a peer's edit made since the typing is not a
 field's change: Save applies the text over it as before and says nothing.
 
 **Replacing a model with unsaved work asks first.** **New**, **Open ▾**,

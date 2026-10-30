@@ -4375,6 +4375,33 @@ package P {
     }
   }, 300_000);
 
+  it('a write-back that would drop a statement no name reaches is refused, and the file is left as it was', async () => {
+    // Review of fence-editor2: the serializer writes `// Not saved:` in the statement's place, the text loads clean to a
+    // model without it, and `--out` over the input would lose `bind w = p.load;` with nothing said.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'unnamed-end.sysml');
+      const source = [
+        'package T {',
+        '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+        '  part p : P { attribute :>> load = 50.0; attribute load : ScalarValues::Real; }',
+        '  attribute w : ScalarValues::Real;',
+        '  bind w = p.load;',
+        '}',
+        '',
+      ].join('\n');
+      writeFileSync(model, source);
+      const out = join(dir, 'out.sysml');
+      const detached = await run(['evidence-detach', model, '--out', out]);
+      expect(detached.code).toBe(2);
+      expect(detached.stderr).toContain('cannot be written back as text without losing a statement');
+      expect(detached.stderr).toContain('a binding whose end no name reaches');
+      expect(existsSync(out), 'nothing is written').toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
   it('the method gate reads every spelling of `kind`, including an inherited one', async () => {
     // FOUR PARSE-CLEAN SPELLINGS OF ONE SENTENCE, and the gate has to read all
     // of them, because the arm that JUDGES is the one a case falls into when no

@@ -4014,6 +4014,20 @@ export class DefiningEquations {
    * specialises (a bound end moved up into the type): the file makes the copy.
    */
   private partedHolder(id: ElementId): boolean {
+    const parted = this.partedOwners();
+    return parted.size > 0 && (parted.has(id) || generalizationsOf(this.model, id).some((g) => parted.has(g.id)));
+  }
+
+  /**
+   * Does the model hold a scope {@link partedHolder} leaves unread? The axioms of a solver run are built from every
+   * scope, so a run over such a model proves or refutes on a set the reopened file may find inconsistent
+   * (`verification/inconsistent-axioms`): the SMT lane decides nothing there (./api/verification).
+   */
+  hasWithheldScope(): boolean {
+    return this.partedOwners().size > 0;
+  }
+
+  private partedOwners(): ReadonlySet<ElementId> {
     if (this.parted === undefined) {
       const out = new Set<ElementId>();
       for (const b of this.model.ofKind('BindingConnectorAsUsage', 'BindingConnector')) {
@@ -4025,7 +4039,7 @@ export class DefiningEquations {
       }
       this.parted = out;
     }
-    return this.parted.size > 0 && (this.parted.has(id) || generalizationsOf(this.model, id).some((g) => this.parted!.has(g.id)));
+    return this.parted;
   }
 
   /**
