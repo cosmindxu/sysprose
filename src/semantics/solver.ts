@@ -2712,7 +2712,7 @@ function designReadings(
     const root = rootOf(eq);
     if (!design.has(root) || rivalRoots.has(root)) continue;
     const r = residualOf(eq, values);
-    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol)) {
+    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol) && nearRoot(eq, values, r)) {
       agreeing.add(eq);
     } else {
       missed.add(eq);
@@ -2801,7 +2801,7 @@ function unsettledFeatures(
     }
     if (vs.length === 0 || !eq.vars.every((v) => values.has(v))) continue;
     const r = residualOf(eq, values);
-    if (r === undefined || !(Math.abs(r) <= convergenceGate(eq, values, tol))) missed.push(vs[0]!);
+    if (r === undefined || !(Math.abs(r) <= convergenceGate(eq, values, tol)) || !nearRoot(eq, values, r)) missed.push(vs[0]!);
   }
   if (missed.length === 0) return new Set();
   const roots = new Set(missed.map(find));
@@ -3175,7 +3175,7 @@ function residualSummary(
       continue;
     }
     residual = Math.max(residual, Math.abs(r));
-    if (Math.abs(r) > convergenceGate(eq, values, tol)) withinTol = false;
+    if (Math.abs(r) > convergenceGate(eq, values, tol) || !nearRoot(eq, values, r)) withinTol = false;
   }
   return { residual, determined, withinTol };
 }
@@ -3221,6 +3221,121 @@ function witnessGate(eq: Equation, values: Map<ElementId, number>, feasTol: numb
   // drives to its own floor is never read as a miss.
   const noise = 64 * (l.err + r.err + Number.EPSILON * Math.abs(l.value - r.value));
   return Math.min(gate, eq.scale ? noise : Math.max(feasTol, 1e-6, noise));
+}
+
+/**
+ * How far, as a fraction of the size of the values it reads, a point may be from a root of an equation to first order (|residual| over
+ * the length of the slope) for a residual under the gate to be that root's ({@link nearRoot}).
+ */
+const ROOT_DISTANCE = 1e-8;
+
+/**
+ * Is the residual `r` of `eq` at `values`, under the gate the caller judges it by, a root's? Only where the equation is steep enough
+ * there: a flat one is under the gate a long way from its root (`1.0 / x == 0.000001` at 999773: 2e-10, the root 227 away), and one
+ * that tends to its asymptote where it has none (`2.0 ^ x == 0.0` at −31, `6.0 / (x + 1.0) == 0.0` at 3e21) is small on a plateau.
+ * The distance to a root to first order, |r| over the length of the slope in what the equation reads, is held to {@link ROOT_DISTANCE}
+ * of the size of those values. A residual within the rounding of its own evaluation is a root, and so is one of 0 unless the
+ * equation holds a quotient or a power and nothing moves it (a plateau: `2.0 ^ x` underflows to 0 at −1100). A slope that cannot be
+ * read (a pole a step away) leaves the verdict to the gate.
+ */
+function nearRoot(eq: Equation, values: Map<ElementId, number>, r: number): boolean {
+  const plateau = quotientOrPower(eq);
+  if (r === 0 && !plateau) return true;
+  const scope = idScope(eq, values);
+  const l = roundingOf(eq.lhs, scope);
+  const q = roundingOf(eq.rhs, scope);
+  if (r !== 0 && l !== undefined && q !== undefined && Math.abs(r) <= 64 * (l.err + q.err + Number.EPSILON * Math.abs(l.value - q.value))) {
+    return true;
+  }
+  const at = (move: (v: ElementId, x: number) => number): number | undefined => {
+    const moved = eq.vars.map((v) => [v, values.get(v)] as const);
+    try {
+      for (const [v, x] of moved) if (x !== undefined && Number.isFinite(x)) values.set(v, move(v, x));
+      return residualOf(eq, values);
+    } finally {
+      for (const [v, x] of moved) if (x !== undefined) values.set(v, x);
+    }
+  };
+  const step = (x: number): number => 1e-6 * (Math.abs(x) + 1);
+  let slope = 0;
+  let size = 0;
+  for (const v of eq.vars) {
+    const x = values.get(v);
+    if (x === undefined || !Number.isFinite(x)) continue;
+    size = Math.max(size, Math.abs(x));
+    const rh = at((u, y) => (u === v ? y + step(y) : y));
+    if (rh === undefined) return true;
+    slope += ((rh - r) / step(x)) ** 2;
+  }
+  if (r === 0) {
+    // No one feature moves it; nor do all together (`x * y / z == 0.0` at x = y = 0 is a root, and moved together they leave 0).
+    const all = at((_, y) => y + step(y));
+    return slope > 0 || all === undefined || all !== 0;
+  }
+  return Math.abs(r) / Math.sqrt(slope) <= ROOT_DISTANCE * (eq.scale ? size : size + 1);
+}
+
+const QUOTIENT_OR_POWER = new WeakMap<Equation, boolean>();
+/** Does `eq` hold a quotient or a power, the shapes that go flat towards an asymptote? */
+function quotientOrPower(eq: Equation): boolean {
+  let out = QUOTIENT_OR_POWER.get(eq);
+  if (out === undefined) {
+    out = false;
+    forEachOp(eq.lhs, (n) => (out = out || n.op === '/' || n.op === '^'));
+    forEachOp(eq.rhs, (n) => (out = out || n.op === '/' || n.op === '^'));
+    QUOTIENT_OR_POWER.set(eq, out);
+  }
+  return out;
+}
+
+function forEachOp(node: ExprNode, f: (n: Extract<ExprNode, { kind: 'binary' }>) => void): void {
+  switch (node.kind) {
+    case 'binary':
+      f(node);
+      forEachOp(node.left, f);
+      forEachOp(node.right, f);
+      break;
+    case 'unary':
+      forEachOp(node.operand, f);
+      break;
+    case 'if':
+      forEachOp(node.cond, f);
+      forEachOp(node.then, f);
+      forEachOp(node.else, f);
+      break;
+    default:
+  }
+}
+
+/**
+ * Does `eq` divide, at `values`, by something within `gate` of 0? With `moved`, only by one that reads a feature in it: a witness the
+ * search moved to a divisor that small is none, `x / y == 3.0` beside `y == 0.0` and `x == 0.0` was met at 1e-16 and 3e-16, a quotient
+ * of rounding where 0/0 satisfies nothing; a literal or a stated divisor, however small, is the model's own scale. Without it, only
+ * where the equation has no residual all the same (a divisor of exactly 0 beside a feature with no value: a guarded `if` that does not
+ * divide is not one).
+ */
+function dividesByNearZero(eq: Equation, values: Map<ElementId, number>, gate: number, moved?: ReadonlySet<ElementId>): boolean {
+  if (moved === undefined && residualOf(eq, values) !== undefined) return false;
+  const scope = idScope(eq, values);
+  const reads = (n: ExprNode): boolean =>
+    n.kind === 'ref'
+      ? moved!.has(eq.nameToId.get(n.path.join('.'))!)
+      : n.kind === 'unary'
+        ? reads(n.operand)
+        : n.kind === 'binary'
+          ? reads(n.left) || reads(n.right)
+          : n.kind === 'if'
+            ? reads(n.cond) || reads(n.then) || reads(n.else)
+            : false;
+  let near = false;
+  const visit = (n: Extract<ExprNode, { kind: 'binary' }>): void => {
+    if (near || n.op !== '/' || (moved !== undefined && !reads(n.right))) return;
+    const d = evaluate(n.right, scope);
+    if ('value' in d && typeof d.value === 'number' && Math.abs(d.value) <= gate) near = true;
+  };
+  forEachOp(eq.lhs, visit);
+  forEachOp(eq.rhs, visit);
+  return near;
 }
 
 /**
@@ -3625,11 +3740,16 @@ function solveScalar(
   for (let i = 0; i < 60; i++) {
     const f0 = f(t);
     if (f0 === undefined) break;
-    if (settled(t, f0)) return t;
+    const done = settled(t, f0);
+    if (done && !mono) return t;
     const h = probeStep(t);
     const f1 = f(t + h);
     if (f1 === undefined) break;
     const deriv = (f1 - f0) / h;
+    // A one-to-one equation under the gate is a root only if the Newton step from there is itself under the step gate. A flat one is under
+    // the gate far from its root (`1.0 / x == 0.000001` at 999773, residual 2e-10: the step is 227), and one that tends to its asymptote
+    // is under it where it has none (`2.0 ^ x == 0.0` at −31: the step stays 1.44): on, to the root or to no root, never stopped there.
+    if (done && Math.abs(deriv) >= 1e-14 && (f0 === 0 || Math.abs(f0 / deriv) <= stepGate(t))) return t;
     if (Math.abs(deriv) < 1e-14) break;
     const next = t - f0 / deriv;
     if (!Number.isFinite(next)) break;
@@ -3885,6 +4005,7 @@ function newtonCore(
   };
 
   const budget = Math.min(maxIter, 100);
+  let stepped = false;
   for (let iter = 0; iter < budget; iter++) {
     const F = residuals(x);
     if (!F) break;
@@ -3949,8 +4070,32 @@ function newtonCore(
       if (!Number.isFinite(d)) return { aborted: true };
       x[j] += d;
       step = Math.max(step, Math.abs(d));
+      stepped = true;
     }
     if (step <= tol * xScale()) break;
+  }
+
+  // A point a step reached under the gate the caller judges it by ({@link convergenceGate}) is a root's only where the equations that go
+  // flat towards an asymptote are steep enough there ({@link nearRoot}): `y == 2.0 ^ x` beside `y == 0.0` was met at x = −23 (residual
+  // 1e-7, the step under `tol`) and written back as a root.
+  if (stepped && active.some(quotientOrPower)) {
+    const F = residuals(x);
+    if (F?.every((fv, i) => Math.abs(fv) <= (anyScaled ? RESIDUAL_FLOOR * eqScales[i]! : Math.max(tol, 1e-6, RESIDUAL_FLOOR * eqScales[i]!)))) {
+      const slope = F.map(() => 0);
+      for (let j = 0; j < n; j++) {
+        const h = 1e-6 * (anyScaled ? Math.abs(x[j]) || xScale() : Math.abs(x[j]) + 1);
+        const xp = x.slice();
+        xp[j] += h;
+        const Fp = residuals(xp);
+        if (!Fp) return { aborted: false };
+        for (let i = 0; i < F.length; i++) slope[i] += ((Fp[i] - F[i]) / h) ** 2;
+      }
+      const size = anyScaled ? xScale() : xScale() + Math.max(0, ...x.map(Math.abs));
+      const flat = F.some((fv, i) =>
+        quotientOrPower(active[i]) && (fv === 0 ? slope[i] === 0 : Math.abs(fv) > ROOT_DISTANCE * size * Math.sqrt(slope[i])),
+      );
+      if (flat) return { aborted: true };
+    }
   }
 
   return { aborted: false };
@@ -4948,7 +5093,7 @@ function feasibleFrom(
   }
   const bent = touched.some((eq) => {
     const r = eq.vars.every((v) => values.has(v)) ? residualOf(eq, values) : undefined;
-    return r === undefined || Math.abs(r) > witnessGate(eq, values, feasTol);
+    return r === undefined || Math.abs(r) > witnessGate(eq, values, feasTol) || !nearRoot(eq, values, r) || dividesByNearZero(eq, values, feasTol, moved);
   });
   // The model's own equations — an asserted one, a binding, a feature's value
   // — and every plain one the solve took as a design equation hold at a
@@ -4963,8 +5108,12 @@ function feasibleFrom(
     if (rel !== undefined && !isAsserted(rel) && !base.imposed.has(rel.id)) return false;
     if (!eq.vars.every((v) => values.has(v))) return false;
     const r = residualOf(eq, values);
-    return r !== undefined && !(Math.abs(r) <= witnessGate(eq, values, feasTol));
+    return r !== undefined && !(Math.abs(r) <= witnessGate(eq, values, feasTol) && nearRoot(eq, values, r) && !dividesByNearZero(eq, values, feasTol, moved));
   });
+  // Nor is there one where an equation, plain or not, divides by 0 beside a feature the point has no value for (`x / y == 3.0` beside
+  // `y == 0.0`), or reads one the equalities fix and the solve found no root for (`2.0 ^ x == 0.0`): held, with nothing to hold it at.
+  const divides =
+    eqs.some((eq) => dividesByNearZero(eq, values, 0)) || eqs.some((eq) => quotientOrPower(eq) && eq.vars.some((v) => pinned.has(v) && !values.has(v)));
   // Infeasibility is DECIDED only by a violation over values the equations
   // determine; one over a freedom the search did not resolve is a search that
   // stopped, not a design that cannot exist — listed apart, never as a violation.
@@ -5060,8 +5209,8 @@ function feasibleFrom(
       stated = true;
     }
   }
-  const feasible = violations.length === 0 && unresolved.length === 0 && !bent && !missed;
-  const decided = feasible ? !unjudged : (violations.length > 0 && !missed) || stated;
+  const feasible = violations.length === 0 && unresolved.length === 0 && !bent && !missed && !divides;
+  const decided = feasible ? !unjudged : (violations.length > 0 && !missed && !divides) || stated;
   // A descent is local, and the roots of an equation of more than one root are apart: begun at the one the plain solve took (x = 2 for
   // `c0 { x * x == 4.0 }` written above `c1 { x == -2.0 }`) it stalls beside the plain equation, and the model is feasible all the same.
   // Where it neither found a witness nor decided anything, it is made again from where the equations that are not curved put those
@@ -5745,6 +5894,24 @@ function numericRows(
     if (readsCurved.length > 0 && !read && !isRefusalReason(detailed.reason)) {
       // The solved value is one of the roots the equations leave: the unit-aware verdict at it is not asked.
       withhold();
+    } else if (
+      detailed.verdict === 'violated' &&
+      !read &&
+      scale &&
+      searched &&
+      isEq &&
+      eq !== undefined &&
+      residual !== undefined &&
+      core.relations.has(el.id) &&
+      Math.abs(residual) <= convergenceGate(eq, values, tol) &&
+      nearRoot(eq, values, residual)
+    ) {
+      // A root the solve met to its tolerance, read by the unit-aware compare with no tolerance of its own (absTol 0 in a model with
+      // quantities): `x / k == 0.0` at the 1.2e-32 the solve took is exact-unequal to 0, a rounding and no violation. Not judged.
+      row.slack = null;
+      row.amount = 0;
+      delete row.slackUnit;
+      row.reason = `the solve took this equation to its tolerance (residual ${residual.toExponential(1)}), and the exact comparison at a solved value cannot tell a rounding from a violation`;
     } else if (detailed.verdict !== 'unknown' && !read) {
       row.result = detailed.verdict;
       if (row.result === 'satisfied') row.amount = 0;
@@ -5794,7 +5961,7 @@ function numericRows(
         core.relations.has(el.id) &&
         !(el.eClass === 'ConstraintUsage' && !isAsserted(el) && (eq?.vars ?? []).some((v) => core.held.has(v)));
       const atPoint = eq && !isNe && (isEq || isCalcBody) && ownEquation ? residualOf(eq, core.point) : undefined;
-      if (atPoint !== undefined && Math.abs(atPoint) <= convergenceGate(eq!, core.point, tol)) {
+      if (atPoint !== undefined && Math.abs(atPoint) <= convergenceGate(eq!, core.point, tol) && nearRoot(eq!, core.point, atPoint)) {
         row.result = 'satisfied';
         row.slack = atPoint;
         row.amount = 0;

@@ -13011,6 +13011,174 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'CW2::q1': ['?/?/t/?', '?'],
       },
     ),
+    // fence-numeric2 S1: an equation with no root, or a flat one, is no longer read as solved. A residual under the gate is a root's only
+    // where the equation is steep enough there: a one-to-one equation set to a value it never reaches (`6.0 / (x + 1.0) == 0.0`,
+    // `2.0 ^ x == 0.0`, `6.0 / x == 0.0`, `5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 + 2.0`) is under the gate where it tends to its asymptote, and the
+    // numeric surface read it imposed at x = −31 (or solveFeasible feasible at 3e21): it and what stands beside it read ? now, in either order of
+    // the text. A flat one WITH a root (`1.0 / x == 0.000001`, slope 1e-12) was under the gate 227 from its root and read `x >= 999999.0`
+    // violated beside it: the root 1e6 is found, and the inequalities read there. FN7: a pin 227 off it is no longer read as agreeing. FN8: 0/0
+    // satisfies nothing (solveFeasible has no witness; the rows were ? already). The check, literal and SMT surfaces abstain on every one.
+    ...reversed(
+      'fence-fn1',
+      `package FN1 { attribute x : ScalarValues::Real; constraint a { 6.0 / (x + 1.0) == 0.0 } constraint b { x >= 0.0 } }`,
+      `package FN1 { constraint b { x >= 0.0 } constraint a { 6.0 / (x + 1.0) == 0.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN1::a': ['?/?/?/?', '?'],
+        'FN1::b': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn2',
+      `package FN2 { attribute x : ScalarValues::Real; constraint a { 2.0 ^ x == 0.0 } constraint b { x <= 0.0 } }`,
+      `package FN2 { constraint b { x <= 0.0 } constraint a { 2.0 ^ x == 0.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN2::a': ['?/U/?/U', '?'],
+        'FN2::b': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn3',
+      `package FN3 { attribute x : ScalarValues::Real; constraint a { 6.0 / x == 0.0 } constraint b { x >= 1.0 } }`,
+      `package FN3 { constraint b { x >= 1.0 } constraint a { 6.0 / x == 0.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN3::a': ['?/?/?/?', '?'],
+        'FN3::b': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn3b',
+      `package FN3B { attribute x : ScalarValues::Real; constraint a { 6.0 / x == 0.0 } constraint b { x <= -1.0 } }`,
+      `package FN3B { constraint b { x <= -1.0 } constraint a { 6.0 / x == 0.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN3B::a': ['?/?/?/?', '?'],
+        'FN3B::b': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn4',
+      `package FN4 { attribute x : ScalarValues::Real; constraint a { 5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 + 2.0 } constraint b { x <= 0.0 } }`,
+      `package FN4 { constraint b { x <= 0.0 } constraint a { 5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 + 2.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN4::a': ['?/U/?/U', '?'],
+        'FN4::b': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn5',
+      `package FN5 { attribute x : ScalarValues::Real; constraint e0 { 1.0 / x == 0.000001 } constraint k { x >= 999999.0 } constraint j { x <= 1000001.0 } }`,
+      `package FN5 { constraint j { x <= 1000001.0 } constraint k { x >= 999999.0 } constraint e0 { 1.0 / x == 0.000001 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN5::e0': ['?/?/t/?', '?'],
+        'FN5::k': ['?/?/T/?', 'T'],
+        'FN5::j': ['?/?/T/?', 'T'],
+      },
+    ),
+    ...reversed(
+      'fence-fn6',
+      `package FN6 { attribute x : ScalarValues::Real; constraint e0 { 1.0 / x == 0.00001 } constraint k { x >= 99999.0 } constraint j { x <= 100001.0 } }`,
+      `package FN6 { constraint j { x <= 100001.0 } constraint k { x >= 99999.0 } constraint e0 { 1.0 / x == 0.00001 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN6::e0': ['?/?/t/?', '?'],
+        'FN6::k': ['?/?/T/?', 'T'],
+        'FN6::j': ['?/?/T/?', 'T'],
+      },
+    ),
+    ...reversed(
+      'fence-fn7',
+      `package FN7 { attribute x : ScalarValues::Real; constraint e0 { 1.0 / x == 0.000001 } constraint p { x == 999773.0 } }`,
+      `package FN7 { constraint p { x == 999773.0 } constraint e0 { 1.0 / x == 0.000001 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN7::e0': ['?/?/?/?', '?'],
+        'FN7::p': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn8',
+      `package FN8 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; constraint c0 { x / y == 3.0 } constraint c1 { y == 0.0 } constraint c2 { x == 0.0 } }`,
+      `package FN8 { constraint c2 { x == 0.0 } constraint c1 { y == 0.0 } constraint c0 { x / y == 3.0 } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; }`,
+      {
+        'FN8::c0': ['?/?/?/?', '?'],
+        'FN8::c1': ['?/?/?/?', '?'],
+        'FN8::c2': ['?/?/?/?', '?'],
+      },
+    ),
+    // FN9: two pins 1e-7 apart (3e-7 and 4e-7), under the absolute gate of 1e-6, were both read imposed; they disagree by a third. FN10: the
+    // equation reached through a second one (`y == 2.0 ^ x` beside `y == 0.0`) was met at x = −23 by the coupled step and imposed there (and
+    // read T asserted, FN10A); FN11: the lone equation, for which solveFeasible read a witness at the plateau and now none.
+    ...reversed(
+      'fence-fn9',
+      `package FN9 { attribute x : ScalarValues::Real; constraint c1 { x == 0.0000003 } constraint c2 { x == 0.0000004 } }`,
+      `package FN9 { constraint c2 { x == 0.0000004 } constraint c1 { x == 0.0000003 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN9::c1': ['?/?/?/?', '?'],
+        'FN9::c2': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn10',
+      `package FN10 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; constraint a { y == 2.0 ^ x } constraint b { y == 0.0 } constraint c { x <= 0.0 } }`,
+      `package FN10 { constraint c { x <= 0.0 } constraint b { y == 0.0 } constraint a { y == 2.0 ^ x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; }`,
+      {
+        'FN10::a': ['?/U/?/U', '?'],
+        'FN10::b': ['?/?/t/?', '?'],
+        'FN10::c': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn10a',
+      `package FN10A { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; assert constraint a { y == 2.0 ^ x } assert constraint b { y == 0.0 } constraint c { x <= 0.0 } }`,
+      `package FN10A { constraint c { x <= 0.0 } assert constraint b { y == 0.0 } assert constraint a { y == 2.0 ^ x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; }`,
+      {
+        'FN10A::a': ['?/-/?/-', null],
+        'FN10A::b': ['T/-/T/-', null],
+        'FN10A::c': ['?/?/?/?', null],
+      },
+    ),
+    ...reversed(
+      'fence-fn11',
+      `package FN11 { attribute x : ScalarValues::Real; constraint a { 2.0 ^ x == 0.0 } }`,
+      `package FN11 { constraint a { 2.0 ^ x == 0.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'FN11::a': ['?/U/?/U', '?'],
+      },
+    ),
+    // FN12: a solved root of 0 that the unit-aware compare (no tolerance of its own in a model with quantities) reads exact-unequal, 1.2e-32
+    // against 0, was `violated` with no reason on the numeric surface alone; the model is met at x = 0 (the other three abstain).
+    ...reversed(
+      'fence-fn12',
+      `package FN12 { attribute x : ISQ::LengthValue; attribute k : ISQ::LengthValue = 2.0 [nm]; constraint c1 { x / k == 0.0 } constraint c2 { x >= 0.0 [m] } }`,
+      `package FN12 { constraint c2 { x >= 0.0 [m] } constraint c1 { x / k == 0.0 } attribute k : ISQ::LengthValue = 2.0 [nm]; attribute x : ISQ::LengthValue; }`,
+      {
+        'FN12::c1': ['?/?/?/?', '?'],
+        'FN12::c2': ['?/?/T/?', 'T'],
+      },
+    ),
+    // FN13 / FN13A: STILL WRONG (NO STEP, TODO "an equation with no root, reached through a further equation"): each equation of
+    // `y == 6.0 / (x + 1.0)`, `z == y * 2.0`, `z == 0.0` is within 1e-8 of a root, in absolute terms, because the nearRoot test reads
+    // the largest value of ONE equation (the runaway x excuses it) and the evidence of no root is joint: the three read imposed
+    // (FN13, `t`, not a decided letter) and, with the first asserted, T on the numeric surface alone (FN13A, the known false row).
+    ...reversed(
+      'fence-fn13',
+      `package FN13 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y == 6.0 / (x + 1.0) } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 0.0 } }`,
+      `package FN13 { constraint c3 { x >= 0.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } constraint c0 { y == 6.0 / (x + 1.0) } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
+      {
+        'FN13::c0': ['?/?/t/?', '?'],
+        'FN13::c1': ['?/?/t/?', '?'],
+        'FN13::c2': ['?/?/t/?', '?'],
+        'FN13::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn13a',
+      `package FN13A { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; assert constraint c0 { y == 1.0 / x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 1.0 } }`,
+      `package FN13A { constraint c3 { x >= 1.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } assert constraint c0 { y == 1.0 / x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
+      {
+        'FN13A::c0': ['?/-/T/-', '?'],
+        'FN13A::c1': ['?/?/t/?', '?'],
+        'FN13A::c2': ['?/?/t/?', '?'],
+        'FN13A::c3': ['?/?/?/?', '?'],
+      },
+    ),
     // fence-readings S2: six wrong answers fenced, each pinned with its twin. A bare-name equation `K == L` between
     // a contradicted L and K was a source itself and tainted nothing it names, so `p.K >= 55.0` read F with the two
     // equations written 50 then 60 and T with them swapped (the check and the numeric surface; SMT's axioms are
@@ -14360,6 +14528,8 @@ package L3 {
    * clash with its own sentence), so each row is `?` on all four surfaces.
    */
   const KNOWN_FALSE = new Map<string, string>([
+    ['fence-fn13a | FN13A::c0', 'NO STEP: an asserted `y == 1.0 / x` with `z == y * 2.0` and `z == 0.0` has no root (the numeric surface reads it T at x = 2e11, each equation within 1e-8 of one alone); TODO "an equation with no root reached through a further equation"'],
+    ['fence-fn13a-rev | FN13A::c0', 'NO STEP: the same, written in the other order'],
   ]);
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,

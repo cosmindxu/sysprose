@@ -1229,6 +1229,84 @@ describe('solve — the order of the text decides no design equation', () => {
     }
   });
 
+  it('reads no root where a quotient or an exponential tends to its asymptote, and the root of a flat one, in every order (fence-numeric2)', async () => {
+    // An equation set to a value its one-to-one function never reaches (`2.0 ^ x == 0.0`, `6.0 / (x + 1.0) == 0.0`) is under the gate a long
+    // way out, where it tends to its asymptote: the numeric surface read it imposed at x = −31 (and `x >= 0.0` beside it satisfied), and
+    // solveFeasible answered feasible, decided, at x = 3e21. A flat one with a root (`1.0 / x == 0.000001`, slope 1e-12) is under the gate
+    // 227 from it: it was imposed at 999773 and `x >= 999999.0` read violated, where the root 1e6 meets it. A residual is a root's only
+    // where the equation is steep enough there: the first reads nothing, the second its root, whichever way the text is ordered.
+    for (const [e, k] of [
+      ['6.0 / (x + 1.0) == 0.0', 'x >= 0.0'],
+      ['6.0 / x == 0.0', 'x <= -1.0'],
+      ['2.0 ^ x == 0.0', 'x <= 0.0'],
+      ['5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 + 2.0', 'x <= 0.0'],
+    ] as const) {
+      for (const text of inEveryOrder(X, [`constraint a { ${e} }`, `constraint b { ${k} }`])) {
+        const r = await rows(text);
+        expect(['a', 'b'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual(Array(2).fill(['unknown', undefined]));
+        const f = solveFeasible((await loadModelText(text)).model!);
+        expect([f.feasible && f.decided, f.feasible === false && f.decided], text).toEqual([false, false]);
+      }
+    }
+    // Alone, the equation has no root and no witness: with no value to hold the feature at, the model is not read feasible either.
+    for (const e of ['2.0 ^ x == 0.0', '6.0 / (x + 1.0) == 0.0']) {
+      const text = `package K { ${X} constraint a { ${e} } }`;
+      expect((await rows(text)).get('a')!.result, text).toBe('unknown');
+      const f = solveFeasible((await loadModelText(text)).model!);
+      expect([f.feasible && f.decided, f.feasible === false && f.decided], text).toEqual([false, false]);
+    }
+    // The same through a second equation that fixes the other side (`y == 0.0`): met by the coupled step at x = −23 (residual 1e-7, under the
+    // gate) and imposed there, a row T on the asserted pair.
+    for (const [kind, members] of [
+      ['plain', ['constraint a { y == 2.0 ^ x }', 'constraint b { y == 0.0 }', 'constraint c { x <= 0.0 }']],
+      ['asserted', ['assert constraint a { y == 2.0 ^ x }', 'assert constraint b { y == 0.0 }', 'constraint c { x <= 0.0 }']],
+    ] as const) {
+      for (const list of [members, [...members].reverse()]) {
+        const text = `package K { ${X} ${list.join(' ')} }`;
+        const r = await rows(text);
+        expect(['a', 'c'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), `${kind} ${text}`).toEqual(Array(2).fill(['unknown', undefined]));
+        const f = solveFeasible((await loadModelText(text)).model!);
+        expect(f.feasible && f.decided, text).toBe(false);
+      }
+    }
+    for (const [c, root] of [['0.000001', 1e6], ['0.00001', 1e5]] as const) {
+      const window = [`constraint e0 { 1.0 / x == ${c} }`, `constraint k { x >= ${root - 1}.0 }`, `constraint j { x <= ${root + 1}.0 }`];
+      for (const text of inEveryOrder(X, window)) {
+        const r = await rows(text);
+        expect(['e0', 'k', 'j'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), text).toEqual([['satisfied', true], ['satisfied', undefined], ['satisfied', undefined]]);
+        expect(solveFeasible((await loadModelText(text)).model!).feasible, text).toBe(true);
+      }
+      // The pin that is the root violates nothing; one 2e-4 off, which the gate (1e-6) lets through, is not read as agreeing with it.
+      for (const pin of [root, root * 1.0002]) {
+        for (const text of inEveryOrder(X, [`constraint e0 { 1.0 / x == ${c} }`, `constraint p { x == ${pin}.0 }`])) {
+          const r = await rows(text);
+          const read = ['e0', 'p'].map((n) => r.get(n)!.result);
+          // The root violates nothing; the pin off it is never read as agreeing with the equation (both satisfied).
+          if (pin === root) expect(read, text).not.toContain('violated');
+          else expect(read.every((v) => v === 'satisfied'), text).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('gives solveFeasible no witness where a divisor the search moved is within tolerance of zero (fence-numeric2)', async () => {
+    // `x / y == 3.0` beside `y == 0.0` and `x == 0.0` was met at 1e-16 and 3e-16 (a quotient of rounding; 0/0 satisfies nothing). With a
+    // divisor that is nowhere near 0 the witness stands.
+    for (const members of [
+      ['constraint c0 { x / y == 3.0 }', 'constraint c1 { y == 0.0 }', 'constraint c2 { x == 0.0 }'],
+      ['constraint c0 { x / y == 3.0 }', 'constraint c1 { y <= 0.0 }', 'constraint c2 { y >= 0.0 }'],
+    ]) {
+      for (const text of inEveryOrder(X, members)) {
+        const f = solveFeasible((await loadModelText(text)).model!);
+        expect([f.feasible && f.decided, f.feasible === false && f.decided], text).toEqual([false, false]);
+      }
+    }
+    for (const text of inEveryOrder(X, ['constraint c0 { x / y == 3.0 }', 'constraint c1 { y == 2.0 }'])) {
+      const f = solveFeasible((await loadModelText(text)).model!);
+      expect([f.feasible, f.decided], text).toEqual([true, true]);
+    }
+  });
+
   it('reads a two-root equation in the middle or at the tail of a long component as in a short one', async () => {
     // A chain anchored at its tail (`x{n} == n + 3.0`) with `x{m+1} == x{m} * x{m}` among its members has two roots for x{m} and so for x0
     // (−2 and −8 at n = 10, −28.76 and −41.25 at n = 70): every value is withheld and the sentence is the short one's, however long the chain.
