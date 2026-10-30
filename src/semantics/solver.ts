@@ -5894,6 +5894,24 @@ function numericRows(
     if (readsCurved.length > 0 && !read && !isRefusalReason(detailed.reason)) {
       // The solved value is one of the roots the equations leave: the unit-aware verdict at it is not asked.
       withhold();
+    } else if (
+      detailed.verdict === 'violated' &&
+      !read &&
+      scale &&
+      searched &&
+      isEq &&
+      eq !== undefined &&
+      residual !== undefined &&
+      core.relations.has(el.id) &&
+      Math.abs(residual) <= convergenceGate(eq, values, tol) &&
+      nearRoot(eq, values, residual)
+    ) {
+      // A root the solve met to its tolerance, read by the unit-aware compare with no tolerance of its own (absTol 0 in a model with
+      // quantities): `x / k == 0.0` at the 1.2e-32 the solve took is exact-unequal to 0, a rounding and no violation. Not judged.
+      row.slack = null;
+      row.amount = 0;
+      delete row.slackUnit;
+      row.reason = `the solve took this equation to its tolerance (residual ${residual.toExponential(1)}), and the exact comparison at a solved value cannot tell a rounding from a violation`;
     } else if (detailed.verdict !== 'unknown' && !read) {
       row.result = detailed.verdict;
       if (row.result === 'satisfied') row.amount = 0;

@@ -13097,6 +13097,43 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'FN11::a': ['?/U/?/U', '?'],
       },
     ),
+    // FN12: a solved root of 0 that the unit-aware compare (no tolerance of its own in a model with quantities) reads exact-unequal, 1.2e-32
+    // against 0, was `violated` with no reason on the numeric surface alone; the model is met at x = 0 (the other three abstain).
+    ...reversed(
+      'fence-fn12',
+      `package FN12 { attribute x : ISQ::LengthValue; attribute k : ISQ::LengthValue = 2.0 [nm]; constraint c1 { x / k == 0.0 } constraint c2 { x >= 0.0 [m] } }`,
+      `package FN12 { constraint c2 { x >= 0.0 [m] } constraint c1 { x / k == 0.0 } attribute k : ISQ::LengthValue = 2.0 [nm]; attribute x : ISQ::LengthValue; }`,
+      {
+        'FN12::c1': ['?/?/?/?', '?'],
+        'FN12::c2': ['?/?/T/?', 'T'],
+      },
+    ),
+    // FN13 / FN13A: STILL WRONG (NO STEP, TODO "an equation with no root, reached through a further equation"): each equation of
+    // `y == 6.0 / (x + 1.0)`, `z == y * 2.0`, `z == 0.0` is within 1e-8 of a root, in absolute terms, because the nearRoot test reads
+    // the largest value of ONE equation (the runaway x excuses it) and the evidence of no root is joint: the three read imposed
+    // (FN13, `t`, not a decided letter) and, with the first asserted, T on the numeric surface alone (FN13A, the known false row).
+    ...reversed(
+      'fence-fn13',
+      `package FN13 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y == 6.0 / (x + 1.0) } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 0.0 } }`,
+      `package FN13 { constraint c3 { x >= 0.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } constraint c0 { y == 6.0 / (x + 1.0) } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
+      {
+        'FN13::c0': ['?/?/t/?', '?'],
+        'FN13::c1': ['?/?/t/?', '?'],
+        'FN13::c2': ['?/?/t/?', '?'],
+        'FN13::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn13a',
+      `package FN13A { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; assert constraint c0 { y == 1.0 / x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 1.0 } }`,
+      `package FN13A { constraint c3 { x >= 1.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } assert constraint c0 { y == 1.0 / x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
+      {
+        'FN13A::c0': ['?/-/T/-', '?'],
+        'FN13A::c1': ['?/?/t/?', '?'],
+        'FN13A::c2': ['?/?/t/?', '?'],
+        'FN13A::c3': ['?/?/?/?', '?'],
+      },
+    ),
     // fence-readings S2: six wrong answers fenced, each pinned with its twin. A bare-name equation `K == L` between
     // a contradicted L and K was a source itself and tainted nothing it names, so `p.K >= 55.0` read F with the two
     // equations written 50 then 60 and T with them swapped (the check and the numeric surface; SMT's axioms are
@@ -14446,6 +14483,8 @@ package L3 {
    * clash with its own sentence), so each row is `?` on all four surfaces.
    */
   const KNOWN_FALSE = new Map<string, string>([
+    ['fence-fn13a | FN13A::c0', 'NO STEP: an asserted `y == 1.0 / x` with `z == y * 2.0` and `z == 0.0` has no root (the numeric surface reads it T at x = 2e11, each equation within 1e-8 of one alone); TODO "an equation with no root reached through a further equation"'],
+    ['fence-fn13a-rev | FN13A::c0', 'NO STEP: the same, written in the other order'],
   ]);
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,
