@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 5070 total — 5070 passed, 0 failed, 0 skipped
+- **Tests:** 5073 total — 5073 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -87,8 +87,8 @@
 | test/unit/docs-counts.test.ts | 117 | 0 | 0 |
 | test/unit/drive.test.ts | 179 | 0 | 0 |
 | test/unit/duplicate.test.ts | 6 | 0 | 0 |
-| test/unit/fmi-cosim.test.ts | 24 | 0 | 0 |
-| test/unit/fmi-export.test.ts | 25 | 0 | 0 |
+| test/unit/fmi-cosim.test.ts | 25 | 0 | 0 |
+| test/unit/fmi-export.test.ts | 27 | 0 | 0 |
 | test/unit/fmi-import.test.ts | 12 | 0 | 0 |
 | test/unit/graph-algorithms.test.ts | 19 | 0 | 0 |
 | test/unit/graph-analysis.test.ts | 19 | 0 | 0 |
