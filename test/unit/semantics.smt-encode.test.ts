@@ -67,6 +67,18 @@ import {
 import { obligationsOf } from '@semantics/obligations';
 import { BINARY_PREFIXES, SI_PREFIXES, UNIT_REGISTRY, resolveUnit } from '@semantics/units';
 import { loadModelText } from '@text/load';
+import { collect, corpusItems } from '../../scripts/census-constraint-classes';
+import {
+  SHAPE_LOGIC,
+  astShape,
+  extractProbes,
+  invariantsHold,
+  mergeCensus,
+  readingOf,
+  shapeOfBytes,
+  termFacts,
+  type ShapeId,
+} from '../../scripts/lib/class-census';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
 
@@ -1163,5 +1175,91 @@ describe('the readings cache of one pass keeps a reading from its second read on
     } finally {
       parse.mockRestore();
     }
+  });
+});
+
+/* ──────────────── the constraint-class census (scripts/census-constraint-classes) ──────────────── */
+
+describe('the constraint-class census sorts a relation by the bytes the encoder emitted', () => {
+  const vars = (sorts: Record<string, EncodeVariable['sort']>): EncodeVariable[] =>
+    Object.entries(sorts).map(([path, sort]) => ({ path, qualifiedName: `P::${path}`, sort, factor: 1, offset: 0, free: false }));
+  const V = vars({ a: 'Real', b: 'Real', n: 'Int', p: 'Bool', q: 'Bool' });
+  /** body, the shape the plan's C.1 gives it. The `^ 0` rows are the ones an AST-only reading gets wrong. */
+  const TABLE: Array<[string, ShapeId]> = [
+    ['a + 1.0 > b', 'lra'],
+    ['n > 3.0', 'lira'],
+    ['p and q', 'bool'],
+    ['1.0 < 2.0', 'ground'],
+    ['a * b > 1.0', 'nra-poly'],
+    ['0.0 * a * b > 1.0', 'nra-poly'],
+    ['a * (b ^ 0) > 1.0', 'nra-poly'],
+    ['a / b > 1.0', 'nra-div'],
+    ['a / (b ^ 0) > 1.0', 'nra-div'],
+    ['n * a >= 12.0', 'nira'],
+    ['(n ^ 0) < b', 'lra'],
+    ['a / (2.0 * 3.0) > 1.0', 'lra'],
+    ['a ^ 1 > 1.0', 'lra'],
+    ['a ^ 3 > 1.0', 'nra-poly'],
+  ];
+
+  it.each(TABLE)('%s is %s, in the bytes, in the AST, and in the encoder\u2019s own logic line', (body, shape) => {
+    const node = parseExpr(body);
+    const e = encodeRelation(node, V);
+    expect(e.ok, body).toBe(true);
+    if (!e.ok) return;
+    const sorts = new Map(V.map((v) => [symbolOf(v.qualifiedName)!, v.sort]));
+    const bytes = shapeOfBytes(termFacts([e.term]), sorts, { syntacticNonlinear: e.syntacticNonlinear, sides: e.sideConditions.length });
+    expect(bytes.shape, `${body}: ${e.term}`).toBe(shape);
+    expect(astShape(node, V), body).toBe(shape);
+    const script = encodeScript({ variables: V, assertions: [{ kind: 'goal', name: 'g', term: e.term }, ...e.sideConditions.map((s) => ({ kind: 'side' as const, name: 'g', term: s.term }))], nonlinear: e.nonlinear, syntacticNonlinear: e.syntacticNonlinear });
+    expect(script.logic, body).toBe(SHAPE_LOGIC[shape]);
+  });
+
+  it('is told apart from the bytes: a body whose read is dropped has linear bytes and a nonlinear walk', () => {
+    const e = encodeRelation(parseExpr('a * (b ^ 0) > 1.0'), V);
+    if (!e.ok) throw new Error('refused');
+    expect(termFacts([e.term]).nonlinear, e.term).toBe(false);
+    expect(e.syntacticNonlinear).toBe(true);
+  });
+
+  it('reads the published examples to the counts the plan expects, with its own invariants intact', async () => {
+    const files = ['uav-isr', 'uav-isr-verification', 'vehicle'].map((n) => `examples/${n}.sysml`);
+    const { census } = await collect(corpusItems(undefined, files), { verdicts: false, probes: false });
+    expect(invariantsHold(census), JSON.stringify(census.checks)).toBe(true);
+    expect(census.perModel['examples/uav-isr.sysml']).toMatchObject({ rows: 14, encoded: 14, units: 3, shapes: { lra: 13, 'nra-div': 1 } });
+    expect(census.perModel['examples/uav-isr-verification.sysml']).toMatchObject({ rows: 10, units: 4, shapes: { lra: 9, 'nra-div': 1 } });
+    expect(census.perModel['examples/vehicle.sysml']).toMatchObject({ rows: 5, units: 0, shapes: { lra: 4, lira: 1 } });
+    // Two censuses add: the sum is a census of both, so a shard is a sound way to split a run.
+    const doubled = mergeCensus(structuredClone(census), structuredClone(census));
+    expect(Object.values(doubled.rows).reduce((a, b) => a + b, 0)).toBe(2 * Object.values(census.rows).reduce((a, b) => a + b, 0));
+  });
+
+  it('gives a row with no formal clause no reading, and every other row one', async () => {
+    const { model } = await loadModelText(read('examples/views-tour.sysml'), { fileName: 'views-tour.sysml' });
+    const rows = obligationsOf(model!);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(readingOf(r) === '(none)', r.expression).toBe(r.source === 'none');
+  });
+
+  it('extracts the probes of a table without running it, and lists the ones whose text is computed', () => {
+    const src = [
+      'const PROBES: Record<string, { text: string }> = {',
+      '  a1: probe(`package A { }`, {',
+      "    'A::x': ['T/T/T/T', 'T'],",
+      '  }),',
+      '  // a comment, with a ` backtick',
+      '  b2: probe(make(2), {',
+      "    'B::y': ['F/F/F/F', 'F'],",
+      '  }),',
+      '  c3: probe(`package $' + '{C} { }`, {}),',
+      "  ...reversed('d4', `package D { }`, { 'D::z': ['T/T/T/T', 'T'] }),",
+      '};',
+    ].join('\n');
+    const got = extractProbes(src);
+    expect(got.total).toBe(3);
+    expect(got.entries.map((e) => e.name)).toEqual(['a1']);
+    expect(got.entries[0]!.rows).toEqual([{ key: 'A::x', letters: 'T/T/T/T', ref: 'T' }]);
+    expect(got.interpolated).toEqual(['b2', 'c3']);
+    expect(got.spreads).toHaveLength(1);
   });
 });
