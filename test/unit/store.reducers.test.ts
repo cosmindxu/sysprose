@@ -111,7 +111,7 @@ import {
 } from '@persistence/index';
 import * as textApi from '@text/index';
 import * as validationApi from '@validation/index';
-import { parseModel, serializeElement, serializeModel, serializeUserModelSignals, settleRedefinitions } from '@text/index';
+import { isStaleCopy, parseModel, serializeElement, serializeModel, serializeUserModelSignals, settleRedefinitions } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   checkConstraints,
@@ -2359,6 +2359,344 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       expect(targets(st().model)).toEqual(before);
     });
 
+    // An implicit end copy is named by the most specific feature it redefines (`bind Zb = M` in `part u0 : D4, D3` makes
+    // `u0::N2`, D1's `N2 redefines M` that D4 redefines again), and `bind Zb = N2` is read on the next open as D2's
+    // other `N2`: the copy keeps the name the author wrote and Save writes that (seed 2373 of the property soak).
+    it('saves an implicit end copy under the name the author wrote, so the next open makes the same copy', async () => {
+      const text = `package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute N2 redefines M default = 13.0; attribute Zd1; bind Zd1 = N; }
+  part def D2 :> Q0 { attribute X redefines M default = 14.0; attribute N2 default = 15.0; attribute Zd2; bind Zd2 = N; }
+  part def D3 :> Q0, D1 {  }
+  part def D4 :> D3, D2 { attribute :>> N default = 16.0; attribute :>> N2 default = 17.0; }
+  part u0 : D4, D3 { attribute Z1 = 19.0; attribute Zb = 1.0; bind Zb = M; }
+  constraint cM { u0.M == 17.0 }
+  constraint cZ { u0.Zb == 17.0 }
+}`;
+      load(text);
+      const saved = serializeModel(st().model);
+      expect(saved).toContain('bind Zb = M;');
+      expect(saved).not.toContain('bind Zb = N2;');
+      await pageIsFile('seed 2373');
+      // Renamed away, the head no longer names what the copy redefines: the copy goes by its own name, as before.
+      st().updateElement(byName('M').id, { declaredName: 'MM' });
+      expect(serializeModel(st().model)).not.toContain('bind Zb = M;');
+    });
+
+    // The head is kept only while the next open reads it onto the copy's own line: a feature `M` of the usage, or a
+    // closer `M` in a type, would take `bind Zb = M` off the copy, so the copy goes by its own name (the review's probes).
+    it('writes an implicit end copy by its own name where a feature of the usage or a type shadows the head', async () => {
+      const text = `package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute N2 redefines M default = 13.0; }
+  part def D3 :> Q0, D1 {  }
+  part u0 : D3 { attribute Zb = 1.0; bind Zb = M; }
+}`;
+      load(text);
+      expect(serializeModel(st().model)).toContain('bind Zb = M;');
+      st().createElement('AttributeUsage', byName('u0').id, 'M');
+      expect(serializeModel(st().model)).toContain('bind Zb = N2;');
+      await pageIsFile('own M in u0');
+      load(text);
+      st().createElement('AttributeUsage', byName('D3').id, 'M');
+      expect(serializeModel(st().model)).toContain('bind Zb = N2;');
+      await pageIsFile('M in D3');
+    });
+
+    // An implicit end copy whose name nothing its owner inherits any more (after a retype, a delete or a rename) is a
+    // copy the next open does not make: the settle parts it from the feature it redefined (a STALE copy, a feature of
+    // its owner with no value and no relation), so the page reads the binding as the file reads it, with the end
+    // unresolved; and a retype back, or a rename back, puts the copy on a feature again.
+    describe('an implicit end copy the next open would not make is stale, and the page reads what the file reads', () => {
+      const EC = `package EC {
+  part def P { attribute load default = 1.0; }
+  part def Q { attribute L; part p : P; }
+  part def Q2 :> Q { attribute :>> L = 50.0; }
+  part def Z;
+  part def Z2 { part p : P; }
+  part r : Q2 { bind p.load = L; }
+  constraint r1 { r.p.load == 1.0 }
+  constraint r50 { r.p.load == 50.0 }
+}`;
+      const qL = (): string => st().model.children(byName('Q').id).find((c) => c.declaredName === 'L')!.id;
+      /** The implicit end copies of `r` that redefine nothing: what the settle left stale. */
+      const stale = (): string[] =>
+        st()
+          .model.children(byName('r').id)
+          .filter((c) => isStaleCopy(st().model, c))
+          .map((c) => c.declaredName ?? '')
+          .sort();
+
+      it('a retype to a type without the name, with only a part of it, or a type deleted', async () => {
+        for (const [note, run] of [
+          ['retype r to Z', () => st().bindType(byName('r').id, 'Z')],
+          ['retype r to Z2', () => st().bindType(byName('r').id, 'Z2')],
+          ['delete Q2', () => st().deleteElement(byName('Q2').id)],
+        ] as const) {
+          load(EC);
+          expect(stale(), `${note}: none before`).toEqual([]);
+          oneStep(note, run);
+          expect(stale().length, `${note}: the copy of L is stale`).toBeGreaterThan(0);
+          await pageIsFile(note);
+        }
+      });
+
+      it('the feature the name finds deleted or renamed', async () => {
+        load(EC);
+        st().deleteElement(qL());
+        expect(stale()).toContain('L');
+        await pageIsFile('delete Q::L');
+        load(EC);
+        oneStep('rename Q::L', () => st().updateElement(qL(), { declaredName: 'LL' }));
+        expect(stale()).toContain('L');
+        await pageIsFile('rename Q::L to LL');
+        // Renamed back, the copy redefines a feature again.
+        st().updateElement(byName('LL').id, { declaredName: 'L' });
+        expect(stale()).toEqual([]);
+        await pageIsFile('rename Q::LL back to L');
+      });
+
+      it('a retype back puts the copy on the feature again, and the binding reads through it', async () => {
+        load(EC);
+        st().bindType(byName('r').id, 'Z');
+        expect(stale().length).toBeGreaterThan(0);
+        st().bindType(byName('r').id, 'Q2');
+        expect(stale()).toEqual([]);
+        expect(satisfied(st().model)).toEqual(['r50']);
+        await pageIsFile('retype Z then back to Q2');
+        // And onto a type that bears the name differently: Q's `L`, not Q2's `:>> L = 50.0`.
+        st().bindType(byName('r').id, 'Z');
+        st().bindType(byName('r').id, 'Q');
+        expect(satisfied(st().model)).toEqual(['r1']);
+        await pageIsFile('retype Z then to Q');
+      });
+
+      // The two readings that stay WEAKER or different than the file's, pinned with their reasons (docs/USER-GUIDE.md,
+      // 'Five more cases are not followed'): neither is a satisfied or refuted verdict the file does not give.
+      it('the readings that differ from the file stay abstentions, not verdicts', async () => {
+        // A binding with a stale end is set aside: the numeric lane abstains where the file decides.
+        load(`package DB {
+  part def P { attribute load default = 11.0; }
+  part def Q { attribute L; part p : P; }
+  part def Q1 :> Q { attribute :>> L default = 12.0; bind p.load = L; }
+  part r0 : Q1 { bind p.load = L; }
+  constraint c1 { r0.p.load == 12.0 }
+  constraint c2 { r0.p.load == 11.0 }
+}`);
+        st().deleteElement(st().model.children(byName('Q').id).find((c) => c.declaredName === 'L')!.id);
+        const page = await surfaces(st().model);
+        const file = await surfaces(reopened(st().model));
+        expect(page['DB::c1'], 'page: the numeric lane abstains (?)').toBe('F/F/?/F');
+        expect(file['DB::c1'], 'file: decided').toBe('F/F/F/F');
+        // A name the stale copy still bears resolves on the page: the numeric lane reads the equation as imposed (t),
+        // where the file's unresolved name decides nothing. No satisfied or refuted cell on any surface of either.
+        load(`package RN {
+  part def P { attribute load; }
+  part def Q { attribute L; part p : P; }
+  part def Q1 :> Q { attribute :>> L = 14.0; }
+  part r0 : Q1 { bind p.load = L; }
+  constraint a { r0.L == 14.0 }
+  constraint b { r0.p.load == 14.0 }
+}`);
+        st().updateElement(st().model.children(byName('Q').id).find((c) => c.declaredName === 'L')!.id, { declaredName: 'Zz' });
+        const renamed = await surfaces(st().model);
+        const reopenedFile = await surfaces(reopened(st().model));
+        expect(renamed['RN::a'], 'page: imposed (t) through the stale copy').toBe('?/?/t/?');
+        expect(reopenedFile['RN::a'], 'file: unresolved').toBe('?/?/?/?');
+        for (const row of [renamed['RN::a']!, reopenedFile['RN::a']!, page['DB::c1']!]) expect(row).not.toMatch(/T/);
+      });
+
+      // Renaming the feature a copy redefines: the next open names the copy by the new name (the copy follows, so a row
+      // written with the old name reads as the file reads it), or merges the binding into a feature of the owner that
+      // bears the new name (the copy is parted: the page abstains where the file decides, and never inverts).
+      it('renaming the feature the copy redefines renames the copy, or parts it where the name is taken', async () => {
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; }
+  part def D2 :> Q0 { attribute N2 :>> M default = 15.0; }
+  part u0 : D2 { attribute Zb; bind Zb = M; }
+  constraint cOld { u0.N2 == 21.0 }
+}`);
+        st().updateElement(byName('N2').id, { declaredName: 'Zd3' });
+        expect(st().model.children(byName('u0').id).some((c) => c.declaredName === 'Zd3' && c.attrs.implicit === true)).toBe(true);
+        await pageIsFile('rename D2::N2 to Zd3');
+        load(`package G {
+  part def Q0 { attribute N default = 12.0; }
+  part def D2 :> Q0 { attribute :>> N default = 14.0; }
+  part u0 : D2 { attribute Z1 = 21.0; attribute Zb; bind Zb = N; }
+  constraint c14 { u0.Zb == 14.0 }
+  constraint c21 { u0.Zb == 21.0 }
+}`);
+        st().updateElement(st().model.children(byName('D2').id).find((c) => c.eClass === 'AttributeUsage')!.id, { declaredName: 'Z1' });
+        const page = await surfaces(st().model);
+        expect(page['G::c14'], 'page: abstains where the file decides, never inverted').toBe('?/?/?/?');
+        expect(page['G::c21']).toBe('?/?/?/?');
+      });
+
+      it('deleting the feature a definition-level bind ends on leaves no copy the page proves through', async () => {
+        load(`package DB {
+  part def P { attribute load default = 1.0; }
+  part def Q { part p : P; }
+  part def Q1 :> Q { bind p.load = 5.0; }
+  part r0 : Q1;
+  constraint c1 { r0.p.load == 5.0 }
+  constraint c2 { r0.p.load == 1.0 }
+}`);
+        st().deleteElement(st().model.children(byName('Q').id).find((c) => c.declaredName === 'p')!.id);
+        await pageIsFile('delete Q::p');
+      });
+    });
+
+    // The settle runs on every route that edits the model, not only on a command of the editor: a call on the model on
+    // screen (`window.sysml.model.update`, `.remove`), where no command opened a step. Not in a room: a peer's edit is
+    // settled by its sender (the moves arrive as edits).
+    describe('a raw call on the model on screen is settled, where it ends', () => {
+      const T = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part t : Q2 { attribute :>> M; }
+  constraint t1 { t.M == 1.0 }
+  constraint t2 { t.M == 2.0 }
+}`;
+      it('model.update of a typing moves the `:>>` as a retype in the app does', async () => {
+        load(T);
+        expect(satisfied(st().model)).toEqual(['t2']);
+        st().model.update(typingOf('t'), { target: [byName('Q').id] });
+        expect(satisfied(st().model)).toEqual(['t1']);
+        await pageIsFile('model.update typing');
+      });
+
+      it('model.remove of a type, and of the feature a binding copy redefines', async () => {
+        load(T);
+        st().model.remove(typingOf('t'));
+        expect(satisfied(st().model)).toEqual(['t1']);
+        await pageIsFile('model.remove typing');
+        load(`package CP {
+  part def P { attribute load default = 1.0; }
+  part def Q { attribute L; part p : P; }
+  part def Q2 :> Q { attribute :>> L = 50.0; }
+  part def Q3 :> Q { attribute :>> L = 60.0; }
+  part r : Q2, Q3 { bind p.load = L; }
+  constraint r50 { r.p.load == 50.0 }
+  constraint r60 { r.p.load == 60.0 }
+  constraint r1 { r.p.load == 1.0 }
+}`);
+        st().model.remove(st().model.children(byName('Q3').id).find((c) => c.eClass === 'AttributeUsage')!.id);
+        expect(satisfied(st().model)).toEqual(['r50']);
+        await pageIsFile('model.remove Q3::L');
+      });
+
+      // The binding of references that follows an open or a library merge is the app's own work, not a call to settle:
+      // it ran unsettled before the raw-call settle, and still does (no cost at boot, no move the author did not ask for).
+      it('the merge of the library binds its references without a settle', async () => {
+        const merge = lib.merge;
+        lib.merge = (m) => {
+          const typing = m.all().find((e) => e.eClass === 'FeatureTyping' && m.get(e.source![0]!)?.declaredName === 't');
+          if (typing) m.update(typing.id, { target: [m.all().find((e) => e.declaredName === 'Q')!.id] });
+        };
+        try {
+          await openText(T, 'sysml');
+          await whenLibrarySettled();
+          const t = st().model.all().find((e) => e.declaredName === 't')!;
+          const typed = st().model.relationshipsFrom(t.id).find((r) => r.eClass === 'FeatureTyping')!;
+          expect(st().model.get(typed.target![0]!)?.declaredName, 'the merge retargeted the typing').toBe('Q');
+          const nested = st().model.children(t.id).find((c) => c.declaredName === undefined && c.eClass === 'AttributeUsage')!;
+          const redef = st().model.children(nested.id).find((c) => c.eClass === 'Redefinition')!;
+          expect(st().model.get(redef.target![0]!)?.ownerId, 'the redefinition was left where the text put it').toBe(byName('Q2').id);
+        } finally {
+          lib.merge = merge;
+        }
+      });
+
+      it('settles the model the store holds whichever it is, and a settle is no edit to settle again', () => {
+        load(T);
+        const settled = st().model;
+        const moves: number[] = [];
+        const stop = settled.subscribe((events) => moves.push(events.length));
+        settled.update(typingOf('t'), { target: [byName('Q').id] });
+        stop();
+        // The edit's own batch, then the settle's one batch: no cascade of settles.
+        expect(moves.length).toBeLessThanOrEqual(3);
+        expect(satisfied(settled)).toEqual(['t1']);
+      });
+    });
+
+    // A rename that makes the name a nested `:>> b` is spelled by find two features (P3's own `b :>> a` beside the `b`
+    // P3 inherits from P) leaves the answer to the ORDER of the owner's generals, which the page and its file do not share
+    // (the typing is bound after the redefinition on the page, before it in the file): Save spells it by its path.
+    it('a simple name the redefinition rule answers by the order of the generals is saved by its path (seed 5439)', async () => {
+      load(`package G {
+  part def P { attribute a default = 11.0; attribute b default = 12.0; }
+  part def P2 :> P { attribute :>> a default = 13.0; }
+  part def P3 :> P { attribute a3 redefines a default = 14.0; }
+  part def H { part p : P3; attribute x default = 15.0; }
+  part w0 : H { part :>> p { attribute :>> a; } }
+}`);
+      const a3 = byName('a3').id;
+      st().model.update(a3, { declaredName: 'b' });
+      const nested = st().model.children(byName('w0').id).find((c) => c.eClass === 'PartUsage')!.id;
+      st().bindType(nested, 'P2');
+      expect(serializeModel(st().model)).toContain('attribute :>> G::P3::b;');
+      const redefinitions = (m: Model): string[] => targets(m).filter((t) => t.startsWith('G::w0::'));
+      expect(redefinitions(st().model)).toEqual(redefinitions(reopened(st().model)));
+      expect(redefinitions(st().model)).toEqual(['G::w0::«PartUsage»#0 -> G::P3#0:b']);
+      // Where the name is no longer ambiguous, it is written as it always was.
+      st().updateElement(a3, { declaredName: 'a3' });
+      expect(serializeModel(st().model)).not.toContain('G::P3::b');
+    });
+
+    it('the same, when a typing is retargeted so that a name finds a part and an attribute (seed 5001)', () => {
+      load(`package G {
+  part def P { attribute a default = 11.0; attribute b default = 12.0; }
+  part def P1 :> P { attribute :>> b default = 13.0; }
+  part def H { part p : P; attribute x default = 14.0; }
+  part def H1 :> H { part :>> p : P {  } }
+  part w0 : H1 { part :>> p { attribute :>> b; } }
+  part w1 : H { part :>> p { attribute :>> b = 15.0; } }
+  part w2 : H { part :>> p { attribute :>> b; attribute :>> b; } }
+}`);
+      const m = st().model;
+      const w2Nested = m.children(byName('w2').id).find((c) => c.eClass === 'PartUsage')!;
+      const second = m.children(w2Nested.id).filter((c) => c.eClass === 'AttributeUsage')[1]!;
+      // The steps of the property soak: a redefinition drawn to H's `x`, w1 deleted, P's `b` renamed `p`, H1 specialising P, w2's part typed H.
+      m.update(m.children(second.id).find((c) => c.eClass === 'Redefinition')!.id, { target: [m.children(byName('H').id).find((c) => c.declaredName === 'x')!.id] });
+      m.remove(byName('w1').id);
+      m.update(m.children(byName('P').id).filter((c) => c.eClass === 'AttributeUsage')[1]!.id, { declaredName: 'p' });
+      m.update(m.relationshipsFrom(byName('H1').id).find((r) => r.eClass === 'Subclassification')!.id, { target: [byName('P').id] });
+      st().bindType(w2Nested.id, 'H');
+      expect(targets(st().model)).toEqual(targets(reopened(st().model)));
+    });
+
+    // A redefinition pointed by the SDK at a feature no name in its scope reaches (one in a nested unnamed part, whose path goes
+    // by the effective name of the part) cannot be read back: the file Save writes has none, so the page has none either.
+    it('a redefinition retargeted to a feature of a nested unnamed part is dropped, as the saved file has none', () => {
+      load(`package G {
+  part def H { part p; part r; }
+  part w1 : H { part :>> p { part p1; } }
+  part w0 : H { part :>> r; }
+}`);
+      const m = st().model;
+      const nested = m.children(byName('w0').id).find((c) => c.eClass === 'PartUsage')!;
+      const edge = m.children(nested.id).find((c) => c.eClass === 'Redefinition')!;
+      m.update(edge.id, { target: [byName('p1').id] });
+      expect(targets(st().model)).toEqual(targets(reopened(st().model)));
+      expect(targets(st().model).filter((t) => t.startsWith('G::w0::'))).toEqual([]);
+    });
+
+    // The path the text writes is dropped only where it steps through the unnamed part: a redefinition inside an unnamed
+    // part that reaches a named usage below it by a path that starts below the unnamed part keeps its target.
+    it('a retarget by a path that starts below an unnamed part keeps its redefinition', () => {
+      load(`package G {
+  part def H { part p; part t; }
+  part w1 : H { part :>> p { part q { part s; } part :>> t; } }
+}`);
+      const m = st().model;
+      const unnamed = m.children(byName('w1').id).find((c) => c.eClass === 'PartUsage')!;
+      const edge = m.children(m.children(unnamed.id).find((c) => c.eClass === 'PartUsage' && c.declaredName === undefined)!.id).find((c) => c.eClass === 'Redefinition')!;
+      m.update(edge.id, { target: [byName('s').id] });
+      expect(targets(st().model)).toEqual(targets(reopened(st().model)));
+      expect(targets(st().model).some((t) => t.endsWith('::q#0:s'))).toBe(true);
+    });
+
     // A few hundred random edit sequences over small random redefinition models (the generator of the review's
     // differential: definitions that specialise one or two earlier, with unnamed and renamed redefinitions and a
     // merged `:>> a, b`; usages that redefine what they inherit). After EACH command the page's redefinitions are
@@ -2482,9 +2820,9 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
           const pick = <T,>(xs: readonly T[]): T | undefined => xs[Math.floor(rnd() * xs.length)];
           let text = randomModel(rnd, seeded(seq * 104729 + 31));
           load(text);
-          // A binding the file does not read back onto the copy the page made at the load (the serializer writes the copy
-          // by the name of the feature it redefines: `bind Zb = N2` for `bind Zb = M`) is a limit of the text, not of the
-          // edit: the sequence runs on the model without the bindings.
+          // A binding the file does not read back onto the copy the page made at the load (two bindings that name one copy
+          // by different names, the file writes one of them) is a limit of the text, not of the edit: the sequence runs on
+          // the model without the bindings.
           if (copiesApart(st().model, reopened(st().model)).length > 0) {
             text = randomModel(seeded(seq * 7919 + 13));
             load(text);

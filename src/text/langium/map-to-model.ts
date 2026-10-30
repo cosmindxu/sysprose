@@ -373,17 +373,23 @@ const CHAIN_CONNECTOR_CLASSES = new Set([
  * `proto`. This is the standard implicit-feature materialization that keeps
  * `connect a.p to b.p` endpoints distinct per usage (no self-edges) and owned
  * by the usage (so IBD edges land on the usage nodes).
+ *
+ * `head` is the name the text wrote for it. A copy is named by the feature it redefines (`M` found D1's `M`, and
+ * the most specific feature D4 has for it is `N2`: the copy is `N2`), which the next parse may not resolve to the
+ * copy; the copy keeps the name the author wrote (`attrs.endHead`), and the serializer writes that.
  */
 function ensureImplicitFeature(
   model: Model,
   owner: ElementRecord,
   proto: ElementRecord,
+  head?: string,
 ): ElementRecord {
   // An unnamed redefinition (`attribute :>> load`) is named by what it redefines.
   const name = proto.declaredName ?? proto.declaredShortName ?? effectiveNameOf(model, proto) ?? '';
   const existing = childNamed(model, owner.id, name);
   if (existing) return existing;
   const attrs: Record<string, AttrValue> = { implicit: true };
+  if (head !== undefined && head !== name) attrs.endHead = head;
   if (typeof proto.attrs.direction === 'string') attrs.direction = proto.attrs.direction;
   // DETERMINISTIC id (no randomness): a stable hash of a fixed prefix + the
   // owner's QUALIFIED NAME + the feature name. The qualified-name path is stable
@@ -449,7 +455,7 @@ function walkChain(
     }
     const proto = findTypeFeature(model, cur, seg);
     if (!proto) return undefined;
-    cur = commit ? ensureImplicitFeature(model, cur, proto) : proto;
+    cur = commit ? ensureImplicitFeature(model, cur, proto, seg) : proto;
   }
   return cur;
 }
@@ -517,7 +523,7 @@ function resolveChainEnd(
     // most specific: where two general types each redefine it (MI1's Q2 and Q3, a clash), neither is.
     const proto = endCopyProto(model, scopeEl, head, hit);
     if (!walkChain(model, proto, rest, false)) continue; // dry run before materializing
-    const anchor = ensureImplicitFeature(model, scopeEl, proto);
+    const anchor = ensureImplicitFeature(model, scopeEl, proto, head);
     const end = walkChain(model, anchor, rest, true);
     if (end) return end;
   }
@@ -539,7 +545,7 @@ function resolveChainEnd(
     const proto = findTypeFeature(model, scopeEl, head);
     if (!proto) continue;
     if (!walkChain(model, proto, rest, false)) continue; // dry run before materializing
-    const anchor = ensureImplicitFeature(model, scopeEl, proto);
+    const anchor = ensureImplicitFeature(model, scopeEl, proto, head);
     const end = walkChain(model, anchor, rest, true);
     if (end) return end;
   }

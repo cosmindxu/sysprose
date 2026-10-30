@@ -155,6 +155,52 @@ describe('REST — commits: history, writes and diff', () => {
     expect(page.has(m4.id)).toBe(true);
   });
 
+  it('settles the redefinitions a commit leaves: a typing retargeted or deleted, a feature a binding copy redefines deleted', () => {
+    // A commit's model reads what the file it saves reads: `t`'s `:>> M` follows its typing, and an implicit end copy
+    // follows the feature it redefines, where `Model.remove`'s walk would leave it.
+    const T = `package P {
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q { attribute :>> M default = 2.0; }
+  part t : Q2 { attribute :>> M; }
+  constraint t1 { t.M == 1.0 }
+  constraint t2 { t.M == 2.0 }
+}`;
+    const CP = `package CP {
+  part def P { attribute load default = 1.0; }
+  part def Q { attribute L; part p : P; }
+  part def Q2 :> Q { attribute :>> L = 50.0; }
+  part def Q3 :> Q { attribute :>> L = 60.0; }
+  part r : Q2, Q3 { bind p.load = L; }
+  constraint r50 { r.p.load == 50.0 }
+  constraint r60 { r.p.load == 60.0 }
+  constraint r1 { r.p.load == 1.0 }
+}`;
+    const satisfied = (m: Model): string[] =>
+      checkConstraints(m).filter((c) => c.result === 'satisfied').map((c) => m.qualifiedName(c.id)).sort();
+    const commit = (text: string, changes: (m: Model) => unknown[]): Model => {
+      const page = parseModel(text).model;
+      const srv = new SysmlApiServer(page);
+      const res = srv.apiFetch('POST', '/projects/project-default/commits', { changes: changes(page) });
+      expect(res.status).toBe(201);
+      return (srv as unknown as { repo: { getModelAtCommit(id: string): Model } }).repo.getModelAtCommit((res.body as { '@id': string })['@id']);
+    };
+    const named = (m: Model, n: string) => m.all().find((e) => e.declaredName === n)!;
+    const typingOf = (m: Model, n: string) => m.relationshipsFrom(named(m, n).id).find((x) => x.eClass === 'FeatureTyping')!;
+    const isFile = (after: Model) => expect(satisfied(after)).toEqual(satisfied(parseModel(serializeModel(after)).model));
+    // Retargeted to Q: the `:>> M` is Q's, as the saved `part t : Q` reads it.
+    const retyped = commit(T, (m) => [{ operation: 'update', identifier: typingOf(m, 't').id, element: { target: [{ '@id': named(m, 'Q').id }] } }]);
+    expect(satisfied(retyped)).toEqual(['P::t1']);
+    isFile(retyped);
+    // The typing deleted.
+    const untyped = commit(T, (m) => [{ operation: 'delete', identifier: typingOf(m, 't').id }]);
+    expect(satisfied(untyped)).toEqual(['P::t1']);
+    isFile(untyped);
+    // The feature `r`'s copy of `L` redefines: Q3's, deleted. The copy lands on Q2's, as `part r : Q2, Q3` read afresh.
+    const copy = commit(CP, (m) => [{ operation: 'delete', identifier: m.children(named(m, 'Q3').id).find((c) => c.eClass === 'AttributeUsage')!.id }]);
+    expect(satisfied(copy)).toEqual(['CP::r50']);
+    isFile(copy);
+  });
+
   it('reads roots at a commit', () => {
     const { srv, model } = server();
     const cid = headCommit(srv);

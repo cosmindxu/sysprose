@@ -87,6 +87,7 @@ test('a field’s change keeps text typed in the Text view: applied first, or le
   const engine = await findElementId(page, 'PartDefinition', 'Engine');
   await selectElementById(page, engine);
   await page.getByTestId('prop-name').fill('Motor');
+  await page.getByTestId('prop-name').press('Enter');
 
   await expect.poll(() => editor.inputValue()).toContain('part def Motor;');
   expect(await editor.inputValue(), 'the typed text went in first').toContain('part def Wheel;');
@@ -97,6 +98,7 @@ test('a field’s change keeps text typed in the Text view: applied first, or le
   const faulted = (await editor.inputValue()).replace('part def Wheel;', 'part def Wheel;\n    blok bad;');
   await editor.fill(faulted);
   await page.getByTestId('prop-name').fill('Motor2');
+  await page.getByTestId('prop-name').press('Enter');
   await expect.poll(() => nameOf(page, engine)).toBe('Motor2');
   await expect.poll(() => recomputePending(page)).toBe(false);
   expect(await editor.inputValue(), 'a text with a syntax error stays').toBe(faulted);

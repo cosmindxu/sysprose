@@ -28,7 +28,7 @@ import {
   type ElementId,
   type ElementRecord,
 } from '@core/index';
-import { endCopyProto, findTypeFeature, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
+import { childNamed, endCopyProto, findTypeFeature, redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
 import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
 import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
@@ -283,6 +283,32 @@ function nameOf(el: ElementRecord): string {
   return n !== undefined ? quoteName(n) : '';
 }
 
+/**
+ * The name the author wrote for an implicit end copy (`attrs.endHead`, set where the mapper makes it), while the next
+ * parse still reads it onto the copy's own line: a copy is named by the most specific feature it redefines (`N2` for
+ * `bind Zb = M`), and that name can find another feature on the next open. A head the edit has since renamed away,
+ * shadowed by a feature of the usage, or given a closer feature by a type, is dropped, and the copy goes by its own
+ * name as before ({@link endCopyFeature}).
+ */
+function endHeadOf(model: Model, el: ElementRecord): string | undefined {
+  const head = el.attrs.endHead;
+  if (el.attrs.implicit !== true || typeof head !== 'string' || head === '') return undefined;
+  const from = model.children(el.id).find((r) => r.eClass === 'Redefinition' && (r.source ?? [])[0] === el.id)?.target?.[0];
+  if (from === undefined || !lineNames(model, from).has(head)) return undefined;
+  const owner = el.ownerId === null ? undefined : model.get(el.ownerId);
+  if (!owner) return undefined;
+  if (model.children(owner.id).some((c) => c.id !== el.id && c.attrs.implicit !== true && (c.declaredName === head || c.declaredShortName === head))) {
+    return undefined;
+  }
+  return endCopyFeature(model, owner, head)?.id === from ? head : undefined;
+}
+
+/** The name a path writes `el` by: the name the author wrote for an implicit end copy, else its own. */
+function writtenName(model: Model, el: ElementRecord): string {
+  const head = endHeadOf(model, el);
+  return head !== undefined ? quoteName(head) : nameOf(el);
+}
+
 /** Build the declaration header (keyword, modifiers, name, specializations…). */
 function header(model: Model, el: ElementRecord): string {
   const parts: string[] = [];
@@ -411,6 +437,27 @@ function lastSegment(ref: string): string {
  */
 function unprintableRef(ref: string): boolean {
   return ref === '' || ref.includes('«') || ref.includes("''");
+}
+
+/**
+ * Is `ref`, the path the text would write for the feature `denotedId`, one that steps into a usage (`G::w1.p.p1`) and
+ * goes through a usage with no name of its own, `denotedId` itself or one that owns it? The path then goes by the
+ * effective name of the unnamed part (`part :>> p`), which the page resolves and the next parse does not: it cannot read
+ * a redefinition by such a path, so the text has no way to name the target (a retarget by the SDK or the Properties
+ * panel to a nested unnamed part, or to a feature of one, or a feature moved into one). Saved, the file has no such
+ * redefinition.
+ */
+function pathThroughUnnamed(model: Model, ref: string, denotedId: ElementId): boolean {
+  // The segments the path names are `denotedId` and as many owners above it as it has dots: a usage further up that the
+  // path starts below is no step of it (an upper bound where a quoted name holds a dot, which only walks further).
+  let steps = ref.split('.').length;
+  if (steps < 2) return false;
+  for (let o: ElementId | null | undefined = denotedId; o !== null && o !== undefined && steps > 0; o = model.get(o)?.ownerId, steps--) {
+    const el = model.get(o);
+    if (!el || !el.eClass.endsWith('Usage')) return false;
+    if (el.declaredName === undefined && el.declaredShortName === undefined) return true;
+  }
+  return false;
 }
 
 /** Inline `: Type`, `:> Super`, `:>> redef`, `::> ref` fragments. */
@@ -1144,8 +1191,11 @@ type RefResolver = (simple: string, scopeOwnerId: ElementId | null) => ElementRe
  * guarantee, so the two must be changed together.
  */
 function specResolver(model: Model, relClass: string, sourceId: ElementId): RefResolver {
+  // A simple name the rule answers by the ORDER of the owner's generals is no spelling of the feature it answers with:
+  // the file it is saved in may order them otherwise (`redefinitionNameIsOrderDependent`), so it is spelled by its path.
   return relClass === 'Redefinition'
-    ? (simple, scope) => resolveRedefinedFeature(model, simple, sourceId, scope)
+    ? (simple, scope) =>
+        redefinitionNameIsOrderDependent(model, simple, sourceId, scope) ? undefined : resolveRedefinedFeature(model, simple, sourceId, scope)
     : (simple, scope) => resolveFullName(model, simple, scope, { exclude: sourceId });
 }
 
@@ -1189,7 +1239,8 @@ function refTo(
   const answer = resolve ?? ((simple: string, scope: ElementId | null) =>
     resolveFullName(model, simple, scope));
   const target = model.get(targetId);
-  const simple = target ? nameOf(target) : undefined;
+  // A copy written under the author's name goes by the path (`writtenName`): its own name may find another feature.
+  const simple = target && endHeadOf(model, target) === undefined ? nameOf(target) : undefined;
   if (simple && !simple.startsWith('«') && answer(simple, scopeOwnerId)?.id === targetId) {
     return simple;
   }
@@ -1469,23 +1520,54 @@ function lineNames(model: Model, targetId: ElementId): ReadonlySet<string> {
  * feature its types have for it where that redefines it ({@link endCopyProto}, U10): a retype of `r` to Q takes the
  * copy off Q2's `:>> L` and onto Q's `L`, and a retype back onto Q2's again. A copy of a name no feature the usage
  * inherits bears (an unnamed `:>> M` is known by it), and a copy in a copy (a hop of a chain, `p` of `p.load`),
- * redefine the feature its owner's types have for the name. `undefined` where the copy stays: where it already is on
- * that feature, or where the next parse would make none (nothing its owner inherits is known by the name): the page
- * then proves through a copy the saved file does not make, which the Problems panel reports as an unresolved name once
- * the file is opened again (docs/USER-GUIDE.md, the cases not followed).
+ * redefine the feature its owner's types have for the name.
+ *
+ * `undefined` where the copy stays (it already is on that feature); `null` where the next parse would make none
+ * (nothing its owner inherits is known by the name): a STALE copy, which the settle parts from the feature it
+ * redefined ({@link isStaleCopy}), so the page does not prove through a copy the saved file does not make.
  */
-function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): ElementId | undefined {
+function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): ElementId | null | undefined {
   const owner = copy.ownerId === null ? undefined : model.get(copy.ownerId);
-  const name = copy.declaredName;
+  // By the name the author wrote for it, where the saved text writes that ({@link endHeadOf}); else by its own.
+  const name = endHeadOf(model, copy) ?? copy.declaredName;
   if (!owner || name === undefined || name === '') return undefined;
-  let proto: ElementRecord | undefined;
+  const proto = endCopyFeature(model, owner, name);
+  if (proto === undefined) return null;
+  return proto.id !== from && proto.id !== copy.id ? proto.id : undefined;
+}
+
+/**
+ * Is `el` an implicit end copy that redefines nothing? The settle leaves one when the saved text would make none: its
+ * name is no longer one its owner inherits (after a retype, a delete or a rename), so the saved file reads the binding
+ * that holds it with an unresolved end. The page reads such a copy as a feature of its owner with no value and no
+ * relation to the feature it redefined: the binding then carries nothing through it, and an equation over it is not
+ * decided, as the file's unresolved name is not. Revived by a later settle that finds the name again.
+ */
+export function isStaleCopy(model: Model, el: ElementRecord): boolean {
+  return el.attrs.implicit === true && !model.children(el.id).some((r) => r.eClass === 'Redefinition' && (r.source ?? [])[0] === el.id);
+}
+
+/** A feature of `ownerId` other than `exceptId` that bears `name` (its own, or by a feature it redefines). */
+function otherNamed(model: Model, ownerId: ElementId, name: string, exceptId: ElementId): ElementRecord | undefined {
+  const own = model.children(ownerId).find((c) => c.id !== exceptId && !isRelationship(c.eClass) && (c.declaredName === name || c.declaredShortName === name));
+  const hit = own ?? childNamed(model, ownerId, name);
+  return hit !== undefined && hit.id !== exceptId ? hit : undefined;
+}
+
+/** The feature the next parse gives the implicit end copy `name` of `owner` to redefine (the rule of {@link endCopyLanding}). */
+function endCopyFeature(model: Model, owner: ElementRecord, name: string): ElementRecord | undefined {
   const hit = owner.attrs.implicit === true ? undefined : resolveInherited(model, owner.id, name);
-  if (hit === undefined) proto = findTypeFeature(model, owner, name);
+  const proto = hit === undefined ? findTypeFeature(model, owner, name) : endCopyProtoOf(model, owner, name, hit);
+  // A stale copy is no feature the next parse has: it makes no copy over it.
+  return proto !== undefined && isStaleCopy(model, proto) ? undefined : proto;
+}
+
+function endCopyProtoOf(model: Model, owner: ElementRecord, name: string, hit: ElementRecord): ElementRecord | undefined {
   // Only a feature is mirrored: a definition or a package the name finds is bound to directly.
-  else if (!isDefinition(hit.eClass) && !isRelationship(hit.eClass) && hit.eClass !== 'Package' && hit.eClass !== 'LibraryPackage') {
-    proto = endCopyProto(model, owner, name, hit);
+  if (!isDefinition(hit.eClass) && !isRelationship(hit.eClass) && hit.eClass !== 'Package' && hit.eClass !== 'LibraryPackage') {
+    return endCopyProto(model, owner, name, hit);
   }
-  return proto && proto.id !== from && proto.id !== copy.id ? proto.id : undefined;
+  return undefined;
 }
 
 /** The most rounds {@link settleRedefinitions} makes: it stops at the first that moves nothing, so this only ends a cycle. */
@@ -1533,8 +1615,10 @@ export function settleRedefinitions(
   let shallow: ElementId[] = names === undefined ? [] : first;
   let filter: ReadonlySet<string> | undefined = names;
   let moved = 0;
+  /** The copies the settle made stale or put back: the bindings that end in them are marked after the rounds. */
+  const staled = new Set<ElementId>();
   for (let round = 0; round < MAX_SETTLE_ROUNDS && deep.length + shallow.length > 0; round++) {
-    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId }> = [];
+    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId; make?: true; copy?: true; rename?: string }> = [];
     const lines = new Map<ElementId, ReadonlySet<string>>();
     const ask = (typeId: ElementId, only: ReadonlySet<string> | undefined): void => {
       const type = model.get(typeId);
@@ -1551,11 +1635,24 @@ export function settleRedefinitions(
           if (line === undefined) lines.set(from, (line = lineNames(model, from)));
           if (copy) {
             // Moved in place, never removed and made again: a binding holds the copy, and removing it would take the
-            // binding along. A copy the next parse would not make (nothing its owner inherits is named so) stays.
-            // It is known by its own name, which the line of the feature it redefines may not bear (`M2` for `X :>> M`).
+            // binding along. A copy the next parse would not make (nothing its owner inherits is named so) is parted
+            // from the feature it redefined and stays as a stale copy ({@link isStaleCopy}); a later settle that finds
+            // the name again puts it back. It is known by its own name, which the line of the feature it redefines may
+            // not bear (`M2` for `X :>> M`).
             if (only !== undefined && !(f.declaredName !== undefined && only.has(f.declaredName)) && ![...line].some((n) => only.has(n))) continue;
             const to = endCopyLanding(model, f, from);
-            if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId });
+            if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId, ...(to === null ? { copy: true as const } : {}) });
+            else {
+              // The copy stays on the feature, but the next parse names it by that feature's name now (a renamed
+              // `:>> M` makes the copy `Zd3`, not `N2`): the copy takes the name, or, where another feature of the
+              // owner bears it, the binding merges into that one and the copy is parted (stale).
+              const target = model.get(from);
+              const want = target && (target.declaredName ?? target.declaredShortName ?? effectiveNameOf(model, target));
+              if (want !== undefined && want !== '' && want !== f.declaredName) {
+                if (otherNamed(model, typeId, want, f.id) !== undefined) moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId, copy: true });
+                else moves.push({ rel: '', to: from, from, feature: f.id, owner: typeId, rename: want });
+              }
+            }
             continue;
           }
           // A target with no name the text can write (the feature it redefined is gone, and it has none of its own):
@@ -1571,9 +1668,27 @@ export function settleRedefinitions(
             continue;
           }
           let to = form.lands ?? resolveRedefinedFeature(model, form.ref, f.id, f.ownerId)?.id;
+          // A path the text cannot read (it steps through an unnamed part): Save writes the feature without it.
+          if (pathThroughUnnamed(model, form.ref, to ?? from)) {
+            moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId });
+            continue;
+          }
           if (to === from && touched !== undefined) to = healedLanding(model, from, f.ownerId, f.id, touched) ?? to;
           if (to === undefined || to === from || to === f.id) continue;
           moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId });
+        }
+        // A stale copy redefines nothing: the name it is known by finds a feature again (a retype back, a feature
+        // renamed back), and the next parse would make the copy redefine it.
+        if (copy && isStaleCopy(model, f)) {
+          const name = f.declaredName;
+          if (only !== undefined && !(name !== undefined && only.has(name))) continue;
+          const owner = model.get(typeId);
+          const proto = owner && name !== undefined && name !== '' ? endCopyFeature(model, owner, name) : undefined;
+          // A feature of the owner already bears the name the copy would take: it merges into that one, so none is made.
+          const protoName = proto && (proto.declaredName ?? proto.declaredShortName ?? effectiveNameOf(model, proto));
+          const taken = protoName !== undefined && protoName !== name && otherNamed(model, typeId, protoName, f.id) !== undefined;
+          if (proto && proto.id !== f.id && !taken) moves.push({ rel: '', to: proto.id, from: proto.id, feature: f.id, owner: typeId, make: true, copy: true });
+          else staled.add(f.id);
         }
       }
     };
@@ -1596,11 +1711,14 @@ export function settleRedefinitions(
     }
     model.transaction(() => {
       for (const mv of moves) {
-        if (mv.to === null) model.remove(mv.rel);
+        if (mv.rename !== undefined) model.update(mv.feature, { declaredName: mv.rename });
+        else if (mv.make) model.create('Redefinition', { id: model.has(`impl-redef-${mv.feature}`) ? undefined : `impl-redef-${mv.feature}`, ownerId: mv.feature, source: [mv.feature], target: [mv.to!] });
+        else if (mv.to === null) model.remove(mv.rel);
         else model.update(mv.rel, { target: [mv.to] });
       }
     });
     moved += moves.length;
+    for (const mv of moves) if (mv.copy) staled.add(mv.feature);
     // The features that moved ask what is nested in them (it resolves through the target they have taken); the
     // types around them ask what the moves left them, by the names of the lines that changed.
     deep = withSpecialisers(model, moves.map((mv) => mv.feature));
@@ -1614,7 +1732,57 @@ export function settleRedefinitions(
       filter = movedNames;
     }
   }
+  if (staled.size > 0) markStaleBindings(model, staled);
   return moved;
+}
+
+/**
+ * Mark the bindings that end in a stale copy, or in a feature a stale copy owns (`attrs.staleEnd`), and clear the mark
+ * of those that no longer do. The saved file has no such copy, so it reads such a binding with an unresolved end, which
+ * binds nothing: every reader of a binding (`isBindingEdge`, `isBindingConnector`) leaves a marked one aside.
+ */
+function markStaleBindings(model: Model, copies: ReadonlySet<ElementId>): void {
+  const ids: ElementId[] = [...copies];
+  for (let i = 0; i < ids.length; i++) for (const c of model.children(ids[i]!)) if (!isRelationship(c.eClass)) ids.push(c.id);
+  const staleChain = (id: ElementId): boolean => {
+    for (let o: ElementId | null | undefined = id; o !== null && o !== undefined; o = model.get(o)?.ownerId) {
+      const el = model.get(o);
+      if (!el) return false;
+      if (isStaleCopy(model, el)) return true;
+    }
+    return false;
+  };
+  model.transaction(() => {
+    for (const id of new Set(ids)) {
+      for (const b of model.edgesOf(id)) {
+        if (b.attrs.isLibrary === true || isRelationship(b.eClass) || !b.eClass.startsWith('BindingConnector')) continue;
+        const stale = [...(b.source ?? []), ...(b.target ?? [])].some(staleChain);
+        if ((b.attrs.staleEnd === true) !== stale) model.setAttrs(b.id, { staleEnd: stale ? true : undefined });
+      }
+    }
+  });
+}
+
+/**
+ * Settle what `events` (the changes of one edit, in any order) left: the redefinitions {@link redefinitionsDirtiedBy}
+ * names, moved where the saved text puts them ({@link settleRedefinitions}). The one call every route that edits a model
+ * ends in: a command of the editor, the SDK, a raw call on the model on screen, a REST commit's working copy. A failure
+ * leaves the edit as it stood: a model may differ from its file, not lose the edit.
+ *
+ * @returns how many redefinitions moved.
+ */
+export function settleRedefinitionsAfter(model: Model, events: readonly ChangeEvent[]): number {
+  if (events.length === 0) return 0;
+  try {
+    const dirtied = redefinitionsDirtiedBy(model, events);
+    let moved = 0;
+    if (dirtied.types.size > 0) moved += settleRedefinitions(model, dirtied.types, dirtied.touched);
+    if (dirtied.named.size > 0) moved += settleRedefinitions(model, dirtied.named, dirtied.touched, dirtied.names);
+    return moved;
+  } catch (err) {
+    console.error('settleRedefinitions failed', err);
+    return 0;
+  }
 }
 
 /** A redefinition whose target is about to go, with the reference the saved text writes it by now. */
@@ -1675,8 +1843,9 @@ export function retargetRedefinitions(model: Model, listed: readonly Redefinitio
  * {@link retargetRedefinitions}), where `Model.remove`'s walk up the removed target's redefinitions would skip a
  * level. For a model somebody removes from: the editor's model on screen (a command, the SDK, a peer's edit), the
  * working copy of a REST commit. Only the EXPLICIT redefinitions whose target goes are landed: an implicit end copy
- * stays where `Model.remove` put it (the store's settle moves it, for a command and an SDK call), and a typing or
- * specialization removed or retargeted is settled by nothing here. A failure leaves the removal as `Model.remove`
+ * stays where `Model.remove` put it, and a typing or specialization removed or retargeted is settled by nothing
+ * here: the settle that ends the edit does that ({@link settleRedefinitionsAfter}, for a command, the SDK, a raw call
+ * on the model on screen and a REST commit). A failure leaves the removal as `Model.remove`
  * walks it: a model may differ from its file, not lose the delete. Returns the call that stops following.
  */
 export function followRedefinitionRemovals(model: Model): () => void {
@@ -1719,7 +1888,7 @@ function relativePath(
   while (cur && !guard.has(cur.id)) {
     guard.add(cur.id);
     const head = cur.ownerId === scope;
-    const nm = nameOf(cur) || (effective && !head ? effectiveSegment(model, cur) : undefined);
+    const nm = writtenName(model, cur) || (effective && !head ? effectiveSegment(model, cur) : undefined);
     if (!nm) return undefined; // anonymous ancestor — cannot path through it
     names.unshift(nm);
     owners.unshift(cur);

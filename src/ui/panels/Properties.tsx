@@ -125,12 +125,16 @@ const MAX_DESCENDANTS = 2000;
 function CommitField(props: {
   value: string;
   testid: string;
-  placeholder: string;
-  title: string;
-  onCommit: (v: string) => void;
+  placeholder?: string;
+  title?: string;
+  /** `false`: the value did not take (a name cannot be cleared), and the box goes back to what the model has. */
+  onCommit: (v: string) => void | false;
 }): JSX.Element {
   const [draft, setDraft] = useState(props.value);
   useEffect(() => setDraft(props.value), [props.value]);
+  const commit = (): void => {
+    if (props.onCommit(draft) === false) setDraft(props.value);
+  };
   return (
     <input
       data-testid={props.testid}
@@ -139,10 +143,10 @@ function CommitField(props: {
       title={props.title}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
-        if (draft !== props.value) props.onCommit(draft);
+        if (draft !== props.value) commit();
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') props.onCommit(draft);
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit();
         else if (e.key === 'Escape') setDraft(props.value);
       }}
     />
@@ -451,12 +455,17 @@ export function Properties(): JSX.Element {
 
         <div className="field">
           <label>Name</label>
-          <input
-            data-testid="prop-name"
+          {/* Applied on Enter or on leaving the box, as a whole: each key was an edit, and a prefix another
+              feature of the owner bears (`M2` on the way to `M2x`) moved a `:>> M` to the base feature for good. */}
+          <CommitField
+            testid="prop-name"
             value={el.declaredName ?? ''}
-            onChange={(e) =>
-              updateElement(id, { declaredName: e.target.value || undefined })
-            }
+            onCommit={(v) => {
+              if (v === (el.declaredName ?? '')) return;
+              // An absent key changes nothing ({@link Model.update}): a name is not cleared here.
+              if (v === '') return false;
+              updateElement(id, { declaredName: v });
+            }}
           />
         </div>
 
@@ -468,12 +477,15 @@ export function Properties(): JSX.Element {
         {!isRequirement(eClass) && (
           <div className="field">
             <label>Short name</label>
-            <input
-              data-testid="prop-shortName"
+            <CommitField
+              testid="prop-shortName"
               value={el.declaredShortName ?? ''}
-              onChange={(e) =>
-                updateElement(id, { declaredShortName: e.target.value || undefined })
-              }
+              onCommit={(v) => {
+                if (v === (el.declaredShortName ?? '')) return;
+                // An absent key changes nothing ({@link Model.update}): a short name is not cleared here.
+                if (v === '') return false;
+                updateElement(id, { declaredShortName: v });
+              }}
             />
           </div>
         )}

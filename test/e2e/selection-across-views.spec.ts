@@ -50,6 +50,7 @@ test('one selection survives a tour of all 17 views, and undo still lands', asyn
   const engineId = await findElementId(page, 'PartDefinition', 'Engine');
   await selectElementById(page, engineId);
   await page.getByTestId('prop-name').fill('TourSubject');
+  await page.getByTestId('prop-name').press('Enter');
   await expect.poll(() => nameOf(page, engineId)).toBe('TourSubject');
 
   // ── The tour: every view, selection intact at each stop ──

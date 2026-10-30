@@ -4005,6 +4005,8 @@ export class DefiningEquations {
  * which reads this one.
  */
 export function isBindingConnector(el: ElementRecord): boolean {
+  // One the editor's settle marked: an end of it is a copy the saved file does not make, which reads it unresolved.
+  if (el.attrs.staleEnd === true) return false;
   const kind = el.attrs.connectorKind ?? el.attrs.kind;
   return (
     el.eClass === 'BindingConnectorAsUsage' ||

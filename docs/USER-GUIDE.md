@@ -486,11 +486,11 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
-(the grouping); `src/ui/store.ts:327-340` (`diagramRootId`, the diagram
-scope), `1566-1740` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
-saved project keeps them), `2758-2775` (`pinNodePositions`: the move itself), `2355-2412`
+(the grouping); `src/ui/store.ts:326-339` (`diagramRootId`, the diagram
+scope), `1565-1739` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2795-2812` (`pinNodePositions`: the move itself), `2390-2449`
 (`applyParsed`, the body of `applyText`: an apply of text carries them over by qualified name),
-`4500-4542` (`openText`: a file opened as text starts afresh).
+`4540-4582` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -676,16 +676,16 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1782-1901` (`RECOMPUTE_DEBOUNCE_MS`,
-`flushRecompute`: the recompute cycle), `2120-2262` (`recomputeSteps`, `flushRecomputeImpl`:
-the steps of a recompute), `2046-2093` (`watchModel`, `beginEdit`, `settleEdit`: an edit's
-redefinitions settled in its one undo step, a removal followed), `2271-2454` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
+**Source of truth:** `src/ui/store.ts:1781-1917` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `2155-2297` (`recomputeSteps`, `flushRecomputeImpl`:
+the steps of a recompute), `2077-2128` (`watchModel`, `beginEdit`, `settleEdit`: an edit's
+redefinitions settled in its one undo step, a removal followed), `2306-2491` (`afterMutation`, `afterSdkEdit`: an edit, and an SDK
 edit, each listing the model in the order its text gives it; `typedTextFirst`, `applyParsed`: a
-field's change over typed text), `912-969` (`inLibrary`, `userOwner`,
-`sdkIntoLibrary`: nothing added to the standard library), `3053-3084`
-(`createElement`: a new element), `3376-3444` (`reparent`, `reparentMany`: a
-move), `5210-5271` (`libraryNote`: the note that says so), `3886-3899`
-(`applyText`), `4346-4400` (`undo`, `redo`), `5299-5357`
+field's change over typed text), `911-968` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `3090-3121`
+(`createElement`: a new element), `3413-3481` (`reparent`, `reparentMany`: a
+move), `5250-5311` (`libraryNote`: the note that says so), `3923-3936`
+(`applyText`), `4383-4437` (`undo`, `redo`), `5339-5397`
 (`refreshAfterLibraryLoad`: the post-apply refresh);
 `src/core/model.ts` (`adoptSerialOrder`: the order the text gives),
 `src/collab/model-doc.ts` (`bindModelToDoc`: a room, and a peer that joins it);
@@ -1107,10 +1107,11 @@ changes either leaves each `:>>` where the saved file puts it, in the same Undo
 step as the edit, and the page reads what the file it saves reads: the Type field,
 a line drawn or deleted, a feature renamed, dragged in the Explorer, added, pasted
 or deleted, with the Delete key, the ✕ button or `window.sysml` alike (an edit through
-`window.sysml` is settled the same, and has no Undo step of its own; a call on
-`window.sysml.model` itself, a peer's removal and a change committed through the REST API are
-followed only when they remove a feature some `:>>` targets, which lands that `:>>` as a delete
-in the app does, and settle nothing else: see the cases below that are not followed). `t`'s `:>> M` in `part t : Q2`, retyped to Q, is Q's M, which
+`window.sysml` is settled the same, and has no Undo step of its own; so is a call on
+`window.sysml.model` itself, where it ends (not the binding of references an open or a library merge does), and a change committed through the REST API once
+its changes are in, so the commit's model reads what the file it saves reads; a peer's edit in a
+room is settled by its sender, whose moves arrive as edits: see the cases below that are not
+followed). `t`'s `:>> M` in `part t : Q2`, retyped to Q, is Q's M, which
 Save writes `:>> M` and the next open lands on; deleting Q2's `:>> M` leaves it on
 the feature that name finds now. A feature renamed to the name a `:>> M` is known
 by (`attribute M2 = 9.0;` beside the `:>> M` that took R's M2) moves that `:>> M`
@@ -1126,39 +1127,60 @@ The implicit copy a binding in a usage makes of an inherited feature (`part r : 
 bind p.load = L; }` makes r an `L`) is not written to the file: the next open makes it
 anew, on the feature `L` finds in r then. It is settled with the `:>>`s, in the same
 step: retyped to Q, r's copy of `L` leaves Q2's `:>> L = 50.0` for Q's `L`, and a
-retype back puts it on Q2's, so `r.p.load` reads the value the saved file reads, as long as
-something r's types hold still bears the name `L`. The copy is moved where it stands, not made
-again: the binding stays on it.
+retype back puts it on Q2's, so `r.p.load` reads the value the saved file reads. Where nothing r's
+types hold bears the name `L` any more (`r` retyped to a type without it, or the feature `L` deleted
+or renamed), the next open makes no copy and reads `bind p.load = L;` with `L` unresolved: the page
+parts the copy from the feature it redefined (a stale copy, which redefines nothing), and the binding
+that ends in it binds nothing, so `r.p.load` is what the file reads and nothing is proved through the
+copy; a retype back, or the feature named back, puts the copy on a feature again. The copy is moved where
+it stands, not made again: the binding stays on it. Save writes the copy under the name the binding was written
+with, not the name of the feature the copy redefines: `bind Zb = M;` in `part u0 : D4, D3`,
+where D1 writes `attribute N2 redefines M` and D2 has an `N2` of its own, stays `bind Zb = M;`
+(it would have been `bind Zb = N2;`, which the next open reads as D2's `N2`). A name the
+edit has since renamed away from that feature, or that a feature of r or a type now shadows
+(the next open would read it as that feature), goes back to the copy's own. Renaming the feature a copy redefines
+renames the copy with it (the next open names the copy by that feature), so a constraint written with the old name
+reads what the file reads. Where another feature of the owner already bears the new name, the next open merges the
+binding into that feature: the page parts the copy (a stale copy), and the row that reads through it abstains
+where the file decides.
 
-Three things stay outside this. A rename that gives two features of one owner one
-name, the declared one or the one an unnamed `:>> M` is known by (the Problems panel
-reports `validation/duplicate-name` for the first): the saved file finds the first of
-them, which may not be the feature the page's `:>>` is on. A name typed in the Name box,
-which is an edit for every key: a prefix that another feature of the owner already bears
-(typing `M2x` passes through `M2`) moves the `:>> M` to the base feature for good, and
-Save writes it by its path (`:>> P::Q::M`), where the same final names written by hand
-would not; a name pasted whole is one edit. And a `window.sysml` call that points a
-redefinition at a feature no name in its scope reaches (one in a nested unnamed part):
-the saved file puts it on another.
+The Name and Short name boxes of the Properties panel apply on Enter or on leaving the box,
+not per key (Escape puts the name back, and so does an emptied box: a name is not cleared there), so a name typed key by key is one edit and one Undo
+step: a prefix another feature of the owner bears (typing `M2x` passes through `M2`) no
+longer moves a `:>> M` to the base feature on the way.
 
-Six more cases are not followed, and in each the page can read what the saved file does not:
+A name that two of the owner's types answer differently (`b` in a nested `:>> b` of a usage typed `P2`
+that redefines a feature typed `P3`, where P3 writes `attribute b :>> a` beside the `b` it inherits from
+P) is read by the order the types are listed in, which a page edited by hand and the file it saves do not
+share: Save writes that redefinition by its path (`:>> G::P3::b`), which the next open reads as written. A
+redefinition that a `window.sysml` call (or a feature moved) points at a feature in a nested unnamed part,
+whose path goes through the part's effective name, is dropped by the settle: the text has no way to name
+it, and the saved file has none. One thing stays outside this: a rename that gives two features of one
+owner one name, the declared one or the one an unnamed `:>> M` is known by (the Problems panel reports
+`validation/duplicate-name` for the first): the saved file finds the first of them, which may not be the
+feature the page's `:>>` is on, and a `window.sysml` call that points a redefinition at a feature its owner
+does not inherit and a name does not reach can leave the page apart from the file. A rename made by
+`updateElement` in steps (the SDK, not the box) is an edit for every call.
 
-- An implicit copy whose name nothing its owner inherits bears any more (`r` retyped to a type
-  without `L`, or `L` deleted or renamed) stays on the feature it redefined. The page keeps
-  proving through it, while the saved file reads `bind p.load = L;` with `L` unresolved (the
-  file, opened again, reports `ref/unresolved-reference`).
-- A change committed through `POST /projects/{id}/commits` is settled only when it deletes a
-  feature a `:>>` targets. A commit that deletes or retargets a typing or a specialization
-  leaves each `:>>` where it was, and the commit's model can prove what the file it saves refutes.
-- A removal through `window.sysml.model`, from a peer, or in a REST commit lands the explicit
-  `:>>`s but leaves an implicit copy where `Model.remove`'s walk up the chain put it, which
-  may not be where the editor's settle (a command, or a `window.sysml` call) puts it.
-- Deleting the feature a `bind` in a part definition ends on takes the binding, and leaves the
-  copies it made in the page: a usage's copy then redefines that debris, where the saved file
-  redefines the feature itself.
-- Renaming the feature an implicit copy redefines leaves the copy under its old name: a
-  constraint written with the old name (`r.L`) is still read on the page, and the file makes the
-  copy under the new one.
+Five more cases are not followed, and in each the page can read what the saved file does not:
+
+- A stale copy (above) is still a feature of its owner on the page, with no value: a constraint
+  that names it (`r0.L` after `L` is renamed away) is read by the numeric lane as free (`imposed`),
+  where the file reads the name as unresolved. No verdict is drawn through it; and the numeric lane
+  may abstain on a constraint where the file decides it (deleting `Q::L` under a definition-level
+  `bind p.load = L`, `r0.p.load == 12.0`). The Problems panel raises nothing for it: the file, opened
+  again, reports `ref/unresolved-reference` and an unbound connector end.
+- A feature renamed onto a name another feature of the same owner bears (`D2`'s `:>> N` renamed to
+  `Z1` in a definition whose usage has a `Z1`) makes the file merge the usage's binding into that
+  feature, and the page, which parts the copy, abstains on the rows the file decides; a literal row
+  over the merged feature, which the file calls contradictory (`bind Zb = Z1` joins two values), the
+  page can still read.
+- A peer's edit in a collaboration room is not settled by the receiver, which relies on the
+  sender's settle arriving as edits (not exercised with two live clients).
+- A `window.sysml` call that points a redefinition at a feature its owner does not inherit (a
+  retarget to an unrelated feature, or a feature moved into the usage that redefines it) can
+  leave the page's redefinition apart from the file's: the saved text names it by a path the next
+  open resolves otherwise.
 - A cycle of redefinitions (`a :>> b`, `b :>> a`, already an invalid model): deleting one
   member leaves the other redefining itself, which the saved text reads as an unresolved name.
 
@@ -4520,8 +4542,8 @@ makes many edits makes them in one `commit(fn)`, which lists the model once
 for the elements it adds; each `reparent` lists it at its own call, inside a
 `commit(fn)` too.
 
-**Source of truth:** `src/ui/store.ts:3569-3751` (`runValidation`,
-`solveParametric`: the four buttons), `2264-2454` (`afterSdkEdit`: an SDK edit),
+**Source of truth:** `src/ui/store.ts:3606-3788` (`runValidation`,
+`solveParametric`: the four buttons), `2299-2491` (`afterSdkEdit`: an SDK edit),
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -4897,17 +4919,17 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:830-848` (`persistScenarios`: the Regroup scenarios kept in
-this browser), `3903-4000` (`newProject`, `listProjects`: New, Save, Open and
-what they mark saved), `4248-4317` (`commitVersion`, `switchBranch`: a commit,
-and a branch head loaded), `5121-5131` (`mergeLoads`: a merge that loads),
-`5133-5271` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+`src/ui/store.ts:829-847` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3940-4037` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `4285-4354` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `5161-5171` (`mergeLoads`: a merge that loads),
+`5173-5311` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
 a save or an export, or kept back and said so), `src/ui/commands.ts:39-106`
 (Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:423-467` (what reads unsaved), `504-531` (`leaveUnsaved`,
 `leaveBeforeUnload`: the tab's question), `1399-1466` (the question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:181-191` (the page's listener),
-`src/ui/store.ts:5111-5119` (`askBeforeLeaving`),
+`src/ui/store.ts:5151-5159` (`askBeforeLeaving`),
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
 
@@ -5163,9 +5185,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:238`
-(`UNDO_LIMIT`: undo is bounded), `1782-1812` (`RECOMPUTE_DEBOUNCE_MS`: the
-derived surfaces lag), `5446-5569` (`mergeLibrary`, `loadStandardLibraryAsync`:
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:237`
+(`UNDO_LIMIT`: undo is bounded), `1781-1811` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `5486-5609` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
 `src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:200-312`.
 
