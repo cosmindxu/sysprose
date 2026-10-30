@@ -1069,8 +1069,32 @@ The redefinition keeps the feature the name finds too where the most specific
 one would make two features of the usage one, or give two the same name:
 
 - a general type's `attribute X :>> M, N` would take both the `:>> M` and the
-  `:>> N` of `part s : Q2`. Trust no verdict over those two features: the model
-  gives X, one feature, two values, and every surface reads two features;
+  `:>> N` of `part s : Q2`, and the model then gives X, one feature, two values.
+  A usage that redefines either (`:>> M = 1.0` beside `:>> N = 2.0`, or `:>> M =
+  4.0` alone), or both in one feature (`:>> M, N = 6.0`), reads neither name:
+  every row over `s.M` or `s.N` is *could not be evaluated*, in a sentence that
+  names X, on every surface; so is a row over a feature that redefines the line
+  under another name (`attribute Y :>> X;` in a type below Q2, or in the usage),
+  `s.Y` as well as `s.N`. A usage that redefines X itself (`:>> X = 5.0`)
+  states one value for the one feature and reads every name of it, and one that
+  redefines neither (`part t : Q2;`) reads X's value as written. A line that
+  states no value over two features that state different ones (`attribute X :>>
+  M, N;` over M's `default = 1.0` and N's `= 2.0`, two different defaults, or
+  `= 1.0` and `= 2.0`) has no one value to read, whichever order the targets are
+  written in, whether or not a usage redefines anything of it: every row over
+  `s.M`, `s.N` or `s.X` is *could not be evaluated* too. Two that agree are read.
+  The fence holds every name on the way to what a row reads: the nested features
+  of a line of parts (`part X :>> M, N;` with `s.X.x`, `s.M.x`, `s.N.x`), and a
+  feature derived from the line's names (`attribute Z = X + 1.0;` in Q2, read as
+  `s.Z`, or in a type below Q2 that redefines one of them), are *could not be
+  evaluated* too. A usage that states one feature twice is read the same way
+  (`:>> x = 5.0; :>> x = 6.0;`, an `attribute x = 5.0;` beside an `attribute :>>
+  x = 6.0;`, a `:>> x;` beside a `:>> x default = 3.0;`, two redefinitions of
+  one part with different content nested below, or `5.0 [kg]` beside `5000.0
+  [g]`): the model states both, and no row over `x`, `s.y` for a `y :>> x`, or
+  what reads them is read there, written in either order. Two that say the same
+  thing in the same unit are read. For values that differ the SMT engine still
+  reports its inconsistent axioms;
 - in `part v : R { attribute :>> M = 5.0; attribute M2 = 9.0; }` the first would
   be named M2 beside the second;
 - in `part v : R, S`, where S writes `attribute M2 redefines K`, a `:>> M` and a
@@ -1141,9 +1165,9 @@ Six more cases are not followed, and in each the page can read what the saved fi
 A feature redefines only what its owner **inherits**. In one definition, `attribute
 mass default = 1.2; attribute :>> mass = 0.8;` is not a legal redefinition: the second
 `mass` names the first, which the same owner declares. The check reports it as a warning,
-`validation/redefinition-own-sibling`, at the redefinition. Trust no verdict over that
-feature until it is fixed: the check, the literal engine and the numeric surface read the
-redefinition's `0.8`, while the solver lane finds the two values inconsistent. Put the value where `mass` is
+`validation/redefinition-own-sibling`, at the redefinition. The model states the
+feature twice, so every row read through it is *could not be evaluated* on every surface
+(`unread-binding`, in a sentence that names the redefinition) until it is fixed. Put the value where `mass` is
 declared (`attribute mass = 0.8;`), or redefine it in a specialisation or a usage
 typed by the owner (`part b : Battery { attribute :>> mass = 0.8; }`).
 
@@ -1337,7 +1361,12 @@ read in the element it is written in, at the satisfier its path names there:
 one that element inherits is that element's own (`satisfy R by p1` in `part sys
 : W` is sys's p1, whose load sys's K gives through W's `bind p1.load = K`), and
 so is one it redefines (beside w's `part :>> p1 { … }`, or the package's
-`satisfy R by w.p1`). One written in a definition, or in a usage another
+`satisfy R by w.p1`). A `satisfy` whose path does not resolve where it is
+written (`satisfy R by w.p1;` in a package nested in the one that declares w, or
+in a part's body) is read at the feature the path names in its definition (W's
+p1), never at w's: where an instance reads that feature otherwise (w's `part
+:>> p1 { … }`), its rows and R's rows for the satisfier are *could not be
+evaluated*, naming w, and the requirement is not read through it. One written in a definition, or in a usage another
 specialises, is read once, at that element's own values, never in each of its
 instances: one whose satisfier is a reference with a value or one an instance
 redefines (`ref part r : T0;` under w's `ref part :>> r = p50`), such a part
@@ -1421,8 +1450,44 @@ in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
 W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
 nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
 has no element that stands for w's p2's sub, so its row, which stands for every
-T1's sub, is *could not be evaluated*. Where no instance reads p1
-otherwise, or p1 is a feature of a package, it reads as written. A
+T1's sub, is *could not be evaluated*. The subsetted p1 is read alike from the
+other side: where an instance reads p2 otherwise (w's `part :>> p2 { attribute
+:>> load = 50.0; }`), w's p2 is its only p1 when both are `[1]`, but this tool
+reads p1 at W's own values, so each row read through p1 — W's own `constraint c
+{ p1.load <= 5.0 }`, the package's `w.p1.load` — is *could not be evaluated*,
+in a sentence that names p1, the subsetter nearest to it that is read otherwise
+(or is read with one) and w; a calculation's body or a derived value that names p1
+(`calc m1 { 10.0 - p1.load }`) is read through it too. So does every usage of the same
+subsetting component (the usages that subset one another, however many links apart,
+whichever way round), for every instance of what they are features of — the usage
+the instance redefines itself (w's own p1 beside W's `part p2 :> p1;`), one that
+redefines the root (a `v : W { part :>> p1 { ... } }` beside w), or a second
+specialisation that redefines it, included: a p1 further up a chain (p3 :> p2 :> p1,
+w's `part :>> p3 { ... }`), the other super of a usage with two supers (`part u3 :>
+u1, u2;` beside w's `part :>> u2 { ... }` makes w's u1 the valued one too, and so
+does a value in the definition alone: `part u3 : T0 { attribute :>> load = 3.0; }` and
+`part u4 :> u1, u3;` make u1's load 3 in a `part w : W` that redefines nothing), and the
+usages above a subsetter that says something of its own, wherever it is declared: in w
+(`part q :> p2 { attribute :>> load = 50.0; }`, or a chain `q :> p1`, `r :> q` of
+which r says it), in W itself (`part def W { part p1; part q :> p1 { attribute :>>
+load = 50.0; } }`), in a specialisation of W, in a package (`part x :> w.p1 { ... }`),
+or in a usage of w, naming its usage through a path (`part q :> sub.p1 { ... }`).
+A subsetter says something of its own by what it declares below it, by a value of
+its own (`attribute y :> x = 50.0;`) or through its type (`part q : Q50 :> p1;` over a
+`Q50` that redefines `load`). The rows read through p2 itself abstain
+with them where p2 subsets one of these, though p2 is the usage that holds the
+value: this tool does not tell the two readings apart; a usage that subsets none of
+them is read as written. It does not read the
+multiplicity, so a `p1` other members fill abstains too. Where no instance reads
+p1 otherwise and no usage of its component says anything of its own, it reads as
+written. Which of several usages a sentence names (the nearest, then the lowest
+qualified name) does not turn on the order the text is written in.
+An end of a connection the model connects to features (`connection cn : C connect
+w.p1 to t;`) is the feature it connects, which may state what the end's type does not
+(w's `part :>> p1 { attribute :>> load = 50.0; }`): `cn.a.load` is *could not be
+evaluated*, in a sentence that names the connection and the end, whatever the
+connected feature states.
+A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A relation of Q read in a usage or a specialisation
@@ -1458,7 +1523,9 @@ through a binding joined to such a one, end to end or through a feature an end
 redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33
 usages down that gives that load its value: Y's `default` gives way, and the
 check reads no value for Y), nor through one whose end has no instance in a
-context it holds in (R's nested Q used outside any R). A binding joins such a
+context it holds in (R's nested Q used outside any R); a binding read through an instance
+of a definition that owns a capped end is capped, whichever of the two is written
+first. A binding joins such a
 one through a feature an end redefines only where that feature is itself another
 binding's end: U's `bind a.load = M` on its own `part a : T0` is not joined to
 T1's capped binding by the T0 `load` both redefine. A value held so, which no
@@ -1497,20 +1564,23 @@ the assert in that instance as an axiom, so its axioms are inconsistent. Where
 Q's instances give the binding different values (`L default = 50.0`, `q2 : Q {
 attribute :>> L = 5.0; }`) each reads its own, in a row of its own. P's own
 row, which has no value to read, is *could not be evaluated*. A plain `constraint
-a2` of P is read in the same instance and is refuted on every surface. Two
-shapes are not read, and the violation in them goes unreported. A relation that
-reads `load` only through a value derived from it (`attribute m2 :
-ScalarValues::Real = 10.0 - load` under `assert constraint c { m2 >= 0.0 }`) is
-not read in Q's p, though it is where the instance redefines `load` itself
-(`part p : P { attribute :>> load = 50.0; }`: *p::m2 = -40 misses P::c*). And
-where Q's `L` states no value at all, not even a `default`, and only an instance
-gives it one (`part q : Q { attribute :>> L = 50.0; }`), neither an `assert` nor
-a plain `constraint` of P is read in q's p. In both the check lists no row for
-the instance and reports nothing of the violation, and the numeric surface and
-the literal engine decide the relations beside it at the values they read; the
-SMT engine reports its axioms inconsistent only for the `assert` over the
-instance-supplied value (it files that assert in q's p as an axiom), and for the
-derived shape proves the relations beside it. A binding that gives the instance
+a2` of P is read in the same instance and is refuted on every surface. So is a
+relation that reads `load` only through a value derived from it (`attribute m2 :
+ScalarValues::Real = 10.0 - load` under `assert constraint c { m2 >= 0.0 }`, up to four
+values deep): Q's p is read at the `load` the binding gives it, and violated (*p::m2 = -40
+misses P::c*), as where the instance redefines `load` itself (`part p : P { attribute :>>
+load = 50.0; }`). And so is a feature Q's `L` gives with no value at all, not even a
+`default`, where only an instance gives it one (`part q : Q { attribute :>> L = 50.0; }`):
+neither an `assert` nor a plain `constraint` of P is read in Q's own p, which has no value
+(*could not be evaluated*), but each is read, and violated, in q's p, and a q2 whose `L`
+is 5 holds. The check and the numeric surface keep deciding the relations beside the
+violation (`kL { q.L >= 0.0 }`) at the values they read; the literal engine marks one
+inconclusive where the violated assert reaches it, and the SMT engine, which files that
+assert in q's p as an axiom, reports its axioms inconsistent (a plain `constraint` of P
+files no axiom, so kL reads 50 on every surface). The contexts a relation is filed at do not
+turn on the order the text is written in: a renamed redefinition (`part p2 :>> p` in
+`q2 : Q`) written before `part def Q` leaves Q's p, and every other instance, filed as
+they are when Q comes first. A binding that gives the instance
 no value this tool reads (two defaults that differ) lists no such row: whatever
 reads that value is *could not be evaluated*. The binding
 need not be written in the definition around the instance: one written in an
@@ -1906,15 +1976,16 @@ other first, in any order, and the model reads as before. A value
 written with `=` (`L = 1.0`) is read whatever its asserts, which are checked
 against it, in any order; so is one an asserted relation reads beside L (`M =
 20.0` in `L >= 0.0 [kg] or M >= 0.0`), and an assert over it alone (`M <=
-10.0`) is still the warning. Limits of this tool: two asserted equations on the two
+10.0`) is still the warning. Two asserted equations on the two
 ends of a binding that reaches one end through a part (`bind p.L = M`, `L == 50.0`
-in p's type and `M == 60.0` in the element) are still only the binding's violated
-pair, each end's readings standing, and the pair only joins features of the element
-that holds the binding; an FMI export's `start` of such a feature still reads the first
-equation written; `K == L`, a bare name on each side, is not read as tying K to such
-an L, so K's FMI `start`, its measure of effectiveness and a check over it still turn on
-the order of the two equations (`K == L + 0.0`, `K == 2.0 * L` and `bind K = L` are
-read as tied); and the SMT engine holds one symbol for a feature across the usages of
+in p's type and `M == 60.0` in the element) are one feature's two values too: the
+binding makes q's p's L and q's M one quantity, and they read as the pair above,
+so every row over either is *could not be evaluated*. The pair is read where the
+binding meets it, which leaves p's type's L undecided in every use of that type
+(a `part p2 : P` beside it too): a price of reading it so. `K == L`, a bare name on
+each side beside such an L, ties K to it like `K == L + 0.0` or `bind K = L`, so K's
+FMI `start`, its measure of effectiveness and a check over it read neither value,
+in either order of the equations. Limits of this tool: the SMT engine holds one symbol for a feature across the usages of
 one definition, so two usages that each assert one end of a binding the
 definition writes (`bind L = K` in P, `part a : P { assert constraint ea { L ==
 50.0 } }`, `part b : P { assert constraint eb { K == 60.0 } }`) read *inconsistent
