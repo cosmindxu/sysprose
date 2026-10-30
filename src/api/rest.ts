@@ -25,8 +25,8 @@
  * counter-based (from {@link ProjectRepository}) — never Date.now/Math.random.
  */
 
-import type { ElementRecord, Model } from '@core/index';
-import { followRedefinitionRemovals } from '@text/serializer';
+import type { ChangeEvent, ElementRecord, Model } from '@core/index';
+import { followRedefinitionRemovals, settleRedefinitionsAfter } from '@text/serializer';
 import { validateRequestBody, type RequestBodyKind } from './request-schemas';
 import { ModelApi, type OmgElementJSON } from './sdk';
 import { evaluateQuery, modelCommitId, type Query, type QueryResult } from './query';
@@ -487,14 +487,21 @@ export class SysmlApiServer {
     const working = this.repo.getModelAtCommit(branch.headCommitId);
     // A delete in the commit lands the explicit redefinitions that targeted the element where the text the model is saved
     // as reads them, as a delete on the editor's page does: the working copy is not that model, and has no follower of
-    // its own. That is all it follows: a typing or specialization deleted or retargeted is not settled, nor is an
-    // implicit end copy landed (docs/USER-GUIDE.md, the cases not followed).
+    // its own. Once the changes are in, the redefinitions they left are settled as the editor settles a command's
+    // (`settleRedefinitionsAfter`): a typing or specialization deleted or retargeted, an implicit end copy a delete left.
     followRedefinitionRemovals(working);
     const expectedHead = b.baseCommit ?? b.baseCommitId;
     try {
-      working.transaction(() => {
-        for (const change of b.changes ?? []) applyChange(working, change);
-      });
+      const events: ChangeEvent[] = [];
+      const unsubscribe = working.subscribe((batch) => events.push(...batch));
+      try {
+        working.transaction(() => {
+          for (const change of b.changes ?? []) applyChange(working, change);
+        });
+      } finally {
+        unsubscribe();
+      }
+      settleRedefinitionsAfter(working, events);
       const commit = this.repo.commit(projectId, branchId, working, b.description, { expectedHead });
       return created(this.commitJSON(commit));
     } catch (e) {

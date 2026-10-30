@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { parseModel } from '@text/index';
-import { resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '../../src/semantics/bind';
+import { redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '../../src/semantics/bind';
 import { Model, ModelFactory } from '@core/index';
 
 /** Parse, then hand back the model plus a name→element lookup. */
@@ -477,5 +477,36 @@ describe('sharesLineWithSibling — a usage of many redefinitions, asked of a fe
       expect(sharesLineWithSibling(model, hit, f.id, touched), f.declaredName).toBe(false);
     }
     expect(has.mock.calls.length).toBeLessThan(n * 10);
+  });
+});
+
+describe('redefinitionNameIsOrderDependent — a simple name two of the owner\'s generals answer differently', () => {
+  // `part :>> p : P2` redefines H's `p : P3`: its generals are P2 and, through the redefined p, P3. P3 has a `b` of its own
+  // (it redefines `a`) beside the `b` it inherits from P, so `:>> b` is P::b by P2 and P3::b by p.
+  const text = (b: string): string => `package G {
+  part def P { attribute a default = 1.0; attribute b default = 2.0; }
+  part def P2 :> P;
+  part def P3 :> P { attribute ${b} :>> a default = 3.0; }
+  part def H { part p : P3; }
+  part w : H { part :>> p : P2 { attribute :>> b; } }
+}`;
+  const ask = (src: string): { order: boolean; owner: string } => {
+    const { model, id } = parsed(src);
+    const nested = model.children(id('w')).find((c) => c.eClass === 'PartUsage')!;
+    const f = model.children(nested.id).find((c) => c.eClass === 'AttributeUsage')!;
+    return { order: redefinitionNameIsOrderDependent(model, 'b', f.id, nested.id), owner: model.qualifiedName(resolveRedefinedFeature(model, 'b', f.id, nested.id)!.id) };
+  };
+
+  it('is true where two generals find different features, and the rule still answers by the first', () => {
+    expect(ask(text('b')).order).toBe(true);
+  });
+
+  it('is false where the name is one feature, or is qualified', () => {
+    expect(ask(text('a3')).order).toBe(false);
+    const { model, id } = parsed(text('b'));
+    const nested = model.children(id('w')).find((c) => c.eClass === 'PartUsage')!;
+    const f = model.children(nested.id).find((c) => c.eClass === 'AttributeUsage')!;
+    expect(redefinitionNameIsOrderDependent(model, 'G::P3::b', f.id, nested.id)).toBe(false);
+    expect(model.qualifiedName(resolveRedefinedFeature(model, 'G::P3::b', f.id, nested.id)!.id)).toBe('G::P3::b');
   });
 });

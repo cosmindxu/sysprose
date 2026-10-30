@@ -45,10 +45,12 @@ export {
   serializeModel,
   serializeElement,
   settleRedefinitions,
+  settleRedefinitionsAfter,
   redefinitionsDirtiedBy,
   redefinitionsToRetarget,
   retargetRedefinitions,
   followRedefinitionRemovals,
+  isStaleCopy,
   UnwritableRequirementRefError,
 } from './serializer';
 export type { DirtiedRedefinitions, RedefinitionToRetarget } from './serializer';

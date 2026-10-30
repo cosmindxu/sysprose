@@ -102,9 +102,8 @@ import {
   parseModel,
   retractResolvedSpecializationWarnings,
   serializeUserModelSignals,
-  redefinitionsDirtiedBy,
   followRedefinitionRemovals,
-  settleRedefinitions,
+  settleRedefinitionsAfter,
   resolveConnectorFeatureChains,
   type MeasuredText,
   type ParseDiagnostic,
@@ -1880,6 +1879,23 @@ export function forcedRecomputePending(): boolean {
 let flushRecomputeImpl: () => void = () => {};
 
 /**
+ * The text just applied, or the library just merged, is binding its references (`resolveTypeReferences`,
+ * `resolveConnectorFeatureChains`): those updates are no edit of a person's, and the raw-call settle leaves them alone.
+ */
+let bindingReferences = 0;
+function whileBindingReferences(run: () => void): void {
+  bindingReferences++;
+  try {
+    run();
+  } finally {
+    bindingReferences--;
+  }
+}
+
+/** Start settling the edits made to `model` (the store factory installs it): the model on screen, whichever it is now. */
+let watchModelImpl: (model: Model) => void = () => {};
+
+/**
  * The save in this browser still being stored, if one is: resolves with
  * whether the browser kept it, once `savedText` says so. A command that would
  * replace the model waits for it (`driveGuard`): saved as of its click, it
@@ -2035,12 +2051,27 @@ export const useAppStore = create<AppState>((set, get) => {
    * A REMOVAL of a redefinition's target is also followed on the model itself, whoever removes from it: the explicit
    * redefinitions that stay are landed on the feature the name they are saved by finds now
    * ({@link followRedefinitionRemovals}), where `Model.remove`'s walk up the removed target's redefinitions would skip
-   * a level. That holds for the SDK, a peer's edit and a direct call as for a command; an implicit end copy is landed
-   * by the settle only, and a REST commit (on a copy of the head) follows no more than this (docs/USER-GUIDE.md).
+   * a level. That holds for the SDK, a peer's edit and a direct call as for a command. A change that arrives with no
+   * command open — a raw call on the model on screen (`window.sysml.model.update`) — is settled where it ends too, by
+   * the same call ({@link settleRedefinitionsAfter}); not in a room, where a peer's edit arrives the same way and its
+   * sender settles it. A REST commit settles its changes once they are in (`createCommit`, docs/USER-GUIDE.md).
    */
   let editEvents: ChangeEvent[] = [];
   let editOpen = false;
+  /** A settle is under way: the moves it makes are no edit to settle. */
+  let settling = false;
   let editWatch: { model: Model; unsubscribe: () => void; unplan: () => void } | null = null;
+
+  /** Settle `events` (in the one undo step of the command that made them, or of no command). */
+  function settleNow(model: Model, events: readonly ChangeEvent[]): void {
+    if (events.length === 0) return;
+    settling = true;
+    try {
+      withCommandMutation(() => settleRedefinitionsAfter(model, events));
+    } finally {
+      settling = false;
+    }
+  }
 
   /** Listen to `model` for the changes of the commands that edit it, and follow its removals. */
   function watchModel(model: Model): void {
@@ -2050,7 +2081,19 @@ export const useAppStore = create<AppState>((set, get) => {
     editWatch = {
       model,
       unsubscribe: model.subscribe((events) => {
-        if (!editOpen) return;
+        if (settling) return;
+        if (!editOpen) {
+          // An edit that is no command: a raw call on the model on screen (`window.sysml.model.update`), a script that
+          // changes it directly. Settled where it ends. Not in a room: a peer's edit arrives here too, and its sender
+          // settles it (the settle's moves come as edits, docs/USER-GUIDE.md). Nor the binding of references an open or a
+          // library merge does ({@link whileBindingReferences}).
+          if (collabRuntime !== null || bindingReferences > 0) return;
+          settleNow(
+            model,
+            events.filter((ev) => ev.type !== 'reset' && ev.type !== 'order' && ev.element?.attrs.isLibrary !== true),
+          );
+          return;
+        }
         for (const ev of events) {
           // The model replaced whole is the text or the snapshot it was made from: nothing it holds is to settle.
           if (ev.type === 'reset') endEdit();
@@ -2060,6 +2103,8 @@ export const useAppStore = create<AppState>((set, get) => {
       unplan: followRedefinitionRemovals(model),
     };
   }
+
+  watchModelImpl = watchModel;
 
   /** Start listening to `model` for the changes of the command that is beginning. */
   function beginEdit(model: Model): void {
@@ -2079,17 +2124,7 @@ export const useAppStore = create<AppState>((set, get) => {
     if (!editOpen) return;
     const events = editEvents;
     endEdit();
-    if (events.length === 0) return;
-    try {
-      const dirtied = redefinitionsDirtiedBy(model, events);
-      withCommandMutation(() => {
-        if (dirtied.types.size > 0) settleRedefinitions(model, dirtied.types, dirtied.touched);
-        if (dirtied.named.size > 0) settleRedefinitions(model, dirtied.named, dirtied.touched, dirtied.names);
-      });
-    } catch (err) {
-      // A settle that fails leaves the edit as it stood: the page may differ from its file, not be lost.
-      console.error('settleRedefinitions failed', err);
-    }
+    settleNow(model, events);
   }
 
   /**
@@ -2397,12 +2432,14 @@ export const useAppStore = create<AppState>((set, get) => {
     // carried apply keeps the standard library standing and binds the text's
     // references to it at once, as the merge below would: the field's change
     // that goes in next may name a library type (`bindType`, `setSubject`).
-    withCommandMutation(() => {
-      if (!carried) return model.reset(data);
-      model.resetPreserving(data, isLibraryEl);
-      resolveTypeReferences(model);
-      resolveConnectorFeatureChains(model);
-    });
+    withCommandMutation(() =>
+      whileBindingReferences(() => {
+        if (!carried) return model.reset(data);
+        model.resetPreserving(data, isLibraryEl);
+        resolveTypeReferences(model);
+        resolveConnectorFeatureChains(model);
+      }),
+    );
     const pins = pinnedBefore ? carryPins(diagramPins, pinnedBefore, userElementsByName(model)) : {};
     const parseDiags = result.diagnostics.map(parseDiagToDiagnostic);
     const validationDiags = safeValidate(model);
@@ -4403,6 +4440,9 @@ export const useAppStore = create<AppState>((set, get) => {
 
 /* ─────────────────────── Collaboration wiring (post-store) ───────────────── */
 
+// The model on screen is watched whichever it is: a store given another model (a test, a script) settles its edits too.
+useAppStore.subscribe((state) => watchModelImpl(state.model));
+
 // Push the local selection to peers whenever it changes (drives remote-selection
 // highlights on every collaborator's Explorer). Only active while connected.
 let lastPushedSelection: ElementId | null = null;
@@ -5464,7 +5504,7 @@ function mergeLibrary(model: Model, merge: () => void): void {
   const suppressed = autoRecomputeSuppressed;
   autoRecomputeSuppressed = true;
   try {
-    merge();
+    whileBindingReferences(merge);
   } finally {
     autoRecomputeSuppressed = suppressed;
   }

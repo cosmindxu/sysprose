@@ -209,8 +209,53 @@ export function resolveRedefinedFeature(
   featureId: ElementId,
   scopeId: ElementId | null,
 ): ElementRecord | undefined {
+  return redefinitionHits(model, ref, featureId, scopeId, false).first ?? redefinitionFallback(model, ref, featureId, scopeId);
+}
+
+/**
+ * Is the SIMPLE name `ref` a name whose redefinition target depends on the order of the owner's generals? Two of them
+ * find different features for it, neither redefining the other (P3's own `b :>> a` beside the `b` P3 inherits from P,
+ * for a nested `:>> b` in a usage typed P2 that redefines a feature typed P3): the rule takes the first general that finds
+ * one, and the generals are listed in the order their relationships were made, which a page edited by hand and the file
+ * it saves do not share (a typing bound after the redefinition, or before). The text can still say which feature it
+ * means by a qualified name, so Save writes that one ({@link refTo}).
+ */
+export function redefinitionNameIsOrderDependent(
+  model: Model,
+  ref: string,
+  featureId: ElementId,
+  scopeId: ElementId | null,
+): boolean {
   const segs = refSegments(ref);
-  if (segs.length === 0) return undefined;
+  // A name that fewer than two features of the model bear cannot be found twice (the check is cheap for the many).
+  if (segs.length !== 1 || (nameCounts(model).get(segs[0]!) ?? 0) < 2) return false;
+  return redefinitionHits(model, ref, featureId, scopeId, true).distinct > 1;
+}
+
+/** How many non-relationship elements bear each declared name or short name, once per model revision. */
+const NAME_COUNTS = new WeakMap<Model, { rev: number; counts: Map<string, number> }>();
+function nameCounts(model: Model): Map<string, number> {
+  const hit = NAME_COUNTS.get(model);
+  if (hit && hit.rev === model.rev) return hit.counts;
+  const counts = new Map<string, number>();
+  for (const e of model.all()) {
+    if (isRelationship(e.eClass)) continue;
+    for (const n of new Set([e.declaredName, e.declaredShortName])) if (n !== undefined) counts.set(n, (counts.get(n) ?? 0) + 1);
+  }
+  NAME_COUNTS.set(model, { rev: model.rev, counts });
+  return counts;
+}
+
+/** What the redefinition rule finds among the generals of the owning type: the first hit, and with `all` how many differ. */
+function redefinitionHits(
+  model: Model,
+  ref: string,
+  featureId: ElementId,
+  scopeId: ElementId | null,
+  all: boolean,
+): { first?: ElementRecord; distinct: number } {
+  const segs = refSegments(ref);
+  if (segs.length === 0) return { distinct: 0 };
   const head = segs[0];
   const rest = segs.slice(1);
   const owningType = model.get(featureId)?.ownerId ?? null;
@@ -220,6 +265,8 @@ export function resolveRedefinedFeature(
   // are no candidates for it, or one edit would land `part r1 : Q3 { attribute :>> L; }` on Q3's copy where the file
   // lands it on Q2's `:>> L`. An implicit end copy itself is placed by the editor's own rule (`endCopyProto`).
   const explicit = model.get(featureId)?.attrs.implicit !== true;
+  const found = new Set<ElementId>();
+  let first: ElementRecord | undefined;
   if (owningType !== null) {
     // Explicit generals first — including the FeatureTyping targets of a usage
     // owner, so `part c : Engine { part p :>> port1; }` finds Engine's feature —
@@ -237,10 +284,24 @@ export function resolveRedefinedFeature(
         rest.length === 0
           ? mostSpecificRedefining(model, ordered, anchor, featureId, explicit)
           : descendFrom(model, anchor, rest);
-      if (hit && hit.id !== featureId && !(explicit && hit.attrs.implicit === true)) return hit;
+      if (hit && hit.id !== featureId && !(explicit && hit.attrs.implicit === true)) {
+        first ??= hit;
+        found.add(hit.id);
+        if (!all) break;
+      }
     }
   }
+  return { ...(first ? { first } : {}), distinct: found.size };
+}
 
+/** The redefinition rule's last resort: full resolution from the scope, without the redefining feature. */
+function redefinitionFallback(
+  model: Model,
+  ref: string,
+  featureId: ElementId,
+  scopeId: ElementId | null,
+): ElementRecord | undefined {
+  const explicit = model.get(featureId)?.attrs.implicit !== true;
   return resolveFullName(model, ref, scopeId, {
     exclude: featureId,
     ...(explicit ? { accept: (el: ElementRecord) => el.attrs.implicit !== true } : {}),

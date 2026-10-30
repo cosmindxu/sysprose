@@ -107,6 +107,8 @@ export function isConnector(el: ElementRecord): boolean {
  * `attrs.bind === true`.
  */
 export function isBindingEdge(el: ElementRecord): boolean {
+  // One the editor's settle marked: an end of it is a copy the saved file does not make, which reads it unresolved.
+  if (el.attrs.staleEnd === true) return false;
   if (el.eClass === 'BindingConnectorAsUsage' || el.eClass === 'BindingConnector') return true;
   if (el.attrs.bind === true) return true;
   const kind = el.attrs.connectorKind ?? el.attrs.kind;
