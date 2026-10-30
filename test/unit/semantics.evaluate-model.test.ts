@@ -5409,7 +5409,9 @@ describe('a value, a reference and a binding that equate two parts or structured
     }
     const { model: sa7 } = await loadModelText(`package SA7 { ${T0} part def W { part p1 : T0; part p2 :> p1; } part w : W { ${p50} }
       constraint k1 { w.p1.load <= 5.0 } }`);
-    expect([check(sa7!, 'SA7::k1').result, numeric(sa7!, 'SA7::k1'), goal(sa7!, 'SA7::k1').encodable]).toEqual(['violated', 'violated', true]);
+    // w's own p1 abstains with the rest of the component (fence-readings round 3): another instance may redefine the root or a
+    // usage below it, and the taint is per usage — the usage the instance redefines itself is no longer read as written.
+    expect([check(sa7!, 'SA7::k1').result, numeric(sa7!, 'SA7::k1'), goal(sa7!, 'SA7::k1').encodable]).toMatchObject(['unknown', 'unknown', { reason: 'unread-binding' }]);
     // An attribute that subsets one w gives a value of its own.
     const { model: attr } = await loadModelText(`package SA7A {
       part def W { attribute a1 : ScalarValues::Real default = 1.0; attribute a2 :> a1; constraint c { a2 <= 5.0 } }
@@ -5492,7 +5494,8 @@ describe('a value, a reference and a binding that equate two parts or structured
       expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), op).toEqual(op === '<=' ? [] : ['Constraint violated: s.load >= 5.0']);
     }
     const { model: plain } = await loadModelText(`package IQ { ${T0} ${RF('<=')} ${W} satisfy RF by w.p1; }`);
-    expect(check(plain!, 'IQ::RF::«ConstraintUsage»').instances!.map((i) => i.result)).toEqual(['violated']);
+    // w's own p1 abstains with the component (round 3): the satisfier the instance redefines itself is read through p1.
+    expect(check(plain!, 'IQ::RF::«ConstraintUsage»').instances!.map((i) => i.result)).toEqual(['unknown']);
     // An asserted equation that reads through p2 gives what else it names w's 50 (decision 14): W's `x == p2.load`
     // and a package's `y == w.p2.load` made `w.x` and `y` read W's own p2 (1) on all four surfaces, `<= 5.0` T and
     // `>= 5.0` F. So through a reference W's sub values with p1 (`x == r.load`).

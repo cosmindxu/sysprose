@@ -4194,8 +4194,8 @@ function clashOf(
     if (c == null) continue;
     const d = pass.definitions.denote(c).get(name);
     if (!d) continue;
-    const clash = pass.definitions.clash(d.reader, d.feature);
-    return clash ? { contextId: d.reader, clash } : boundClashOf(pass.model, c, name);
+    const along = pass.definitions.clashAlong(c, name);
+    return along ?? boundClashOf(pass.model, c, name);
   }
   return undefined;
 }

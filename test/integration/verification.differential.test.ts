@@ -11737,8 +11737,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // A usage that subsets a feature an instance reads otherwise (subsetting-pass S1): every w's p2 is one of w's p1s
     // (load 50), but the walk read w's p2 as W's own, a T0 of load 1. W's `c` filed no row for w, `k` read T and its
     // reverse F on all four surfaces, and a `satisfy RF by p2` W writes filed no row for w (sa3: `verify` exit 0).
-    // Each row read through p2 abstains now, W's own too, naming w; `w.p1.load` and W's own p1 at 50 (sa5) read as
-    // written. Each probe is pinned beside its reversed twin (`<=` read `>=`): written `= 1.0` instead, w's `:>> load
+    // Each row read through p2 abstains now, W's own too, naming w, and so does `w.p1.load`: the component is fenced
+    // for every instance, the usage the instance redefines itself included (another instance may redefine the root or a
+    // usage below it, and the taint is per usage; fence-readings round 3). W's own p1 at 50 (sa5) reads as written. Each probe is pinned beside its reversed twin (`<=` read `>=`): written `= 1.0` instead, w's `:>> load
     // = 50.0` contradicts T0's value and no reading is tested. The refs are W's own values for W's `c` and w's for
     // the rest, a satisfaction being a claim about every W.
     'sub-sa7': probe(`package SA7 {
@@ -11750,7 +11751,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
 }`, {
       'SA7::W::c': ['?/?/?/?', 'T'],
       'SA7::k': ['?/?/?/?', 'F'],
-      'SA7::k1': ['F/F/F/F', 'F'],
+      'SA7::k1': ['?/?/?/?', 'F'],
     }),
     'sub-sa7-rev': probe(`package SA7 {
   part def T0 { attribute load default = 1.0; }
@@ -11761,7 +11762,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
 }`, {
       'SA7::W::c': ['?/?/?/?', 'F'],
       'SA7::k': ['?/?/?/?', 'T'],
-      'SA7::k1': ['T/T/T/T', 'T'],
+      'SA7::k1': ['?/?/?/?', 'T'],
     }),
     'sub-sa3': probe(`package SA3 {
   part def T0 { attribute load default = 1.0; }
@@ -12529,8 +12530,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         satisfy RF by w.p1;
       }`, {
       'NQ3::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
-      'NQ3::RF::«ConstraintUsage» in NQ3::«Satisfy»': ['F/-/F/-', 'F'],
-      'NQ3::RF::«ConstraintUsage» in NQ3::w::p1': ['-/F/-/F', 'F'],
+      'NQ3::RF::«ConstraintUsage» in NQ3::«Satisfy»': ['?/-/?/-', 'F'],
+      'NQ3::RF::«ConstraintUsage» in NQ3::w::p1': ['-/?/-/?', 'F'],
     }),
     'sat-nested-nq5': probe(`package NQ5 {
         part def T0 { attribute load default = 1.0; }
@@ -12665,8 +12666,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // The usage with two supers (`part u3 :> u1, u2;`): u3's element is both u1's and u2's, so w's valued u2 (50) makes
     // `w.u1.load` 50 as well — it read W's own 1 on all four surfaces, and `satisfy RF by w.u1` held. The whole
-    // undirected subsetting component of the usage read otherwise abstains (`k3`, `k1`); the one the instance
-    // redefines itself is read as written (`k2`, false: 50 beside 5).
+    // undirected subsetting component of the usage read otherwise abstains (`k3`, `k1`), the one the instance
+    // redefines itself too (`k2`): another instance may redefine the root, and which usage is read as written
+    // would turn on it.
     ...reversed('sub-rv1-diamond', `package DM {
         part def T0 { attribute load default = 1.0; }
         part def W { part u1 : T0[1]; part u2 : T0[1]; part u3 :> u1, u2 [1]; }
@@ -12683,7 +12685,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def T0 { attribute load default = 1.0; }
       }`, {
       'DM::k1': ['?/?/?/?', 'F'],
-      'DM::k2': ['F/F/F/F', 'F'],
+      'DM::k2': ['?/?/?/?', 'F'],
       'DM::k3': ['?/?/?/?', 'F'],
     }),
     // A chain of subsetters the instance declares itself (`q :> p1`, `r :> q`, r valued): r is q is p1, so all three
@@ -12784,6 +12786,883 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'RV1P::W::c': ['T/T/T/T', 'T'],
       'RV1P::k1': ['T/T/T/T', 'T'],
+    }),
+    // fence-readings round 3 (the final review): the subsetting component closes whoever else redefines its root, a
+    // subsetter says something of its own through its type, by a value or through a path, a bridge is read in a definition
+    // that redefines nothing, a calc body is read through the usage, a connection end is the feature it connects, and a
+    // line (`X :>> M, N`) holds what reads its names and what is nested below them. Each pin has its text-order twin
+    // (`-rev`: members, statements and the supers of a usage reversed), which reads alike.
+    'sub-rv3-redef-root': probe(`package RR {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1 [1]; part p3 :> p2 [1]; }
+  part w : W { part :>> p3 { attribute :>> load = 50.0; } }
+  part v : W { part :>> p1 { attribute :>> load = 2.0; } }
+  constraint kw1 { w.p1.load <= 5.0 }
+  constraint kw2 { w.p2.load <= 5.0 }
+  constraint kv1 { v.p1.load <= 5.0 }
+  constraint kv3 { v.p3.load <= 5.0 }
+}`, {
+      'RR::kv1': ['?/?/?/?', 'T'],
+      'RR::kv3': ['?/?/?/?', 'T'],
+      'RR::kw1': ['?/?/?/?', 'F'],
+      'RR::kw2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-redef-root-rev': probe(`package RR {
+  constraint kv3 { v.p3.load <= 5.0 }
+  constraint kv1 { v.p1.load <= 5.0 }
+  constraint kw2 { w.p2.load <= 5.0 }
+  constraint kw1 { w.p1.load <= 5.0 }
+  part v : W { part :>> p1 { attribute :>> load = 2.0; } }
+  part w : W { part :>> p3 { attribute :>> load = 50.0; } }
+  part def W { part p3 :> p2 [1]; part p2 :> p1 [1]; part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'RR::kv1': ['?/?/?/?', 'T'],
+      'RR::kv3': ['?/?/?/?', 'T'],
+      'RR::kw1': ['?/?/?/?', 'F'],
+      'RR::kw2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-redef-root-renamed': probe(`package RN {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part c1 : T0[1]; part b1 :> c1 [1]; part a1 :> b1 [1]; }
+  part w : W { part :>> a1 { attribute :>> load = 50.0; } }
+  part v : W { part :>> c1 { attribute :>> load = 2.0; } }
+  constraint kw1 { w.c1.load <= 5.0 }
+  constraint kw2 { w.b1.load <= 5.0 }
+  constraint kv1 { v.c1.load <= 5.0 }
+  constraint kv3 { v.a1.load <= 5.0 }
+}`, {
+      'RN::kv1': ['?/?/?/?', 'T'],
+      'RN::kv3': ['?/?/?/?', 'T'],
+      'RN::kw1': ['?/?/?/?', 'F'],
+      'RN::kw2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-redef-root-renamed-rev': probe(`package RN {
+  constraint kv3 { v.a1.load <= 5.0 }
+  constraint kv1 { v.c1.load <= 5.0 }
+  constraint kw2 { w.b1.load <= 5.0 }
+  constraint kw1 { w.c1.load <= 5.0 }
+  part v : W { part :>> c1 { attribute :>> load = 2.0; } }
+  part w : W { part :>> a1 { attribute :>> load = 50.0; } }
+  part def W { part a1 :> b1 [1]; part b1 :> c1 [1]; part c1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'RN::kv1': ['?/?/?/?', 'T'],
+      'RN::kv3': ['?/?/?/?', 'T'],
+      'RN::kw1': ['?/?/?/?', 'F'],
+      'RN::kw2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-spec-redefines-root': probe(`package SR {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part u1 : T0 [1]; part u3 :> u1 [1]; part u5 :> u3 [1] { attribute :>> load default = 50.0; } }
+  part def W2 :> W { part u2 :>> u1 [1]; }
+  part w : W;
+  constraint a_w_u1 { w.u1.load <= 5.0 }
+  constraint a_w_u3 { w.u3.load <= 5.0 }
+  constraint a_w_u5 { w.u5.load <= 5.0 }
+}`, {
+      'SR::a_w_u1': ['?/?/?/?', 'F'],
+      'SR::a_w_u3': ['?/?/?/?', 'F'],
+      'SR::a_w_u5': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-spec-redefines-root-rev': probe(`package SR {
+  constraint a_w_u5 { w.u5.load <= 5.0 }
+  constraint a_w_u3 { w.u3.load <= 5.0 }
+  constraint a_w_u1 { w.u1.load <= 5.0 }
+  part w : W;
+  part def W2 :> W { part u2 :>> u1 [1]; }
+  part def W { part u5 :> u3 [1] { attribute :>> load default = 50.0; } part u3 :> u1 [1]; part u1 : T0 [1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'SR::a_w_u1': ['?/?/?/?', 'F'],
+      'SR::a_w_u3': ['?/?/?/?', 'F'],
+      'SR::a_w_u5': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-spec-redefines-root-renamed': probe(`package SN {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part u1 : T0 [1]; part zz :> u1 [1]; part aa :> zz [1] { attribute :>> load default = 50.0; } }
+  part def W2 :> W { part u2 :>> u1 [1]; }
+  part w : W;
+  constraint k1 { w.u1.load <= 5.0 }
+  constraint kz { w.zz.load <= 5.0 }
+  constraint ka { w.aa.load <= 5.0 }
+}`, {
+      'SN::k1': ['?/?/?/?', 'F'],
+      'SN::ka': ['?/?/?/?', 'F'],
+      'SN::kz': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-spec-redefines-root-renamed-rev': probe(`package SN {
+  constraint ka { w.aa.load <= 5.0 }
+  constraint kz { w.zz.load <= 5.0 }
+  constraint k1 { w.u1.load <= 5.0 }
+  part w : W;
+  part def W2 :> W { part u2 :>> u1 [1]; }
+  part def W { part aa :> zz [1] { attribute :>> load default = 50.0; } part zz :> u1 [1]; part u1 : T0 [1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'SN::k1': ['?/?/?/?', 'F'],
+      'SN::ka': ['?/?/?/?', 'F'],
+      'SN::kz': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-bridge-instance': probe(`package BI {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part a1 : T0[1]; part a2 :> a1 [1]; part b1 : T0[1]; part b2 :> b1 [1]; }
+  part x : W { part :>> a1 { attribute :>> load = 2.0; } }
+  part v : W { part :>> b2 { attribute :>> load = 50.0; } part q :> b2, a2 [1]; }
+  constraint ka { v.a1.load <= 5.0 }
+  constraint kb { v.b1.load <= 5.0 }
+}`, {
+      'BI::ka': ['?/?/?/?', 'F'],
+      'BI::kb': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-bridge-instance-rev': probe(`package BI {
+  constraint kb { v.b1.load <= 5.0 }
+  constraint ka { v.a1.load <= 5.0 }
+  part v : W { part q :> a2, b2 [1]; part :>> b2 { attribute :>> load = 50.0; } }
+  part x : W { part :>> a1 { attribute :>> load = 2.0; } }
+  part def W { part b2 :> b1 [1]; part b1 : T0[1]; part a2 :> a1 [1]; part a1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'BI::ka': ['?/?/?/?', 'F'],
+      'BI::kb': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-two-redefined-supers': probe(`package TR {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0 [1]; part p2 : T0 [1]; part p3 :> p1, p2 [1]; }
+  part w : W { part :>> p1 { attribute :>> load = 50.0; } part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k2 { w.p2.load <= 5.0 }
+  constraint k3 { w.p3.load <= 5.0 }
+}`, {
+      'TR::k1': ['?/?/?/?', 'F'],
+      'TR::k2': ['?/?/?/?', 'F'],
+      'TR::k3': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-two-redefined-supers-rev': probe(`package TR {
+  constraint k3 { w.p3.load <= 5.0 }
+  constraint k2 { w.p2.load <= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } part :>> p1 { attribute :>> load = 50.0; } }
+  part def W { part p3 :> p2, p1 [1]; part p2 : T0 [1]; part p1 : T0 [1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'TR::k1': ['?/?/?/?', 'F'],
+      'TR::k2': ['?/?/?/?', 'F'],
+      'TR::k3': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-bridge-definition': probe(`package BD {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part u1 : T0[1]; part u3 : T0[1] { attribute :>> load = 3.0; } part u4 :> u1, u3 [1]; }
+  part w : W;
+  constraint k1 { w.u1.load > 2.0 }
+  constraint k3 { w.u3.load > 2.0 }
+  constraint k4 { w.u4.load > 2.0 }
+}`, {
+      'BD::k1': ['?/?/?/?', 'T'],
+      'BD::k3': ['?/?/?/?', 'T'],
+      'BD::k4': ['?/?/?/?', 'T'],
+    }),
+    'sub-rv3-bridge-definition-rev': probe(`package BD {
+  constraint k4 { w.u4.load > 2.0 }
+  constraint k3 { w.u3.load > 2.0 }
+  constraint k1 { w.u1.load > 2.0 }
+  part w : W;
+  part def W { part u4 :> u3, u1 [1]; part u3 : T0[1] { attribute :>> load = 3.0; } part u1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'BD::k1': ['?/?/?/?', 'T'],
+      'BD::k3': ['?/?/?/?', 'T'],
+      'BD::k4': ['?/?/?/?', 'T'],
+    }),
+    'sub-rv3-bridge-definition-chain': probe(`package BC {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part u1 : T0[1]; part u2 :> u1 [1]; part u3 : T0[1] { attribute :>> load default = 50.0; } part u4 :> u2, u3 [1]; constraint c1 { u1.load <= 5.0 } }
+  part w : W;
+  constraint k1 { w.u1.load <= 5.0 }
+  constraint k2 { w.u2.load <= 5.0 }
+}`, {
+      'BC::W::c1': ['?/?/?/?', 'F'],
+      'BC::k1': ['?/?/?/?', 'F'],
+      'BC::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-bridge-definition-chain-rev': probe(`package BC {
+  constraint k2 { w.u2.load <= 5.0 }
+  constraint k1 { w.u1.load <= 5.0 }
+  part w : W;
+  part def W { constraint c1 { u1.load <= 5.0 } part u4 :> u3, u2 [1]; part u3 : T0[1] { attribute :>> load default = 50.0; } part u2 :> u1 [1]; part u1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'BC::W::c1': ['?/?/?/?', 'F'],
+      'BC::k1': ['?/?/?/?', 'F'],
+      'BC::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-bridge-nested-twice': probe(`package BN {
+  part def T0 { attribute load default = 1.0; }
+  part def In { part u1 : T0[1]; part u3 : T0[1] { attribute :>> load default = 3.0; } part u4 :> u1, u3 [1]; }
+  part def Out { part a : In[1]; part b : In[1]; }
+  part o : Out { part :>> a { part :>> u1 { attribute :>> load = 4.0; } } }
+  constraint a_a_u1 { o.a.u1.load == 4.0 }
+  constraint a_a_u4 { o.a.u4.load == 4.0 }
+  constraint a_b_u1 { o.b.u1.load == 3.0 }
+  constraint a_b_u4 { o.b.u4.load == 3.0 }
+}`, {
+      'BN::a_a_u1': ['?/?/?/?', 'T'],
+      'BN::a_a_u4': ['?/?/?/?', 'T'],
+      'BN::a_b_u1': ['?/?/?/?', 'T'],
+      'BN::a_b_u4': ['?/?/?/?', 'T'],
+    }),
+    'sub-rv3-bridge-nested-twice-rev': probe(`package BN {
+  constraint a_b_u4 { o.b.u4.load == 3.0 }
+  constraint a_b_u1 { o.b.u1.load == 3.0 }
+  constraint a_a_u4 { o.a.u4.load == 4.0 }
+  constraint a_a_u1 { o.a.u1.load == 4.0 }
+  part o : Out { part :>> a { part :>> u1 { attribute :>> load = 4.0; } } }
+  part def Out { part b : In[1]; part a : In[1]; }
+  part def In { part u4 :> u3, u1 [1]; part u3 : T0[1] { attribute :>> load default = 3.0; } part u1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'BN::a_a_u1': ['?/?/?/?', 'T'],
+      'BN::a_a_u4': ['?/?/?/?', 'T'],
+      'BN::a_b_u1': ['?/?/?/?', 'T'],
+      'BN::a_b_u4': ['?/?/?/?', 'T'],
+    }),
+    'sub-rv3-calc-body': probe(`package CB {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1 [1]; calc m1 { 10.0 - p1.load } }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.m1 >= 5.0 }
+  constraint k2 { w.p1.load <= 5.0 }
+}`, {
+      'CB::W::m1': ['-/-/?/-', '?'],
+      'CB::k1': ['?/?/?/?', 'F'],
+      'CB::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-calc-body-rev': probe(`package CB {
+  constraint k2 { w.p1.load <= 5.0 }
+  constraint k1 { w.m1 >= 5.0 }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  part def W { calc m1 { 10.0 - p1.load } part p2 :> p1 [1]; part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'CB::W::m1': ['-/-/?/-', '?'],
+      'CB::k1': ['?/?/?/?', 'F'],
+      'CB::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-typed-subsetter': probe(`package TY {
+  part def T0 { attribute load default = 1.0; }
+  part def Q50 :> T0 { attribute :>> load = 50.0; }
+  part def W { part p1 : T0[1]; part q :> p1 : Q50 [1]; }
+  part w : W;
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k2 { w.q.load <= 5.0 }
+}`, {
+      'TY::k1': ['?/?/?/?', 'F'],
+      'TY::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-typed-subsetter-rev': probe(`package TY {
+  constraint k2 { w.q.load <= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W;
+  part def W { part q :> p1 : Q50 [1]; part p1 : T0[1]; }
+  part def Q50 :> T0 { attribute :>> load = 50.0; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'TY::k1': ['?/?/?/?', 'F'],
+      'TY::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-typed-subsetter-instance': probe(`package TI {
+  part def T0 { attribute load default = 1.0; }
+  part def T1 :> T0 { attribute :>> load default = 50.0; }
+  part def W { part p1 : T0[1]; }
+  part w : W { part q : T1 :> p1 [1]; }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k2 { w.q.load <= 5.0 }
+}`, {
+      'TI::k1': ['?/?/?/?', 'F'],
+      'TI::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-typed-subsetter-instance-rev': probe(`package TI {
+  constraint k2 { w.q.load <= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W { part q : T1 :> p1 [1]; }
+  part def W { part p1 : T0[1]; }
+  part def T1 :> T0 { attribute :>> load default = 50.0; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'TI::k1': ['?/?/?/?', 'F'],
+      'TI::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-valued-attribute-subsetter': probe(`package VA {
+  part def W { attribute x : ScalarValues::Real; attribute y :> x = 50.0; }
+  part w : W;
+  constraint k1 { w.x <= 5.0 }
+  constraint k2 { w.y <= 5.0 }
+}`, {
+      'VA::k1': ['?/?/?/?', 'F'],
+      'VA::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-valued-attribute-subsetter-rev': probe(`package VA {
+  constraint k2 { w.y <= 5.0 }
+  constraint k1 { w.x <= 5.0 }
+  part w : W;
+  part def W { attribute y :> x = 50.0; attribute x : ScalarValues::Real; }
+}`, {
+      'VA::k1': ['?/?/?/?', 'F'],
+      'VA::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target': probe(`package CT {
+  part def T0 { attribute load default = 1.0; }
+  part def S { part p1 : T0[1]; }
+  part def W { part sub : S[1]; }
+  part w : W { part q :> sub.p1 [1] { attribute :>> load = 50.0; } }
+  constraint k1 { w.sub.p1.load <= 5.0 }
+  constraint k2 { w.q.load <= 5.0 }
+}`, {
+      'CT::k1': ['?/?/?/?', 'F'],
+      'CT::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target-rev': probe(`package CT {
+  constraint k2 { w.q.load <= 5.0 }
+  constraint k1 { w.sub.p1.load <= 5.0 }
+  part w : W { part q :> sub.p1 [1] { attribute :>> load = 50.0; } }
+  part def W { part sub : S[1]; }
+  part def S { part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'CT::k1': ['?/?/?/?', 'F'],
+      'CT::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target-other-instance': probe(`package CO {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; }
+  part def V { }
+  part w1 : W;
+  part w2 : V { part q :> w1.p1 [1] { attribute :>> load = 50.0; } }
+  constraint k1 { w1.p1.load <= 5.0 }
+  constraint k2 { w2.q.load <= 5.0 }
+}`, {
+      'CO::k1': ['?/?/?/?', 'F'],
+      'CO::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target-other-instance-rev': probe(`package CO {
+  constraint k2 { w2.q.load <= 5.0 }
+  constraint k1 { w1.p1.load <= 5.0 }
+  part w2 : V { part q :> w1.p1 [1] { attribute :>> load = 50.0; } }
+  part w1 : W;
+  part def V {  }
+  part def W { part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'CO::k1': ['?/?/?/?', 'F'],
+      'CO::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target-package': probe(`package CP {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; }
+  part w : W;
+  part x :> w.p1 [1] { attribute :>> load = 50.0; }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k2 { x.load <= 5.0 }
+}`, {
+      'CP::k1': ['?/?/?/?', 'F'],
+      'CP::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target-package-rev': probe(`package CP {
+  constraint k2 { x.load <= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part x :> w.p1 [1] { attribute :>> load = 50.0; }
+  part w : W;
+  part def W { part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'CP::k1': ['?/?/?/?', 'F'],
+      'CP::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target-nested': probe(`package CN {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; }
+  part w : W { part inner { part q :> w.p1 [1] { attribute :>> load = 50.0; } } }
+  constraint k1 { w.p1.load <= 5.0 }
+}`, {
+      'CN::k1': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-chain-target-nested-rev': probe(`package CN {
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W { part inner { part q :> w.p1 [1] { attribute :>> load = 50.0; } } }
+  part def W { part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'CN::k1': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-package-subsetter': probe(`package PS {
+  part def T0 { attribute load default = 1.0; }
+  part u1 : T0[1];
+  part u3 :> u1 [1] { attribute :>> load = 50.0; }
+  constraint k1 { u1.load <= 5.0 }
+  constraint k3 { u3.load <= 5.0 }
+}`, {
+      'PS::k1': ['?/?/?/?', 'F'],
+      'PS::k3': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-package-subsetter-rev': probe(`package PS {
+  constraint k3 { u3.load <= 5.0 }
+  constraint k1 { u1.load <= 5.0 }
+  part u3 :> u1 [1] { attribute :>> load = 50.0; }
+  part u1 : T0[1];
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'PS::k1': ['?/?/?/?', 'F'],
+      'PS::k3': ['?/?/?/?', 'F'],
+    }),
+    'conn-end-redefined': probe(`package CE {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; }
+  part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+  connection def C { end a : T0; end b : T0; }
+  part t : T0;
+  connection cn : C connect w.p1 to t;
+  constraint kc { cn.a.load <= 5.0 }
+  constraint kw { w.p1.load <= 5.0 }
+}`, {
+      'CE::kc': ['?/?/?/?', 'F'],
+      'CE::kw': ['F/F/F/F', 'F'],
+    }),
+    'conn-end-redefined-rev': probe(`package CE {
+  constraint kw { w.p1.load <= 5.0 }
+  constraint kc { cn.a.load <= 5.0 }
+  connection cn : C connect w.p1 to t;
+  part t : T0;
+  connection def C { end b : T0; end a : T0; }
+  part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+  part def W { part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'CE::kc': ['?/?/?/?', 'F'],
+      'CE::kw': ['F/F/F/F', 'F'],
+    }),
+    'line-twice-valueless-first': probe(`package TV {
+  part def A { attribute x default = 1.0; }
+  part a : A { attribute :>> x; attribute :>> x default = 3.0; }
+  constraint cx3 { a.x == 3.0 }
+  constraint cx1 { a.x == 1.0 }
+}`, {
+      'TV::cx1': ['?/?/?/?', 'F'],
+      'TV::cx3': ['?/?/?/?', 'T'],
+    }),
+    'line-twice-valueless-first-rev': probe(`
+package TV {
+  constraint cx1 { a.x == 1.0 }
+  constraint cx3 { a.x == 3.0 }
+  part a : A { attribute :>> x default = 3.0; attribute :>> x; }
+  part def A { attribute x default = 1.0; }
+}`, {
+      'TV::cx1': ['?/?/?/?', 'F'],
+      'TV::cx3': ['?/?/?/?', 'T'],
+    }),
+    'line-twice-nested': probe(`package TN {
+  part def T0 { attribute x default = 1.0; attribute y default = 1.0; }
+  part def U { part p : T0[1]; }
+  part u : U { part :>> p { attribute :>> x = 5.0; } part :>> p { attribute :>> y = 6.0; } }
+  constraint cx { u.p.x == 5.0 }
+  constraint cy { u.p.y == 6.0 }
+}`, {
+      'TN::cx': ['?/?/?/?', 'T'],
+      'TN::cy': ['?/?/?/?', 'T'],
+    }),
+    'line-twice-nested-rev': probe(`package TN {
+  constraint cy { u.p.y == 6.0 }
+  constraint cx { u.p.x == 5.0 }
+  part u : U { part :>> p { attribute :>> y = 6.0; } part :>> p { attribute :>> x = 5.0; } }
+  part def U { part p : T0[1]; }
+  part def T0 { attribute y default = 1.0; attribute x default = 1.0; }
+}`, {
+      'TN::cx': ['?/?/?/?', 'T'],
+      'TN::cy': ['?/?/?/?', 'T'],
+    }),
+    'line-twice-units': probe(`package TU {
+  part def A { attribute x : ISQ::MassValue default = 1.0 [kg]; }
+  part a : A { attribute :>> x = 5.0 [kg]; attribute :>> x = 5000.0 [g]; }
+  part b : A { attribute :>> x = 5.0 [kg]; }
+  constraint c5 { a.x == 5.0 [kg] }
+  constraint cb { b.x == 5.0 [kg] }
+}`, {
+      'TU::c5': ['?/?/?/?', 'T'],
+      'TU::cb': ['T/T/T/T', 'T'],
+    }),
+    'line-twice-units-rev': probe(`package TU {
+  constraint cb { b.x == 5.0 [kg] }
+  constraint c5 { a.x == 5.0 [kg] }
+  part b : A { attribute :>> x = 5.0 [kg]; }
+  part a : A { attribute :>> x = 5000.0 [g]; attribute :>> x = 5.0 [kg]; }
+  part def A { attribute x : ISQ::MassValue default = 1.0 [kg]; }
+}`, {
+      'TU::c5': ['?/?/?/?', 'T'],
+      'TU::cb': ['T/T/T/T', 'T'],
+    }),
+    'line-twice-hiding': probe(`package TH {
+  part def A { attribute x default = 1.0; }
+  part a : A { attribute x = 5.0; attribute :>> x = 6.0; }
+  constraint c5 { a.x == 5.0 }
+  constraint c6 { a.x == 6.0 }
+}`, {
+      'TH::c5': ['?/?/?/X', null],
+      'TH::c6': ['?/?/?/X', null],
+    }),
+    'line-twice-hiding-rev': probe(`package TH {
+  constraint c6 { a.x == 6.0 }
+  constraint c5 { a.x == 5.0 }
+  part a : A { attribute :>> x = 6.0; attribute x = 5.0; }
+  part def A { attribute x default = 1.0; }
+}`, {
+      'TH::c5': ['?/?/?/X', null],
+      'TH::c6': ['?/?/?/X', null],
+    }),
+    'line-alias-twice': probe(`package AT {
+  part def Q { attribute M default = 3.0; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q2 :> Q, Q1 { attribute X :>> N, M; }
+  part s : Q2 { attribute Y :>> X; attribute :>> X default = 2.0; }
+  constraint cY1 { s.Y == 1.0 }
+  constraint cY2 { s.Y == 2.0 }
+}`, {
+      'AT::cY1': ['?/?/?/?', 'F'],
+      'AT::cY2': ['?/?/?/?', 'T'],
+    }),
+    'line-alias-twice-rev': probe(`
+package AT {
+  constraint cY2 { s.Y == 2.0 }
+  constraint cY1 { s.Y == 1.0 }
+  part s : Q2 { attribute :>> X default = 2.0; attribute Y :>> X; }
+  part def Q2 :> Q1, Q { attribute X :>> M, N; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q { attribute M default = 3.0; }
+}`, {
+      'AT::cY1': ['?/?/?/?', 'F'],
+      'AT::cY2': ['?/?/?/?', 'T'],
+    }),
+    'line-alias-usage-redefines-both': probe(`package AB {
+  part def Q { attribute M; }
+  part def Q1 { attribute N default = 2.0; }
+  part def Q2 :> Q, Q1 { attribute X :>> M, N; }
+  part def Q3 :> Q2 { attribute Y :>> X;  }
+  part s : Q3 { attribute :>> M default = 3.0; attribute :>> X default = 3.0; }
+  constraint cY2 { s.Y == 2.0 }
+  constraint cY3 { s.Y == 3.0 }
+  constraint cM3 { s.M == 3.0 }
+  constraint cX3 { s.X == 3.0 }
+}`, {
+      'AB::cM3': ['?/?/?/?', 'T'],
+      'AB::cX3': ['?/?/?/?', 'T'],
+      'AB::cY2': ['?/?/?/?', 'F'],
+      'AB::cY3': ['?/?/?/?', 'T'],
+    }),
+    'line-alias-usage-redefines-both-rev': probe(`package AB {
+  constraint cX3 { s.X == 3.0 }
+  constraint cM3 { s.M == 3.0 }
+  constraint cY3 { s.Y == 3.0 }
+  constraint cY2 { s.Y == 2.0 }
+  part s : Q3 { attribute :>> X default = 3.0; attribute :>> M default = 3.0; }
+  part def Q3 :> Q2 { attribute Y :>> X; }
+  part def Q2 :> Q1, Q { attribute X :>> M, N; }
+  part def Q1 { attribute N default = 2.0; }
+  part def Q { attribute M; }
+}`, {
+      'AB::cM3': ['?/?/?/?', 'T'],
+      'AB::cX3': ['?/?/?/?', 'T'],
+      'AB::cY2': ['?/?/?/?', 'F'],
+      'AB::cY3': ['?/?/?/?', 'T'],
+    }),
+    'line-dependent-attribute': probe(`package DA {
+  part def Q { attribute M default = 1.0; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q2 :> Q, Q1 { attribute X :>> M, N; attribute Z = X + 1.0; }
+  part s : Q2 { attribute :>> M = 5.0; }
+  part t : Q2;
+  constraint cZ6 { s.Z == 6.0 }
+  constraint cZ2 { s.Z == 2.0 }
+  constraint cX5 { s.X == 5.0 }
+  constraint ctZ2 { t.Z == 2.0 }
+}`, {
+      'DA::cX5': ['?/?/?/?', 'T'],
+      'DA::cZ2': ['?/?/?/?', 'F'],
+      'DA::cZ6': ['?/?/?/?', 'T'],
+      'DA::ctZ2': ['T/T/T/?', 'T'],
+    }),
+    'line-dependent-attribute-rev': probe(`package DA {
+  constraint ctZ2 { t.Z == 2.0 }
+  constraint cX5 { s.X == 5.0 }
+  constraint cZ2 { s.Z == 2.0 }
+  constraint cZ6 { s.Z == 6.0 }
+  part t : Q2;
+  part s : Q2 { attribute :>> M = 5.0; }
+  part def Q2 :> Q1, Q { attribute Z = X + 1.0; attribute X :>> M, N; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q { attribute M default = 1.0; }
+}`, {
+      'DA::cX5': ['?/?/?/?', 'T'],
+      'DA::cZ2': ['?/?/?/?', 'F'],
+      'DA::cZ6': ['?/?/?/?', 'T'],
+      'DA::ctZ2': ['T/T/T/?', 'T'],
+    }),
+    'line-dependent-attribute-type': probe(`package DT {
+  part def Q { attribute M; attribute N default = 3.0; }
+  part def Q2 :> Q { attribute X :>> N, M; attribute Z = N + 1.0; }
+  part def Q3 :> Q2 { attribute :>> M default = 1.0; }
+  part t : Q3;
+  part t2 : Q2;
+  constraint cZ2 { t.Z == 2.0 }
+  constraint cZ4 { t.Z == 4.0 }
+  constraint cN1 { t.N == 1.0 }
+  constraint c2Z4 { t2.Z == 4.0 }
+}`, {
+      'DT::c2Z4': ['T/T/T/?', 'T'],
+      'DT::cN1': ['?/?/?/?', 'T'],
+      'DT::cZ2': ['?/?/?/?', 'T'],
+      'DT::cZ4': ['?/?/?/?', 'F'],
+    }),
+    'line-dependent-attribute-type-rev': probe(`package DT {
+  constraint c2Z4 { t2.Z == 4.0 }
+  constraint cN1 { t.N == 1.0 }
+  constraint cZ4 { t.Z == 4.0 }
+  constraint cZ2 { t.Z == 2.0 }
+  part t2 : Q2;
+  part t : Q3;
+  part def Q3 :> Q2 { attribute :>> M default = 1.0; }
+  part def Q2 :> Q { attribute Z = N + 1.0; attribute X :>> N, M; }
+  part def Q { attribute N default = 3.0; attribute M; }
+}`, {
+      'DT::c2Z4': ['T/T/T/?', 'T'],
+      'DT::cN1': ['?/?/?/?', 'T'],
+      'DT::cZ2': ['?/?/?/?', 'T'],
+      'DT::cZ4': ['?/?/?/?', 'F'],
+    }),
+    'line-of-parts': probe(`package LP {
+  part def T0 { attribute x default = 1.0; }
+  part def Q { part M : T0[1]; }
+  part def Q1 { part N : T0[1]; }
+  part def Q2 :> Q, Q1 { part X :>> M, N; }
+  part s : Q2 { part :>> M { attribute :>> x = 5.0; } }
+  part t : Q2;
+  constraint cX5 { s.X.x == 5.0 }
+  constraint cM5 { s.M.x == 5.0 }
+  constraint cN5 { s.N.x == 5.0 }
+  constraint ctX1 { t.X.x == 1.0 }
+}`, {
+      'LP::cM5': ['?/?/?/?', 'T'],
+      'LP::cN5': ['?/?/?/?', 'T'],
+      'LP::cX5': ['?/?/?/?', 'T'],
+      'LP::ctX1': ['T/T/T/T', 'T'],
+    }),
+    'line-of-parts-rev': probe(`package LP {
+  constraint ctX1 { t.X.x == 1.0 }
+  constraint cN5 { s.N.x == 5.0 }
+  constraint cM5 { s.M.x == 5.0 }
+  constraint cX5 { s.X.x == 5.0 }
+  part t : Q2;
+  part s : Q2 { part :>> M { attribute :>> x = 5.0; } }
+  part def Q2 :> Q1, Q { part X :>> M, N; }
+  part def Q1 { part N : T0[1]; }
+  part def Q { part M : T0[1]; }
+  part def T0 { attribute x default = 1.0; }
+}`, {
+      'LP::cM5': ['?/?/?/?', 'T'],
+      'LP::cN5': ['?/?/?/?', 'T'],
+      'LP::cX5': ['?/?/?/?', 'T'],
+      'LP::ctX1': ['T/T/T/T', 'T'],
+    }),
+    'line-of-parts-instance-of-instance': probe(`package LI {
+  part def T0 { attribute x default = 1.0; }
+  part def Q { part M : T0[1]; }
+  part def Q1 { part N : T0[1]; }
+  part def Q2 :> Q, Q1 { part X :>> M, N; }
+  part def U { part t : Q2[1]; }
+  part u : U { part :>> t { part :>> N { attribute :>> x = 5.0; } } }
+  part v : U;
+  constraint cX5 { u.t.X.x == 5.0 }
+  constraint cM5 { u.t.M.x == 5.0 }
+  constraint cvX1 { v.t.X.x == 1.0 }
+}`, {
+      'LI::cM5': ['?/?/?/?', 'T'],
+      'LI::cX5': ['?/?/?/?', 'T'],
+      'LI::cvX1': ['T/T/T/T', 'T'],
+    }),
+    'line-of-parts-instance-of-instance-rev': probe(`package LI {
+  constraint cvX1 { v.t.X.x == 1.0 }
+  constraint cM5 { u.t.M.x == 5.0 }
+  constraint cX5 { u.t.X.x == 5.0 }
+  part v : U;
+  part u : U { part :>> t { part :>> N { attribute :>> x = 5.0; } } }
+  part def U { part t : Q2[1]; }
+  part def Q2 :> Q1, Q { part X :>> M, N; }
+  part def Q1 { part N : T0[1]; }
+  part def Q { part M : T0[1]; }
+  part def T0 { attribute x default = 1.0; }
+}`, {
+      'LI::cM5': ['?/?/?/?', 'T'],
+      'LI::cX5': ['?/?/?/?', 'T'],
+      'LI::cvX1': ['T/T/T/T', 'T'],
+    }),
+    'line-contradiction': probe(`package CC {
+  part def Q { attribute M = 2.0; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q2 :> Q, Q1 { attribute :>> M, N; }
+  part s : Q2 { attribute :>> N = 1.0; }
+  constraint c_M_2 { s.M == 2.0 }
+}`, {
+      'CC::c_M_2': ['?/?/?/X', '?'],
+      'CC::s::«AttributeUsage»#binding': ['F/-/F/-', 'F'],
+    }),
+    'line-contradiction-rev': probe(`package CC {
+  constraint c_M_2 { s.M == 2.0 }
+  part s : Q2 { attribute :>> N = 1.0; }
+  part def Q2 :> Q1, Q { attribute :>> M, N; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q { attribute M = 2.0; }
+}`, {
+      'CC::c_M_2': ['?/?/?/X', '?'],
+      'CC::s::«AttributeUsage»#binding': ['F/-/F/-', 'F'],
+    }),
+    'sub-rv3-sentence-spec': probe(`package SE {
+  part def T0 { attribute load default = 1.0; }
+  requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+  part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+  part def W3 :> W { part q :> p2 [1] { attribute :>> load = 50.0; } constraint c { p1.load <= 5.0 } }
+  part w : W3;
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k2 { w.p2.load <= 5.0 }
+  satisfy RF by w.p1;
+}`, {
+      'SE::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SE::RF::«ConstraintUsage» in SE::w::p1': ['-/?/-/?', 'F'],
+      'SE::RF::«ConstraintUsage» in SE::«Satisfy»': ['?/-/?/-', 'F'],
+      'SE::W3::c': ['?/?/?/?', 'F'],
+      'SE::k1': ['?/?/?/?', 'F'],
+      'SE::k2': ['?/?/?/?', 'F'],
+    }),
+    'sub-rv3-sentence-spec-rev': probe(`package SE {
+  satisfy RF by w.p1;
+  constraint k2 { w.p2.load <= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W3;
+  part def W3 :> W { constraint c { p1.load <= 5.0 } part q :> p2 [1] { attribute :>> load = 50.0; } }
+  part def W { part p2 :> p1 [1]; part p1 : T0[1]; }
+  requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'SE::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SE::RF::«ConstraintUsage» in SE::w::p1': ['-/?/-/?', 'F'],
+      'SE::RF::«ConstraintUsage» in SE::«Satisfy»': ['?/-/?/-', 'F'],
+      'SE::W3::c': ['?/?/?/?', 'F'],
+      'SE::k1': ['?/?/?/?', 'F'],
+      'SE::k2': ['?/?/?/?', 'F'],
+    }),
+    'line-sentence-twice-renamed': probe(`package ST {
+  part def A { attribute x default = 1.0; }
+  part a : A { attribute y :>> x = 5.0; attribute :>> x = 6.0; }
+  constraint c5 { a.x == 5.0 }
+  constraint c5y { a.y == 5.0 }
+}`, {
+      'ST::c5': ['?/?/?/?', null],
+      'ST::c5y': ['?/?/?/?', null],
+    }),
+    'line-sentence-twice-renamed-rev': probe(`package ST {
+  constraint c5y { a.y == 5.0 }
+  constraint c5 { a.x == 5.0 }
+  part a : A { attribute :>> x = 6.0; attribute y :>> x = 5.0; }
+  part def A { attribute x default = 1.0; }
+}`, {
+      'ST::c5': ['?/?/?/?', null],
+      'ST::c5y': ['?/?/?/?', null],
+    }),
+    'line-of-parts-targets-reversed': probe(`package LQ {
+  part def T0 { attribute x default = 1.0; }
+  part def Q1 { part N : T0[1]; }
+  part def Q { part M : T0[1]; }
+  part def Q2 :> Q1, Q { part X :>> N, M; }
+  part s : Q2 { part :>> M { attribute :>> x = 5.0; } }
+  part t : Q2;
+  constraint ctX1 { t.X.x == 1.0 }
+  constraint cN5 { s.N.x == 5.0 }
+  constraint cM5 { s.M.x == 5.0 }
+  constraint cX5 { s.X.x == 5.0 }
+}`, {
+      'LQ::cM5': ['?/?/?/?', 'T'],
+      'LQ::cN5': ['?/?/?/?', 'T'],
+      'LQ::cX5': ['?/?/?/?', 'T'],
+      'LQ::ctX1': ['T/T/T/T', 'T'],
+    }),
+    'line-dependent-attribute-targets-reversed': probe(`package DR {
+  part def Q1 { attribute N default = 1.0; }
+  part def Q { attribute M default = 1.0; }
+  part def Q2 :> Q1, Q { attribute X :>> N, M; attribute Z = X + 1.0; }
+  part s : Q2 { attribute :>> M = 5.0; }
+  part t : Q2;
+  constraint ctZ2 { t.Z == 2.0 }
+  constraint cX5 { s.X == 5.0 }
+  constraint cZ2 { s.Z == 2.0 }
+  constraint cZ6 { s.Z == 6.0 }
+}`, {
+      'DR::cX5': ['?/?/?/?', 'T'],
+      'DR::cZ2': ['?/?/?/?', 'F'],
+      'DR::cZ6': ['?/?/?/?', 'T'],
+      'DR::ctZ2': ['T/T/T/?', 'T'],
+    }),
+    'line-three-targets': probe(`package L3 {
+  part def Q { attribute M default = 1.0; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q0 { attribute P = 2.0; }
+  part def Q2 :> Q, Q1, Q0 { attribute X :>> M, N, P; }
+  part s : Q2;
+  constraint cM { s.M == 2.0 }
+  constraint cP { s.P == 2.0 }
+  constraint cX { s.X == 2.0 }
+}`, {
+      'L3::cM': ['?/?/?/?', 'T'],
+      'L3::cP': ['?/?/?/?', 'T'],
+      'L3::cX': ['?/?/?/?', 'T'],
+    }),
+    'line-three-targets-rev': probe(`
+package L3 {
+  constraint cX { s.X == 2.0 }
+  constraint cP { s.P == 2.0 }
+  constraint cM { s.M == 2.0 }
+  part s : Q2;
+  part def Q2 :> Q0, Q1, Q { attribute X :>> P, N, M; }
+  part def Q0 { attribute P = 2.0; }
+  part def Q1 { attribute N default = 1.0; }
+  part def Q { attribute M default = 1.0; }
+}`, {
+      'L3::cM': ['?/?/?/?', 'T'],
+      'L3::cP': ['?/?/?/?', 'T'],
+      'L3::cX': ['?/?/?/?', 'T'],
+    }),
+    'line-shared-root': probe(`package LR {
+  part def QA { attribute A0 default = 2.0; }
+  part def Q :> QA { attribute M :>> A0; }
+  part def Q1 :> QA { attribute N :>> A0; }
+  part def Q2 :> Q, Q1 { attribute X :>> M, N; }
+  part s : Q2;
+  constraint cX2 { s.X == 2.0 }
+  constraint cM2 { s.M == 2.0 }
+  constraint cN3 { s.N == 3.0 }
+}`, {
+      'LR::cM2': ['T/T/T/T', 'T'],
+      'LR::cN3': ['F/F/F/F', 'F'],
+      'LR::cX2': ['T/T/T/T', 'T'],
+    }),
+    'line-shared-root-rev': probe(`package LR {
+  constraint cN3 { s.N == 3.0 }
+  constraint cM2 { s.M == 2.0 }
+  constraint cX2 { s.X == 2.0 }
+  part s : Q2;
+  part def Q2 :> Q1, Q { attribute X :>> M, N; }
+  part def Q1 :> QA { attribute N :>> A0; }
+  part def Q :> QA { attribute M :>> A0; }
+  part def QA { attribute A0 default = 2.0; }
+}`, {
+      'LR::cM2': ['T/T/T/T', 'T'],
+      'LR::cN3': ['F/F/F/F', 'F'],
+      'LR::cX2': ['T/T/T/T', 'T'],
     }),
   };
 
@@ -13548,11 +14427,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
 
   const seen = new Map<string, Map<string, SurfaceRow>>();
   // Every probe through four surfaces, in one hook: about 15 minutes on a loaded machine (O9 S1's table timed
-  // out at 10 under three branches' gates, and skipped every test below), so the hook may take 30.
+  // out at 10 under three branches' gates, and skipped every test below), so the hook may take 60.
   beforeAll(async () => {
     if (!backendPresent) return;
     for (const [name, p] of Object.entries(PROBES)) seen.set(name, await fourSurfaces(p.text, name));
-  }, 1_800_000);
+  }, 3_600_000);
   /** Every row a probe pins or a surface filed, with its `ref` (null for a row no pin names: I3 reports it). */
   const each = () =>
     Object.entries(PROBES).flatMap(([name, p]) =>
@@ -13756,6 +14635,51 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     expect([...exported].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
     // Not vacuous: the table holds such features, and each of its q5 / cv pairs reads in both orders.
     expect(exportedFeatures).toBeGreaterThan(20);
+  });
+
+  /**
+   * I16 (fence-readings round 3): the sentences the fences give, by text, on the check and the literal engine — the
+   * usage that declares the subsetter, the nearest and the root, the feature a pair is stated twice of (not the name it
+   * is read under), the bridge, the connection end — and the same sentence on the text-order twin (`-rev`).
+   */
+  const SENTENCES: ReadonlyArray<readonly [string, string, RegExp]> = [
+    ['sub-rv3-sentence-spec', 'SE::k1', /^.*`p1` in SE::W is subsetted by `p2`, which is read together with `q`, which an instance of SE::W3 reads otherwise: this tool reads `p1` at SE::W's own values, never as the `q` that instance holds, so no relation that reads through `p1` or `p2` is read/],
+    ['sub-rv3-sentence-spec', 'SE::k2', /`p2` in SE::W3 is subsetted by `q`, which an instance of SE::W3 reads otherwise: this tool reads `p2` at SE::W3's own values, never as the `q` that instance holds/],
+    ['sub-rv3-sentence-spec', 'SE::RF::«ConstraintUsage» in SE::«Satisfy»', /`satisfy RF by w\.p1` in SE reads its satisfier through `p1`, which `p2` subsets: this tool reads `p1` at SE::W's own values, never as the `q` that instance holds, so no relation it requires of the satisfier is read/],
+    ['sub-rv3-chain-target', 'CT::k1', /`p1` in CT::S is one usage with `q`, which says something of its own and is declared outside the instances and definitions that have `p1` as a feature \(in a package, or naming it through a path\)/],
+    ['sub-rv3-bridge-definition', 'BD::k1', /`u1` in BD::W is one usage with `u3`, which says something of its own \(`u4` subsets more than one usage, which joins them\): this tool reads `u1` at BD::W's own values, never as the `u3` it is/],
+    ['sub-rv3-bridge-definition', 'BD::k3', /`u3` in BD::W says something of its own, and `u4` subsets more than one usage, which joins it with the others/],
+    ['conn-end-redefined', 'CE::kc', /`cn` connects features to the end `a` of CE::C: the end is the feature it is connected to, which may state what the end's type does not/],
+    ['line-twice-valueless-first', 'TV::cx3', /TV::a redefines `x` twice, and not alike \(a value beside none, or content nested below\), so the model states both for the one feature and neither is read/],
+    ['line-twice-hiding', 'TH::c5', /TH::a states `x` twice \(declared beside a redefinition of it\), with 5\.0 and 6\.0, so the model states both/],
+    ['line-twice-units', 'TU::c5', /TU::a redefines `x` twice, with 5\.0 \[kg\] and 5000\.0 \[g\], so the model states both/],
+    ['line-sentence-twice-renamed', 'ST::c5y', /ST::a redefines `x` twice, with 6\.0 and 5\.0, so the model states both for the one feature and neither is read/],
+    ['line-of-parts', 'LP::cX5', /LP::Q2::X redefines `M` and `N` together, so in LP::s they are one feature/],
+  ];
+  withZ3('I16: the sentences of the round-3 fences are the ones pinned, whichever way the text is ordered', () => {
+    const wrong: string[] = [];
+    for (const [name, row, sentence] of SENTENCES) {
+      for (const twin of [name, `${name}-rev`]) {
+        const got = seen.get(twin)?.get(row);
+        if (!got) {
+          if (twin === name) wrong.push(`${twin} | ${row}: no row`);
+          continue;
+        }
+        for (const s of [0, 1]) {
+          if (got.verdicts[s] === '-') continue;
+          const why = got.why[s]!;
+          if (!sentence.test(why)) wrong.push(`${twin} | ${row}: ${SURFACES[s]} says ${why.slice(0, 240)}`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  // The cycle pin's comment names the error the model is: a subsetting cycle is the specialization-cycle finding, and the
+  // fixpoint ends on it (the rows abstain).
+  it('sub-rv1-cycle: the subsetting cycle is reported as a specialization cycle', async () => {
+    const { report } = await loadModelText(PROBES['sub-rv1-cycle']!.text, { fileName: 'cycle.sysml', strict: true });
+    expect(report.diagnostics.filter((d) => d.code === 'validation/specialization-cycle').length).toBeGreaterThan(0);
   });
 
   // PI-1: a usage-owned relation's one other instance (pi1-r17's q1::p) was refuted by verify while

@@ -291,7 +291,7 @@ export interface ReadOtherwise {
    * as one of what that instance's feature is ({@link
    * DefiningEquations.subsettingOtherwise}).
    */
-  kind: 'satisfy' | 'subject' | 'reference' | 'valueless' | 'subsetting';
+  kind: 'satisfy' | 'subject' | 'reference' | 'valueless' | 'subsetting' | 'end';
   /** The `satisfy` relationship, the requirement usage, the reference, the valueless redefinition, or the subsetting usage. */
   written: ElementRecord;
   /**
@@ -316,6 +316,15 @@ export interface ReadOtherwise {
   subsetter?: ElementRecord;
   /** For `subsetting` read the other way, up a chain or across a usage with two supers: the usage the reading started from, when it is not {@link subsetter}. */
   root?: ElementRecord;
+  /** For `subsetting`, where a subsetter that says something of its own names the subsetted usage through a path (`part q :> sub.p1 { … }`) or from outside the usage it is a feature of: `written` is that usage, this the subsetter. */
+  chain?: true;
+  /**
+   * For `subsetting` across a usage that subsets more than one (`part u4 :> u1, u3;`) in a component one member of which
+   * says something of its own: `via` is that usage, `sayer` the member that says it.
+   */
+  bridge?: { via: ElementRecord; sayer: ElementRecord };
+  /** For `subsetting` carried up a chain or across a usage with two supers: the element whose instances read the first usage otherwise, when it is not {@link scope}. */
+  reader?: ElementRecord;
 }
 
 /**
@@ -349,6 +358,8 @@ export class DefiningEquations {
   private readonly carried = new Map<string, ElementRecord>();
   private readonly contradicted = new Map<ElementId, BindingConflict | null>();
   private readonly clashes = new Map<ElementId, Map<string, NameClash>>();
+  /** The clashes of a context that hold a family of features ({@link NameClash}'s `family`), per context. */
+  private readonly familyClashes = new Map<ElementId, NameClash[]>();
   /** The features that redefine two at once, by feature ({@link mergedLines}), built on first ask. */
   private redefiningTwo?: Map<ElementId, ElementRecord[]>;
   /** {@link inheritedClashes} per context. */
@@ -768,6 +779,7 @@ export class DefiningEquations {
           continue;
         }
         if (d.inCall || this.clash(d.reader, d.feature)) continue;
+        if (name.includes('.') && this.clashAlong(contextId, name) !== undefined) continue;
         const ref = this.valueRef(d);
         if (!ref) continue;
         hit.set(name, ref.target.id);
@@ -1820,8 +1832,12 @@ export class DefiningEquations {
     return answer;
   }
 
-  /** {@link subsettingOtherwise}, worked out: the first feature `f` subsets that a context reads otherwise. */
+  /**
+   * {@link subsettingOtherwise}, worked out: the feature `f` subsets that a context reads otherwise — of several, the
+   * one with the lowest qualified name, not the first the relations were written in.
+   */
   private subsettingOtherwiseOf(f: ElementRecord): ReadOtherwise | undefined {
+    let best: { answer: ReadOtherwise; key: string } | undefined;
     for (const r of this.model.relationshipsFrom(f.id)) {
       if (r.eClass !== 'Subsetting' && r.eClass !== 'ReferenceSubsetting') continue;
       for (const t of r.target ?? []) {
@@ -1841,10 +1857,12 @@ export class DefiningEquations {
         if (!scope || isPackage(scope)) continue;
         const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
         const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} subsetting`, scope, names) : undefined;
-        if (otherwise) return { kind: 'subsetting', written: f, scope, path, instance: otherwise.instance, redefined: g };
+        if (!otherwise) continue;
+        const key = this.qualifiedNameOf(g.id);
+        if (!best || key < best.key) best = { answer: { kind: 'subsetting', written: f, scope, path, instance: otherwise.instance, redefined: g }, key };
       }
     }
-    return undefined;
+    return best?.answer;
   }
 
   /**
@@ -1862,17 +1880,78 @@ export class DefiningEquations {
     if (!isUsage(f.eClass) || !isUsage(g.eClass)) return undefined;
     const scope = this.model.get(f.ownerId);
     const path = this.nameOf(f);
-    if (!scope || isPackage(scope) || path === undefined) return undefined;
     // A subsetter that says something of its own, declared where `g` is a feature: in an instance (`part w : W { part q
     // :> p1 { attribute :>> load = 50.0; } }`; its own subsetters and its own supers' too, so a chain `r :> q :> p1`
     // it declares reaches p1), in the definition (`part def W { part p1; part q :> p1 { … } }`) or in a specialisation
     // of it. That instance, or every instance of that definition, reads `g` otherwise; the instance is `scope` itself.
-    if (this.saysOwn(f) && this.features(scope.id).some((x) => x.id === g.id)) {
-      return { kind: 'subsetting', written: g, scope, path, instance: isUsage(scope.eClass) ? scope : undefined, subsetter: f };
+    // It says something of its own by what it declares below it, by a value it states (`attribute y :> x = 50.0;`), or
+    // through its type (`part q : Q50 :> p1;` over a Q50 that redefines a feature).
+    const inScope = scope !== undefined && !isPackage(scope) && this.features(scope.id).some((x) => x.id === g.id);
+    if (inScope && this.saysOwnOver(f, g)) {
+      return { kind: 'subsetting', written: g, scope: scope!, path: path ?? '', instance: isUsage(scope!.eClass) ? scope : undefined, subsetter: f };
     }
+    // A subsetter a package declares (`part u3 :> u1 { … }` beside the package's `part u1`) says it of the one usage u1 is.
+    const says = !inScope && this.saysOwnOver(f, g, true);
+    if (says && scope !== undefined && isPackage(scope) && g.ownerId === scope.id) {
+      return { kind: 'subsetting', written: g, scope, path: this.nameOf(g) ?? '', instance: undefined, subsetter: f, chain: true };
+    }
+    // The same where `g` is NOT a feature of what the subsetter is declared in: it names it through a path (`part q :>
+    // sub.p1 { … }` in w, `part x :> w.p1 { … }` in a package, `part q :> w.p1 { … }` in a usage of w), and every usage of
+    // what `g` is a feature of is read as the element has it. The usage it names is `g`, which is what the mapper keeps.
+    if (says) {
+      const home = g.ownerId != null ? this.model.get(g.ownerId) : undefined;
+      if (home && !isPackage(home) && home.attrs.isLibrary !== true) {
+        return { kind: 'subsetting', written: g, scope: home, path: this.nameOf(g) ?? '', instance: undefined, subsetter: f, chain: true };
+      }
+    }
+    if (!scope || isPackage(scope) || path === undefined) return undefined;
     const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
     const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} subsetted`, scope, names) : undefined;
     return otherwise ? { kind: 'subsetting', written: g, scope, path, instance: otherwise.instance, subsetter: f } : undefined;
+  }
+
+  /**
+   * Does the subsetter `f` of `g` say something of its own ({@link saysOwn}), state a value (`attribute y :> x = 50.0;`),
+   * or have a type that does — one `g`'s does not have, with a redefinition, a constraint, a calculation or a binding
+   * (`part q : Q50 :> p1;` over `part def Q50 :> T0 { attribute :>> load = 50.0; }`)? `g` may be several usages (the others a usage is joined with); `undefined`: any type. `strict`:
+   * a value, a constraint, a calculation or a binding, at any depth below — not a bare redefinition (`attribute :>> M;`),
+   * which states nothing the redefined feature does not.
+   */
+  saysOwnOver(f: ElementRecord, g: ElementRecord | readonly ElementRecord[] | undefined, strict = false): boolean {
+    const own = (c: ElementRecord): boolean => c.eClass === 'ConstraintUsage' || c.eClass === 'CalculationUsage' || isBindingConnector(c);
+    // What a usage declares below it that is a value, at any depth (a bare redefinition, `attribute :>> M;`, is none).
+    const valued = (x: ElementRecord, depth: number): boolean =>
+      this.model.children(x.id).some(
+        (c) => c.attrs.isLibrary !== true && (own(c) || (isUsage(c.eClass) && (hasStatedValue(this.model, c) || (depth < 8 && valued(c, depth + 1))))),
+      );
+    if (strict ? hasStatedValue(this.model, f) || valued(f, 0) : this.saysOwn(f) || hasStatedValue(this.model, f)) return true;
+    const typed = (x: ElementRecord): Map<ElementId, ElementRecord> => {
+      const out = new Map<ElementId, ElementRecord>();
+      // The definitions it is typed by (the usage a subsetter subsets is among `typesOf`, and is no type).
+      for (const t of this.model.typesOf(x.id)) {
+        if (isUsage(t.eClass)) continue;
+        out.set(t.id, t);
+        for (const general of generalizationsOf(this.model, t.id)) out.set(general.id, general);
+      }
+      return out;
+    };
+    // The types of the usage it subsets (or of the others it is joined with): a type they share says nothing of its own.
+    const theirs = new Map<ElementId, ElementRecord>();
+    for (const o of g === undefined ? [] : Array.isArray(g) ? g : [g as ElementRecord]) for (const [id, t] of typed(o)) theirs.set(id, t);
+    // A type states a value for its instances by what it redefines (or declares with a value); a constraint, a calculation or a
+    // binding it holds is a relation over them, which a subsetter's type that differs from the subsetted usage's does not change.
+    for (const [id, t] of typed(f)) {
+      if (theirs.has(id) || t.attrs.isLibrary === true) continue;
+      const states = this.model.children(id).some(
+        (c) =>
+          c.attrs.isLibrary !== true &&
+          !own(c) &&
+          isUsage(c.eClass) &&
+          (strict ? hasStatedValue(this.model, c) || valued(c, 1) : redefinedClosure(this.model, c).length > 0),
+      );
+      if (states) return true;
+    }
+    return false;
   }
 
   /**
@@ -2345,6 +2424,9 @@ export class DefiningEquations {
         // nothing either place: unchanged, and the value keeps its own fault.
         if (g === undefined && mine === undefined) continue;
         if (g === undefined || mine === undefined || !this.sameReading(mine, g, name)) return false;
+        // A name the context states twice or merges into a line it redefines one of ({@link NameClash}) is read nowhere
+        // there: a value over it (`attribute Z = X + 1.0;` below `X :>> M, N;`) is the context's own, and has none.
+        if (this.clashAlong(contextId, name) !== undefined && this.clashAlong(owner, name) === undefined) return false;
       }
     }
     return true;
@@ -2471,7 +2553,18 @@ export class DefiningEquations {
       const hit = clashes.get(n);
       if (hit && hit.kept === f) return hit.merged && hit.merged.name !== name ? { ...hit, merged: { ...hit.merged, name } } : hit;
     }
-    return undefined;
+    // A feature that redefines one a merged line or a twice-stated feature holds is held too, whoever the name keeps
+    // (a renamed redefiner beside the context's own redefinition of the line, written in either order).
+    let held: NameClash[] | undefined = this.familyClashes.get(contextId);
+    if (held === undefined) {
+      held = [...new Set([...clashes.values()].filter((c) => c.family !== undefined))];
+      this.familyClashes.set(contextId, held);
+    }
+    if (held.length === 0) return undefined;
+    const mine = [f, ...redefinedClosure(this.model, f)];
+    const hit = held.find((c) => mine.some((g) => c.family!.has(g.id)));
+    if (!hit) return undefined;
+    return hit.merged ? { ...hit, merged: { ...hit.merged, name } } : hit;
   }
 
   /**
@@ -2481,8 +2574,22 @@ export class DefiningEquations {
    * for them (A.2.1): the binding reaches one of the two.
    */
   clashedIn(contextId: ElementId, name: string): boolean {
-    const d = this.denote(contextId).get(name);
-    return d !== undefined && this.clash(d.reader, d.feature) !== undefined;
+    return this.clashAlong(contextId, name) !== undefined;
+  }
+
+  /**
+   * The {@link clash} a name read in `contextId` meets: the feature the name denotes, or a feature on its way — `s.X.x` below
+   * a line of parts `part X :>> M, N;` that `s` redefines one of is below the one feature X, M and N are, whatever the leaf —
+   * with the context that reads it.
+   */
+  clashAlong(contextId: ElementId, name: string): { contextId: ElementId; clash: NameClash } | undefined {
+    const denoted = this.denote(contextId);
+    for (let end = name.length; end > 0; end = name.lastIndexOf('.', end - 1)) {
+      const d = denoted.get(name.slice(0, end));
+      const clash = d !== undefined ? this.clash(d.reader, d.feature) : undefined;
+      if (d !== undefined && clash !== undefined) return { contextId: d.reader, clash };
+    }
+    return undefined;
   }
 
   /**
@@ -2682,7 +2789,7 @@ export class DefiningEquations {
         const name = effectiveNameOf(this.model, g);
         const kept = name !== undefined ? byName.get(name) : undefined;
         if (name === undefined || kept === undefined || out.has(name)) continue;
-        out.set(name, { kept, other: line, keptValue: kept, otherValue: line, contradiction: false, decided: false, merged: { line, name, differing } });
+        out.set(name, { kept, other: line, keptValue: kept, otherValue: line, contradiction: false, decided: false, merged: { line, name, differing }, family: new Set([line.id, ...ids]) });
       }
     }
     return out;
@@ -2701,34 +2808,132 @@ export class DefiningEquations {
   }
 
   /**
-   * The names `contextId` gives two values by redefining ONE feature twice (`part s : Q2 { :>> x = 5.0; :>> x = 6.0; }`):
-   * the model states both, the check, literal and numeric surfaces read the first and the SMT one found the axioms
-   * inconsistent. The context reads no such name ({@link NameClash}'s `twice`).
+   * The names `contextId` states TWICE (`part s : Q2 { :>> x = 5.0; :>> x = 6.0; }`): it redefines one feature more than
+   * once, or declares a feature beside a redefinition of the same name (`attribute x = 5.0; attribute :>> x = 6.0;`),
+   * and the statements do not all say the same thing — values that differ or are written in different units, a value
+   * beside none (`attribute :>> x; attribute :>> x default = 3.0;`), or any nested content (`part :>> p { … } part
+   * :>> p { … }`). The model states both for the one feature; the check, literal and numeric surfaces read whichever
+   * came first, and the SMT one found the axioms inconsistent. The context reads no such name, nor a name below one
+   * ({@link NameClash}'s `twice`): weaker, never false.
    */
   private redefinedTwice(contextId: ElementId): Map<string, NameClash> {
     const out = new Map<string, NameClash>();
     const context = this.model.get(contextId);
     if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
-    const byTarget = new Map<ElementId, ElementRecord[]>();
-    for (const x of this.model.children(contextId)) {
-      if (!isUsage(x.eClass) || x.attrs.implicit === true || x.attrs.value === undefined || x.attrs.value === null) continue;
-      for (const r of this.model.relationshipsFrom(x.id)) {
-        if (r.eClass === 'Redefinition') for (const t of r.target ?? []) byTarget.set(t, [...(byTarget.get(t) ?? []), x]);
-      }
-    }
     const byName = this.byName(contextId);
-    for (const xs of byTarget.values()) {
-      const pair = xs.flatMap((a, i) => xs.slice(i + 1).filter((b) => compareWrittenValues(a, b) !== 'same').map((b) => [a, b] as const))[0];
-      if (!pair) continue;
-      for (const x of xs) {
-        for (const name of [this.nameOf(x), ...this.aliasesOf(x)]) {
-          const kept = name !== undefined ? byName.get(name) : undefined;
-          if (name === undefined || kept === undefined || out.has(name)) continue;
-          out.set(name, { kept, other: pair[1], keptValue: pair[0], otherValue: pair[1], contradiction: false, decided: false, twice: true });
+    // Unnamed statements of one feature share a qualified name: what they state tells them apart, not the order they were written in.
+    const key = (e: ElementRecord): string =>
+      `${this.qualifiedNameOf(e.id)}\0${String(e.attrs.valueText ?? e.attrs.value ?? '')}\0${String(e.attrs.unit ?? '')}\0${e.attrs.defaultValue === true ? 'd' : 'f'}`;
+    const byQn = (a: ElementRecord, b: ElementRecord): number => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+    // What the context states twice itself, and what a general type it specialises does (its `s : Q3` inherits both).
+    for (const holder of [context, ...generalizationsOf(this.model, contextId)]) {
+      if (holder.attrs.isLibrary === true) continue;
+      // The usages the holder owns, joined where they redefine one feature or answer to one name: a component is the
+      // statements of ONE feature, however many of the two ways of saying so reach it.
+      const parent = new Map<string, string>();
+      const find = (x: string): string => {
+        let r = x;
+        while (parent.get(r) !== undefined && parent.get(r) !== r) r = parent.get(r)!;
+        return r;
+      };
+      const join = (x: string, y: string): void => {
+        for (const k of [x, y]) if (!parent.has(k)) parent.set(k, k);
+        parent.set(find(x), find(y));
+      };
+      const users = new Map<string, ElementRecord>();
+      const targets = new Map<string, ElementRecord>();
+      for (const x of this.model.children(holder.id)) {
+        if (!isUsage(x.eClass) || x.attrs.implicit === true) continue;
+        users.set(x.id, x);
+        const name = this.nameOf(x);
+        if (name !== undefined) join(x.id, `n ${name}`);
+        for (const r of this.model.relationshipsFrom(x.id)) {
+          if (r.eClass !== 'Redefinition') continue;
+          for (const t of r.target ?? []) {
+            join(x.id, `t ${t}`);
+            const g = this.model.get(t);
+            if (g) targets.set(`t ${t}`, g);
+          }
+        }
+      }
+      const components = new Map<string, { xs: ElementRecord[]; ts: ElementRecord[] }>();
+      for (const [id, x] of users) {
+        if (!parent.has(id)) continue;
+        const c = components.get(find(id)) ?? { xs: [], ts: [] };
+        c.xs.push(x);
+        components.set(find(id), c);
+      }
+      for (const [key, g] of targets) components.get(find(key))?.ts.push(g);
+      for (const { xs, ts } of components.values()) {
+        if (xs.length < 2) continue;
+        xs.sort(byQn);
+        ts.sort(byQn);
+        const pair = xs.flatMap((a, i) => xs.slice(i + 1).filter((b) => !this.statesSame(a, b)).map((b) => [a, b] as const))[0];
+        if (!pair) continue;
+        const clash: Omit<NameClash, 'kept'> = {
+          other: pair[1],
+          keptValue: pair[0],
+          otherValue: pair[1],
+          contradiction: false,
+          decided: false,
+          twice: {
+            target: ts[0] ?? xs[0]!,
+            // A feature declared beside a redefinition of it (`attribute x = 5.0; attribute :>> x = 6.0;`) is stated twice, not redefined twice.
+            redefines:
+              ts.length > 0 &&
+              xs.filter((x) => this.model.relationshipsFrom(x.id).some((r) => r.eClass === 'Redefinition' && (r.target ?? []).includes(ts[0]!.id))).length > 1,
+            hasValues: pair[0].attrs.value != null && pair[1].attrs.value != null,
+            byUnit: xs.every((a, i) => xs.slice(i + 1).every((b) => this.statesSame(a, b) || this.sameValueOtherUnit(a, b))),
+          },
+          family: new Set<ElementId>([...xs.map((x) => x.id), ...ts.map((t) => t.id)]),
+        };
+        for (const x of xs) {
+          for (const name of [this.nameOf(x), ...this.aliasesOf(x)]) {
+            const kept = name !== undefined ? byName.get(name) : undefined;
+            if (name === undefined || kept === undefined || out.has(name)) continue;
+            out.set(name, { ...clash, kept });
+          }
         }
       }
     }
     return out;
+  }
+
+  /** Do `a` and `b` state the same quantity, written in different units (`5.0 [kg]`, `5000.0 [g]`), neither nested nor valueless? */
+  private sameValueOtherUnit(a: ElementRecord, b: ElementRecord): boolean {
+    const valued = (e: ElementRecord): boolean => e.attrs.value !== undefined && e.attrs.value !== null;
+    return (
+      valued(a) &&
+      valued(b) &&
+      (a.attrs.defaultValue === true) === (b.attrs.defaultValue === true) &&
+      (a.attrs.unit ?? '') !== (b.attrs.unit ?? '') &&
+      compareWrittenValues(a, b) === 'same' &&
+      !this.model.children(a.id).some((c) => isUsage(c.eClass)) &&
+      !this.model.children(b.id).some((c) => isUsage(c.eClass))
+    );
+  }
+
+  /**
+   * Is `f` one of several statements of a feature that all state the one quantity, in different units, in its owner
+   * (`:>> x = 5.0 [kg]; :>> x = 5000.0 [g];`)? The statements agree, but the SMT lane pins a symbol to the magnitude
+   * the file stores, in each statement's own unit, so it would find the axioms inconsistent: it carries none of them.
+   */
+  statedInOtherUnits(f: ElementRecord): boolean {
+    return f.ownerId != null && this.clash(f.ownerId, f)?.twice?.byUnit === true;
+  }
+
+  /**
+   * Do two statements of one feature in one context say the same thing — the same value in the same unit, both a
+   * `default` or both firm, and nothing nested below either? A value beside none does not.
+   */
+  private statesSame(a: ElementRecord, b: ElementRecord): boolean {
+    const valued = (e: ElementRecord): boolean => e.attrs.value !== undefined && e.attrs.value !== null;
+    const nested = (e: ElementRecord): boolean => this.model.children(e.id).some((c) => c.attrs.implicit !== true && (isUsage(c.eClass) || isBindingConnector(c)));
+    if (valued(a) !== valued(b) || nested(a) || nested(b)) return false;
+    if (!valued(a)) return true;
+    if ((a.attrs.defaultValue === true) !== (b.attrs.defaultValue === true)) return false;
+    if ((a.attrs.unit ?? '') !== (b.attrs.unit ?? '')) return false;
+    return compareWrittenValues(a, b) === 'same';
   }
 
   /**
@@ -5151,6 +5356,22 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
   const subsetting = subsettingTaint(model);
   for (const [id, source] of subsetting.taint) if (!taint.has(id)) taint.set(id, source);
   for (const [id, answer] of subsetting.why) if (!why.has(id)) why.set(id, answer);
+  // An end of a connection the model connects to features (`connection cn : C connect w.p1 to t;`) is the feature it is
+  // connected to, which may state what the end's type does not (w's `p1` redefines `load = 50.0`); the walk reads the end
+  // as its own type has it (`cn.a.load` read T0's default where w's p1 is 50). Every end of the types of such a connection
+  // is read by no relation: weaker than reading the connected feature, never false.
+  for (const c of model.all()) {
+    if (c.attrs.isLibrary === true || !['ConnectionUsage', 'InterfaceUsage', 'FlowUsage'].includes(c.eClass)) continue;
+    if ((c.source?.length ?? 0) === 0 && (c.target?.length ?? 0) === 0) continue;
+    for (const type of model.typesOf(c.id)) {
+      if (type.attrs.isLibrary === true) continue;
+      for (const end of effectiveFeatures(model, type.id)) {
+        if (end.attrs.isEnd !== true || end.attrs.isLibrary === true || taint.has(end.id)) continue;
+        taint.set(end.id, end);
+        if (!why.has(end.id)) why.set(end.id, { kind: 'end', written: c, scope: type, path: effectiveNameOf(model, end) ?? '', instance: undefined, redefined: end });
+      }
+    }
+  }
   // What subsets one by reference (`ref part r2 ::> r;`) too, as {@link subsettingTaint} follows.
   if (taint.size > 0) spreadOtherwise(model, taint, [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting', 'ReferenceSubsetting')]);
   // Only a reference itself is left to a group's own re-resolution: what reads through it is not.
@@ -5167,7 +5388,10 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
  */
 function spreadOtherwise(model: Model, taint: Map<ElementId, ElementRecord>, narrowing: readonly ElementRecord[]): void {
   const users = model.all().filter((el) => el.attrs.isLibrary !== true);
-  const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string' && el.ownerId != null);
+  // A calculation's body reads like a value written beside it (`calc m1 { 10.0 - p1.load }` in W).
+  const valueText = (el: ElementRecord): string | undefined =>
+    typeof el.attrs.value === 'string' ? el.attrs.value : el.eClass === 'CalculationUsage' && typeof el.attrs.expression === 'string' ? el.attrs.expression : undefined;
+  const valued = users.filter((el) => isUsage(el.eClass) && valueText(el) !== undefined && el.ownerId != null);
   const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
   const asserted = users.filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string' && el.ownerId != null);
   const defs = sharedDefinitions(model);
@@ -5183,7 +5407,7 @@ function spreadOtherwise(model: Model, taint: Map<ElementId, ElementRecord>, nar
     grew = false;
     for (const f of valued) {
       if (taint.has(f.id)) continue;
-      const hit = namesOfValue(f.attrs.value as string)
+      const hit = namesOfValue(valueText(f)!)
         .map((n) => readsTainted(model, taint, [f.ownerId!], n))
         .find((x) => x !== undefined);
       if (hit) join(f, hit);
@@ -5323,6 +5547,44 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
     offers.clear();
     return any;
   };
+  // A usage that subsets more than one (`part u4 :> u1, u3;`) joins them into one: where a member of the component says
+  // something of its own (a value, a redefinition below it), that is the value of every member, in every instance of
+  // what they are features of — instances that redefine nothing included. The walk reads each at its own values.
+  const bridges = new Map<ElementId, ElementRecord>();
+  {
+    const supers = new Map<ElementId, Set<ElementId>>();
+    const members = new Map<ElementId, ElementRecord>();
+    const parent = new Map<ElementId, ElementId>();
+    const find = (x: ElementId): ElementId => {
+      let r = x;
+      while (parent.get(r) !== undefined && parent.get(r) !== r) r = parent.get(r)!;
+      return r;
+    };
+    for (const { f, g } of pairs) {
+      if (f.id === g.id || !isUsage(f.eClass) || !isUsage(g.eClass) || f.attrs.isLibrary === true || g.attrs.isLibrary === true) continue;
+      supers.set(f.id, (supers.get(f.id) ?? new Set<ElementId>()).add(g.id));
+      members.set(f.id, f);
+      members.set(g.id, g);
+      for (const x of [f.id, g.id]) if (!parent.has(x)) parent.set(x, x);
+      parent.set(find(f.id), find(g.id));
+    }
+    const joins = [...supers].filter(([, set]) => set.size >= 2).map(([id]) => members.get(id)!);
+    if (joins.length > 0) {
+      const components = new Map<ElementId, ElementRecord[]>();
+      for (const m of members.values()) components.set(find(m.id), [...(components.get(find(m.id)) ?? []), m]);
+      for (const via of joins.sort((a, b) => (defs.qualifiedNameOf(a.id) < defs.qualifiedNameOf(b.id) ? -1 : 1))) {
+        const all = components.get(find(via.id)) ?? [];
+        const sayer = all.filter((m) => defs.saysOwnOver(m, all.filter((o) => o.id !== m.id), true)).sort((a, b) => (defs.qualifiedNameOf(a.id) < defs.qualifiedNameOf(b.id) ? -1 : 1))[0];
+        if (!sayer) continue;
+        for (const m of all) {
+          const scope = m.ownerId != null ? model.get(m.ownerId) : undefined;
+          if (!scope || bridges.has(m.id)) continue;
+          bridges.set(m.id, m);
+          offer(m, { kind: 'subsetting', written: m, scope, path: defs.nameOf(m) ?? '', instance: undefined, subsetter: via, bridge: { via, sayer } }, 0);
+        }
+      }
+    }
+  }
   // The usages that subset a feature an instance reads otherwise, and the subsetted usage of a subsetter that is
   // (RV1): it is the subsetter's value that fills it there, which the walk reads at the owner's own values.
   for (const { f, g } of pairs) {
@@ -5343,10 +5605,13 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
     for (let more = true; more; more = accept()) {
       for (const { f, g } of pairs) {
         const a = answerOf(f);
-        if (!a || taint.has(g.id) || g.id === f.id || g.attrs.isLibrary === true || !isUsage(g.eClass) || a.redefined?.id === g.id) continue;
+        if (!a || taint.has(g.id) || g.id === f.id || g.attrs.isLibrary === true || !isUsage(g.eClass)) continue;
         const seed = a.root ?? a.subsetter ?? a.written;
         const scope = g.ownerId != null ? model.get(g.ownerId) : undefined;
-        offer(g, { ...a, written: g, scope: scope ?? a.scope, subsetter: f, root: seed.id === f.id ? undefined : seed }, (hops.get(taint.get(f.id)!.id) ?? 0) + 1);
+        // f's own distance from the usage a context reads otherwise: its accepted hop, else (joined by what reads through a
+        // tainted usage) one more than the usage it was joined from.
+        const own = hops.get(f.id) ?? (hops.get(taint.get(f.id)!.id) ?? 0) + 1;
+        offer(g, { ...a, written: g, scope: scope ?? a.scope, reader: a.reader ?? a.scope, subsetter: f, root: seed.id === f.id ? undefined : seed }, own + 1);
       }
     }
     const size = taint.size;
@@ -5545,7 +5810,33 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
         : `\`${name}\` in ${where} redefines ${redefined} (\`= ${s.path}\`) and states no value of its own`;
     return `${what}: this tool reads it as a fresh instance of its type, never as what \`${s.path}\` names${so('no relation that reads through it')}`;
   }
+  if (s.kind === 'end') {
+    const connection = effectiveNameOf(model, s.written) ?? s.written.id;
+    return (
+      `\`${connection}\` connects features to the end \`${s.path}\` of ${where}: the end is the feature it is connected to, which may state what ` +
+      `the end's type does not, and this tool reads it as ${where} has it${so(`no relation that reads through \`${s.path}\``)}`
+    );
+  }
   const who = s.instance ? effectiveQualifiedName(model, s.instance.id) : `an instance of ${where}`;
+  if (s.kind === 'subsetting' && s.bridge) {
+    const name = effectiveNameOf(model, s.written) ?? s.written.id;
+    const nm = (e: ElementRecord): string => `\`${effectiveNameOf(model, e) ?? e.id}\``;
+    const { via, sayer } = s.bridge;
+    const rows = so(`no relation that reads through \`${name}\``);
+    const reads = `this tool reads \`${name}\` at ${where}'s own values`;
+    return s.written.id === sayer.id
+      ? `\`${name}\` in ${where} says something of its own, and ${nm(via)} subsets more than one usage, which joins it with the others: ${reads}, never as one of them${rows}`
+      : `\`${name}\` in ${where} is one usage with ${nm(sayer)}, which says something of its own (${nm(via)} subsets more than one usage, which joins them): ${reads}, never as the ${nm(sayer)} it is${rows}`;
+  }
+  if (s.kind === 'subsetting' && s.chain && s.subsetter) {
+    const name = effectiveNameOf(model, s.written) ?? s.written.id;
+    const nm = (e: ElementRecord): string => `\`${effectiveNameOf(model, e) ?? e.id}\``;
+    const sayer = s.root ?? s.subsetter;
+    return (
+      `\`${name}\` in ${where} is one usage with ${nm(sayer)}, which says something of its own and is declared outside the instances and definitions that have \`${name}\` as a feature (in a package, or naming it through a path): ` +
+      `this tool reads \`${name}\` at ${where}'s own values, never as the ${nm(sayer)} it is${so(`no relation that reads through \`${name}\` or ${nm(sayer)}`)}`
+    );
+  }
   if (s.kind === 'subsetting' && s.subsetter) {
     const name = effectiveNameOf(model, s.written) ?? s.written.id;
     const nm = (e: ElementRecord): string => `\`${effectiveNameOf(model, e) ?? e.id}\``;
@@ -5554,7 +5845,7 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
     const by = nm(s.subsetter) + (s.root ? `, which is read together with ${nm(s.root)}` : '') + (s.redefined ? `, which subsets ${nm(s.redefined)}` : '');
     const held = s.redefined ? nm(s.redefined) : nm(s.root ?? s.subsetter);
     return (
-      `\`${name}\` in ${where} is subsetted by ${by}, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: this tool ` +
+      `\`${name}\` in ${where} is subsetted by ${by}, which ${contextSpelling(model, s.instance) ?? (s.reader ? `an instance of ${effectiveQualifiedName(model, s.reader.id)}` : who)} reads otherwise: this tool ` +
       `reads \`${name}\` at ${where}'s own values, never as the ${held} that instance holds${so(`no relation that reads through \`${name}\` or ${nm(s.subsetter)}`)}`
     );
   }
@@ -5569,7 +5860,7 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   const nmv = (e: ElementRecord): string => `\`${effectiveNameOf(model, e) ?? e.id}\``;
   const through = s.via?.subsetter
     ? `through ${nmv(s.via.written)}, which ${nmv(s.via.subsetter)} subsets: ` +
-      `this tool reads ${nmv(s.via.written)} at ${effectiveQualifiedName(model, s.via.scope.id)}'s own values, never as the ${nmv(s.via.redefined ?? s.via.root ?? s.via.subsetter)} that ${contextSpelling(model, s.via.instance) ?? 'that instance'} holds`
+      `this tool reads ${nmv(s.via.written)} at ${effectiveQualifiedName(model, s.via.scope.id)}'s own values, never as the ${nmv(s.via.redefined ?? s.via.root ?? s.via.subsetter)} that ${contextSpelling(model, s.via.instance) ?? 'instance'} holds`
     : s.via ? `through \`${effectiveNameOf(model, s.via.written) ?? s.via.written.id}\`, which subsets \`${s.via.path}\`: ${subsettingRead(model, s.via)}` : '';
   const inPackage = s.via !== undefined && isPackage(s.scope);
   const via = through && !inPackage ? `, ${through}` : '';
@@ -12353,8 +12644,19 @@ export interface NameClash {
    * contradiction, and `other` is that line.
    */
   merged?: { line: ElementRecord; name: string; differing: ElementRecord[] };
-  /** Set where the context redefines the one feature twice, with values that differ ({@link DefiningEquations.redefinedTwice}): `keptValue` and `otherValue` are the two. */
-  twice?: true;
+  /**
+   * Set where the context states one feature twice, and not alike ({@link DefiningEquations.redefinedTwice}): `keptValue` and
+   * `otherValue` are two of the statements, `target` the feature redefined (`redefines`; else the first of the features
+   * that hide each other by name), `hasValues` whether both state a value, `byUnit` whether they all state one quantity in
+   * different units.
+   */
+  twice?: { target: ElementRecord; redefines: boolean; hasValues: boolean; byUnit: boolean };
+  /**
+   * The features this clash holds, beside the one the name keeps ({@link DefiningEquations.clash}): a merged line's line and
+   * targets, the features a context states twice and the one they redefine. A feature that redefines one of them is held too,
+   * whatever name it answers to (`attribute Y :>> X;` beside `attribute :>> X default = 2.0;`).
+   */
+  family?: ReadonlySet<ElementId>;
   /**
    * Set where the two values are the same, and the context's own feature of
    * the name states nothing and redefines neither ({@link
@@ -12390,10 +12692,11 @@ export function clashSentence(model: Model, contextId: ElementId, clash: NameCla
     );
   }
   if (clash.twice) {
-    return (
-      `${context} redefines \`${name}\` twice, with ${writtenValue(clash.keptValue)} and ${writtenValue(clash.otherValue)}, ` +
-      'so the model states both values for the one feature and neither is read'
-    );
+    const { target, redefines, hasValues } = clash.twice;
+    const feature = effectiveNameOf(model, target) ?? name;
+    const what = redefines ? `redefines \`${feature}\` twice` : `states \`${feature}\` twice (declared beside a redefinition of it)`;
+    const how = hasValues ? `, with ${writtenValue(clash.keptValue)} and ${writtenValue(clash.otherValue)}` : ', and not alike (a value beside none, or content nested below)';
+    return `${context} ${what}${how}, so the model states both for the one feature and neither is read`;
   }
   if (clash.merged) {
     const { line, differing } = clash.merged;

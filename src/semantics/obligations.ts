@@ -884,6 +884,8 @@ function featureValueAxiom(
   if (underMetadata(model, el)) return undefined;
   // A `default` a binding overrides is no fact: the binding's axiom is.
   if (defaultGivesWay(model, el)) return undefined;
+  // One quantity stated twice in different units: the lane pins a symbol to each stored magnitude ({@link literalAxiom}).
+  if (sharedDefinitions(model).statedInOtherUnits(el)) return undefined;
 
   if (typeof raw === 'number' || typeof raw === 'boolean') {
     return literalAxiom(model, el, name, raw, memo);

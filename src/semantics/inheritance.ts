@@ -160,6 +160,17 @@ function generalIdsOf(model: Model, typeId: ElementId): ReadonlySet<ElementId> {
 const generalIdCaches = new WeakMap<Model, { rev: number; byType: Map<ElementId, ReadonlySet<ElementId>> }>();
 
 /**
+ * Does the feature `h` answer to `name`: its effective name, or — a feature that redefines two at once (`attribute X :>>
+ * M, N;`, written in either order) — the name of any it redefines? The effective name of an unnamed line is its FIRST
+ * target's, so the order of the targets decided which name masked it.
+ */
+function answersTo(model: Model, h: ElementRecord, name: string): boolean {
+  if (effectiveNameOf(model, h) === name) return true;
+  const targets = redefinedBy(model, h);
+  return targets.length >= 2 && targets.some((t) => effectiveNameOf(model, t) === name);
+}
+
+/**
  * The features `f` masks BY NAME in its owner's effective feature set
  * ({@link effectiveFeatures}) — every feature of a general type of `f`'s owner
  * with `f`'s effective name that `f` does not redefine — with what each of
@@ -174,7 +185,7 @@ export function maskedByName(model: Model, f: ElementRecord): ElementRecord[] {
   const seen = new Set<ElementId>([f.id, ...redefinedClosure(model, f).map((g) => g.id)]);
   for (const general of generalizationsOf(model, f.ownerId)) {
     for (const h of ownFeatures(model, general.id)) {
-      if (seen.has(h.id) || effectiveNameOf(model, h) !== name) continue;
+      if (seen.has(h.id) || !answersTo(model, h, name)) continue;
       for (const g of [h, ...redefinedClosure(model, h)]) {
         if (seen.has(g.id)) continue;
         seen.add(g.id);

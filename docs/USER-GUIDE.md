@@ -1013,9 +1013,18 @@ one would make two features of the usage one, or give two the same name:
   `= 1.0` and `= 2.0`) has no one value to read, whichever order the targets are
   written in, whether or not a usage redefines anything of it: every row over
   `s.M`, `s.N` or `s.X` is *could not be evaluated* too. Two that agree are read.
-  So is a usage that redefines one feature twice with values that differ (`:>> x
-  = 5.0; :>> x = 6.0;`): the model states both, and no row over `x` is read there
-  (the SMT engine still reports its inconsistent axioms);
+  The fence holds every name on the way to what a row reads: the nested features
+  of a line of parts (`part X :>> M, N;` with `s.X.x`, `s.M.x`, `s.N.x`), and a
+  feature derived from the line's names (`attribute Z = X + 1.0;` in Q2, read as
+  `s.Z`, or in a type below Q2 that redefines one of them), are *could not be
+  evaluated* too. A usage that states one feature twice is read the same way
+  (`:>> x = 5.0; :>> x = 6.0;`, an `attribute x = 5.0;` beside an `attribute :>>
+  x = 6.0;`, a `:>> x;` beside a `:>> x default = 3.0;`, two redefinitions of
+  one part with different content nested below, or `5.0 [kg]` beside `5000.0
+  [g]`): the model states both, and no row over `x`, `s.y` for a `y :>> x`, or
+  what reads them is read there, written in either order. Two that say the same
+  thing in the same unit are read. For values that differ the SMT engine still
+  reports its inconsistent axioms;
 - in `part v : R { attribute :>> M = 5.0; attribute M2 = 9.0; }` the first would
   be named M2 beside the second;
 - in `part v : R, S`, where S writes `attribute M2 redefines K`, a `:>> M` and a
@@ -1377,20 +1386,37 @@ other side: where an instance reads p2 otherwise (w's `part :>> p2 { attribute
 reads p1 at W's own values, so each row read through p1 — W's own `constraint c
 { p1.load <= 5.0 }`, the package's `w.p1.load` — is *could not be evaluated*,
 in a sentence that names p1, the subsetter nearest to it that is read otherwise
-(or is read with one) and w. So does every usage of the same subsetting component
-(the usages that subset one another, however many links apart, whichever way
-round): a p1 further up a chain (p3 :> p2 :> p1, w's `part :>> p3 { ... }`), the
-other super of a usage with two supers (`part u3 :> u1, u2;` beside w's `part
-:>> u2 { ... }` makes w's u1 the valued one too), and the usages above a subsetter
-that says something of its own, wherever it is declared: in w (`part q :> p2 {
-attribute :>> load = 50.0; }`, or a chain `q :> p1`, `r :> q` of which r says
-it), in W itself (`part def W { part p1; part q :> p1 { attribute :>> load =
-50.0; } }`) or in a specialisation of W. The rows read through p2 itself abstain
+(or is read with one) and w; a calculation's body or a derived value that names p1
+(`calc m1 { 10.0 - p1.load }`) is read through it too. So does every usage of the same
+subsetting component (the usages that subset one another, however many links apart,
+whichever way round), for every instance of what they are features of — the usage
+the instance redefines itself (w's own p1 beside W's `part p2 :> p1;`), one that
+redefines the root (a `v : W { part :>> p1 { ... } }` beside w), or a second
+specialisation that redefines it, included: a p1 further up a chain (p3 :> p2 :> p1,
+w's `part :>> p3 { ... }`), the other super of a usage with two supers (`part u3 :>
+u1, u2;` beside w's `part :>> u2 { ... }` makes w's u1 the valued one too, and so
+does a value in the definition alone: `part u3 : T0 { attribute :>> load = 3.0; }` and
+`part u4 :> u1, u3;` make u1's load 3 in a `part w : W` that redefines nothing), and the
+usages above a subsetter that says something of its own, wherever it is declared: in w
+(`part q :> p2 { attribute :>> load = 50.0; }`, or a chain `q :> p1`, `r :> q` of
+which r says it), in W itself (`part def W { part p1; part q :> p1 { attribute :>>
+load = 50.0; } }`), in a specialisation of W, in a package (`part x :> w.p1 { ... }`),
+or in a usage of w, naming its usage through a path (`part q :> sub.p1 { ... }`).
+A subsetter says something of its own by what it declares below it, by a value of
+its own (`attribute y :> x = 50.0;`) or through its type (`part q : Q50 :> p1;` over a
+`Q50` that redefines `load`). The rows read through p2 itself abstain
 with them where p2 subsets one of these, though p2 is the usage that holds the
-value: this tool does not tell the two readings apart; a usage the instance
-redefines that subsets none of them is read as written. It does not read the
+value: this tool does not tell the two readings apart; a usage that subsets none of
+them is read as written. It does not read the
 multiplicity, so a `p1` other members fill abstains too. Where no instance reads
-p1 otherwise, or p1 is a feature of a package, it reads as written.
+p1 otherwise and no usage of its component says anything of its own, it reads as
+written. Which of several usages a sentence names (the nearest, then the lowest
+qualified name) does not turn on the order the text is written in.
+An end of a connection the model connects to features (`connection cn : C connect
+w.p1 to t;`) is the feature it connects, which may state what the end's type does not
+(w's `part :>> p1 { attribute :>> load = 50.0; }`): `cn.a.load` is *could not be
+evaluated*, in a sentence that names the connection and the end, whatever the
+connected feature states.
 A
 value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
 feature only where every instance it stands for reads the partner alike — not
