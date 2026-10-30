@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadModelText } from '@text/load';
 import { checkText } from '@text/check';
+import { checkConstraints } from '@semantics/evaluate-model';
 
 const TYPED = 'package P {\n    part def A {\n        attribute mass : Real;\n    }\n}\n';
 const CLEAN = 'package P {\n    part def A;\n}\n';
@@ -141,6 +142,43 @@ function bindingSequence(file: string, from: string, to: string): string[] {
   expect(end, `${file} no longer contains ${JSON.stringify(to)}`).toBeGreaterThan(start);
   return [...src.slice(start, end).matchAll(BINDING_STEPS)].map((m) => m[1]);
 }
+
+describe('a usage typed by or subsetting a library part loads in seconds', () => {
+  // A library feature's members are a dense web (`Part` owns features typed by
+  // `Part`, `Item` ...). The name walk of a constraint's context named a tower
+  // through it route by route, so `part p3 subsets Parts::parts;` beside an
+  // instance and a constraint ran out of memory (about 2.6 minutes and 3 GB at
+  // the default heap, nothing printed). The members are now walked once.
+  const SPELLINGS = [
+    'part p3 subsets Parts::parts;',
+    'part p3 :> Parts::parts;',
+    'part p3 specializes Parts::parts;',
+    'part p3 : Parts::Part;',
+    'item p3 :> Items::items;',
+    'item p3 : Items::Item;',
+    'ref part p3 :> Parts::parts;',
+    'part p3 redefines Parts::parts;',
+  ];
+  const model = (member: string, where: 'def' | 'usage' | 'package'): string =>
+    'package G {\n  part def T0 { attribute load default = 1.0; }\n' +
+    `  part def W { part p1 : T0[1]; ${where === 'def' ? member : ''} }\n` +
+    `  part w : W${where === 'usage' ? ` { ${member} }` : ';'}\n` +
+    `  ${where === 'package' ? member : ''}\n` +
+    '  constraint kT { w.p1.load <= 5.0 }\n  constraint kF { w.p1.load >= 5.0 }\n}\n';
+
+  for (const where of ['def', 'usage', 'package'] as const) {
+    it(`loads and reads the same verdicts with the member in ${where === 'def' ? 'the definition' : where === 'usage' ? 'the instance' : 'the package'}`, async () => {
+      for (const member of SPELLINGS) {
+        const t0 = performance.now();
+        const { model: m } = await loadModelText(model(member, where), { fileName: 'g.sysml' });
+        expect(performance.now() - t0, member).toBeLessThan(20_000);
+        const verdicts = Object.fromEntries(checkConstraints(m!).map((c) => [m!.qualifiedName(c.id), c.result]));
+        // The verdicts are the model's without the library member.
+        expect(verdicts, member).toEqual({ 'G::kT': 'satisfied', 'G::kF': 'violated' });
+      }
+    }, 300_000);
+  }
+});
 
 describe('the loader and the UI store bind a model the same way', () => {
   it('runs the same four steps in the same order', () => {

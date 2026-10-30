@@ -5834,6 +5834,30 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'UB2::at30': ['?/?/?/X', '?'],
       'UB2::atL': ['?/?/?/X', '?'],
     }),
+    // A usage that subsets or is typed by a LIBRARY part (`part p3 :> Parts::parts`, `part p3 : Parts::Part`), beside an
+    // instance and a constraint, ran out of memory in the name walk (a tower through the library's feature web, 2.6
+    // minutes and 3 GB; fence-loader S1). The library feature's members are walked once: the rows read as the same
+    // models without the member.
+    'lib-subset-u1': probe(`package LS1 {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; part p3 :> Parts::parts; }
+        part w : W;
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.p1.load >= 5.0 }
+      }`, {
+      'LS1::k1': ['T/T/T/T', 'T'],
+      'LS1::k2': ['F/F/F/F', 'F'],
+    }),
+    'lib-typed-u1': probe(`package LS2 {
+        part def T0 { attribute load default = 1.0; }
+        part def W { part p1 : T0[1]; item p3 : Items::Item; }
+        part w : W { part p4 : Parts::Part; }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k2 { w.p1.load >= 5.0 }
+      }`, {
+      'LS2::k1': ['T/T/T/T', 'T'],
+      'LS2::k2': ['F/F/F/F', 'F'],
+    }),
     // Two general types that each redefine the end's head (Q2's `L = 50.0`, Q3's `L = 60.0`) leave no one
     // most specific (O6's branch review): the copy redefines Q's declared L as at 755352c — the first cut took
     // whichever came first, and read 50 (or 60 for `:> Q3, Q2`) beside the `#clash` that says neither is read.

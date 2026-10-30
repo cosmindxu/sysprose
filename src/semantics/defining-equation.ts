@@ -882,7 +882,13 @@ export class DefiningEquations {
       enclosing: readonly InstanceFrame[],
     ): void => {
       if (onPath.has(ownerId)) return;
-      const guardKey = `${prefix} ${ownerId}`;
+      // A LIBRARY feature's members are walked once, whatever the prefix: the
+      // library's feature graph is a dense web (`Part` owns features typed by
+      // `Part`, `Item` ...), and a name tower through it grows with every
+      // route, so `part p3 : Parts::Part;` beside an instance and a constraint
+      // ran out of memory. No model reads a library feature's member by a
+      // chain below a user feature; a name past the first route stays unread.
+      const guardKey = this.model.get(ownerId)?.attrs.isLibrary === true ? `library ${ownerId}` : `${prefix} ${ownerId}`;
       if (visited.has(guardKey)) return;
       visited.add(guardKey);
       onPath.add(ownerId);
