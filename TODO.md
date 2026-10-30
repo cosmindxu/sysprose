@@ -74,17 +74,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       the equation is read in the element that writes it (site.at === owner). Otherwise the pair
       stays info and `--strict` passes. A side over a value another pair leaves undecided also reads
       nothing, by design. No probe was written for the first case.
-- [ ] **Abstain over a feature an own-sibling redefinition values (Opus, moves verdicts).**
-      `validation/redefinition-own-sibling` reports `part def Battery { attribute mass default =
-      1.2; attribute :>> mass = 0.8; }`, but the surfaces still read it. (a) default + value: check,
-      literal and numeric read b.mass = 0.8 (`heavy` refuted, `light` held) while SMT answers
-      inconsistent-axioms; (b) value + value: every surface already abstains, with a check conflict
-      row; (c) a valueless redefinition over a default: all four read the default; (d) a valueless
-      declared feature with a valued redefinition: all four read the redefinition's value. In (c)
-      and (d) the four agree, so no cross-check can catch it. Make check, literal and numeric
-      abstain with their own sentence wherever an own-sibling redefinition values the feature read,
-      and pin every shape in `verification.differential.test.ts`. Identical at 2218b84.
-      [small-wording S1, review]
 - [ ] **Give the own-sibling finding its own validation rule.** The Problems panel
       (`src/ui/panels/BottomPanel.tsx:221`) labels the row `redefinition-conformance` while the CLI
       prints `validation/redefinition-own-sibling`, and `excludeRuleIds:
@@ -143,22 +132,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       subsetting-pass-scratch/wbr/ai.sysml). There the check abstains on `a` (?/-/?/-) and strict is
       OK, while SMT reads W's own p2 (1) and reports inconsistent-axioms on every row (`k`, `k2`
       T/T/T/X): an X the check no longer explains. [subsetting-pass S1, branch review]
-- [ ] **Read the subsetted feature where an instance redefines a usage that subsets it.** RV1: `part
-      def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }` with `part w :
-      W { part :>> p2 { attribute :>> load = 50.0; } }`. w's p2 is its only p1, so `w.p1.load <=
-      5.0` is false, but it reads T/T/T/T; W::c reads T, the reversed `k1R` reads F/F/F/F, and
-      strict reports a false violation. This was already so at 84fb971 (probe
-      subsetting-pass-scratch/wbr/rv1.sysml). Taint p1 where an instance reads a usage that subsets
-      it otherwise and p1's upper multiplicity is 1, or abstain. This needs a multiplicity ruling,
-      which also bears on corpus model e1-subset (`part q9 :> q { attribute :>> L = 50.0; }`).
-      [subsetting-pass branch review]
-- [ ] **Resolve a satisfier path written in a nested package through the owning namespaces.** NQ1
-      (`satisfy RF by NQ1::w.p1;`) and NQ2 (`satisfy RF by w.p1;`), each in `package Inner`, file no
-      row. The mapper resolves the source to `W::p1` with chain `w.p1`. RF's own row (T) stands for
-      the satisfy, and `verify --engine smt` exits 0 although w's p1.load is 50 (true F). The same
-      satisfy written in the top package (NQ3) files an F row. This is unrelated to subsetting and
-      was already so at 84fb971 (probes in subsetting-pass-scratch/wbr/nq1.sysml, nq2.sysml,
-      nq3.sysml). Resolve the path, or file the row and abstain. [subsetting-pass branch review]
 - [ ] **Spell a chained subsetting target as written in the subsetting sentence.** For W's `part p2
       :> q.p1;`, the mapper records the Subsetting with target `Q::p1` and no chain (unlike a
       Satisfy's `sourceChain`). So the sentence says "subsets `p1` … through SC::Q's own `p1`, never
@@ -239,8 +212,8 @@ abstain on or read false in the four-surface table
 an asserted equation override a `default` on every surface, read definition-feature and part-valued
 bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open.
 Since per-instance-rest (merged by `ca4992c`), `KNOWN_FALSE` was empty (it held 20 rows at 3c54ae0), and
-redefinition-target (merged by 64d149d) pins six rows in it again, tagged `NO STEP`, for a feature that
-redefines two features of one line (MU, MUR; entry below). Since
+redefinition-target (merged by 64d149d) pinned six rows in it again, tagged `NO STEP`, for a feature that
+redefines two features of one line (MU, MUR), and fence-readings (merged by 9ddd2c2) withdrew them: it is empty. Since
 default-stands (decision 14 amended 2026-10-22) a `default` stands against every assertion; only a
 feature without a value is defined by an asserted equation. The residuals are the entries below. The
 false verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
@@ -413,21 +386,6 @@ headings.
       rows; `DP33::negT` reads ?/?/T/T and `posF` ?/?/F/?). Sound, only weaker than it could be.
       Raise the cap or make the instance walk iterative. Done when those rows decide on all four
       surfaces. [review 2026-10-14 E10]
-- [ ] **Read a binding past the 32-usage cap whatever the order of the text.** The corpus models
-      cap1-per-binding and cap2-per-binding-valueless (gate-tools corpus a75dc2b9f417,
-      20544bc6c8f2), written with the members of the package and of every part definition in the
-      reverse order, read `yT { Y >= 40.0 }` F/F/F/X, `negT` F/F/F/X and `yF { Y <= 5.0 }` T/T/T/X,
-      where X's 50 reaches Y and top's load through T1's binding at the chain's end (written in
-      order: ?/?/T/T, ?/?/T/T, ?/?/F/?). A false verdict on the check, the literal engine and the
-      numeric surface that turns on the text order, in the past-cap reading in defining-equation.ts;
-      the same at 84fb971. Pin both with their reversed twins in the four-surface table. Probes:
-      review-2026-10-14/wave3-probes/text-order/cap1r.sysml and cap2r.sysml (forward: cap1f, cap2f).
-      [text-order S1]
-- [ ] **File a usage-owned group's context rows whatever the declaration order.** e5-renamed (corpus
-      65a411ed2025) with its members reversed files no `E5::P::c in E5::Q::p` and no `E5::P::c in
-      E5::q::p` row on any surface (T/T/T/T written in order); the same at 84fb971. Probe:
-      review-2026-10-14/wave3-probes/text-order/65a411ed2025-e5-renamed.rev.sysml. [text-order S1
-      measurement]
 - [ ] **Read the equation an asserted conjunction gives on the numeric surface (optional).** Since
       text-order S1 a valueless feature that an asserted `L == 50.0 and L >= 0.0` constrains is no
       design freedom, so the numeric surface reads `t50 { p.L == 50.0 }` unknown, which SMT proves,
@@ -450,17 +408,6 @@ headings.
       contested rule; this one does not turn on the order. Decide whether a satisfied requirement's
       clause is a fact for the design-equation choice. Probe:
       review-2026-10-14/wave3-probes/text-order/reqk.sysml. [text-order S1 review]
-- [ ] **Tie K to a contradicted L through a bare-name equation `K == L` (`contradictedTaint`,
-      defining-equation.ts).** `attribute L; attribute measureK; L == 50.0 and L == 60.0` in either
-      order, `assert constraint x { K == L }`, a `part p : P` and `constraint kk { p.K >= 55.0 }`:
-      `contradictedTaint` does not tie K to the contradicted L, so K's FMI start and its measure
-      value are 50 or 60 by the order of the two equations, and `kk` reads F/X/F/X in one order and
-      T/X/T/X in the other on the check and the numeric surface. A local tied by `T == L` keeps the
-      same order-dependent start; `K == L + 0.0`, `K == 2.0 * L` and `bind K = L` are withheld
-      correctly. Not caused by text-order; add its twin to the four-surface table with the fix and
-      drop the USER-GUIDE limit sentence ('`K == L`, a bare name on each side, is not read as tying
-      K') when it closes. Probes: review-2026-10-14/wave3-probes/text-order/tie-ab.sysml,
-      tie-ba.sysml. [text-order S2]
 - [ ] **Route the three direct readers of `evaluateFeatureValue` left through
       `readsContradictedDefinition`.** `objectiveValue` and the `optimize` `scoreOf` fallback in
       solver.ts and the String-valued stated read in refinement.ts (~l.2882) still return the first
@@ -549,29 +496,6 @@ headings.
       Pinned as `h5-rb5-differ`
       (review-2026-10-14/wave3-probes/contradictory-models/h5-rb5-differ.sysml). Done when the
       assert is filed in q1 with the cause, or the two defaults are read. [contradictory-models S1]
-- [ ] **Read a definition's assert in an instance whose value an INSTANCE of the binding's owner
-      gives (VC, instance side).** `part def Q { attribute L : Real; part p : P; bind p.load = L; }`
-      with `part q : Q { attribute :>> L = 50.0; }` under P's `assert constraint a2 { load <= 10.0
-      }`: `readingContexts` lists no context for P::a2 (Q's p gets no value from a binding in Q), so
-      the check files no `P::a2 in q::p` row, `sysml-check --strict` passes, and the literal engine
-      and the numeric surface read a relation over q.L at T (exit 0); SMT files the axiom and reads
-      kL X (exit 2). A plain constraint of P is not read there either. A silent self-contradiction,
-      unchanged from the base. Pinned as `bound-vc-ivalue` (P::a2 `?/-/?/-`, kL `T/T/T/X` in
-      I7_ALLOWED); probes review-2026-10-14/wave3-probes/contradictory-models/bound-vc-ivalue.sysml,
-      j3.sysml, k2p-ivalue.sysml, i1.sysml (q2 = 5), i2.sysml (q3 valueless). Done when a group is
-      made for a usage whose value comes from its instances and q::p files its row. Neighbour of the
-      C3 case. [contradictory-models S1, review]
-- [ ] **Read a relation over a derived feature of a valueless feature a binding supplies.** `package
-      I5 { part def P { attribute load; attribute m2 = 10.0 - load; assert constraint c { m2 >= 0.0
-      } } part def Q { attribute L = 50.0; part p : P; bind p.load = L; } part q : Q; constraint k {
-      q.L >= 0.0 } }` is a silent pass on all four surfaces (identical at 71aa37a): no row `P::c in
-      Q::p`, k holds, SMT proves k; the twin `part p : P { attribute :>> load = 50.0; }` reports
-      `p::m2 = -40 misses P::c`. `bindingValued` skips features that state their own value and
-      `valuedByBinding` lists no context for a derived name. Pinned as `bound-vc-derived` (I5::P::c
-      ?/-/?/-, I5::k T/T/T/T). Options: list the context through the derivation's inputs, or abstain
-      on the row with its own sentence. Probes
-      review-2026-10-14/wave3-probes/contradictory-models/i5.sysml, i4.sysml. [contradictory-models
-      S1 review]
 - [ ] **Read `assert not constraint c { ... }` as the negation.** `part def P { attribute load :
       Real = 50.0; assert not constraint c { load > 10.0 } }` reads T on all four surfaces, but `c`
       holds at load = 50, so the negated assert is violated; the instance row of P::c in a
@@ -596,17 +520,103 @@ headings.
       probes abstains on the literal engine today, so no false verdict is known. Seed them if a
       model decides a row beside one. [contradictory-models S3]
 - [ ] **Read two asserted equations on the two ends of a binding that reaches an end through a part
-      as one feature's two values.** S3 reads the pair only where both ends are undotted features of
-      the element that holds the binding (the equations in it, in a usage of it or in a type it
-      specialises; through a chain too, across a specialisation too). In `part def Q { part p : P;
-      attribute M; bind p.L = M; assert constraint cm { M == 60.0 } }` with P's `assert constraint
-      cl { L == 50.0 }`, q.p.L == 50.0 and q.M == 50.0 read T and F on the check and the numeric
-      surface (one quantity by the binding; E5 is the two-ends-through-parts variant, T on the
-      check, ? numeric, X literal and SMT); the literal engine marks both inconclusive since D1.
-      Reading it as a set would leave P's L undecided in every P, so decide the scope first (taint
-      only the instance where they meet; see the optional abstention entry). Probe
-      review-2026-10-14/wave3-probes/contradictory-models/c6-nested-swap.sysml. Done when the
-      readings abstain together or agree on all surfaces. [contradictory-models S3]
+      only where they meet (the scope decision).** fence-readings S2 made the two readings abstain
+      together on every surface, so the entry's first done-when holds. The residual is the scope:
+      taint only the instance where the two equations meet (q's p and q's M), so that a `part p2 :
+      P` beside it, and every other P, keep reading `L == 50.0`; today P's L is undecided in every P
+      once such a binding exists (pinned as `u50` in bind-through-part). Probes:
+      review-2026-10-14/wave3-probes/contradictory-models/c6-nested-swap.sysml,
+      review-2026-10-14/wave3-probes/fence-readings/s2/bq.sysml. Done when only the meeting instance
+      abstains. [contradictory-models S3; fence-readings S2]
+- [ ] **Stop `loadModelText` running out of memory on a usage that subsets a library feature, beside
+      an instance and a constraint (pre-existing crash).** `package C { part def W { part p3 subsets
+      Parts::parts; } part w : W; constraint k { 1.0 <= 5.0 } }`
+      (review-2026-10-14/wave3-probes/fence-readings/oom/c.sysml; the first form, `part p3 :>
+      Parts::parts` with `constraint k1 { w.p1.load <= 5.0 }`, is
+      review-2026-10-14/wave3-probes/fence-readings/p/u1.sysml) dies with 'FATAL ERROR: Ineffective
+      mark-compacts near heap limit' under `NODE_OPTIONS=--max-old-space-size=700 timeout 90 npx tsx
+      scripts/sysml-check.ts --strict c.sysml`; at the default heap it runs about 2.6 minutes (about
+      3.3 GB) and prints nothing. The definition alone, or with an instance and no constraint,
+      loads, and so does `item i :> p1` or `attribute a :> p1.load` in place of the library
+      subsetting. Identical at 5d9e806. Cause not isolated: an unbounded walk over the library
+      subsetting once an instance and a constraint exist. Fix: bound the walk, or treat an
+      unresolved library subsetting as an abstention, and stop resolving a dotted chain through the
+      library feature's members. Done when the probe loads and checks in seconds. [fence-readings
+      review]
+- [ ] **Resolve a package-level chain end the same in either text order (loader).** The fence of
+      fence-readings S1 only withdraws the false verdict past the 32-usage cap: cap1r and cap2r read
+      ?/?/T/T and ?/?/F/?, as the forward text does. The root cause stays: bind.ts
+      `mostSpecificRedefining` / `endCopyProto` and the mapper resolve a package `bind Y =
+      top.a.….a.load` before T1's `bind a.load = L` has its end copy, so the chain end redefines
+      only T0::load when the bind is written first. Resolve package-level chain ends after every
+      definition's own end copies exist. Done when the loader's redefinedClosure of that end is the
+      same in both orders (a unit test on the closure) and the reversed corpus models pin the same
+      cells for the same reason. Probes: review-2026-10-14/wave3-probes/text-order/cap1r.sysml,
+      cap2r.sysml, cap1f.sysml, cap2f.sysml. Pins: cap1rev, cap2, cap2rev. [fence-readings S1]
+- [ ] **Give the specialisers of a usage-owned group one canonical order (optional).** The
+      group-order fence of fence-readings S1 is a stable sort by usage-ancestor count in
+      `contextsUncached`; `specialisersOf` itself and the context-key dedup have no canonical order,
+      so two contexts with equal nesting and the same reading key still file the first by text
+      order. Low: both rows read the same today. Probe:
+      review-2026-10-14/wave3-probes/text-order/65a411ed2025-e5-renamed.rev.sysml. Pins:
+      e5-renamed-rev, e5-renamed-silent, e5-renamed. [fence-readings S1]
+- [ ] **Bound the subsetting walk on dense layered diamonds and on a full DAG (cost;
+      pre-existing).** Layered graphs where every usage subsets all eight of the layer above: 7x7
+      12.9 s CPU, 8x8 52.6 s (5d9e806 49.8 s), 10x5 34 s, 8x10 (80 usages, 576 subsetting edges) not
+      finished after 7 CPU-minutes; a full DAG `part u_i :> u_1, ..., u_(i-1) [1]`: n=22 about 11 s,
+      n=26 99-105 s (174-192 s with a redefinition), n=30 over 4 minutes. Chains of 150-300, zigzags
+      and cycles stay at 5-8 s. The fixpoint of fence-readings is cheap; the super-linear step is in
+      the per-instance walk or `contextsOf`. Unchanged by fence-readings. Probes:
+      review-2026-10-14/wave3-probes/fence-readings/cost/grid{4x5,5x6,6x6,7x7,8x8,10x5,8x10}.sysml
+      and review-2026-10-14/wave3-probes/fence-readings/repro/R14-dense-subsetting-cost.sysml (n=22;
+      generate larger n). Done when 8x8 and n=26 finish in seconds. [fence-readings final review]
+- [ ] **Abstentions left in the readings (rollup; sound, only weaker).** Each reads unknown where an
+      answer exists; none gives a wrong answer. (1) The subsetting component fence is per usage, not
+      per instance: the usage an instance redefines itself (w.p1 beside `p2 :> p1`), every instance
+      of what the component's usages are features of, and a package subsetter's subsetted usage
+      abstain even where the reading would be right (pins sub-rv1-diamond k2, sub-sa7 k1, the two
+      satisfy rows of sat-nested-nq3; corpus model e1-subset); a sound per-instance skip needs
+      per-context answers. (2) A bridge, chain-target or package fence fires on any member that
+      states a value, at any depth, or whose type states one, even where the values agree. (3) A
+      line of parts, a merged line and a twice-stated feature fence every name they reach (dependent
+      attributes included); `Y :>> X` beside any statement of X abstains in both orders; the nested
+      content of a twice-stated part abstains even where identical; `:>> M, N = 6.0` over a general
+      type's `X :>> M, N` abstains though the values agree
+      (review-2026-10-14/wave3-probes/fence-readings/p/m4.sysml, rows uM and uN). (4) The ends of
+      every type of a connection that connects features abstain, whatever the connected feature
+      states (pin conn-end-redefined). (5) A satisfy written outside its definition is not resolved
+      through the owning namespaces: NQ1, NQ2, NQ5, NQ7 abstain instead of filing w's F row as NQ3
+      does (widen the mapper's sourceChain to `::` paths and resolve in writtenSatisfier,
+      satisfierOtherwiseOf and the satisfy-context listing;
+      review-2026-10-14/wave3-probes/fence-readings/s2/nq1.sysml, nq2, nq5, nq7). (6) A subsetted
+      feature is read as the union of its own value and its subsetter's when p1's upper bound is 1,
+      abstaining when it is unstated or above 1 (needs a multiplicity ruling; also settles
+      e1-subset; review-2026-10-14/wave3-probes/fence-readings/s2/rv1.sysml, rev/rv-spec.sysml,
+      rev/rv-q.sysml). (7) A feature that redefines two features of one line is not modelled as ONE
+      feature (its two written values as a contradiction, or as one value: a decision on what the
+      tool reads; review-2026-10-14/wave3-probes/fence-readings/s2/mu.sysml, mur.sysml, mu1.sysml).
+      (8) An own-sibling redefinition is not read as one hard validation error
+      (review-2026-10-14/wave3-probes/fence-readings/s2/os-a.sysml); models that contain one still
+      decide cells, the model being invalid and flagged. (9) Bindings: Q's own generic row (P::a2 in
+      Q::p, no value anywhere) and an instance nothing gives a value (q3) stay ?/-/?/-; a derived
+      chain deeper than four values, or whose names the context does not denote, is not listed as
+      bound-valued and its row is not filed (wave3-probes/contradictory-models/bound-vc-derived
+      family, i5.sysml, i4.sysml); every binding read through an instance of a definition owning a
+      capped end is past the cap and abstains on the check and literal engine, including bindings
+      the capped one does not reach in the reversed text (text-order/cap1r.sysml, cap2r.sysml). (10)
+      Rows read through a subsetter whose subsetted usage an instance reads otherwise abstain
+      together with the subsetted usage's rows
+      (review-2026-10-14/wave3-probes/fence-readings/p/v1.sysml, v2.sysml); the component fence
+      ignores multiplicity; a chain taint does not reach a subsetter declared deeper in a
+      specialisation the model never instantiates. (11) Order only, sound either way: the SMT lane's
+      `?` versus `X` letters on contradictory merged lines and `T` versus `?` on generic requirement
+      rows; the row key of a constraint read in a specialisation context flips with member order
+      ('in W3' or 'in v', same ?/?/?/? cell;
+      review-2026-10-14/wave3-probes/fence-readings/p2/o1.sysml); the tie sentence lists the
+      equations in written order (review-2026-10-14/wave3-probes/fence-readings/p2/t2.sysml); `part
+      p1 :> p1` terminates and abstains but raises no specialization-cycle diagnostic, unlike p1 :>
+      p2 :> p1 (review-2026-10-14/wave3-probes/fence-readings/p2/cy3.sysml). Probes:
+      review-2026-10-14/wave3-probes/fence-readings/. [fence-readings]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** One symbol per feature across the usages of one definition: `part def P { attribute
       L; attribute K; bind L = K; } part a : P { assert constraint ea { L == 50.0 } } part b : P {
@@ -622,15 +632,6 @@ headings.
       inconsistent-axioms claim; unchanged from the base and in the USER-GUIDE limits. Done when SMT
       keys a symbol by instance, or the shapes are pinned in I7_ALLOWED with this reason.
       [contradictory-models S3, review]
-- [ ] **Model a feature that redefines two features of one line (`attribute X :>> M, N`) when a
-      usage redefines both.** `part def Q2 :> Q { attribute X :>> M, N default = 3.0; }` with `part
-      s : Q2 { attribute :>> M = 1.0; attribute :>> N = 2.0; }`: both of s's redefinitions are of X,
-      one feature that then has two values (no value, ref ?). Every surface instead reads s's M and
-      s's N as two features, each redefining Q's, and decides: MU sM1 and sN2 T/T/T/T, sN1 F/F/F/F;
-      MUR is the reversed twin. Six KNOWN_FALSE rows (`REDEFINES_TWO_FEATURES`), unchanged from
-      84fb971, and the guide says to trust no verdict over those two features. Opus class. Done when
-      those rows abstain on all four surfaces or report the contradiction. [redefinition-target S1
-      review]
 - [ ] **Name an unnamed redefinition by its effective name in the numeric surface sentences.**
       `nameList` (solver.ts) prints the raw element id for `attribute :>> L;` ("fixes 12ac9de4-…",
       "did not converge: f4bded69-… is where it stopped"); use `effectiveNameOf` or
