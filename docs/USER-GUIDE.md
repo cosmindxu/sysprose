@@ -775,7 +775,15 @@ Two names worth separating:
   between two of those points, is not found** — `1.0 / (x - 5.0) == 2.0` (root 5.5, pole 5, between 4 and 8)
   and `3.0 / (x + 1.5) == 10.0` (root −1.2, pole −1.5, between −2 and −1) read *unknown* alone, in every
   order, never a value (a plain constraint that states the value, `x == 5.5`, supplies it, and the equation is
-  then *imposed* beside it in either order). One that disagrees with the
+  then *imposed* beside it in either order). A residual under the gate is a root's only where the equation is
+  steep enough there, to first order. A flat one (`1.0 / x == 0.000001`, slope 1e-12) is under the gate 227
+  from its root 1e6, which is found, so `x >= 999999.0` beside it is satisfied; one that tends to its asymptote
+  where it has no root (`2.0 ^ x == 0.0`, `6.0 / (x + 1.0) == 0.0`, `5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 +
+  2.0`) reads *unknown* with what stands beside it, in every order, and `solveFeasible` has no witness for it. A
+  pin within the gate of a flat equation but off its root (`x == 999773.0` beside `1.0 / x == 0.000001`) is
+  not read as agreeing with it. `solveFeasible` gives no witness at which a divisor the search moved is within
+  tolerance of 0 (`x / y == 3.0` beside `y == 0.0` and `x == 0.0`: 0/0 satisfies nothing), nor one where an
+  equation divides by exactly 0 (`y == 0.0` beside it, `x` free). One that disagrees with the
   values the others fix (`x == 7.0` beside them) is withheld with them. Such a
   quotient or exponential set equal to a side that varies with the same feature
   can cross it more than once, so the equation is read as a whole and as if it had more than one
