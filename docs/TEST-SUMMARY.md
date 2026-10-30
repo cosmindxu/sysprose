@@ -5,12 +5,12 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 5098 total — 5098 passed, 0 failed, 0 skipped
+- **Tests:** 5136 total — 5136 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 120 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 122 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
 | test/campaign/verification.test.ts | 185 | 0 | 0 |
@@ -38,7 +38,7 @@
 | test/integration/smt-z3.integration.test.ts | 33 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
-| test/integration/verification.differential.test.ts | 222 | 0 | 0 |
+| test/integration/verification.differential.test.ts | 223 | 0 | 0 |
 | test/interop/self-roundtrip.test.ts | 10 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
@@ -137,14 +137,14 @@
 | test/unit/semantics.smt-encode.test.ts | 61 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 133 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 75 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 77 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 31 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 328 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 338 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
@@ -152,12 +152,12 @@
 | test/unit/text.grammar2.test.ts | 14 | 0 | 0 |
 | test/unit/text.lexer.test.ts | 6 | 0 | 0 |
 | test/unit/text.literal-form.test.ts | 24 | 0 | 0 |
-| test/unit/text.load.test.ts | 9 | 0 | 0 |
+| test/unit/text.load.test.ts | 14 | 0 | 0 |
 | test/unit/text.parser.test.ts | 14 | 0 | 0 |
 | test/unit/text.recovery-honesty.test.ts | 30 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 134 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 152 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 26 | 0 | 0 |
