@@ -2532,6 +2532,71 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(page['G::c21']).toBe('?/?/?/?');
       });
 
+      // A binding whose end is a copy the saved file does not make AND whose name a member of the owner bears: the file
+      // binds that member (a retype, a rename, a feature made), the page cannot say what it then joins. The scope of
+      // the binding's owner is withheld (DefiningEquations.partedHolder), so a row naming one decides nothing, where
+      // the page used to read the binding set aside (Zb at its own 1.0: F) and the file reads two values joined (??).
+      // Soak seeds 333, 1115, 3034 of review-2026-10-14/wave3-probes/fence-editor/b.test.ts.
+      it('a copy whose name a member of its owner bears parts the binding: the rows of both ends are withheld, as the file reads them', async () => {
+        const cells = (row: string | undefined): string[] => (row ?? '').split('/');
+        /** No cell the page decides (T or F) that the file does not give alike: the file may decide more, never less sure. */
+        const neverMore = (page: Record<string, string>, file: Record<string, string>, note: string): void => {
+          for (const [k, row] of Object.entries(page)) {
+            cells(row).forEach((c, i) => {
+              if (c === 'T' || c === 'F') expect(cells(file[k])[i], `${note}: ${k} lane ${i}`).toBe(c);
+            });
+          }
+        };
+        // (a) The copy is stale after a retype, then a rename gives a member of the owner its name (seed 3034).
+        load(`package PB {
+  part def Q0 { attribute N default = 12.0; }
+  part def D1 :> Q0;
+  part def D4 :> D1 { attribute K2 default = 15.0; }
+  part u1 : D4 { attribute :>> N = 19.0; attribute Zb = 1.0; bind Zb = K2; }
+  constraint cZb { u1.Zb == 11.0 }
+  constraint cN { u1.N == 19.0 }
+  constraint cK { u1.K2 == 15.0 }
+}`);
+        st().bindType(byName('u1').id, 'D1');
+        const retyped = await surfaces(st().model);
+        neverMore(retyped, await surfaces(reopened(st().model)), 'retype u1 to D1');
+        st().updateElement(st().model.children(byName('Q0').id).find((c) => c.declaredName === 'N')!.id, { declaredName: 'K2' });
+        const a = await surfaces(st().model);
+        expect(a['PB::cZb'], 'page: the binding is parted, Zb is not read').toBe('?/?/?/?');
+        const said = checkConstraints(st().model).find((r) => st().model.qualifiedName(r.id) === 'PB::cZb')!;
+        expect(said.message, 'the check says why').toContain('u1.Zb is not read: PB::u1 owns a binding whose end is a copy the saved file reads as another feature');
+        neverMore(a, await surfaces(reopened(st().model)), 'rename Q0::N to K2');
+        // (b) The copy is not stale: the rename gives a member of the owner the name its feature bears (seed 1115).
+        load(`package PC {
+  part def T0 { attribute K default = 13.0; }
+  part def D1 :> T0 { attribute K2 default = 14.0; attribute M2 :>> K default = 15.0; }
+  part u1 : D1 { attribute :>> M2 = 17.0; attribute Zb = 1.0; bind Zb = K2; }
+  constraint cM2 { u1.M2 == 18.0 }
+  constraint cZb { u1.Zb == 14.0 }
+}`);
+        st().updateElement(st().model.children(byName('T0').id).find((c) => c.declaredName === 'K')!.id, { declaredName: 'K2' });
+        const b = await surfaces(st().model);
+        expect(b['PC::cM2'], 'page: u1 is withheld').toBe('?/?/?/?');
+        neverMore(b, await surfaces(reopened(st().model)), 'rename T0::K to K2');
+        // (c) A bound end moved up into a type its owner specialises: the file makes the copy `u0::Zb` the page does
+        // not hold (seed 20290), and reads the two values joined where the page read M at its own 18.0.
+        load(`package PD {
+  part def Q0 { attribute M default = 11.0; }
+  part u0 : Q0 { attribute :>> M = 18.0; attribute Zb = 1.0; bind Zb = M; }
+  constraint cM { u0.M == 18.0 }
+  constraint cZ { u0.Zb == 18.0 }
+}`);
+        st().reparent(byName('Zb').id, byName('Q0').id);
+        const c = await surfaces(st().model);
+        expect(c['PD::cM'], 'page: u0 is withheld').toBe('?/?/?/?');
+        expect(c['PD::cZ']).toBe('?/?/?/?');
+        neverMore(c, await surfaces(reopened(st().model)), 'move u0::Zb up into Q0');
+        // A stale copy no member of its owner bears stays exactly as before: the file reads the end unresolved too.
+        load(EC);
+        st().bindType(byName('r').id, 'Z');
+        expect(await surfaces(st().model)).toEqual(await surfaces(reopened(st().model)));
+      });
+
       it('deleting the feature a definition-level bind ends on leaves no copy the page proves through', async () => {
         load(`package DB {
   part def P { attribute load default = 1.0; }

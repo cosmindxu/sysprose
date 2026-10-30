@@ -1617,8 +1617,10 @@ export function settleRedefinitions(
   let moved = 0;
   /** The copies the settle made stale or put back: the bindings that end in them are marked after the rounds. */
   const staled = new Set<ElementId>();
+  /** Of those, the copies the saved file merges into another feature of their owner ({@link markStaleBindings}). */
+  const parted = new Set<ElementId>();
   for (let round = 0; round < MAX_SETTLE_ROUNDS && deep.length + shallow.length > 0; round++) {
-    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId; make?: true; copy?: true; rename?: string }> = [];
+    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId; make?: true; copy?: true; parted?: true; rename?: string }> = [];
     const lines = new Map<ElementId, ReadonlySet<string>>();
     const ask = (typeId: ElementId, only: ReadonlySet<string> | undefined): void => {
       const type = model.get(typeId);
@@ -1643,13 +1645,15 @@ export function settleRedefinitions(
             const to = endCopyLanding(model, f, from);
             if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId, ...(to === null ? { copy: true as const } : {}) });
             else {
+              // A copy that stays is asked again whether a member of its owner now bears its name ({@link claimedCopy}).
+              staled.add(f.id);
               // The copy stays on the feature, but the next parse names it by that feature's name now (a renamed
               // `:>> M` makes the copy `Zd3`, not `N2`): the copy takes the name, or, where another feature of the
               // owner bears it, the binding merges into that one and the copy is parted (stale).
               const target = model.get(from);
               const want = target && (target.declaredName ?? target.declaredShortName ?? effectiveNameOf(model, target));
               if (want !== undefined && want !== '' && want !== f.declaredName) {
-                if (otherNamed(model, typeId, want, f.id) !== undefined) moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId, copy: true });
+                if (otherNamed(model, typeId, want, f.id) !== undefined) moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId, copy: true, parted: true });
                 else moves.push({ rel: '', to: from, from, feature: f.id, owner: typeId, rename: want });
               }
             }
@@ -1688,7 +1692,10 @@ export function settleRedefinitions(
           const protoName = proto && (proto.declaredName ?? proto.declaredShortName ?? effectiveNameOf(model, proto));
           const taken = protoName !== undefined && protoName !== name && otherNamed(model, typeId, protoName, f.id) !== undefined;
           if (proto && proto.id !== f.id && !taken) moves.push({ rel: '', to: proto.id, from: proto.id, feature: f.id, owner: typeId, make: true, copy: true });
-          else staled.add(f.id);
+          else {
+            staled.add(f.id);
+            if (taken) parted.add(f.id);
+          }
         }
       }
     };
@@ -1718,7 +1725,11 @@ export function settleRedefinitions(
       }
     });
     moved += moves.length;
-    for (const mv of moves) if (mv.copy) staled.add(mv.feature);
+    for (const mv of moves) {
+      if (!mv.copy) continue;
+      staled.add(mv.feature);
+      if (mv.parted) parted.add(mv.feature);
+    }
     // The features that moved ask what is nested in them (it resolves through the target they have taken); the
     // types around them ask what the moves left them, by the names of the lines that changed.
     deep = withSpecialisers(model, moves.map((mv) => mv.feature));
@@ -1732,32 +1743,63 @@ export function settleRedefinitions(
       filter = movedNames;
     }
   }
-  if (staled.size > 0) markStaleBindings(model, staled);
+  if (staled.size > 0) markStaleBindings(model, staled, parted);
   return moved;
+}
+
+/**
+ * Is `el` an implicit end copy whose owner has a member of its own that bears the copy's name (after a rename, or a
+ * member made, on the line the copy was made for)? The saved file makes no copy there: it binds that member, which
+ * the page does not (a stale copy, or one on another feature), so it cannot say what the file reads of the binding.
+ * A stale copy no member of its owner bears is read by the file as an unresolved end, which binds nothing.
+ */
+function claimedCopy(model: Model, el: ElementRecord): boolean {
+  if (el.attrs.implicit !== true || el.ownerId === null || el.declaredName === undefined || el.declaredName === '') return false;
+  const name = el.declaredName;
+  return model.children(el.ownerId).some(
+    (c) =>
+      c.id !== el.id &&
+      c.attrs.implicit !== true &&
+      !isRelationship(c.eClass) &&
+      [c, ...redefinedClosure(model, c)].some((g) => g.declaredName === name || g.declaredShortName === name),
+  );
 }
 
 /**
  * Mark the bindings that end in a stale copy, or in a feature a stale copy owns (`attrs.staleEnd`), and clear the mark
  * of those that no longer do. The saved file has no such copy, so it reads such a binding with an unresolved end, which
  * binds nothing: every reader of a binding (`isBindingEdge`, `isBindingConnector`) leaves a marked one aside.
+ *
+ * Where a member of the copy's owner bears its name ({@link claimedCopy}) the file binds that member instead, and the
+ * page cannot say which feature the binding joins in the file, or what value it contradicts: the binding is marked
+ * `attrs.partedEnd` too, and the scope of the element that owns it offers no name (DefiningEquations.partedHolder), so
+ * no row naming one is decided (soak seeds 333, 1115 and 3034: the page FF, the file ??).
  */
-function markStaleBindings(model: Model, copies: ReadonlySet<ElementId>): void {
+function markStaleBindings(model: Model, copies: ReadonlySet<ElementId>, parted: ReadonlySet<ElementId>): void {
   const ids: ElementId[] = [...copies];
   for (let i = 0; i < ids.length; i++) for (const c of model.children(ids[i]!)) if (!isRelationship(c.eClass)) ids.push(c.id);
-  const staleChain = (id: ElementId): boolean => {
+  /** 0: no end is a stale or claimed copy; 1: one is stale; 2: one is claimed by a member of its owner. */
+  const staleChain = (id: ElementId): 0 | 1 | 2 => {
+    let out: 0 | 1 = 0;
     for (let o: ElementId | null | undefined = id; o !== null && o !== undefined; o = model.get(o)?.ownerId) {
       const el = model.get(o);
-      if (!el) return false;
-      if (isStaleCopy(model, el)) return true;
+      if (!el) return 0;
+      if (parted.has(el.id) || claimedCopy(model, el)) return 2;
+      if (isStaleCopy(model, el)) out = 1;
     }
-    return false;
+    return out;
   };
   model.transaction(() => {
     for (const id of new Set(ids)) {
       for (const b of model.edgesOf(id)) {
         if (b.attrs.isLibrary === true || isRelationship(b.eClass) || !b.eClass.startsWith('BindingConnector')) continue;
-        const stale = [...(b.source ?? []), ...(b.target ?? [])].some(staleChain);
-        if ((b.attrs.staleEnd === true) !== stale) model.setAttrs(b.id, { staleEnd: stale ? true : undefined });
+        const ends = [...(b.source ?? []), ...(b.target ?? [])].map(staleChain);
+        const stale = ends.some((e) => e > 0);
+        // A copy parted by an earlier settle stays so while it is stale: the name it was merged under is not kept.
+        const apart = ends.includes(2) || (stale && b.attrs.partedEnd === true);
+        if ((b.attrs.staleEnd === true) !== stale || (b.attrs.partedEnd === true) !== apart) {
+          model.setAttrs(b.id, { staleEnd: stale ? true : undefined, partedEnd: apart ? true : undefined });
+        }
       }
     }
   });

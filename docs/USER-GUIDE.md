@@ -1141,8 +1141,12 @@ edit has since renamed away from that feature, or that a feature of r or a type 
 (the next open would read it as that feature), goes back to the copy's own. Renaming the feature a copy redefines
 renames the copy with it (the next open names the copy by that feature), so a constraint written with the old name
 reads what the file reads. Where another feature of the owner already bears the new name, the next open merges the
-binding into that feature: the page parts the copy (a stale copy), and the row that reads through it abstains
-where the file decides.
+binding into that feature: the page parts the copy (a stale copy), and no row that names a feature of the
+element that owns the binding is decided, because the page cannot say what the binding then joins (below).
+Likewise where a copy that is not stale, or a stale one, has a name that a member of its owner bears (a rename
+or a new feature gave it), and where a binding's end is a feature of a type its owner specialises, held with no
+copy of its own (a bound feature moved up into the type): the next open binds that member, or makes the copy,
+and the page reads neither.
 
 The Name and Short name boxes of the Properties panel apply on Enter or on leaving the box,
 not per key (Escape puts the name back, and so does an emptied box: a name is not cleared there), so a name typed key by key is one edit and one Undo
@@ -1172,9 +1176,13 @@ Five more cases are not followed, and in each the page can read what the saved f
   again, reports `ref/unresolved-reference` and an unbound connector end.
 - A feature renamed onto a name another feature of the same owner bears (`D2`'s `:>> N` renamed to
   `Z1` in a definition whose usage has a `Z1`) makes the file merge the usage's binding into that
-  feature, and the page, which parts the copy, abstains on the rows the file decides; a literal row
-  over the merged feature, which the file calls contradictory (`bind Zb = Z1` joins two values), the
-  page can still read.
+  feature, which the file calls contradictory where it joins two values (`bind Zb = Z1`). The page parts
+  the copy and leaves every name of the element that owns the binding unread, so it abstains on those
+  rows where the file decides, and never reads `Zb` at its own value where the file reads it joined: the
+  check says `u0.Zb is not read: G::u0 owns a binding whose end is a copy the saved file reads as another
+  feature, so no name of G::u0 is read until the file is saved and opened again`; the numeric, literal and
+  SMT rows are inconclusive. Save and open the file to read them. What stays: a stale copy no member of
+  its owner bears is read as the file reads it (the end unresolved), and decides.
 - A peer's edit in a collaboration room is not settled by the receiver, which relies on the
   sender's settle arriving as edits (not exercised with two live clients).
 - A `window.sysml` call that points a redefinition at a feature its owner does not inherit (a
