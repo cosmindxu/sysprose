@@ -239,9 +239,7 @@ abstain on or read false in the four-surface table
 an asserted equation override a `default` on every surface, read definition-feature and part-valued
 bindings, deleted the eleven `I7_ALLOWED` entries of the old clash, and pinned what it left open.
 Since per-instance-rest (merged by `ca4992c`), `KNOWN_FALSE` was empty (it held 20 rows at 3c54ae0), and
-contradictory-models (merged by 1653271) pins two rows in it again, tagged `NO STEP`: E1E::c3F and E1E::c3T,
-the numeric solve carrying an asserted value through a package head's slot (entry below);
-redefinition-target (merged by 64d149d) adds six more tagged `NO STEP`, for a feature that
+redefinition-target (merged by 64d149d) pins six rows in it again, tagged `NO STEP`, for a feature that
 redefines two features of one line (MU, MUR; entry below). Since
 default-stands (decision 14 amended 2026-10-22) a `default` stands against every assertion; only a
 feature without a value is defined by an asserted equation. The residuals are the entries below. The
@@ -469,11 +467,6 @@ headings.
       equation written for a contradicted feature. No probe reaches the optimize fallback (11 shapes
       return NaN or the stated value on 84fb971 and on text-order: the solve marks the objective
       unsettled first), so this is unverified, not known false. [text-order S2 review]
-- [ ] **Do not seed a valueless parameter's FMI start into a co-simulation as a fixed 0
-      (optional).** `seedInputs` in src/interop/fmi/cosim.ts still seeds a parameter or input whose
-      start is the type default as a fixed override into `solve`, so outputs are computed from an
-      invented 0; text-order S2 stopped it only for a withheld contradicted start
-      (`FmiVariable.startWithheld`). The same flag could mark a valueless parameter. [text-order S2]
 - [ ] **Solve the plain equations of a design component jointly over all roots (optional).** Since
       text-order the curved-root rule withholds `x * x == 4.0` beside `x == 2.0` in both orders
       where one root agrees (it read t/t before); a finer rule would solve the plain equations
@@ -535,23 +528,19 @@ headings.
       plain constraint beside another left unused is withheld (`x / y == 3.0` beside `y == 2.0` and
       `x == 6.0`). (10) Cost: `fixedByOthers` is rebuilt per curved equation, quadratic per
       component (about 1.2x b635385 on a chain of 400 with a curved leaf per member), and
-      `optimize()` re-solves without a cache. Probes: review-2026-10-14/wave3-probes/numeric-curved/
-      (lens1-r5, worklist-probes, nc-rereview2-p1, sweeps/),
-      review-2026-10-14/wave3-probes/text-order/. [numeric-curved]
-- [ ] **Keep the numeric solve from carrying an asserted value through a package head's slot when
-      the assert sits in a definition (E1's enclosed twin).** `package E1E { part def P { attribute
-      load; } attribute M default = 9.0; bind P::load = M; part p4 : P { attribute :>> load default
-      = 7.0; } part def W { attribute L; assert constraint fix { L == 5.0 } part p2 : P; bind
-      p2.load = L; } part w : W; part p3 : P; constraint c3T { p3.load <= 6.0 } constraint c3F {
-      p3.load >= 6.0 } }`: M gives way, and the check, the literal engine and SMT read p3's load
-      with no value, but the numeric solve sets M = 5 and p3 = 5 and reads c3T T and c3F F. The
-      package-level L (E1) abstains on all four. Cause: `givenWayDefaults` in solver.ts keys on the
-      variables the asserted equation reads directly and does not follow the binding into M; leave
-      free any variable `givenWayThroughHead` names, as the SMT lane does. Pinned as probe
-      `stand-gw-e1-encl` with rows E1E::c3F and E1E::c3T in KNOWN_FALSE (NO STEP); delete both when
-      it is fixed. Probe:
-      review-2026-10-14/wave3-probes/contradictory-models/stand-gw-e1-encl.sysml. Done when it reads
-      ?/?/?/?. [contradictory-models S2]
+      `optimize()` re-solves without a cache. (11) A fenced head carry (fence-numeric): numeric
+      reads an assert's slot at the assert's own value where the check and the literal engine
+      abstain on the slot (E1Q `c2T`, `fix`: pinned `stand-gw-e1-slot` with null refs; probe
+      fence-numeric-scratch/p/path0.sysml); for a valued L through a package head (V2/V4/V5) numeric
+      and SMT read p3.load and M at the written 5 where the check and the literal engine abstain, a
+      surface disagreement that may be a model solution (probes fence-numeric-scratch/rev/v2.sysml,
+      v4, v5; a sound fence needs `contracts.ts`); the numeric abstention uses the generic left-free
+      sentence, not one naming the head binding as the SMT lane does. (12) An FMI parameter or input
+      whose stated value the tool cannot evaluate (`Bb = A + 1.0` over a valueless A, `1.0 / 0.0`)
+      is held free (NaN) with the note 'the model states none this tool reads' (probe
+      fence-numeric-scratch/review/fmi2.mts, cases `expr` and `big`). Probes:
+      review-2026-10-14/wave3-probes/numeric-curved/ (lens1-r5, worklist-probes, nc-rereview2-p1,
+      sweeps/), review-2026-10-14/wave3-probes/text-order/. [numeric-curved; fence-numeric]
 - [ ] **Read Q's assert at an instance whose binding joins the asserted path to defaults that differ
       (RB5E).** `part q1 : Q { attribute K default = 9.0; attribute J default = 8.0; bind p.x = K;
       bind p.x = J; }` under Q's `assert constraint tie { p.x == 50.0 }` gives q1's p.x no value to
