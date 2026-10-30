@@ -427,22 +427,21 @@ headings.
       by numeric-curved: an equation one to one in the feature it fixes is single-root; what stays
       withheld is a curved plain constraint beside another left unused, listed in the rollup
       'Abstentions left in the numeric solver'. [text-order re-review; numeric-curved S2]
-- [ ] **Stop the numeric surface reading an equation with no root, or a flat one, as solved
-      (pre-existing, wrong answer).** Identical at b635385. (1) A one-to-one equation set to a value
-      it never reaches reads t at a far point: `2.0 ^ x == 0.0` beside `x <= 0.0` reads a t, b T at
-      x = -30.74, and `6.0 / (x + 1.0) == 0.0` beside `x >= 0.0` reads ?/? but `solveFeasible`
-      answers feasible, decided, with the witness x about 3e21
-      (review-2026-10-14/wave3-probes/numeric-curved/lens1-r5/N1..N6). (2) An exponential set equal
-      to its asymptote reads t at |f| < 1e-9 (`5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 + 2.0`). (3) `1.0
-      / x == 0.000001` beside `x >= 999999.0` reads k F and `solveFeasible` infeasible
-      (review-2026-10-14/wave3-probes/numeric-curved/p12, R1 and R2): the absolute 1e-9 accept of a
-      flat function in the Newton path. (4) A flat equation beside a wrong pin reads both t when the
-      pin is within the gate. (5) `x / y == 3.0` with `y == 0.0` and `x == 0.0` gives
-      `solveFeasible` a witness near 1e-16 though 0/0 satisfies nothing
-      (review-2026-10-14/wave3-probes/numeric-curved/zero-over-zero-p1.sysml). Fix: withhold or
-      reject a root-find that ends beyond the equation's tolerance only because the function tends
-      to its asymptote (`witnessGate` does so for `x / (1.0 + x * x) == 0.6 + y`), and refuse a
-      witness at which a divisor is within tolerance of zero. [numeric-curved]
+- [ ] **Stop the numeric surface and solveFeasible reading a no-root equation reached through a
+      further equation as solved (pre-existing, wrong answer).** fence-numeric2 fences an equation
+      with no root, or a flat one, alone or beside an inequality, a pin or an equation that fixes
+      the other side. What stays: `y == 6.0 / (x + 1.0)`, `z == y * 2.0`, `z == 0.0`, `x >= 0.0`
+      reads c0, c1 and c2 imposed (t) and solveFeasible answers feasible and decided at x = 2.1e11;
+      an asserted `y == 1.0 / x` in the same chain reads T; `y == 2.0 ^ x`, `y == 0.0000000001`, `x
+      <= -34.0` is feasible and decided at x = -9.6e18; `z == x / y`, `z == 0.0`, `x == 1.0` is
+      feasible and decided at y = -3.6e38. Each equation is within 1e-8 of a root alone (nearRoot
+      takes the size over all its variables, so a runaway variable excuses any residual); the
+      evidence of no root is joint. Pinned: fence-fn13 (t rows) and fence-fn13a (KNOWN_FALSE, both
+      text orders); solveFeasible is not in the four-surface table. Fix: judge the witness by the
+      minimum-norm correction of the whole touched system against the same 1e-8 relative distance; a
+      magnitude guard is unsafe (6 of the 637 corpus models legitimately exceed 1e9 times their
+      largest literal). Probes: fence-numeric2-scratch/review/ i01-i04, g13, f01, f03, f04, f12,
+      b28. [fence-numeric2 review]
 - [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The guide
       says 'bar four cases'. Each abstains in one text order and reads a value in the other, never a
       different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
@@ -488,6 +487,15 @@ headings.
       fence-numeric-scratch/review/fmi2.mts, cases `expr` and `big`). Probes:
       review-2026-10-14/wave3-probes/numeric-curved/ (lens1-r5, worklist-probes, nc-rereview2-p1,
       sweeps/), review-2026-10-14/wave3-probes/text-order/. [numeric-curved; fence-numeric]
+      fence-numeric2: (a) double roots read ? where base read t (`x * x == 0.0`, `(x - 3.0) ^ 2.0 ==
+      0.0`); (b) a tautology held exactly 0 or 1 by a quotient or power reads ? (`0.0 / x == 0.0`,
+      `x ^ 0.0 == 1.0`) and solveFeasible goes d1f1 to d0f0; (c) two stated values further apart
+      than 1e-8 of their size but closer than the 1e-6 gate read ? on both rows (`x == 1.0000001`
+      beside `x == 1.0`); (d) a guarded divisor refuses the witness even when the branch is not
+      taken; (e) dividesByNearZero is absolute in SI, so a free divisor below 1e-6 loses its witness
+      (`x / y == 3.0`, y in [1e-7, 2e-7]); (f) a lone no-root equation reads ? and solveFeasible
+      undecided (was decided-infeasible through a false premise; 168 generator models). Probes:
+      fence-numeric2-scratch/review/. [fence-numeric2]
 - [ ] **Read Q's assert at an instance whose binding joins the asserted path to defaults that differ
       (RB5E).** `part q1 : Q { attribute K default = 9.0; attribute J default = 8.0; bind p.x = K;
       bind p.x = J; }` under Q's `assert constraint tie { p.x == 50.0 }` gives q1's p.x no value to
@@ -496,14 +504,18 @@ headings.
       Pinned as `h5-rb5-differ`
       (review-2026-10-14/wave3-probes/contradictory-models/h5-rb5-differ.sysml). Done when the
       assert is filed in q1 with the cause, or the two defaults are read. [contradictory-models S1]
-- [ ] **Read `assert not constraint c { ... }` as the negation.** `part def P { attribute load :
-      Real = 50.0; assert not constraint c { load > 10.0 } }` reads T on all four surfaces, but `c`
-      holds at load = 50, so the negated assert is violated; the instance row of P::c in a
-      binding-carried instance reads T the same way. A silent pass of a model that contradicts
-      itself, identical at the base. Probes
-      review-2026-10-14/wave3-probes/contradictory-models/h1.sysml, h2.sysml. Done when the negated
-      assert is checked, or the form is refused with its own finding. [contradictory-models S1
-      review]
+- [ ] **Read `assert not constraint c { ... }` as the negation.** The form (also `require not`,
+      `assume not`) is now refused at load with its own error, `mapper/negated-assert-unread`: the
+      load degrades, the judging commands exit 2 and the reporting ones exit 1, the app's checks
+      stand down, the save keeps the clause verbatim, and no surface files a row for it. Before, h1
+      and h2 already failed to load as an unnamed parse error whose recovery left c a plain
+      constraint on the in-process surfaces (T on all four). Done when the clause is read: the
+      mapper keeps `negated` and the body, the check, the numeric solve and the instance rows judge
+      the NEGATION of the body, the SMT axiom role asserts `not (body)`, `isAsserted` does not make
+      a negated `==` define a value, and the refusal is lifted. Probes:
+      review-2026-10-14/wave3-probes/contradictory-models/h1.sysml, h2.sysml; pinned as
+      neg-assert-h1/-rev, neg-assert-h2/-rev, neg-assert-family. [contradictory-models S1 review;
+      fence-assert-not]
 - [ ] **File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine
       can seed from it.** Since contradictory-models S3 the literal engine marks the rows over the
       values a binding the check reports violated joins inconclusive. Two rows still decide on the
@@ -528,21 +540,6 @@ headings.
       review-2026-10-14/wave3-probes/contradictory-models/c6-nested-swap.sysml,
       review-2026-10-14/wave3-probes/fence-readings/s2/bq.sysml. Done when only the meeting instance
       abstains. [contradictory-models S3; fence-readings S2]
-- [ ] **Stop `loadModelText` running out of memory on a usage that subsets a library feature, beside
-      an instance and a constraint (pre-existing crash).** `package C { part def W { part p3 subsets
-      Parts::parts; } part w : W; constraint k { 1.0 <= 5.0 } }`
-      (review-2026-10-14/wave3-probes/fence-readings/oom/c.sysml; the first form, `part p3 :>
-      Parts::parts` with `constraint k1 { w.p1.load <= 5.0 }`, is
-      review-2026-10-14/wave3-probes/fence-readings/p/u1.sysml) dies with 'FATAL ERROR: Ineffective
-      mark-compacts near heap limit' under `NODE_OPTIONS=--max-old-space-size=700 timeout 90 npx tsx
-      scripts/sysml-check.ts --strict c.sysml`; at the default heap it runs about 2.6 minutes (about
-      3.3 GB) and prints nothing. The definition alone, or with an instance and no constraint,
-      loads, and so does `item i :> p1` or `attribute a :> p1.load` in place of the library
-      subsetting. Identical at 5d9e806. Cause not isolated: an unbounded walk over the library
-      subsetting once an instance and a constraint exist. Fix: bound the walk, or treat an
-      unresolved library subsetting as an abstention, and stop resolving a dotted chain through the
-      library feature's members. Done when the probe loads and checks in seconds. [fence-readings
-      review]
 - [ ] **Resolve a package-level chain end the same in either text order (loader).** The fence of
       fence-readings S1 only withdraws the false verdict past the 32-usage cap: cap1r and cap2r read
       ?/?/T/T and ?/?/F/?, as the forward text does. The root cause stays: bind.ts
@@ -617,6 +614,22 @@ headings.
       p1 :> p1` terminates and abstains but raises no specialization-cycle diagnostic, unlike p1 :>
       p2 :> p1 (review-2026-10-14/wave3-probes/fence-readings/p2/cy3.sysml). Probes:
       review-2026-10-14/wave3-probes/fence-readings/. [fence-readings]
+      fence-loader: a name two or more levels below a user feature that goes through a library
+      feature's members, past the first route, is no longer registered, and the bare names of
+      library features can become admitted (nested count 2 to 1; 18 names on views-tour, all read
+      unknown because the library states no value); past 10,000 owners of one context
+      (MAX_NAME_WALK_OWNERS) the names below it read unknown with the sentence 'the names below
+      <ctx> are not all read'. v9 enters at most 542 owners, the examples 59. [fence-loader]
+- [ ] **Abstentions left in the negated assert (rollup; sound, only weaker).** (a) A model with
+      `assert not`, `require not` or `assume not` degrades as a whole, not only the dependent rows;
+      (b) `assert not satisfy R by s;` parses as the bare clause `assert not` plus a plain `satisfy
+      R by s;`: the error is raised but the satisfy edge is read plain and the sentence names the
+      clause (`not satisfy` and `satisfy not` stay generic parse errors); (c) members declared
+      inside a refused body are not mapped (kept verbatim in the save), and `assert not x > 1.0;`
+      swallows `x` as the clause's name, giving a `validation/duplicate-name` finding beside the new
+      error; (d) a caller that runs the engines on a model whose load report it ignores sees the
+      clause dropped from the axiom set; (e) a degraded `contracts` / `obligations` report shows a
+      requirement whose only clause was refused as having no formal clause. [fence-assert-not]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** One symbol per feature across the usages of one definition: `part def P { attribute
       L; attribute K; bind L = K; } part a : P { assert constraint ea { L == 50.0 } } part b : P {
@@ -660,6 +673,9 @@ headings.
       edit in a room is not settled by the receiver (the sender's settle arrives as edits; not
       exercised with two live clients). Done when each reads as the reopened file does.
       [fence-editor]
+      fence-editor2: item (c) now withholds every name of the binding's owner on all four surfaces
+      (a rename onto a taken name), and the SMT lane proves and refutes nothing on a model that
+      holds a withheld scope; the page still cannot decide rows the file decides. [fence-editor2]
 - [ ] **Make two features of one owner under one name, and a hand-retargeted redefinition,
       page-equals-file.** fence-editor fixed the order-dependent simple name (seed 5439) and the
       path through an unnamed part (seed 5001). What stays: (1) two features of ONE owner under one
@@ -670,14 +686,6 @@ headings.
       `RC_FIRST=<seed> RC_SEQ=1 RC_STEPS=5` with
       review-2026-10-14/wave3-probes/fence-editor/zzprop.test.ts copied to test/unit/zzprop.test.ts,
       on seeds 165, 317, 400, 1327, 1406, 7220, 7430, 7436. [fence-editor S2]
-- [ ] **Withhold the rows of a parted binding so the page does not read what the reopened file calls
-      contradictory (page FF, file ??; wrong answer).** After a retype or rename that parts an
-      implicit end copy (stale), the page still reads a literal row that the file, opened again,
-      calls contradictory (`bind Zb = Z1` joins two values): page FF, file ??. Soak seeds 333, 1115
-      and 3034 (RV_STEPS=5/5/6; review-2026-10-14/wave3-probes/fence-editor/b.body.ts run through
-      b.test.ts). A parted binding is set aside rather than made unreadable. Fix: have
-      `markStaleBindings` withhold the rows of both ends. Done when the three seeds read ?? on the
-      page. [fence-editor review]
 - [ ] **Abstentions left in the editor (rollup; sound, only weaker).** (1) After a retype that parts
       a copy under an unrelated binding, the page abstains where the file decides ('page ?F file
       FF': seeds 106, 123, 527 of the 1000-sequence window). (2) A stale copy still resolves as a
@@ -700,6 +708,15 @@ headings.
       is queued in editEvents, and the next beginEdit drops it unsettled (src/ui/store.ts
       watchModel, beginEdit); fix: endEdit() where a command returns without a mutation. Probes:
       review-2026-10-14/wave3-probes/fence-editor/a.test.ts, d.test.ts, e.test.ts. [fence-editor]
+      fence-editor2: (7) a parsed `part p : A { bind A::x = y; }` is a parted holder, so `--engine
+      literal` no longer decides on the CLI (mark the end where the editor moves it, not by
+      structure; probe rev/m/m5.sysml); (8) after a retype or rename the page abstains on every name
+      of the binding's owner where the file decides some (402 cells of the 216-model generator); (9)
+      rows over a withheld scope are inconclusive without the check lane's own sentence; (10) a
+      requirement pair (satisfy, verify, refine, trace, derive) or a redefinition-family statement
+      with an anonymous end is skipped silently on Save, and Apply of the Text view's text after a
+      `// Not saved:` statement drops it; (11) the generator had no units. Residual page-F/file-X
+      pairs (seeds 70041, 70338, 70349, 70478, 70555) are identical at the base. [fence-editor2]
 - [ ] **Stop a deleted Redefinition cycle member leaving a self-redefinition (low).** A cycle a -> b
       -> a: deleting a leaves `b :>> b` (the saved text `attribute b :>> b;` reads Unresolved
       reference). Fix: in `Model.survivingTargets` treat a found target equal to the redefining
@@ -929,15 +946,6 @@ true values. What follows is what that branch and the review of it left open; en
       extra = 20.0; }` under `load + extra <= 10.0`) the finding points at `:>> L = 2.0` and names
       `load = 2`, though putting load back to 1 still misses (1 + 20 > 10) and `extra = 20.0` breaks
       it. Pinned in the PI-2 S1 test (G5) as the current, honest behaviour.
-- [ ] **Say when a Save applies typed text over a field's change in the two cases that stay
-      silent.** The in-browser Save, the offline Save and Export say so since `ui-small` S3
-      (`fieldOverTyped`, `over-changes`). (1) A Save to an attached Google Drive file with unsaved
-      changes (`runSave` then `driveSave`, `payloadNow`) applies the text over a change
-      `typedTextFirst` kept back and the strip says nothing: it needs a Drive-strip message that
-      survives the save's own notice. (2) The guard's Save (`saveBeforeReplacing`, the Save and
-      continue of New, Open, Import, Switch branch, Merge or Join room) does the same and says
-      nothing, because the guarded command replaces the model next: it needs a sentence that does
-      not promise one Undo (it takes two). [ui-small S3]
 - [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small`
       S4 an edit's recompute yields to the page between its steps (`recomputeSteps`), but three
       tasks stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root
@@ -995,20 +1003,19 @@ true values. What follows is what that branch and the review of it left open; en
       `scratchpad/collab-ui-scratch` (copy in
       `~/Work/sysprose-soundness-artifacts/review-2026-10-14/wave3-probes/collab-ui/`). Wrong-answer
       class: peers show different models. [collab-ui review]
-- [ ] **Save an end that no name reaches.** Save writes a binding whose end is an unnamed
-      redefinition by its effective name (`bind p.load = L;`, `p.a.load`), but where no name reaches
-      the end it still writes the `«eClass»` placeholder, which a terminal cannot read back
-      (`unexpected character` on `«` and `»`) and the binding end is lost: two unnamed members of
-      one owner that answer to the same effective name, an unnamed redefinition beside a named
-      member of the same name, an unnamed redefinition as the head segment of the path, a redefined
-      feature with no name. Loud, not a false verdict. Probe: `package T { part def P { attribute
-      load : ScalarValues::Real default = 1.0; } part p : P { attribute :>> load = 50.0; attribute
-      load : ScalarValues::Real; } attribute w : ScalarValues::Real; bind w = p.load; }` is saved as
-      `bind w = T::p::«AttributeUsage»;`. Refuse or skip the binding with a stated reason, or give
-      the redefinition a declared name on Save (`refTo` and `effectiveSegment` in
-      `src/text/serializer.ts`). Also optional: now that an unnamed `:>> x` resolves to the most
-      specific inherited feature, `refTo` could verify the effective path with `resolveFullName`
-      instead of the one-answering-member rule. [save-and-wording S1]
+- [ ] **Save the unnamed end by a name, instead of leaving it out (wrong answer: page and file
+      differ).** Save now writes a `// Not saved: a <word> whose end no name reaches (...)` note
+      where it used to write the `«eClass»` placeholder, so the file reopens, but the statement is
+      gone: opened and saved again, the file no longer has it (an unnamed redefinition beside a
+      named member of that name, two unnamed redefinitions of one name, an unnamed head of the path,
+      a redefined feature with no name). Also `duplicate` of an unnamed `:>> M` redefinition: the
+      page holds two features of one owner under one name and a binding end no name reaches, Save
+      writes `bind Zb = G::u0::«AttributeUsage»`; seeds 24795, 26349 and 32180 give page FF against
+      file TT or ?? (fence-editor2-scratch/probes/zzb.test.ts with RV_RAW=1 RV_FIRST=<seed> RV_SEQ=1
+      RV_STEPS=5). Fix: give the redefinition a declared name on Save, or let `refTo` verify the
+      effective path with `resolveFullName` instead of the one-answering-member rule in
+      `effectiveSegment`. Probe: fence-editor2-scratch/s2/probes/p1.sysml. [fence-editor S2;
+      fence-editor2]
 - [ ] **Contain the own-row `standingDefaultSentence` call like the instance-row one (optional,
       low).** `readInContexts` wraps the sentence in a try/catch that yields no sentence (the
       sentence is wording and must not cost the row); the call on a constraint's own row (`standing
