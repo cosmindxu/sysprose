@@ -1114,7 +1114,11 @@ with, not the name of the feature the copy redefines: `bind Zb = M;` in `part u0
 where D1 writes `attribute N2 redefines M` and D2 has an `N2` of its own, stays `bind Zb = M;`
 (it would have been `bind Zb = N2;`, which the next open reads as D2's `N2`). A name the
 edit has since renamed away from that feature, or that a feature of r or a type now shadows
-(the next open would read it as that feature), goes back to the copy's own.
+(the next open would read it as that feature), goes back to the copy's own. Renaming the feature a copy redefines
+renames the copy with it (the next open names the copy by that feature), so a constraint written with the old name
+reads what the file reads. Where another feature of the owner already bears the new name, the next open merges the
+binding into that feature: the page parts the copy (a stale copy), and the row that reads through it abstains
+where the file decides.
 
 The Name and Short name boxes of the Properties panel apply on Enter or on leaving the box,
 not per key (Escape puts the name back, and so does an emptied box: a name is not cleared there), so a name typed key by key is one edit and one Undo
@@ -1134,13 +1138,19 @@ feature the page's `:>>` is on, and a `window.sysml` call that points a redefini
 does not inherit and a name does not reach can leave the page apart from the file. A rename made by
 `updateElement` in steps (the SDK, not the box) is an edit for every call.
 
-Four more cases are not followed, and in each the page can read what the saved file does not:
+Five more cases are not followed, and in each the page can read what the saved file does not:
 
 - A stale copy (above) is still a feature of its owner on the page, with no value: a constraint
   that names it (`r0.L` after `L` is renamed away) is read by the numeric lane as free (`imposed`),
   where the file reads the name as unresolved. No verdict is drawn through it; and the numeric lane
   may abstain on a constraint where the file decides it (deleting `Q::L` under a definition-level
-  `bind p.load = L`, `r0.p.load == 12.0`).
+  `bind p.load = L`, `r0.p.load == 12.0`). The Problems panel raises nothing for it: the file, opened
+  again, reports `ref/unresolved-reference` and an unbound connector end.
+- A feature renamed onto a name another feature of the same owner bears (`D2`'s `:>> N` renamed to
+  `Z1` in a definition whose usage has a `Z1`) makes the file merge the usage's binding into that
+  feature, and the page, which parts the copy, abstains on the rows the file decides; a literal row
+  over the merged feature, which the file calls contradictory (`bind Zb = Z1` joins two values), the
+  page can still read.
 - A peer's edit in a collaboration room is not settled by the receiver, which relies on the
   sender's settle arriving as edits (not exercised with two live clients).
 - A `window.sysml` call that points a redefinition at a feature its owner does not inherit (a

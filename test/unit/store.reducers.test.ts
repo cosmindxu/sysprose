@@ -2472,7 +2472,7 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       });
 
       // The two readings that stay WEAKER or different than the file's, pinned with their reasons (docs/USER-GUIDE.md,
-      // 'Four more cases are not followed'): neither is a satisfied or refuted verdict the file does not give.
+      // 'Five more cases are not followed'): neither is a satisfied or refuted verdict the file does not give.
       it('the readings that differ from the file stay abstentions, not verdicts', async () => {
         // A binding with a stale end is set aside: the numeric lane abstains where the file decides.
         load(`package DB {
@@ -2504,6 +2504,32 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(renamed['RN::a'], 'page: imposed (t) through the stale copy').toBe('?/?/t/?');
         expect(reopenedFile['RN::a'], 'file: unresolved').toBe('?/?/?/?');
         for (const row of [renamed['RN::a']!, reopenedFile['RN::a']!, page['DB::c1']!]) expect(row).not.toMatch(/T/);
+      });
+
+      // Renaming the feature a copy redefines: the next open names the copy by the new name (the copy follows, so a row
+      // written with the old name reads as the file reads it), or merges the binding into a feature of the owner that
+      // bears the new name (the copy is parted: the page abstains where the file decides, and never inverts).
+      it('renaming the feature the copy redefines renames the copy, or parts it where the name is taken', async () => {
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; }
+  part def D2 :> Q0 { attribute N2 :>> M default = 15.0; }
+  part u0 : D2 { attribute Zb; bind Zb = M; }
+  constraint cOld { u0.N2 == 21.0 }
+}`);
+        st().updateElement(byName('N2').id, { declaredName: 'Zd3' });
+        expect(st().model.children(byName('u0').id).some((c) => c.declaredName === 'Zd3' && c.attrs.implicit === true)).toBe(true);
+        await pageIsFile('rename D2::N2 to Zd3');
+        load(`package G {
+  part def Q0 { attribute N default = 12.0; }
+  part def D2 :> Q0 { attribute :>> N default = 14.0; }
+  part u0 : D2 { attribute Z1 = 21.0; attribute Zb; bind Zb = N; }
+  constraint c14 { u0.Zb == 14.0 }
+  constraint c21 { u0.Zb == 21.0 }
+}`);
+        st().updateElement(st().model.children(byName('D2').id).find((c) => c.eClass === 'AttributeUsage')!.id, { declaredName: 'Z1' });
+        const page = await surfaces(st().model);
+        expect(page['G::c14'], 'page: abstains where the file decides, never inverted').toBe('?/?/?/?');
+        expect(page['G::c21']).toBe('?/?/?/?');
       });
 
       it('deleting the feature a definition-level bind ends on leaves no copy the page proves through', async () => {

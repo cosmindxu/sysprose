@@ -1051,17 +1051,17 @@ nothing (a chain of nested redefinitions, or of the hop copies of `bind
 y = n1.n2.n3.n4.x`, takes a round per hop). What it does not reach: two features
 of one owner under one name (declared, or the one an unnamed `:>> M` is known
 by), and a `window.sysml` call that points a redefinition at a feature no name in its scope reaches; and
-six more, each a residual of the end copies and of the routes, listed in the
-user guide: (a) a copy whose name nothing its owner inherits any more stays on
-the feature it redefined, where the saved file has `bind p.load = L` with `L`
-unresolved; (b) a REST commit is settled only for the delete of a Redefinition
-target, not for a FeatureTyping or Specialization deleted or retargeted; (c) a
-delete through `window.sysml.model`, a peer or REST lands the explicit
-redefinitions but leaves a copy where `Model.remove`'s walk put it; (d) deleting
-the feature a part definition's `bind` ends on leaves the copies of that binding
-in the page; (e) renaming the feature a copy redefines leaves the copy under its
-old name; (f) a cycle of redefinitions leaves a self-redefinition when a member
-is deleted. A sibling renamed into the name a `:>> M` is known by moves it back to
+the residuals of the end copies and of the routes, listed in the user guide: a
+copy whose name nothing its owner inherits any more is parted from the feature it
+redefined (a stale copy), and the binding that ends in it binds nothing, as the
+saved file's `bind p.load = L` with `L` unresolved does (the Problems panel stays
+silent about it until the file is opened again); a raw call on the model on
+screen and a REST commit are settled where they end; renaming the feature a copy
+redefines renames the copy, and where the new name is another feature's of the
+owner the copy is parted and the page abstains on the rows the file decides (a
+literal row the file calls contradictory can still be read); a cycle of
+redefinitions leaves a self-redefinition when a member is deleted; a peer's edit is
+settled by its sender only. A sibling renamed into the name a `:>> M` is known by moves it back to
 the base feature, as the file with both keeps them apart; one the text was loaded
 with stays as written. A removal of a redefinition's target is followed on the model itself:
 a removal planner (`Model.addRemovalPlanner`, `followRedefinitionRemovals`) lands
@@ -1070,9 +1070,9 @@ the explicit redefinition on the feature the name it is written by finds now
 command, `window.sysml` or a peer's edit on the model on screen, or a `POST
 /projects/{id}/commits` delete, whose working copy of the repository's head has
 the planner too (the page's model is not touched by a REST commit). That is all
-the planner does: the implicit copies are landed by the settle of a command or
-an SDK call only, and a REST commit settles no other change (a typing or
-specialization deleted or retargeted). `Model.remove`'s walk up the removed target's
+the planner does: the implicit copies are landed by the store's settle (a command,
+an SDK call, a raw call on the model on screen, a REST commit's working copy).
+`Model.remove`'s walk up the removed target's
 redefinitions to the nearest feature that stays is the fallback for a model nobody
 watches (the command line), and that walk can skip a level the name does not. One whose target keeps no name to write goes, as Save writes the feature
 without it.

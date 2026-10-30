@@ -28,7 +28,7 @@ import {
   type ElementId,
   type ElementRecord,
 } from '@core/index';
-import { endCopyProto, findTypeFeature, redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
+import { childNamed, endCopyProto, findTypeFeature, redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
 import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
 import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
@@ -1547,6 +1547,13 @@ export function isStaleCopy(model: Model, el: ElementRecord): boolean {
   return el.attrs.implicit === true && !model.children(el.id).some((r) => r.eClass === 'Redefinition' && (r.source ?? [])[0] === el.id);
 }
 
+/** A feature of `ownerId` other than `exceptId` that bears `name` (its own, or by a feature it redefines). */
+function otherNamed(model: Model, ownerId: ElementId, name: string, exceptId: ElementId): ElementRecord | undefined {
+  const own = model.children(ownerId).find((c) => c.id !== exceptId && !isRelationship(c.eClass) && (c.declaredName === name || c.declaredShortName === name));
+  const hit = own ?? childNamed(model, ownerId, name);
+  return hit !== undefined && hit.id !== exceptId ? hit : undefined;
+}
+
 /** The feature the next parse gives the implicit end copy `name` of `owner` to redefine (the rule of {@link endCopyLanding}). */
 function endCopyFeature(model: Model, owner: ElementRecord, name: string): ElementRecord | undefined {
   const hit = owner.attrs.implicit === true ? undefined : resolveInherited(model, owner.id, name);
@@ -1611,7 +1618,7 @@ export function settleRedefinitions(
   /** The copies the settle made stale or put back: the bindings that end in them are marked after the rounds. */
   const staled = new Set<ElementId>();
   for (let round = 0; round < MAX_SETTLE_ROUNDS && deep.length + shallow.length > 0; round++) {
-    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId; make?: true; copy?: true }> = [];
+    const moves: Array<{ rel: ElementId; to: ElementId | null; from: ElementId; feature: ElementId; owner: ElementId; make?: true; copy?: true; rename?: string }> = [];
     const lines = new Map<ElementId, ReadonlySet<string>>();
     const ask = (typeId: ElementId, only: ReadonlySet<string> | undefined): void => {
       const type = model.get(typeId);
@@ -1635,6 +1642,17 @@ export function settleRedefinitions(
             if (only !== undefined && !(f.declaredName !== undefined && only.has(f.declaredName)) && ![...line].some((n) => only.has(n))) continue;
             const to = endCopyLanding(model, f, from);
             if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId, ...(to === null ? { copy: true as const } : {}) });
+            else {
+              // The copy stays on the feature, but the next parse names it by that feature's name now (a renamed
+              // `:>> M` makes the copy `Zd3`, not `N2`): the copy takes the name, or, where another feature of the
+              // owner bears it, the binding merges into that one and the copy is parted (stale).
+              const target = model.get(from);
+              const want = target && (target.declaredName ?? target.declaredShortName ?? effectiveNameOf(model, target));
+              if (want !== undefined && want !== '' && want !== f.declaredName) {
+                if (otherNamed(model, typeId, want, f.id) !== undefined) moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId, copy: true });
+                else moves.push({ rel: '', to: from, from, feature: f.id, owner: typeId, rename: want });
+              }
+            }
             continue;
           }
           // A target with no name the text can write (the feature it redefined is gone, and it has none of its own):
@@ -1662,12 +1680,14 @@ export function settleRedefinitions(
         // A stale copy redefines nothing: the name it is known by finds a feature again (a retype back, a feature
         // renamed back), and the next parse would make the copy redefine it.
         if (copy && isStaleCopy(model, f)) {
-          const head = endHeadOf(model, f);
-          const names = [f.declaredName, head].filter((n): n is string => n !== undefined && n !== '');
-          if (only !== undefined && !names.some((n) => only.has(n))) continue;
+          const name = f.declaredName;
+          if (only !== undefined && !(name !== undefined && only.has(name))) continue;
           const owner = model.get(typeId);
-          const proto = owner && names.length > 0 ? endCopyFeature(model, owner, names.at(-1)!) : undefined;
-          if (proto && proto.id !== f.id) moves.push({ rel: '', to: proto.id, from: proto.id, feature: f.id, owner: typeId, make: true, copy: true });
+          const proto = owner && name !== undefined && name !== '' ? endCopyFeature(model, owner, name) : undefined;
+          // A feature of the owner already bears the name the copy would take: it merges into that one, so none is made.
+          const protoName = proto && (proto.declaredName ?? proto.declaredShortName ?? effectiveNameOf(model, proto));
+          const taken = protoName !== undefined && protoName !== name && otherNamed(model, typeId, protoName, f.id) !== undefined;
+          if (proto && proto.id !== f.id && !taken) moves.push({ rel: '', to: proto.id, from: proto.id, feature: f.id, owner: typeId, make: true, copy: true });
           else staled.add(f.id);
         }
       }
@@ -1691,7 +1711,8 @@ export function settleRedefinitions(
     }
     model.transaction(() => {
       for (const mv of moves) {
-        if (mv.make) model.create('Redefinition', { id: model.has(`impl-redef-${mv.feature}`) ? undefined : `impl-redef-${mv.feature}`, ownerId: mv.feature, source: [mv.feature], target: [mv.to!] });
+        if (mv.rename !== undefined) model.update(mv.feature, { declaredName: mv.rename });
+        else if (mv.make) model.create('Redefinition', { id: model.has(`impl-redef-${mv.feature}`) ? undefined : `impl-redef-${mv.feature}`, ownerId: mv.feature, source: [mv.feature], target: [mv.to!] });
         else if (mv.to === null) model.remove(mv.rel);
         else model.update(mv.rel, { target: [mv.to] });
       }

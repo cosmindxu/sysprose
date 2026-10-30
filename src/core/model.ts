@@ -612,7 +612,8 @@ export class Model {
     // name `M` on Q2's). A model the app edits has a removal planner (`addRemovalPlanner`) that re-resolves by the
     // name the saved text writes (`retargetRedefinitions`), so for the explicit redefinitions a delete in the app, through
     // the SDK, from a peer or in a REST commit, and the same delete in the text agree. It lands no implicit end copy: that
-    // is the store's settle (a command, an SDK call), so a copy stays where this walk puts it for any other route.
+    // is the store's settle (a command, an SDK call, a raw call on the model on screen outside a room, a REST commit),
+    // so only a model nobody watches (the command line) keeps the copy where this walk puts it.
     const moved = new Map<ElementId, ElementId[]>();
     for (const r of this.elements.values()) {
       if (toRemove.has(r.id)) continue;
