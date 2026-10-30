@@ -2283,6 +2283,29 @@ package P {
     }
   }, 120_000);
 
+  it('verify, consistency, bounds and refine refuse a model with a negated assert: its own finding, and exit 2', () => {
+    // `assert not constraint c { load > 10.0 }` over load = 50 was a parse error whose recovery left `c` a plain
+    // constraint, read T by every surface while it holds: the negated assert is violated, and the model passed.
+    // The clause is refused with a finding of its own; the load degrades, so no command judges the file.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-negated-assert-'));
+    try {
+      const file = join(dir, 'h1.sysml');
+      writeFileSync(
+        file,
+        'package H1 {\n  part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { load > 10.0 } }\n  part p : P;\n}\n',
+      );
+      for (const args of [['verify', file, '--engine', 'literal'], ['consistency', file], ['bounds', file, '--measure', 'p.load'], ['refine', file]]) {
+        const r = spawnCli(args);
+        expect(r.stdout + r.stderr, args[0]).toContain('mapper/negated-assert-unread');
+        expect(r.stdout + r.stderr, args[0]).toContain('`assert not` is not read');
+        expect(r.code, `${args[0]} gave an answer over a clause it could not read`).toBe(2);
+        expect(r.stderr, args[0]).toContain('did not load cleanly');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   /**
    * The two flags this commit adds, asserted on what the command prints.
    *

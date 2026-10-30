@@ -295,7 +295,9 @@ RequirementClause infers RequirementClause:
     | kind=('actor' | 'stakeholder' | 'objective' | 'frame' | 'verify') ('requirement')?
         (name=Name)? (specializations+=Specialization | multiplicity+=Multiplicity)*
         (valueOp=ValueOp value=Expression)? (body=Body | ';')?
-    | kind=('require' | 'assume' | 'assert') (declares=('constraint' | 'requirement'))? (name=Name)?
+    // `assert not constraint c { … }` is the published grammar's negated assert. The `not` is parsed on any of the
+    // three so that the mapper can refuse it with a finding of its own (mapper/negated-assert-unread).
+    | kind=('require' | 'assume' | 'assert') (negated?='not')? (declares=('constraint' | 'requirement'))? (name=Name)?
         (specializations+=Specialization)?
         ('{' (members+=Member)* (expr=Expression)? '}' | ';'?)
     );

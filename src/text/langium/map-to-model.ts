@@ -2243,6 +2243,38 @@ class Mapper {
       this.bareVerifyClauses.set(rel.id, unquoteName(node.name) ?? '');
       return;
     }
+    if (node.negated) {
+      // `assert not constraint c { B }` states that B does NOT hold (`require not` and `assume not` are no published
+      // form, and are refused the same way). Read as the plain assert it states the opposite:
+      // `c` checked as a fact (T while B holds, so a model that contradicts itself passes), the body asserted as an
+      // axiom, or the clause dropped from a proof it restricts. No reader negates it, so the clause is refused: the
+      // load degrades, the checks abstain, and it is kept as written with no expression for any reader to take as
+      // the plain clause (the save re-emits its text, as it does for a keyword this tool does not model).
+      const code = 'mapper/negated-assert-unread';
+      const name = unquoteName(node.name);
+      this.diagnostics.push({
+        message: `\`${node.kind} not\` is not read: the negation of ${name ? `\`${name}\`` : 'the clause'} is neither checked nor asserted.`,
+        ...posOf(node),
+        severity: 'error',
+        source: 'mapper',
+        code,
+        ...(name ? { found: name } : {}),
+        hint: renderHint(code, name ? { found: name } : {}),
+        ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+      });
+      const verbatim = node.$cstNode?.text;
+      this.create('ConstraintUsage', {
+        ownerId: ownerId ?? undefined,
+        declaredName: name,
+        attrs: {
+          requirementRole: node.kind,
+          negated: true,
+          ...visibility,
+          ...(verbatim ? { unparsedText: verbatim } : {}),
+        },
+      });
+      return;
+    }
     if (node.kind === 'subject') {
       const el = this.create('ReferenceUsage', {
         ownerId: ownerId ?? undefined,

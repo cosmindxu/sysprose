@@ -980,6 +980,7 @@ export interface RequirementClause extends langium.AstNode {
     members: Array<Member>;
     multiplicity: Array<Multiplicity>;
     name?: Name;
+    negated: boolean;
     specializations: Array<Specialization>;
     value?: Expression;
     valueOp?: ValueOp;
@@ -1780,6 +1781,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'members', defaultValue: [] },
                         { name: 'multiplicity', defaultValue: [] },
                         { name: 'name' },
+                        { name: 'negated', defaultValue: false },
                         { name: 'specializations', defaultValue: [] },
                         { name: 'value' },
                         { name: 'valueOp' },
