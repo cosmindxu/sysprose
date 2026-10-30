@@ -650,74 +650,56 @@ headings.
       (deliberate; decide whether to keep the edge and abstain with a reason sentence instead). Rows
       redef-target-renamed-away(-rev)(-q). Seen by the property oracle: sequences 184 and 5068 of
       the store.reducers generator. [redefinition-target S2]
-- [ ] **Commit a name typed in the Properties box on blur or Enter, not per keystroke.**
-      `Properties.tsx` calls `updateElement` on every keystroke, so an unrelated sibling typed Z, M,
-      M2, M2x passes through a prefix that collides with a `:>> M`; the settle moves it to Q's M for
-      good and the final names no longer match the same names written by hand. Model: `part def Q {
-      attribute M default = 1.0; } part def R :> Q { attribute M2 redefines M default = 2.0; } part
-      v : R { attribute :>> M = 5.0; attribute Z = 9.0; }`, vM25 reads violated on the page and in
-      the saved file (`attribute :>> RA::Q::M = 5.0`) but satisfied written by hand. Probe:
-      review-2026-10-14/wave3-probes/redefinition-target/keys.probe.ts. Done when a name typed key
-      by key reads as the same names written by hand (commit on blur or Enter, or leave intermediate
-      names unhealed). Documented as a limit meanwhile. [redefinition-target review]
-- [ ] **Settle an implicit end copy through its whole life, not only on a retype.** The store's
-      settle moves an implicit end copy in place on a retype (`endCopyLanding`), and these cases
-      still differ between page and file: (a) a copy whose name nothing its owner inherits bears any
-      more (after a retype, delete or rename) stays on the feature it redefined, so the page keeps
-      proving through it while the saved file reads `bind p.load = L` with L unresolved (dropping
-      the relationship alone is not enough: a later retype back onto a type that has the name makes
-      the file re-create it while the page copy has none); (b) deleting the feature a
-      definition-level `bind` ends on removes the binding but leaves its copies (Q1::p,
-      Q1::p::load), and usage copies then redefine the debris where the file has Q::p and P::load
-      (review-2026-10-14/wave3-probes/redefinition-target/debris.sysml; fuzz sequences 1024, 1254,
-      1314, 1372 of FZ_DEFBIND=1 FZ_FIRST=1000 FZ_N=400 FZ_STEPS=4); (c) renaming the feature a copy
-      redefines leaves the copy under its old name (page r0::L -> Q1::Zz, the file makes r0::Zz;
-      review-2026-10-14/wave3-probes/redefinition-target/rncopy.sysml, rncopy2.sysml; sequence
-      1360); (d) the mapper lands the copy of a definition's bind over a general definition's copy
-      by text order (D2 :> D3 both with `bind ... = N`: D3's copy if D3 is written first, Q0's N if
-      D2 is), so page and file cannot agree for both orders; decide which order the mapper takes.
-      Fix direction: settle the copy to the name the mapper gives it or drop a copy no binding
-      holds. Probes: review-2026-10-14/wave3-probes/redefinition-target/probe-stay.test.ts,
-      probe-stay2.test.ts, probe-copy.test.ts. [redefinition-target review, re-review]
-- [ ] **Settle a redefinition on the routes that skip the store.** The store follows a removal on
-      every route (Delete key, palette, `deleteElement`, `window.sysml.delete`/`commit`,
-      `model.remove`, a peer's removal in `reconcileModelFromDoc`) for an explicit redefinition, and
-      a REST commit follows the delete of a Redefinition target (`followRedefinitionRemovals`). Not
-      followed: (a) a REST commit that deletes or retargets a FeatureTyping or Specialization leaves
-      each `:>>` where it was (fix: in `createCommit` collect the working copy's events and call
-      `redefinitionsDirtiedBy` and `settleRedefinitions` once after `applyChange`; probe
-      review-2026-10-14/wave3-probes/redefinition-target/probe-resttyping.test.ts); (b) a delete
-      through `window.sysml.model`, a peer or a REST commit leaves an implicit end copy where
-      `Model.remove`'s walk put it, where the store's settle would put it elsewhere (Q3's L deleted
-      under `part r : Q2, Q3 { bind p.load = L; }`: page reads r1, the file r50; probe
-      review-2026-10-14/wave3-probes/redefinition-target/probe-copy.test.ts); (c) raw
-      `window.sysml.model.update/create/reparent` calls are not settled at all; (d) a collaboration
-      peer does not settle its own model and relies on the sender's settle events arriving as edits
-      (not exercised with two live clients). Done when the planner's after-step runs the shared
-      settle (copies included) and a REST commit settles every edit. [redefinition-target S2,
-      re-review]
-- [ ] **Make a rename that gives two features of one owner one name, or a retarget the text cannot
-      name, page-equals-file.** Two features of one owner under one declared (or effective) name
-      cannot be told apart by any text that names them: a redefinition aimed at the second is saved
-      by a path that finds the first, so page and file can differ, and the editor does not refuse or
-      rename. The same holds for an SDK `updateElement` that retargets a Redefinition edge to a
-      feature the text cannot name from its scope (a nested anonymous part; seeds 5001 and 5439 of
-      the extended generator, rc2/prop.probe.ts), and for the settle of an implicit copy reached by
-      a chain through an explicit owner, which uses the mapper's head rule where the mapper used the
-      non-unique chain rule (they differ only where two unrelated types of the owner each bear the
-      name; not once in 8,000 sequences). The property test stops at such a state. Done when the
-      editor refuses or renames, or the reading is ruled permanent with a sentence.
-      [redefinition-target S2]
-- [ ] **Save an implicit end copy under a name the next open reads back.** Save writes an implicit
-      end copy by the name of the feature it redefines: `part u0 : D4, D3 { bind Zb = M; }` where D1
-      has `attribute N2 redefines M` is saved `bind Zb = N2`, which the next open resolves to D2's
-      declared N2, so the saved file reads another feature than the text the user wrote (seed 2373
-      of the extended property soak, SYSPROSE_RT_FIRST=1500 SYSPROSE_RT_STEPS=5). The property test
-      reloads such a model without its bindings. Related and tracked in 'Save a binding to an
-      unnamed redefinition under a name a terminal can read': an unnamed explicit redefinition is
-      written `EX::r::«AttributeUsage»`
-      (review-2026-10-14/wave3-probes/redefinition-target/endcopy.probe.ts). [redefinition-target
-      review]
+- [ ] **Settle an implicit end copy through its whole life: a rename onto a taken name, the mapper's
+      text order, a peer's edit.** fence-editor settles a copy on a retype, a delete, a rename of
+      the feature it redefines, undo and redo, and on the raw routes (REST commits, the store's
+      model listener). What stays: (c) a rename that gives the copy a name another feature of its
+      owner bears parts the copy (stale) and the page abstains where the reopened file decides (D1:
+      page ?/?/?/?, file F and T; review-2026-10-14/wave3-probes/fence-editor/d.test.ts); (d) where
+      the mapper lands a definition's copy by text order, page and file may differ; (e) a peer's
+      edit in a room is not settled by the receiver (the sender's settle arrives as edits; not
+      exercised with two live clients). Done when each reads as the reopened file does.
+      [fence-editor]
+- [ ] **Make two features of one owner under one name, and a hand-retargeted redefinition,
+      page-equals-file.** fence-editor fixed the order-dependent simple name (seed 5439) and the
+      path through an unnamed part (seed 5001). What stays: (1) two features of ONE owner under one
+      name (the saved file finds the first); (2) a Redefinition edge retargeted by hand (SDK,
+      `updateElement`) to a feature its owner does not inherit, to a feature of another kind, or to
+      one that makes a cycle leaves page and file redefinitions apart. A sound fence needs a stable
+      identity between page and reparsed file (compare by place), more than 40 lines. Probes:
+      `RC_FIRST=<seed> RC_SEQ=1 RC_STEPS=5` with
+      review-2026-10-14/wave3-probes/fence-editor/zzprop.test.ts copied to test/unit/zzprop.test.ts,
+      on seeds 165, 317, 400, 1327, 1406, 7220, 7430, 7436. [fence-editor S2]
+- [ ] **Withhold the rows of a parted binding so the page does not read what the reopened file calls
+      contradictory (page FF, file ??; wrong answer).** After a retype or rename that parts an
+      implicit end copy (stale), the page still reads a literal row that the file, opened again,
+      calls contradictory (`bind Zb = Z1` joins two values): page FF, file ??. Soak seeds 333, 1115
+      and 3034 (RV_STEPS=5/5/6; review-2026-10-14/wave3-probes/fence-editor/b.body.ts run through
+      b.test.ts). A parted binding is set aside rather than made unreadable. Fix: have
+      `markStaleBindings` withhold the rows of both ends. Done when the three seeds read ?? on the
+      page. [fence-editor review]
+- [ ] **Abstentions left in the editor (rollup; sound, only weaker).** (1) After a retype that parts
+      a copy under an unrelated binding, the page abstains where the file decides ('page ?F file
+      FF': seeds 106, 123, 527 of the 1000-sequence window). (2) A stale copy still resolves as a
+      name on the page, so a constraint naming it (`r0.L` after `Q::L` is renamed away) is read by
+      the numeric lane as imposed (t) where the file reads the name as unresolved (?); a
+      definition-level `bind p.load = L` after `Q::L` is deleted reads ? on the numeric lane where
+      the file decides (F), a binding with a stale end being set aside (both pinned in
+      test/unit/store.reducers.test.ts, 'the readings that differ from the file stay abstentions,
+      not verdicts'; probes review-2026-10-14/wave3-probes/fence-editor/zzprobe3.test.ts, 'RN rename
+      L->Zz' and 'debris delete Q::L'). (3) Two bindings in one usage that reach one copy by
+      different names (`bind Zb = M; bind Zc = N2;` in the D4/D3 diamond) are saved under the
+      first-created name for both: page equals file, the second spelling is not kept. (4) A head the
+      edit made land elsewhere is dropped and the copy goes by its own name; a name cannot be
+      cleared from the Properties Name or Short name box, which put the name back (the clear belongs
+      to an SDK setter in the style of Model.setShortName); a draft typed and not committed is
+      dropped if the selection changes with no blur (programmatic only). (5) A stale copy raises no
+      Problems entry on the page until the file is reopened (the file reports 2 x
+      ref/unresolved-reference and error:connector-endpoints). (6) Latent, not reproduced: a command
+      that calls pushUndo and exits with no change leaves editOpen true; a raw model call made after
+      is queued in editEvents, and the next beginEdit drops it unsettled (src/ui/store.ts
+      watchModel, beginEdit); fix: endEdit() where a command returns without a mutation. Probes:
+      review-2026-10-14/wave3-probes/fence-editor/a.test.ts, d.test.ts, e.test.ts. [fence-editor]
 - [ ] **Stop a deleted Redefinition cycle member leaving a self-redefinition (low).** A cycle a -> b
       -> a: deleting a leaves `b :>> b` (the saved text `attribute b :>> b;` reads Unresolved
       reference). Fix: in `Model.survivingTargets` treat a found target equal to the redefining
