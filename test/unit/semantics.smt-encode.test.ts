@@ -1444,6 +1444,82 @@ describe('the script shape is the logic line', () => {
     expect(f('(< |Q::z| 1.0)').symbols).toEqual([]);
   });
 
+  it('CC-04: the relation and the script carry the shape of their bytes, and the script’s logic line is read from it', () => {
+    let guarded = 0;
+    for (const node of bodies(2000, 20261031)) {
+      const e = encodeRelation(node, V);
+      if (!e.ok) continue;
+      const terms = [e.term, ...e.sideConditions.map((s) => s.term)];
+      // the relation reads its own variables, not the whole environment, and loses none of them
+      const whole = shapeOfTerm(terms, V, {
+        syntacticNonlinear: e.syntacticNonlinear,
+        hasSideConditions: e.sideConditions.length > 0,
+        reads: e.reads,
+      });
+      expect(e.shape, e.term).toEqual(whole);
+      const script = encodeScript({
+        variables: V,
+        assertions: terms.map((term, i) => ({ kind: i === 0 ? ('goal' as const) : ('side' as const), name: 'g', term })),
+        nonlinear: e.nonlinear,
+        syntacticNonlinear: e.syntacticNonlinear,
+      });
+      // the script’s shape is over its bytes: the logic line is that shape’s, whatever the relation’s own flag said
+      expect(logicFromShape(script.shape), e.term).toBe(script.logic);
+      expect(script.text).toContain(`(set-logic ${script.logic})\n`);
+      expect(script.shape.symbols).toEqual(script.symbols);
+      expect(script.shape.guarded).toBe(e.sideConditions.length > 0);
+      if (e.sideConditions.length > 0) guarded += 1;
+    }
+    expect(guarded).toBeGreaterThan(30);
+    // a hand-built script with no walk flag still gets the line its bytes are in
+    const hand = encodeScript({
+      variables: V,
+      assertions: [{ kind: 'goal', name: 'g', term: '(< (* |P::a| |P::b|) 1.0)' }],
+      nonlinear: false,
+    });
+    expect(hand.logic).toBe('QF_NRA');
+    expect(hand.shape.nlSymbols).toEqual(['P::a', 'P::b']);
+  });
+
+  it('CC-04: a script’s bytes are what they were — header, logic, declarations, labelled assertions', () => {
+    const e = encodeRelation(parseExpr('n * a / b >= 12.0'), V);
+    if (!e.ok) throw new Error('did not encode');
+    const script = encodeScript({
+      variables: V,
+      assertions: [
+        { kind: 'goal', name: 'R', term: e.term },
+        ...e.sideConditions.map((c) => ({ kind: 'side' as const, name: 'R', term: c.term })),
+      ],
+      nonlinear: e.nonlinear,
+      syntacticNonlinear: e.syntacticNonlinear,
+    });
+    expect(script.logic).toBe('QF_NIRA');
+    expect(script.text).toBe(
+      [
+        '; sysprose — SMT-LIB2 encoding of one obligation.',
+        '; Variables are declared in their storage unit; every read is lifted to coherent SI.',
+        '; Symbols and assertion labels are qualified names — never element ids, which are fresh per load.',
+        '(set-logic QF_NIRA)',
+        '(set-option :produce-unsat-cores true)',
+        '(declare-fun |P::a| () Real)',
+        '(declare-fun |P::b| () Real)',
+        '(declare-fun |P::n| () Int)',
+        `(assert (! ${e.term} :named |goal:R|))`,
+        `(assert (! ${e.sideConditions[0]!.term} :named |side:R|))`,
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('CC-04: a name two variables share is typed by the first one, as the script declares it', () => {
+    const twin = [v('x'), v('x', { sort: 'Int' })];
+    const term = '(< |P::x| 1.0)';
+    const script = encodeScript({ variables: twin, assertions: [{ kind: 'goal', name: 'g', term }], nonlinear: false });
+    expect(script.text).toContain('(declare-fun |P::x| () Real)');
+    expect(script.logic).toBe('QF_LRA');
+    expect(shapeOfTerm(term, twin, { syntacticNonlinear: false, hasSideConditions: false, reads: [] }).int).toBe(false);
+  });
+
   it('CC-03: an oracle that ignores `/` or `^` is caught by the same fuzz', () => {
     const count = (ignore: { div?: boolean; pow?: boolean }) => {
       let wrong = 0;

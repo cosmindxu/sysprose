@@ -8,11 +8,11 @@
  * semantics, because {@link ./encode} is imported by half of the lane and a
  * dependency on the lane's contracts from here would be a cycle.
  *
- * It is a COPY for now. `encode.ts` still carries its own `parseSexps`,
- * `carriesSymbol` and `nonlinearSexp`; the parity fuzz in
- * `test/unit/semantics.smt-encode.test.ts` holds the two to one answer on the
- * `set-logic` line, and the step that follows swaps `encode.ts` onto this file
- * and deletes the originals. Until then a change to one is a change to both.
+ * {@link ./encode} imports this file: `encodeScript` takes its `set-logic` line from
+ * {@link logicFromShape}, and `encodeRelation` and `encodeScript` carry the
+ * {@link ShapeFacts} they read as `shape`. The parity fuzz in
+ * `test/unit/semantics.smt-encode.test.ts` holds the line to an independent
+ * reading of the expression tree.
  *
  * Two inputs decide the answer and only one of them is in the bytes. A term
  * `a * (b ^ 0)` encodes to `(* a 1.0)`, which no scan calls nonlinear, and the
@@ -163,7 +163,8 @@ export function shapeOfTerm(
   for (const v of vars) {
     const symbol = quotedSymbol(v.qualifiedName);
     if (symbol === undefined) continue;
-    if (quoted.has(symbol) || literal.some((t) => t.includes(symbol))) carried.set(symbol, v);
+    // the first variable of a name wins, as the script declares it
+    if (!carried.has(symbol) && (quoted.has(symbol) || literal.some((t) => t.includes(symbol)))) carried.set(symbol, v);
   }
 
   let mask = 0;
