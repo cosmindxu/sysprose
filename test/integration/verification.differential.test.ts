@@ -5858,6 +5858,27 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'LS2::k1': ['T/T/T/T', 'T'],
       'LS2::k2': ['F/F/F/F', 'F'],
     }),
+    // Five part definitions that each type a part of the other four: the name walk of a context has a tower of names that
+    // grows with the number of simple routes through the web, and ran out of memory (more than 10^5 names per context, fence-loader
+    // review). The walk stops at a cap of owners; the names it registered stand (`a.load`, the first route), a name only a
+    // later route spells reads unknown with its own sentence, and the two readings that infer from what the walk did not find stay off.
+    'name-web-u1': probe(`package NW1 {
+        part def A0 { attribute load default = 1.0; part x1 : A1; part x2 : A2; part x3 : A3; part x4 : A4; }
+        part def A1 { attribute load default = 1.0; part x0 : A0; part x2 : A2; part x3 : A3; part x4 : A4; }
+        part def A2 { attribute load default = 1.0; part x0 : A0; part x1 : A1; part x3 : A3; part x4 : A4; }
+        part def A3 { attribute load default = 1.0; part x0 : A0; part x1 : A1; part x2 : A2; part x4 : A4; }
+        part def A4 { attribute load default = 1.0; part x0 : A0; part x1 : A1; part x2 : A2; part x3 : A3; }
+        part a : A0;
+        constraint kT { a.load <= 5.0 }
+        constraint kF { a.load >= 5.0 }
+        constraint dT { a.x4.x3.load <= 5.0 }
+        constraint dF { a.x4.x3.load >= 5.0 }
+      }`, {
+      'NW1::kT': ['T/T/T/T', 'T'],
+      'NW1::kF': ['F/F/F/F', 'F'],
+      'NW1::dT': ['?/?/?/?', '?'],
+      'NW1::dF': ['?/?/?/?', '?'],
+    }),
     // Two general types that each redefine the end's head (Q2's `L = 50.0`, Q3's `L = 60.0`) leave no one
     // most specific (O6's branch review): the copy redefines Q's declared L as at 755352c — the first cut took
     // whichever came first, and read 50 (or 60 for `:> Q3, Q2`) beside the `#clash` that says neither is read.

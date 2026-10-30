@@ -390,6 +390,8 @@ export class DefiningEquations {
   private readonly aboveBound = new Map<string, BoundAbove | null>();
   /** {@link valuedByBinding} per context and names. */
   private readonly valuedByBindingMemo = new Map<string, boolean>();
+  /** The contexts whose {@link denote} walk met {@link MAX_NAME_WALK_OWNERS} ({@link nameWalkCut}). */
+  private readonly cutWalks = new Set<ElementId>();
   /** {@link lexicalNames} per context. */
   private readonly lexical = new Map<
     ElementId,
@@ -851,6 +853,19 @@ export class DefiningEquations {
     return hit;
   }
 
+  /**
+   * Did the {@link denote} walk of `contextId` stop at its work cap, so that
+   * names below it are not registered: the sentence a name it does not answer
+   * reads unknown with, else `undefined`.
+   */
+  nameWalkCut(contextId: ElementId): string | undefined {
+    this.denote(contextId);
+    return this.cutWalks.has(contextId)
+      ? `the names below ${this.qualifiedNameOf(contextId)} are not all read: its parts are typed by parts of each other in more than ` +
+          `${MAX_NAME_WALK_OWNERS.toLocaleString('en')} routes`
+      : undefined;
+  }
+
   private walk(contextId: ElementId): Map<string, Denotation> {
     const ids = new Map<string, Denotation>();
     const direct = new Set<string>();
@@ -865,9 +880,21 @@ export class DefiningEquations {
     // repeats, so it cannot see the cycle — it recursed until the stack died.
     // `visited` is only a WORK BOUND for a diamond reached twice at the SAME
     // prefix, so it keeps the prefix: two sibling features of one type (`part
-    // a : T; part b : T;`) are different scopes and both must be walked.
+    // a : T; part b : T;`) are different scopes and both must be walked —
+    // except an owner that is a library element, walked once (see the use).
     const visited = new Set<string>();
     const onPath = new Set<ElementId>();
+    // A WORK CAP on the tower itself: the guards cut cycles and diamonds, not
+    // the number of simple routes, which grows factorially in a web of part
+    // definitions that type parts of each other. Past the cap no owner is
+    // entered: the names registered stand (first route wins, as in a whole
+    // walk), the rest read unknown ({@link nameWalkCut}), and the two readings
+    // that infer from what the walk did NOT find stay off — the `nested`
+    // bare-name admission (its counts are low only because the walk stopped)
+    // and the lexical one (a direct name never registered would let an outer
+    // attribute of the same name through).
+    let entered = 0;
+    let cut = false;
     // `inCall`: below a calculation with a parameter, whose features are the
     // values of a CALL — its `in y = 100.0` a default nothing invokes, its
     // `return r = y` the result of one — so a value scope reads none of them.
@@ -882,14 +909,17 @@ export class DefiningEquations {
       enclosing: readonly InstanceFrame[],
     ): void => {
       if (onPath.has(ownerId)) return;
-      // A LIBRARY feature's members are walked once, whatever the prefix: the
-      // library's feature graph is a dense web (`Part` owns features typed by
-      // `Part`, `Item` ...), and a name tower through it grows with every
-      // route, so `part p3 : Parts::Part;` beside an instance and a constraint
-      // ran out of memory. No model reads a library feature's member by a
-      // chain below a user feature; a name past the first route stays unread.
+      // A library feature's members are walked once, whatever the prefix: its
+      // feature graph is a dense web (`Part` owns features typed by `Part`...),
+      // so `part p3 : Parts::Part;` beside an instance and a constraint ran out
+      // of memory. No model reads such a member by a chain below a user feature.
       const guardKey = this.model.get(ownerId)?.attrs.isLibrary === true ? `library ${ownerId}` : `${prefix} ${ownerId}`;
       if (visited.has(guardKey)) return;
+      if (entered >= MAX_NAME_WALK_OWNERS) {
+        cut = true;
+        return;
+      }
+      entered++;
       visited.add(guardKey);
       onPath.add(ownerId);
       for (const feat of this.features(ownerId)) {
@@ -924,6 +954,10 @@ export class DefiningEquations {
       onPath.delete(ownerId);
     };
     visit(contextId, '', false, false, this.instanceNameOf(contextId), []);
+    if (cut) {
+      this.cutWalks.add(contextId);
+      return ids;
+    }
     // A name the context's own features do not answer is the attribute its
     // owning namespaces declare ({@link lexicalNames}), as KerML resolves it.
     const lexical = this.lexicalNames(contextId);
@@ -1081,6 +1115,10 @@ export class DefiningEquations {
   lexicalRefusal(contextId: ElementId, name: string): string | undefined {
     const shadowed = this.clashesIn(contextId).get(name);
     if (shadowed?.shadow) return clashSentence(this.model, contextId, shadowed);
+    if (!this.denote(contextId).has(name)) {
+      const cut = this.nameWalkCut(contextId);
+      if (cut !== undefined) return cut;
+    }
     return this.byName(contextId).has(name) ? undefined : this.lexicalNames(contextId).refused.get(name);
   }
 
@@ -1632,6 +1670,10 @@ export class DefiningEquations {
     // subject were read, so `m` was dropped, no instance was found to read the
     // satisfier otherwise, and w's 50 was never read: SM1's `satisfy RF by p1`
     // held on all four surfaces.
+    // A walk that stopped at its cap lists not every name below the satisfier: the row abstains.
+    if (this.nameWalkCut(written.id) !== undefined || (scope.id !== written.id && this.nameWalkCut(scope.id) !== undefined)) {
+      return { kind: satisfied ? 'satisfy' : 'subject', written, scope, path, instance: undefined };
+    }
     const denoted = this.denote(written.id);
     const through = this.subjectInstance(written.id)?.instance;
     const own = this.instanceNameOf(written.id);
@@ -1739,6 +1781,7 @@ export class DefiningEquations {
     }
     const name = this.nameOf(satisfier);
     if (name === undefined) return undefined;
+    if (this.nameWalkCut(home.id) !== undefined) return { kind: 'satisfy', written, scope: home, path: chain ?? name, instance: undefined, outside: true };
     const names = [...this.denote(home.id).keys()].filter((k) => k === name || k.startsWith(`${name}.`));
     const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${written.id} satisfier`, home, names) : undefined;
     return otherwise ? { kind: 'satisfy', written, scope: home, path: chain ?? name, instance: otherwise.instance, outside: true } : undefined;
@@ -4401,6 +4444,15 @@ const MAX_BINDING_FRAMES = 4096;
 
 /** Past this many usages on a context's path below where a binding is written, the context is not read. */
 const MAX_BINDING_SEGMENTS = 32;
+
+/**
+ * The most owners one {@link DefiningEquations.denote} walk enters. A web of
+ * part definitions that each type parts of the others has a name tower that
+ * grows with the number of simple routes through it (five definitions of four
+ * such parts each: over 10^5 names, then the heap); the bundled examples and the
+ * v9 model enter fewer than 600 owners.
+ */
+const MAX_NAME_WALK_OWNERS = 10_000;
 
 /**
  * Past this many values read through one another, a name's reading is followed
