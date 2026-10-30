@@ -50,6 +50,7 @@ import {
   valueTextNumeral,
   type EncodeVariable,
 } from '@semantics/smt/encode';
+import { logicFromShape, shapeOfTerm, SHAPE_BITS, type ShapeFacts } from '@semantics/smt/shape';
 import {
   addRationals,
   compareRationals,
@@ -67,6 +68,18 @@ import {
 import { obligationsOf } from '@semantics/obligations';
 import { BINARY_PREFIXES, SI_PREFIXES, UNIT_REGISTRY, resolveUnit } from '@semantics/units';
 import { loadModelText } from '@text/load';
+import { collect, corpusItems } from '../../scripts/census-constraint-classes';
+import {
+  SHAPE_LOGIC,
+  astShape,
+  extractProbes,
+  invariantsHold,
+  mergeCensus,
+  readingOf,
+  shapeOfBytes,
+  termFacts,
+  type ShapeId,
+} from '../../scripts/lib/class-census';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
 
@@ -1163,5 +1176,364 @@ describe('the readings cache of one pass keeps a reading from its second read on
     } finally {
       parse.mockRestore();
     }
+  });
+});
+
+/* ──────────────── the constraint-class census (scripts/census-constraint-classes) ──────────────── */
+
+describe('the constraint-class census sorts a relation by the bytes the encoder emitted', () => {
+  const vars = (sorts: Record<string, EncodeVariable['sort']>): EncodeVariable[] =>
+    Object.entries(sorts).map(([path, sort]) => ({ path, qualifiedName: `P::${path}`, sort, factor: 1, offset: 0, free: false }));
+  const V = vars({ a: 'Real', b: 'Real', n: 'Int', p: 'Bool', q: 'Bool' });
+  /** body, the shape the plan's C.1 gives it. The `^ 0` rows are the ones an AST-only reading gets wrong. */
+  const TABLE: Array<[string, ShapeId]> = [
+    ['a + 1.0 > b', 'lra'],
+    ['n > 3.0', 'lira'],
+    ['p and q', 'bool'],
+    ['1.0 < 2.0', 'ground'],
+    ['a * b > 1.0', 'nra-poly'],
+    ['0.0 * a * b > 1.0', 'nra-poly'],
+    ['a * (b ^ 0) > 1.0', 'nra-poly'],
+    ['a / b > 1.0', 'nra-div'],
+    ['a / (b ^ 0) > 1.0', 'nra-div'],
+    ['n * a >= 12.0', 'nira'],
+    ['(n ^ 0) < b', 'lra'],
+    ['a / (2.0 * 3.0) > 1.0', 'lra'],
+    ['a ^ 1 > 1.0', 'lra'],
+    ['a ^ 3 > 1.0', 'nra-poly'],
+    ['a ^ -1 > 1.0', 'nra-div'],
+    ['a ^ -2 > 1.0', 'nra-div'],
+    ['n ^ -1 > 1.0', 'nira'],
+  ];
+
+  it.each(TABLE)('%s is %s, in the bytes, in the AST, and in the encoder\u2019s own logic line', (body, shape) => {
+    const node = parseExpr(body);
+    const e = encodeRelation(node, V);
+    expect(e.ok, body).toBe(true);
+    if (!e.ok) return;
+    const sorts = new Map(V.map((v) => [symbolOf(v.qualifiedName)!, v.sort]));
+    const bytes = shapeOfBytes(termFacts([e.term]), sorts, { syntacticNonlinear: e.syntacticNonlinear, sides: e.sideConditions.length });
+    expect(bytes.shape, `${body}: ${e.term}`).toBe(shape);
+    expect(astShape(node, V), body).toBe(shape);
+    const script = encodeScript({ variables: V, assertions: [{ kind: 'goal', name: 'g', term: e.term }, ...e.sideConditions.map((s) => ({ kind: 'side' as const, name: 'g', term: s.term }))], nonlinear: e.nonlinear, syntacticNonlinear: e.syntacticNonlinear });
+    expect(script.logic, body).toBe(SHAPE_LOGIC[shape]);
+  });
+
+  it('is told apart from the bytes: a body whose read is dropped has linear bytes and a nonlinear walk', () => {
+    const e = encodeRelation(parseExpr('a * (b ^ 0) > 1.0'), V);
+    if (!e.ok) throw new Error('refused');
+    expect(termFacts([e.term]).nonlinear, e.term).toBe(false);
+    expect(e.syntacticNonlinear).toBe(true);
+  });
+
+  it('reads the published examples to the expected counts, with its own invariants intact', async () => {
+    const files = ['uav-isr', 'uav-isr-verification', 'vehicle'].map((n) => `examples/${n}.sysml`);
+    const { census } = await collect(corpusItems(undefined, files), { verdicts: false, probes: false });
+    expect(invariantsHold(census), JSON.stringify(census.checks)).toBe(true);
+    expect(census.perModel['examples/uav-isr.sysml']).toMatchObject({ rows: 14, encoded: 14, units: 3, shapes: { lra: 13, 'nra-div': 1 } });
+    expect(census.perModel['examples/uav-isr-verification.sysml']).toMatchObject({ rows: 10, units: 4, shapes: { lra: 9, 'nra-div': 1 } });
+    expect(census.perModel['examples/vehicle.sysml']).toMatchObject({ rows: 5, units: 0, shapes: { lra: 4, lira: 1 } });
+    // Two censuses add: the sum is a census of both, so a shard is a sound way to split a run.
+    const doubled = mergeCensus(structuredClone(census), structuredClone(census));
+    expect(Object.values(doubled.rows).reduce((a, b) => a + b, 0)).toBe(2 * Object.values(census.rows).reduce((a, b) => a + b, 0));
+  });
+
+  it('gives a row with no formal clause no reading, and every other row one', async () => {
+    const { model } = await loadModelText(read('examples/views-tour.sysml'), { fileName: 'views-tour.sysml' });
+    const rows = obligationsOf(model!);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(readingOf(r) === '(none)', r.expression).toBe(r.source === 'none');
+  });
+
+  it('extracts the probes of a table without running it, and lists the ones whose text is computed', () => {
+    const src = [
+      'const PROBES: Record<string, { text: string }> = {',
+      '  a1: probe(`package A { }`, {',
+      "    'A::x': ['T/T/T/T', 'T'],",
+      '  }),',
+      '  // a comment, with a ` backtick',
+      '  b2: probe(make(2), {',
+      "    'B::y': ['F/F/F/F', 'F'],",
+      '  }),',
+      '  c3: probe(`package $' + '{C} { }`, {}),',
+      "  ...reversed('d4', `package D { }`, { 'D::z': ['T/T/T/T', 'T'] }),",
+      '};',
+    ].join('\n');
+    const got = extractProbes(src);
+    expect(got.total).toBe(3);
+    expect(got.entries.map((e) => e.name)).toEqual(['a1']);
+    expect(got.entries[0]!.rows).toEqual([{ key: 'A::x', letters: 'T/T/T/T', ref: 'T' }]);
+    expect(got.interpolated).toEqual(['b2', 'c3']);
+    expect(got.spreads).toHaveLength(1);
+  });
+});
+
+/* ──────────────── the script shape is the logic line (smt/shape.ts) ──────────────── */
+
+describe('the script shape is the logic line', () => {
+  const V = (['a', 'b', 'c'] as const)
+    .map((p) => v(p))
+    .concat([v('n', { sort: 'Int' }), v('m', { sort: 'Int' }), v('p', { sort: 'Bool' })]);
+  const name = (path: string) => `P::${path}`;
+
+  /** The shape of an encoded body, through the walk's own flags, and the logic the public script gives it. */
+  function both(node: ReturnType<typeof parseExpr>, variables: EncodeVariable[], opts: { hint?: boolean } = {}) {
+    const e = encodeRelation(node, variables);
+    if (!e.ok) return undefined;
+    const terms = [e.term, ...e.sideConditions.map((s) => s.term)];
+    const hint = opts.hint !== false;
+    const shape = shapeOfTerm(terms, variables, {
+      syntacticNonlinear: hint && e.syntacticNonlinear,
+      hasSideConditions: e.sideConditions.length > 0,
+      reads: e.reads,
+    });
+    const script = encodeScript({
+      variables,
+      assertions: terms.map((term, i) => ({ kind: i === 0 ? ('goal' as const) : ('side' as const), name: 'g', term })),
+      nonlinear: e.nonlinear,
+      ...(hint ? { syntacticNonlinear: e.syntacticNonlinear } : {}),
+    });
+    return { e, shape, logic: script.logic };
+  }
+
+  /**
+   * An oracle that reads the AST and not the bytes. It models the two places the two differ:
+   * `x ^ 0` writes `1.0` (the walk saw the read, the bytes do not carry it) and `x ^ 1` writes `x`
+   * (no product), and a negative power is a division by a symbol. A `≠ 0` guard is part of the
+   * script and keeps the symbols of its divisor even when a `^ 0` erased the term that held them.
+   */
+  function oracleLogic(root: ReturnType<typeof parseExpr>, ignore: { div?: boolean; pow?: boolean } = {}): string {
+    const sort = new Map(V.map((x) => [x.path, x.sort]));
+    interface F { walk: Set<string>; bytes: Set<string>; guard: Set<string>; nl: boolean }
+    const go = (n: ReturnType<typeof parseExpr>): F => {
+      const empty = (): F => ({ walk: new Set(), bytes: new Set(), guard: new Set(), nl: false });
+      const merge = (...xs: F[]): F => ({
+        walk: new Set(xs.flatMap((x) => [...x.walk])),
+        bytes: new Set(xs.flatMap((x) => [...x.bytes])),
+        guard: new Set(xs.flatMap((x) => [...x.guard])),
+        nl: xs.some((x) => x.nl),
+      });
+      switch (n.kind) {
+        case 'ref':
+          return { ...empty(), walk: new Set([n.path.join('.')]), bytes: new Set([n.path.join('.')]) };
+        case 'unary':
+          return go(n.operand);
+        case 'if':
+          return merge(go(n.cond), go(n.then), go(n.else));
+        case 'binary': {
+          const l = go(n.left);
+          const r = go(n.right);
+          const f = merge(l, r);
+          if (n.op === '*') return { ...f, nl: f.nl || (l.walk.size > 0 && r.walk.size > 0) };
+          if (n.op === '/') {
+            const guard = r.walk.size > 0 ? new Set([...f.guard, ...r.bytes]) : f.guard;
+            return { ...f, guard, nl: f.nl || (!ignore.div && r.walk.size > 0) };
+          }
+          if (n.op === '^') {
+            const e = n.right.kind === 'num' ? n.right.value : n.right.kind === 'unary' && n.right.operand.kind === 'num' ? -n.right.operand.value : NaN;
+            if (e === 0) return { ...l, bytes: new Set() };
+            if (e === 1 || ignore.pow) return l;
+            const guard = e < 0 && l.walk.size > 0 ? new Set([...l.guard, ...l.bytes]) : l.guard;
+            return { ...l, guard, nl: l.nl || l.walk.size > 0 };
+          }
+          return f;
+        }
+        default:
+          return empty();
+      }
+    };
+    const f = go(root);
+    const int = [...f.bytes, ...f.guard].some((p) => sort.get(p) === 'Int');
+    return int ? (f.nl ? 'QF_NIRA' : 'QF_LIRA') : f.nl ? 'QF_NRA' : 'QF_LRA';
+  }
+
+  /** A seeded body: arithmetic over reals and ints, `^` with literal exponents -2..3, guards, `ite`. */
+  function bodies(count: number, seed: number): ReturnType<typeof parseExpr>[] {
+    let s = seed >>> 0;
+    const rnd = (k: number) => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * k);
+    };
+    const leaf = () => ['a', 'b', 'c', 'n', 'm', '1.0', '2.0', '0.5', '3.0'][rnd(9)]!;
+    const arith = (d: number): string => {
+      if (d === 0 || rnd(5) === 0) return leaf();
+      switch (rnd(7)) {
+        case 0: return `(${arith(d - 1)} + ${arith(d - 1)})`;
+        case 1: return `(${arith(d - 1)} - ${arith(d - 1)})`;
+        case 2:
+        case 3: return `(${arith(d - 1)} * ${arith(d - 1)})`;
+        case 4: return `(${arith(d - 1)} / ${arith(d - 1)})`;
+        case 5: return `(${arith(d - 1)} ^ ${['-2', '-1', '0', '1', '2', '3'][rnd(6)]})`;
+        default: return `(if a > b then ${arith(d - 1)} else ${arith(d - 1)})`;
+      }
+    };
+    const out: ReturnType<typeof parseExpr>[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const cmp = `${arith(1 + rnd(3))} ${['<', '>=', '=='][rnd(3)]} ${arith(1 + rnd(2))}`;
+      out.push(parseExpr(rnd(6) === 0 ? `${cmp} and p` : cmp));
+    }
+    return out;
+  }
+
+  it('CC-01: the shape gives the encoder’s own logic line over 20,000 seeded bodies, and the AST oracle agrees', () => {
+    const miss: string[] = [];
+    const seen = { encoded: 0, nonlinear: 0, int: 0, guarded: 0 };
+    for (const node of bodies(20000, 20261030)) {
+      const r = both(node, V);
+      if (r === undefined) continue;
+      seen.encoded += 1;
+      if (r.shape.nonlinear) seen.nonlinear += 1;
+      if (r.shape.int) seen.int += 1;
+      if (r.shape.guarded) seen.guarded += 1;
+      const bytes = both(node, V, { hint: false })!;
+      const want = r.logic;
+      // the shape with the walk's flag, the shape from the bytes alone, and the oracle each give the script's line
+      if (logicFromShape(r.shape) !== want) miss.push(`shape ${r.e.term}: ${logicFromShape(r.shape)} vs ${want}`);
+      if (logicFromShape(bytes.shape) !== bytes.logic) miss.push(`bytes ${r.e.term}: ${logicFromShape(bytes.shape)} vs ${bytes.logic}`);
+      if (oracleLogic(node) !== want) miss.push(`oracle ${r.e.term}: ${oracleLogic(node)} vs ${want}`);
+    }
+    expect(miss.slice(0, 5)).toEqual([]);
+    expect(seen.encoded).toBeGreaterThan(8000);
+    expect(seen.nonlinear).toBeGreaterThanOrEqual(600);
+    expect(seen.int).toBeGreaterThanOrEqual(1000);
+    expect(seen.guarded).toBeGreaterThanOrEqual(300);
+  });
+
+  const EDGES: Array<[string, string, { int?: boolean; guarded?: boolean; nl?: string[]; syms?: string[] }]> = [
+    ['a + 1.0 > b', 'QF_LRA', { syms: ['a', 'b'] }],
+    ['n > 3.0', 'QF_LIRA', { int: true, syms: ['n'] }],
+    ['p and p', 'QF_LRA', { syms: ['p'] }],
+    ['1.0 < 2.0', 'QF_LRA', { syms: [] }],
+    ['false', 'QF_LRA', { syms: [] }],
+    ['a * b > 1.0', 'QF_NRA', { nl: ['a', 'b'], syms: ['a', 'b'] }],
+    ['0.0 * a * b > 1.0', 'QF_NRA', { nl: ['a', 'b'], syms: ['a', 'b'] }],
+    ['a * (b ^ 0) > 1.0', 'QF_NRA', { nl: ['a', 'b'], syms: ['a'] }],
+    ['a / b > 1.0', 'QF_NRA', { guarded: true, nl: ['a', 'b'], syms: ['a', 'b'] }],
+    ['a / (b ^ 0) > 1.0', 'QF_NRA', { guarded: true, nl: ['a', 'b'], syms: ['a'] }],
+    ['n * a >= 12.0', 'QF_NIRA', { int: true, nl: ['a', 'n'], syms: ['a', 'n'] }],
+    ['(n ^ 0) < b', 'QF_LRA', { syms: ['b'] }],
+    ['a / (2.0 * 3.0) > 1.0', 'QF_LRA', { syms: ['a'] }],
+    ['a ^ 1 > 1.0', 'QF_LRA', { syms: ['a'] }],
+    ['a ^ 3 > 1.0', 'QF_NRA', { nl: ['a'], syms: ['a'] }],
+    ['a ^ -1 > 1.0', 'QF_NRA', { guarded: true, nl: ['a'], syms: ['a'] }],
+  ];
+
+  it.each(EDGES)('CC-02: %s is %s', (body, logic, want) => {
+    const r = both(parseExpr(body), V);
+    expect(r, body).toBeDefined();
+    expect(r!.logic, body).toBe(logic);
+    expect(logicFromShape(r!.shape), `${body}: ${r!.e.term}`).toBe(logic);
+    expect(r!.shape.int).toBe(want.int ?? false);
+    expect(r!.shape.guarded).toBe(want.guarded ?? false);
+    expect(r!.shape.nlSymbols).toEqual((want.nl ?? []).map(name));
+    expect(r!.shape.symbols).toEqual((want.syms ?? []).map(name));
+  });
+
+  it('CC-02: a hand-built term and the operator mask', () => {
+    const f = (term: string): ShapeFacts => shapeOfTerm(term, V, { syntacticNonlinear: false, hasSideConditions: false, reads: [] });
+    expect(logicFromShape(f('(< (* |P::a| |P::b|) 1.0)'))).toBe('QF_NRA');
+    expect(logicFromShape(f('(< (* 60.0 |P::a|) 1.0)'))).toBe('QF_LRA');
+    expect(logicFromShape(f('(< (/ 1.0 |P::a|) 1.0)'))).toBe('QF_NRA');
+    expect(logicFromShape(f('(< (to_real |P::n|) 1.0)'))).toBe('QF_LIRA');
+    expect(logicFromShape(f('(< (to_real |P::n|) 1.0)'), false)).toBe('QF_LRA');
+    expect(f('(< (to_real |P::n|) 1.0)').mask).toBe(SHAPE_BITS.TO_REAL);
+    expect(f('(ite (< |P::a| 1.0) (* 2.0 |P::a|) (/ |P::b| 2.0))').mask).toBe(SHAPE_BITS.ITE | SHAPE_BITS.ARITH | SHAPE_BITS.MUL_SYM);
+    expect(f('(< (/ 1.0 |P::a|) 1.0)').mask).toBe(SHAPE_BITS.ARITH | SHAPE_BITS.DIV_SYM);
+    expect(f('(< (^ |P::a| 2.0) 1.0)').mask).toBe(SHAPE_BITS.ARITH | SHAPE_BITS.POW);
+    // a symbol the environment does not declare is not carried
+    expect(f('(< |Q::z| 1.0)').symbols).toEqual([]);
+  });
+
+  it('CC-04: the relation and the script carry the shape of their bytes, and the script’s logic line is read from it', () => {
+    let guarded = 0;
+    for (const node of bodies(2000, 20261031)) {
+      const e = encodeRelation(node, V);
+      if (!e.ok) continue;
+      const terms = [e.term, ...e.sideConditions.map((s) => s.term)];
+      // the relation reads its own variables, not the whole environment, and loses none of them
+      const whole = shapeOfTerm(terms, V, {
+        syntacticNonlinear: e.syntacticNonlinear,
+        hasSideConditions: e.sideConditions.length > 0,
+        reads: e.reads,
+      });
+      expect(e.shape, e.term).toEqual(whole);
+      const script = encodeScript({
+        variables: V,
+        assertions: terms.map((term, i) => ({ kind: i === 0 ? ('goal' as const) : ('side' as const), name: 'g', term })),
+        nonlinear: e.nonlinear,
+        syntacticNonlinear: e.syntacticNonlinear,
+      });
+      // the script’s shape is over its bytes: the logic line is that shape’s, whatever the relation’s own flag said
+      expect(logicFromShape(script.shape), e.term).toBe(script.logic);
+      expect(script.text).toContain(`(set-logic ${script.logic})\n`);
+      expect(script.shape.symbols).toEqual(script.symbols);
+      expect(script.shape.guarded).toBe(e.sideConditions.length > 0);
+      if (e.sideConditions.length > 0) guarded += 1;
+    }
+    expect(guarded).toBeGreaterThan(30);
+    // a hand-built script with no walk flag still gets the line its bytes are in
+    const hand = encodeScript({
+      variables: V,
+      assertions: [{ kind: 'goal', name: 'g', term: '(< (* |P::a| |P::b|) 1.0)' }],
+      nonlinear: false,
+    });
+    expect(hand.logic).toBe('QF_NRA');
+    expect(hand.shape.nlSymbols).toEqual(['P::a', 'P::b']);
+  });
+
+  it('CC-04: a script’s bytes are what they were — header, logic, declarations, labelled assertions', () => {
+    const e = encodeRelation(parseExpr('n * a / b >= 12.0'), V);
+    if (!e.ok) throw new Error('did not encode');
+    const script = encodeScript({
+      variables: V,
+      assertions: [
+        { kind: 'goal', name: 'R', term: e.term },
+        ...e.sideConditions.map((c) => ({ kind: 'side' as const, name: 'R', term: c.term })),
+      ],
+      nonlinear: e.nonlinear,
+      syntacticNonlinear: e.syntacticNonlinear,
+    });
+    expect(script.logic).toBe('QF_NIRA');
+    expect(script.text).toBe(
+      [
+        '; sysprose — SMT-LIB2 encoding of one obligation.',
+        '; Variables are declared in their storage unit; every read is lifted to coherent SI.',
+        '; Symbols and assertion labels are qualified names — never element ids, which are fresh per load.',
+        '(set-logic QF_NIRA)',
+        '(set-option :produce-unsat-cores true)',
+        '(declare-fun |P::a| () Real)',
+        '(declare-fun |P::b| () Real)',
+        '(declare-fun |P::n| () Int)',
+        `(assert (! ${e.term} :named |goal:R|))`,
+        `(assert (! ${e.sideConditions[0]!.term} :named |side:R|))`,
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('CC-04: a name two variables share is typed by the first one, as the script declares it', () => {
+    const twin = [v('x'), v('x', { sort: 'Int' })];
+    const term = '(< |P::x| 1.0)';
+    const script = encodeScript({ variables: twin, assertions: [{ kind: 'goal', name: 'g', term }], nonlinear: false });
+    expect(script.text).toContain('(declare-fun |P::x| () Real)');
+    expect(script.logic).toBe('QF_LRA');
+    expect(shapeOfTerm(term, twin, { syntacticNonlinear: false, hasSideConditions: false, reads: [] }).int).toBe(false);
+  });
+
+  it('CC-03: an oracle that ignores `/` or `^` is caught by the same fuzz', () => {
+    const count = (ignore: { div?: boolean; pow?: boolean }) => {
+      let wrong = 0;
+      for (const node of bodies(2000, 20261030)) {
+        const r = both(node, V);
+        if (r !== undefined && oracleLogic(node, ignore) !== r.logic) wrong += 1;
+      }
+      return wrong;
+    };
+    expect(count({})).toBe(0);
+    expect(count({ div: true })).toBeGreaterThan(0);
+    expect(count({ pow: true })).toBeGreaterThan(0);
   });
 });

@@ -78,6 +78,7 @@ import { DOUBLE_DIGITS, significantDigitsOf, type ExprNode } from '../expr';
 import type { ContractVariable, Fragment, Refusal, VarSort } from '../contracts';
 import type { ScaleMap } from '../relations';
 import { resolveUnit, type FactorTerm } from '../units';
+import { logicFromShape, shapeOfTerm, type ShapeFacts } from './shape';
 
 /* ────────────────────────────── variables ───────────────────────────────── */
 
@@ -242,6 +243,13 @@ export interface EncodedRelation {
   sideConditions: SideCondition[];
   /** The variables the term actually reads, by qualified name, first-seen order. */
   reads: string[];
+  /**
+   * The term's shape, read from its bytes and the walk's flag ({@link shapeOfTerm}): the operators the
+   * bytes use, whether an `Int` symbol occurs in them, and the symbols under their nonlinear sites.
+   * Taken over the term AND its {@link sideConditions}, because that is what a proof asserts. A label:
+   * nothing in this lane branches on it.
+   */
+  shape: ShapeFacts;
 }
 
 /** A relation this lane does not encode, with the reason a person branches on. */
@@ -262,6 +270,8 @@ type Encoded = { ok: true; text: string; sort: TermSort } | RefusedRelation;
 interface Walk {
   vars: Map<string, EncodeVariable>;
   reads: string[];
+  /** The variable behind each entry of {@link reads}, for {@link shapeOfTerm}. */
+  readVars: EncodeVariable[];
   seen: Set<string>;
   nonlinearIn: Set<string>;
   nonlinear: boolean;
@@ -284,6 +294,7 @@ export function encodeRelation(
   const walk: Walk = {
     vars: indexBy(variables),
     reads: [],
+    readVars: [],
     seen: new Set(),
     nonlinearIn: new Set(),
     nonlinear: false,
@@ -309,6 +320,11 @@ export function encodeRelation(
     nonlinearIn: [...walk.nonlinearIn].sort(),
     sideConditions: walk.sideConditions,
     reads: walk.reads,
+    shape: shapeOfTerm([encoded.text, ...walk.sideConditions.map((c) => c.term)], walk.readVars, {
+      syntacticNonlinear: walk.syntacticNonlinear,
+      hasSideConditions: walk.sideConditions.length > 0,
+      reads: walk.reads,
+    }),
   };
 }
 
@@ -362,7 +378,7 @@ function term(node: ExprNode, walk: Walk): Encoded {
  * the model and is kept — and READ through `to_real`, so every arithmetic term
  * in a script is Real-sorted and a mixed comparison cannot be ill-sorted. The
  * logic line says `QF_LIRA` / `QF_NIRA` when that happens (see
- * {@link logicOf}); the report's fragment vocabulary stays the plan's two words.
+ * {@link logicFromShape}); the report's fragment vocabulary stays the plan's two words.
  */
 function readOf(path: string, walk: Walk): Encoded {
   const v = walk.vars.get(path);
@@ -383,6 +399,7 @@ function readOf(path: string, walk: Walk): Encoded {
   if (!walk.seen.has(v.qualifiedName)) {
     walk.seen.add(v.qualifiedName);
     walk.reads.push(v.qualifiedName);
+    walk.readVars.push(v);
   }
   if (v.sort === 'Bool') {
     if (v.factor !== 1 || v.offset !== 0) {
@@ -1038,6 +1055,12 @@ export interface SmtScript {
   symbols: string[];
   /** The `:named` labels, in assertion order — what an UNSAT core comes back as. */
   labels: string[];
+  /**
+   * The shape of the script's bytes ({@link shapeOfTerm}) over every assertion it holds, the guards
+   * included. {@link logic} is {@link logicFromShape} of it, so the two cannot disagree. A label:
+   * nothing in this lane branches on it.
+   */
+  shape: ShapeFacts;
 }
 
 /** What a script is built from. */
@@ -1118,10 +1141,21 @@ export function encodeScript(req: ScriptRequest): SmtScript {
     .sort((a, b) => (a.qualifiedName < b.qualifiedName ? -1 : a.qualifiedName > b.qualifiedName ? 1 : 0));
 
   // The logic line is the one claim in this file z3 will CHECK, so it is
-  // derived from the bytes rather than from the caller's free-relative flag.
-  const syntacticNonlinear =
-    req.syntacticNonlinear === true || req.assertions.some((a) => nonlinearTerm(a.term));
-  const logic = logicOf(declared, syntacticNonlinear);
+  // derived from the bytes (and the encoder's own walk flag) rather than from the
+  // caller's free-relative one: z3 checks `(set-logic QF_LRA)` against the SYNTAX
+  // of the assertions, and a `QF_LRA` header over `(* |x| |y|)` is a script it
+  // refuses outright. `shape.ts` reads the bytes; the declared symbols are the
+  // ones they mention, so it is given those and not the whole environment.
+  const shape = shapeOfTerm(
+    req.assertions.map((a) => a.term),
+    declared,
+    {
+      syntacticNonlinear: req.syntacticNonlinear === true,
+      hasSideConditions: req.assertions.some((a) => a.kind === 'side'),
+      reads: [],
+    },
+  );
+  const logic = logicFromShape(shape);
   const lines = [HEADER, `(set-logic ${logic})`];
   if (req.cores !== false) lines.push('(set-option :produce-unsat-cores true)');
   const symbols: string[] = [];
@@ -1157,99 +1191,13 @@ export function encodeScript(req: ScriptRequest): SmtScript {
     fragment: req.nonlinear ? 'qf-nra' : 'qf-lra',
     symbols,
     labels,
+    shape,
   };
 }
 
 /** A label as an SMT symbol: the two characters a quoted symbol cannot hold. */
 function labelSymbol(name: string): string {
   return name.replace(/[|\\]/g, '_');
-}
-
-/**
- * Is this term's SYNTAX nonlinear?
- *
- * z3 checks `(set-logic QF_LRA)` against the shape of the assertions, not
- * against anybody's reasoning about which variables are pinned, so this scan is
- * the thing that decides the logic line. `(* 60.0 |x|)` is linear — one operand
- * carries a symbol; `(* |x| |y|)` is not, and neither is a division whose
- * divisor carries one. A term this returns `true` for and a `QF_LRA` header is
- * a script z3 refuses outright, reported by {@link ../z3-bridge} as `error`.
- *
- * Not exported: {@link encodeScript} is the only caller, and an exported helper
- * nothing calls is how a documented behaviour ends up describing no code path.
- */
-function nonlinearTerm(text: string): boolean {
-  return parseSexps(text).some(nonlinearSexp);
-}
-
-/** An S-expression: a quoted-or-bare atom, or an application. */
-type Sexp = string | Sexp[];
-
-/** Tokenise and nest. `|a::b|` is one atom, pipes included. */
-function parseSexps(text: string): Sexp[] {
-  const stack: Sexp[][] = [[]];
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (c === '(') {
-      const child: Sexp[] = [];
-      stack[stack.length - 1].push(child);
-      stack.push(child);
-      i += 1;
-    } else if (c === ')') {
-      if (stack.length > 1) stack.pop();
-      i += 1;
-    } else if (c === '|') {
-      const end = text.indexOf('|', i + 1);
-      if (end === -1) return stack[0];
-      stack[stack.length - 1].push(text.slice(i, end + 1));
-      i = end + 1;
-    } else if (/\s/.test(c)) {
-      i += 1;
-    } else {
-      let j = i;
-      while (j < text.length && !/[\s()|]/.test(text[j])) j += 1;
-      stack[stack.length - 1].push(text.slice(i, j));
-      i = j;
-    }
-  }
-  return stack[0];
-}
-
-/** Does this sub-term carry a variable, as opposed to only literals? */
-function carriesSymbol(s: Sexp): boolean {
-  // The head of an application is an operator (`-`, `to_real`, `ite`), never a
-  // variable, so `(- 3.0)` and `(/ 37.0 2.0)` are literals and are skipped.
-  if (Array.isArray(s)) return s.slice(1).some(carriesSymbol);
-  return !/^[+-]?\d/.test(s) && s !== 'true' && s !== 'false';
-}
-
-function nonlinearSexp(s: Sexp): boolean {
-  if (!Array.isArray(s) || s.length === 0) return false;
-  const head = s[0];
-  const args = s.slice(1);
-  if (head === '*' && args.filter(carriesSymbol).length >= 2) return true;
-  if (head === '/' && args.slice(1).some(carriesSymbol)) return true;
-  if (head === '^') return true;
-  return s.some(nonlinearSexp);
-}
-
-/**
- * The `set-logic` line.
- *
- * The plan's report vocabulary has two words — `qf-lra` and `qf-nra` — and
- * SMT-LIB has four names for what this encoder can produce, because an `Int`
- * declaration puts a script in the mixed integer/real fragment. The report
- * keeps the two words; the script names the logic its BYTES are in. The two
- * questions differ, and the difference is the whole reason this takes a
- * syntactic flag rather than the report's: `a * b` with `b` pinned by an axiom
- * is linear reasoning and a nonlinear script, and a `QF_LRA` header over it is
- * refused by z3 before it decides anything.
- */
-function logicOf(declared: readonly EncodeVariable[], nonlinear: boolean): string {
-  const mixed = declared.some((v) => v.sort === 'Int');
-  if (mixed) return nonlinear ? 'QF_NIRA' : 'QF_LIRA';
-  return nonlinear ? 'QF_NRA' : 'QF_LRA';
 }
 
 /**
