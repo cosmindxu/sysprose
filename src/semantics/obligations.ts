@@ -2502,6 +2502,9 @@ function readsOf(row: Obligation): Set<string> | undefined {
         // `unparseable`: a qualified name carrying `|` or `\` cannot be quoted
         // as an SMT symbol.
         if (symbol.includes('|') || symbol.includes('\\')) return undefined;
+        // A feature typed `Natural`, `Positive` or `UnlimitedNatural`: the encoder
+        // refuses the read (its floor is an axiom this lane does not carry).
+        if (v.restricted !== undefined) return undefined;
         reads.add(symbol);
         const { factor, offset } = scaleOf(v);
         if (sortOf(v) === 'Bool') {

@@ -3070,7 +3070,7 @@ same sentence:
 
 | Answer | What it means |
 |---|---|
-| `optimum` | νZ established its optimality and a design attains it — the witness is printed |
+| `optimum` | νZ established its optimality (on an Integer-and-Real script, two plain checks confirmed it beside νZ) and a design attains it — the witness is printed |
 | `supremum` / `infimum` | exact, and **never attained** (`x < 5` has no maximum) |
 | `unbounded` | z3 proved there is no finite bound in that direction — over a **linear** script, the only shape νZ is complete for |
 | `bound-without-optimality` | a bound z3 reached over a **nonlinear** script, which νZ does not certify — finite or `oo` alike |
@@ -3089,6 +3089,28 @@ bound: a file whose only ceiling on a quantity is a relation the encoder refused
 would otherwise read *unbounded above*. A refusal in an unrelated corner of the
 file cannot move the answer and is listed rather than acted on — the same reach
 test `verify` applies before it publishes a refutation.
+
+**A script over an Integer and a Real feature is checked before it is believed.**
+z3's νZ, given a script that declares both an Integer and a Real feature,
+answered `min x` with an *infimum* of 3/4 that was never attained, where `x = 0`
+with `y = 1` is a design (`x` Real in `[0, 1]`, `y` Integer, `y + x > 0.5`), and
+`max x` with `1 + epsilon` where 2 is attained, with no strict
+comparison anywhere. For such a script `bounds` keeps an `optimum` only when two
+plain checks, which are not νZ, agree with it (nothing feasible lies beyond the
+value, and the value itself is taken); an infimum, a supremum or *unbounded* is
+`inconclusive` with `verification/optimality-not-established` at exit **2**, with
+no number and a sentence that says the script mixes the two sorts. A model whose
+features are all Real or all Integer is decided as before.
+
+**A feature typed `Natural`, `Positive` or `UnlimitedNatural` is not read.** This
+tool derives no domain axiom from a type, and a Natural was an unbounded
+Integer to the solver: `n > -3 and n < 4` gave `min n = -2`, and two requirements
+`n <= -1` and `n >= -5` were *consistent* at `n = -1`. A relation that reads such
+a feature is refused (`verification/unsupported-expression`, reason
+`non-numeric-operand`, with the type named), so `bounds` on it is
+`verification/not-evaluable` (a partial axiom set) and `consistency` is
+inconclusive, at exit **2**; the SMT engine of `verify` and `refine` abstain over it
+too. The same feature typed `Integer` is read as before.
 
 **A measure a binding this tool does not read may carry is no bound either.**
 The axioms state no equality for a binding or a value that equates two parts

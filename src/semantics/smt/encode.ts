@@ -109,6 +109,8 @@ export interface EncodeVariable {
   factorTerms?: ReadonlyArray<FactorTerm>;
   /** Has the caller released this feature's value? */
   free: boolean;
+  /** `Natural`, `Positive` or `UnlimitedNatural`: a domain this lane does not carry, so it does not read the feature. */
+  restricted?: string;
 }
 
 /**
@@ -136,6 +138,7 @@ export function encodeVariables(
     offset: opts.scaled ? v.siOffset : 0,
     ...(opts.scaled ? declaredTerms(v, v.siFactor) : {}),
     free: free.has(v.path) || free.has(v.qualifiedName),
+    ...(v.restricted !== undefined ? { restricted: v.restricted } : {}),
   }));
 }
 
@@ -189,6 +192,7 @@ export function encodeVariablesOf(
       offset: s?.offset ?? 0,
       ...(s ? declaredTerms(v, s.factor) : {}),
       free: free.has(v.path) || free.has(v.qualifiedName),
+      ...(v.restricted !== undefined ? { restricted: v.restricted } : {}),
     };
   });
 }
@@ -394,6 +398,16 @@ function readOf(path: string, walk: Walk): Encoded {
       'unparseable',
       `the qualified name \`${v.qualifiedName}\` contains a character no SMT symbol can carry ` +
         '(`|` or `\\`), so the feature cannot be named in a script',
+    );
+  }
+  // A TYPE'S FLOOR IS AN AXIOM THIS LANE DOES NOT CARRY. `Natural` is `Int` here with no `>= 0`, so a bound or a
+  // witness below the type's floor was published as the model's (`min n = -2` for a Natural asserted `n > -3`; a
+  // set consistent only at a negative Natural). The read is refused and the engines abstain with this sentence.
+  if (v.restricted !== undefined) {
+    return refuse(
+      'non-numeric-operand',
+      `\`${v.path}\` is typed \`${v.restricted}\`, a domain below the integers that this lane does not carry ` +
+        'as an axiom (it derives none from a type), so a bound or a witness could lie where the type forbids a value',
     );
   }
   if (!walk.seen.has(v.qualifiedName)) {

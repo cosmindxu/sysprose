@@ -222,6 +222,12 @@ export interface ContractVariable {
   /** The origin offset of the stored scale — non-zero only on °C / °F. */
   siOffset: number;
   /**
+   * The ScalarValues type that restricts this feature's domain below what its sort encodes: `Natural`,
+   * `Positive` or `UnlimitedNatural` are `Int` here, with no lower bound ({@link restrictedDomainOf}). Absent
+   * for every other feature. The SMT encoder refuses to read one ({@link ../smt/encode}).
+   */
+  restricted?: string;
+  /**
    * The symbol an engine reads this path by, when it is NOT the feature's own
    * nor an instance's ({@link instance}): a name the validation surface reads
    * no value for in this relation's context (`unreadValuesOf` in
@@ -486,19 +492,38 @@ function sortOf(model: Model, id: ElementId): VarSort {
   const el = model.get(id);
   if (!el) return 'Real';
   if (typeof el.attrs.value === 'boolean') return 'Bool';
+  const names = typeNamesOf(model, id);
+  if (names.has('Boolean')) return 'Bool';
+  if (names.has('Integer') || names.has('Natural') || names.has('UnlimitedNatural')) return 'Int';
+  return 'Real';
+}
+
+/** The names a feature's type goes by: its types', theirs generalizations', and the tail of the declared one. */
+function typeNamesOf(model: Model, id: ElementId): Set<string> {
   const names = new Set<string>();
   for (const t of model.typesOf(id)) {
     if (t.declaredName) names.add(t.declaredName);
     for (const g of generalizationsOf(model, t.id)) if (g.declaredName) names.add(g.declaredName);
   }
-  const declared = el.attrs.type;
+  const declared = model.get(id)?.attrs.type;
   if (typeof declared === 'string') {
     const tail = declared.includes('::') ? declared.slice(declared.lastIndexOf('::') + 2) : declared;
     names.add(tail);
   }
-  if (names.has('Boolean')) return 'Bool';
-  if (names.has('Integer') || names.has('Natural') || names.has('UnlimitedNatural')) return 'Int';
-  return 'Real';
+  return names;
+}
+
+/**
+ * The type that restricts a feature's domain below what {@link sortOf} encodes, or `undefined`.
+ *
+ * `Natural` (`n >= 0`), `Positive` (`n >= 1`) and `UnlimitedNatural` are an unbounded `Int` in the SMT lane, which
+ * derives no axiom from a type: a bound over them reached below the type's floor (`min n = -2` for a `Natural`
+ * asserted `n > -3`), and a set was consistent only at a negative Natural. The lane abstains on such a feature
+ * rather than carry the floor as an axiom beside every engine's own cores and censuses.
+ */
+function restrictedDomainOf(model: Model, id: ElementId): string | undefined {
+  const names = typeNamesOf(model, id);
+  return ['Positive', 'Natural', 'UnlimitedNatural'].find((n) => names.has(n));
 }
 
 /**
@@ -1124,6 +1149,7 @@ function variablesOf(
     if (id === undefined) continue;
     const scale = storageScaleOf(model, id, memo);
     const facets = dimensionalFacets(model, id);
+    const restricted = restrictedDomainOf(model, id);
     out.push({
       path,
       featureId: id,
@@ -1132,6 +1158,7 @@ function variablesOf(
       unit: facets.unit ?? null,
       siFactor: scale?.factor ?? 1,
       siOffset: scale?.offset ?? 0,
+      ...(restricted !== undefined ? { restricted } : {}),
     });
   }
   return out;
