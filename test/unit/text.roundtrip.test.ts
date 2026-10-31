@@ -2204,6 +2204,50 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
       }
     }
 
+    // The first-of-its-name rule is the chain resolver's, which serves a binding, connection, flow and interface only.
+    // An allocation, succession, dependency or transition reopens its end through `resolveFullName` (the NAMED member
+    // first, the definition's own feature when only unnamed redefinitions answer), so two members of the name leave no
+    // name for the unnamed one: the note, as before, never `allocate p.load to y;` that reopens on another feature.
+    const NON_CHAIN: Array<[string, string, string]> = [
+      ['allocate', 'allocation', 'part y; allocate END to y;'],
+      ['allocate, the end last', 'allocation', 'part y; allocate y to END;'],
+      ['succession', 'succession', 'part y; succession first END then y;'],
+      ['dependency', 'dependency', 'part y; dependency from END to y;'],
+    ];
+    const TWO: Array<[string, string]> = [
+      ['an unnamed redefinition, then a named member', 'attribute :>> load = 50.0; attribute load : ScalarValues::Real;'],
+      ['two unnamed redefinitions', 'attribute :>> load = 50.0; attribute :>> load = 60.0;'],
+    ];
+    for (const [shape, members] of TWO) {
+      for (const [stmt, word, body] of NON_CHAIN) {
+        it(`${stmt}: ${shape} is not saved, and says so (not a chain statement)`, () => {
+          const src = `package T { ${DEF}part p : P { ${members} } ${body.replace('END', 'p.load')} }`;
+          const m = parseModel(src).model;
+          const link = m.all().find((e) => /^(Allocation|Succession|Dependency)/.test(e.eClass) && (e.source?.length || e.target?.length))!;
+          const pId = m.all().find((e) => e.declaredName === 'p')!.id;
+          const unnamed = m.children(pId).find((e) => e.declaredName === undefined && String(e.attrs.value) === '50')!;
+          const key = body.includes('END to') || body.includes('first END') || body.includes('from END') ? 'source' : 'target';
+          m.update(link.id, { [key]: [unnamed.id] });
+          const text = serializeModel(m);
+          expect(text).not.toContain('«');
+          expect(text).not.toMatch(/p\.load/);
+          expect(text).toMatch(new RegExp(`// Not saved: a ${word} whose end no name reaches \\(`));
+        });
+      }
+    }
+    it('transition: an unnamed redefinition beside another state of its name is not saved, and says so', () => {
+      for (const states of ['state :>> s1; state s1;', 'state :>> s1; state :>> s1;']) {
+        const m = parseModel(`package T { state def S { state s1; state s2; } state m : S { ${states} state z; transition first s2 then z; } }`).model;
+        const tr = m.all().find((e) => /Transition/.test(e.eClass))!;
+        const mId = m.all().find((e) => e.declaredName === 'm')!.id;
+        m.update(tr.id, { source: [m.children(mId).find((c) => /State/.test(c.eClass) && c.declaredName === undefined)!.id] });
+        const text = serializeModel(m);
+        expect(text).not.toContain('«');
+        expect(text).not.toMatch(/first T::m\.s1|first m\.s1/);
+        expect(text).toMatch(/\/\/ Not saved: a transition whose end no name reaches \(/);
+      }
+    });
+
     it('writes an end one name reaches as it did, and a statement with an anonymous relationship end as before', () => {
       const { text } = saved(`package T {
         part def P { attribute load : ScalarValues::Real default = 1.0; }

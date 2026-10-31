@@ -4402,8 +4402,9 @@ package P {
     // Review of fence-editor2: the serializer wrote `// Not saved:` in the statement's place for this file, the text loaded
     // clean to a model without it, and `--out` over the input lost `bind w = p.load;` with nothing said (the write-back
     // refused it then). The unnamed `:>> load` is the first member of its name, which the next load reads as the end
-    // (`fence-save-name`), so the statement is written. An end that is not the first of its name cannot come from a
-    // text, so no file reaches the refusal in `modelText` any more.
+    // (`fence-save-name`), so the statement is written. An end that is not the first of its name (or, for a
+    // non-chain statement, not the only one) cannot come from a text, so no file reaches the refusal in `modelText`
+    // any more; the guard stays for a model built by an edit, and is not tested here.
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     try {
       const model = join(dir, 'unnamed-end.sysml');

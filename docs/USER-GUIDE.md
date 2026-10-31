@@ -1196,20 +1196,25 @@ does not inherit and a name does not reach can leave the page apart from the fil
 
 A statement whose end no name reaches is not saved. A binding, connection, flow, allocation,
 succession, transition, dependency or alias ends in a feature the saved text has to name: a
-redefinition with no name of its own is named by what it redefines (`bind w = p.load;`), and the
-next open reads that name as the FIRST member of its owner that goes by it. So the unnamed
-redefinition is written by that name where it is the first of them: beside a named `load` that
-comes after it, or as the first of two unnamed `:>> load` (what `duplicate` makes), the statement is
-saved and the file reopens with it on the same feature. Where it is not the first (a member of that
-name before it: a rename gave one the name, or the second of two unnamed redefinitions), or a
-redefined feature has no name, no text a terminal reads names the end. Save, Export ▾ SysML and the
-Text view then write a line comment in the statement's place (`// Not saved: a binding whose end no
-name reaches (T::p::(unnamed AttributeUsage)). Name the unnamed redefinition on its path to save
-it.`) instead of text a terminal refuses (`unexpected character`). The file reads cleanly to a model
-without that statement, so it is another model than the one on screen, and `reach` and
-`check-behaviour` say so (`the text a file of it holds reads as another model`); naming the
-redefinition saves the statement. Opened and saved again, the file no longer has the statement or
-the comment.
+redefinition with no name of its own is named by what it redefines (`bind w = p.load;`). For a
+binding, connection, flow or interface the next open reads that name as the FIRST member of its
+owner that goes by it, so the unnamed redefinition is written by that name where it is the first of
+them: beside a named `load` that comes after it, or as the first of two unnamed `:>> load` (what
+`duplicate` makes), the statement is saved and the file reopens with it on the same feature. For an
+allocation, succession, transition, dependency or alias the next open reads the name by the NAMED
+member first, so the name is written only where exactly one member of the owner answers to it. Where
+it is not the first (a member of that name before it: a rename gave one the name, or the second of
+two unnamed redefinitions), or two members answer (for those statements), or a redefined feature
+has no name, no text a terminal reads names the end. Save, Export ▾ SysML and the Text view then
+write a line comment in the statement's place (`// Not saved: a binding whose end no name reaches
+(T::p::(unnamed AttributeUsage)). Name the unnamed redefinition on its path to save it.`) instead of
+text a terminal refuses (`unexpected character`). The file reads cleanly to a model without that
+statement, so it is another model than the one on screen, and `reach` and `check-behaviour` say so
+(`the text a file of it holds reads as another model`); naming the redefinition saves the
+statement. Opened and saved again, the file no longer has the statement or the comment. An end that
+is a NAMED member behind an earlier member of its name is written by the name and reopens on the
+earlier one, with no note: rename one of the two (the model already carries the duplicate-name
+finding).
 
 Five more cases are not followed, and in each the page can read what the saved file does not:
 

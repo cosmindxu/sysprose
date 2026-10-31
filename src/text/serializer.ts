@@ -90,9 +90,9 @@ export function serializeModel(model: Model): string {
 
 /**
  * Thrown inside {@link serializeElement} when an end of a statement is reached by no name: the path to it goes
- * through an unnamed redefinition that {@link effectiveSegment} cannot spell (a member of its owner before it goes by
- * its effective name: a named one, or the first of two unnamed redefinitions; an unnamed head of the path; a
- * redefined feature with no name). The placeholder `«AttributeUsage»` the path would carry is no text a terminal
+ * through an unnamed redefinition that {@link effectiveSegment} cannot spell (for a binding, connection, flow or
+ * interface a member of its owner before it goes by its effective name; for another statement a second member that
+ * answers to it; an unnamed head of the path; a redefined feature with no name). The placeholder `«AttributeUsage»` the path would carry is no text a terminal
  * reads (`unexpected character`), and the end is lost on the next load whatever is written there.
  */
 class NoNameReachesEnd extends Error {
@@ -960,6 +960,20 @@ function bodyMembers(model: Model, el: ElementRecord): ElementRecord[] {
 
 /* ───────────────────────── endpoint statements ────────────────────────── */
 
+/**
+ * The statements whose ends the next load reads as FEATURE CHAINS (`resolveChainEnd` of the text mapper, which serves
+ * these classes only: `CHAIN_CONNECTOR_CLASSES` in `map-to-model.ts`). Every other statement (allocation, succession,
+ * transition, dependency, disjoining, alias) reopens its ends through `resolveFullName`, a different rule.
+ */
+const CHAIN_STATEMENT_CLASSES: ReadonlySet<string> = new Set([
+  'ConnectionUsage',
+  'Connector',
+  'InterfaceUsage',
+  'BindingConnectorAsUsage',
+  'Flow',
+  'FlowUsage',
+]);
+
 /** `ref` without its quoted names: a `«` left in it is the placeholder of an unnamed element on the path. */
 function reachedByNoName(ref: string): boolean {
   return ref.replace(/'(?:\\.|[^'\\])*'/g, '').includes('«');
@@ -972,7 +986,7 @@ function reachedByNoName(ref: string): boolean {
 function endpoint(model: Model, el: ElementRecord, which: 'source' | 'target', skipped = false): string {
   const id = (el[which] ?? [])[0];
   if (id) {
-    const ref = refTo(model, id, el.ownerId);
+    const ref = refTo(model, id, el.ownerId, undefined, CHAIN_STATEMENT_CLASSES.has(el.eClass));
     if (!skipped && reachedByNoName(ref)) throw new NoNameReachesEnd(el.id, ref);
     return ref;
   }
@@ -1309,6 +1323,7 @@ function refTo(
   targetId: ElementId,
   scopeOwnerId: ElementId | null,
   resolve?: RefResolver,
+  chain = false,
 ): string {
   const answer = resolve ?? ((simple: string, scope: ElementId | null) =>
     resolveFullName(model, simple, scope));
@@ -1325,21 +1340,29 @@ function refTo(
   // An unnamed redefinition on the path (`p.load` for `attribute :>> load = 30.0;` in `p`) is spelled
   // by its effective name — the name a `bind`/`connect` end reads it by — never as `«AttributeUsage»`.
   // Only a path that would carry a placeholder takes this spelling; a fully named one is unchanged.
-  return relativePath(model, targetId, scopeOwnerId, true) ?? relativePath(model, targetId, null, true) ?? qn;
+  const how = chain ? 'first' : 'unique';
+  return relativePath(model, targetId, scopeOwnerId, how) ?? relativePath(model, targetId, null, how) ?? qn;
 }
 
 /**
  * The spelling of an unnamed element on a path: the effective name
- * ({@link effectiveNameOf}) of an unnamed redefinition, when the next load reads that name as THIS member. A chain
- * segment reads the first member of its owner that goes by the name ({@link childNamed}, the rule `resolveChainEnd`
- * of the text mapper walks), so the name is checked against that same rule: the first of two unnamed `:>> M`
- * (`duplicate` makes the second) is `M`; the second one, or an unnamed redefinition after a named `M`, is reached by
- * no name, and an unnamed head (`load` alone, in its owner's scope) is not read that way.
+ * ({@link effectiveNameOf}) of an unnamed redefinition, when the next load reads that name as THIS member. Which
+ * member that is depends on the statement. A chain end (`chain`: a binding, connection, flow or interface) reads the
+ * first member of its owner that goes by the name ({@link childNamed}, the rule `resolveChainEnd` of the text mapper
+ * walks): the first of two unnamed `:>> M` (`duplicate` makes the second) is `M`; the second one, or an unnamed
+ * redefinition after a named `M`, is reached by no name. Every other statement reads its ends through
+ * `resolveFullName`, which takes the NAMED member first and the definition's own feature when only unnamed
+ * redefinitions answer, so the name is written only where exactly ONE member of the owner answers to it. An unnamed
+ * head (`load` alone, in its owner's scope) is not read that way in either.
  */
-function effectiveSegment(model: Model, el: ElementRecord): string | undefined {
+function effectiveSegment(model: Model, el: ElementRecord, chain: boolean): string | undefined {
   const name = effectiveNameOf(model, el);
   if (name === undefined || el.ownerId === null) return undefined;
-  return childNamed(model, el.ownerId, name)?.id === el.id ? quoteName(name) : undefined;
+  if (chain) return childNamed(model, el.ownerId, name)?.id === el.id ? quoteName(name) : undefined;
+  const answers = model
+    .children(el.ownerId)
+    .filter((c) => !isSpecialization(c.eClass) && (c.declaredName ?? c.declaredShortName ?? effectiveNameOf(model, c)) === name);
+  return answers.length === 1 && answers[0]!.id === el.id ? quoteName(name) : undefined;
 }
 
 /**
@@ -1993,7 +2016,7 @@ function relativePath(
   model: Model,
   targetId: ElementId,
   scope: ElementId | null,
-  effective = false,
+  effective: false | 'first' | 'unique' = false,
 ): string | undefined {
   const names: string[] = [];
   const owners: ElementRecord[] = [];
@@ -2002,7 +2025,7 @@ function relativePath(
   while (cur && !guard.has(cur.id)) {
     guard.add(cur.id);
     const head = cur.ownerId === scope;
-    const nm = writtenName(model, cur) || (effective && !head ? effectiveSegment(model, cur) : undefined);
+    const nm = writtenName(model, cur) || (effective && !head ? effectiveSegment(model, cur, effective === 'first') : undefined);
     if (!nm) return undefined; // anonymous ancestor — cannot path through it
     names.unshift(nm);
     owners.unshift(cur);
