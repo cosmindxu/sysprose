@@ -56,6 +56,10 @@
  * cycle at the top level ({@link docOwners}), and write that into the doc
  * ({@link breakCycles}), so a later edit of either leaves the peers alike.
  *
+ * An owner removed while its children stay (`Model.remove` with `cascade: false`) leaves them
+ * under an owner nobody has: the peer that removed it moves them to the top level
+ * ({@link orphanedBy}), where every other peer reads them ({@link docOwners}).
+ *
  * Flow:
  *   local model change  → doc.transact(fn, ORIGIN_LOCAL)   (minimal ops)
  *   remote doc change   → model.transaction(fn) under an `applyingRemote`
@@ -253,6 +257,10 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     doc.transact(() => {
       for (const ev of events) applyLocalEvent(model, elements, ev, placing);
     }, ORIGIN_LOCAL);
+    // A removal that kept the owner's children (`cascade: false`) leaves them under an owner no peer
+    // has; every peer reads them at the top level, so this model does too, and the doc says so.
+    const orphans = orphanedBy(model, events);
+    if (orphans.length > 0) model.transaction(() => orphans.forEach((id) => model.reparent(id, null)));
   });
 
   /* ─────────────────────── Y.Doc → local model (read) ──────────────────── */
@@ -447,6 +455,14 @@ function docOwners(elements: Y.Map<ElementYMap>): { owner: Map<ElementId, Elemen
     }
   }
   return { owner, broken };
+}
+
+/** The elements still in `model` whose owner a `remove` of `events` took away: the removal did not cascade. */
+function orphanedBy(model: Model, events: readonly ChangeEvent[]): ElementId[] {
+  let gone: Set<ElementId> | undefined;
+  for (const ev of events) if (ev.type === 'remove' && ev.id !== undefined) (gone ??= new Set()).add(ev.id);
+  if (gone === undefined) return [];
+  return model.all().filter((e) => e.ownerId !== null && gone.has(e.ownerId)).map((e) => e.id);
 }
 
 /** Whether a doc transaction added, replaced or removed an element, or wrote an element's owner: the only edits that change the reading of {@link docOwners}. */
