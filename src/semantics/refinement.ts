@@ -113,6 +113,7 @@ import {
   type RefusalReach,
 } from './obligations';
 import { NO_MARKERS } from './relations';
+import type { ClassifiableRow, RowKind } from './smt/classes';
 import { parseRelationBody } from './unit-literals';
 import {
   encodeRelation,
@@ -435,6 +436,29 @@ interface RelationRow {
   sortPerVar: Record<string, VarSort>;
   scaled: boolean;
   encodable: Encodable;
+}
+
+/**
+ * A relation of this command as the constraint-class register reads it ({@link classifyRow} of
+ * ./smt/classes): a label only, which nothing here branches on. `kind` is `clause` for an author's
+ * contract and `gamma` for a synthetic item-flow equality, and the variables are the ones
+ * {@link encodeRow} encodes: no symbol of its own, because this command reads a name as the feature
+ * it names.
+ */
+export function classifiableOf(
+  row: Pick<RelationRow, 'node' | 'vars' | 'sortPerVar' | 'scaled' | 'encodable'>,
+  kind: RowKind,
+): { row: ClassifiableRow; kind: RowKind } {
+  return {
+    row: {
+      node: row.node,
+      vars: row.vars.map(({ symbol: _symbol, ...v }) => v),
+      sortPerVar: row.sortPerVar,
+      scaled: row.scaled,
+      encodable: row.encodable,
+    },
+    kind,
+  };
 }
 
 /** One row, encoded under its own scale decision. */
