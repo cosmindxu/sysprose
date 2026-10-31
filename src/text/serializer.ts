@@ -91,8 +91,9 @@ export function serializeModel(model: Model): string {
 /**
  * Thrown inside {@link serializeElement} when an end of a statement is reached by no name: the path to it goes
  * through an unnamed redefinition that {@link effectiveSegment} cannot spell (for a binding, connection, flow or
- * interface a member of its owner before it goes by its effective name; for another statement a second member that
- * answers to it; an unnamed head of the path; a redefined feature with no name). The placeholder `«AttributeUsage»` the path would carry is no text a terminal
+ * interface a member of its owner before it goes by its effective name; for another statement an unnamed redefinition
+ * at all; an unnamed head of the path; a redefined feature with no name), or a NAMED segment behind an earlier member of
+ * its name ({@link EarlierMemberOfName}). The placeholder `«AttributeUsage»` the path would carry is no text a terminal
  * reads (`unexpected character`), and the end is lost on the next load whatever is written there.
  */
 class NoNameReachesEnd extends Error {
@@ -100,9 +101,23 @@ class NoNameReachesEnd extends Error {
     readonly elementId: ElementId,
     /** The path as the serializer would have written it, the placeholder in it. */
     readonly ref: string,
+    /** The end is NAMED, but an earlier member of its owner goes by the name ({@link EarlierMemberOfName}). */
+    readonly earlier = false,
   ) {
     super(`no name reaches ${ref}`);
     this.name = 'NoNameReachesEnd';
+  }
+}
+
+/**
+ * Thrown by {@link refTo} for a statement whose end is NAMED but is not the member of its owner the next load reads
+ * the name as (a chain statement: the first that goes by it, `childNamed`; any other: the first one DECLARED by it): the
+ * path would reopen on another feature with nothing said. {@link endpoint} turns it into {@link NoNameReachesEnd}.
+ */
+class EarlierMemberOfName extends Error {
+  constructor(readonly ref: string) {
+    super(`an earlier member goes by the name of ${ref}`);
+    this.name = 'EarlierMemberOfName';
   }
 }
 
@@ -145,7 +160,9 @@ export function serializeElement(model: Model, id: ElementId, indent = 0): strin
     const ref = err.ref.replace(/«([^»]*)»/g, '(unnamed $1)').replace(/\s+/g, ' ');
     return (
       `${INDENT.repeat(indent)}${NOT_SAVED_MARK}a ${word} whose end no name reaches (${ref}). ` +
-      'Name the unnamed redefinition on its path to save it.'
+      (err.earlier
+        ? 'Rename the earlier member of its name, or move this one before it, to save it.'
+        : 'Name the unnamed redefinition on its path to save it.')
     );
   }
 }
@@ -986,7 +1003,14 @@ function reachedByNoName(ref: string): boolean {
 function endpoint(model: Model, el: ElementRecord, which: 'source' | 'target', skipped = false): string {
   const id = (el[which] ?? [])[0];
   if (id) {
-    const ref = refTo(model, id, el.ownerId, undefined, CHAIN_STATEMENT_CLASSES.has(el.eClass));
+    let ref: string;
+    try {
+      ref = refTo(model, id, el.ownerId, undefined, CHAIN_STATEMENT_CLASSES.has(el.eClass) ? 'chain' : 'name');
+    } catch (err) {
+      if (!(err instanceof EarlierMemberOfName)) throw err;
+      if (skipped) return err.ref;
+      throw new NoNameReachesEnd(el.id, err.ref, true);
+    }
     if (!skipped && reachedByNoName(ref)) throw new NoNameReachesEnd(el.id, ref);
     return ref;
   }
@@ -1323,7 +1347,7 @@ function refTo(
   targetId: ElementId,
   scopeOwnerId: ElementId | null,
   resolve?: RefResolver,
-  chain = false,
+  reads?: EndReading,
 ): string {
   const answer = resolve ?? ((simple: string, scope: ElementId | null) =>
     resolveFullName(model, simple, scope));
@@ -1333,15 +1357,45 @@ function refTo(
   if (simple && !simple.startsWith('«') && answer(simple, scopeOwnerId)?.id === targetId) {
     return simple;
   }
-  const rel = relativePath(model, targetId, scopeOwnerId);
+  const rel = relativePath(model, targetId, scopeOwnerId, false, reads);
   if (rel) return rel;
   const qn = qualifiedRef(model, targetId);
-  if (!qn.includes('«')) return qn;
+  if (!qn.includes('«')) {
+    if (reads) assertFirstOfName(model, targetId, qn, reads);
+    return qn;
+  }
   // An unnamed redefinition on the path (`p.load` for `attribute :>> load = 30.0;` in `p`) is spelled
   // by its effective name — the name a `bind`/`connect` end reads it by — never as `«AttributeUsage»`.
   // Only a path that would carry a placeholder takes this spelling; a fully named one is unchanged.
-  const how = chain ? 'first' : 'unique';
-  return relativePath(model, targetId, scopeOwnerId, how) ?? relativePath(model, targetId, null, how) ?? qn;
+  const how = reads === 'chain' ? 'first' : 'unique';
+  return relativePath(model, targetId, scopeOwnerId, how, reads) ?? relativePath(model, targetId, null, how, reads) ?? qn;
+}
+
+/** How the next load reads the ends of a statement: as a feature chain (a binding, connection, flow, interface), or by `resolveFullName`. */
+type EndReading = 'chain' | 'name';
+
+/**
+ * Whether the next load reads a NAMED segment of a path as another member: an earlier member of its owner goes by the
+ * name (a chain: `childNamed`, the first member that does, an unnamed redefinition of it too; `resolveFullName`: the
+ * first member DECLARED by it). An unnamed segment is {@link effectiveSegment}'s.
+ */
+function behindAnEarlierMember(model: Model, el: ElementRecord, reads: EndReading): boolean {
+  const name = endHeadOf(model, el) ?? el.declaredName ?? el.declaredShortName;
+  if (name === undefined || name === '' || el.ownerId === null) return false;
+  if (reads === 'chain') return childNamed(model, el.ownerId, name)?.id !== el.id;
+  const first = model
+    .children(el.ownerId)
+    .find((c) => !isSpecialization(c.eClass) && (c.declaredName ?? c.declaredShortName) === name);
+  return first !== undefined && first.id !== el.id;
+}
+
+/** An end spelled by the qualified name: every segment after the first root is read as the path says. */
+function assertFirstOfName(model: Model, targetId: ElementId, ref: string, reads: EndReading): void {
+  let cur = model.get(targetId);
+  while (cur && cur.ownerId !== null) {
+    if (behindAnEarlierMember(model, cur, reads)) throw new EarlierMemberOfName(ref);
+    cur = model.get(cur.ownerId);
+  }
 }
 
 /**
@@ -1352,17 +1406,16 @@ function refTo(
  * walks): the first of two unnamed `:>> M` (`duplicate` makes the second) is `M`; the second one, or an unnamed
  * redefinition after a named `M`, is reached by no name. Every other statement reads its ends through
  * `resolveFullName`, which takes the NAMED member first and the definition's own feature when only unnamed
- * redefinitions answer, so the name is written only where exactly ONE member of the owner answers to it. An unnamed
- * head (`load` alone, in its owner's scope) is not read that way in either.
+ * redefinitions answer, so no name reaches an unnamed redefinition there. An unnamed head (`load` alone, in its owner's
+ * scope) is not read that way in either.
  */
 function effectiveSegment(model: Model, el: ElementRecord, chain: boolean): string | undefined {
   const name = effectiveNameOf(model, el);
   if (name === undefined || el.ownerId === null) return undefined;
   if (chain) return childNamed(model, el.ownerId, name)?.id === el.id ? quoteName(name) : undefined;
-  const answers = model
-    .children(el.ownerId)
-    .filter((c) => !isSpecialization(c.eClass) && (c.declaredName ?? c.declaredShortName ?? effectiveNameOf(model, c)) === name);
-  return answers.length === 1 && answers[0]!.id === el.id ? quoteName(name) : undefined;
+  // Any other statement reads `p.load` through `resolveFullName`, which finds the NAMED member, else the definition's own
+  // feature when only unnamed redefinitions answer: a lone unnamed `:>> load` is never what the name lands on.
+  return undefined;
 }
 
 /**
@@ -2017,6 +2070,7 @@ function relativePath(
   targetId: ElementId,
   scope: ElementId | null,
   effective: false | 'first' | 'unique' = false,
+  reads?: EndReading,
 ): string | undefined {
   const names: string[] = [];
   const owners: ElementRecord[] = [];
@@ -2027,6 +2081,10 @@ function relativePath(
     const head = cur.ownerId === scope;
     const nm = writtenName(model, cur) || (effective && !head ? effectiveSegment(model, cur, effective === 'first') : undefined);
     if (!nm) return undefined; // anonymous ancestor — cannot path through it
+    // A segment after the head is read by name: a named one behind an earlier member of its name is not it.
+    if (reads && !head && writtenName(model, cur) && behindAnEarlierMember(model, cur, reads)) {
+      throw new EarlierMemberOfName(qualifiedRef(model, targetId));
+    }
     names.unshift(nm);
     owners.unshift(cur);
     if (head) {

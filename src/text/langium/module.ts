@@ -22,15 +22,54 @@ import {
   type PartialLangiumCoreServices,
   createDefaultCoreModule,
   createDefaultSharedCoreModule,
+  DefaultLexer,
+  type LexerResult,
+  type TokenizeOptions,
 } from 'langium';
 import { SysMLGeneratedModule, SysMLGeneratedSharedModule } from './generated/module.js';
 import type { Namespace } from './generated/ast.js';
 
 /**
- * Custom, language-specific service overrides. Empty for now — the generated
- * defaults cover lexing and parsing, which is all the textual migration needs.
+ * The generated lexer, plus one rule: a bare `in` inside a `[ … ]` bracket is a
+ * NAME, not the direction keyword. `[in]` is how a model spells the inch (the
+ * keyword `in` is reserved, so the strict spelling is `['in']`, which the
+ * serializer writes), and read as the keyword it ended the expression at `[`,
+ * made the rest a parse error and let Save write the text with the rest gone.
+ * The bracket counts only when no `{` lies between it and the word: a body
+ * inside a bracket still reads `in port;` as a member. Every other token and
+ * every `in` outside a bracket is untouched.
  */
-export type SysmlAddedServices = Record<string, never>;
+class SysmlLexer extends DefaultLexer {
+  override tokenize(text: string, options?: TokenizeOptions): LexerResult {
+    const result = super.tokenize(text, options);
+    const d = this.definition;
+    const [id, kwIn, lb, rb, lc, rc, lp, rp] = ['ID', 'in', '[', ']', '{', '}', '(', ')'].map((n) => d[n]);
+    if (!id || !kwIn || !lb || !rb || !lc || !rc || !lp || !rp) return result;
+    const open: unknown[] = [];
+    for (const t of result.tokens) {
+      const type = t.tokenType;
+      if (type === lb || type === lc || type === lp) open.push(type);
+      else if (type === rb || type === rc || type === rp) {
+        const at = open.lastIndexOf(type === rb ? lb : type === rc ? lc : lp);
+        if (at >= 0) open.length = at;
+      } else if (type === kwIn) {
+        let i = open.length - 1;
+        while (i >= 0 && open[i] === lp) i--;
+        if (i >= 0 && open[i] === lb) {
+          t.tokenType = id;
+          t.tokenTypeIdx = id.tokenTypeIdx as number;
+        }
+      }
+    }
+    return result;
+  }
+}
+
+/**
+ * Custom, language-specific service overrides: the lexer above. The generated
+ * defaults cover parsing, which is all the textual migration needs.
+ */
+export type SysmlAddedServices = object;
 
 /** The full service type available for the `sysml` language. */
 export type SysmlServices = LangiumCoreServices & SysmlAddedServices;
@@ -39,7 +78,11 @@ export type SysmlServices = LangiumCoreServices & SysmlAddedServices;
 export const SysmlModule: Module<
   SysmlServices,
   PartialLangiumCoreServices & SysmlAddedServices
-> = {};
+> = {
+  parser: {
+    Lexer: (services) => new SysmlLexer(services),
+  },
+};
 
 /**
  * Create the shared + language services for SysML using an empty (in-memory)

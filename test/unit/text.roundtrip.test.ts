@@ -2150,6 +2150,7 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
     const READ: Array<[string, string, string]> = [
       ['an unnamed redefinition, then a named member', 'attribute :>> load = 50.0; attribute load : ScalarValues::Real;', 'p.load'],
       ['two unnamed redefinitions', 'attribute :>> load = 50.0; attribute :>> load = 60.0;', 'p.load'],
+      ['a lone unnamed redefinition', 'attribute :>> load = 50.0;', 'p.load'],
       ['an unnamed head of the path, then a named one', 'part :>> a { attribute :>> load = 3.0; } part a;', 'p.a.load'],
       ['an unnamed head, another beside it', 'part :>> a { attribute :>> load = 3.0; } part :>> a { attribute :>> load = 4.0; }', 'p.a.load'],
     ];
@@ -2247,6 +2248,64 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
         expect(text).toMatch(/\/\/ Not saved: a transition whose end no name reaches \(/);
       }
     });
+
+    // `fence-text`: the rest of the residuals. (a) A NAMED end behind an earlier member of its name is written by the name
+    // too and reopens on the earlier member (a chain reads the first member that goes by the name, an unnamed redefinition
+    // of it included; any other statement reads the first one DECLARED by it): the note, never the name. (b) A lone unnamed
+    // `:>> load` is no name's answer for a statement that is not a chain: `resolveFullName` lands `p.load` on the
+    // definition's `P::load` when only unnamed redefinitions answer.
+    const NAMED_BEHIND: Array<[string, string, boolean]> = [
+      // [shape, members, a chain statement only]
+      ['a named member after an unnamed redefinition', 'attribute :>> load = 50.0; attribute load : ScalarValues::Real = 60.0;', true],
+      ['a named member after a named one', 'attribute load : ScalarValues::Real = 50.0; attribute load : ScalarValues::Real = 60.0;', false],
+      ['the third of three named members', 'attribute load : ScalarValues::Real = 50.0; attribute load : ScalarValues::Real = 70.0; attribute load : ScalarValues::Real = 60.0;', false],
+    ];
+    const retargeted = (members: string, body: string, value: string) => {
+      const m = parseModel(`package T { ${DEF}part p : P { ${members} } ${body.replace('END', 'p.load')} }`).model;
+      const link = m.all().find((e) => /^(Allocation|Succession|Dependency|BindingConnector|Connection|Flow)/.test(e.eClass) && ((e.source?.length ?? 0) + (e.target?.length ?? 0)) > 0)!;
+      const pId = m.all().find((e) => e.declaredName === 'p')!.id;
+      const target = m.children(pId).find((e) => !isRelationship(e.eClass) && String(e.attrs.value) === value)!;
+      const key = body.includes('END to') || body.includes('first END') || body.includes('from END') || body.includes('END =') ? 'source' : 'target';
+      m.update(link.id, { [key]: [target.id] });
+      return { m, link, key, target };
+    };
+    for (const [shape, members, chainOnly] of NAMED_BEHIND) {
+      for (const [stmt, word, body] of [...STATEMENTS, ...(chainOnly ? [] : NON_CHAIN)]) {
+        it(`${stmt}: ${shape} is not saved, and says so`, () => {
+          const { m } = retargeted(members, body, '60');
+          const text = serializeModel(m);
+          expect(text).not.toContain('«');
+          expect(text).not.toMatch(/p\.load/);
+          expect(text).toMatch(new RegExp(`// Not saved: a ${word} whose end no name reaches \\(.*Rename the earlier member of its name`));
+          const after = parseModel(text);
+          expect(after.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+          expect(after.model.all().filter((e) => /^(Allocation|Succession|Dependency|BindingConnector|Connection|Flow)/.test(e.eClass) && ((e.source?.length ?? 0) + (e.target?.length ?? 0)) > 0)).toHaveLength(0);
+          // The page reads the file as another model than the one on screen, so a check says so.
+          expect(measureTextHealth(text, () => {}).rewritten).not.toBe(text);
+        });
+      }
+    }
+    it('writes a named end behind an unnamed redefinition by its name for a statement that is not a chain', () => {
+      for (const [stmt, , body] of NON_CHAIN) {
+        const { m, target } = retargeted('attribute :>> load = 50.0; attribute load : ScalarValues::Real = 60.0;', body, '60');
+        const text = serializeModel(m);
+        expect(text, stmt).not.toContain('Not saved');
+        const after = parseModel(text).model;
+        const link = after.all().find((e) => /^(Allocation|Succession|Dependency)/.test(e.eClass) && ((e.source?.length ?? 0) + (e.target?.length ?? 0)) > 0)!;
+        const ends = [...(link.source ?? []), ...(link.target ?? [])].map((id) => place(after, id));
+        expect(ends, stmt).toContain(place(m, target.id));
+      }
+    });
+    for (const [stmt, word, body] of NON_CHAIN) {
+      it(`${stmt}: a lone unnamed redefinition is not saved, and says so (not a chain statement)`, () => {
+        const { m } = retargeted('attribute :>> load = 50.0;', body, '50');
+        const text = serializeModel(m);
+        expect(text).not.toContain('«');
+        expect(text).not.toMatch(/p\.load/);
+        expect(text).toMatch(new RegExp(`// Not saved: a ${word} whose end no name reaches \\(`));
+        expect(parseModel(text).diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+      });
+    }
 
     it('writes an end one name reaches as it did, and a statement with an anonymous relationship end as before', () => {
       const { text } = saved(`package T {
