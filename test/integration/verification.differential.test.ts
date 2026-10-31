@@ -13468,6 +13468,71 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RT::c1': ['?/?/?/?', null],
       'RT::c2': ['?/?/?/?', null],
     }),
+    // The mask test: the owners are related by specialisation, but the specific feature does not redefine the general one's
+    // line, so it masks nothing. v7: D2's `a :>> b` (answers to `b` too) beside P's `b`, in a usage retyped to D2 where H1's
+    // p states `:>> b = 15.0`: the typing bound after the redefinition read 15.0, the file 12.0.
+    ...reversed('related-not-masking', `package M7 {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def D2 :> P { attribute a :>> b; }
+        part def H { part p : D2; }
+        part def H1 :> H { part :>> p { attribute :>> b = 15.0; } }
+        part w : H1 { part :>> p : D2; }
+        constraint c12 { w.p.b == 12.0 }
+        constraint c15 { w.p.b == 15.0 }
+      }`, `package M7 {
+        constraint c15 { w.p.b == 15.0 }
+        constraint c12 { w.p.b == 12.0 }
+        part w : H1 { part :>> p : D2; }
+        part def H1 :> H { part :>> p { attribute :>> b = 15.0; } }
+        part def H { part p : D2; }
+        part def D2 :> P { attribute a :>> b; }
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'M7::c12': ['?/?/?/?', null],
+      'M7::c15': ['?/?/?/?', null],
+    }),
+    // s1: the usage retyped to P, a type D2 that specialises it is the type p had: a value the redefinition states for `a`
+    // (16.0) beside P's own (11.0), the file reading the one and the page the other.
+    ...reversed('related-retyped-general', `package S1 {
+        part def P { attribute a default = 11.0; }
+        part def D2 :> P;
+        part def H { part p : D2; }
+        part def H1 :> H { part :>> p { attribute a default = 16.0; } }
+        part w : H1 { part :>> p : P; }
+        constraint c11 { w.p.a == 11.0 }
+        constraint c16 { w.p.a == 16.0 }
+      }`, `package S1 {
+        constraint c16 { w.p.a == 16.0 }
+        constraint c11 { w.p.a == 11.0 }
+        part w : H1 { part :>> p : P; }
+        part def H1 :> H { part :>> p { attribute a default = 16.0; } }
+        part def H { part p : D2; }
+        part def D2 :> P;
+        part def P { attribute a default = 11.0; }
+      }`, {
+      'S1::c11': ['?/?/?/?', null],
+      'S1::c16': ['?/?/?/?', null],
+    }),
+    // n1: two fresh parts of one name with content of their own, inherited from two types that do not specialise each
+    // other. Nothing is redefined: the file reads the first general's `s`, and the other order of the generals the second's.
+    ...reversed('unrelated-nested-parts', `package N1 {
+        part def A { part s { attribute k default = 1.0; } }
+        part def B { part s { attribute k default = 2.0; } }
+        part def C :> A, B;
+        part w : C;
+        constraint c1 { w.s.k == 1.0 }
+        constraint c2 { w.s.k == 2.0 }
+      }`, `package N1 {
+        constraint c2 { w.s.k == 2.0 }
+        constraint c1 { w.s.k == 1.0 }
+        part w : C;
+        part def C :> A, B;
+        part def B { part s { attribute k default = 2.0; } }
+        part def A { part s { attribute k default = 1.0; } }
+      }`, {
+      'N1::c1': ['?/?/?/?', null],
+      'N1::c2': ['?/?/?/?', null],
+    }),
     // A `satisfy` written outside the definition whose feature it names, by a path that does not resolve where it is
     // written (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in the one that declares w; NQ5 without the
     // subsetting; NQ7 in a part body), recorded W's own p1: a requirement w's 50 breaks held (T, `verify` exit 0). It

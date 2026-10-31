@@ -4219,8 +4219,8 @@ function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string 
       if (why === 'order') {
         return (
           `${name} is not read: ${of} is, or is typed by or specialises, a scope that inherits two features for one name from general types ` +
-          `neither of which specialises the other (a renamed redefiner beside the feature it answers to, or one that states a value beside one ` +
-          `that states none), and which of the two a name finds depends on the order of those types, which the saved file may list otherwise, ` +
+          `whose features do not mask one another (a renamed redefiner beside the feature it answers to, one that states a value beside one ` +
+          `that states none, or two of one name that hold content of their own), and which of the two a name finds depends on the order of those types, which the saved file may list otherwise, ` +
           `so no name of ${of} is read`
         );
       }

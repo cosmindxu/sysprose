@@ -585,6 +585,18 @@ describe('unreadScopes — the owners whose features the saved file may read oth
       part def H { part p : P3; } part w : H { part :>> p : P2; } }`;
     expect(both(bare)).toEqual([['D::w::«PartUsage»:order'], ['D::w::«PartUsage»:order']]);
     expect(both(bare.replace('attribute :>> a default = 13.0;', 'attribute :>> a;'))).toEqual([[], []]);
+    // Owners related by specialisation mask each other only when the specific feature redefines the line of the general one's
+    // and answers to every name it does: D2's `a :>> b` beside P's `b` masks nothing, so the retyped usage is withheld.
+    const related = `package E { part def P { attribute a default = 11.0; attribute b default = 12.0; } part def D2 :> P { attribute a :>> b; }
+      part def H { part p : D2; } part def H1 :> H { part :>> p { attribute :>> b = 15.0; } } part w : H1 { part :>> p : D2; } }`;
+    expect(both(related)).toEqual([['E::w::«PartUsage»:order'], ['E::w::«PartUsage»:order']]);
+    expect(both(related.replace('part :>> p : D2;', 'part :>> p;'))).toEqual([[], []]);
+    // The same with D2 redefining the line plainly (`:>> b`), which masks P's `b`.
+    expect(both(related.replace('attribute a :>> b;', 'attribute :>> b;'))).toEqual([[], []]);
+    // Two fresh parts of one name with content of their own, from two unrelated generals, read in the order they are listed.
+    const fresh = `package F { part def A { part s { attribute k default = 1.0; } } part def B { part s { attribute k default = 2.0; } } part def C :> A, B; part w : C; }`;
+    expect(both(fresh)).toEqual([['F::C:order', 'F::w:order'], ['F::C:order', 'F::w:order']]);
+    expect(both(fresh.replace('part def C :> A, B;', 'part def C :> A;'))).toEqual([[], []]);
   });
 
   it('lists the owner of a redefinition retargeted by hand to a feature it does not inherit, of another kind, or in a cycle', () => {
