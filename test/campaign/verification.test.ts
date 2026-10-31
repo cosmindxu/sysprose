@@ -3932,18 +3932,24 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
     for (const inline of [false, true]) {
       for (const reversed of [false, true]) {
         // y + x > 0.5: min x = 0 (not the infimum 3/4), max x = 1; y - x > 0.5: min x = 0, max x = 1 (not the
-        // supremum 0). The strict bound νZ calls approached is withheld; the optimum beside it is confirmed.
-        for (const [op, sense, outcome, value] of [
-          ['y + x > 0.5', 'min', 'inconclusive', null],
-          ['y - x > 0.5', 'max', 'inconclusive', null],
+        // supremum 0). The strict bound νZ calls approached is withheld; the optimum beside it is confirmed. z3
+        // 5.3.1 answers the sensed row wrongly, so it is withheld; a later z3 that answers it right keeps the hand
+        // value, which this accepts too. What may never appear is an infimum, a supremum or an unbounded row.
+        for (const [op, sense, hand] of [
+          ['y + x > 0.5', 'min', 0],
+          ['y - x > 0.5', 'max', 1],
         ] as const) {
           const r = await boundsOf(strict(op, inline, reversed), 'p.x');
           const b = r.bounds.find((x) => x.sense === sense)!;
-          expect([op, inline, reversed, b.outcome, b.code, b.value]).toEqual([
-            op, inline, reversed, outcome, 'verification/optimality-not-established', value,
-          ]);
-          expect(b.detail).toContain('mixes Integer and Real features');
-          expect(r.exitCode).toBe(2);
+          expect(['inconclusive', 'optimum'], `${op} ${inline} ${reversed}`).toContain(b.outcome);
+          if (b.outcome === 'inconclusive') {
+            expect(b.code).toBe('verification/optimality-not-established');
+            expect(b.value).toBeNull();
+            expect(b.detail).toContain('mixes Integer and Real features');
+            expect(r.exitCode).toBe(2);
+          } else {
+            expect(b.value).toBe(hand);
+          }
           for (const kept of r.bounds.filter((x) => x.outcome !== 'inconclusive')) {
             expect(kept.outcome).toBe('optimum');
             expect(kept.value).toBe(kept.sense === 'min' ? 0 : 1);
@@ -5230,6 +5236,28 @@ describe('L8 — staleness scoped to what provably cannot affect the proof', () 
           [...footprintOf(model, row, { rows, free })].sort(),
           `${meta.model} — ${row.element.qualifiedName}`,
         ).toEqual([...encoded].sort());
+      }
+    }
+    // A feature typed `Natural` is refused by the encoder (its floor is an axiom this lane does not
+    // carry); the twin refuses the same read, so the footprints still agree. No corpus model has one.
+    for (const type of ['Natural', 'Integer']) {
+      const { model } = await loadModelText(
+        `package M { part def P { attribute n : ${type} = 3; attribute x : Real = 2.0; }
+           part p : P;
+           requirement def R { subject s : P; require constraint { s.x <= 10.0 } }
+           satisfy R by p; }`,
+        { fileName: `footprint-${type}.sysml` },
+      );
+      if (!model) throw new Error('no model');
+      const rows = obligationsOf(model);
+      const goals = rows.filter((r) => r.role === 'obligation');
+      expect(goals.length, `${type}: no obligation`).toBeGreaterThan(0);
+      for (const row of goals) {
+        const encoded = encodedFootprint(rows, row, new Set<string>());
+        expect(encoded, `${type}: the goal itself encodes`).not.toBeNull();
+        expect([...footprintOf(model, row, { rows, free: new Set<string>() })].sort(), type).toEqual(
+          [...encoded!].sort(),
+        );
       }
     }
     // A sweep that compared nothing would be green for the wrong reason.

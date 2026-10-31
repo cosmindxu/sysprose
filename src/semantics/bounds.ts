@@ -1002,7 +1002,19 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
         continue;
       }
     }
-    bounds.push(boundRow(sense, outcome, prepared, census, checks - before));
+    const row = boundRow(sense, outcome, prepared, census, checks - before);
+    // On a mixed script an optimum stands on the two plain checks above, not on νZ alone: say so.
+    bounds.push(
+      mixed && prepared.relevantRefusals.length === 0 && row.outcome === 'optimum'
+        ? {
+            ...row,
+            detail: row.detail.replace(
+              'optimality established by z3’s νZ',
+              'confirmed by two plain checks beside z3’s νZ',
+            ),
+          }
+        : row,
+    );
   }
 
   return {

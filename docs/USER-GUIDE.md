@@ -3070,7 +3070,7 @@ same sentence:
 
 | Answer | What it means |
 |---|---|
-| `optimum` | νZ established its optimality and a design attains it — the witness is printed |
+| `optimum` | νZ established its optimality (on an Integer-and-Real script, two plain checks confirmed it beside νZ) and a design attains it — the witness is printed |
 | `supremum` / `infimum` | exact, and **never attained** (`x < 5` has no maximum) |
 | `unbounded` | z3 proved there is no finite bound in that direction — over a **linear** script, the only shape νZ is complete for |
 | `bound-without-optimality` | a bound z3 reached over a **nonlinear** script, which νZ does not certify — finite or `oo` alike |
