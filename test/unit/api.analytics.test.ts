@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
+import { serializeUserModelSignals } from '@text/health';
 import {
   ModelApi,
   countByMetaclass,
@@ -117,6 +118,43 @@ describe('analytics — traceability & where-used', () => {
     const wu = whereUsed(model, ids.vehicleDef);
     expect(wu.references.some((r) => r.via === 'FeatureTyping' && r.isTyping)).toBe(true);
     expect(wu.usedBy.some((e) => e.id === ids.vehicle)).toBe(true);
+  });
+
+  // The load bind order (TODO.md): a load lists what it binds later after the declarations, in the order of its binding passes;
+  // the page lists a typing an edit made after every one it had, and one whose element a drag put elsewhere where it was. The rows
+  // come in the order of the text on the page, in a terminal over the saved text, and on a model rebuilt from its JSON.
+  describe('lists the users of a definition in the order of the text', () => {
+    const load = async (text: string): Promise<Model> => (await loadModelText(text, { fileName: 'm.sysml' })).model!;
+    const named = (m: Model, n: string) => m.all().find((e) => e.declaredName === n && e.attrs.isLibrary !== true)!;
+    const users = (m: Model, defName: string) => whereUsed(m, named(m, defName).id).references.map((r) => r.relatedElements.map((e) => e.declaredName).join('+'));
+    const terminal = async (m: Model) => load(serializeUserModelSignals(m).text);
+
+    it('a typing made in the app (Properties\' Type field) comes where its usage stands', async () => {
+      const page = await load('package X { part def D { attribute a = 1; constraint c { a <= 0 } } part u1; part u2 : D; }');
+      page.create('FeatureTyping', { ownerId: named(page, 'u1').id, source: [named(page, 'u1').id], target: [named(page, 'D').id] });
+      page.adoptSerialOrder();
+      expect(users(page, 'D'), 'the page').toEqual(['u1', 'u2']);
+      expect(users(await terminal(page), 'D'), 'a terminal over the saved text').toEqual(['u1', 'u2']);
+      expect(users(Model.fromJSON(page.toJSON()), 'D'), 'a model rebuilt from its JSON').toEqual(['u1', 'u2']);
+    });
+
+    it('a package dragged out and back in takes its usages with it', async () => {
+      const page = await load('package X { part def D; package A { part u1 : D; } package B { part u2 : D; } }');
+      expect(users(page, 'D')).toEqual(['u1', 'u2']);
+      page.reparent(named(page, 'A').id, null);
+      page.reparent(named(page, 'A').id, named(page, 'X').id);
+      page.adoptSerialOrder();
+      // A now follows B in the text, whatever the page held before.
+      expect(users(page, 'D'), 'the page').toEqual(['u2', 'u1']);
+      expect(users(await terminal(page), 'D'), 'a terminal').toEqual(['u2', 'u1']);
+      expect(users(Model.fromJSON(page.toJSON()), 'D'), 'the model reopened').toEqual(['u2', 'u1']);
+    });
+
+    it('a specialisation, a typing and a redefinition of one owner stand `:>` family first, then typings, then redefinitions', async () => {
+      const m = await load('package X { part def D; part def S :> D; part s : D; part t :> s; }');
+      expect(users(m, 'D')).toEqual(['S', 's']);
+      expect(whereUsed(m, named(m, 'D').id).references.map((r) => r.via)).toEqual(['Subclassification', 'FeatureTyping']);
+    });
   });
 
   it('finds where a requirement is referenced (satisfy target)', () => {

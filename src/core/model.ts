@@ -592,6 +592,12 @@ export class Model {
   /**
    * Remove an element. By default cascades to owned children and removes any
    * relationships that reference the deleted element(s).
+   *
+   * With `cascade: false` the children that stay are moved to the top level in the removal's own
+   * transaction (before the removal, so a listener sees where they are going), as a collaboration room
+   * reads them on every peer (`src/collab/model-doc.ts`): none is left under an owner no element has,
+   * in this model, in a snapshot of it (`toJSON`, Undo) or in a room. So an owner removed and made again
+   * with the same id in one transaction does not take them back: they stay at the top level.
    */
   remove(id: ElementId, opts: { cascade?: boolean } = {}): ElementId[] {
     const cascade = opts.cascade ?? true;
@@ -631,8 +637,14 @@ export class Model {
         if (after) afterwards.push(after);
       }
     }
+    // The children that stay (`cascade: false`; or an edge's, owned by a removed element) go to the top level.
+    const homeless: ElementId[] = [];
+    for (const rid of toRemove) {
+      for (const cid of this.childrenIndex.get(rid) ?? []) if (!toRemove.has(cid)) homeless.push(cid);
+    }
     return this.transaction(() => {
       for (const [rid, target] of moved) this.update(rid, { target });
+      for (const cid of homeless) this.reparent(cid, null);
       const removed: ElementId[] = [];
       for (const rid of toRemove) {
         const rec = this.elements.get(rid);

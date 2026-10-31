@@ -224,8 +224,9 @@ describe('pipeline: Parse → impact closure across a wire', () => {
       m.all().find((e) => e.declaredName === n && e.attrs.implicit !== true)!;
     const closure = impactClosure(m, byName('a').id, Number.POSITIVE_INFINITY);
     expect(closure.impacted.map((i) => `${i.depth} ${i.via} ${i.element.declaredName}`)).toEqual([
-      '1 ConnectionUsage b',
+      // In the order of the text: `a`'s typing, written on its line, before the connection that follows it.
       '1 FeatureTyping PP',
+      '1 ConnectionUsage b',
     ]);
     expect(closure.implicitExcluded).toBe(0);
   });
