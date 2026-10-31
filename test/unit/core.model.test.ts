@@ -64,6 +64,20 @@ describe('Model core', () => {
     expect(m.remove('H').sort()).toEqual(['H', 'K']);
   });
 
+  // The children of an edge that goes with a removed element (default cascade) used to stay under an owner nobody has,
+  // invisible in the tree and in the saved text; they go to the top level, as a room reads them on every peer.
+  it('moves what a relationship removed with its element owned to the top level', () => {
+    const m = new Model();
+    m.create('Package', { id: 'P' });
+    m.create('PartUsage', { id: 'A', ownerId: 'P' });
+    m.create('PartUsage', { id: 'B', ownerId: 'P' });
+    m.create('ConnectionUsage', { id: 'C', ownerId: 'P', source: ['A'], target: ['B'] });
+    m.create('AttributeUsage', { id: 'K', ownerId: 'C' });
+    expect(m.remove('A').sort()).toEqual(['A', 'C']);
+    expect(m.get('K')!.ownerId).toBeNull();
+    expect(m.rootIds().sort()).toEqual(['K', 'P']);
+  });
+
   it('does not hand the kept children back to an owner made again with the same id in one transaction', () => {
     const m = new Model();
     m.create('Package', { id: 'F' });

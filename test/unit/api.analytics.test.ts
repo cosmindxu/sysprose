@@ -155,6 +155,33 @@ describe('analytics — traceability & where-used', () => {
       expect(users(m, 'D')).toEqual(['S', 's']);
       expect(whereUsed(m, named(m, 'D').id).references.map((r) => r.via)).toEqual(['Subclassification', 'FeatureTyping']);
     });
+
+    it('one owner holding all three kinds, the later ones added after the load, lists them `:>` family, typing, redefinition', async () => {
+      const m = await load('package X { part def D; part x; }');
+      const x = named(m, 'x').id;
+      const D = named(m, 'D').id;
+      // Made in the reverse of the order the text binds them in, so the model lists the redefinition first.
+      for (const eClass of ['Redefinition', 'FeatureTyping', 'Subsetting'] as const) m.create(eClass, { ownerId: x, source: [x], target: [D] });
+      m.adoptSerialOrder();
+      expect(whereUsed(m, D).references.map((r) => r.via)).toEqual(['Subsetting', 'FeatureTyping', 'Redefinition']);
+    });
+
+    it('a usage typed by a library element in a package made after the library merged comes first, as in a terminal', async () => {
+      const page = await load('package X { part u2 { attribute r : ScalarValues::Real; } }');
+      const real = page.all().find((e) => e.declaredName === 'Real' && e.attrs.isLibrary === true)!;
+      const Y = page.create('Package', { declaredName: 'Y', ownerId: null });
+      const q = page.create('AttributeUsage', { declaredName: 'q', ownerId: Y.id });
+      page.create('FeatureTyping', { ownerId: q.id, source: [q.id], target: [real.id] });
+      page.adoptSerialOrder();
+      const rows = (m: Model, id: string) => whereUsed(m, id).references.map((r) => r.relatedElements.map((e) => e.qualifiedName).join('+'));
+      const term = await terminal(page);
+      const real2 = term.all().find((e) => e.declaredName === 'Real' && e.attrs.isLibrary === true)!;
+      const mine = (r: string[]) => r.filter((x) => x.startsWith('X') || x.startsWith('Y'));
+      expect(mine(rows(page, real.id)), 'the page').toEqual(['X::u2::r', 'Y::q']);
+      expect(mine(rows(term, real2.id)), 'a terminal').toEqual(['X::u2::r', 'Y::q']);
+      expect(rows(page, real.id).slice(0, 2), 'before every library user').toEqual(['X::u2::r', 'Y::q']);
+      expect(rows(page, real.id)).toEqual(rows(term, real2.id));
+    });
   });
 
   it('finds where a requirement is referenced (satisfy target)', () => {

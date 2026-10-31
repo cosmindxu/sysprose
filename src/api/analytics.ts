@@ -495,7 +495,12 @@ function containmentRank(model: Model): Map<ElementId, number> {
   const hit = RANK_CACHE.get(model);
   if (hit && hit.rev === model.rev) return hit.rank;
   const rank = new Map<ElementId, number>();
-  const stack = [...model.rootIds()].reverse();
+  // The user's roots first, then the library's: the text a terminal reads writes the model's packages and
+  // merges the library after them, whichever order this model lists its roots in (a package made or dragged
+  // to the top level after the library merged is listed after it).
+  const roots = model.rootIds();
+  const isLib = (i: ElementId): boolean => model.get(i)?.attrs.isLibrary === true;
+  const stack = [...roots.filter((i) => !isLib(i)), ...roots.filter(isLib)].reverse();
   while (stack.length > 0) {
     const cur = stack.pop()!;
     if (rank.has(cur)) continue;

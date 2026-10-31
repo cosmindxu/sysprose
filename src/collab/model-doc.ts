@@ -263,8 +263,8 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     }, ORIGIN_LOCAL);
     // A removal that kept the owner's children (`cascade: false`) moved them to the top level in its own
     // transaction (`Model.remove`), where every peer reads them: the events carry the move, ahead of the removal.
-    // This scan finds a child under an owner the model lacks that no removal in these events left: a reset
-    // to a snapshot that holds one. The move is a nested transaction.
+    // This scan finds a child under an owner the model lacks after a reset to a snapshot that holds one.
+    // The move is a nested transaction.
     const orphans = orphanedBy(model, events);
     if (orphans.length > 0) model.transaction(() => orphans.forEach((id) => model.reparent(id, null)));
   });
@@ -464,21 +464,15 @@ function docOwners(elements: Y.Map<ElementYMap>): { owner: Map<ElementId, Elemen
 }
 
 /**
- * The elements still in `model` whose owner is gone: one a `remove` of `events` took away (the removal did not
- * cascade; an owner removed and made again keeps the id, so only the removed ids count), or any owner a `reset`
- * snapshot lacks (Open, Undo, Import of a model that already holds such a child).
+ * The elements still in `model` whose owner is gone, when `events` hold a `reset`: any owner the snapshot
+ * lacks (Open, Undo, Import of a model that already holds such a child). A `remove` needs no scan:
+ * `Model.remove` moved what it kept to the top level itself.
  */
 function orphanedBy(model: Model, events: readonly ChangeEvent[]): ElementId[] {
-  let gone: Set<ElementId> | undefined;
-  let reset = false;
-  for (const ev of events) {
-    if (ev.type === 'reset') reset = true;
-    else if (ev.type === 'remove' && ev.id !== undefined) (gone ??= new Set()).add(ev.id);
-  }
-  if (gone === undefined && !reset) return [];
+  if (!events.some((ev) => ev.type === 'reset')) return [];
   return model
     .all()
-    .filter((e) => e.ownerId !== null && (reset ? !model.has(e.ownerId) : gone!.has(e.ownerId)))
+    .filter((e) => e.ownerId !== null && !model.has(e.ownerId))
     .map((e) => e.id);
 }
 

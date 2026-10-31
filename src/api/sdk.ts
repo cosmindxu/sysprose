@@ -491,7 +491,10 @@ export class ModelApi {
     return this.model.update(id, patch);
   }
 
-  /** Delete an element (cascades by default); returns removed ids. */
+  /**
+   * Delete an element (cascades by default); returns removed ids. With `cascade: false` the children it
+   * keeps move to the top level, as they do in a room.
+   */
   delete(id: ElementId, opts: { cascade?: boolean } = {}): ElementId[] {
     return this.model.remove(id, opts);
   }

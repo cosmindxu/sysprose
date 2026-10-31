@@ -598,7 +598,8 @@ in one order on every peer. A member that one peer moves into an element
 another peer deletes at the same moment goes to the top level, on every peer;
 so do the members of an element deleted with `cascade: false` (the SDK's
 `delete`), in a room or not — the delete itself moves them, and an element made
-again with the same id in that transaction does not take them back; so do members whose
+again with the same id in that transaction does not take them back; so do the members of
+a connection or other relationship removed along with an element it ran to; so do members whose
 element was deleted that way before the room was joined, or that an Open, Undo or Import brings in.
 A typing, specialisation or redefinition keeps its place among the others,
 wherever the text writes it: one made in the app — the Type field, a line drawn
@@ -4615,7 +4616,7 @@ for the elements it adds; each `reparent` lists it at its own call, inside a
 
 **Source of truth:** `src/ui/store.ts:3608-3790` (`runValidation`,
 `solveParametric`: the four buttons), `2299-2491` (`afterSdkEdit`: an SDK edit),
-`src/api/analytics.ts:2459-2466` (`feasible`), `src/ui/App.tsx:46-94`
+`src/api/analytics.ts:2465-2472` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -5272,7 +5273,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 (`UNDO_LIMIT`: undo is bounded), `1781-1811` (`RECOMPUTE_DEBOUNCE_MS`: the
 derived surfaces lag), `5516-5639` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2459-2466` (`feasible`), `src/ui/commands.ts:207-319`.
+`src/api/analytics.ts:2465-2472` (`feasible`), `src/ui/commands.ts:207-319`.
 
 ---
 
