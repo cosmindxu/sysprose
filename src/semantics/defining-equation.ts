@@ -42,7 +42,7 @@ import {
   ownFeatures,
   redefinedClosure,
 } from './inheritance';
-import { resolveFullName } from './bind';
+import { resolveFullName, unreadScopes, type UnreadScope } from './bind';
 import { type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
@@ -371,8 +371,8 @@ export class DefiningEquations {
   private readonly asking = new Set<string>();
   private guessed = false;
   private bound?: ReadonlySet<ElementId>;
-  /** The elements that own a binding the editor parted from a copy ({@link partedHolder}), once asked. */
-  private parted?: ReadonlySet<ElementId>;
+  /** The elements that own a binding the editor parted from a copy, or a scope the saved file may read otherwise ({@link partedHolder}), once asked. */
+  private parted?: ReadonlyMap<ElementId, 'binding' | UnreadScope>;
   /** Per context, the scopes {@link partedHolder} left unread: the path they are reached by, and their owner. */
   private readonly withheldIn = new Map<ElementId, Map<string, ElementId>>();
   /** The types an owner of a binding specialises, for {@link endsInGeneral}. */
@@ -4076,19 +4076,33 @@ export class DefiningEquations {
     return this.partedOwners().size > 0;
   }
 
-  private partedOwners(): ReadonlySet<ElementId> {
+  private partedOwners(): ReadonlyMap<ElementId, 'binding' | UnreadScope> {
     if (this.parted === undefined) {
-      const out = new Set<ElementId>();
+      const out = new Map<ElementId, 'binding' | UnreadScope>();
       for (const b of this.model.ofKind('BindingConnectorAsUsage', 'BindingConnector')) {
         if (b.ownerId == null || b.attrs.isLibrary === true) continue;
-        if (b.attrs.partedEnd === true) out.add(b.ownerId);
+        if (b.attrs.partedEnd === true) out.set(b.ownerId, 'binding');
         // An end that is a feature of a type its owner specialises, held with no copy of its own in the owner (a bound
         // end moved up into the type): the saved file makes the copy, which the page does not hold.
-        else if (this.endsInGeneral(b)) out.add(b.ownerId);
+        else if (this.endsInGeneral(b)) out.set(b.ownerId, 'binding');
       }
+      // An owner of two features under one name, or of a redefinition the saved file does not keep as it stands.
+      for (const [id, why] of unreadScopes(this.model)) if (!out.has(id)) out.set(id, why);
       this.parted = out;
     }
     return this.parted;
+  }
+
+  /** Why the scope of `ownerId` ({@link withheldOwner}) is left unread: a parted binding, or what {@link unreadScopes} names. */
+  withheldWhy(ownerId: ElementId): 'binding' | UnreadScope {
+    const parted = this.partedOwners();
+    const own = parted.get(ownerId);
+    if (own !== undefined) return own;
+    for (const g of generalizationsOf(this.model, ownerId)) {
+      const why = parted.get(g.id);
+      if (why !== undefined) return why;
+    }
+    return 'binding';
   }
 
   /**

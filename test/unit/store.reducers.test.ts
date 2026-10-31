@@ -2641,6 +2641,78 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(await surfaces(st().model)).toEqual(await surfaces(reopened(st().model)));
       });
 
+      // A Redefinition edge the saved file does not keep as it stands (retargeted by hand to a feature its owner does not
+      // inherit and no name finds, to one of another kind, or into a cycle), and two features of one owner under one
+      // name: the file drops the edge or finds the first of the two, so the scope of the owner (and of what is typed by
+      // or specialises it) is withheld (bind.ts unreadScopes, DefiningEquations.partedHolder): no row names one. The
+      // soak that found them: fence-editor's zzprop.test.ts, seeds 165, 317, 400, 1327, 1406, 7220, 7430 and 7436.
+      it('a redefinition the file does not keep as it stands, and two features of one name, leave the owner’s names unread', async () => {
+        const cells = (row: string | undefined): string[] => (row ?? '').split('/');
+        const neverMore = (page: Record<string, string>, file: Record<string, string>, note: string): void => {
+          for (const [k, row] of Object.entries(page)) {
+            cells(row).forEach((c, i) => {
+              if (c === 'T' || c === 'F') expect(cells(file[k])[i], `${note}: ${k} lane ${i}`).toBe(c);
+            });
+          }
+        };
+        const said = (name: string): string => checkConstraints(st().model).find((r) => st().model.qualifiedName(r.id) === name)!.message ?? '';
+        // (a) H1's `part p1 :>> p` retargeted to the `:>> p1` inside w, which redefines it: the edge is a cycle, and the file
+        // reads w's `p1` as the feature H1 declares. Every name of H1, of w (typed H1) and below is unread.
+        load(`package RC {
+  part def P { attribute a default = 11.0; }
+  part def H { part p : P; }
+  part def H1 :> H { part p1 :>> p; }
+  part w : H1 { part :>> p1 { attribute :>> a = 15.0; } }
+  constraint c15 { w.p1.a == 15.0 }
+  constraint c11 { w.p1.a == 11.0 }
+  constraint d11 { w.p.a == 11.0 }
+  constraint e11 { H1.p1.a == 11.0 }
+}`);
+        const before = await surfaces(st().model);
+        expect(before['RC::c15'], 'before the edit: decided').toBe('T/T/T/T');
+        st().updateElement(
+          st().model.all().find((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && e.source![0] === byName('p1').id)!.id,
+          { target: [st().model.children(byName('w').id).find((c) => c.eClass === 'PartUsage')!.id] },
+        );
+        expect(targets(st().model), 'the page keeps the edge the file drops').not.toEqual(targets(reopened(st().model)));
+        const a = await surfaces(st().model);
+        for (const k of ['RC::c15', 'RC::c11', 'RC::d11']) expect(a[k], `page: ${k} is not read`).toBe('?/?/?/?');
+        expect(said('RC::c15'), 'the check says why').toContain('w.p1.a is not read: RC::w holds, or is typed by or specialises a scope that holds, a redefinition the saved file does not keep as it stands');
+        neverMore(a, await surfaces(reopened(st().model)), 'retarget p1 into a cycle');
+        // (b) The same edge moved to another kind: the attribute `a` is no part for `p1` to redefine.
+        load(`package RK {
+  part def P { attribute a default = 11.0; }
+  part def H { part p : P; }
+  part def H1 :> H { part p1 :>> p; }
+  part w : H1 { part :>> p1 { attribute :>> a = 15.0; } }
+  constraint c15 { w.p1.a == 15.0 }
+}`);
+        st().updateElement(
+          st().model.all().find((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && e.source![0] === byName('p1').id)!.id,
+          { target: [byName('a').id] },
+        );
+        expect((await surfaces(st().model))['RK::c15'], 'page: another kind is not read').toBe('?/?/?/?');
+        neverMore(await surfaces(st().model), await surfaces(reopened(st().model)), 'retarget p1 onto an attribute');
+        // (c) A rename by a raw call gives P two features named `a`: the file finds the first. The instance typed by P, the
+        // definition that specialises P and the part that holds an instance are all unread, and the check says why.
+        load(`package RT {
+  part def P { attribute a default = 11.0; attribute b default = 12.0; }
+  part def P1 :> P;
+  part def H { part p : P; }
+  part w : H { part :>> p { attribute :>> b = 18.0; } }
+  part v : P1;
+  constraint wa { w.p.a == 11.0 }
+  constraint wb { w.p.b == 18.0 }
+  constraint va { v.a == 11.0 }
+}`);
+        expect((await surfaces(st().model))['RT::va'], 'before the rename: decided').toBe('T/T/T/T');
+        st().model.update(byName('b').id, { declaredName: 'a' });
+        const c = await surfaces(st().model);
+        for (const k of ['RT::wa', 'RT::wb', 'RT::va']) expect(c[k], `page: ${k} is not read`).toBe('?/?/?/?');
+        expect(said('RT::va')).toContain('v.a is not read: RT::v holds, or is typed by or specialises a scope that holds, two features under one name');
+        neverMore(c, await surfaces(reopened(st().model)), 'raw rename of P::b to a');
+      });
+
       it('deleting the feature a definition-level bind ends on leaves no copy the page proves through', async () => {
         load(`package DB {
   part def P { attribute load default = 1.0; }

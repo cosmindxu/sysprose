@@ -1187,11 +1187,19 @@ P) is read by the order the types are listed in, which a page edited by hand and
 share: Save writes that redefinition by its path (`:>> G::P3::b`), which the next open reads as written. A
 redefinition that a `window.sysml` call (or a feature moved) points at a feature in a nested unnamed part,
 whose path goes through the part's effective name, is dropped by the settle: the text has no way to name
-it, and the saved file has none. One thing stays outside this: a rename that gives two features of one
-owner one name, the declared one or the one an unnamed `:>> M` is known by (the Problems panel reports
-`validation/duplicate-name` for the first): the saved file finds the first of them, which may not be the
-feature the page's `:>>` is on, and a `window.sysml` call that points a redefinition at a feature its owner
-does not inherit and a name does not reach can leave the page apart from the file. A rename made by
+it, and the saved file has none. Two more things the saved text cannot say are read as unknown, not
+guessed. A rename that gives two features of one owner one name, the declared one or the one an unnamed
+`:>> M` is known by (the Problems panel reports `validation/duplicate-name` for the first), leaves the file
+finding the first of them, which may not be the feature the page's `:>>` is on. And a `window.sysml` call (or
+the Properties panel) that points a redefinition at a feature its owner does not inherit and no name or path
+of the target finds, at one of another kind, or back into a cycle, makes an edge the file drops or lands
+elsewhere. In both, the page leaves every name of that owner unread, and of what specialises it or is typed
+by it, on all four surfaces: the check says `x is not read: G::A holds, or is typed by or specialises a scope
+that holds, two features under one name, and the saved file may read the other, so no name of G::A is read`
+(or `… a redefinition the saved file does not keep as it stands …, so no name of G::A is read until the file
+is saved and opened again`), the numeric, literal and SMT rows are inconclusive, and the solver proves and
+refutes nothing on a model that holds such a scope. A file that holds the same twins reads the same way, and
+one that redefines by a path what its owner does not inherit does too. A rename made by
 `updateElement` in steps (the SDK, not the box) is an edit for every call.
 
 A statement whose end no name reaches is not saved. A binding, connection, flow, allocation,
@@ -1208,7 +1216,7 @@ statement, so it is another model than the one on screen, and `reach` and `check
 so (`the text a file of it holds reads as another model`); naming the redefinition saves the
 statement. Opened and saved again, the file no longer has the statement or the comment.
 
-Five more cases are not followed, and in each the page can read what the saved file does not:
+Four more cases are not followed, and in each the page can read what the saved file does not:
 
 - A stale copy (above) is still a feature of its owner on the page, with no value: a constraint
   that names it (`r0.L` after `L` is renamed away) is read by the numeric lane as free (`imposed`),
@@ -1227,10 +1235,6 @@ Five more cases are not followed, and in each the page can read what the saved f
   its owner bears is read as the file reads it (the end unresolved), and decides.
 - A peer's edit in a collaboration room is not settled by the receiver, which relies on the
   sender's settle arriving as edits (not exercised with two live clients).
-- A `window.sysml` call that points a redefinition at a feature its owner does not inherit (a
-  retarget to an unrelated feature, or a feature moved into the usage that redefines it) can
-  leave the page's redefinition apart from the file's: the saved text names it by a path the next
-  open resolves otherwise.
 - A cycle of redefinitions (`a :>> b`, `b :>> a`, already an invalid model): deleting one
   member leaves the other redefining itself, which the saved text reads as an unresolved name.
 
