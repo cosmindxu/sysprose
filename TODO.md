@@ -676,16 +676,6 @@ headings.
       fence-editor2: item (c) now withholds every name of the binding's owner on all four surfaces
       (a rename onto a taken name), and the SMT lane proves and refutes nothing on a model that
       holds a withheld scope; the page still cannot decide rows the file decides. [fence-editor2]
-- [ ] **Make two features of one owner under one name, and a hand-retargeted redefinition,
-      page-equals-file.** fence-editor fixed the order-dependent simple name (seed 5439) and the
-      path through an unnamed part (seed 5001). What stays: (1) two features of ONE owner under one
-      name (the saved file finds the first); (2) a Redefinition edge retargeted by hand (SDK,
-      `updateElement`) to a feature its owner does not inherit, to a feature of another kind, or to
-      one that makes a cycle leaves page and file redefinitions apart. A sound fence needs a stable
-      identity between page and reparsed file (compare by place), more than 40 lines. Probes:
-      `RC_FIRST=<seed> RC_SEQ=1 RC_STEPS=5` with
-      review-2026-10-14/wave3-probes/fence-editor/zzprop.test.ts copied to test/unit/zzprop.test.ts,
-      on seeds 165, 317, 400, 1327, 1406, 7220, 7430, 7436. [fence-editor S2]
 - [ ] **Abstentions left in the editor (rollup; sound, only weaker).** (1) After a retype that parts
       a copy under an unrelated binding, the page abstains where the file decides ('page ?F file
       FF': seeds 106, 123, 527 of the 1000-sequence window). (2) A stale copy still resolves as a
@@ -717,12 +707,33 @@ headings.
       with an anonymous end is skipped silently on Save, and Apply of the Text view's text after a
       `// Not saved:` statement drops it; (11) the generator had no units. Residual page-F/file-X
       pairs (seeds 70041, 70338, 70349, 70478, 70555) are identical at the base. [fence-editor2]
+      fence-redefs: (12) the page abstains over an owner of two features under one name, and over an
+      owner of a redefinition edge the file does not keep (not inherited, another kind, a cycle),
+      where the reopened file decides: 12.7% of the steps and 8.5% of the decided cells of the
+      adversarial soak, 0 of the 637 corpus models; a rename or create that gives a feature
+      another's name withholds the whole owner scope and compares nothing with the file, so it is
+      conservative on a retarget the file keeps; a precise twin fence (a relationship pointing at
+      the non-first twin) and an edge fence by place would read more; a retarget onto a library
+      feature is treated as inherited; (13) on a hand-edited page a row that reads a withheld name
+      still gets the SMT sentence 'unresolved-name ...' where the check lane gives the true cause;
+      (14) `bind.ts` `redefinitionIsKept` re-implements the serializer's spelling
+      (`effectiveNameOf`, `effectiveQualifiedName`): re-run the edge property
+      (scratchpad/rev-redefs/zzedge.test.ts) when the serializer changes; 51 of 5222 steps differ
+      page against file in the edge, 5 with the owner not flagged, no row difference in 820
+      constraint replays. fence-save-name: (15) page `FF`/file `??` rows seqs 44248 and 40746
+      (identical on base, no note in the saved text) and about 390 per window 'page ?? / file
+      decides' rows; probe fence-save-name-scratch/soak/mine-4*.log, generator
+      fence-save-name-scratch/zzb.test.ts; a stale-copy probe: seed 32180 (RV_RAW=1 RV_FIRST=32180
+      RV_SEQ=1 RV_STEPS=5) and soak seq 42267 (page TT, file ?F on c6). [fence-redefs;
+      fence-save-name]
 - [ ] **Stop a deleted Redefinition cycle member leaving a self-redefinition (low).** A cycle a -> b
       -> a: deleting a leaves `b :>> b` (the saved text `attribute b :>> b;` reads Unresolved
-      reference). Fix: in `Model.survivingTargets` treat a found target equal to the redefining
-      feature as no survivor. A cycle is already an invalid model. Probe:
+      reference). fence-redefs: the self-edge is now withheld on the page (the owner and the feature
+      read unknown), so the page abstains where the file decides (probe cases/cyc2.json). Fix: in
+      `Model.survivingTargets` treat a found target equal to the redefining feature as no survivor.
+      A cycle is already an invalid model. Probe:
       review-2026-10-14/wave3-probes/redefinition-target/probe-selfred.test.ts. [redefinition-target
-      re-review]
+      re-review; fence-redefs]
 - [ ] **Take the dangling-edge scan out of `Model.remove` (core cost).** `Model.remove` scans every
       element for dangling edges, so a settle that drops many redefinitions one remove at a time
       costs O(N) each: deleting a base attribute that 300 redefinitions end in costs about 0.9 s on
@@ -995,32 +1006,76 @@ true values. What follows is what that branch and the review of it left open; en
       message. Done when the first message of a v9 room carries under 1 MB of library. [collab-ui
       S2]
 - [ ] **Make peers converge after concurrent removals in a collaboration room (pre-existing).**
-      Three peers that move and remove elements at random points and then exchange their updates end
-      with different trees in about 7 sequences of 100 (33 of 500 on collab-ui, 42 of 500 at
-      227d10c); a cycle is not involved, a removal that reaches one peer before or after a move into
-      the removed owner is. Moves, creates, resets and renames alone converge (0 of 2000). Probe:
-      `ONLY=fuzz.probe.ts N=500 OPS=mr vitest run --config vitest.scratch.config.ts` in
-      `scratchpad/collab-ui-scratch` (copy in
-      `~/Work/sysprose-soundness-artifacts/review-2026-10-14/wave3-probes/collab-ui/`). Wrong-answer
-      class: peers show different models. [collab-ui review]
+      fence-collab fixed the divergence (a non-cascading remove was the cause: 81 of 500 sequences
+      with `cascade:false`, 0 with `cascade:true`): the room binding now reads the kept children of
+      a removed owner, and of an owner the model lacks on a seed or a reset, at the top level on
+      every peer (0 of 4000 seeds, three peers, move/remove/create/rename/reset). What stays is
+      core: `Model.remove(id, { cascade: false })` leaves the kept children with an ownerId no
+      element has, and nothing moves them outside a room; reachable only through the SDK's
+      `delete(id, { cascade: false })` (`window.sysml` and scripts). The same child survives in any
+      snapshot (toJSON, Open, Undo, Import). A remove then a create of the same id in one
+      transaction moves the kept child out of the re-created owner on every peer. Fix:
+      `Model.remove` re-homes the kept children in its own transaction, or the option is refused.
+      Probe: `m.create('Package',{id:'F'}); m.create('PartUsage',{id:'E',ownerId:'F'});
+      m.remove('F',{cascade:false}); m.get('E').ownerId === 'F'`. A listener subscribed after the
+      binding sees the move before the removal (comment in model-doc.ts). [collab-ui review;
+      fence-collab]
 - [ ] **Save the unnamed end by a name, instead of leaving it out (wrong answer: page and file
-      differ).** Save now writes a `// Not saved: a <word> whose end no name reaches (...)` note
-      where it used to write the `«eClass»` placeholder, so the file reopens, but the statement is
-      gone: opened and saved again, the file no longer has it (an unnamed redefinition beside a
-      named member of that name, two unnamed redefinitions of one name, an unnamed head of the path,
-      a redefined feature with no name). Also `duplicate` of an unnamed `:>> M` redefinition: the
-      page holds two features of one owner under one name and a binding end no name reaches, Save
-      writes `bind Zb = G::u0::«AttributeUsage»`; seeds 24795, 26349 and 32180 give page FF against
-      file TT or ?? (fence-editor2-scratch/probes/zzb.test.ts with RV_RAW=1 RV_FIRST=<seed> RV_SEQ=1
-      RV_STEPS=5). Fix: give the redefinition a declared name on Save, or let `refTo` verify the
-      effective path with `resolveFullName` instead of the one-answering-member rule in
-      `effectiveSegment`. Probe: fence-editor2-scratch/s2/probes/p1.sysml. [fence-editor S2;
-      fence-editor2]
+      differ).** fence-save-name: Save writes a binding, connection, flow or interface end through
+      an unnamed redefinition by its effective name where it is the FIRST member of its owner that
+      goes by the name (the chain resolver's rule, `childNamed`), so a `duplicate` of `:>> M`, an
+      unnamed redefinition before a named member of its name and an unnamed head of a path are saved
+      and reopen on the same feature. An allocation, succession, transition, dependency, disjoining
+      or alias end keeps the one-answering-member rule (the file reads the named member first).
+      Still written as `// Not saved: a <word> whose end no name reaches (...)`, and the file
+      reopens without the statement: an end that is not the first of its name for a chain kind (a
+      rename, `duplicate`, reparent or retarget made an earlier member bear the name), two members
+      for the others, and a redefined feature with no name. No text makes that state, only an edit.
+      Residual: (a) a NAMED end behind an earlier member of its name is written by the name with no
+      note and reopens on the earlier member (80 cases on base and branch; load health is blind
+      since the re-saved text is identical; raises validation/duplicate-name); fix: the
+      first-of-name check for every non-head segment in `relativePath`, minding `::` steps; (b) a
+      single unnamed `:>> load` end of a non-chain statement is written `p.load` and reopens on the
+      definition's `P::load` (same on base; only the re-saved text differs): fence by a note for
+      non-chain kinds when the unnamed segment is the only one; (c) the write-back refusal in
+      scripts/sysprose.ts `modelText` has no test that reaches it (test it with an SDK-built model).
+      Fix of the rest: give the end's redefinition a declared name on Save, or reorder so the end is
+      first. Probes: the UNREACHED cases in test/unit/text.roundtrip.test.ts, the rename case in
+      test/unit/store.reducers.test.ts, fence-editor2-scratch/s2/probes/p1.sysml. [fence-editor S2;
+      fence-editor2; fence-save-name]
 - [ ] **Contain the own-row `standingDefaultSentence` call like the instance-row one (optional,
       low).** `readInContexts` wraps the sentence in a try/catch that yields no sentence (the
       sentence is wording and must not cost the row); the call on a constraint's own row (`standing
       = standingDefaultSentence(model, el)` in `evaluate-model.ts`) is not wrapped. No reachable
       throw was found. [save-and-wording review]
+- [ ] **Make a rename onto a sibling's effective name read like the file (wrong answer: page and
+      file differ, pre-existing).** Two shapes, identical edges on page and file, so a reader
+      divergence outside the fences of fence-redefs: (1) after a raw rename of a named redefinition
+      to a name equal to the effective name of a sibling feature in a retyped usage, the answer
+      depends on the order of the generals: `q :>> a = 16.0` in H1's `p` beside P2's `:>> a default
+      13.0`; `w2.p.a` reads the 16-side on the page and 13.0 in the file (soak seed 10738, window
+      10000: page F, file T on the check, literal and numeric lanes; probe soak/mine4-10000.json seq
+      10738); (2) an attribute inside `part :>> p` renamed to `p` (`attribute p :>> b = 15.0`)
+      beside a usage retyped to its owner: `w1.p.b == 14.0` reads page F, file ? on all three lanes
+      (soak seed 103, RW_KINDS=5,6,11,11,11,4,0,1,13; probe soak/rows-base-0.json seq 103 step 4).
+      Both are the same on 5f0ee3a and not cheaply fenceable; schedule a fence in the next sweep.
+      [fence-redefs]
+- [ ] **Stop a unit named `in` in an expression being read as the direction keyword (wrong answer:
+      Save drops the rest).** A unit written `[in]` inside `require constraint { s.x + 0.05 [in] <
+      0.3 [in] }` is read as the keyword `in` (`in port;` members), and the first Save already
+      writes `{ s.x + 0.05 [` with the rest gone, so the saved file is not a parse-save-parse fixed
+      point (11 of 858 saved corpus texts are not, z186 among them; the others are listed in
+      fence-save-name-scratch/idem2.mts output). Probe: gate-tools/corpus/0d8166168231-z186.sysml,
+      fence-save-name-scratch/idem2.mts. [fence-save-name]
+- [ ] **Z3 constraint classes: classes-2 and classes-3 (rollup, plan
+      ~/.claude/plans/z3-constraint-classes.md).** classes-1 merged the census (`npm run
+      census:classes`) and `src/semantics/smt/shape.ts` (label only; no script byte moves). Still to
+      do: classes-2 (classifier, pinned.ts, the maturity function, generated facts, census `--check
+      --strict`; a nonlinear shape with an empty nlSymbols set reads /free, add CC-21 `(a ^ 0) * (b
+      ^ 0)`; compare pinnedSymbolsOf with the engine's pinnedSymbols) and classes-3 (printing the
+      class line in verify text/JSON and the other z3 commands, only cells that have corpus rows;
+      the 55 fence-only no-clause rows carry no ninth reading; a row with zero symbols is `ground`).
+      classes-3 waits for the wrong-answer count at or below 15. [classes-1]
 
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
