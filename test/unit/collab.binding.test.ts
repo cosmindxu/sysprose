@@ -469,6 +469,68 @@ describe('bindModelToDoc — CRDT convergence', () => {
     expect(m3.has('stdlib:Old')).toBe(false);
   });
 
+  it('a library element under an owner of the user\'s stands at the top level when a peer removes or resets the owner; a library-flagged package put under the library does too, on both peers', () => {
+    const loadLibrary = (m: Model): void =>
+      m.transaction(() => {
+        m.create('Package', { id: 'stdlib:Lib', declaredName: 'Lib', attrs: { isLibrary: true } });
+        m.create('DataType', { id: 'stdlib:Lib::t', declaredName: 't', ownerId: 'stdlib:Lib', attrs: { isLibrary: true } });
+      });
+    const setup2 = (): { m1: Model; m2: Model; d1: Y.Doc; d2: Y.Doc } => {
+      const m1 = new Model();
+      const m2 = new Model();
+      const d1 = new Y.Doc();
+      const d2 = new Y.Doc();
+      loadLibrary(m1);
+      loadLibrary(m2);
+      m1.create('Package', { id: 'P', declaredName: 'P', attrs: { isLibrary: true } });
+      bindModelToDoc(m1, d1);
+      Y.applyUpdate(d2, Y.encodeStateAsUpdate(d1), 'remote');
+      bindModelToDoc(m2, d2);
+      wire(d1, d2);
+      return { m1, m2, d1, d2 };
+    };
+
+    // The library root moved under a library-flagged package of the user's; a peer removes the package.
+    const a = setup2();
+    a.m2.reparent('stdlib:Lib', 'P');
+    a.m1.remove('P', { cascade: false });
+    expect(a.m1.get('stdlib:Lib')!.ownerId).toBeNull();
+    expect(a.m2.get('stdlib:Lib')!.ownerId).toBeNull();
+    expect(a.m2.rootIds()).toContain('stdlib:Lib');
+
+    // The peer that joins to a room whose package is gone keeps the library at the top level.
+    const b = setup2();
+    b.m2.reparent('stdlib:Lib', 'P');
+    const m3 = new Model();
+    loadLibrary(m3);
+    m3.create('Package', { id: 'P', declaredName: 'P', attrs: { isLibrary: true } });
+    m3.reparent('stdlib:Lib', 'P');
+    const d3 = new Y.Doc();
+    b.m1.remove('P');
+    Y.applyUpdate(d3, Y.encodeStateAsUpdate(b.d1), 'remote');
+    d3.getMap('elements').set('Q', new Y.Map());
+    (d3.getMap('elements').get('Q') as Y.Map<unknown>).set('eClass', 'Package');
+    bindModelToDoc(m3, d3);
+    expect(m3.get('stdlib:Lib')!.ownerId).toBeNull();
+
+    // A library-flagged package of the user's put under the library reads at the top level on both peers.
+    const c = setup2();
+    c.m1.reparent('P', 'stdlib:Lib');
+    expect(c.m1.get('P')!.ownerId).toBeNull();
+    expect(c.m2.get('P')!.ownerId).toBeNull();
+    c.m2.create('Package', { id: 'R', declaredName: 'R', ownerId: 'stdlib:Lib', attrs: { isLibrary: true } });
+    expect(c.m2.get('R')!.ownerId).toBeNull();
+    expect(c.m1.get('R')!.ownerId).toBeNull();
+  });
+
+  it('every id of the bundled standard library carries the prefix the room leaves out of its document', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const lib = JSON.parse(readFileSync(resolve(process.cwd(), 'src/library/std/stdlib.json'), 'utf8')) as { elements: Array<{ id: string }> };
+    expect(lib.elements.length).toBeGreaterThan(0);
+    expect(lib.elements.filter((e) => !e.id.startsWith('stdlib:'))).toEqual([]);
+  });
+
   it('unbind stops propagation', () => {
     const { m1, m2, b1 } = setup();
     m1.create('Package', { id: 'before', declaredName: 'B' });

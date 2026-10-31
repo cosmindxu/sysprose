@@ -5218,8 +5218,8 @@ Stated plainly, because finding these out by surprise is worse.
   The standard library is not in the room's document: every peer loads it
   itself, so a library element dragged to another owner is that page's own
   view, and a room an earlier build wrote may still hold the library, which no
-  peer reads. Two peers
-  who each drag one of two elements into the other at the same moment leave the
+  peer reads. A library element under an owner a peer removes stands at the top
+  level. Two peers who each drag one of two elements into the other at the same moment leave the
   room's document holding each under the other; every peer, and a page that
   joins, then reads the one with the lower id at the top level and the other
   under it, and the document is corrected to say so.

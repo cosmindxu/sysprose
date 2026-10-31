@@ -57,8 +57,10 @@
  * removal made by another peer. A doc an earlier build wrote may hold them: they
  * are left where they are, and a reset drops them. The first message of the
  * drone-swarm model so carries about 1 MB, not 10.8 MB. An element of the user's
- * under an owner of the library's (the app puts none there) reads at the top
- * level on every peer but the one that made it. The rules above about places
+ * put under an owner of the library's (a library-flagged package of the user's
+ * dragged into it, through the SDK) stands at the top level on every peer, the
+ * one that made it too, and a library element held under an owner of the user's
+ * that a peer removes or a reset drops stands there too. The rules above about places
  * under an owner of the library's hold for a library whose ids are not
  * `stdlib:`'s (the curated subset, loaded when the full one is not).
  *
@@ -251,7 +253,7 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
   if (elements.size === 0 && model.size > 0) {
     // Doc is empty → seed it from the model. A child whose owner the model no longer has (an SDK
     // `delete(id, { cascade: false })` before joining) is read at the top level by every joiner: so is it here.
-    const dangling = orphanedBy(model, [{ type: 'reset' }]);
+    const dangling = [...orphanedBy(model, [{ type: 'reset' }]), ...underLibrary(model, model.all().map((e) => e.id))];
     if (dangling.length > 0) model.transaction(() => dangling.forEach((id) => model.reparent(id, null)));
     doc.transact(() => {
       seedDocFromModel(model, elements);
@@ -263,6 +265,8 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     try {
       // Its own copy of the standard library stays: the doc holds none.
       model.resetPreserving(serializeFromDoc(elements, owner), (el) => isLibraryId(el.id));
+      // A library element it kept under an owner the doc lacks stands at the top level, as on every other peer.
+      for (const id of orphanedBy(model, [{ type: 'reset' }])) model.reparent(id, null);
       // The doc lists the elements in the order they reached it, not the order
       // their text gives them: list the model as the peers present at those
       // edits list theirs (`Model.adoptSerialOrder`, D-1).
@@ -285,7 +289,9 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     // has; every peer reads them at the top level, so this model does too, and the doc says so.
     // The move is a nested transaction: a listener subscribed after this one is told of it before the removal.
     // Removed and made again in one transaction, the owner has the id but not the child: the child is moved too.
-    const orphans = orphanedBy(model, events);
+    // An element of the user's put under an owner of the library's is read at the top level by every other peer
+    // ({@link docOwners}): so is it here.
+    const orphans = [...orphanedBy(model, events), ...underLibrary(model, events.flatMap((ev) => (ev.type === 'add' || ev.type === 'reparent' ? [ev.id ?? ''] : [])))];
     if (orphans.length > 0) model.transaction(() => orphans.forEach((id) => model.reparent(id, null)));
   });
 
@@ -302,6 +308,9 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     try {
       model.transaction(() => {
         for (const id of reconcileModelFromDoc(model, elements, owner)) placed.add(id);
+        // A library element this peer holds under an owner a peer removed (the doc holds no library, so step 3
+        // does not re-home it) stands at the top level, as on every other peer.
+        if (owner !== undefined) for (const id of orphanedBy(model, [{ type: 'reset' }])) model.reparent(id, null);
         // Each owner the peer's edit added to, moved into or re-placed holds its
         // children as that peer holds them (the header's "Child order").
         holdPlaces(model, elements, placed);
@@ -502,6 +511,14 @@ function orphanedBy(model: Model, events: readonly ChangeEvent[]): ElementId[] {
     .all()
     .filter((e) => e.ownerId !== null && (reset ? !model.has(e.ownerId) : gone!.has(e.ownerId)))
     .map((e) => e.id);
+}
+
+/** Of `ids`, the elements of the user's (not the library's) that `model` holds under an owner of the library's. */
+function underLibrary(model: Model, ids: readonly ElementId[]): ElementId[] {
+  return ids.filter((id) => {
+    const el = model.get(id);
+    return el !== undefined && !isLibraryId(id) && el.ownerId !== null && isLibraryId(el.ownerId);
+  });
 }
 
 /** Whether a doc transaction added, replaced or removed an element, or wrote an element's owner: the only edits that change the reading of {@link docOwners}. */
