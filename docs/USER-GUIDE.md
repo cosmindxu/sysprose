@@ -597,7 +597,8 @@ later; two members that two peers add to one element at the same moment come
 in one order on every peer. A member that one peer moves into an element
 another peer deletes at the same moment goes to the top level, on every peer;
 so do the members of an element deleted with `cascade: false` (the SDK's
-`delete`), on the peer that deleted it as on the others.
+`delete`), on the peer that deleted it as on the others; so do members whose
+element was deleted that way before the room was joined, or that an Open, Undo or Import brings in.
 A typing, specialisation or redefinition keeps its place among the others,
 wherever the text writes it: one made in the app — the Type field, a line drawn
 with the palette — is taken after those the model had, and one of an element

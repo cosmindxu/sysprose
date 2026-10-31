@@ -243,8 +243,41 @@ describe('bindModelToDoc — CRDT convergence', () => {
     expect(snapshot(joined)).toEqual(snapshot(m1));
   });
 
+  it('a child whose owner the model already lacks reads at the top level for the creator, a joiner and a reset alike', () => {
+    const dangling = () => {
+      const m = new Model();
+      m.create('Package', { id: 'F', declaredName: 'F' });
+      m.create('PartUsage', { id: 'E', declaredName: 'E', ownerId: 'F' });
+      m.remove('F', { cascade: false });
+      return m;
+    };
+    // The creator seeds the doc from a model that holds the child under a vanished owner.
+    const m1 = dangling();
+    const d1 = new Y.Doc();
+    bindModelToDoc(m1, d1);
+    const joined = new Model();
+    const dj = new Y.Doc();
+    Y.applyUpdate(dj, Y.encodeStateAsUpdate(d1), 'remote');
+    bindModelToDoc(joined, dj);
+    expect(snapshot(joined)).toEqual(snapshot(m1));
+    expect(m1.rootIds()).toEqual(['E']);
+    // A live room resets to such a snapshot (Open, Undo, Import).
+    const a = new Model();
+    const b = new Model();
+    const da = new Y.Doc();
+    const db = new Y.Doc();
+    bindModelToDoc(a, da);
+    bindModelToDoc(b, db);
+    da.on('update', (u: Uint8Array, o: unknown) => {
+      if (o !== 'remote') Y.applyUpdate(db, u, 'remote');
+    });
+    a.reset(dangling().toJSON());
+    expect(snapshot(b)).toEqual(snapshot(a));
+    expect(b.rootIds()).toEqual(['E']);
+  });
+
   it('three peers that move and remove (with or without the children) at random points end alike', () => {
-    // The sequences that ended in different trees before the removing peer moved the kept children up (172 of 2000).
+    // The sequences that ended in different trees before the removing peer moved the kept children up (32 of 2000).
     const rng = (seed: number) => {
       let x = seed >>> 0;
       return () => ((x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 2 ** 32);

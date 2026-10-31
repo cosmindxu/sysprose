@@ -58,7 +58,8 @@
  *
  * An owner removed while its children stay (`Model.remove` with `cascade: false`) leaves them
  * under an owner nobody has: the peer that removed it moves them to the top level
- * ({@link orphanedBy}), where every other peer reads them ({@link docOwners}).
+ * ({@link orphanedBy}), where every other peer reads them ({@link docOwners}); so does a model that
+ * already holds such a child when it seeds the doc or is reset.
  *
  * Flow:
  *   local model change  → doc.transact(fn, ORIGIN_LOCAL)   (minimal ops)
@@ -229,7 +230,10 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
   /* ───────────────────────── Initial synchronisation ──────────────────── */
 
   if (elements.size === 0 && model.size > 0) {
-    // Doc is empty → seed it from the model.
+    // Doc is empty → seed it from the model. A child whose owner the model no longer has (an SDK
+    // `delete(id, { cascade: false })` before joining) is read at the top level by every joiner: so is it here.
+    const dangling = orphanedBy(model, [{ type: 'reset' }]);
+    if (dangling.length > 0) model.transaction(() => dangling.forEach((id) => model.reparent(id, null)));
     doc.transact(() => {
       seedDocFromModel(model, elements);
     }, ORIGIN_LOCAL);
@@ -259,6 +263,8 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     }, ORIGIN_LOCAL);
     // A removal that kept the owner's children (`cascade: false`) leaves them under an owner no peer
     // has; every peer reads them at the top level, so this model does too, and the doc says so.
+    // The move is a nested transaction: a listener subscribed after this one is told of it before the removal.
+    // Removed and made again in one transaction, the owner has the id but not the child: the child is moved too.
     const orphans = orphanedBy(model, events);
     if (orphans.length > 0) model.transaction(() => orphans.forEach((id) => model.reparent(id, null)));
   });
@@ -457,12 +463,23 @@ function docOwners(elements: Y.Map<ElementYMap>): { owner: Map<ElementId, Elemen
   return { owner, broken };
 }
 
-/** The elements still in `model` whose owner a `remove` of `events` took away: the removal did not cascade. */
+/**
+ * The elements still in `model` whose owner is gone: one a `remove` of `events` took away (the removal did not
+ * cascade; an owner removed and made again keeps the id, so only the removed ids count), or any owner a `reset`
+ * snapshot lacks (Open, Undo, Import of a model that already holds such a child).
+ */
 function orphanedBy(model: Model, events: readonly ChangeEvent[]): ElementId[] {
   let gone: Set<ElementId> | undefined;
-  for (const ev of events) if (ev.type === 'remove' && ev.id !== undefined) (gone ??= new Set()).add(ev.id);
-  if (gone === undefined) return [];
-  return model.all().filter((e) => e.ownerId !== null && gone.has(e.ownerId)).map((e) => e.id);
+  let reset = false;
+  for (const ev of events) {
+    if (ev.type === 'reset') reset = true;
+    else if (ev.type === 'remove' && ev.id !== undefined) (gone ??= new Set()).add(ev.id);
+  }
+  if (gone === undefined && !reset) return [];
+  return model
+    .all()
+    .filter((e) => e.ownerId !== null && (reset ? !model.has(e.ownerId) : gone!.has(e.ownerId)))
+    .map((e) => e.id);
 }
 
 /** Whether a doc transaction added, replaced or removed an element, or wrote an element's owner: the only edits that change the reading of {@link docOwners}. */
