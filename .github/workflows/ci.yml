@@ -57,6 +57,14 @@ jobs:
       - name: Production build
         run: npm run build
 
+      # The constraint-class maturity levels are computed from committed facts
+      # (src/semantics/smt/class-facts.ts). This recounts them from the repository,
+      # with no solver, and fails closed when a committed level is above the recount
+      # (a hand-raised fact, a test renamed away, a dropped defect). It does not
+      # compare counts: a fence run that moves a count and no level stays green.
+      - name: Constraint-class facts hold (recount, no solver)
+        run: npm run census:classes -- --check --strict
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 

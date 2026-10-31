@@ -16,6 +16,8 @@
  *   --time               print the wall time of each phase to stderr
  *   --json               print the census as JSON
  *   --check              run the census twice in separate processes and test its own invariants
+ *   --strict             with --check: also recount the facts the rubric reads (the differential table too, no
+ *                        solver) and fail when a committed level is above the recounted one
  *   --expect-clean-src   with --check: also fail when `git status` shows an uncommitted change under src/
  *
  * With FILEs, only those are read (corpus `files`). Exit 0 on success, 1 when a `--check` invariant fails,
@@ -28,6 +30,9 @@ import { fileURLToPath } from 'node:url';
 import { loadModelText } from '../src/text/load';
 import { verifyModel } from '../src/api/verification';
 import { loadZ3 } from '../src/semantics/smt/z3-bridge';
+import { CLASS_FACTS } from '../src/semantics/smt/class-facts';
+import { CELLS } from '../src/semantics/smt/classes';
+import { compareLevels, computeFacts, z3Release } from './lib/class-facts';
 import { flagGiven, flagValue, isArgError, parseArgs, type FlagSpec } from './lib/args';
 import { runMain } from './lib/exit';
 import { isMainModule } from './lib/is-main';
@@ -56,6 +61,7 @@ const FLAGS: readonly FlagSpec[] = [
   { name: 'time', kind: 'boolean', doc: 'Print the wall time of each phase to stderr.' },
   { name: 'json', kind: 'boolean', doc: 'Print the census as JSON.' },
   { name: 'check', kind: 'boolean', doc: 'Run twice in two processes and test the invariants.' },
+  { name: 'strict', kind: 'boolean', doc: 'With --check: recount the rubric facts and fail when a committed level is above the recounted one.' },
   { name: 'expect-clean-src', kind: 'boolean', doc: 'With --check: also fail on an uncommitted change under src/.' },
 ];
 
@@ -177,7 +183,7 @@ export function canonical(c: Census): string {
   return JSON.stringify(sort(c), null, 1) + '\n';
 }
 
-async function check(argv: readonly string[], expectCleanSrc: boolean): Promise<number> {
+async function check(argv: readonly string[], expectCleanSrc: boolean, strict: boolean): Promise<number> {
   const run = (): string => {
     const r = spawnSync(process.execPath, [...process.execArgv, process.argv[1]!, '--json', ...argv], { encoding: 'utf8', maxBuffer: 1 << 28 });
     if (r.status !== 0) throw new Error(`census run failed: ${r.stderr.slice(0, 400)}`);
@@ -195,6 +201,21 @@ async function check(argv: readonly string[], expectCleanSrc: boolean): Promise<
     const git = spawnSync('git', ['status', '--porcelain', '--', 'src'], { cwd: ROOT, encoding: 'utf8' });
     results.push([git.status === 0 && git.stdout.trim() === '', 'no uncommitted change under src/']);
   }
+  if (strict) {
+    // The facts the rubric reads, recounted with no solver: a committed level above the recounted one is an
+    // overstatement (a hand-raised fact, or a drop below a threshold). Counts that moved without moving a level
+    // are only reported, as stale.
+    const live = await computeFacts({ root: ROOT, full: true, table: true });
+    const z3 = z3Release(ROOT);
+    const diffs = compareLevels(CLASS_FACTS, live.facts, 'all', { z3 });
+    for (const d of diffs) lines.push(`FAILS  ${d.cell}: committed ${d.committed}, recounted ${d.live}`);
+    const overstated = CELLS.filter((c) => (CLASS_FACTS.cells[c]?.rows ?? 0) > 0 && (live.facts.cells[c]?.rows ?? 0) === 0);
+    for (const c of overstated) lines.push(`FAILS  ${c}: committed rows, recounted none`);
+    results.push([diffs.length === 0 && overstated.length === 0, 'no committed level or row presence is above the recount (facts, defects and z3 as recounted)']);
+    const stale: string[] = (['probes', 'goldens', 'defects'] as const).filter((k) => CLASS_FACTS.digests[k] !== live.facts.digests[k]);
+    if (CLASS_FACTS.z3 !== z3) stale.push('z3');
+    lines.push(stale.length === 0 ? 'ok     facts are fresh' : `note   facts stale for: ${stale.join(', ')} (run npm run measure:classes)`);
+  }
   for (const [ok, what] of results) lines.push(`${ok ? 'ok    ' : 'FAILS '} ${what}`);
   process.stdout.write(lines.join('\n') + '\n');
   return results.every(([ok]) => ok) ? 0 : 1;
@@ -208,8 +229,8 @@ async function main(): Promise<number> {
   }
   const given = (n: string): boolean => flagGiven(args, n);
   if (given('check')) {
-    const rest = process.argv.slice(2).filter((x) => x !== '--check' && x !== '--expect-clean-src');
-    return check(rest, given('expect-clean-src'));
+    const rest = process.argv.slice(2).filter((x) => x !== '--check' && x !== '--expect-clean-src' && x !== '--strict');
+    return check(rest, given('expect-clean-src'), given('strict'));
   }
   if (given('merge')) {
     const merged = args.positionals.map((f) => JSON.parse(readFileSync(f, 'utf8')) as Census).reduce((a, b) => mergeCensus(a, b));

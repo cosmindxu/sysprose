@@ -306,7 +306,7 @@ export function readingOf(row: Obligation): ReadingId | typeof NO_READING {
 }
 
 /** One worklist row, encoded the way the SMT engine encodes it, with the refusal if there is one. */
-interface EncRow {
+export interface EncRow {
   row: Obligation;
   vars: EncodeVariable[];
   encoded?: EncodedRelation;
@@ -314,7 +314,7 @@ interface EncRow {
   layer?: 'gate' | 'encoder';
 }
 
-function encRow(row: Obligation): EncRow {
+export function encRow(row: Obligation): EncRow {
   const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: new Set() });
   if (row.node === null || row.encodable !== true) {
     return row.encodable === true
@@ -594,7 +594,7 @@ export function censusModel(c: Census, input: ModelInput): { script: string[] } 
 }
 
 /** The labelled assertions of encoded rows, side conditions included, as the engine files them. */
-function assertedOf(list: readonly EncRow[], kind: 'axiom' | 'premise'): ScriptAssertion[] {
+export function assertedOf(list: readonly EncRow[], kind: 'axiom' | 'premise'): ScriptAssertion[] {
   return list.flatMap((e) =>
     e.encoded
       ? [
@@ -606,7 +606,7 @@ function assertedOf(list: readonly EncRow[], kind: 'axiom' | 'premise'): ScriptA
 }
 
 /** One script over a context of rows, and the shape its BYTES have (symbols the script declares only). */
-function scriptOf(context: readonly EncRow[], assertions: readonly ScriptAssertion[]): { script: ReturnType<typeof encodeScript>; cls: ReturnType<typeof scriptClassOf> } {
+export function scriptOf(context: readonly EncRow[], assertions: readonly ScriptAssertion[]): { script: ReturnType<typeof encodeScript>; cls: ReturnType<typeof scriptClassOf> } {
   const variables: EncodeVariable[] = [];
   const seen = new Set<string>();
   for (const e of context) for (const v of e.vars) if (!seen.has(v.qualifiedName)) (seen.add(v.qualifiedName), variables.push(v));
@@ -635,7 +635,7 @@ function hasLiteral(n: ExprNode): boolean {
 }
 
 /** `relevantAxioms` of `engines/smt.ts`, by its own rule, re-written here so the parity with `encodedFootprint` means something. */
-function relevant(axioms: readonly EncRow[], premises: readonly EncRow[], goal: EncodedRelation): { kept: EncRow[]; reached: Set<string> } {
+export function relevant(axioms: readonly EncRow[], premises: readonly EncRow[], goal: EncodedRelation): { kept: EncRow[]; reached: Set<string> } {
   const reached = new Set<string>(goal.reads);
   for (const p of premises) for (const r of p.encoded?.reads ?? []) reached.add(r);
   const kept: EncRow[] = [];
@@ -699,11 +699,13 @@ const unescapeTemplate = (s: string): string =>
 
 /**
  * Extract the `PROBES` table of the differential test without running it: every `name: probe(`…`, { rows })`
- * whose text is a plain template literal. The entries whose text is computed (an interpolation or a call) are
- * listed by name, and the spreads (`...reversed('name', text, rows)`, which file several probes from one call)
- * by their call; neither is read.
+ * whose text is a plain template literal, and the probe and `-rev` twin of every `...reversed('name', `text`,
+ * `rev`, { rows })` spread of plain templates. The entries whose text is computed (an interpolation or a call)
+ * are listed by name, and every other spread (`...standing(…)`, `...exchanged(…)`, a `reversed` over a call),
+ * which files several probes from one call, by its call; neither is read. `region` is the source span of the
+ * table, for a digest.
  */
-export function extractProbes(source: string): { entries: ProbeEntry[]; interpolated: string[]; spreads: string[]; total: number } {
+export function extractProbes(source: string): { entries: ProbeEntry[]; interpolated: string[]; spreads: string[]; total: number; region: { from: number; to: number } } {
   const start = source.indexOf('const PROBES: Record<string,');
   if (start < 0) throw new Error('class-census: no PROBES table in the differential test');
   let i = source.indexOf('= {', start) + 3;
@@ -778,17 +780,74 @@ export function extractProbes(source: string): { entries: ProbeEntry[]; interpol
       i += 1;
     }
   };
+  const rowsOf = (body: string): ProbeEntry['rows'] =>
+    [...body.replace(/^\s*\/\/.*$/gm, '').matchAll(/(['"`])((?:(?!\1).)+)\1\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*\]/g)].map((m) => ({ key: m[2]!, letters: m[3]!, ref: m[4]! }));
   const entries: ProbeEntry[] = [];
   const interpolated: string[] = [];
   const spreads: string[] = [];
   let total = 0;
+  /** `reversed('name', `text`, `rev`, { rows })` at `i` (after the `...`), or `undefined` with `i` unmoved. */
+  const readReversed = (): ProbeEntry[] | undefined => {
+    const save = i;
+    const fail = (): undefined => {
+      i = save;
+      return undefined;
+    };
+    if (!source.startsWith('reversed(', i)) return undefined;
+    i += 'reversed('.length;
+    skipWs();
+    const q = source[i];
+    if (q !== "'" && q !== '"') return fail();
+    const end = source.indexOf(q, i + 1);
+    if (end < 0) return fail();
+    const name = source.slice(i + 1, end);
+    i = end + 1;
+    skipWs();
+    const texts: string[] = [];
+    for (let k = 0; k < 2; k += 1) {
+      if (source[i] !== ',') return fail();
+      i += 1;
+      skipWs();
+      if (source[i] !== '`') return fail();
+      const t = template();
+      if (t.interpolates) return fail();
+      texts.push(unescapeTemplate(t.raw));
+      skipWs();
+    }
+    if (source[i] !== ',') return fail();
+    i += 1;
+    skipWs();
+    const rowsStart = i;
+    expr();
+    const body = source.slice(rowsStart, i);
+    skipWs();
+    if (source[i] === ',') {
+      i += 1;
+      skipWs();
+    }
+    if (source[i] !== ')') return fail();
+    i += 1;
+    const rows = rowsOf(body);
+    return [
+      { name, text: texts[0]!, rows },
+      { name: `${name}-rev`, text: texts[1]!, rows },
+    ];
+  };
   for (;;) {
     skipWs();
     if (source[i] === '}') break;
     if (source.startsWith('...', i)) {
-      // A spread (`...reversed('name', text, rows)` files two probes from one call): computed, listed, not read.
+      // A spread files several probes from one call. `...reversed('name', `text`, `rev`, { rows })` with plain
+      // template literals is read (the probe `name` and its twin `name-rev`); every other spread is listed, not read.
       const from = i;
       i += 3;
+      const twin = readReversed();
+      if (twin) {
+        entries.push(...twin);
+        skipWs();
+        if (source[i] === ',') i += 1;
+        continue;
+      }
       expr();
       spreads.push(source.slice(from, i).replace(/\s+/g, ' ').slice(0, 48));
       if (source[i] === ',') i += 1;
@@ -825,19 +884,19 @@ export function extractProbes(source: string): { entries: ProbeEntry[]; interpol
     skipWs();
     const rowsStart = i;
     expr();
-    const body = source.slice(rowsStart, i).replace(/^\s*\/\/.*$/gm, '');
+    const body = source.slice(rowsStart, i);
     // A rows expression with a generic (`as Record<string, [string, Ref]>`) has a comma at depth 0.
     while (source[i] === ',') {
       i += 1;
       expr();
     }
-    const rows = [...body.matchAll(/(['"`])((?:(?!\1).)+)\1\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*\]/g)].map((m) => ({ key: m[2]!, letters: m[3]!, ref: m[4]! }));
+    const rows = rowsOf(body);
     entries.push({ name, text, rows });
     i += 1; // the `)`
     skipWs();
     if (source[i] === ',') i += 1;
   }
-  return { entries, interpolated, spreads, total };
+  return { entries, interpolated, spreads, total, region: { from: start, to: i } };
 }
 
 /** Fold one probe's pinned rows into `byCell`: its goal cell, its SMT letter, and whether that letter is the hand-computed `ref`. */

@@ -1266,6 +1266,31 @@ describe('the constraint-class census sorts a relation by the bytes the encoder 
     expect(got.interpolated).toEqual(['b2', 'c3']);
     expect(got.spreads).toHaveLength(1);
   });
+
+  it('reads a `reversed(name, text, rev, rows)` spread of plain templates as the probe and its `-rev` twin, and lists any other spread', () => {
+    const src = [
+      'const PROBES: Record<string, { text: string }> = {',
+      '  ...reversed(',
+      "    'fn',",
+      '    `package F { x }`,',
+      '    `package F { y }`,',
+      '    {',
+      "      'F::c0': ['?/-/T/-', '?'],",
+      '    },',
+      '  ),',
+      "  ...reversed('g', `package G { }`, reversedMembers(text), { 'G::c': ['T/T/T/T', 'T'] }),",
+      "  ...standing('h', `package H { }`, { 'H::c': ['T/T/T/T', 'T'] }),",
+      '};',
+    ].join('\n');
+    const got = extractProbes(src);
+    expect(got.entries.map((e) => [e.name, e.text])).toEqual([
+      ['fn', 'package F { x }'],
+      ['fn-rev', 'package F { y }'],
+    ]);
+    expect(got.entries.map((e) => e.rows)).toEqual([[{ key: 'F::c0', letters: '?/-/T/-', ref: '?' }], [{ key: 'F::c0', letters: '?/-/T/-', ref: '?' }]]);
+    expect(got.spreads).toHaveLength(2);
+    expect(src.slice(got.region.from, got.region.to)).toContain('...standing(');
+  });
 });
 
 /* ──────────────── the script shape is the logic line (smt/shape.ts) ──────────────── */

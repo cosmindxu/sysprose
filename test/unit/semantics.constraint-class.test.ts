@@ -10,6 +10,8 @@
  *   class beside it (CC-13). Maturity can be replaced wholesale and nothing but levels moves (CC-20).
  * - Shape, reading and fence do not depend on `--free` (CC-19); `search` is the strict pinned reading, which
  *   never pins a symbol through an equation that mentions it on its own right-hand side (CC-21).
+ * - The maturity rubric is a pure function of the facts and the defects (CC-14); every pointer of the register
+ *   resolves (CC-15); every open defect of the sidecar is a bullet of `TODO.md` (CC-18).
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -34,6 +36,7 @@ import {
   READINGS,
   READING_OF,
   REGISTER_VERSION,
+  RUBRIC,
   SHAPES,
   SURFACES,
   basisOf,
@@ -41,7 +44,9 @@ import {
   classLine,
   classLines,
   classifyRow,
+  levelDetail,
   levelOf,
+  levelRank,
   readingOf,
   rollUp,
   scriptClassOf,
@@ -52,15 +57,33 @@ import {
   unclassified,
   weakestOf,
   withLevelSource,
+  type CellFacts,
+  type ClassFacts,
   type ClassifiableRow,
+  type Defect,
   type Level,
   type RowClass,
   type RollUpInput,
 } from '@semantics/smt/classes';
 import { pinnedSymbolsOf } from '@semantics/smt/pinned';
 import { classifiableOf } from '@semantics/refinement';
+import { CLASS_FACTS } from '@semantics/smt/class-facts';
+import { blockKeys, credit, type Proof } from '../../scripts/lib/class-facts';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
+
+/** No fact at all: every encoded cell is `experimental` and every fence `unpinned`, whatever the committed facts say. */
+const NO_FACTS: ClassFacts = {
+  register: REGISTER_VERSION,
+  z3: '5.3.1',
+  digests: { probes: '', goldens: '', defects: '' },
+  knownFalse: { parsed: true, entries: 0, unattributed: 0 },
+  cells: {},
+  fences: {},
+  defects: [],
+};
+/** Run `body` with the levels the register gives when no fact exists (the committed facts move; these tests are about the roll-up). */
+const noFacts = <T,>(body: () => T): T => withLevelSource((cell, env) => levelOf(cell, { ...env, facts: NO_FACTS }), body);
 
 async function load(text: string, name = 'probe.sysml'): Promise<Model> {
   const { model } = await loadModelText(text, { library: 'full', fileName: name });
@@ -452,14 +475,14 @@ describe('the roll-up folds to the weakest cell', () => {
   }
 
   it('names the weakest cell, the goal alone and the script, and sorts its sets by the register', () => {
-    const s = rollUp(proof());
+    const s = noFacts(() => rollUp(proof()));
     expect(s.shape).toEqual([
       { id: 'nra-div', search: 'pinned', rows: 1 },
       { id: 'lra', rows: 2 },
     ]);
     expect(s.script).toEqual({ shape: 'nra-div', search: 'pinned' });
     expect(s.goal).toMatchObject({ shape: 'lra', modifiers: ['units'], reading: 'requirement-clause' });
-    // every encoded cell is `experimental` until facts exist: the tie goes to the earlier cell of the register
+    // with no fact every encoded cell is `experimental`: the tie goes to the earlier cell of the register
     expect(s.weakest).toMatchObject({ cell: 'nra-div/pinned', level: 'experimental', firstUnmet: null });
     expect(s.reading.map((r) => r.id)).toEqual(['defining-equation', 'requirement-clause']);
     expect(s.logic).toBe('QF_NRA');
@@ -492,7 +515,7 @@ describe('the roll-up folds to the weakest cell', () => {
     // a fenced goal has no weakest cell to name and prints the fence line
     const g = rollUp(proof({ goal: refused, context: [], forgiven: true, basis: 'none' }));
     expect(g.goal.fence).toEqual({ id: 'fence/unsupported-operator', layer: 'gate', forgiven: true });
-    expect(classLine(g)).toBe('classes: fence/unsupported-operator (gate) [unpinned] — not sent to z3; --allow-inconclusive forgives this outcome');
+    expect(noFacts(() => classLine(g))).toBe('classes: fence/unsupported-operator (gate) [unpinned] — not sent to z3; --allow-inconclusive forgives this outcome');
   });
 
   it('says a fenced goal is no flag’s to forgive when the code is not forgivable or the word is a point evaluation', () => {
@@ -528,14 +551,14 @@ describe('the roll-up folds to the weakest cell', () => {
 
   it('ranks only encoded cells and caps a query other than verify at `tested`', () => {
     expect(weakestOf(['fence/unparseable'])).toBeNull();
-    expect(levelOf('fence/unparseable')).toBe('unpinned');
-    expect(levelOf('lra')).toBe('experimental');
-    expect(levelOf('lra', { query: 'refine' })).toBe('experimental');
+    expect(levelOf('fence/unparseable', { facts: NO_FACTS })).toBe('unpinned');
+    expect(levelOf('lra', { facts: NO_FACTS })).toBe('experimental');
+    expect(levelOf('lra', { facts: NO_FACTS, query: 'refine' })).toBe('experimental');
     expect(LEVELS).toEqual(['unrated', 'experimental', 'tested', 'differential-tested', 'battery-backed']);
     const stub = (cell: string): Level => (cell === 'lra' ? 'battery-backed' : 'unrated');
     expect(withLevelSource(stub, () => weakestOf(['lra', 'ite'], { query: 'verify' })?.cell)).toBe('ite');
     // a tie goes to the earlier cell of the register: shapes come before modifiers
-    expect(weakestOf(['ite', 'lra'])?.cell).toBe('lra');
+    expect(noFacts(() => weakestOf(['ite', 'lra'])?.cell)).toBe('lra');
   });
 });
 
@@ -603,8 +626,8 @@ describe('maturity is a label: replacing every level moves nothing but levels', 
 
   it('restores the level source after the body, and when the body throws', () => {
     expect(() => withLevelSource(() => 'battery-backed', () => { throw new Error('x'); })).toThrow('x');
-    expect(levelOf('lra')).toBe('experimental');
-    expect(weakestOf(['lra'])?.level).toBe('experimental');
+    expect(levelOf('lra')).not.toBe('battery-backed');
+    expect(weakestOf(['lra'])?.level).not.toBe('battery-backed');
   });
 });
 
@@ -706,5 +729,277 @@ describe('the words the register prints', () => {
         for (const l of d.limits) expect(l.text, d.id).not.toMatch(banned);
       }
     }
+  });
+});
+
+/* ─────────────────────────────── CC-14: the maturity rubric ─────────────────────────────── */
+
+describe('the rubric is a pure function of the facts and the defects', () => {
+  const cell = (over: Partial<CellFacts> = {}): CellFacts => ({
+    rows: 3,
+    models: 1,
+    encoderTests: 1,
+    goldenDecided: 1,
+    goldenCases: 1,
+    tableAgree: 0,
+    tableProbes: 0,
+    tableDisagree: 0,
+    battery: null,
+    ...over,
+  });
+  const facts = (cells: Record<string, CellFacts>, over: Partial<ClassFacts> = {}): ClassFacts => ({ ...NO_FACTS, cells, ...over });
+  const defect = (over: Partial<Defect>): Defect => ({ id: 'D-x', todo: 'x', classes: ['lra'], kind: 'wrong-statement', note: '', ...over });
+  const level = (f: ClassFacts, c = 'lra', env: { query?: 'verify' | 'refine'; z3?: string } = {}): Level => levelOf(c, { facts: f, ...env });
+
+  it('climbs the ladder on the thresholds of the plan, one clause at a time', () => {
+    expect([RUBRIC.tableAgree, RUBRIC.tableProbes, RUBRIC.batteryCells]).toEqual([20, 3, 200]);
+    expect(level(facts({ lra: cell({ encoderTests: 0 }) }))).toBe('experimental');
+    expect(level(facts({ lra: cell({ goldenDecided: 0 }) }))).toBe('experimental');
+    expect(level(facts({ lra: cell() }))).toBe('tested');
+    expect(level(facts({ lra: cell({ tableAgree: 19, tableProbes: 5 }) }))).toBe('tested');
+    expect(level(facts({ lra: cell({ tableAgree: 20, tableProbes: 2 }) }))).toBe('tested');
+    expect(level(facts({ lra: cell({ tableAgree: 20, tableProbes: 3 }) }))).toBe('differential-tested');
+    expect(level(facts({ lra: cell({ tableAgree: 90, tableProbes: 9, tableDisagree: 1 }) }))).toBe('tested');
+    const diff = { tableAgree: 90, tableProbes: 9 };
+    expect(level(facts({ lra: cell({ ...diff, battery: { cells: 199, wrong: 0, z3: '5.3.1' } }) }))).toBe('differential-tested');
+    expect(level(facts({ lra: cell({ ...diff, battery: { cells: 200, wrong: 1, z3: '5.3.1' } }) }))).toBe('differential-tested');
+    expect(level(facts({ lra: cell({ ...diff, battery: { cells: 200, wrong: 0, z3: '5.3.0' } }) }))).toBe('differential-tested');
+    expect(level(facts({ lra: cell({ ...diff, battery: { cells: 200, wrong: 0, z3: '5.3.1' } }) }))).toBe('battery-backed');
+  });
+
+  it('names the first clause the next rung asks for and the cell does not meet, as a phrase', () => {
+    const detail = (c: Partial<CellFacts>) => levelDetail('lra', { facts: facts({ lra: cell(c) }) });
+    expect(detail({ encoderTests: 0 }).firstUnmet).toBe('an encoder test, have 0');
+    expect(detail({ goldenDecided: 0 }).firstUnmet).toBe('a decided golden row, have 0');
+    expect(detail({}).firstUnmet).toBe('20 four-surface rows agree, have 0');
+    expect(detail({ tableAgree: 20 }).firstUnmet).toBe('3 probes, have 0');
+    expect(detail({ tableAgree: 20, tableProbes: 3, tableDisagree: 2 }).firstUnmet).toBe('no row against its hand-computed answer, have 2');
+    expect(detail({ tableAgree: 20, tableProbes: 3 }).firstUnmet).toBe('a battery of 200 cells, have none');
+    expect(detail({ tableAgree: 20, tableProbes: 3, battery: { cells: 200, wrong: 0, z3: '5.3.1' } }).firstUnmet).toBeNull();
+  });
+
+  it('never lowers a level when a fact is raised, and never raises it when one is lowered', () => {
+    let seed = 11;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    for (let i = 0; i < 300; i++) {
+      const base = cell({ encoderTests: rnd(2), goldenDecided: rnd(2), tableAgree: rnd(30), tableProbes: rnd(5), tableDisagree: rnd(2), battery: rnd(2) ? { cells: rnd(300), wrong: rnd(2), z3: '5.3.1' } : null });
+      const more = { ...base, encoderTests: base.encoderTests + rnd(2), goldenDecided: base.goldenDecided + rnd(2), tableAgree: base.tableAgree + rnd(8), tableProbes: base.tableProbes + rnd(3) };
+      const fewer = { ...base, tableDisagree: base.tableDisagree + rnd(2) };
+      expect(levelRank(level(facts({ lra: more })))).toBeGreaterThanOrEqual(levelRank(level(facts({ lra: base }))));
+      expect(levelRank(level(facts({ lra: fewer })))).toBeLessThanOrEqual(levelRank(level(facts({ lra: base }))));
+    }
+  });
+
+  it('caps by the kind of the open defect: wrong-verdict to experimental, wrong-statement to tested, the rest not at all', () => {
+    const top = cell({ tableAgree: 90, tableProbes: 9 });
+    const f = (d: Defect[]) => facts({ lra: top }, { defects: d });
+    expect(level(f([]))).toBe('differential-tested');
+    expect(level(f([defect({ kind: 'wrong-verdict' })]))).toBe('experimental');
+    expect(level(f([defect({ kind: 'wrong-statement' })]))).toBe('tested');
+    expect(level(f([defect({ kind: 'abstains' })]))).toBe('differential-tested');
+    expect(level(f([defect({ kind: 'fenced' })]))).toBe('differential-tested');
+    expect(level(f([defect({ kind: 'wrong-statement', classes: ['ite'] })]))).toBe('differential-tested');
+    expect(levelDetail('lra', { facts: f([defect({ kind: 'wrong-verdict', id: 'D-v' })]) }).capped).toEqual(['open wrong-verdict: D-v']);
+    // a defect of `nra-div` covers both its cells
+    const nl = facts({ 'nra-div/pinned': top, 'nra-div/free': top }, { defects: [defect({ classes: ['nra-div'] })] });
+    expect([level(nl, 'nra-div/pinned'), level(nl, 'nra-div/free')]).toEqual(['tested', 'tested']);
+  });
+
+  it('applies a defect that names queries to results of those queries only', () => {
+    const top = cell({ tableAgree: 90, tableProbes: 9 });
+    const f = facts({ lra: top }, { defects: [defect({ kind: 'wrong-verdict', queries: ['property-gate-4'] })] });
+    expect(level(f)).toBe('differential-tested');
+    expect(levelOf('lra', { facts: f, query: 'verify' })).toBe('differential-tested');
+    expect(levelOf('lra', { facts: f, query: 'property-gate-4' })).toBe('experimental');
+  });
+
+  it('caps a query other than verify, a z3 other than the facts’ and an unattributed known-false block at `tested`', () => {
+    const top = cell({ tableAgree: 90, tableProbes: 9, battery: { cells: 500, wrong: 0, z3: '5.3.1' } });
+    const f = facts({ lra: top });
+    expect(level(f, 'lra', { query: 'verify' })).toBe('battery-backed');
+    for (const q of ['refine', 'consistency', 'bounds', 'fault-tree', 'property-gate-4'] as const) expect(levelOf('lra', { facts: f, query: q }), q).toBe('tested');
+    // another z3: what z3 measured (the table, the battery) counts as 0, so the cell stands at what the repository pins
+    expect(level(f, 'lra', { z3: '5.3.2' })).toBe('tested');
+    expect(levelDetail('lra', { facts: f, z3: '5.3.2' }).capped).toEqual([]);
+    expect(level(f, 'lra', { z3: '5.3.1' })).toBe('battery-backed');
+    const unparsed = facts({ lra: top }, { knownFalse: { parsed: false, entries: 0, unattributed: 0 } });
+    const unattributed = facts({ lra: top }, { knownFalse: { parsed: true, entries: 2, unattributed: 1 } });
+    for (const x of [unparsed, unattributed]) {
+      expect(level(x)).toBe('tested');
+      expect(levelDetail('lra', { facts: x }).capped).toEqual(['a known-false block of the differential table cannot be attributed']);
+    }
+    expect(level(facts({ lra: top }, { knownFalse: { parsed: true, entries: 2, unattributed: 0 } }))).toBe('battery-backed');
+  });
+
+  it('counts a fact that is absent as 0, and says a cell no row stands in has no evidence', () => {
+    expect(levelDetail('lira', { facts: NO_FACTS })).toMatchObject({ level: 'experimental', noEvidence: true, firstUnmet: 'an encoder test, have 0' });
+    expect(levelDetail('lra', { facts: facts({ lra: cell() }) }).noEvidence).toBe(false);
+    expect(levelDetail('lra', { facts: facts({ lra: cell({ rows: 0 }) }) }).noEvidence).toBe(true);
+    expect(levelOf('not-a-cell', { facts: NO_FACTS })).toBe('experimental');
+    // a fence no row stands in has no evidence either, and one a row stands in has
+    expect(levelDetail('fence/collection-valued', { facts: NO_FACTS }).noEvidence).toBe(true);
+    expect(levelDetail('fence/collection-valued', { facts: facts({ 'fence/collection-valued': cell({ rows: 2 }) }) }).noEvidence).toBe(false);
+  });
+
+  it('puts a fence at `fenced` only when a test pins each layer it is produced at and its sentences are in source', () => {
+    const f = (layers: Array<'gate' | 'encoder'>, stems = true, d: Defect[] = []): ClassFacts =>
+      facts({}, { fences: { 'fence/unresolved-name': { layersPinned: layers, stems } }, defects: d });
+    const id = 'fence/unresolved-name'; // produced at the gate and at the encoder
+    expect(CONSTRAINT_CLASSES[id].layers).toEqual(['gate', 'encoder']);
+    expect(levelOf(id, { facts: f(['gate', 'encoder']) })).toBe('fenced');
+    expect(levelDetail(id, { facts: f(['gate']) })).toMatchObject({ level: 'unpinned', firstUnmet: 'a test that pins the encoder layer' });
+    expect(levelOf(id, { facts: f([]) })).toBe('unpinned');
+    expect(levelDetail(id, { facts: f(['gate', 'encoder'], false) })).toMatchObject({ level: 'unpinned', firstUnmet: 'the register sentences found in source' });
+    expect(levelOf(id, { facts: f(['gate', 'encoder'], true, [defect({ classes: [id], kind: 'wrong-statement' })]) })).toBe('fenced-defect');
+    expect(levelOf(id, { facts: f(['gate', 'encoder'], true, [defect({ classes: [id], kind: 'abstains' })]) })).toBe('fenced');
+    expect(levelOf(id, { facts: f(['gate', 'encoder']), query: 'refine' })).toBe('fenced');
+  });
+
+  it('credits a proof by what decided it: the numeric surface’s work never credits a shape cell (the C.4 table)', () => {
+    const p = {
+      shapes: new Set(['lra', 'nra-div/pinned']),
+      modifiers: new Set(['units', 'partial-context', 'text-as-real']),
+      readings: new Set(['requirement-clause']),
+    } as unknown as Proof;
+    const got = (b: Parameters<typeof credit>[0]) => [...credit(b, p)].sort();
+    expect(got('solver')).toEqual(['lra', 'nra-div/pinned', 'partial-context', 'requirement-clause', 'text-as-real', 'units']);
+    expect(got('solver-witness')).toEqual(got('solver'));
+    expect(got('solver+numeric')).toEqual(['lra', 'nra-div/pinned', 'partial-context']);
+    expect(got('numeric-surface')).toEqual(['partial-context', 'text-as-real']);
+    expect(got('point-evaluation')).toEqual(['partial-context', 'text-as-real']);
+    expect(got('none')).toEqual([]);
+  });
+
+  it('carries the cap and the unmet clause up to the roll-up’s weakest cell', () => {
+    const f = facts({ lra: cell({ tableAgree: 90, tableProbes: 9 }), units: cell() }, { defects: [defect({ classes: ['units'], kind: 'wrong-statement', id: 'D-u' })] });
+    const w = weakestOf(['lra', 'units'], { facts: f });
+    expect(w).toMatchObject({ cell: 'units', level: 'tested', firstUnmet: '20 four-surface rows agree, have 0', capped: [] });
+    const g = facts({ units: cell({ tableAgree: 90, tableProbes: 9 }) }, { defects: [defect({ classes: ['units'], kind: 'wrong-statement', id: 'D-u' })] });
+    expect(weakestOf(['units'], { facts: g })).toMatchObject({ level: 'tested', capped: ['open wrong-statement: D-u'] });
+  });
+
+  it('holds the plan’s decided caps on the committed facts: asserted-fact at experimental, nra-div at gate 4 at experimental', () => {
+    expect(levelRank(levelOf('asserted-fact', { facts: CLASS_FACTS }))).toBeLessThanOrEqual(levelRank('experimental'));
+    expect(levelOf('nra-div/pinned', { facts: CLASS_FACTS, query: 'property-gate-4' })).toBe('experimental');
+    for (const c of ['bind-equality', 'per-instance', 'inherited-context', 'text-as-real']) {
+      expect(levelRank(levelOf(c, { facts: CLASS_FACTS })), c).toBeLessThanOrEqual(levelRank('tested'));
+    }
+    expect(CELLS.map((c) => levelOf(c, { facts: CLASS_FACTS })).includes('battery-backed')).toBe(false);
+  });
+});
+
+/* ──────────────────────────────── CC-15: the register’s pointers ──────────────────────────────── */
+
+describe('every pointer of the register resolves', () => {
+  it('finds the test of each class by its exact string, and gives every encoded class at least one', () => {
+    for (const d of Object.values(CONSTRAINT_CLASSES)) {
+      for (const t of d.tests) expect(read(t.file), `${d.id}: ${t.find}`).toContain(t.find);
+      if (d.family !== 'fence') expect(d.tests.length, `${d.id} has no test`).toBeGreaterThan(0);
+    }
+  });
+
+  it('pins a fence’s layer only with a test that names it, and says which pairs have none', () => {
+    const pinned = new Set<string>();
+    for (const d of Object.values(CONSTRAINT_CLASSES)) {
+      for (const t of d.tests) {
+        if (d.family === 'fence') {
+          expect(t.layer, `${d.id}: ${t.find}`).toBeDefined();
+          expect(d.layers, d.id).toContain(t.layer);
+          pinned.add(`${d.id} ${t.layer}`);
+        } else expect(t.layer).toBeUndefined();
+      }
+    }
+    const all = FENCES.flatMap((f) => CONSTRAINT_CLASSES[f].layers.map((l) => `${f} ${l}`));
+    expect(all).toHaveLength(19);
+    // the (reason, layer) pairs no test pins yet: a fence with one is `unpinned`
+    expect(all.filter((x) => !pinned.has(x)).sort()).toEqual(['fence/unit-unresolved gate', 'fence/unparseable gate', 'fence/unscalable gate']);
+  });
+
+  it('keeps the committed facts the register’s own count of resolving tests', () => {
+    for (const d of Object.values(CONSTRAINT_CLASSES)) {
+      const live = d.tests.filter((t) => read(t.file).includes(t.find)).length;
+      for (const c of CELLS.filter((x) => x === d.id || x.startsWith(`${d.id}/`))) expect(CLASS_FACTS.cells[c]?.encoderTests, c).toBe(live);
+    }
+  });
+});
+
+/* ───────────────────────────────── CC-18: the defect sidecar ───────────────────────────────── */
+
+describe('the defect sidecar names real entries and the register reads it', () => {
+  interface Sidecar {
+    version: number;
+    defects: Defect[];
+    pending?: Array<{ todo: string; note: string }>;
+    resolved: Array<{ todo: string; by: string }>;
+  }
+  const sidecar = JSON.parse(read('docs/constraint-class-defects.json')) as Sidecar;
+  const titles = [...read('TODO.md').matchAll(/^- \[ \] \*\*([\s\S]*?)\*\*/gm)].map((m) => m[1]!.replace(/\s+/g, ' ').trim());
+  const bases = new Set<string>(Object.keys(CONSTRAINT_CLASSES));
+
+  it('has unique ids, real kinds, real cells and real queries', () => {
+    expect(sidecar.version).toBe(1);
+    expect(new Set(sidecar.defects.map((d) => d.id)).size).toBe(sidecar.defects.length);
+    for (const d of sidecar.defects) {
+      expect(['wrong-verdict', 'wrong-statement', 'abstains', 'fenced'], d.id).toContain(d.kind);
+      expect(d.classes.length, d.id).toBeGreaterThan(0);
+      for (const c of d.classes) expect(bases.has(c), `${d.id}: ${c}`).toBe(true);
+      for (const q of d.queries ?? []) expect(['verify', 'consistency', 'refine', 'bounds', 'fault-tree', 'property-gate-4'], d.id).toContain(q);
+      expect(d.note.length, d.id).toBeGreaterThan(20);
+    }
+  });
+
+  it('names an entry TODO.md holds, or one it lists as resolved or pending: lifting a cap is a reviewed edit', () => {
+    const resolved = new Set(sidecar.resolved.map((r) => r.todo));
+    const pending = new Set((sidecar.pending ?? []).map((r) => r.todo));
+    for (const d of sidecar.defects) expect(titles.includes(d.todo) || resolved.has(d.todo) || pending.has(d.todo), `${d.id}: ${d.todo}`).toBe(true);
+    // a resolved entry is closed: it is not a bullet any more
+    for (const r of resolved) expect(titles.includes(r), r).toBe(false);
+    for (const r of resolved) expect(sidecar.defects.some((d) => d.todo === r), `${r} still caps a class`).toBe(false);
+  });
+
+  it('is what the committed facts carry, so a hand edit of the sidecar is regenerated before it counts', () => {
+    expect(CLASS_FACTS.defects).toEqual(sidecar.defects);
+  });
+
+  it('attributes the open wrong answers the plan names to the classes the plan names', () => {
+    const by = (id: string) => sidecar.defects.find((d) => d.id === id)!;
+    expect(by('D-assert-not')).toMatchObject({ classes: ['asserted-fact'], kind: 'wrong-verdict' });
+    expect(by('D-gate4-guard')).toMatchObject({ classes: ['nra-div'], kind: 'wrong-verdict', queries: ['property-gate-4'] });
+    expect(by('D-inconsistent-axioms')).toMatchObject({ classes: ['bind-equality', 'per-instance'], kind: 'wrong-statement' });
+    expect(by('D-subsetting-contradiction')).toMatchObject({ classes: ['inherited-context', 'per-instance'], kind: 'wrong-statement' });
+    expect(by('D-bound-detail')).toMatchObject({ classes: ['text-as-real'], kind: 'wrong-statement' });
+  });
+});
+
+describe('the known-false blocks of the differential table are read as the test writes them', () => {
+  const src = [
+    'const KNOWN_FALSE = new Map<string, string>([',
+    "  ['a | A::c0', 'a reason with a ] and a [ in it'],",
+    '  // a comment, [with brackets',
+    "  ['b-rev | B::c1', `NO STEP: a ' quote and a ] in a template`],",
+    ']);',
+    'const KNOWN_FALSE_WITNESS = new Set<string>();',
+    'const SAME_POINT_DEMOTED = new Map<string, string>([]);',
+    "const SOME_SET = new Set<string>(['p | P::c', 'q | Q::c']);",
+    'const BROKEN = new Map<string, string>([',
+    "  ['never closed | X::c', 'x'],",
+  ].join('\n');
+  it('finds the key of each entry of a Map and of a Set, and an empty block', () => {
+    expect(blockKeys(src, 'KNOWN_FALSE')).toEqual(['a | A::c0', 'b-rev | B::c1']);
+    expect(blockKeys(src, 'KNOWN_FALSE_WITNESS')).toEqual([]);
+    expect(blockKeys(src, 'SAME_POINT_DEMOTED')).toEqual([]);
+    expect(blockKeys(src, 'SOME_SET')).toEqual(['p | P::c', 'q | Q::c']);
+  });
+  it('says it cannot read a block that is missing or does not close, so the rubric caps every cell', () => {
+    expect(blockKeys(src, 'NOT_THERE')).toBeNull();
+    expect(blockKeys(src, 'BROKEN')).toBeNull();
+  });
+  it('reads the real blocks of the differential test, attributed to probes the table holds', () => {
+    const real = read('test/integration/verification.differential.test.ts');
+    for (const name of ['KNOWN_FALSE', 'KNOWN_FALSE_WITNESS', 'SAME_POINT_DEMOTED']) expect(blockKeys(real, name), name).not.toBeNull();
+    expect(CLASS_FACTS.knownFalse).toEqual({ parsed: true, entries: (blockKeys(real, 'KNOWN_FALSE')?.length ?? 0) + (blockKeys(real, 'KNOWN_FALSE_WITNESS')?.length ?? 0) + (blockKeys(real, 'SAME_POINT_DEMOTED')?.length ?? 0), unattributed: 0 });
   });
 });
