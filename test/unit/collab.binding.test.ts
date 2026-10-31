@@ -226,6 +226,103 @@ describe('bindModelToDoc — CRDT convergence', () => {
     expect(idSet(m1)).toEqual(idSet(m2));
   });
 
+  it('a removal that keeps the owner\'s children puts them at the top level on every peer', () => {
+    const { m1, m2, d1 } = setup();
+    m1.create('Package', { id: 'F', declaredName: 'F' });
+    m1.create('PartUsage', { id: 'E', declaredName: 'E', ownerId: 'F' });
+    m1.remove('F', { cascade: false });
+    // Not left under an owner nobody has: the peer that removed it reads E where the others do.
+    expect(m1.get('E')!.ownerId).toBeNull();
+    expect(m1.rootIds()).toEqual(['E']);
+    expect(snapshot(m1)).toEqual(snapshot(m2));
+    expect(m2.rootIds()).toEqual(['E']);
+    const joined = new Model();
+    const dj = new Y.Doc();
+    Y.applyUpdate(dj, Y.encodeStateAsUpdate(d1), 'remote');
+    bindModelToDoc(joined, dj);
+    expect(snapshot(joined)).toEqual(snapshot(m1));
+  });
+
+  it('a child whose owner the model already lacks reads at the top level for the creator, a joiner and a reset alike', () => {
+    const dangling = () => {
+      const m = new Model();
+      m.create('Package', { id: 'F', declaredName: 'F' });
+      m.create('PartUsage', { id: 'E', declaredName: 'E', ownerId: 'F' });
+      m.remove('F', { cascade: false });
+      return m;
+    };
+    // The creator seeds the doc from a model that holds the child under a vanished owner.
+    const m1 = dangling();
+    const d1 = new Y.Doc();
+    bindModelToDoc(m1, d1);
+    const joined = new Model();
+    const dj = new Y.Doc();
+    Y.applyUpdate(dj, Y.encodeStateAsUpdate(d1), 'remote');
+    bindModelToDoc(joined, dj);
+    expect(snapshot(joined)).toEqual(snapshot(m1));
+    expect(m1.rootIds()).toEqual(['E']);
+    // A live room resets to such a snapshot (Open, Undo, Import).
+    const a = new Model();
+    const b = new Model();
+    const da = new Y.Doc();
+    const db = new Y.Doc();
+    bindModelToDoc(a, da);
+    bindModelToDoc(b, db);
+    da.on('update', (u: Uint8Array, o: unknown) => {
+      if (o !== 'remote') Y.applyUpdate(db, u, 'remote');
+    });
+    a.reset(dangling().toJSON());
+    expect(snapshot(b)).toEqual(snapshot(a));
+    expect(b.rootIds()).toEqual(['E']);
+  });
+
+  it('three peers that move and remove (with or without the children) at random points end alike', () => {
+    // The sequences that ended in different trees before the removing peer moved the kept children up (32 of 2000).
+    const rng = (seed: number) => {
+      let x = seed >>> 0;
+      return () => ((x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+    };
+    const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const tree = (m: Model) => JSON.stringify([m.all().map((e) => [e.id, e.ownerId, m.childIds(e.id)]).sort(), m.rootIds()]);
+    for (let seed = 1; seed <= 200; seed++) {
+      const r = rng(seed * 7919);
+      const models = [new Model(), new Model(), new Model()];
+      const docs = models.map(() => new Y.Doc());
+      models.forEach((m, i) => bindModelToDoc(m, docs[i]));
+      const queues: Uint8Array[][][] = docs.map(() => docs.map(() => []));
+      docs.forEach((d, i) =>
+        d.on('update', (u: Uint8Array, o: unknown) => {
+          if (o !== 'remote') docs.forEach((_, j) => j !== i && queues[i][j].push(u));
+        }),
+      );
+      const hear = () => {
+        for (let n = 0; n < 4; n++)
+          docs.forEach((_, i) => docs.forEach((d, j) => i !== j && queues[i][j].splice(0).forEach((u) => Y.applyUpdate(d, u, 'remote'))));
+      };
+      models[0].transaction(() => ids.forEach((id) => models[0].create('Package', { id, declaredName: id })));
+      hear();
+      for (let round = 0; round < 12; round++) {
+        for (const m of models) {
+          if (r() >= 0.7) continue;
+          const live = ids.filter((id) => m.has(id));
+          if (live.length === 0) continue;
+          const pick = () => live[Math.floor(r() * live.length)];
+          try {
+            if (r() < 0.78) m.reparent(pick(), r() < 0.15 ? null : pick());
+            else m.remove(pick(), { cascade: r() < 0.5 });
+          } catch {
+            /* a move into itself or a descendant is refused */
+          }
+        }
+        if (r() < 0.6) hear();
+      }
+      hear();
+      hear();
+      const want = tree(models[0]);
+      models.forEach((m, i) => expect(tree(m), `seed ${seed}, peer ${i}`).toBe(want));
+    }
+  });
+
   it('no echo loop: a single local edit produces a bounded number of updates', () => {
     const { m1, counter } = setup();
     const before = counter.updates;
