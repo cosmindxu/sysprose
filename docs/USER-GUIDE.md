@@ -789,9 +789,12 @@ Two names worth separating:
   `y == 0.0000000001` and `x <= -34.0`, and `z == x / y`, `z == 0.0`, `x == 1.0`; `solveFeasible` has no witness for them.
   The point is judged by the smallest correction of all the equations that read its features together (to first order, as
   one equation's is), and a point that no correction within 1e-8 of the size of the values brings onto them is no root.
-  **The limit of that: a point the correction cannot be read at (a feature the equations do not move, a slope that cannot be read)
-  is judged by each equation alone, and a group of more than 120 equations linked through their features that holds a quotient or a
-  power is not judged together but read *unknown* throughout.** Two stated values that differ by more than 1e-8 of their size but by less than the gate
+  An equation over a feature with no value (`w * v == y`) is left out of that judgement and does not switch it off for the chain
+  beside it, and a power that rounds to 0 (`y == 2.0 ^ x` at `x` of -1e19) is a plateau, never a root.
+  **The limit of that: a point the correction cannot be read at (a slope that cannot be read) is judged by each equation alone, and a
+  group of more than 120 equations linked through their features that holds a quotient or a power is not judged together: the solve
+  reports that it did not converge (though a chain of that size that has a root still reads imposed), and a point that misses one of
+  its equations still reads *unknown*.** Two stated values that differ by more than 1e-8 of their size but by less than the gate
   (`x == 1.0000001` beside `x == 1.0`) are read as disagreeing, not as equal. A
   pin within the gate of a flat equation but off its root (`x == 999773.0` beside `1.0 / x == 0.000001`) is
   not read as agreeing with it. `solveFeasible` gives no witness at which a divisor the search moved is within

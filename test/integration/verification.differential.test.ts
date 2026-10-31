@@ -13261,6 +13261,32 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'FN13C::c3': ['?/?/?/?', '?'],
       },
     ),
+    // FN13D / FN13E: the same fence where an unrelated equation over features with no value (`w * v == y`) joins the chain, and where the
+    // power rounds to 0 in binary64 (`2.0 ^ x` at x = −1e19, every residual 0 there: a plateau, no root). A feature with no value leaves its
+    // equation out of the judgement, never the chain beside it; an underflowed power is no root.
+    ...reversed(
+      'fence-fn13d',
+      `package FN13D { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; assert constraint c0 { y == 1.0 / x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 1.0 } assert constraint c4 { w * v == y } }`,
+      `package FN13D { assert constraint c4 { w * v == y } constraint c3 { x >= 1.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } assert constraint c0 { y == 1.0 / x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; }`,
+      {
+        'FN13D::c0': ['?/-/?/-', '?'],
+        'FN13D::c1': ['?/?/?/?', '?'],
+        'FN13D::c2': ['?/?/?/?', '?'],
+        'FN13D::c3': ['?/?/?/?', '?'],
+        'FN13D::c4': ['?/-/?/-', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn13e',
+      `package FN13E { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; constraint c0 { y == 2.0 ^ x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x <= -40.0 } }`,
+      `package FN13E { constraint c3 { x <= -40.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } constraint c0 { y == 2.0 ^ x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; }`,
+      {
+        'FN13E::c0': ['?/U/?/U', '?'],
+        'FN13E::c1': ['?/?/?/?', '?'],
+        'FN13E::c2': ['?/?/?/?', '?'],
+        'FN13E::c3': ['?/?/?/?', '?'],
+      },
+    ),
     // fence-readings S2: six wrong answers fenced, each pinned with its twin. A bare-name equation `K == L` between
     // a contradicted L and K was a source itself and tainted nothing it names, so `p.K >= 55.0` read F with the two
     // equations written 50 then 60 and T with them swapped (the check and the numeric surface; SMT's axioms are

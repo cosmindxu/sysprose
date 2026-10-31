@@ -3299,24 +3299,34 @@ const JOINT_EQUATIONS = 120;
  * (the same distance as one equation's), and must leave no residual of the rows it cannot reach (rows that are dependent, or a feature
  * a pole has made unmovable, leave that part of the residual where it is). With `reach`, only the components that read one of those
  * features. A component of more than {@link JOINT_EQUATIONS} equations is not judged but withheld (no root is read near any point of
- * it); one with a value that is not a finite number or a residual that cannot be read is not judged here.
+ * it); an equation with a value that is not a finite number is left out of the components, and a component whose power has underflowed
+ * to 0 is read as having no root near the point.
  */
 function jointMissed(eqs: readonly Equation[], values: Map<ElementId, number>, reach?: ReadonlySet<ElementId>): Equation[][] {
   if (!eqs.some(quotientOrPower)) return [];
+  // An equation that reads a feature with no value (or no finite one) is left out, as residualSummary leaves it: it cannot join a
+  // chain it does not constrain at this point, and a valueless feature must not switch the judgement off for the rest of the component.
+  const readable = (eq: Equation): boolean => !eq.vars.some((v) => !Number.isFinite(values.get(v) ?? Number.NaN));
   const parent = new Map<ElementId, ElementId>();
   const find = (a: ElementId): ElementId => {
-    while (parent.get(a) !== a) a = parent.get(a)!;
+    while (parent.get(a) !== a) {
+      parent.set(a, parent.get(parent.get(a)!)!);
+      a = parent.get(a)!;
+    }
     return a;
   };
   for (const eq of eqs) {
+    if (!readable(eq)) continue;
     for (const v of eq.vars) if (!parent.has(v)) parent.set(v, v);
     for (let i = 1; i < eq.vars.length; i++) parent.set(find(eq.vars[0]!), find(eq.vars[i]!));
   }
   const groups = new Map<ElementId, Equation[]>();
   for (const eq of eqs) {
-    if (eq.vars.length === 0) continue;
+    if (eq.vars.length === 0 || !readable(eq)) continue;
     const root = find(eq.vars[0]!);
-    groups.set(root, [...(groups.get(root) ?? []), eq]);
+    const members = groups.get(root);
+    if (members === undefined) groups.set(root, [eq]);
+    else members.push(eq);
   }
   const out: Equation[][] = [];
   for (const group of groups.values()) {
@@ -3328,12 +3338,31 @@ function jointMissed(eqs: readonly Equation[], values: Map<ElementId, number>, r
   return out;
 }
 
+/**
+ * Does `eq` hold, at `values`, a power of a positive base (not 1) that binary64 has rounded to below its smallest normal number? Such a
+ * power is a plateau at 0, not a root: `y == 2.0 ^ x`, `z == y * 2.0`, `z == 0.0` at x = −1e19 has every residual 0 and no root.
+ */
+function plateaued(eq: Equation, values: Map<ElementId, number>): boolean {
+  const scope = idScope(eq, values);
+  let hit = false;
+  const visit = (n: Extract<ExprNode, { kind: 'binary' }>): void => {
+    if (n.op !== '^') return;
+    const a = roundingOf(n.left, scope);
+    const b = roundingOf(n.right, scope);
+    if (a !== undefined && b !== undefined && a.value > 0 && a.value !== 1 && Math.abs(a.value ** b.value) < 2.2250738585072014e-308) hit = true;
+  };
+  forEachOp(eq.lhs, visit);
+  forEachOp(eq.rhs, visit);
+  return hit;
+}
+
 function jointNearRoot(group: readonly Equation[], point: Map<ElementId, number>): boolean {
   const vars = [...new Set(group.flatMap((eq) => eq.vars))];
   const at = new Map(vars.map((v, i) => [v, i] as const));
-  const values = new Map(point);
+  const values = new Map(vars.map((v) => [v, point.get(v)!] as const));
   const start = vars.map((v) => values.get(v));
   if (start.some((x) => x === undefined || !Number.isFinite(x))) return true;
+  if (group.some((eq) => plateaued(eq, point))) return false;
   const size = Math.max(...start.map((x) => Math.abs(x!)));
   const bound = ROOT_DISTANCE * (group.some((eq) => eq.scale !== undefined) ? size : size + 1);
   let first = 0;
