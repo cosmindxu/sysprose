@@ -90,8 +90,8 @@ export function serializeModel(model: Model): string {
 
 /**
  * Thrown inside {@link serializeElement} when an end of a statement is reached by no name: the path to it goes
- * through an unnamed redefinition that {@link effectiveSegment} cannot spell (two members of its owner answer to
- * its effective name, an unnamed redefinition beside a named member of that name, an unnamed head of the path, a
+ * through an unnamed redefinition that {@link effectiveSegment} cannot spell (a member of its owner before it goes by
+ * its effective name: a named one, or the first of two unnamed redefinitions; an unnamed head of the path; a
  * redefined feature with no name). The placeholder `«AttributeUsage»` the path would carry is no text a terminal
  * reads (`unexpected character`), and the end is lost on the next load whatever is written there.
  */
@@ -1330,18 +1330,16 @@ function refTo(
 
 /**
  * The spelling of an unnamed element on a path: the effective name
- * ({@link effectiveNameOf}) of an unnamed redefinition, when exactly ONE member of its owner
- * answers to it. A chain end reads the first member of that name (the reparse resolves `p.load`
- * so; the round-trip tests pin it), so a second one would make the path ambiguous, and an unnamed
- * head (`load` alone, in its owner's scope) is not read that way.
+ * ({@link effectiveNameOf}) of an unnamed redefinition, when the next load reads that name as THIS member. A chain
+ * segment reads the first member of its owner that goes by the name ({@link childNamed}, the rule `resolveChainEnd`
+ * of the text mapper walks), so the name is checked against that same rule: the first of two unnamed `:>> M`
+ * (`duplicate` makes the second) is `M`; the second one, or an unnamed redefinition after a named `M`, is reached by
+ * no name, and an unnamed head (`load` alone, in its owner's scope) is not read that way.
  */
 function effectiveSegment(model: Model, el: ElementRecord): string | undefined {
   const name = effectiveNameOf(model, el);
   if (name === undefined || el.ownerId === null) return undefined;
-  const answers = model
-    .children(el.ownerId)
-    .filter((c) => !isSpecialization(c.eClass) && (c.declaredName ?? c.declaredShortName ?? effectiveNameOf(model, c)) === name);
-  return answers.length === 1 && answers[0]!.id === el.id ? quoteName(name) : undefined;
+  return childNamed(model, el.ownerId, name)?.id === el.id ? quoteName(name) : undefined;
 }
 
 /**

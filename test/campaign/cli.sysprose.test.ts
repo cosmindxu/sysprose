@@ -4398,9 +4398,12 @@ package P {
     }
   }, 300_000);
 
-  it('a write-back that would drop a statement no name reaches is refused, and the file is left as it was', async () => {
-    // Review of fence-editor2: the serializer writes `// Not saved:` in the statement's place, the text loads clean to a
-    // model without it, and `--out` over the input would lose `bind w = p.load;` with nothing said.
+  it('a write-back keeps a statement whose end is an unnamed redefinition beside a named member', async () => {
+    // Review of fence-editor2: the serializer wrote `// Not saved:` in the statement's place for this file, the text loaded
+    // clean to a model without it, and `--out` over the input lost `bind w = p.load;` with nothing said (the write-back
+    // refused it then). The unnamed `:>> load` is the first member of its name, which the next load reads as the end
+    // (`fence-save-name`), so the statement is written. An end that is not the first of its name cannot come from a
+    // text, so no file reaches the refusal in `modelText` any more.
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     try {
       const model = join(dir, 'unnamed-end.sysml');
@@ -4416,10 +4419,9 @@ package P {
       writeFileSync(model, source);
       const out = join(dir, 'out.sysml');
       const detached = await run(['evidence-detach', model, '--out', out]);
-      expect(detached.code).toBe(2);
-      expect(detached.stderr).toContain('cannot be written back as text without losing a statement');
-      expect(detached.stderr).toContain('a binding whose end no name reaches');
-      expect(existsSync(out), 'nothing is written').toBe(false);
+      expect(detached.code, detached.stderr).toBe(0);
+      expect(readFileSync(out, 'utf8')).toContain('bind w = p.load;');
+      expect(readFileSync(out, 'utf8')).not.toContain('Not saved');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

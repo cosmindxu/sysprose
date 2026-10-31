@@ -8721,18 +8721,45 @@ describe('the load health never vouches for a text that does not load (review 20
   });
 
   it('reads the note Save writes for an end no name reaches as another model: the file lacks the statement', async () => {
-    // `bind w = p.load` over an unnamed redefinition beside a named member: no name reaches the end, so Save writes
-    // a note where `bind w = T::p::«AttributeUsage»;` (a text a terminal refuses) was written (fence-editor2 S2).
+    // `bind w = p.load` over an unnamed redefinition: the unnamed `:>> load` is the first member of its name, so Save
+    // writes the statement. A rename that gives a member before it that name makes the end the second of `load`, which no
+    // name reaches, and Save writes a note where `bind w = T::p::«AttributeUsage»;` (a text a terminal refuses) was
+    // written (fence-editor2 S2; fence-save-name).
     reset();
     await apply(
-      'package T { part def P { attribute load = 1.0; } part p : P { attribute :>> load = 50.0; attribute load; } attribute w; bind w = p.load; }\n',
+      'package T { part def P { attribute load = 1.0; } part p : P { attribute lo; attribute :>> load = 50.0; } attribute w; bind w = p.load; }\n',
     );
+    expect(st().textBuffer).toContain('bind w = p.load;');
+    expect(st().textBuffer).not.toContain('Not saved');
+    expect(loadHealth().otherModel).toBe(false);
+    st().updateElement(byName('lo'), { declaredName: 'load' });
+    flushRecompute();
     expect(st().textBuffer).toContain('// Not saved: a binding whose end no name reaches');
     expect(st().textBuffer).not.toContain('«');
     const h = loadHealth();
     expect(h.saved).toMatchObject({ parseErrors: 0, basis: 'parse', otherModel: true });
     expect(h.otherModel).toBe(true);
     expect(runCheck(reachSpec, { model: st().model, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: h }).summary).toContain('the text a file of it holds reads as another model');
+  });
+
+  it('saves the binding of a duplicated unnamed redefinition: the first of the two is the end the file reads (fence-save-name)', async () => {
+    // `duplicate` of `attribute :>> load = 50.0` leaves two members of one owner under one name beside `bind w = p.load`;
+    // the end is the first of them, which the next open reads, so Save writes the statement (it wrote a note, and the file
+    // lost the binding, so the constraint below read 1.0 in the file and 50.0 on the page).
+    reset();
+    await apply(
+      'package T { part def P { attribute load = 1.0; } part p : P { attribute :>> load = 50.0; } attribute w; bind w = p.load; }\n',
+    );
+    const unnamed = st().model.children(byName('p')).find((e) => e.eClass === 'AttributeUsage' && e.declaredName === undefined && e.attrs.implicit !== true)!;
+    st().duplicateElement(unnamed.id);
+    flushRecompute();
+    expect(st().model.children(byName('p')).filter((e) => e.eClass === 'AttributeUsage' && e.attrs.implicit !== true)).toHaveLength(2);
+    expect(st().textBuffer).toContain('bind w = p.load;');
+    expect(st().textBuffer).not.toContain('Not saved');
+    expect(loadHealth().otherModel).toBe(false);
+    const loaded = await textApi.loadModelText(withFinalNewline(st().textBuffer), { fileName: 'x.sysml' });
+    const end = loaded.model!.all().find((e) => e.eClass === 'BindingConnectorAsUsage')!;
+    expect(loaded.model!.get((end.target ?? [])[0] ?? '')?.attrs.value, 'the file binds w to the first, the 50').toBe(50);
   });
 
   it('counts only a faulty line the lexer reads as code: one inside a comment, or after a line note, is left to the parse', async () => {
