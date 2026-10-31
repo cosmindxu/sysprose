@@ -48,7 +48,7 @@ import {
   type Model,
 } from '@core/index';
 import { generalizationsWithImplicit } from './featuring';
-import { effectiveNameOf, effectiveQualifiedName, mostSpecificOwned, ownFeatures, redefinedBy, redefinedClosure } from './inheritance';
+import { effectiveNameOf, effectiveQualifiedName, generalizationsOf, mostSpecificOwned, ownFeatures, redefinedBy, redefinedClosure } from './inheritance';
 import { resolveName } from './resolve-names';
 
 /** Options for {@link resolveFullName}. */
@@ -224,12 +224,19 @@ export function resolveRedefinedFeature(
  *   ({@link resolveRedefinedFeature}), or it is of another kind, or it makes a cycle with what it redefines (a retarget
  *   by the SDK or the Properties panel). Saved, the edge is dropped or lands elsewhere, and the owner's features differ.
  *
+ * - `order`: the owner inherits, from two general types neither of which specialises the other, a renamed redefiner
+ *   (`attribute q :>> a`) and a feature whose name it answers to (P2's `a`; a part `p` beside `attribute p :>> b`), or two
+ *   features of one name of which one states a value and the other does not, and the two are not one line. Which the name finds, and which a masked name leaves out, depends on the order of the owner's generals
+ *   ({@link generalizationsOf}), which a page edited by hand (a typing bound after the redefinition) and the file it saves
+ *   (the typing before it) do not share. Two of one name that both state a plain value are the name clash
+ *   (`DefiningEquations.clash`), which says so itself.
+ *
  * The owner is listed, and for `twins` both members, for a `redefinition` of a cycle or an unfound target the feature
  * too: a caller reads what is typed by, subsets or specialises one through its generals (`DefiningEquations.partedHolder`). A model read from text has `twins` scopes, which the reopened file shares (it
  * abstains the same way), and a `redefinition` one where the text redefines by a path what its owner does not inherit.
  * Library elements are never listed.
  */
-export type UnreadScope = 'twins' | 'redefinition';
+export type UnreadScope = 'twins' | 'redefinition' | 'order';
 export function unreadScopes(model: Model): Map<ElementId, UnreadScope> {
   const out = new Map<ElementId, UnreadScope>();
   const names = new Map<ElementId, Map<string, ElementId>>();
@@ -265,7 +272,73 @@ export function unreadScopes(model: Model): Map<ElementId, UnreadScope> {
       out.set(f.id, 'redefinition');
     }
   }
+  orderDependentOwners(model, out);
   return out;
+}
+
+/**
+ * Add to `out` the owners that inherit, from two general types neither of which specialises the other, two features that
+ * stand for one name and are not one line ({@link UnreadScope} `order`): a renamed redefiner beside a feature of the
+ * name it redefines, or two of one name of which one states a value and the other does not (neither holding content of
+ * its own). Two features of one name that both state a plain value are the name clash, which says so itself; two that
+ * state nothing are read alike whichever the name finds.
+ */
+function orderDependentOwners(model: Model, out: Map<ElementId, UnreadScope>): void {
+  const user = (f: ElementRecord): boolean => f.attrs.isLibrary !== true && f.attrs.implicit !== true;
+  // Only an owner with two general types that own features can be asked twice (most models hold none).
+  const holders = new Set<ElementId>();
+  for (const f of model.all()) if (f.ownerId !== null && isUsage(f.eClass) && user(f)) holders.add(f.ownerId);
+  const lines = new Map<ElementId, ElementRecord[]>();
+  const generalsOf = (id: ElementId): ElementRecord[] => {
+    let hit = lines.get(id);
+    if (hit === undefined) lines.set(id, (hit = generalizationsOf(model, id)));
+    return hit;
+  };
+  // Every name a feature answers to: its own, and the names of what it redefines (`q :>> a` is `q` and `a`).
+  const namesOf = (f: ElementRecord): Set<string> => {
+    const n = new Set<string>();
+    const own = effectiveNameOf(model, f);
+    if (own !== undefined) n.add(own);
+    for (const g of redefinedClosure(model, f)) {
+      const gn = effectiveNameOf(model, g);
+      if (gn !== undefined) n.add(gn);
+    }
+    return n;
+  };
+  // What the feature states ITSELF: a value it inherits from the line it redefines is the other's as well.
+  const valued = (f: ElementRecord): boolean => f.attrs.value !== undefined && f.attrs.value !== null;
+  const nested = (f: ElementRecord): boolean => model.children(f.id).some((c) => isUsage(c.eClass) && user(c));
+  const related = (a: ElementId, b: ElementId): boolean => a === b || generalsOf(a).some((g) => g.id === b) || generalsOf(b).some((g) => g.id === a);
+  for (const o of model.all()) {
+    if (out.has(o.id) || !user(o) || !(isDefinition(o.eClass) || isUsage(o.eClass))) continue;
+    const generals = generalsOf(o.id).filter((g) => g.attrs.isLibrary !== true);
+    if (generals.filter((g) => holders.has(g.id)).length < 2) continue;
+    // As effectiveFeatures meets them: what the owner and its generals own, less what any of them redefines.
+    const candidates = [...ownFeatures(model, o.id), ...generals.flatMap((g) => ownFeatures(model, g.id))].filter(user);
+    const redefined = new Set<ElementId>();
+    for (const f of candidates) for (const g of redefinedClosure(model, f)) redefined.add(g.id);
+    const byName = new Map<string, ElementRecord[]>();
+    for (const f of candidates) {
+      if (redefined.has(f.id) || f.ownerId === o.id || f.ownerId === null) continue;
+      for (const n of namesOf(f)) byName.set(n, [...(byName.get(n) ?? []), f]);
+    }
+    search: for (const same of byName.values()) {
+      for (const [i, r] of same.entries()) {
+        for (const f of same.slice(i + 1)) {
+          if (f === r || related(r.ownerId!, f.ownerId!)) continue;
+          if (effectiveNameOf(model, f) === effectiveNameOf(model, r)) {
+            // One name. Two plain values are the clash `DefiningEquations.clash` names. Features that stand for no other name
+            // and state alike (two values, none, or content of their own: the diamond the per-instance readings abstain on,
+            // DM2 and DN2) are read alike whichever the name finds. A renamed one that the other masks loses its other name.
+            if (valued(r) && valued(f) && !nested(r) && !nested(f)) continue;
+            if (namesOf(r).size === 1 && namesOf(f).size === 1 && (valued(r) === valued(f) || nested(r) || nested(f))) continue;
+          }
+          out.set(o.id, 'order');
+          break search;
+        }
+      }
+    }
+  }
 }
 
 /** Does the owner of `f` inherit `t`, or does a name the text can write for `t` find it by the mapper's rule from `f`? */

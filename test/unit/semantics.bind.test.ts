@@ -544,6 +544,49 @@ describe('unreadScopes — the owners whose features the saved file may read oth
     // The owner and both members: what is typed by or specialises a member is withheld as well (partedHolder).
   });
 
+  it('lists the owner that inherits a renamed redefiner beside a feature it answers to, in either order of its generals (order)', () => {
+    const head = `part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      part def P2 :> P { attribute :>> a default = 13.0; }
+      part def H { part p : P; }`;
+    // A page that bound the typing after the redefinition lists the generals the other way round: the same scopes.
+    const relisted = (model: Model): Model => {
+      for (const u of model.all().filter((e) => e.attrs.isLibrary !== true && e.eClass !== 'FeatureTyping' && model.typesOf(e.id).length >= 2)) {
+        for (const r of model.relationshipsFrom(u.id).filter((x) => x.eClass === 'FeatureTyping')) {
+          const { eClass, ownerId, source, target, attrs } = r;
+          model.remove(r.id);
+          model.create(eClass, { ownerId, source, target, attrs });
+        }
+      }
+      return model;
+    };
+    const both = (src: string): string[][] => {
+      const { model } = parsed(src);
+      const file = named(model, unreadScopes(model));
+      return [file, named(model, unreadScopes(relisted(model)))];
+    };
+    // q answers to `a` and so does P2's: w's p inherits both from two types neither of which specialises the other.
+    const rename = `package A { ${head} part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } } part w : H1 { part :>> p : P2; } part v : H1 { part :>> p; } }`;
+    expect(both(rename)).toEqual([['A::w::«PartUsage»:order'], ['A::w::«PartUsage»:order']]);
+    // The same without the rename (an unnamed `:>> a`), or retyped to the type p already has, or no retyping: nothing.
+    expect(both(rename.replace('attribute q :>> a', 'attribute :>> a'))).toEqual([[], []]);
+    expect(both(rename.replace('part :>> p : P2;', 'part :>> p : P;'))).toEqual([[], []]);
+    expect(both(rename.replace('part :>> p : P2;', 'part :>> p;'))).toEqual([[], []]);
+    // The owner's own renamed redefiner masks what it inherits, whatever the order.
+    expect(both(`package A { ${head} part w : P2 { attribute q :>> a = 16.0; } }`)).toEqual([[], []]);
+    // The part `p` of the type the usage is retyped to, beside `attribute p :>> b` in the usage it redefines.
+    const sibling = `package B { part def P { attribute a default = 11.0; attribute b default = 12.0; } part def P2 :> P; part def H { part p : P; }
+      part def H1 :> H { part :>> p : P2 { attribute p :>> b = 15.0; } } part w : H1 { part :>> p : H1; } part v : H1; }`;
+    expect(both(sibling)).toEqual([['B::w::«PartUsage»:order'], ['B::w::«PartUsage»:order']]);
+    expect(both(sibling.replace('part :>> p : H1;', 'part :>> p;'))).toEqual([[], []]);
+    // Two types that each redefine the line under its own name and state a value: the name clash says so, not this scope.
+    expect(both(`package C { ${head} part def Q :> P { attribute a default = 7.0; } part w : P2, Q; }`)).toEqual([[], []]);
+    // One name, one of the two stating a value and the other nothing (the file masks one, the page the other); two that state nothing read alike.
+    const bare = `package D { part def P { attribute a default = 11.0; } part def P2 :> P { attribute :>> a default = 13.0; } part def P3 :> P { attribute :>> a; }
+      part def H { part p : P3; } part w : H { part :>> p : P2; } }`;
+    expect(both(bare)).toEqual([['D::w::«PartUsage»:order'], ['D::w::«PartUsage»:order']]);
+    expect(both(bare.replace('attribute :>> a default = 13.0;', 'attribute :>> a;'))).toEqual([[], []]);
+  });
+
   it('lists the owner of a redefinition retargeted by hand to a feature it does not inherit, of another kind, or in a cycle', () => {
     const retargeted = (from: string, to: (m: Model, id: (n: string) => string) => string): string[] => {
       const { model, id } = parsed(SRC);

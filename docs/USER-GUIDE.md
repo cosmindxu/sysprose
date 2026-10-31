@@ -1205,6 +1205,20 @@ numeric, literal and SMT rows are inconclusive, and the solver proves and refute
 holds such a scope, naming the cause. A file that holds the same twins reads the same way. A rename made by
 `updateElement` in steps (the SDK, not the box) is an edit for every call.
 
+A rename onto a name a sibling answers to is read the same way when the two features come from two types of
+one owner that neither specialises the other: `part :>> p : P2` in a usage whose `p` holds `attribute q :>>
+a` (`q` also answers to `a`, and so does P2's `a`), or `attribute p :>> b` in a part beside the part `p` of
+the type the usage is retyped to, or two features of one name of which one states a value and the other
+states nothing (`attribute a redefines a;` beside P2's `redefines a default = 13.0`). Which of the two a name
+finds, and which the other masks, depends on the order the owner's types are listed in, which a page edited
+by hand (a typing bound after the redefinition) and the file it saves do not share; the file lists the typing
+first, so the two read different values. The page leaves every name of that owner unread, and of what specialises it or is typed by it, on all four
+surfaces: the check says `x is not read: G::w::p is, or is typed by or specialises, a scope that inherits two
+features for one name from general types neither of which specialises the other (a renamed redefiner beside the
+feature it answers to, or one that states a value beside one that states none), …, so no name of
+G::w::p is read`, and a file that holds the same shape reads the same way. Two such features that both
+state a value under one name are the name clash, which says so itself.
+
 A statement whose end no name reaches is not saved. A binding, connection, flow, allocation,
 succession, transition, dependency or alias ends in a feature the saved text has to name: a
 redefinition with no name of its own is named by what it redefines (`bind w = p.load;`). For a

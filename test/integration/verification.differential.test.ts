@@ -13416,6 +13416,58 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'UD::c2': ['?/?/?/?', null],
       'UD::c3': ['?/?/?/?', null],
     }),
+    // A rename onto a name a sibling answers to, in a usage that inherits from two types neither of which specialises the
+    // other (`bind.ts` unreadScopes, `order`): H1's p holds `attribute q :>> a` (q answers to `a` too) and the usage w
+    // retypes p to P2, whose `a` is a feature of the same line. Which of the two `w.p.a` finds depends on the order of the
+    // generals of w's p: the file lists the typing first (13.0), a page that bound the typing after the redefinition lists
+    // it last (16.0, page F, file T on the check, literal and numeric lanes). The scope of that p is unread on every
+    // surface, whichever way the text lists the members.
+    ...reversed('rename-onto-alias', `package RS {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part w : H1 { part :>> p : P2; }
+        constraint c1 { w.p.a == 13.0 }
+        constraint c2 { w.p.a == 16.0 }
+        constraint c3 { w.p.b == 12.0 }
+      }`, `package RS {
+        constraint c3 { w.p.b == 12.0 }
+        constraint c2 { w.p.a == 16.0 }
+        constraint c1 { w.p.a == 13.0 }
+        part w : H1 { part :>> p : P2; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def H { part p : P; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'RS::c1': ['?/?/?/?', null],
+      'RS::c2': ['?/?/?/?', null],
+      'RS::c3': ['?/?/?/?', null],
+    }),
+    // The other face: a part `p` of the type a usage is retyped to (the usage's owner) beside `attribute p :>> b` in the
+    // usage it redefines. The file masks one of the two features named `p`, the page the other, and `w.p.b` read 15.0 on
+    // the page and nothing in the file. The usage that is not retyped reads as before (`v.p.b`).
+    ...reversed('rename-onto-sibling', `package RT {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P;
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p : P2 { attribute p :>> b = 15.0; } }
+        part w : H1 { part :>> p : H1; }
+        constraint c1 { w.p.b == 14.0 }
+        constraint c2 { w.p.b == 15.0 }
+      }`, `package RT {
+        constraint c2 { w.p.b == 15.0 }
+        constraint c1 { w.p.b == 14.0 }
+        part w : H1 { part :>> p : H1; }
+        part def H1 :> H { part :>> p : P2 { attribute p :>> b = 15.0; } }
+        part def H { part p : P; }
+        part def P2 :> P;
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'RT::c1': ['?/?/?/?', null],
+      'RT::c2': ['?/?/?/?', null],
+    }),
     // A `satisfy` written outside the definition whose feature it names, by a path that does not resolve where it is
     // written (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in the one that declares w; NQ5 without the
     // subsetting; NQ7 in a part body), recorded W's own p1: a requirement w's 50 breaks held (T, `verify` exit 0). It
