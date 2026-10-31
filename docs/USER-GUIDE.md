@@ -5213,10 +5213,12 @@ Stated plainly, because finding these out by surprise is worse.
   are open with no permissions layer, and your identity is a random per-session
   name and colour. The relay takes at most 64 MiB in one message, and closes
   only the connection that sends a larger one: a peer's first message holds the
-  whole model with its standard library, about 10.8 MB for the drone-swarm
-  example, so a room over a model several times that size still fits, and a
-  model past the cap cannot be shared. The standard library travels in the
-  room's document, so every peer's first message carries it again. Two peers
+  whole model, about 1 MB for the drone-swarm example, so a room over a model
+  many times that size still fits, and a model past the cap cannot be shared.
+  The standard library is not in the room's document: every peer loads it
+  itself, so a library element dragged to another owner is that page's own
+  view, and a room an earlier build wrote may still hold the library, which no
+  peer reads. Two peers
   who each drag one of two elements into the other at the same moment leave the
   room's document holding each under the other; every peer, and a page that
   joins, then reads the one with the lower id at the top level and the other

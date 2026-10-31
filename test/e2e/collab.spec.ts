@@ -13,12 +13,14 @@
  *      page2's Explorer row (peer colour ring);
  *   4. a room over a model of the drone-swarm example's size (a first message
  *      over the relay's old 10 MiB cap) syncs between two pages, and a message
- *      over the relay's cap closes only its own connection;
+ *      over the relay's cap closes only its own connection; the standard
+ *      library is in no room's document (each page loads it itself);
  *   5. two elements each moved into the other at once are held alike by both
  *      pages and a page that joins.
  *
  * Presence/awareness is lightweight and reliable; whole-model CRDT sync (both
- * clients also carry the full standard library) is heavier, so the convergence
+ * clients carry the full standard library, which the room's document does not)
+ * is heavier, so the convergence
  * assertions use tolerant timeouts. If a future headless environment cannot run
  * two synced ws contexts, the deterministic unit convergence tests
  * (`test/unit/collab.binding.test.ts`) remain the primary proof and the
@@ -75,8 +77,8 @@ async function openCollabConnected(page: Page): Promise<void> {
 test('two users collaborate: presence + element convergence + remote-selection highlight', async ({
   browser,
 }) => {
-  // Two heavy contexts + whole-model CRDT sync (both carry the full standard
-  // library) need well beyond the default per-test budget.
+  // Two heavy contexts (both load the full standard library) + CRDT sync need
+  // well beyond the default per-test budget.
   test.setTimeout(240_000);
   const room = `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
@@ -133,6 +135,13 @@ test('two users collaborate: presence + element convergence + remote-selection h
     await expect(page2Row).toContainText(probeName);
 
     await shot(page2, 'collab-2-page2-converged');
+
+    // The standard library (about 10.8 MB with its places) is in neither page's document: the relay holds the
+    // sample and the new package only, and each page loads the library itself.
+    expect(await relayDocBytes(room), 'the room\'s document holds no standard library').toBeLessThan(1 * MIB);
+    for (const page of [page1, page2]) {
+      expect(await page.evaluate(() => (window as unknown as { sysml: SysmlSdk }).sysml.libraryElementCount())).toBeGreaterThan(0);
+    }
 
     // ── 3) A selection in page1 highlights on page2's Explorer row ──────────
     // page1's model gained the element too (its own local create); select it to
@@ -218,8 +227,9 @@ test('a room over a model of the drone-swarm example\'s size syncs between two p
   const errors1 = captureErrors(page1);
   const errors2 = captureErrors(page2);
   try {
-    // Page 1 holds the model before it joins: the sample, the standard library, and about 3 MB of
-    // elements more — the room's document, which its first message carries, passes 10 MiB.
+    // Page 1 holds the model before it joins: the sample, the standard library (which the room's document
+    // leaves out), and about 11.5 MB of elements more — the document, which its first message carries,
+    // passes 10 MiB.
     await page1.goto(`/?collabUrl=${encodeURIComponent(RELAY)}`, { waitUntil: 'domcontentloaded' });
     await expect(page1.getByTestId('explorer')).toBeVisible();
     await page1.waitForFunction(() => !!(window as unknown as { sysml?: unknown }).sysml);
@@ -229,7 +239,7 @@ test('a room over a model of the drone-swarm example\'s size syncs between two p
       const pkg = api.create('Package', { declaredName: 'BulkModel', ownerId: null });
       let id = pkg.id;
       for (let i = 0; i < 700; i++) {
-        id = api.create('PartUsage', { declaredName: `bulk${i}`, ownerId: pkg.id, attrs: { note: `${i} `.padEnd(4096, 'x') } }).id;
+        id = api.create('PartUsage', { declaredName: `bulk${i}`, ownerId: pkg.id, attrs: { note: `${i} `.padEnd(16384, 'x') } }).id;
       }
       return id;
     });

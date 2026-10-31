@@ -381,6 +381,94 @@ describe('bindModelToDoc — CRDT convergence', () => {
     expect(elements.get('x')!.get('declaredName')).toBe('X');
   });
 
+  it("the standard library stays out of the room's document: every peer keeps the one it loaded, whatever the room does", () => {
+    /** The library as each peer loads it: ids under `stdlib:`, the same on every peer. */
+    const loadLibrary = (m: Model): void =>
+      m.transaction(() => {
+        for (const p of ['stdlib:Lib', 'stdlib:ISQ']) {
+          m.create('Package', { id: p, declaredName: p, attrs: { isLibrary: true } });
+          for (let i = 0; i < 40; i++) m.create('DataType', { id: `${p}::t${i}`, declaredName: `t${i}`, ownerId: p, attrs: { isLibrary: true } });
+        }
+      });
+    const library = (m: Model): string[] => m.all().filter((e) => e.id.startsWith('stdlib:')).map((e) => e.id).sort();
+    const user = (m: Model): string[] => m.all().filter((e) => !e.id.startsWith('stdlib:')).map((e) => e.id).sort();
+    const keys = (d: Y.Doc): string[] => [...(d.getMap('elements') as Y.Map<unknown>).keys()];
+
+    // A peer that holds the library and the user's model seeds a document without the library.
+    const m1 = new Model();
+    const d1 = new Y.Doc();
+    loadLibrary(m1);
+    m1.create('Package', { id: 'U', declaredName: 'U' });
+    m1.create('PartUsage', { id: 'u1', declaredName: 'u1', ownerId: 'U' });
+    bindModelToDoc(m1, d1);
+    expect(keys(d1).sort()).toEqual(['U', 'u1']);
+    // The size follows: the library is 82 elements here, about 10.8 MB of 42,584 on the drone-swarm model.
+    expect(Y.encodeStateAsUpdate(d1).byteLength).toBeLessThan(2_000);
+
+    // A second peer joins with the library it loaded, and keeps it when it takes the room in.
+    const m2 = new Model();
+    const d2 = new Y.Doc();
+    loadLibrary(m2);
+    Y.applyUpdate(d2, Y.encodeStateAsUpdate(d1), 'remote');
+    bindModelToDoc(m2, d2);
+    wire(d1, d2);
+    expect(library(m2)).toEqual(library(m1));
+    expect(user(m2)).toEqual(['U', 'u1']);
+    expect(m2.get('u1')!.ownerId).toBe('U');
+
+    // The library loading again (an Apply, an Import) writes nothing; the peers' libraries are not touched by it.
+    const before = Y.encodeStateVector(d1).byteLength;
+    m1.transaction(() => m1.create('DataType', { id: 'stdlib:Lib::late', declaredName: 'late', ownerId: 'stdlib:Lib', attrs: { isLibrary: true } }));
+    m1.update('stdlib:Lib::t0', { declaredName: 'renamed' });
+    m1.reparent('stdlib:Lib::t1', null);
+    expect(Y.encodeStateVector(d1).byteLength).toBe(before);
+    expect(keys(d1).sort()).toEqual(['U', 'u1']);
+    expect(m2.has('stdlib:Lib::late')).toBe(false);
+
+    // A reset on one peer that keeps the library (Undo, Apply, New) leaves the other one's library alone, user elements included.
+    m1.create('PartUsage', { id: 'u2', declaredName: 'u2', ownerId: 'U' });
+    m1.resetPreserving(m1.toJSONWhere((e) => e.attrs.isLibrary !== true), (e) => e.attrs.isLibrary === true);
+    m1.resetPreserving({ formatVersion: m1.toJSON().formatVersion, elements: [], rootIds: [] }, (e) => e.attrs.isLibrary === true);
+    expect(user(m1)).toEqual([]);
+    expect(user(m2)).toEqual([]);
+    expect(library(m2)).toHaveLength(82);
+    expect(library(m1)).toHaveLength(82 + 1);
+    expect(keys(d2)).toEqual([]);
+
+    // The peer's own removal of everything else reaches the other one without taking its library.
+    m2.create('Package', { id: 'V', declaredName: 'V' });
+    expect(user(m1)).toEqual(['V']);
+    m2.remove('V');
+    expect(user(m1)).toEqual([]);
+    expect(library(m1)).toHaveLength(82 + 1);
+
+    // A document an earlier build wrote holds the library: it is not read, and a peer that joins keeps its own.
+    const old = new Y.Doc();
+    const ob = new Model();
+    const od = new Y.Doc();
+    bindModelToDoc(ob, od);
+    // (This build writes none of them: the earlier build's entries are written by hand.)
+    const oldElements = od.getMap('elements') as Y.Map<Y.Map<unknown>>;
+    od.transact(() => {
+      for (const [id, owner] of [['stdlib:Old', null], ['stdlib:Old::t', 'stdlib:Old'], ['K', null]] as const) {
+        const ym = new Y.Map<unknown>();
+        oldElements.set(id, ym);
+        ym.set('eClass', id === 'K' ? 'Package' : id === 'stdlib:Old' ? 'Package' : 'DataType');
+        ym.set('ownerId', owner);
+        const attrs = new Y.Map<unknown>();
+        ym.set('attrs', attrs);
+        if (id !== 'K') attrs.set('isLibrary', true);
+      }
+    });
+    Y.applyUpdate(old, Y.encodeStateAsUpdate(od), 'remote');
+    const m3 = new Model();
+    loadLibrary(m3);
+    bindModelToDoc(m3, old);
+    expect(user(m3)).toEqual(['K']);
+    expect(library(m3)).toHaveLength(82);
+    expect(m3.has('stdlib:Old')).toBe(false);
+  });
+
   it('unbind stops propagation', () => {
     const { m1, m2, b1 } = setup();
     m1.create('Package', { id: 'before', declaredName: 'B' });

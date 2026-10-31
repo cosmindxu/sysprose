@@ -50,6 +50,18 @@
  * Two peers that add to one owner at once give equal places, and every peer
  * orders them alike, a member whose kind one changed at that moment too.
  *
+ * The standard library stays out of the doc. Its elements carry ids under
+ * `stdlib:` ({@link isLibraryId}), the same on every peer, and every peer loads
+ * the library itself: they are written to no doc and read from none, and a peer
+ * keeps its own through a join ({@link Model.resetPreserving}), a reset and a
+ * removal made by another peer. A doc an earlier build wrote may hold them: they
+ * are left where they are, and a reset drops them. The first message of the
+ * drone-swarm model so carries about 1 MB, not 10.8 MB. An element of the user's
+ * under an owner of the library's (the app puts none there) reads at the top
+ * level on every peer but the one that made it. The rules above about places
+ * under an owner of the library's hold for a library whose ids are not
+ * `stdlib:`'s (the curated subset, loaded when the full one is not).
+ *
  * Containment. Two peers who each move one of two elements into the other at
  * once leave the doc holding each under the other. Every peer, a peer that
  * joins and a model bound to such a doc read the member of the lowest id of the
@@ -87,6 +99,13 @@ export interface ModelDocBinding {
 const ELEMENTS_KEY = 'elements';
 /** The per-element key that holds its place among its owner's children (the header's "Child order"). */
 const PLACE_KEY = 'order';
+/** The id prefix of the bundled standard library (`src/library/full-library.ts`): its elements never enter the doc. */
+const LIBRARY_ID_PREFIX = 'stdlib:';
+
+/** Whether `id` is an element of the bundled standard library, which every peer loads itself and no room shares. */
+function isLibraryId(id: ElementId): boolean {
+  return id.startsWith(LIBRARY_ID_PREFIX);
+}
 
 /**
  * Whether a doc written whole — a seed, a reset — gives `el` a place: every
@@ -119,7 +138,7 @@ function libraryOwnersPlaced(model: Model, elements: Y.Map<ElementYMap>): Set<El
     if (ownerId !== null && typeof ym.get(PLACE_KEY) === 'number') kept.add(ownerId);
   }
   for (const owner of model.all()) {
-    if (owner.attrs.isLibrary !== true || kept.has(owner.id)) continue;
+    if (owner.attrs.isLibrary !== true || kept.has(owner.id) || isLibraryId(owner.id)) continue;
     let added = false;
     for (const id of model.childIds(owner.id)) {
       const was = ownerOf.get(id);
@@ -242,7 +261,8 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     applyingRemote = true;
     const { owner, broken } = docOwners(elements);
     try {
-      model.reset(serializeFromDoc(elements, owner));
+      // Its own copy of the standard library stays: the doc holds none.
+      model.resetPreserving(serializeFromDoc(elements, owner), (el) => isLibraryId(el.id));
       // The doc lists the elements in the order they reached it, not the order
       // their text gives them: list the model as the peers present at those
       // edits list theirs (`Model.adoptSerialOrder`, D-1).
@@ -312,6 +332,7 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
 function seedDocFromModel(model: Model, elements: Y.Map<ElementYMap>, kept?: ReadonlySet<ElementId>): void {
   const places = placesIn(model);
   for (const el of model.all()) {
+    if (isLibraryId(el.id)) continue;
     const ym = new Y.Map() as ElementYMap;
     elements.set(el.id, ym);
     writeRecordInto(ym, el);
@@ -324,7 +345,7 @@ function seedDocFromModel(model: Model, elements: Y.Map<ElementYMap>, kept?: Rea
 function placesIn(model: Model): Map<ElementId, number> {
   const places = new Map<ElementId, number>();
   model.rootIds().forEach((id, i) => places.set(id, i));
-  for (const el of model.all()) model.childIds(el.id).forEach((id, i) => places.set(id, i));
+  for (const el of model.all()) if (!isLibraryId(el.id)) model.childIds(el.id).forEach((id, i) => places.set(id, i));
   return places;
 }
 
@@ -435,8 +456,9 @@ function placeIn(
 function docOwners(elements: Y.Map<ElementYMap>): { owner: Map<ElementId, ElementId | null>; broken: ElementId[] } {
   const owner = new Map<ElementId, ElementId | null>();
   for (const [id, ym] of elements.entries()) {
+    if (isLibraryId(id)) continue;
     const ownerId = (ym.get('ownerId') as ElementId | null | undefined) ?? null;
-    owner.set(id, ownerId !== null && !elements.has(ownerId) ? null : ownerId);
+    owner.set(id, ownerId !== null && (isLibraryId(ownerId) || !elements.has(ownerId)) ? null : ownerId);
   }
   const broken: ElementId[] = [];
   const onPath = new Set<ElementId>();
@@ -509,6 +531,7 @@ function serializeFromDoc(elements: Y.Map<ElementYMap>, owners: ReadonlyMap<Elem
   // Where in `records` each owner's children are (the top level's under `null`), in the doc's order.
   const at = new Map<ElementId | null, number[]>();
   for (const [id, ym] of elements.entries()) {
+    if (isLibraryId(id)) continue;
     const rec = readRecord(id, ym);
     // An owner the doc lacks, or one of two elements it holds in each other: at the top level, as a peer present holds it.
     rec.ownerId = owners.get(id) ?? null;
@@ -547,6 +570,7 @@ function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeE
     case 'order': {
       // Held in another order: each child takes the place it now holds — an owner of the library's too.
       const ownerId = ev.ownerId ?? null;
+      if (ownerId !== null && isLibraryId(ownerId)) return;
       placeAll(model, elements, ownerId);
       placing.next.delete(ownerId);
       placing.bare.delete(ownerId);
@@ -556,7 +580,7 @@ function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeE
     case 'update':
     case 'reparent': {
       const el = ev.element ?? (ev.id !== undefined ? model.get(ev.id) : undefined);
-      if (!el) return;
+      if (!el || isLibraryId(el.id)) return;
       let ym = elements.get(el.id);
       if (!(ym instanceof Y.Map)) {
         ym = new Y.Map() as ElementYMap;
@@ -611,7 +635,7 @@ function holdPlaces(model: Model, elements: Y.Map<ElementYMap>, placed: Readonly
   const owners = new Set<ElementId | null>();
   for (const id of placed) {
     const el = model.get(id);
-    if (el !== undefined) owners.add(el.ownerId);
+    if (el !== undefined && !isLibraryId(el.id)) owners.add(el.ownerId);
   }
   let keyAt: Map<ElementId, number> | undefined;
   for (const ownerId of owners) {
@@ -631,7 +655,7 @@ function holdPlaces(model: Model, elements: Y.Map<ElementYMap>, placed: Readonly
  * another order.
  */
 function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>, owners?: ReadonlyMap<ElementId, ElementId | null>): Set<ElementId> {
-  const docIds = new Set<ElementId>(elements.keys());
+  const docIds = new Set<ElementId>([...elements.keys()].filter((id) => !isLibraryId(id)));
   const moved = new Set<ElementId>();
   // An element whose owner the doc lacks — one peer removed the owner while
   // another added to it or moved an element into it — stands at the top level,
@@ -645,14 +669,14 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>, owner
   // 1) Removals — anything in the model but no longer in the doc. A child the
   //    doc still holds goes to the top level in 3), its owner gone.
   for (const el of model.all()) {
-    if (!docIds.has(el.id) && model.has(el.id)) model.remove(el.id, { cascade: false });
+    if (!docIds.has(el.id) && !isLibraryId(el.id) && model.has(el.id)) model.remove(el.id, { cascade: false });
   }
 
   // 2) Creations — owners before children (repeat until settled), each in the
   //    doc's order: a peer's batch reaches it in the order the peer made it.
   let pending: Array<[ElementId, ElementRecord]> = [];
   for (const [id, ym] of elements.entries()) {
-    if (!model.has(id)) {
+    if (!model.has(id) && !isLibraryId(id)) {
       const rec = readRecord(id, ym);
       rec.ownerId = ownerIn(rec);
       pending.push([id, rec]);
@@ -689,7 +713,7 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>, owner
   let refused: ElementId[] = [];
   for (const [id, ym] of elements.entries()) {
     const cur = model.get(id);
-    if (!cur) continue;
+    if (!cur || isLibraryId(id)) continue;
     const rec = readRecord(id, ym);
 
     if (cur.ownerId !== ownerIn(rec)) {
