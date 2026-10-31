@@ -13352,6 +13352,70 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'OSD::heavy': ['?/?/?/?', null],
       'OSD::light': ['?/?/?/?', null],
     }),
+    // Two features of one owner under one name (`validation/duplicate-name`): the saved file finds the first in its
+    // text, a page edited by hand may hold the other, so the scope of the owner is unread on every surface, and so is
+    // the scope of what is typed by it (a usage, an instance of a usage typed by a specialisation, one nested in a
+    // part) or specialises it (`bind.ts` unreadScopes). The check, literal and numeric lanes said ? already; the SMT
+    // lane said inconsistent axioms for the two defaults and says ? now. A hand-retargeted redefinition the file does
+    // not keep is pinned in store.reducers.test.ts, where an edit makes it.
+    ...reversed('twin-names', `package TW {
+        part def A { attribute x default = 1.0; attribute x default = 2.0; }
+        part def A1 :> A;
+        part a : A;
+        part a1 : A1;
+        part b { part c : A; }
+        constraint c1 { a.x == 1.0 }
+        constraint c2 { a.x == 2.0 }
+        constraint c3 { a1.x == 1.0 }
+        constraint c4 { b.c.x == 2.0 }
+        constraint c5 { A.x == 1.0 }
+      }`, `package TW {
+        constraint c5 { A.x == 1.0 }
+        constraint c4 { b.c.x == 2.0 }
+        constraint c3 { a1.x == 1.0 }
+        constraint c2 { a.x == 2.0 }
+        constraint c1 { a.x == 1.0 }
+        part b { part c : A; }
+        part a1 : A1;
+        part a : A;
+        part def A1 :> A;
+        part def A { attribute x default = 2.0; attribute x default = 1.0; }
+      }`, {
+      'TW::c1': ['?/?/?/?', null],
+      'TW::c2': ['?/?/?/?', null],
+      'TW::c3': ['?/?/?/?', null],
+      'TW::c4': ['?/?/?/?', null],
+      'TW::c5': ['?/?/?/?', null],
+    }),
+    // The twins are the two definitions, in a package the usage is not in (a rename onto a name its package already
+    // bears makes this): a usage typed by a member, or a definition specialising one, is unread too, not only the owner.
+    ...reversed('twin-defs', `package TD {
+        part def A { attribute v default = 1.0; }
+        part def A { attribute v default = 2.0; }
+        part def C :> A;
+      }
+      package UD {
+        part x : TD::A;
+        part y : TD::C;
+        constraint c1 { x.v == 1.0 }
+        constraint c2 { x.v == 2.0 }
+        constraint c3 { y.v == 1.0 }
+      }`, `package UD {
+        constraint c3 { y.v == 1.0 }
+        constraint c2 { x.v == 2.0 }
+        constraint c1 { x.v == 1.0 }
+        part y : TD::C;
+        part x : TD::A;
+      }
+      package TD {
+        part def C :> A;
+        part def A { attribute v default = 2.0; }
+        part def A { attribute v default = 1.0; }
+      }`, {
+      'UD::c1': ['?/?/?/?', null],
+      'UD::c2': ['?/?/?/?', null],
+      'UD::c3': ['?/?/?/?', null],
+    }),
     // A `satisfy` written outside the definition whose feature it names, by a path that does not resolve where it is
     // written (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in the one that declares w; NQ5 without the
     // subsetting; NQ7 in a part body), recorded W's own p1: a requirement w's 50 breaks held (T, `verify` exit 0). It

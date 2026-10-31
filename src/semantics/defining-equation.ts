@@ -42,7 +42,7 @@ import {
   ownFeatures,
   redefinedClosure,
 } from './inheritance';
-import { resolveFullName } from './bind';
+import { resolveFullName, unreadScopes, type UnreadScope } from './bind';
 import { type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
@@ -371,8 +371,8 @@ export class DefiningEquations {
   private readonly asking = new Set<string>();
   private guessed = false;
   private bound?: ReadonlySet<ElementId>;
-  /** The elements that own a binding the editor parted from a copy ({@link partedHolder}), once asked. */
-  private parted?: ReadonlySet<ElementId>;
+  /** The elements that own a binding the editor parted from a copy, or a scope the saved file may read otherwise ({@link partedHolder}), once asked. */
+  private parted?: ReadonlyMap<ElementId, 'binding' | UnreadScope>;
   /** Per context, the scopes {@link partedHolder} left unread: the path they are reached by, and their owner. */
   private readonly withheldIn = new Map<ElementId, Map<string, ElementId>>();
   /** The types an owner of a binding specialises, for {@link endsInGeneral}. */
@@ -4055,12 +4055,13 @@ export class DefiningEquations {
   }
 
   /**
-   * Does `id`, or a type it specialises, own a binding the editor set aside because an end of it is a copy a member
-   * of its owner takes the name of (`attrs.partedEnd`, the serializer's markStaleBindings)? The reopened file binds
-   * that member, which the page cannot follow: no name of that scope (the ends, the features the file may join to
-   * them, what is nested below them) is read, so it is unresolved, and a row naming one is not decided on a reading
-   * the file may not give. So is a binding with an end held with no copy in its owner, on a type the owner
-   * specialises (a bound end moved up into the type): the file makes the copy.
+   * Is `id`, or a type it specialises, a scope the page leaves unread: an owner of a binding the editor set aside because
+   * an end of it is a copy a member of its owner takes the name of (`attrs.partedEnd`, the serializer's
+   * markStaleBindings)? The reopened file binds that member, which the page cannot follow: no name of that scope (the
+   * ends, the features the file may join to them, what is nested below them) is read, so it is unresolved, and a row
+   * naming one is not decided on a reading the file may not give. So is a binding with an end held with no copy in its
+   * owner, on a type the owner specialises (a bound end moved up into the type): the file makes the copy. So is what
+   * {@link unreadScopes} names (two features under one name, a redefinition the file does not keep as it stands).
    */
   private partedHolder(id: ElementId): boolean {
     const parted = this.partedOwners();
@@ -4068,27 +4069,42 @@ export class DefiningEquations {
   }
 
   /**
-   * Does the model hold a scope {@link partedHolder} leaves unread? The axioms of a solver run are built from every
-   * scope, so a run over such a model proves or refutes on a set the reopened file may find inconsistent
-   * (`verification/inconsistent-axioms`): the SMT lane decides nothing there (./api/verification).
+   * Why the model holds a scope {@link partedHolder} leaves unread, once per cause (empty: none). The axioms of a solver
+   * run are built from every scope, so a run over such a model proves or refutes on a set the reopened file may find
+   * inconsistent (`verification/inconsistent-axioms`): the SMT lane decides nothing there (./api/verification), and
+   * names the causes.
    */
-  hasWithheldScope(): boolean {
-    return this.partedOwners().size > 0;
+  withheldCauses(): Array<'binding' | UnreadScope> {
+    return [...new Set(this.partedOwners().values())];
   }
 
-  private partedOwners(): ReadonlySet<ElementId> {
+  private partedOwners(): ReadonlyMap<ElementId, 'binding' | UnreadScope> {
     if (this.parted === undefined) {
-      const out = new Set<ElementId>();
+      const out = new Map<ElementId, 'binding' | UnreadScope>();
       for (const b of this.model.ofKind('BindingConnectorAsUsage', 'BindingConnector')) {
         if (b.ownerId == null || b.attrs.isLibrary === true) continue;
-        if (b.attrs.partedEnd === true) out.add(b.ownerId);
+        if (b.attrs.partedEnd === true) out.set(b.ownerId, 'binding');
         // An end that is a feature of a type its owner specialises, held with no copy of its own in the owner (a bound
         // end moved up into the type): the saved file makes the copy, which the page does not hold.
-        else if (this.endsInGeneral(b)) out.add(b.ownerId);
+        else if (this.endsInGeneral(b)) out.set(b.ownerId, 'binding');
       }
+      // An owner of two features under one name, or of a redefinition the saved file does not keep as it stands.
+      for (const [id, why] of unreadScopes(this.model)) if (!out.has(id)) out.set(id, why);
       this.parted = out;
     }
     return this.parted;
+  }
+
+  /** Why the scope of `ownerId` ({@link withheldOwner}) is left unread: a parted binding, or what {@link unreadScopes} names. */
+  withheldWhy(ownerId: ElementId): 'binding' | UnreadScope {
+    const parted = this.partedOwners();
+    const own = parted.get(ownerId);
+    if (own !== undefined) return own;
+    for (const g of generalizationsOf(this.model, ownerId)) {
+      const why = parted.get(g.id);
+      if (why !== undefined) return why;
+    }
+    return 'binding';
   }
 
   /**

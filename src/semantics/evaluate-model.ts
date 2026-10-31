@@ -4202,14 +4202,25 @@ function clashOf(
 }
 
 /**
- * Why a name a body reads is left unread: the element it is read through owns a binding whose end is a copy the saved
- * file reads as another feature ({@link DefiningEquations.withheldOwner}), so the page cannot say what it joins.
+ * Why a name a body reads is left unread ({@link DefiningEquations.withheldOwner}): the element it is read through owns
+ * a binding whose end is a copy the saved file reads as another feature, so the page cannot say what it joins, or holds
+ * two features under one name, or a redefinition the saved file does not keep as it stands (bind.ts unreadScopes).
  */
 function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
   for (const c of [el.ownerId, el.id]) {
     const owner = c == null ? undefined : pass.definitions.withheldOwner(c, name);
     if (owner) {
       const of = pass.definitions.qualifiedNameOf(owner.id);
+      const why = pass.definitions.withheldWhy(owner.id);
+      if (why === 'twins') {
+        return `${name} is not read: ${of} holds, or is typed by or specialises a scope that holds, two features under one name, and the saved file may read the other, so no name of ${of} is read`;
+      }
+      if (why === 'redefinition') {
+        return (
+          `${name} is not read: ${of} holds, or is typed by or specialises a scope that holds, a redefinition the saved file does not keep as it stands ` +
+          `(its target is no feature the owner inherits or a name finds, is of another kind, or makes a cycle), so no name of ${of} is read`
+        );
+      }
       return (
         `${name} is not read: ${of} owns a binding whose end is a copy the saved file reads as another feature, ` +
         `so no name of ${of} is read until the file is saved and opened again`

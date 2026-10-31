@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { parseModel } from '@text/index';
-import { redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '../../src/semantics/bind';
+import { redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling, unreadScopes } from '../../src/semantics/bind';
 import { Model, ModelFactory } from '@core/index';
 
 /** Parse, then hand back the model plus a name→element lookup. */
@@ -508,5 +508,60 @@ describe('redefinitionNameIsOrderDependent — a simple name two of the owner\'s
     const f = model.children(nested.id).find((c) => c.eClass === 'AttributeUsage')!;
     expect(redefinitionNameIsOrderDependent(model, 'G::P3::b', f.id, nested.id)).toBe(false);
     expect(model.qualifiedName(resolveRedefinedFeature(model, 'G::P3::b', f.id, nested.id)!.id)).toBe('G::P3::b');
+  });
+});
+
+describe('unreadScopes — the owners whose features the saved file may read otherwise', () => {
+  const named = (model: Model, scopes: ReturnType<typeof unreadScopes>): string[] => [...scopes].map(([id, why]) => `${model.qualifiedName(id)}:${why}`).sort();
+  const edge = (model: Model, from: string): string => model.all().find((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && model.get(e.source![0]!)?.declaredName === from)!.id;
+  const SRC = `package U {
+    part def P { attribute a default = 11.0; attribute b default = 12.0; }
+    part def P1 :> P { attribute a1 :>> a default = 13.0; }
+    part def P2 :> P1 { attribute a2 :>> a1 default = 14.0; }
+    part def H { part p : P; part q : P; }
+    part def H1 :> H { part p1 :>> p; }
+    part w : H1 { part :>> p1 { attribute :>> b = 15.0; } }
+  }`;
+
+  it('lists nothing for the redefinitions the mapper makes (inherited, by path, a reference usage, an implicit library base)', () => {
+    expect(unreadScopes(parsed(SRC).model).size).toBe(0);
+    // A usage with no type whose `:>> M` the file resolves by the path the settle writes; a metadata body's keyword-less `:>>`;
+    // `connect a to done`'s implicit `done` over the library's `Parts::Part::done`.
+    const odd = parsed(`package V {
+      metadata def Risk { attribute level : ScalarValues::Real; }
+      part def Q { attribute M default = 1.0; }
+      part def Car { part a; connect a to done; metadata rk : Risk { :>> level = 3.0; } }
+      part t { attribute :>> V::Q::M; }
+    }`);
+    expect(named(odd.model, unreadScopes(odd.model))).toEqual([]);
+  });
+
+  it('lists the owner of two features under one name, or one name and one short name, and no other', () => {
+    const twin = parsed(`package T { part def A { attribute x default = 1.0; attribute x default = 2.0; } part def B { attribute <y> y2; attribute y; } part def C { attribute <z> z; } }`);
+    expect(named(twin.model, unreadScopes(twin.model))).toEqual([
+      'T::A::x:twins', 'T::A::x:twins', 'T::A:twins', 'T::B::y2:twins', 'T::B::y:twins', 'T::B:twins',
+    ]);
+    // The owner and both members: what is typed by or specialises a member is withheld as well (partedHolder).
+  });
+
+  it('lists the owner of a redefinition retargeted by hand to a feature it does not inherit, of another kind, or in a cycle', () => {
+    const retargeted = (from: string, to: (m: Model, id: (n: string) => string) => string): string[] => {
+      const { model, id } = parsed(SRC);
+      model.update(edge(model, from), { target: [to(model, id)] });
+      return named(model, unreadScopes(model));
+    };
+    // H1's p1 onto H::q, which H1 inherits: the file spells it `:>> q` and reads it back.
+    expect(retargeted('p1', (_m, id) => id('q'))).toEqual([]);
+    // Onto the top-level usage w, which the name `w` finds by the mapper's rule from H1: the file keeps it too.
+    expect(retargeted('p1', (_m, id) => id('w'))).toEqual([]);
+    // Onto the unnamed `:>> p1` inside w, which H1 does not inherit and no name finds from H1 (and w's `:>> p1` now
+    // redefines a feature that redefines it back: a cycle).
+    expect(retargeted('p1', (m, id) => m.children(id('w')).find((c) => c.eClass === 'PartUsage')!.id)).toEqual([
+      'U::H1::p1:redefinition', 'U::H1:redefinition', 'U::w::«PartUsage»:redefinition', 'U::w:redefinition',
+    ]);
+    // Another kind: the part usage p1 onto the attribute b.
+    expect(retargeted('p1', (_m, id) => id('b'))).toEqual(['U::H1:redefinition']);
+    // A cycle: a1 onto a2, which redefines a1.
+    expect(retargeted('a1', (_m, id) => id('a2'))).toEqual(['U::P1::a1:redefinition', 'U::P1:redefinition', 'U::P2::a2:redefinition', 'U::P2:redefinition']);
   });
 });

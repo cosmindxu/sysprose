@@ -39,6 +39,7 @@
  */
 
 import {
+  isDefinition,
   isRelationship,
   isUsage,
   refSegments,
@@ -47,7 +48,7 @@ import {
   type Model,
 } from '@core/index';
 import { generalizationsWithImplicit } from './featuring';
-import { effectiveNameOf, mostSpecificOwned, ownFeatures, redefinedBy, redefinedClosure } from './inheritance';
+import { effectiveNameOf, effectiveQualifiedName, mostSpecificOwned, ownFeatures, redefinedBy, redefinedClosure } from './inheritance';
 import { resolveName } from './resolve-names';
 
 /** Options for {@link resolveFullName}. */
@@ -210,6 +211,73 @@ export function resolveRedefinedFeature(
   scopeId: ElementId | null,
 ): ElementRecord | undefined {
   return redefinitionHits(model, ref, featureId, scopeId, false).first ?? redefinitionFallback(model, ref, featureId, scopeId);
+}
+
+/**
+ * The owners whose features the saved file may read otherwise than the page does: a page edited by hand keeps what the
+ * file cannot say, so a row read through one of these scopes is not read.
+ *
+ * - `twins`: the owner holds two features under one name (a name or a short name). The file finds the first in its
+ *   text, the page the first it holds, and a `:>> x` or a binding end that names it lands on either.
+ * - `redefinition`: the owner holds a feature whose Redefinition edge the file does not keep as it stands. Its target
+ *   is no feature the owner inherits and no name or path of it finds it by the mapper's own rule
+ *   ({@link resolveRedefinedFeature}), or it is of another kind, or it makes a cycle with what it redefines (a retarget
+ *   by the SDK or the Properties panel). Saved, the edge is dropped or lands elsewhere, and the owner's features differ.
+ *
+ * The owner is listed, and for `twins` both members, for a `redefinition` of a cycle or an unfound target the feature
+ * too: a caller reads what is typed by, subsets or specialises one through its generals (`DefiningEquations.partedHolder`). A model read from text has `twins` scopes, which the reopened file shares (it
+ * abstains the same way), and a `redefinition` one where the text redefines by a path what its owner does not inherit.
+ * Library elements are never listed.
+ */
+export type UnreadScope = 'twins' | 'redefinition';
+export function unreadScopes(model: Model): Map<ElementId, UnreadScope> {
+  const out = new Map<ElementId, UnreadScope>();
+  const names = new Map<ElementId, Map<string, ElementId>>();
+  const typed = (id: ElementId | null): id is ElementId => {
+    const o = id === null ? undefined : model.get(id);
+    return o !== undefined && (isDefinition(o.eClass) || isUsage(o.eClass)) && o.attrs.isLibrary !== true;
+  };
+  for (const e of model.all()) {
+    if (!typed(e.ownerId) || e.attrs.isLibrary === true || e.attrs.implicit === true || isRelationship(e.eClass)) continue;
+    let seen = names.get(e.ownerId);
+    for (const n of new Set([e.declaredName, e.declaredShortName])) {
+      if (n === undefined || n === '') continue;
+      if (seen === undefined) names.set(e.ownerId, (seen = new Map()));
+      const first = seen.get(n);
+      if (first !== undefined) {
+        // The owner and both members: what is typed by or specialises a twin reads the file's pick of the two as well.
+        out.set(e.ownerId, 'twins');
+        out.set(first, 'twins');
+        out.set(e.id, 'twins');
+      } else seen.set(n, e.id);
+    }
+  }
+  for (const r of model.ofKind('Redefinition')) {
+    const f = model.get((r.source ?? [])[0] ?? '');
+    const t = model.get((r.target ?? [])[0] ?? '');
+    if (!f || !t || !typed(f.ownerId) || f.attrs.isLibrary === true || out.has(f.ownerId)) continue;
+    // The keyword-less `:>> x` is a reference usage that redefines a feature of any kind (the mapper makes one in a metadata body).
+    const otherKind = t.eClass !== f.eClass && f.eClass !== 'ReferenceUsage' && t.eClass !== 'ReferenceUsage';
+    if (otherKind) out.set(f.ownerId, 'redefinition');
+    // The feature itself too: what subsets it reads the target the file lands on (a cycle, a target no name finds).
+    else if (redefinedClosure(model, t).some((g) => g.id === f.id) || !redefinitionIsKept(model, f, t)) {
+      out.set(f.ownerId, 'redefinition');
+      out.set(f.id, 'redefinition');
+    }
+  }
+  return out;
+}
+
+/** Does the owner of `f` inherit `t`, or does a name the text can write for `t` find it by the mapper's rule from `f`? */
+function redefinitionIsKept(model: Model, f: ElementRecord, t: ElementRecord): boolean {
+  // A library feature is inherited through the base type every definition has by default (`connect a to done` makes
+  // a `done` that redefines `Parts::Part::done`), which generalizationsWithImplicit lists.
+  if (t.ownerId !== null && generalizationsWithImplicit(model, f.ownerId!).some((g) => g.id === t.ownerId)) return true;
+  // The file spells the target by its name or by its path (`Save` writes the one the next open resolves to it).
+  for (const ref of [effectiveNameOf(model, t), effectiveQualifiedName(model, t.id)]) {
+    if (ref !== undefined && !ref.includes('«') && resolveRedefinedFeature(model, ref, f.id, f.ownerId)?.id === t.id) return true;
+  }
+  return false;
 }
 
 /**
