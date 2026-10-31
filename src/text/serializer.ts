@@ -1382,11 +1382,14 @@ type EndReading = 'chain' | 'name';
 function behindAnEarlierMember(model: Model, el: ElementRecord, reads: EndReading): boolean {
   const name = endHeadOf(model, el) ?? el.declaredName ?? el.declaredShortName;
   if (name === undefined || name === '' || el.ownerId === null) return false;
-  if (reads === 'chain') return childNamed(model, el.ownerId, name)?.id !== el.id;
-  const first = model
-    .children(el.ownerId)
-    .find((c) => !isSpecialization(c.eClass) && (c.declaredName ?? c.declaredShortName) === name);
-  return first !== undefined && first.id !== el.id;
+  for (const c of model.children(el.ownerId)) {
+    if (c.id === el.id) return false;
+    // A chain-materialized copy is no source text: the next load makes it again, after the members the file declares.
+    if (c.attrs.implicit === true || isSpecialization(c.eClass)) continue;
+    if (c.declaredName === name || c.declaredShortName === name) return true;
+    if (reads === 'chain' && c.declaredName === undefined && c.declaredShortName === undefined && effectiveNameOf(model, c) === name) return true;
+  }
+  return false;
 }
 
 /** An end spelled by the qualified name: every segment after the first root is read as the path says. */
@@ -2081,8 +2084,9 @@ function relativePath(
     const head = cur.ownerId === scope;
     const nm = writtenName(model, cur) || (effective && !head ? effectiveSegment(model, cur, effective === 'first') : undefined);
     if (!nm) return undefined; // anonymous ancestor — cannot path through it
-    // A segment after the head is read by name: a named one behind an earlier member of its name is not it.
-    if (reads && !head && writtenName(model, cur) && behindAnEarlierMember(model, cur, reads)) {
+    // A named segment is read by name: one behind an earlier member of its name is not it. The head is read lexically
+    // (`resolveFullName`: the first member DECLARED by the name), whatever the statement.
+    if (reads && writtenName(model, cur) && behindAnEarlierMember(model, cur, head ? 'name' : reads)) {
       throw new EarlierMemberOfName(qualifiedRef(model, targetId));
     }
     names.unshift(nm);

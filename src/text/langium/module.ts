@@ -43,12 +43,16 @@ class SysmlLexer extends DefaultLexer {
   override tokenize(text: string, options?: TokenizeOptions): LexerResult {
     const result = super.tokenize(text, options);
     const d = this.definition;
-    const [id, kwIn, lb, rb, lc, rc, lp, rp] = ['ID', 'in', '[', ']', '{', '}', '(', ')'].map((n) => d[n]);
-    if (!id || !kwIn || !lb || !rb || !lc || !rc || !lp || !rp) return result;
+    const [id, kwIn, lb, rb, lc, rc, lp, rp, semi] = ['ID', 'in', '[', ']', '{', '}', '(', ')', ';'].map((n) => d[n]);
+    if (!id || !kwIn || !lb || !rb || !lc || !rc || !lp || !rp || !semi) return result;
     const open: unknown[] = [];
     for (const t of result.tokens) {
       const type = t.tokenType;
       if (type === lb || type === lc || type === lp) open.push(type);
+      // A `;` cannot occur inside a bracket expression outside a `{ }`: a bracket left open (a missing `]`) ends here.
+      else if (type === semi) {
+        while (open.length > 0 && open[open.length - 1] !== lc) open.pop();
+      }
       else if (type === rb || type === rc || type === rp) {
         const at = open.lastIndexOf(type === rb ? lb : type === rc ? lc : lp);
         if (at >= 0) open.length = at;

@@ -112,6 +112,12 @@ describe('bracket expression — feature value fold', () => {
     expect(expressionOf(parseModel(quoted).model)).toBe(expressionOf(again.model));
   });
 
+  it('ends a bracket left open at the next `;`, so a missing `]` costs one error and not every later `in port`', () => {
+    const m = parseModel(`package Z { part def P { attribute x : ISQ::LengthValue = 3.0 [m; in port a; in port b; in port c; } }`);
+    expect(m.diagnostics.filter((d) => d.severity === 'error').length).toBeLessThanOrEqual(1);
+    expect(m.model.all().filter((e) => e.eClass === 'PortUsage').map((e) => e.declaredName)).toEqual(['a', 'b', 'c']);
+  });
+
   it('still reads `in` as the direction keyword outside a bracket', () => {
     const { model, diagnostics } = parseModel(
       'package Z { part def Q { in item i; out port o; attribute e [1..2]; in attribute k; } }',

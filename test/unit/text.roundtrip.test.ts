@@ -2285,6 +2285,49 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
         });
       }
     }
+    // The head of an end is read lexically (the first member DECLARED by the name) in every statement, so a named end that is
+    // the second of its name in the statement's own scope is not reached by the bare name either.
+    const HEAD_BEHIND: Array<[string, string, RegExp, 'source' | 'target', string, string, number]> = [
+      // [shape, source, link, end, owner, name, ordinal]
+      ['bind', 'package T { attribute v : ScalarValues::Real = 1.0; attribute v : ScalarValues::Real = 2.0; attribute w : ScalarValues::Real; bind w = v; }', /^Binding/, 'target', 'T', 'v', 1],
+      ['allocate', 'package T { part c; part c; part y; allocate y to c; }', /^Allocation/, 'target', 'T', 'c', 1],
+      ['connect', 'package T { part c; part c; part y; connect y to c; }', /^(Connection|Connector)/, 'target', 'T', 'c', 1],
+      ['dependency', 'package T { part c; part c; part y; dependency from y to c; }', /^Dependency/, 'target', 'T', 'c', 1],
+      ['flow', 'package T { part c; part c; part y; flow from y to c; }', /^Flow/, 'target', 'T', 'c', 1],
+      ['bind in a usage', 'package T { part q { attribute v : ScalarValues::Real = 1.0; attribute v : ScalarValues::Real = 2.0; attribute w : ScalarValues::Real; bind w = v; } }', /^Binding/, 'target', 'T::q', 'v', 1],
+      ['transition target', 'package T { state def S { state a; state b; state b; transition t first a then b; } }', /^Transition/, 'target', 'T::S', 'b', 1],
+      ['transition source', 'package T { state def S { state a; state a; state b; transition t first a then b; } }', /^Transition/, 'source', 'T::S', 'a', 1],
+      ['succession', 'package T { action def A { action a; action b; action b; first a then b; } }', /^Succession/, 'target', 'T::A', 'b', 1],
+    ];
+    for (const [shape, src, linkRe, key, owner, name, ordinal] of HEAD_BEHIND) {
+      it(`${shape}: an end that is the second member of its name is not saved by the bare name, and says so`, () => {
+        const m = parseModel(src).model;
+        const link = m.all().find((e) => linkRe.test(e.eClass) && !e.attrs.implicit && ((e.source?.length ?? 0) + (e.target?.length ?? 0)) > 0)!;
+        const want = m.all().filter((e) => e.declaredName === name && m.qualifiedName(e.ownerId!) === owner)[ordinal]!;
+        m.update(link.id, { [key]: [want.id] });
+        const text = serializeModel(m);
+        expect(text).toMatch(/\/\/ Not saved: a .* whose end no name reaches \(.*Rename the earlier member of its name/);
+        const after = parseModel(text);
+        expect(after.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+        expect(after.model.all().filter((e) => linkRe.test(e.eClass) && !e.attrs.implicit && ((e.source?.length ?? 0) + (e.target?.length ?? 0)) > 0)).toHaveLength(0);
+      });
+    }
+    it('a member whose short name is the end\'s name is an earlier member of it too', () => {
+      const m = parseModel('package T { part <c> comp1; part c; part y; allocate y to c; }').model;
+      const link = m.all().find((e) => e.eClass === 'Allocation')!;
+      m.update(link.id, { target: [m.all().find((e) => e.declaredName === 'c')!.id] });
+      expect(serializeModel(m)).toMatch(/\/\/ Not saved: a allocation whose end no name reaches/);
+    });
+    it('an implicit copy a chain made is no earlier member of a name: the member added beside it is written by its name', () => {
+      const m = parseModel('package T { part def P { attribute load : ScalarValues::Real default = 1.0; } part p : P; attribute w : ScalarValues::Real; bind w = p.load; part y; }').model;
+      const p = m.all().find((e) => e.declaredName === 'p' && e.eClass === 'PartUsage')!;
+      expect(m.children(p.id).some((c) => c.attrs.implicit === true && c.declaredName === 'load')).toBe(true);
+      const added = m.create('AttributeUsage', { ownerId: p.id, declaredName: 'load', attrs: { value: 60 } });
+      m.create('Allocation', { ownerId: m.all().find((e) => e.declaredName === 'T')!.id, source: [m.all().find((e) => e.declaredName === 'y')!.id], target: [added.id] });
+      const text = serializeModel(m);
+      expect(text).not.toContain('Not saved');
+      expect(text).toContain('allocate y to p.load;');
+    });
     it('writes a named end behind an unnamed redefinition by its name for a statement that is not a chain', () => {
       for (const [stmt, , body] of NON_CHAIN) {
         const { m, target } = retargeted('attribute :>> load = 50.0; attribute load : ScalarValues::Real = 60.0;', body, '60');

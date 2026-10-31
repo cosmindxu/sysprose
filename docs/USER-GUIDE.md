@@ -1227,7 +1227,9 @@ statement. Opened and saved again, the file no longer has the statement or the c
 is a NAMED member behind an earlier member of its name (for a binding, connection, flow or interface
 one that goes by the name, an unnamed redefinition of it too; for the others one declared by it) gets
 the same note (`… Rename the earlier member of its name, or move this one before it, to save it.`):
-the name would reopen on the earlier one (the model already carries the duplicate-name finding).
+the name would reopen on the earlier one (the first end of a statement too: `allocate y to c` with a second `c` beside the
+first). A rename onto a taken name raises `validation/duplicate-name`; a named member added after an unnamed redefinition
+of its name gets only this note. An implicit copy a chain made is not an earlier member.
 
 Four more cases are not followed, and in each the page can read what the saved file does not:
 
