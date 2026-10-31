@@ -53,7 +53,7 @@ import {
   resolveRedefinedFeature,
 } from '@semantics/bind';
 import { generalizationsWithImplicit } from '@semantics/featuring';
-import { effectiveNameOf } from '@semantics/inheritance';
+import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
 import {
   EVIDENCE_DEFINITION,
   EVIDENCE_QUALIFIED_NAME,
@@ -433,6 +433,33 @@ function implicitId(prefix: string, ...parts: string[]): string {
 }
 
 /**
+ * Does `scopeEl` have a feature for `head`, no copy, with a `default` value that the end copy on `proto` does not stand
+ * on or above, and no feature of a type below it hides? The copy then hides what the types give, and the reading turns
+ * on which feature it was made on: D1's `bind` (a copy `D1::N`) and D2's explicit `:>> N default = 15.0` (which meets no
+ * copy, so it redefines Q0's `N` beside D1's copy) leave D3's `bind` a copy on D1's when D1 is read first and on D2's
+ * when it is read last, so `u1.N` read 12 or 15 by the order of the text. The same holds of two unrelated lines
+ * (`part def D3 :> D1, D2`) or a clash of defaults (`D3 :> D2, D2b`). The binding is left unread, as one the editor
+ * cannot follow (`attrs.partedEnd`): the scope that owns it offers no name on any surface. A value written with `=` that
+ * the copy hides is a clash the checks already name (`#clash`), and is left as it reads. In a usage, two unrelated lines
+ * are left to the rule of the inherited pair (`q : Q2, Q3`); a line of overrides the copy passed over is not.
+ */
+function leavesOutOverride(model: Model, scopeEl: ElementRecord, head: string, proto: ElementRecord): boolean {
+  const line = new Set<ElementId>([proto.id, ...redefinedClosure(model, proto).map((g) => g.id)]);
+  // A feature of a type that `proto`'s owner specialises is hidden by it (Q23's `:>> M`, over Q2's and Q3's).
+  const below = proto.ownerId === null ? [] : generalizationsWithImplicit(model, proto.ownerId);
+  const off: ElementRecord[] = [];
+  for (const t of generalizationsWithImplicit(model, scopeEl.id)) {
+    const g = t.attrs.isLibrary === true ? undefined : childNamed(model, t.id, head);
+    if (g && g.attrs.implicit !== true && !line.has(g.id) && !below.some((b) => b.id === g.ownerId) && !off.includes(g)) off.push(g);
+  }
+  if (!off.some((g) => g.attrs.defaultValue === true)) return false;
+  // In a usage, features of types that specialise none of the others (the inherited pair `q : Q2, Q3`) are read and
+  // named by their own rule; a line of them, one type below another, is the override the copy passed over.
+  const below1 = (x: ElementRecord, y: ElementRecord): boolean => x.ownerId !== null && generalizationsWithImplicit(model, x.ownerId).some((b) => b.id === y.ownerId);
+  return isDefinition(scopeEl.eClass) || off.some((x) => off.every((y) => y.id === x.id || below1(x, y)));
+}
+
+/**
  * Walk a chain `segs` starting from `anchor`. Each segment prefers a direct
  * containment child; failing that, a feature inherited through the type
  * closure. `commit=false` is a side-effect-free dry run (an inherited feature
@@ -471,6 +498,7 @@ function resolveChainEnd(
   model: Model,
   ref: string,
   scopeOwnerId: ElementId | null,
+  unsettled?: { copy: boolean },
 ): ElementRecord | undefined {
   const segs = refSegments(ref);
   if (segs.length === 0) return undefined;
@@ -523,6 +551,7 @@ function resolveChainEnd(
     // most specific: where two general types each redefine it (MI1's Q2 and Q3, a clash), neither is.
     const proto = endCopyProto(model, scopeEl, head, hit);
     if (!walkChain(model, proto, rest, false)) continue; // dry run before materializing
+    if (unsettled && leavesOutOverride(model, scopeEl, head, proto)) unsettled.copy = true;
     const anchor = ensureImplicitFeature(model, scopeEl, proto, head);
     const end = walkChain(model, anchor, rest, true);
     if (end) return end;
@@ -578,8 +607,11 @@ export function resolveConnectorFeatureChains(model: Model): number {
 function resolveChainEndpointsOf(model: Model, el: ElementRecord): number {
   let n = 0;
   const scope = el.ownerId;
+  // A binding whose end copy hides an override it cannot choose between is left unread ({@link leavesOutOverride}): the
+  // editor's mark for a binding the page cannot follow, which withholds the scope that owns it on every surface.
+  const unsettled = { copy: false };
   if (typeof el.attrs.sourceRef === 'string' && (el.source?.length ?? 0) === 0) {
-    const r = resolveChainEnd(model, el.attrs.sourceRef, scope);
+    const r = resolveChainEnd(model, el.attrs.sourceRef, scope, unsettled);
     if (r && r.id !== el.id) {
       model.update(el.id, { source: [r.id] });
       model.setAttrs(el.id, { sourceRef: undefined });
@@ -587,13 +619,14 @@ function resolveChainEndpointsOf(model: Model, el: ElementRecord): number {
     }
   }
   if (typeof el.attrs.targetRef === 'string' && (el.target?.length ?? 0) === 0) {
-    const r = resolveChainEnd(model, el.attrs.targetRef, scope);
+    const r = resolveChainEnd(model, el.attrs.targetRef, scope, unsettled);
     if (r && r.id !== el.id) {
       model.update(el.id, { target: [r.id] });
       model.setAttrs(el.id, { targetRef: undefined });
       n++;
     }
   }
+  if (unsettled.copy && el.eClass.startsWith('BindingConnector') && el.attrs.partedEnd !== true) model.setAttrs(el.id, { partedEnd: true });
   return n;
 }
 

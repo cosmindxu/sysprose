@@ -1179,6 +1179,21 @@ or a new feature gave it), and where a binding's end is a feature of a type its 
 copy of its own (a bound feature moved up into the type): the next open binds that member, or makes the copy,
 and the page reads neither.
 
+The implicit copy of a `bind` written in a definition (`part def D3 :> D2 { bind z = N; }`) stands on the feature
+the name finds in D3, and an override it would hide is left unread. With D1's own `bind z1 = N` (a copy in D1) and D2's
+`attribute :>> N default = 15.0` between them, D3's copy stood on D1's copy when D1 was written before D3 and on D2's
+`N` otherwise, so `u1.N` read 12 or 15 by the order of the text. The nearest `N` is D2's, but the page does not choose
+it: where the copy would hide a `default` (D2's, or one of two types that neither redefines the other, `part def D3 :>
+D1, D2` or a clash `D3 :> D2, D2b`, each with a default) the binding is left unread: no name of what D3 owns, types or
+specialises is read (the check says `u1.N is not read: G::u1 owns a binding whose end is a copy the saved file
+reads as another feature, so no name of G::u1 is read until the file is saved and opened again`, the sentence of a
+binding the page cannot follow) and the rows are inconclusive, as the same types without the `bind` already are. The
+text order that put the copy on D2's `N` hides nothing and reads 15. A value written with `=` that a copy hides is a clash
+the checks already name (`#clash`), and a usage that inherits two unrelated lines (`part q : Q2, Q3 { bind ... }`) is read
+by the rule of the inherited pair, as before. The mark is made when a file is read: an edit that settles the copy (a
+retype, a rename) drops it, and an edit that makes a copy hide a default does not set it, so after such an edit the
+page may read the copy where the saved file leaves it unread (Save and open the file to read it as the file does).
+
 The Name and Short name boxes of the Properties panel apply on Enter or on leaving the box,
 not per key (Escape puts the name back, and so does an emptied box: a name is not cleared there), so a name typed key by key is one edit and one Undo
 step: a prefix another feature of the owner bears (typing `M2x` passes through `M2`) no

@@ -251,6 +251,45 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
     expect(redefined('u0')).toEqual([own('D1').id]);
   });
 
+  // D1's and D3's `bind` each make an end copy of N; D2's `:>> N` is explicit, so it redefines Q0's N beside D1's copy.
+  // D3's copy stood on D1's copy when D1 came first in the text and on D2's N otherwise, so u1.N read 12 or 15 by the
+  // order of the definitions (sweep 2026-10-31, item C). The copy that hides D2's default is left unread: the binding
+  // carries `partedEnd`, and the scope that owns it offers no name on any surface. Where nothing is hidden it stays.
+  it('leaves unread a definition-level end copy that hides a default the text order could expose', () => {
+    const defs = {
+      D1: 'part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }',
+      D2: 'part def D2 :> D1 { attribute :>> N default = 15.0; }',
+      D3: 'part def D3 :> D2 { attribute Zd3; bind Zd3 = N; }',
+    };
+    const orders = [['D1', 'D2', 'D3'], ['D1', 'D3', 'D2'], ['D2', 'D1', 'D3'], ['D2', 'D3', 'D1'], ['D3', 'D1', 'D2'], ['D3', 'D2', 'D1']] as const;
+    const parted = (src: string): string[] => {
+      const { model } = parsed(src);
+      return model.all().filter((e) => e.eClass.startsWith('BindingConnector') && e.attrs.partedEnd === true).map((e) => model.qualifiedName(e.ownerId!)).sort();
+    };
+    for (const order of orders) {
+      const src = `package P { part def Q0 { attribute N default = 12.0; } ${order.map((d) => defs[d]).join(' ')} part u1 : D3; }`;
+      const { model, id } = parsed(src);
+      const copy = model.children(id('D3')).find((c) => c.declaredName === 'N' && c.attrs.implicit === true)!;
+      const d2n = model.children(id('D2')).find((c) => c.eClass === 'AttributeUsage' && c.declaredName === undefined)!;
+      const target = model.children(copy.id).find((c) => c.eClass === 'Redefinition')!.target![0];
+      // The copy stands on D1's copy (D1 read first) or on D2's N: the binding is unread exactly when it stands on D1's.
+      expect(parted(src), order.join(' ')).toEqual(target === d2n.id ? [] : ['P::D3']);
+    }
+    // The text order that put the copy on D1's is fenced (the sweep's probe, forward).
+    expect(parted(`package P { part def Q0 { attribute N default = 12.0; } ${defs.D1} ${defs.D2} ${defs.D3} part u1 : D3; }`)).toEqual(['P::D3']);
+    // Nothing hidden: no override in the chain, or one written with `=` (a clash the checks already name).
+    const quiet = (d2: string) => `package P { part def Q0 { attribute N default = 12.0; } ${defs.D1} ${d2} ${defs.D3} part u1 : D3; }`;
+    expect(parted(quiet('part def D2 :> D1;'))).toEqual([]);
+    expect(parted(quiet('part def D2 :> D1 { attribute :>> N = 15.0; }'))).toEqual([]);
+    // A diamond whose second line overrides with a default, and a clash of two defaults, with D3's copy made after theirs.
+    const base = 'part def Q0 { attribute N default = 12.0; } part def D2 :> Q0 { attribute :>> N default = 15.0; }';
+    const bound = (sup: string) => `part def D3 :> ${sup} { attribute Zd3; bind Zd3 = N; }`;
+    const d1 = 'part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }';
+    expect(parted(`package P { ${base} ${d1} ${bound('D1, D2')} }`)).toEqual(['P::D3']);
+    const clash = 'part def D2b :> Q0 { attribute :>> N default = 17.0; }';
+    expect(parted(`package P { ${base} ${clash} ${bound('D2, D2b')} }`)).toEqual(['P::D3']);
+  });
+
   // Two of a usage's features must not take one NAME either: v's `:>> M` and `:>> K` each have a most specific
   // feature named M2 (R's, S's), so both would be v's M2, and the SMT engine merged them into one symbol while the
   // other surfaces read the first by text order (p2s, p2sr). A sibling is judged by the names of the line it lies in,
