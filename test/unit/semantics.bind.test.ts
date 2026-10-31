@@ -538,7 +538,10 @@ describe('unreadScopes — the owners whose features the saved file may read oth
 
   it('lists the owner of two features under one name, or one name and one short name, and no other', () => {
     const twin = parsed(`package T { part def A { attribute x default = 1.0; attribute x default = 2.0; } part def B { attribute <y> y2; attribute y; } part def C { attribute <z> z; } }`);
-    expect(named(twin.model, unreadScopes(twin.model))).toEqual(['T::A:twins', 'T::B:twins']);
+    expect(named(twin.model, unreadScopes(twin.model))).toEqual([
+      'T::A::x:twins', 'T::A::x:twins', 'T::A:twins', 'T::B::y2:twins', 'T::B::y:twins', 'T::B:twins',
+    ]);
+    // The owner and both members: what is typed by or specialises a member is withheld as well (partedHolder).
   });
 
   it('lists the owner of a redefinition retargeted by hand to a feature it does not inherit, of another kind, or in a cycle', () => {
@@ -553,10 +556,12 @@ describe('unreadScopes — the owners whose features the saved file may read oth
     expect(retargeted('p1', (_m, id) => id('w'))).toEqual([]);
     // Onto the unnamed `:>> p1` inside w, which H1 does not inherit and no name finds from H1 (and w's `:>> p1` now
     // redefines a feature that redefines it back: a cycle).
-    expect(retargeted('p1', (m, id) => m.children(id('w')).find((c) => c.eClass === 'PartUsage')!.id)).toEqual(['U::H1:redefinition', 'U::w:redefinition']);
+    expect(retargeted('p1', (m, id) => m.children(id('w')).find((c) => c.eClass === 'PartUsage')!.id)).toEqual([
+      'U::H1::p1:redefinition', 'U::H1:redefinition', 'U::w::«PartUsage»:redefinition', 'U::w:redefinition',
+    ]);
     // Another kind: the part usage p1 onto the attribute b.
     expect(retargeted('p1', (_m, id) => id('b'))).toEqual(['U::H1:redefinition']);
     // A cycle: a1 onto a2, which redefines a1.
-    expect(retargeted('a1', (_m, id) => id('a2'))).toEqual(['U::P1:redefinition', 'U::P2:redefinition']);
+    expect(retargeted('a1', (_m, id) => id('a2'))).toEqual(['U::P1::a1:redefinition', 'U::P1:redefinition', 'U::P2::a2:redefinition', 'U::P2:redefinition']);
   });
 });

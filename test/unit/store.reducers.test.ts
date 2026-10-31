@@ -2472,7 +2472,7 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       });
 
       // The two readings that stay WEAKER or different than the file's, pinned with their reasons (docs/USER-GUIDE.md,
-      // 'Five more cases are not followed'): neither is a satisfied or refuted verdict the file does not give.
+      // 'Four more cases are not followed'): neither is a satisfied or refuted verdict the file does not give.
       it('the readings that differ from the file stay abstentions, not verdicts', async () => {
         // A binding with a stale end is set aside: the numeric lane abstains where the file decides.
         load(`package DB {
@@ -2711,6 +2711,38 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         for (const k of ['RT::wa', 'RT::wb', 'RT::va']) expect(c[k], `page: ${k} is not read`).toBe('?/?/?/?');
         expect(said('RT::va')).toContain('v.a is not read: RT::v holds, or is typed by or specialises a scope that holds, two features under one name');
         neverMore(c, await surfaces(reopened(st().model)), 'raw rename of P::b to a');
+        // (d) A usage elsewhere that subsets the feature with the retargeted edge (review): the page decided where the
+        // base and the file abstained, once the owners were withheld and the feature itself was not.
+        load(`package RS {
+  part def P { attribute a default = 11.0; }
+  part def H { part p : P; }
+  part def H1 :> H { part p1 :>> p; }
+  part w : H1 { part :>> p1 { attribute :>> a = 15.0; } }
+  part u :> w.p1;
+  part z { attribute y = 1.0; }
+  constraint cy { z.y == 1.0 }
+  constraint c15 { u.a == 15.0 }
+  constraint c11 { u.a == 11.0 }
+}`);
+        st().updateElement(
+          st().model.all().find((e) => e.eClass === 'Redefinition' && e.attrs.isLibrary !== true && e.source![0] === byName('p1').id)!.id,
+          { target: [st().model.children(byName('w').id).find((c2) => c2.eClass === 'PartUsage')!.id] },
+        );
+        const d = await surfaces(st().model);
+        for (const k of ['RS::c15', 'RS::c11']) expect(d[k], `page: ${k} is not read`).toBe('?/?/?/?');
+        neverMore(d, await surfaces(reopened(st().model)), 'retarget p1 into a cycle, a usage subsets it');
+        // The SMT lane names the cause on a row that reads nothing unread (no binding is in the model, so no binding's sentence).
+        const smt = (await verifyModel(st().model, { engine: 'smt', sourceText: serializeModel(st().model) })).results.find((r) => r.clause.qualifiedName.startsWith('RS::cy'))!;
+        expect(smt.detail).toContain('the model holds a redefinition the saved file does not keep as it stands');
+        expect(smt.detail).not.toContain('binding');
+        // (e) A rename through the Properties box onto the name of the twin's sibling: what is typed by the renamed
+        // definition, in another package, is unread (the file resolves its name to the first of the two).
+        load(`package TE { part def A { attribute v default = 1.0; } part def B { attribute v default = 2.0; } }
+package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v == 1.0 } }`);
+        st().updateElement(byName('B').id, { declaredName: 'A' });
+        const e = await surfaces(st().model);
+        for (const k of ['UE::c1', 'UE::c2']) expect(e[k], `page: ${k} is not read`).toBe('?/?/?/?');
+        neverMore(e, await surfaces(reopened(st().model)), 'rename TE::B to A, a usage typed by it elsewhere');
       });
 
       it('deleting the feature a definition-level bind ends on leaves no copy the page proves through', async () => {

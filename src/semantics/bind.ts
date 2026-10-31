@@ -224,15 +224,15 @@ export function resolveRedefinedFeature(
  *   ({@link resolveRedefinedFeature}), or it is of another kind, or it makes a cycle with what it redefines (a retarget
  *   by the SDK or the Properties panel). Saved, the edge is dropped or lands elsewhere, and the owner's features differ.
  *
- * Only the owner is listed: a caller reads what is typed by it or specialises it through its generals
- * (`DefiningEquations.partedHolder`). A model read from text has `twins` scopes, which the reopened file shares (it
+ * The owner is listed, and for `twins` both members, for a `redefinition` of a cycle or an unfound target the feature
+ * too: a caller reads what is typed by, subsets or specialises one through its generals (`DefiningEquations.partedHolder`). A model read from text has `twins` scopes, which the reopened file shares (it
  * abstains the same way), and a `redefinition` one where the text redefines by a path what its owner does not inherit.
  * Library elements are never listed.
  */
 export type UnreadScope = 'twins' | 'redefinition';
 export function unreadScopes(model: Model): Map<ElementId, UnreadScope> {
   const out = new Map<ElementId, UnreadScope>();
-  const names = new Map<ElementId, Set<string>>();
+  const names = new Map<ElementId, Map<string, ElementId>>();
   const typed = (id: ElementId | null): id is ElementId => {
     const o = id === null ? undefined : model.get(id);
     return o !== undefined && (isDefinition(o.eClass) || isUsage(o.eClass)) && o.attrs.isLibrary !== true;
@@ -242,9 +242,14 @@ export function unreadScopes(model: Model): Map<ElementId, UnreadScope> {
     let seen = names.get(e.ownerId);
     for (const n of new Set([e.declaredName, e.declaredShortName])) {
       if (n === undefined || n === '') continue;
-      if (seen === undefined) names.set(e.ownerId, (seen = new Set()));
-      if (seen.has(n)) out.set(e.ownerId, 'twins');
-      else seen.add(n);
+      if (seen === undefined) names.set(e.ownerId, (seen = new Map()));
+      const first = seen.get(n);
+      if (first !== undefined) {
+        // The owner and both members: what is typed by or specialises a twin reads the file's pick of the two as well.
+        out.set(e.ownerId, 'twins');
+        out.set(first, 'twins');
+        out.set(e.id, 'twins');
+      } else seen.set(n, e.id);
     }
   }
   for (const r of model.ofKind('Redefinition')) {
@@ -253,7 +258,12 @@ export function unreadScopes(model: Model): Map<ElementId, UnreadScope> {
     if (!f || !t || !typed(f.ownerId) || f.attrs.isLibrary === true || out.has(f.ownerId)) continue;
     // The keyword-less `:>> x` is a reference usage that redefines a feature of any kind (the mapper makes one in a metadata body).
     const otherKind = t.eClass !== f.eClass && f.eClass !== 'ReferenceUsage' && t.eClass !== 'ReferenceUsage';
-    if (otherKind || redefinedClosure(model, t).some((g) => g.id === f.id) || !redefinitionIsKept(model, f, t)) out.set(f.ownerId, 'redefinition');
+    if (otherKind) out.set(f.ownerId, 'redefinition');
+    // The feature itself too: what subsets it reads the target the file lands on (a cycle, a target no name finds).
+    else if (redefinedClosure(model, t).some((g) => g.id === f.id) || !redefinitionIsKept(model, f, t)) {
+      out.set(f.ownerId, 'redefinition');
+      out.set(f.id, 'redefinition');
+    }
   }
   return out;
 }

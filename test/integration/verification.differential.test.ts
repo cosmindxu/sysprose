@@ -13387,6 +13387,35 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'TW::c4': ['?/?/?/?', null],
       'TW::c5': ['?/?/?/?', null],
     }),
+    // The twins are the two definitions, in a package the usage is not in (a rename onto a name its package already
+    // bears makes this): a usage typed by a member, or a definition specialising one, is unread too, not only the owner.
+    ...reversed('twin-defs', `package TD {
+        part def A { attribute v default = 1.0; }
+        part def A { attribute v default = 2.0; }
+        part def C :> A;
+      }
+      package UD {
+        part x : TD::A;
+        part y : TD::C;
+        constraint c1 { x.v == 1.0 }
+        constraint c2 { x.v == 2.0 }
+        constraint c3 { y.v == 1.0 }
+      }`, `package UD {
+        constraint c3 { y.v == 1.0 }
+        constraint c2 { x.v == 2.0 }
+        constraint c1 { x.v == 1.0 }
+        part y : TD::C;
+        part x : TD::A;
+      }
+      package TD {
+        part def C :> A;
+        part def A { attribute v default = 2.0; }
+        part def A { attribute v default = 1.0; }
+      }`, {
+      'UD::c1': ['?/?/?/?', null],
+      'UD::c2': ['?/?/?/?', null],
+      'UD::c3': ['?/?/?/?', null],
+    }),
     // A `satisfy` written outside the definition whose feature it names, by a path that does not resolve where it is
     // written (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in the one that declares w; NQ5 without the
     // subsetting; NQ7 in a part body), recorded W's own p1: a requirement w's 50 breaks held (T, `verify` exit 0). It

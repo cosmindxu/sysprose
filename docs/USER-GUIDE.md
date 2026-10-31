@@ -1194,12 +1194,12 @@ finding the first of them, which may not be the feature the page's `:>>` is on. 
 the Properties panel) that points a redefinition at a feature its owner does not inherit and no name or path
 of the target finds, at one of another kind, or back into a cycle, makes an edge the file drops or lands
 elsewhere. In both, the page leaves every name of that owner unread, and of what specialises it or is typed
-by it, on all four surfaces: the check says `x is not read: G::A holds, or is typed by or specialises a scope
+by it (and of what is typed by or specialises either of the two features, or the feature with the edge),
+on all four surfaces: the check says `x is not read: G::A holds, or is typed by or specialises a scope
 that holds, two features under one name, and the saved file may read the other, so no name of G::A is read`
-(or `… a redefinition the saved file does not keep as it stands …, so no name of G::A is read until the file
-is saved and opened again`), the numeric, literal and SMT rows are inconclusive, and the solver proves and
-refutes nothing on a model that holds such a scope. A file that holds the same twins reads the same way, and
-one that redefines by a path what its owner does not inherit does too. A rename made by
+(or `… a redefinition the saved file does not keep as it stands …, so no name of G::A is read`), the
+numeric, literal and SMT rows are inconclusive, and the solver proves and refutes nothing on a model that
+holds such a scope, naming the cause. A file that holds the same twins reads the same way. A rename made by
 `updateElement` in steps (the SDK, not the box) is an edit for every call.
 
 A statement whose end no name reaches is not saved. A binding, connection, flow, allocation,
@@ -1236,7 +1236,8 @@ Four more cases are not followed, and in each the page can read what the saved f
 - A peer's edit in a collaboration room is not settled by the receiver, which relies on the
   sender's settle arriving as edits (not exercised with two live clients).
 - A cycle of redefinitions (`a :>> b`, `b :>> a`, already an invalid model): deleting one
-  member leaves the other redefining itself, which the saved text reads as an unresolved name.
+  member leaves the other redefining itself, which the saved text reads as an unresolved name. The
+  page abstains on what the owner of that edge holds (above), where the file decides.
 
 A feature redefines only what its owner **inherits**. In one definition, `attribute
 mass default = 1.2; attribute :>> mass = 0.8;` is not a legal redefinition: the second

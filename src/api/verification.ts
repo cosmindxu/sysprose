@@ -1087,6 +1087,12 @@ const LITERAL_CLAIM: Record<LiteralOutcome, { claim: EvidenceClaim; code: string
  * refutation carried `null`, so the loudest verdict in the run was the only one
  * absent from the diagnostic list.
  */
+/** What a model holds that the SMT lane leaves unread ({@link DefiningEquations.withheldCauses}), as a clause of its detail. */
+const WITHHELD_CAUSE = {
+  binding: 'a binding whose end is a copy the saved file reads as another feature',
+  twins: 'two features under one name, which the saved file may read the other way',
+  redefinition: 'a redefinition the saved file does not keep as it stands',
+} as const;
 const SMT_CLAIM: Record<SmtOutcome, { claim: EvidenceClaim; code: string | null }> = {
   proved: { claim: 'proved', code: null },
   refuted: { claim: 'refuted', code: 'verification/refuted' },
@@ -1654,9 +1660,11 @@ async function judge(input: {
       free: input.free,
       timeoutMs: input.timeoutMs,
     });
-    // A scope the page leaves unread (a binding the editor parted from a copy) is a scope whose axioms the reopened file
-    // may hold against the rest: a proof or a refutation over this model's axioms is not one the file gives, so none stands.
-    const withheld = sharedDefinitions(model).hasWithheldScope();
+    // A scope the page leaves unread (a binding the editor parted from a copy, two features under one name, a redefinition
+    // the file does not keep) is a scope whose axioms the reopened file may hold against the rest: a proof or a refutation
+    // over this model's axioms is not one the file gives, so none stands.
+    const causes = sharedDefinitions(model).withheldCauses();
+    const withheld = causes.length > 0;
     return judged.map(({ row, judgement }) => {
       const { claim, code } = SMT_CLAIM[judgement.outcome];
       if (withheld && (claim === 'proved' || claim === 'refuted')) {
@@ -1664,8 +1672,8 @@ async function judge(input: {
           claim: 'inconclusive',
           code: 'verification/not-evaluable',
           detail:
-            'the model holds a binding whose end is a copy the saved file reads as another feature, so the solver’s ' +
-            'axioms are not those of the file until it is saved and opened again: no proof or refutation is read from them',
+            `the model holds ${causes.map((c) => WITHHELD_CAUSE[c]).join(' and ')}, so the solver’s axioms may not be ` +
+            'those of the saved file: no proof or refutation is read from them',
           premises: [],
           bindings: [],
           bound: { kind: 'none', detail: 'nothing was claimed' },

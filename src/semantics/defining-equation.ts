@@ -4055,12 +4055,13 @@ export class DefiningEquations {
   }
 
   /**
-   * Does `id`, or a type it specialises, own a binding the editor set aside because an end of it is a copy a member
-   * of its owner takes the name of (`attrs.partedEnd`, the serializer's markStaleBindings)? The reopened file binds
-   * that member, which the page cannot follow: no name of that scope (the ends, the features the file may join to
-   * them, what is nested below them) is read, so it is unresolved, and a row naming one is not decided on a reading
-   * the file may not give. So is a binding with an end held with no copy in its owner, on a type the owner
-   * specialises (a bound end moved up into the type): the file makes the copy.
+   * Is `id`, or a type it specialises, a scope the page leaves unread: an owner of a binding the editor set aside because
+   * an end of it is a copy a member of its owner takes the name of (`attrs.partedEnd`, the serializer's
+   * markStaleBindings)? The reopened file binds that member, which the page cannot follow: no name of that scope (the
+   * ends, the features the file may join to them, what is nested below them) is read, so it is unresolved, and a row
+   * naming one is not decided on a reading the file may not give. So is a binding with an end held with no copy in its
+   * owner, on a type the owner specialises (a bound end moved up into the type): the file makes the copy. So is what
+   * {@link unreadScopes} names (two features under one name, a redefinition the file does not keep as it stands).
    */
   private partedHolder(id: ElementId): boolean {
     const parted = this.partedOwners();
@@ -4068,12 +4069,13 @@ export class DefiningEquations {
   }
 
   /**
-   * Does the model hold a scope {@link partedHolder} leaves unread? The axioms of a solver run are built from every
-   * scope, so a run over such a model proves or refutes on a set the reopened file may find inconsistent
-   * (`verification/inconsistent-axioms`): the SMT lane decides nothing there (./api/verification).
+   * Why the model holds a scope {@link partedHolder} leaves unread, once per cause (empty: none). The axioms of a solver
+   * run are built from every scope, so a run over such a model proves or refutes on a set the reopened file may find
+   * inconsistent (`verification/inconsistent-axioms`): the SMT lane decides nothing there (./api/verification), and
+   * names the causes.
    */
-  hasWithheldScope(): boolean {
-    return this.partedOwners().size > 0;
+  withheldCauses(): Array<'binding' | UnreadScope> {
+    return [...new Set(this.partedOwners().values())];
   }
 
   private partedOwners(): ReadonlyMap<ElementId, 'binding' | UnreadScope> {
