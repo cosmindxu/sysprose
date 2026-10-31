@@ -3898,6 +3898,149 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
     expect(folded.requirements).toEqual(['BoundsAssume::MassRequirement', 'BoundsAssume::HeavyPayload']);
     expect(folded.exitCode).toBe(0);
   });
+
+  /** A part `p` with the attributes and assertions given, the members in the order given. */
+  function partText(members: string[], inline = false): string {
+    const body = members.join('\n    ');
+    return inline
+      ? `package M {\n  part p {\n    ${body}\n  }\n}\n`
+      : `package M {\n  part def P {\n    ${body}\n  }\n  part p : P;\n}\n`;
+  }
+
+  async function boundsOf(text: string, measure: string, opts: { freeAll?: boolean } = {}) {
+    const { model } = await loadModelText(text, { fileName: 'bounds-probe.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    return boundsReport(model, { measure, sense: 'both', ...opts, sourceText: text });
+  }
+
+  // z3's νZ answers a script over an Integer and a Real feature with a bound that a feasible point lies beyond
+  // (x in [0, 1], y Integer, y + x > 0.5 gave `min x = infimum 3/4` where x = 0, y = 1 is feasible; y - x > 0.5
+  // gave `max x = supremum 0` where x = 1, y = 2 is). The row abstains instead, in the text order of the file and
+  // reversed, in a part def and inline. An optimum two plain checks confirm is kept (the non-strict twin), and
+  // the single-sort twins are decided as before.
+  withZ3('a bound over an Integer and a Real feature is withheld unless an optimum is confirmed', async () => {
+    const strict = (op: string, inline: boolean, reversed: boolean): string => {
+      const members = [
+        'attribute x : Real;',
+        'attribute y : Integer;',
+        'assert constraint c0 { x >= 0.0 }',
+        'assert constraint c1 { x <= 1.0 }',
+        `assert constraint c2 { ${op} }`,
+      ];
+      return partText(reversed ? members.reverse() : members, inline);
+    };
+    for (const inline of [false, true]) {
+      for (const reversed of [false, true]) {
+        // y + x > 0.5: min x = 0 (not the infimum 3/4), max x = 1; y - x > 0.5: min x = 0, max x = 1 (not the
+        // supremum 0). The strict bound νZ calls approached is withheld; the optimum beside it is confirmed.
+        for (const [op, sense, outcome, value] of [
+          ['y + x > 0.5', 'min', 'inconclusive', null],
+          ['y - x > 0.5', 'max', 'inconclusive', null],
+        ] as const) {
+          const r = await boundsOf(strict(op, inline, reversed), 'p.x');
+          const b = r.bounds.find((x) => x.sense === sense)!;
+          expect([op, inline, reversed, b.outcome, b.code, b.value]).toEqual([
+            op, inline, reversed, outcome, 'verification/optimality-not-established', value,
+          ]);
+          expect(b.detail).toContain('mixes Integer and Real features');
+          expect(r.exitCode).toBe(2);
+          for (const kept of r.bounds.filter((x) => x.outcome !== 'inconclusive')) {
+            expect(kept.outcome).toBe('optimum');
+            expect(kept.value).toBe(kept.sense === 'min' ? 0 : 1);
+          }
+        }
+      }
+    }
+    // The non-strict twin is an optimum two plain checks confirm, at the values a hand computation gives. The
+    // second model is one where νZ itself answered `max x = 1 + epsilon` with no strict comparison: x in [0, 2]
+    // beside y - 2x <= 1 and y in [-4, 2], where x = 2 is attained. It is withheld, or the true 2.
+    const nonStrict = await boundsOf(strict('y + x >= 0.5', false, false), 'p.x');
+    expect(nonStrict.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'optimum', 0],
+      ['max', 'optimum', 1],
+    ]);
+    const closed = await boundsOf(
+      partText([
+        'attribute x : Real;',
+        'attribute y : Integer;',
+        'assert constraint c0 { y - 2.0 * x <= 1.0 }',
+        'assert constraint c1 { 0.0 - 2.0 * x - y <= 6.0 }',
+        'assert constraint c2 { y >= -4.0 }',
+        'assert constraint c3 { y <= 2.0 }',
+        'assert constraint c4 { x >= 0.0 }',
+        'assert constraint c5 { x <= 2.0 }',
+      ]),
+      'p.x',
+    );
+    const [closedMin, closedMax] = closed.bounds;
+    expect(['inconclusive', 'optimum']).toContain(closedMin.outcome);
+    expect(closedMax.outcome === 'inconclusive' || (closedMax.outcome === 'optimum' && closedMax.value === 2)).toBe(true);
+    // Every feature Real, and every feature Integer, with a strict comparison: decided as before.
+    const real = await boundsOf(
+      partText(['attribute x : Real;', 'attribute y : Real;', 'assert constraint c0 { x > 0.0 }', 'assert constraint c1 { x <= 1.0 }', 'assert constraint c2 { y + x > 0.5 }']),
+      'p.x',
+    );
+    expect(real.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'infimum', 0],
+      ['max', 'optimum', 1],
+    ]);
+    const ints = await boundsOf(
+      partText(['attribute x : Integer;', 'attribute y : Integer;', 'assert constraint c0 { x > 0.5 }', 'assert constraint c1 { x <= 4.0 }', 'assert constraint c2 { y + x > 0.5 }']),
+      'p.x',
+    );
+    expect(ints.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'optimum', 1],
+      ['max', 'optimum', 4],
+    ]);
+  });
+
+  // A feature typed Natural, Positive or UnlimitedNatural is an unbounded Integer in this lane, which derives no
+  // axiom from a type: `Natural n` asserted `n > -3 and n < 4` gave `min n = -2` beside a type that has no -2.
+  // The relation is refused (nothing is asserted over it), so the bound is not claimed; the Integer twin is.
+  withZ3('a Natural, Positive or UnlimitedNatural feature is not bounded below its type’s floor', async () => {
+    const typed = (type: string): string =>
+      partText([`attribute n : ${type};`, 'assert constraint lo { n > -3 }', 'assert constraint hi { n < 4 }']);
+    for (const type of ['Natural', 'Positive', 'UnlimitedNatural']) {
+      for (const freeAll of [false, true]) {
+        const r = await boundsOf(typed(type), 'p.n', { freeAll });
+        for (const b of r.bounds) {
+          expect([type, freeAll, b.sense, b.outcome, b.code, b.value]).toEqual([
+            type, freeAll, b.sense, 'inconclusive', 'verification/not-evaluable', null,
+          ]);
+          expect(b.detail).toContain('PARTIAL axiom set');
+        }
+        expect(r.refused, 'the two relations over the Natural were asserted').toBe(2);
+        expect(r.bounds[0].detail).toContain('non-numeric-operand');
+        expect(r.exitCode).toBe(2);
+      }
+    }
+    const integer = await boundsOf(typed('Integer'), 'p.n', { freeAll: true });
+    expect(integer.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'optimum', -2],
+      ['max', 'optimum', 3],
+    ]);
+  });
+
+  withZ3('a set consistent only at a negative Natural is not called consistent', async () => {
+    const text = (type: string): string =>
+      'package M {\n  part def P { attribute n : ' + type + '; }\n  part p : P;\n' +
+      '  requirement def R1 { subject s : P; require constraint { s.n <= -1 } }\n' +
+      '  requirement def R2 { subject s : P; require constraint { s.n >= -5 } }\n' +
+      '  satisfy R1 by p;\n  satisfy R2 by p;\n}\n';
+    const run = async (type: string) => {
+      const source = text(type);
+      const { model } = await loadModelText(source, { fileName: 'consistency-probe.sysml' });
+      if (!model) throw new Error('the probe produced no model');
+      return consistencyReport(model, { sourceText: source });
+    };
+    const natural = await run('Natural');
+    expect(natural.groups.map((g) => g.outcome)).toEqual(['inconclusive']);
+    expect(natural.consistent).toBe(0);
+    expect(natural.exitCode).toBe(2);
+    // The Integer twin is the same set and is consistent, at the point the Natural cannot take.
+    const integer = await run('Integer');
+    expect(integer.groups.map((g) => g.outcome)).toEqual(['consistent']);
+  });
 });
 
 /**

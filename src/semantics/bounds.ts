@@ -931,6 +931,7 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
   const vacuityCore = consistency.status === 'unsat' ? sortedCore(consistency.core) : [];
 
   const bounds: Bound[] = [];
+  const mixed = mixesSorts(symbols, prepared.variables);
   for (const sense of sensesOf(opts.sense)) {
     if (consistency.status === 'unsat') {
       bounds.push({
@@ -956,6 +957,51 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
       { timeoutMs: opts.timeoutMs, variables: symbols },
     );
     checks += 1;
+    // A MIXED-SORT SCRIPT'S ANSWER IS CHECKED, NOT TRUSTED (see {@link mixesSorts}). An optimum is
+    // kept when two plain checks agree with it, a decision procedure that is not νZ: nothing feasible lies
+    // beyond it and the value itself is taken. An infimum, a supremum and `oo` are withheld.
+    if (mixed && prepared.relevantRefusals.length === 0 && outcome.status === 'sat' && outcome.bound !== null) {
+      const b = outcome.bound;
+      const at = `(to_real ${symbol})`;
+      const term = `(to_real ${b.term})`;
+      let kept = b.infinite === 0 && b.epsilon === 0;
+      if (kept) {
+        for (const [claim, want] of [
+          [`(${sense === 'max' ? '>' : '<'} ${at} ${term})`, 'unsat'],
+          [`(= ${at} ${term})`, 'sat'],
+        ] as const) {
+          const answer = await opts.backend.check(`${script.text}${preamble}(assert ${claim})\n`, {
+            timeoutMs: opts.timeoutMs,
+            variables: symbols,
+            witness: false,
+          });
+          checks += 1;
+          if (answer.status !== want) {
+            kept = false;
+            break;
+          }
+        }
+      }
+      if (!kept) {
+        bounds.push({
+          sense,
+          outcome: 'inconclusive',
+          code: OPTIMALITY_NOT_ESTABLISHED_CODE,
+          detail:
+            `no ${sense} of \`${prepared.measure.qualifiedName}\` is claimed: the script mixes Integer and Real ` +
+            `features, a shape on which z3’s νZ was found to answer with a bound that a feasible point lies beyond ` +
+            `(an infimum or a supremum approached from outside the feasible set, or an optimum that is not the ` +
+            `tightest), so an answer of that kind is withheld unless two plain checks confirm an optimum. A limit of ` +
+            `this tool, not a defect in the model. ${census}`,
+          value: null,
+          siValue: null,
+          term: '',
+          witness: [],
+          checks: checks - before,
+        });
+        continue;
+      }
+    }
     bounds.push(boundRow(sense, outcome, prepared, census, checks - before));
   }
 
@@ -967,6 +1013,23 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
     vacuityCore,
     checks,
   };
+}
+
+/**
+ * Does the script declare both an Integer and a Real symbol?
+ *
+ * z3's νZ over such a script answered with a bound that a feasible point lies beyond: `min x = infimum 3/4` where
+ * `x = 0` is feasible (`x` Real in `[0, 1]`, `y` Integer, `y + x > 0.5`), `max x = supremum 0` where `x = 1` is,
+ * and, with no strict comparison anywhere, `max x = 1 + epsilon` for `x` in `[0, 2]` beside `y - 2x <= 1` and
+ * `y` in `[-4, 2]`, where 2 is attained. Scripts of one sort were right on every model of the probe battery.
+ */
+function mixesSorts(symbols: readonly string[], variables: readonly EncodeVariable[]): boolean {
+  const sorts = new Set<string>();
+  for (const name of symbols) {
+    const sort = variables.find((v) => v.qualifiedName === name)?.sort;
+    if (sort !== undefined) sorts.add(sort);
+  }
+  return sorts.has('Int') && sorts.has('Real');
 }
 
 /** One optimiser answer as a row, with the claim it is allowed to make. */
