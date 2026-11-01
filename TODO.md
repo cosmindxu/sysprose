@@ -1149,21 +1149,25 @@ true values. What follows is what that branch and the review of it left open; en
       F/F/F/F and CNF::c15 T/T/T/T and the fence in leavesOutOverride (map-to-model.ts) is narrowed
       to the diamond and the clash (D3 :> D1, D2 or D2, D2b). The bind.ts and serializer.ts parts
       need the fence-rename and fence-text owners at merge. [sweep 2026-10-31]
-- [ ] **Stop deciding a feature's own value against a bound end the tool cannot resolve through a
-      retyped redefinition (wrong answer, check/literal/numeric lanes).** Confirmed by a read-only
-      check of 2026-11-01 on 03e4e9f; the simple pairs are right (a `=` end against a `=` feature
-      gives the bind-conflict message and nothing decided, nested, reversed or flat; a `default` end
-      against a `=` feature keeps the feature's value, decision 14). The wrong answer is only where
-      the bound end is reached through a retyped redefinition that hides a nested `=` redefinition:
-      `part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }` with
-      `part w : H1 { part :>> p : P2; }` and `attribute k = 5.0; bind k = w.p.a`. The tool abstains
-      on the end (`u.w.p.a`, `u.w.p.q`, an unvalued k, a default k all read ?), yet decides
-      `u.k == 5.0` T and `== 13.0`, `== 16.0` F, byte-identical whether q is `=` or `default`; without
-      the retype it reports the bind conflict and decides nothing. The SMT lane answers ? (correct).
-      Fix or fence: make the seed-keeping check abstain on k when the bound end does not resolve (treat
-      the retyped end as unresolved), or resolve q's value through the retype. Probes:
-      scratchpad confirm/k1/m/ (Q, R, valk-eq-fwd, m6/dfl-L2-fwd). [fence-numeric4 review, confirmed
-      2026-11-01]
+- [ ] **Abstentions left in seeds against an unread bound end (rollup; sound, only weaker).** (1) A
+      feature that writes a value and is bound to an end under an unread scope reads ? even when
+      every candidate end gives way to it or is valueless (with the end under `order`, k = 5.0 beside
+      `q :>> a default = 16.0` and P2's `a default = 13.0` was right at base and is ? now; 648 + 438
+      such cells in 44 + 30 of 1100 generated models); reading them would mean enumerating the
+      candidate ends of the unread scope. (2) The fence covers every unread-scope kind (`order`,
+      `twins`, `redefinition`); on the twins model SMT went from `inconsistent-axioms` to
+      `not-evaluable`. (3) A usage-level `:>> k = 7.0` over a bound `k = 5.0` keeps its own binding
+      F row; `u.k == 5.0` / `== 7.0` now read ? with the unread-end sentence instead of the
+      binding-conflict sentence. (4) `bounds --measure u.k` (dotted path of a fenced feature) exits 2
+      with `internal error: VerifyOptionError: --measure names nothing in this model: u.k` and a
+      stack trace, where the qualified `RS::U::k` reads inconclusive [verification/not-evaluable]:
+      map the unread-path error to the not-evaluable row (scripts/sysprose.ts bounds, boundsReport,
+      src/api/verification.ts ~2700; probe fence-seed-scratch/review/b1.sysml). (5) Sweep coverage
+      for the next round: the generator reads the seed only from package-level constraints; add a
+      bare-name constraint inside the definition, the usage body and a subtype, and a nested part
+      with a same-named attribute (probes fence-seed-scratch/review/n1.sysml to n10.sysml).
+      Not generated: a unit on k, a bound end three or more redefinitions deep, a `calc` body read.
+      [fence-seed]
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
