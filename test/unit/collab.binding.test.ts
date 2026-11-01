@@ -13,6 +13,7 @@ import { Model } from '@core/index';
 import type { CreateElementOptions } from '@core/index';
 import { bindModelToDoc, ORIGIN_LOCAL } from '../../src/collab/model-doc';
 import { whereUsed } from '../../src/api/analytics';
+import { ModelApi } from '../../src/api/sdk';
 
 /** Canonical, order-independent snapshot of a model for equality assertions. */
 function snapshot(model: Model) {
@@ -672,14 +673,22 @@ describe('bindModelToDoc — CRDT convergence', () => {
     bindModelToDoc(m3, d3);
     wire(d1, d3);
     const rows = (m: Model) => whereUsed(m, 'D').references.map((r) => r.relatedElements.map((e) => e.id).join('+'));
-    for (const [peer, m] of [['the mover', m1], ['a peer present', m2], ['a peer that joined', m3]] as const) expect(rows(m), peer).toEqual(['u1', 'u2']);
+    // The SDK's traverse and an element's relationships (REST) list in the same order (`Model.edgesInTextOrder`).
+    const far = (m: Model) => new ModelApi(m).traverse('D', 'FeatureTyping', 'in').map((e) => e.id);
+    for (const [peer, m] of [['the mover', m1], ['a peer present', m2], ['a peer that joined', m3]] as const) {
+      expect(rows(m), peer).toEqual(['u1', 'u2']);
+      expect(far(m), peer).toEqual(['u1', 'u2']);
+    }
     // A is dragged out and back in: it now follows B and u3 in the text.
     m1.reparent('A', null);
     m1.reparent('A', 'X');
     m1.adoptSerialOrder();
     m1.create('FeatureTyping', { id: 't3', ownerId: 'u3', source: ['u3'], target: ['D'] });
     m1.adoptSerialOrder();
-    for (const [peer, m] of [['the mover', m1], ['a peer present', m2], ['a peer that joined', m3]] as const) expect(rows(m), peer).toEqual(['u2', 'u3', 'u1']);
+    for (const [peer, m] of [['the mover', m1], ['a peer present', m2], ['a peer that joined', m3]] as const) {
+      expect(rows(m), peer).toEqual(['u2', 'u3', 'u1']);
+      expect(far(m), peer).toEqual(['u2', 'u3', 'u1']);
+    }
   });
 
   /**

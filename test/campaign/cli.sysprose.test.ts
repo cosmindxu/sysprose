@@ -74,7 +74,7 @@ import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 // script (`scripts/lib/is-main.ts`, shared with `gen-cli-reference.ts`). That
 // guard is asserted here too — see the symlink case — because getting it wrong
 // does not fail loudly, it runs nothing and exits 0.
-import { main as sysproseMain } from '../../scripts/sysprose';
+import { main as sysproseMain, modelText } from '../../scripts/sysprose';
 import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -82,6 +82,7 @@ import { join, resolve } from 'node:path';
 // inventory is that it resolves the text this tool ships, and a hand-copied
 // package in a test resolves whatever the copy says.
 import { SYSPROSE_VERIFICATION_LIBRARY } from '@semantics/index';
+import { parseModel } from '@text/index';
 // The caveat that has to stand beside a printed core, imported rather than
 // retyped: a copy of it in a test asserts the copy.
 import { CORE_SUFFICIENCY_NOTE, environmentSentence } from '@api/index';
@@ -4398,13 +4399,27 @@ package P {
     }
   }, 300_000);
 
+  it('a write-back is refused for a model whose edit left a statement with no name for its end', () => {
+    // The guard in `modelText` is reached only by a model built by an edit (the SDK, a retarget), never by a file: here a
+    // `satisfy` retargeted to the second of two `d1` is written as the note, and writing that over the reader's source would
+    // drop the statement with nothing said (fence-order: the earlier-member case of the requirement relationships).
+    const model = parseModel('package T { requirement def R; part def D; part d1 : D; part d1 : D; satisfy R by d1; }').model;
+    const satisfy = model.all().find((e) => e.eClass === 'Satisfy')!;
+    const second = model.all().filter((e) => e.declaredName === 'd1')[1]!;
+    model.update(satisfy.id, { source: [second.id] });
+    expect(() => modelText(model)).toThrow(/cannot be written back as text without losing a statement: a satisfy whose end no name reaches/);
+    // The control: the first member of its name is written and nothing is refused.
+    model.update(satisfy.id, { source: [model.all().filter((e) => e.declaredName === 'd1')[0]!.id] });
+    expect(modelText(model)).toContain('satisfy R by d1;');
+  });
+
   it('a write-back keeps a statement whose end is an unnamed redefinition beside a named member', async () => {
     // Review of fence-editor2: the serializer wrote `// Not saved:` in the statement's place for this file, the text loaded
     // clean to a model without it, and `--out` over the input lost `bind w = p.load;` with nothing said (the write-back
     // refused it then). The unnamed `:>> load` is the first member of its name, which the next load reads as the end
     // (`fence-save-name`), so the statement is written. An end that is not the first of its name (or, for a
     // non-chain statement, not the only one) cannot come from a text, so no file reaches the refusal in `modelText`
-    // any more; the guard stays for a model built by an edit, and is not tested here.
+    // any more; the guard stays for a model built by an edit (tested next).
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     try {
       const model = join(dir, 'unnamed-end.sysml');

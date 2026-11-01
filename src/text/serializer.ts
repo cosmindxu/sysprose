@@ -137,6 +137,17 @@ const STATEMENT_WORD: Record<string, string> = {
   Membership: 'alias',
   TransitionUsage: 'transition',
   TransitionFeature: 'transition',
+  Satisfy: 'satisfy',
+  Verify: 'verify',
+  Refine: 'refine',
+  Trace: 'trace',
+  Derive: 'derive',
+  Subsetting: 'specialization',
+  Subclassification: 'specialization',
+  Specialization: 'specialization',
+  ReferenceSubsetting: 'specialization',
+  Redefinition: 'redefinition',
+  FeatureTyping: 'typing',
 };
 
 /** What the note written in a statement's place starts with ({@link serializeElement}): a writer that cannot keep the text looks for it. */
@@ -151,20 +162,36 @@ export const NOT_SAVED_MARK = '// Not saved: ';
  * screen, which the load health reads (`MeasuredText.rewritten`). Nothing else changes.
  */
 export function serializeElement(model: Model, id: ElementId, indent = 0): string {
+  const outer = leftOut;
+  const mine = new Set<string>();
+  leftOut = mine;
   try {
-    return serializeElementOf(model, id, indent);
+    const text = serializeElementOf(model, id, indent);
+    // A specialization written on the declaration's own line (`attribute w :> q.v`) that no name reaches is left out of the
+    // line, and the note stands above it: the declaration and its body are kept.
+    return mine.size === 0 ? text : [...mine].map((note) => `${INDENT.repeat(indent)}${note}`).join('\n') + `\n${text}`;
   } catch (err) {
     if (!(err instanceof NoNameReachesEnd) || err.elementId !== id) throw err;
-    const word = STATEMENT_WORD[model.require(id).eClass] ?? 'statement';
-    // One line: a name holding a line break must not end the comment and leave the rest to be read as code.
-    const ref = err.ref.replace(/«([^»]*)»/g, '(unnamed $1)').replace(/\s+/g, ' ');
-    return (
-      `${INDENT.repeat(indent)}${NOT_SAVED_MARK}a ${word} whose end no name reaches (${ref}). ` +
-      (err.earlier
-        ? 'Rename the earlier member of its name, or move this one before it, to save it.'
-        : 'Name the unnamed redefinition on its path to save it.')
-    );
+    return `${INDENT.repeat(indent)}${notSavedNote(model.require(id).eClass, err)}`;
+  } finally {
+    leftOut = outer;
   }
+}
+
+/** The notes of the inline specializations the declaration being written leaves out ({@link serializeElement}). */
+let leftOut: Set<string> | undefined;
+
+/** The comment Save writes in the place of a statement, or above a declaration, whose end no name reaches. */
+function notSavedNote(eClass: string, err: NoNameReachesEnd): string {
+  const word = STATEMENT_WORD[eClass] ?? 'statement';
+  // One line: a name holding a line break must not end the comment and leave the rest to be read as code.
+  const ref = err.ref.replace(/«([^»]*)»/g, '(unnamed $1)').replace(/\s+/g, ' ');
+  return (
+    `${NOT_SAVED_MARK}a ${word} whose end no name reaches (${ref}). ` +
+    (err.earlier
+      ? 'Rename the earlier member of its name, or move this one before it, to save it.'
+      : 'Name the unnamed redefinition on its path to save it.')
+  );
 }
 
 function serializeElementOf(model: Model, id: ElementId, indent: number): string {
@@ -569,10 +596,22 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
     // The re-parse of an inlined `:>>` uses the redefinition rule and excludes
     // the redefining feature; every other operator uses full resolution with
     // the same exclusion the mapper applies.
-    const ref =
-      rel.eClass === 'Redefinition'
-        ? redefinitionRef(model, targetId, el.ownerId, el.id)
-        : refTo(model, targetId, el.ownerId, specResolver(model, rel.eClass, el.id));
+    let ref: string;
+    try {
+      if (rel.eClass === 'Redefinition') {
+        const form = redefinitionForm(model, targetId, el.ownerId, el.id);
+        ref = form.ref;
+        // A path to a feature behind an earlier member of its name reopens on that member.
+        if (form.via !== undefined && leftOut !== undefined) assertFirstOfName(model, form.via, ref, 'name');
+      } else {
+        ref = refTo(model, targetId, el.ownerId, specResolver(model, rel.eClass, el.id), leftOut === undefined ? undefined : 'name');
+      }
+    } catch (err) {
+      // The target is NAMED, but an earlier member of its owner goes by the name: the next load reads the name as that one.
+      if (!(err instanceof EarlierMemberOfName) || leftOut === undefined) throw err;
+      leftOut.add(notSavedNote(rel.eClass, new NoNameReachesEnd(rel.id, err.ref, true)));
+      continue;
+    }
     const op = operatorFor(rel.eClass);
     // Do not restate a typing the display string already expresses. After the
     // library binder runs, an attribute carries BOTH `attrs.type = 'Real'` and a
@@ -1049,7 +1088,17 @@ function connectionLine(model: Model, el: ElementRecord, indent: number): string
 /** All endpoint texts on one side (resolved paths, or a single textual-ref fallback). */
 function endpointList(model: Model, el: ElementRecord, which: 'source' | 'target'): string[] {
   const ids = el[which] ?? [];
-  if (ids.length > 0) return ids.map((id) => refTo(model, id, el.ownerId));
+  if (ids.length > 0) {
+    return ids.map((id) => {
+      try {
+        // The next load reads the ends of a requirement relationship by `resolveFullName`, as an allocation's.
+        return refTo(model, id, el.ownerId, undefined, 'name');
+      } catch (err) {
+        if (!(err instanceof EarlierMemberOfName)) throw err;
+        throw new NoNameReachesEnd(el.id, err.ref, true);
+      }
+    });
+  }
   const refAttr = which === 'source' ? el.attrs.sourceRef : el.attrs.targetRef;
   return typeof refAttr === 'string' && refAttr ? [refAttr] : [];
 }
@@ -1452,7 +1501,7 @@ function redefinitionForm(
   targetId: ElementId,
   scopeOwnerId: ElementId | null,
   sourceId: ElementId,
-): { ref: string; lands?: ElementId } {
+): { ref: string; lands?: ElementId; via?: ElementId } {
   const resolve = specResolver(model, 'Redefinition', sourceId);
   const target = model.get(targetId);
   if (!target) return { ref: refTo(model, targetId, scopeOwnerId, resolve) };
@@ -1474,9 +1523,13 @@ function redefinitionForm(
       const answer = resolve(simple, scopeOwnerId);
       if (answer && answer.id !== sourceId && inLineOf(model, answer, base)) return { ref: simple, lands: answer.id };
     }
-    if (bases.length > 0) return { ref: refTo(model, bases[bases.length - 1]!.id, scopeOwnerId, resolve) };
+    if (bases.length > 0) {
+      const via = bases[bases.length - 1]!.id;
+      return { ref: refTo(model, via, scopeOwnerId, resolve), via };
+    }
   }
-  return { ref: refTo(model, targetId, scopeOwnerId, resolve) };
+  // Spelled by a path to `via`, not by a name that was found to land on a feature.
+  return { ref: refTo(model, targetId, scopeOwnerId, resolve), via: targetId };
 }
 
 /** The named features `target` redefines, through any number of redefinitions, the farthest first. */

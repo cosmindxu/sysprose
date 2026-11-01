@@ -3043,7 +3043,7 @@ async function reportFaultTree(
  * this is the terminal's copy of it, and it is the reason `evidence-attach`
  * can write its output back over the file it read.
  */
-function modelText(model: Model): string {
+export function modelText(model: Model): string {
   const text = model
     .rootIds()
     .filter((id) => model.get(id)?.attrs.isLibrary !== true)

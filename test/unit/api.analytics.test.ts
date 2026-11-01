@@ -14,6 +14,7 @@ import {
   orphanReport,
   requirementSatisfaction,
   traceabilityMatrix,
+  relationshipsOfElement,
   whereUsed,
   connectivityReport,
   constraintReport,
@@ -181,6 +182,38 @@ describe('analytics — traceability & where-used', () => {
       expect(mine(rows(term, real2.id)), 'a terminal').toEqual(['X::u2::r', 'Y::q']);
       expect(rows(page, real.id).slice(0, 2), 'before every library user').toEqual(['X::u2::r', 'Y::q']);
       expect(rows(page, real.id)).toEqual(rows(term, real2.id));
+    });
+  });
+
+  // The edgesOf family's other list consumers (TODO.md, the load bind order): the SDK's traverse, an element's relationships
+  // (REST) and the impact graph's neighbours go by `Model.edgesInTextOrder`, so the page, a terminal over the saved text
+  // and a model rebuilt from its JSON list the far ends in one order, whichever order the model holds the typings in.
+  describe('lists the far ends of an element\'s edges in the order of the text', () => {
+    const load = async (text: string): Promise<Model> => (await loadModelText(text, { fileName: 'm.sysml' })).model!;
+    const named = (m: Model, n: string) => m.all().find((e) => e.declaredName === n && e.attrs.isLibrary !== true)!;
+    const terminal = async (m: Model) => load(serializeUserModelSignals(m).text);
+    const SRC = 'package X { part def D; part def E :> D; package A { part u1; } package B { part u2 : D; } part u3 : D; }';
+    const surfaces = async (): Promise<Array<[string, Model]>> => {
+      const page = await load(SRC);
+      // Typed in the app after the typing the model had, and a specialisation added last.
+      page.create('FeatureTyping', { ownerId: named(page, 'u1').id, source: [named(page, 'u1').id], target: [named(page, 'D').id] });
+      page.adoptSerialOrder();
+      return [['the page', page], ['a terminal', await terminal(page)], ['a model rebuilt from its JSON', Model.fromJSON(page.toJSON())]];
+    };
+
+    it('traverse over typings gives the users of a definition in the order of the text', async () => {
+      for (const [label, m] of await surfaces()) {
+        expect(new ModelApi(m).traverse(named(m, 'D').id, 'FeatureTyping', 'in').map((e) => e.declaredName), label).toEqual(['u1', 'u2', 'u3']);
+      }
+    });
+
+    it('an element\'s incoming relationships (REST) and its impact neighbours come in the order of the text', async () => {
+      for (const [label, m] of await surfaces()) {
+        const D = named(m, 'D').id;
+        const owners = (ids: readonly { ownerId: string | null }[]) => ids.map((e) => m.get(e.ownerId!)?.declaredName);
+        expect(owners(relationshipsOfElement(m, D).incoming), label).toEqual(['E', 'u1', 'u2', 'u3']);
+        expect(owners(m.edgesInTextOrder(m.edgesOf(D))), label).toEqual(['E', 'u1', 'u2', 'u3']);
+      }
     });
   });
 

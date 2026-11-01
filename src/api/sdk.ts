@@ -236,6 +236,7 @@ export class ModelApi {
    *  - `both` — union of the two.
    * Uses endpoint-bearing elements (KerML relationships AND edge-like usages such
    * as ConnectionUsage/Flow/Succession/Transition), matching the core edge model.
+   * The far ends come in text order (Model.edgesInTextOrder), as a terminal lists them.
    */
   traverse(id: ElementId, relKind: string, dir: TraverseDir = 'out'): ElementRecord[] {
     const out = new Map<ElementId, ElementRecord>();
@@ -247,12 +248,12 @@ export class ModelApi {
       }
     };
     if (dir === 'out' || dir === 'both') {
-      for (const e of this.model.edgesFrom(id)) {
+      for (const e of this.model.edgesInTextOrder(this.model.edgesFrom(id))) {
         if (e.eClass === relKind) collect(e.target);
       }
     }
     if (dir === 'in' || dir === 'both') {
-      for (const e of this.model.edgesTo(id)) {
+      for (const e of this.model.edgesInTextOrder(this.model.edgesTo(id))) {
         if (e.eClass === relKind) collect(e.source);
       }
     }

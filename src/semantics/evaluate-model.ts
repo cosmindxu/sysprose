@@ -4888,7 +4888,8 @@ function specialisersOf(model: Model, measure: ElementRecord): Specialisers {
   const queue: ElementId[] = [measure.id];
   while (queue.length > 0) {
     const general = queue.shift()!;
-    for (const r of model.relationshipsTo(general)) {
+    // In the order of the text, as a terminal lists them: a subsetting made in the app is held after every one the model had.
+    for (const r of model.edgesInTextOrder(model.relationshipsTo(general))) {
       if (r.eClass !== 'Subsetting' && r.eClass !== 'Redefinition') continue;
       for (const s of r.source ?? []) {
         const specific = model.get(s);

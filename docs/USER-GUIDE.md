@@ -612,7 +612,12 @@ than another peer does. `where-used` does not: it lists the references to an
 element in the order of the text (a typing, specialisation or redefinition by where
 its feature stands, `:>` before typings before redefinitions of one feature), on
 the page, in a terminal over the saved file and on every peer, whatever order
-the model lists them in; the impact closure, which walks it, follows.
+the model lists them in; the impact closure, which walks it, follows. So do the SDK's
+`traverse`, an element's relationships (the REST `relationships` of an element), the impact
+graph's neighbours and the specialisers a finding names (`what specialises it (LA::areaFraction,
+PA::areaFraction)`). What stays: a typing beside a subsetting or redefinition of one
+element, made in the app, is listed in the order they were made in the Properties panel's
+Types and Specializations lists; a terminal lists the subsetting before the typing and the typing before the redefinition.
 
 ### The Text tab, in both directions
 
@@ -1283,7 +1288,10 @@ one that goes by the name, an unnamed redefinition of it too; for the others one
 the same note (`… Rename the earlier member of its name, or move this one before it, to save it.`):
 the name would reopen on the earlier one (the first end of a statement too: `allocate y to c` with a second `c` beside the
 first). A rename onto a taken name raises `validation/duplicate-name`; a named member added after an unnamed redefinition
-of its name gets only this note. An implicit copy a chain made is not an earlier member.
+of its name gets only this note. An implicit copy a chain made is not an earlier member. The same holds for the ends of
+`satisfy`, `verify`, `refine`, `trace` and `derive` (`// Not saved: a satisfy whose end no name reaches (T::d1) …`), and for a
+specialization written on a declaration's own line (`part x : D`, `attribute w :> q.v`, `:>> a.v` or `:>> P::v` (a redefinition spelled by a path), `::> q.v`): there the note
+stands on the line above the declaration, which keeps its body, and the file reopens without that specialization. A `:>> v` by a simple name that the load lands elsewhere is moved on the page as before.
 
 Four more cases are not followed, and in each the page can read what the saved file does not:
 
@@ -4690,7 +4698,7 @@ for the elements it adds; each `reparent` lists it at its own call, inside a
 
 **Source of truth:** `src/ui/store.ts:3608-3790` (`runValidation`,
 `solveParametric`: the four buttons), `2299-2491` (`afterSdkEdit`: an SDK edit),
-`src/api/analytics.ts:2465-2472` (`feasible`), `src/ui/App.tsx:46-94`
+`src/api/analytics.ts:2411-2418` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -5349,7 +5357,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 (`UNDO_LIMIT`: undo is bounded), `1781-1811` (`RECOMPUTE_DEBOUNCE_MS`: the
 derived surfaces lag), `5516-5639` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2465-2472` (`feasible`), `src/ui/commands.ts:207-319`.
+`src/api/analytics.ts:2411-2418` (`feasible`), `src/ui/commands.ts:207-319`.
 
 ---
 
