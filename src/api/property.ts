@@ -1347,8 +1347,10 @@ async function nonTriviality(
   }
   const solver = { version: z3.version, detail: `z3 ${z3.version} (WASM), seed ${z3.seed}` };
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  // Gate 4 asserts no axiom, every variable is free, and it asserts the clause alone: no `side:` guard of a
-  // division goes in (the class says so). Every script sent is recorded; nothing here reads the record back.
+  // Gate 4 asserts no axiom and every variable is free. It asserts the clause and the `side:` divisor guard
+  // the clause's division carries, as verify, consistency, refine and bounds do: a clause no assignment with
+  // a nonzero divisor satisfies is as useless as any other unsatisfiable one. Every script sent is recorded;
+  // nothing here reads the record back.
   const rollup = new ClassRollup('property-gate-4');
   const sorts = new Map(variables.map((v) => [v.qualifiedName, v.sort] as const));
   // One class for the clause, shared by both scripts (it is the same row).
@@ -1368,7 +1370,10 @@ async function nonTriviality(
   const script = (term: string): string => {
     const sent = encodeScript({
       variables,
-      assertions: [{ kind: 'goal', name: label, term }],
+      assertions: [
+        { kind: 'goal', name: label, term },
+        ...encoded.sideConditions.map((c) => ({ kind: 'side' as const, name: label, term: c.term })),
+      ],
       nonlinear: encoded.nonlinear,
       syntacticNonlinear: encoded.syntacticNonlinear,
       cores: false,

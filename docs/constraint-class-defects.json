@@ -86,25 +86,13 @@
       "note": "Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer."
     },
     {
-      "id": "D-gate4-guard",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "nra-div"
-      ],
-      "queries": [
-        "property-gate-4"
-      ],
-      "kind": "wrong-verdict",
-      "note": "Gate 4 of property-check builds its script from the goal term only (api/property.ts), so the divisor guard every other caller asserts is missing: x / y > 1.0 and y == 0.0 is sat without the guard and unsat with it. Probed at the script level only; unverified end to end. Applies to results of property-gate-4 only."
-    },
-    {
       "id": "D-m8-detail",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
       "classes": [
         "nra-div"
       ],
       "kind": "wrong-statement",
-      "note": "Division in the goal surfaces as vacuous, and the detail names the premises where the unsat core names the goal’s own side guard."
+      "note": "Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard."
     },
     {
       "id": "D-bound-detail",

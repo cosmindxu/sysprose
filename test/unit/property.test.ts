@@ -278,7 +278,7 @@ describe('propertyCheck — gate 0, then the four judging gates', () => {
     expect(report.limits.join(' ')).toContain('syntactic');
   }, 60_000);
 
-  it('states what gate 4 sent to z3 beside the report, not in it: every variable free, no axioms, no division guard', async () => {
+  it('states what gate 4 sent to z3 beside the report, not in it: every variable free, no axioms', async () => {
     const { model } = await uav();
     const accepted = await propertyCheck(model, idOf(model, 'MassRequirement'), 'uav.mtow <= 25.0 [kg]');
     const plain = classesOf(accepted);
@@ -293,7 +293,7 @@ describe('propertyCheck — gate 0, then the four judging gates', () => {
     expect(trivial.refusedAt).toBe(4);
     expect(classesOf(trivial)).toMatchObject({ query: 'property-gate-4', basis: 'solver', script: { shape: 'lra' } });
 
-    // a division is nra-div, and `free`: the divisor is a free symbol, and the d != 0 guard is not asserted at gate 4
+    // a division is nra-div, and `free`: the divisor is a free symbol (the d != 0 guard is asserted, as in every other caller)
     const { model: m } = await fromText(`package D4 {
     part def P { attribute f : ScalarValues::Real = 6.0; attribute g : ScalarValues::Real = 2.0; }
     part p : P;
@@ -305,6 +305,15 @@ describe('propertyCheck — gate 0, then the four judging gates', () => {
     expect(st.script).toEqual({ shape: 'nra-div', search: 'free' });
     expect(st.logic).toBe('QF_NRA');
     expect(st.shape).toEqual([{ id: 'nra-div', search: 'free', rows: 1 }]);
+
+    // gate 4 asserts the divisor guard: `p.f / p.g > 1.0 and p.g == 0.0` has no assignment with a nonzero divisor, so
+    // it is unsatisfiable on its own and refused (unguarded, z3 took a divisor of zero and accepted it)
+    const zero = await propertyCheck(m, idOf(m, 'R'), 'p.f / p.g > 1.0 and p.g == 0.0');
+    expect(zero.refusedAt).toBe(4);
+    expect(zero.outcome).toBe('refused');
+    expect(zero.gates.find((g) => g.gate === 4)?.detail).toContain('unsatisfiable on its own');
+    // …and a clause that holds with a nonzero divisor stays accepted
+    expect((await propertyCheck(m, idOf(m, 'R'), 'p.f / p.g <= 5.0 and p.g == 2.0')).refusedAt).toBeNull();
   }, 60_000);
 
   it('sends nothing without a solver, and so has no statement to give', async () => {

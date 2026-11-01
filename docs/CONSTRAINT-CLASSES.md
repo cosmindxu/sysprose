@@ -143,13 +143,11 @@ What z3 is asked: the `set-logic` the relation’s own bytes need. A relation th
 - **Logic.** `QF_NRA`.
 - **Level of `nra-div/pinned`.** `tested` (first unmet: 20 four-surface rows agree, have 0).
 - **Limits.**
-  - The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0. Observed once on a hand-written probe model (m7); no test here reruns it yet.
-  - Division in the goal surfaces as `vacuous`, never as `proved`. Observed once on a hand-written probe model (m8); no test here reruns it yet.
-  - Gate 4 of `property-check` does not assert the guard.
+  - The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0 when the divisor is pinned to zero. Pinned by `test/integration/smt-z3.integration.test.ts`: “does not call a division by a zero value a proof, and says so in the class (CC-46)”.
+  - Division in the goal surfaces as `vacuous`, never as `proved`, when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`. Pinned by `test/integration/smt-z3.integration.test.ts`: “does not call a division by a zero value a proof, and says so in the class (CC-46)”.
   - An algebraic witness has no reading, which gives `witness-unconfirmed`; `bounds` gives `bound-without-optimality`.
 - **Open defects.**
-  - `D-gate4-guard` (wrong-verdict, for the `property-gate-4` query only): Gate 4 of property-check builds its script from the goal term only (api/property.ts), so the divisor guard every other caller asserts is missing: x / y > 1.0 and y == 0.0 is sat without the guard and unsat with it. Probed at the script level only; unverified end to end. Applies to results of property-gate-4 only.
-  - `D-m8-detail` (wrong-statement): Division in the goal surfaces as vacuous, and the detail names the premises where the unsat core names the goal’s own side guard.
+  - `D-m8-detail` (wrong-statement): Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard.
 - **Tests.**
   - `test/unit/semantics.smt-encode.test.ts`: “adds `≠ 0` and names the divisor”
 
@@ -172,7 +170,7 @@ An extra reading that rides on a shape. A modifier only ever lowers the weakest 
 - **Encodes.** A kept axiom or premise was refused and the proof stands on the rest.
 - **Level of `partial-context`.** `experimental` (first unmet: a decided golden row, have 0).
 - **Limits.**
-  - `proved` is sound (dropping a hypothesis strengthens the entailment); `vacuous` and `axioms-inconsistent` can be decided on the numeric surface alone. Observed once on a hand-written probe model (m4); no test here reruns it yet.
+  - `proved` is sound (dropping a hypothesis strengthens the entailment); `vacuous` and `axioms-inconsistent` can be decided on the numeric surface alone. Pinned by `test/integration/smt-z3.integration.test.ts`: “reads the basis off the trace and not off the verdict word (CC-42b)”.
   - `--free` makes it `not-evaluable`.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “leaves fences out of the weakest and lists them, with partial-context”

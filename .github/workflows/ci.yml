@@ -65,10 +65,13 @@ jobs:
       - name: Constraint-class facts hold (recount, no solver)
         run: npm run census:classes -- --check --strict
 
+      # The recount above may fail on a hand-raised fact; the E2E result is still wanted beside it.
       - name: Install Playwright Chromium
+        if: ${{ !cancelled() }}
         run: npx playwright install --with-deps chromium
 
       - name: End-to-end (Playwright)
+        if: ${{ !cancelled() }}
         run: npx playwright test
 
       - name: Upload E2E report on failure

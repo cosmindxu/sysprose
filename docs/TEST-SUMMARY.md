@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 157
-- **Tests:** 5204 total — 5204 passed, 0 failed, 0 skipped
+- **Files:** 159
+- **Tests:** 5308 total — 5308 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -13,7 +13,7 @@
 | test/campaign/cli.sysprose.test.ts | 122 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
-| test/campaign/verification.test.ts | 185 | 0 | 0 |
+| test/campaign/verification.test.ts | 186 | 0 | 0 |
 | test/conformance/api-contract.test.ts | 22 | 0 | 0 |
 | test/conformance/corpus.test.ts | 16 | 0 | 0 |
 | test/conformance/oslc-conformance.test.ts | 8 | 0 | 0 |
@@ -21,6 +21,7 @@
 | test/integration/analysis.integration.test.ts | 5 | 0 | 0 |
 | test/integration/api-library-counts.test.ts | 7 | 0 | 0 |
 | test/integration/complete-semantics.integration.test.ts | 9 | 0 | 0 |
+| test/integration/constraint-class.census.test.ts | 6 | 0 | 0 |
 | test/integration/execution.integration.test.ts | 6 | 0 | 0 |
 | test/integration/full-library.load.test.ts | 8 | 0 | 0 |
 | test/integration/full-library.resolve.test.ts | 16 | 0 | 0 |
@@ -35,7 +36,7 @@
 | test/integration/pipeline.validate.test.ts | 6 | 0 | 0 |
 | test/integration/semantics-exec.integration.test.ts | 9 | 0 | 0 |
 | test/integration/semantics.pipeline.test.ts | 9 | 0 | 0 |
-| test/integration/smt-z3.integration.test.ts | 33 | 0 | 0 |
+| test/integration/smt-z3.integration.test.ts | 42 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
 | test/integration/verification.differential.test.ts | 223 | 0 | 0 |
@@ -84,7 +85,7 @@
 | test/unit/diagram.svg-export.test.ts | 22 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.symbols2.test.ts | 14 | 0 | 0 |
-| test/unit/docs-counts.test.ts | 117 | 0 | 0 |
+| test/unit/docs-counts.test.ts | 120 | 0 | 0 |
 | test/unit/drive.test.ts | 179 | 0 | 0 |
 | test/unit/duplicate.test.ts | 6 | 0 | 0 |
 | test/unit/fmi-cosim.test.ts | 25 | 0 | 0 |
@@ -99,7 +100,7 @@
 | test/unit/paste.test.ts | 7 | 0 | 0 |
 | test/unit/persistence.io.test.ts | 32 | 0 | 0 |
 | test/unit/planning.test.ts | 25 | 0 | 0 |
-| test/unit/property.test.ts | 26 | 0 | 0 |
+| test/unit/property.test.ts | 28 | 0 | 0 |
 | test/unit/readme.test.ts | 15 | 0 | 0 |
 | test/unit/reconnect.test.ts | 9 | 0 | 0 |
 | test/unit/regroup-apply.test.ts | 28 | 0 | 0 |
@@ -110,6 +111,7 @@
 | test/unit/semantics.bind.test.ts | 29 | 0 | 0 |
 | test/unit/semantics.conformance.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
+| test/unit/semantics.constraint-class.test.ts | 82 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
 | test/unit/semantics.evaluate-model.test.ts | 277 | 0 | 0 |
@@ -134,7 +136,7 @@
 | test/unit/semantics.relations.test.ts | 17 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
-| test/unit/semantics.smt-encode.test.ts | 104 | 0 | 0 |
+| test/unit/semantics.smt-encode.test.ts | 105 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 133 | 0 | 0 |
 | test/unit/semantics.solver.test.ts | 77 | 0 | 0 |

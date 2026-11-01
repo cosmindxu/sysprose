@@ -913,9 +913,8 @@ describe('the rubric is a pure function of the facts and the defects', () => {
     expect(weakestOf(['units'], { facts: g })).toMatchObject({ level: 'tested', capped: ['open wrong-statement: D-u'] });
   });
 
-  it('holds the plan’s decided caps on the committed facts: asserted-fact at experimental, nra-div at gate 4 at experimental', () => {
+  it('holds the plan’s decided caps on the committed facts: asserted-fact at experimental', () => {
     expect(levelRank(levelOf('asserted-fact', { facts: CLASS_FACTS }))).toBeLessThanOrEqual(levelRank('experimental'));
-    expect(levelOf('nra-div/pinned', { facts: CLASS_FACTS, query: 'property-gate-4' })).toBe('experimental');
     for (const c of ['bind-equality', 'per-instance', 'inherited-context', 'text-as-real']) {
       expect(levelRank(levelOf(c, { facts: CLASS_FACTS })), c).toBeLessThanOrEqual(levelRank('tested'));
     }
@@ -930,6 +929,8 @@ describe('every pointer of the register resolves', () => {
     for (const d of Object.values(CONSTRAINT_CLASSES)) {
       for (const t of d.tests) expect(read(t.file), `${d.id}: ${t.find}`).toContain(t.find);
       if (d.family !== 'fence') expect(d.tests.length, `${d.id} has no test`).toBeGreaterThan(0);
+      // a limit that cites a probe model names the test that reruns it
+      for (const l of d.limits) if (l.pin) expect(read(l.pin.file), `${d.id}: ${l.pin.find}`).toContain(l.pin.find);
     }
   });
 
@@ -999,7 +1000,8 @@ describe('the defect sidecar names real entries and the register reads it', () =
   it('attributes the open wrong answers the plan names to the classes the plan names', () => {
     const by = (id: string) => sidecar.defects.find((d) => d.id === id)!;
     expect(by('D-assert-not')).toMatchObject({ classes: ['asserted-fact'], kind: 'wrong-verdict' });
-    expect(by('D-gate4-guard')).toMatchObject({ classes: ['nra-div'], kind: 'wrong-verdict', queries: ['property-gate-4'] });
+    // gate 4 asserts the divisor guard since the review of classes-2: the defect that capped nra-div there is closed
+    expect(sidecar.defects.some((d) => d.id === 'D-gate4-guard')).toBe(false);
     expect(by('D-inconsistent-axioms')).toMatchObject({ classes: ['bind-equality', 'per-instance'], kind: 'wrong-statement' });
     expect(by('D-subsetting-contradiction')).toMatchObject({ classes: ['inherited-context', 'per-instance'], kind: 'wrong-statement' });
     expect(by('D-bound-detail')).toMatchObject({ classes: ['text-as-real'], kind: 'wrong-statement' });

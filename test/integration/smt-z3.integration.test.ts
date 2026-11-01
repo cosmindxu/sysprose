@@ -917,6 +917,10 @@ describe('a judgement carries the constraint class of what it stood on', () => {
     const g1 = m8.get('M8::R::g1')!.judgement;
     expect([g1.outcome, g1.classes.goal.shape, g1.classes.script?.shape, g1.classes.basis]).toEqual(['vacuous', 'nra-div', 'nra-div', 'solver']);
     expect(m8.get('M8::R::g2')!.judgement.outcome).toBe('proved');
+    // …but a division by a pinned NONZERO value is a proof, in QF_NRA: the card says "when the divisor is pinned to zero".
+    const nonzero = (await classed(z3, M8.replace('package M8', 'package M8b').replace('k : ScalarValues::Real = 0.0', 'k : ScalarValues::Real = 2.0'))).by;
+    const ok = nonzero.get('M8b::R::g1')!.judgement;
+    expect([ok.outcome, ok.classes.goal.shape, ok.classes.script?.shape, ok.classes.logic]).toEqual(['proved', 'nra-div', 'nra-div', 'QF_NRA']);
   });
 
   withZ3('moves no verdict when every level is replaced, or when the classifier throws (CC-20)', async (z3) => {

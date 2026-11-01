@@ -513,21 +513,9 @@ export const CLASS_FACTS: ClassFacts = {
       "classes": [
         "nra-div"
       ],
-      "id": "D-gate4-guard",
-      "kind": "wrong-verdict",
-      "note": "Gate 4 of property-check builds its script from the goal term only (api/property.ts), so the divisor guard every other caller asserts is missing: x / y > 1.0 and y == 0.0 is sat without the guard and unsat with it. Probed at the script level only; unverified end to end. Applies to results of property-gate-4 only.",
-      "queries": [
-        "property-gate-4"
-      ],
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
-        "nra-div"
-      ],
       "id": "D-m8-detail",
       "kind": "wrong-statement",
-      "note": "Division in the goal surfaces as vacuous, and the detail names the premises where the unsat core names the goal’s own side guard.",
+      "note": "Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard.",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
     },
     {
@@ -568,7 +556,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "fececa560e4baf116fd87206119d304b6c2f83867379934cf6ea597e30cae3a8",
+    "defects": "3ef3924b47868583560237e6ce7d1a2bd50b19b23f17eeddff10058e46571c1b",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
     "probes": "9d45cc50615573c2007f9c938be61efbc5c58c1c524ff43b055eb7c2a50756bd"
   },

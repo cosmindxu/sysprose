@@ -174,10 +174,10 @@ export interface TestPin {
   layer?: Layer;
 }
 
-/** One limit of a class. A `pin` names a probe that exercises the sentence. */
+/** One limit of a class. A `pin` names the test that reruns the sentence (resolved by its exact title). */
 export interface Limit {
   text: string;
-  pin?: string;
+  pin?: TestPin;
 }
 
 export interface ClassDef {
@@ -190,8 +190,6 @@ export interface ClassDef {
   /** The `SmtOutcome` words the class can produce. */
   verdicts: readonly SmtOutcome[];
   limits: readonly Limit[];
-  /** Open defects attributed to the class (the sidecar, a later step, carries their kinds). */
-  defects: readonly string[];
   pointers: readonly Pointer[];
   /** Probe ids that pin a sentence of this card. */
   probes: readonly string[];
@@ -225,6 +223,12 @@ const API_VERIFICATION_TEST = 'test/unit/api.verification.test.ts';
 const CLASS_TEST = 'test/unit/semantics.constraint-class.test.ts';
 const EVALUATE_MODEL_TEST = 'test/unit/semantics.evaluate-model.test.ts';
 const at = (file: string, find: string, layer?: Layer): TestPin => (layer ? { file, find, layer } : { file, find });
+
+const SMT_Z3_TEST = 'test/integration/smt-z3.integration.test.ts';
+/** The tests that rerun the hand-written probe models the cards cite (m1, m4, m6, m7, m8). */
+const PIN_M1 = at(SMT_Z3_TEST, 'reads the script cell off the script, not off the rows: no row is `nira` and the proof is (CC-45)');
+const PIN_M4_M6 = at(SMT_Z3_TEST, 'reads the basis off the trace and not off the verdict word (CC-42b)');
+const PIN_M7_M8 = at(SMT_Z3_TEST, 'does not call a division by a zero value a proof, and says so in the class (CC-46)');
 
 /**
  * The tests that exercise each cell (the `encoderTests` fact counts the ones that still resolve), and for a
@@ -286,7 +290,7 @@ const TESTS: Partial<Record<ClassId, readonly TestPin[]>> = {
 };
 
 function def(id: ClassId, family: Family, d: Partial<ClassDef> & { encodes: string }): ClassDef {
-  return { id, family, logic: null, verdicts: ALL_WORDS, limits: [], defects: [], pointers: [], probes: [], tests: TESTS[id] ?? [], layers: [], ...d };
+  return { id, family, logic: null, verdicts: ALL_WORDS, limits: [], pointers: [], probes: [], tests: TESTS[id] ?? [], layers: [], ...d };
 }
 
 const FENCE_CARDS: Record<RefusalReason, { encodes: string; layers: readonly Layer[]; limits?: Limit[]; pointers?: Pointer[] }> = {
@@ -390,21 +394,16 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
       encodes: '`(/ a b)` with a symbol-carrying divisor, plus the guard `(distinct b 0.0)` asserted as `side:`',
       logic: 'QF_NRA',
       limits: [
-        { text: 'The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0.', pin: 'm7' },
-        { text: 'Division in the goal surfaces as `vacuous`, never as `proved`.', pin: 'm8' },
-        { text: 'Gate 4 of `property-check` does not assert the guard.' },
+        { text: 'The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0 when the divisor is pinned to zero.', pin: PIN_M7_M8 },
+        { text: 'Division in the goal surfaces as `vacuous`, never as `proved`, when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`.', pin: PIN_M7_M8 },
         { text: nlNote },
-      ],
-      defects: [
-        'the vacuous detail names the premises where the unsat core names the goal’s side guard (wrong-statement)',
-        'gate 4 omits the divisor guard (wrong-verdict for query property-gate-4, unverified end to end)',
       ],
     }),
     nira: def('nira', 'shape', {
       encodes: 'any nonlinear shape with an Int read, in one row or only in the script as a whole',
       logic: 'QF_NIRA',
       limits: [
-        { text: 'The script can be stronger than every row: goal QF_NRA, axioms QF_LIRA, script QF_NIRA, `proved`.', pin: 'm1' },
+        { text: 'The script can be stronger than every row: goal QF_NRA, axioms QF_LIRA, script QF_NIRA, `proved`.', pin: PIN_M1 },
         { text: 'undecidable in general; z3 may answer `unknown`' },
       ],
     }),
@@ -428,15 +427,14 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
       encodes: 'a feature whose declared type names String, read as a Real; its value axiom is refused, so nothing pins it',
       verdicts: ['refuted', 'witness-unconfirmed', 'not-evaluable'],
       limits: [
-        { text: '`refuted` only through the numeric surface; `s.a == s.b` ("bus", "car") is `refuted`, basis `numeric-surface`', pin: 'm6' },
+        { text: '`refuted` only through the numeric surface; `s.a == s.b` ("bus", "car") is `refuted`, basis `numeric-surface`', pin: PIN_M4_M6 },
         { text: 'equal strings and `!=` are `not-evaluable`, "witness not confirmed"' },
       ],
-      defects: ['bound.detail says "decided by z3" on a numeric-surface decision (wrong-statement)'],
     }),
     'partial-context': def('partial-context', 'modifier', {
       encodes: 'a kept axiom or premise was refused and the proof stands on the rest',
       limits: [
-        { text: '`proved` is sound (dropping a hypothesis strengthens the entailment); `vacuous` and `axioms-inconsistent` can be decided on the numeric surface alone.', pin: 'm4' },
+        { text: '`proved` is sound (dropping a hypothesis strengthens the entailment); `vacuous` and `axioms-inconsistent` can be decided on the numeric surface alone.', pin: PIN_M4_M6 },
         { text: '`--free` makes it `not-evaluable`' },
       ],
     }),
@@ -444,22 +442,18 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
     'defining-equation': def('defining-equation', 'reading', {
       encodes: '`f == expr`, and calculations',
       limits: [{ text: 'a parameterised calculation is `unread-definition`' }],
-      defects: ['TODO.md:827 (abstains)'],
     }),
     'bind-equality': def('bind-equality', 'reading', {
       encodes: '`bind`, and the gamma edges of refine',
       limits: [{ text: 'a bare `connection` is not an equality unless `--connections-as-equalities`' }],
-      defects: ['TODO.md:522, 803, 820 (abstain)', 'TODO.md:620 (wrong-statement)'],
     }),
-    'asserted-fact': def('asserted-fact', 'reading', { encodes: '`assert constraint`', defects: ['TODO.md:499 (wrong-verdict)'] }),
+    'asserted-fact': def('asserted-fact', 'reading', { encodes: '`assert constraint`' }),
     'requirement-clause': def('requirement-clause', 'reading', { encodes: '`require`, `assume`, `objective`, `constraint` and `keyword` clauses' }),
     'inherited-context': def('inherited-context', 'reading', {
       encodes: 'a relation read in a specialising context',
-      defects: ['TODO.md:26, 98 (abstain)', 'TODO.md:125 (wrong-statement, possibly decided wrong cells)'],
     }),
     'per-instance': def('per-instance', 'reading', {
       encodes: 'one symbol per instance',
-      defects: ['TODO.md:620 and :125 (wrong-statement)', 'TODO.md:573 (abstains)'],
     }),
     'own-symbol': def('own-symbol', 'reading', {
       encodes: 'a goal or premise over a name the check reads no value for',

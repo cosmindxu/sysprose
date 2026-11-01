@@ -176,7 +176,7 @@ function card(id: ClassId): string {
   if (d.limits.length > 0) {
     lines.push('- **Limits.**');
     for (const lim of d.limits) {
-      lines.push(`  - ${sentence(lim.text)}${lim.pin ? ` Observed once on a hand-written probe model (${lim.pin}); no test here reruns it yet.` : ''}`);
+      lines.push(`  - ${sentence(lim.text)}${lim.pin ? ` Pinned by \`${lim.pin.file}\`: “${lim.pin.find}”.` : ''}`);
     }
   }
   const defects = defectLines(id);
