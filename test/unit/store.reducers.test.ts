@@ -2706,6 +2706,58 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(await surfaces(st().model)).toEqual(await surfaces(reopened(st().model)));
       });
 
+      // The settle found the feature a name stands for past a stale copy no farther than the stale copy itself: after
+      // `Subclassification D1 -> Q0` is deleted, D1's `N` is stale, and retyping u1 to D3 parted u1's copy as one the file
+      // does not make, where the file makes it on D3's `K2` (`:>> N`) and joins Zb = 1.0 to it: the page read K2 at its
+      // own 16.0 (T) and the file F (soak seed 91332). The copy is parted and its binding withheld now: the page abstains
+      // where the file decides, in both text orders. Seeds 91332, 91790 and 94617 of the verdict soak (zzb.test.ts).
+      it('a stale copy in a type below hides the feature the file binds: the binding is withheld, not set aside', async () => {
+        const cells = (row: string | undefined): string[] => (row ?? '').split('/');
+        const members = [
+          'part def Q0 { attribute N default = 12.0; }',
+          'part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }',
+          'part def D3 :> D1 :> Q0 { attribute K2 :>> N default = 16.0; }',
+          'part u1 : Q0 { attribute Zb = 1.0; bind Zb = N; }',
+          'constraint c8 { u1.K2 == 16.0 }',
+        ];
+        for (const [order, text] of [['text order', members], ['reversed', [...members].reverse()]] as const) {
+          load(`package G { ${text.join(' ')} }`);
+          const sub = st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName('D1').id)!;
+          st().deleteElement(sub.id);
+          st().bindType(byName('u1').id, 'D3');
+          const page = await surfaces(st().model);
+          const file = await surfaces(reopened(st().model));
+          expect(file['G::c8'], `${order}: the file makes the copy on K2 and joins Zb to it`).toBe('F/F/F/F');
+          expect(page['G::c8'], `${order}: the page abstains on every lane`).toBe('?/?/?/?');
+          const said = checkConstraints(st().model).find((r) => st().model.qualifiedName(r.id) === 'G::c8')!.message ?? '';
+          expect(said, `${order}: the check says why`).toContain('u1.K2 is not read: G::u1 owns a binding whose end is a copy the saved file reads as another feature');
+          // Retyped back, the stale copy is revived and the mark follows: the page reads the file again.
+          st().bindType(byName('u1').id, 'Q0');
+          expect(cells((await surfaces(st().model))['G::c8']), `${order}: u1 back on Q0`).toEqual(cells((await surfaces(reopened(st().model)))['G::c8']));
+        }
+      });
+
+      // A rename of a feature a redefinition reaches that no longer lies below the renamed feature's owner (a `Subclassification
+      // D2 -> D1` retargeted away leaves D2's `:>> K` on D1's `K`): the copies below D2 were not asked, and kept the old name
+      // on a feature the file does not find by it (soak seed 91790, B1). No row is decided on any lane the file abstains on.
+      it('a rename asks the copies below an owner whose redefinition the retarget left on the renamed feature', async () => {
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; }
+  part def D1 { attribute K default = 13.0; }
+  part def D2 :> D1 { attribute :>> K default = 16.0; }
+  part def D3 :> D2 { attribute Zd3; bind Zd3 = K; }
+  part u1 : D3;
+  constraint c3 { u1.K == 16.0 }
+}`);
+        const sub = st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName('D2').id)!;
+        st().updateElement(sub.id, { target: [byName('Q0').id] });
+        st().updateElement(byName('K').id, { declaredName: 'N' });
+        const page = await surfaces(st().model);
+        const file = await surfaces(reopened(st().model));
+        expect(file['G::c3'], 'file: K names nothing').toBe('?/?/?/?');
+        for (const [i, c] of (page['G::c3'] ?? '').split('/').entries()) expect(c, `page lane ${i}`).not.toMatch(/[TF]/);
+      });
+
       // A Redefinition edge the saved file does not keep as it stands (retargeted by hand to a feature its owner does not
       // inherit and no name finds, to one of another kind, or into a cycle), and two features of one owner under one
       // name: the file drops the edge or finds the first of the two, so the scope of the owner (and of what is typed by

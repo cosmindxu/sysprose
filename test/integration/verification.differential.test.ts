@@ -16128,6 +16128,27 @@ describe('a witness is the value at the path the row read, not the feature’s o
       expect(row.detail).not.toContain('the relation itself cannot be read');
     });
 
+    // A scope the mapper withholds (the copy that hides an override, copy-nearest-n) reached the encoder as a name it has no
+    // symbol for: the row said `unresolved-name` and closed with "a defect in the relation". It says why now, in the scope's
+    // own sentence, and closes as a limit of this tool (the verdict is `?` either way; `--allow-inconclusive` forgives neither).
+    t(`${engine}: a row that names a withheld copy scope prints the sentence of its cause, not a name that resolves to nothing`, async () => {
+      const CNF = `package CNF {
+        part def Q0 { attribute N default = 12.0; }
+        part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
+        part def D2 :> D1 { attribute :>> N default = 15.0; }
+        part def D3 :> D2 { attribute Zd3; bind Zd3 = N; }
+        part u1 : D3;
+        constraint c12 { u1.N == 12.0 }
+      }`;
+      const m = await contextModel(CNF, 'CNF');
+      const row = (await verifyModel(m, { engine, sourceText: CNF })).results.find((r) => r.clause.qualifiedName === 'CNF::c12')!;
+      expect([row.claim, row.code]).toEqual(['inconclusive', 'verification/not-evaluable']);
+      expect(row.detail).toContain('u1.N is not read: CNF::u1 owns, or joins a feature of, a binding whose end is a copy standing on one of several features');
+      expect(row.detail).toContain('This is a limit of this tool, not a defect in the relation: the scope is withheld');
+      expect(row.detail).not.toContain('names nothing this tool can resolve');
+      expect(row.detail).not.toContain('This is a defect in the relation');
+    });
+
     // A bare literal beside a quantity is read in the feature's declared unit, by the scalar reading: the unit-aware
     // evaluator declines it, so its coherent-SI pair is not the comparison the verdict made (5000 g against 10 g).
     t(`${engine}: a bare literal beside a quantity prints no coherent-SI pair of a comparison nobody made (U3)`, async () => {
