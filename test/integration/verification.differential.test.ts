@@ -779,6 +779,14 @@ describe('derived values — one verdict, or one refusal, on all four surfaces',
     constraint eqMs { v == 10.0 [m/s] }
     constraint neMs { v != 10.0 [m/s] }
   }`,
+    // The inch written bare (`[in]`, read as the direction keyword until `fence-text`): a unit in a value and in a constraint.
+    bareInch: `package F4 {
+    attribute L : ISQ::LengthValue = 12.0 [in];
+    constraint eqFt { L == 1.0 [ft] }
+    constraint neFt { L != 1.0 [ft] }
+    constraint geIn { L >= 12.0 [in] }
+    constraint ltIn { L + 0.05 [in] < 0.3 [in] }
+  }`,
     derivedGram: `package Z5 {
     attribute m1 : ISQ::MassValue = 0.1 [g];
     attribute m2 : ISQ::MassValue = 0.2 [g];
@@ -926,6 +934,7 @@ describe('derived values — one verdict, or one refusal, on all four surfaces',
     // Exact where the author's decimals are: 1 g is 1/1000 kg, 3 ft is 0.9144 m, 36 km/h is 10 m/s.
     gram: { eq: 'satisfied', ne: 'violated', ge: 'satisfied', eqKg: 'satisfied', neMg: 'violated' },
     otherUnits: { eqM: 'satisfied', neM: 'violated', eqMm: 'satisfied', eqMs: 'satisfied', neMs: 'violated' },
+    bareInch: { eqFt: 'satisfied', neFt: 'violated', geIn: 'satisfied', ltIn: 'violated' },
     // 0.1 g + 0.2 g is 0.3 g; 7 min + 0.1 h is 13 min, 780 s.
     derivedGram: { eq: 'satisfied', ne: 'violated', neKg: 'violated', le: 'satisfied' },
     derivedMinutes: { eq: 'satisfied', ne: 'violated', eqS: 'satisfied', neS: 'violated' },

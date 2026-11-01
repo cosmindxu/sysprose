@@ -70,6 +70,12 @@ describe('bracket expression — feature value fold', () => {
 
   it.each([
     ["18 ['in']", 'in'],
+    // The inch, bare: `in` is the direction keyword everywhere else, and a name inside a bracket (`fence-text`).
+    ['18 [in]', 'in'],
+    ['3 [ in ]', 'in'],
+    ['3 [m/in]', 'm/in'],
+    ['3 [in^2]', 'in^2'],
+    ['3 [ft*in]', 'ft*in'],
     ['5 [SI::kg]', 'SI::kg'],
     ["1 [SI::'watt hour']", 'SI::watt hour'],
     ['3 [m/s]', 'm/s'],
@@ -84,6 +90,43 @@ describe('bracket expression — feature value fold', () => {
   ])('stores the unit of `%s` as %s', (value, unit) => {
     const { el } = attrOf(`package P { attribute d : Real = ${value}; }`, 'd');
     expect(el.attrs.unit).toBe(unit);
+  });
+
+  // `fence-text`: `[in]` in a constraint body was read as the direction keyword (`in port;`), the body ended at `[`, and the
+  // first Save wrote `{ s.x + 0.05 [` with the rest gone — a text that was not its own fixed point.
+  it('reads `[in]` in an expression as a unit: Save keeps the rest and the text is a fixed point', () => {
+    const src = `package Z { part def P { attribute x : ISQ::LengthValue = 3.0 [m]; }
+      requirement def R { subject s : P; require constraint { s.x + 0.05 [in] < 0.3 [in] } } }`;
+    const first = parseModel(src);
+    expect(first.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const saved = serializeModel(first.model);
+    expect(saved).toContain('s.x + 0.05 [in] < 0.3 [in]');
+    const again = parseModel(saved);
+    expect(again.diagnostics.filter((d) => d.severity === 'error'), saved).toEqual([]);
+    expect(serializeModel(again.model)).toBe(saved);
+    // The same constraint as the quoted spelling.
+    const quoted = serializeModel(parseModel(src.replaceAll('[in]', "['in']")).model);
+    expect(quoted).toContain("s.x + 0.05 ['in'] < 0.3 ['in']");
+    const expressionOf = (m: ReturnType<typeof parseModel>['model']) =>
+      String(m.all().find((e) => e.eClass === 'ConstraintUsage')!.attrs.expression).replaceAll("'in'", 'in');
+    expect(expressionOf(parseModel(quoted).model)).toBe(expressionOf(again.model));
+  });
+
+  it('ends a bracket left open at the next `;`, so a missing `]` costs one error and not every later `in port`', () => {
+    const m = parseModel(`package Z { part def P { attribute x : ISQ::LengthValue = 3.0 [m; in port a; in port b; in port c; } }`);
+    expect(m.diagnostics.filter((d) => d.severity === 'error').length).toBeLessThanOrEqual(1);
+    expect(m.model.all().filter((e) => e.eClass === 'PortUsage').map((e) => e.declaredName)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('still reads `in` as the direction keyword outside a bracket', () => {
+    const { model, diagnostics } = parseModel(
+      'package Z { part def Q { in item i; out port o; attribute e [1..2]; in attribute k; } }',
+    );
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(model.all().find((e) => e.declaredName === 'i')!.attrs.direction).toBe('in');
+    expect(model.all().find((e) => e.declaredName === 'k')!.attrs.direction).toBe('in');
+    // A bare `in` between a bracket and its close is the unit, even inside a `(`.
+    expect(parseModel('package Z { part def P { attribute d = 3 [(in)]; } }').diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
   });
 
   it('keeps a declaration multiplicity apart from the value unit', () => {

@@ -1224,19 +1224,23 @@ owner that goes by it, so the unnamed redefinition is written by that name where
 them: beside a named `load` that comes after it, or as the first of two unnamed `:>> load` (what
 `duplicate` makes), the statement is saved and the file reopens with it on the same feature. For an
 allocation, succession, transition, dependency or alias the next open reads the name by the NAMED
-member first, so the name is written only where exactly one member of the owner answers to it. Where
-it is not the first (a member of that name before it: a rename gave one the name, or the second of
-two unnamed redefinitions), or two members answer (for those statements), or a redefined feature
-has no name, no text a terminal reads names the end. Save, Export ▾ SysML and the Text view then
+member first, and lands it on the definition's own feature when only unnamed redefinitions answer,
+so an unnamed redefinition is never written by a name for them. Where it is not the first (a member
+of that name before it: a rename gave one the name, or the second of two unnamed redefinitions), or
+it is the only one for those statements, or a redefined feature has no name, no text a terminal
+reads names the end. Save, Export ▾ SysML and the Text view then
 write a line comment in the statement's place (`// Not saved: a binding whose end no name reaches
 (T::p::(unnamed AttributeUsage)). Name the unnamed redefinition on its path to save it.`) instead of
 text a terminal refuses (`unexpected character`). The file reads cleanly to a model without that
 statement, so it is another model than the one on screen, and `reach` and `check-behaviour` say so
 (`the text a file of it holds reads as another model`); naming the redefinition saves the
 statement. Opened and saved again, the file no longer has the statement or the comment. An end that
-is a NAMED member behind an earlier member of its name is written by the name and reopens on the
-earlier one, with no note: rename one of the two (the model already carries the duplicate-name
-finding).
+is a NAMED member behind an earlier member of its name (for a binding, connection, flow or interface
+one that goes by the name, an unnamed redefinition of it too; for the others one declared by it) gets
+the same note (`… Rename the earlier member of its name, or move this one before it, to save it.`):
+the name would reopen on the earlier one (the first end of a statement too: `allocate y to c` with a second `c` beside the
+first). A rename onto a taken name raises `validation/duplicate-name`; a named member added after an unnamed redefinition
+of its name gets only this note. An implicit copy a chain made is not an earlier member.
 
 Four more cases are not followed, and in each the page can read what the saved file does not:
 
