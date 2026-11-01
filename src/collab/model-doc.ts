@@ -71,9 +71,9 @@
  * ({@link breakCycles}), so a later edit of either leaves the peers alike.
  *
  * An owner removed while its children stay (`Model.remove` with `cascade: false`) leaves them
- * under an owner nobody has: the peer that removed it moves them to the top level
- * ({@link orphanedBy}), where every other peer reads them ({@link docOwners}); so does a model that
- * already holds such a child when it seeds the doc or is reset.
+ * under an owner nobody has: `Model.remove` itself moves them to the top level, where every other
+ * peer reads them ({@link docOwners}); a model that already holds such a child when it seeds the
+ * doc or is reset has them moved there too ({@link orphanedBy}, a snapshot an earlier build wrote).
  *
  * Flow:
  *   local model change  → doc.transact(fn, ORIGIN_LOCAL)   (minimal ops)
@@ -285,12 +285,11 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     doc.transact(() => {
       for (const ev of events) applyLocalEvent(model, elements, ev, placing);
     }, ORIGIN_LOCAL);
-    // A removal that kept the owner's children (`cascade: false`) leaves them under an owner no peer
-    // has; every peer reads them at the top level, so this model does too, and the doc says so.
-    // The move is a nested transaction: a listener subscribed after this one is told of it before the removal.
-    // Removed and made again in one transaction, the owner has the id but not the child: the child is moved too.
+    // A removal that kept the owner's children (`cascade: false`) moved them to the top level in its own
+    // transaction (`Model.remove`), where every peer reads them: the events carry the move, ahead of the removal.
+    // This scan finds a child under an owner the model lacks after a reset to a snapshot that holds one.
     // An element of the user's put under an owner of the library's is read at the top level by every other peer
-    // ({@link docOwners}): so is it here.
+    // ({@link docOwners}): so is it here. The move is a nested transaction.
     const orphans = [...orphanedBy(model, events), ...underLibrary(model, events.flatMap((ev) => (ev.type === 'add' || ev.type === 'reparent' ? [ev.id ?? ''] : [])))];
     if (orphans.length > 0) model.transaction(() => orphans.forEach((id) => model.reparent(id, null)));
   });
@@ -495,21 +494,15 @@ function docOwners(elements: Y.Map<ElementYMap>): { owner: Map<ElementId, Elemen
 }
 
 /**
- * The elements still in `model` whose owner is gone: one a `remove` of `events` took away (the removal did not
- * cascade; an owner removed and made again keeps the id, so only the removed ids count), or any owner a `reset`
- * snapshot lacks (Open, Undo, Import of a model that already holds such a child).
+ * The elements still in `model` whose owner is gone, when `events` hold a `reset`: any owner the snapshot
+ * lacks (Open, Undo, Import of a model that already holds such a child). A `remove` needs no scan:
+ * `Model.remove` moved what it kept to the top level itself.
  */
 function orphanedBy(model: Model, events: readonly ChangeEvent[]): ElementId[] {
-  let gone: Set<ElementId> | undefined;
-  let reset = false;
-  for (const ev of events) {
-    if (ev.type === 'reset') reset = true;
-    else if (ev.type === 'remove' && ev.id !== undefined) (gone ??= new Set()).add(ev.id);
-  }
-  if (gone === undefined && !reset) return [];
+  if (!events.some((ev) => ev.type === 'reset')) return [];
   return model
     .all()
-    .filter((e) => e.ownerId !== null && (reset ? !model.has(e.ownerId) : gone!.has(e.ownerId)))
+    .filter((e) => e.ownerId !== null && !model.has(e.ownerId))
     .map((e) => e.id);
 }
 
@@ -684,9 +677,14 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>, owner
     owners !== undefined ? (owners.get(rec.id) ?? null) : rec.ownerId !== null && !docIds.has(rec.ownerId) ? null : rec.ownerId;
 
   // 1) Removals — anything in the model but no longer in the doc. A child the
-  //    doc still holds goes to the top level in 3), its owner gone.
+  //    doc still holds goes to the top level in the removal itself (`Model.remove`)
+  //    and to the owner the doc gives it in 3); the top level may hold its children
+  //    in another order then, so they count as moved.
   for (const el of model.all()) {
-    if (!docIds.has(el.id) && !isLibraryId(el.id) && model.has(el.id)) model.remove(el.id, { cascade: false });
+    if (!docIds.has(el.id) && !isLibraryId(el.id) && model.has(el.id)) {
+      for (const child of model.childIds(el.id)) moved.add(child);
+      model.remove(el.id, { cascade: false });
+    }
   }
 
   // 2) Creations — owners before children (repeat until settled), each in the

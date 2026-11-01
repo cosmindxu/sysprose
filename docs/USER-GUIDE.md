@@ -597,16 +597,22 @@ later; two members that two peers add to one element at the same moment come
 in one order on every peer. A member that one peer moves into an element
 another peer deletes at the same moment goes to the top level, on every peer;
 so do the members of an element deleted with `cascade: false` (the SDK's
-`delete`), on the peer that deleted it as on the others; so do members whose
+`delete`), in a room or not — the delete itself moves them, and an element made
+again with the same id in that transaction does not take them back; so do the members of
+a connection or other relationship removed along with an element it ran to; so do members whose
 element was deleted that way before the room was joined, or that an Open, Undo or Import brings in.
 A typing, specialisation or redefinition keeps its place among the others,
 wherever the text writes it: one made in the app — the Type field, a line drawn
 with the palette — is taken after those the model had, and one of an element
 whose declaration a drag puts elsewhere in the text, or that a project you
 open, a model JSON you import or a branch you switch to stored in another
-order, stays where it was. So a check that goes by them, such as `where-used`
-over a definition, can list its usages in another order than a terminal does,
-and, in a room, than another peer does.
+order, stays where it was. So a check that goes by the order the model lists
+them can list its rows in another order than a terminal does, and, in a room,
+than another peer does. `where-used` does not: it lists the references to an
+element in the order of the text (a typing, specialisation or redefinition by where
+its feature stands, `:>` before typings before redefinitions of one feature), on
+the page, in a terminal over the saved file and on every peer, whatever order
+the model lists them in; the impact closure, which walks it, follows.
 
 ### The Text tab, in both directions
 
@@ -4637,7 +4643,7 @@ for the elements it adds; each `reparent` lists it at its own call, inside a
 
 **Source of truth:** `src/ui/store.ts:3608-3790` (`runValidation`,
 `solveParametric`: the four buttons), `2299-2491` (`afterSdkEdit`: an SDK edit),
-`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/App.tsx:46-94`
+`src/api/analytics.ts:2465-2472` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -5296,7 +5302,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 (`UNDO_LIMIT`: undo is bounded), `1781-1811` (`RECOMPUTE_DEBOUNCE_MS`: the
 derived surfaces lag), `5516-5639` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2409-2416` (`feasible`), `src/ui/commands.ts:207-319`.
+`src/api/analytics.ts:2465-2472` (`feasible`), `src/ui/commands.ts:207-319`.
 
 ---
 

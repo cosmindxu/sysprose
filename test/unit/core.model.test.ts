@@ -40,6 +40,58 @@ describe('Model core', () => {
     expect(m.has(b.id)).toBe(true);
   });
 
+  // `remove(id, { cascade: false })` kept the children under an owner no element has (reachable through the SDK's
+  // `delete(id, { cascade: false })`); a snapshot of the model (toJSON, Undo, Open) carried that owner too. They go to the
+  // top level in the removal's own transaction, where a collaboration room reads them on every peer.
+  it('moves the children a non-cascading removal keeps to the top level, in the removal\'s own transaction', () => {
+    const m = new Model();
+    m.create('Package', { id: 'F' });
+    m.create('PartUsage', { id: 'E', ownerId: 'F' });
+    m.create('PartUsage', { id: 'G', ownerId: 'E' });
+    const batches: string[][] = [];
+    m.subscribe((evts) => batches.push(evts.map((ev) => `${ev.type}:${ev.id}`)));
+    expect(m.remove('F', { cascade: false })).toEqual(['F']);
+    expect(m.get('E')!.ownerId).toBeNull();
+    expect(m.get('G')!.ownerId).toBe('E'); // only the removed owner's own children move
+    expect(m.rootIds()).toEqual(['E']);
+    expect(batches, 'one notification: the move, then the removal').toEqual([['reparent:E', 'remove:F']]);
+    // No owner is missing in a snapshot of it.
+    const copy = Model.fromJSON(m.toJSON());
+    expect(copy.all().every((e) => e.ownerId === null || copy.has(e.ownerId))).toBe(true);
+    // The default still cascades.
+    m.create('Package', { id: 'H' });
+    m.create('PartUsage', { id: 'K', ownerId: 'H' });
+    expect(m.remove('H').sort()).toEqual(['H', 'K']);
+  });
+
+  // The children of an edge that goes with a removed element (default cascade) used to stay under an owner nobody has,
+  // invisible in the tree and in the saved text; they go to the top level, as a room reads them on every peer.
+  it('moves what a relationship removed with its element owned to the top level', () => {
+    const m = new Model();
+    m.create('Package', { id: 'P' });
+    m.create('PartUsage', { id: 'A', ownerId: 'P' });
+    m.create('PartUsage', { id: 'B', ownerId: 'P' });
+    m.create('ConnectionUsage', { id: 'C', ownerId: 'P', source: ['A'], target: ['B'] });
+    m.create('AttributeUsage', { id: 'K', ownerId: 'C' });
+    expect(m.remove('A').sort()).toEqual(['A', 'C']);
+    expect(m.get('K')!.ownerId).toBeNull();
+    expect(m.rootIds().sort()).toEqual(['K', 'P']);
+  });
+
+  it('does not hand the kept children back to an owner made again with the same id in one transaction', () => {
+    const m = new Model();
+    m.create('Package', { id: 'F' });
+    m.create('PartUsage', { id: 'E', ownerId: 'F' });
+    m.transaction(() => {
+      m.remove('F', { cascade: false });
+      m.create('Package', { id: 'F' });
+    });
+    // Before: a plain model kept E under the new F (a room moved it out, on every peer). Now both read E at the top level.
+    expect(m.get('E')!.ownerId).toBeNull();
+    expect(m.childIds('F')).toEqual([]);
+    expect(m.rootIds().sort()).toEqual(['E', 'F']);
+  });
+
   // A Redefinition whose target goes but whose feature stays is not a dangling edge to drop: the feature redefines the
   // nearest feature the removed one redefined, which is where the redefinition rule lands it on the next parse.
   it('moves a redefinition off a removed target to the nearest feature that stays', () => {

@@ -12,6 +12,7 @@ import * as Y from 'yjs';
 import { Model } from '@core/index';
 import type { CreateElementOptions } from '@core/index';
 import { bindModelToDoc, ORIGIN_LOCAL } from '../../src/collab/model-doc';
+import { whereUsed } from '../../src/api/analytics';
 
 /** Canonical, order-independent snapshot of a model for equality assertions. */
 function snapshot(model: Model) {
@@ -644,6 +645,41 @@ describe('bindModelToDoc — CRDT convergence', () => {
     expect(ids(m3)).toEqual(ids(m1));
     const listed = m3.inSerialOrder();
     expect(m3.all().every((el, i) => el === listed[i])).toBe(true);
+  });
+
+  /**
+   * The load bind order (TODO.md): where-used over a definition lists its users in the order of the text on every
+   * peer, whatever order each peer's copy lists the typings in: the mover, a peer present, a peer that joins, after a
+   * typing made in the app and after a package is dragged out and back in.
+   */
+  it('where-used lists the users of a definition in the order of the text on every peer', () => {
+    const { m1, m2, d1 } = setup();
+    m1.create('Package', { id: 'X', declaredName: 'X' });
+    m1.create('PartDefinition', { id: 'D', declaredName: 'D', ownerId: 'X' });
+    m1.create('Package', { id: 'A', declaredName: 'A', ownerId: 'X' });
+    m1.create('PartUsage', { id: 'u1', declaredName: 'u1', ownerId: 'A' });
+    m1.create('Package', { id: 'B', declaredName: 'B', ownerId: 'X' });
+    m1.create('PartUsage', { id: 'u2', declaredName: 'u2', ownerId: 'B' });
+    m1.create('PartUsage', { id: 'u3', declaredName: 'u3', ownerId: 'X' });
+    m1.create('FeatureTyping', { id: 't2', ownerId: 'u2', source: ['u2'], target: ['D'] });
+    m1.adoptSerialOrder();
+    // Typed in the app, after the typing the model had.
+    m1.create('FeatureTyping', { id: 't1', ownerId: 'u1', source: ['u1'], target: ['D'] });
+    m1.adoptSerialOrder();
+    const m3 = new Model();
+    const d3 = new Y.Doc();
+    Y.applyUpdate(d3, Y.encodeStateAsUpdate(d1), 'remote');
+    bindModelToDoc(m3, d3);
+    wire(d1, d3);
+    const rows = (m: Model) => whereUsed(m, 'D').references.map((r) => r.relatedElements.map((e) => e.id).join('+'));
+    for (const [peer, m] of [['the mover', m1], ['a peer present', m2], ['a peer that joined', m3]] as const) expect(rows(m), peer).toEqual(['u1', 'u2']);
+    // A is dragged out and back in: it now follows B and u3 in the text.
+    m1.reparent('A', null);
+    m1.reparent('A', 'X');
+    m1.adoptSerialOrder();
+    m1.create('FeatureTyping', { id: 't3', ownerId: 'u3', source: ['u3'], target: ['D'] });
+    m1.adoptSerialOrder();
+    for (const [peer, m] of [['the mover', m1], ['a peer present', m2], ['a peer that joined', m3]] as const) expect(rows(m), peer).toEqual(['u2', 'u3', 'u1']);
   });
 
   /**
