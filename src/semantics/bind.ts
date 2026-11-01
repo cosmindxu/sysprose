@@ -580,6 +580,33 @@ export function endCopyProto(model: Model, scopeEl: ElementRecord, head: string,
 }
 
 /**
+ * Does `scopeEl` have a feature for `head`, no copy, that the end copy on `proto` does not stand on or above, and no
+ * feature of a type below it hides? Any such feature (a `default`, a value written with `=`, an expression, a typed or
+ * named override, a feature an `assert` or a binding reads) is hidden by the copy, and the reading turns on which feature
+ * it was made on: D1's `bind` (a copy `D1::N`) and D2's explicit `:>> N default = 15.0` (which meets no copy, so it
+ * redefines Q0's `N` beside D1's copy) leave D3's `bind` a copy on D1's when D1 is read first and on D2's when it is read
+ * last, so `u1.N` read 12 or 15 by the order of the text. The same holds of two unrelated lines (`part def D3 :> D1, D2`)
+ * or a clash of values (`D3 :> D2, D2b`). The binding (or other chain connector) is left unread, as one the editor cannot
+ * follow (`attrs.partedEnd`): the scope that owns it offers no name on any surface. In a usage, two unrelated lines are
+ * left to the rule of the inherited pair (`q : Q2, Q3`); a line of overrides the copy passed over is not.
+ */
+export function leavesOutOverride(model: Model, scopeEl: ElementRecord, head: string, proto: ElementRecord): boolean {
+  const line = new Set<ElementId>([proto.id, ...redefinedClosure(model, proto).map((g) => g.id)]);
+  // A feature of a type that `proto`'s owner specialises is hidden by it (Q23's `:>> M`, over Q2's and Q3's).
+  const below = proto.ownerId === null ? [] : generalizationsWithImplicit(model, proto.ownerId);
+  const off: ElementRecord[] = [];
+  for (const t of generalizationsWithImplicit(model, scopeEl.id)) {
+    const g = t.attrs.isLibrary === true ? undefined : childNamed(model, t.id, head);
+    if (g && g.attrs.implicit !== true && !line.has(g.id) && !below.some((b) => b.id === g.ownerId) && !off.includes(g)) off.push(g);
+  }
+  if (off.length === 0) return false;
+  // In a usage, features of types that specialise none of the others (the inherited pair `q : Q2, Q3`) are read and
+  // named by their own rule; a line of them, one type below another, is the override the copy passed over.
+  const below1 = (x: ElementRecord, y: ElementRecord): boolean => x.ownerId !== null && generalizationsWithImplicit(model, x.ownerId).some((b) => b.id === y.ownerId);
+  return isDefinition(scopeEl.eClass) || off.some((x) => off.every((y) => y.id === x.id || below1(x, y)));
+}
+
+/**
  * What {@link mostSpecificRedefining} and {@link joinsTwo} ask of the model's edges and children again and again, kept
  * for one revision of the model: a chain of D definitions, each redefining the one above, makes D such calls over D
  * features, and a lookup per ask made a parse of it cost D cubed.

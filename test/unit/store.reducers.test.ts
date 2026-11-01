@@ -2532,6 +2532,43 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(page['G::c21']).toBe('?/?/?/?');
       });
 
+      // The mapper leaves unread a definition-level end copy that hides an override the text order picks between (D1's
+      // `bind`, D2's `:>> N default = 15.0`, D3's `bind`). Its mark follows the copy as it stands: an edit that settles the
+      // copy again (a rename there and back, a retarget there and back) read the wrong 12 on the page (all four cells T)
+      // while the saved file abstained.
+      it('a copy that hides an override stays unread through a rename and a retarget, as the file reads it', async () => {
+        const src = `package G {
+  part def Q0 { attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
+  part def D2 :> D1 { attribute :>> N default = 15.0; }
+  part def D3 :> D2 { attribute Zd3; bind Zd3 = N; }
+  part u1 : D3;
+  constraint c12 { u1.N == 12.0 }
+  constraint c15 { u1.N == 15.0 }
+}`;
+        const nOfQ0 = (): string => st().model.children(byName('Q0').id).find((c) => c.declaredName === 'N' || c.declaredName === 'M')!.id;
+        const abstains = async (note: string): Promise<void> => {
+          const page = await surfaces(st().model);
+          expect(page['G::c12'], `page after ${note}`).toBe('?/?/?/?');
+          expect(page['G::c15'], `page after ${note}`).toBe('?/?/?/?');
+          expect(await surfaces(reopened(st().model)), `file after ${note}`).toEqual(page);
+        };
+        load(src);
+        await abstains('load');
+        st().updateElement(nOfQ0(), { declaredName: 'M' });
+        st().updateElement(nOfQ0(), { declaredName: 'N' });
+        await abstains('rename N to M and back');
+        load(src);
+        const sub = (name: string) => st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName(name).id)!;
+        st().updateElement(sub('D3').id, { target: [byName('D1').id] });
+        st().updateElement(sub('D3').id, { target: [byName('D2').id] });
+        await abstains('retarget D3 to D1 and back to D2');
+        // An edit that makes the shape (D2's `K` renamed to `N`, over D1's copy) is read as the file reads it.
+        load(src.replace('attribute :>> N default = 15.0;', 'attribute K default = 15.0;'));
+        st().updateElement(st().model.children(byName('D2').id).find((c) => c.declaredName === 'K')!.id, { declaredName: 'N' });
+        expect(await surfaces(st().model), 'rename D2::K to N').toEqual(await surfaces(reopened(st().model)));
+      });
+
       // A binding whose end is a copy the saved file does not make AND whose name a member of the owner bears: the file
       // binds that member (a retype, a rename, a feature made), the page cannot say what it then joins. The scope of
       // the binding's owner is withheld (DefiningEquations.partedHolder), so a row naming one decides nothing, where

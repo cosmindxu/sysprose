@@ -255,7 +255,7 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
   // D3's copy stood on D1's copy when D1 came first in the text and on D2's N otherwise, so u1.N read 12 or 15 by the
   // order of the definitions (sweep 2026-10-31, item C). The copy that hides D2's default is left unread: the binding
   // carries `partedEnd`, and the scope that owns it offers no name on any surface. Where nothing is hidden it stays.
-  it('leaves unread a definition-level end copy that hides a default the text order could expose', () => {
+  it('leaves unread a definition-level end copy that hides an override the text order could expose', () => {
     const defs = {
       D1: 'part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }',
       D2: 'part def D2 :> D1 { attribute :>> N default = 15.0; }',
@@ -277,10 +277,20 @@ describe('resolveRedefinedFeature — KerML §8.2.3.5.1', () => {
     }
     // The text order that put the copy on D1's is fenced (the sweep's probe, forward).
     expect(parted(`package P { part def Q0 { attribute N default = 12.0; } ${defs.D1} ${defs.D2} ${defs.D3} part u1 : D3; }`)).toEqual(['P::D3']);
-    // Nothing hidden: no override in the chain, or one written with `=` (a clash the checks already name).
+    // Nothing hidden: no override in the chain. Any override the copy hides is fenced, a value written with `=` as well:
+    // the same text read 12 in this order and 15 in the other, and no clash is named where only one value is written.
     const quiet = (d2: string) => `package P { part def Q0 { attribute N default = 12.0; } ${defs.D1} ${d2} ${defs.D3} part u1 : D3; }`;
     expect(parted(quiet('part def D2 :> D1;'))).toEqual([]);
-    expect(parted(quiet('part def D2 :> D1 { attribute :>> N = 15.0; }'))).toEqual([]);
+    expect(parted(quiet('part def D2 :> D1 { attribute :>> N = 15.0; }'))).toEqual(['P::D3']);
+    expect(parted(quiet('part def D2 :> D1 { attribute :>> N : Real = 15.0; }'))).toEqual(['P::D3']);
+    // A `connect` makes the same copy and is marked likewise (a connector of any chain kind), and so is a connector written
+    // in D1 (D1's own copy of N is the one D3's copy stands on or above).
+    const joined = (conn: string) => `package P { part def Q0 { attribute N default = 12.0; } part def D1 :> Q0 { attribute Zd1; ${conn.replace('Z', 'Zd1')} } ${defs.D2} part def D3 :> D2 { attribute Zd3; ${conn.replace('Z', 'Zd3')} } part u1 : D3; }`;
+    const partedConn = (src: string): string[] => {
+      const { model } = parsed(src);
+      return model.all().filter((e) => e.eClass !== 'BindingConnectorAsUsage' && (e.eClass.endsWith('ConnectionUsage') || e.eClass === 'Connector') && e.attrs.partedEnd === true).map((e) => model.qualifiedName(e.ownerId!)).sort();
+    };
+    expect(partedConn(joined('connect Z to N;'))).toEqual(['P::D3']);
     // A diamond whose second line overrides with a default, and a clash of two defaults, with D3's copy made after theirs.
     const base = 'part def Q0 { attribute N default = 12.0; } part def D2 :> Q0 { attribute :>> N default = 15.0; }';
     const bound = (sup: string) => `part def D3 :> ${sup} { attribute Zd3; bind Zd3 = N; }`;

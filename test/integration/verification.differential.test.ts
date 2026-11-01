@@ -5978,8 +5978,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'ME9::P::c in ME9::Q::p': ['T/T/T/?', 'T'],
       'ME9::P::c in ME9::Q2::p': ['T/T/T/?', 'T'],
       'ME9::P::c in ME9::Q3::p': ['T/T/T/?', 'T'],
-      'ME9::P::c in ME9::S::p': ['?/?/?/?', 'F'],
-      'ME9::P::c in ME9::s::p': ['?/?/?/?', 'F'],
+      // S's `bind p.load = L` copies L over the two unrelated lines Q2 and Q3 (each `:>> L = 50.0`): the copy hides an
+      // override the text order picks between, so S's scope is left unread (copy-nearest-n) and the two instances of c in
+      // S's p and s's p are no rows any more (they read ?/?/?/? and were F by hand).
     }),
     // A usage's own valueless redefinition (`attribute :>> L;`) of a feature a specialising definition redefines
     // without a name (Q2's `:>> L = 50.0`), found by per-instance-rest S3's finish: the mapper resolved `L` to Q's
@@ -6452,6 +6453,48 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'CNC::c12': ['?/?/?/?', '?'],
       'CNC::c15': ['?/?/?/?', '?'],
+    }),
+    // The fence reaches every override the copy hides, not only a `default`: a value written with `=` read 12 in the
+    // order above and 15 in the other (no clash is named where only one value is written); a `connect` makes the same
+    // copy; and a name outside the fenced scope that is bound to the instance's feature (`bind x = u1.N`) is joined to
+    // what the scope leaves unread, so the numeric lane does not follow it to the root feature (the truth is 15).
+    'copy-nearest-eq': probe(`package CNQ {
+        part def Q0 { attribute N default = 12.0; }
+        part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
+        part def D2 :> D1 { attribute :>> N = 15.0; }
+        part def D3 :> D2 { attribute Zd3; bind Zd3 = N; }
+        part u1 : D3;
+        constraint c12 { u1.N == 12.0 }
+        constraint c15 { u1.N == 15.0 }
+      }`, {
+      'CNQ::c12': ['?/?/?/?', 'F'],
+      'CNQ::c15': ['?/?/?/?', 'T'],
+    }),
+    'copy-nearest-connect': probe(`package CNK {
+        part def Q0 { attribute N default = 12.0; }
+        part def D1 :> Q0 { attribute Zd1; connect Zd1 to N; }
+        part def D2 :> D1 { attribute :>> N default = 15.0; }
+        part def D3 :> D2 { attribute Zd3; connect Zd3 to N; }
+        part u1 : D3;
+        constraint c12 { u1.N == 12.0 }
+        constraint c15 { u1.N == 15.0 }
+      }`, {
+      'CNK::c12': ['?/?/?/?', 'F'],
+      'CNK::c15': ['?/?/?/?', 'T'],
+    }),
+    'copy-nearest-outer-bind': probe(`package CNO {
+        part def Q0 { attribute N default = 12.0; }
+        part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
+        part def D2 :> D1 { attribute :>> N default = 15.0; }
+        part def D3 :> D2 { attribute Zd3; bind Zd3 = N; }
+        part u1 : D3;
+        attribute x;
+        bind x = u1.N;
+        constraint c12 { x == 12.0 }
+        constraint c15 { x == 15.0 }
+      }`, {
+      'CNO::c12': ['?/?/?/?', 'F'],
+      'CNO::c15': ['?/?/?/?', 'T'],
     }),
     // ... and the same value twice states one: read.
     'redef-twice-agree': probe(`package TA {

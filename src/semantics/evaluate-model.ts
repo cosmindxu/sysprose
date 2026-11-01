@@ -4221,6 +4221,13 @@ function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string 
           `(its target is no feature the owner inherits or a name finds, is of another kind, or makes a cycle), so no name of ${of} is read`
         );
       }
+      if (why === 'copy') {
+        return (
+          `${name} is not read: ${of} owns, or joins a feature of, a binding whose end is a copy standing on one of several features ` +
+          `the types give the name, which the order of the text chooses between (the saved file is read the same way), so no name of ${of} is read ` +
+          `until an edit removes the competing override`
+        );
+      }
       return (
         `${name} is not read: ${of} owns a binding whose end is a copy the saved file reads as another feature, ` +
         `so no name of ${of} is read until the file is saved and opened again`

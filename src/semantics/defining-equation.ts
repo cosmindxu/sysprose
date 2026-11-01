@@ -328,6 +328,15 @@ export interface ReadOtherwise {
 }
 
 /**
+ * Why a scope is left unread: a binding the editor parted from a copy (`binding`), a copy the mapper stood on one of
+ * several features the text order picks between (`copy`, {@link leavesOutOverride}), or what {@link unreadScopes} names.
+ */
+export type WithheldCause = 'binding' | 'copy' | UnreadScope;
+
+/** The connector kinds beside a binding whose end copy the mapper may mark parted (`attrs.partedEnd`): the chain connectors of map-to-model. */
+const OTHER_CHAIN_CONNECTORS = ['ConnectionUsage', 'Connector', 'InterfaceUsage', 'Flow', 'FlowUsage'] as const;
+
+/**
  * The defining equations one evaluation pass reads, gathered once per context
  * — with the valueless feature of each name an equation there may define — so
  * a long chain does not re-parse every constraint of its context at every
@@ -372,7 +381,7 @@ export class DefiningEquations {
   private guessed = false;
   private bound?: ReadonlySet<ElementId>;
   /** The elements that own a binding the editor parted from a copy, or a scope the saved file may read otherwise ({@link partedHolder}), once asked. */
-  private parted?: ReadonlyMap<ElementId, 'binding' | UnreadScope>;
+  private parted?: ReadonlyMap<ElementId, WithheldCause>;
   /** Per context, the scopes {@link partedHolder} left unread: the path they are reached by, and their owner. */
   private readonly withheldIn = new Map<ElementId, Map<string, ElementId>>();
   /** The types an owner of a binding specialises, for {@link endsInGeneral}. */
@@ -4074,29 +4083,46 @@ export class DefiningEquations {
    * inconsistent (`verification/inconsistent-axioms`): the SMT lane decides nothing there (./api/verification), and
    * names the causes.
    */
-  withheldCauses(): Array<'binding' | UnreadScope> {
+  withheldCauses(): Array<WithheldCause> {
     return [...new Set(this.partedOwners().values())];
   }
 
-  private partedOwners(): ReadonlyMap<ElementId, 'binding' | UnreadScope> {
+  private partedOwners(): ReadonlyMap<ElementId, WithheldCause> {
     if (this.parted === undefined) {
-      const out = new Map<ElementId, 'binding' | UnreadScope>();
-      for (const b of this.model.ofKind('BindingConnectorAsUsage', 'BindingConnector')) {
+      const out = new Map<ElementId, WithheldCause>();
+      for (const b of this.model.ofKind('BindingConnectorAsUsage', 'BindingConnector', ...OTHER_CHAIN_CONNECTORS)) {
         if (b.ownerId == null || b.attrs.isLibrary === true) continue;
-        if (b.attrs.partedEnd === true) out.set(b.ownerId, 'binding');
+        if (b.attrs.partedEnd === true) out.set(b.ownerId, b.attrs.copyHides === true ? 'copy' : 'binding');
         // An end that is a feature of a type its owner specialises, held with no copy of its own in the owner (a bound
         // end moved up into the type): the saved file makes the copy, which the page does not hold.
-        else if (this.endsInGeneral(b)) out.set(b.ownerId, 'binding');
+        else if (b.eClass.startsWith('BindingConnector') && this.endsInGeneral(b)) out.set(b.ownerId, 'binding');
       }
       // An owner of two features under one name, or of a redefinition the saved file does not keep as it stands.
       for (const [id, why] of unreadScopes(this.model)) if (!out.has(id)) out.set(id, why);
       this.parted = out;
+      // A binding elsewhere that ends in a feature of a scope a parted binding withholds joins the value to names that
+      // scope leaves unread (`bind x = u1.N`, N the feature a parted copy stands on): the solver follows it to the
+      // root feature no withheld scope owns, so it is withheld with them.
+      const held = new Map([...out].filter(([, why]) => why === 'binding' || why === 'copy'));
+      const heldBy = (id: ElementId): WithheldCause | undefined =>
+        held.get(id) ?? generalizationsOf(this.model, id).map((g) => held.get(g.id)).find((why) => why !== undefined);
+      for (const b of this.model.ofKind('BindingConnectorAsUsage', 'BindingConnector')) {
+        if (b.ownerId == null || b.attrs.isLibrary === true || out.has(b.ownerId)) continue;
+        for (const e of [...(b.source ?? []), ...(b.target ?? [])]) {
+          let why: WithheldCause | undefined;
+          for (let o = this.model.get(e)?.ownerId; o != null && why === undefined; o = this.model.get(o)?.ownerId) why = heldBy(o);
+          if (why !== undefined) {
+            out.set(b.ownerId, why);
+            break;
+          }
+        }
+      }
     }
     return this.parted;
   }
 
   /** Why the scope of `ownerId` ({@link withheldOwner}) is left unread: a parted binding, or what {@link unreadScopes} names. */
-  withheldWhy(ownerId: ElementId): 'binding' | UnreadScope {
+  withheldWhy(ownerId: ElementId): WithheldCause {
     const parted = this.partedOwners();
     const own = parted.get(ownerId);
     if (own !== undefined) return own;
