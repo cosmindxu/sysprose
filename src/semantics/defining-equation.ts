@@ -960,6 +960,14 @@ export class DefiningEquations {
             const full = prefix ? `${prefix}.${n}` : n;
             if (!held.has(full)) held.set(full, joined);
             joinedPaths.add(full);
+            // The name stays taken (a nested feature of the same name never answers a bare read of it) and counted.
+            if (prefix === '') direct.add(n);
+            else {
+              const seen = nested.get(n);
+              // count 2: ambiguous by construction, so never admitted as the one nested feature of the name
+              if (seen) seen.count += 2;
+              else nested.set(n, { denoted: { feature: feat, reader: ownerId, inCall, instance, enclosing }, count: 2 });
+            }
           }
           continue;
         }

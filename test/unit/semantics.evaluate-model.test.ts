@@ -3305,6 +3305,16 @@ describe('checkConstraints — a bound partner is read only where every instance
       expect(c5.message).toContain('u.k is not read: it states a value, and a binding joins it to a feature of a scope the saved file may read otherwise');
       expect(checkConstraintsNumeric(m!).find((r) => r.id === c5.id)!.result).toBe('unknown');
     }
+    // The fenced name stays taken: a bare `k` is never the one nested `s.k` of an unrelated part, nor one of two nested `k`.
+    for (const body of ['attribute k = 5.0; bind k = w.p.a; part s { attribute k = 9.0; }', 'part sa { attribute k = 5.0; } bind sa.k = w.p.a; part sb { attribute k = 9.0; }']) {
+      const { model: nm } = await loadModelText(`package SN {
+        ${head}
+        part def U { part w : H1 { part :>> p : P2; } ${body} constraint ck9 { k == 9.0 } constraint ck5 { k == 5.0 } }
+        part u : U;
+      }`);
+      expect(checkConstraints(nm!).map((c) => c.result)).toEqual(['unknown', 'unknown']);
+      expect(checkConstraintsNumeric(nm!).map((c) => c.result)).toEqual(['unknown', 'unknown']);
+    }
     // No unread scope: a `=` against a `default` end keeps its value (decision 14), and a `default` stands against none.
     const { model: ok } = await loadModelText(`package SC {
       part def P { attribute a default = 11.0; } part def H { part p : P; }

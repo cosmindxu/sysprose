@@ -13751,6 +13751,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RS::c1': ['?/?/?/?', null],
       'RS::c2': ['?/?/?/?', null],
     }),
+    // The fenced name stays taken: a bare `k` read in the definition or the usage body is never the one nested `s.k`
+    // (`attribute k = 9.0` of an unrelated part), nor one of two nested `k` where the other is the fenced one.
+    ...Object.fromEntries([
+      ['nested', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind k = w.p.a; part s { attribute k = 9.0; } constraint ck5 { k == 5.0 } constraint ck9 { k == 9.0 } }', 'part u : U;', ['RS::U::ck5', 'RS::U::ck9']],
+      ['nested-two', 'part def U { part w : H1 { part :>> p : P2; } part sa { attribute k = 5.0; } bind sa.k = w.p.a; part sb { attribute k = 9.0; } constraint ck5 { k == 5.0 } constraint ck9 { k == 9.0 } }', 'part u : U;', ['RS::U::ck5', 'RS::U::ck9']],
+      ['nested-usage', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind k = w.p.a; }', 'part u : U { part s { attribute k = 9.0; } constraint cu5 { k == 5.0 } constraint cu9 { k == 9.0 } }', ['RS::u::cu5', 'RS::u::cu9']],
+    ].map(([form, u, tail, names]) => {
+      const text = `package RS {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        ${u}
+        ${tail}
+      }`;
+      const rows: Record<string, [string, Ref]> = Object.fromEntries((names as string[]).map((n) => [n, ['?/?/?/?', null] as [string, Ref]]));
+      return Object.entries(reversed(`rename-onto-alias-seed-${form}`, text, reversedMembers(text), rows));
+    }).flat()),
     // The controls: with no unread scope the same binding is read as before. A `= 5.0` against a `default` end keeps its
     // own value (decision 14), a `default` k stands against a valueless end, and the unrelated feature keeps reading.
     ...reversed('rename-onto-alias-seed-control', `package RS {
