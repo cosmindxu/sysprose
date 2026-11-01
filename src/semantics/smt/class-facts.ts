@@ -431,7 +431,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-assert-not",
       "kind": "wrong-verdict",
-      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read, by plan decision 6.",
+      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read.",
       "todo": "Read `assert not constraint c { ... }` as the negation."
     },
     {
@@ -563,12 +563,12 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-unparseable-words",
       "kind": "wrong-statement",
-      "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation”, and an enum comparison is unparseable (verification/not-evaluable), not unsupported-construct as docs/04 says.",
+      "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation” although they are constructs the expression reader does not take; an enum comparison is unparseable (verification/not-evaluable), which no flag forgives.",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
     }
   ],
   "digests": {
-    "defects": "71e44d9cac03e6cb4a2ced66cee08dcd6d84a5c741ce45e7c12df9810cd6877b",
+    "defects": "fececa560e4baf116fd87206119d304b6c2f83867379934cf6ea597e30cae3a8",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
     "probes": "9d45cc50615573c2007f9c938be61efbc5c58c1c524ff43b055eb7c2a50756bd"
   },

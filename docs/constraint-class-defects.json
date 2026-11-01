@@ -8,7 +8,7 @@
         "asserted-fact"
       ],
       "kind": "wrong-verdict",
-      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read, by plan decision 6."
+      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read."
     },
     {
       "id": "D-inconsistent-axioms",
@@ -140,7 +140,7 @@
         "fence/unparseable"
       ],
       "kind": "wrong-statement",
-      "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation”, and an enum comparison is unparseable (verification/not-evaluable), not unsupported-construct as docs/04 says."
+      "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation” although they are constructs the expression reader does not take; an enum comparison is unparseable (verification/not-evaluable), which no flag forgives."
     }
   ],
   "resolved": [],

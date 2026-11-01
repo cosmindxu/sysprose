@@ -483,6 +483,21 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
 /** Is this a fence cell? */
 export const isFenceCell = (cell: string): boolean => cell.startsWith('fence/');
 
+/** The maturity cells of one class: a nonlinear shape has a `/pinned` and a `/free` cell, every other class one. */
+export function cellsOfClass(id: ClassId): string[] {
+  return (SHAPES as readonly string[]).includes(id) && isNonlinearShape(id as ShapeId) ? [`${id}/pinned`, `${id}/free`] : [id];
+}
+
+/**
+ * The classes a surface may print: user decision 1 (2026-10-30). A class is printed only when the corpus holds
+ * a row in one of its cells; a class with no row is kept in the register and is not in the printed vocabulary
+ * until one appears. Register order: shapes by precedence, then modifiers, readings and fences.
+ */
+export function printedClasses(facts: ClassFacts = CLASS_FACTS): ClassId[] {
+  const ids: ClassId[] = [...SHAPES, ...MODIFIERS, ...READINGS, ...FENCES];
+  return ids.filter((id) => cellsOfClass(id).some((c) => (facts.cells[c]?.rows ?? 0) > 0));
+}
+
 /* ──────────────────────────────── maturity (levels) ──────────────────────────────── */
 
 /** Encoded cells climb this ladder. */
@@ -1187,19 +1202,23 @@ export function classLines(s: ClassStatement): string[] {
 export interface Surface {
   id: string;
   status: 'built' | 'planned';
+  /** What the surface states, in a phrase: the generated document prints it beside the status. */
+  says: string;
   pointer: Pointer | null;
 }
 
+const GENERATOR_TS = 'scripts/gen-constraint-classes.ts';
+
 export const SURFACES: readonly Surface[] = [
-  { id: 'register', status: 'built', pointer: { file: 'src/semantics/smt/classes.ts', find: 'export const CONSTRAINT_CLASSES' } },
-  { id: 'classifier', status: 'built', pointer: { file: 'src/semantics/smt/classes.ts', find: 'export function classifyRow' } },
-  { id: 'verify-text', status: 'planned', pointer: null },
-  { id: 'verify-json', status: 'planned', pointer: null },
-  { id: 'other-z3-commands', status: 'planned', pointer: null },
-  { id: 'checks-tab', status: 'planned', pointer: null },
-  { id: 'contracts-view', status: 'planned', pointer: null },
-  { id: 'evidence-record', status: 'planned', pointer: null },
-  { id: 'generated-docs', status: 'planned', pointer: null },
-  { id: 'test-report-counts', status: 'planned', pointer: null },
-  { id: 'export', status: 'planned', pointer: null },
+  { id: 'register', status: 'built', says: 'what each class encodes and where it ends', pointer: { file: 'src/semantics/smt/classes.ts', find: 'export const CONSTRAINT_CLASSES' } },
+  { id: 'classifier', status: 'built', says: 'one worklist row sorted to its cell', pointer: { file: 'src/semantics/smt/classes.ts', find: 'export function classifyRow' } },
+  { id: 'generated-docs', status: 'built', says: 'this document and the marked regions of the user guide, the conformance scorecard and the test report', pointer: { file: GENERATOR_TS, find: 'export function renderConstraintClasses' } },
+  { id: 'test-report-counts', status: 'built', says: 'the fact counts behind each level, in the test report', pointer: { file: 'docs/TEST-REPORT.md', find: 'BEGIN GENERATED constraint-classes:test-report' } },
+  { id: 'verify-text', status: 'planned', says: 'a class line under each `verify` verdict', pointer: null },
+  { id: 'verify-json', status: 'planned', says: 'a `classes` key on each `verify --json` verdict', pointer: null },
+  { id: 'other-z3-commands', status: 'planned', says: 'the same statement from `consistency`, `refine`, `bounds`, `fault-tree` and gate 4 of `property-check`', pointer: null },
+  { id: 'checks-tab', status: 'planned', says: 'a class line under a solver check of the palette', pointer: null },
+  { id: 'contracts-view', status: 'planned', says: 'a shape-class column in the Contracts view', pointer: null },
+  { id: 'evidence-record', status: 'planned', says: 'the class ids a `--record` evidence record was proved under', pointer: null },
+  { id: 'export', status: 'planned', says: 'an SMT-LIB export: there is no `export` command; when one is built, its class comments follow the header and never sit in the script bytes', pointer: null },
 ];

@@ -609,6 +609,39 @@ are `docs/TEST-SUMMARY.md`'s.]*
 **Vitest grand total: 1242 / 1242 passed across 97 files (0 skipped).** *[2026-09-16:
 the 2026-07-03 run's total; the current run's is §1's and §7's.]*
 
+### 4.1 The constraint-class facts
+
+Fact counts, not test-title counts: each row below is counted with no solver from this repository (`npm run census:classes -- --check --strict` holds them to a recount), and the level in its last column is what the rubric computes from them. What each class is, and what a level does and does not say, is in [`CONSTRAINT-CLASSES.md`](CONSTRAINT-CLASSES.md).
+
+<!-- BEGIN GENERATED constraint-classes:test-report (scripts/gen-constraint-classes.ts; npm run classes) -->
+| Cell | Rows | Models | Encoder tests | Decided golden rows | Agreeing table rows (probes) | Table rows against | Battery cells | Level |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `lra` | 483 | 72 | 2 | 6 | 503 (210) | 0 | none | `differential-tested` |
+| `lira` | 15 | 13 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
+| `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `nra-div/pinned` | 17 | 9 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `units` | 98 | 40 | 2 | 5 | 25 (12) | 0 | none | `differential-tested` |
+| `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `stated-value` | 311 | 78 | 1 | 7 | 498 (208) | 0 | none | `differential-tested` |
+| `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
+| `bind-equality` | 9 | 5 | 1 | 0 | 171 (97) | 0 | none | `experimental` |
+| `asserted-fact` | 27 | 8 | 1 | 0 | 7 (5) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 293 (187) | 0 | none | `differential-tested` |
+| `per-instance` | 1 | 1 | 1 | 0 | 212 (88) | 0 | none | `experimental` |
+| `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
+| `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
+| `fence/unresolved-name` | 5 | 4 | 2 | — | — | — | none | `fenced` |
+| `fence/unit-unresolved` | 1 | 1 | 0 | — | — | — | none | `unpinned` |
+| `fence/dimension-clash` | 2 | 2 | 1 | — | — | — | none | `fenced` |
+| `fence/offset-arithmetic` | 3 | 3 | 1 | — | — | — | none | `fenced` |
+| `fence/refused-derivation` | 1 | 1 | 1 | — | — | — | none | `fenced` |
+| `fence/unsupported-operator` | 6 | 5 | 2 | — | — | — | none | `fenced-defect` |
+| `fence/non-numeric-operand` | 4 | 4 | 2 | — | — | — | none | `fenced` |
+<!-- END GENERATED constraint-classes:test-report -->
+
 ---
 
 ## 5. E2E scenario summary
