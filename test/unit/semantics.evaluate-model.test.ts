@@ -51,7 +51,7 @@ import { refusalHead, refusalTail } from '../../src/semantics/engines/literal';
 import { checkConstraintsNumeric, solveFeasible } from '../../src/semantics/solver';
 import { DIMENSIONLESS } from '../../src/semantics/units';
 import { equationDerivation, evaluateConstraintQuantityDetailed } from '../../src/semantics/units-eval';
-import { parseModel } from '../../src/text/index';
+import { parseModel, serializeModel } from '../../src/text/index';
 import { verifyModel } from '../../src/api/verification';
 import { validate } from '../../src/validation/index';
 import { loadModelText } from '@text/load';
@@ -990,6 +990,35 @@ describe('checkConstraints — a target read through the features that specialis
         'and what specialises it (LA::areaFraction) is not read through a feature chain',
     );
     expect(c.instances).toBeUndefined();
+  });
+
+  // The load bind order (TODO.md): the specialisers a finding names come in the order of the text on the page, in a terminal over
+  // the saved text and on a model rebuilt from its JSON, whichever order the subsettings were made in.
+  it('names what specialises a measure in the order of the text, whatever order the subsettings were made in', () => {
+    const src = `package E {
+      part def Software { attribute areaFraction : Real; }
+      part software : Software;
+      requirement def SoftwareContract {
+        subject coordination : Software;
+        require constraint { coordination.areaFraction >= 0.9 }
+      }
+      package LA { attribute areaFraction = 0.5; }
+      package PA { attribute areaFraction = 0.6; }
+    }`;
+    const page = model(src);
+    const named = (m: Model, qn: string) => m.all().find((e) => m.qualifiedName(e.id) === qn)!;
+    const base = named(page, 'E::Software::areaFraction').id;
+    // PA's subsetting is made first, as the palette or the SDK may: the page holds it before LA's.
+    for (const qn of ['E::PA::areaFraction', 'E::LA::areaFraction']) {
+      const f = named(page, qn).id;
+      page.create('Subsetting', { ownerId: f, source: [f], target: [base] });
+    }
+    page.adoptSerialOrder();
+    const message = (m: Model) => checkConstraints(m).find((x) => x.expression === 'coordination.areaFraction >= 0.9')!.message;
+    const want = 'and what specialises it (LA::areaFraction, PA::areaFraction) is not read through a feature chain';
+    expect(message(page), 'the page').toContain(want);
+    expect(message(model(serializeModel(page))), 'a terminal over the saved text').toContain(want);
+    expect(message(Model.fromJSON(page.toJSON())), 'a model rebuilt from its JSON').toContain(want);
   });
 });
 

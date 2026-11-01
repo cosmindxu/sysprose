@@ -19,7 +19,7 @@ interface Neighbour {
 
 function neighboursOf(model: Model, id: ElementId): Neighbour[] {
   const acc = new Map<string, Neighbour>();
-  for (const e of model.edgesOf(id)) {
+  for (const e of model.edgesInTextOrder(model.edgesOf(id))) {
     if (e.id === id) continue;
     const onSource = (e.source ?? []).includes(id);
     const others = (onSource ? e.target : e.source) ?? [];

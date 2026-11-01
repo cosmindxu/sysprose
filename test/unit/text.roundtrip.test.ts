@@ -2312,6 +2312,74 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
         expect(after.model.all().filter((e) => linkRe.test(e.eClass) && !e.attrs.implicit && ((e.source?.length ?? 0) + (e.target?.length ?? 0)) > 0)).toHaveLength(0);
       });
     }
+    // `fence-order`: the earlier-member case for the statements that passed no `reads`. A requirement relationship (satisfy, verify,
+    // refine, trace, derive) reopens its ends through `resolveFullName`, and an inline specialization (`: T`, `:> q.v`, `:>> v`,
+    // `::> q.v`) its target by the same rule, so an end that is the second member of its name reopens on the first: the note
+    // (a declaration's, above it, with the declaration and its body kept), never the bare name. The first member is written as ever.
+    const REQ_FORMS: Array<[string, string, (n: number) => string, 'source' | 'target', string]> = [
+      // [keyword, word, source with n members of the name, the end, the name]
+      ...(['satisfy R by d1', 'verify R by d1', 'refine R by d1', 'trace R to d1', 'derive R from d1'] as const).flatMap((stmt): Array<[string, string, (n: number) => string, 'source' | 'target', string]> => [
+        [stmt.split(' ')[0]!, 'by', (n) => `package T { requirement def R; part def D; ${'part d1 : D; '.repeat(n)}${stmt}; }`, 'source', 'd1'],
+        [stmt.split(' ')[0]!, 'req', (n) => `package T { ${'requirement def R; '.repeat(n)}part def D; part d1 : D; ${stmt}; }`, 'target', 'R'],
+      ]),
+    ];
+    for (const [kw, end, mk, side, name] of REQ_FORMS) {
+      it(`${kw}: the ${end} end that is the second member of its name is not saved, and says so; the first is`, () => {
+        const eClass = kw[0]!.toUpperCase() + kw.slice(1);
+        const find = (m: Model) => m.all().find((e) => e.eClass === eClass)!;
+        for (const k of [0, 1]) {
+          const m = parseModel(mk(2)).model;
+          const members = m.all().filter((e) => e.declaredName === name && e.attrs.isLibrary !== true);
+          m.update(find(m).id, { [side]: [members[k]!.id] });
+          const text = serializeModel(m);
+          const after = parseModel(text);
+          expect(after.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+          if (k === 0) {
+            expect(text).not.toContain('Not saved');
+            const ends = after.model.all().filter((e) => e.declaredName === name && e.attrs.isLibrary !== true);
+            expect(ends.map((e) => e.id).indexOf(find(after.model)[side]![0]!), 'the statement reopens on the first member').toBe(0);
+          } else {
+            expect(text).toMatch(new RegExp(`// Not saved: a ${kw} whose end no name reaches \\(.*Rename the earlier member of its name`));
+            expect(after.model.all().filter((e) => e.eClass === eClass), 'the file has no such statement').toHaveLength(0);
+            expect(measureTextHealth(text, () => {}).rewritten).not.toBe(text);
+          }
+        }
+      });
+    }
+
+    const INLINE: Array<[string, string, string, (n: number) => string, string]> = [
+      // [shape, link, word, source, name]
+      ['a typing', 'FeatureTyping', 'typing', (n) => `package T { ${'part def D; '.repeat(n)}part x : D { attribute k = 1; } }`, 'D'],
+      ['a specialization of a definition', 'Subclassification', 'specialization', (n) => `package T { ${'part def D; '.repeat(n)}part def S :> D { attribute k = 1; } }`, 'D'],
+      ['a subsetting by a path', 'Subsetting', 'specialization', (n) => `package T { part q { ${'attribute v : ScalarValues::Real; '.repeat(n)}} attribute w :> q.v { attribute k = 1; } }`, 'v'],
+      ['a reference subsetting by a path', 'ReferenceSubsetting', 'specialization', (n) => `package T { part q { ${'part v; '.repeat(n)}} part r ::> q.v { attribute k = 1; } }`, 'v'],
+      ['a redefinition by a path', 'Redefinition', 'redefinition', (n) => `package T { part def Q { ${'attribute v : ScalarValues::Real; '.repeat(n)}} part q : Q { attribute :>> v = 5.0; attribute k = 1; } }`, 'v'],
+    ];
+    for (const [shape, eClass, word, mk, name] of INLINE) {
+      it(`${shape} whose target is the second member of its name is left out of the declaration, with a note above it`, () => {
+        for (const k of [0, 1]) {
+          const m = parseModel(mk(2)).model;
+          const rel = m.all().find((e) => e.eClass === eClass && e.attrs.isLibrary !== true && (e.target ?? []).every((t) => m.get(t)?.attrs.isLibrary !== true) && (e.target ?? []).length > 0)!;
+          const members = m.all().filter((e) => e.declaredName === name && e.attrs.isLibrary !== true && (eClass !== 'Redefinition' || e.eClass === 'AttributeUsage'));
+          m.update(rel.id, { target: [members[k]!.id] });
+          const text = serializeModel(m);
+          const after = parseModel(text);
+          expect(after.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+          const again = after.model.all().find((e) => e.eClass === eClass && e.attrs.isLibrary !== true && (e.target ?? []).length > 0 && (e.target ?? []).every((t) => after.model.get(t)?.attrs.isLibrary !== true));
+          // The declaration and its body are kept either way.
+          expect(after.model.all().some((e) => e.declaredName === 'k')).toBe(true);
+          if (k === 0) {
+            expect(text).not.toContain('Not saved');
+            expect(again).toBeDefined();
+          } else {
+            expect(text).toMatch(new RegExp(`// Not saved: a ${word} whose end no name reaches \\(.*Rename the earlier member of its name`));
+            expect(again, 'the file has no such specialization').toBeUndefined();
+            expect(measureTextHealth(text, () => {}).rewritten).not.toBe(text);
+          }
+        }
+      });
+    }
+
     it('a member whose short name is the end\'s name is an earlier member of it too', () => {
       const m = parseModel('package T { part <c> comp1; part c; part y; allocate y to c; }').model;
       const link = m.all().find((e) => e.eClass === 'Allocation')!;

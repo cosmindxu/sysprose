@@ -614,8 +614,9 @@ export function relationshipsOfElement(model: Model, id: string): ElementRelatio
       owning.push(r);
     }
   }
-  const incoming = model.edgesTo(id).filter((e) => e.id !== id);
-  const outgoing = model.edgesFrom(id).filter((e) => e.id !== id);
+  // In the order of the text, as a terminal lists them (`Model.edgesInTextOrder`), not the order this copy holds them.
+  const incoming = model.edgesInTextOrder(model.edgesTo(id)).filter((e) => e.id !== id);
+  const outgoing = model.edgesInTextOrder(model.edgesFrom(id)).filter((e) => e.id !== id);
   return { owned, owning, incoming, outgoing };
 }
 

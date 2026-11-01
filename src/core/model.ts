@@ -140,6 +140,9 @@ export class Model {
   private _edgeIndexRev = -1;
   private _sourceIndex = new Map<ElementId, ElementRecord[]>();
   private _targetIndex = new Map<ElementId, ElementRecord[]>();
+  /** Lazy containment pre-order ranks ({@link edgesInTextOrder}), keyed by rev. */
+  private _rankRev = -1;
+  private _rank = new Map<ElementId, number>();
 
   constructor() {
     this.childrenIndex.set(null, []);
@@ -422,6 +425,57 @@ export class Model {
     if (!to) return [...from];
     const seen = new Set(from.map((e) => e.id));
     return [...from, ...to.filter((e) => !seen.has(e.id))];
+  }
+
+  /**
+   * `edges` — a list {@link edgesFrom}, {@link edgesTo} or {@link edgesOf} gave — in the order of the text: a
+   * typing, specialisation or redefinition by where its owner stands in the containment walk, any other edge by
+   * where it stands itself, and a tie by the `:>` family, typings, redefinitions, then as the model lists them.
+   *
+   * NOT the order the model lists them in. A load lists what it binds later (typings, specialisations,
+   * redefinitions, implicit features) after the declarations, in the order of its own binding passes; the page
+   * lists one an edit added (Properties' Type field, a palette line) after every one it had, one whose element a
+   * drag put elsewhere where it was, and a peer of a room in the order the room's document lists its keys. So
+   * the same model gave a list built on them — where-used, an element's relationships, the SDK's traverse, the
+   * impact graph's neighbours, the specialisers a finding names — in another order on the page, in a terminal
+   * over the saved text and on another peer (TODO.md: the load bind order). The containment walk is held alike
+   * by all of them ({@link adoptSerialOrder}, the room's places), so the rows are ordered by it. A consumer
+   * that picks by kind among edges a load lists in place (a connector, a transition, a `satisfy`) needs no
+   * sorting: it already lists in that order.
+   */
+  edgesInTextOrder(edges: ElementRecord[]): ElementRecord[] {
+    if (edges.length < 2) return edges;
+    const rank = this.containmentRank();
+    const key = (e: ElementRecord): [number, number] => {
+      const at = isSpecialization(e.eClass) && e.ownerId !== null ? e.ownerId : e.id;
+      return [rank.get(at) ?? Number.MAX_SAFE_INTEGER, BIND_FAMILY[e.eClass] ?? 0];
+    };
+    return edges
+      .map((e, i) => ({ e, i, k: key(e) }))
+      .sort((x, y) => x.k[0] - y.k[0] || x.k[1] - y.k[1] || x.i - y.i)
+      .map((x) => x.e);
+  }
+
+  /** Where each element stands in the containment pre-order, kept per revision ({@link edgesInTextOrder}). */
+  private containmentRank(): Map<ElementId, number> {
+    if (this._rankRev === this._rev) return this._rank;
+    const rank = new Map<ElementId, number>();
+    // The user's roots first, then the library's: the text a terminal reads writes the model's packages and
+    // merges the library after them, whichever order this model lists its roots in (a package made or dragged
+    // to the top level after the library merged is listed after it).
+    const roots = this.rootIds();
+    const isLib = (i: ElementId): boolean => this.elements.get(i)?.attrs.isLibrary === true;
+    const stack = [...roots.filter((i) => !isLib(i)), ...roots.filter(isLib)].reverse();
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (rank.has(cur)) continue;
+      rank.set(cur, rank.size);
+      const kids = this.childrenIndex.get(cur) ?? [];
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]!);
+    }
+    this._rank = rank;
+    this._rankRev = this._rev;
+    return rank;
   }
 
   /** Relationships whose `source` includes `id`. */
@@ -891,10 +945,13 @@ export class Model {
    * — is listed after those the model had; one whose element a drag puts
    * elsewhere in the text, or that a project, model JSON or branch stored in
    * another order, stays where it was. `where-used` and the impact closure
-   * do not follow it: they list in the order of the text (`edgesInTextOrder`
-   * in `src/api/analytics.ts`). The other consumers of `edgesOf` still list
-   * in the model's order, here and in every copy, and in the text's order in
-   * a terminal (TODO.md).
+   * do not follow it: they list in the order of the text
+   * ({@link edgesInTextOrder}), as do the SDK's traverse, an element's
+   * relationships, the impact graph and the specialisers a finding names. What
+   * is left is a typing beside a subsetting or redefinition of ONE element
+   * (`typesOf`, Properties' lists) and the consumers that walk `ofKind` of a
+   * kind a load lists later, which no output has been found to depend on
+   * (TODO.md).
    */
   adoptSerialOrder(opts: { whole?: boolean } = {}): boolean {
     const whole = opts.whole === true;
@@ -1125,6 +1182,9 @@ export class Model {
     for (const l of this.listeners) l([{ type: 'reset' }]);
   }
 }
+
+/** The kinds a load lists after the declarations, in the order its binding passes make them: `:>` family, typings, redefinitions. */
+const BIND_FAMILY: Readonly<Record<string, number>> = { FeatureTyping: 1, Redefinition: 2 };
 
 /**
  * Whether a load lists an element after the elements the text declares, rather

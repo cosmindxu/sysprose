@@ -247,12 +247,12 @@ export class ModelApi {
       }
     };
     if (dir === 'out' || dir === 'both') {
-      for (const e of this.model.edgesFrom(id)) {
+      for (const e of this.model.edgesInTextOrder(this.model.edgesFrom(id))) {
         if (e.eClass === relKind) collect(e.target);
       }
     }
     if (dir === 'in' || dir === 'both') {
-      for (const e of this.model.edgesTo(id)) {
+      for (const e of this.model.edgesInTextOrder(this.model.edgesTo(id))) {
         if (e.eClass === relKind) collect(e.source);
       }
     }

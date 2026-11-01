@@ -17,7 +17,6 @@ import {
   isControlNode,
   isDefinition,
   isRelationship,
-  isSpecialization,
   isTypingSpecialization,
 } from '@core/index';
 import {
@@ -486,64 +485,11 @@ export interface WhereUsedReport {
   unresolvedTypings: number;
 }
 
-/** The kinds a load lists after the declarations, in the order its binding passes make them: `:>` family, typings, redefinitions. */
-const BIND_FAMILY: Readonly<Record<string, number>> = { FeatureTyping: 1, Redefinition: 2 };
-
-/** Where each element stands in the containment pre-order; kept per model revision, as the impact walk asks once per element. */
-const RANK_CACHE = new WeakMap<Model, { rev: number; rank: Map<ElementId, number> }>();
-function containmentRank(model: Model): Map<ElementId, number> {
-  const hit = RANK_CACHE.get(model);
-  if (hit && hit.rev === model.rev) return hit.rank;
-  const rank = new Map<ElementId, number>();
-  // The user's roots first, then the library's: the text a terminal reads writes the model's packages and
-  // merges the library after them, whichever order this model lists its roots in (a package made or dragged
-  // to the top level after the library merged is listed after it).
-  const roots = model.rootIds();
-  const isLib = (i: ElementId): boolean => model.get(i)?.attrs.isLibrary === true;
-  const stack = [...roots.filter((i) => !isLib(i)), ...roots.filter(isLib)].reverse();
-  while (stack.length > 0) {
-    const cur = stack.pop()!;
-    if (rank.has(cur)) continue;
-    rank.set(cur, rank.size);
-    const kids = model.childIds(cur);
-    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]!);
-  }
-  RANK_CACHE.set(model, { rev: model.rev, rank });
-  return rank;
-}
-
-/**
- * The edges touching `id`, in the order of the text: a typing, specialisation or redefinition by where its
- * owner stands in the containment walk, any other edge by where it stands itself, and a tie by the
- * `:>` family, typings, redefinitions, then as the model lists them.
- *
- * NOT the order the model lists them in (`edgesOf`). A load lists what it binds later (typings,
- * specialisations, redefinitions, implicit features) after the declarations, in the order of its own binding
- * passes; the page lists one an edit added (Properties' Type field, a palette line) after every one it had,
- * one whose element a drag put elsewhere where it was, and a peer of a room in the order the room's
- * document lists its keys. So the same model gave its where-used rows in another order on the page, in a
- * terminal over the saved text and on another peer (TODO.md: the load bind order). The containment
- * walk is held alike by all of them (`Model.adoptSerialOrder`, the room's places), so the rows are ordered by it.
- */
-function edgesInTextOrder(model: Model, id: string): ElementRecord[] {
-  const edges = model.edgesOf(id);
-  if (edges.length < 2) return edges;
-  const rank = containmentRank(model);
-  const key = (e: ElementRecord): [number, number] => {
-    const at = isSpecialization(e.eClass) && e.ownerId !== null ? e.ownerId : e.id;
-    return [rank.get(at) ?? Number.MAX_SAFE_INTEGER, BIND_FAMILY[e.eClass] ?? 0];
-  };
-  return edges
-    .map((e, i) => ({ e, i, k: key(e) }))
-    .sort((x, y) => x.k[0] - y.k[0] || x.k[1] - y.k[1] || x.i - y.i)
-    .map((x) => x.e);
-}
-
 /**
  * Find everything that references `id` via typing or any relationship/edge — the
  * basis of impact analysis. For each edge touching `id`, reports the edge kind,
  * the role `id` plays, and the elements at the far end, in the order of the text
- * ({@link edgesInTextOrder}).
+ * ({@link Model.edgesInTextOrder}).
  */
 export function whereUsed(model: Model, id: string): WhereUsedReport {
   const el = model.get(id);
@@ -553,7 +499,7 @@ export function whereUsed(model: Model, id: string): WhereUsedReport {
   const references: UsageRef[] = [];
   const usedByMap = new Map<string, ElementRef>();
 
-  for (const e of edgesInTextOrder(model, id)) {
+  for (const e of model.edgesInTextOrder(model.edgesOf(id))) {
     if (e.id === id) continue;
     const onSource = (e.source ?? []).includes(id);
     const role: 'source' | 'target' = onSource ? 'source' : 'target';
