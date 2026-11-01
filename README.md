@@ -307,6 +307,7 @@ See [`docs/03-architecture-and-plan.md`](docs/03-architecture-and-plan.md). Laye
 - [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — the guide: the views, the notation, the hazards, and what is kept.
 - [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md) — every subcommand and flag of `check` and `sysprose` (generated).
 - [`docs/DIAGNOSTIC-CODES.md`](docs/DIAGNOSTIC-CODES.md) — every diagnostic code, its trigger and its repair hint (generated).
+- [`docs/CONSTRAINT-CLASSES.md`](docs/CONSTRAINT-CLASSES.md) — the classes of constraint z3 is handed or refused, and the maturity level the repository's own facts give each: a label, no verdict moves (generated).
 - [`docs/AGENT-AUTHORING-CAMPAIGN.md`](docs/AGENT-AUTHORING-CAMPAIGN.md) — the agent-authoring test campaign and the defects it has found.
 - [`docs/01-state-of-the-art.md`](docs/01-state-of-the-art.md) — survey of existing SysML v2 tools.
 - [`docs/02-omg-standard-reference.md`](docs/02-omg-standard-reference.md) — OMG SysML v2 / KerML / API & Services implementer reference.

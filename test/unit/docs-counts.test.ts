@@ -36,6 +36,8 @@ import { SEMANTIC_PROFILE, WITNESS_CLAIMS } from '@api/index';
 import { loadModelText } from '@text/load';
 import { RULES } from '@validation/index';
 import { contractsOf } from '@semantics/index';
+// The classes with a corpus row, for the one figure the constraint-class documents quote.
+import { printedClasses } from '@semantics/smt/classes';
 // The command table itself, for the same reason `RULES` is imported rather than
 // counted in prose: the number of subcommands is a fact about the table, and a
 // document that quotes it has to be checked against the table and not against
@@ -242,6 +244,14 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     pattern: /\*\*(\d+)\s+solver\s+blocks\*\*/,
     actual: () => [...read('test/campaign/verification.test.ts').matchAll(/beforeAll\(freshModule\)/g)].length,
   },
+  // The constraint classes with a corpus row: a fact about the register and its committed facts, quoted by
+  // three documents, all of them inside a generated region (so the figure moves when the facts do).
+  ...(['docs/USER-GUIDE.md', 'docs/CONFORMANCE.md', 'docs/CONSTRAINT-CLASSES.md'] as const).map((file) => ({
+    file,
+    what: 'constraint classes with a corpus row',
+    pattern: /\*\*(\d+)\s+constraint\s+classes\*\*/,
+    actual: () => printedClasses().length,
+  })),
   // ── the closing commit's re-measurement ───────────────────────────────────
   // Every figure below was hand-pasted once and guarded by nothing: the
   // conformance-suite file count, TEST-REPORT §1's per-directory file counts

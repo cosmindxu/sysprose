@@ -27,6 +27,7 @@ import {
 } from '../../src/api/property';
 import { promptsFor } from '../../src/api/analytics';
 import { contractsOf } from '../../src/semantics/contracts';
+import { classesOf } from '../../src/semantics/smt/classes';
 import {
   BenchUsageError,
   SUITES,
@@ -275,6 +276,58 @@ describe('propertyCheck — gate 0, then the four judging gates', () => {
     expect(report.outcome).toBe('accepted');
     expect(report.gates.find((g) => g.gate === 4)?.status).toBe('passed');
     expect(report.limits.join(' ')).toContain('syntactic');
+  }, 60_000);
+
+  it('states what gate 4 sent to z3 beside the report, not in it: every variable free, no axioms', async () => {
+    const { model } = await uav();
+    const accepted = await propertyCheck(model, idOf(model, 'MassRequirement'), 'uav.mtow <= 25.0 [kg]');
+    const plain = classesOf(accepted);
+    expect(plain, 'gate 4 sent two scripts, so it has a statement').toBeDefined();
+    expect(plain).toMatchObject({ status: 'ok', scope: 'proof', query: 'property-gate-4', basis: 'solver', logic: 'QF_LRA', script: { shape: 'lra' } });
+    expect(plain!.shape).toEqual([{ id: 'lra', rows: 1 }]);
+    expect(plain!.reading.map((r) => r.id)).toEqual(['requirement-clause']);
+    expect(JSON.stringify(accepted)).not.toContain('"classes"');
+
+    // a refusal gate 4 reached through z3 carries the statement of the script that decided it
+    const trivial = await propertyCheck(model, idOf(model, 'EnduranceRequirement'), 'uav.mtow <= uav.mtow');
+    expect(trivial.refusedAt).toBe(4);
+    expect(classesOf(trivial)).toMatchObject({ query: 'property-gate-4', basis: 'solver', script: { shape: 'lra' } });
+
+    // a division is nra-div, and `free`: the divisor is a free symbol (the d != 0 guard is asserted, as in every other caller)
+    const { model: m } = await fromText(`package D4 {
+    part def P { attribute f : ScalarValues::Real = 6.0; attribute g : ScalarValues::Real = 2.0; }
+    part p : P;
+    requirement def R { subject p : P; require constraint { p.f >= 0.0 } }
+    satisfy R by p; }`);
+    const div = await propertyCheck(m, idOf(m, 'R'), 'p.f / p.g > 1.0');
+    expect(div.refusedAt).toBeNull();
+    const st = classesOf(div)!;
+    expect(st.script).toEqual({ shape: 'nra-div', search: 'free' });
+    expect(st.logic).toBe('QF_NRA');
+    expect(st.shape).toEqual([{ id: 'nra-div', search: 'free', rows: 1 }]);
+
+    // gate 4 asserts the divisor guard: `p.f / p.g > 1.0 and p.g == 0.0` has no assignment with a nonzero divisor, so
+    // it is unsatisfiable on its own and refused (unguarded, z3 took a divisor of zero and accepted it)
+    const zero = await propertyCheck(m, idOf(m, 'R'), 'p.f / p.g > 1.0 and p.g == 0.0');
+    expect(zero.refusedAt).toBe(4);
+    expect(zero.outcome).toBe('refused');
+    expect(zero.gates.find((g) => g.gate === 4)?.detail).toContain('unsatisfiable on its own');
+    // …and a clause that holds with a nonzero divisor stays accepted
+    expect((await propertyCheck(m, idOf(m, 'R'), 'p.f / p.g <= 5.0 and p.g == 2.0')).refusedAt).toBeNull();
+  }, 60_000);
+
+  it('sends nothing without a solver, and so has no statement to give', async () => {
+    const { model } = await uav();
+    const previous = process.env.SYSPROSE_NO_Z3;
+    process.env.SYSPROSE_NO_Z3 = '1';
+    try {
+      const without = await propertyCheck(model, idOf(model, 'MassRequirement'), 'uav.mtow <= 25.0 [kg]');
+      expect(without.outcome).toBe('accepted-with-gap');
+      expect(classesOf(without)).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.SYSPROSE_NO_Z3;
+      else process.env.SYSPROSE_NO_Z3 = previous;
+    }
   }, 60_000);
 
   it('returns the insertion range inside the requirement body for an accepted clause', async () => {

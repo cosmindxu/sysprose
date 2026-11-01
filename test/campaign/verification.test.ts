@@ -130,7 +130,8 @@ import {
 import { loadModelText } from '@text/load';
 import { serializeElement, serializeModel } from '@text/serializer';
 import { RULES_BY_ID } from '@validation/rules';
-import { encodedFootprint } from '@semantics/engines/smt';
+import { encodedFootprint, judgeBySmt } from '@semantics/engines/smt';
+import { classifyRow } from '@semantics/smt/classes';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -5859,6 +5860,84 @@ describe('L8 — staleness scoped to what provably cannot affect the proof', () 
     expect(first.records.every((rec) => (rec.proofScope?.footprint.length ?? 0) > 0)).toBe(true);
     const total = first.records.reduce((n, rec) => n + (rec.proofScope?.footprint.length ?? 0), 0);
     expect(total, 'the measured footprint total on this model').toBe(24);
+  }, 300_000);
+});
+
+/**
+ * The constraint class of what each solver golden stands on (CC-50). The goldens are untouched and pin no class: this
+ * reads the class off the judgement beside the verdict the report gives the same row, so a class that drifted from the
+ * verdict, or from the closure the proof was drawn over, shows up here. No class is printed yet.
+ */
+describe('L8 — constraint classes: what each solver golden rests on, beside its verdict (CC-50)', () => {
+  beforeAll(freshModule);
+  const SOLVER_GOLDENS = [
+    'smt-uav-proved',
+    'smt-tautology',
+    'smt-vacuous',
+    'smt-inconsistent-axioms',
+    'smt-gate-refused-refuted',
+    'smt-refused-axiom-relevant',
+  ];
+  /** The basis each outcome word is allowed to carry, and no other. */
+  const BASES_OF: Record<string, string[]> = {
+    proved: ['solver', 'solver+numeric'],
+    refuted: ['solver-witness', 'numeric-surface', 'point-evaluation'],
+    vacuous: ['solver', 'numeric-surface'],
+    'axioms-inconsistent': ['solver', 'numeric-surface'],
+    'witness-unconfirmed': ['none'],
+  };
+
+  withZ3('counts the rows of each proof as its closure, and gives each verdict a basis its word allows', async () => {
+    const real = await loadZ3();
+    if (real.absent) throw new Error(real.reason);
+    let proofs = 0;
+    let runs = 0;
+    let pointEvaluated = 0;
+    for (const name of SOLVER_GOLDENS) {
+      const meta = JSON.parse(read(`test/fixtures/verification/${name}/meta.json`)) as Meta;
+      const model = await modelFor(meta.model);
+      const rows = obligationsOf(model);
+      const judged = (await judgeBySmt(model, rows, { backend: real })).filter((r) => r.row.role === 'obligation');
+      const report = await runCase(meta);
+      expect(report.results, name).toHaveLength(judged.length);
+      judged.forEach(({ row, judgement: j }, i) => {
+        const where = `${name}: ${row.element.qualifiedName}`;
+        const c = j.classes;
+        expect(c.status, where).toBe('ok');
+        expect(BASES_OF[j.outcome] ?? [], where).toContain(c.basis);
+        // The verdict the report prints for this row is the word the class was read beside.
+        expect(report.results[i]!.claim, where).toBe(
+          { proved: 'proved', refuted: 'refuted', vacuous: 'vacuous' }[j.outcome as string] ?? 'inconclusive',
+        );
+        expect(c.goal.fence !== undefined, where).toBe(classifyRow(row, { model }).fence !== null);
+        if (c.goal.fence !== undefined) {
+          // A refused goal: its fence, no script, nothing else.
+          expect([c.script, c.shape], where).toEqual([null, []]);
+          if (j.outcome === 'refuted') pointEvaluated++;
+          return;
+        }
+        if (c.scope === 'run') {
+          // Step 0 asserted every axiom of the run: the cells are theirs.
+          runs++;
+          const axioms = rows.filter((r) => r.role === 'axiom' && classifyRow(r, { model }).fence === null);
+          expect(c.shape.reduce((n, x) => n + x.rows, 0), where).toBe(axioms.length);
+          return;
+        }
+        proofs++;
+        // A proof stands on the goal, its premises and the axioms of its footprint: the cells add up to that, refused rows aside.
+        const footprint = encodedFootprint(rows, row, new Set(meta.free ?? []))!;
+        const premises = rows.filter((r) => r.role === 'premise' && r.requirement?.id === row.requirement?.id);
+        const encodedRows = [
+          row,
+          ...premises,
+          ...rows.filter((r) => r.role === 'axiom' && footprint.has(r.element.id)),
+        ].filter((r) => classifyRow(r, { model }).fence === null);
+        expect(c.shape.reduce((n, x) => n + x.rows, 0), where).toBe(encodedRows.length);
+        expect(c.logic, where).toBe(j.logic);
+      });
+    }
+    // A sweep that compared nothing would be green for the wrong reason.
+    expect([proofs >= 4, runs >= 1, pointEvaluated >= 1]).toEqual([true, true, true]);
   }, 300_000);
 });
 

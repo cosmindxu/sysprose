@@ -38,15 +38,15 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
 | **Date** | 2026-10-15 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **5204 passed / 0 failed / 0 skipped** across **157 files** |
-| &nbsp;&nbsp;— unit | 4125 passed across 119 files |
-| &nbsp;&nbsp;— integration | 450 passed across 21 files |
+| **Vitest checks** | **5308 passed / 0 failed / 0 skipped** across **159 files** |
+| &nbsp;&nbsp;— unit | 4213 passed across 120 files |
+| &nbsp;&nbsp;— integration | 465 passed across 22 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 10 passed across 1 file |
-| &nbsp;&nbsp;— campaign (L6–L8) | 497 passed across 5 files |
+| &nbsp;&nbsp;— campaign (L6–L8) | 498 passed across 5 files |
 | **E2E scenarios** | **236 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
-| **Grand total** | **5440 automated checks passed / 0 failed** |
+| **Grand total** | **5544 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -609,6 +609,39 @@ are `docs/TEST-SUMMARY.md`'s.]*
 **Vitest grand total: 1242 / 1242 passed across 97 files (0 skipped).** *[2026-09-16:
 the 2026-07-03 run's total; the current run's is §1's and §7's.]*
 
+### 4.1 The constraint-class facts
+
+Fact counts, not test-title counts: each row below is counted with no solver from this repository (`npm run census:classes -- --check --strict` holds them to a recount), and the level in its last column is what the rubric computes from them. What each class is, and what a level does and does not say, is in [`CONSTRAINT-CLASSES.md`](CONSTRAINT-CLASSES.md).
+
+<!-- BEGIN GENERATED constraint-classes:test-report (scripts/gen-constraint-classes.ts; npm run classes) -->
+| Cell | Rows | Models | Encoder tests | Decided golden rows | Agreeing table rows (probes) | Table rows against | Battery cells | Level |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `lra` | 483 | 72 | 2 | 6 | 503 (210) | 0 | none | `differential-tested` |
+| `lira` | 15 | 13 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
+| `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `nra-div/pinned` | 17 | 9 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `units` | 98 | 40 | 2 | 5 | 25 (12) | 0 | none | `differential-tested` |
+| `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `stated-value` | 311 | 78 | 1 | 7 | 498 (208) | 0 | none | `differential-tested` |
+| `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
+| `bind-equality` | 9 | 5 | 1 | 0 | 171 (97) | 0 | none | `experimental` |
+| `asserted-fact` | 27 | 8 | 1 | 0 | 7 (5) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 293 (187) | 0 | none | `differential-tested` |
+| `per-instance` | 1 | 1 | 1 | 0 | 212 (88) | 0 | none | `experimental` |
+| `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
+| `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
+| `fence/unresolved-name` | 5 | 4 | 2 | — | — | — | none | `fenced` |
+| `fence/unit-unresolved` | 1 | 1 | 0 | — | — | — | none | `unpinned` |
+| `fence/dimension-clash` | 2 | 2 | 1 | — | — | — | none | `fenced` |
+| `fence/offset-arithmetic` | 3 | 3 | 1 | — | — | — | none | `fenced` |
+| `fence/refused-derivation` | 1 | 1 | 1 | — | — | — | none | `fenced` |
+| `fence/unsupported-operator` | 6 | 5 | 2 | — | — | — | none | `fenced-defect` |
+| `fence/non-numeric-operand` | 4 | 4 | 2 | — | — | — | none | `fenced` |
+<!-- END GENERATED constraint-classes:test-report -->
+
 ---
 
 ## 5. E2E scenario summary
@@ -974,8 +1007,8 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **5440 green automated
-checks** (**5204** unit/integration/conformance/server/interop/campaign across **157 files**,
+SysML v2 standard family — all six read **Covered** — with **5544 green automated
+checks** (**5308** unit/integration/conformance/server/interop/campaign across **159 files**,
 **0 skips**, + **236 E2E** across **84 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
@@ -994,8 +1027,8 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (5204 passed /
-0 skipped across 157 files) and Playwright (231/231 across 84 spec files), plus
+*End of report. Counts and verdicts derived from a live `vitest run` (5308 passed /
+0 skipped across 159 files) and Playwright (231/231 across 84 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
 verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and

@@ -64,6 +64,7 @@ import type { ExprNode } from '../semantics/expr';
 import { parseRelationBody, type LoweredLiteral } from '../semantics/relations';
 import { requirementShortId, requirementStatement } from '../semantics/requirements';
 import { isNonNormativeStatement } from '../semantics/statement-kind';
+import { attachClasses, classifyRow, ClassRollup, scriptClassOf, type ClassStatement, type RowClass } from '../semantics/smt/classes';
 import { encodeRelation, encodeScript, encodeVariablesOf, notTerm } from '../semantics/smt/encode';
 import { DEFAULT_TIMEOUT_MS, loadZ3 } from '../semantics/smt/z3-bridge';
 import { dimToString } from '../semantics/units';
@@ -1237,17 +1238,22 @@ export async function propertyCheck(
   );
 
   /* ── gate 4: syntactic non-triviality ──────────────────────────────────── */
-  const gate4 = await nonTriviality(reading, base.shortId || base.requirement.qualifiedName, opts);
+  const gate4 = await nonTriviality(model, reading, base.shortId || base.requirement.qualifiedName, opts);
+  // What gate 4 sent to z3, as the constraint-class register reads it: kept beside the report ({@link attachClasses}),
+  // a label that no field of the report carries.
+  const labelled = <T extends object>(report: T): T => (gate4.classes ? attachClasses(report, gate4.classes) : report);
   if (gate4.row.status === 'refused') {
-    return refuse([...gates, gate4.row], gate4.code ?? PROPERTY_CODES.trivial, gate4.row.detail, {
-      reads,
-      backTranslation: english,
-      solver: gate4.solver,
-    });
+    return labelled(
+      refuse([...gates, gate4.row], gate4.code ?? PROPERTY_CODES.trivial, gate4.row.detail, {
+        reads,
+        backTranslation: english,
+        solver: gate4.solver,
+      }),
+    );
   }
   gates.push(gate4.row);
   const where = insertionFor(model, requirementId, opts);
-  return {
+  return labelled({
     ...base,
     outcome: gate4.row.status === 'passed' ? 'accepted' : 'accepted-with-gap',
     refusedAt: null,
@@ -1268,7 +1274,7 @@ export async function propertyCheck(
     solver: gate4.solver,
     limits: PROPERTY_LIMITS,
     notice: MEANING_NOTICE,
-  };
+  });
 }
 
 /** A placeholder row for the gate about to be filled in by {@link refuse}. */
@@ -1284,6 +1290,8 @@ interface Gate4 {
   row: GateResult;
   code: string | null;
   solver: { version: string | null; detail: string };
+  /** What gate 4 sent to z3 (`property-gate-4`), when it sent anything. A label. */
+  classes?: ClassStatement;
 }
 
 /**
@@ -1301,6 +1309,7 @@ interface Gate4 {
  * against.
  */
 async function nonTriviality(
+  model: Model,
   reading: RelationReading,
   label: string,
   opts: PropertyOptions,
@@ -1338,14 +1347,43 @@ async function nonTriviality(
   }
   const solver = { version: z3.version, detail: `z3 ${z3.version} (WASM), seed ${z3.seed}` };
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const script = (term: string): string =>
-    encodeScript({
+  // Gate 4 asserts no axiom and every variable is free. It asserts the clause and the `side:` divisor guard
+  // the clause's division carries, as verify, consistency, refine and bounds do: a clause no assignment with
+  // a nonzero divisor satisfies is as useless as any other unsatisfiable one. Every script sent is recorded;
+  // nothing here reads the record back.
+  const rollup = new ClassRollup('property-gate-4');
+  const sorts = new Map(variables.map((v) => [v.qualifiedName, v.sort] as const));
+  // One class for the clause, shared by both scripts (it is the same row).
+  let clauseRow: RowClass | undefined;
+  const clauseClass = (): RowClass =>
+    (clauseRow ??= classifyRow(
+      {
+        node: reading.node,
+        vars: reading.variables,
+        sortPerVar: reading.sortPerVar,
+        scaled: reading.scale !== undefined,
+        encodable: reading.encodable,
+        ...(reading.unread !== undefined ? { unread: reading.unread } : {}),
+      },
+      { model, encoded, kind: 'clause' },
+    ));
+  const script = (term: string): string => {
+    const sent = encodeScript({
       variables,
-      assertions: [{ kind: 'goal', name: label, term }],
+      assertions: [
+        { kind: 'goal', name: label, term },
+        ...encoded.sideConditions.map((c) => ({ kind: 'side' as const, name: label, term: c.term })),
+      ],
       nonlinear: encoded.nonlinear,
       syntacticNonlinear: encoded.syntacticNonlinear,
       cores: false,
-    }).text;
+    });
+    rollup.guard((r) => r.add(scriptClassOf(sent.shape, sent.logic, sorts), [clauseClass()]));
+    return sent.text;
+  };
+  /** The statement of whatever was sent, with z3 having answered or not. */
+  const classes = (decided: boolean): ClassStatement =>
+    rollup.statement({ scope: 'proof', basis: decided ? 'solver' : 'none', z3: z3.version });
 
   const positive = await z3.check(script(encoded.term), { timeoutMs });
   if (positive.status === 'unsat') {
@@ -1361,10 +1399,16 @@ async function nonTriviality(
       },
       code: PROPERTY_CODES.trivial,
       solver,
+      classes: classes(true),
     };
   }
   if (positive.status !== 'sat') {
-    return { row: undecided(positive.status, positive.reason, timeoutMs, 'the clause'), code: PROPERTY_CODES.unchecked, solver };
+    return {
+      row: undecided(positive.status, positive.reason, timeoutMs, 'the clause'),
+      code: PROPERTY_CODES.unchecked,
+      solver,
+      classes: classes(false),
+    };
   }
   const negated = await z3.check(script(notTerm(encoded.term)), { timeoutMs });
   if (negated.status === 'unsat') {
@@ -1380,10 +1424,16 @@ async function nonTriviality(
       },
       code: PROPERTY_CODES.trivial,
       solver,
+      classes: classes(true),
     };
   }
   if (negated.status !== 'sat') {
-    return { row: undecided(negated.status, negated.reason, timeoutMs, 'its negation'), code: PROPERTY_CODES.unchecked, solver };
+    return {
+      row: undecided(negated.status, negated.reason, timeoutMs, 'its negation'),
+      code: PROPERTY_CODES.unchecked,
+      solver,
+      classes: classes(false),
+    };
   }
   return {
     row: passed(
@@ -1393,6 +1443,7 @@ async function nonTriviality(
     ),
     code: null,
     solver,
+    classes: classes(true),
   };
 }
 

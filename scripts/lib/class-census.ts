@@ -2,19 +2,19 @@
  * The constraint-class census (step S0 of the constraint-classes plan): an INVENTORY of everything the
  * SMT lane hands to z3, or refuses to hand over, sorted into the classes the plan proposes.
  *
- * LABEL ONLY, and it adds nothing to `src/`. It reads the worklist (`obligationsOf`), the encoder's own
- * bytes (`encodeRelation`, `encodeScript`) and, with `--verdicts`, the verdicts `verifyModel` gives. The
- * classifier is carried HERE, twice, on purpose: once from the BYTES the encoder emitted (the derivation
- * `shape.ts` will move into `src/` at S1) and once from the AST (an independent oracle). A row on which the
- * two disagree is listed, never settled by choosing one.
+ * LABEL ONLY. It reads the worklist (`obligationsOf`), the encoder's own bytes (`encodeRelation`,
+ * `encodeScript`) and, with `--verdicts`, the verdicts `verifyModel` gives. Since step S3 the rows are sorted by
+ * the register's own classifier (`classifyRow` and `pinnedSymbolsOf` of `src/semantics/smt/`), so the census
+ * counts what the product labels. The BYTES derivation below (`termFacts`, `shapeOfBytes`) and the AST
+ * oracle (`astShape`) stay as independent readings the self-check and the unit tests hold the classifier to:
+ * a row on which they disagree is listed, never settled by choosing one.
  *
  * Everything counted is a sum over rows, so two partial censuses merge by adding their counts
  * ({@link mergeCensus}); that is what `--shard` and `--merge` rely on, and why no count here depends on
  * the order models were read in.
  */
 import { createHash } from 'node:crypto';
-import type { ElementId, Model } from '../../src/core/index';
-import { generalizationsOf } from '../../src/semantics/inheritance';
+import type { Model } from '../../src/core/index';
 import {
   axiomsOf,
   obligationsOf,
@@ -36,6 +36,8 @@ import {
   type ScriptAssertion,
 } from '../../src/semantics/smt/encode';
 import { encodedFootprint } from '../../src/semantics/engines/smt';
+import { classifyRow, scriptClassOf, searchOf } from '../../src/semantics/smt/classes';
+import { pinnedSymbolsOf } from '../../src/semantics/smt/pinned';
 import type { ObligationVerdict } from '../../src/api/verification';
 
 /* ───────────────────────────────── vocabulary ───────────────────────────────── */
@@ -303,22 +305,8 @@ export function readingOf(row: Obligation): ReadingId | typeof NO_READING {
   }
 }
 
-/** Does the declared-type closure of this feature name `String`? (`contracts.ts` `sortOf`'s name set.) */
-function textAsReal(model: Model, featureId: string): boolean {
-  const el = model.get(featureId as ElementId);
-  if (!el) return false;
-  const names = new Set<string>();
-  for (const t of model.typesOf(el.id)) {
-    if (t.declaredName) names.add(t.declaredName);
-    for (const g of generalizationsOf(model, t.id)) if (g.declaredName) names.add(g.declaredName);
-  }
-  const declared = el.attrs.type;
-  if (typeof declared === 'string') names.add(declared.includes('::') ? declared.slice(declared.lastIndexOf('::') + 2) : declared);
-  return names.has('String');
-}
-
 /** One worklist row, encoded the way the SMT engine encodes it, with the refusal if there is one. */
-interface EncRow {
+export interface EncRow {
   row: Obligation;
   vars: EncodeVariable[];
   encoded?: EncodedRelation;
@@ -326,7 +314,7 @@ interface EncRow {
   layer?: 'gate' | 'encoder';
 }
 
-function encRow(row: Obligation): EncRow {
+export function encRow(row: Obligation): EncRow {
   const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: new Set() });
   if (row.node === null || row.encodable !== true) {
     return row.encodable === true
@@ -349,56 +337,11 @@ const symbolSorts = (vars: readonly EncodeVariable[]): Map<string, VarSort> => {
 /* ───────────────────────────── pinned versus free ───────────────────────────── */
 
 /**
- * The symbols a set of asserted axioms fixes, by the plan's strict rule (C.2): a defining row pins its
- * left-hand feature only if that feature does not occur on its own right-hand side and every symbol of the
- * right-hand side is already pinned; a `bind` pins both ends once either is pinned; an own symbol never pins.
- * Mutual definitions stay unpinned. This is NOT the engine's `pinnedSymbols`.
+ * The symbols a set of asserted axioms fixes, by the plan's strict rule (C.2): `pinnedSymbolsOf` of
+ * `src/semantics/smt/pinned.ts`. This is NOT the engine's `pinnedSymbols`.
  */
-export function pinnedStrict(axioms: readonly EncRow[]): Set<string> {
-  const pinned = new Set<string>();
-  const rows = axioms.filter((a) => a.encoded !== undefined);
-  const qn = (r: EncRow, path: string): string | undefined => r.vars.find((v) => v.path === path)?.qualifiedName;
-  const refsOf = (n: ExprNode): string[] =>
-    n.kind === 'ref'
-      ? [n.path.join('.')]
-      : n.kind === 'unary'
-        ? refsOf(n.operand)
-        : n.kind === 'binary'
-          ? [...refsOf(n.left), ...refsOf(n.right)]
-          : n.kind === 'if'
-            ? [...refsOf(n.cond), ...refsOf(n.then), ...refsOf(n.else)]
-            : [];
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const a of rows) {
-      const node = a.row.node;
-      if (node?.kind !== 'binary' || node.op !== '==') continue;
-      if (a.row.source === 'bind' && node.left.kind === 'ref' && node.right.kind === 'ref') {
-        const l = qn(a, node.left.path.join('.'));
-        const r = qn(a, node.right.path.join('.'));
-        if (l !== undefined && r !== undefined && pinned.has(l) !== pinned.has(r)) {
-          pinned.add(l);
-          pinned.add(r);
-          grew = true;
-        }
-        continue;
-      }
-      if (!['feature-value', 'calculation', 'assert'].includes(a.row.source)) continue;
-      if (node.left.kind !== 'ref') continue;
-      const leftPath = node.left.path.join('.');
-      const target = a.row.vars.find((v) => v.path === leftPath);
-      if (!target || target.symbol !== undefined) continue;
-      const symbol = target.qualifiedName;
-      if (pinned.has(symbol)) continue;
-      const rhs = refsOf(node.right);
-      if (rhs.includes(leftPath)) continue;
-      const rhsSymbols = rhs.map((p) => qn(a, p));
-      if (rhsSymbols.some((s) => s === undefined || s === symbol || !pinned.has(s))) continue;
-      pinned.add(symbol);
-      grew = true;
-    }
-  }
-  return pinned;
+function pinnedStrict(model: Model, axioms: readonly EncRow[]): Set<string> {
+  return pinnedSymbolsOf(model, axioms);
 }
 
 /* ──────────────────────────────── the census ──────────────────────────────── */
@@ -532,21 +475,22 @@ export function censusModel(c: Census, input: ModelInput): { script: string[] } 
   }
 
   const axiomRows = axiomsOf(rows).map((a) => enc[rows.indexOf(a)]!);
-  const pinnedModel = pinnedStrict(axiomRows);
+  const pinnedModel = pinnedStrict(model, axiomRows);
   const rowCell = new Map<Obligation, string>();
   const perModel = name.startsWith('examples/') ? { rows: rows.length, encoded: 0, units: 0, shapes: {} as Record<string, number> } : undefined;
 
   for (const e of enc) {
     const r = e.row;
-    const reading = readingOf(r);
+    const rc = classifyRow(r, { model, ...(e.encoded ? { encoded: e.encoded } : {}) });
+    const reading = rc.reading ?? NO_READING;
     let cell: string;
     let search = '-';
-    const mods: string[] = [];
+    const mods: string[] = [...rc.modifiers];
     if (e.encoded) {
       const out = e.encoded;
       const facts = termFacts([out.term]);
       const sorts = symbolSorts(e.vars);
-      const { shape } = shapeOfBytes(facts, sorts, { syntacticNonlinear: out.syntacticNonlinear, sides: out.sideConditions.length });
+      const shape = rc.shape!;
       cell = shape;
       // The logic the encoder gives this row alone must be the logic its shape stands for.
       const script = encodeScript({
@@ -560,34 +504,28 @@ export function censusModel(c: Census, input: ModelInput): { script: string[] } 
       hashes.push(`${corpus}\t${name}\t${r.element.qualifiedName || r.expression}\trow\t${script.logic}\t${sha(script.text)}`);
       const oracle = astShape(r.node!, e.vars);
       if (oracle !== shape) violation(c, 'oracle: AST shape differs from the bytes', `${name}: ${r.expression}: bytes ${shape}, AST ${oracle}`);
+      // the independent term-bytes reading must agree with the classifier's
+      const byBytes = shapeOfBytes(facts, sorts, { syntacticNonlinear: out.syntacticNonlinear, sides: out.sideConditions.length }).shape;
+      if (byBytes !== shape) violation(c, 'oracle: AST shape differs from the bytes', `${name}: ${r.expression}: classifier ${shape}, term bytes ${byBytes}`);
       if (shape === 'ground' && facts.arith) note(c, 'ground rows that carry arithmetic', `${name}: ${r.expression}`);
       if (shape === 'ground') note(c, 'ground rows', `${name}: ${r.expression}`);
-      if (['nra-poly', 'nra-div', 'nira'].includes(shape)) {
-        const nl = facts.nlSymbols.size > 0 ? facts.nlSymbols : facts.symbols;
-        const pinnedSyms = new Set([...pinnedModel].map((q) => symbolOf(q)).filter((s): s is string => s !== undefined));
-        search = [...nl].every((s) => pinnedSyms.has(s)) ? 'pinned' : 'free';
-      }
+      search = searchOf(rc, pinnedModel) ?? '-';
       const reads = new Set(out.reads);
       const carried = e.vars.filter((v) => reads.has(v.qualifiedName));
       const viaFactor = carried.some((v) => v.factor !== 1);
-      if (viaFactor || hasLiteral(r.node!)) mods.push('units');
       if (!viaFactor && hasLiteral(r.node!)) bump(c.facts, 'units rows visible only through a [unit] literal');
-      if (carried.some((v) => v.offset !== 0)) mods.push('offset-order');
-      if (facts.ite) mods.push('ite');
-      if (shape === 'nira' && out.sideConditions.length > 0) mods.push('div-guard');
-      if (r.vars.some((v) => textAsReal(model, v.featureId))) mods.push('text-as-real');
       if (perModel) {
         perModel.encoded += 1;
         perModel.shapes[shape] = (perModel.shapes[shape] ?? 0) + 1;
         if (mods.includes('units')) perModel.units += 1;
       }
     } else {
-      cell = `fence/${e.refusal!.reason}`;
+      cell = rc.primary;
       if (!(e.refusal!.reason in FENCE_SET)) violation(c, 'partition: a refusal reason outside the vocabulary', `${name}: ${e.refusal!.reason}`);
     }
     rowCell.set(r, cell);
     const v = verdictOf.get(r);
-    const basis = input.verdicts && r.role === 'obligation' ? basisEstimate(e, v, pinnedModel) : '-';
+    const basis = input.verdicts && r.role === 'obligation' ? basisEstimate(model, e, v, pinnedModel) : '-';
     const verdict = v ? verdictWord(v) : '-';
     if (e.encoded && !(reading !== NO_READING || r.source === 'none')) violation(c, 'partition: an encoded row with no reading', `${name}: ${r.expression}`);
     if (reading === NO_READING && e.encoded) violation(c, 'partition: a no-clause row that encoded', `${name}: ${r.expression}`);
@@ -606,7 +544,8 @@ export function censusModel(c: Census, input: ModelInput): { script: string[] } 
   // Step 0 of `verify` (and the baseline of `consistency` with values): every encoded axiom in one script.
   const encodedAxioms = axiomRows.filter((a) => a.encoded);
   if (encodedAxioms.length > 0) {
-    const { script, shape } = scriptOf(encodedAxioms, assertedOf(encodedAxioms, 'axiom'));
+    const { script, cls } = scriptOf(encodedAxioms, assertedOf(encodedAxioms, 'axiom'));
+    const shape = cls.shape;
     if (SHAPE_LOGIC[shape] !== script.logic) violation(c, 'logic: script shape does not give the encoder\u2019s logic', `${name}: step 0 is ${shape}, the script says ${script.logic}`);
     bump(c.facts, `step-0 axiom script (verify, consistency): ${shape} ${script.logic}`);
     hashes.push(`${corpus}\t${name}\t(step 0)\tstep0\t${script.logic}\t${sha(script.text)}`);
@@ -631,19 +570,15 @@ export function censusModel(c: Census, input: ModelInput): { script: string[] } 
       ...g.encoded.sideConditions.map((s) => ({ kind: 'side' as const, name: g.row.element.qualifiedName || g.row.expression, term: s.term })),
       { kind: 'goal', name: g.row.element.qualifiedName || g.row.expression, term: notTerm(g.encoded.term) },
     ];
-    const { script, facts, shape: scriptShape } = scriptOf(context, assertions);
+    const { script, cls } = scriptOf(context, assertions);
+    const scriptShape = cls.shape;
     hashes.push(`${corpus}\t${name}\t${g.row.element.qualifiedName || g.row.expression}\tproof\t${script.logic}\t${sha(script.text)}`);
     if (SHAPE_LOGIC[scriptShape] !== script.logic) violation(c, 'logic: script shape does not give the encoder’s logic', `${name}: ${g.row.element.qualifiedName} is ${scriptShape}, the script says ${script.logic}`);
     const rowShapes = context.map((e) => rowCell.get(e.row)!).filter((s) => !s.startsWith('fence/'));
     const maxRow = rowShapes.reduce((m, s) => ((RANK.get(s) ?? -1) > (RANK.get(m) ?? -1) ? s : m), 'ground');
     const outranks = (RANK.get(scriptShape) ?? 0) > (RANK.get(maxRow) ?? 0);
     if (outranks) note(c, 'proofs whose script cell outranks every row cell', `${name}: ${g.row.element.qualifiedName}: rows ${maxRow}, script ${scriptShape}`);
-    let search = '-';
-    if (['nra-poly', 'nra-div', 'nira'].includes(scriptShape)) {
-      const pin = new Set([...pinnedStrict(kept)].map((q) => symbolOf(q)));
-      const nl = facts.nlSymbols.size > 0 ? facts.nlSymbols : facts.symbols;
-      search = [...nl].every((s) => pin.has(s)) ? 'pinned' : 'free';
-    }
+    const search = searchOf(cls, pinnedStrict(model, kept)) ?? '-';
     const contextReached = reachedBy([
       ...context.filter((e) => e.encoded !== undefined).map((e) => ({ vars: e.row.vars, symbols: e.vars.map((v) => v.qualifiedName) })),
       { vars: [], symbols: reached },
@@ -652,14 +587,14 @@ export function censusModel(c: Census, input: ModelInput): { script: string[] } 
       premises.filter((p) => p.encoded === undefined).length +
       kept.filter((a) => a.encoded === undefined && refusalReaches(reachOfRow(a.row, a.vars.map((v) => v.qualifiedName)), contextReached)).length;
     const v = verdictOf.get(g.row);
-    const basis = input.verdicts ? basisEstimate(g, v, pinnedModel, dropped, kept) : '-';
+    const basis = input.verdicts ? basisEstimate(model, g, v, pinnedModel, dropped, kept) : '-';
     bump(c.proofs, [corpus, rowCell.get(g.row)!, scriptShape, script.logic, search, outranks ? 'outranks' : 'within', dropped > 0 ? 'dropped' : 'whole', v ? verdictWord(v) : '-', basis].join('\t'));
   }
   return { script: hashes };
 }
 
 /** The labelled assertions of encoded rows, side conditions included, as the engine files them. */
-function assertedOf(list: readonly EncRow[], kind: 'axiom' | 'premise'): ScriptAssertion[] {
+export function assertedOf(list: readonly EncRow[], kind: 'axiom' | 'premise'): ScriptAssertion[] {
   return list.flatMap((e) =>
     e.encoded
       ? [
@@ -671,17 +606,15 @@ function assertedOf(list: readonly EncRow[], kind: 'axiom' | 'premise'): ScriptA
 }
 
 /** One script over a context of rows, and the shape its BYTES have (symbols the script declares only). */
-function scriptOf(context: readonly EncRow[], assertions: readonly ScriptAssertion[]): { script: ReturnType<typeof encodeScript>; facts: TermFacts; shape: ShapeId } {
+export function scriptOf(context: readonly EncRow[], assertions: readonly ScriptAssertion[]): { script: ReturnType<typeof encodeScript>; cls: ReturnType<typeof scriptClassOf> } {
   const variables: EncodeVariable[] = [];
   const seen = new Set<string>();
   for (const e of context) for (const v of e.vars) if (!seen.has(v.qualifiedName)) (seen.add(v.qualifiedName), variables.push(v));
   const synt = context.some((e) => e.encoded?.syntacticNonlinear === true);
   const script = encodeScript({ variables, assertions, nonlinear: context.some((e) => e.encoded?.nonlinear === true), syntacticNonlinear: synt });
-  const facts = termFacts(assertions.map((a) => a.term));
-  const declared = new Set(script.symbols.map((q) => symbolOf(q)));
-  const read = new Map([...symbolSorts(variables)].filter(([sym]) => declared.has(sym)));
-  const { shape } = shapeOfBytes({ ...facts, symbols: new Set([...facts.symbols].filter((x) => read.has(x))) }, read, { syntacticNonlinear: synt, sides: assertions.filter((x) => x.kind === 'side').length });
-  return { script, facts, shape };
+  const sorts = new Map<string, VarSort>();
+  for (const v of variables) if (!sorts.has(v.qualifiedName)) sorts.set(v.qualifiedName, v.sort);
+  return { script, cls: scriptClassOf(script.shape, script.logic, sorts) };
 }
 
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex').slice(0, 16);
@@ -702,7 +635,7 @@ function hasLiteral(n: ExprNode): boolean {
 }
 
 /** `relevantAxioms` of `engines/smt.ts`, by its own rule, re-written here so the parity with `encodedFootprint` means something. */
-function relevant(axioms: readonly EncRow[], premises: readonly EncRow[], goal: EncodedRelation): { kept: EncRow[]; reached: Set<string> } {
+export function relevant(axioms: readonly EncRow[], premises: readonly EncRow[], goal: EncodedRelation): { kept: EncRow[]; reached: Set<string> } {
   const reached = new Set<string>(goal.reads);
   for (const p of premises) for (const r of p.encoded?.reads ?? []) reached.add(r);
   const kept: EncRow[] = [];
@@ -729,6 +662,7 @@ function relevant(axioms: readonly EncRow[], premises: readonly EncRow[], goal: 
  * model's values, and a `refuted` row as the solver's witness only when every symbol of the goal is pinned.
  */
 function basisEstimate(
+  model: Model,
   e: EncRow,
   v: ObligationVerdict | undefined,
   pinnedModel: ReadonlySet<string>,
@@ -742,7 +676,7 @@ function basisEstimate(
     return dropped > 0 ? 'solver+numeric' : 'solver';
   }
   if (v.claim === 'refuted') {
-    const pinned = kept ? pinnedStrict(kept) : pinnedModel;
+    const pinned = kept ? pinnedStrict(model, kept) : pinnedModel;
     return e.vars.filter((x) => e.encoded!.reads.includes(x.qualifiedName)).every((x) => pinned.has(x.qualifiedName)) ? 'solver-witness' : 'numeric-surface';
   }
   if (v.claim === 'vacuous' || v.code === 'verification/inconsistent-axioms') {
@@ -765,11 +699,13 @@ const unescapeTemplate = (s: string): string =>
 
 /**
  * Extract the `PROBES` table of the differential test without running it: every `name: probe(`…`, { rows })`
- * whose text is a plain template literal. The entries whose text is computed (an interpolation or a call) are
- * listed by name, and the spreads (`...reversed('name', text, rows)`, which file several probes from one call)
- * by their call; neither is read.
+ * whose text is a plain template literal, and the probe and `-rev` twin of every `...reversed('name', `text`,
+ * `rev`, { rows })` spread of plain templates. The entries whose text is computed (an interpolation or a call)
+ * are listed by name, and every other spread (`...standing(…)`, `...exchanged(…)`, a `reversed` over a call),
+ * which files several probes from one call, by its call; neither is read. `region` is the source span of the
+ * table, for a digest.
  */
-export function extractProbes(source: string): { entries: ProbeEntry[]; interpolated: string[]; spreads: string[]; total: number } {
+export function extractProbes(source: string): { entries: ProbeEntry[]; interpolated: string[]; spreads: string[]; total: number; region: { from: number; to: number } } {
   const start = source.indexOf('const PROBES: Record<string,');
   if (start < 0) throw new Error('class-census: no PROBES table in the differential test');
   let i = source.indexOf('= {', start) + 3;
@@ -844,17 +780,74 @@ export function extractProbes(source: string): { entries: ProbeEntry[]; interpol
       i += 1;
     }
   };
+  const rowsOf = (body: string): ProbeEntry['rows'] =>
+    [...body.replace(/^\s*\/\/.*$/gm, '').matchAll(/(['"`])((?:(?!\1).)+)\1\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*\]/g)].map((m) => ({ key: m[2]!, letters: m[3]!, ref: m[4]! }));
   const entries: ProbeEntry[] = [];
   const interpolated: string[] = [];
   const spreads: string[] = [];
   let total = 0;
+  /** `reversed('name', `text`, `rev`, { rows })` at `i` (after the `...`), or `undefined` with `i` unmoved. */
+  const readReversed = (): ProbeEntry[] | undefined => {
+    const save = i;
+    const fail = (): undefined => {
+      i = save;
+      return undefined;
+    };
+    if (!source.startsWith('reversed(', i)) return undefined;
+    i += 'reversed('.length;
+    skipWs();
+    const q = source[i];
+    if (q !== "'" && q !== '"') return fail();
+    const end = source.indexOf(q, i + 1);
+    if (end < 0) return fail();
+    const name = source.slice(i + 1, end);
+    i = end + 1;
+    skipWs();
+    const texts: string[] = [];
+    for (let k = 0; k < 2; k += 1) {
+      if (source[i] !== ',') return fail();
+      i += 1;
+      skipWs();
+      if (source[i] !== '`') return fail();
+      const t = template();
+      if (t.interpolates) return fail();
+      texts.push(unescapeTemplate(t.raw));
+      skipWs();
+    }
+    if (source[i] !== ',') return fail();
+    i += 1;
+    skipWs();
+    const rowsStart = i;
+    expr();
+    const body = source.slice(rowsStart, i);
+    skipWs();
+    if (source[i] === ',') {
+      i += 1;
+      skipWs();
+    }
+    if (source[i] !== ')') return fail();
+    i += 1;
+    const rows = rowsOf(body);
+    return [
+      { name, text: texts[0]!, rows },
+      { name: `${name}-rev`, text: texts[1]!, rows },
+    ];
+  };
   for (;;) {
     skipWs();
     if (source[i] === '}') break;
     if (source.startsWith('...', i)) {
-      // A spread (`...reversed('name', text, rows)` files two probes from one call): computed, listed, not read.
+      // A spread files several probes from one call. `...reversed('name', `text`, `rev`, { rows })` with plain
+      // template literals is read (the probe `name` and its twin `name-rev`); every other spread is listed, not read.
       const from = i;
       i += 3;
+      const twin = readReversed();
+      if (twin) {
+        entries.push(...twin);
+        skipWs();
+        if (source[i] === ',') i += 1;
+        continue;
+      }
       expr();
       spreads.push(source.slice(from, i).replace(/\s+/g, ' ').slice(0, 48));
       if (source[i] === ',') i += 1;
@@ -891,19 +884,19 @@ export function extractProbes(source: string): { entries: ProbeEntry[]; interpol
     skipWs();
     const rowsStart = i;
     expr();
-    const body = source.slice(rowsStart, i).replace(/^\s*\/\/.*$/gm, '');
+    const body = source.slice(rowsStart, i);
     // A rows expression with a generic (`as Record<string, [string, Ref]>`) has a comma at depth 0.
     while (source[i] === ',') {
       i += 1;
       expr();
     }
-    const rows = [...body.matchAll(/(['"`])((?:(?!\1).)+)\1\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*\]/g)].map((m) => ({ key: m[2]!, letters: m[3]!, ref: m[4]! }));
+    const rows = rowsOf(body);
     entries.push({ name, text, rows });
     i += 1; // the `)`
     skipWs();
     if (source[i] === ',') i += 1;
   }
-  return { entries, interpolated, spreads, total };
+  return { entries, interpolated, spreads, total, region: { from: start, to: i } };
 }
 
 /** Fold one probe's pinned rows into `byCell`: its goal cell, its SMT letter, and whether that letter is the hand-computed `ref`. */
@@ -926,9 +919,7 @@ export function censusProbe(p: ProbeCensus, entry: ProbeEntry, model: Model): vo
     }
     // One logical row, one count: its goal if it has one, else its first row.
     const e = found.find((x) => x.row.role === 'obligation') ?? found[0]!;
-    const cell = e.encoded
-      ? shapeOfBytes(termFacts([e.encoded.term]), symbolSorts(e.vars), { syntacticNonlinear: e.encoded.syntacticNonlinear, sides: e.encoded.sideConditions.length }).shape
-      : `fence/${e.refusal!.reason}`;
+    const cell = classifyRow(e.row, { model, ...(e.encoded ? { encoded: e.encoded } : {}) }).primary;
     const decided = smt === 'T' || smt === 'F';
     bump(p.byCell, `${cell}\t${smt}\t${!decided ? 'undecided' : smt === pin.ref ? 'agree' : 'differ'}\t${e.row.role}`);
   }

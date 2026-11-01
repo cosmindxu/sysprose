@@ -36,6 +36,7 @@ const ORDER = [
   '02-omg-standard-reference.md',
   '03-architecture-and-plan.md',
   'DIAGNOSTIC-CODES.md',
+  'CONSTRAINT-CLASSES.md',
   'AGENT-AUTHORING-CAMPAIGN.md',
   'TEST-REPORT.md',
   'TEST-SUMMARY.md',

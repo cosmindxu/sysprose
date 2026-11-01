@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "defects": [
+    {
+      "id": "D-assert-not",
+      "todo": "Read `assert not constraint c { ... }` as the negation.",
+      "classes": [
+        "asserted-fact"
+      ],
+      "kind": "wrong-verdict",
+      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read."
+    },
+    {
+      "id": "D-inconsistent-axioms",
+      "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself.",
+      "classes": [
+        "bind-equality",
+        "per-instance"
+      ],
+      "kind": "wrong-statement",
+      "note": "One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim."
+    },
+    {
+      "id": "D-subsetting-contradiction",
+      "todo": "Report a model that contradicts itself through a subsetting usage.",
+      "classes": [
+        "inherited-context",
+        "per-instance"
+      ],
+      "kind": "wrong-statement",
+      "note": "A model that contradicts itself through a subsetting usage decides other rows (w.x <= 5.0 T, w.x >= 5.0 F) where decision 1 says the axioms are inconsistent, and nothing reports it. The entry may be a wrong decided cell; read as a wrong-statement until probed."
+    },
+    {
+      "id": "D-literal-reach",
+      "todo": "Narrow the literal engine's contradiction reach to the instance the violated assert reads.",
+      "classes": [
+        "inherited-context"
+      ],
+      "kind": "abstains",
+      "note": "Re-read: the literal engine and SMT go inconclusive on relations about another, consistent instance. Sound, none false."
+    },
+    {
+      "id": "D-subsets-otherwise",
+      "todo": "Read a usage that subsets a feature an instance reads otherwise in that instance.",
+      "classes": [
+        "inherited-context"
+      ],
+      "kind": "abstains",
+      "note": "Re-read: every row read through the subsetting usage abstains wherever any context reads the subsetted feature otherwise. Sound, only weaker."
+    },
+    {
+      "id": "D-readings-rollup",
+      "todo": "Abstentions left in the readings (rollup; sound, only weaker).",
+      "classes": [
+        "per-instance"
+      ],
+      "kind": "abstains",
+      "note": "The subsetting component fence is per usage, not per instance, and the other abstentions of the rollup. None gives a wrong answer."
+    },
+    {
+      "id": "D-ub6-w4o",
+      "todo": "File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine can seed from it.",
+      "classes": [
+        "bind-equality"
+      ],
+      "kind": "abstains",
+      "note": "Two rows decide on the literal engine beside SMT X because the check files no violated row for their contradiction."
+    },
+    {
+      "id": "D-default-sentence",
+      "todo": "Say why a default stood on the rows `standingDefaultSentence` still does not reach.",
+      "classes": [
+        "bind-equality"
+      ],
+      "kind": "abstains",
+      "note": "A wording gap on rows that already decide; optional, low."
+    },
+    {
+      "id": "D-default-machinery",
+      "todo": "Remove the decision-14 default machinery, or ship the held tag (analysis Q2).",
+      "classes": [
+        "bind-equality",
+        "defining-equation"
+      ],
+      "kind": "abstains",
+      "note": "Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer."
+    },
+    {
+      "id": "D-m8-detail",
+      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
+      "classes": [
+        "nra-div"
+      ],
+      "kind": "wrong-statement",
+      "note": "Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard."
+    },
+    {
+      "id": "D-bound-detail",
+      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
+      "classes": [
+        "text-as-real"
+      ],
+      "kind": "wrong-statement",
+      "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface)."
+    },
+    {
+      "id": "D-string-as-real",
+      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
+      "classes": [
+        "text-as-real"
+      ],
+      "kind": "wrong-statement",
+      "note": "A String-typed feature gets sort Real (contracts.ts), so a comparison of two strings is a comparison of two reals nothing pins."
+    },
+    {
+      "id": "D-x-pow-neg",
+      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
+      "classes": [
+        "fence/unsupported-operator"
+      ],
+      "kind": "wrong-statement",
+      "note": "`x ^ -1` is refused as “the exponent is not a literal” (contracts.ts tests the unary minus as a non-number)."
+    },
+    {
+      "id": "D-unparseable-words",
+      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
+      "classes": [
+        "fence/unparseable"
+      ],
+      "kind": "wrong-statement",
+      "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation” although they are constructs the expression reader does not take; an enum comparison is unparseable (verification/not-evaluable), which no flag forgives."
+    }
+  ],
+  "resolved": [],
+  "pending": [
+    {
+      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
+      "note": "The coordinator appends this entry to TODO.md at merge; drop this field then."
+    }
+  ]
+}

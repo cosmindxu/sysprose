@@ -32,7 +32,9 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadModelText } from '@text/load';
 import type { ConstraintCheck } from '@semantics/evaluate-model';
-import { judgeBySmt } from '@semantics/engines/smt';
+import { judgeBySmt, type SmtJudgement } from '@semantics/engines/smt';
+import { ALLOW_INCONCLUSIVE_CODES, verifyModel } from '@api/index';
+import { classLines, levelOf, withLevelSource } from '@semantics/smt/classes';
 import { obligationsOf } from '@semantics/obligations';
 import {
   DEAD_MODULE_MARGIN_MS,
@@ -624,6 +626,320 @@ describe('a witness that is not the check’s own point confirms nothing (the sa
     const none = await q2Row(z3, (r) => ({ ...r, path: 'extra', symbol: 'SP::q2::p::extra' }));
     expect(none[0]).toBe('witness-unconfirmed');
     expect(none[1]).toContain('the check reads no value at `load`');
+  });
+});
+
+/* ───────────── the constraint class of a judgement (CC-20, CC-40..46): a label read off the trace ───────────── */
+
+describe('a judgement carries the constraint class of what it stood on', () => {
+  const SHAPES = `package Sh {
+    part def S {
+      attribute on : ScalarValues::Boolean = true;
+      attribute off : ScalarValues::Boolean = false;
+      attribute a : ScalarValues::Real = 2.0;
+      attribute b : ScalarValues::Real = 3.0;
+      attribute n : ScalarValues::Integer = 4;
+      attribute k : ScalarValues::Real = 1.0;
+    }
+    part s : S;
+    requirement def R {
+      subject u : S;
+      require constraint cBool { u.on and not u.off }
+      require constraint cLra { u.a + u.b <= 6.0 }
+      require constraint cLira { u.n >= 3 }
+      require constraint cPoly { u.a * u.b >= 5.0 }
+      require constraint cDiv { u.a / u.b <= 1.0 }
+      require constraint cIte { (if u.a > 1.0 then u.b else u.k) >= 1.0 }
+      require constraint cNira { u.n * u.a >= 3.0 }
+    }
+    satisfy R by s;
+  }`;
+  /** A goal-less script cell: an Integer `a`, a Real `c` and a product of the two that is not an Integer row. */
+  const M1 = `package M1 {
+    part def P {
+      attribute n : ScalarValues::Integer = 6;
+      attribute a : ScalarValues::Real = n / 2.0;
+      attribute b : ScalarValues::Real = 4.0;
+      attribute c : ScalarValues::Real = 2.0;
+    }
+    part p : P;
+    requirement def R { subject s : P; require constraint cMul { s.a * s.b >= 5.0 } }
+    satisfy R by p;
+  }`;
+  /** A refused premise beside a satisfiable one that the model's value makes false (`Rvac`), and one it makes true (`Rok`). */
+  const M4 = `package M4 {
+    part def P { attribute x : ScalarValues::Real = 5.0; attribute y : ScalarValues::Real = 1.0; }
+    part p : P;
+    requirement def Rvac {
+      subject s : P;
+      assume constraint a1 { s.x % 4.0 >= 3.5 }
+      assume constraint a2 { s.x >= 5.0 and s.x <= 5.5 }
+      require constraint g1 { s.y <= 2.0 }
+    }
+    requirement def Rok {
+      subject s : P;
+      assume constraint a1 { s.x % 4.0 >= 0.5 }
+      require constraint g1 { s.y <= 2.0 }
+    }
+    satisfy Rvac by p;
+    satisfy Rok by p;
+  }`;
+  const M6 = `package M6 {
+    part def P {
+      attribute a : ScalarValues::String = "bus";
+      attribute b : ScalarValues::String = "car";
+      attribute m : ScalarValues::Real = 4.0;
+    }
+    part p : P;
+    requirement def R { subject s : P; require constraint g1 { s.a == s.b } require constraint g2 { s.m <= 5.0 } }
+    satisfy R by p;
+  }`;
+  /** `k = 0` in an axiom (M7) and in the goal alone (M8). */
+  const M7 = `package M7 {
+    part def P {
+      attribute d : ScalarValues::Real = 8.0;
+      attribute k : ScalarValues::Real = 0.0;
+      attribute r : ScalarValues::Real = 3.0;
+      attribute q : ScalarValues::Real = d / k;
+    }
+    part p : P;
+    requirement def R { subject s : P; require constraint g1 { s.d / s.k <= 5.0 } require constraint g2 { s.r >= 1.0 } require constraint g3 { s.q >= 1.0 } }
+    satisfy R by p;
+  }`;
+  const M8 = `package M8 {
+    part def P {
+      attribute d : ScalarValues::Real = 8.0;
+      attribute k : ScalarValues::Real = 0.0;
+      attribute r : ScalarValues::Real = 3.0;
+    }
+    part p : P;
+    requirement def R { subject s : P; require constraint g1 { s.d / s.k <= 5.0 } require constraint g2 { s.r >= 1.0 } }
+    satisfy R by p;
+  }`;
+  const M10 = `package M10 {
+    part def Bus { attribute seats : ScalarValues::Integer = 13; }
+    part b : Bus;
+    requirement def R { subject s : Bus; require constraint even { s.seats % 2 == 0 } }
+    satisfy R by b;
+  }`;
+  /** One goal of every refusal that reaches the engine, and the two in the fragment beside them. */
+  const FENCES = `package Fn {
+    part def F {
+      attribute v : ScalarValues::Real = 5.0;
+      attribute n : ScalarValues::Real = 2.0;
+      attribute s : ScalarValues::String = "bus";
+      attribute t1 : ISQ::TemperatureValue = 20.0 ['°C'];
+      attribute t2 : ISQ::TemperatureValue = 30.0 ['°C'];
+      attribute z : ScalarValues::Real = 0.0;
+    }
+    part f : F;
+    requirement def R {
+      subject u : F;
+      require constraint rem { u.v % 2.0 == 1.0 }
+      require constraint varExp { u.v ^ u.n >= 1.0 }
+      require constraint fracExp { u.v ^ 0.5 >= 1.0 }
+      require constraint zeroDiv { u.v / 0.0 > 1.0 }
+      require constraint bigExp { u.v ^ 40 > 1.0 }
+      require constraint str { u.s == "bus" }
+      require constraint offs { u.t1 + u.t2 >= 1.0 }
+      require constraint divz { u.v / u.z > 1.0 }
+      require constraint inFragment { u.v >= 1.0 }
+    }
+    requirement def Prose { subject u : F; doc /* only prose */ }
+    satisfy R by f;
+    satisfy Prose by f;
+  }`;
+
+  /** Every obligation of `text`, judged by the engine, beside the verdict the report gives the same row. */
+  async function classed(z3: Z3Backend, text: string, allowInconclusive = false) {
+    const { model } = await loadModelText(text, { library: 'full' });
+    const rows = obligationsOf(model!);
+    const judged = (await judgeBySmt(model!, rows, { backend: z3 })).filter((r) => r.row.role === 'obligation');
+    const report = await verifyModel(model!, { engine: 'smt', allowInconclusive });
+    expect(report.results, 'the report and the engine judged different rows').toHaveLength(judged.length);
+    const by = new Map<string, { judgement: SmtJudgement; code: string | null; exitCode: number; expression: string }>();
+    judged.forEach((r, i) => {
+      expect(report.results[i]!.expression).toBe(r.row.expression);
+      by.set(r.row.element.qualifiedName, { judgement: r.judgement, code: report.results[i]!.code, exitCode: report.exitCode, expression: r.row.expression });
+    });
+    return { model: model!, rows, judged, report, by };
+  }
+  const classesOf = async (z3: Z3Backend, text: string, name: string) => {
+    const j = (await classed(z3, text)).by.get(name);
+    if (!j) throw new Error(`no row ${name}`);
+    return j.judgement;
+  };
+
+  withZ3('sorts the six shapes and the nira probe, and pins the verdict beside each (CC-40)', async (z3) => {
+    const { by } = await classed(z3, SHAPES);
+    const got = Object.fromEntries(
+      [...by].map(([name, { judgement: j }]) => [
+        name.replace('Sh::R::', ''),
+        [j.outcome, j.classes.goal.shape, j.classes.goal.search ?? null, j.classes.goal.modifiers.join(), j.classes.script?.shape, j.classes.logic, j.classes.basis, j.classes.scope],
+      ]),
+    );
+    expect(got).toEqual({
+      cBool: ['proved', 'bool', null, '', 'bool', 'QF_LRA', 'solver', 'proof'],
+      cLra: ['proved', 'lra', null, '', 'lra', 'QF_LRA', 'solver', 'proof'],
+      cLira: ['proved', 'lira', null, '', 'lira', 'QF_LIRA', 'solver', 'proof'],
+      cPoly: ['proved', 'nra-poly', 'pinned', '', 'nra-poly', 'QF_NRA', 'solver', 'proof'],
+      cDiv: ['proved', 'nra-div', 'pinned', '', 'nra-div', 'QF_NRA', 'solver', 'proof'],
+      cIte: ['proved', 'lra', null, 'ite', 'lra', 'QF_LRA', 'solver', 'proof'],
+      cNira: ['proved', 'nira', 'pinned', '', 'nira', 'QF_NIRA', 'solver', 'proof'],
+    });
+    // The script cell is the logic line the verdict names, for every row.
+    for (const { judgement: j } of by.values()) expect(j.classes.logic).toBe(j.logic);
+  });
+
+  withZ3('reads a run-wide verdict over every axiom of the run, not over the proof’s footprint (CC-41)', async (z3) => {
+    const text = `package Inc {
+      part def P {
+        attribute m : ScalarValues::Real = 5.0;
+        attribute other : ScalarValues::Real = 9.0;
+        assert constraint clash { m == 6.0 }
+      }
+      part p : P;
+      requirement def R { subject s : P; require constraint cap { s.m <= 10.0 } }
+      satisfy R by p;
+    }`;
+    const { by, rows } = await classed(z3, text);
+    const j = by.get('Inc::R::cap')!.judgement;
+    expect(j.outcome).toBe('axioms-inconsistent');
+    expect(j.classes.scope).toBe('run');
+    expect(j.classes.basis).toBe('solver');
+    const axioms = rows.filter((r) => r.role === 'axiom');
+    // Step 0 asserted all of them, `other` (which the goal never reads) included.
+    expect(axioms.length).toBeGreaterThanOrEqual(3);
+    expect(j.classes.shape.reduce((n, s) => n + s.rows, 0)).toBe(axioms.length);
+    expect(j.classes.reading.map((r) => r.id)).toEqual(['stated-value', 'asserted-fact']);
+    // The goal is named beside the run's cells, and is not one of them.
+    expect(j.classes.goal.shape).toBe('lra');
+  });
+
+  withZ3('calls a refused relation read violated at the model’s values a point evaluation, which no flag forgives (CC-42)', async (z3) => {
+    for (const allow of [false, true]) {
+      const { by } = await classed(z3, M10, allow);
+      const j = by.get('M10::R::even')!;
+      expect(j.judgement.outcome).toBe('refuted');
+      expect(j.exitCode, `allow-inconclusive ${allow}`).toBe(1);
+      const c = j.judgement.classes;
+      expect([c.basis, c.script, c.goal.shape, c.goal.fence]).toEqual(['point-evaluation', null, null, { id: 'fence/unsupported-operator', layer: 'gate', forgiven: false }]);
+      expect(classLines(c).join('\n')).toContain('no flag forgives it');
+    }
+  });
+
+  withZ3('reads the basis off the trace and not off the verdict word (CC-42b)', async (z3) => {
+    const m4 = (await classed(z3, M4)).by;
+    // Rvac: z3 proved the entailment, and the numeric surface found the antecedent false at the model's values.
+    const vac = m4.get('M4::Rvac::g1')!.judgement;
+    expect([vac.outcome, vac.classes.basis, vac.classes.modifiers.map((m) => m.id), vac.classes.fenced.map((f) => `${f.id}/${f.layer}`)]).toEqual([
+      'vacuous',
+      'numeric-surface',
+      ['partial-context'],
+      ['fence/unsupported-operator/gate'],
+    ]);
+    // Rok: the same refused premise, held at the model's values, and the proof stands on z3's entailment.
+    const ok = m4.get('M4::Rok::g1')!.judgement;
+    expect([ok.outcome, ok.classes.basis, ok.classes.modifiers.map((m) => m.id)]).toEqual(['proved', 'solver+numeric', ['partial-context']]);
+    // m6: a String read as a Real is a refutation confirmed on the numeric surface at a point z3 did not choose.
+    const m6 = (await classed(z3, M6)).by;
+    const text = m6.get('M6::R::g1')!.judgement;
+    expect([text.outcome, text.classes.basis, text.classes.modifiers.map((m) => m.id)]).toEqual(['refuted', 'numeric-surface', ['text-as-real']]);
+    expect(classLines(text.classes).join('\n')).toContain('basis: numeric-surface');
+    // …and the numeric row beside it is an ordinary proof.
+    expect(m6.get('M6::R::g2')!.judgement.classes.basis).toBe('solver');
+  });
+
+  withZ3('lists a refused kept axiom under `fenced` and marks the context partial (CC-43)', async (z3) => {
+    const relevant = read('test/fixtures/verification/models/refused-axiom-relevant.sysml');
+    const j = (await classed(z3, relevant)).by.get('RefusedAxiomRelevant::MassLimit::«ConstraintUsage»')!.judgement;
+    expect(j.outcome).toBe('witness-unconfirmed');
+    expect(j.classes.fenced).toEqual([{ id: 'fence/unsupported-operator', layer: 'gate', rows: 1 }]);
+    expect(j.classes.modifiers.map((m) => m.id)).toContain('partial-context');
+    expect(j.classes.basis).toBe('none');
+    // One that shares no symbol with the goal is nothing this proof stood on, so it is not listed.
+    const irrelevant = read('test/fixtures/verification/models/refused-axiom-irrelevant.sysml');
+    const i = [...(await classed(z3, irrelevant)).by.values()][0]!.judgement;
+    expect(i.classes.fenced).toEqual([]);
+    expect(i.classes.modifiers.map((m) => m.id)).not.toContain('partial-context');
+  });
+
+  withZ3('forgives a fenced goal exactly where its code is forgiven, for every refusal that reaches the engine (CC-44)', async (z3) => {
+    const { by } = await classed(z3, FENCES);
+    const want: Record<string, [string, string, string, boolean]> = {
+      rem: ['unsupported', 'fence/unsupported-operator', 'gate', true],
+      varExp: ['unsupported', 'fence/unsupported-operator', 'gate', true],
+      fracExp: ['not-evaluable', 'fence/unsupported-operator', 'encoder', false],
+      zeroDiv: ['not-evaluable', 'fence/unsupported-operator', 'encoder', false],
+      bigExp: ['not-evaluable', 'fence/unsupported-operator', 'encoder', false],
+      str: ['unsupported', 'fence/non-numeric-operand', 'gate', true],
+      offs: ['unsupported', 'fence/offset-arithmetic', 'gate', true],
+    };
+    let fenced = 0;
+    for (const [name, { judgement: j, code }] of by) {
+      const fence = j.classes.goal.fence;
+      if (fence === undefined) continue;
+      fenced++;
+      // The parity itself: the flag forgives a code, and the class says what the code says.
+      expect(fence.forgiven, name).toBe(ALLOW_INCONCLUSIVE_CODES.has(code ?? ''));
+      const short = name.split('::')[2]!;
+      if (short in want) expect([j.outcome, fence.id, fence.layer, fence.forgiven], name).toEqual(want[short]);
+      else expect(fence.id, name).toBe('fence/no-formal-clause');
+    }
+    expect(fenced).toBe(Object.keys(want).length + 1);
+    // `divz` and `inFragment` are encoded: no fence on either.
+    expect(by.get('Fn::R::divz')!.judgement.classes.goal.fence).toBeUndefined();
+    // A refused PREMISE (Rvac) is context, with no forgiveness field and a code no flag forgives.
+    const m4 = (await classed(z3, M4)).by.get('M4::Rvac::g1')!;
+    expect(ALLOW_INCONCLUSIVE_CODES.has(m4.code ?? '')).toBe(false);
+    expect(m4.judgement.classes.goal.fence).toBeUndefined();
+    expect(m4.judgement.classes.fenced.every((f) => !('forgiven' in f))).toBe(true);
+  });
+
+  withZ3('reads the script cell off the script, not off the rows: no row is `nira` and the proof is (CC-45)', async (z3) => {
+    const j = await classesOf(z3, M1, 'M1::R::cMul');
+    expect(j.outcome).toBe('proved');
+    expect(j.classes.logic).toBe('QF_NIRA');
+    expect(j.classes.script).toEqual({ shape: 'nira', search: 'pinned' });
+    expect(j.classes.shape.map((s) => s.id)).not.toContain('nira');
+    expect(j.classes.weakest?.cell).toBe('nira/pinned');
+  });
+
+  withZ3('does not call a division by a zero value a proof, and says so in the class (CC-46)', async (z3) => {
+    // M7: the division is an AXIOM (`q = d / k`), so step 0 finds the axioms inconsistent: a run-wide word.
+    const m7 = (await classed(z3, M7)).by;
+    for (const g of ['g1', 'g2', 'g3']) {
+      const j = m7.get(`M7::R::${g}`)!.judgement;
+      expect([j.outcome, j.classes.scope, j.classes.script?.shape], g).toEqual(['axioms-inconsistent', 'run', 'nra-div']);
+    }
+    // M8: the division is in the GOAL, its `d != 0` guard contradicts `k = 0`, and the antecedent is empty: vacuous.
+    const m8 = (await classed(z3, M8)).by;
+    const g1 = m8.get('M8::R::g1')!.judgement;
+    expect([g1.outcome, g1.classes.goal.shape, g1.classes.script?.shape, g1.classes.basis]).toEqual(['vacuous', 'nra-div', 'nra-div', 'solver']);
+    expect(m8.get('M8::R::g2')!.judgement.outcome).toBe('proved');
+    // …but a division by a pinned NONZERO value is a proof, in QF_NRA: the card says "when the divisor is pinned to zero".
+    const nonzero = (await classed(z3, M8.replace('package M8', 'package M8b').replace('k : ScalarValues::Real = 0.0', 'k : ScalarValues::Real = 2.0'))).by;
+    const ok = nonzero.get('M8b::R::g1')!.judgement;
+    expect([ok.outcome, ok.classes.goal.shape, ok.classes.script?.shape, ok.classes.logic]).toEqual(['proved', 'nra-div', 'nra-div', 'QF_NRA']);
+  });
+
+  withZ3('moves no verdict when every level is replaced, or when the classifier throws (CC-20)', async (z3) => {
+    const strip = (rs: Array<{ judgement: SmtJudgement }>) => rs.map((r) => ({ ...r.judgement, classes: undefined }));
+    const { model } = await loadModelText(M4, { library: 'full' });
+    const rows = obligationsOf(model!);
+    const plain = await judgeBySmt(model!, rows, { backend: z3 });
+    let seed = 11;
+    const rnd = () => (['unrated', 'experimental', 'tested', 'differential-tested', 'battery-backed'] as const)[(seed = (seed * 1103515245 + 12345) % 2147483648) % 5]!;
+    const random = await withLevelSource(() => rnd(), () => judgeBySmt(model!, rows, { backend: z3 }));
+    expect(strip(random)).toEqual(strip(plain));
+    // Not vacuous: the stubbed source did reach the statements.
+    expect(random.some((r, i) => JSON.stringify(r.judgement.classes.levels) !== JSON.stringify(plain[i]!.judgement.classes.levels))).toBe(true);
+    expect(plain.every((r) => r.judgement.classes.status === 'ok')).toBe(true);
+    // A level source that throws is a classifier failure: `unclassified`, and the verdict is the one it was.
+    const thrown = await withLevelSource(() => { throw new Error('a gap in the register'); }, () => judgeBySmt(model!, rows, { backend: z3 }));
+    expect(strip(thrown)).toEqual(strip(plain));
+    expect(thrown.filter((r) => r.row.role === 'obligation').every((r) => r.judgement.classes.status === 'unclassified')).toBe(true);
+    expect(levelOf('lra')).not.toBe('battery-backed');
   });
 });
 

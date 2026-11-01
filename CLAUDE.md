@@ -125,6 +125,9 @@ npm test -- --reporter=json --outputFile.json=test-results/unit-results.json
 npm run build            # production build
 npx playwright test --config="$PWD/playwright.config.ts"
 npm run campaign         # agent authoring testing campaign (part of `npm test`)
+npm run census:classes -- --check --strict
+                         # constraint classes: recounts the maturity facts (no solver) and fails when a
+                         # committed level is above the recount; read $? from a redirected log, it takes minutes
 ```
 
 `docs/TEST-SUMMARY.md` is generated, and CI holds it to CI's own run: the Vitest step of
