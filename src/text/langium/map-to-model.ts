@@ -48,6 +48,7 @@ import {
   childNamed,
   endCopyProto,
   findTypeFeature,
+  leavesOutOverride,
   resolveFullName,
   resolveImportTargets,
   resolveRedefinedFeature,
@@ -471,6 +472,7 @@ function resolveChainEnd(
   model: Model,
   ref: string,
   scopeOwnerId: ElementId | null,
+  unsettled?: { copy: boolean },
 ): ElementRecord | undefined {
   const segs = refSegments(ref);
   if (segs.length === 0) return undefined;
@@ -523,6 +525,7 @@ function resolveChainEnd(
     // most specific: where two general types each redefine it (MI1's Q2 and Q3, a clash), neither is.
     const proto = endCopyProto(model, scopeEl, head, hit);
     if (!walkChain(model, proto, rest, false)) continue; // dry run before materializing
+    if (unsettled && leavesOutOverride(model, scopeEl, head, proto)) unsettled.copy = true;
     const anchor = ensureImplicitFeature(model, scopeEl, proto, head);
     const end = walkChain(model, anchor, rest, true);
     if (end) return end;
@@ -578,8 +581,12 @@ export function resolveConnectorFeatureChains(model: Model): number {
 function resolveChainEndpointsOf(model: Model, el: ElementRecord): number {
   let n = 0;
   const scope = el.ownerId;
+  // A connector (a binding, a `connect`, an interface, a flow) whose end copy hides an override it cannot choose between
+  // is left unread ({@link leavesOutOverride}): the editor's mark for a binding the page cannot follow, which withholds
+  // the scope that owns it on every surface.
+  const unsettled = { copy: false };
   if (typeof el.attrs.sourceRef === 'string' && (el.source?.length ?? 0) === 0) {
-    const r = resolveChainEnd(model, el.attrs.sourceRef, scope);
+    const r = resolveChainEnd(model, el.attrs.sourceRef, scope, unsettled);
     if (r && r.id !== el.id) {
       model.update(el.id, { source: [r.id] });
       model.setAttrs(el.id, { sourceRef: undefined });
@@ -587,13 +594,14 @@ function resolveChainEndpointsOf(model: Model, el: ElementRecord): number {
     }
   }
   if (typeof el.attrs.targetRef === 'string' && (el.target?.length ?? 0) === 0) {
-    const r = resolveChainEnd(model, el.attrs.targetRef, scope);
+    const r = resolveChainEnd(model, el.attrs.targetRef, scope, unsettled);
     if (r && r.id !== el.id) {
       model.update(el.id, { target: [r.id] });
       model.setAttrs(el.id, { targetRef: undefined });
       n++;
     }
   }
+  if (unsettled.copy && el.attrs.copyHides !== true) model.setAttrs(el.id, { partedEnd: true, copyHides: true });
   return n;
 }
 

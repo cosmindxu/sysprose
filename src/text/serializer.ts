@@ -28,7 +28,7 @@ import {
   type ElementId,
   type ElementRecord,
 } from '@core/index';
-import { childNamed, endCopyProto, findTypeFeature, redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
+import { childNamed, endCopyProto, findTypeFeature, leavesOutOverride, redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
 import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
 import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
@@ -1916,6 +1916,9 @@ function claimedCopy(model: Model, el: ElementRecord): boolean {
   );
 }
 
+/** The chain connectors beside a binding (map-to-model's CHAIN_CONNECTOR_CLASSES): the mapper's `partedEnd` mark is made on them too. */
+const OTHER_CHAIN_CONNECTORS: ReadonlySet<string> = new Set(['ConnectionUsage', 'Connector', 'InterfaceUsage', 'Flow', 'FlowUsage']);
+
 /**
  * Mark the bindings that end in a stale copy, or in a feature a stale copy owns (`attrs.staleEnd`), and clear the mark
  * of those that no longer do. The saved file has no such copy, so it reads such a binding with an unresolved end, which
@@ -1940,16 +1943,37 @@ function markStaleBindings(model: Model, copies: ReadonlySet<ElementId>, parted:
     }
     return out;
   };
+  // An end that is an implicit copy hiding an override the types give the name (the mapper's mark, kept for the page
+  // as the copy stands now: a rename, a retype or an Undo settles the copy again, and the mark follows).
+  const hidesOverride = (id: ElementId): boolean => {
+    const c = model.get(id);
+    if (!c || c.attrs.implicit !== true || c.ownerId === null || c.declaredName === undefined) return false;
+    const owner = model.get(c.ownerId);
+    const red = model.children(c.id).find((r) => r.eClass === 'Redefinition' && (r.target ?? []).length === 1);
+    const from = red === undefined ? undefined : model.get(red.target![0]!);
+    return owner !== undefined && from !== undefined && leavesOutOverride(model, owner, endHeadOf(model, c) ?? c.declaredName, from);
+  };
   model.transaction(() => {
     for (const id of new Set(ids)) {
       for (const b of model.edgesOf(id)) {
-        if (b.attrs.isLibrary === true || isRelationship(b.eClass) || !b.eClass.startsWith('BindingConnector')) continue;
+        if (b.attrs.isLibrary === true || isRelationship(b.eClass)) continue;
+        if (!b.eClass.startsWith('BindingConnector')) {
+          // Another chain connector (`connect`, an interface, a flow) is never stale or claimed here: only the mapper's
+          // mark for an end copy that hides an override follows the copy as it stands.
+          if (!OTHER_CHAIN_CONNECTORS.has(b.eClass)) continue;
+          const hides = [...(b.source ?? []), ...(b.target ?? [])].some(hidesOverride);
+          if ((b.attrs.partedEnd === true) !== hides || (b.attrs.copyHides === true) !== hides) {
+            model.setAttrs(b.id, { partedEnd: hides ? true : undefined, copyHides: hides ? true : undefined });
+          }
+          continue;
+        }
         const ends = [...(b.source ?? []), ...(b.target ?? [])].map(staleChain);
         const stale = ends.some((e) => e === 1);
         // A copy parted by an earlier settle stays so while it is stale: the name it was merged under is not kept.
-        const apart = ends.includes(2) || (stale && b.attrs.partedEnd === true);
-        if ((b.attrs.staleEnd === true) !== stale || (b.attrs.partedEnd === true) !== apart) {
-          model.setAttrs(b.id, { staleEnd: stale ? true : undefined, partedEnd: apart ? true : undefined });
+        const hides = [...(b.source ?? []), ...(b.target ?? [])].some(hidesOverride);
+        const apart = ends.includes(2) || (stale && b.attrs.partedEnd === true && b.attrs.copyHides !== true) || hides;
+        if ((b.attrs.staleEnd === true) !== stale || (b.attrs.partedEnd === true) !== apart || (b.attrs.copyHides === true) !== hides) {
+          model.setAttrs(b.id, { staleEnd: stale ? true : undefined, partedEnd: apart ? true : undefined, copyHides: hides ? true : undefined });
         }
       }
     }

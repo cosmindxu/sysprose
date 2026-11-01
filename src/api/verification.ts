@@ -1090,6 +1090,7 @@ const LITERAL_CLAIM: Record<LiteralOutcome, { claim: EvidenceClaim; code: string
 /** What a model holds that the SMT lane leaves unread ({@link DefiningEquations.withheldCauses}), as a clause of its detail. */
 const WITHHELD_CAUSE = {
   binding: 'a binding whose end is a copy the saved file reads as another feature',
+  copy: 'a binding whose end is a copy standing on one of several features the order of the text chooses between',
   twins: 'two features under one name, which the saved file may read the other way',
   redefinition: 'a redefinition the saved file does not keep as it stands',
   order: 'two inherited features for one name, which the saved file may read the other way round',

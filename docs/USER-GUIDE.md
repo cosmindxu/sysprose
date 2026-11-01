@@ -1190,6 +1190,26 @@ or a new feature gave it), and where a binding's end is a feature of a type its 
 copy of its own (a bound feature moved up into the type): the next open binds that member, or makes the copy,
 and the page reads neither.
 
+The implicit copy of a `bind` (or any connector with an end, `connect z to N;`) written in a definition (`part def D3 :>
+D2 { bind z = N; }`) stands on the feature the name finds in D3, and an override it would hide is left unread. With D1's
+own `bind z1 = N` (a copy in D1) and D2's `attribute :>> N default = 15.0` between them, D3's copy stood on D1's copy
+when D1 was written before D3 and on D2's `N` otherwise, so `u1.N` read 12 or 15 by the order of the text. The nearest
+`N` is D2's, but the page does not choose it: where the copy would hide any override of the name (a `default`, a value
+written with `=`, an expression, a typed or named redefinition, a feature a constraint or a binding reads; D2's, or one
+of two types that neither redefines the other, `part def D3 :> D1, D2` or a clash `D3 :> D2, D2b`) the binding is left
+unread: no name of what D3 owns, types or specialises is read, and nor is a name bound to a feature of such a scope
+(`bind x = u1.N` in the package). The check says `u1.N is not read: G::u1 owns, or joins a feature of, a binding whose end
+is a copy standing on one of several features the types give the name, which the order of the text chooses between (the
+saved file is read the same way), so no name of G::u1 is read until an edit removes the competing override`. Saving and
+opening the file does not lift it: the file is read the same way. The rows of such a scope are inconclusive on every
+surface, as the same diamond or clash without the `bind` already is (not the chain case, where D3 has no `bind` of its
+own: it reads D2's 15 and decides). One such binding also makes every SMT proof or refutation of the whole model
+inconclusive, rows that name nothing of it included, because the solver's axioms are those of every scope. The text order that
+put the copy on D2's `N` hides nothing and reads 15, and a usage that inherits two unrelated lines (`part q : Q2, Q3
+{ bind ... }`) is read by the rule of the inherited pair, as before. The mark is made when a file is read and kept as the
+copy stands after an edit: a rename, a retype or an Undo that settles the copy again moves it to the feature the file
+would then find, and the page and the saved file abstain alike.
+
 The Name and Short name boxes of the Properties panel apply on Enter or on leaving the box,
 not per key (Escape puts the name back, and so does an emptied box: a name is not cleared there), so a name typed key by key is one edit and one Undo
 step: a prefix another feature of the owner bears (typing `M2x` passes through `M2`) no
