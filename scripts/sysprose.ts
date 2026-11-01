@@ -3055,8 +3055,8 @@ function modelText(model: Model): string {
   if (dropped.length > 0) {
     throw new UsageError(
       `the model cannot be written back as text without losing ${dropped.length === 1 ? 'a statement' : `${dropped.length} statements`}: ` +
-        dropped.map((line) => line.trim().slice(NOT_SAVED_MARK.length).replace(/\. Name the unnamed.*$/, '')).join('; ') +
-        '. Name the unnamed redefinition on its path, then run the command again.',
+        dropped.map((line) => line.trim().slice(NOT_SAVED_MARK.length).replace(/\. (Name the unnamed|Rename the earlier).*$/, '')).join('; ') +
+        '. Each note above says what to name or rename; do that, then run the command again.',
     );
   }
   return text;

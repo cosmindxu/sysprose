@@ -36,8 +36,9 @@ const ALLOWED_ORIGINS = (process.env.COLLAB_ALLOW_ORIGIN ?? '')
   .filter(Boolean);
 /**
  * Cap a single WS frame to 64 MiB (ws defaults to 100 MiB). A peer's first
- * message carries the whole document, standard library included: about 10.9 MB
- * for the drone-swarm example, so 10 MiB stopped the relay on it. A frame over
+ * message carries the user's model only (the standard library stays out of the room's
+ * document): about 1 MB for the drone-swarm example; with the library it was
+ * about 10.9 MB, which a 10 MiB cap stopped the relay on. A frame over
  * the cap closes its own connection (code 1009), not the relay.
  */
 const MAX_PAYLOAD = 64 * 1024 * 1024;

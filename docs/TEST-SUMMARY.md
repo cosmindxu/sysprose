@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5308 total — 5308 passed, 0 failed, 0 skipped
+- **Tests:** 5377 total — 5377 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -13,7 +13,7 @@
 | test/campaign/cli.sysprose.test.ts | 122 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
-| test/campaign/verification.test.ts | 186 | 0 | 0 |
+| test/campaign/verification.test.ts | 189 | 0 | 0 |
 | test/conformance/api-contract.test.ts | 22 | 0 | 0 |
 | test/conformance/corpus.test.ts | 16 | 0 | 0 |
 | test/conformance/oslc-conformance.test.ts | 8 | 0 | 0 |
@@ -39,7 +39,7 @@
 | test/integration/smt-z3.integration.test.ts | 42 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
-| test/integration/verification.differential.test.ts | 223 | 0 | 0 |
+| test/integration/verification.differential.test.ts | 224 | 0 | 0 |
 | test/interop/self-roundtrip.test.ts | 10 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
@@ -48,7 +48,7 @@
 | test/server/index-browser-guard.test.ts | 3 | 0 | 0 |
 | test/server/oslc-rdf.test.ts | 11 | 0 | 0 |
 | test/server/oslc-shapes.test.ts | 11 | 0 | 0 |
-| test/unit/api.analytics.test.ts | 67 | 0 | 0 |
+| test/unit/api.analytics.test.ts | 72 | 0 | 0 |
 | test/unit/api.evidence.test.ts | 54 | 0 | 0 |
 | test/unit/api.oslc.test.ts | 10 | 0 | 0 |
 | test/unit/api.prompts.test.ts | 14 | 0 | 0 |
@@ -65,10 +65,10 @@
 | test/unit/checks-registry.test.ts | 138 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
-| test/unit/collab.binding.test.ts | 32 | 0 | 0 |
+| test/unit/collab.binding.test.ts | 36 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
-| test/unit/core.model.test.ts | 21 | 0 | 0 |
+| test/unit/core.model.test.ts | 24 | 0 | 0 |
 | test/unit/diagnostic-codes.test.ts | 15 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
@@ -108,7 +108,7 @@
 | test/unit/reparent-target.test.ts | 14 | 0 | 0 |
 | test/unit/requirements-table.test.ts | 20 | 0 | 0 |
 | test/unit/scenarios.test.ts | 3 | 0 | 0 |
-| test/unit/semantics.bind.test.ts | 29 | 0 | 0 |
+| test/unit/semantics.bind.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.conformance.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraint-class.test.ts | 82 | 0 | 0 |
@@ -139,15 +139,15 @@
 | test/unit/semantics.smt-encode.test.ts | 105 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 133 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 77 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 78 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 31 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 340 | 0 | 0 |
-| test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 342 | 0 | 0 |
+| test/unit/text.bracket-expr.test.ts | 53 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/text.export-fidelity.test.ts | 3 | 0 | 0 |
@@ -159,7 +159,7 @@
 | test/unit/text.recovery-honesty.test.ts | 30 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 169 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 209 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 26 | 0 | 0 |
