@@ -493,7 +493,17 @@ headings.
       it is described, and no corpus or v9 model is hit. Item (f) also covers the chain shapes.
       Probes: fence-numeric3-scratch/rchain10-2.0.sysml, rchain10-0.002.sysml, rchain20-2.0.sysml,
       rchain30-2.0.sysml, chain100-2.sysml, chain150-0.sysml (no root), review/big-chain-130.sysml.
-      [fence-numeric3]
+       fence-numeric4: (a) a bind end under an unread scope (an `order` scope) withholds that end
+      and everything joined to it by bindings, even where an end has a value elsewhere; only an end
+      with no stated value of its own is made unreadable, and a valued end keeps its own seed
+      (fence-numeric4-scratch/models2/n2-keq-fwd.sysml, F correct). (b) The withheld set joins by
+      raw end ids, so a binding written at package level through a differently spelled copy of the
+      same end is not joined to the component and could keep a decided reading; no probe found one
+      (models3 pkg rows are all ?). (c) A feature that states a value with `=` and is bound into an
+      unread scope keeps its own seed and reads the same on the check, literal and numeric lanes; a
+      binding to a valued feature joined to another end still reads a decided T beside a
+      contradictory file reading (probes rev/m/valk-eq-fwd.sysml, rev/m6/dfl-L2-fwd.sysml). It is
+      consistent across the lanes and not new. [fence-numeric3; fence-numeric4]
 - [ ] **Read Q's assert at an instance whose binding joins the asserted path to defaults that differ
       (RB5E).** `part q1 : Q { attribute K default = 9.0; attribute J default = 8.0; bind p.x = K;
       bind p.x = J; }` under Q's `assert constraint tie { p.x == 50.0 }` gives q1's p.x no value to
@@ -531,13 +541,16 @@ headings.
       model decides a row beside one. [contradictory-models S3]
 - [ ] **Read two asserted equations on the two ends of a binding that reaches an end through a part
       only where they meet (the scope decision).** fence-readings S2 made the two readings abstain
-      together on every surface, so the entry's first done-when holds. The residual is the scope:
-      taint only the instance where the two equations meet (q's p and q's M), so that a `part p2 :
-      P` beside it, and every other P, keep reading `L == 50.0`; today P's L is undecided in every P
-      once such a binding exists (pinned as `u50` in bind-through-part). Probes:
+      together on every surface, so the entry's first done-when holds and is pinned
+      (`bind-through-part`, `u50`). What is left is precision only: the taint
+      (equatedTaint/spreadTaint) is per feature on all four lanes (check, literal, numeric and SMT),
+      so a `part p2 : P` beside the meeting instance, and every other P, stay undecided on `L ==
+      50.0` once such a binding exists. Taint only the instance where the two equations meet (q's p
+      and q's M) instead. That is a change across the four lanes, far over the 120-line fence, and
+      needs no user decision to stay fenced. Probes:
       review-2026-10-14/wave3-probes/contradictory-models/c6-nested-swap.sysml,
       review-2026-10-14/wave3-probes/fence-readings/s2/bq.sysml. Done when only the meeting instance
-      abstains. [contradictory-models S3; fence-readings S2]
+      abstains. [contradictory-models S3; fence-readings S2; fence-numeric4]
 - [ ] **Resolve a package-level chain end the same in either text order (loader).** The fence of
       fence-readings S1 only withdraws the false verdict past the 32-usage cap: cap1r and cap2r read
       ?/?/T/T and ?/?/F/?, as the forward text does. The root cause stays: bind.ts
@@ -979,33 +992,28 @@ true values. What follows is what that branch and the review of it left open; en
       margin on slower CI cores: if the first CI run is red, make the assertion relative. [ui-small
       S4, review 2026-10-14 D-3]
 - [ ] **List what a load binds later in the order a terminal binds it, on the page and on every peer
-      of a room.** After an edit the page lists the user's declarations in the order the text gives
-      them (`Model.adoptSerialOrder`, `src/core/model.ts`), and each owner's children come in one
-      order on every peer of a room (`src/collab/model-doc.ts`). But a typing, specialisation,
-      redefinition or implicit feature keeps its place among the others: one made in the app
-      (Properties' Type field, a line drawn with the palette) is listed after every one the model
-      had; one whose element a drag puts elsewhere in the text, or that a project, model JSON or
-      branch stored in another order, stays where it was. A terminal over the saved text binds them
-      in the order their declarations come. In a room, a peer that joins lists them in the order the
-      room's document lists its keys, and a peer present after a reset (Apply, Import, Undo, Redo)
-      keeps them where it had them. So a consumer that goes by them can list its rows in another
-      order than a terminal, and than another peer (fence-coremodel: where-used and the impact
-      closure now list in the text order on the page, on a terminal and on every peer of a room, and
-      probes (a) and (b) pass for them). Probes: (a) `package X { part def D { attribute a = 1;
-      constraint c { a <= 0 } } part u1; part u2 : D; }`, type `u1` as `D` in Properties: the page
-      gives u2, u1 and a terminal u1, u2; (b) `package X { part def D {...} package A { part u1 : D;
-      } package B { part u2 : D; } }`, drag A out and back in: the page gives [u1, u2] and a
-      terminal [u2, u1], and the same after the stored project is reopened (the same at 87e8c0f).
-      What stays: every other consumer that goes by the model's own listing order (edgesOf, edgesTo,
-      edgesFrom and what is built on them: instance groups, instancesOfDefinition, per-definition
-      findings and row lists, the checks worker's copy) can still list a late binding in another
-      order than a terminal, on the page and across peers. Fix: derive the parser's multi-pass order
-      for typings, specialisations, redefinitions, implicit features and library typings and show it
-      is the identity on every load (measure over the 856 corpus files; the
-      family-then-source-preorder key failed on L4-self-typed-feature), or sort those consumers by
-      text. Done when those consumers list in one order on the page, a terminal and every peer.
-      Probes: fence-coremodel-scratch/cand.mts, late-dump.mts, gen-wu.mts (raw-base.txt against
-      raw-tree.txt). [review 2026-10-14 D-1, collab-order; fence-coremodel]
+      of a room.** Done by fence-coremodel and fence-order: where-used, the impact closure, SDK
+      traverse, REST relationships of an element, the impact graph's neighbours and the specialisers
+      a finding names list in text order on the page, in a terminal and on every peer of a room.
+      What stays: (1) a typing beside a subsetting or redefinition of ONE element, made in the app,
+      is listed in creation order by `typesOf` and the Properties Types and Specializations lists: a
+      typing beside a subsetting is listed in creation order on the page with the subsetting first
+      in a terminal; a typing beside a redefinition has the typing first in a terminal. This is
+      display order only: no check, verify, validate or where-used cell differed in 200 generated
+      models (probe wave3-probes/fence-order/gen.mts, cell `prop`, 30 of 200). A sort would not
+      match the terminal in the corpus's s1-spec, so it was not done. (2) Consumers that walk
+      `ofKind` of Redefinition, FeatureTyping, Subsetting or Subclassification in `all()` order
+      (rules.ts 833 and 941, bind.ts 264, defining-equation, units-eval): no validate() output
+      depends on the walk order in rules.ts 833 and 941, but bind.ts 264, defining-equation and
+      units-eval were not re-probed, so for them it is not proven. The claim that no validate cell
+      differed covers the SET of validate() output, not its ORDER: validate() ends with a sort by
+      severity, element id, rule and id, and element ids are fresh per load, so its order differs
+      between a page, a terminal and a JSON copy whatever the walk order is (see 'Abstentions left
+      in the order of listings'). Done when a typing beside a subsetting or redefinition lists in
+      one order on the page and in a terminal, and the three unprobed consumers are shown not to
+      depend on the walk order. Probes: wave3-probes/fence-order/gen.mts, pb.mts;
+      fence-coremodel-scratch/cand.mts, late-dump.mts, gen-wu.mts. [review 2026-10-14 D-1,
+      collab-order; fence-coremodel; fence-order; fence-order review]
 - [ ] **Make a reset in a collaboration room cost what it changes (optional, measure first).** An
       Undo, Redo, Apply or Import in a room clears the room's document and writes every element
       again, library included. On v9 with its library, the editing peer's reseed plus one other
@@ -1024,23 +1032,16 @@ true values. What follows is what that branch and the review of it left open; en
       reopens without the statement: an end that is not the first of its name for a chain kind (a
       rename, `duplicate`, reparent or retarget made an earlier member bear the name), two members
       for the others, and a redefined feature with no name. No text makes that state, only an edit.
-      (a) and (b) are closed by fence-text. A NAMED end behind an earlier member of its name, and a
-      lone unnamed `:>> load` end of a non-chain statement, now get the `// Not saved:` note; a
-      named end behind an earlier named member of a non-chain statement (allocation, succession,
-      dependency, transition) is fenced too (the named end behind an earlier member, head and
-      non-head, for the statements the docs list, is closed). Still open, wrong answer: the
-      earlier-member case remains for requirement relationship ends (satisfy, verify, refine, trace,
-      derive: endpointList and requirementRelLine pass no `reads`) and for inlined specialization
-      targets (`attribute w :> q.v` retargeted to the second `v` is saved as `:> q.v`); both are
-      pre-existing and need a NoNameReachesEnd route for those statements (probes
-      fence-text-scratch/review/dup3.mts, where satisfy-dup prints MOVED T::d1#1 -> T::d1#0, and
-      fence-text-scratch/review/sk.mts). Also open: (c) the write-back refusal in
-      scripts/sysprose.ts `modelText` has no test that reaches it (test it with an SDK-built model),
-      and the full fix, giving the end redefinition a declared name on Save or reordering so the end
-      is first, instead of the note. Probes: the UNREACHED cases in
-      test/unit/text.roundtrip.test.ts, the rename case in test/unit/store.reducers.test.ts,
-      fence-editor2-scratch/s2/probes/p1.sysml. [fence-editor S2; fence-editor2; fence-save-name;
-      fence-text]
+      Closed: (a) and (b) by fence-text; by fence-order, the earlier-member case for requirement
+      relationship ends (satisfy, verify, refine, trace, derive) and for inline specialization
+      targets (typing, `:>`, `::>`, a redefinition spelled by a path), which now get the `// Not
+      saved:` note too; and (c), the write-back refusal in scripts/sysprose.ts `modelText`, which is
+      exported and tested. Still open, wrong answer: only the full fix, giving the end redefinition
+      a declared name on Save, or reordering so the end is first, instead of the note; also a
+      redefinition spelled by a simple name that lands elsewhere keeps the healing route
+      (`settleRedefinitions`) as before. Probes: wave3-probes/fence-order/gen3.mts, req.mts,
+      inl.mts; fence-text-scratch/review/dup3.mts, sk.mts; fence-editor2-scratch/s2/probes/p1.sysml.
+      [fence-editor S2; fence-editor2; fence-save-name; fence-text; fence-order]
 - [ ] **Contain the own-row `standingDefaultSentence` call like the instance-row one (optional,
       low).** `readInContexts` wraps the sentence in a try/catch that yields no sentence (the
       sentence is wording and must not cost the row); the call on a constraint's own row (`standing
@@ -1148,47 +1149,12 @@ true values. What follows is what that branch and the review of it left open; en
       F/F/F/F and CNF::c15 T/T/T/T and the fence in leavesOutOverride (map-to-model.ts) is narrowed
       to the diamond and the clash (D3 :> D1, D2 or D2, D2b). The bind.ts and serializer.ts parts
       need the fence-rename and fence-text owners at merge. [sweep 2026-10-31]
-- [ ] **The settle leaves a stale copy resolving after a delete or a rename (page decides, file
-      differs).** (a) After the Subclassification D1 -> Q0 is deleted, D1::N is a stale copy, and a
-      later retype of a usage whose binding copy redefines N finds that stale copy through
-      resolveInherited and treats it as no feature; the file instead makes the copy on D3::K2 (`:>>
-      N`). The page parts the copy and reads T/T/T/T where the file reads F/F/F/F (soak seed 91332;
-      probe: package G { part def Q0 { attribute N default = 12.0; } part def D1 :> Q0 { attribute
-      Zd1; bind Zd1 = N; } part def D3 :> D1 :> Q0 { attribute K2 :>> N default = 16.0; } part u1 :
-      Q0 { attribute Zb = 1.0; bind Zb = N; } constraint c8 { u1.K2 == 16.0 } }, steps: delete
-      Subclassification D1 -> Q0, then store.bindType(u1, D3); page pageCopies [], file u1::K2 ->
-      D3::K2). Likely cause (not verified in session): endCopyFeature (serializer.ts) takes the
-      first resolveInherited hit and returns undefined if it is a stale copy, instead of looking
-      past it. (b) A name renamed away still resolves on the page through a leftover implicit copy
-      that the settle does not part, so the page decides a constraint that names it where the file
-      has no such name and abstains (B1: package G { part def Q0 { attribute M default = 11.0; }
-      part def D1 { attribute K default = 13.0; } part def D2 :> D1 { attribute :>> K default =
-      16.0; } part def D3 :> D2 { attribute Zd3; bind Zd3 = K; } part u1 : D3; constraint c3 { u1.K
-      == 16.0 } }, steps: retarget the Subclassification D2 -> D1 to Q0, rename D1::K to N: page
-      T/T/T/T, file ?/?/?/?, D3::K -> D2#0 stays; B2 seed 91790 page F/F/F/F, file ?; seed 94617 raw
-      rename route, page F F on check and numeric, file ??). After the rename the unnamed `:>> K`s
-      effectiveNameOf is N, so the cause is in the settle, not in the name; not found in the
-      session. Same family as the items of 'Abstentions left in the editor', with a full T or F
-      instead of a numeric t. Probes: sweep-dry/editor/repro/p1.sh with the texts above; soak
-      RV_RAW=1 RV_FIRST=<seed> RV_SEQ=1 RV_STEPS=5 for 91332, 91790, 94617. [sweep 2026-10-31]
-- [ ] **Read a `bind` end that goes through an `order` scope on the numeric lane like the other
-      lanes (wrong answer: numeric lane).** The numeric check still reads a `bind k = w.p.a` end
-      that goes through an `order` scope (and the other unreadScopes kinds). Probe:
-      fence-rename-scratch/rev/plumb/p7.sysml gives check/literal/numeric/SMT = ?/?/T/? and ?/?/F/?;
-      base was T/T/T/T. Page and file agree on a freshly parsed model, but the end is a concrete
-      element, so a bindType edit leaves it stale. Fix: route the solver.ts bind-end resolution
-      through DefiningEquations.withheldOwner; a solver.ts change (fence-numeric3's file), since no
-      sound fence fitted in defining-equation.ts alone. [fence-rename review]
-- [ ] **verify: a scope withheld by the mapper (cause copy) reaches the SMT encoder as
-      unresolved-name, with the defect-in-the-relation sentence.** `sysprose verify` on a fenced
-      model prints the SMT gate sentence 'u1.N names nothing this tool can resolve ... a defect in
-      the relation, not a construct outside the fragment, so --allow-inconclusive does not forgive
-      it', and for an unrelated row 'a gate refused (...: unresolved-name)'. The fenced scope's own
-      'copy' sentence appears only on the check, literal and numeric surfaces and in the whole-model
-      SMT withheld text (WITHHELD_CAUSE.copy). The verdict is ?, so it is wording, not a wrong
-      answer. Done when the encoder routes through DefiningEquations.withheldWhy so the copy
-      sentence is printed (src/semantics/contracts.ts; probes fence-copy-review/p/k01-fwd-bind.sysml
-      and p7/w.sysml). [fence-copy review]
+- [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
+      lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
+      findings in different orders (probe wave3-probes/fence-order/gen.mts with the `.sort()`
+      removed, 150 seeds, 59 cells; fence-order-scratch/gen-unsorted.mts and vo.mts). It is sorted
+      but not stable across loads, not a wrong answer, and pre-existing; a stable order would need a
+      text-order sort key in validate.ts. [fence-order review]
 - [ ] **Abstentions left in the editor's copies (rollup; sound, only weaker).** fence-copy: (1) an
       implicit copy hiding an override: the forward member order of a nearest-N chain (D1 and D3
       bind N, D2 overrides, 54 of 120 gen2 models and 3 of 160 gen1 models), a diamond or clash of
@@ -1205,7 +1171,20 @@ true values. What follows is what that branch and the review of it left open; en
       longer listed; the agreeing-values case could be read. (4) The whole-model SMT lane abstains
       on a model that holds a withheld scope, so one fenced bind loses every SMT proof, not only the
       rows that name the scope; a per-scope SMT withholding would be a separate change in
-      src/semantics/smt. [fence-copy]
+      src/semantics/smt. fence-copy2: (5) a stale copy beside a live feature of the same name in a
+      type the copy's owner specialises (D1's `N` stale after `Subclassification D1 -> Q0` is
+      deleted, with D3 `:> D1, Q0` and `K2 :>> N`) now parts the usage's copy and withholds the
+      usage's whole scope, so the page reads ?/?/?/? where the file decides F/F/F/F, and unrelated
+      names of that usage (`u1.Zb == 1.0`) are withheld with it; 204 of the 420 cells it withdrew
+      were right by agreement with the file; probes fence-copy2-scratch/probes-saved/gen.test.ts
+      (cases both-bx-D1-f-e2, both-bo-Q0-f-e4) and gen-fin.json. (6) The numeric lane still reads
+      `t` (imposed) through a stale name the file leaves unresolved (the rename-away shape; never T
+      or F), generator 2 case def-n-f-s0. (7) A rename asks the owners of a feature's redefiners
+      only when they are not already specialisers of its owner, so the cost for the ordinary case is
+      unchanged. (8) A live-aware endCopyFeature (a lookup that skips stale copies in
+      resolveInherited and findTypeFeature) would let the page decide where it now abstains; it
+      needs a bind.ts change to childNamed, which the page's other readers share, so it is over the
+      40-line fence. [fence-copy; fence-copy2]
 - [ ] **Abstentions left in renames and name clashes (rollup; sound, only weaker).** fence-rename:
       (1) names unrelated to the clash inside a flagged scope are withheld along with it (e.g.
       `w.p.x`, or an unrelated `a = 15.0` beside a clash on `b`), because the fence is the whole
@@ -1231,7 +1210,16 @@ true values. What follows is what that branch and the review of it left open; en
       others: an earlier member declared by it), and a lone unnamed redefinition for allocation,
       succession, transition, dependency and alias (probes fence-text-scratch/gen.mts and b2.mts;
       pinned in test/unit/text.roundtrip.test.ts, NAMED_BEHIND and the non-chain lone-unnamed
-      loops). [fence-text]
+      loops). fence-order: Save leaves out, with the `// Not saved:` note, a
+      requirement-relationship end or an inline specialization target that is the 2nd or later
+      member of its name in its owner, where a renaming or reordering would save it (probe
+      wave3-probes/fence-order/gen3.mts, 144 of 240 neighbours). [fence-text; fence-order]
+- [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
+      lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
+      findings in different orders (probe wave3-probes/fence-order/gen.mts with the `.sort()`
+      removed, 150 seeds, 59 cells; fence-order-scratch/gen-unsorted.mts and vo.mts). It is sorted
+      but not stable across loads, not a wrong answer, and pre-existing; a stable order would need a
+      text-order sort key in validate.ts. [fence-order review]
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
 From the reviews of the behaviour lane (reach and check-behaviour in the palette) and of the ux
