@@ -16149,6 +16149,17 @@ describe('a witness is the value at the path the row read, not the feature’s o
       expect(row.detail).not.toContain('This is a defect in the relation');
     });
 
+    // The twins reach the same sentence: the cause of the scope, a limit of this tool, never a defect in the relation.
+    t(`${engine}: a relation over two features under one name prints the sentence of its cause (unread-binding), not a defect`, async () => {
+      const TW = `package T { part def A { attribute x default = 1.0; attribute x default = 2.0; } part a : A; constraint c { a.x == 1.0 } }`;
+      const m = await contextModel(TW, 'T');
+      const row = (await verifyModel(m, { engine, sourceText: TW })).results.find((r) => r.clause.qualifiedName === 'T::c')!;
+      expect(row.code).toBe('verification/not-evaluable');
+      expect(row.detail).toContain('two features under one name');
+      expect(row.detail).toContain('This is a limit of this tool');
+      expect(row.detail).not.toContain('This is a defect in the relation');
+    });
+
     // A bare literal beside a quantity is read in the feature's declared unit, by the scalar reading: the unit-aware
     // evaluator declines it, so its coherent-SI pair is not the comparison the verdict made (5000 g against 10 g).
     t(`${engine}: a bare literal beside a quantity prints no coherent-SI pair of a comparison nobody made (U3)`, async () => {

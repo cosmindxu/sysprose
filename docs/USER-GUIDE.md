@@ -1188,12 +1188,13 @@ element that owns the binding is decided, because the page cannot say what the b
 Likewise where a copy that is not stale, or a stale one, has a name that a member of its owner bears (a rename
 or a new feature gave it), and where a binding's end is a feature of a type its owner specialises, held with no
 copy of its own (a bound feature moved up into the type): the next open binds that member, or makes the copy,
-and the page reads neither. So where a type below the copy's owner holds a stale copy of the name beside a live
+and the page reads neither. So where a type the copy's owner specialises holds a stale copy of the name beside a live
 feature that bears it (`Subclassification D1 -> Q0` deleted, D1's `N` stale, D3 `:> D1, Q0` with `attribute K2
 :>> N`, then a usage retyped to D3): the next open makes the copy on that feature (`K2`), the page meets the
-stale copy first and cannot say so, and it parts the copy and withholds the binding the same way. A rename of
+stale copy first and cannot say which feature the file binds, and it parts the copy and withholds the binding the same way. A rename of
 a feature asks the owners of what redefines it too, so a `:>>` a retarget left on the renamed feature does not
-keep the old name alive on the copies below it.
+keep the old name alive on the copies below it. An implicit copy whose binding is deleted goes with it, as the saved
+file has no such member: it no longer hides an override on the page.
 
 The implicit copy of a `bind` (or any connector with an end, `connect z to N;`) written in a definition (`part def D3 :>
 D2 { bind z = N; }`) stands on the feature the name finds in D3, and an override it would hide is left unread. With D1's
@@ -1206,7 +1207,10 @@ unread: no name of what D3 owns, types or specialises is read, and nor is a name
 (`bind x = u1.N` in the package). The check says `u1.N is not read: G::u1 owns, or joins a feature of, a binding whose end
 is a copy standing on one of several features the types give the name, which the order of the text chooses between (the
 saved file is read the same way), so no name of G::u1 is read until an edit removes the competing override`. Saving and
-opening the file does not lift it: the file is read the same way. The rows of such a scope are inconclusive on every
+opening the file does not lift it: the file is read the same way.
+`verify` files a row that names a fenced scope `verification/not-evaluable` under the reason `unread-binding`, a limit
+of this tool, and prints the scope's own sentence (`u1.N is not read: G::u1 owns, or joins a feature of, a binding whose
+end is a copy standing on one of several features ...`), as the check does, not a name that resolves to nothing. The rows of such a scope are inconclusive on every
 surface, as the same diamond or clash without the `bind` already is (not the chain case, where D3 has no `bind` of its
 own: it reads D2's 15 and decides). One such binding also makes every SMT proof or refutation of the whole model
 inconclusive, rows that name nothing of it included, because the solver's axioms are those of every scope. The text order that
@@ -1285,9 +1289,6 @@ the same note (`… Rename the earlier member of its name, or move this one befo
 the name would reopen on the earlier one (the first end of a statement too: `allocate y to c` with a second `c` beside the
 first). A rename onto a taken name raises `validation/duplicate-name`; a named member added after an unnamed redefinition
 of its name gets only this note. An implicit copy a chain made is not an earlier member.
-`verify` files a row that names a fenced scope `verification/not-evaluable` under the reason `unread-binding`, a limit
-of this tool, and prints the scope's own sentence (`u1.N is not read: G::u1 owns, or joins a feature of, a binding whose
-end is a copy standing on one of several features ...`), as the check does, not a name that resolves to nothing.
 
 Four more cases are not followed, and in each the page can read what the saved file does not:
 

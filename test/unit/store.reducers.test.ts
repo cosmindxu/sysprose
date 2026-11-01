@@ -2737,6 +2737,60 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         }
       });
 
+      // The stale copy two types up (D4 :> D3 :> D1, a usage typed by D4 whose own `bind` makes a copy) is found past, whichever
+      // of the two edits comes first: the page abstains on every lane where the file decides F/F/F/F (the chain is transitive).
+      it('a stale copy two types up hides the feature the file binds, in either order of the two edits', async () => {
+        const text = `package G {
+  part def Q0 { attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
+  part def D3 :> D1, Q0 { attribute K2 :>> N default = 16.0; }
+  part def D4 :> D3 { attribute Zd4; bind Zd4 = N; }
+  part u1 : Q0 { attribute Zb = 1.0; bind Zb = N; }
+  part u4 : D4 { attribute Zc = 1.0; bind Zc = N; }
+  constraint c8 { u1.K2 == 16.0 }
+  constraint c9 { u4.K2 == 16.0 }
+}`;
+        const steps: Record<string, (() => void)[]> = {
+          'retype, then delete': [() => st().bindType(byName('u1').id, 'D3'), () => st().deleteElement(st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName('D1').id)!.id)],
+          'delete, then retype': [() => st().deleteElement(st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName('D1').id)!.id), () => st().bindType(byName('u1').id, 'D3')],
+        };
+        for (const [order, run] of Object.entries(steps)) {
+          load(text);
+          for (const step of run) step();
+          const page = await surfaces(st().model);
+          const file = await surfaces(reopened(st().model));
+          for (const row of ['G::c8', 'G::c9']) {
+            expect(file[row], `${order}: ${row} in the file`).toBe('F/F/F/F');
+            expect(page[row], `${order}: ${row} on the page`).not.toMatch(/[TF]/);
+          }
+        }
+      });
+
+      // An implicit copy outlives the deletion of the binding that made it (the copy keeps hiding the override on the page, the
+      // saved file has no such member): both the page and the file read the same after it. Soak seeds 700237 and 920292.
+      it('an implicit copy goes with the binding that made it: the page reads what the file reads', async () => {
+        const probes: [string, string, string][] = [
+          [
+            'G::c12',
+            'Zd5',
+            `package G { part def Q0 { attribute N default = 12.0; } part def D1 :> Q0 { attribute :>> N default = 14.0; } part def D2 :> D1 :> Q0 { attribute N2 :>> N default = 16.0; } part def D3 :> D2 { } part def D5 :> Q0 :> D1 { attribute Zd5; bind Zd5 = N; } part u2 : D5, D3 { } constraint c12 { u2.N == 16.0 } }`,
+          ],
+          [
+            'G::c15',
+            'Zb',
+            `package G { part def Q0 { attribute N default = 12.0; } part def D1 :> Q0 { attribute :>> N default = 13.0; } part def D3 :> Q0 { bind Zd3 = N; attribute Zd3; } part def D5 :> D1 :> D3 { attribute X :>> N default = 18.0; } part u2 : D5 { bind Zb = N; attribute Zb = 1.0; } constraint c15 { u2.N == 18.0 } }`,
+          ],
+        ];
+        for (const [row, gone, text] of probes) {
+          load(text);
+          st().deleteElement(byName(gone).id);
+          const page = await surfaces(st().model);
+          expect(page[row], `${row} on the page`).toBe((await surfaces(reopened(st().model)))[row]);
+          expect(page[row]).toMatch(/^T\/T\/T\/[TX]$/);
+          expect(st().model.all().some((e) => e.attrs.implicit === true && e.ownerId !== null && st().model.get(e.ownerId)?.declaredName === (row === 'G::c12' ? 'D5' : 'u2'))).toBe(false);
+        }
+      });
+
       // A rename of a feature a redefinition reaches that no longer lies below the renamed feature's owner (a `Subclassification
       // D2 -> D1` retargeted away leaves D2's `:>> K` on D1's `K`): the copies below D2 were not asked, and kept the old name
       // on a feature the file does not find by it (soak seed 91790, B1). No row is decided on any lane the file abstains on.

@@ -2052,11 +2052,47 @@ export function settleRedefinitionsAfter(model: Model, events: readonly ChangeEv
     let moved = 0;
     if (dirtied.types.size > 0) moved += settleRedefinitions(model, dirtied.types, dirtied.touched);
     if (dirtied.named.size > 0) moved += settleRedefinitions(model, dirtied.named, dirtied.touched, dirtied.names);
+    moved += dropOrphanCopies(model, events);
     return moved;
   } catch (err) {
     console.error('settleRedefinitions failed', err);
     return 0;
   }
+}
+
+/**
+ * An implicit end copy that nothing outside its own subtree refers to any more (the binding that made it went) is not in the
+ * saved file: it goes too, or it would keep resolving, and hiding an override, on a page whose file has no such member.
+ * Only the owners of what `events` removed are asked, then the owners of the copies that redefined a copy dropped.
+ *
+ * @returns how many copies were dropped.
+ */
+function dropOrphanCopies(model: Model, events: readonly ChangeEvent[]): number {
+  const queue: ElementId[] = [];
+  for (const ev of events) if (ev.type === 'remove' && ev.element && ev.element.ownerId !== null) queue.push(ev.element.ownerId);
+  let dropped = 0;
+  for (let i = 0; i < queue.length; i++) {
+    const owner = queue[i]!;
+    if (!model.has(owner)) continue;
+    for (const c of [...model.children(owner)]) {
+      if (c.attrs.implicit !== true || isRelationship(c.eClass) || c.attrs.isLibrary === true) continue;
+      const own = new Set<ElementId>([c.id, ...model.descendants(c.id).map((d) => d.id)]);
+      if ([...own].some((id) => model.edgesOf(id).some((e) => !own.has(e.id)))) continue;
+      // What the dropped copy redefined may have been held by it alone.
+      for (const id of own) {
+        for (const e of model.edgesFrom(id)) {
+          if (e.eClass !== 'Redefinition') continue;
+          for (const t of e.target ?? []) {
+            const home = model.get(t)?.ownerId;
+            if (home !== null && home !== undefined) queue.push(home);
+          }
+        }
+      }
+      model.remove(c.id);
+      dropped++;
+    }
+  }
+  return dropped;
 }
 
 /** A redefinition whose target is about to go, with the reference the saved text writes it by now. */
