@@ -997,14 +997,7 @@ true values. What follows is what that branch and the review of it left open; en
       peer's reconcile take about 28 to 30 s in node on a quiet machine (80 to 100 s at load 30 to
       35), at 87e8c0f and at `collab-order` alike. The whole document goes as one message, which
       runs into the relay's message cap (64 MiB since collab-ui S2). Fix: write only what the reset changed (a diff of the snapshot
-      against the document), with the library kept out. Pre-existing. [collab-order S2]
-- [ ] **Keep the standard library out of a collaboration room's document.** Every peer's first
-      message and every reset carries the whole library (about 10.8 MB on the drone-swarm v9 model),
-      and the relay takes at most 64 MiB in one message (`scripts/collab-server.ts` MAX_PAYLOAD,
-      USER-GUIDE section 9), so a model several times the size of v9 still cannot be shared. Fix:
-      leave the library elements out of the room's document (every peer loads it) or split the
-      message. Done when the first message of a v9 room carries under 1 MB of library. [collab-ui
-      S2]
+      against the document). The library is already out of the document (fence-roomlib). Pre-existing. [collab-order S2]
 - [ ] **Make peers converge after concurrent removals in a collaboration room (pre-existing).**
       fence-collab fixed the divergence (a non-cascading remove was the cause: 81 of 500 sequences
       with `cascade:false`, 0 with `cascade:true`): the room binding now reads the kept children of
@@ -1077,6 +1070,42 @@ true values. What follows is what that branch and the review of it left open; en
       the 55 fence-only no-clause rows carry no ninth reading; a row with zero symbols is `ground`).
       classes-3 waits for the wrong-answer count at or below 15. [classes-1]
 
+- [ ] **z3 νZ answers a script over an Integer and a Real feature with a bound that a feasible point
+      lies beyond (wrong answer, FENCED).** `bounds` on a model that declares both an Integer and a
+      Real feature published 'min x = infimum 3/4, never attained' where x = 0 is feasible, 'max x =
+      supremum 0' where x = 1 is, and (no strict comparison needed) 'max x = 1 + epsilon' where 2 is
+      attained. fence-bounds: such a script keeps an optimum only when two plain checks confirm it,
+      and withholds an infimum, a supremum and `oo` as inconclusive with
+      verification/optimality-not-established. The full reading (a sound encoding or an own
+      optimiser for mixed scripts) is not done. Probes: fence-bounds-scratch/p/mix2.sysml and
+      mix3.sysml (`npm run sysprose -- bounds <f> --measure p.x --sense both`); battery
+      fence-bounds-scratch/gen/genmix.py seeds 1-3. [sweep 2026-10-31; fence-bounds]
+- [ ] **Abstentions left in bounds and consistency (rollup; sound, only weaker).** (1) Mixed Integer
+      and Real bounds: an infimum, a supremum or `oo` is withheld even when correct (14 to 49 per
+      300 cells in the battery were decided on base and abstain now, some of them right); probe
+      fence-bounds-scratch/gen/s2.cases.json. (2) A relation that reads a feature typed Natural,
+      Positive or UnlimitedNatural is refused in the z3 lane, so bounds, consistency, verify and
+      refine abstain on it even where a literal pins the feature (`k : Natural = 3` with `x <= k *
+      2.0` used to give max 6); probe fence-bounds-scratch/gen/f5.cases.json; the full reading
+      carries n >= 0 / n >= 1 as an axiom in encodeScript, without disturbing consistency's
+      owners/core mapping and the `axiom` census. (3) `verify` on a freed Natural says 'relation
+      cannot be read (non-numeric-operand)' where it said verification/free-variable-unbounded
+      (abstention to abstention). (4) Retyping an Integer to Natural leaves a recorded refutation
+      'current' although the tool now abstains on it: `restricted` is not in scopeRowDigest
+      (src/api/evidence.ts). (5) The `bounds` exit-code sentence (scripts/lib/sysprose-spec.ts
+      BOUNDS_EXIT_CODES) does not list the two new not-decided kinds. [sweep 2026-10-31;
+      fence-bounds]
+- [ ] **Abstentions left in the collaboration room (rollup; sound, only weaker).** (a) A library
+      element dragged within the library is now that page's own view and is not shared; nothing is
+      lost, since the library is read-only for the user (test/unit/collab.binding.test.ts 'the
+      standard library stays out of the room's document'). (b) A room document an earlier build
+      wrote still holds its library until a reset clears it, so a returning peer's first message
+      from such a room stays about 10 MB. (c) A page that joins a room before its own library has
+      merged takes the room's non-stdlib library-flagged elements and then skips the bundled library
+      for good (src/library/full-library.ts:207-212; the joiner holds 1 library element against
+      38,762 on the first peer; library typings read as unresolved, the conservative direction); the
+      fix is for the loader to look for any `stdlib:`-prefixed element instead of any isLibrary one.
+      [fence-roomlib]
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
 From the reviews of the behaviour lane (reach and check-behaviour in the palette) and of the ux
