@@ -1307,6 +1307,60 @@ describe('solve — the order of the text decides no design equation', () => {
     }
   });
 
+  it('reads no root where equations that each have one nearby have none together, and gives solveFeasible no witness there (fence-numeric3)', async () => {
+    // `y == 1.0 / x`, `z == y * 2.0`, `z == 0.0` hold together only as x runs to infinity; each equation is within 1e-8 of a root alone (the
+    // runaway x excuses it), so the numeric surface read the three imposed (T asserted) and solveFeasible answered feasible, decided, at x =
+    // 2e11. A quotient with a plateau of its own (`z == x / y` beside `z == 0.0` and `x == 1.0`: y = −4e38) the same. The point is judged by
+    // the minimum-norm correction of the whole component: no row reads imposed or satisfied, no witness stands, in the text's order and the reverse.
+    // An unrelated equation over features with no value (`w * v == y`) beside the chain does not switch the judgement off, and a power that
+    // binary64 has rounded to 0 (`2.0 ^ x` at x = −1e19: every residual 0) is a plateau and no root.
+    const WV = 'attribute w : ScalarValues::Real; attribute v : ScalarValues::Real;';
+    for (const members of [
+      ['assert constraint c0 { y == 1.0 / x }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x >= 1.0 }', 'assert constraint c4 { w * v == y }'],
+      ['assert constraint c4 { w * v == y }', 'assert constraint c2 { z == 0.0 }', 'assert constraint c1 { z == y * 2.0 }', 'assert constraint c0 { y == 1.0 / x }'],
+      ['constraint c0 { y == 2.0 ^ x }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x <= -40.0 }'],
+      ['assert constraint c0 { y == 2.0 ^ x }', 'constraint c1 { z == y + y }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x <= -1100.0 }'],
+      ['constraint c0 { y == 2.0 ^ (0.0 - x * x) }', 'constraint c1 { y == 0.0 }'],
+    ]) {
+      for (const text of [members, [...members].reverse()].map((list) => `package K { ${X} ${WV} ${list.join(' ')} }`)) {
+        const r = await rows(text);
+        expect([...r.values()].filter((v) => v.imposed || v.result !== 'unknown').length, text).toBe(0);
+        const f = solveFeasible((await loadModelText(text)).model!);
+        expect([f.feasible && f.decided, f.feasible === false && f.decided], text).toEqual([false, false]);
+      }
+    }
+    for (const members of [
+      ['constraint c0 { y == 6.0 / (x + 1.0) }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x >= 0.0 }'],
+      ['assert constraint c0 { y == 1.0 / x }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x >= 1.0 }'],
+      ['constraint c0 { y == 1.0 / x }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x <= 0.0 }'],
+      ['constraint c0 { y == 2.0 ^ x }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x <= 0.0 }'],
+      ['constraint c0 { z == x / y }', 'constraint c1 { z == 0.0 }', 'constraint c2 { x == 1.0 }'],
+      ['constraint c0 { z == x / y }', 'constraint c1 { z == 0.0 }', 'constraint c2 { x == 1.0 }', 'constraint c3 { y >= 1.0 }'],
+      ['constraint c0 { x == 1.0 / y }', 'constraint c1 { x == 0.0 }'],
+      ['constraint c0 { x * (1.0 / y) == 0.0 }', 'constraint c1 { x == 1.0 }'],
+    ]) {
+      for (const text of [members, [...members].reverse()].map((list) => `package K { ${X} ${list.join(' ')} }`)) {
+        const r = await rows(text);
+        expect([...r.values()].filter((v) => v.imposed || v.result !== 'unknown').length, text).toBe(0);
+        const f = solveFeasible((await loadModelText(text)).model!);
+        expect([f.feasible && f.decided, f.feasible === false && f.decided], text).toEqual([false, false]);
+      }
+    }
+    // The same chain with a sink it reaches (`z == 6.0` at x = 1) has its root, imposed and feasible, whichever way it is written.
+    const reach = ['constraint c0 { y == 6.0 / (x + 1.0) }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 6.0 }', 'constraint c3 { x >= 0.0 }'];
+    for (const text of [reach, [...reach].reverse()].map((list) => `package K { ${X} ${list.join(' ')} }`)) {
+      const r = await rows(text);
+      expect(['c0', 'c1', 'c2'].map((n) => r.get(n)!.imposed), text).toEqual([true, true, true]);
+      expect(solveFeasible((await loadModelText(text)).model!).feasible, text).toBe(true);
+    }
+    // ... also beside an equation over features with no value.
+    for (const text of [[...reach, 'assert constraint c4 { w * v == y }'], ['assert constraint c4 { w * v == y }', ...[...reach].reverse()]].map((list) => `package K { ${X} ${WV} ${list.join(' ')} }`)) {
+      const r = await rows(text);
+      expect(['c0', 'c1', 'c2'].map((n) => r.get(n)!.imposed), text).toEqual([true, true, true]);
+      expect(solveFeasible((await loadModelText(text)).model!).feasible, text).toBe(true);
+    }
+  });
+
   it('reads a two-root equation in the middle or at the tail of a long component as in a short one', async () => {
     // A chain anchored at its tail (`x{n} == n + 3.0`) with `x{m+1} == x{m} * x{m}` among its members has two roots for x{m} and so for x0
     // (−2 and −8 at n = 10, −28.76 and −41.25 at n = 70): every value is withheld and the sentence is the short one's, however long the chain.

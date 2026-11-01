@@ -13212,18 +13212,19 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'FN12::c2': ['?/?/T/?', 'T'],
       },
     ),
-    // FN13 / FN13A: STILL WRONG (NO STEP, TODO "an equation with no root, reached through a further equation"): each equation of
-    // `y == 6.0 / (x + 1.0)`, `z == y * 2.0`, `z == 0.0` is within 1e-8 of a root, in absolute terms, because the nearRoot test reads
-    // the largest value of ONE equation (the runaway x excuses it) and the evidence of no root is joint: the three read imposed
-    // (FN13, `t`, not a decided letter) and, with the first asserted, T on the numeric surface alone (FN13A, the known false row).
+    // FN13 / FN13A / FN13B / FN13C: an equation with no root reached through a further equation. Each equation of `y == 6.0 / (x + 1.0)`,
+    // `z == y * 2.0`, `z == 0.0` is within 1e-8 of a root alone (the runaway x excuses it in nearRoot, which reads ONE equation), and they hold
+    // together only as x runs to infinity: the three read imposed (`t`) and, with the first asserted, T. The point is now judged by the
+    // minimum-norm correction of the whole component (jointMissed): every row is `?`, in both orders, for the quotient (FN13, FN13A, FN13B)
+    // and the power (FN13C).
     ...reversed(
       'fence-fn13',
       `package FN13 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y == 6.0 / (x + 1.0) } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 0.0 } }`,
       `package FN13 { constraint c3 { x >= 0.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } constraint c0 { y == 6.0 / (x + 1.0) } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
       {
-        'FN13::c0': ['?/?/t/?', '?'],
-        'FN13::c1': ['?/?/t/?', '?'],
-        'FN13::c2': ['?/?/t/?', '?'],
+        'FN13::c0': ['?/?/?/?', '?'],
+        'FN13::c1': ['?/?/?/?', '?'],
+        'FN13::c2': ['?/?/?/?', '?'],
         'FN13::c3': ['?/?/?/?', '?'],
       },
     ),
@@ -13232,10 +13233,58 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package FN13A { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; assert constraint c0 { y == 1.0 / x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 1.0 } }`,
       `package FN13A { constraint c3 { x >= 1.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } assert constraint c0 { y == 1.0 / x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
       {
-        'FN13A::c0': ['?/-/T/-', '?'],
-        'FN13A::c1': ['?/?/t/?', '?'],
-        'FN13A::c2': ['?/?/t/?', '?'],
+        'FN13A::c0': ['?/-/?/-', '?'],
+        'FN13A::c1': ['?/?/?/?', '?'],
+        'FN13A::c2': ['?/?/?/?', '?'],
         'FN13A::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn13b',
+      `package FN13B { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y == 1.0 / x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x <= 0.0 } }`,
+      `package FN13B { constraint c3 { x <= 0.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } constraint c0 { y == 1.0 / x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
+      {
+        'FN13B::c0': ['?/?/?/?', '?'],
+        'FN13B::c1': ['?/?/?/?', '?'],
+        'FN13B::c2': ['?/?/?/?', '?'],
+        'FN13B::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn13c',
+      `package FN13C { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y == 2.0 ^ x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x <= 0.0 } }`,
+      `package FN13C { constraint c3 { x <= 0.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } constraint c0 { y == 2.0 ^ x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; }`,
+      {
+        'FN13C::c0': ['?/U/?/U', '?'],
+        'FN13C::c1': ['?/?/?/?', '?'],
+        'FN13C::c2': ['?/?/?/?', '?'],
+        'FN13C::c3': ['?/?/?/?', '?'],
+      },
+    ),
+    // FN13D / FN13E: the same fence where an unrelated equation over features with no value (`w * v == y`) joins the chain, and where the
+    // power rounds to 0 in binary64 (`2.0 ^ x` at x = −1e19, every residual 0 there: a plateau, no root). A feature with no value leaves its
+    // equation out of the judgement, never the chain beside it; an underflowed power is no root.
+    ...reversed(
+      'fence-fn13d',
+      `package FN13D { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; assert constraint c0 { y == 1.0 / x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x >= 1.0 } assert constraint c4 { w * v == y } }`,
+      `package FN13D { assert constraint c4 { w * v == y } constraint c3 { x >= 1.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } assert constraint c0 { y == 1.0 / x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; }`,
+      {
+        'FN13D::c0': ['?/-/?/-', '?'],
+        'FN13D::c1': ['?/?/?/?', '?'],
+        'FN13D::c2': ['?/?/?/?', '?'],
+        'FN13D::c3': ['?/?/?/?', '?'],
+        'FN13D::c4': ['?/-/?/-', '?'],
+      },
+    ),
+    ...reversed(
+      'fence-fn13e',
+      `package FN13E { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; constraint c0 { y == 2.0 ^ x } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } constraint c3 { x <= -40.0 } }`,
+      `package FN13E { constraint c3 { x <= -40.0 } constraint c2 { z == 0.0 } constraint c1 { z == y * 2.0 } constraint c0 { y == 2.0 ^ x } attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; attribute w : ScalarValues::Real; attribute v : ScalarValues::Real; }`,
+      {
+        'FN13E::c0': ['?/U/?/U', '?'],
+        'FN13E::c1': ['?/?/?/?', '?'],
+        'FN13E::c2': ['?/?/?/?', '?'],
+        'FN13E::c3': ['?/?/?/?', '?'],
       },
     ),
     // fence-readings S2: six wrong answers fenced, each pinned with its twin. A bare-name equation `K == L` between
@@ -14650,10 +14699,7 @@ package L3 {
    * fence-readings S2 withdrew all six: a usage that redefines a feature of such a line reads none of its names (a
    * clash with its own sentence), so each row is `?` on all four surfaces.
    */
-  const KNOWN_FALSE = new Map<string, string>([
-    ['fence-fn13a | FN13A::c0', 'NO STEP: an asserted `y == 1.0 / x` with `z == y * 2.0` and `z == 0.0` has no root (the numeric surface reads it T at x = 2e11, each equation within 1e-8 of one alone); TODO "an equation with no root reached through a further equation"'],
-    ['fence-fn13a-rev | FN13A::c0', 'NO STEP: the same, written in the other order'],
-  ]);
+  const KNOWN_FALSE = new Map<string, string>();
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,
    * refute-r19's three, sound-C r8's p, d1plain's two, assert-min-def's two, u-witness's p2.k): every one a

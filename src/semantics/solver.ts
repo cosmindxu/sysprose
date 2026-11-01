@@ -2803,6 +2803,13 @@ function unsettledFeatures(
     const r = residualOf(eq, values);
     if (r === undefined || !(Math.abs(r) <= convergenceGate(eq, values, tol)) || !nearRoot(eq, values, r)) missed.push(vs[0]!);
   }
+  // A component no root of which is near the point, though each of its equations is ({@link jointMissed}).
+  for (const comp of jointMissed(eqs.filter(own), values)) {
+    for (const eq of comp) {
+      const v = eq.vars.find((u) => parent.has(u));
+      if (v !== undefined) missed.push(v);
+    }
+  }
   if (missed.length === 0) return new Set();
   const roots = new Set(missed.map(find));
   const out = new Set<ElementId>();
@@ -3177,6 +3184,8 @@ function residualSummary(
     residual = Math.max(residual, Math.abs(r));
     if (Math.abs(r) > convergenceGate(eq, values, tol) || !nearRoot(eq, values, r)) withinTol = false;
   }
+  // Each within its gate alone is not a root of them together ({@link jointMissed}).
+  if (withinTol && jointMissed(eqs, values).length > 0) withinTol = false;
   return { residual, determined, withinTol };
 }
 
@@ -3241,12 +3250,7 @@ const ROOT_DISTANCE = 1e-8;
 function nearRoot(eq: Equation, values: Map<ElementId, number>, r: number): boolean {
   const plateau = quotientOrPower(eq);
   if (r === 0 && !plateau) return true;
-  const scope = idScope(eq, values);
-  const l = roundingOf(eq.lhs, scope);
-  const q = roundingOf(eq.rhs, scope);
-  if (r !== 0 && l !== undefined && q !== undefined && Math.abs(r) <= 64 * (l.err + q.err + Number.EPSILON * Math.abs(l.value - q.value))) {
-    return true;
-  }
+  if (r !== 0 && withinRounding(eq, values, r)) return true;
   const at = (move: (v: ElementId, x: number) => number): number | undefined => {
     const moved = eq.vars.map((v) => [v, values.get(v)] as const);
     try {
@@ -3273,6 +3277,146 @@ function nearRoot(eq: Equation, values: Map<ElementId, number>, r: number): bool
     return slope > 0 || all === undefined || all !== 0;
   }
   return Math.abs(r) / Math.sqrt(slope) <= ROOT_DISTANCE * (eq.scale ? size : size + 1);
+}
+
+/** Is the residual `r` of `eq` at `values` within the rounding of its own evaluation? */
+function withinRounding(eq: Equation, values: Map<ElementId, number>, r: number): boolean {
+  const scope = idScope(eq, values);
+  const l = roundingOf(eq.lhs, scope);
+  const q = roundingOf(eq.rhs, scope);
+  return l !== undefined && q !== undefined && Math.abs(r) <= 64 * (l.err + q.err + Number.EPSILON * Math.abs(l.value - q.value));
+}
+
+/** The most equations of a component {@link jointMissed} judges together (a dense Gram matrix of this order). */
+const JOINT_EQUATIONS = 120;
+
+/**
+ * The components of `eqs` (linked through the features they read) that hold a quotient or a power and have NO root near the point
+ * `values`, though each equation of them is within {@link ROOT_DISTANCE} of one alone ({@link nearRoot}): `y == 1.0 / x`, `z == y *
+ * 2.0`, `z == 0.0` at x = 2e11 (each steep enough alone, and every one of them held only by y and z running to 0 as x runs away). The
+ * point is judged by the minimum-norm correction of the whole component: the rows of the Jacobian, each scaled to unit length, give
+ * the smallest step that zeroes every residual to first order, and it must be within {@link ROOT_DISTANCE} of the size of the values
+ * (the same distance as one equation's), and must leave no residual of the rows it cannot reach (rows that are dependent, or a feature
+ * a pole has made unmovable, leave that part of the residual where it is). With `reach`, only the components that read one of those
+ * features. A component of more than {@link JOINT_EQUATIONS} equations is not judged but withheld (no root is read near any point of
+ * it); an equation with a value that is not a finite number is left out of the components, and a component whose power has underflowed
+ * to 0 is read as having no root near the point.
+ */
+function jointMissed(eqs: readonly Equation[], values: Map<ElementId, number>, reach?: ReadonlySet<ElementId>): Equation[][] {
+  if (!eqs.some(quotientOrPower)) return [];
+  // An equation that reads a feature with no value (or no finite one) is left out, as residualSummary leaves it: it cannot join a
+  // chain it does not constrain at this point, and a valueless feature must not switch the judgement off for the rest of the component.
+  const readable = (eq: Equation): boolean => !eq.vars.some((v) => !Number.isFinite(values.get(v) ?? Number.NaN));
+  const parent = new Map<ElementId, ElementId>();
+  const find = (a: ElementId): ElementId => {
+    while (parent.get(a) !== a) {
+      parent.set(a, parent.get(parent.get(a)!)!);
+      a = parent.get(a)!;
+    }
+    return a;
+  };
+  for (const eq of eqs) {
+    if (!readable(eq)) continue;
+    for (const v of eq.vars) if (!parent.has(v)) parent.set(v, v);
+    for (let i = 1; i < eq.vars.length; i++) parent.set(find(eq.vars[0]!), find(eq.vars[i]!));
+  }
+  const groups = new Map<ElementId, Equation[]>();
+  for (const eq of eqs) {
+    if (eq.vars.length === 0 || !readable(eq)) continue;
+    const root = find(eq.vars[0]!);
+    const members = groups.get(root);
+    if (members === undefined) groups.set(root, [eq]);
+    else members.push(eq);
+  }
+  const out: Equation[][] = [];
+  for (const group of groups.values()) {
+    if (!group.some(quotientOrPower)) continue;
+    if (reach !== undefined && !group.some((eq) => eq.vars.some((v) => reach.has(v)))) continue;
+    // Too many to judge together: read as no root near (a verdict withheld, never one a runaway variable excuses).
+    if (group.length > JOINT_EQUATIONS || !jointNearRoot(group, values)) out.push(group);
+  }
+  return out;
+}
+
+/**
+ * Does `eq` hold, at `values`, a power of a positive base (not 1) that binary64 has rounded to below its smallest normal number? Such a
+ * power is a plateau at 0, not a root: `y == 2.0 ^ x`, `z == y * 2.0`, `z == 0.0` at x = −1e19 has every residual 0 and no root.
+ */
+function plateaued(eq: Equation, values: Map<ElementId, number>): boolean {
+  const scope = idScope(eq, values);
+  let hit = false;
+  const visit = (n: Extract<ExprNode, { kind: 'binary' }>): void => {
+    if (n.op !== '^') return;
+    const a = roundingOf(n.left, scope);
+    const b = roundingOf(n.right, scope);
+    if (a !== undefined && b !== undefined && a.value > 0 && a.value !== 1 && Math.abs(a.value ** b.value) < 2.2250738585072014e-308) hit = true;
+  };
+  forEachOp(eq.lhs, visit);
+  forEachOp(eq.rhs, visit);
+  return hit;
+}
+
+function jointNearRoot(group: readonly Equation[], point: Map<ElementId, number>): boolean {
+  const vars = [...new Set(group.flatMap((eq) => eq.vars))];
+  const at = new Map(vars.map((v, i) => [v, i] as const));
+  const values = new Map(vars.map((v) => [v, point.get(v)!] as const));
+  const start = vars.map((v) => values.get(v));
+  if (start.some((x) => x === undefined || !Number.isFinite(x))) return true;
+  if (group.some((eq) => plateaued(eq, point))) return false;
+  const size = Math.max(...start.map((x) => Math.abs(x!)));
+  const bound = ROOT_DISTANCE * (group.some((eq) => eq.scale !== undefined) ? size : size + 1);
+  let first = 0;
+  let moved = 0;
+  // Gauss-Newton: the step is taken and the residuals read again, for one a rounding hides at the start (`x == 1.0 / y` at y = −4e38,
+  // whose slope in y is below the rounding of x) shows at the first correction's end.
+  for (let iter = 0; iter < 6; iter++) {
+    const J: number[][] = [];
+    const F: number[] = [];
+    for (const eq of group) {
+      const r = residualOf(eq, values);
+      if (r === undefined) return true;
+      const row = new Array<number>(vars.length).fill(0);
+      for (const v of eq.vars) {
+        const x = values.get(v)!;
+        const h = 1e-6 * (Math.abs(x) + 1);
+        values.set(v, x + h);
+        const rh = residualOf(eq, values);
+        values.set(v, x);
+        if (rh === undefined) return true;
+        row[at.get(v)!] += (rh - r) / h;
+      }
+      const norm = Math.hypot(...row);
+      if (norm === 0) continue;
+      J.push(row.map((a) => a / norm));
+      F.push(r === 0 || withinRounding(eq, values, r) ? 0 : r / norm);
+    }
+    const rnorm = Math.hypot(...F);
+    if (iter === 0) first = rnorm;
+    if (rnorm === 0) return true;
+    // The minimum-norm step that zeroes the rows to first order, by orthogonalising them in turn (a row that adds no direction to those
+    // before it, to 1e-9 of its length, is not one of them: a slope a rounding hides is none): rows = Rᵀ Qᵀ, Rᵀ z = −F, step = Q z.
+    const Q: number[][] = [];
+    const z: number[] = [];
+    for (const [i, row] of J.entries()) {
+      const rest = row.slice();
+      let coef = F[i]!;
+      for (const [j, q] of Q.entries()) {
+        const c = q.reduce((t, x, k) => t + x * rest[k]!, 0);
+        for (let k = 0; k < rest.length; k++) rest[k] -= c * q[k]!;
+        coef += c * z[j]!;
+      }
+      const len = Math.hypot(...rest);
+      if (len <= 1e-9) continue;
+      Q.push(rest.map((x) => x / len));
+      z.push(-coef / len);
+    }
+    const delta = vars.map((_, k) => Q.reduce((t, q, j) => t + q[k]! * z[j]!, 0));
+    const left = J.map((row, i) => F[i]! + row.reduce((t, x, k) => t + x * delta[k]!, 0));
+    moved += Math.hypot(...delta);
+    if (moved > bound || Math.hypot(...left) > 0.1 * rnorm) return false;
+    for (const [v, k] of at) values.set(v, values.get(v)! + delta[k]!);
+  }
+  return first === 0 || group.every((eq) => withinRounding(eq, values, residualOf(eq, values) ?? 0));
 }
 
 const QUOTIENT_OR_POWER = new WeakMap<Equation, boolean>();
@@ -5091,10 +5235,13 @@ function feasibleFrom(
     const reads = freeVars.filter((v) => touched.some((eq) => eq.vars.includes(v)));
     newtonSolve(touched, reads, values, held, tol, 200, definedFeatures(eqs, unreadable), unreadable);
   }
-  const bent = touched.some((eq) => {
-    const r = eq.vars.every((v) => values.has(v)) ? residualOf(eq, values) : undefined;
-    return r === undefined || Math.abs(r) > witnessGate(eq, values, feasTol) || !nearRoot(eq, values, r) || dividesByNearZero(eq, values, feasTol, moved);
-  });
+  const bent =
+    touched.some((eq) => {
+      const r = eq.vars.every((v) => values.has(v)) ? residualOf(eq, values) : undefined;
+      return r === undefined || Math.abs(r) > witnessGate(eq, values, feasTol) || !nearRoot(eq, values, r) || dividesByNearZero(eq, values, feasTol, moved);
+    }) ||
+    // Nor where the equations that read them have no root near it together ({@link jointMissed}): `z == x / y`, `z == 0.0`, `x == 1.0` at y = −4e38.
+    jointMissed(eqs, values, moved).length > 0;
   // The model's own equations — an asserted one, a binding, a feature's value
   // — and every plain one the solve took as a design equation hold at a
   // witness, whatever the search moved: two asserted values of one feature

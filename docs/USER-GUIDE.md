@@ -783,13 +783,18 @@ Two names worth separating:
   from its root 1e6, which is found, so `x >= 999999.0` beside it is satisfied; one that tends to its asymptote
   where it has no root (`2.0 ^ x == 0.0`, `6.0 / (x + 1.0) == 0.0`, `5.0 == 1.5 ^ (5.0 * x - 10.0) + 3.0 +
   2.0`) reads *unknown* with what stands beside it, in every order, and `solveFeasible` has no witness for it, when it
-  stands alone, beside an inequality, beside a pin, or beside an equation that fixes the other side. **The limit of that
-  fence: an equation with no root reached through a further equation is not told from one with a root.** `y == 1.0 /
-  x`, `z == y * 2.0`, `z == 0.0` (no `x` or `y` meets all three; each equation alone is within 1e-8 of a root) can still read
-  *imposed by the solve* (T if the first is asserted), and `solveFeasible` can answer feasible with a witness at a huge
-  `x` (about 2e11), as can `y == 2.0 ^ x` beside `y == 0.0000000001` and `x <= -34.0`, and `z == x / y`,
-  `z == 0.0`, `x == 1.0` (at `y` about −4e38): the evidence that there is no root is in the equations together, and
-  each is read alone. Two stated values that differ by more than 1e-8 of their size but by less than the gate
+  stands alone, beside an inequality, beside a pin, or beside an equation that fixes the other side. **An equation with no root
+  reached through a further equation is told by the whole.** `y == 1.0 / x`, `z == y * 2.0`, `z == 0.0` (no `x` or `y` meets
+  all three; each equation alone is within 1e-8 of a root) read *unknown*, in every order, and so do `y == 2.0 ^ x` beside
+  `y == 0.0000000001` and `x <= -34.0`, and `z == x / y`, `z == 0.0`, `x == 1.0`; `solveFeasible` has no witness for them.
+  The point is judged by the smallest correction of all the equations that read its features together (to first order, as
+  one equation's is), and a point that no correction within 1e-8 of the size of the values brings onto them is no root.
+  An equation over a feature with no value (`w * v == y`) is left out of that judgement and does not switch it off for the chain
+  beside it, and a power that rounds to 0 (`y == 2.0 ^ x` at `x` of -1e19) is a plateau, never a root.
+  **The limit of that: a point the correction cannot be read at (a slope that cannot be read) is judged by each equation alone, and a
+  group of more than 120 equations linked through their features that holds a quotient or a power is not judged together: the solve
+  reports that it did not converge (though a chain of that size that has a root still reads imposed), and a point that misses one of
+  its equations still reads *unknown*.** Two stated values that differ by more than 1e-8 of their size but by less than the gate
   (`x == 1.0000001` beside `x == 1.0`) are read as disagreeing, not as equal. A
   pin within the gate of a flat equation but off its root (`x == 999773.0` beside `1.0 / x == 0.000001`) is
   not read as agreeing with it. `solveFeasible` gives no witness at which a divisor the search moved is within
