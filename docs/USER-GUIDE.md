@@ -617,7 +617,7 @@ the model lists them in; the impact closure, which walks it, follows. So do the 
 graph's neighbours and the specialisers a finding names (`what specialises it (LA::areaFraction,
 PA::areaFraction)`). What stays: a typing beside a subsetting or redefinition of one
 element, made in the app, is listed in the order they were made in the Properties panel's
-Types and Specializations lists, where a terminal lists the typing last.
+Types and Specializations lists; a terminal lists the subsetting before the typing and the typing before the redefinition.
 
 ### The Text tab, in both directions
 
@@ -1286,8 +1286,8 @@ the name would reopen on the earlier one (the first end of a statement too: `all
 first). A rename onto a taken name raises `validation/duplicate-name`; a named member added after an unnamed redefinition
 of its name gets only this note. An implicit copy a chain made is not an earlier member. The same holds for the ends of
 `satisfy`, `verify`, `refine`, `trace` and `derive` (`// Not saved: a satisfy whose end no name reaches (T::d1) …`), and for a
-specialization written on a declaration's own line (`part x : D`, `attribute w :> q.v`, `:>> v`, `::> q.v`): there the note
-stands on the line above the declaration, which keeps its body, and the file reopens without that specialization.
+specialization written on a declaration's own line (`part x : D`, `attribute w :> q.v`, `:>> a.v` or `:>> P::v` (a redefinition spelled by a path), `::> q.v`): there the note
+stands on the line above the declaration, which keeps its body, and the file reopens without that specialization. A `:>> v` by a simple name that the load lands elsewhere is moved on the page as before.
 
 Four more cases are not followed, and in each the page can read what the saved file does not:
 

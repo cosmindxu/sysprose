@@ -236,6 +236,7 @@ export class ModelApi {
    *  - `both` — union of the two.
    * Uses endpoint-bearing elements (KerML relationships AND edge-like usages such
    * as ConnectionUsage/Flow/Succession/Transition), matching the core edge model.
+   * The far ends come in text order (Model.edgesInTextOrder), as a terminal lists them.
    */
   traverse(id: ElementId, relKind: string, dir: TraverseDir = 'out'): ElementRecord[] {
     const out = new Map<ElementId, ElementRecord>();
