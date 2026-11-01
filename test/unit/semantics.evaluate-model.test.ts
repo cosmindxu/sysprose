@@ -3286,6 +3286,35 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(checks.filter((c) => c.conflict === 'bind').map((c) => [m!.qualifiedName(c.ownerId!), c.result])).toEqual([['FanS::Q2', 'violated']]);
   });
 
+  it('reads no value of a feature a binding joins to a scope the page leaves unread, `=` or `default`, and keeps the simple pairs', async () => {
+    // `q :>> a = 16.0` beside the typing's `a default = 13.0` (bind.ts unreadScopes, `order`): `w.p.a` is read by no
+    // surface, and k's own 5.0 was read against an end that may hold 16.0 (a conflict) or only a default (k stands).
+    const head = `part def P { attribute a default = 11.0; } part def P2 :> P { attribute :>> a default = 13.0; }
+      part def H { part p : P; } part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }`;
+    for (const k of ['attribute k = 5.0;', 'attribute k default = 5.0;']) {
+      const { model: m } = await loadModelText(`package SU {
+        ${head}
+        part def U { part w : H1 { part :>> p : P2; } ${k} attribute z = 7.0; bind k = w.p.a; }
+        part u : U;
+        constraint c5 { u.k == 5.0 }
+        constraint cz { u.z == 7.0 }
+      }`);
+      const rows = checkConstraints(m!).map((c) => [m!.qualifiedName(c.id), c.result] as const);
+      expect(rows).toEqual([['SU::c5', 'unknown'], ['SU::cz', 'satisfied']]);
+      const c5 = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'SU::c5')!;
+      expect(c5.message).toContain('u.k is not read: it states a value, and a binding joins it to a feature of a scope the saved file may read otherwise');
+      expect(checkConstraintsNumeric(m!).find((r) => r.id === c5.id)!.result).toBe('unknown');
+    }
+    // No unread scope: a `=` against a `default` end keeps its value (decision 14), and a `default` stands against none.
+    const { model: ok } = await loadModelText(`package SC {
+      part def P { attribute a default = 11.0; } part def H { part p : P; }
+      part def U { part w : H; attribute k = 5.0; bind k = w.p.a; }
+      part u : U;
+      constraint c5 { u.k == 5.0 }
+    }`);
+    expect(checkConstraints(ok!).map((c) => c.result)).toEqual(['satisfied']);
+  });
+
   it('expands a shared usage into its generic row and one row per instance (M8, F7)', async () => {
     const { model: m } = await loadModelText(`package M8 {
       part def P { attribute load : ScalarValues::Real default = 3.0; constraint c { load <= 10.0 } }

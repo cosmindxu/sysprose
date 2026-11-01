@@ -1271,7 +1271,12 @@ scope (or through a scope of twins or of a redefinition the file does not keep) 
 feature bound to it that states no value of its own, every such feature joined to that one through other bindings, and
 what a value equation derives from any of them (`attribute m = k + 1.0;`) read no value on the check, the literal and the
 numeric rows alike (`u.k has no value`), whether the binding is written in the definition, in the usage or at package
-level, and a default of its other end stands for none of them. A feature that states a value with `=` keeps it.
+level, and a default of its other end stands for none of them. A feature that states a value (with `=` or as a `default`)
+and is joined so reads none either: the saved file may find the end in a value of its own (the two conflict, or the
+default gives way) or in none (this one stands), and the page cannot say which, so `u.k` with `attribute k = 5.0;
+bind k = w.p.a;` says `u.k is not read: it states a value, and a binding joins it to a feature of …` and the rows that
+name it are inconclusive, on every surface and in either order of the text; the features that do not meet that end
+(`u.z`) keep reading.
 
 A statement whose end no name reaches is not saved. A binding, connection, flow, allocation,
 succession, transition, dependency or alias ends in a feature the saved text has to name: a

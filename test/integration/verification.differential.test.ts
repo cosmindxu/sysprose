@@ -13686,6 +13686,97 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       };
       return Object.entries(reversed(`rename-onto-alias-bind-${form}`, text, reversedMembers(text), rows));
     })),
+    // A feature that WRITES a value (`= 5.0`, or `default = 5.0`) beside such a binding. The end is unread, and the bound
+    // value was read all the same: `u.k == 5.0` T and `== 13.0`, `== 16.0` F on the check, the literal and the numeric
+    // lanes, where the file reads the end in the redefiner's 16.0 (a conflict with k's own value, or k gives way to it)
+    // or in the typing's default (k stands), and the page cannot say which. The feature reads no value, in the usage's
+    // body, at package level, through a binding of a valueless feature, one the other way round, in an instance of an
+    // instance, in a specialisation of the owner, and in a package's feature joined to it. The unrelated `z` keeps reading
+    // (`DefiningEquations.seedJoinedToUnread`).
+    ...Object.fromEntries([
+      ['seed', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind k = w.p.a; }', 'part u : U;', 'u.k'],
+      ['seed-default', 'part def U { part w : H1 { part :>> p : P2; } attribute k default = 5.0; bind k = w.p.a; }', 'part u : U;', 'u.k'],
+      ['seed-xk', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind w.p.a = k; }', 'part u : U;', 'u.k'],
+      ['seed-pkg', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; }', 'part u : U; bind u.k = u.w.p.a;', 'u.k'],
+      ['seed-usage', 'part def U { part w : H1 { part :>> p : P2; } }', 'part u : U { attribute k = 5.0; bind k = w.p.a; }', 'u.k'],
+      ['seed-chain', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; attribute j; bind k = j; bind j = w.p.a; }', 'part u : U;', 'u.k'],
+      ['seed-inst', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind k = w.p.a; } part def V { part u : U; }', 'part v : V;', 'v.u.k'],
+      ['seed-spec', 'part def U0 { part w : H1 { part :>> p : P2; } attribute k default = 5.0; bind w.p.a = k; } part def U :> U0;', 'part u : U;', 'u.k'],
+      ['seed-redef', 'part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind k = w.p.a; }', 'part u : U { attribute :>> k = 7.0; }', 'u.k'],
+    ].map(([form, u, tail, path]) => {
+      const text = `package RS {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        ${u}
+        ${tail}
+        constraint c5 { ${path} == 5.0 }
+        constraint c13 { ${path} == 13.0 }
+        constraint c16 { ${path} == 16.0 }
+      }`;
+      const rows: Record<string, [string, Ref]> = { 'RS::c5': ['?/?/?/?', null], 'RS::c13': ['?/?/?/?', null], 'RS::c16': ['?/?/?/?', null] };
+      // The usage's own `7.0` over the `5.0` a binding holds is that pair's conflict, whatever the end reads.
+      if (form === 'seed-redef') rows['RS::u::«AttributeUsage»#binding'] = ['F/-/F/-', 'F'];
+      return Object.entries(reversed(`rename-onto-alias-${form}`, text, reversedMembers(text), rows));
+    }).flat()),
+    // A package's feature `L` joined through the package's own binding to the valueless end of such a binding: neither
+    // `q.load` nor `L` (which states 50.0) reads a value (the numeric lane carried the 50.0 over the binding).
+    ...reversed('rename-onto-alias-seed-L', `package RS {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def Q { attribute load; part w : H1 { part :>> p : P2; } bind load = w.p.a; }
+        part q : Q;
+        attribute L = 50.0;
+        bind q.load = L;
+        constraint c0 { q.load == 50.0 }
+        constraint c1 { q.load == 13.0 }
+        constraint c2 { L == 50.0 }
+      }`, `package RS {
+        constraint c2 { L == 50.0 }
+        constraint c1 { q.load == 13.0 }
+        constraint c0 { q.load == 50.0 }
+        bind q.load = L;
+        attribute L = 50.0;
+        part q : Q;
+        part def Q { attribute load; part w : H1 { part :>> p : P2; } bind load = w.p.a; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def H { part p : P; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'RS::c0': ['?/?/?/?', null],
+      'RS::c1': ['?/?/?/?', null],
+      'RS::c2': ['?/?/?/?', null],
+    }),
+    // The controls: with no unread scope the same binding is read as before. A `= 5.0` against a `default` end keeps its
+    // own value (decision 14), a `default` k stands against a valueless end, and the unrelated feature keeps reading.
+    ...reversed('rename-onto-alias-seed-control', `package RS {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def H { part p : P; }
+        part def U { part w : H; attribute k = 5.0; attribute kd default = 5.0; bind k = w.p.b; bind kd = w.p.b; }
+        part u : U;
+        constraint c5 { u.k == 5.0 }
+        constraint c12 { u.k == 12.0 }
+        constraint d5 { u.kd == 5.0 }
+        constraint d12 { u.kd == 12.0 }
+      }`, `package RS {
+        constraint d12 { u.kd == 12.0 }
+        constraint d5 { u.kd == 5.0 }
+        constraint c12 { u.k == 12.0 }
+        constraint c5 { u.k == 5.0 }
+        part u : U;
+        part def U { part w : H; attribute k = 5.0; attribute kd default = 5.0; bind k = w.p.b; bind kd = w.p.b; }
+        part def H { part p : P; }
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'RS::c5': ['T/T/T/T', 'T'],
+      'RS::c12': ['F/F/F/F', 'F'],
+      'RS::d5': ['T/T/T/T', 'T'],
+      'RS::d12': ['F/F/F/F', 'F'],
+    }),
     // The other kinds of an unread scope (`redefinition`: `attribute :>> x = 3.0` over a part): a binding into it joins
     // nothing the check follows; the numeric surface read both ends as imposed.
     ...reversed('redefinition-bind', `package RD {

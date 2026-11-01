@@ -4208,6 +4208,21 @@ function clashOf(
  * from independent general types (bind.ts unreadScopes).
  */
 function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
+  const said = partedSentence(el, name, pass);
+  if (said === undefined) return undefined;
+  // A feature's own value that a binding joins to such a scope: the end it meets is not read, so neither is it.
+  const prefix = `${name} is not read: `;
+  for (const c of [el.ownerId, el.id]) {
+    if (c == null || pass.definitions.withheldOwner(c, name) === undefined) continue;
+    if (pass.definitions.withheldJoined(c, name)) {
+      return `${prefix}it states a value, and a binding joins it to a feature of a scope the saved file may read otherwise, whose end this tool cannot follow; ${said.slice(prefix.length)}`;
+    }
+    break;
+  }
+  return said;
+}
+
+function partedSentence(el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
   for (const c of [el.ownerId, el.id]) {
     const owner = c == null ? undefined : pass.definitions.withheldOwner(c, name);
     if (owner) {

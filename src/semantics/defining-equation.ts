@@ -384,6 +384,9 @@ export class DefiningEquations {
   private parted?: ReadonlyMap<ElementId, WithheldCause>;
   /** Per context, the scopes {@link partedHolder} left unread: the path they are reached by, and their owner. */
   private readonly withheldIn = new Map<ElementId, Map<string, ElementId>>();
+  /** Per context, the paths of {@link withheldIn} that are a feature's own, left unread because a binding joins its value to a scope the page leaves unread ({@link seedJoinedToUnread}). */
+  private readonly joinedIn = new Map<ElementId, Set<string>>();
+  private joins?: { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId> };
   /** The types an owner of a binding specialises, for {@link endsInGeneral}. */
   private readonly generalIds = new Map<ElementId, ReadonlySet<ElementId>>();
   private specialised?: Map<ElementId, ElementRecord[]>;
@@ -912,6 +915,8 @@ export class DefiningEquations {
     let cut = false;
     const held = new Map<string, ElementId>();
     this.withheldIn.set(contextId, held);
+    const joinedPaths = new Set<string>();
+    this.joinedIn.set(contextId, joinedPaths);
     // `inCall`: below a calculation with a parameter, whose features are the
     // values of a CALL — its `in y = 100.0` a default nothing invokes, its
     // `return r = y` the result of one — so a value scope reads none of them.
@@ -947,6 +952,17 @@ export class DefiningEquations {
       for (const feat of this.features(ownerId)) {
         const name = this.nameOf(feat);
         if (!name) continue;
+        // A value that a binding joins to a scope the page leaves unread is not offered: the saved file may find the other end
+        // in a value of its own (a conflict, or this one gives way) or in none (this one stands), and the page cannot say.
+        const joined = this.seedJoinedToUnread(feat);
+        if (joined !== undefined) {
+          for (const n of [name, ...this.aliasesOf(feat)]) {
+            const full = prefix ? `${prefix}.${n}` : n;
+            if (!held.has(full)) held.set(full, joined);
+            joinedPaths.add(full);
+          }
+          continue;
+        }
         const denoted: Denotation = { feature: feat, reader: ownerId, inCall, instance, enclosing };
         // A directed feature is its owner's parameter: never a nested bare name.
         const own = inBody || isDirected(feat);
@@ -4151,8 +4167,13 @@ export class DefiningEquations {
    * that ends in `id` joins nothing the page can follow: the solver reads no equation from it ({@link withheldOwner}).
    */
   withheldBelow(id: ElementId): boolean {
+    return this.unreadOwnerOf(id) !== undefined;
+  }
+
+  /** The owner, from `id` outward, of the scope {@link withheldBelow} names, or `undefined`. */
+  private unreadOwnerOf(id: ElementId): ElementId | undefined {
     const parted = this.partedOwners();
-    if (parted.size === 0) return false;
+    if (parted.size === 0) return undefined;
     const unread = (o: ElementId): boolean => {
       const own = parted.get(o);
       if (own !== undefined && own !== 'binding' && own !== 'copy') return true;
@@ -4164,9 +4185,73 @@ export class DefiningEquations {
     const seen = new Set<ElementId>();
     for (let o: ElementId | null | undefined = id; o != null && !seen.has(o); o = this.model.get(o)?.ownerId) {
       seen.add(o);
-      if (unread(o)) return true;
+      if (unread(o)) return o;
     }
-    return false;
+    return undefined;
+  }
+
+  /**
+   * The bindings with an end below a scope the page leaves unread ({@link withheldBelow}), and the ends they are written
+   * with, each with the owner of the scope it is joined to. No surface follows such a binding (no name of the scope is
+   * read), so none reads a value through it. Then to a fixpoint the bindings that join one of their ends: a feature
+   * joined to a value nothing follows has none either, through however many bindings.
+   */
+  withheldJoins(): { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId> } {
+    if (this.joins !== undefined) return this.joins;
+    const edges = new Set<ElementId>();
+    const ends = new Map<ElementId, ElementId>();
+    const all: Array<{ id: ElementId; raw: ElementId[] }> = [];
+    if (this.partedOwners().size > 0) {
+      for (const el of this.model.all()) {
+        if (el.attrs.isLibrary === true || !isBindingConnector(el)) continue;
+        all.push({ id: el.id, raw: [el.source?.[0], el.target?.[0]].filter((e): e is ElementId => e !== undefined) });
+      }
+    }
+    for (const b of all) {
+      const owner = b.raw.map((e) => this.unreadOwnerOf(e)).find((o) => o !== undefined);
+      if (owner === undefined) continue;
+      edges.add(b.id);
+      for (const e of b.raw) if (!ends.has(e)) ends.set(e, owner);
+    }
+    // An end joined through a feature that redefines one of the ends (the copy a usage makes of it) is joined too.
+    const joinedTo = (e: ElementId): ElementId | undefined => {
+      const f = this.model.get(e);
+      return ends.get(e) ?? (f ? redefinedClosure(this.model, f).map((g) => ends.get(g.id)).find((o) => o !== undefined) : undefined);
+    };
+    for (let grew = edges.size > 0; grew; ) {
+      grew = false;
+      for (const b of all) {
+        const owner = edges.has(b.id) ? undefined : b.raw.map(joinedTo).find((o) => o !== undefined);
+        if (owner === undefined) continue;
+        edges.add(b.id);
+        for (const e of b.raw) if (!ends.has(e)) ends.set(e, owner);
+        grew = true;
+      }
+    }
+    this.joins = { edges, ends };
+    return this.joins;
+  }
+
+  /**
+   * The owner of the scope the page leaves unread that a binding joins a value `f` writes (with `=` or as a `default`) to,
+   * or `undefined`: `f`, or a feature it redefines, is an end of a binding {@link withheldJoins} lists, and one of them
+   * writes a value. The file reads the other end in a value of its own (the two conflict, or `f` gives way) or in none
+   * (`f` stands), and the page cannot say which, so it reads no value of `f` (a valueless end is read as none already).
+   * A bound end it could not follow stood for nothing, and `k = 5.0` read 5 against a `= 16.0` it never met.
+   */
+  seedJoinedToUnread(f: ElementRecord): ElementId | undefined {
+    const { ends } = this.withheldJoins();
+    if (ends.size === 0) return undefined;
+    const line = [f, ...redefinedClosure(this.model, f)];
+    const owner = line.map((g) => ends.get(g.id)).find((o) => o !== undefined);
+    if (owner === undefined) return undefined;
+    return line.some((g) => g.attrs.value !== undefined && g.attrs.value !== null) ? owner : undefined;
+  }
+
+  /** Is `name`, read in `contextId`, a feature's own value left unread by {@link seedJoinedToUnread} (and not a name below the scope)? */
+  withheldJoined(contextId: ElementId, name: string): boolean {
+    this.denote(contextId);
+    return this.joinedIn.get(contextId)?.has(name) === true;
   }
 
   /** Does an end of the binding `b` belong to a type its owner specialises ({@link partedHolder})? */
@@ -11352,7 +11437,8 @@ function denotingElementOf(definitions: DefiningEquations, instance: string): El
 /**
  * Is `f` a value written with `=` that a binding joins, in SOME context it is
  * read in, to another value written with `=` that differs from it, or that
- * only an evaluation could compare with it ({@link statedAgainstBoundIn})?
+ * only an evaluation could compare with it ({@link statedAgainstBoundIn}), or
+ * to a scope the page leaves unread ({@link DefiningEquations.seedJoinedToUnread})?
  * Both are, and a redefinition with a value of
  * its own of the slot a package's binding joins (`fixed`,
  * {@link DefinitionHead}) is joined so to every value written in that
@@ -11362,6 +11448,8 @@ function denotingElementOf(definitions: DefiningEquations, instance: string): El
  * Once per revision.
  */
 export function statedAgainstBoundSomewhere(model: Model, f: ElementRecord): boolean {
+  // A value (a `default` too) a binding joins to a scope the page leaves unread: the end it meets there is not read.
+  if (sharedDefinitions(model).seedJoinedToUnread(f) !== undefined) return true;
   if (f.attrs.value === undefined || f.attrs.value === null || f.attrs.defaultValue === true) return false;
   if (!hasUserBindings(model)) return false;
   const ends = bindingEnds(model);
