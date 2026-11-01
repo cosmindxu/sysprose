@@ -51,7 +51,7 @@ import {
   type Model,
 } from '@core/index';
 import { isBindingEdge } from './connectors';
-import { readRefusalOf, unreadDependenciesOf, unreadValuesOf, type ReadRefusal } from './evaluate-model';
+import { readRefusalOf, unreadDependenciesOf, unreadValuesOf, withheldNamesCause, type ReadRefusal } from './evaluate-model';
 import {
   defaultGivesWay,
   givenWayThroughHead,
@@ -954,6 +954,10 @@ export function gateRelation(
   // failure direction this lane exists to avoid.
   const unresolved = unresolvedNames(node, nameToId, markers);
   if (unresolved.length > 0) {
+    // A name a scope the page withholds leaves unread (a binding whose end is a copy standing on one of several features)
+    // is a limit of this tool with the sentence of its cause: the model may decide it, the encoder has no symbol for it.
+    const withheld = readBy ? withheldNamesCause(model, readBy.el, unresolved) : undefined;
+    if (withheld !== undefined) return refused(expression, { reason: 'unread-binding', detail: withheld }, null, variables, sortPerVar);
     return refused(
       expression,
       {

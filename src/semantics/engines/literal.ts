@@ -217,6 +217,11 @@ export function refusalTail(reason: RefusalReason, detail = ''): string {
         : 'This is a limit of this tool, not a defect in the relation: the model decides it, so ' +
           '`--allow-inconclusive` does not forgive it';
   }
+  // A name a withheld scope leaves unread ({@link withheldNamesCause}) says why in its detail: the page cannot say what the saved
+  // file reads there, so it is not claimed that the model gives it a value.
+  if (reason === 'unread-binding' && /, so no name of \S+ is read/.test(detail)) {
+    return 'This is a limit of this tool, not a defect in the relation: the scope is withheld, so `--allow-inconclusive` does not forgive it';
+  }
   return reason === 'unread-binding'
     ? 'This is a limit of this tool, not a defect in the relation: the model gives it a value, so ' +
         '`--allow-inconclusive` does not forgive it'

@@ -30,6 +30,7 @@ import {
 } from '@core/index';
 import { childNamed, endCopyProto, findTypeFeature, leavesOutOverride, redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
 import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
+import { generalizationsWithImplicit } from '@semantics/featuring';
 import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
 
@@ -1696,6 +1697,28 @@ export function redefinitionsDirtiedBy(model: Model, events: readonly ChangeEven
     }
     // An element added, removed, renamed: what its owner's types hold under its names changed.
     mark(named, el.ownerId);
+    // And the owners of the features that redefine it, through any number of redefinitions, where such an owner is no
+    // specialiser of this one (a `:>>` its retargeted `:>` left on the renamed feature): the settle reaches the
+    // specialisers of what it is asked, not these, so the copies below them would keep a name the file no longer finds.
+    if (ev.type === 'update' && el.ownerId !== null && model.has(el.id)) {
+      const seen = new Set<ElementId>([el.id]);
+      const queue: ElementId[] = [el.id];
+      let below: Set<ElementId> | undefined;
+      for (let i = 0; i < queue.length; i++) {
+        for (const r of model.relationshipsTo(queue[i]!)) {
+          if (r.eClass !== 'Redefinition') continue;
+          for (const x of r.source ?? []) {
+            if (seen.has(x)) continue;
+            seen.add(x);
+            queue.push(x);
+            const home = model.get(x)?.ownerId;
+            if (home === null || home === undefined) continue;
+            below ??= new Set(withSpecialisers(model, [el.ownerId]));
+            if (!below.has(home)) mark(named, home);
+          }
+        }
+      }
+    }
     nameOfRecord(el);
     for (const n of ev.previousNames ?? []) names.add(n);
     if (ev.type !== 'remove') touched.add(el.id);
@@ -1749,6 +1772,29 @@ function endCopyLanding(model: Model, copy: ElementRecord, from: ElementId): Ele
  */
 export function isStaleCopy(model: Model, el: ElementRecord): boolean {
   return el.attrs.implicit === true && !model.children(el.id).some((r) => r.eClass === 'Redefinition' && (r.source ?? [])[0] === el.id);
+}
+
+/**
+ * Does a type `owner` inherits from hold a stale copy ({@link isStaleCopy}) known by `name`? The saved file has no such
+ * copy, so what the name finds there, and the one feature the types have for it, is another feature (a type below, an
+ * unnamed `:>> N`) that the page's lookups ({@link endCopyFeature}) cannot see past the stale copy they meet first: the
+ * page would part the copy of a binding the file makes on that feature (soak seed 91332, the page T where the file read F).
+ * Only where a feature of those types answers to the name besides, so the file finds that one: the copy is then parted and
+ * its binding withheld, as one the page cannot follow.
+ */
+function shadowedByStale(model: Model, owner: ElementRecord, name: string): boolean {
+  const types = generalizationsWithImplicit(model, owner.id);
+  const bears = (c: ElementRecord): boolean => c.declaredName === name || c.declaredShortName === name;
+  if (!types.some((t) => model.children(t.id).some((c) => bears(c) && isStaleCopy(model, c)))) return false;
+  // Only where a feature of those types answers to the name besides: nothing else there, and the file finds nothing either.
+  return types.some((t) =>
+    model.children(t.id).some(
+      (c) =>
+        !isRelationship(c.eClass) &&
+        !isStaleCopy(model, c) &&
+        (bears(c) || [c, ...redefinedClosure(model, c)].some((g) => g.declaredName === name || g.declaredShortName === name) || effectiveNameOf(model, c) === name),
+    ),
+  );
 }
 
 /** A feature of `ownerId` other than `exceptId` that bears `name` (its own, or by a feature it redefines). */
@@ -1846,6 +1892,12 @@ export function settleRedefinitions(
             // the name again puts it back. It is known by its own name, which the line of the feature it redefines may
             // not bear (`M2` for `X :>> M`).
             if (only !== undefined && !(f.declaredName !== undefined && only.has(f.declaredName)) && ![...line].some((n) => only.has(n))) continue;
+            // A stale copy in a type below hides what the name finds there: the copy is parted and its binding withheld.
+            const written = endHeadOf(model, f) ?? f.declaredName;
+            if (written !== undefined && written !== '' && shadowedByStale(model, model.get(typeId)!, written)) {
+              moves.push({ rel: rel.id, to: null, from, feature: f.id, owner: typeId, copy: true, parted: true });
+              continue;
+            }
             const to = endCopyLanding(model, f, from);
             if (to !== undefined) moves.push({ rel: rel.id, to, from, feature: f.id, owner: typeId, ...(to === null ? { copy: true as const } : {}) });
             else {
@@ -1891,6 +1943,11 @@ export function settleRedefinitions(
           const name = f.declaredName;
           if (only !== undefined && !(name !== undefined && only.has(name))) continue;
           const owner = model.get(typeId);
+          if (owner && name !== undefined && name !== '' && shadowedByStale(model, owner, name)) {
+            staled.add(f.id);
+            parted.add(f.id);
+            continue;
+          }
           const proto = owner && name !== undefined && name !== '' ? endCopyFeature(model, owner, name) : undefined;
           // A feature of the owner already bears the name the copy would take: it merges into that one, so none is made.
           const protoName = proto && (proto.declaredName ?? proto.declaredShortName ?? effectiveNameOf(model, proto));
@@ -2048,11 +2105,47 @@ export function settleRedefinitionsAfter(model: Model, events: readonly ChangeEv
     let moved = 0;
     if (dirtied.types.size > 0) moved += settleRedefinitions(model, dirtied.types, dirtied.touched);
     if (dirtied.named.size > 0) moved += settleRedefinitions(model, dirtied.named, dirtied.touched, dirtied.names);
+    moved += dropOrphanCopies(model, events);
     return moved;
   } catch (err) {
     console.error('settleRedefinitions failed', err);
     return 0;
   }
+}
+
+/**
+ * An implicit end copy that nothing outside its own subtree refers to any more (the binding that made it went) is not in the
+ * saved file: it goes too, or it would keep resolving, and hiding an override, on a page whose file has no such member.
+ * Only the owners of what `events` removed are asked, then the owners of the copies that redefined a copy dropped.
+ *
+ * @returns how many copies were dropped.
+ */
+function dropOrphanCopies(model: Model, events: readonly ChangeEvent[]): number {
+  const queue: ElementId[] = [];
+  for (const ev of events) if (ev.type === 'remove' && ev.element && ev.element.ownerId !== null) queue.push(ev.element.ownerId);
+  let dropped = 0;
+  for (let i = 0; i < queue.length; i++) {
+    const owner = queue[i]!;
+    if (!model.has(owner)) continue;
+    for (const c of [...model.children(owner)]) {
+      if (c.attrs.implicit !== true || isRelationship(c.eClass) || c.attrs.isLibrary === true) continue;
+      const own = new Set<ElementId>([c.id, ...model.descendants(c.id).map((d) => d.id)]);
+      if ([...own].some((id) => model.edgesOf(id).some((e) => !own.has(e.id)))) continue;
+      // What the dropped copy redefined may have been held by it alone.
+      for (const id of own) {
+        for (const e of model.edgesFrom(id)) {
+          if (e.eClass !== 'Redefinition') continue;
+          for (const t of e.target ?? []) {
+            const home = model.get(t)?.ownerId;
+            if (home !== null && home !== undefined) queue.push(home);
+          }
+        }
+      }
+      model.remove(c.id);
+      dropped++;
+    }
+  }
+  return dropped;
 }
 
 /** A redefinition whose target is about to go, with the reference the saved text writes it by now. */

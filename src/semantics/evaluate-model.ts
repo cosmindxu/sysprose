@@ -4246,6 +4246,18 @@ function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string 
   return undefined;
 }
 
+/**
+ * Why the names `names` a relation of `el` reads are left unread by a scope the page withholds ({@link partedCause}), when
+ * every one is: the sentence of the cause. The SMT encoder asks it of the names it finds no symbol for, so a withheld
+ * scope is a limit of this tool with its own sentence, not a name that resolves to nothing.
+ */
+export function withheldNamesCause(model: Model, el: ElementRecord, names: readonly string[]): string | undefined {
+  if (names.length === 0) return undefined;
+  const pass = newPass(model);
+  const causes = [...new Set(names)].map((n) => partedCause(el, n, pass));
+  return causes.every((c) => c !== undefined) ? causes.join('; ') : undefined;
+}
+
 /** Why a name a body reads has no value because two inherited values collide under it ({@link clashOf}). */
 function clashCause(model: Model, el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
   const hit = clashOf(el, name, pass);
