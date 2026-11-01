@@ -67,6 +67,7 @@ import {
   type RefusedClause,
   type UnencodedConnection,
 } from './refinement';
+import { attachClasses, ClassRollup } from './smt/classes';
 import { sortedCore, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
 import {
   EXCEPTIONAL_QUALIFIED_NAME,
@@ -683,22 +684,27 @@ export async function computeFaultTree(
   });
   const groups: FaultTreeGroup[] = [];
   let checks = 0;
+  // WHAT WAS SENT, over the whole run, beside each group's own (a label: nothing below branches on it).
+  const run = new ClassRollup('fault-tree');
   for (const target of census.targets) {
-    const group = await judgeTarget(model, target, census.targets, opts);
+    const group = await judgeTarget(model, target, census.targets, opts, run);
     checks += group.checks;
     groups.push(group);
   }
-  return {
-    groups,
-    contracts: census.contracts,
-    bindEqualities: census.bindEqualities,
-    itemFlows: census.itemFlows,
-    connectionEqualities: census.connectionEqualities,
-    notEncoded: census.notEncoded,
-    refused: census.refused,
-    checks,
-    timeoutMs: opts.timeoutMs,
-  };
+  return attachClasses(
+    {
+      groups,
+      contracts: census.contracts,
+      bindEqualities: census.bindEqualities,
+      itemFlows: census.itemFlows,
+      connectionEqualities: census.connectionEqualities,
+      notEncoded: census.notEncoded,
+      refused: census.refused,
+      checks,
+      timeoutMs: opts.timeoutMs,
+    },
+    run.statement({ scope: 'run', basis: groups.some((g) => g.outcome !== 'inconclusive') ? 'solver' : 'none', z3: opts.backend.version }),
+  );
 }
 
 /**
@@ -816,6 +822,23 @@ async function judgeTarget(
   target: InjectionTarget,
   all: readonly InjectionTarget[],
   opts: FaultTreeOptions,
+  run: ClassRollup,
+): Promise<FaultTreeGroup> {
+  const rollup = new ClassRollup('fault-tree', run);
+  // What the decomposition left out is context refused, whether or not a script gets as far as being sent.
+  rollup.guard((r) => r.refuse(target.refusedClasses?.() ?? []));
+  if (target.notEncoded.length > 0) rollup.markPartial();
+  const group = await judgeTargetInner(model, target, all, opts, rollup);
+  return attachClasses(group, rollup.statement({ scope: 'group', basis: group.outcome === 'inconclusive' ? 'none' : 'solver', z3: opts.backend.version }));
+}
+
+/** The enumeration of {@link judgeTarget}, byte for byte; its constraint class is read from `rollup` by the wrapper. */
+async function judgeTargetInner(
+  model: Model,
+  target: InjectionTarget,
+  all: readonly InjectionTarget[],
+  opts: FaultTreeOptions,
+  rollup: ClassRollup,
 ): Promise<FaultTreeGroup> {
   // A fault set larger than the whole decomposition is not a set of
   // sub-contracts, so the bound a reader asked for is reported back CLAMPED
@@ -827,6 +850,7 @@ async function judgeTarget(
   const solverOpts = {
     backend: opts.backend,
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    rollup,
   };
 
   if (target.standDown !== null) {

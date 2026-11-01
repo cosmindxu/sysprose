@@ -113,7 +113,16 @@ import {
   type RefusalReach,
 } from './obligations';
 import { NO_MARKERS } from './relations';
-import type { ClassifiableRow, RowKind } from './smt/classes';
+import {
+  attachClasses,
+  classifyRow,
+  ClassRollup,
+  scriptClassOf,
+  type ClassifiableRow,
+  type RowClass,
+  type RowKind,
+  type ScriptClass,
+} from './smt/classes';
 import { parseRelationBody } from './unit-literals';
 import {
   encodeRelation,
@@ -470,9 +479,12 @@ interface EncodedRow {
   refusal?: Refusal;
 }
 
+/** The worklist row a {@link RelationRow} was made from, for the one fact the class register reads off it: the instance. */
+const ORIGIN = new WeakMap<RelationRow, Obligation>();
+
 /** A worklist row as this module reads it. */
 function rowOf(o: Obligation): RelationRow {
-  return {
+  const row: RelationRow = {
     id: o.element.id,
     baseId: o.instance?.baseId ?? o.element.id,
     qualifiedName: o.element.qualifiedName,
@@ -483,6 +495,48 @@ function rowOf(o: Obligation): RelationRow {
     scaled: o.scaled,
     encodable: o.encodable,
   };
+  ORIGIN.set(row, o);
+  return row;
+}
+
+const CLASSIFIABLE = new WeakMap<RelationRow, ClassifiableRow>();
+
+/**
+ * One encoded row of this command, sorted into its constraint class (a label: nothing here branches on it).
+ * `kind` is `clause` for a contract's clause and `gamma` for an equality of γ. Memoised on the row.
+ */
+function classOfRow(model: Model, e: EncodedRow, kind: RowKind): RowClass {
+  let c = CLASSIFIABLE.get(e.row);
+  if (c === undefined) {
+    const instance = ORIGIN.get(e.row)?.instance;
+    c = { ...classifiableOf(e.row, kind).row, ...(instance !== undefined ? { instance } : {}) };
+    CLASSIFIABLE.set(e.row, c);
+  }
+  return classifyRow(c, { model, ...(e.encoded !== undefined ? { encoded: e.encoded } : {}), kind });
+}
+
+/** The rows an encoded contract asserts, in the order they are read. */
+const rowsOfContract = (c: EncodedContract): EncodedRow[] => [...c.assumptions, ...c.guarantees].filter((r) => r.encoded !== undefined);
+
+/**
+ * One script was sent. `rows` are the encoded clauses and γ equalities it asserts. Nothing in this command is
+ * pinned (it asserts no value and no definition), so every nonlinear site reads `free`.
+ */
+function sentOver(rollup: ClassRollup, model: Model, script: { scriptClass: () => ScriptClass }, clauses: readonly EncodedRow[], gamma: readonly EncodedRow[]): void {
+  rollup.guard((r) =>
+    r.add(script.scriptClass(), [
+      ...clauses.filter((e) => e.encoded !== undefined).map((e) => classOfRow(model, e, 'clause')),
+      ...gamma.filter((e) => e.encoded !== undefined).map((e) => classOfRow(model, e, 'gamma')),
+    ]),
+  );
+}
+
+/** What a group left out: its contracts' refused clauses and every γ edge a gate refused, as context refused. */
+function refusedClassesOf(model: Model, contracts: readonly EncodedContract[], gamma: Gamma): RowClass[] {
+  return [
+    ...contracts.flatMap((c) => c.refusedRows.map((e) => classOfRow(model, e, 'clause'))),
+    ...gamma.refusedReach.map((r) => classOfRow(model, r.row, 'gamma')),
+  ];
 }
 
 /**
@@ -577,6 +631,8 @@ interface EncodedContract {
   assumptions: EncodedRow[];
   guarantees: EncodedRow[];
   refused: RefusedClause[];
+  /** The rows behind {@link refused}. */
+  refusedRows: EncodedRow[];
   /** `nf(C) = ¬A ∨ G`, or `null` when it is ⊤. */
   nf: string | null;
   /** `A`, or `null` when the contract states no assumption at all. */
@@ -641,7 +697,12 @@ function encodeContract(
   const assumptions = clauses.filter((c) => assumptionIds.has(c.row.baseId));
   const guarantees = clauses.filter((c) => !assumptionIds.has(c.row.baseId));
   const refused: RefusedClause[] = [];
-  for (const c of clauses) if (!c.encoded) refused.push(refusalOf(c, contract.qualifiedName));
+  const refusedRows: EncodedRow[] = [];
+  for (const c of clauses) {
+    if (c.encoded) continue;
+    refused.push(refusalOf(c, contract.qualifiedName));
+    refusedRows.push(c);
+  }
 
   const antecedent = conjunction(assumptions.flatMap(termsOf));
   const consequent = conjunction(guarantees.flatMap(termsOf));
@@ -667,6 +728,7 @@ function encodeContract(
     assumptions,
     guarantees,
     refused,
+    refusedRows,
     nf,
     antecedent,
     hasRefusal: refused.length > 0,
@@ -799,7 +861,7 @@ interface Gamma {
   notEncoded: UnencodedConnection[];
   refused: RefusedClause[];
   /** Each refused edge beside what it would have read ({@link refusedGammaIn}). */
-  refusedReach: Array<{ clause: RefusedClause; reach: RefusalReach }>;
+  refusedReach: Array<{ clause: RefusedClause; reach: RefusalReach; row: EncodedRow }>;
   /** Every feature an ENCODED γ edge touches, by qualified name. */
   connected: Set<string>;
 }
@@ -840,7 +902,7 @@ function buildGamma(
     if (!row.encoded) {
       const clause = refusalOf(row, null);
       refused.push(clause);
-      refusedReach.push({ clause, reach: reachOf(row.row.vars, row.vars.map((v) => v.qualifiedName)) });
+      refusedReach.push({ clause, reach: reachOf(row.row.vars, row.vars.map((v) => v.qualifiedName)), row });
       return;
     }
     encoded.push({ edge, row });
@@ -1269,14 +1331,25 @@ function derivationsOf(
  * refines" over a contradiction is the same false verdict §3.6's step (0)
  * exists to prevent one level down.
  */
-async function judgeDerivation(input: {
+async function judgeDerivation(input: DerivationInput): Promise<RefinementGroup> {
+  const rollup = new ClassRollup('refine', input.rollup);
+  const group = await judgeDerivationInner({ ...input, rollup });
+  return attachClasses(group, rollup.statement({ scope: 'group', basis: solverBasisOf(group), z3: input.backend.version }));
+}
+
+interface DerivationInput {
   model: Model;
   derivation: Derivation;
   prepared: Prepared;
   connectionsAsEqualities: boolean;
   backend: Z3Backend;
   timeoutMs: number | undefined;
-}): Promise<RefinementGroup> {
+  /** The run's roll-up of what was sent: a group's own rolls into it ({@link judgeDerivation}). */
+  rollup: ClassRollup;
+}
+
+/** The judgement of {@link judgeDerivation}, byte for byte; its constraint class is read from `input.rollup` by the wrapper. */
+async function judgeDerivationInner(input: DerivationInput): Promise<RefinementGroup> {
   const { derivation, prepared, connectionsAsEqualities } = input;
   const parent = encodeContract(derivation.parent, null, prepared.rows);
   const children = derivation.children.map((c) => encodeContract(c, null, prepared.rows));
@@ -1293,6 +1366,10 @@ async function judgeDerivation(input: {
     ...children.flatMap((c) => c.refused),
     ...prepared.gamma.refused,
   ];
+  // What this group left out is context refused, whether or not a script gets as far as being sent.
+  input.rollup.guard((r) => r.refuse(refusedClassesOf(input.model, [parent, ...children], prepared.gamma)));
+  if (children.some((c) => c.hasRefusedAssumption)) input.rollup.markPartial();
+  const gammaRows = groupGamma.rows.map((g) => g.row);
 
   const base = {
     via: derivation.via,
@@ -1395,27 +1472,34 @@ async function judgeDerivation(input: {
   let checks = 0;
   let logic = '';
   let fragment: Fragment = 'qf-lra';
-  const run = async (assertions: ScriptAssertion[]): Promise<CheckOutcome> => {
+  // `clauses` are the rows the script asserts, for the constraint class of what was sent (a label).
+  const run = async (assertions: ScriptAssertion[], clauses: readonly EncodedRow[]): Promise<CheckOutcome> => {
     const script = scriptOf(assertions, variables, { nonlinear, syntacticNonlinear });
     logic = script.logic;
     fragment = script.fragment;
     checks += 1;
+    sentOver(input.rollup, input.model, script, clauses, gammaRows);
     return input.backend.check(script.text, {
       timeoutMs: input.timeoutMs,
       variables: script.symbols,
     });
   };
+  const parentAssumed = parent.antecedent !== null ? parent.assumptions : [];
+  const premiseRows = premises.flatMap((p) => rowsOfContract(p.contract));
 
   // ── step (0): can the parent assumption and the children hold together? ────
-  const zero = await run([
-    ...parentAssume,
-    ...premises.map((p) => ({
-      kind: 'premise' as const,
-      name: p.contract.contract.qualifiedName,
-      term: p.term,
-    })),
-    ...gammaAssertions,
-  ]);
+  const zero = await run(
+    [
+      ...parentAssume,
+      ...premises.map((p) => ({
+        kind: 'premise' as const,
+        name: p.contract.contract.qualifiedName,
+        term: p.term,
+      })),
+      ...gammaAssertions,
+    ],
+    [...parentAssumed, ...premiseRows],
+  );
   if (zero.status === 'unsat') {
     const core = sortedCore(zero.core);
     return {
@@ -1500,15 +1584,18 @@ async function judgeDerivation(input: {
       continue;
     }
     const before = checks;
-    const outcome = await run([
-      ...parentAssume,
-      ...gammaAssertions,
-      {
-        kind: 'goal',
-        name: `${child.contract.qualifiedName}::assume`,
-        term: notTerm(child.antecedent),
-      },
-    ]);
+    const outcome = await run(
+      [
+        ...parentAssume,
+        ...gammaAssertions,
+        {
+          kind: 'goal',
+          name: `${child.contract.qualifiedName}::assume`,
+          term: notTerm(child.antecedent),
+        },
+      ],
+      [...parentAssumed, ...child.assumptions],
+    );
     obligations.push(
       obligationRow({
         kind: 'assumption',
@@ -1557,20 +1644,23 @@ async function judgeDerivation(input: {
     });
   } else {
     const before = checks;
-    const outcome = await run([
-      ...parentAssume,
-      ...premises.map((p) => ({
-        kind: 'premise' as const,
-        name: p.contract.contract.qualifiedName,
-        term: p.term,
-      })),
-      ...gammaAssertions,
-      {
-        kind: 'goal',
-        name: `${derivation.parent.qualifiedName}::require`,
-        term: notTerm(conjunction(parent.guarantees.flatMap(termsOf)) ?? 'true'),
-      },
-    ]);
+    const outcome = await run(
+      [
+        ...parentAssume,
+        ...premises.map((p) => ({
+          kind: 'premise' as const,
+          name: p.contract.contract.qualifiedName,
+          term: p.term,
+        })),
+        ...gammaAssertions,
+        {
+          kind: 'goal',
+          name: `${derivation.parent.qualifiedName}::require`,
+          term: notTerm(conjunction(parent.guarantees.flatMap(termsOf)) ?? 'true'),
+        },
+      ],
+      [...parentAssumed, ...premiseRows, ...parent.guarantees],
+    );
     obligations.push(
       obligationRow({
         kind: 'composition',
@@ -1977,6 +2067,8 @@ export async function checkRefinement(
   const groups: RefinementGroup[] = [];
   let checks = 0;
   let unreadEdges = 0;
+  // WHAT WAS SENT, over the whole run, beside each group's own (a label: nothing below branches on it).
+  const run = new ClassRollup('refine');
   for (const family of familiesOf(via)) {
     if (family === 'composition') {
       for (const d of decompositionsOf(model, prepared.contracts, opts.elementId)) {
@@ -1987,6 +2079,7 @@ export async function checkRefinement(
           connectionsAsEqualities,
           backend: opts.backend,
           timeoutMs: opts.timeoutMs,
+          rollup: run,
         });
         checks += group.checks;
         groups.push(group);
@@ -2003,20 +2096,24 @@ export async function checkRefinement(
         connectionsAsEqualities,
         backend: opts.backend,
         timeoutMs: opts.timeoutMs,
+        rollup: run,
       });
       checks += group.checks;
       groups.push(group);
     }
   }
-  return runResult(groups, {
-    via,
-    connectionsAsEqualities,
-    gamma: prepared.gamma,
-    contracts: prepared.contracts.length,
-    unreadEdges,
-    checks,
-    timeoutMs: opts.timeoutMs,
-  });
+  return attachClasses(
+    runResult(groups, {
+      via,
+      connectionsAsEqualities,
+      gamma: prepared.gamma,
+      contracts: prepared.contracts.length,
+      unreadEdges,
+      checks,
+      timeoutMs: opts.timeoutMs,
+    }),
+    run.statement({ scope: 'run', basis: groups.some((g) => g.outcome !== 'inconclusive') ? 'solver' : 'none', z3: opts.backend.version }),
+  );
 }
 
 interface JudgeInput {
@@ -2026,6 +2123,8 @@ interface JudgeInput {
   connectionsAsEqualities: boolean;
   backend: Z3Backend;
   timeoutMs: number | undefined;
+  /** The run's roll-up of what was sent: a group's own rolls into it ({@link judgeGroup}). */
+  rollup: ClassRollup;
 }
 
 /** One script, and the labels it gave each assertion. */
@@ -2033,7 +2132,7 @@ function scriptOf(
   assertions: readonly ScriptAssertion[],
   variables: readonly EncodeVariable[],
   flags: { nonlinear: boolean; syntacticNonlinear: boolean },
-): { text: string; logic: string; fragment: Fragment; symbols: string[]; labels: string[] } {
+): { text: string; logic: string; fragment: Fragment; symbols: string[]; labels: string[]; scriptClass: () => ScriptClass } {
   const seen = new Set<string>();
   const declared: EncodeVariable[] = [];
   for (const v of variables) {
@@ -2053,6 +2152,7 @@ function scriptOf(
     fragment: script.fragment,
     symbols: script.symbols,
     labels: script.labels,
+    scriptClass: () => scriptClassOf(script.shape, script.logic, new Map(declared.map((v) => [v.qualifiedName, v.sort] as const))),
   };
 }
 
@@ -2070,6 +2170,19 @@ function scriptOf(
  * it is enforced by {@link outcomeOf} rather than by whoever reads the rows.
  */
 async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
+  const rollup = new ClassRollup('refine', input.rollup);
+  const group = await judgeGroupInner({ ...input, rollup });
+  return attachClasses(group, rollup.statement({ scope: 'group', basis: solverBasisOf(group), z3: input.backend.version }));
+}
+
+/** z3 decided a group where any of its obligations (or its vacuity check) came from an answer. */
+const solverBasisOf = (g: RefinementGroup): 'solver' | 'none' => (g.outcome === 'inconclusive' && g.obligations.every((o) => o.outcome === 'undecided' || o.outcome === 'no-assumption') ? 'none' : 'solver');
+
+/**
+ * The judgement of {@link judgeGroup}, byte for byte. The group's constraint class is read from `input.rollup`
+ * by its wrapper: a label, which nothing here branches on.
+ */
+async function judgeGroupInner(input: JudgeInput): Promise<RefinementGroup> {
   const { model, decomposition, prepared, connectionsAsEqualities } = input;
   const systemPartRef = refOf(model, decomposition.systemPart);
   const system = encodeContract(decomposition.system, systemPartRef, prepared.rows);
@@ -2090,6 +2203,10 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
     ...components.flatMap((c) => c.refused),
     ...prepared.gamma.refused,
   ];
+  // What this group left out is context refused, whether or not a script gets as far as being sent.
+  input.rollup.guard((r) => r.refuse(refusedClassesOf(model, [system, ...components], prepared.gamma)));
+  if (notEncoded.length > 0 || components.some((c) => c.hasRefusedAssumption)) input.rollup.markPartial();
+  const gammaRows = groupGamma.rows.map((g) => g.row);
 
   const base = {
     via: 'composition' as const,
@@ -2210,25 +2327,32 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
   let checks = 0;
   let logic = '';
   let fragment: Fragment = 'qf-lra';
-  const run = async (assertions: ScriptAssertion[]): Promise<CheckOutcome> => {
+  // `clauses` are the rows the script asserts, for the constraint class of what was sent (a label).
+  const run = async (assertions: ScriptAssertion[], clauses: readonly EncodedRow[]): Promise<CheckOutcome> => {
     const script = scriptOf(assertions, variables, { nonlinear, syntacticNonlinear });
     logic = script.logic;
     fragment = script.fragment;
     checks += 1;
+    sentOver(input.rollup, model, script, clauses, gammaRows);
     return input.backend.check(script.text, {
       timeoutMs: input.timeoutMs,
       variables: script.symbols,
     });
   };
+  const premiseRows = (skip?: EncodedContract): EncodedRow[] =>
+    premises.filter((p) => p.contract !== skip).flatMap((p) => rowsOfContract(p.contract));
 
   // ── step (0): can any implementation satisfy A ∧ ⋀ nf(C′) ∧ γ at all? ──────
-  const zero = await run([
-    ...(system.antecedent !== null
-      ? [{ kind: 'premise' as const, name: `${decomposition.system.qualifiedName}::assume`, term: system.antecedent }]
-      : []),
-    ...premiseAssertions(),
-    ...gammaAssertions,
-  ]);
+  const zero = await run(
+    [
+      ...(system.antecedent !== null
+        ? [{ kind: 'premise' as const, name: `${decomposition.system.qualifiedName}::assume`, term: system.antecedent }]
+        : []),
+      ...premiseAssertions(),
+      ...gammaAssertions,
+    ],
+    [...(system.antecedent !== null ? system.assumptions : []), ...premiseRows()],
+  );
   if (zero.status === 'unsat') {
     const core = sortedCore(zero.core);
     return {
@@ -2275,11 +2399,14 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
   // ── obligation (3): ⋀ nf(C′) ∧ γ ⊨ nf(C) ─────────────────────────────────
   {
     const before = checks;
-    const outcome = await run([
-      ...premiseAssertions(),
-      ...gammaAssertions,
-      { kind: 'goal', name: `${decomposition.system.qualifiedName}::nf`, term: notTerm(system.nf) },
-    ]);
+    const outcome = await run(
+      [
+        ...premiseAssertions(),
+        ...gammaAssertions,
+        { kind: 'goal', name: `${decomposition.system.qualifiedName}::nf`, term: notTerm(system.nf) },
+      ],
+      [...premiseRows(), ...rowsOfContract(system)],
+    );
     obligations.push(
       obligationRow({
         kind: 'composition',
@@ -2355,18 +2482,21 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
       continue;
     }
     const before = checks;
-    const outcome = await run([
-      ...(system.antecedent !== null
-        ? [{ kind: 'premise' as const, name: `${decomposition.system.qualifiedName}::assume`, term: system.antecedent }]
-        : []),
-      ...premiseAssertions(component),
-      ...gammaAssertions,
-      {
-        kind: 'goal',
-        name: `${component.contract.qualifiedName}::assume`,
-        term: notTerm(component.antecedent),
-      },
-    ]);
+    const outcome = await run(
+      [
+        ...(system.antecedent !== null
+          ? [{ kind: 'premise' as const, name: `${decomposition.system.qualifiedName}::assume`, term: system.antecedent }]
+          : []),
+        ...premiseAssertions(component),
+        ...gammaAssertions,
+        {
+          kind: 'goal',
+          name: `${component.contract.qualifiedName}::assume`,
+          term: notTerm(component.antecedent),
+        },
+      ],
+      [...(system.antecedent !== null ? system.assumptions : []), ...premiseRows(component), ...component.assumptions],
+    );
     const unreached = assumptionReach(
       component,
       groupGamma.connected,
@@ -3075,7 +3205,7 @@ export interface InjectionTarget {
    * that entails everything, which is why §3.9 reports it as vacuous rather
    * than as "no cut set".
    */
-  baseline(opts: { backend: Z3Backend; timeoutMs?: number }): Promise<CheckOutcome>;
+  baseline(opts: SolverOptions): Promise<CheckOutcome>;
   /**
    * Why the baseline's answer is not one about the contracts the file states,
    * or `null`: a `sat` found without a refused clause that does not re-read as
@@ -3094,10 +3224,20 @@ export interface InjectionTarget {
    * same one `bozzano-2014` calls a basic event. By index, not by contract: one
    * contract satisfied by two parts is two components, and two basic events.
    */
-  obligationThree(
-    dropped: ReadonlySet<number>,
-    opts: { backend: Z3Backend; timeoutMs?: number },
-  ): Promise<InjectedOutcome>;
+  obligationThree(dropped: ReadonlySet<number>, opts: SolverOptions): Promise<InjectedOutcome>;
+  /**
+   * What this decomposition left out, as context refused: its contracts' refused clauses and every γ edge a gate
+   * refused. For the constraint class of the enumeration (a label).
+   */
+  refusedClasses?: () => readonly RowClass[];
+}
+
+/** How a fault-tree check is run: the solver, its budget, and where to record what was sent. */
+export interface SolverOptions {
+  backend: Z3Backend;
+  timeoutMs?: number;
+  /** The constraint-class roll-up the scripts sent are recorded in. A label: nothing here reads it back. */
+  rollup?: ClassRollup;
 }
 
 /** The census a fault-tree run reports at RUN level, beside its groups. */
@@ -3250,11 +3390,14 @@ function injectionTarget(
         ]
       : [];
 
+  const gammaRows = groupGamma.rows.map((g) => g.row);
   const run = async (
     assertions: ScriptAssertion[],
-    opts: { backend: Z3Backend; timeoutMs?: number },
+    clauses: readonly EncodedRow[],
+    opts: SolverOptions,
   ): Promise<{ outcome: CheckOutcome; logic: string; fragment: Fragment }> => {
     const script = scriptOf(assertions, variables, { nonlinear, syntacticNonlinear });
+    if (opts.rollup) sentOver(opts.rollup, model, script, clauses, gammaRows);
     const outcome = await opts.backend.check(script.text, {
       ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       variables: script.symbols,
@@ -3277,9 +3420,15 @@ function injectionTarget(
     refused,
     census,
     standDown,
+    refusedClasses: () => refusedClassesOf(model, [system, ...components], prepared.gamma),
     baseline: async (opts) =>
-      (await run([...systemAssume, ...premises.map(premiseAssertion), ...gammaAssertions], opts))
-        .outcome,
+      (
+        await run(
+          [...systemAssume, ...premises.map(premiseAssertion), ...gammaAssertions],
+          [...(system.antecedent !== null ? system.assumptions : []), ...premises.flatMap((p) => rowsOfContract(p.contract))],
+          opts,
+        )
+      ).outcome,
     zeroDoubt: (zero) => {
       if (zero.status !== 'sat') return null;
       const why = zeroDoubt(
@@ -3308,6 +3457,7 @@ function injectionTarget(
             term: notTerm(system.nf ?? 'true'),
           },
         ],
+        [...kept.flatMap((p) => rowsOfContract(p.contract)), ...rowsOfContract(system)],
         opts,
       );
       const injected = injectedOutcome(outcome, logic, fragment, (values) =>

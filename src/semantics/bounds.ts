@@ -111,6 +111,14 @@ import {
   type ScriptAssertion,
 } from './smt/encode';
 import {
+  attachClasses,
+  classifyRow,
+  ClassRollup,
+  pinnedSymbolsOf,
+  refusedClassOf,
+  scriptClassOf,
+} from './smt/classes';
+import {
   rereadPoint,
   sortedCore,
   type ObjectiveBound,
@@ -498,6 +506,8 @@ interface Prepared {
    * nor whether one exists, and listing them is all this run owes them.
    */
   relevantRefusals: RefusedAxiom[];
+  /** The rows behind {@link relevantRefusals}, in the same order: the refused context the constraint class lists. */
+  relevantRefusedRows: EncodedRow[];
   /**
    * Why the measure may read a value a binding or a value that equates two
    * parts carries, which no axiom states ({@link equatedPartsMeasureRefusal}),
@@ -592,7 +602,7 @@ export function prepareBounds(
    * never met it, and `p.e <= 1.0` (refused) beside P's `e == x * 2.0` left
    * the maximum of `x` at 100 "exactly" where the requirement makes it 0.5.
    */
-  const refusedReach: Array<{ axiom: RefusedAxiom; reach: RefusalReach }> = [];
+  const refusedReach: Array<{ axiom: RefusedAxiom; reach: RefusalReach; row: EncodedRow }> = [];
   const reachOfRows = (rows: readonly EncodedRow[]): RefusalReach => {
     const r = rows.map((row) => reachOfRow(row.row, row.vars.map((v) => v.qualifiedName)));
     return {
@@ -607,7 +617,7 @@ export function prepareBounds(
     if (!row.encoded) {
       const axiom = refusalOf(row);
       refused.push(axiom);
-      refusedReach.push({ axiom, reach: reachOfRows([row]) });
+      refusedReach.push({ axiom, reach: reachOfRows([row]), row });
       continue;
     }
     row.rereadable = row.row.source !== 'feature-value' || isLiteralValueAxiom(model, row.row);
@@ -656,7 +666,7 @@ export function prepareBounds(
             if (c.encoded) continue;
             const axiom = refusalOf(c);
             refused.push(axiom);
-            refusedReach.push({ axiom, reach });
+            refusedReach.push({ axiom, reach, row: c });
           }
           continue;
         }
@@ -673,9 +683,8 @@ export function prepareBounds(
   ]);
   const features = new Set(reachedSet.features);
   features.add(opts.measureId);
-  const relevantRefusals = refusedReach
-    .filter((r) => refusalReaches(r.reach, { features, symbols: reachedSet.symbols }))
-    .map((r) => r.axiom);
+  const relevant = refusedReach.filter((r) => refusalReaches(r.reach, { features, symbols: reachedSet.symbols }));
+  const relevantRefusals = relevant.map((r) => r.axiom);
   const variables: EncodeVariable[] = [];
   const seen = new Set<string>();
   for (const a of kept) {
@@ -691,6 +700,7 @@ export function prepareBounds(
     assertions: kept,
     refused,
     relevantRefusals,
+    relevantRefusedRows: relevant.map((r) => r.row),
     ...(equated !== undefined ? { equated } : {}),
     released,
     requirements: requirements.filter((q) =>
@@ -811,6 +821,18 @@ function confirmBoundWitness(
  * of the model and the options.
  */
 export async function checkBounds(model: Model, opts: BoundsOptions): Promise<BoundsResult> {
+  const rollup = new ClassRollup('bounds');
+  const result = await checkBoundsInner(model, opts, rollup);
+  // The run is decided by z3 where any row came from an answer: a bound (or its absence) or the axioms' unsat.
+  const decided = result.bounds.some((b) => b.outcome !== 'inconclusive');
+  return attachClasses(result, rollup.statement({ scope: 'run', basis: decided ? 'solver' : 'none', z3: opts.backend.version }));
+}
+
+/**
+ * The run itself. The constraint class of what it sent is read from `rollup` by {@link checkBounds}: a label,
+ * which nothing here branches on.
+ */
+async function checkBoundsInner(model: Model, opts: BoundsOptions, rollup: ClassRollup): Promise<BoundsResult> {
   const withRequirements = opts.withRequirements === true;
   const prepared = prepareBounds(model, {
     measureId: opts.measureId,
@@ -902,6 +924,23 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
     assertions: prepared.assertions.map((a) => a.assertion),
     nonlinear: prepared.nonlinear,
     syntacticNonlinear: prepared.syntacticNonlinear,
+  });
+  // Every check below is over this one script (the objective is added to its text, not to its shape). The axioms
+  // it asserts decide what is pinned; the refused rows the measure reaches are context refused.
+  const asserted = prepared.assertions.flatMap((a) => a.rows);
+  rollup.guard((r) => {
+    r.refuse(
+      prepared.relevantRefusedRows.map((e) => refusedClassOf(e.row, e.refusal ?? { reason: 'unparseable', detail: '' }, { model })),
+    );
+    r.add(
+      scriptClassOf(script.shape, script.logic, new Map(prepared.variables.map((v) => [v.qualifiedName, v.sort] as const))),
+      [...new Set(asserted)].filter((e) => e.encoded !== undefined).map((e) => classifyRow(e.row, { model, encoded: e.encoded! })),
+      () =>
+        pinnedSymbolsOf(
+          model,
+          prepared.assertions.filter((a) => a.assertion.kind === 'axiom').flatMap((a) => a.rows),
+        ),
+    );
   });
   // THE OBJECTIVE HAS TO BE DECLARED EVEN WHEN NOTHING ASSERTS IT. `encodeScript`
   // declares the symbols its assertions actually read, which is right for a

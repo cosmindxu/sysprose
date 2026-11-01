@@ -119,6 +119,17 @@ import {
   type ScriptAssertion,
 } from './smt/encode';
 import { rereadPoint, type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
+import {
+  attachClasses,
+  classifyRow,
+  ClassRollup,
+  pinnedSymbolsOf,
+  refusedClassOf,
+  scriptClassOf,
+  type Layer,
+  type RowClass,
+  type ScriptClass,
+} from './smt/classes';
 
 /**
  * The largest core `--minimize` will attempt to reduce, by default.
@@ -528,6 +539,8 @@ function scriptOf(units: readonly Unit[]): {
   /** label → the unit that produced the assertion carrying it. */
   owners: Map<string, Unit>;
   symbols: string[];
+  /** The script's own constraint class, from its bytes, read when it is recorded (a label: nothing here reads it). */
+  scriptClass: () => ScriptClass;
 } {
   const assertions: ScriptAssertion[] = [];
   const from: Unit[] = [];
@@ -561,7 +574,41 @@ function scriptOf(units: readonly Unit[]): {
     fragment: script.fragment,
     owners,
     symbols: script.symbols,
+    scriptClass: () =>
+      scriptClassOf(script.shape, script.logic, new Map(variables.map((v) => [v.qualifiedName, v.sort] as const))),
   };
+}
+
+/* ───────────────────── the constraint class of what was sent ───────────────────── */
+
+/** A row beside its encoding, as the register reads it. Memoised on the worklist row. */
+const classOfRow = (model: Model, e: EncodedRow): RowClass =>
+  classifyRow(e.row, { model, ...(e.encoded !== undefined ? { encoded: e.encoded } : {}) });
+
+/** Which side of the encoder a refusal was made on: the gates (and this lane's own policy), or the encoder. */
+const layerOf = (e: EncodedRow): Layer => (e.row.encodable !== true || (e.row.unread?.length ?? 0) > 0 ? 'gate' : 'encoder');
+
+/** A row this lane did not assert, as a context row: its fence, under the reason it was refused for. */
+const refusedOfRow = (model: Model, e: EncodedRow, refusal: Refusal, layer: Layer = layerOf(e)): RowClass =>
+  refusedClassOf(e.row, refusal, { model }, layer);
+
+/**
+ * One script was sent over these units: its class, and the rows it asserts. The axioms among them decide
+ * what is `pinned` (the released stated values are not among them: they pin nothing here).
+ */
+function sentOver(
+  rollup: ClassRollup,
+  model: Model,
+  units: readonly Unit[],
+  script: { scriptClass: () => ScriptClass },
+): void {
+  rollup.guard((r) =>
+    r.add(
+      script.scriptClass(),
+      units.flatMap(rowsOf).filter((e) => e.encoded !== undefined).map((e) => classOfRow(model, e)),
+      () => pinnedSymbolsOf(model, units.filter((u) => u.kind === 'axiom').map((u) => u.row)),
+    ),
+  );
 }
 
 /* ────────────────────────────── the run ─────────────────────────────────── */
@@ -682,7 +729,7 @@ interface Prepared {
    * symbol ({@link refusalReaches}), never only by the symbol a refused row was
    * given — for {@link refusedReach}.
    */
-  axiomsRefusedReach: Array<{ relation: RefusedRelation; reach: RefusalReach }>;
+  axiomsRefusedReach: Array<{ relation: RefusedRelation; reach: RefusalReach; row: EncodedRow }>;
   /** Each requirement's own relations, by requirement id. */
   clausesOf: Map<ElementId, EncodedRow[]>;
   contracts: Contract[];
@@ -728,7 +775,7 @@ function prepare(model: Model, withValues: boolean): Prepared {
     if (!e.encoded) {
       const relation = refusalOf(e, null);
       axiomsRefused.push(relation);
-      axiomsRefusedReach.push({ relation, reach: reachOfRow(e.row, e.vars.map((v) => v.qualifiedName)) });
+      axiomsRefusedReach.push({ relation, reach: reachOfRow(e.row, e.vars.map((v) => v.qualifiedName)), row: e });
       continue;
     }
     axiomUnits.push(unitOf(e, 'axiom', null));
@@ -779,6 +826,8 @@ function censusOf(
 ): {
   units: Unit[];
   refused: RefusedRelation[];
+  /** The rows behind {@link refused}, each with the refusal it is listed under and the layer it was made on. */
+  refusedRows: Array<{ row: EncodedRow; refusal: Refusal; layer: Layer }>;
   requirements: ConsistencyRequirement[];
   noFormalClause: number;
   /** Every contract that carries an asserted antecedent, and what it is. */
@@ -786,6 +835,7 @@ function censusOf(
 } {
   const units: Unit[] = [];
   const refused: RefusedRelation[] = [];
+  const refusedRows: Array<{ row: EncodedRow; refusal: Refusal; layer: Layer }> = [];
   const requirements: ConsistencyRequirement[] = [];
   const conditional: Array<{ contract: Contract; premises: EncodedRow[] }> = [];
   let noFormalClause = 0;
@@ -819,6 +869,11 @@ function censusOf(
           asserted += 1;
         } else if (clause.encoded && brokenPremise !== undefined) {
           const why = brokenPremise.refusal?.reason ?? 'unparseable';
+          refusedRows.push({
+            row: clause,
+            refusal: { reason: why, detail: brokenPremise.refusal?.detail ?? 'the relation was not encoded' },
+            layer: layerOf(brokenPremise),
+          });
           refused.push({
             ...refusalOf(clause, contract.qualifiedName),
             reason: why,
@@ -829,6 +884,11 @@ function censusOf(
           });
           turnedDown += 1;
         } else {
+          refusedRows.push({
+            row: clause,
+            refusal: clause.refusal ?? { reason: 'unparseable', detail: 'the relation was not encoded' },
+            layer: layerOf(clause),
+          });
           refused.push(refusalOf(clause, contract.qualifiedName));
           turnedDown += 1;
         }
@@ -853,7 +913,7 @@ function censusOf(
       refused: turnedDown,
     });
   }
-  return { units, refused, requirements, noFormalClause, conditional };
+  return { units, refused, refusedRows, requirements, noFormalClause, conditional };
 }
 
 /**
@@ -961,8 +1021,13 @@ export async function checkConsistency(
   let axiomsConsistent = true;
   let axiomCore: CoreMember[] = [];
   let axiomOutcome: CheckOutcome | null = null;
+  // WHAT WAS SENT, as the constraint-class register reads it: every script of the run, beside each group's own.
+  // A label — nothing below branches on it.
+  const run = new ClassRollup('consistency');
+  run.guard((r) => r.refuse(axiomsRefusedReach.map((a) => refusedOfRow(model, a.row, a.row.refusal ?? { reason: 'unparseable', detail: '' }))));
   if (axiomUnits.length > 0) {
     const script = scriptOf(axiomUnits);
+    sentOver(run, model, axiomUnits, script);
     // Its status, reason and core are read; its model never is.
     axiomOutcome = await opts.backend.check(script.text, { timeoutMs, witness: false });
     checks += 1;
@@ -1009,6 +1074,7 @@ export async function checkConsistency(
       checksAtValues,
       minimize,
       maxCore,
+      rollup: run,
     });
     checks += judged.checks;
     out.push(judged);
@@ -1026,7 +1092,7 @@ export async function checkConsistency(
     }
   }
 
-  return {
+  const result: ConsistencyResult = {
     groups: out,
     withValues,
     minimize,
@@ -1041,6 +1107,10 @@ export async function checkConsistency(
     checks,
     timeoutMs,
   };
+  // The run is decided by z3 where the axiom check or any group's check answered; undecided, no solver verdict.
+  const decided =
+    axiomOutcome?.status === 'sat' || axiomOutcome?.status === 'unsat' || out.some((g) => g.outcome !== 'inconclusive');
+  return attachClasses(result, run.statement({ scope: 'run', basis: decided ? 'solver' : 'none', z3: opts.backend.version }));
 }
 
 /* ─────────────────────────────── grouping ────────────────────────────────── */
@@ -1167,6 +1237,8 @@ interface JudgeInput {
   checksAtValues: () => ReadonlyMap<ElementId, ConstraintCheck>;
   minimize: boolean;
   maxCore: number;
+  /** The run's roll-up of what was sent: a group's own rolls into it ({@link judgeGroup}). */
+  rollup: ClassRollup;
 }
 
 /**
@@ -1240,14 +1312,36 @@ function refusedSentence(refused: readonly RefusedRelation[]): string {
         .join('; ')})`;
 }
 
+/**
+ * One requirement set, decided, and sorted into its constraint class.
+ *
+ * The judgement is {@link judgeGroupInner}'s, byte for byte; the group's statement is read from what its scripts
+ * were over, and kept beside the group ({@link attachClasses}), so no report carries it before a step prints it.
+ */
 async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
+  const rollup = new ClassRollup('consistency', input.rollup);
+  const group = await judgeGroupInner({ ...input, rollup });
+  return attachClasses(
+    group,
+    rollup.statement({
+      scope: 'group',
+      basis: group.outcome === 'consistent' || group.outcome === 'inconsistent' ? 'solver' : 'none',
+      z3: input.backend.version,
+    }),
+  );
+}
+
+async function judgeGroupInner(input: JudgeInput): Promise<ConsistencyGroup> {
   const {
     units: requirementUnits,
     refused,
+    refusedRows,
     requirements,
     noFormalClause,
     conditional,
   } = censusOf(input.contracts, input.clausesOf);
+  // The set's own refused clauses are context refused, whether or not a script gets as far as being sent.
+  input.rollup.guard((r) => r.refuse(refusedRows.map((e) => refusedOfRow(input.model, e.row, e.refusal, e.layer))));
 
   const base = {
     subject: input.subject,
@@ -1333,6 +1427,7 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
   const axioms = reachableAxioms(input.axiomUnits, requirementUnits);
   const units = [...axioms, ...requirementUnits];
   const script = scriptOf(units);
+  sentOver(input.rollup, input.model, units, script);
   const outcome = await input.backend.check(script.text, {
     timeoutMs: input.timeoutMs,
     variables: script.symbols,
@@ -1504,6 +1599,7 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
   // defect (a dimension clash, an unresolved name, a value this tool does not
   // read here) is `not-evaluable` there: neither is forgiven here either.
   const reach = refusedReach(input, units, refused);
+  input.rollup.guard((r) => r.refuse(reach.contextRows.map((a) => refusedOfRow(input.model, a, a.refusal ?? { reason: 'unparseable', detail: '' }))));
   if (reach.own.length + reach.context.length > 0) {
     const left = [...reach.own, ...reach.context];
     const violated = violatedOwn(input, reach.own);
@@ -1575,9 +1671,9 @@ function refusedReach(
   input: JudgeInput,
   units: readonly Unit[],
   refused: readonly RefusedRelation[],
-): { own: RefusedRelation[]; context: RefusedRelation[] } {
+): { own: RefusedRelation[]; context: RefusedRelation[]; contextRows: EncodedRow[] } {
   const own = [...refused];
-  if (input.axiomsRefusedReach.length === 0) return { own, context: [] };
+  if (input.axiomsRefusedReach.length === 0) return { own, context: [], contextRows: [] };
   const reached = reachedBy(
     units.flatMap((u) =>
       rowsOf(u).map((r) => ({
@@ -1586,8 +1682,8 @@ function refusedReach(
       })),
     ),
   );
-  const context = input.axiomsRefusedReach.filter((a) => refusalReaches(a.reach, reached)).map((a) => a.relation);
-  return { own, context };
+  const inReach = input.axiomsRefusedReach.filter((a) => refusalReaches(a.reach, reached));
+  return { own, context: inReach.map((a) => a.relation), contextRows: inReach.map((a) => a.row) };
 }
 
 /**
@@ -1617,10 +1713,9 @@ async function checkEngagement(
   for (const { contract, premises } of conditional) {
     // The antecedent, asserted on its own as a fact of this trial: `A ∧ ⋀(A⇒G)`.
     const engaged = premises.map((p) => unitOf(p, 'guarantee', contract, []));
-    const outcome = await input.backend.check(
-      scriptOf([...axioms, ...requirementUnits, ...engaged]).text,
-      { timeoutMs: input.timeoutMs },
-    );
+    const trial = scriptOf([...axioms, ...requirementUnits, ...engaged]);
+    sentOver(input.rollup, input.model, [...axioms, ...requirementUnits, ...engaged], trial);
+    const outcome = await input.backend.check(trial.text, { timeoutMs: input.timeoutMs });
     checks += 1;
     if (outcome.status !== 'unsat') continue;
     engagedUnits.push(...engaged);
@@ -1771,7 +1866,9 @@ async function minimizeCore(
   for (const unit of units) {
     if (!working.includes(unit)) continue;
     const trial = working.filter((u) => u !== unit);
-    const outcome = await input.backend.check(scriptOf(trial).text, { timeoutMs: input.timeoutMs });
+    const trialScript = scriptOf(trial);
+    sentOver(input.rollup, input.model, trial, trialScript);
+    const outcome = await input.backend.check(trialScript.text, { timeoutMs: input.timeoutMs });
     checks += 1;
     if (outcome.status === 'unsat') {
       working = trial;

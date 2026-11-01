@@ -31,6 +31,7 @@ import {
   BASIS_OF,
   CELLS,
   CONSTRAINT_CLASSES,
+  ClassRollup,
   FENCES,
   FENCE_OF,
   LEVELS,
@@ -48,6 +49,7 @@ import {
   cellOfRow,
   classLine,
   classLines,
+  classesOf,
   classifyRow,
   levelDetail,
   levelOf,
@@ -64,6 +66,7 @@ import {
   withLevelSource,
   type CellFacts,
   type ClassFacts,
+  type ClassStatement,
   type ClassifiableRow,
   type Defect,
   type Level,
@@ -72,7 +75,11 @@ import {
   type RollUpInput,
 } from '@semantics/smt/classes';
 import { pinnedSymbolsOf } from '@semantics/smt/pinned';
-import { classifiableOf } from '@semantics/refinement';
+import { classifiableOf, checkRefinement } from '@semantics/refinement';
+import { checkConsistency } from '@semantics/consistency';
+import { checkBounds } from '@semantics/bounds';
+import { computeFaultTree } from '@semantics/fault-tree';
+import type { Z3Backend } from '@semantics/smt/z3-bridge';
 import { CLASS_FACTS } from '@semantics/smt/class-facts';
 import { blockKeys, credit, type Proof } from '../../scripts/lib/class-facts';
 import { REGION_HOSTS, beginMarker, endMarker, readRegion, renderConstraintClasses, spliceRegion, type RegionName } from '../../scripts/gen-constraint-classes';
@@ -537,6 +544,24 @@ describe('the roll-up folds to the weakest cell', () => {
     expect(lines.at(-1)).toMatch(/^basis: numeric-surface — the verdict word was decided on the numeric surface/);
     expect(classLines(unclassified('proof', 'verify'))).toEqual(["classes: unclassified — a gap in the tool's class register"]);
     expect(unclassified('run', 'consistency')).toMatchObject({ status: 'unclassified', weakest: null, shape: [] });
+  });
+
+  it('turns a throw in the classifier of an engine into an unclassified statement, in the group and its run', () => {
+    const run = new ClassRollup('fault-tree');
+    const group = new ClassRollup('fault-tree', run);
+    expect(() =>
+      group.guard(() => {
+        throw new Error('a gap in the register');
+      }),
+    ).not.toThrow();
+    expect(group.statement({ scope: 'group', basis: 'solver' })).toMatchObject({ status: 'unclassified', scope: 'group' });
+    expect(run.statement({ scope: 'run', basis: 'solver' })).toMatchObject({ status: 'unclassified', scope: 'run' });
+    // a throw inside what `add` reads back (the pinned set) is the same
+    const third = new ClassRollup('bounds');
+    third.add({ shape: 'nra-poly', nlSymbols: ['a'], logic: 'QF_NRA' }, [], () => {
+      throw new Error('pinned');
+    });
+    expect(third.statement({ scope: 'run', basis: 'solver' }).status).toBe('unclassified');
   });
 
   it('keeps the script cell: a script stronger than any row is the weakest claim of its proof', () => {
@@ -1126,5 +1151,186 @@ describe('the generated words claim nothing more than the register holds (CC-17)
       const outside = host.slice(0, host.indexOf(beginMarker(name))) + host.slice(host.indexOf(endMarker(name)));
       expect(outside, `${name}: a hand-written count of constraint classes`).not.toMatch(/\*\*\d+ constraint classes\*\*/);
     }
+  });
+});
+
+/* ───────────────── the other z3 engines carry a statement of what they sent (S6b; no WASM) ───────────────── */
+
+/**
+ * A solver that answers one word to every check, and for `unsat` names every `:named` label as the core. No WASM.
+ * `axiomsHold` makes a script with no goal in it (the axiom check) `sat` whatever the word is, so a group's own
+ * scripts get sent.
+ */
+function fakeBackend(answer: 'sat' | 'unsat' | 'unknown', axiomsHold = false): Z3Backend {
+  return {
+    absent: false,
+    version: '5.3.1',
+    fullVersion: '5.3.1',
+    seed: 0,
+    initMs: 0,
+    async check(script) {
+      const status = axiomsHold && !script.includes(':named |goal:') ? 'sat' : answer;
+      const core = status === 'unsat' ? [...script.matchAll(/:named \|([^|]*)\|/g)].map((m) => m[1]!) : [];
+      return { status, reason: '', timedOut: false, timeoutMs: 1, elapsedMs: 0, witness: [], completion: [], core };
+    },
+    async optimize() {
+      return {
+        status: answer,
+        reason: '',
+        timedOut: false,
+        timeoutMs: 1,
+        elapsedMs: 0,
+        bound: answer === 'sat' ? { term: '5', infinite: 0, value: 5, epsilon: 0 } : null,
+        witness: [],
+        completion: [],
+      };
+    },
+  };
+}
+
+const FIXTURE = (name: string): string => read(`test/fixtures/verification/models/${name}`);
+const loadFixture = (name: string): Promise<Model> => load(FIXTURE(name), name);
+const need = (s: ClassStatement | undefined): ClassStatement => {
+  expect(s, 'the engine attached no statement').toBeDefined();
+  return s!;
+};
+const ids = (xs: Array<{ id: string }>): string[] => xs.map((x) => x.id);
+const cellsOf = (s: ClassStatement): string[] => s.shape.map((x) => (x.search ? `${x.id}/${x.search}` : x.id));
+
+/** Two requirements over stated values, one product: `/pinned` only when the values are asserted. */
+const PRODUCT = `package Pr {
+  part def P { attribute a : ScalarValues::Real = 2.0; attribute b : ScalarValues::Real = 3.0; attribute z : ScalarValues::Real = 1.0; }
+  part p : P;
+  requirement def R { subject s : P; require constraint c1 { s.a * s.b >= 5.0 } require constraint c2 { s.z <= 4.0 } }
+  satisfy R by p;
+}`;
+/** A set with a remainder in it: a clause the encoder cannot read, in reach of what is sent. */
+const REMAINDER = `package Rm {
+  part def P { attribute x : ScalarValues::Real = 5.0; attribute y : ScalarValues::Real = 1.0; }
+  part p : P;
+  requirement def R { subject s : P; require constraint c1 { s.x % 4.0 >= 1.0 } require constraint c2 { s.y <= 2.0 } }
+  satisfy R by p;
+}`;
+
+describe('consistency states what it sent, beside each group and over the run (S6b)', () => {
+  it('a decided group is solver-based; the statement is over the script, its rows, their reading and their modifiers', async () => {
+    const result = await checkConsistency(await loadFixture('consistency-conflict.sysml'), { backend: fakeBackend('unsat') });
+    expect(result.groups.map((g) => g.outcome)).toEqual(['inconsistent']);
+    const group = need(classesOf(result.groups[0]!));
+    expect(group).toMatchObject({ status: 'ok', scope: 'group', query: 'consistency', basis: 'solver', logic: 'QF_LRA', script: { shape: 'lra' } });
+    expect(cellsOf(group)).toEqual(['lra']);
+    expect(ids(group.reading)).toEqual(['requirement-clause']);
+    expect(group.fenced).toEqual([]);
+    // the run is the union of the groups' scripts (and the axioms' own), so here it holds the same cells
+    const run = need(classesOf(result));
+    expect(run).toMatchObject({ scope: 'run', query: 'consistency', basis: 'solver' });
+    expect(cellsOf(run)).toEqual(['lra']);
+  });
+
+  it('an undecided group still says what it sent, and that no solver verdict stood behind it', async () => {
+    const result = await checkConsistency(await loadFixture('consistency-conflict.sysml'), { backend: fakeBackend('unknown') });
+    const group = need(classesOf(result.groups[0]!));
+    expect(group.basis).toBe('none');
+    expect(group.script).toEqual({ shape: 'lra' });
+    expect(need(classesOf(result)).basis).toBe('none');
+  });
+
+  it('a clause the encoder refuses is context refused, whether or not a script follows', async () => {
+    const result = await checkConsistency(await load(REMAINDER), { backend: fakeBackend('unsat') });
+    const group = need(classesOf(result.groups[0]!));
+    expect(group.fenced).toEqual([{ id: 'fence/unsupported-operator', layer: 'gate', rows: 1 }]);
+    expect(ids(group.modifiers)).toContain('partial-context');
+    // the rest of the set was still sent: the refused clause is not among the rows
+    expect(cellsOf(group)).toEqual(['lra']);
+  });
+
+  it('a product is /free where the values are released and /pinned where they are asserted', async () => {
+    const m = await load(PRODUCT);
+    const free = need(classesOf(await checkConsistency(m, { backend: fakeBackend('unsat') })));
+    expect(cellsOf(free)).toContain('nra-poly/free');
+    expect(free.script).toEqual({ shape: 'nra-poly', search: 'free' });
+    const pinned = need(classesOf(await checkConsistency(m, { backend: fakeBackend('unsat', true), withValues: true })));
+    expect(cellsOf(pinned)).toContain('nra-poly/pinned');
+    expect(pinned.script).toEqual({ shape: 'nra-poly', search: 'pinned' });
+    expect(pinned.logic).toBe('QF_NRA');
+  });
+
+  it('is a label: the result serialises the same with it or without it, and under any levels', async () => {
+    const m = await load(PRODUCT);
+    const plain = JSON.stringify(await checkConsistency(m, { backend: fakeBackend('unsat') }));
+    expect(plain).not.toContain('classes');
+    const stubbed = await withLevelSource(
+      () => 'battery-backed',
+      () => checkConsistency(m, { backend: fakeBackend('unsat') }),
+    );
+    expect(JSON.stringify(stubbed)).toBe(plain);
+    expect(need(classesOf(stubbed)).weakest?.level).toBe('battery-backed');
+  });
+});
+
+describe('refine and fault-tree state what they sent, and nothing in them is pinned (S6b)', () => {
+  it('a group that stands down lists its refused clause and sent nothing; the run still holds the sibling group', async () => {
+    const result = await checkRefinement(await loadFixture('refinement-refused-clause.sysml'), { backend: fakeBackend('unsat') });
+    expect(result.groups.map((g) => g.outcome)).toEqual(['inconclusive', 'vacuous']);
+    const [stood, decided] = result.groups.map((g) => need(classesOf(g)));
+    expect(stood).toMatchObject({ query: 'refine', scope: 'group', basis: 'none', script: null, logic: null });
+    expect(stood!.fenced).toEqual([{ id: 'fence/unsupported-operator', layer: 'gate', rows: 1 }]);
+    expect(decided).toMatchObject({ basis: 'solver', logic: 'QF_LRA', script: { shape: 'lra' } });
+    expect(decided!.fenced).toEqual([{ id: 'fence/unsupported-operator', layer: 'gate', rows: 1 }]);
+    const run = need(classesOf(result));
+    expect(run).toMatchObject({ scope: 'run', query: 'refine', basis: 'solver' });
+    expect(run.fenced).toEqual([{ id: 'fence/unsupported-operator', layer: 'gate', rows: 2 }]);
+    expect(ids(run.modifiers)).toContain('partial-context');
+    expect(ids(run.reading)).toEqual(['requirement-clause']);
+  });
+
+  it('a gamma equality is a bind-equality row, and a decomposition is the union of its scripts', async () => {
+    const result = await computeFaultTree(await loadFixture('fault-tree-redundant.sysml'), { backend: fakeBackend('unsat') });
+    const group = need(classesOf(result.groups[0]!));
+    expect(group).toMatchObject({ query: 'fault-tree', scope: 'group', basis: 'solver', script: { shape: 'lra' } });
+    expect(ids(group.reading)).toEqual(['bind-equality', 'requirement-clause']);
+    expect(need(classesOf(result))).toMatchObject({ scope: 'run', query: 'fault-tree' });
+  });
+
+  it('is a label: the fault tree serialises the same under any levels', async () => {
+    const m = await loadFixture('fault-tree-redundant.sysml');
+    const plain = JSON.stringify(await computeFaultTree(m, { backend: fakeBackend('unsat') }));
+    expect(plain).not.toContain('classes');
+    const stubbed = await withLevelSource(
+      () => 'tested',
+      () => computeFaultTree(m, { backend: fakeBackend('unsat') }),
+    );
+    expect(JSON.stringify(stubbed)).toBe(plain);
+  });
+});
+
+describe('bounds states what it sent: one script, and only the refused rows the measure reaches (S6b)', () => {
+  const measure = (m: Model, qualifiedName: string) => m.all().find((e) => m.qualifiedName(e.id) === qualifiedName)!.id;
+
+  it('lists the refusal the objective reaches, and not the one that factorises away', async () => {
+    const m = await loadFixture('bounds-refused-axiom.sysml');
+    const a = await checkBounds(m, { backend: fakeBackend('sat'), measureId: measure(m, 'BoundsRefusedAxiom::TankA::level') });
+    expect(need(classesOf(a)).fenced).toEqual([]);
+    const b = await checkBounds(m, { backend: fakeBackend('sat'), measureId: measure(m, 'BoundsRefusedAxiom::TankB::depth') });
+    const reached = need(classesOf(b));
+    expect(reached).toMatchObject({ query: 'bounds', scope: 'run' });
+    expect(reached.fenced.map((f) => f.id)).toEqual(['fence/non-numeric-operand']);
+    expect(ids(reached.modifiers)).toContain('partial-context');
+  });
+
+  it('a run that found no relation over the measure sent nothing and says so', async () => {
+    const m = await load('package Z { part def P { attribute v : ScalarValues::Real = 1.0; attribute w : ScalarValues::Real; } part p : P; }');
+    const w = m.all().find((e) => m.qualifiedName(e.id) === 'Z::P::w')!.id;
+    const st = need(classesOf(await checkBounds(m, { backend: fakeBackend('sat'), measureId: w })));
+    expect(st).toMatchObject({ basis: 'none', script: null, logic: null });
+  });
+
+  it('is a label: the result serialises the same under any levels', async () => {
+    const m = await loadFixture('bounds-refused-axiom.sysml');
+    const id = measure(m, 'BoundsRefusedAxiom::TankB::depth');
+    const plain = JSON.stringify(await checkBounds(m, { backend: fakeBackend('sat'), measureId: id }));
+    expect(plain).not.toContain('classes');
+    const stubbed = await withLevelSource(() => 'tested', () => checkBounds(m, { backend: fakeBackend('sat'), measureId: id }));
+    expect(JSON.stringify(stubbed)).toBe(plain);
   });
 });

@@ -2,10 +2,11 @@
  * The constraint classes: what everything Sysprose hands to z3, or refuses to hand over, is SORTED into.
  *
  * LABEL ONLY. Nothing in the lane branches on a class: no claim, code, exit code, `detail`, digest or script
- * byte depends on anything in this file (the constraint-classes plan, decision 3), and it is not wired to any
- * engine or surface yet. It is the register (what each class encodes and where it ends), the classifier (one
- * row to its cell), the roll-up (the rows of one proof, one run or one group to one statement) and the lines
- * a surface will print.
+ * byte depends on anything in this file (the constraint-classes plan, decision 3). The z3 engines (`verify`,
+ * `consistency`, `refine`, `fault-tree`, `bounds` and gate 4 of `property-check`) fill it in as they send
+ * scripts and keep the statement BESIDE their results ({@link attachClasses}); no surface prints it yet. It is
+ * the register (what each class encodes and where it ends), the classifier (one row to its cell), the roll-up
+ * (the rows of one proof, one run or one group to one statement) and the lines a surface will print.
  *
  * One deciding function per fact. The shape of a term is read from the BYTES the encoder emitted and the
  * walk's flag ({@link ./shape}), because z3 checks the `set-logic` line against that syntax and an
@@ -885,6 +886,21 @@ function compute(row: ClassifiableRow, ctx: ClassifyContext): RowClass {
   };
 }
 
+/**
+ * A row an engine refused, as a context row: its fence, even where only the engine's own policy refused it
+ * (a name it reads no value for, a requirement stood down with the `assume` it hangs on), which the gates and
+ * the encoder alone would have let through. Memoised like {@link classifyRow}.
+ */
+const REFUSED_MEMO = new WeakMap<object, RowClass>();
+export function refusedClassOf(row: ClassifiableRow, refusal: Refusal, ctx: ClassifyContext, layer: Layer = 'gate'): RowClass {
+  const hit = REFUSED_MEMO.get(row);
+  if (hit) return hit;
+  const own = classifyRow(row, ctx);
+  const made = own.fence !== null && own.fence.id === FENCE_OF[refusal.reason] ? own : fenceOf(refusal, layer, own.reading);
+  REFUSED_MEMO.set(row, made);
+  return made;
+}
+
 /** A script's class: the bytes of every assertion it holds, the guards included. */
 export interface ScriptClass {
   shape: ShapeId;
@@ -1130,6 +1146,122 @@ export function rollUp(input: RollUpInput): ClassStatement {
     weakest: weakestOf(allCells, env),
     levels,
   };
+}
+
+/* ────────────────────────────── the roll-up of a group ───────────────────────────── */
+
+const NOTHING_PINNED: ReadonlySet<string> = new Set<string>();
+
+/**
+ * The statement of what a command SENT to z3, gathered script by script: the engines that send many (a
+ * consistency run, a refinement group, a fault-tree enumeration) call {@link ClassRollup.add} beside each
+ * `logic` assignment, and read one statement at the end. A set of rows, never a concatenation per script, so
+ * a model of thousands of instances costs one reference per row; a script is kept once per distinct
+ * (shape, logic, symbols-at-nonlinear-sites).
+ *
+ * `pinned` is read only when a nonlinear cell is in play, and the sets of scripts that disagree are
+ * INTERSECTED: a symbol counts as fixed only if every script that holds a nonlinear site fixed it, the weaker
+ * reading. A child rolls up into its parent as well (a run beside its groups).
+ *
+ * A LABEL: it reads what the engine already computed and never writes back, and a throw is the
+ * `unclassified` statement, not a changed verdict.
+ */
+export class ClassRollup {
+  private readonly scripts = new Map<string, ScriptClass>();
+  private readonly rows = new Set<RowClass>();
+  private pinned: Set<string> | null = null;
+  private partial = false;
+  private failed = false;
+  private last: string | null = null;
+
+  constructor(
+    readonly query: Query,
+    private readonly parent?: ClassRollup,
+  ) {}
+
+  /** One script was sent, over these rows (the encoded ones). `pinned` is what the axioms IT asserted fix. */
+  add(script: ScriptClass, rows: readonly RowClass[], pinned: () => ReadonlySet<string> = () => NOTHING_PINNED): void {
+    this.parent?.add(script, rows, pinned);
+    try {
+      this.record(script, rows, pinned);
+    } catch {
+      this.failed = true;
+    }
+  }
+
+  private record(script: ScriptClass, rows: readonly RowClass[], pinned: () => ReadonlySet<string>): void {
+    this.scripts.set(`${script.shape}\t${script.logic}\t${[...script.nlSymbols].sort().join(',')}`, script);
+    this.last = script.logic;
+    for (const r of rows) this.rows.add(r);
+    if (isNonlinearShape(script.shape) || rows.some((r) => r.shape !== null && isNonlinearShape(r.shape))) {
+      const p = pinned();
+      this.pinned = this.pinned === null ? new Set(p) : new Set([...this.pinned].filter((s) => p.has(s)));
+    }
+  }
+
+  /** Rows that were refused and stand in reach of what was sent: context refused, so `partial-context`. */
+  refuse(rows: readonly RowClass[]): void {
+    this.parent?.refuse(rows);
+    for (const r of rows) this.rows.add(r);
+  }
+
+  /**
+   * Work out a class an engine records and record it, with a throw in the classifier poisoning the roll-up
+   * (its statement becomes `unclassified`) and never reaching the engine: the label may not move a verdict.
+   */
+  guard(record: (rollup: ClassRollup) => void): void {
+    try {
+      record(this);
+    } catch {
+      this.poison();
+    }
+  }
+
+  /** The classifier failed on something this roll-up was to hold: its statement is `unclassified`. */
+  poison(): void {
+    this.parent?.poison();
+    this.failed = true;
+  }
+
+  /** Something in reach was left out that is not a row (a connection that is not an equality). */
+  markPartial(): void {
+    this.parent?.markPartial();
+    this.partial = true;
+  }
+
+  /** The statement. `basis` is dropped to `none` when no script was sent: nothing was asked of a solver. */
+  statement(o: { scope: Scope; basis: Basis; z3?: string }): ClassStatement {
+    try {
+      if (this.failed) return unclassified(o.scope, this.query);
+      return rollUp({
+        scope: o.scope,
+        query: this.query,
+        basis: this.scripts.size === 0 ? 'none' : o.basis,
+        logic: this.last,
+        scripts: [...this.scripts.values()],
+        context: [...this.rows],
+        pinned: this.pinned ?? NOTHING_PINNED,
+        partialContext: this.partial,
+        ...(o.z3 !== undefined ? { z3: o.z3 } : {}),
+      });
+    } catch {
+      return unclassified(o.scope, this.query);
+    }
+  }
+}
+
+/**
+ * The statement of a group or a result, kept BESIDE the object and not on it: the reports hand these objects
+ * to `--json` as they are, and a label may not appear in an output before the step that prints it. Keyed by
+ * identity, so a copy of the object does not carry it.
+ */
+const STATEMENTS = new WeakMap<object, ClassStatement>();
+export function attachClasses<T extends object>(target: T, statement: ClassStatement): T {
+  STATEMENTS.set(target, statement);
+  return target;
+}
+export function classesOf(target: object): ClassStatement | undefined {
+  return STATEMENTS.get(target);
 }
 
 /** What a classifier failure is: a gap in the register, never an exit code. */
