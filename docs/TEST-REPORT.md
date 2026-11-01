@@ -618,19 +618,19 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 483 | 72 | 2 | 6 | 503 (210) | 0 | none | `differential-tested` |
-| `lira` | 15 | 13 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `lra` | 483 | 72 | 2 | 6 | 505 (211) | 0 | none | `differential-tested` |
+| `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `units` | 98 | 40 | 2 | 5 | 25 (12) | 0 | none | `differential-tested` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `stated-value` | 311 | 78 | 1 | 7 | 498 (208) | 0 | none | `differential-tested` |
+| `stated-value` | 311 | 78 | 1 | 7 | 500 (209) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
-| `bind-equality` | 9 | 5 | 1 | 0 | 171 (97) | 0 | none | `experimental` |
+| `bind-equality` | 9 | 5 | 1 | 0 | 173 (98) | 0 | none | `experimental` |
 | `asserted-fact` | 27 | 8 | 1 | 0 | 7 (5) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 293 (187) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 212 (88) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 295 (188) | 0 | none | `differential-tested` |
+| `per-instance` | 1 | 1 | 1 | 0 | 214 (89) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 5 | 4 | 2 | — | — | — | none | `fenced` |
@@ -639,7 +639,7 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 | `fence/offset-arithmetic` | 3 | 3 | 1 | — | — | — | none | `fenced` |
 | `fence/refused-derivation` | 1 | 1 | 1 | — | — | — | none | `fenced` |
 | `fence/unsupported-operator` | 6 | 5 | 2 | — | — | — | none | `fenced-defect` |
-| `fence/non-numeric-operand` | 4 | 4 | 2 | — | — | — | none | `fenced` |
+| `fence/non-numeric-operand` | 6 | 6 | 2 | — | — | — | none | `fenced` |
 <!-- END GENERATED constraint-classes:test-report -->
 
 ---
