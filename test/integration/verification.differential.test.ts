@@ -13628,6 +13628,34 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RS::c1': ['?/?/?/?', null],
       'RS::c2': ['?/?/?/?', null],
     }),
+    // A feature a value equation derives from that end reads no value either, however many equations deep: the numeric
+    // surface held `ka` at its starting 0 and read `m` 1 and `n` 2, so `u.m == 14.0` (the page) and `u.m == 17.0` (the
+    // file) were both violated.
+    ...reversed('rename-onto-alias-bind-derived', `package RM {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def U { part w : H1 { part :>> p : P2; } attribute ka; bind ka = w.p.a; attribute m = ka + 1.0; attribute n = m + 1.0; }
+        part u : U;
+        constraint c1 { u.m == 14.0 }
+        constraint c2 { u.m == 17.0 }
+        constraint c3 { u.n == 15.0 }
+      }`, `package RM {
+        constraint c3 { u.n == 15.0 }
+        constraint c2 { u.m == 17.0 }
+        constraint c1 { u.m == 14.0 }
+        part u : U;
+        part def U { part w : H1 { part :>> p : P2; } attribute ka; bind ka = w.p.a; attribute m = ka + 1.0; attribute n = m + 1.0; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def H { part p : P; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'RM::c1': ['?/?/?/?', null],
+      'RM::c2': ['?/?/?/?', null],
+      'RM::c3': ['?/?/?/?', null],
+    }),
     // The same family, one constraint on each of three ends (a single constraint on a valueless end is "imposed by the
     // solve" on the numeric surface, which it is not where a binding joins the end to a value nothing follows), the
     // binding written the other way round, at package level, in the usage, and through two bindings. The unrelated

@@ -800,6 +800,20 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
       }
     }
   }
+  // A feature a value equation or an asserted equation derives from one whose value is not read has none either: the
+  // solve held the one at its starting 0 and decided the other from it (`bind k = w.p.a` below an order scope, `attribute
+  // m = k + 1.0; attribute n = m + 1.0`: `u.m == 14.0` and `u.m == 17.0` both violated, where the check abstains).
+  for (let grew = unreadable.size > 0; grew; ) {
+    grew = false;
+    for (const eq of all) {
+      if (!eq.vars.some((v) => unreadable.has(v))) continue;
+      for (const v of [...(eq.states !== undefined ? [eq.states] : []), ...(eq.defines ?? [])]) {
+        if (unreadable.has(v)) continue;
+        unreadable.add(v);
+        grew = true;
+      }
+    }
+  }
   pastCapUnreadable(model, all, unreadable, scopeId);
   const cut = headBindingsCarrying(model, all, relationOf);
   return { eqs: cut.size === 0 ? all : all.filter((eq) => !cut.has(eq)), unreadable, relationOf, held };

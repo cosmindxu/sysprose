@@ -1662,6 +1662,22 @@ describe('solve — a binding whose end goes through a scope the page leaves unr
     }
   });
 
+  it('reads no value for a feature a value equation derives from that end, one level or two, in either text order', async () => {
+    const w = 'part w : H1 { part :>> p : P2; }';
+    for (const derived of ['attribute m = ka + 1.0; attribute n = m + 1.0;', 'attribute m = ka * 2.0; attribute n = m + 1.0;']) {
+      const members = [
+        ...HEAD,
+        `part def U { ${w} attribute ka; bind ka = w.p.a; ${derived} }`,
+        'part u : U;',
+        'constraint c1 { u.m == 14.0 }',
+        'constraint c2 { u.m == 17.0 }',
+        'constraint c3 { u.n == 15.0 }',
+      ];
+      expect(await rows(members)).toEqual(['c1:unknown', 'c2:unknown', 'c3:unknown']);
+      expect(await rows([...members].reverse())).toEqual(['c1:unknown', 'c2:unknown', 'c3:unknown']);
+    }
+  });
+
   it('keeps reading the same binding where the typing is no order scope', async () => {
     const members = [
       'part def P { attribute a default = 11.0; }',
