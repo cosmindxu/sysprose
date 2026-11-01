@@ -4145,6 +4145,30 @@ export class DefiningEquations {
     return undefined;
   }
 
+  /**
+   * Is feature `id` one of, or below, a scope {@link unreadScopes} names (twins, a redefinition the file does not keep, an
+   * order-dependent inheritance), or one that is typed by or specialises one? No name of that scope is read, so a binding
+   * that ends in `id` joins nothing the page can follow: the solver reads no equation from it ({@link withheldOwner}).
+   */
+  withheldBelow(id: ElementId): boolean {
+    const parted = this.partedOwners();
+    if (parted.size === 0) return false;
+    const unread = (o: ElementId): boolean => {
+      const own = parted.get(o);
+      if (own !== undefined && own !== 'binding' && own !== 'copy') return true;
+      return generalizationsOf(this.model, o).some((g) => {
+        const why = parted.get(g.id);
+        return why !== undefined && why !== 'binding' && why !== 'copy';
+      });
+    };
+    const seen = new Set<ElementId>();
+    for (let o: ElementId | null | undefined = id; o != null && !seen.has(o); o = this.model.get(o)?.ownerId) {
+      seen.add(o);
+      if (unread(o)) return true;
+    }
+    return false;
+  }
+
   /** Does an end of the binding `b` belong to a type its owner specialises ({@link partedHolder})? */
   private endsInGeneral(b: ElementRecord): boolean {
     const owner = b.ownerId!;
@@ -11575,6 +11599,9 @@ function standingDefaultIn(model: Model, symbol: string): ElementRecord | undefi
   // attribute :>> load = 7.0; }` under `bind P::load = L`, L valueless), P's
   // default is no value of the component's (L is 7) — none stands.
   if (pairedHeads(model, best.root, best.component, true)) return undefined;
+  // Nor one in a component that reaches a member through a scope the page leaves unread ({@link withheldOwner}): that
+  // binding is read by no surface, so no default of its other end stands for this one.
+  if (componentFacts(model, best.root, best.component).paths.some((p) => definitions.withheldOwner(best.root, p) !== undefined)) return undefined;
   // Nor one an assert typed by an equation's definition may define: it gives
   // way there as everywhere ({@link typedAssertHolding}).
   const source = standingDefaultPath(model, best.root, best.component)?.source;

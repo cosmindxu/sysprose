@@ -717,6 +717,7 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
   // (3) BindingConnector / bind / equality connectors — each end read as the
   // feature whose value it is ({@link carriedEnd}).
   const bound: Array<[ElementId, ElementId]> = [];
+  const withheld = withheldBindings(model).edges;
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true) continue;
     if (!isBindingEdge(el)) continue;
@@ -724,6 +725,15 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
     const s = carriedEnd(model, el.source?.[0]);
     const t = carriedEnd(model, el.target?.[0]);
     if (s === undefined || t === undefined) continue;
+    // An end below a scope the page leaves unread (`order`, `twins`, `redefinition`) joins nothing the check follows: the
+    // binding is read by no surface, and an end that states no value is read by none either.
+    if (withheld.has(el.id)) {
+      for (const v of [s, t]) {
+        const f = model.get(v);
+        if (f && !hasStatedValue(model, f)) unreadable.add(v);
+      }
+      continue;
+    }
     eqs.push(bindingEquation(model, el.id, s, t, memo));
     bound.push([s, t]);
   }
@@ -1052,6 +1062,46 @@ function assignmentEquation(
   const eq = makeEquation(model, lhs, node, s, nameToId, body, memo, identity, el, false, onRefused);
   if (eq) eq.states = el.id;
   return eq;
+}
+
+const WITHHELD_BINDINGS = new WeakMap<Model, { rev: number; edges: ReadonlySet<ElementId>; ends: ReadonlySet<ElementId> }>();
+
+/**
+ * The bindings with an end below a scope the page leaves unread (`order`, `twins`, `redefinition`:
+ * {@link DefiningEquations.withheldBelow}), and the ends they are written with. No surface follows such a binding (no
+ * name of the scope is read), so none of them reads a value through it: the solver gathers no equation from it, and
+ * an end that states no value is read as none, in the model and in each of its instances.
+ */
+function withheldBindings(model: Model): { edges: ReadonlySet<ElementId>; ends: ReadonlySet<ElementId> } {
+  const hit = WITHHELD_BINDINGS.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const edges = new Set<ElementId>();
+  const ends = new Set<ElementId>();
+  const definitions = sharedDefinitions(model);
+  const all: Array<{ id: ElementId; raw: ElementId[] }> = [];
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true || !isBindingEdge(el)) continue;
+    all.push({ id: el.id, raw: [el.source?.[0], el.target?.[0]].filter((e): e is ElementId => e !== undefined) });
+  }
+  // The bindings below a withheld scope, then to a fixpoint the bindings that join one of their ends: a feature joined
+  // to a value nothing follows has none either, through however many bindings.
+  for (const b of all) {
+    if (!b.raw.some((e) => definitions.withheldBelow(e))) continue;
+    edges.add(b.id);
+    for (const e of b.raw) ends.add(e);
+  }
+  for (let grew = edges.size > 0; grew; ) {
+    grew = false;
+    for (const b of all) {
+      if (edges.has(b.id) || !b.raw.some((e) => ends.has(e))) continue;
+      edges.add(b.id);
+      for (const e of b.raw) ends.add(e);
+      grew = true;
+    }
+  }
+  const fresh = { rev: model.rev, edges, ends };
+  WITHHELD_BINDINGS.set(model, fresh);
+  return fresh;
 }
 
 /**
@@ -1539,6 +1589,8 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       // What an assert typed by an equation's definition may define, here too:
       // no freedom, solved from nothing ({@link typedAssertNames}).
       if (typedAssertHolding(model, source ?? feature) !== undefined) system.unreadable.add(key);
+      // Nor a feature a binding into a scope the page leaves unread joins: no value of its own, none it reads through that.
+      if (!hasStatedValue(model, feature) && withheldBindings(model).ends.has(feature.id)) system.unreadable.add(key);
       // A `default` that gives way at THIS instance (`held-redef`): no value
       // equation fixes it — the binding that holds it does.
       if (source && name !== undefined && !defaultGivesWayIn(model, feature, reading.symbol)) {

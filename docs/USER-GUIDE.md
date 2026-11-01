@@ -1252,8 +1252,11 @@ features for one name from general types whose features do not mask one another 
 feature it answers to, one that states a value beside one that states none, or two of one name that hold content
 of their own), …, so no name of
 G::w::p is read`, and a file that holds the same shape reads the same way. Two such features that both
-state a value under one name are the name clash, which says so itself. A `bind` in another part to a name
-that goes through such a scope ends in the feature the text resolved it to, which the numeric check still reads.
+state a value under one name are the name clash, which says so itself. A `bind` whose end goes through such a
+scope (or through a scope of twins or of a redefinition the file does not keep) joins nothing any surface follows: the
+feature bound to it, and every feature joined to that one through other bindings, reads no value on the check, the
+literal and the numeric rows alike (`u.k has no value`), whether the binding is written in the definition, in the usage
+or at package level, and a default of its other end stands for none of them.
 
 A statement whose end no name reaches is not saved. A binding, connection, flow, allocation,
 succession, transition, dependency or alias ends in a feature the saved text has to name: a
