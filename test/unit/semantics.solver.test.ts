@@ -1629,3 +1629,66 @@ describe('solve — a finite-difference probe leaves the working map as it found
     expect(first.free).toEqual(again.free);
   });
 });
+
+describe('solve — a binding whose end goes through a scope the page leaves unread joins nothing', () => {
+  const HEAD = [
+    'part def P { attribute a default = 11.0; attribute b default = 12.0; }',
+    'part def P2 :> P { attribute :>> a default = 13.0; }',
+    'part def H { part p : P; }',
+    'part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }',
+  ];
+  const rows = async (members: string[]): Promise<string[]> => {
+    const text = `package K { ${members.join('\n')} }`;
+    const { model } = (await loadModelText(text, { fileName: 'p.sysml', strict: false })) as unknown as { model: Model };
+    return checkConstraintsNumeric(model)
+      .map((r) => `${r.name}:${r.imposed ? 'imposed' : r.result}`)
+      .sort();
+  };
+
+  it('reads no value for the end it joins, in a definition, the usage or the package, and through a second binding, in either text order', async () => {
+    // One constraint on each end: on a valueless end a single constraint would be "imposed by the solve".
+    const cons = ['constraint cA { u.ka == 13.0 }', 'constraint cB { u.kb == 12.0 }', 'constraint cZ { u.z == 7.0 }'];
+    const w = 'part w : H1 { part :>> p : P2; }';
+    const shapes: string[][] = [
+      [`part def U { ${w} attribute ka; attribute kb; attribute z = 7.0; bind ka = w.p.a; bind kb = w.p.b; }`, 'part u : U;'],
+      [`part def U { ${w} attribute ka; attribute kb; attribute z = 7.0; }`, 'part u : U;', 'bind u.ka = u.w.p.a;', 'bind u.kb = u.w.p.b;'],
+      [`part def U { ${w} attribute z = 7.0; }`, 'part u : U { attribute ka; attribute kb; bind ka = w.p.a; bind kb = w.p.b; }'],
+      [`part def U { ${w} attribute ka; attribute j; attribute kb; attribute z = 7.0; bind ka = j; bind j = w.p.a; bind kb = w.p.b; }`, 'part u : U;'],
+    ];
+    for (const shape of shapes) {
+      const members = [...HEAD, ...shape, ...cons];
+      expect(await rows(members)).toEqual(['cA:unknown', 'cB:unknown', 'cZ:satisfied']);
+      expect(await rows([...members].reverse())).toEqual(['cA:unknown', 'cB:unknown', 'cZ:satisfied']);
+    }
+  });
+
+  it('reads no value for a feature a value equation derives from that end, one level or two, in either text order', async () => {
+    const w = 'part w : H1 { part :>> p : P2; }';
+    for (const derived of ['attribute m = ka + 1.0; attribute n = m + 1.0;', 'attribute m = ka * 2.0; attribute n = m + 1.0;']) {
+      const members = [
+        ...HEAD,
+        `part def U { ${w} attribute ka; bind ka = w.p.a; ${derived} }`,
+        'part u : U;',
+        'constraint c1 { u.m == 14.0 }',
+        'constraint c2 { u.m == 17.0 }',
+        'constraint c3 { u.n == 15.0 }',
+      ];
+      expect(await rows(members)).toEqual(['c1:unknown', 'c2:unknown', 'c3:unknown']);
+      expect(await rows([...members].reverse())).toEqual(['c1:unknown', 'c2:unknown', 'c3:unknown']);
+    }
+  });
+
+  it('keeps reading the same binding where the typing is no order scope', async () => {
+    const members = [
+      'part def P { attribute a default = 11.0; }',
+      'part def P2 :> P { attribute :>> a default = 13.0; }',
+      'part def H { part p : P; }',
+      'part def H1 :> H { part :>> p { attribute r = 16.0; } }',
+      'part def U { part w : H1 { part :>> p : P2; } attribute ka; bind ka = w.p.a; }',
+      'part u : U;',
+      'constraint cA { u.ka == 13.0 }',
+    ];
+    expect(await rows(members)).toEqual(['cA:satisfied']);
+    expect(await rows([...members].reverse())).toEqual(['cA:satisfied']);
+  });
+});

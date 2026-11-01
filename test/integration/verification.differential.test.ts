@@ -13603,6 +13603,109 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RS::c2': ['?/?/?/?', null],
       'RS::c3': ['?/?/?/?', null],
     }),
+    // A `bind` whose end is read through that scope (`bind k = w.p.a`, a `w` of U): no surface follows it, so `k` has no
+    // value. The numeric surface joined the end to the typing's 13.0 (the standing default of the component) and read c1 T
+    // and c2 F where the check, the literal and the SMT engines abstained (`DefiningEquations.withheldBelow`).
+    ...reversed('rename-onto-alias-bind', `package RS {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def U { part w : H1 { part :>> p : P2; } attribute k; bind k = w.p.a; }
+        part u : U;
+        constraint c1 { u.k == 13.0 }
+        constraint c2 { u.k == 16.0 }
+      }`, `package RS {
+        constraint c2 { u.k == 16.0 }
+        constraint c1 { u.k == 13.0 }
+        part u : U;
+        part def U { part w : H1 { part :>> p : P2; } attribute k; bind k = w.p.a; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def H { part p : P; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'RS::c1': ['?/?/?/?', null],
+      'RS::c2': ['?/?/?/?', null],
+    }),
+    // A feature a value equation derives from that end reads no value either, however many equations deep: the numeric
+    // surface held `ka` at its starting 0 and read `m` 1 and `n` 2, so `u.m == 14.0` (the page) and `u.m == 17.0` (the
+    // file) were both violated.
+    ...reversed('rename-onto-alias-bind-derived', `package RM {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def U { part w : H1 { part :>> p : P2; } attribute ka; bind ka = w.p.a; attribute m = ka + 1.0; attribute n = m + 1.0; }
+        part u : U;
+        constraint c1 { u.m == 14.0 }
+        constraint c2 { u.m == 17.0 }
+        constraint c3 { u.n == 15.0 }
+      }`, `package RM {
+        constraint c3 { u.n == 15.0 }
+        constraint c2 { u.m == 17.0 }
+        constraint c1 { u.m == 14.0 }
+        part u : U;
+        part def U { part w : H1 { part :>> p : P2; } attribute ka; bind ka = w.p.a; attribute m = ka + 1.0; attribute n = m + 1.0; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        part def H { part p : P; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+      }`, {
+      'RM::c1': ['?/?/?/?', null],
+      'RM::c2': ['?/?/?/?', null],
+      'RM::c3': ['?/?/?/?', null],
+    }),
+    // The same family, one constraint on each of three ends (a single constraint on a valueless end is "imposed by the
+    // solve" on the numeric surface, which it is not where a binding joins the end to a value nothing follows), the
+    // binding written the other way round, at package level, in the usage, and through two bindings. The unrelated
+    // `z` keeps reading. Each of `a`, `b` and `q` is a name of the unread scope.
+    ...Object.fromEntries([
+      ['a=k', 'part def U { part w : H1 { part :>> p : P2; } attribute ka; attribute kb; attribute kq; attribute z = 7.0; bind w.p.a = ka; bind w.p.b = kb; bind w.p.q = kq; }', 'part u : U;'],
+      ['pkg', 'part def U { part w : H1 { part :>> p : P2; } attribute ka; attribute kb; attribute kq; attribute z = 7.0; }', 'part u : U; bind u.ka = u.w.p.a; bind u.kb = u.w.p.b; bind u.kq = u.w.p.q;'],
+      ['usage', 'part def U { part w : H1 { part :>> p : P2; } attribute z = 7.0; }', 'part u : U { attribute ka; attribute kb; attribute kq; bind ka = w.p.a; bind kb = w.p.b; bind kq = w.p.q; }'],
+      ['chain', 'part def U { part w : H1 { part :>> p : P2; } attribute ka; attribute j; attribute kb; attribute kq; attribute z = 7.0; bind ka = j; bind j = w.p.a; bind kb = w.p.b; bind kq = ka; }', 'part u : U;'],
+    ].flatMap(([form, u, tail]) => {
+      const text = `package RB {
+        part def P { attribute a default = 11.0; attribute b default = 12.0; }
+        part def P2 :> P { attribute :>> a default = 13.0; }
+        part def H { part p : P; }
+        part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+        ${u}
+        ${tail}
+        constraint cA { u.ka == 13.0 }
+        constraint cB { u.kb == 12.0 }
+        constraint cQ { u.kq == 16.0 }
+        constraint cZ { u.z == 7.0 }
+      }`;
+      const rows: Record<string, [string, Ref]> = {
+        'RB::cA': ['?/?/?/?', null],
+        'RB::cB': ['?/?/?/?', null],
+        'RB::cQ': ['?/?/?/?', null],
+        'RB::cZ': ['T/T/T/?', 'T'],
+      };
+      return Object.entries(reversed(`rename-onto-alias-bind-${form}`, text, reversedMembers(text), rows));
+    })),
+    // The other kinds of an unread scope (`redefinition`: `attribute :>> x = 3.0` over a part): a binding into it joins
+    // nothing the check follows; the numeric surface read both ends as imposed.
+    ...reversed('redefinition-bind', `package RD {
+        part def D0 { part x; }
+        part def D :> D0 { attribute :>> x = 3.0; attribute y = 4.0; }
+        part def U { part d : D; attribute k; attribute j; bind k = d.y; bind j = d.x; }
+        part u : U;
+        constraint cK { u.k == 4.0 }
+        constraint cJ { u.j == 3.0 }
+      }`, `package RD {
+        constraint cJ { u.j == 3.0 }
+        constraint cK { u.k == 4.0 }
+        part u : U;
+        part def U { part d : D; attribute k; attribute j; bind k = d.y; bind j = d.x; }
+        part def D :> D0 { attribute :>> x = 3.0; attribute y = 4.0; }
+        part def D0 { part x; }
+      }`, {
+      'RD::cK': ['?/?/?/?', null],
+      'RD::cJ': ['?/?/?/?', null],
+    }),
     // The other face: a part `p` of the type a usage is retyped to (the usage's owner) beside `attribute p :>> b` in the
     // usage it redefines. The file masks one of the two features named `p`, the page the other, and `w.p.b` read 15.0 on
     // the page and nothing in the file. The usage that is not retyped reads as before (`v.p.b`).
