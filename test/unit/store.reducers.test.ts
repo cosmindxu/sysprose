@@ -1859,6 +1859,34 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
     });
   });
 
+  // A rename onto a sibling's effective name: `q :>> a = 16.0` in H1's p beside P2's `:>> a default = 13.0` of the type w's p
+  // is retyped to. The page that bound the typing after the redefinition lists the generals of w's p the other way round
+  // from the file it saves, and `w.p.a` read 16 (F) on the page and 13 (T) in the file: the scope is unread on both
+  // (bind.ts unreadScopes, `order`), and a retype that makes it so says nothing either way.
+  describe('a usage retyped beside its redefinition of a renamed sibling is read alike on the page and in its saved file', () => {
+    const src = `package RS {
+  part def P { attribute a default = 11.0; attribute b default = 12.0; }
+  part def P2 :> P { attribute :>> a default = 13.0; }
+  part def H { part p : P; }
+  part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+  part w : H1 { part :>> p; }
+  constraint c13 { w.p.a == 13.0 }
+  constraint c16 { w.p.a == 16.0 }
+}`;
+    const letters = (m: Model): Record<string, string> =>
+      Object.fromEntries(checkConstraints(m).map((c) => [m.qualifiedName(c.id), c.result === 'satisfied' ? 'T' : c.result === 'violated' ? 'F' : '?']));
+    it('bindType after the redefinition: the page and the file both leave w.p.a unread', () => {
+      load(src);
+      const p = st().model.children(byName('w').id).find((c) => c.eClass === 'PartUsage')!;
+      // Before the retype w.p has the one general line: q's 16 is a's value.
+      expect(letters(st().model)).toEqual({ 'RS::c13': 'F', 'RS::c16': 'T' });
+      st().bindType(p.id, 'P2');
+      const page = letters(st().model);
+      expect(page).toEqual({ 'RS::c13': '?', 'RS::c16': '?' });
+      expect(letters(parseModel(serializeModel(st().model)).model)).toEqual(page);
+    });
+  });
+
   // EVERY command that edits the model settles the redefinitions it leaves, in its one undo step. The listening is in
   // `pushUndo` and `afterMutation`, which each of them goes through, so none names what it changes and none can
   // forget it. Each case below is a probe of the second review of S1: the page's four surfaces (check, literal,

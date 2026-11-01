@@ -1092,6 +1092,7 @@ const WITHHELD_CAUSE = {
   binding: 'a binding whose end is a copy the saved file reads as another feature',
   twins: 'two features under one name, which the saved file may read the other way',
   redefinition: 'a redefinition the saved file does not keep as it stands',
+  order: 'two inherited features for one name, which the saved file may read the other way round',
 } as const;
 const SMT_CLAIM: Record<SmtOutcome, { claim: EvidenceClaim; code: string | null }> = {
   proved: { claim: 'proved', code: null },

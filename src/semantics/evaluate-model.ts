@@ -4204,7 +4204,8 @@ function clashOf(
 /**
  * Why a name a body reads is left unread ({@link DefiningEquations.withheldOwner}): the element it is read through owns
  * a binding whose end is a copy the saved file reads as another feature, so the page cannot say what it joins, or holds
- * two features under one name, or a redefinition the saved file does not keep as it stands (bind.ts unreadScopes).
+ * two features under one name, or a redefinition the saved file does not keep as it stands, or inherits two features for one name
+ * from independent general types (bind.ts unreadScopes).
  */
 function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
   for (const c of [el.ownerId, el.id]) {
@@ -4214,6 +4215,14 @@ function partedCause(el: ElementRecord, name: string, pass: ScalarPass): string 
       const why = pass.definitions.withheldWhy(owner.id);
       if (why === 'twins') {
         return `${name} is not read: ${of} holds, or is typed by or specialises a scope that holds, two features under one name, and the saved file may read the other, so no name of ${of} is read`;
+      }
+      if (why === 'order') {
+        return (
+          `${name} is not read: ${of} is, or is typed by or specialises, a scope that inherits two features for one name from general types ` +
+          `whose features do not mask one another (a renamed redefiner beside the feature it answers to, one that states a value beside one ` +
+          `that states none, or two of one name that hold content of their own), and which of the two a name finds depends on the order of those types, which the saved file may list otherwise, ` +
+          `so no name of ${of} is read`
+        );
       }
       if (why === 'redefinition') {
         return (
