@@ -1149,23 +1149,21 @@ true values. What follows is what that branch and the review of it left open; en
       F/F/F/F and CNF::c15 T/T/T/T and the fence in leavesOutOverride (map-to-model.ts) is narrowed
       to the diamond and the clash (D3 :> D1, D2 or D2, D2b). The bind.ts and serializer.ts parts
       need the fence-rename and fence-text owners at merge. [sweep 2026-10-31]
-- [ ] **A feature that states a value keeps it when the end it is bound to states another (possible
-      wrong answer; unverified against the file's meaning).** `attribute k = 5.0; bind k = w.p.a;`
-      with `w.p.a = 13.0` reads `u.k == 5.0` T and `== 13.0` F on the check, literal and numeric
-      lanes, though the two ends are one value and the model holds two. fence-numeric4 keeps the
-      valued end's own seed on purpose (an end with no stated value is the one it withholds), and the
-      SMT lane answers ?. Whether the right reading is "contradictory, nothing is decided" (the
-      decided T/F is then a false verdict) is the open question; the contradicted-value family
-      (decision 14: an asserted equation overrides a default) decides it. Probes:
-      fence-numeric4-scratch/rev/m/valk-eq-fwd.sysml, m6/dfl-L2-fwd.sysml. [fence-numeric4 review]
-
-- [ ] **Find why the forward and reversed text orders of one edit sequence read different decided
-      values in 16 of 376 generator cases (possible wrong answer; unverified, not investigated).**
-      The saved files of the two text orders of the same edit sequence read different decided
-      values, e.g. `part u1 : D3 { bind Zb = N; }` listed before D3, D1 and Q0 reads F/F/F/X on
-      `u1.K2 == 16.0`, where the forward text is fenced to ?. Probably the known text-order family
-      (the copy-nearest-N entry), not confirmed. Probe: fence-copy2-scratch/probes-saved/gen.test.ts
-      and gen-fin.json, cases both-bo-D3-{f,r}-e5, c2, c3. [fence-copy2 review]
+- [ ] **Stop deciding a feature's own value against a bound end the tool cannot resolve through a
+      retyped redefinition (wrong answer, check/literal/numeric lanes).** Confirmed by a read-only
+      check of 2026-11-01 on 03e4e9f; the simple pairs are right (a `=` end against a `=` feature
+      gives the bind-conflict message and nothing decided, nested, reversed or flat; a `default` end
+      against a `=` feature keeps the feature's value, decision 14). The wrong answer is only where
+      the bound end is reached through a retyped redefinition that hides a nested `=` redefinition:
+      `part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }` with
+      `part w : H1 { part :>> p : P2; }` and `attribute k = 5.0; bind k = w.p.a`. The tool abstains
+      on the end (`u.w.p.a`, `u.w.p.q`, an unvalued k, a default k all read ?), yet decides
+      `u.k == 5.0` T and `== 13.0`, `== 16.0` F, byte-identical whether q is `=` or `default`; without
+      the retype it reports the bind conflict and decides nothing. The SMT lane answers ? (correct).
+      Fix or fence: make the seed-keeping check abstain on k when the bound end does not resolve (treat
+      the retyped end as unresolved), or resolve q's value through the retype. Probes:
+      scratchpad confirm/k1/m/ (Q, R, valk-eq-fwd, m6/dfl-L2-fwd). [fence-numeric4 review, confirmed
+      2026-11-01]
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
