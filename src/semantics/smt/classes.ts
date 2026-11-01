@@ -136,7 +136,7 @@ export const BASIS_OF: Record<SmtOutcome, Basis> = {
 };
 
 const NONLINEAR_SHAPES: readonly ShapeId[] = ['nra-poly', 'nra-div', 'nira'];
-const isNonlinearShape = (s: ShapeId): boolean => NONLINEAR_SHAPES.includes(s);
+export const isNonlinearShape = (s: ShapeId): boolean => NONLINEAR_SHAPES.includes(s);
 
 /** The maturity cell of a shape: nonlinear shapes split into `/pinned` and `/free`. */
 export function shapeCell(shape: ShapeId, search?: Search): string {
@@ -692,16 +692,24 @@ export function levelOf(cell: string, env: LevelEnv = {}): Level {
   return levelDetail(cell, env).level;
 }
 
-/** The seam the inertness test (CC-20) uses: replace the level source and see that nothing but levels move. */
+/**
+ * The seam the inertness test (CC-20) uses: replace the level source and see that nothing but levels move.
+ * A body that returns a promise keeps the source until the promise settles (the engines judge asynchronously).
+ */
 let levelSource: ((cell: string, env: LevelEnv) => Level) | undefined;
 export function withLevelSource<T>(source: (cell: string, env: LevelEnv) => Level, body: () => T): T {
   const saved = levelSource;
   levelSource = source;
+  let out: T;
   try {
-    return body();
-  } finally {
+    out = body();
+  } catch (e) {
     levelSource = saved;
+    throw e;
   }
+  if (out instanceof Promise) return out.finally(() => { levelSource = saved; }) as T;
+  levelSource = saved;
+  return out;
 }
 const detailFor = (cell: string, env: LevelEnv): LevelDetail =>
   levelSource ? { level: levelSource(cell, env), firstUnmet: null, capped: [], noEvidence: false } : levelDetail(cell, env);
@@ -1051,6 +1059,20 @@ export function weakestOf(cells: Iterable<string>, env: LevelEnv = {}): ClassSta
   return best === null ? null : { cell: best.cell, level: best.d.level, firstUnmet: best.d.firstUnmet, capped: best.d.capped };
 }
 
+/** The `goal` part of a statement: the goal row's own class, beside the roll-up it sits in. */
+export function goalOf(goal: RowClass | undefined, pinned: ReadonlySet<string>, forgiven: boolean): ClassStatement['goal'] {
+  if (!goal) return { shape: null, modifiers: [], reading: null };
+  const cell = goal.shape !== null ? cellOfRow(goal, pinned) : null;
+  const search = cell === null ? undefined : (cell.split('/')[1] as Search | undefined);
+  return {
+    shape: goal.shape,
+    ...(search ? { search } : {}),
+    modifiers: [...goal.modifiers],
+    reading: goal.reading,
+    ...(goal.fence ? { fence: { ...goal.fence, forgiven } } : {}),
+  };
+}
+
 /** The statement for one proof, one run or one group: sets of cells with counts, never a concatenation. */
 export function rollUp(input: RollUpInput): ClassStatement {
   const env: LevelEnv = { query: input.query, ...(input.z3 !== undefined ? { z3: input.z3 } : {}) };
@@ -1077,17 +1099,7 @@ export function rollUp(input: RollUpInput): ClassStatement {
   };
   const byRegister = <T extends { key: string }>(xs: T[]): T[] => xs.sort((a, b) => cellIndex(a.key) - cellIndex(b.key) || (a.key < b.key ? -1 : 1));
 
-  const goalClass = input.goal;
-  const goalCell = goalClass && goalClass.shape !== null ? cellOfRow(goalClass, input.pinned) : null;
-  const goalStatement: ClassStatement['goal'] = goalClass
-    ? {
-        shape: goalClass.shape,
-        ...(goalCell && cellId(goalCell).search ? { search: cellId(goalCell).search } : {}),
-        modifiers: [...goalClass.modifiers],
-        reading: goalClass.reading,
-        ...(goalClass.fence ? { fence: { ...goalClass.fence, forgiven: input.forgiven === true } } : {}),
-      }
-    : { shape: null, modifiers: [], reading: null };
+  const goalStatement = goalOf(input.goal, input.pinned, input.forgiven === true);
 
   const allCells = [...rowCells, ...scriptCells, ...modifiers.keys(), ...readings.keys()];
   const levels: Record<string, Level> = {};

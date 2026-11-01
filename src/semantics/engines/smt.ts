@@ -79,7 +79,7 @@ import {
   type Obligation,
   type RefusalReach,
 } from '../obligations';
-import { type ContractVariable, type Refusal } from '../contracts';
+import { type ContractVariable, type Refusal, type VarSort } from '../contracts';
 import { idScopeFor, mergeMaps } from '../relations';
 import { effectiveNameOf, effectiveQualifiedName } from '../inheritance';
 import { dimToString } from '../units';
@@ -97,6 +97,18 @@ import {
   type SideCondition,
 } from '../smt/encode';
 import { rereadPoint, type CheckOutcome, type WitnessValue, type Z3Backend } from '../smt/z3-bridge';
+import {
+  basisOf,
+  classifyRow,
+  goalOf,
+  isNonlinearShape,
+  pinnedSymbolsOf,
+  rollUp,
+  scriptClassOf,
+  unclassified,
+  type ClassStatement,
+  type RowClass,
+} from '../smt/classes';
 import {
   isOutsideTheFragment,
   modelBindings,
@@ -280,6 +292,11 @@ export interface SmtJudgement {
    * script, and "0 axioms in the script" is a measurement, not an absence.
    */
   axiomCensus: AxiomCensus | null;
+  /**
+   * The constraint class of what this verdict stood on (`../smt/classes`). A LABEL: no verdict word, code,
+   * detail or script byte reads it, and nothing prints it yet. `unclassified` where the classifier failed.
+   */
+  classes: ClassStatement;
 }
 
 /** One judged row: the worklist row, and what this engine made of it. */
@@ -703,6 +720,31 @@ interface JudgeInput {
 }
 
 /**
+ * What one judgement saw on its way, kept so that its constraint class can be read afterwards. A label's
+ * input: nothing in this file branches on it.
+ */
+interface JudgeTrace {
+  /** The axioms the read-closure kept, and the symbols it reached ({@link relevantAxioms}). */
+  relevant?: { kept: readonly EncodedRow[]; reached: ReadonlySet<string> };
+  /** The negation script (step 1), once it was built: the script whose logic the verdict names. */
+  script?: ReturnType<typeof encodeScript>;
+  /** The verdict word came out of {@link partialAntecedent}, the numeric surface's re-read of refused context. */
+  partial?: boolean;
+}
+
+/**
+ * One obligation, judged, and sorted into its constraint class.
+ *
+ * The judgement is {@link judgeOneInner}'s, byte for byte; the class is read from the trace it left, inside a
+ * `try`, so that a gap in the class register is an `unclassified` statement and never a changed verdict.
+ */
+async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> {
+  const trace: JudgeTrace = {};
+  const judged = await judgeOneInner(model, { ...input, trace });
+  return { ...judged, classes: classesOfJudgement(model, input, trace, judged) };
+}
+
+/**
  * One obligation, judged in the order the plan fixes.
  *
  * The order is not a style choice. Encodability is answered before any solver
@@ -712,7 +754,7 @@ interface JudgeInput {
  * domain is a fabricated counterexample and must never be printed as a
  * refutation.
  */
-async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> {
+async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTrace }): Promise<Omit<SmtJudgement, 'classes'>> {
   const { row } = input;
   // THE POINT THE CLAIM WAS READ AT is the model's own values only when nothing
   // this obligation's proof reads was released. Keyed on the row's own
@@ -867,6 +909,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   const goal = row.encoded as EncodedRelation;
   // Only the axioms this obligation can actually reach — see {@link relevantAxioms}.
   const { kept: axioms, reached } = relevantAxioms(input.axioms, input.premises, goal);
+  input.trace.relevant = { kept: axioms, reached };
   const context = [...axioms, ...input.premises, row];
   const variables = variablesOf([...context]);
   // THE POINT THE CLAIM WAS READ AT, from the SAME predicate the bound is
@@ -946,6 +989,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     [...assumed, { kind: 'goal', name: nameOf(row.row), term: notTerm(goal.term) }],
     context,
   );
+  input.trace.script = negationScript;
   const logic = negationScript.logic;
 
   // THE TWO-SIDED RULE, before the negation check and blocking it. Only over
@@ -1108,6 +1152,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     // ON — see {@link partialAntecedent}.
     const partial = partialAntecedent(model, input, row, axioms, reached, countFree(variables) > 0);
     if (partial) {
+      input.trace.partial = true;
       return {
         ...base,
         ...point,
@@ -1598,6 +1643,138 @@ function pinnedSymbols(model: Model, rows: readonly EncodedRow[]): Set<string> {
     }
   }
   return pinned;
+}
+
+/* ───────────────────── the constraint class of a judgement ───────────────────── */
+
+const NO_SYMBOLS: ReadonlySet<string> = new Set<string>();
+
+/** A row beside its encoding: what the classifier reads. Memoised on the worklist row, so it is paid once per run. */
+const classOf = (model: Model, e: EncodedRow): RowClass =>
+  classifyRow(e.row, { model, ...(e.encoded !== undefined ? { encoded: e.encoded } : {}) });
+
+/** The sort of every symbol these rows may declare: what a script's own cell reads a Bool from a Real by. */
+function sortsOf(rows: readonly EncodedRow[]): Map<string, VarSort> {
+  const sorts = new Map<string, VarSort>();
+  for (const v of variablesOf(rows)) sorts.set(v.qualifiedName, v.sort);
+  return sorts;
+}
+
+/** Step 0 is one script for the whole run, so its statement is read once per run and shared by every row of it. */
+const RUN_CLASSES = new WeakMap<readonly EncodedRow[], { statement: ClassStatement; pinned: ReadonlySet<string> }>();
+
+function runClasses(model: Model, input: JudgeInput, z3: string): { statement: ClassStatement; pinned: ReadonlySet<string> } {
+  const hit = RUN_CLASSES.get(input.axioms);
+  if (hit) return hit;
+  // Step 0 asserts every encoded axiom of the run (`judgeBySmt`), so those are the cells; a refused axiom is context refused.
+  const script = scriptOf(variablesOf(input.axioms), assertionsOf(input.axioms, 'axiom'), input.axioms);
+  const pinned = pinnedSymbolsOf(model, input.axioms.filter((e) => e.encoded !== undefined));
+  const statement = rollUp({
+    scope: 'run',
+    query: 'verify',
+    basis: 'solver',
+    logic: script.logic,
+    scripts: [scriptClassOf(script.shape, script.logic, sortsOf(input.axioms))],
+    context: input.axioms.map((e) => classOf(model, e)),
+    pinned,
+    z3,
+  });
+  const made = { statement, pinned };
+  RUN_CLASSES.set(input.axioms, made);
+  return made;
+}
+
+/**
+ * The constraint class of one judgement: which cells of the register what it stood on falls in, and what decided
+ * its verdict word (`basisOf`: the trace, never the word alone).
+ *
+ * A LABEL. It reads the judgement and the trace and writes nothing back, and a throw anywhere here is the
+ * `unclassified` statement and not a different verdict.
+ *
+ *  - A refused goal has no script and no context: its fence, and the basis `point-evaluation` where the numeric
+ *    surface read it violated, `none` otherwise.
+ *  - A step-0 outcome is the whole run's: the cells of every axiom, and the axioms script.
+ *  - A proof's cells are the goal, the premises, the kept axioms in the read-closure, and the script the verdict
+ *    names. A refused premise or kept axiom that the closure reaches is context refused (`partial-context`); one it
+ *    does not reach is nothing this proof stood on, and is not listed.
+ */
+function classesOfJudgement(
+  model: Model,
+  input: JudgeInput,
+  trace: JudgeTrace,
+  judged: Omit<SmtJudgement, 'classes'>,
+): ClassStatement {
+  const refused = input.row.refusal !== undefined;
+  const scope = !refused && input.consistency.status !== 'sat' ? 'run' : 'proof';
+  try {
+    const z3 = input.backend.version;
+    const goal = classOf(model, input.row);
+    // `unsupported` is the one outcome whose code `--allow-inconclusive` forgives (`ALLOW_INCONCLUSIVE_CODES`, checked
+    // against it by the campaign test); a refused goal with any other outcome is never forgiven.
+    const forgiven = judged.outcome === 'unsupported';
+    const noFacts = { goalRefused: refused, dropped: false, partialAntecedent: false, goalSymbols: [] as string[] };
+    if (refused) {
+      return rollUp({
+        scope: 'proof',
+        query: 'verify',
+        basis: basisOf(judged.outcome, noFacts, NO_SYMBOLS),
+        logic: null,
+        scripts: [],
+        goal,
+        context: [],
+        pinned: NO_SYMBOLS,
+        forgiven,
+        z3,
+      });
+    }
+    if (scope === 'run') {
+      const run = runClasses(model, input, z3);
+      return { ...run.statement, basis: basisOf(judged.outcome, noFacts, run.pinned), goal: goalOf(goal, run.pinned, false) };
+    }
+
+    const relevant = trace.relevant;
+    if (relevant === undefined) throw new Error('the judgement left no trace of its read-closure');
+    const { kept, reached } = relevant;
+    const refusedKept = kept.filter((a) => a.encoded === undefined);
+    const reachedSet = refusedKept.length > 0 ? contextReach(input.row, kept, input.premises, reached) : undefined;
+    const droppedAxioms = refusedKept.filter((a) => refusalReaches(reachOfEncoded(a), reachedSet!));
+    const dropped = [...input.premises.filter((p) => p.encoded === undefined), ...droppedAxioms];
+    const context = [...kept.filter((a) => a.encoded !== undefined), ...input.premises, ...droppedAxioms].map((e) => classOf(model, e));
+    const script = trace.script ? scriptClassOf(trace.script.shape, trace.script.logic, sortsOf([...kept, ...input.premises, input.row])) : undefined;
+    // The axioms the script asserts decide `pinned`; it is only read for a nonlinear cell and for a refutation's witness.
+    const cells = [goal, ...context];
+    const needsPinned =
+      judged.outcome === 'refuted' ||
+      (script !== undefined && isNonlinearShape(script.shape)) ||
+      cells.some((c) => c.shape !== null && isNonlinearShape(c.shape));
+    const pinned = needsPinned ? pinnedSymbolsOf(model, kept.filter((a) => a.encoded !== undefined)) : NO_SYMBOLS;
+    const freed = new Set(input.row.vars.filter((v) => v.free).map((v) => v.qualifiedName));
+    return rollUp({
+      scope: 'proof',
+      query: 'verify',
+      basis: basisOf(
+        judged.outcome,
+        {
+          goalRefused: false,
+          dropped: dropped.length > 0,
+          partialAntecedent: trace.partial === true,
+          goalSymbols: input.row.encoded!.reads,
+          free: freed,
+          textAsReal: goal.modifiers.includes('text-as-real'),
+        },
+        pinned,
+      ),
+      logic: trace.script?.logic ?? null,
+      scripts: script ? [script] : [],
+      goal,
+      context,
+      pinned,
+      partialContext: dropped.length > 0,
+      z3,
+    });
+  } catch {
+    return unclassified(scope, 'verify');
+  }
 }
 
 /**
