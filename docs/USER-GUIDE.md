@@ -1791,7 +1791,7 @@ reading failed (RangeError); reported, not dropped`; a group's roll-up counts it
 *not read*), and every other row and finding stands — on the verify lane too, where the goal row is refused in
 that sentence and closed as a failure of the tool, not a defect in the relation. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
-sentence; one while it lists the asserted equations over a `default` it does not
+sentence; one while it lists the contexts a relation is read in besides where it is written files that relation's other contexts as one *could not be evaluated* row (*… is not read in the contexts that read it beside X: the per-instance reading failed*; on `verify`, *X in its other contexts*, inconclusive, exit 2) while its own row and every other relation stand; one while it lists the asserted equations over a `default` it does not
 read, or the satisfactions, subjects, references and subsetting usages an instance reads otherwise,
 leaves every row *could not be evaluated* (*… could not be listed: the reading
 failed (RangeError); reported, not dropped*), since which rows they reach is

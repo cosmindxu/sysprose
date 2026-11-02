@@ -8220,6 +8220,30 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       expect(() => checkConstraintsNumeric(m!)).not.toThrow();
     });
 
+    it('a throw in a binding’s own context walk files its other contexts unread, never ends the check or the load (changingContexts)', async () => {
+      const real = DefiningEquations.prototype.changingContexts;
+      vi.spyOn(DefiningEquations.prototype, 'changingContexts').mockImplementation(function (this: DefiningEquations, el, names) {
+        if (isBindingConnector(el)) throw new RangeError('changingContexts, planted to throw');
+        return real.call(this, el, names);
+      });
+      const { model: m } = await loadModelText(`package T2 {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+  part q1 : Q { attribute :>> L = 50.0; }
+}`);
+      expect(m).toBeDefined();
+      const rows = checkConstraints(m!).filter((c) => c.id.endsWith('@contexts'));
+      expect(rows.map((r) => [r.result, r.message])).toEqual([
+        [
+          'unknown',
+          'Could not evaluate: `bind p.load = L` is not read in the contexts that read it beside T2::Q: the per-instance reading failed (RangeError); reported, not dropped',
+        ],
+      ]);
+      const bound = obligationsOf(m!).filter((o) => o.element.id.endsWith('@contexts'));
+      expect(bound.map((o) => [o.source, o.status])).toEqual([['bind', expect.anything()]]);
+      expect(bound[0]!.encodable).toMatchObject({ reason: 'unread-definition' });
+    });
+
     it('a guard reads no asserted default, so a throw planted there is never met (readFeatures)', async () => {
       // The guard read an asserted equation over a default, which it now never asks of: no assertion replaces a
       // default since decision 14 was amended (2026-10-22, `replaceableDefaults`). A throw planted there made

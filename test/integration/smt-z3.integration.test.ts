@@ -1081,9 +1081,10 @@ describe('D5 — every hook and case that drives z3 outlasts the death guard', (
       ctx.skip();
       return;
     }
-    const { cases, hooks, caseCount } = shortOnes();
+    const { cases, hooks, caseCount, undeclared } = shortOnes();
     expect.soft(cases, 'these cases drive z3 under a timeout shorter than the budget they handed it plus the margin plus 5 s').toEqual([]);
     expect.soft(hooks, 'these hooks hand z3 a check under a timeout shorter than the budget plus the margin plus 5 s').toEqual([]);
+    expect.soft(undeclared, 'these cases hand z3 a check without the wrapper, so under vitest’s 5 s default').toEqual([]);
     expect.soft(caseCount, 'no case was recorded: the record is broken').toBeGreaterThan(5);
   });
 });

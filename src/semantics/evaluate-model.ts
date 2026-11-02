@@ -2490,7 +2490,23 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
     if (!owner || left === undefined || right === undefined || left === right) continue;
     const expr = `${exprRef(left)} == ${exprRef(right)}`;
     const at: ElementRecord = owner.id === b.ownerId ? b : { ...b, ownerId: owner.id };
-    for (const x of [owner, ...pass.definitions.changingContexts(at, [left, right])]) {
+    // A throw in the binding's own context walk (A.2.9): which other contexts read it is unknown, so one row says
+    // so, `unknown`, and the binding's row where it is written stands.
+    let others: ElementRecord[] = [];
+    try {
+      others = pass.definitions.changingContexts(at, [left, right]);
+    } catch (e) {
+      const sentence = failedReadingSentence(`\`bind ${left} = ${right}\``, `the contexts that read it beside ${pass.definitions.contextName(owner.id)}`, e);
+      out.push({
+        id: `${b.id}@contexts`,
+        ownerId: owner.id,
+        expression: expr,
+        result: 'unknown',
+        message: `Could not evaluate: ${sentence}`,
+        conflict: 'bind',
+      });
+    }
+    for (const x of [owner, ...others]) {
       // A context listed only because a member reads its own value there: its
       // relations are read at its instance (E7), but the binding's own row is
       // not filed there yet — sound, only weaker.

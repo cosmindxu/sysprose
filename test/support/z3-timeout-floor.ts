@@ -11,9 +11,11 @@
  * it is declared, but they see neither a larger budget nor a hook. This helper
  * measures both: it notes each hook and case that handed z3 a check, with the
  * largest budget it handed (`z3BudgetWatch`) and the timeout it ran under, and
- * `shortOnes()` names those given less than {@link floorFor} that budget.
+ * `shortOnes()` names those given less than {@link floorFor} that budget. A case that handed z3 a check without
+ * being declared through the wrapper (a plain `it`, which vitest runs under its 5 s default) is named too
+ * (`undeclared`): the record sees only what runs, so the guard that reads it needs the whole file to run.
  */
-import { beforeAll as vitestBeforeAll } from 'vitest';
+import { beforeAll as vitestBeforeAll, beforeEach } from 'vitest';
 import {
   DEAD_MODULE_MARGIN_MS,
   DEFAULT_TIMEOUT_MS,
@@ -41,6 +43,14 @@ interface Noted {
 export function solverTimeoutFloor() {
   const hooks: Noted[] = [];
   const cases: Noted[] = [];
+  const undeclared: string[] = [];
+  // Every case of the file, whatever declared it: one that handed z3 a check and was not noted through `note` is named.
+  beforeEach((ctx) => {
+    const calls = z3CallCount();
+    return () => {
+      if (z3CallCount() !== calls && !cases.some((c) => c.name === ctx.task.name)) undeclared.push(ctx.task.name);
+    };
+  });
 
   /** Run a body, noting it when it handed z3 at least one check. */
   const noted = async <T>(into: Noted[], name: string, timeout: number | undefined, run: () => Promise<T> | T): Promise<T> => {
@@ -70,6 +80,7 @@ export function solverTimeoutFloor() {
         hooks: hooks.filter((h) => (h.timeout ?? HOOK_TIMEOUT_MS) < floorFor(h.budget)).map((h) => line(h, HOOK_TIMEOUT_MS)),
         hookNames: hooks.map((h) => h.name),
         caseCount: cases.length,
+        undeclared,
       };
     },
   };

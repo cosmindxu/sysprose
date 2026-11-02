@@ -1868,7 +1868,40 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
   if (left === undefined || right === undefined) return [];
   const definitions = sharedDefinitions(model);
   const out: Obligation[] = [];
-  for (const context of definitions.changingContexts(el, [left, right])) {
+  let contexts: ElementRecord[];
+  try {
+    contexts = definitions.changingContexts(el, [left, right]);
+  } catch (e) {
+    // A throw in the binding's own context walk (A.2.9): one refused row says which contexts are unread, in the
+    // sentence {@link instanceRows} files for a relation, never a throw out of the worklist.
+    const encodable: Encodable = {
+      reason: 'unread-definition',
+      detail: failedReadingSentence(effectiveQualifiedName(model, el.id), `the contexts that read it beside ${definitions.contextName(el.ownerId)}`, e),
+    };
+    return [
+      {
+        requirement: null,
+        shortId: '',
+        subject: null,
+        role: 'axiom',
+        source: 'bind',
+        element: { ...ref(model, el), id: `${el.id}@contexts`, qualifiedName: `${effectiveQualifiedName(model, el.id)} in its other contexts` },
+        expression: `${left} == ${right}`,
+        node: null,
+        vars: [],
+        sortPerVar: {},
+        scaled: false,
+        encodable,
+        nonlinear: false,
+        verifiedBy: [],
+        method: null,
+        evidence: [],
+        status: statusOf(encodable),
+        instance: { baseId: el.id, contextId: el.ownerId },
+      },
+    ];
+  }
+  for (const context of contexts) {
     // Listed only because a member reads its own value there: the context's
     // relations are read at its instance (E7), but no bind axiom is filed there
     // yet — sound, only weaker.
@@ -1960,8 +1993,8 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
  * How many bindings that join a feature of an enclosing instance are filed one below the other, each for the
  * instance of the usage that writes it inside the last ({@link instanceRelationRows}): definitions that hold each
  * other go on without end. One left unfiled past it that no later row of the worklist files is not carried, and the
- * rows that read what it joins are refused. The depth at which a binding is no longer read for a path of usages
- * (`MAX_BINDING_SEGMENTS` of the defining equations).
+ * rows that read what it joins are refused. It guards definitions that hold each other, not a path of usages: it is
+ * independent of `MAX_BINDING_SEGMENTS` of the defining equations (48), and deliberately left at 32.
  */
 const MAX_NESTED_BINDING_DEPTH = 32;
 

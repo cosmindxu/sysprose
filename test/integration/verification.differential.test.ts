@@ -1597,7 +1597,9 @@ describe('a value read where its inputs are changed is that context’s own, and
     expect((await bound(same, 'RS', 'w.sub.r.load')).slice(0, 2)).toEqual([[['optimum', null, 1]], 0]);
   });
 
-  it('files a binding it does not read under its own reason: a limit of this tool, exit 2, never forgiven (O9 S1)', async () => {
+  const UNREAD_BINDING = 'files a binding it does not read under its own reason: a limit of this tool, exit 2, never forgiven (O9 S1)';
+  // Drives z3 only where a backend is present, so the literal engine still runs without one: noted by hand.
+  it(UNREAD_BINDING, () => note(UNREAD_BINDING, 120_000, async () => {
     const text = `package PU {
     part def T0 { attribute load : ScalarValues::Real default = 1.0; }
     part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
@@ -1621,7 +1623,7 @@ describe('a value read where its inputs are changed is that context’s own, and
         }
       }
     }
-  });
+  }), 120_000);
 
   withZ3('refine reads a contract over an unread value as the feature it names', async () => {
     const pack = (top: string, cell: string) => `package RF {
@@ -3855,7 +3857,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   /**
    * A binding written ONCE, at package level, `depth − 1` usages down — `bind top.a.….a.L = X` into the T1
    * whose own `bind a.load = L` carries it into the T0 below: top.a.….a's load is X's 50, so its m2 is
-   * −40. Past 32 segments the package frame is the one dropped (`heldDefaults`' segment cap), and it is the
+   * −40. Past 48 segments the package frame is the one dropped (`heldDefaults`' segment cap), and it is the
    * one that carries the value — unlike `bindingChain`, whose every level re-binds.
    */
   const bindingChainPkg = (depth: number) => {
@@ -17461,7 +17463,8 @@ describe('the relation census — no relation leaves the pipeline unaccounted fo
     expect([...reconcile(ids, withRelations!.worklist).values()]).not.toContain('missing');
   });
 
-  it('walks a self-typed feature rather than dying on it', async () => {
+  const SELF_TYPED = 'walks a self-typed feature rather than dying on it';
+  it(SELF_TYPED, () => note(SELF_TYPED, 120_000, async () => {
     // `item def Person { timeslice asPresident : Person; }` names an unbounded
     // tower of dotted scopes. The numeric surface's collector was given a cycle
     // guard keyed on the owner when that fixture was filed; the worklist's was
@@ -17476,7 +17479,7 @@ describe('the relation census — no relation leaves the pipeline unaccounted fo
     expect(() => obligationsOf(model!), 'the worklist gatherer died on a self-typed feature').not.toThrow();
     const report = await verifyModel(model!, { engine: 'smt', sourceText: text });
     expect(report.exitCode, 'the run did not reach a verdict at all').toBeGreaterThanOrEqual(0);
-  }, 120_000);
+  }), 120_000);
 });
 
 describe('D5 — every hook and case that drives z3 outlasts the death guard', () => {
@@ -17486,9 +17489,10 @@ describe('D5 — every hook and case that drives z3 outlasts the death guard', (
       ctx.skip();
       return;
     }
-    const { cases, hooks, hookNames, caseCount } = shortOnes();
+    const { cases, hooks, hookNames, caseCount, undeclared } = shortOnes();
     expect.soft(cases, 'these cases drive z3 under a timeout shorter than the budget they handed it plus the margin plus 5 s').toEqual([]);
     expect.soft(hooks, 'these hooks hand z3 a check under a timeout shorter than the budget plus the margin plus 5 s').toEqual([]);
+    expect.soft(undeclared, 'these cases hand z3 a check without `withZ3`, so under vitest’s 5 s default').toEqual([]);
     // Not vacuous: the corpus hook drives z3 over every model, so the record that misses it is broken.
     expect.soft(hookNames.length, 'no hook was recorded: the record is broken').toBeGreaterThanOrEqual(1);
     expect.soft(caseCount, 'no case was recorded: the record is broken').toBeGreaterThan(10);

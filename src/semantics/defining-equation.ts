@@ -7843,7 +7843,7 @@ function heldDefaults(
  * value it gives in a context left out still reaches every feature joined to
  * its ends there, whatever binding joins them: CAP1's `bind Y = top.a.….a.load`,
  * read in the package, joins Y's `default = 1.0` to the load T1's `bind a.load
- * = L` gives X's 50 thirty-three usages down, a binding past the segment cap
+ * = L` gives X's 50 forty-nine usages down, a binding past the segment cap
  * (the package is the context left out). Read as one component in the package,
  * Y and the load's fall-through were two defaults that agree, and Y stood at
  * 1 (`Y >= 40.0` refuted where it holds). So the cap reaches the whole GLOBAL
