@@ -1021,8 +1021,10 @@ true values. What follows is what that branch and the review of it left open; en
       35), at 87e8c0f and at `collab-order` alike. The whole document goes as one message, which
       runs into the relay's message cap (64 MiB since collab-ui S2). Fix: write only what the reset changed (a diff of the snapshot
       against the document). The library is already out of the document (fence-roomlib). Pre-existing. [collab-order S2]
-- [ ] **Save the unnamed end by a name, instead of leaving it out (wrong answer: page and file
-      differ).** fence-save-name: Save writes a binding, connection, flow or interface end through
+- [ ] **Save the unnamed end by a name, instead of leaving it out (a loud note today; sound, only
+      weaker).** Rechecked read-only on a683620 (2026-11-02): 240 neighbour cases lost or moved no
+      statement and every end Save cannot name gets the `// Not saved:` note, so the page and the
+      saved file no longer disagree; only the full fix below is left. History: fence-save-name: Save writes a binding, connection, flow or interface end through
       an unnamed redefinition by its effective name where it is the FIRST member of its owner that
       goes by the name (the chain resolver's rule, `childNamed`), so a `duplicate` of `:>> M`, an
       unnamed redefinition before a named member of its name and an unnamed head of a path are saved
@@ -1057,7 +1059,8 @@ true values. What follows is what that branch and the review of it left open; en
       classes-3 waits for the wrong-answer count at or below 15. [classes-1, classes-2]
 
 - [ ] **z3 νZ answers a script over an Integer and a Real feature with a bound that a feasible point
-      lies beyond (wrong answer, FENCED).** `bounds` on a model that declares both an Integer and a
+      lies beyond (the wrong answer is fenced; the full reading is left, sound, only weaker).** The
+      original defect: `bounds` on a model that declares both an Integer and a
       Real feature published 'min x = infimum 3/4, never attained' where x = 0 is feasible, 'max x =
       supremum 0' where x = 1 is, and (no strict comparison needed) 'max x = 1 + epsilon' where 2 is
       attained. fence-bounds: such a script keeps an optimum only when two plain checks confirm it,
