@@ -7669,7 +7669,8 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
   it('points a violated instance at the line that makes it differ, never at the usage they share (PI-2)', async () => {
     // E's m1: each instance's finding pointed at Q's `part p : P`, the line every instance shares, so an
     // agent edited the definition. It points at the member stating the value the binding carries in (q1's
-    // `:>> L`, also where the relation reads a value derived from the bound one), else at the element the
+    // `:>> L`, also where the relation reads a value derived from the bound one), else at the redefinition
+    // that states the value breaking it (q2's `:>> extra = 20.0`, 194), else at the element the
     // instance is read in (q2's `part :>> p`), else at the instance's innermost own usage (r1, whose K the
     // bound L derives from — never the `sys` r1 and r2 share).
     const anchored = async (text: string) => {
@@ -7691,7 +7692,7 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
       ),
     ).toEqual([
       ['PA::q1::p', 4, 'attribute :>> L = 50.0'],
-      ['PA::q2::p', 5, 'part :>> p'],
+      ['PA::q2::p', 5, 'attribute :>> extra = 20.0'],
     ]);
     expect(
       await anchored(
@@ -7847,13 +7848,26 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         ['package F1f {', 'part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }', 'part p : P { attribute heavy :>> load = 50.0; }', '}'].join('\n'),
       ),
     ).toEqual(['p::heavy = 50 misses P::c (load <= 10.0)']);
-    // A value the instance's own element redefines (`extra`) is not among the reads: the relation is not mended by
-    // putting the one read back, so no read is said to break it and the first read a binding carried is named.
+    // A value the instance's own element redefines (`extra`) is not among the reads, yet putting it back to
+    // the relation's own value mends the relation where putting the one read (`load`) back does not (1 + 20 > 10):
+    // it is named, and the finding points at the redefinition that states it (194), not at `:>> L = 2.0`.
     expect(
       await findings(
         ['package G5 {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }', '}'].join('\n'),
       ),
-    ).toEqual([['G5::q2::p', 8, 'attribute :>> L = 2.0', 'L', " is violated in G5::q2::p: load = 2 — q2.L = 2 through G5::Q's `bind p.load = L`"]]);
+    ).toEqual([['G5::q2::p', 8, 'attribute :>> extra = 20.0', 'extra', ' is violated in G5::q2::p: extra = 20']]);
+    // A read that mends it alone is still named first (a redefinition beside it does not take its place), and a
+    // redefined value that is no plain number (derived, or a default the instance does not redefine) is not named.
+    expect(
+      await findings(
+        ['package G5b {', ...defs, '  part q2 : Q { attribute :>> L = 20.0; part :>> p { attribute :>> extra = 0.5; } }', '}'].join('\n'),
+      ),
+    ).toEqual([['G5b::q2::p', 8, 'attribute :>> L = 20.0', 'L', " is violated in G5b::q2::p: load = 20 — q2.L = 20 through G5b::Q's `bind p.load = L`"]]);
+    expect(
+      await findings(
+        ['package G5c {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; attribute K : ScalarValues::Real = 4.0; part :>> p { attribute :>> extra = 5.0 * K; } }', '}'].join('\n'),
+      ).then((f) => f.map((x) => x.slice(0, 2))),
+    ).toEqual([['G5c::q2::p', 8]]);
   });
 
   it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {
@@ -7897,8 +7911,9 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         '}',
       ]),
     ).toEqual([['constraint-by-instance', 'warning', 'K2::q', 5, 'attribute :>> L = 50.0']]);
-    // M7's q2 is read at its own instance (E7): its load of 50 breaks c, at q2's own usage (the K it sets
-    // reaches the load through Q's own `L = 2.0 * K`, which no member of q2 states).
+    // M7's q2 is read at its own instance (E7): its load of 50 breaks c, at the one member q2 states of what the
+    // load derives from (q2's `:>> K = 25.0`, reaching the load through Q's own `L = 2.0 * K`, 193); where q2 states
+    // two of them (M7b's K and J) no one line is the change, and it stays at q2's own usage.
     expect(
       await findings([
         'package M7 {',
@@ -7913,7 +7928,23 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         '  part q2 : Q { attribute :>> K = 25.0; }',
         '}',
       ]),
-    ).toEqual([['constraint-by-instance', 'warning', 'M7::q2', 10, 'part q2 : Q']]);
+    ).toEqual([['constraint-by-instance', 'warning', 'M7::q2', 10, 'attribute :>> K = 25.0']]);
+    expect(
+      await findings([
+        'package M7b {',
+        '  part def Q {',
+        '    attribute K : ScalarValues::Real default = 0.5;',
+        '    attribute J : ScalarValues::Real default = 0.0;',
+        '    attribute L : ScalarValues::Real = 2.0 * K + J;',
+        '    attribute load : ScalarValues::Real;',
+        '    bind load = L;',
+        '    constraint c { load <= 5.0 }',
+        '  }',
+        '  part q1 : Q;',
+        '  part q2 : Q { attribute :>> K = 25.0; attribute :>> J = 1.0; }',
+        '}',
+      ]),
+    ).toEqual([['constraint-by-instance', 'warning', 'M7b::q2', 11, 'part q2 : Q']]);
     // No binding carries the reading: a target over L that q redefines reads q's own L, and Q's asserted
     // `defL` read in Q2 reads L, the binding's source, not a value carried in. Both stay a target's.
     expect(
