@@ -1169,6 +1169,39 @@ true values. What follows is what that branch and the review of it left open; en
       Not generated: a unit on k, a bound end three or more redefinitions deep, a `calc` body read.
       [fence-seed]
 
+- [ ] **Read a single-quoted name in an expression as a reference, not a string (wrong answer on the
+      check lane; abstention elsewhere; genericity).** `attribute 'max load' = 25.0;
+      constraint c { 'max load' <= 10.0 }` reads ?/U/?/U where the same model with `maxload` reads
+      F/F/F/F; `attribute 'ref'; assert constraint { 'ref' == a * b }` (satisfiable: d free, the bare
+      spelling reads T) reads F on the check lane with a `constraint-violation` warning, because the
+      expression lexer takes a single-quoted unrestricted name for a string literal ("String literals
+      are not unit-aware expressions") and compares it with the number. SysML v2 spells names with
+      spaces or keyword-like words this way, so every constraint over such a feature is unjudged and
+      some are judged wrongly. Declarations and paths outside expressions already accept quoted
+      names. Probes: genericity/verify/q1.sysml, q1b.sysml, q2.sysml, q2b.sysml (scratchpad). Found
+      by the rename audit of 2026-11-02 (rename-kw experiment). [genericity audit]
+
+- [ ] **Abstentions left under the genericity audit of 2026-11-02 (rollup; sound, only weaker).**
+      Metamorphic audit over the 637-model corpus (rename: 636 transformed; reorder: 634; wrap and
+      instance: 637; identity run byte-identical; no decided verdict changed except the quoted-name
+      entry above). (1) Order: which of two contexts of one constraint abstains depends on source
+      order (r16-subject-dflt: `requirement r : R { subject s = p }` beside `satisfy R by p`; both
+      are refuted by the model's meaning, each order decides one and abstains on the other); the
+      numeric `solveFeasible` of brief-targets-by-layer flips from decided feasible to undecided when
+      the members are reversed (propagation order; iteration counts move 2 to 3); the one code
+      reported for a group with two causes (refinement-sibling-shortfall) follows source order; the
+      per-instance rows are capped at the first 256 in source order. (2) Instance: a package-level
+      `assert constraint px { h.p.x == 3.0 }` that imposes a value through a part-def instance
+      (`part def H { part p : P; } part h : H;`) is not imposed, so `h.p.y == 7.0` reads ? where the
+      same model with `part h { part p : P; }` reads violated; `bind w = hold_p.p.load` through a
+      part-def instance is not followed (r14: w = 50 lost). (3) Label-only differences: group and
+      instance labels, evidence footprint digests of anonymous binding connectors, the order of two
+      names in a reason string. (4) Measures are chosen by NAME: `MOE_NAME_RE = /moe|measure|objective/i`
+      in src/semantics/solver.ts, so renaming `totalObjective` drops its analysis-report measure
+      row (not a verdict cell; a documented heuristic, to be replaced by an explicit marker).
+      Probes: scratchpad genericity/{rename,reorder,wrap-and-instance}/ (harness batch.sh,
+      harness.sh, compare.py; repros in the reports). [genericity audit]
+
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
       findings in different orders (probe wave3-probes/fence-order/gen.mts with the `.sort()`
