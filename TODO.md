@@ -1142,6 +1142,16 @@ true values. What follows is what that branch and the review of it left open; en
       Probes: scratchpad genericity/{rename,reorder,wrap-and-instance}/ (harness batch.sh,
       harness.sh, compare.py; repros in the reports). [genericity audit]
 
+- [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
+      parallel machine where one region refuses and the others simply come to rest without refusing,
+      `stopsRun`, `atRest` and `complete` stay false even after more ticks, so Play runs on to the
+      sample cap (probe parser-pass-scratch/review/probe4.mts); no verdict is involved. (2) 162,
+      195 and 280 were closed by a documented decision (docs/06 section 8.16 and the USER-GUIDE),
+      not by code: the completion refusal for a count past the budget is permanent, the livelock
+      pass cost (about 20%, 240 to 290 ms on the 9,641-configuration model) is accepted, and the
+      Simulate trace stopping at a composite step's holding machine is the intended behaviour;
+      re-add the entry with its original title to reverse one. [parser-pass]
+
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
       findings in different orders (probe wave3-probes/fence-order/gen.mts with the `.sort()`
@@ -1286,23 +1296,6 @@ tagged `[O1 …]` are what its steps and reviews left open.
       (ids, `hierarchyPath`, atoms, the edge census, what a redefined state or transition means, the
       properties a base carries, the names a report prints), with the witness replay green over
       them. [behaviour-small S1]
-- [ ] **Decide a count past the budget where a trigger-less dwell follows (optional).** Since
-      `behaviour-rest` S1 a search on a machine that names no trigger ends each run where the chase
-      budget stops it (`budgetEndsRun`, `src/semantics/mc/patterns.ts`; docs/06 §8.12). The
-      exception is a walkable trigger-less transition that carries a numeric `attrs.after` (set only
-      through the API): a clock advance fires it where the chase stopped and the chase goes on (on
-      `a ⇄ b` with `a -> b` such a dwell, one advance of 5 takes the run into `b` 65 times), so the
-      search still refuses the step past the budget (`completion`, inconclusive). Done when such a
-      search carries the chase position and offers the clock advance where a chase stops, or the
-      refusal is documented as permanent. [behaviour-rest S1]
-- [ ] **Name every region's refusal on a parallel machine (optional).** `StateRunResult.refused`
-      names the first region's refusal only. Listing the others needs `refusedStepSentence`
-      reworded, because "the machine's other regions run on" is false once every region has refused;
-      it also needs `SimRefusal.stopsRun` (true only for a non-parallel machine today) to read all
-      the regions, so Play stops when every region has stopped. Done when `refused` lists every
-      region's refusal, with a sentence and `stopsRun` that read all the regions, or the parallel
-      interpreter interleaves its regions. No verdict stands on it, since the walk refuses every
-      parallel machine. [behaviour-rest S1; behaviour-small S2]
 - [ ] **Let the Simulate trace of a composite run on its own step out into its holding machine
       (optional, low).** Since behaviour-small S1 the Simulate button's trace of a composite run on
       its own stops at a step that leaves the composite for a state of the machine that holds it (it
@@ -1310,20 +1303,6 @@ tagged `[O1 …]` are what its steps and reviews left open.
       run take the same step as an ordinary step (the `exits` row of the semantic profile does not
       say it, `docs/06` §8.14 does). No corpus, example or v9 model has such a step. Decide whether
       the Simulate trace should follow the holding machine there. [behaviour-small S1]
-- [ ] **Livelock-pass cost.** `reach` is about 20% slower than at `5943654` on a 9,641-configuration
-      machine (about 240 to 290 ms) from the livelock pass (`docs/06` §8.8); measure paired on an
-      idle machine and decide whether to accept it. [reporting-residuals S3]
-
-## Solver and speed — review 2026-10-14
-
-From the review of the speed2 branch (66704a8, 79f7350, merged by 607e783): no verdict, code, exit
-code or value changed, and the claimed gains reproduce. These three are what it left.
-
-
-## Docs, tutorials and what waits on others — review 2026-10-14
-
-User guide and tutorials that are wrong, and what waits on something outside the code.
-
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
       groups.** The rule (`src/validation/rules.ts:1118`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
