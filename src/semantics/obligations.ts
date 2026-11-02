@@ -289,7 +289,7 @@ function noFormalClauseDetail(model: Model, requirementId: ElementId, axioms: re
   if (asserted.length === 0) return 'the requirement carries prose and no constraint body, so there is nothing to encode';
   return (
     'the requirement states no `require` or `assume` clause, so there is nothing to encode — ' +
-    `${asserted.map((o) => `its asserted \`${o.expression}\` (${o.element.qualifiedName})`).join(', ')} ` +
+    `${asserted.map((o) => `its asserted \`${o.expression.replace(/\s+/g, ' ')}\` (${o.element.qualifiedName})`).join(', ')} ` +
     `${asserted.length === 1 ? 'is a fact of the model, an axiom' : 'are facts of the model, axioms'} the check ` +
     'judges and the SMT engine asserts, not a clause of the requirement'
   );

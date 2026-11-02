@@ -48,10 +48,10 @@
  * it is reading.
  *
  * The report goes to stdout and everything about the FILE goes to stderr, for
- * every exit code (the one exception is that `degraded` line on a judging
- * report): a file that parsed with warnings still had something wrong with it,
- * and a reader who is never told is a reader confidently analysing a file the
- * tool did not recognise.
+ * every exit code (the exceptions are that `degraded` line on a judging
+ * report and on `evidence-status`): a file that parsed with warnings still
+ * had something wrong with it, and a reader who is never told is a reader
+ * confidently analysing a file the tool did not recognise.
  *
  * FAIL DIRECTION. Three refusals, each replacing an answer that would read as
  * true: a model that PARSED and produced no elements exits 2 rather than
@@ -1336,7 +1336,7 @@ function emptyClauseLine(model: Model, contract: Contract): string {
       .filter((c) => isAsserted(c) && c.ownerId != null && owners.has(c.ownerId) && typeof c.attrs.expression === 'string');
     if (asserted.length > 0) {
       return (
-        `    no formal clause: its asserted ${asserted.map((c) => `\`${String(c.attrs.expression).trim()}\``).join(', ')} ` +
+        `    no formal clause: its asserted ${asserted.map((c) => `\`${String(c.attrs.expression).replace(/\s+/g, ' ').trim()}\``).join(', ')} ` +
         `${asserted.length === 1 ? 'is a fact of the model, an axiom' : 'are facts of the model, axioms'} the check judges, ` +
         'not a clause of the requirement — nothing to encode as one'
       );
