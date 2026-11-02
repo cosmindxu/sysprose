@@ -96,6 +96,14 @@ describe('relations — lowering a `[unit]` literal', () => {
     expect(literal.dimension).toEqual(dim({ M: 1 }));
   });
 
+  it('a quoted name is a name: a digit and a bracket inside it are no literal and no unit', () => {
+    const lowered = lowerUnitLiterals("'rev 2 [x]' <= 5 [kg] and 'a [m]' > 1");
+    expect(lowered.literals.size).toBe(1);
+    expect(lowered.text).toContain("'rev 2 [x]'");
+    expect(lowered.text).toContain("'a [m]'");
+    expect(lowered.resolved).toBe(true);
+  });
+
   it('a prefixed literal is folded to its SI magnitude, not left in its own unit', () => {
     const lowered = lowerUnitLiterals('range >= 5 [km]');
     const [, literal] = [...lowered.literals][0];

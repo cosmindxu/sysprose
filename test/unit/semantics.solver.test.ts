@@ -1469,13 +1469,14 @@ describe('solve — the order of the text decides no design equation', () => {
     // and `t1 { p.m == 3.0 }` was not solved for. A name written outside the brackets is still read.
     const P = (e: string) => `package US { part def P { attribute L : ScalarValues::Real; attribute m : ScalarValues::Real; attribute M : ScalarValues::Real;
       assert constraint e { ${e} } } part p : P; constraint t1 { p.m == 3.0 } constraint t2 { p.M == 1.0 } }`;
-    for (const e of ['M ** 2.0 == 4.0 [m]', 'M == max(L, 4.0 [m])', 'M ** 2.0 == 4.0 and "m" != "n"', "M ** 2.0 == 4.0 and 'm' != 'n'", 'M ** 2.0 == 4.0 [m] + 2.0 [m]']) {
+    for (const e of ['M ** 2.0 == 4.0 [m]', 'M == max(L, 4.0 [m])', 'M ** 2.0 == 4.0 and "m" != "n"', 'M ** 2.0 == 4.0 [m] + 2.0 [m]']) {
       const r = await rows(P(e));
       expect([r.get('t1')!.result, r.get('t1')!.imposed], e).toEqual(['satisfied', true]);
       expect([r.get('t2')!.result, r.get('t2')!.imposed], e).toEqual(['unknown', undefined]);
       expect(r.get('t2')!.reason, e).toContain('an assert constrains it in a form the numeric solve does not read');
     }
-    for (const e of ['m ** 2.0 == 4.0 [m]', 'M ** 2.0 == m']) {
+    // A single quote opens a NAME, not a string: `'m'` is the feature m, which the assert then constrains.
+    for (const e of ['m ** 2.0 == 4.0 [m]', 'M ** 2.0 == m', "M ** 2.0 == 4.0 and 'm' != 'n'"]) {
       const r = await rows(P(e));
       expect([r.get('t1')!.result, r.get('t1')!.imposed], e).toEqual(['unknown', undefined]);
     }

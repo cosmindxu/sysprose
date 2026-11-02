@@ -1215,7 +1215,7 @@ const unknownUnit: ValidationRule = {
       const isStringLiteral =
         value !== undefined &&
         value.length >= 2 &&
-        ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")));
+        (value.startsWith('"') && value.endsWith('"'));
       if (
         value &&
         !isStringLiteral &&

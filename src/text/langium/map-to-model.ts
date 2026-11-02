@@ -295,6 +295,9 @@ function readableMultiplicities(mults: Multiplicity[] | undefined): string[] {
   return (mults ?? []).map(formatMultiplicity).filter((m): m is string => m !== undefined);
 }
 
+/** A satisfier written as a feature chain: two or more segments, each a plain name or a single-quoted unrestricted name. */
+const SATISFIER_CHAIN = /^(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*')(?:\.(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*'))+$/;
+
 /** Verbatim source text of an expression node (trimmed), for free-form fragments. */
 function exprText(expr: Expression | undefined): string {
   return (expr?.$cstNode?.text ?? '').trim();
@@ -1449,7 +1452,7 @@ class Mapper {
           // A satisfier named by a feature CHAIN (`satisfy R by q1.p`) is q1's
           // p, which the resolved feature (Q's p) no longer says: the chain is
           // kept for the verification lane, which reads R at that instance.
-          const chain = el.eClass === 'Satisfy' && /^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$/.test(sref.trim());
+          const chain = el.eClass === 'Satisfy' && SATISFIER_CHAIN.test(sref.trim());
           this.model.setAttrs(el.id, { sourceRef: undefined, ...(chain ? { sourceChain: sref.trim() } : {}) });
           sourceResolved = true;
           // A `:>`-family relationship built while its source name was still

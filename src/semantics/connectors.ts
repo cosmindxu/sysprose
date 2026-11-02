@@ -385,10 +385,7 @@ function literalValueOf(feat: ElementRecord | undefined): unknown {
   if (typeof raw === 'number' || typeof raw === 'boolean') return raw;
   if (typeof raw !== 'string') return undefined;
   const s = raw.trim();
-  if (
-    s.length >= 2 &&
-    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-  ) {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
     return s.slice(1, -1);
   }
   // A self-contained literal expression (e.g. "5", "true") with no references.

@@ -88,7 +88,7 @@ import {
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
-import { DOUBLE_DIGITS, significantDigitsOf } from './expr';
+import { DOUBLE_DIGITS, readQuotedName, significantDigitsOf } from './expr';
 import {
   addRationals,
   compareRationals,
@@ -601,7 +601,7 @@ function lexQ(src: string): QTok[] {
     // kind), but it must be lexed as ONE token: `"see table [3]"` carries a
     // bracket that is text, not a unit reference, and `unknown-unit` reads
     // the token stream to find the units a body names.
-    if (c === '"' || c === "'") {
+    if (c === '"') {
       let j = i + 1;
       while (j < n && src[j] !== c) j++;
       if (j >= n) throw new SyntaxError('Unterminated string literal');
@@ -638,12 +638,31 @@ function lexQ(src: string): QTok[] {
       i = j;
       continue;
     }
-    // Identifier / dotted feature chain / keyword.
-    if (isIdentStart(c)) {
-      let j = i + 1;
-      while (j < n && isIdentPart(src[j])) j++;
-      const word = src.slice(i, j);
-      toks.push(Q_KEYWORDS.has(word) ? { t: 'kw', v: word } : { t: 'name', v: word });
+    // Identifier / dotted feature chain / keyword. A chain's segment may be a
+    // single-quoted unrestricted name (`'max load'.x`, `a.'c d'`): a name
+    // reference, unquoted here — a single quote never opens a string — and a
+    // lone quoted name is never a keyword (`'in'` names a feature).
+    if (isIdentStart(c) || c === "'") {
+      let j = i;
+      let word = '';
+      let quoted = false;
+      let closed = false; // just after a quoted segment: only a `.` continues the chain (`'a b'and` is two tokens)
+      while (j < n) {
+        if (src[j] === "'" && (j === i || src[j - 1] === '.')) {
+          const q = readQuotedName(src, j);
+          word += q.name;
+          j = q.end;
+          quoted = true;
+          closed = true;
+        } else if (closed && src[j] !== '.') {
+          break;
+        } else if (j === i ? isIdentStart(src[j]) : isIdentPart(src[j])) {
+          word += src[j];
+          j++;
+          closed = false;
+        } else break;
+      }
+      toks.push(Q_KEYWORDS.has(word) && !quoted ? { t: 'kw', v: word } : { t: 'name', v: word });
       i = j;
       continue;
     }
@@ -1937,7 +1956,7 @@ function deriveFeatureUncached(
   if (typeof raw === 'boolean') return { claim: 'unknown', b: raw };
   if (typeof raw !== 'string' || raw.trim() === '') return claimOnly('unknown', 'unresolved');
   const s = raw.trim();
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+  if (s.startsWith('"') && s.endsWith('"')) {
     return claimOnly('unknown', 'not-quantity');
   }
   const flight = inst !== undefined ? `${id}@${inst}` : at !== undefined ? instanceKey(id, at) : id;

@@ -85,9 +85,13 @@ export interface LoweredBody {
  * engines that predate it.)
  */
 const UNIT_LITERAL_RE =
-  /(^|[^A-Za-z0-9_.])((?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*\[([^\]]*)\]/g;
-/** Any bracket group (used to spot a unit on a non-literal operand). */
-const ANY_BRACKET_RE = /\[[^\]]*\]/;
+  /'(?:\\.|[^'\\])*'|(^|[^A-Za-z0-9_.])((?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*\[([^\]]*)\]/g;
+/**
+ * Any bracket group (used to spot a unit on a non-literal operand). A single-quoted
+ * unrestricted name is a NAME and is matched first, so `'rev 2 [x]'` is no literal
+ * and no unit: both patterns step over it whole.
+ */
+const ANY_BRACKET_RE = /'(?:\\.|[^'\\])*'|\[[^\]]*\]/g;
 
 export function lowerUnitLiterals(raw: string): LoweredBody {
   const literals = new Map<string, LoweredLiteral>();
@@ -98,7 +102,8 @@ export function lowerUnitLiterals(raw: string): LoweredBody {
   // feature name (`__uq0` is a legal SysML name, however unlikely).
   let prefix = '__uq';
   while (raw.includes(prefix)) prefix += 'q';
-  let text = raw.replace(UNIT_LITERAL_RE, (_m, before: string, magnitude: string, unit: string) => {
+  let text = raw.replace(UNIT_LITERAL_RE, (_m, before: string | undefined, magnitude: string, unit: string) => {
+    if (before === undefined) return _m; // a quoted name, kept whole
     hadUnit = true;
     const u = resolveUnit(unit.trim());
     // An offset scale cannot be folded to a magnitude (10 °C is not 10 K), and
@@ -118,13 +123,13 @@ export function lowerUnitLiterals(raw: string): LoweredBody {
     });
     return `${before}${name}`;
   });
-  if (ANY_BRACKET_RE.test(text)) {
+  if ([...text.matchAll(ANY_BRACKET_RE)].some((m) => m[0].startsWith('['))) {
     // A `[unit]` on something other than a literal — `(a + b) [m]`. The shape
     // is kept parseable so the relation can still be REPORTED, but nothing
     // about it may be judged.
     hadUnit = true;
     resolved = false;
-    text = text.replace(new RegExp(ANY_BRACKET_RE.source, 'g'), ' ');
+    text = text.replace(ANY_BRACKET_RE, (m) => (m.startsWith('[') ? ' ' : m));
   }
   return { text, literals, hadUnit, resolved };
 }

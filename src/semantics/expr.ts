@@ -7,8 +7,9 @@
  * evaluator was copied). It implements the operator set and precedence of the
  * OMG KerML expression notation faithfully enough for the semantics engine:
  *
- *  - literals: numbers, double/single-quoted strings, `true` / `false`, `null`;
- *  - dotted feature-chain references `a.b.c`;
+ *  - literals: numbers, double-quoted strings, `true` / `false`, `null`;
+ *  - dotted feature-chain references `a.b.c`, whose segments may be single-quoted
+ *    unrestricted names (`'max load'.x`): a single quote never opens a string;
  *  - unary `-` `+` `not`;
  *  - binary `+ - * / % ^`, comparisons `< <= > >= == !=`,
  *    logical `and or xor implies`;
@@ -20,6 +21,7 @@
  * rather than throwing).
  */
 
+import { unquoteName } from '@core/index';
 import type { FactorTerm } from './units';
 
 /* ─────────────────────────────── AST ─────────────────────────────────── */
@@ -105,6 +107,57 @@ const MULTI_OPS = ['<=', '>=', '==', '!='];
 const SINGLE_OPS = new Set(['+', '-', '*', '/', '%', '^', '<', '>']);
 
 /**
+ * Read the single-quoted unrestricted name that opens at `src[i]` (`'max load'`,
+ * `'ref'`): the notation's spelling of a name with spaces, symbols or a
+ * keyword-like word, and in an expression a NAME REFERENCE — never a string
+ * (a string is double-quoted). Returns the name unquoted and unescaped, the
+ * form `declaredName` holds, and the index after the closing quote.
+ *
+ * A name holding `.`, `:` or nothing at all is refused (a SyntaxError, so the
+ * expression is not read): the evaluators carry a reference as its segments
+ * joined by `.`, in which `'a.b'` and `a.b` would be one text.
+ */
+export function readQuotedName(src: string, i: number): { name: string; end: number } {
+  let j = i + 1;
+  while (j < src.length && src[j] !== "'") j += src[j] === '\\' ? 2 : 1;
+  if (j >= src.length) throw new SyntaxError(`Unterminated quoted name at ${i}`);
+  const name = unquoteName(src.slice(i, j + 1)) ?? '';
+  if (name === '' || /[.:]/.test(name)) {
+    throw new SyntaxError(`A quoted name holding '.', ':' or nothing is not read in an expression: ${src.slice(i, j + 1)}`);
+  }
+  return { name, end: j + 1 };
+}
+
+/**
+ * A name (or dotted path of names) in the form an expression text spells it:
+ * each segment bare where it is a plain identifier the lexer does not take for a
+ * keyword, single-quoted otherwise (`max load` → `'max load'`, `in` → `'in'`).
+ * For the readers that BUILD an expression from names the model holds unquoted
+ * (`<end> == <end>` of a binding) and parse it again; a name that is already
+ * plain comes back unchanged.
+ */
+export function exprRef(path: string): string {
+  return path
+    .split('.')
+    .map((seg) =>
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(seg) && !KEYWORDS.has(seg) ? seg : `'${seg.replace(/[\\']/g, '\\$&')}'`,
+    )
+    .join('.');
+}
+
+const WRITTEN_CHAIN_RE = /(?<![\w.])(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*')(?:\.(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*'))*/g;
+
+/**
+ * The dotted chains a text writes, as written (`a.'b c'`): for the readers that
+ * scan a body they could not parse, where a segment is a plain identifier or a
+ * single-quoted unrestricted name. Cut one into its unquoted segments with
+ * `refSegments`.
+ */
+export function writtenChains(text: string): string[] {
+  return text.match(WRITTEN_CHAIN_RE) ?? [];
+}
+
+/**
  * Lex an expression string into tokens. A '.' between names is emitted as an
  * `op` token so the parser's dotted feature-chain loop can consume it; a '.'
  * that begins a number (e.g. `.5`) is folded into the number literal.
@@ -129,8 +182,15 @@ function tokenize(src: string): Tok[] {
       i++;
       continue;
     }
-    // String literal (double or single quoted).
-    if (c === '"' || c === "'") {
+    // A single quote opens an unrestricted NAME (a reference), not a string.
+    if (c === "'") {
+      const q = readQuotedName(src, i);
+      toks.push({ t: 'name', v: q.name });
+      i = q.end;
+      continue;
+    }
+    // String literal (double quoted).
+    if (c === '"') {
       const quote = c;
       let j = i + 1;
       let out = '';

@@ -3425,6 +3425,29 @@ describe('useAppStore — interfaces drawn port to port, tags and subjects', () 
     expect(st().model.all().some((e) => e.eClass === 'InterfaceUsage')).toBe(false);
   });
 
+  it('connectPorts ends an interface on parts and ports named with a space or a keyword-like word (quoted names)', () => {
+    load(`package R {
+    port def P;
+    interface def I { end a : P; end b : ~P; }
+    part def M { out port 'out o' : P; in port 'in' : ~P; }
+    part 'part m1' : M;
+    part 'ref' : M;
+  }`);
+    const id = st().connectPorts(
+      'InterfaceUsage',
+      { owner: byQn('R::part m1').id, port: byQn('R::M::out o').id },
+      { owner: byQn('R::ref').id, port: byQn('R::M::in').id },
+    );
+    expect(text()).toContain("interface connect 'part m1'.'out o' to 'ref'.'in';");
+    // It re-parses to the same wiring.
+    const again = parseModel(text()).model;
+    const reparsed = again.all().find((e) => e.eClass === 'InterfaceUsage')!;
+    expect(again.qualifiedName(reparsed.source![0]!)).toBe('R::part m1::out o');
+    expect(again.qualifiedName(reparsed.target![0]!)).toBe('R::ref::in');
+    st().undo();
+    expect(st().model.get(id)).toBeUndefined();
+  });
+
   it('connectPorts ends on a part\'s own port directly', () => {
     load(WIRING);
     st().connectPorts('ConnectionUsage', { port: byQn('R::m3::q').id }, { owner: byQn('R::m1').id, port: byQn('R::M::i').id });

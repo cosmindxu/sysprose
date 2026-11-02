@@ -135,6 +135,7 @@ import {
   resolveUnitRef,
   siValue,
   UNIT_AWARE_OPERATORS,
+  quantityRefsIn,
   unitRefsIn,
   valueUnitRefusal,
 } from '../../src/semantics/units-eval';
@@ -746,6 +747,18 @@ describe('comparison tolerance and offset units', () => {
       fallback: (name) => (name === 'y' ? { magnitude: 1, dimension: dim({ M: 1 }), unit: 'kg' } : undefined),
     });
     expect(r.verdict).toBe('satisfied');
+  });
+
+  it('quantityRefsIn reads a single-quoted unrestricted name as a reference, in a body with a unit', () => {
+    expect(quantityRefsIn("'max load' <= 10.0 [kg]")).toEqual(['max load']);
+    expect(quantityRefsIn("'a b'.'c d' + x.'in' * 2.0 [m]")).toEqual(['a b.c d', 'x.in']);
+    expect(quantityRefsIn("'in' >= 1.0 [g] and 'not' < 2.0 [g]")).toEqual(['in', 'not']);
+    expect(quantityRefsIn('"max load" <= 10.0 [kg]')).toBeUndefined(); // a double-quoted string is no quantity
+    expect(quantityRefsIn("'a.b' <= 10.0 [kg]")).toBeUndefined();
+    expect(quantityRefsIn("'x'and 'y'")).toEqual(['x', 'y']); // a closing quote ends the name: `and` is a keyword
+    expect(quantityRefsIn("'a'b")).toBeUndefined(); // and `b` is not part of it
+    // a bracket inside a quoted name is no unit
+    expect(unitRefsIn("'rev 2 [x]' <= 10.0 [kg]")).toEqual(['kg']);
   });
 
   it('unitRefsIn collects the bracket units of an expression text', () => {

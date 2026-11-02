@@ -2021,10 +2021,7 @@ function rawExpressionOf(f: ElementRecord): string | undefined {
   const s = raw.trim();
   if (s === '') return undefined;
   // A bare quoted string is a literal, not an expression to (re)evaluate.
-  if (
-    s.length >= 2 &&
-    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-  ) {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
     return undefined;
   }
   return s;

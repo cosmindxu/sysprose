@@ -56,7 +56,7 @@
  * implementation (no third-party solver was copied).
  */
 
-import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/index';
+import { type ElementId, type ElementRecord, type Model, isUsage, refSegments } from '@core/index';
 import {
   evaluateDecided,
   statedRational,
@@ -64,7 +64,7 @@ import {
   writtenRational,
   type ExactScope,
 } from './exact';
-import { parseExpr, evaluate, type ExprNode } from './expr';
+import { parseExpr, evaluate, writtenChains, type ExprNode } from './expr';
 import { isBindingEdge, propagateValues } from './connectors';
 import {
   anchorFor,
@@ -596,8 +596,8 @@ function relationReads(model: Model, el: ElementRecord, instance?: string): Elem
   return relationVarsOf(node, keyed?.nameToId ?? scope);
 }
 
-/** A string literal in a relation body, either quote (a backslash escapes the next character). */
-const STRING_LITERAL_RE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+/** A string literal in a relation body (a backslash escapes the next character): double-quoted, a single quote opens a NAME. */
+const STRING_LITERAL_RE = /"(?:\\.|[^"\\])*"/g;
 
 /**
  * The names a relation body that does not parse writes (`M == max(L, 20.0)`,
@@ -612,9 +612,9 @@ const STRING_LITERAL_RE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
 function writtenNames(raw: string): ExprNode | undefined {
   let node: ExprNode | undefined;
   const lowered = lowerUnitLiterals(raw.replace(STRING_LITERAL_RE, ' '));
-  for (const text of new Set(lowered.text.match(/(?<![\w.])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g) ?? [])) {
+  for (const text of new Set(writtenChains(lowered.text))) {
     if (lowered.literals.has(text)) continue;
-    const ref: ExprNode = { kind: 'ref', path: text.split('.') };
+    const ref: ExprNode = { kind: 'ref', path: refSegments(text) };
     node = node ? { kind: 'binary', op: '+', left: node, right: ref } : ref;
   }
   return node;
@@ -1032,10 +1032,7 @@ function assignmentEquation(
   // solved `a = "abc"` from `e == a * 2.0` (4.5 beside a check `e == 9.0`, or
   // whatever a least-squares step picked once the check no longer stood in for
   // the definition). Nothing reads it, so nothing is solved from it.
-  if (
-    s.length >= 2 &&
-    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-  ) {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
     onRefused?.();
     return undefined;
   }
@@ -1363,7 +1360,7 @@ function valueEquation(
   const raw = statedValueOf(model, source);
   if (typeof raw !== 'string') return undefined;
   const s = raw.trim();
-  if (s === '' || /^(["']).*\1$/s.test(s)) return undefined;
+  if (s === '' || /^".*"$/s.test(s)) return undefined;
   if (source.eClass === 'CalculationUsage' && isParameterisedCalculation(model, source)) {
     onRefused?.();
     return undefined;

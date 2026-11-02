@@ -112,7 +112,7 @@ import {
   usageOwnedRefusal,
   type InstanceGroup,
 } from './defining-equation';
-import { DOUBLE_DIGITS, significantDigitsOf, type ExprNode } from './expr';
+import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import { foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
 import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
@@ -893,10 +893,7 @@ function featureValueAxiom(
   if (typeof raw !== 'string') return undefined;
   const text = raw.trim();
   if (text === '') return undefined;
-  if (
-    text.length >= 2 &&
-    ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'")))
-  ) {
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
     return undefined;
   }
   // `(k * 2.0) [GiB]` is `k * 2.0` in GiB: the unit beside the expression is
@@ -1534,7 +1531,7 @@ function bindingRows(model: Model, el: ElementRecord, memo: DerivationMemo): Obl
     const nameToId = new Map<string, ElementId>([[name, el.id]]);
     reading = gateRelation(model, node, nameToId, NO_MARKERS, false, memo, true, `${name} == ${text ?? String(raw)}`);
     verbatim = true;
-  } else if (typeof raw === 'string' && raw.trim() !== '' && !/^(["']).*\1$/s.test(raw.trim())) {
+  } else if (typeof raw === 'string' && raw.trim() !== '' && !/^".*"$/s.test(raw.trim())) {
     reading = readRelation(model, { ...el, ownerId: context.id }, raw.trim(), memo, name, binding);
   } else {
     return [];
@@ -1625,7 +1622,7 @@ function literalEquality(
   literal: string,
   memo: DerivationMemo,
 ): RelationReading {
-  const text = `${name} == ${literal}`;
+  const text = `${exprRef(name)} == ${literal}`;
   const body = parseRelationBody(text);
   const nameToId = new Map<string, ElementId>([[name, featureId]]);
   if (!body || (body.hadUnit && !body.resolved)) {
@@ -1847,7 +1844,7 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
     const reading = readRelation(
       model,
       { ...el, ownerId: context.id },
-      `${spelledIn(definitions, context.id, left)} == ${spelledIn(definitions, context.id, right)}`,
+      `${exprRef(spelledIn(definitions, context.id, left))} == ${exprRef(spelledIn(definitions, context.id, right))}`,
       memo,
       undefined,
       undefined,
@@ -1899,7 +1896,7 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
   const read = definitions.redefinedValueOf(el);
   if (name === undefined || !read) return undefined;
   const text = statedValueOf(model, read.target);
-  if (typeof text !== 'string' || text.trim() === '' || /^(["']).*\1$/s.test(text.trim())) return undefined;
+  if (typeof text !== 'string' || text.trim() === '' || /^".*"$/s.test(text.trim())) return undefined;
   // Read as the copy's own value: the copy is the feature the equality names.
   const reading = readRelation(model, { ...read.target, id: el.id, ownerId: el.ownerId }, text.trim(), memo, name, read.target);
   const encodable = unreadAxiom('axiom', reading.encodable, reading.unread);
@@ -2175,7 +2172,7 @@ function instanceValueRow(
   if (source.eClass === 'CalculationUsage' && isParameterisedCalculation(model, source)) return undefined;
   let valueSource = source;
   let text = statedValueOf(model, source);
-  if (typeof text !== 'string' || text.trim() === '' || /^(["']).*\1$/s.test(text.trim())) {
+  if (typeof text !== 'string' || text.trim() === '' || /^".*"$/s.test(text.trim())) {
     // A numeric or boolean literal stated directly (a `default` this instance
     // reads, no binding reaching it) is the instance variable's value too.
     const literal = source.attrs.value;
@@ -2274,11 +2271,11 @@ function instanceBindRow(
   const up = ends === undefined && (left === undefined) !== (right === undefined) ? enclosedBindingFrame(model, el, holder, path) : undefined;
   let reading: RelationReading;
   if (up !== undefined) {
-    const text = `${spelledIn(definitions, up.reader, up.ends[0])} == ${spelledIn(definitions, up.reader, up.ends[1])}`;
+    const text = `${exprRef(spelledIn(definitions, up.reader, up.ends[0]))} == ${exprRef(spelledIn(definitions, up.reader, up.ends[1]))}`;
     reading = readRelation(model, { ...el, ownerId: up.reader }, text, memo, undefined, undefined, up.instance);
   } else if (left !== undefined && right !== undefined) {
     // Each end as the context spells it: q's `pp.load` where `part pp :>> p` renames Q's p (H5, E8).
-    const text = `${spelledIn(definitions, context.id, left)} == ${spelledIn(definitions, context.id, right)}`;
+    const text = `${exprRef(spelledIn(definitions, context.id, left))} == ${exprRef(spelledIn(definitions, context.id, right))}`;
     reading = readRelation(model, { ...el, ownerId: context.id }, text, memo, undefined, undefined, path);
   } else {
     const own = left ?? right;

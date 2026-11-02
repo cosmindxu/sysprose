@@ -198,6 +198,15 @@ attribute endurance : ISQ::DurationValue = battery.capacity * usableEnergyFracti
 That last line is a **derived attribute**: an expression over other attributes,
 recomputed by the solver rather than stored.
 
+**Names with a space, a symbol or a keyword-like word.** The notation writes such a
+name in single quotes, and it is a name wherever a plain one is: a declaration, a path
+(`'battery pack'.capacity`), a binding end, a redefinition (`:>> 'max load'`) and an
+expression, where `'max load' <= 10.0 [kg]`, `'ref' == a * b` and `'in' + 'default'` read
+the features of those names, exactly as `maxLoad <= 10.0 [kg]` would. A string is
+double-quoted, so `"max load"` stays text. The one name an expression cannot hold is a
+quoted one that itself contains a `.` or a `:` (`'a.b'`), which a path would cut in two: every
+surface abstains on an expression holding one, and the check and numeric rows say why.
+
 **Ports and connections.** A port is a typed interaction point with a direction;
 a connection wires two of them.
 

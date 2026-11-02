@@ -111,10 +111,7 @@ function interpretLiteral(raw: unknown): Literal {
   if (typeof raw === 'boolean') return { kind: 'boolean', value: raw };
   if (typeof raw === 'string') {
     const s = raw.trim();
-    if (
-      s.length >= 2 &&
-      ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-    ) {
+    if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
       return { kind: 'string', value: s.slice(1, -1) };
     }
     if (s === 'true' || s === 'false') return { kind: 'boolean', value: s === 'true' };

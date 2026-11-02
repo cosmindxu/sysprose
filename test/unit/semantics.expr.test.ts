@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseExpr, evaluate } from '../../src/semantics/index';
+import { exprRef, writtenChains } from '../../src/semantics/expr';
 
 /** Evaluate a source string against an optional variable map. */
 function evalStr(src: string, vars: Record<string, unknown> = {}): unknown {
@@ -64,6 +65,37 @@ describe('semantics — expression parser + evaluator', () => {
     expect(evalStr('"foo" + "bar"')).toBe('foobar');
     expect(evalStr('"n=" + 5')).toBe('n=5');
     expect(evalStr('"a" == "a"')).toBe(true);
+  });
+
+  it('a single-quoted unrestricted name is a reference, never a string (a string is double-quoted)', () => {
+    // 'max load' and 'ref' are names; the scope answers them unquoted, as `declaredName` holds them.
+    expect(evalStr("'max load' <= 10.0", { 'max load': 25 })).toBe(false);
+    expect(evalStr("'ref' == a * b", { ref: 6, a: 2, b: 3 })).toBe(true);
+    expect(evalStr("'ref' == 5")).toBe(UNKNOWN); // no value in scope: unknown, never the string 'ref' compared with 5
+    expect(evalStr('"max load" == "max load"')).toBe(true);
+    expect(evalStr('"max load" == 5', { 'max load': 5 })).toBe(false); // a double-quoted string stays a string
+    // a keyword-like word is a name once quoted, and a path may mix plain and quoted segments
+    expect(evalStr("'true' and 'not'", { true: true, not: true })).toBe(true);
+    expect(evalStr("'a b'.'c d' + x.'in'", { 'a b.c d': 40, 'x.in': 2 })).toBe(42);
+    expect(parseExpr("'a b'.'c d'")).toEqual({ kind: 'ref', path: ['a b', 'c d'] });
+    expect(parseExpr("'it\\'s'")).toEqual({ kind: 'ref', path: ["it's"] });
+  });
+
+  it('a quoted name holding `.` or `:`, or nothing, is not read (it would join like a path)', () => {
+    expect(() => parseExpr("'a.b' + 1")).toThrow(/quoted name/);
+    expect(() => parseExpr("'A::b' + 1")).toThrow(/quoted name/);
+    expect(() => parseExpr("'' + 1")).toThrow(/quoted name/);
+    expect(() => parseExpr("'open + 1")).toThrow(/Unterminated/);
+  });
+
+  it('exprRef spells a name the way an expression reads it back', () => {
+    expect(exprRef('x')).toBe('x');
+    expect(exprRef('a.b')).toBe('a.b');
+    expect(exprRef('max load.in')).toBe("'max load'.in"); // `in` is no keyword of the expression lexers
+    expect(exprRef('x.if')).toBe("x.'if'");
+    expect(exprRef('true')).toBe("'true'");
+    expect(parseExpr(exprRef('max load.c d'))).toEqual({ kind: 'ref', path: ['max load', 'c d'] });
+    expect(writtenChains("f('a b'.c, d.e) + 'g h'")).toEqual(['f', "'a b'.c", 'd.e', "'g h'"]);
   });
 
   it('dotted feature-chain references resolve via scope', () => {

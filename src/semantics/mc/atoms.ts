@@ -28,8 +28,8 @@
  * verdict that means nothing.
  */
 
-import type { ElementId, ElementRecord, Model } from '@core/index';
-import { parseExpr } from '../expr';
+import { refSegments, type ElementId, type ElementRecord, type Model } from '@core/index';
+import { parseExpr, writtenChains } from '../expr';
 import {
   evalStr,
   leafOf,
@@ -382,8 +382,8 @@ export function expressionRefusal(
   obs: Observation,
 ): AtomRefusal {
   const scope = storeScope(obs.config.store, regionScope(model, obs.config.regionId));
-  const identifiers = [...atom.argument.matchAll(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g)]
-    .map((m) => m[0])
+  const identifiers = writtenChains(atom.argument)
+    .map((c) => (c.includes("'") ? refSegments(c).join('.') : c))
     .filter((n) => !RESERVED.has(n));
   const unknown = identifiers.filter((n) => scope(n) === undefined && scope(n.split('.')[0]) === undefined);
   if (unknown.length > 0) {

@@ -97,7 +97,7 @@ import {
 } from './defining-equation';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
-import { evaluate, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
   NO_MARKERS,
   bareLiteralRefusal,
@@ -926,10 +926,7 @@ function valueOfFeature(
   if (typeof raw === 'boolean') return { value: raw, depth: 0 };
   if (typeof raw !== 'string') return NO_ANSWER;
   const s = raw.trim();
-  if (
-    s.length >= 2 &&
-    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-  ) {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
     return { value: s.slice(1, -1), depth: 0 };
   }
   const key = valueKey(id, inst, at);
@@ -2423,7 +2420,7 @@ function contradictions(model: Model, pass: ScalarPass): ConstraintCheck[] {
     out.push({
       id: f.id,
       ownerId: f.ownerId,
-      expression: `${name} == ${String(binding.attrs.valueText ?? binding.attrs.value).trim()}${unit}`,
+      expression: `${exprRef(name)} == ${String(binding.attrs.valueText ?? binding.attrs.value).trim()}${unit}`,
       result: conflict.decided ? 'violated' : 'unknown',
       message: conflict.decided ? `Constraint violated: ${sentence}` : `Could not evaluate: ${sentence}`,
       conflict: 'binding',
@@ -2438,7 +2435,7 @@ function contradictions(model: Model, pass: ScalarPass): ConstraintCheck[] {
     out.push({
       id: `${clash.other.id}@${context.id}`,
       ownerId: context.id,
-      expression: `${name} == ${String(v.attrs.valueText ?? v.attrs.value).trim()}${unit}`,
+      expression: `${exprRef(name)} == ${String(v.attrs.valueText ?? v.attrs.value).trim()}${unit}`,
       result: clash.decided ? 'violated' : 'unknown',
       message: clash.decided ? `Constraint violated: ${sentence}` : `Could not evaluate: ${sentence}`,
       conflict: 'clash',
@@ -2490,7 +2487,7 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
     const left = read?.left;
     const right = read?.right;
     if (!owner || left === undefined || right === undefined || left === right) continue;
-    const expr = `${left} == ${right}`;
+    const expr = `${exprRef(left)} == ${exprRef(right)}`;
     const at: ElementRecord = owner.id === b.ownerId ? b : { ...b, ownerId: owner.id };
     for (const x of [owner, ...pass.definitions.changingContexts(at, [left, right])]) {
       // A context listed only because a member reads its own value there: its

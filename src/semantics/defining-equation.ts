@@ -31,7 +31,7 @@
  * ({@link shadowedNamesOf}).
  */
 
-import { type AttrValue, type ElementId, type ElementRecord, type Model, TEXTUAL_KEYWORD, isDefinition, isTypingSpecialization, isUsage } from '@core/index';
+import { type AttrValue, type ElementId, type ElementRecord, type Model, TEXTUAL_KEYWORD, isDefinition, isTypingSpecialization, isUsage, splitQualified, unquoteName } from '@core/index';
 import {
   effectiveFeatures,
   effectiveNameOf,
@@ -43,7 +43,7 @@ import {
   redefinedClosure,
 } from './inheritance';
 import { resolveFullName, unreadScopes, type UnreadScope } from './bind';
-import { type ExprNode } from './expr';
+import { writtenChains, type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
 import { NO_MARKERS, parseRelationBody, type MarkerDimensions } from './unit-literals';
@@ -603,8 +603,9 @@ export class DefiningEquations {
     }
     const v = equated ? equated.path : f.attrs.value;
     if (typeof v !== 'string') return undefined;
-    const path = v.trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(path)) return undefined;
+    // A part's partner path is the model's own (names unquoted); a value is the text as written.
+    const path = equated ? v.trim() : valuePathOf(v);
+    if (path === undefined || path === '') return undefined;
     const inContext = equated || subject ? undefined : this.referencedIn(contextId, f, path);
     const seen = new Set<ElementId>();
     for (
@@ -1405,14 +1406,17 @@ export class DefiningEquations {
       satisfied && written?.ownerId != null && f.attrs.requirementRole === 'subject'
         ? this.bareSatisfierPath(written.ownerId, satisfied.satisfier)
         : undefined;
-    const ref = equated ? equated.path : satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef ?? bare) : f.attrs.value;
-    if (typeof ref !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(ref.trim())) {
+    const spelled = satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
+    const ref = equated ? equated.path : satisfied ? (spelled ?? bare) : f.attrs.value;
+    // As written (quoted segments unquoted), except a path the model itself names: a part's partner, a bare satisfier.
+    const refPath = typeof ref !== 'string' ? undefined : equated || (satisfied && spelled === undefined) ? ref.trim() : valuePathOf(ref);
+    if (refPath === undefined || refPath === '') {
       const s = satisfied && f.attrs.requirementRole === 'subject' ? satisfied.satisfier : undefined;
       if (!s) return undefined;
       const frames = s.ownerId != null ? [{ instance: this.instanceNameOf(s.ownerId), reader: s.ownerId }] : [];
       return { feature: s, instance: this.qualifiedNameOf(s.id), enclosing: frames, bare: true };
     }
-    const path = ref.trim();
+    const path = refPath;
     // A reference read in an instance of the element its value is written in
     // names that instance's own feature.
     const inContext = equated || satisfied || f.attrs.isRef !== true ? undefined : this.referencedIn(contextId, f, path);
@@ -1672,20 +1676,24 @@ export class DefiningEquations {
     const subjectName = subject ? this.nameOf(subject) : undefined;
     if (!subject || subjectName === undefined) return undefined;
     let path: string | undefined;
+    let pathIsPlain = true;
     let scope: ElementRecord | undefined;
     if (satisfied) {
       // The satisfier's path is resolved where the `satisfy` is written, and
       // there alone ({@link instanceStep}).
       const chain = written.attrs.sourceChain ?? written.attrs.sourceRef;
-      path = typeof chain === 'string' ? chain.trim() : this.nameOf(satisfied.satisfier);
+      const spelled = typeof chain === 'string' ? valuePathOf(chain) : undefined;
+      // A chain that is no plain path (`NQ1::w.p1`) is read as written, and by no path walk below.
+      if (typeof chain === 'string' && spelled === undefined) pathIsPlain = false;
+      path = typeof chain === 'string' ? (spelled ?? chain.trim()) : this.nameOf(satisfied.satisfier);
       scope = written.ownerId != null ? this.model.get(written.ownerId) : undefined;
-      const outside = this.satisfierFromOutside(written, satisfied.satisfier, typeof chain === 'string' ? chain.trim() : undefined);
+      const outside = this.satisfierFromOutside(written, satisfied.satisfier, typeof chain === 'string' ? (spelled ?? chain.trim()) : undefined, pathIsPlain);
       if (outside) return outside;
     } else {
       // A subject's value, from where it is written outward ({@link standsIn}).
       if (typeof subject.attrs.value !== 'string') return undefined;
-      path = subject.attrs.value.trim();
-      if (!VALUE_PATH.test(path)) return undefined;
+      path = valuePathOf(subject.attrs.value);
+      if (path === undefined) return undefined;
       const seen = new Set<ElementId>();
       for (let cur = subject.ownerId ?? null; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
         seen.add(cur);
@@ -1695,7 +1703,7 @@ export class DefiningEquations {
         }
       }
     }
-    if (path === undefined || !VALUE_PATH.test(path) || !scope) return undefined;
+    if (path === undefined || !pathIsPlain || !scope) return undefined;
     // Resolved in a package, the satisfier is one instance, read alike wherever
     // it is read — save through a usage that subsets a feature an instance
     // reads otherwise ({@link subsettingTaint}): a package's `satisfy RF by
@@ -1814,11 +1822,11 @@ export class DefiningEquations {
    * the answer is of kind `satisfy` with `outside`. A satisfy written in W, in an instance of it or below one reads
    * as before; so does one no instance reads otherwise (`part w : W;`). `undefined` otherwise.
    */
-  private satisfierFromOutside(written: ElementRecord, satisfier: ElementRecord, chain: string | undefined): ReadOtherwise | undefined {
+  private satisfierFromOutside(written: ElementRecord, satisfier: ElementRecord, chain: string | undefined, plain: boolean): ReadOtherwise | undefined {
     const owner = written.ownerId;
     const home = satisfier.ownerId != null ? this.model.get(satisfier.ownerId) : undefined;
     if (owner == null || !home || !isDefinition(home.eClass) || isPackage(home) || satisfier.attrs.isLibrary === true) return undefined;
-    if (chain !== undefined && VALUE_PATH.test(chain) && featuresAlongValue(this.model, owner, chain)?.scope === owner) return undefined;
+    if (chain !== undefined && plain && featuresAlongValue(this.model, owner, chain)?.scope === owner) return undefined;
     // In W, in an instance of it, or below one: read where it is written, as before.
     const seen = new Set<ElementId>();
     for (let cur: ElementId | null = owner; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
@@ -1850,7 +1858,8 @@ export class DefiningEquations {
     if (hit !== undefined) return hit ?? undefined;
     let answer: ReadOtherwise | undefined;
     if (f.attrs.isRef === true && f.attrs.isLibrary !== true && typeof f.attrs.value === 'string' && f.ownerId != null) {
-      answer = this.pathOtherwise(f, f.attrs.value.trim(), 'reference', f);
+      const path = valuePathOf(f.attrs.value);
+      if (path !== undefined) answer = this.pathOtherwise(f, path, 'reference', f);
     }
     this.referenceAsked.set(f.id, answer ?? null);
     return answer;
@@ -1872,7 +1881,8 @@ export class DefiningEquations {
     let answer: ReadOtherwise | undefined;
     const written = subject.ownerId != null ? this.model.get(subject.ownerId) : undefined;
     if (subject.attrs.requirementRole === 'subject' && subject.attrs.isLibrary !== true && typeof subject.attrs.value === 'string' && written) {
-      answer = this.pathOtherwise(subject, subject.attrs.value.trim(), 'subject', written);
+      const path = valuePathOf(subject.attrs.value);
+      if (path !== undefined) answer = this.pathOtherwise(subject, path, 'subject', written);
     }
     this.subjectAsked.set(subject.id, answer ?? null);
     return answer;
@@ -1887,7 +1897,7 @@ export class DefiningEquations {
   private pathOtherwise(f: ElementRecord, path: string, kind: 'reference' | 'subject', written: ElementRecord): ReadOtherwise | undefined {
     let scope: ElementRecord | undefined;
     const seen = new Set<ElementId>();
-    for (let cur: ElementId | null = VALUE_PATH.test(path) ? f.ownerId : null; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+    for (let cur: ElementId | null = f.ownerId; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
       seen.add(cur);
       if (this.chain([cur], path)) {
         scope = this.model.get(cur);
@@ -4321,7 +4331,7 @@ export function sharedDefinitions(model: Model): DefiningEquations {
 /** The names a value expression reads, a `[unit]` literal's marker excluded — `[]` for one that does not parse. */
 function namesOfValue(text: string): string[] {
   const s = text.trim();
-  if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) return [];
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return [];
   const body = parseRelationBody(s);
   return body ? refsIn(body.node, body.literals) : [];
 }
@@ -4953,8 +4963,8 @@ function isStructuredByType(model: Model, e: ElementRecord): boolean {
 function writtenSatisfier(model: Model, rel: ElementRecord, recorded: ElementRecord): ElementRecord | undefined {
   if (rel.ownerId == null) return undefined;
   const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
-  const path = typeof chain === 'string' ? chain.trim() : effectiveNameOf(model, recorded);
-  if (path === undefined || !VALUE_PATH.test(path)) return undefined;
+  const path = typeof chain === 'string' ? valuePathOf(chain) : effectiveNameOf(model, recorded);
+  if (path === undefined) return undefined;
   const found = featuresAlongValue(model, rel.ownerId, path);
   const last = found?.scope === rel.ownerId ? found.links[found.links.length - 1] : undefined;
   return last !== undefined && last.id !== recorded.id && redefinedClosure(model, last).some((g) => g.id === recorded.id) ? last : undefined;
@@ -4989,11 +4999,28 @@ function featuresAlongValue(
   return undefined;
 }
 
-/** A plain dotted path (`top.a`), the only value that names one feature. */
-const VALUE_PATH = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+/**
+ * A plain dotted path (`top.a`), the only value that names one feature; a segment may be a single-quoted
+ * unrestricted name (`'top x'.a`).
+ */
+const VALUE_PATH = /^(?:[A-Za-z_][A-Za-z0-9_]*|'(?:\\.|[^'\\])*')(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|'(?:\\.|[^'\\])*'))*$/;
+
+/**
+ * The path a value text spells, as the model names its features (segments unquoted, joined by `.`), or `undefined`
+ * for any other text — and for a quoted segment holding `.`, which a joined path cannot tell from two.
+ */
+function valuePathOf(text: string): string | undefined {
+  const t = text.trim();
+  if (!VALUE_PATH.test(t)) return undefined;
+  if (!t.includes("'")) return t;
+  const segments = splitQualified(t).map((x) => unquoteName(x.trim()) ?? '');
+  return segments.some((x) => x === '' || x.includes('.')) ? undefined : segments.join('.');
+}
 
 /** Every dotted name a value's text spells, for one the name reader does not parse (a call: `Same(top.a)`). */
-const NAMES_IN_TEXT = /[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g;
+function namesInText(value: string): string[] {
+  return writtenChains(value).map((c) => (c.includes("'") ? valuePathOf(c) ?? c : c));
+}
 
 /**
  * What the `value` of a valued `e` no surface reads through ({@link
@@ -5006,8 +5033,9 @@ const NAMES_IN_TEXT = /[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g;
  * written, or outward.
  */
 function valuePartners(model: Model, e: ElementRecord, value: string): Array<{ partner: ElementRecord; links: ElementRecord[] }> {
-  const parsed = VALUE_PATH.test(value) ? [value] : namesOfValue(value);
-  const names = parsed.length > 0 ? parsed : (value.match(NAMES_IN_TEXT) ?? []);
+  const spelled = valuePathOf(value);
+  const parsed = spelled !== undefined ? [spelled] : namesOfValue(value);
+  const names = parsed.length > 0 ? parsed : namesInText(value);
   const out: Array<{ partner: ElementRecord; links: ElementRecord[] }> = [];
   for (const n of names) {
     const found = e.ownerId != null ? featuresAlongValue(model, e.ownerId, n) : undefined;
@@ -5073,15 +5101,16 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     if (e.attrs.isLibrary === true || e.attrs.isRef === true) continue;
     const v = e.attrs.value;
     if (e.ownerId == null || e.attrs.requirementRole === 'subject' || typeof v !== 'string' || isQuoted(v.trim())) continue;
-    const path = v.trim();
+    const spelledPath = valuePathOf(v);
+    const path = spelledPath ?? v.trim();
     const part = VALUED_PART_KINDS.has(e.eClass);
     const typed = !part && isStructuredByType(model, e);
-    if (!part && !typed && !(VALUE_PATH.test(path) && isStructuredAttribute(model, e))) continue;
+    if (!part && !typed && !(spelledPath !== undefined && isStructuredAttribute(model, e))) continue;
     // A part's or a structured type's value is one whatever it reads: a call
     // the name reader does not parse (`Same(top.a)`) equates as much as a
     // path does.
     if (!part && !typed && namesOfValue(v).length === 0) continue;
-    const found = VALUE_PATH.test(path) ? featuresAlongValue(model, e.ownerId, path) : undefined;
+    const found = spelledPath !== undefined ? featuresAlongValue(model, e.ownerId, spelledPath) : undefined;
     const last = found?.links[found.links.length - 1];
     if (!part && !typed && last && last.eClass === 'AttributeUsage' && !isStructuredAttribute(model, last)) continue;
     valued.push({ e, path, ...(found ? { found } : {}) });
@@ -5225,7 +5254,8 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     const satisfier = rel.source?.[0] !== undefined ? model.get(rel.source[0]) : undefined;
     if (!satisfier) continue;
     const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
-    const found = typeof chain === 'string' && VALUE_PATH.test(chain.trim()) ? featuresAlongValue(model, rel.ownerId, chain.trim()) : undefined;
+    const chainPath = typeof chain === 'string' ? valuePathOf(chain) : undefined;
+    const found = chainPath !== undefined ? featuresAlongValue(model, rel.ownerId, chainPath) : undefined;
     if ([...(found?.links ?? []), satisfier].some(standsElsewhere) && perInstance(rel.ownerId)) unread.push(rel);
   }
   // So is a requirement usage written there whose subject's value names it
@@ -5234,8 +5264,8 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
   // read at W's own r alone, never at w's p50.
   for (const s of subjects) {
     const requirement = model.get(s.ownerId!);
-    const path = String(s.attrs.value).trim();
-    if (!requirement || requirement.ownerId == null || !VALUE_PATH.test(path)) continue;
+    const path = valuePathOf(String(s.attrs.value));
+    if (!requirement || requirement.ownerId == null || path === undefined) continue;
     const found = featuresAlongValue(model, requirement.id, path);
     if (found !== undefined && found.links.some(standsElsewhere) && perInstance(requirement.ownerId)) unread.push(s);
   }
@@ -6040,7 +6070,7 @@ function satisfierMeasureRefusal(model: Model, featureId: ElementId, symbol: str
   if (failed !== undefined) return `${failed}, so no bound of a value read through one is claimed`;
   if (taint.size === 0) return undefined;
   let b = taintedAt(model, taint, model.get(featureId));
-  if (!b && spelled !== undefined && spelled.includes('.') && VALUE_PATH.test(spelled)) {
+  if (!b && spelled !== undefined && spelled.includes('.')) {
     const defs = sharedDefinitions(model);
     for (const p of model.all()) {
       if (b || p.attrs.isLibrary === true || p.attrs.implicit === true || !isPackage(p) || !defs.denote(p.id).has(spelled)) continue;
@@ -6062,7 +6092,7 @@ function unreadMeasureRefusal(model: Model, featureId: ElementId, symbol: string
   if (unread.length === 0) return undefined;
   const taint = equatedTaint(model);
   let b = taintedAt(model, taint, model.get(featureId));
-  if (!b && spelled !== undefined && spelled.includes('.') && VALUE_PATH.test(spelled)) {
+  if (!b && spelled !== undefined && spelled.includes('.')) {
     const defs = sharedDefinitions(model);
     for (const p of model.all()) {
       if (b || p.attrs.isLibrary === true || p.attrs.implicit === true || !isPackage(p) || !defs.denote(p.id).has(spelled)) continue;
@@ -8400,15 +8430,15 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
             const f = resolve(g.ownerId!, n);
             if (f) target(f, a);
           }
-          const path = c.attrs.value.trim();
-          give(effectiveNameOf(model, c), VALUE_PATH.test(path) ? resolve(g.ownerId!, path) : undefined);
+          const path = valuePathOf(c.attrs.value);
+          give(effectiveNameOf(model, c), path !== undefined ? resolve(g.ownerId!, path) : undefined);
         }
       }
       for (const t of types) {
         // Its body, and the values its definition gives its parameters itself (`in a = L;` in Eq).
         for (const c of model.children(t.id)) {
-          const path = typeof c.attrs.value === 'string' ? c.attrs.value.trim() : undefined;
-          if (path !== undefined) give(effectiveNameOf(model, c), VALUE_PATH.test(path) ? resolve(t.id, path) : undefined);
+          const path = typeof c.attrs.value === 'string' ? valuePathOf(c.attrs.value) : undefined;
+          if (typeof c.attrs.value === 'string') give(effectiveNameOf(model, c), path !== undefined ? resolve(t.id, path) : undefined);
         }
         const values = model.children(t.id).flatMap((c) => (typeof c.attrs.value === 'string' ? namesOfValue(c.attrs.value) : []));
         for (const n of [...relationNamesOf(String(t.attrs.expression)), ...values]) {
@@ -13262,7 +13292,7 @@ function equalRationals(a: Rational, b: Rational): boolean {
 }
 
 function isQuoted(s: string): boolean {
-  return s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")));
+  return s.length >= 2 && s.startsWith('"') && s.endsWith('"');
 }
 
 /**

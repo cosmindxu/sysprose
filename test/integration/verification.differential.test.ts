@@ -3894,6 +3894,169 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   };
 
   /**
+   * fix-quoted S1: a single-quoted unrestricted name in an expression is a NAME REFERENCE, never a string (a string is
+   * double-quoted). SysML v2 spells a name with a space, a symbol or a keyword-like word this way, and it works wherever
+   * a bare name does: a constraint, an assert, a `require constraint`, a unit-bearing expression, a path, a binding end,
+   * a redefinition, an instance and a reference feature's value. Each shape is pinned beside its bare twin (`-bare`,
+   * the same model with plain names): the two read alike row for row (I14), and each is pinned in either text order.
+   * Before the step `'max load' <= 10.0` read ?/U/?/U (the unit-aware lexer took the name for a string) and
+   * `assert constraint { 'ref' == a * b }` read F on the check lane (the scalar lexer compared the string with a
+   * number), where the bare spelling read T.
+   */
+  const QUOTED_FAMILY: ReadonlyArray<{
+    name: string;
+    build: (n: Record<string, string>) => string;
+    rows: Record<string, [string, Ref]>;
+  }> = [
+    {
+      name: 'space',
+      build: (n) => ['package QS {', `  part def P { attribute ${n.a} : ScalarValues::Real = 25.0; constraint cF { ${n.a} <= 10.0 } constraint cT { ${n.a} >= 10.0 } }`, '  part p : P;', '}'].join('\n'),
+      rows: { 'QS::P::cF': ['F/F/F/F', 'F'], 'QS::P::cT': ['T/T/T/T', 'T'] },
+    },
+    {
+      name: 'keywords',
+      build: (n) =>
+        [
+          'package QK {',
+          `  part def P { attribute ${n.a} : ScalarValues::Real = 1.0; attribute ${n.b} : ScalarValues::Real = 2.0; attribute ${n.c} : ScalarValues::Real = 3.0; attribute ${n.d} : ScalarValues::Real = 4.0; constraint c1 { ${n.a} + ${n.b} <= 3.0 } constraint c2 { ${n.c} * ${n.d} >= 12.0 } constraint c3 { not (${n.a} < ${n.b}) } }`,
+          '  part p : P;',
+          '}',
+        ].join('\n'),
+      rows: { 'QK::P::c1': ['T/T/T/T', 'T'], 'QK::P::c2': ['T/T/T/T', 'T'], 'QK::P::c3': ['F/F/F/F', 'F'] },
+    },
+    {
+      name: 'assert',
+      build: (n) =>
+        [
+          'package QA {',
+          `  part def P { attribute a : ScalarValues::Real = 25.0; attribute b : ScalarValues::Real = 1.0; attribute ${n.a} : ScalarValues::Real; assert constraint { ${n.a} == a * b } }`,
+          '}',
+        ].join('\n'),
+      rows: { 'QA::P::«ConstraintUsage»': ['T/-/T/-', 'T'] },
+    },
+    {
+      name: 'path',
+      build: (n) =>
+        [
+          'package QP {',
+          `  part def Q { attribute ${n.b} : ScalarValues::Real = 25.0; }`,
+          `  part def P { part ${n.a} : Q; constraint cF { ${n.a}.${n.b} <= 10.0 } constraint cT { ${n.a}.${n.b} >= 10.0 } }`,
+          '  part p : P;',
+          '}',
+        ].join('\n'),
+      rows: { 'QP::P::cF': ['F/F/F/F', 'F'], 'QP::P::cT': ['T/T/T/T', 'T'] },
+    },
+    {
+      name: 'requirement',
+      build: (n) =>
+        [
+          'package QR {',
+          `  part def P { attribute ${n.a} : ScalarValues::Real = 25.0; }`,
+          '  part p : P;',
+          `  requirement def R { subject s : P; require constraint { s.${n.a} <= 10.0 } }`,
+          '  satisfy R by p;',
+          '}',
+        ].join('\n'),
+      rows: { 'QR::R::«ConstraintUsage»': ['F/F/F/F', 'F'] },
+    },
+    {
+      name: 'unit',
+      build: (n) =>
+        [
+          'package QU {',
+          `  part def P { attribute ${n.a} : ISQ::MassValue = 25.0 [kg]; constraint cF { ${n.a} <= 10.0 [kg] } constraint cT { ${n.a} >= 10000.0 [g] } }`,
+          '  part p : P;',
+          '}',
+        ].join('\n'),
+      rows: { 'QU::P::cF': ['F/F/F/F', 'F'], 'QU::P::cT': ['T/T/T/T', 'T'] },
+    },
+    {
+      name: 'bind',
+      build: (n) =>
+        [
+          'package QB {',
+          `  part def P { attribute ${n.a} : ScalarValues::Real = 25.0; attribute ${n.b} : ScalarValues::Real; bind ${n.b} = ${n.a}; constraint cF { ${n.b} <= 10.0 } }`,
+          '  part p : P;',
+          '}',
+        ].join('\n'),
+      rows: { 'QB::P::cF': ['F/F/F/F', 'F'] },
+    },
+    {
+      name: 'redefinition',
+      build: (n) =>
+        [
+          'package QD {',
+          `  part def A { attribute ${n.a} : ScalarValues::Real default = 25.0; }`,
+          `  part def B :> A { attribute :>> ${n.a} = 5.0; constraint cT { ${n.a} <= 10.0 } }`,
+          '  part b : B;',
+          '}',
+        ].join('\n'),
+      rows: { 'QD::B::cT': ['T/T/T/T', 'T'] },
+    },
+    {
+      name: 'reference',
+      build: (n) =>
+        [
+          'package QF {',
+          '  part def T0 { attribute load : ScalarValues::Real default = 1.0; }',
+          `  part ${n.a} : T0 { attribute :>> load = 50.0; }`,
+          `  ref part ${n.b} : T0 = ${n.a};`,
+          `  constraint cT { ${n.b}.load >= 10.0 }`,
+          '}',
+        ].join('\n'),
+      rows: { 'QF::cT': ['T/T/T/T', 'T'] },
+    },
+    {
+      name: 'satisfier-chain',
+      build: (n) =>
+        [
+          'package QC {',
+          '  part def P { attribute x : ScalarValues::Real = 25.0; }',
+          `  part ${n.a} { part ${n.b} : P; }`,
+          '  requirement def R { subject s : P; require constraint { s.x <= 10.0 } }',
+          `  satisfy R by ${n.a}.${n.b};`,
+          '}',
+        ].join('\n'),
+      rows: { 'QC::R::«ConstraintUsage»': ['F/F/F/F', 'F'] },
+    },
+    {
+      name: 'valued-part',
+      build: (n) =>
+        [
+          'package QV {',
+          '  part def T0 { attribute load : ScalarValues::Real default = 1.0; }',
+          `  part def T1 { attribute L : ScalarValues::Real default = 1.0; part ${n.b} : T0; bind ${n.b}.load = L; }`,
+          `  part ${n.a} : T1 { attribute :>> L = 50.0; }`,
+          `  part ${n.c} : T0 = ${n.a}.${n.b};`,
+          `  constraint cT { ${n.c}.load >= 10.0 }`,
+          '}',
+        ].join('\n'),
+      rows: { 'QV::cT': ['T/T/T/T', 'T'] },
+    },
+    {
+      name: 'string',
+      build: (n) =>
+        [
+          'package QT {',
+          `  part def P { attribute ${n.a} : ScalarValues::Real = 25.0; attribute label : ScalarValues::String = "max load"; constraint cF { ${n.a} <= 10.0 } }`,
+          '  part p : P;',
+          '}',
+        ].join('\n'),
+      rows: { 'QT::P::cF': ['F/F/F/F', 'F'] },
+    },
+  ];
+  /** The names a {@link QUOTED_FAMILY} model is written with, quoted and plain (the keyword-like ones have no bare spelling, so the twin renames them). */
+  const QUOTED_NAMES: Record<string, string> = { a: "'max load'", b: "'ref'", c: "'default'", d: "'part'" };
+  const PLAIN_NAMES: Record<string, string> = { a: 'maxload', b: 'rf', c: 'dflt', d: 'prt' };
+  const quotedFamilyProbes = (): Record<string, { text: string; rows: Record<string, [string, Ref]> }> =>
+    Object.fromEntries(
+      QUOTED_FAMILY.flatMap((f) => [
+        ...Object.entries(reversed(`quoted-${f.name}`, f.build(QUOTED_NAMES), reversedMembers(f.build(QUOTED_NAMES)), f.rows)),
+        ...Object.entries(reversed(`quoted-${f.name}-bare`, f.build(PLAIN_NAMES), reversedMembers(f.build(PLAIN_NAMES)), f.rows)),
+      ]),
+    );
+
+  /**
    * Each probe: its text, and per row `[check/literal/numeric/SMT as they stand, ref]`. The design's names:
    * the binding and default probes of the soundness pass (h2 … w3, r14, the cross-track c3c and c5), the
    * mapper's siblings and shared usages, the derived-partner series M1–M9, big-bind, the refutation round
@@ -15084,6 +15247,7 @@ package L3 {
       'LR::cN3': ['F/F/F/F', 'F'],
       'LR::cX2': ['T/T/T/T', 'T'],
     }),
+    ...quotedFamilyProbes(),
   };
 
   /**
@@ -16009,6 +16173,8 @@ package L3 {
     ['stand-eqmd', 'stand-eqmd-rev'],
     ['stand-eqmd', 'stand-eqmd-alleq'],
     ['stand-hlx', 'stand-hlx-eqx'],
+    // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
+    ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
     ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc', 'cv-bnd2', 'cv-bnd2x', 'cv-bnd3', 'cv-bnd3u'].map(
       (k) => [`${k}-ab`, `${k}-ba`] as const,

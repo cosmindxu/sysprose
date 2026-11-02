@@ -34,8 +34,8 @@
  * (the two type imports below are erased), so there is no module cycle.
  */
 
-import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/index';
-import { parseExpr, evaluate, type ExprNode } from '../expr';
+import { type ElementId, type ElementRecord, type Model, isUsage, unquoteName } from '@core/index';
+import { parseExpr, evaluate, readQuotedName, type ExprNode } from '../expr';
 import { scopeFor, type Scope } from '../evaluate-model';
 // The ONE reader of an edge's payload in this codebase: `itemFlowsOf` uses it to
 // decide that a `Succession` with an item is a succession flow, and the step
@@ -283,8 +283,9 @@ export function applyAssignment(
   store: Map<string, unknown>,
   scope: Scope,
 ): string | undefined {
-  const target =
-    strAttr(el, 'target') ?? strAttr(el, 'referent') ?? strAttr(el, 'feature') ?? el.declaredName;
+  const target = unquoteName(
+    strAttr(el, 'target') ?? strAttr(el, 'referent') ?? strAttr(el, 'feature') ?? el.declaredName,
+  );
   const raw = el.attrs.value ?? strAttr(el, 'expression');
   if (!target || raw === undefined) return undefined;
   const v = evalStr(raw, store, scope);
@@ -299,10 +300,20 @@ export function inlineAssign(text: string, store: Map<string, unknown>, scope: S
   if (idx <= 0 || text[idx + 1] === '=') return false; // no '=' or an '==' operator
   const lhs = text.slice(0, idx).trim().replace(/:$/, ''); // allow ':=' form
   const rhs = text.slice(idx + 1).trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(lhs)) return false;
+  // The target is a plain identifier or ONE single-quoted unrestricted name (`'max load' = 5`).
+  let target = lhs;
+  if (lhs.startsWith("'")) {
+    try {
+      const q = readQuotedName(lhs, 0);
+      if (q.end !== lhs.length) return false;
+      target = q.name;
+    } catch {
+      return false;
+    }
+  } else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(lhs)) return false;
   const v = evalStr(rhs, store, scope);
   if (v === undefined) return false;
-  store.set(lhs, v);
+  store.set(target, v);
   return true;
 }
 
@@ -427,10 +438,7 @@ export function literalValueOf(feat: ElementRecord | undefined): unknown {
   if (typeof raw === 'number' || typeof raw === 'boolean') return raw;
   if (typeof raw !== 'string') return undefined;
   const s = raw.trim();
-  if (
-    s.length >= 2 &&
-    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-  ) {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
     return s.slice(1, -1);
   }
   // A self-contained literal expression (e.g. "5", "true") with no references.
