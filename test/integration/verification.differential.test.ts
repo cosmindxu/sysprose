@@ -10067,8 +10067,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // carries (K's `default` stands against every assertion, as K's `= 9.0` does: the `-eq` twin of each probe):
     // the assert is read in q1 and violated there, so the model contradicts itself. The check and the numeric
     // surface report it and keep deciding top and topK at their 9; the literal engine and the SMT engine do not
-    // (inconsistent axioms). (P has no relation of its own here: the check files two rows named `P::c in
-    // q1::p` for such a model, a specialiser's and the group's, which this table cannot key.) Q's own tie, with
+    // (inconsistent axioms). (RB5P below adds a relation on P.) Q's own tie, with
     // no value for p.x, is the assert as it defines it: it holds (ref T). It was not read for q1 before
     // contradictory-models S1 (every reading of the pair abstained over the default, `unread-binding`, and the
     // same model with `K = 9.0` passed silently on every surface).
@@ -10084,6 +10083,26 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RB5::top': ['T/X/T/X', null],
       'RB5::topK': ['T/X/T/X', null],
     }, '9.0'),
+    // RB5 with a relation on P (RB5P): the check filed two rows named `P::c in q1::p`, a specialiser's reading of
+    // the valueless x and the group's row of the instance q1's p (the enclosing assert), which this table could not
+    // key; the group's row stands for the instance alone (naming-pass).
+    'h5-rb5p': probe(`package RB5P {
+        part def P { attribute x : ScalarValues::Real; constraint c { x <= 10.0 } }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q1 : Q { attribute K : ScalarValues::Real default = 9.0; bind p.x = K; }
+        constraint top { q1.p.x <= 10.0 }
+        constraint topK { q1.K <= 10.0 }
+      }`, {
+      // x has no value of its own: Q's assert gives Q's p the 50, so c is violated there (as in RB4), and q1's p
+      // is the instance the model contradicts itself in, which no surface decides (ref null).
+      'RB5P::P::c': ['?/?/?/X', null],
+      'RB5P::P::c in RB5P::Q::p': ['F/X/F/X', 'F'],
+      'RB5P::P::c in RB5P::q1::p': ['?/?/?/?', null],
+      'RB5P::Q::tie': ['T/-/T/-', 'T'],
+      'RB5P::Q::tie in RB5P::q1': ['F/-/F/-', 'F'],
+      'RB5P::top': ['T/X/T/X', null],
+      'RB5P::topK': ['T/X/T/X', null],
+    }),
     // RB5 with the binding written elsewhere: in q1's redefinition of p (RB5C), in the package (RB5D), in a
     // definition around the instance (RB5F). Each reads K's 9 against Q's assert, which is violated at q1: top and
     // topK T on the check and the numeric surface (RB5F's top: the solve does not converge there, as before),
@@ -16099,6 +16118,9 @@ package L3 {
       'bound-vc-inst | VCI::kr',
       'bound-vc-kg | VCK::kp',
       'h5-rb5-ineq | RB5I::top1',
+      'h5-rb5p | RB5P::top',
+      'h5-rb5p | RB5P::topK',
+      'h5-rb5p | RB5P::P::c in RB5P::Q::p',
       ...[
         ['RB5', ['top', 'topK']],
         ['RB5C', ['top', 'topK']],

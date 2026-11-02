@@ -1461,6 +1461,13 @@ export interface SpecialisationInstance {
    */
   breaks?: string;
   /**
+   * On a violated group row whose breaking value ({@link breaks}) is one the
+   * instance's own element redefines and no read carries (194): that value, so
+   * the finding names it and points at the redefinition that states it. It is
+   * no read, so no engine and no witness sees it.
+   */
+  redefined?: InstanceRead;
+  /**
    * On a violated group row: its anchor is a line the instance shares with every
    * instance of a definition its element is typed by (the literal `R::q::L =
    * 50.0` under `part r1 : R`), the one cause of each of their findings
@@ -1502,6 +1509,8 @@ export interface InstanceRead {
   exact?: string;
   /** The unit `value` is read in, where a binding carried it into the unit the filled feature declares. */
   unit?: string;
+  /** Set on the one value {@link SpecialisationInstance.redefined} names: the feature is the redefinition that states it. */
+  redefined?: true;
   /** `exact` is SI, read the way the encoder reads the feature — set on the unit-aware reads alone; every other read's `exact` is in the stored magnitude or the declared `unit`. */
   si?: true;
   via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string; sourceValue?: number | boolean | string; sourceUnit?: string };
@@ -1576,7 +1585,7 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       ...(judged.reads ? { reads: judged.reads } : {}),
       ...(judged.sides ? { sides: judged.sides } : {}),
     };
-    if (judged.gap) readThroughSpecialisers(model, el, expr, check, pass);
+    if (judged.gap) readThroughSpecialisers(model, el, expr, check, pass, groups);
     readInContexts(model, el, expr, check, pass, groups);
     // A usage-owned relation's own row is its generic row; file each other
     // instance beside it (F7), no separate generic row.
@@ -1895,9 +1904,11 @@ function isNumberLiteral(text: unknown): boolean {
  * the scalar scope the judgement itself used, so only where that reproduces
  * the verdict and no value is a quantity in a unit: `undefined` otherwise (and
  * where it throws), when the finding keeps naming the first read a binding
- * carried.
+ * carried. With `ownElement`, a value the instance's own element redefines as a number
+ * may be named although no read lists it: the result is then a read the row does not
+ * list (`redefined`), so a caller finds it by its `featureId`, not among `reads`.
  */
-function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, expr: string, pass: ScalarPass, inst: string | undefined, judged: Judgement): InstanceRead | undefined {
+function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, expr: string, pass: ScalarPass, inst: string | undefined, judged: Judgement, ownElement = false): InstanceRead | undefined {
   const reads = judged.reads;
   if (judged.result !== 'violated' || reads === undefined || reads.length === 0) return undefined;
   try {
@@ -1907,10 +1918,33 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
     const base = evaluate(node, here);
     if (!('value' in base) || base.value !== false) return undefined;
     const there = combinedScope(model, own, pass);
-    return reads.find((r) => {
-      const put = evaluate(node, (n) => (n === r.path ? there(n) : here(n)));
+    const mends = (name: string): boolean => {
+      const put = evaluate(node, (n) => (n === name ? there(n) : here(n)));
       return 'value' in put && put.value === true;
-    });
+    };
+    const read = reads.find((r) => mends(r.path));
+    if (read !== undefined || !ownElement || reading.ownerId == null) return read;
+    // No read mends it: a value the instance's own element redefines (`part :>> p { attribute :>> extra =
+    // 20.0; }`), which no binding carries and no read lists, may. It is named by the redefinition that
+    // states it, which is the instance's own line (194); the row's `reads` stay as the engines read them.
+    const definitions = pass.definitions;
+    const root = reading.ownerId;
+    const inside = (el: ElementRecord): boolean => {
+      for (let cur: ElementRecord | undefined = el; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+        if (cur.id === root) return true;
+      }
+      return false;
+    };
+    for (const name of namesIn(expr)) {
+      if (reads.some((r) => r.path === name)) continue;
+      const d = definitions.denote(root).get(name);
+      const stated = d !== undefined ? definitions.carrier(d.reader, d.feature) : undefined;
+      const value = here(name);
+      if (stated === undefined || stated.attrs.isLibrary === true || stated.attrs.implicit === true || !inside(stated)) continue;
+      if (typeof value !== 'number' || !hasStatedValue(model, stated) || !isNumberLiteral(stated.attrs.valueText) || value !== stated.attrs.value || !mends(name)) continue;
+      return { path: name, featureId: stated.id, symbol: definitions.qualifiedNameOf(stated.id), value, redefined: true };
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -1935,7 +1969,12 @@ function breakKey(judged: Judgement, readIn: ElementId | undefined): string {
  * that member's own value is the one read, or else the component's single
  * stated member written in one of them ({@link DefiningEquations.statedMember}:
  * where the relation reads a value derived from the bound one, h2c's `p.m2 =
- * 10.0 - load`, or one the instance's own binding holds, A4's q2's `E`); else
+ * 10.0 - load`, or one the instance's own binding holds, A4's q2's `E`), or the
+ * redefinition stating a value that breaks the relation and no binding carries
+ * (q2's `attribute :>> extra = 20.0`, {@link SpecialisationInstance.redefined}), or
+ * the one member of them stating a number that a derived breaking value reads,
+ * where no other number it reads is a redefinition outside them (M7's q2's `attribute :>> K = 25.0` under Q's
+ * `L = 2.0 * K`; not m7j's J beside Q2's K); else
  * (2) the element the instance is read in (`readIn`: q2's `part :>> p { … }`,
  * Q2's `part :>> p : P2`); else (3) the innermost of its own elements (r1, where r1 sets the K a bound L derives from;
  * `sys::r1`'s r1, not the `sys` its siblings share); else (4) `own` itself, a
@@ -1963,6 +2002,9 @@ function instanceAnchor(
       const owns = el !== undefined && (isUsage(el.eClass) || (isDefinition(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage'));
       return user(el) && owns && definitions.instanceNameOf(el.id) === instance;
     });
+    // The value the breaking read names is one the instance's own element redefines (194): that redefinition.
+    const redefined = reads?.length === 1 && reads[0]!.redefined === true ? model.get(reads[0]!.featureId) : undefined;
+    if (user(redefined)) return { id: redefined.id };
     const sources = (reads ?? []).flatMap((r) => (r.via !== undefined ? [r.via.sourceSymbol] : []));
     for (const source of sources) {
       // The member the source symbol names, from the innermost own usage it is spelled under.
@@ -1987,6 +2029,36 @@ function instanceAnchor(
         if (user(stated) && definitions.qualifiedNameOf(stated.id) === source && only.sourceValue === stated.attrs.value && isNumberLiteral(stated.attrs.valueText)) {
           return { id: stated.id, shared: true };
         }
+      }
+    }
+    // The value that breaks it is derived (`L = 2.0 * K`, which no member of the instance states, M7's and PB's): the one
+    // member the instance's own elements state of what that value reads (q2's `:>> K = 25.0`), the instance's own
+    // changing line — where it is the only one (193). Only where putting the read back mends the relation.
+    const derived = mends && reads?.length === 1 ? reads[0]!.via : undefined;
+    if (derived !== undefined) {
+      for (let k = mine.length - 1; k >= 0; k--) {
+        const { instance, reader } = mine[k]!;
+        if (derived.sourceSymbol === instance || !spellsInstance(derived.sourceSymbol, instance)) continue;
+        const d = definitions.denote(reader).get(derived.sourceSymbol.slice(instance.length + 2).split('::').join('.'));
+        if (!d) continue;
+        const own = new Set(mine.map((m) => m.reader));
+        const inOwn = (f: ElementRecord): boolean => {
+          for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+            if (own.has(cur.id)) return true;
+          }
+          return false;
+        };
+        const states = definitions
+          .dependencies(d.reader, d.feature)
+          .map((id) => model.get(id))
+          .filter((f): f is ElementRecord => user(f) && hasStatedValue(model, f) && isNumberLiteral(f.attrs.valueText));
+        // Another stated input that is a redefinition outside the instance's own elements (Q2's `:>> K = 25.0`
+        // beside the instance's own `J`) may be what breaks it: the own line is not shown to be the cause (m7j).
+        // A declaration nothing redefines (Q's `J default = 0.0`) is what the relation's own context reads too.
+        if (states.some((f) => !inOwn(f) && redefinedClosure(model, f).length > 0)) break;
+        const ids = [...new Set(states.filter(inOwn).map((f) => f.id))];
+        if (ids.length === 1) return { id: ids[0]! };
+        break;
       }
     }
     // No read names a source of its own: the stated member, from the innermost own element, the names
@@ -2380,7 +2452,7 @@ function rollupMessage(
  * (`load = 50 \u2014 q1.L = 50 through R17::Q's \`bind p.load = L\``).
  */
 function violatedInstanceMessage(model: Model, relation: string, expr: string, inst: SpecialisationInstance): string {
-  const read = inst.breaks !== undefined ? inst.reads?.find((r) => r.path === inst.breaks) : inst.reads?.find((r) => r.via !== undefined);
+  const read = inst.breaks !== undefined ? (inst.reads?.find((r) => r.path === inst.breaks) ?? inst.redefined) : inst.reads?.find((r) => r.via !== undefined);
   let detail = '';
   if (read && !read.via && inst.breaks !== undefined) {
     detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)}`;
@@ -2823,7 +2895,7 @@ function readInContexts(
         ? undefined
         : renamed !== undefined && judged.result === 'unknown'
           ? renamed.member.id
-          : instanceAnchor(model, pass.definitions, readAs, several ? [broke.path] : names, several ? [broke] : judged.reads, undefined, x.id)?.id;
+          : instanceAnchor(model, pass.definitions, readAs, several ? [broke.path] : names, several ? [broke] : judged.reads, undefined, x.id, broke !== undefined)?.id;
     // A violated `assert` says why a `default` stood at this instance, read as the instance reads its names (the
     // context is the owner): q's `:>> L = 50.0` is no default, and P's `load default = 1.0` is the one that stood.
     const kept = judged.result === 'violated' ? standingFor(model, reading) : undefined;
@@ -2907,7 +2979,7 @@ function groupInstanceRows(
     const key = breakKey(judged, readIn);
     if (broken.has(key)) return broken.get(key);
     if (broken.size >= MAX_LISTED_VIOLATED) return undefined;
-    const found = breakingRead(model, el, readIn !== undefined ? { ...el, ownerId: readIn } : reading, expr, pass, inst, judged);
+    const found = breakingRead(model, el, readIn !== undefined ? { ...el, ownerId: readIn } : reading, expr, pass, inst, judged, readIn !== undefined);
     broken.set(key, found);
     return found;
   };
@@ -2932,7 +3004,8 @@ function groupInstanceRows(
     // ({@link breakKey}); only the first {@link MAX_LISTED_VIOLATED} distinct readings of the group are asked.
     const broke = inst !== undefined && judged.result === 'violated' ? breaking(inst, judged, readIn) : undefined;
     if (broke !== undefined) row.breaks = broke.path;
-    const several = broke !== undefined && (judged.reads?.length ?? 0) > 1;
+    if (broke?.redefined === true) row.redefined = broke;
+    const several = broke !== undefined && (broke.redefined === true || (judged.reads?.length ?? 0) > 1);
     const anchor =
       inst !== undefined
         ? instanceAnchor(model, definitions, inst, several ? [broke.path] : names, several ? [broke] : judged.reads, readIn, readIn ?? element, broke !== undefined)
@@ -4724,6 +4797,7 @@ function readThroughSpecialisers(
   expr: string,
   check: ConstraintCheck,
   pass: ScalarPass,
+  groups: readonly InstanceGroup[] = [],
 ): void {
   if (el.ownerId == null) return;
   const names = bareNamesIn(expr);
@@ -4755,10 +4829,13 @@ function readThroughSpecialisers(
   const specialising = new Set(
     pass.definitions.specialisersOf(el.ownerId).map((x) => x.id),
   );
+  // Nor one an expanded group reads as its own instance (RB5's q1 `bind p.x = K` makes q1's p, the
+  // instance Q's p group files a row for): a second row of that name, on the same element.
+  const standing = new Set(groups.filter((g) => g.expanded).flatMap((g) => [...(g.standsFor?.values() ?? [])]));
   const contexts: (ElementId | null)[] = [];
   for (const m of missing) {
     for (const ctx of walks.get(m.name)!.byContext.keys()) {
-      if (!contexts.includes(ctx) && !(ctx != null && specialising.has(ctx))) contexts.push(ctx);
+      if (!contexts.includes(ctx) && !(ctx != null && (specialising.has(ctx) || standing.has(ctx)))) contexts.push(ctx);
     }
   }
 
