@@ -1904,7 +1904,9 @@ function isNumberLiteral(text: unknown): boolean {
  * the scalar scope the judgement itself used, so only where that reproduces
  * the verdict and no value is a quantity in a unit: `undefined` otherwise (and
  * where it throws), when the finding keeps naming the first read a binding
- * carried.
+ * carried. With `ownElement`, a value the instance's own element redefines as a number
+ * may be named although no read lists it: the result is then a read the row does not
+ * list (`redefined`), so a caller finds it by its `featureId`, not among `reads`.
  */
 function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, expr: string, pass: ScalarPass, inst: string | undefined, judged: Judgement, ownElement = false): InstanceRead | undefined {
   const reads = judged.reads;
@@ -1970,8 +1972,9 @@ function breakKey(judged: Judgement, readIn: ElementId | undefined): string {
  * 10.0 - load`, or one the instance's own binding holds, A4's q2's `E`), or the
  * redefinition stating a value that breaks the relation and no binding carries
  * (q2's `attribute :>> extra = 20.0`, {@link SpecialisationInstance.redefined}), or
- * the one member of them stating a number that a derived breaking value reads
- * (M7's q2's `attribute :>> K = 25.0` under Q's `L = 2.0 * K`); else
+ * the one member of them stating a number that a derived breaking value reads,
+ * where no other number it reads is a redefinition outside them (M7's q2's `attribute :>> K = 25.0` under Q's
+ * `L = 2.0 * K`; not m7j's J beside Q2's K); else
  * (2) the element the instance is read in (`readIn`: q2's `part :>> p { … }`,
  * Q2's `part :>> p : P2`); else (3) the innermost of its own elements (r1, where r1 sets the K a bound L derives from;
  * `sys::r1`'s r1, not the `sys` its siblings share); else (4) `own` itself, a
@@ -2039,17 +2042,21 @@ function instanceAnchor(
         const d = definitions.denote(reader).get(derived.sourceSymbol.slice(instance.length + 2).split('::').join('.'));
         if (!d) continue;
         const own = new Set(mine.map((m) => m.reader));
+        const inOwn = (f: ElementRecord): boolean => {
+          for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+            if (own.has(cur.id)) return true;
+          }
+          return false;
+        };
         const states = definitions
           .dependencies(d.reader, d.feature)
           .map((id) => model.get(id))
-          .filter((f): f is ElementRecord => {
-            if (!user(f) || !hasStatedValue(model, f) || !isNumberLiteral(f.attrs.valueText)) return false;
-            for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
-              if (own.has(cur.id)) return true;
-            }
-            return false;
-          });
-        const ids = [...new Set(states.map((f) => f.id))];
+          .filter((f): f is ElementRecord => user(f) && hasStatedValue(model, f) && isNumberLiteral(f.attrs.valueText));
+        // Another stated input that is a redefinition outside the instance's own elements (Q2's `:>> K = 25.0`
+        // beside the instance's own `J`) may be what breaks it: the own line is not shown to be the cause (m7j).
+        // A declaration nothing redefines (Q's `J default = 0.0`) is what the relation's own context reads too.
+        if (states.some((f) => !inOwn(f) && redefinedClosure(model, f).length > 0)) break;
+        const ids = [...new Set(states.filter(inOwn).map((f) => f.id))];
         if (ids.length === 1) return { id: ids[0]! };
         break;
       }

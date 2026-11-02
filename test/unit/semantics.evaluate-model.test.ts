@@ -7866,8 +7866,8 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(
       await findings(
         ['package G5c {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; attribute K : ScalarValues::Real = 4.0; part :>> p { attribute :>> extra = 5.0 * K; } }', '}'].join('\n'),
-      ).then((f) => f.map((x) => x.slice(0, 2))),
-    ).toEqual([['G5c::q2::p', 8]]);
+      ),
+    ).toEqual([['G5c::q2::p', 8, 'attribute :>> L = 2.0', 'L', " is violated in G5c::q2::p: load = 2 — q2.L = 2 through G5c::Q's `bind p.load = L`"]]);
   });
 
   it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {
@@ -7945,6 +7945,42 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         '}',
       ]),
     ).toEqual([['constraint-by-instance', 'warning', 'M7b::q2', 11, 'part q2 : Q']]);
+    // A shared input beside the instance's own (m7j: Q2's `:>> K = 25.0` breaks it, q2 states J): putting J back
+    // would not mend it, so q2's `:>> J` is not the change and the finding stays at q2's own usage.
+    expect(
+      await findings([
+        'package M7j {',
+        '  part def Q {',
+        '    attribute K : ScalarValues::Real default = 0.5;',
+        '    attribute J : ScalarValues::Real default = 0.0;',
+        '    attribute L : ScalarValues::Real = 2.0 * K + J;',
+        '    attribute load : ScalarValues::Real;',
+        '    bind load = L;',
+        '    constraint c { load <= 5.0 }',
+        '  }',
+        '  part def Q2 :> Q { attribute :>> K = 25.0; }',
+        '  part q1 : Q2;',
+        '  part q2 : Q2 { attribute :>> J = 1.0; }',
+        '}',
+      ]).then((f) => f.filter((x) => x[2] === 'M7j::q2')),
+    ).toEqual([['constraint-by-instance', 'warning', 'M7j::q2', 12, 'part q2 : Q2']]);
+    // A shared input nothing redefines (Q's `J default = 0.0`) is what Q's own context reads too: the own `:>> K` stays the change.
+    expect(
+      await findings([
+        'package M7p {',
+        '  part def Q {',
+        '    attribute K : ScalarValues::Real default = 0.5;',
+        '    attribute J : ScalarValues::Real default = 0.0;',
+        '    attribute L : ScalarValues::Real = 2.0 * K + J;',
+        '    attribute load : ScalarValues::Real;',
+        '    bind load = L;',
+        '    constraint c { load <= 5.0 }',
+        '  }',
+        '  part q1 : Q;',
+        '  part q2 : Q { attribute :>> K = 25.0; }',
+        '}',
+      ]),
+    ).toEqual([['constraint-by-instance', 'warning', 'M7p::q2', 11, 'attribute :>> K = 25.0']]);
     // No binding carries the reading: a target over L that q redefines reads q's own L, and Q's asserted
     // `defL` read in Q2 reads L, the binding's source, not a value carried in. Both stay a target's.
     expect(
