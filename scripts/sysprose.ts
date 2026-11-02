@@ -48,10 +48,10 @@
  * it is reading.
  *
  * The report goes to stdout and everything about the FILE goes to stderr, for
- * every exit code (the one exception is that `degraded` line on a judging
- * report): a file that parsed with warnings still had something wrong with it,
- * and a reader who is never told is a reader confidently analysing a file the
- * tool did not recognise.
+ * every exit code (the exceptions are that `degraded` line on a judging
+ * report and on `evidence-status`): a file that parsed with warnings still
+ * had something wrong with it, and a reader who is never told is a reader
+ * confidently analysing a file the tool did not recognise.
  *
  * FAIL DIRECTION. Three refusals, each replacing an answer that would read as
  * true: a model that PARSED and produced no elements exits 2 rather than
@@ -179,7 +179,9 @@ import {
   type RefinementVia,
   type StatementKind,
   type WriteVerdictReport,
+  generalizationsOf,
 } from '../src/semantics/index';
+import { isAsserted } from '../src/semantics/defining-equation';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
 // layout engine in with it, and neither of these two builders needs it.
 import { buildGrid } from '../src/diagram/grid';
@@ -1320,10 +1322,25 @@ function inheritedClauseLines(contract: Contract): string[] {
  * definition and owns none — it is not prose, and saying so would be false
  * about a requirement that a `satisfy` names and that this tool can encode.
  * A requirement that really carries only words is the other case, and it is the
- * commonest row a real requirement set produces.
+ * commonest row a real requirement set produces. A third: it writes an `assert
+ * constraint` and no `require` or `assume` (`requirement r { subject s : P = x;
+ * assert constraint ca { s.L == 50.0 } }`, or one typed by a definition that
+ * does): the assert is a fact of the model that the check judges, so the row
+ * says it is that, not that the requirement carries prose.
  */
-function emptyClauseLine(contract: Contract): string {
+function emptyClauseLine(model: Model, contract: Contract): string {
   if (contract.clausesInheritedFrom.length === 0) {
+    const owners = new Set<string>([contract.id, ...generalizationsOf(model, contract.id).map((t) => t.id)]);
+    const asserted = model
+      .ofKind('ConstraintUsage')
+      .filter((c) => isAsserted(c) && c.ownerId != null && owners.has(c.ownerId) && typeof c.attrs.expression === 'string');
+    if (asserted.length > 0) {
+      return (
+        `    no formal clause: its asserted ${asserted.map((c) => `\`${String(c.attrs.expression).replace(/\s+/g, ' ').trim()}\``).join(', ')} ` +
+        `${asserted.length === 1 ? 'is a fact of the model, an axiom' : 'are facts of the model, axioms'} the check judges, ` +
+        'not a clause of the requirement — nothing to encode as one'
+      );
+    }
     return '    no formal clause: prose only, nothing to encode';
   }
   const where = contract.clausesInheritedFrom.map((d) => d.qualifiedName || label(d)).join(', ');
@@ -1444,7 +1461,7 @@ function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
         `  ${c.qualifiedName}${c.shortId ? ` (${c.shortId})` : ''}  [${c.eClass}]`,
         `    subject ${subjectLine(c.subject)}`,
         ...(c.assumptions.length + c.guarantees.length === 0
-          ? [emptyClauseLine(c)]
+          ? [emptyClauseLine(model, c)]
           : [...c.assumptions, ...c.guarantees].flatMap(clauseLines)),
         ...inheritedShown,
         ...edgeLines(c),
@@ -2746,14 +2763,22 @@ async function reportBounds(
   const measure = boundsMeasure(args);
   const sense = boundsSense(args);
   const { free, freeAll } = boundsFree(args);
-  const r = await boundsReport(model, {
-    measure,
-    ...(sense !== undefined ? { sense } : {}),
-    ...(free.length > 0 ? { free } : {}),
-    ...(freeAll ? { freeAll: true } : {}),
-    withRequirements: flagGiven(args, 'with-requirements'),
-    sourceText: text,
-  });
+  let r: Awaited<ReturnType<typeof boundsReport>>;
+  try {
+    r = await boundsReport(model, {
+      measure,
+      ...(sense !== undefined ? { sense } : {}),
+      ...(free.length > 0 ? { free } : {}),
+      ...(freeAll ? { freeAll: true } : {}),
+      withRequirements: flagGiven(args, 'with-requirements'),
+      sourceText: text,
+    });
+  } catch (err) {
+    // What was ASKED (a --measure that names nothing), not a finding: one
+    // sentence and exit 2, as `verify` does, rather than an internal-error banner.
+    if (err instanceof VerifyOptionError) throw new UsageError(err.message);
+    throw err;
+  }
 
   const undecided = r.bounds.filter((b) => b.code !== null).length;
   const rendered = [
@@ -2761,7 +2786,7 @@ async function reportBounds(
     // this lane: a line that opened with the number reads as an answer with a
     // footnote, and the footnote is what decides the exit code.
     `${name}: ${undecided} not established, ${r.bounds.length - undecided} decided — ` +
-      `\`${r.measure?.qualifiedName ?? measure}\` over ${r.axioms} assertion(s)`,
+      `\`${r.asked ?? r.measure?.qualifiedName ?? measure}\` over ${r.axioms} assertion(s)`,
     r.toolAbsent
       ? `  no solver ran: a bound is a claim about every design the axioms admit, and the value in ` +
         `the file is one of them rather than the tightest — this run is exit ${r.exitCode}`
@@ -3938,7 +3963,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       // on the model. (`--json` carries the same fact as `degraded` and `verdict`.)
       degraded && verdict
       ? `${DEGRADED_VERDICT_HEADER(name, report.summary.errors, report.summary.warnings)}\n${built.text}`
-      : built.text;
+      : // `evidence-status` judges nothing but prints a status per row (stale, current,
+        // overstated), which reads as a verdict on the model: over a half-parsed model it
+        // opens with the same fact. Exit code unchanged (the reporting contract's 1).
+        degraded && cmd.name === 'evidence-status'
+        ? `${DEGRADED_STATUS_HEADER(name, report.summary.errors, report.summary.warnings)}\n${built.text}`
+        : built.text;
 
   const out = flagValue(parsed, 'out');
   if (out !== undefined) {
@@ -3994,6 +4024,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 const DEGRADED_VERDICT_HEADER = (name: string, errors: number, warnings: number): string =>
   `degraded — ${name} did not load cleanly (${errors} error(s), ${warnings} warning(s)); ` +
   `the answers below are over what parsed; none is a verdict on the model (exit 2)`;
+
+/** The first stdout line of `evidence-status` over a degraded load (no exit change). */
+const DEGRADED_STATUS_HEADER = (name: string, errors: number, warnings: number): string =>
+  `degraded — ${name} did not load cleanly (${errors} error(s), ${warnings} warning(s)); ` +
+  `the statuses below are over what parsed; none is a claim about the whole model`;
 
 /**
  * Only when this file was RUN — the guard `scripts/gen-cli-reference.ts` and

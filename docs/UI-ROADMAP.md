@@ -267,7 +267,7 @@ where the parse is the cost, not the build.
 
 ### P4 — an edit's recompute was one task of 0.2 to 0.4 s on the drone-swarm model — now a task for each rule, the text, and the results (`recomputeSteps`, `src/ui/store.ts`)
 
-After every edit the page validates the whole model (27 rules), writes its text and builds the
+After every edit the page validates the whole model (28 rules), writes its text and builds the
 diagram. Measured in Chromium (headless, the `drone-swarm-v9` model of the palette-checks guard, the
 State view, six renames through `window.sysml`, the page's long tasks timed from each edit), on a
 16-core machine at a load average of about 13: the recompute was one task of 207 – 393 ms after the
@@ -292,7 +292,7 @@ burst's deadline, and the recompute that reaches the deadline runs in one task, 
 which an edit cannot end; without that, edits arriving faster than a recompute's wall time (several
 tasks, with draws between) would end every one of them and the diagnostics, diagram and text would
 not refresh for as long as the typing lasted. So the 200 ms bound is of an edit alone; under a
-sustained burst one task of the recompute is the whole of it, at the cap. Nothing is validated incrementally: the same 27 rules run over the
+sustained burst one task of the recompute is the whole of it, at the cap. Nothing is validated incrementally: the same 28 rules run over the
 whole model, and no finding can depend on what an edit was thought to leave alone.
 
 | | the recompute's longest task | the longest task of an edit and its recompute |

@@ -280,6 +280,12 @@ export interface RefusedAxiom {
 /** What one bounds run came to. */
 export interface BoundsResult {
   measure: MeasureRef | null;
+  /**
+   * The measure as the caller wrote it (`w.p2.load`), set only on a run refused for the value an instance or a
+   * part-valued binding may carry ({@link equatedPartsMeasureRefusal}): the feature it resolved to is the
+   * definition's shared one (`SA7::T0::load`), which is not what the caller asked about.
+   */
+  asked?: string;
   bounds: Bound[];
   /** Were the `require` bodies folded in? */
   withRequirements: boolean;
@@ -895,9 +901,11 @@ async function checkBoundsInner(model: Model, opts: BoundsOptions, rollup: Class
   // that reads such a value undecided; so does this one, before any solver
   // runs. A limit of this tool, not of the model: never a decided row.
   if (prepared.equated !== undefined) {
-    const name = prepared.measure.qualifiedName;
+    // Named as asked: the resolved feature is the shared definition's, and no bound of it is what was refused.
+    const name = opts.measureSpelling ?? prepared.measure.qualifiedName;
     return {
       ...base,
+      ...(opts.measureSpelling !== undefined ? { asked: opts.measureSpelling } : {}),
       bounds: sensesOf(opts.sense).map((sense) => ({
         sense,
         outcome: 'inconclusive' as const,

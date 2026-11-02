@@ -52,13 +52,13 @@ Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
 an answer and exits 0. A model that did not load cleanly still produces a
 report — of what error recovery salvaged — with a `degraded` banner on stderr
-saying so. Under the judging contract a degraded model is exit **2**: a verdict
+saying so (`evidence-status` also opens its stdout with a `degraded` line). Under the judging contract a degraded model is exit **2**: a verdict
 over half a model is not a verdict, and the report on stdout (text form) opens
 with a `degraded` line saying the answers below were read over what parsed.
 
 **stdout carries the report; stderr carries everything about the file**, for
-every exit code (bar that one `degraded` line on a judging report, so its text
-cannot be read as a verdict on the model), so a pipeline gets the data and a
+every exit code (bar the `degraded` line on a judging report and on
+`evidence-status`, so its text cannot be read as a verdict on the model), so a pipeline gets the data and a
 person gets the warnings.
 
 Two refusals, each replacing an answer that would read as true: a file that

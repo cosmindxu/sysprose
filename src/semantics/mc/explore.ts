@@ -3318,7 +3318,7 @@ export function constructsOf(unsupported: readonly UnsupportedConstruct[]): stri
 export function boundsSentence(b: ExploreBounds): string {
   const alphabet = b.alphabet.length === 0 ? 'no named trigger' : b.alphabet.join(', ');
   return (
-    `{maxConfigs ${b.maxConfigs}, maxDepth ${b.maxDepth}, maxCompletion ${b.maxCompletion}, ` +
+    `{maxConfigs ${b.maxConfigs}, maxDepth ${b.maxDepth} events, maxCompletion ${b.maxCompletion}, ` +
     `alphabet ${alphabet}, store seeded from declared literal values — a guard over an ` +
     'attribute with no declared value is undecided and takes no edge}'
   );

@@ -6337,11 +6337,16 @@ function numericRows(
   return out;
 }
 
-/** `a`, `a and b`, `a, b and c` — the declared names of `ids`, an instance's variable by its symbol. */
+/**
+ * `a`, `a and b`, `a, b and c` — the effective names of `ids` (an unnamed `:>> L` by the name it
+ * redefines), an instance's variable by its symbol.
+ */
 function nameList(model: Model, ids: readonly ElementId[]): string {
-  const names = ids.map((id) =>
-    id.includes('@') ? id.slice(id.indexOf('@') + 1) : (model.get(id)?.declaredName ?? id),
-  );
+  const names = ids.map((id) => {
+    if (id.includes('@')) return id.slice(id.indexOf('@') + 1);
+    const el = model.get(id);
+    return (el !== undefined ? effectiveNameOf(model, el) : undefined) ?? id;
+  });
   return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
@@ -6534,7 +6539,9 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
         amount: 0,
         context: { baseId: c.id, contextId: i.contextId, ...(i.instance !== undefined ? { path: i.instance } : {}) },
         ...(i.instance !== undefined || i.via === true ? { anchorId: anchorFor(model, c, i) } : {}),
-        ...(i.result !== 'satisfied' ? { reason: reason(i.detail ?? i.message) } : {}),
+        ...(i.result !== 'satisfied'
+          ? { reason: reason(i.detail ?? i.message) + (i.standing !== undefined ? ` — ${i.standing}` : '') }
+          : {}),
         ...(i.result === 'unknown' && i.cause !== undefined ? { cause: i.cause } : {}),
       });
     }

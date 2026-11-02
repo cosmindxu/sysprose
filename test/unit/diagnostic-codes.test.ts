@@ -17,7 +17,7 @@ import {
 } from '@api/index';
 import type { UndeterminedGuardRow } from '@api/index';
 import { CHECK_META_CODES } from '../../src/ui/checks';
-import { RULES_BY_ID, RULE_IDS } from '@validation/index';
+import { RULES_BY_ID, validate } from '@validation/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
 
@@ -175,7 +175,7 @@ describe('diagnostic-code catalogue', () => {
   });
 });
 
-describe('validation/redefinition-own-sibling (carried by the redefinition-conformance rule)', () => {
+describe('validation/redefinition-own-sibling (its own rule, so the Problems panel’s rule id is the code’s)', () => {
   const OWN = 'validation/redefinition-own-sibling';
   const ownFindings = async (body: string) =>
     (await loadModelText(`package P {\n${body}\n}`)).report.diagnostics.filter((d) => d.code === OWN);
@@ -214,10 +214,15 @@ describe('validation/redefinition-own-sibling (carried by the redefinition-confo
     ).toEqual([]);
   });
 
-  it('is raised by the redefinition-conformance rule, so the rule count does not move', () => {
+  it('is raised by its own rule, and the redefinition-conformance rule no longer carries it', () => {
     const m = parseModel('package P { part def B { attribute mass default = 1.2; attribute :>> mass = 0.8; } }').model;
-    const diags = RULES_BY_ID.get('redefinition-conformance')!.run(m);
-    expect(diags.map((d) => d.code)).toEqual([OWN]);
-    expect(RULE_IDS).not.toContain('redefinition-own-sibling');
+    expect(RULES_BY_ID.get('redefinition-own-sibling')!.run(m).map((d) => [d.ruleId, d.severity])).toEqual([
+      ['redefinition-own-sibling', 'warning'],
+    ]);
+    expect(RULES_BY_ID.get('redefinition-conformance')!.run(m)).toEqual([]);
+    // The Problems panel labels the row by the rule id, and `excludeRuleIds` drops it by that id alone.
+    expect(validate(m).filter((d) => d.ruleId === 'redefinition-own-sibling')).toHaveLength(1);
+    expect(validate(m, { excludeRuleIds: ['redefinition-own-sibling'] }).some((d) => d.ruleId === 'redefinition-own-sibling')).toBe(false);
+    expect(validate(m, { excludeRuleIds: ['redefinition-conformance'] }).some((d) => d.ruleId === 'redefinition-own-sibling')).toBe(true);
   });
 });

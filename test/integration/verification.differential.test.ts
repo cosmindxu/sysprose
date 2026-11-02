@@ -1583,6 +1583,8 @@ describe('a value read where its inputs are changed is that context’s own, and
       expect([rows, exit], name).toEqual([[['inconclusive', 'verification/not-evaluable', null]], 2]);
       expect(detail, name).toContain(said);
       expect(detail, name).toContain('so no bound of a value read through it is claimed');
+      // Named by the path asked, not by the definition's shared feature the spelling resolves to (`SA7::T0::load`).
+      expect(detail, name).toContain(`no max of \`${measure}\` is claimed`);
     }
     // Where no instance reads p1 otherwise, the reference reads as written: bounded at W's p1's 1.
     const same = `package RS { ${T0} part def W { part p1 : T0; part sub { ref part r : T0 = p1; } } part w : W; }`;

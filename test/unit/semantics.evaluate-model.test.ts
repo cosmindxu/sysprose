@@ -3479,7 +3479,7 @@ describe('checkConstraints — defaults a binding joins stand only as one consta
     // said `"L" has no value in scope`.
     const { model: q } = await loadModelText(`package GA6 { ${P} part def Q { ${L} bind p.load = L; } part q : Q; }`);
     expect(checkConstraintsNumeric(q!).find((n) => n.name === 'qa' && n.context === undefined)!.reason).toBe(
-      'L has no value in GA6::Q: `bind p.load = L` of GA6::Q joins defaults that differ or are not constants (p.load, L), and the model states neither',
+      'L has no value in GA6::Q: `bind p.load = L` of GA6::Q joins defaults that differ or are not constants (p.load (default 7.0), L (default 5.0)), and the model states neither',
     );
     // F5 names the defaults that differ (A.9 `defaults-differ`), not "declared without one".
     const { model: r } = await loadModelText(R3A);
@@ -3638,6 +3638,17 @@ describe('checkConstraints — a default stands against an asserted equation (de
       "q::L = 50 misses Q::tie (p.load == L) — P::load's `default = 1.0` is not changed by an assertion: write the analysis as " +
         'the value (`part :>> p { attribute :>> load = …; }` in H2E::q) to replace it',
     ]);
+    // The numeric surface says it beside the relation on the instance's violated row, as the check does.
+    const { model: g9 } = await loadModelText(`package G9 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+      part def Q { part p : P { assert constraint c2 { load == extra + 1.0 } } }
+      part q : Q { part :>> p { attribute :>> extra = 20.0; } }
+    }`);
+    const numeric = checkConstraintsNumeric(g9!).find((r) => r.name === 'c2' && r.result === 'violated')!;
+    expect(numeric.reason).toBe(
+      "load == extra + 1.0 — P::load's `default = 1.0` is not changed by an assertion: write the analysis as the value " +
+        '(`:>> load = …`) to replace it',
+    );
     // Through a binding: RB3's valueless x is joined to q's `L default = 4.0`, which is the value the assert missed.
     const { model: b } = await loadModelText(`package RB3 {
       part def P { attribute x : ScalarValues::Real; }
