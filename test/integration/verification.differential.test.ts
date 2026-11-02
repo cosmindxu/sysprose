@@ -47,7 +47,7 @@
  * engines over each — ~18 s wall clock on this machine, of which the library
  * bind is the great majority.
  */
-import { describe, it, expect, afterAll, beforeAll } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ElementId, ElementRecord, Model } from '@core/index';
@@ -85,6 +85,7 @@ import {
 } from '@semantics/smt/z3-bridge';
 import { BINARY_PREFIXES, SI_PREFIXES, UNIT_REGISTRY, resolveUnit } from '@semantics/units';
 import { loadModelText } from '@text/load';
+import { solverTimeoutFloor } from '../support/z3-timeout-floor';
 import { validate } from '@validation/index';
 
 const root = (p: string) => resolve(process.cwd(), p);
@@ -210,6 +211,13 @@ const installed = existsSync(root('node_modules/z3-solver/package.json'));
 const SOLVER_CASE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS + DEAD_MODULE_MARGIN_MS + 5_000;
 
 /**
+ * The hooks and cases of this file that hand z3 a check, noted with the largest budget they handed: `beforeAll`
+ * below is vitest's, and `withZ3` notes each case, for the guard at the end of the file (the floor a larger budget or
+ * a hook moves; `withZ3` alone sees neither).
+ */
+const { beforeAll, note, shortOnes } = solverTimeoutFloor();
+
+/**
  * Skip a solver case where the optional dependency is not installed.
  *
  * The same pattern, for the same reason, as
@@ -234,7 +242,7 @@ const withZ3 = (name: string, fn: () => void | Promise<void>, timeout = 120_000)
         ctx.skip();
         return;
       }
-      await fn();
+      await note(name, timeout, fn);
     },
     timeout,
   );
@@ -1591,7 +1599,9 @@ describe('a value read where its inputs are changed is that context’s own, and
     expect((await bound(same, 'RS', 'w.sub.r.load')).slice(0, 2)).toEqual([[['optimum', null, 1]], 0]);
   });
 
-  it('files a binding it does not read under its own reason: a limit of this tool, exit 2, never forgiven (O9 S1)', async () => {
+  const UNREAD_BINDING = 'files a binding it does not read under its own reason: a limit of this tool, exit 2, never forgiven (O9 S1)';
+  // Drives z3 only where a backend is present, so the literal engine still runs without one: noted by hand.
+  it(UNREAD_BINDING, () => note(UNREAD_BINDING, 120_000, async () => {
     const text = `package PU {
     part def T0 { attribute load : ScalarValues::Real default = 1.0; }
     part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
@@ -1615,7 +1625,7 @@ describe('a value read where its inputs are changed is that context’s own, and
         }
       }
     }
-  });
+  }), 120_000);
 
   withZ3('refine reads a contract over an unread value as the feature it names', async () => {
     const pack = (top: string, cell: string) => `package RF {
@@ -3849,7 +3859,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   /**
    * A binding written ONCE, at package level, `depth − 1` usages down — `bind top.a.….a.L = X` into the T1
    * whose own `bind a.load = L` carries it into the T0 below: top.a.….a's load is X's 50, so its m2 is
-   * −40. Past 32 segments the package frame is the one dropped (`heldDefaults`' segment cap), and it is the
+   * −40. Past 48 segments the package frame is the one dropped (`heldDefaults`' segment cap), and it is the
    * one that carries the value — unlike `bindingChain`, whose every level re-binds.
    */
   const bindingChainPkg = (depth: number) => {
@@ -3868,16 +3878,19 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ].join('\n');
   };
 
-  /** CAP1's text (below): chainPkg33 plus `bind Y = top.a.….a.load` over `Y default = 1.0`; CAP2's has no `default`. */
+  /** One usage past the segment cap (`MAX_BINDING_SEGMENTS`, 48): a binding this deep is read by no surface that walks frames. */
+  const PAST_CAP = 49;
+
+  /** CAP1's text (below): chainPkg49 plus `bind Y = top.a.….a.load` over `Y default = 1.0`; CAP2's has no `default`. */
   const CAP1_TEXT = (valued = true): string =>
-    bindingChainPkg(33)
-      .replace('package DP33 {', `package ${valued ? 'CAP1' : 'CAP2'} {`)
+    bindingChainPkg(PAST_CAP)
+      .replace(`package DP${PAST_CAP} {`, `package ${valued ? 'CAP1' : 'CAP2'} {`)
       .replace(
         /\n}$/,
         [
           '',
           `  attribute Y : ScalarValues::Real${valued ? ' default = 1.0' : ''};`,
-          `  bind Y = top.${Array.from({ length: 33 }, () => 'a').join('.')}.load;`,
+          `  bind Y = top.${Array.from({ length: PAST_CAP }, () => 'a').join('.')}.load;`,
           '  constraint yT { Y >= 40.0 }',
           '  constraint yF { Y <= 5.0 }',
           '}',
@@ -4080,8 +4093,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * Each probe: its text, and per row `[check/literal/numeric/SMT as they stand, ref]`. The design's names:
    * the binding and default probes of the soundness pass (h2 … w3, r14, the cross-track c3c and c5), the
    * mapper's siblings and shared usages, the derived-partner series M1–M9, big-bind, the refutation round
-   * (refute-*), a binding carried past 32 usages, the shapes the table's own review found (a package
-   * binding past 32 segments, a usage-body binding whose type redefines an end, an asserted partner, the
+   * (refute-*), a binding carried past 48 usages, the shapes the table's own review found (a package
+   * binding past 48 segments, a usage-body binding whose type redefines an end, an asserted partner, the
    * M2 family with units, a specialised override or a sibling, a plain value against a binding), the
    * controls that must keep abstaining (k4 … n4), and the rows where the check decides and another
    * surface abstains (d1-dec-inst … c1-chain).
@@ -5881,26 +5894,44 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'X11::q2::«PartUsage»::«ConstraintUsage»': ['T/-/T/-', 'T'],
       'X11::q2::p::c': ['-/T/-/T', 'T'],
     }),
+    // A binding carried 33 usages down was past the old cap of 32 (the check and the literal engine abstained, `?/?/T/T`
+    // and `?/?/F/?`); the cap is 48 now, and it reads like the 32-level chain does. The cap's own pins are PAST_CAP's.
     chain33: probe(bindingChain(33), {
+      'Deep::deepNegT': ['T/T/T/T', 'T'],
+      'Deep::deepPosF': ['F/F/F/F', 'F'],
+    }),
+    chain48: probe(bindingChain(48), {
+      'Deep::deepNegT': ['T/T/T/T', 'T'],
+      'Deep::deepPosF': ['F/F/F/F', 'F'],
+    }),
+    chain49: probe(bindingChain(PAST_CAP), {
       'Deep::deepNegT': ['?/?/T/T', 'T'],
       'Deep::deepPosF': ['?/?/F/?', 'F'],
     }),
     // Found by the soundness review of this table (F0): shapes the design's probes did not build.
     chainPkg33: probe(bindingChainPkg(33), {
-      'DP33::negT': ['?/?/T/T', 'T'],
-      'DP33::posF': ['?/?/F/?', 'F'],
+      'DP33::negT': ['T/T/T/T', 'T'],
+      'DP33::posF': ['F/F/F/F', 'F'],
+    }),
+    chainPkg48: probe(bindingChainPkg(48), {
+      'DP48::negT': ['T/T/T/T', 'T'],
+      'DP48::posF': ['F/F/F/F', 'F'],
+    }),
+    chainPkg49: probe(bindingChainPkg(PAST_CAP), {
+      'DP49::negT': ['?/?/T/T', 'T'],
+      'DP49::posF': ['?/?/F/?', 'F'],
     }),
     chainPkg32: probe(bindingChainPkg(32), {
       'DP32::negT': ['T/T/T/T', 'T'],
       'DP32::posF': ['F/F/F/F', 'F'],
     }),
-    // CAP1 (the 2026-10-14 review, A-C3): chainPkg33 plus `bind Y = top.a.….a.load` read in the package, over
+    // CAP1 (the 2026-10-14 review, A-C3): chainPkg49 (chainPkg33 when the cap was 32) plus `bind Y = top.a.….a.load` read in the package, over
     // `Y default = 1.0`. T1's binding is past the segment cap, and the package's second binding carried its
     // value on: Y's default and the load's fall-through were read there as two defaults that agree, so Y and
     // the load stood at 1 — yT and negT F/F/F/X, yF and posF T/T/T/X, where Y is 50 and m2 is −40. The cap
     // reaches every binding joined to the capped one (O2 S3): the check and the literal engine abstain, the
-    // numeric and SMT lanes solve the bindings and decide. It sits beside chainPkg33, the cap's pin here;
-    // P4's others are the 33-level chain unit test (CAP1 is pinned beside it too) and r4cap, out of tree.
+    // numeric and SMT lanes solve the bindings and decide. It sits beside chainPkg49, the cap's pin here;
+    // P4's others are the cap-deep chain unit test (CAP1 is pinned beside it too) and r4cap, out of tree.
     cap1: probe(CAP1_TEXT(), {
       'CAP1::negT': ['?/?/T/T', 'T'],
       'CAP1::posF': ['?/?/F/?', 'F'],
@@ -5931,14 +5962,14 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'CAP2::yT': ['?/?/T/T', 'T'],
       'CAP2::yF': ['?/?/F/?', 'F'],
     }),
-    // CAPU2 (the review of O2 S3): chainPkg33 plus U's own `bind a.load = M` on its `part a : T0`. Both U's end
+    // CAPU2 (the review of O2 S3): chainPkg49 plus U's own `bind a.load = M` on its `part a : T0`. Both U's end
     // and T1's capped one redefine T0's load, and joined through it U's binding was held past T1's cap: M and
     // the load were free to the numeric lane, which solved `u.a.load == 9.0` as a design equation and refuted
     // c2–c4 at 9 (the app's Solve: infeasible), where u's load and M are U's default of 1. A binding joins a
     // capped one only through another binding's end.
     capu2: probe(
-      bindingChainPkg(33)
-        .replace('package DP33 {', 'package CAPU2 {')
+      bindingChainPkg(PAST_CAP)
+        .replace(`package DP${PAST_CAP} {`, 'package CAPU2 {')
         .replace(
           /\n}$/,
           [
@@ -5967,8 +5998,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // and c2 and c3 refuted at that 9. A value held past a cap that no binding carries from a stated value
     // is no freedom: every surface abstains.
     capu4: probe(
-      bindingChainPkg(33)
-        .replace('package DP33 {', 'package CAPU4 {')
+      bindingChainPkg(PAST_CAP)
+        .replace(`package DP${PAST_CAP} {`, 'package CAPU4 {')
         .replace(
           /\n}$/,
           [
@@ -10773,17 +10804,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'PPS2::pT': ['T/T/T/T', 'T'],
       'PPS2::pF': ['F/F/F/F', 'F'],
     }),
-    // The same past the 32-usage cap (CAPP): pp reads the capped load, as chainPkg33 does — the check and the
+    // The same past the 48-usage cap (CAPP): pp reads the capped load, as chainPkg49 does — the check and the
     // literal engine abstain, the numeric and SMT lanes solve it; never the shared default 1.
     'h5-capp': probe(
-      bindingChainPkg(33)
-        .replace('package DP33 {', 'package CAPP {')
+      bindingChainPkg(PAST_CAP)
+        .replace(`package DP${PAST_CAP} {`, 'package CAPP {')
         .replace(
           /\n}$/,
           [
             '',
             '  part pp : T0;',
-            `  bind pp = top.${Array.from({ length: 33 }, () => 'a').join('.')};`,
+            `  bind pp = top.${Array.from({ length: PAST_CAP }, () => 'a').join('.')};`,
             '  constraint pT { pp.load >= 40.0 }',
             '  constraint pF { pp.load <= 5.0 }',
             '}',
@@ -15384,7 +15415,7 @@ package L3 {
    * value (M2's `L = 2.0 * K` under q's K of 25, refute-r8's two levels, refute-r16*'s input through a
    * second binding, an asserted partner, units, a specialised override, a sibling) was read at the
    * definition — q's p's m2 read 9 where it is −40, and the same reading called the binding a
-   * contradiction (`#bind`) — and a package binding past 32 segments (chainPkg33) left the end's default
+   * contradiction (`#bind`) — and a package binding past the segment cap (chainPkg49) left the end's default
    * standing: the check and the literal engine now abstain on them.
    *
    * The table's own review added rows false on ALL FOUR surfaces — no clash, so only a `ref` sees them:
@@ -17551,7 +17582,8 @@ describe('the relation census — no relation leaves the pipeline unaccounted fo
     expect([...reconcile(ids, withRelations!.worklist).values()]).not.toContain('missing');
   });
 
-  it('walks a self-typed feature rather than dying on it', async () => {
+  const SELF_TYPED = 'walks a self-typed feature rather than dying on it';
+  it(SELF_TYPED, () => note(SELF_TYPED, 120_000, async () => {
     // `item def Person { timeslice asPresident : Person; }` names an unbounded
     // tower of dotted scopes. The numeric surface's collector was given a cycle
     // guard keyed on the owner when that fixture was filed; the worklist's was
@@ -17566,5 +17598,22 @@ describe('the relation census — no relation leaves the pipeline unaccounted fo
     expect(() => obligationsOf(model!), 'the worklist gatherer died on a self-typed feature').not.toThrow();
     const report = await verifyModel(model!, { engine: 'smt', sourceText: text });
     expect(report.exitCode, 'the run did not reach a verdict at all').toBeGreaterThanOrEqual(0);
-  }, 120_000);
+  }), 120_000);
+});
+
+describe('D5 — every hook and case that drives z3 outlasts the death guard', () => {
+  it('names no hook or case that handed z3 a check under a timeout shorter than its budget plus the guard', (ctx) => {
+    if (!backendPresent) {
+      expect(absentReason.length, 'no backend and no reason either').toBeGreaterThan(20);
+      ctx.skip();
+      return;
+    }
+    const { cases, hooks, hookNames, caseCount, undeclared } = shortOnes();
+    expect.soft(cases, 'these cases drive z3 under a timeout shorter than the budget they handed it plus the margin plus 5 s').toEqual([]);
+    expect.soft(hooks, 'these hooks hand z3 a check under a timeout shorter than the budget plus the margin plus 5 s').toEqual([]);
+    expect.soft(undeclared, 'these cases hand z3 a check without `withZ3`, so under vitest’s 5 s default').toEqual([]);
+    // Not vacuous: the corpus hook drives z3 over every model, so the record that misses it is broken.
+    expect.soft(hookNames.length, 'no hook was recorded: the record is broken').toBeGreaterThanOrEqual(1);
+    expect.soft(caseCount, 'no case was recorded: the record is broken').toBeGreaterThan(10);
+  });
 });

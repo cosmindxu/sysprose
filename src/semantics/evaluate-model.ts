@@ -56,6 +56,7 @@ import {
   joinedTo,
   hasUserBindings,
   readsPerInstance,
+  readingContextsOf,
   heldPastCapSentence,
   instanceGroups,
   lookupsHold,
@@ -2497,7 +2498,23 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
     if (!owner || left === undefined || right === undefined || left === right) continue;
     const expr = `${exprRef(left)} == ${exprRef(right)}`;
     const at: ElementRecord = owner.id === b.ownerId ? b : { ...b, ownerId: owner.id };
-    for (const x of [owner, ...pass.definitions.changingContexts(at, [left, right])]) {
+    // A throw in the binding's own context walk (A.2.9): which other contexts read it is unknown, so one row says
+    // so, `unknown`, and the binding's row where it is written stands.
+    let others: ElementRecord[] = [];
+    try {
+      others = pass.definitions.changingContexts(at, [left, right]);
+    } catch (e) {
+      const sentence = failedReadingSentence(`\`bind ${left} = ${right}\``, `the contexts that read it beside ${pass.definitions.contextName(owner.id)}`, e);
+      out.push({
+        id: `${b.id}@contexts`,
+        ownerId: owner.id,
+        expression: expr,
+        result: 'unknown',
+        message: `Could not evaluate: ${sentence}`,
+        conflict: 'bind',
+      });
+    }
+    for (const x of [owner, ...others]) {
       // A context listed only because a member reads its own value there: its
       // relations are read at its instance (E7), but the binding's own row is
       // not filed there yet — sound, only weaker.
@@ -2660,7 +2677,27 @@ function readInContexts(
 ): void {
   if (el.ownerId == null) return;
   const names = namesIn(expr);
-  const contexts = pass.definitions.readingContexts(el, names);
+  const walked = readingContextsOf(model, pass.definitions, el, names);
+  // A throw in the relation's own context walk (A.2.9): which other contexts read it is unknown, so one row says
+  // so, `internal`, and the relation's own row stands. (The obligations lane files the same refusal.)
+  if ('failed' in walked) {
+    const sentence = walked.failed;
+    const ownerId = el.ownerId;
+    (check.instances ??= []).push({
+      contextId: ownerId,
+      context: effectiveNameOf(model, model.get(ownerId)!) ?? pass.definitions.contextName(ownerId),
+      featureId: ownerId,
+      qualifiedName: effectiveQualifiedName(model, ownerId),
+      bindings: [],
+      result: 'unknown',
+      message: `Could not evaluate: ${sentence}`,
+      detail: `Could not evaluate: ${sentence}`,
+      abstention: 'internal',
+      cause: 'internal',
+    });
+    return;
+  }
+  const contexts = walked.contexts;
   if (contexts.length === 0) return;
   const owner = el.ownerId;
   const ownIds = pass.definitions.scope(owner, 'all');
@@ -4626,7 +4663,7 @@ function unitAwareVerdict(
 /**
  * Why a feature a relation reads by its bare name has no value read for it,
  * where a binding past a cap holds it ({@link boundSourceIn}'s `past-cap`):
- * `Y is not read in CAP: a binding of this model is read deeper than 32
+ * `Y is not read in CAP: a binding of this model is read deeper than 48
  * usages`, in the sentence a per-instance read gives — or `undefined`.
  */
 function pastCapCause(model: Model, feature: ElementRecord, pass: ScalarPass): string | undefined {

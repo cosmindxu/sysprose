@@ -27,7 +27,7 @@
  * carries one number for "init plus three checks" and could not tell which half
  * it was. `resetZ3Cache()` exists for this case alone.
  */
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadModelText } from '@text/load';
@@ -51,6 +51,7 @@ import {
 } from '@semantics/smt/z3-bridge';
 import { encodeRelation, encodeScript, notTerm } from '@semantics/smt/encode';
 import { parseExpr } from '@semantics/expr';
+import { solverTimeoutFloor } from '../support/z3-timeout-floor';
 
 /**
  * The forged check (planted bug P9): the SMT engine reads the check's sweep
@@ -112,6 +113,12 @@ const HARD = [
 let backend: Z3Backend | undefined;
 let absentReason = '';
 
+/**
+ * `beforeAll` below is vitest's, noting the largest budget its body hands z3, and `withZ3` notes each case, for the
+ * guard at the end of the file: the floor a larger budget or a hook moves, which the declaration check cannot see.
+ */
+const { beforeAll, note, shortOnes } = solverTimeoutFloor();
+
 /** Is the optional dependency actually on disk? */
 const installed = existsSync(resolve(process.cwd(), 'node_modules/z3-solver/package.json'));
 
@@ -171,7 +178,7 @@ const withZ3 = (
         ctx.skip();
         return;
       }
-      await fn(backend);
+      await note(name, timeout, () => fn(backend!));
     },
     timeout,
   );
@@ -567,7 +574,9 @@ describe('a terminated module’s abandoned check is cancelled and does not hold
       // The shared `backend` is a third module, kept by the plain reset, and it still answers.
       if (backend) expect((await backend.check(trivial)).status).toBe('unsat');
     },
-    60_000,
+    // The case ends in seconds, but the orphan was handed a 60 s budget, and the guard at the end of the file holds a
+    // case to the largest budget it handed z3 plus the margin plus 5 s: the floor for that budget is 95 s.
+    100_000,
   );
 });
 
@@ -1062,6 +1071,21 @@ describe('the solver stays out of the browser build', () => {
     expect(config).toContain('refuse-bundled-z3');
     expect(config).toMatch(/plugins:\s*\[[^\]]*refuseBundledZ3\(\)/);
     expect(config).toContain('generateBundle');
+  });
+});
+
+describe('D5 — every hook and case that drives z3 outlasts the death guard', () => {
+  it('names no hook or case that handed z3 a check under a timeout shorter than its budget plus the guard', (ctx) => {
+    if (!backend) {
+      expect(absentReason.length, 'no backend and no reason either').toBeGreaterThan(20);
+      ctx.skip();
+      return;
+    }
+    const { cases, hooks, caseCount, undeclared } = shortOnes();
+    expect.soft(cases, 'these cases drive z3 under a timeout shorter than the budget they handed it plus the margin plus 5 s').toEqual([]);
+    expect.soft(hooks, 'these hooks hand z3 a check under a timeout shorter than the budget plus the margin plus 5 s').toEqual([]);
+    expect.soft(undeclared, 'these cases hand z3 a check without the wrapper, so under vitest’s 5 s default').toEqual([]);
+    expect.soft(caseCount, 'no case was recorded: the record is broken').toBeGreaterThan(5);
   });
 });
 

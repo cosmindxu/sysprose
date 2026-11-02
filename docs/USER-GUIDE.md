@@ -1696,9 +1696,9 @@ usage's body to a feature of the definition around it (`part q : Q { bind
 p.load = L; }` in R, over R's L) is read in the instance of that definition
 around each reading, on every surface: r's q reads r's L (50 where `r : R` sets
 K), and r0's q r0's. No value is read through a binding for any one instance
-where it holds in more than 4,096 contexts or more than 32 usages deep, nor
+where it holds in more than 4,096 contexts or more than 48 usages deep, nor
 through a binding joined to such a one, end to end or through a feature an end
-redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33
+redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 49
 usages down that gives that load its value: Y's `default` gives way, and the
 check reads no value for Y), nor through one whose end has no instance in a
 context it holds in (R's nested Q used outside any R); a binding read through an instance
@@ -1713,7 +1713,7 @@ solved as a design equation (`s.a.load == 9.0` for a shallow `part s : T1`
 beside the capped chain), and the feasibility search does not move it. A model
 with such a capped binding reports *did not converge* in the Solve header — the
 check keeps its fail-closed reading, and the rows over a value the binding
-holds name the cap (*a binding of this model is read deeper than 32 usages*).
+holds name the cap (*a binding of this model is read deeper than 48 usages*).
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
 listed and read at its own instance, as above — an asserted equation over a
@@ -1791,7 +1791,7 @@ reading failed (RangeError); reported, not dropped`; a group's roll-up counts it
 *not read*), and every other row and finding stands — on the verify lane too, where the goal row is refused in
 that sentence and closed as a failure of the tool, not a defect in the relation. A failure while the tool lists the instances one usage reads a
 relation in is that usage's one row, *could not be evaluated* in the same
-sentence; one while it lists the asserted equations over a `default` it does not
+sentence; one while it lists the contexts a relation is read in besides where it is written files that relation's other contexts as one *could not be evaluated* row (*… is not read in the contexts that read it beside X: the per-instance reading failed*; on `verify`, *X in its other contexts*, inconclusive, exit 2) while its own row and every other relation stand; one while it lists the asserted equations over a `default` it does not
 read, or the satisfactions, subjects, references and subsetting usages an instance reads otherwise,
 leaves every row *could not be evaluated* (*… could not be listed: the reading
 failed (RangeError); reported, not dropped*), since which rows they reach is
