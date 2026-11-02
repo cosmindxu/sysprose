@@ -142,6 +142,23 @@ describe('Model core', () => {
     expect(m2.has(u.id)).toBe(true);
   });
 
+  // A cycle a -> b -> a is an invalid model, but deleting a must not leave `b :>> b`: the walk up from a lands on b
+  // itself, which is no survivor, so b's redefinition goes with a.
+  it('drops the redefinition of a cycle member whose only way up leads back to itself', () => {
+    const m = new Model();
+    const pkg = m.create('Package', { declaredName: 'P' });
+    const d = m.create('PartDefinition', { declaredName: 'D', ownerId: pkg.id });
+    const a = m.create('AttributeUsage', { declaredName: 'a', ownerId: d.id });
+    const b = m.create('AttributeUsage', { declaredName: 'b', ownerId: d.id });
+    const ab = m.create('Redefinition', { ownerId: a.id, source: [a.id], target: [b.id] });
+    const ba = m.create('Redefinition', { ownerId: b.id, source: [b.id], target: [a.id] });
+    m.remove(a.id);
+    expect(m.has(ab.id)).toBe(false);
+    expect(m.has(ba.id)).toBe(false);
+    expect(m.has(b.id)).toBe(true);
+    expect(m.all().filter((e) => e.eClass === 'Redefinition' && (e.target ?? []).includes(b.id) && (e.source ?? []).includes(b.id))).toEqual([]);
+  });
+
   // A listener that follows what an element inherits (the editor, which settles redefinitions after an edit) passes
   // over a change of `attrs` alone, and asks the ends a relationship had when one moved.
   it('names what an update changed, and the ends a relationship had', () => {

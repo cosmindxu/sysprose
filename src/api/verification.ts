@@ -53,6 +53,7 @@ import {
   foreignKeyword,
   isSysproseVocabulary,
   keywordsOnRecord,
+  ambiguousKeyword,
   resolveKeyword,
 } from '../semantics/keywords';
 import {
@@ -270,7 +271,9 @@ export type KeywordOrigin =
   /** Something else that really resolves — the model's own, or the library's. */
   | 'other'
   /** It names no `metadata def` in scope. */
-  | 'unresolved';
+  | 'unresolved'
+  /** Two imports of one scope answer to it with different definitions: it names neither (see {@link KeywordUse.ambiguousBetween}). */
+  | 'ambiguous';
 
 /** One use of one keyword, with what it resolves to. */
 export interface KeywordUse {
@@ -287,6 +290,11 @@ export interface KeywordUse {
     shortName?: string;
   } | null;
   origin: KeywordOrigin;
+  /**
+   * For an `ambiguous` keyword: the qualified names of the definitions two imports answer with, in import order.
+   * Absent otherwise. `resolvedTo` is `null`: which of them the keyword names would depend on the order of the imports.
+   */
+  ambiguousBetween?: string[];
   /**
    * For a third-party spelling: what this tool would read it as, and the
    * provenance sentence that must be printed wherever that reading is used.
@@ -363,7 +371,9 @@ function keywordUses(model: Model, scoped: (id: ElementId) => boolean): KeywordU
 export function keywordUsesOn(model: Model, el: ElementRecord): KeywordUse[] {
   const out: KeywordUse[] = [];
   for (const keyword of keywordsOnRecord(el)) {
-    const def = resolveKeyword(model, keyword);
+    // Two imports answering with different definitions: the keyword names neither, in either import order.
+    const rivals = ambiguousKeyword(model, keyword);
+    const def = rivals ? undefined : resolveKeyword(model, keyword);
     const alias = foreignKeyword(keyword);
     // Only when nothing resolved: a model that declares its own
     // `metadata def <prose>` is using its own vocabulary, and `resolvedTo`
@@ -378,7 +388,9 @@ export function keywordUsesOn(model: Model, el: ElementRecord): KeywordUse[] {
           : 'other'
         : bySpelling
           ? 'sysprose'
-          : 'unresolved';
+          : rivals
+            ? 'ambiguous'
+            : 'unresolved';
     out.push({
       keyword: keyword.written,
       element: {
@@ -411,6 +423,7 @@ export function keywordUsesOn(model: Model, el: ElementRecord): KeywordUse[] {
           }
         : null,
       readBySpelling: bySpelling ? { package: STATEMENT_KIND_PACKAGE } : null,
+      ...(rivals ? { ambiguousBetween: rivals.map((r) => model.qualifiedName(r.id)) } : {}),
     });
   }
   return out;
@@ -609,8 +622,8 @@ function numbered(findings: readonly Finding[]): Diagnostic[] {
 }
 
 /**
- * What the inventory noticed: a third-party spelling, and a keyword that names
- * nothing.
+ * What the inventory noticed: a third-party spelling, a keyword that names
+ * nothing, and one two imports answer to.
  *
  * Both INFO, and neither is a defect in the model. A foreign keyword is a file
  * written for another tool, which is the case this reader exists for; a keyword
@@ -629,6 +642,15 @@ function keywordFindings(uses: readonly KeywordUse[]): Finding[] {
         elementName: use.element.qualifiedName,
         code: 'verification/foreign-keyword',
         hint: `It is read as ${use.foreign.readAs} only where a command asks for it (\`obligations --from-keywords\`); this row is an inventory and changes no obligation.`,
+      });
+    } else if (use.origin === 'ambiguous' && use.ambiguousBetween) {
+      out.push({
+        severity: 'info',
+        message: `\`#${use.keyword}\` on ${use.element.qualifiedName} is ambiguous: ${use.ambiguousBetween.join(' and ')} both answer to it.`,
+        elementId: use.element.id,
+        elementName: use.element.qualifiedName,
+        code: 'verification/keyword-ambiguous',
+        hint: 'Write the keyword qualified (`#SysproseVerification::exceptional`) or import only one of the packages. It is read as no tag meanwhile, whichever import comes first.',
       });
     } else if (use.origin === 'unresolved') {
       out.push({

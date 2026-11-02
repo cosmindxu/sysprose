@@ -613,6 +613,9 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
       leftOut.add(notSavedNote(rel.eClass, new NoNameReachesEnd(rel.id, err.ref, true)));
       continue;
     }
+    // A subsetting the author wrote as a path (`:> q.p1`) is written as the path while it still reads the same target.
+    const chain = rel.eClass === 'Subsetting' && typeof rel.attrs.chain === 'string' ? rel.attrs.chain : undefined;
+    if (chain !== undefined && !unprintableRef(chain) && specResolver(model, rel.eClass, el.id)(chain, el.ownerId)?.id === targetId) ref = chain;
     const op = operatorFor(rel.eClass);
     // Do not restate a typing the display string already expresses. After the
     // library binder runs, an attribute carries BOTH `attrs.type = 'Real'` and a
@@ -974,16 +977,19 @@ function stateBehaviorLine(model: Model, el: ElementRecord, indent: number): str
 
 /** `@Type` metadata annotation, with optional `about A, B` and body (also the print of the unnamed `metadata Type about …`). */
 function annotationLine(model: Model, el: ElementRecord, indent: number): string {
-  // A named annotation is the keyword spelling (`metadata N : T about …`): `@` has no name slot.
-  // Without `about` that spelling would reparse as a plain usage, so the name is dropped there.
+  // A named annotation keeps its Identification (`<sn> N`) before the type: `metadata <sn> N : T about …` with an
+  // `about` target, `@<sn> N : T` without (the keyword spelling alone would reparse as a plain usage).
   const about = el.attrs.about;
   const hasAbout = Array.isArray(about) && about.length > 0;
-  const parts = [
-    ...visibilityPrefix(el),
-    el.declaredName !== undefined && hasAbout
-      ? `metadata ${quoteName(el.declaredName)} : ${attrStr(el, 'type')}`
-      : `@${attrStr(el, 'type')}`,
-  ];
+  const identification = [
+    ...(el.declaredShortName !== undefined ? [`<${quoteName(el.declaredShortName)}>`] : []),
+    ...(el.declaredName !== undefined ? [quoteName(el.declaredName)] : []),
+  ].join(' ');
+  const spelled =
+    identification === ''
+      ? `@${attrStr(el, 'type')}`
+      : `${hasAbout ? 'metadata ' : '@'}${identification} : ${attrStr(el, 'type')}`;
+  const parts = [...visibilityPrefix(el), spelled];
   if (Array.isArray(about) && hasAbout) parts.push('about', about.map(String).join(', '));
   return renderWithBody(model, el, indent, parts.join(' '));
 }

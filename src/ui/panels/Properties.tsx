@@ -105,6 +105,7 @@ function keywordReading(use: KeywordUse): string {
   if (use.origin === 'foreign') {
     return `a third-party spelling, read as ${use.foreign?.readAs ?? 'nothing'}`;
   }
+  if (use.origin === 'ambiguous') return `ambiguous — ${(use.ambiguousBetween ?? []).join(' and ')} both answer to it`;
   if (use.readBySpelling) return `Sysprose vocabulary, read by spelling (${use.readBySpelling.package})`;
   if (use.resolvedTo) {
     return use.origin === 'sysprose'

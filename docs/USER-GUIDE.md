@@ -444,7 +444,7 @@ app.
 | View | What it shows | The question it answers | Test id |
 |---|---|---|---|
 | Allocation | A matrix of elements × elements with a mark wherever an Allocation joins them (falling back to Satisfy when a model declares no allocations) | What is allocated to what? | `tb-view-allocation` |
-| Grid | Every in-scope non-relationship element as a row: name, metaclass, type, multiplicity, value, redefines, doc; a `default` value reads `default 1.2` and a bound one `1.2`; `elements` prints `default 1.2` and `= 1.2`, and its `--json` `value` is the cell | What is in this model, in bulk? | `tb-view-grid` |
+| Grid | Every in-scope non-relationship element as a row: name, metaclass, type, multiplicity, value, redefines, doc; a `default` value reads `default 1.2`, an initial value (`:=`) `:= 1.2` and a bound one `1.2`, with the unit after the number (`7 [kg]`); `elements` prints `default 1.2`, `:= 1.2` and `= 1.2`, and its `--json` `value` is the cell | What is in this model, in bulk? | `tb-view-grid` |
 | Requirements | Hierarchical requirement rows with outline numbers, editable id / name / text, chips for Satisfied By / Verified By / Refined By / Traced To / Derived From, and a Kind cell plus the nine management attributes (status, verdict, risk, priority, criticality, rationale, source, owner, verification) | Are my requirements covered, and by what? | `tb-view-requirements` |
 | Contracts | One row per requirement or case objective: the subject and how it got there, every `assume` and every `require` clause as written, the relations a gate refused with the reason, and the fragment the row sits in — with the census under it | What does each requirement assume and guarantee, and about whom? | `tb-view-contracts` |
 
@@ -4590,7 +4590,7 @@ wrote them through a save, and — because a model annotated for another tool is
 model you should still be able to open here — reads a handful of other people's
 spellings too.
 
-`contracts --keywords` is the inventory. It says one of four things per keyword,
+`contracts --keywords` is the inventory. It says one of five things per keyword,
 and it changes nothing:
 
 ```console
@@ -4602,6 +4602,13 @@ $ npm run sysprose -- contracts vocabulary.sysml --keywords
   verification/foreign-keyword  ...
   verification/keyword-names-nothing  ...
 ```
+
+The fifth is `ambiguous`: a bare `#exceptional` written where two imports of one
+scope (`VendorHints` and `SysproseVerification`, say) each declare a `metadata def`
+it answers to. Which one it names would depend on the order of the imports, so the
+inventory names both (`verification/keyword-ambiguous`, information) and the keyword
+is read as no tag, in either order. Write it qualified (`#SysproseVerification::exceptional`)
+or import one package.
 
 Those two `verification/*` rows are **information** and they come from nowhere
 but this command — except `verification/foreign-keyword`, which

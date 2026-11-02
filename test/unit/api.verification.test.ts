@@ -1540,6 +1540,25 @@ package P {
     expect(row.foreign?.readAs).toContain('SysproseVerification::exceptional');
   }, 60_000);
 
+  it('inventories a keyword two imports answer to as ambiguous, whatever the import order', async () => {
+    for (const imports of ['import VendorHints::*; import SysproseVerification::*;', 'import SysproseVerification::*; import VendorHints::*;']) {
+      const model = await load(`${SYSPROSE_VERIFICATION_LIBRARY}
+
+package VendorHints { metadata def <exceptional> ExceptionalOutcome; }
+package P {
+  ${imports}
+  #exceptional state failsafe;
+}`);
+      const r = contractReport(model, { keywords: true });
+      const [use] = r.keywords;
+      expect([use!.keyword, use!.origin, use!.resolvedTo]).toEqual(['exceptional', 'ambiguous', null]);
+      expect([...use!.ambiguousBetween!].sort()).toEqual(['SysproseVerification::ExceptionalOutcome', 'VendorHints::ExceptionalOutcome']);
+      const found = r.diagnostics.filter((d) => d.code === 'verification/keyword-ambiguous');
+      expect(found.map((d) => [d.severity, d.elementName])).toEqual([['info', 'P::failsafe']]);
+      expect(found[0]!.message).toContain('both answer to it');
+    }
+  }, 60_000);
+
   it('publishes one info per foreign spelling and one per keyword that names nothing', async () => {
     const model = await load(VOCABULARY);
     const r = contractReport(model, { keywords: true });

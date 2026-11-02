@@ -261,12 +261,29 @@ describe('Langium SysML grammar — extended construct families', () => {
         private @Sec about Design, Other;
         protected metadata n : Sec about Design;
         metadata Plain : Sec;
+        @sn : Sec about Design;
+        metadata <s1> sb : Sec about Design;
+        @<s2> sc : Sec { approved = true; }
+        @Sec::Inner about Design;
       }
     `);
     const members = (
       ast.members[0] as { body: { members: { $type: string; type?: string; name?: string; visibility?: string; about?: string[] }[] } }
     ).body.members;
-    expect(members.map((m) => m.$type)).toEqual(['Annotation', 'Annotation', 'Annotation', 'Annotation', 'Annotation', 'Definition']);
+    expect(members.map((m) => m.$type)).toEqual([
+      'Annotation', 'Annotation', 'Annotation', 'Annotation', 'Annotation', 'Definition',
+      'Annotation', 'Annotation', 'Annotation', 'Annotation',
+    ]);
+    // The named `@` spelling and the short name (BNF MetadataUsageDeclaration's Identification): a name is read
+    // only before a `:`, so `@Sec::Inner` is a qualified type.
+    expect(
+      members.slice(6).map((m) => [(m as { shortName?: string }).shortName, m.name, m.type]),
+    ).toEqual([
+      [undefined, 'sn', 'Sec'],
+      ['s1', 'sb', 'Sec'],
+      ['s2', 'sc', 'Sec'],
+      [undefined, undefined, 'Sec::Inner'],
+    ]);
     expect(members.slice(0, 5).map((m) => [m.visibility, m.name, m.type])).toEqual([
       [undefined, 'securityDesignAnnotation', 'SecurityRelated'],
       [undefined, 'sa', 'Sec'],

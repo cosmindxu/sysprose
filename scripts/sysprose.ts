@@ -182,7 +182,7 @@ import {
 } from '../src/semantics/index';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
 // layout engine in with it, and neither of these two builders needs it.
-import { buildGrid } from '../src/diagram/grid';
+import { buildGrid, valueCellHasOperator } from '../src/diagram/grid';
 import { buildRequirementsTable } from '../src/diagram/requirements-table';
 import { loadModelText, type CheckReport } from '../src/text/load';
 import type { Diagnostic, TextRange } from '../src/validation/types';
@@ -648,9 +648,10 @@ function reportElements(model: Model, name: string, includeLibrary: boolean): Re
     '  relationships and documentation are reported through the elements they attach to',
     `  ${implicitExcluded} re-derived element(s) (usage-scoped connector endpoints) left out`,
     ...rows.map((r) => {
-      // The grid's value cell already reads `default 1.2` for a default and `1.2` for a bound value.
-      const isDefault = model.get(r.id)?.attrs.defaultValue === true;
-      const tail = [r.type ? `: ${r.type}` : '', r.value ? (isDefault ? ` ${r.value}` : ` = ${r.value}`) : ''].join('');
+      // The grid's value cell already reads `default 1.2` for a default, `:= 1.2` for an initial value and `1.2` for a bound value.
+      const el = model.get(r.id);
+      const marked = el !== undefined && valueCellHasOperator(el);
+      const tail = [r.type ? `: ${r.type}` : '', r.value ? (marked ? ` ${r.value}` : ` = ${r.value}`) : ''].join('');
       return `  ${r.qualifiedName.padEnd(width)}  ${r.metaclass}${tail}`;
     }),
   ].join('\n');
@@ -1346,7 +1347,7 @@ function edgeLines(contract: Contract): string[] {
 /**
  * One keyword, said the way §3.12 of the plan says it may be said.
  *
- * Four sentences, one per origin, and none of them may be collapsed into
+ * Five sentences, one per origin, and none of them may be collapsed into
  * another: "third-party spelling" and "names nothing" are different facts about
  * a file, and a reader who is told only the second goes looking for a
  * misspelling in a keyword this tool understood perfectly well. The word
@@ -1375,6 +1376,8 @@ function keywordLine(use: KeywordUse): string {
         // definition was ignored.
         (use.resolvedTo ? `; it names ${use.resolvedTo.qualifiedName} here` : '')
       );
+    case 'ambiguous':
+      return `    ambiguous: #${use.keyword} ${on} — ${(use.ambiguousBetween ?? []).join(' and ')} both answer to it; read as no tag`;
     case 'other':
       return `    other vocabulary: #${use.keyword} ${on} → ${use.resolvedTo?.qualifiedName ?? ''}`;
     default:

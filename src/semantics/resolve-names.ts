@@ -290,8 +290,9 @@ function resolveViaImports(
   name: string,
   visited: Set<string>,
   publicOnly: boolean,
+  only?: ElementRecord,
 ): ElementRecord | undefined {
-  for (const rel of model.children(scopeId)) {
+  for (const rel of only ? [only] : model.children(scopeId)) {
     if (publicOnly && !isPublic(rel)) continue;
 
     if (rel.eClass === 'NamespaceImport') {
@@ -309,6 +310,45 @@ function resolveViaImports(
     }
   }
   return undefined;
+}
+
+/**
+ * The distinct elements `name` denotes through the IMPORTS of `scopeId`, each import asked on its own — two imports
+ * that expose different elements under one name make the name ambiguous in the scope (KerML), where {@link resolveName}
+ * answers the first. `undefined` when the scope's own or inherited members answer to the name with an element `accept`
+ * takes (they shadow every import, so nothing is ambiguous); empty when no import exposes it, and for a qualified
+ * name. `accept` keeps only the elements the caller is looking for, as {@link resolveName}'s callers do. For the root
+ * scope (`null`) the imports are the root elements that are imports.
+ */
+export function importedAnswers(
+  model: Model,
+  scopeId: ElementId | null,
+  name: string,
+  accept: (el: ElementRecord) => boolean = () => true,
+): ElementRecord[] | undefined {
+  const query = name.trim();
+  if (query === '' || query.includes('::')) return [];
+  if (scopeId === null) {
+    // The root "namespace" is a set of roots: its imports are the root elements that are imports.
+    const found: ElementRecord[] = [];
+    for (const root of model.roots()) {
+      if (root.eClass !== 'NamespaceImport' && root.eClass !== 'MembershipImport') continue;
+      const nsId = (root.target ?? [])[0];
+      const hit = nsId ? resolveName(model, nsId, query) : undefined;
+      if (hit && accept(hit) && !found.some((x) => x.id === hit.id)) found.push(hit);
+    }
+    return found;
+  }
+  const shadow = resolveOwned(model, scopeId, query, /* publicOnly */ false) ?? resolveInherited(model, scopeId, query);
+  if (shadow && accept(shadow)) return undefined;
+  const out: ElementRecord[] = [];
+  for (const rel of model.children(scopeId)) {
+    if (rel.eClass !== 'NamespaceImport' && rel.eClass !== 'MembershipImport' && rel.eClass !== 'Expose') continue;
+    // One import at a time: a fresh visited set, so what an earlier import walked is asked again.
+    const hit = resolveViaImports(model, scopeId, query, new Set<string>(), false, rel);
+    if (hit && accept(hit) && !out.some((x) => x.id === hit.id)) out.push(hit);
+  }
+  return out;
 }
 
 /* ─────────────────────────────── public API ─────────────────────────────── */

@@ -1173,9 +1173,13 @@ class Mapper {
         if (req.relId !== undefined) {
           this.model.update(req.relId, { target: [targetId] });
         } else {
+          // A subsetting written as a path (`part p2 :> q.p1;`) keeps the path as written (`attrs.chain`, like a
+          // `satisfy`'s `sourceChain`): the target is the feature the path ends in (Q's p1), and the sentences and the
+          // saved text say the path the author wrote.
+          const chain = req.op === ':>' && !isDefinition(el.eClass) && req.ref.includes('.') ? { chain: req.ref.trim() } : undefined;
           const rel = this.create(
             relClassForOp(req.op, isDefinition(el.eClass)),
-            { ownerId: el.id, source: [el.id], target: [targetId] },
+            { ownerId: el.id, source: [el.id], target: [targetId], ...(chain ? { attrs: chain } : {}) },
             req.node,
           );
           req.relId = rel.id;
@@ -1760,8 +1764,8 @@ class Mapper {
   /**
    * `@Type { … }` or `metadata Type about … { … }` metadata annotation (printed
    * back as `@Type …`) → a MetadataUsage carrying the type. A visibility word
-   * and the name of `metadata N : Type about …` are kept on the usage; read
-   * like the unprefixed, unnamed twin.
+   * and the name and short name of `metadata <sn> N : Type about …` (or `@N : Type`) are kept on the usage;
+   * read like the unprefixed, unnamed twin.
    */
   private mapAnnotation(node: Annotation, ownerId: ElementId | null): void {
     const attrs: Record<string, AttrValue> = { annotation: true, type: node.type };
@@ -1771,6 +1775,7 @@ class Mapper {
     const el = this.create('MetadataUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
+      declaredShortName: unquoteName(node.shortName),
       attrs,
     });
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);

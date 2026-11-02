@@ -316,12 +316,13 @@ every keyword in a file with what it resolves to — resolution is KerML full na
 resolution against the `MetadataDefinition`s in scope, with the bundled library as
 the namespace of last resort, which is why the library's own `#moe` resolves. A
 keyword naming nothing in scope is reported (`verification/keyword-names-nothing`,
-info); a third-party spelling this tool recognises is reported with its provenance
+info), and one that two imports of a scope answer to with different definitions is
+reported as ambiguous (`verification/keyword-ambiguous`, info) and read as no tag; a third-party spelling this tool recognises is reported with its provenance
 (`verification/foreign-keyword`, info) and never described as standard.
 `verification/foreign-keyword` also comes from `obligations --from-keywords`, one
 row per obligation a keyword actually filed; `verification/keyword-names-nothing`
-comes from `contracts --keywords` alone, since a keyword naming nothing files
-nothing. Neither comes from anywhere else: `npm run check` does not judge a
+and `verification/keyword-ambiguous` come from `contracts --keywords` alone, since a keyword naming nothing, or two things, files
+nothing. None comes from anywhere else: `npm run check` does not judge a
 keyword.
 
 **What a keyword may move, and what it may never touch.** A third-party

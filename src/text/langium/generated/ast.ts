@@ -408,6 +408,7 @@ export interface Annotation extends langium.AstNode {
     about: Array<QualifiedName>;
     body?: Body;
     name?: Name;
+    shortName?: Name;
     type: QualifiedName;
     visibility?: Visibility;
 }
@@ -1367,6 +1368,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'about', defaultValue: [] },
                         { name: 'body' },
                         { name: 'name' },
+                        { name: 'shortName' },
                         { name: 'type' },
                         { name: 'visibility' }
                     ]

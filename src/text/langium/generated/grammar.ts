@@ -1028,6 +1028,73 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 "value": "@"
               },
               {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "<"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "shortName",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@75"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": ">"
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Assignment",
+                    "feature": "name",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@75"
+                      },
+                      "arguments": []
+                    },
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Alternatives",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": ":"
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Keyword",
+                            "value": "typed"
+                          },
+                          {
+                            "$type": "Keyword",
+                            "value": "by"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "cardinality": "?"
+              },
+              {
                 "$type": "Assignment",
                 "feature": "type",
                 "operator": "=",
@@ -1127,6 +1194,32 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 "$type": "Group",
                 "elements": [
                   {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "<"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "shortName",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@75"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": ">"
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
                     "$type": "Assignment",
                     "feature": "name",
                     "operator": "=",
@@ -1136,7 +1229,8 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                         "$ref": "#/rules@75"
                       },
                       "arguments": []
-                    }
+                    },
+                    "cardinality": "?"
                   },
                   {
                     "$type": "Alternatives",

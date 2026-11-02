@@ -94,6 +94,18 @@ describe('buildGrid — columns and rows', () => {
     expect(cell(valueless.id)).toBe('');
   });
 
+  it('writes an initial value as `:= 4` and the unit after the number', () => {
+    // `:=` is the state a feature starts in, not a binding; the unit is part of what the text states.
+    const { model } = parseModel(`package P { part def D {
+      attribute init := 4.0; attribute softInit default := 3.0; attribute kg = 7 [kg]; attribute initKg := 2 [kg];
+      attribute soft default = 1.5 [m]; attribute plain = 9; } }`);
+    const g = buildGrid(model);
+    const cell = (name: string) => g.rows.find((r) => r.cells.name === name)!.cells.value;
+    expect(['init', 'softInit', 'kg', 'initKg', 'soft', 'plain'].map(cell)).toEqual([
+      ':= 4', 'default := 3', '7 [kg]', ':= 2 [kg]', 'default 1.5 [m]', '9',
+    ]);
+  });
+
   it('computes the redefines cell from Redefinition relationships', () => {
     const row = grid.rows.find((r) => r.id === ids.heavyMass)!;
     expect(row.cells.redefines).toBe('mass');
