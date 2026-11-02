@@ -710,34 +710,52 @@ export function readRelation(
 ): RelationReading {
   const cache = READINGS.get(memo);
   if (cache === undefined) return withInstances(model, el, readRelationAsWritten(model, el, raw, memo, assignTo, valueOf), instance);
-  const key = cache.keyOf(el, raw, assignTo, valueOf);
-  const kept = cache.readings.get(key);
-  if (kept !== undefined && kept !== null) {
+  const entry = cache.find(el, raw, assignTo, valueOf);
+  if (entry.reading !== null && entry.reading !== undefined) {
     // A fresh copy for every caller, as every read made one: `withInstances`
     // writes into the variables, and the rows filed from them are the caller's.
-    return withInstances(model, el, structuredClone(kept), instance);
+    return withInstances(model, el, structuredClone(entry.reading), instance);
   }
   const reading = readRelationAsWritten(model, el, raw, memo, assignTo, valueOf);
-  // A key read once costs its key alone (a model whose relations are each
+  // A key read once costs its lookup alone (a model whose relations are each
   // read once, as the v9 model's, pays no copy for a cache it never uses):
   // the copy is kept from the SECOND read of the key on, taken before the
   // caller has written into the reading it is handed.
-  cache.readings.set(key, kept === null ? structuredClone(reading) : null);
+  entry.reading = entry.reading === null ? structuredClone(reading) : null;
   return withInstances(model, el, reading, instance);
+}
+
+/** What one read is keyed by ({@link ReadingCache}): the element as passed, the body, `assignTo` and `valueOf`. */
+interface ReadingKey {
+  eClass: ElementRecord['eClass'];
+  declaredName: string | null;
+  declaredShortName: string | null;
+  attrs: unknown;
+  source: unknown;
+  target: unknown;
+  raw: string;
+  assignTo: string | null;
+  valueOf: ElementRecord | undefined;
+  /** `undefined`: the key has not been read yet; `null`: it has been read once; the reading is kept from the second read. */
+  reading?: RelationReading | null;
 }
 
 /**
  * The readings {@link readRelation} kept for ONE pass, by the memo of that
  * pass ({@link cacheReadings}). The same relation is read once per instance
  * it holds of — 6131 reads of 37 relations in a model of 4098 instance rows —
- * and a key is kept from its second read on, so a key read once costs its key
- * alone. Everything but the instance it is re-rooted for ({@link withInstances})
+ * and a key is kept from its second read on, so a key read once costs its
+ * lookup alone. Everything but the instance it is re-rooted for ({@link withInstances})
  * is the same each time.
+ *
+ * A key is told apart by comparing its fields, not by building a string of them
+ * (the v9 model reads 78 relations through it with no hit, and the string cost
+ * about 1.5% of a pass): two lookups by the element's id and its owner narrow it
+ * to the few reads of one relation in one context.
  */
 interface ReadingCache {
-  /** `null`: the key has been read once; the reading is kept from the second read. */
-  readings: Map<string, RelationReading | null>;
-  keyOf: (el: ElementRecord, raw: string, assignTo?: string, valueOf?: ElementRecord) => string;
+  /** The key of this read, made at its first ask: the entry it keeps its reading in. */
+  find: (el: ElementRecord, raw: string, assignTo?: string, valueOf?: ElementRecord) => ReadingKey;
 }
 
 const READINGS = new WeakMap<DerivationMemo, ReadingCache>();
@@ -760,33 +778,45 @@ const READINGS = new WeakMap<DerivationMemo, ReadingCache>();
  */
 export function cacheReadings(memo: DerivationMemo): void {
   if (READINGS.has(memo)) return;
-  const ids = new WeakMap<object, number>();
-  let next = 0;
-  const objectId = (o: object | undefined): string => {
-    if (o === undefined) return '-';
-    let n = ids.get(o);
-    if (n === undefined) {
-      n = ++next;
-      ids.set(o, n);
-    }
-    return String(n);
-  };
+  const byId = new Map<ElementId, Map<ElementId | null | undefined, ReadingKey[]>>();
   READINGS.set(memo, {
-    readings: new Map(),
-    keyOf: (el, raw, assignTo, valueOf) =>
-      JSON.stringify([
-        el.id,
-        el.eClass,
-        el.declaredName ?? null,
-        el.declaredShortName ?? null,
-        el.ownerId,
-        objectId(el.attrs),
-        objectId(el.source),
-        objectId(el.target),
+    find: (el, raw, assignTo, valueOf) => {
+      let owners = byId.get(el.id);
+      if (owners === undefined) byId.set(el.id, (owners = new Map()));
+      let keys = owners.get(el.ownerId);
+      if (keys === undefined) owners.set(el.ownerId, (keys = []));
+      const declaredName = el.declaredName ?? null;
+      const declaredShortName = el.declaredShortName ?? null;
+      const at = assignTo ?? null;
+      for (const k of keys) {
+        if (
+          k.eClass === el.eClass &&
+          k.declaredName === declaredName &&
+          k.declaredShortName === declaredShortName &&
+          k.attrs === el.attrs &&
+          k.source === el.source &&
+          k.target === el.target &&
+          k.raw === raw &&
+          k.assignTo === at &&
+          k.valueOf === valueOf
+        ) {
+          return k;
+        }
+      }
+      const key: ReadingKey = {
+        eClass: el.eClass,
+        declaredName,
+        declaredShortName,
+        attrs: el.attrs,
+        source: el.source,
+        target: el.target,
         raw,
-        assignTo ?? null,
-        objectId(valueOf),
-      ]),
+        assignTo: at,
+        valueOf,
+      };
+      keys.push(key);
+      return key;
+    },
   });
 }
 

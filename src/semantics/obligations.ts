@@ -97,6 +97,7 @@ import {
   enclosedBindingsOf,
   equatedPartsRefusal,
   failedReadingSentence,
+  readingContextsOf,
   hasUserBindings,
   hasStatedValue,
   isAsserted,
@@ -991,7 +992,39 @@ function instanceRows(
   const sharedOut: Array<{ context: ElementRecord; vars: ContractVariable[] }> = [];
   const definitions = sharedDefinitions(model);
   const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
-  const contexts = only ?? definitions.readingContexts(el, names);
+  const walked = only ? { contexts: only } : readingContextsOf(model, definitions, el, names);
+  // A throw in the relation's own context walk (A.2.9): which other contexts read it is unknown, so one refused
+  // row says so, in the sentence the check files its row in — never a throw out of the worklist, and never the
+  // other contexts dropped unsaid. An asserted relation's row is refused too: a proof cannot rest on it.
+  if ('failed' in walked) {
+    const encodable: Encodable = { reason: 'unread-definition', detail: walked.failed };
+    return {
+      rows: [
+        {
+          requirement: contract ? contractRef(contract) : null,
+          shortId: contract?.shortId ?? '',
+          subject: contract?.subject ?? null,
+          role: filed.role,
+          source: filed.source,
+          element: { ...ref(model, el), id: `${el.id}@contexts`, qualifiedName: `${effectiveQualifiedName(model, el.id)} in its other contexts` },
+          expression: raw,
+          node: null,
+          vars: [],
+          sortPerVar: {},
+          scaled: false,
+          encodable,
+          nonlinear: false,
+          verifiedBy: [],
+          method: null,
+          evidence: [],
+          status: statusOf(encodable),
+          instance: { baseId: el.id, contextId: el.ownerId ?? el.id, ...(contract ? { requirementId: contract.id } : {}) },
+        },
+      ],
+      shared: [],
+    };
+  }
+  const contexts = walked.contexts;
   // Each expanded group's share of the run's goal budget, taken in the order
   // its context comes (as the loop below files it): only a group whose rows
   // are filed reads, in its row for an element's own instance, the relation

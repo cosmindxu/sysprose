@@ -864,7 +864,7 @@ function headBindingsCarrying(model: Model, eqs: readonly Equation[], relationOf
  * added to `unreadable`. Such a feature has a value (its default, or the one
  * the capped binding gives where this tool does not read it), and no plain
  * check may fix it, nor the feasibility search move it: read as a design
- * freedom, CAPU4's `s.a.load == 9.0` (s a T1 beside T1's chain 33 usages
+ * freedom, CAPU4's `s.a.load == 9.0` (s a T1 beside T1's chain 49 usages
  * deep) was solved as a design equation, and `s.L <= 5.0` refuted at that 9,
  * where s's L and load are T1's default of 1; and `r2.L >= 5.0` over R's L
  * (R's nested Q used outside any R), which only that inequality reads, was

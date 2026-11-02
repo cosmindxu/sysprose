@@ -3362,7 +3362,18 @@ export class DefiningEquations {
       }
       return n;
     };
-    const contexts = [...this.specialisersOf(owner)].sort((a, b) => usageDepth(a) - usageDepth(b));
+    // Between a definition and an element that is no definition written directly in a package (a usage, a
+    // `satisfy`), with the same usages around them, the definition first: the row `P::ca` gets in `P2 :> P` with
+    // the one usage `p : P2` is filed under P2 whichever is written first, not under whichever the text put
+    // first (`P::ca in P2` and `P::ca in p` were one reading, filed under two names). One written in a definition
+    // or a usage keeps the text order: a binding of its owner can read it otherwise.
+    const inPackage = (c: ElementRecord): boolean => {
+      const o = c.ownerId != null ? this.model.get(c.ownerId) : undefined;
+      return !isDefinition(c.eClass) && o !== undefined && isPackage(o);
+    };
+    const contexts = [...this.specialisersOf(owner)].sort(
+      (a, b) => usageDepth(a) - usageDepth(b) || Number(inPackage(a)) - Number(inPackage(b)),
+    );
     if (contexts.length === 0) return { listed: [], plain };
     const ownAll = this.scope(owner, 'all');
     const ownValue = this.scope(owner, 'value');
@@ -4688,8 +4699,12 @@ const BINDING_ENDS = new WeakMap<Model, BindingEnds>();
 /** Past this many contexts for one binding, its ends are held wherever they read a default. */
 const MAX_BINDING_FRAMES = 4096;
 
-/** Past this many usages on a context's path below where a binding is written, the context is not read. */
-const MAX_BINDING_SEGMENTS = 32;
+/**
+ * Past this many usages on a context's path below where a binding is written, the context is not read. The cap is
+ * a cost guard: a chain whose every level re-binds reads in about 1 s at 32 usages, 5 s at 48 and 10 s at 64
+ * (a model of the shape a person writes is far shallower).
+ */
+const MAX_BINDING_SEGMENTS = 48;
 
 /**
  * The most owners one {@link DefiningEquations.denote} walk enters. A web of
@@ -7505,7 +7520,7 @@ type EndValue = { kind: 'value'; asserted?: true } | { kind: 'default'; source: 
  * MAX_BINDING_FRAMES}, or one deeper than {@link MAX_BINDING_SEGMENTS} usages
  * left out — holds its ends wherever they read a default, since the context
  * left out may be the one that gives them another value (a package's `bind
- * top.a.….a.L = X` 33 usages down left T1's `L default = 1.0` standing
+ * top.a.….a.L = X` 49 usages down left T1's `L default = 1.0` standing
  * beside X's 50), and sets `cap` ({@link BindingEnds.partial}).
  */
 function heldDefaults(
@@ -9912,7 +9927,7 @@ export function hasPastCapBindings(model: Model): boolean {
  * this tool does not read? Its `default` was held for that (`holdEnds`), not
  * because a binding gives it another value, and where nothing else determines
  * it, it is no value the model leaves free: the value is there, unread.
- * CAPU4's `part s : T1;` beside T1's chain 33 usages deep holds s's L and its
+ * CAPU4's `part s : T1;` beside T1's chain 49 usages deep holds s's L and its
  * a's load at T1's default of 1; read as free, `s.a.load == 9.0` was solved as
  * a design equation, and `s.L <= 5.0` refuted at that 9. So was R's nested Q,
  * used outside any R, for `r2 : R`'s q's p's load, where r2's L is R's default
@@ -12551,6 +12566,27 @@ function bindingValued(definitions: DefiningEquations, x: ElementRecord, names: 
 }
 
 /**
+ * {@link DefiningEquations.readingContexts}, contained (A.2.9): the contexts a relation is read in besides where it
+ * is written, or, where the walk threw, the sentence the relation is refused in (`internal`, the tool failed — not
+ * the relation). Every reading of a relation in another context asks this walk: the instance index, the check's
+ * context rows and the obligations lane's. A throw out of it ended the check and `verify`; each surface now files
+ * the relation's other contexts as unread in this sentence, and reads every other relation as it would.
+ */
+export function readingContextsOf(
+  model: Model,
+  definitions: DefiningEquations,
+  el: ElementRecord,
+  names: readonly string[],
+): { contexts: ElementRecord[] } | { failed: string } {
+  try {
+    return { contexts: instanceIndexSeam.readingContexts(definitions, el, names) };
+  } catch (e) {
+    const owner = el.ownerId != null ? definitions.contextName(el.ownerId) : 'its owner';
+    return { failed: failedReadingSentence(effectiveQualifiedName(model, el.id), `the contexts that read it beside ${owner}`, e) };
+  }
+}
+
+/**
  * The calls the instance index makes to itself where a throw is contained
  * (A.2.9) — inside {@link instanceGroups} (a usage's sites, and the asserted
  * equations the coverage guard reads, {@link readFeatures}), in {@link
@@ -12561,7 +12597,9 @@ function bindingValued(definitions: DefiningEquations, x: ElementRecord, names: 
  * values), in {@link contradictedTaint} (what they leave undecided, asked
  * per row: a throw refuses that row, `internal`) and in {@link
  * DefiningEquations.valuedByBinding} (the contexts a binding gives a value:
- * a throw lists the context, to be read and contained as its own row) —
+ * a throw lists the context, to be read and contained as its own row) and in
+ * {@link readingContextsOf} (the contexts a relation is read in: a throw files
+ * its other contexts as unread, `internal`) —
  * made through this object, never directly: the seam a test makes one of
  * them throw through (`vi.spyOn`), since a module-level stub reaches only the
  * calls another module makes. Each is the function it names; nothing else
@@ -12582,6 +12620,8 @@ export const instanceIndexSeam = {
     instanceSitesOf(definitions, usage),
   bindingValued: (definitions: DefiningEquations, x: ElementRecord, names: readonly string[]): boolean =>
     bindingValued(definitions, x, names),
+  readingContexts: (definitions: DefiningEquations, el: ElementRecord, names: readonly string[]): ElementRecord[] =>
+    definitions.readingContexts(el, names),
 };
 
 /**
@@ -12651,7 +12691,8 @@ function groupsOf(model: Model): InstanceGroup[] {
     // numeric lane all ask this, and a throw here emptied every one of them. A
     // usage whose question throws is grouped so, and the budget the group had
     // taken is given back. (`readingContexts` is the relation's own context
-    // walk, which every reading of it asks too: not the index's.)
+    // walk, which every reading of it asks too: not the index's, and contained
+    // by {@link readingContextsOf} below.)
     const failed = (usage: ElementRecord, e: unknown): InstanceGroup => ({
       relationId: el.id,
       usageId: usage.id,
@@ -12673,7 +12714,12 @@ function groupsOf(model: Model): InstanceGroup[] {
       }
     };
     const usages: ElementRecord[] = [];
-    for (const usage of definitions.readingContexts(el, names)) {
+    // A throw in the relation's own context walk groups none of its contexts: the check and the obligations lane
+    // ask the same walk, and each files the relation's other contexts as unread in its sentence
+    // ({@link readingContextsOf}), so nothing is read per instance here and nothing is decided from an
+    // empty list.
+    const walked = readingContextsOf(model, definitions, el, names);
+    for (const usage of 'contexts' in walked ? walked.contexts : []) {
       if (isUsage(usage.eClass) && groupedAbove(usage)) usages.push(usage);
     }
     // A relation OWNED by a usage U (R17c/R17, R1-M2): U is itself a group —

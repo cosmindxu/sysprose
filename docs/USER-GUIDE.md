@@ -1696,9 +1696,9 @@ usage's body to a feature of the definition around it (`part q : Q { bind
 p.load = L; }` in R, over R's L) is read in the instance of that definition
 around each reading, on every surface: r's q reads r's L (50 where `r : R` sets
 K), and r0's q r0's. No value is read through a binding for any one instance
-where it holds in more than 4,096 contexts or more than 32 usages deep, nor
+where it holds in more than 4,096 contexts or more than 48 usages deep, nor
 through a binding joined to such a one, end to end or through a feature an end
-redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33
+redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 49
 usages down that gives that load its value: Y's `default` gives way, and the
 check reads no value for Y), nor through one whose end has no instance in a
 context it holds in (R's nested Q used outside any R); a binding read through an instance
@@ -1713,7 +1713,7 @@ solved as a design equation (`s.a.load == 9.0` for a shallow `part s : T1`
 beside the capped chain), and the feasibility search does not move it. A model
 with such a capped binding reports *did not converge* in the Solve header — the
 check keeps its fail-closed reading, and the rows over a value the binding
-holds name the cap (*a binding of this model is read deeper than 32 usages*).
+holds name the cap (*a binding of this model is read deeper than 48 usages*).
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
 listed and read at its own instance, as above — an asserted equation over a

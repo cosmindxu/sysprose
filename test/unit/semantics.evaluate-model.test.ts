@@ -2876,9 +2876,11 @@ describe('checkConstraints — a bound partner is read only where every instance
   });
 
   it('refines the frame cap per binding: one deep binding does not abstain every bound read', async () => {
-    const { model: deep } = await loadModelText(bindingChain(33));
-    const { model: shallow } = await loadModelText(bindingChain(32));
-    // The package frame of T1's binding lies 33 usages down (`top.a.….a`): left out, not silently.
+    const { model: deep } = await loadModelText(bindingChain(49));
+    const { model: shallow } = await loadModelText(bindingChain(48));
+    // 33 usages down was past the old cap of 32: it reads now.
+    expect(bindingCapOf((await loadModelText(bindingChain(33))).model!)).toBeUndefined();
+    // The package frame of T1's binding lies 49 usages down (`top.a.….a`): left out, not silently.
     expect(bindingCapOf(deep!)).toBe('segments');
     expect(bindingCapOf(shallow!)).toBeUndefined();
     // Any reading of a binding's end answers the cap, in the sentence every surface gives.
@@ -2888,7 +2890,7 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(above).toEqual({ pastCap: 'segments' });
     expect(boundAboveSentence(definitions, a.id, above!)).toBe(
       'the relation is read in Deep::T1::a and reads a value a binding joins, and a binding of this model is read ' +
-        'deeper than 32 usages: past that, this tool reads no bound value for any one instance, so it is not carried',
+        'deeper than 48 usages: past that, this tool reads no bound value for any one instance, so it is not carried',
     );
     // Per binding, not model-wide: M6's own binding is not the one the deep chain capped, so its
     // partner still reads — `bindingCapOf` reports the model-wide summary, the guards do not.
@@ -2898,7 +2900,7 @@ describe('checkConstraints — a bound partner is read only where every instance
       attribute load : ScalarValues::Real;
       bind load = L;
       constraint c1 { load <= 1.0 }
-      ${deepChain ? bindingChain(33).split('\n').slice(1, -1).join('\n') : ''}
+      ${deepChain ? bindingChain(49).split('\n').slice(1, -1).join('\n') : ''}
     }`;
     for (const deepChain of [false, true] as const) {
       const { model: m } = await loadModelText(M6(deepChain));
@@ -2913,7 +2915,7 @@ describe('checkConstraints — a bound partner is read only where every instance
   });
 
   // CAP1 (the 2026-10-14 review, A-C3): the package's `bind Y = top.a.….a.load` joins Y's default to the load
-  // T1's `bind a.load = L` gives X's 50 thirty-three usages down — a binding past the segment cap. Read in the
+  // T1's `bind a.load = L` gives X's 50 forty-nine usages down — a binding past the segment cap. Read in the
   // package alone, Y's default and the load's fall-through were two defaults that agree, and Y stood at 1:
   // `Y >= 40.0` refuted where it holds, on all four surfaces. The cap reaches every binding joined to the
   // capped one, through what an end redefines (the package's end at that path redefines T1's).
@@ -2924,15 +2926,15 @@ describe('checkConstraints — a bound partner is read only where every instance
         'package CAP {',
         `  ${P.replace('part def P', 'part def T0')}`,
         '  part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }',
-        ...Array.from({ length: 32 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
-        '  part top : T33;',
+        ...Array.from({ length: 48 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
+        '  part top : T49;',
         '  attribute X : ScalarValues::Real = 50.0;',
-        `  bind top.${as(32)}.L = X;`,
+        `  bind top.${as(48)}.L = X;`,
         `  attribute Y : ScalarValues::Real${y};`,
-        `  bind Y = top.${as(33)}.load;`,
+        `  bind Y = top.${as(49)}.load;`,
         '  constraint yT { Y >= 40.0 }',
         '  constraint yF { Y <= 5.0 }',
-        `  constraint negT { top.${as(33)}.m2 <= 0.0 }`,
+        `  constraint negT { top.${as(49)}.m2 <= 0.0 }`,
         '  attribute V : ScalarValues::Real = 3.0;',
         '  attribute W : ScalarValues::Real;',
         '  bind W = V;',
@@ -2957,7 +2959,7 @@ describe('checkConstraints — a bound partner is read only where every instance
       expect(['CAP::yT', 'CAP::yF', 'CAP::negT'].map((r) => resultOf(checks, m!, r)), y).toEqual(['unknown', 'unknown', 'unknown']);
       // Y has a value (its default, or the one the capped binding gives): the cap is why it is not read.
       expect(checks.find((c) => m!.qualifiedName(c.id) === 'CAP::yT')!.message, y).toBe(
-        'Could not evaluate: Y is not read in CAP: a binding of this model is read deeper than 32 usages',
+        'Could not evaluate: Y is not read in CAP: a binding of this model is read deeper than 48 usages',
       );
       expect(pastCapEnd(m!, Y.id), y).toBe(true);
       // A binding the capped one does not reach reads as before.
@@ -4105,10 +4107,26 @@ describe('checkConstraints — a default stands against an asserted equation (de
     const v = new Map(verdicts(m!) as Array<[string, string]>);
     expect([v.get('HR::top'), v.get('HR::top2')]).toEqual(['violated', 'violated']);
     const qa = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'HR::Q::qa')!;
+    // A definition's row is listed before a usage written in the package, whichever is written first.
     expect(qa.instances!.map((i) => [i.context, i.result])).toEqual([
-      ['q', 'violated'],
       ['Q2', 'violated'],
+      ['q', 'violated'],
     ]);
+  });
+
+  it('files a definition’s row under the specialisation whichever of it and its one usage is written first', async () => {
+    const P = 'part def P { attribute L : ScalarValues::Real default = 1.0; assert constraint ca { L == 60.0 } }';
+    const P2 = 'part def P2 :> P { attribute :>> L = 50.0; }';
+    const p = 'part p : P2;';
+    for (const chunks of [[P, P2, p], [P, p, P2], [p, P2, P], [P2, p, P], [p, P, P2], [P2, P, p]]) {
+      const { model: m } = await loadModelText(`package T { ${chunks.join('\n')} }`);
+      const ca = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'T::P::ca')!;
+      expect(ca.instances!.map((i) => [m!.qualifiedName(i.contextId), i.result]), chunks.join(' ')).toEqual([['T::P2', 'violated']]);
+      expect(
+        obligationsOf(m!).map((o) => o.element.qualifiedName).filter((n) => n.startsWith('T::P::ca in ')),
+        chunks.join(' '),
+      ).toEqual(['T::P::ca in T::P2']);
+    }
   });
 
   it('leaves an assert of an enclosing context to the per-instance reading (d: the local rule only)', async () => {
@@ -8170,6 +8188,36 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       expect(checkConstraintsNumeric(m!).filter((r) => r.context?.baseId === rowOf(m!, checks, 'T2::P::c').id).map((r) => r.result)).toEqual([
         'unknown',
       ]);
+    });
+
+    it('a throw in a relation’s own context walk files its other contexts unread, never ends the check or verify (readingContexts)', async () => {
+      // Armed before the load, since the load's validation builds the index. Only `c` throws: `other` has no walk to fail.
+      const real = instanceIndexSeam.readingContexts;
+      vi.spyOn(instanceIndexSeam, 'readingContexts').mockImplementation((definitions, el, names) => {
+        if (el.declaredName === 'c') throw new RangeError('readingContexts, planted to throw');
+        return real(definitions, el, names);
+      });
+      const { model: m } = await loadModelText(GROUP);
+      expect(m).toBeDefined();
+      const sentence =
+        'T2::P::c is not read in the contexts that read it beside T2::P: the per-instance reading failed (RangeError); reported, not dropped';
+      const checks = checkConstraints(m!);
+      const c = rowOf(m!, checks, 'T2::P::c');
+      // The relation's own row stands, and one row says its other contexts are unread: no context is decided from an empty list.
+      expect(c.result).toBe('satisfied');
+      expect(c.instances!.map((i) => [m!.qualifiedName(i.contextId), i.result, i.abstention, i.cause, i.message])).toEqual([
+        ['T2::P', 'unknown', 'internal', 'internal', `Could not evaluate: ${sentence}`],
+      ]);
+      expect(rowOf(m!, checks, 'T2::other').result).toBe('violated');
+      expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+      // The obligations lane files one refused row for them, and `verify` closes it as the tool's failure, on both engines.
+      expect(goals(m!, 'T2::P::c')).toEqual([`T2::P::c in its other contexts: ${sentence}`]);
+      for (const engine of ['literal', 'smt'] as const) {
+        const row = (await verifyModel(m!, { engine })).results.find((r) => r.clause.qualifiedName.endsWith('its other contexts'));
+        expect(row?.claim, engine).toBe('inconclusive');
+        expect(row?.detail, engine).toContain('this tool failed while reading the relation (unread-definition)');
+      }
+      expect(() => checkConstraintsNumeric(m!)).not.toThrow();
     });
 
     it('a guard reads no asserted default, so a throw planted there is never met (readFeatures)', async () => {

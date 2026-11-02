@@ -554,7 +554,7 @@ describe('solve — a default a binding holds per feature stands in the instance
 });
 
 /**
- * A binding read in fewer contexts than it holds in — 32 usages deep, or with
+ * A binding read in fewer contexts than it holds in — 48 usages deep, or with
  * an end that has no instance where it holds — holds its ends' defaults
  * wherever they are read, and the check reads no value for them. The numeric
  * lane read such a value as a design freedom: a plain check fixed it, and the
@@ -569,18 +569,18 @@ describe('solve — a value a binding past a cap holds is no design freedom', ()
     'package CAPU4 {',
     '  part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }',
     '  part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }',
-    ...Array.from({ length: 32 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
-    '  part top : T33;',
+    ...Array.from({ length: 48 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
+    '  part top : T49;',
     '  attribute X : ScalarValues::Real = 50.0;',
-    `  bind top.${as(32)}.L = X;`,
+    `  bind top.${as(48)}.L = X;`,
     '  attribute Y : ScalarValues::Real default = 1.0;',
-    `  bind Y = top.${as(33)}.load;`,
+    `  bind Y = top.${as(49)}.load;`,
     '  part s : T1;',
     '  constraint c1 { s.a.load == 9.0 }',
     '  constraint c2 { s.a.load <= 5.0 }',
     '  constraint c3 { s.L <= 5.0 }',
     '  constraint yT { Y >= 40.0 }',
-    `  constraint negT { top.${as(33)}.m2 <= 0.0 }`,
+    `  constraint negT { top.${as(49)}.m2 <= 0.0 }`,
     '}',
   ].join('\n');
 
@@ -596,7 +596,7 @@ describe('solve — a value a binding past a cap holds is no design freedom', ()
       'satisfied',
     ]);
     expect(row('c1').imposed).toBeUndefined();
-    expect(row('c1').reason).toBe('load is not read in CAPU4::s::a: a binding of this model is read deeper than 32 usages');
+    expect(row('c1').reason).toBe('load is not read in CAPU4::s::a: a binding of this model is read deeper than 48 usages');
     // T1's own L is held past the cap, not left free.
     const free = solve(m!).free.map((id) => m!.qualifiedName(id.split('@')[0]!));
     expect(free).not.toContain('CAPU4::T1::L');
@@ -610,7 +610,7 @@ describe('solve — a value a binding past a cap holds is no design freedom', ()
     expect(report.converged).toBe(false);
     const numeric = checkConstraintsNumeric(m!);
     const row = numeric.find((r) => m!.qualifiedName(r.id) === 'CAPU4::c1')!;
-    expect(row.reason).toContain('deeper than 32 usages');
+    expect(row.reason).toContain('deeper than 48 usages');
   });
 
   it('leaves an instance whose binding has an end outside it unjudged (R’s nested Q)', async () => {

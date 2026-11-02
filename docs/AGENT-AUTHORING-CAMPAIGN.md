@@ -5449,8 +5449,10 @@ instead, since the counter cannot tell their checks apart). The file's
 `beforeAll` hooks that hand z3 a check are held to the same floor, a hook given
 no timeout counting as vitest's 10 s `hookTimeout`; the `withZ3`
 wrappers of `smt-z3.integration` and `verification.differential` refuse a
-timeout under 40 s when a case is declared (they see neither a larger budget
-nor a hook). The campaign file's **84 `withZ3`
+timeout under 40 s when a case is declared, and both files end on a case that
+holds their `withZ3` cases and `beforeAll` hooks to the same floor for the
+largest budget each handed z3 (`test/support/z3-timeout-floor.ts`, over
+`z3BudgetWatch()`; the campaign file keeps its own, richer record). The campaign file's **84 `withZ3`
 cases** and the plain cases that also drive the solver used to share one
 context from the first block to the last; each of its **13 solver blocks** now
 starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per
