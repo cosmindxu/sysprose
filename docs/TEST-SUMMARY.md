@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5415 total — 5415 passed, 0 failed, 0 skipped
+- **Tests:** 5434 total — 5434 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -36,10 +36,10 @@
 | test/integration/pipeline.validate.test.ts | 6 | 0 | 0 |
 | test/integration/semantics-exec.integration.test.ts | 9 | 0 | 0 |
 | test/integration/semantics.pipeline.test.ts | 9 | 0 | 0 |
-| test/integration/smt-z3.integration.test.ts | 42 | 0 | 0 |
+| test/integration/smt-z3.integration.test.ts | 43 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
-| test/integration/verification.differential.test.ts | 228 | 0 | 0 |
+| test/integration/verification.differential.test.ts | 229 | 0 | 0 |
 | test/interop/self-roundtrip.test.ts | 10 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
@@ -58,7 +58,7 @@
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
 | test/unit/api.rest2.test.ts | 11 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 12 | 0 | 0 |
-| test/unit/api.verification.test.ts | 80 | 0 | 0 |
+| test/unit/api.verification.test.ts | 82 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
@@ -68,14 +68,14 @@
 | test/unit/collab.binding.test.ts | 36 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
-| test/unit/core.model.test.ts | 24 | 0 | 0 |
+| test/unit/core.model.test.ts | 25 | 0 | 0 |
 | test/unit/diagnostic-codes.test.ts | 15 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.exports.test.ts | 3 | 0 | 0 |
 | test/unit/diagram.geometry.test.ts | 18 | 0 | 0 |
 | test/unit/diagram.geometry3d.test.ts | 14 | 0 | 0 |
-| test/unit/diagram.grid.test.ts | 14 | 0 | 0 |
+| test/unit/diagram.grid.test.ts | 15 | 0 | 0 |
 | test/unit/diagram.layout.test.ts | 4 | 0 | 0 |
 | test/unit/diagram.layout2.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
@@ -114,14 +114,14 @@
 | test/unit/semantics.constraint-class.test.ts | 82 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 279 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 284 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.expr.test.ts | 17 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 13 | 0 | 0 |
-| test/unit/semantics.keywords.test.ts | 46 | 0 | 0 |
+| test/unit/semantics.keywords.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 91 | 0 | 0 |
@@ -138,8 +138,8 @@
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.smt-encode.test.ts | 105 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
-| test/unit/semantics.solver-units.test.ts | 133 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 81 | 0 | 0 |
+| test/unit/semantics.solver-units.test.ts | 134 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 85 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 44 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
@@ -159,7 +159,7 @@
 | test/unit/text.recovery-honesty.test.ts | 30 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 224 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 226 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 26 | 0 | 0 |

@@ -23,9 +23,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 5,
       "rows": 9,
-      "tableAgree": 181,
+      "tableAgree": 187,
       "tableDisagree": 0,
-      "tableProbes": 100
+      "tableProbes": 103
     },
     "bool": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 513,
+      "tableAgree": 522,
       "tableDisagree": 0,
-      "tableProbes": 213
+      "tableProbes": 218
     },
     "nira/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 222,
+      "tableAgree": 228,
       "tableDisagree": 0,
-      "tableProbes": 91
+      "tableProbes": 94
     },
     "requirement-clause": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 299,
+      "tableAgree": 308,
       "tableDisagree": 0,
-      "tableProbes": 190
+      "tableProbes": 195
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 508,
+      "tableAgree": 517,
       "tableDisagree": 0,
-      "tableProbes": 211
+      "tableProbes": 216
     },
     "text-as-real": {
       "battery": null,
@@ -558,7 +558,7 @@ export const CLASS_FACTS: ClassFacts = {
   "digests": {
     "defects": "3ef3924b47868583560237e6ce7d1a2bd50b19b23f17eeddff10058e46571c1b",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "69570d6eb077b68d4fb26448a778763c8ee6eaf1c5798fc33c7764c64132bbad"
+    "probes": "d02d6298e6df5407779b6a6ceeb5383fca2c5d7ad98583449d348787c73c8e04"
   },
   "fences": {
     "fence/collection-valued": {
