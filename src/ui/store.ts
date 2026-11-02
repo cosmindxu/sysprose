@@ -1197,7 +1197,7 @@ function stateMachineDiagnostics(model: Model, machine: StateMachineRun): Diagno
     severity: 'info',
     message: `State machine "${name}": triggers [${machine.triggers.join(', ')}] → ${machine.firedCount} transition(s) fired${
       active ? `; active: ${active}` : ''
-    }${machine.clock ? `; clock ${machine.clock}` : ''}${machine.complete ? '; complete' : ''}.${machine.refused ? ` Stopped: ${machine.refused.sentence}` : ''}`,
+    }${machine.clock ? `; clock ${machine.clock}` : ''}${machine.complete ? '; complete' : ''}.${machine.refused ? ` Stopped: ${[machine.refused, ...(machine.refused.others ?? [])].map((r) => r.sentence).join(' ')}` : ''}`,
     elementId: machine.stateMachine.id,
   };
   const states: Diagnostic[] = machine.visited.map((sid, i) => ({

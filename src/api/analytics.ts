@@ -2629,7 +2629,20 @@ export interface StateMachineRun {
    * tab and the app's Simulate trace print; for a composite state run on its own
    * that steps into itself, it names the machine that holds the composite.
    */
-  refused?: { transitionId: string; from: string; to: string; trigger: string; sentence: string };
+  refused?: {
+    transitionId: string;
+    from: string;
+    to: string;
+    trigger: string;
+    sentence: string;
+    /**
+     * The other regions' refusals of a parallel machine, each with its own
+     * sentence; absent unless a second region refused. `refused` is the first
+     * region's, and its sentence says whether the remaining regions run on or
+     * every region has stopped.
+     */
+    others?: Array<{ transitionId: string; from: string; to: string; trigger: string; sentence: string }>;
+  };
 }
 
 /** Runnable behaviors in the model, each with a short simulated trace. */
@@ -2729,12 +2742,16 @@ export function executionReport(model: Model): ExecutionReport {
         completionBudgetHit: result.completionBudgetHit === true,
         ...(result.refused === undefined
           ? {}
-          : {
-              refused: {
-                ...result.refused,
-                sentence: refusedStepSentence(model, el.id, result.refused.transitionId),
-              },
-            }),
+          : (() => {
+              const all = result.refusals ?? [result.refused];
+              const regions = { stopped: all.length, of: result.regionCount ?? 1 };
+              const say = (f: (typeof all)[number]) => ({
+                ...f,
+                sentence: refusedStepSentence(model, el.id, f.transitionId, regions),
+              });
+              const [first, ...rest] = all.map(say);
+              return { refused: { ...first!, ...(rest.length === 0 ? {} : { others: rest }) } };
+            })()),
       });
     }
   }

@@ -945,11 +945,22 @@ export interface StateRunResult {
    * ON A PARALLEL MACHINE ({@link runsParallel}, set only through the API) the
    * stop is the REGION's: each region is driven on its own over the whole
    * script, one after another, so the region the step came in stops and takes
-   * no step after it, and the other regions run on. The first region's refusal
-   * is the one named. The walk refuses every parallel machine
-   * (`parallel-regions`), so this too is a trace, never a verdict.
+   * no step after it, and the other regions run on. `refused` is the FIRST
+   * region's refusal; {@link refusals} lists every region's. The walk refuses
+   * every parallel machine (`parallel-regions`), so this too is a trace, never
+   * a verdict.
    */
   refused?: StateFire;
+  /**
+   * Every region's refusal, in region order (`refused` is its first), and how
+   * many regions the machine was driven as (`regionCount`: one for a machine
+   * that is not parallel). Both are set exactly when `refused` is. When
+   * `refusals.length` reaches `regionCount` every region has stopped and
+   * nothing advances ({@link refusalStopsRun}); until then the regions that
+   * have not stopped run on.
+   */
+  refusals?: StateFire[];
+  regionCount?: number;
 }
 
 /**
@@ -1005,22 +1016,59 @@ export function runStateMachine(
   const fired: StateFire[] = [];
   const finals: (ElementId | null)[] = [];
   let completionBudgetHit = false;
-  let refused: StateFire | undefined;
+  const refusals: StateFire[] = [];
   for (const region of regions) {
     const res = runRegion(model, container.id, region.id, stringTriggers, valueStore, performed, maxCompletion, tie);
     visited.push(...res.visited);
     fired.push(...res.fired);
     finals.push(res.finalState);
     if (res.completionBudgetHit) completionBudgetHit = true;
-    refused ??= res.refused;
+    if (res.refused !== undefined) refusals.push(res.refused);
   }
 
   const activeStates = finals.filter((s): s is ElementId => s !== null);
   const finalState = parallel ? (finals[0] ?? null) : (finals[0] ?? null);
   // A refused run did not complete; every other flat run leaves `complete`
   // untracked, as it always did.
-  const stopped = refused === undefined ? {} : { complete: false, refused };
+  const stopped =
+    refusals.length === 0 ? {} : { complete: false, refused: refusals[0]!, refusals, regionCount: regions.length };
   return { visited, fired, performed, valueStore, activeStates, finalState, completionBudgetHit, ...stopped };
+}
+
+/**
+ * Did a refusal stop the whole run ({@link StateRunResult.refusals}): the
+ * machine is not parallel, has a single region, or every region has refused.
+ * Until then a parallel machine's other regions run on and Play goes on.
+ */
+export function refusalStopsRun(
+  model: Model,
+  machineId: ElementId,
+  res: Pick<StateRunResult, 'refusals' | 'regionCount'>,
+): boolean {
+  return !runsParallel(model, machineId) || (res.refusals?.length ?? 0) >= (res.regionCount ?? 1);
+}
+
+/**
+ * The clause of {@link refusedStepSentence} that says what stopped. On a
+ * parallel machine it reads how many regions have refused: one, and the rest
+ * run on; several, and the remaining regions run on; all of them, and the run
+ * stops (a lone region is the whole run, as on a machine that is not parallel).
+ */
+function stopClause(model: Model, machineId: ElementId, regions?: { stopped: number; of: number }): string {
+  const whole = 'the run stops where it stands without taking it, and takes no step after it';
+  if (!runsParallel(model, machineId)) return whole;
+  if (regions !== undefined && regions.of <= 1) return whole;
+  const own = 'its region stops where it stands without taking it and takes no step after it';
+  if (regions !== undefined && regions.stopped >= regions.of) {
+    return `${own}, and so does every other region of the machine at a step it does not take, so the run stops`;
+  }
+  if (regions !== undefined && regions.stopped > 1) {
+    return (
+      `${own}, as do the other regions that stopped at a step they do not take, while the machine’s remaining ` +
+      'regions, each run on its own over the whole script, run on'
+    );
+  }
+  return `${own}, while the machine’s other regions, each run on its own over the whole script, run on`;
 }
 
 /**
@@ -1050,7 +1098,10 @@ export function runsParallel(model: Model, machineId: ElementId): boolean {
  * TWO RUNS ARE WORDED APART, because the plain sentence would be false of them:
  * - On a parallel machine ({@link runsParallel}) the step stops its own region,
  *   and the other regions run on; the sentence says so, where "takes no step
- *   after it" would be contradicted by the steps they fire.
+ *   after it" would be contradicted by the steps they fire. `regions` (how many
+ *   have refused, of how many) words the rest: several refused and some run on,
+ *   or every region refused and the run stops, which "the other regions run on"
+ *   would contradict.
  * - A composite state run on its own — `executionReport` runs every element
  *   that owns a transition, a state written inside a machine among them — that
  *   steps into ITSELF is not stepping into a machine's root: in the machine
@@ -1066,14 +1117,16 @@ export function runsParallel(model: Model, machineId: ElementId): boolean {
  *   it was false: the step is the plain one, into the machine itself, in the
  *   words `reach` prints for the same step.
  */
-export function refusedStepSentence(model: Model, machineId: ElementId, transitionId: ElementId): string {
+export function refusedStepSentence(
+  model: Model,
+  machineId: ElementId,
+  transitionId: ElementId,
+  regions?: { stopped: number; of: number },
+): string {
   const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
   const edge = model.get(transitionId);
   if (!edge?.source?.[0] || !edge.target?.[0]) return `${qn(transitionId)} was not taken, and the run stopped there.`;
-  const stop = runsParallel(model, machineId)
-    ? 'its region stops where it stands without taking it and takes no step after it, while the machine’s ' +
-      'other regions, each run on its own over the whole script, run on'
-    : 'the run stops where it stands without taking it, and takes no step after it';
+  const stop = stopClause(model, machineId, regions);
   if (stepAcrossBoundary(model, machineId, edge)) {
     const far = isRegionNode(model, machineId, edge.target[0]) ? edge.source[0] : edge.target[0];
     const holds = machineHolding(model, far);
@@ -1414,14 +1467,14 @@ function runHierMachine(
   const leaves: (ElementId | null)[] = [];
   const completes: boolean[] = [];
   let completionBudgetHit = false;
-  let refused: StateFire | undefined;
+  const refusals: StateFire[] = [];
   for (const rc of regionContainers) {
     const r = runHierRegion(model, container.id, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion, tie);
     leaves.push(r.leaf);
     // A region stopped at a step it does not take did not complete.
     completes.push(r.complete && r.refused === undefined);
     if (r.completionBudgetHit) completionBudgetHit = true;
-    refused ??= r.refused;
+    if (r.refused !== undefined) refusals.push(r.refused);
   }
 
   const activeStates = leaves.filter((s): s is ElementId => s !== null);
@@ -1458,7 +1511,9 @@ function runHierMachine(
     clock: clockRef.clock,
     complete,
     completionBudgetHit,
-    ...(refused === undefined ? {} : { refused }),
+    ...(refusals.length === 0
+      ? {}
+      : { refused: refusals[0]!, refusals, regionCount: regionContainers.length }),
   };
 }
 

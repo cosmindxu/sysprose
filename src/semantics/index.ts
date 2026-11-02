@@ -82,6 +82,7 @@ export {
 export {
   runActionFlow,
   runStateMachine,
+  refusalStopsRun,
   refusedStepSentence,
   executeBehavior,
   propagateBindings,
