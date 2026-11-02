@@ -9209,7 +9209,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'X5::P::c': ['F/X/F/X', null],
       'X5::P::c in X5::Q::p': ['F/X/F/X', null],
-      'X5::P::c in X5::q::p': ['?/?/?/X', null],
+      'X5::P::c in X5::q::p': ['T/X/T/X', 'T'],
       'X5::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
       'X5::Q::a': ['?/-/?/-', 'F'],
       'X5::Q::a in X5::q': ['T/-/T/-', 'T'],
@@ -9222,11 +9222,117 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'X6::P::c': ['F/X/F/X', null],
       'X6::P::c in X6::Q::p': ['F/X/F/X', null],
-      'X6::P::c in X6::W::q::p': ['?/?/?/X', null],
-      'X6::P::c in X6::w::q::p': ['?/?/?/X', null],
+      'X6::P::c in X6::W::q::p': ['T/X/T/X', 'T'],
+      'X6::P::c in X6::w::q::p': ['T/X/T/X', 'T'],
       'X6::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
       'X6::Q::a': ['?/-/?/-', 'F'],
       'X6::Q::a in X6::W::q': ['T/-/T/-', 'T'],
+    }),
+    // defaults-pass (TODO 218): the valued members of W's binding component (M written with `=`, Q's asserted
+    // `L == 3.0`) state ONE value, exactly, so W's q's p's load is read at 3 and `c` holds there (stand-x6 above);
+    // X6D has M = 4.0 beside the assert (two values: nothing is read), X6U states the 3 in g beside the assert in kg.
+    'stand-x6-differ': probe(`package X6D {
+        part def P { attribute load default = 1.0; constraint c { load >= 2.0 } }
+        part def Q { attribute L; part p : P; bind p.load = L; assert constraint a { L == 3.0 } }
+        part def W { attribute M = 4.0; part q : Q; bind q.p.load = M; }
+        part w : W;
+      }`, {
+      'X6D::P::c': ['F/X/F/X', null],
+      'X6D::P::c in X6D::Q::p': ['F/X/F/X', null],
+      'X6D::P::c in X6D::W::q::p': ['?/?/?/X', null],
+      'X6D::P::c in X6D::w::q::p': ['?/?/?/X', null],
+      'X6D::Q::a': ['?/-/?/-', 'F'],
+      'X6D::Q::a in X6D::W::q': ['?/-/?/-', null],
+      'X6D::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'X6D::Q::«BindingConnectorAsUsage» in X6D::W::q#bind': ['F/-/F/-', 'F'],
+    }),
+    'stand-x6-unit': probe(`package X6U {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; constraint c { load >= 4.0 [kg] } }
+        part def Q { attribute L : ISQ::MassValue; part p : P; bind p.load = L; assert constraint a { L == 3.0 [kg] } }
+        part def W { attribute M : ISQ::MassValue = 3000.0 [g]; part q : Q; bind q.p.load = M; }
+        part w : W;
+      }`, {
+      'X6U::P::c': ['F/X/F/X', null],
+      'X6U::P::c in X6U::Q::p': ['F/X/F/X', null],
+      'X6U::P::c in X6U::W::q::p': ['F/X/F/X', 'F'],
+      'X6U::P::c in X6U::w::q::p': ['F/X/F/X', 'F'],
+      'X6U::Q::a': ['?/-/?/-', 'F'],
+      'X6U::Q::a in X6U::W::q': ['T/-/T/-', 'T'],
+      'X6U::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    // defaults-pass (TODO 235): a pair of asserted equations that meet in Q, one inherited from P, whose side reads a
+    // name Q's binding joins to K: 30 * 2.0 against 50.0 (E1D, read in Q: the warning) and 25 * 2.0 (E1A: no pair).
+    'apart-inherited': probe(`package E1D {
+        part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real; attribute K : ScalarValues::Real = 30.0;
+          assert constraint c2a { L == a * 2.0 } }
+        part def Q :> P { bind a = K; assert constraint c50 { L == 50.0 } }
+        part q : Q;
+        constraint t50 { q.L == 50.0 }
+      }`, {
+      'E1D::P::c2a': ['?/-/?/-', null],
+      'E1D::P::c2a in E1D::q': ['?/-/?/-', null],
+      'E1D::Q::c50': ['?/-/?/-', null],
+      'E1D::t50': ['?/?/?/X', null],
+      'E1D::P::L in E1D::Q#equations': ['F/-/F/-', 'F'],
+    }),
+    'apart-inherited-agree': probe(`package E1A {
+        part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real; attribute K : ScalarValues::Real = 25.0;
+          assert constraint c2a { L == a * 2.0 } }
+        part def Q :> P { bind a = K; assert constraint c50 { L == 50.0 } }
+        part q : Q;
+        constraint t50 { q.L == 50.0 }
+      }`, {
+      'E1A::P::c2a': ['?/-/?/-', null],
+      'E1A::P::c2a in E1A::q': ['?/-/?/-', null],
+      'E1A::Q::c50': ['?/-/?/-', null],
+      'E1A::t50': ['?/?/?/T', 'T'],
+      'E1A::P::L in E1A::Q#equations': ['?/-/?/-', null],
+    }),
+    // defaults-pass (TODO 250): L states no value and an assert typed by an inequality-only constraint definition
+    // constrains it, so a lone plain check over it is no design equation (the numeric surface read t1 imposed at 1,
+    // or at 200, past the definition's bound), and a feature with a value is read as before (T1V).
+    'typed-ineq-lone': probe(`package T1L {
+        constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+        part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x = L; } }
+        part p : P;
+        constraint t1 { p.L == 200.0 }
+      }`, {
+      'T1L::t1': ['?/?/?/?', null],
+    }),
+    // The same shape written the other ways a typed assert gives its parameter: `bind x = L` (T10), a constraint usage it
+    // specialises (U1) and a name the definition's body reads that is no parameter (U2, `limit`): all held alike.
+    'typed-ineq-bind': probe(`package T10 {
+        constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+        part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x; bind x = L; } }
+        part p : P;
+        constraint t1 { p.L == 200.0 }
+      }`, {
+      'T10::t1': ['?/?/?/?', null],
+    }),
+    'typed-ineq-specialised': probe(`package U1 {
+        constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+        part def P { attribute L : ScalarValues::Real; constraint e0 : Cd { in x = L; } assert constraint ea :> e0; }
+        part p : P;
+        constraint t1 { p.L == 200.0 }
+      }`, {
+      'U1::t1': ['?/?/?/?', null],
+    }),
+    'typed-ineq-body-name': probe(`package U2 {
+        attribute limit : ScalarValues::Real;
+        constraint def Cd { in x : ScalarValues::Real; x <= limit }
+        part def P { attribute L : ScalarValues::Real = 5.0; assert constraint ca : Cd { in x = L; } }
+        part p : P;
+        constraint t1 { limit == 1.0 }
+      }`, {
+      'U2::t1': ['?/?/?/?', null],
+    }),
+    'typed-ineq-valued': probe(`package T1V {
+        constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+        part def P { attribute L : ScalarValues::Real = 5.0; assert constraint ca : Cd { in x = L; } }
+        part p : P;
+        constraint t1 { p.L == 5.0 }
+      }`, {
+      'T1V::t1': ['T/T/T/T', 'T'],
     }),
     // default-stands' branch review. A binding to a value written with `=` that holds a `default` only in ANOTHER
     // context — a specialisation never instantiated (T4C's `Q5 :> Q { :>> L = 7.0 }`) or a sibling instance (T4D's
@@ -15580,6 +15686,17 @@ package L3 {
             'stand-x5 | X5::P::c in X5::Q::p',
             'stand-x6 | X6::P::c',
             'stand-x6 | X6::P::c in X6::Q::p',
+            // W’s q’s p (X5’s q’s p): M’s 3 and Q’s asserted 3 are one value, which the check and the numeric surface read
+            // there; the default 1.0 that Q’s assert contradicts in Q’s own p is why the SMT engine finds its axioms inconsistent.
+            'stand-x5 | X5::P::c in X5::q::p',
+            'stand-x6 | X6::P::c in X6::W::q::p',
+            'stand-x6 | X6::P::c in X6::w::q::p',
+            'stand-x6-differ | X6D::P::c',
+            'stand-x6-differ | X6D::P::c in X6D::Q::p',
+            'stand-x6-unit | X6U::P::c',
+            'stand-x6-unit | X6U::P::c in X6U::Q::p',
+            'stand-x6-unit | X6U::P::c in X6U::W::q::p',
+            'stand-x6-unit | X6U::P::c in X6U::w::q::p',
           ],
         ],
         [

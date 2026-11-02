@@ -91,7 +91,7 @@ import {
   type RefusalReason,
   type VarSort,
 } from './contracts';
-import { sharedDefinitions } from './defining-equation';
+import { readsContradictedDefinition, sharedDefinitions } from './defining-equation';
 import { evaluateFeatureValue } from './evaluate-model';
 import {
   affineRational,
@@ -3033,6 +3033,8 @@ function rereadAt(model: Model, row: EncodedRow, values: PointValues): boolean |
     const value = el.attrs.value;
     if (typeof value === 'number') return value * v.factor + v.offset;
     if (typeof value === 'boolean') return value;
+    // A String two asserted equations give two values reads as neither: the first one written is no value of it.
+    if (readsContradictedDefinition(model, el.id)) return undefined;
     const r = evaluateFeatureValue(model, el.id);
     return 'value' in r && typeof r.value === 'string' ? r.value : undefined;
   };

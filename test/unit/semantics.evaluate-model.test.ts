@@ -2232,6 +2232,26 @@ describe('checkConstraints — two asserted equations that give one feature two 
     expect(each.every((i) => i.result === 'unknown' && i.cause === 'two-values')).toBe(true);
   });
 
+  it('reads a side over a name a binding joins where the pair meets, not only where the equation is written (E1)', async () => {
+    // P writes `L == a * 2.0`; Q :> P joins a to K by `bind a = K` and writes `L == 50.0`. The pair meets in Q, which
+    // is not the element that writes the first, so reading it there gave the pair as unknown, and `--strict` passed.
+    // K = 30 gives 60 against 50: the warning, as when both equations sit in one element. K = 25 gives 50: no warning.
+    const inherited = (k: string) => `package E1 {
+      part def P { attribute L : ScalarValues::Real; attribute a : ScalarValues::Real; attribute K : ScalarValues::Real = ${k};
+        assert constraint c2a { L == a * 2.0 } }
+      part def Q :> P { bind a = K; assert constraint c50 { L == 50.0 } }
+      part q : Q;
+    }`;
+    const pairOf = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      return checkConstraints(m!).find((c) => c.conflict === 'equations');
+    };
+    const differ = await pairOf(inherited('30.0'));
+    expect(differ?.result).toBe('violated');
+    expect(differ?.message).toContain("(`L == a * 2.0` is false where L is 50, `50.0` is 50)");
+    expect((await pairOf(inherited('25.0')))?.result).not.toBe('violated');
+  });
+
   it('two Booleans, and two sides that read no name in a form this tool does not compute, are no value either', async () => {
     expect(
       await bothOrders(`package BOO {
@@ -6179,6 +6199,45 @@ describe('the instance index — frames, components, and bound sources', () => {
     expect(differ && 'abstain' in differ && differ.abstain).toBe('defaults-differ');
     // A name no binding holds: nothing.
     expect(boundSourceIn(r!, 'R3a::a1::K')).toBeUndefined();
+  });
+
+  it('reads valued members that state one value exactly as that value, and abstains where they differ or are not exact (X6)', async () => {
+    // W's `bind q.p.load = M` beside Q's asserted `L == 3.0`, both joined to P's load: the model states 3 twice.
+    const x6 = (l: string, m: string, t: string, ty = '') => `package X6 {
+      part def P { attribute load ${ty}; constraint c { load >= ${t} } }
+      part def Q { attribute L ${ty}; part p : P; bind p.load = L; assert constraint a { L == ${l} } }
+      part def W { attribute M ${ty}= ${m}; part q : Q; bind q.p.load = M; }
+      part w : W;
+    }`;
+    const source = (m: Model, symbol: string) => {
+      const s = boundSourceIn(m, symbol);
+      return s === undefined ? undefined : 'abstain' in s ? s.abstain : s.via.source;
+    };
+    const row = (m: Model) => {
+      const c = checkConstraints(m).find((k) => m.qualifiedName(k.id) === 'X6::P::c')!;
+      return (c.instances ?? []).filter((i) => i.instance?.endsWith('::q::p')).map((i) => [i.instance, i.result]);
+    };
+    const same = [
+      ['X6::W::q::p', 'satisfied'],
+      ['X6::w::q::p', 'satisfied'],
+    ];
+    const { model: eq } = await loadModelText(x6('3.0', '3.0', '2.0'));
+    expect(source(eq!, 'X6::W::q::p::load')).toBe('M');
+    expect(row(eq!)).toEqual(same);
+    // The value is the one stated, not a threshold's: 3 against 4 is violated, in both instances.
+    const { model: low } = await loadModelText(x6('1.5 * 2.0', '6.0 / 2.0', '4.0'));
+    expect(row(low!)).toEqual(same.map(([i]) => [i, 'violated']));
+    // Units: 3000 g is 3 kg.
+    const { model: unit } = await loadModelText(x6('3.0 [kg]', '3000.0 [g]', '2.0 [kg]', ': ISQ::MassValue'));
+    expect(source(unit!, 'X6::W::q::p::load')).toBe('M');
+    expect(row(unit!)).toEqual(same);
+    // Two values: nothing is read, as before.
+    const { model: differ } = await loadModelText(x6('3.0', '4.0', '2.0'));
+    expect(source(differ!, 'X6::W::q::p::load')).toBe('two-values');
+    expect(row(differ!).every(([, r]) => r === 'unknown')).toBe(true);
+    // A bare number against a quantity is not one value this tool compares.
+    const { model: mixed } = await loadModelText(x6('3.0', '3.0 [kg]', '2.0 [kg]', ': ISQ::MassValue'));
+    expect(source(mixed!, 'X6::W::q::p::load')).toBe('two-values');
   });
 
   it('reads the outermost frame root as the global union-find of what the connectors join', async () => {

@@ -3228,7 +3228,9 @@ export class DefiningEquations {
       if (!reads.has(r.feature)) continue;
       const x = there.get(path);
       if (!x) return 'unread';
-      if (classified(this.model, contextId, x.component).valued.length > 1) return 'two-values';
+      const valued = classified(this.model, contextId, x.component).valued;
+      // Members that state one and the same value, exactly, are one value ({@link agreedValued}).
+      if (valued.length > 1 && agreedValued(this.model, contextId, valued) === undefined) return 'two-values';
     }
     return undefined;
   }
@@ -7971,7 +7973,10 @@ function heldInstance(definitions: DefiningEquations, rootId: ElementId, path: s
   return `${definitions.instanceNameOf(rootId)}::${path.split('.').join('::')}`;
 }
 
-const ASSERT_HELD = new WeakMap<Model, { rev: number; held: ReadonlySet<ElementId>; typedBy: ReadonlyMap<ElementId, ElementRecord> }>();
+const ASSERT_HELD = new WeakMap<
+  Model,
+  { rev: number; held: ReadonlySet<ElementId>; typedBy: ReadonlyMap<ElementId, ElementRecord>; heldOnly: ReadonlyMap<ElementId, ElementRecord> }
+>();
 
 /** No `default` an assertion may replace ({@link replaceableDefaults}). */
 const NO_DEFAULTS: ReadonlySet<ElementId> = new Set();
@@ -8283,6 +8288,23 @@ export function typedAssertNames(model: Model, f: ElementRecord): boolean {
   return assertHeldIndex(model).typedBy.has(f.id);
 }
 
+/**
+ * The assert typed by an INEQUALITY-only constraint definition (`x >= 0.0 and x <= 100.0`) that constrains `f` through
+ * the values it gives the definition's parameters (`in x = L`, `bind x = L`, a usage it specialises, a name its body
+ * reads that is no parameter of it): the model constrains `f` in a form no surface reads as a definition of it. It
+ * defines nothing — a `default` stands against it, a value written with `=` is read as written — so the numeric
+ * surface holds a valueless `f` as no design freedom and no plain check fixes it ({@link typedAssertNames} is the
+ * equation's: that one leaves `f` unread).
+ */
+export function typedAssertHeldOnly(model: Model, f: ElementRecord): ElementRecord | undefined {
+  return assertHeldIndex(model).heldOnly.get(f.id);
+}
+
+/** Does any assert typed by an inequality-only definition constrain a feature ({@link typedAssertHeldOnly})? */
+export function typedAssertsHoldOnly(model: Model): boolean {
+  return assertHeldIndex(model).heldOnly.size > 0;
+}
+
 /** Does any assert typed by an equation's definition name a feature it may define ({@link typedAssertNames})? */
 export function typedAssertsName(model: Model): boolean {
   return assertHeldIndex(model).typedBy.size > 0;
@@ -8294,6 +8316,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
   if (hit && hit.rev === model.rev) return hit;
   const held = new Set<ElementId>();
   const typedBy = new Map<ElementId, ElementRecord>();
+  const heldOnly = new Map<ElementId, ElementRecord>();
   const owners = new Set<ElementId>();
   const defaults: ElementRecord[] = [];
   // The asserts typed by a constraint definition whose body holds an equation
@@ -8301,7 +8324,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
   // a conjunction, `a == 50.0 and a >= 0.0`, too), or a body this tool cannot
   // parse — each with the definitions that make it one. An inequality alone
   // defines nothing (U5).
-  const typedAsserts: Array<{ a: ElementRecord; types: ElementRecord[] }> = [];
+  const typedAsserts: Array<{ a: ElementRecord; types: ElementRecord[]; only?: true }> = [];
   // The local rule reads only the defaults an assertion may replace: none ({@link replaceableDefaults}).
   const replaceable = replaceableDefaults(model);
   for (const el of model.all()) {
@@ -8314,6 +8337,13 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
         return node === undefined || holdsEquation(node);
       });
       if (types.length > 0) typedAsserts.push({ a: el, types });
+      // The same assert's inequality-only definitions define nothing, and constrain all the same ({@link typedAssertHeldOnly}).
+      const inequalities = generalizationsOf(model, el.id).filter((t) => {
+        if (t.attrs.isLibrary === true || typeof t.attrs.expression !== 'string' || t.attrs.expression.trim() === '') return false;
+        const node = parseRelationBody(t.attrs.expression.trim())?.node;
+        return node !== undefined && !holdsEquation(node);
+      });
+      if (inequalities.length > 0) typedAsserts.push({ a: el, types: inequalities, only: true });
     } else if (el.attrs.defaultValue === true && el.attrs.value !== undefined && el.attrs.value !== null && replaceable.has(el.id)) defaults.push(el);
   }
   const named = new Map<ElementId, ReadonlyMap<string, ElementRecord>>();
@@ -8364,7 +8394,15 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
       return redefining.get(id) ?? [];
     };
     const stated = (g: ElementRecord): boolean => g.attrs.value !== undefined && g.attrs.value !== null;
+    let only = false;
     const target = (f: ElementRecord, a: ElementRecord): void => {
+      if (only) {
+        // An inequality defines nothing: every feature it reaches is held, whatever it states (a value is read as written).
+        for (const g of [f, ...redefinedClosure(model, f), ...redefinersOf(f.id)]) {
+          if (g.attrs.isLibrary !== true && !heldOnly.has(g.id)) heldOnly.set(g.id, a);
+        }
+        return;
+      }
       for (const g of [f, ...redefinedClosure(model, f)]) {
         if (stated(g) && g.attrs.defaultValue !== true) break;
         if (g.attrs.isLibrary !== true && !typedTargets.has(g.id)) typedTargets.set(g.id, a);
@@ -8394,7 +8432,8 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
         targetBelow(g, a, seen);
       }
     };
-    for (const { a, types } of typedAsserts) {
+    for (const { a, types, only: held } of typedAsserts) {
+      only = held === true;
       // Where its parameters are given values: the assert, and each constraint
       // usage it specialises (`constraint e0 : Eq { in x = p.load; }` under
       // `assert constraint ea :> e0;`), each resolved from its own owner.
@@ -8514,7 +8553,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
     const f = model.get(id);
     if (f?.attrs.defaultValue === true) held.add(id);
   }
-  const fresh = { rev: model.rev, held, typedBy };
+  const fresh = { rev: model.rev, held, typedBy, heldOnly };
   ASSERT_HELD.set(model, fresh);
   return fresh;
 }
@@ -11067,7 +11106,15 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
     via: { bindingIds: componentBindingIds(model, best!.root, best!.component), source: valuePath },
   });
   if (cls.valued.length > 1) {
-    return { abstain: 'two-values', sentence: abstentionSentence(model, symbol, best.root, best.component, 'two-values') };
+    // Valued members that state one and the same value, exactly (X6's W `M = 3.0` beside Q's asserted `L ==
+    // 3.0`), are the one value: it is read from the first, as from a lone valued member. Any member whose value
+    // is no exact constant leaves them two ({@link agreedValued}).
+    const agreed = agreedValued(model, best.root, cls.valued);
+    if (agreed === undefined) {
+      return { abstain: 'two-values', sentence: abstentionSentence(model, symbol, best.root, best.component, 'two-values') };
+    }
+    if (memberInstance(definitions, best.root, agreed) === symbol) return undefined;
+    return source(agreed);
   }
   if (cls.valued.length === 1) {
     // The member that states the value IS the name's own path: today's reading
@@ -11099,6 +11146,63 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
       ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
       : abstentionSentence(model, symbol, best.root, best.component, 'free'),
   };
+}
+
+/**
+ * The path among `valued` (the valued members of a binding component read in `root`, {@link classified}) to read
+ * their one value from, or `undefined` where they do not state exactly one: a member is a value written with `=`
+ * (or a `default` that stands) or an asserted equation of its owner, of a feature it redefines or of the
+ * context, and each is an exact constant ({@link constantOf}, {@link exactConstant}); the constants must all be
+ * the same, unit and dimension included ({@link compareConstants}). A package's head (`#…`), an equation that
+ * reads a name, an assertion that is no equation, or one equation the others disagree with is no agreement.
+ * The first member written with `=` is the source, else the first.
+ */
+function agreedValued(model: Model, root: ElementId, valued: readonly string[]): string | undefined {
+  const rootEl = model.get(root);
+  const reading = bindingEnds(model).readings.get(root);
+  if (!rootEl || !reading) return undefined;
+  const definitions = sharedDefinitions(model);
+  const constants: Array<{ path: string; c: Constant; written: boolean }> = [];
+  for (const path of valued) {
+    if (path.startsWith('#')) return undefined;
+    const r = reading.get(path);
+    const g = r ? model.get(r.feature) : undefined;
+    if (!g) return undefined;
+    const written = valueSourceOf(model, g);
+    if (written) {
+      const c = constantOf(written);
+      if (!c) return undefined;
+      constants.push({ path, c, written: true });
+      continue;
+    }
+    // An asserted equation: every site an assertion that defines the end may sit at (assertDefinesEnd).
+    const sites: Array<[ElementId, string]> = [];
+    for (const f of [g, ...redefinedClosure(model, g)]) {
+      const n = definitions.nameOf(f);
+      if (f.ownerId != null && n !== undefined) sites.push([f.ownerId, n]);
+    }
+    sites.push([root, path]);
+    const segments = path.split('.');
+    let owner = root;
+    for (let i = 0; i < segments.length - 1; i++) {
+      const h = definitions.byName(owner).get(segments[i]!);
+      if (!h) return undefined;
+      const rest = segments.slice(i + 1).join('.');
+      for (const x of [h, ...redefinedClosure(model, h)]) sites.push([x.id, rest]);
+      owner = h.id;
+    }
+    const equations = sites.flatMap(([site, n]) => definitions.of(site, n));
+    if (equations.length === 0 || !assertDefinesEnd(model, g, rootEl, path)) return undefined;
+    for (const eq of equations) {
+      const c = exactConstant(eq.definition, eq.literals);
+      if (!c) return undefined;
+      constants.push({ path, c, written: false });
+    }
+  }
+  const first = constants[0];
+  if (!first) return undefined;
+  for (const x of constants) if (compareConstants(first.c, x.c) !== 'same') return undefined;
+  return (constants.find((x) => x.written) ?? first).path;
 }
 
 /**

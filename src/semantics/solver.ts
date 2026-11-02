@@ -103,8 +103,10 @@ import {
   sharedDefinitions,
   spelledIn,
   statedValueOf,
+  typedAssertHeldOnly,
   typedAssertHolding,
   typedAssertNames,
+  typedAssertsHoldOnly,
   typedAssertsName,
   writesStandingDefault,
   usageOwnedRefusal,
@@ -799,6 +801,21 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
         }
       }
     }
+  }
+  // What an assert typed by an INEQUALITY-only definition constrains (`assert constraint ca : Cd { in x = L; }` over `x >=
+  // 0.0 and x <= 100.0`, whichever way it gives x: `bind x = L`, a usage it specialises, a name Cd's body reads) is held
+  // like an untyped inequality's: the model constrains it in a form this lane does not read ({@link GatheredSystem.held}).
+  // By FEATURE, in every instance that reads it — weaker than the instance's alone, never false.
+  if (typedAssertsHoldOnly(model)) {
+    const mark = (vars: readonly ElementId[]): void => {
+      for (const v of vars) {
+        const f = model.get(baseIdOf(v));
+        const a = f && !typedAssertNames(model, f) ? typedAssertHeldOnly(model, f) : undefined;
+        if (a) holdVar(held, v, a.id);
+      }
+    };
+    for (const eq of all) mark(eq.vars);
+    for (const iq of gatherInequalities(model, scopeId)) mark(iq.vars);
   }
   // A feature a value equation or an asserted equation derives from one whose value is not read has none either: the
   // solve held the one at its starting 0 and decided the other from it (`bind k = w.p.a` below an order scope, `attribute
@@ -4965,7 +4982,8 @@ export function optimize(
     if (core.unsettled.has(objectiveId)) return Number.POSITIVE_INFINITY;
     const at = determinedValues(core);
     let v = at.get(objectiveId);
-    if (v === undefined || !Number.isFinite(v)) {
+    if ((v === undefined || !Number.isFinite(v)) && !readsContradictedDefinition(model, objectiveId)) {
+      // Not for an objective two asserted equations give two values: the first one written is no value of it.
       const r = evaluateFeatureValue(model, objectiveId);
       v = 'value' in r && typeof r.value === 'number' && Number.isFinite(r.value) ? r.value : undefined;
     }
@@ -5067,6 +5085,9 @@ function objectiveValue(
   if (core.unsettled.has(objectiveId)) return undefined;
   const v = determinedValues(core).get(objectiveId);
   if (v !== undefined && Number.isFinite(v)) return v;
+  // A value two asserted equations give two values has none to read in their place (the first one written is
+  // no value of it, and it turned on the order of the text).
+  if (readsContradictedDefinition(model, objectiveId)) return undefined;
   // Objective not part of the solved system — evaluate its own value directly.
   const r = evaluateFeatureValue(model, objectiveId);
   if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) return r.value;
@@ -6415,7 +6436,9 @@ function heldSentence(model: Model, ids: readonly ElementId[], asserts: readonly
     const node = parseRelationBody(String(el?.attrs.expression ?? ''))?.node;
     const op = node?.kind === 'binary' ? node.op : undefined;
     const shape =
-      op === 'and'
+      typeof el?.attrs.expression !== 'string'
+        ? 'a typed assert'
+        : op === 'and'
         ? 'a conjunction'
         : op === 'or' || op === 'xor'
           ? 'a disjunction'
