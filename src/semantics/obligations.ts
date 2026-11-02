@@ -115,7 +115,7 @@ import {
 } from './defining-equation';
 import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
-import { foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
+import { ambiguousKeyword, foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
 import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
 import { getRequirementAttr } from './requirements';
 import { isNonNormativeStatement } from './statement-kind';
@@ -518,7 +518,8 @@ function keywordRole(model: Model, el: ElementRecord, written: FiledRole): Filed
   for (const keyword of keywordsOnRecord(el)) {
     const alias = foreignKeyword(keyword);
     if (!alias || alias.reads.as !== 'clause-role') continue;
-    const named = resolveKeyword(model, keyword);
+    // Two imports answering to one bare keyword: it names neither, in either import order (as `keywordUsesOn`).
+    const named = ambiguousKeyword(model, keyword) ? undefined : resolveKeyword(model, keyword);
     return {
       role: alias.reads.role === 'assume' ? 'premise' : 'obligation',
       source: 'keyword',

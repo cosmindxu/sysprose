@@ -13,6 +13,7 @@
 import type { ElementId, ElementRecord } from '@core/index';
 import { Model, isAnnotation, isRelationship } from '@core/index';
 import { effectiveNameOf } from '@semantics/inheritance';
+import { unitLexeme } from '@text/serializer';
 import type { GridModel } from './types';
 
 /* ─────────────────────────────── helpers ───────────────────────────────── */
@@ -31,17 +32,27 @@ function str(v: unknown): string {
 }
 
 /**
- * The value cell. A `default` value reads `default 1.2`, never the bare `1.2` a
- * bound (`=`) value shows: a redefinition or an asserted equation overrides the
- * one and not the other, so a reader (the CLI's `elements`, the in-process
- * workflow) that cannot tell them apart would take a default for a fixed number.
- * A reader that parses the bare form gets no number from `default 1.2`; what it
- * then does is its own (the mbse-workflow readers must change, TODO residual of
- * small-defaults S1, before their SYSPROSE_REF moves past this change).
+ * The value cell, `[default] [:=] value [unit]`. A `default` value reads `default 1.2`, never the bare `1.2` a
+ * bound (`=`) value shows: a redefinition or an asserted equation overrides the one and not the other, so a reader
+ * (the CLI's `elements`, the in-process workflow) that cannot tell them apart would take a default for a fixed
+ * number. An initial value (`:=`, the state a feature starts in, not a binding) reads `:= 4` (`default := 3`), and a
+ * unit follows the number as `7 [kg]`, spelled as the text writes it (`['W⋅h']` when the grammar cannot read it bare). A reader that parses the bare form gets no number
+ * from a prefixed or a unit-carrying cell; what it then does is its own (the mbse-workflow readers must change, TODO
+ * residual of small-defaults S1, before their SYSPROSE_REF moves past this change).
  */
 function valueCell(el: ElementRecord): string {
   const v = str(el.attrs.value);
-  return v !== '' && el.attrs.defaultValue === true ? `default ${v}` : v;
+  if (v === '') return '';
+  const unit = typeof el.attrs.unit === 'string' && el.attrs.unit !== '' ? ` [${unitLexeme(el.attrs.unit)}]` : '';
+  const operator = [el.attrs.defaultValue === true ? 'default' : '', el.attrs.initialValue === true ? ':=' : '']
+    .filter((x) => x !== '')
+    .join(' ');
+  return `${operator === '' ? '' : `${operator} `}${v}${unit}`;
+}
+
+/** Whether a value cell starts with an operator word (`default`, `:=`), so a listing prints it without `=`. */
+export function valueCellHasOperator(el: ElementRecord): boolean {
+  return el.attrs.defaultValue === true || el.attrs.initialValue === true;
 }
 
 /** The fixed column set of the grid view (a sensible subset per element). */

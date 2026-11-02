@@ -219,6 +219,7 @@ export {
   keywordsOf,
   keywordsOnRecord,
   resolveKeyword,
+  ambiguousKeyword,
   hasKeyword,
   foreignKeyword,
   isSysproseVocabulary,

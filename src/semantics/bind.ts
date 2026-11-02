@@ -523,7 +523,20 @@ function resolveWithoutCopies(model: Model, general: ElementId, head: string): E
 
 /** The types whose features `:>>` is read against in `owningType`: its explicit generals, then the full closure. */
 function redefinitionGenerals(model: Model, owningType: ElementId): ElementRecord[] {
-  return [...model.typesOf(owningType), ...generalizationsWithImplicit(model, owningType)];
+  return [...annotationDefinition(model, owningType), ...model.typesOf(owningType), ...generalizationsWithImplicit(model, owningType)];
+}
+
+/**
+ * The `metadata def` an annotation is typed by (`@T about X { ref :>> approved = true; }`, `metadata T about X { … }`),
+ * with what it specialises: the MetadataUsage keeps its type as the string `attrs.type`, with no FeatureTyping, so the
+ * features its body redefines are T's. Empty for any other owner, and when T is not a metadata definition of the model
+ * (a library type resolves later: the cell keeps its textual `attrs.redefines`).
+ */
+function annotationDefinition(model: Model, ownerId: ElementId): ElementRecord[] {
+  const owner = model.get(ownerId);
+  if (owner?.eClass !== 'MetadataUsage' || owner.attrs.annotation !== true || typeof owner.attrs.type !== 'string') return [];
+  const def = resolveFullName(model, owner.attrs.type, owner.ownerId, { accept: (el) => el.eClass === 'MetadataDefinition' });
+  return def ? [def, ...generalizationsWithImplicit(model, def.id)] : [];
 }
 
 /**
@@ -707,17 +720,27 @@ export function findTypeFeature(model: Model, el: ElementRecord, seg: string, un
  */
 export function endCopyProto(model: Model, scopeEl: ElementRecord, head: string, hit: ElementRecord): ElementRecord {
   const special = findTypeFeature(model, scopeEl, head, true);
-  return special && special !== hit && redefinedClosure(model, special).includes(hit) ? special : hit;
+  if (!special || special === hit) return hit;
+  if (redefinedClosure(model, special).includes(hit)) return special;
+  // `hit` is itself an implicit copy (made first, where the text puts a `bind` before the override in another
+  // type of the line): the one most specific feature the types have, no copy, that redefines what the copy
+  // redefines is the nearest override, whatever order the text made them in (D2's `:>> N default = 15.0` over D1's
+  // copy of Q0's `N`: u1.N reads 15 in every order of the members).
+  if (hit.attrs.implicit === true && special.attrs.implicit !== true) {
+    const of = redefinedClosure(model, hit);
+    if (of.length > 0 && redefinedClosure(model, special).some((g) => of.includes(g))) return special;
+  }
+  return hit;
 }
 
 /**
  * Does `scopeEl` have a feature for `head`, no copy, that the end copy on `proto` does not stand on or above, and no
  * feature of a type below it hides? Any such feature (a `default`, a value written with `=`, an expression, a typed or
  * named override, a feature an `assert` or a binding reads) is hidden by the copy, and the reading turns on which feature
- * it was made on: D1's `bind` (a copy `D1::N`) and D2's explicit `:>> N default = 15.0` (which meets no copy, so it
- * redefines Q0's `N` beside D1's copy) leave D3's `bind` a copy on D1's when D1 is read first and on D2's when it is read
- * last, so `u1.N` read 12 or 15 by the order of the text. The same holds of two unrelated lines (`part def D3 :> D1, D2`)
- * or a clash of values (`D3 :> D2, D2b`). The binding (or other chain connector) is left unread, as one the editor cannot
+ * it was made on. A line (D1's `bind`, a copy `D1::N`, under D2's explicit `:>> N default = 15.0` below it, which meets
+ * no copy so it redefines Q0's `N` beside D1's copy) is settled: {@link endCopyProto} lands D3's copy on D2's `N`, the
+ * nearest, in every order of the text. What is left is two unrelated lines (`part def D3 :> D1, D2`) or a clash of values
+ * (`D3 :> D2, D2b`), where `u1.N` read 12 or 15 by the order of the text. The binding (or other chain connector) is left unread, as one the editor cannot
  * follow (`attrs.partedEnd`): the scope that owns it offers no name on any surface. In a usage, two unrelated lines are
  * left to the rule of the inherited pair (`q : Q2, Q3`); a line of overrides the copy passed over is not.
  */

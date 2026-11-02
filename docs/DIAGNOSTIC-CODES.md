@@ -172,7 +172,7 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 
 - **Severity:** error
 - **Source:** mapper
-- **Fires when:** A carrier a reader takes from the element it is written in (PropertyPattern, Evidence, FaultHypothesis, VerificationMethod or RequirementMetadata, qualified or not, or an `about` annotation whose `kind` names a verification method) is written with `about` (`@T about X`, `metadata T about X` or the named `metadata N : T about X`, each with or without a visibility word). No reader looks at `about`, so the property would be dropped or read on the wrong element, and a case with a method declared beside it would be judged as declaring none.
+- **Fires when:** A carrier a reader takes from the element it is written in (PropertyPattern, Evidence, FaultHypothesis, VerificationMethod or RequirementMetadata, qualified or not, or an `about` annotation whose `kind` names a verification method) is written with `about` (`@T about X`, `metadata T about X` or the named `metadata N : T about X` and `@N : T about X`, each with or without a visibility word). No reader looks at `about`, so the property would be dropped or read on the wrong element, and a case with a method declared beside it would be judged as declaring none.
 - **Hint given:** The carrier {found} is read on the element it is written in, and `about` is not read. Write it as `@Type { … }` inside the element it is about; the load stays degraded and the checks abstain until you do.
 
 ### `mapper/negated-assert-unread`
@@ -501,6 +501,13 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Source:** verification
 - **Fires when:** A `#keyword` resolves to no `metadata def` in scope — a misspelling, or a vocabulary the file never declares or imports.
 - **Hint given:** Declare or import the `metadata def` the keyword names — `import SysproseVerification::*;` for the one this tool ships — or correct the spelling. The keyword is kept in the file either way.
+
+### `verification/keyword-ambiguous`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A bare `#keyword` is answered by two imports of one scope with different `metadata def`s (`VendorHints` and `SysproseVerification` both declare `<exceptional>`, both imported), so which it names would depend on the order of the imports. Emitted by `contracts --keywords` alone.
+- **Hint given:** Write the keyword qualified (`#SysproseVerification::exceptional`) or import only one of the packages. The keyword is read as no tag meanwhile, whichever import comes first.
 
 ### `verification/vacuous-pass`
 
@@ -943,4 +950,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*121 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*122 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

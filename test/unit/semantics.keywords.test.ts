@@ -59,6 +59,7 @@ import {
   SYSPROSE_VERIFICATION_LIBRARY,
   SYSPROSE_VERIFICATION_PACKAGE,
   faultTreeCensus,
+  ambiguousKeyword,
   foreignKeyword,
   hasKeyword,
   keywordsOf,
@@ -828,6 +829,44 @@ package Ours {
     }
     // Asked of the vendor's own qualified name, it is theirs.
     expect(hasKeyword(model, theirs.id, 'VendorHints::ExceptionalOutcome')).toBe(true);
+  });
+
+  /**
+   * TWO IMPORTS, ONE KEYWORD. A bare `#exceptional` with both `VendorHints` and `SysproseVerification` imported
+   * resolves to whichever import comes first, so what it names (and whether a fault tree labels it) would depend on
+   * the order of the imports. It is ambiguous: named so, and no tag to `hasKeyword` in either order. A definition the
+   * scope declares itself, or a qualified spelling, is not ambiguous.
+   */
+  it('reports a keyword two imports answer to as ambiguous, and reads it as no tag in either import order', () => {
+    const body = (imports: string): string =>
+      `${FOREIGN}\npackage Both {\n    ${imports}\n    #exceptional part def Tagged;\n}`;
+    for (const imports of [
+      'import VendorHints::*; import SysproseVerification::*;',
+      'import SysproseVerification::*; import VendorHints::*;',
+    ]) {
+      const model = parsed(body(imports));
+      const tagged = byName(model, 'Tagged');
+      const [keyword] = keywordsOf(model, tagged.id);
+      expect(ambiguousKeyword(model, keyword!)?.map((d) => model.qualifiedName(d.id)).sort()).toEqual([
+        'SysproseVerification::ExceptionalOutcome',
+        'VendorHints::ExceptionalOutcome',
+      ]);
+      for (const name of [EXCEPTIONAL_QUALIFIED_NAME, EXCEPTIONAL_DEFINITION, 'VendorHints::ExceptionalOutcome']) {
+        expect(hasKeyword(model, tagged.id, name), `${name} under ${imports}`).toBe(false);
+      }
+    }
+    // One import, a package that declares its own, and a qualified spelling: none is ambiguous.
+    const single = parsed(`${FOREIGN}\npackage One { import VendorHints::*; #exceptional part def T; }`);
+    expect(ambiguousKeyword(single, keywordsOf(single, byName(single, 'T').id)[0]!)).toBeUndefined();
+    const own = parsed(
+      `${FOREIGN}\npackage Own { import VendorHints::*; import SysproseVerification::*; metadata def <exceptional> Mine; #exceptional part def T; }`,
+    );
+    expect(ambiguousKeyword(own, keywordsOf(own, byName(own, 'T').id)[0]!)).toBeUndefined();
+    const qualified = parsed(
+      `${FOREIGN}\npackage Q { import VendorHints::*; import SysproseVerification::*; #SysproseVerification::exceptional part def T; }`,
+    );
+    expect(ambiguousKeyword(qualified, keywordsOf(qualified, byName(qualified, 'T').id)[0]!)).toBeUndefined();
+    expect(hasKeyword(qualified, byName(qualified, 'T').id, EXCEPTIONAL_QUALIFIED_NAME)).toBe(true);
   });
 
   it('holds for a tag the package has not shipped yet, and only an explicit option reads another package', () => {

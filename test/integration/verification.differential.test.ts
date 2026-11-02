@@ -6202,7 +6202,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'ME9::P::c in ME9::Q2::p': ['T/T/T/?', 'T'],
       'ME9::P::c in ME9::Q3::p': ['T/T/T/?', 'T'],
       // S's `bind p.load = L` copies L over the two unrelated lines Q2 and Q3 (each `:>> L = 50.0`): the copy hides an
-      // override the text order picks between, so S's scope is left unread (copy-nearest-n) and the two instances of c in
+      // override the text order picks between, so S's scope is left unread (copy-nearest-diamond) and the two instances of c in
       // S's p and s's p are no rows any more (they read ?/?/?/? and were F by hand).
     }),
     // A usage's own valueless redefinition (`attribute :>> L;`) of a feature a specialising definition redefines
@@ -6623,9 +6623,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // D1's and D3's definition-level `bind Zd = N` make an end copy of N each; D2's `:>> N default = 15.0` is an explicit
     // `:>>`, which meets no copy, so it redefines Q0's N beside D1's copy. D3's copy redefined D1's copy when D1 was
     // written first and D2's N when it was written last, so u1.N read 12 in one order and 15 in the other, all four
-    // surfaces alike (the sweep of 2026-10-31, item C; the truth is D2's 15, the nearest N). The copy that hides D2's
-    // default is left unread, so the binding's owner offers no name and every surface abstains; the order that put the
-    // copy on D2's N hides nothing and reads 15 (the twin below).
+    // surfaces alike (the sweep of 2026-10-31, item C; the truth is D2's 15, the nearest N). The copy lands on the
+    // nearest override whatever the text order (`endCopyProto`: D2's N, which redefines what D1's copy redefines), so
+    // u1.N reads 15 in both orders (the twin below).
     'copy-nearest-n': probe(`package CNF {
         part def Q0 { attribute N default = 12.0; }
         part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
@@ -6635,8 +6635,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c12 { u1.N == 12.0 }
         constraint c15 { u1.N == 15.0 }
       }`, {
-      'CNF::c12': ['?/?/?/?', 'F'],
-      'CNF::c15': ['?/?/?/?', 'T'],
+      'CNF::c12': ['F/F/F/F', 'F'],
+      'CNF::c15': ['T/T/T/T', 'T'],
     }),
     'copy-nearest-n-last': probe(`package CNL {
         constraint c15 { u1.N == 15.0 }
@@ -6677,10 +6677,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'CNC::c12': ['?/?/?/?', '?'],
       'CNC::c15': ['?/?/?/?', '?'],
     }),
-    // The fence reaches every override the copy hides, not only a `default`: a value written with `=` read 12 in the
-    // order above and 15 in the other (no clash is named where only one value is written); a `connect` makes the same
-    // copy; and a name outside the fenced scope that is bound to the instance's feature (`bind x = u1.N`) is joined to
-    // what the scope leaves unread, so the numeric lane does not follow it to the root feature (the truth is 15).
+    // The copy lands on the nearest override, not only a `default`: a value written with `=` read 12 in the order above and
+    // 15 in the other; a `connect` makes the same copy; and a name outside the scope that is bound to the instance's
+    // feature (`bind x = u1.N`) follows it to the nearest N (the truth is 15 on every surface). The diamond and the clash
+    // above keep the fence.
     'copy-nearest-eq': probe(`package CNQ {
         part def Q0 { attribute N default = 12.0; }
         part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
@@ -6690,8 +6690,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c12 { u1.N == 12.0 }
         constraint c15 { u1.N == 15.0 }
       }`, {
-      'CNQ::c12': ['?/?/?/?', 'F'],
-      'CNQ::c15': ['?/?/?/?', 'T'],
+      'CNQ::c12': ['F/F/F/F', 'F'],
+      'CNQ::c15': ['T/T/T/T', 'T'],
     }),
     'copy-nearest-connect': probe(`package CNK {
         part def Q0 { attribute N default = 12.0; }
@@ -6702,8 +6702,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c12 { u1.N == 12.0 }
         constraint c15 { u1.N == 15.0 }
       }`, {
-      'CNK::c12': ['?/?/?/?', 'F'],
-      'CNK::c15': ['?/?/?/?', 'T'],
+      'CNK::c12': ['F/F/F/F', 'F'],
+      'CNK::c15': ['T/T/T/T', 'T'],
     }),
     'copy-nearest-outer-bind': probe(`package CNO {
         part def Q0 { attribute N default = 12.0; }
@@ -6716,8 +6716,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c12 { x == 12.0 }
         constraint c15 { x == 15.0 }
       }`, {
-      'CNO::c12': ['?/?/?/?', 'F'],
-      'CNO::c15': ['?/?/?/?', 'T'],
+      'CNO::c12': ['F/F/F/F', 'F'],
+      'CNO::c15': ['T/T/T/T', 'T'],
     }),
     // ... and the same value twice states one: read.
     'redef-twice-agree': probe(`package TA {
@@ -16674,15 +16674,15 @@ describe('a witness is the value at the path the row read, not the feature’s o
       expect(row.detail).not.toContain('the relation itself cannot be read');
     });
 
-    // A scope the mapper withholds (the copy that hides an override, copy-nearest-n) reached the encoder as a name it has no
+    // A scope the mapper withholds (the copy that hides an override it cannot choose, copy-nearest-diamond) reached the encoder as a name it has no
     // symbol for: the row said `unresolved-name` and closed with "a defect in the relation". It says why now, in the scope's
     // own sentence, and closes as a limit of this tool (the verdict is `?` either way; `--allow-inconclusive` forgives neither).
     t(`${engine}: a row that names a withheld copy scope prints the sentence of its cause, not a name that resolves to nothing`, async () => {
       const CNF = `package CNF {
         part def Q0 { attribute N default = 12.0; }
         part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
-        part def D2 :> D1 { attribute :>> N default = 15.0; }
-        part def D3 :> D2 { attribute Zd3; bind Zd3 = N; }
+        part def D2 :> Q0 { attribute :>> N default = 15.0; }
+        part def D3 :> D1, D2 { attribute Zd3; bind Zd3 = N; }
         part u1 : D3;
         constraint c12 { u1.N == 12.0 }
       }`;

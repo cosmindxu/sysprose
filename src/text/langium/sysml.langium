@@ -115,14 +115,17 @@ Dependency infers Dependency:
 // this rule must not capture. The standard reads a bare `metadata T;` as typed
 // by T (BNF `MetadataUsageDeclaration`); that reading is not built here.
 // BNF `MemberPrefix` lets either spelling start with a visibility word
-// (`public @T about A;`), and `MetadataUsageDeclaration` lets the keyword form
-// name the usage (`metadata N : T about A;`, 7.27.2's `securityDesignAnnotation`).
-// Only the keyword form takes a name: `@N : T` is not parsed.
+// (`public @T about A;`), and `MetadataUsageDeclaration` lets both spellings
+// name the usage: its Identification (a short name in `<…>`, a name, or both)
+// then `:` or `typed by` (`metadata N : T about A;`, 7.27.2's
+// `securityDesignAnnotation`; `@N : T about A;`; `metadata <sn> N : T about A;`).
+// The two-token lookahead is Name then `:` (a name) against Name then `::`, `about`,
+// `{` or `;` (the type itself).
 Annotation infers Annotation:
-      (visibility=Visibility)? '@' type=QualifiedName
+      (visibility=Visibility)? '@' (('<' shortName=Name '>')? name=Name? (':' | 'typed' 'by'))? type=QualifiedName
       ('about' about+=QualifiedName (',' about+=QualifiedName)*)?
       (body=Body)? ';'?
-    | (visibility=Visibility)? 'metadata' (name=Name (':' | 'typed' 'by'))? type=QualifiedName
+    | (visibility=Visibility)? 'metadata' (('<' shortName=Name '>')? name=Name? (':' | 'typed' 'by'))? type=QualifiedName
       'about' about+=QualifiedName (',' about+=QualifiedName)*
       (body=Body)? ';'?;
 

@@ -419,10 +419,14 @@ function metadataTypeNames(model: Model, el: ElementRecord): string[] {
 function kindCells(model: Model, carrier: ElementRecord): ElementRecord[] {
   return model.children(carrier.id).filter((cell) => {
     if (cell.declaredName === METHOD_KIND_ATTR) return true;
-    const redefines = cell.attrs.redefines;
     // `attribute :>> kind = test;` — the redefinition spelling, which carries no
-    // declared name at all and whose value would otherwise be invisible.
-    return Array.isArray(redefines) && redefines.some((r) => String(r).split('::').pop() === METHOD_KIND_ATTR);
+    // declared name at all and whose value would otherwise be invisible. Read by the relationship once the name is
+    // resolved (the cell then has no textual `redefines`), by the text while it is not.
+    const redefines = cell.attrs.redefines;
+    if (Array.isArray(redefines) && redefines.some((r) => String(r).split('::').pop() === METHOD_KIND_ATTR)) return true;
+    return model.relationshipsFrom(cell.id).some(
+      (r) => r.eClass === 'Redefinition' && (r.target ?? []).some((t) => model.get(t)?.declaredName === METHOD_KIND_ATTR),
+    );
   });
 }
 

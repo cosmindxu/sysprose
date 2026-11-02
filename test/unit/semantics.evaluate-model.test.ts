@@ -5638,7 +5638,7 @@ describe('a value, a reference and a binding that equate two parts or structured
       ['GI', 'part def W { part p1 : T0; } part w : W { part :>> p1 { attribute :>> load = 50.0; } part p3 :> p1; }', 'w.p3.load',
         '`p3` in GI::w subsets `p1`, which GI::w reads otherwise: this tool reads `p3` through GI::W\'s own `p1`, never as one of what `p1` is in GI::w'],
       ['SC', 'part def Q { part p1 : T0; } part def W { part q : Q; part p2 :> q.p1; } part w : W { part :>> q { part :>> p1 { attribute :>> load = 50.0; } } }', 'w.p2.load',
-        '`p2` in SC::W subsets `p1`, which SC::w::q reads otherwise: this tool reads `p2` through SC::Q\'s own `p1`, never as one of what `p1` is in SC::w::q'],
+        '`p2` in SC::W subsets `q.p1`, which SC::w::q reads otherwise: this tool reads `p2` through SC::Q\'s own `p1`, never as one of what `p1` is in SC::w::q'],
     ] as const) {
       const { model: x } = await loadModelText(`package ${name} { ${T0} ${text} constraint k { ${read} <= 5.0 } }`);
       const c = check(x!, `${name}::k`);

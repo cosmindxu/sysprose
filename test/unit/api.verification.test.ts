@@ -1540,6 +1540,42 @@ package P {
     expect(row.foreign?.readAs).toContain('SysproseVerification::exceptional');
   }, 60_000);
 
+  it('inventories a keyword two imports answer to as ambiguous, whatever the import order', async () => {
+    for (const imports of ['import VendorHints::*; import SysproseVerification::*;', 'import SysproseVerification::*; import VendorHints::*;']) {
+      const model = await load(`${SYSPROSE_VERIFICATION_LIBRARY}
+
+package VendorHints { metadata def <exceptional> ExceptionalOutcome; }
+package P {
+  ${imports}
+  #exceptional state failsafe;
+}`);
+      const r = contractReport(model, { keywords: true });
+      const [use] = r.keywords;
+      expect([use!.keyword, use!.origin, use!.resolvedTo]).toEqual(['exceptional', 'ambiguous', null]);
+      expect([...use!.ambiguousBetween!].sort()).toEqual(['SysproseVerification::ExceptionalOutcome', 'VendorHints::ExceptionalOutcome']);
+      const found = r.diagnostics.filter((d) => d.code === 'verification/keyword-ambiguous');
+      expect(found.map((d) => [d.severity, d.elementName])).toEqual([['info', 'P::failsafe']]);
+      expect(found[0]!.message).toContain('both answer to it');
+    }
+  }, 60_000);
+
+  it('does not say a foreign-spelled keyword two imports answer to names one of them, in either import order', async () => {
+    const sentences: string[] = [];
+    for (const imports of ['import A::*; import B::*;', 'import B::*; import A::*;']) {
+      const model = await load(`package A { metadata def <precondition> PreA; }
+package B { metadata def <precondition> PreB; }
+package P {
+  ${imports}
+  part def Sys { attribute x : Real = 1.0; }
+  requirement def R { subject s : Sys; #precondition constraint ok { s.x > 0.0 } }
+}`);
+      const row = obligationsOf(model, { fromKeywords: true }).find((o) => o.source === 'keyword');
+      expect(row?.provenance?.note).not.toContain('it names');
+      sentences.push(row!.provenance!.note);
+    }
+    expect(sentences[0]).toBe(sentences[1]);
+  }, 60_000);
+
   it('publishes one info per foreign spelling and one per keyword that names nothing', async () => {
     const model = await load(VOCABULARY);
     const r = contractReport(model, { keywords: true });

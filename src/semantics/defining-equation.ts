@@ -6195,7 +6195,9 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   if (s.kind === 'subsetting') {
     const name = effectiveNameOf(model, s.written) ?? s.written.id;
     const at = s.written.ownerId != null ? effectiveQualifiedName(model, s.written.ownerId) : where;
-    return `\`${name}\` in ${at} subsets \`${s.path}\`, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: ${subsettingRead(model, s)}${so('no relation that reads through it')}`;
+    // The path as the author wrote it (`part p2 :> q.p1;` says `q.p1`), when the subsetting kept one.
+    const written = s.redefined !== undefined ? subsettingChain(model, s.written, s.redefined) : undefined;
+    return `\`${name}\` in ${at} subsets \`${written ?? s.path}\`, which ${contextSpelling(model, s.instance) ?? who} reads otherwise: ${subsettingRead(model, s)}${so('no relation that reads through it')}`;
   }
   const tail = `is read at ${where}'s own values only, never in each instance of it, and ${who} reads`;
   // A satisfier or a subject read through such a subsetting usage says which ({@link subsettingTaint}); resolved in
@@ -6231,6 +6233,12 @@ function satisfierSentence(model: Model, s: ReadOtherwise, measure = false): str
   const head = `${spelled} in ${effectiveQualifiedName(model, s.written.id)}`;
   if (inPackage) return `${head} reads what it names ${through}${so('no relation it requires of the subject')}`;
   return `${head} ${tail} what it names otherwise${via}${so('no relation it requires of the subject')}`;
+}
+
+/** The path `f`'s subsetting of `g` was written with (`q.p1`), or `undefined` when it names `g` by a plain name. */
+function subsettingChain(model: Model, f: ElementRecord, g: ElementRecord): string | undefined {
+  const rel = model.relationshipsFrom(f.id).find((r) => r.eClass === 'Subsetting' && (r.target ?? [])[0] === g.id && typeof r.attrs.chain === 'string');
+  return typeof rel?.attrs.chain === 'string' ? rel.attrs.chain : undefined;
 }
 
 /**

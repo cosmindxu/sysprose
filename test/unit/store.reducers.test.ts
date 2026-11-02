@@ -2560,11 +2560,12 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
         expect(page['G::c21']).toBe('?/?/?/?');
       });
 
-      // The mapper leaves unread a definition-level end copy that hides an override the text order picks between (D1's
-      // `bind`, D2's `:>> N default = 15.0`, D3's `bind`). Its mark follows the copy as it stands: an edit that settles the
-      // copy again (a rename there and back, a retarget there and back) read the wrong 12 on the page (all four cells T)
-      // while the saved file abstained.
-      it('a copy that hides an override stays unread through a rename and a retarget, as the file reads it', async () => {
+      // A definition-level end copy lands on the nearest override whatever the text order (D1's `bind`, D2's `:>> N
+      // default = 15.0`, D3's `bind`: D3's copy stands on D2's N), so the page and the file read 15 alike, and an edit that
+      // settles the copy again (a rename there and back, a retarget there and back) reads it as the file does. The mapper
+      // leaves unread one it cannot choose (a diamond: `D3 :> D1, D2`), whose mark follows the copy as it stands: the same
+      // edits read the wrong 12 on the page (all four cells T) while the saved file abstained.
+      it('a copy lands on the nearest override, and one that hides an override it cannot choose stays unread, through a rename and a retarget, as the file reads it', async () => {
         const src = `package G {
   part def Q0 { attribute N default = 12.0; }
   part def D1 :> Q0 { attribute Zd1; bind Zd1 = N; }
@@ -2575,22 +2576,37 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
   constraint c15 { u1.N == 15.0 }
 }`;
         const nOfQ0 = (): string => st().model.children(byName('Q0').id).find((c) => c.declaredName === 'N' || c.declaredName === 'M')!.id;
-        const abstains = async (note: string): Promise<void> => {
+        // `decided`: the nearest N is D2's 15; else both rows abstain (the diamond). `weaker`: the page may abstain where the
+        // file decides (never the reverse): a rename of the feature the copy redefines, and back, leaves the binding parted.
+        const reads = async (note: string, decided: boolean, weaker = false): Promise<void> => {
           const page = await surfaces(st().model);
-          expect(page['G::c12'], `page after ${note}`).toBe('?/?/?/?');
-          expect(page['G::c15'], `page after ${note}`).toBe('?/?/?/?');
-          expect(await surfaces(reopened(st().model)), `file after ${note}`).toEqual(page);
+          const file = await surfaces(reopened(st().model));
+          const want = { 'G::c12': decided ? 'F/F/F/F' : '?/?/?/?', 'G::c15': decided ? 'T/T/T/T' : '?/?/?/?' };
+          expect(file['G::c12'], `file after ${note}`).toBe(want['G::c12']);
+          expect(file['G::c15'], `file after ${note}`).toBe(want['G::c15']);
+          if (weaker && page['G::c12'] === '?/?/?/?') expect(page['G::c15'], `page after ${note}`).toBe('?/?/?/?');
+          else {
+            expect(page['G::c12'], `page after ${note}`).toBe(want['G::c12']);
+            expect(page['G::c15'], `page after ${note}`).toBe(want['G::c15']);
+          }
         };
         load(src);
-        await abstains('load');
+        await reads('load', true);
         st().updateElement(nOfQ0(), { declaredName: 'M' });
         st().updateElement(nOfQ0(), { declaredName: 'N' });
-        await abstains('rename N to M and back');
+        await reads('rename N to M and back', true, true);
         load(src);
         const sub = (name: string) => st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName(name).id)!;
         st().updateElement(sub('D3').id, { target: [byName('D1').id] });
         st().updateElement(sub('D3').id, { target: [byName('D2').id] });
-        await abstains('retarget D3 to D1 and back to D2');
+        await reads('retarget D3 to D1 and back to D2', true);
+        // The diamond (D1's copy and D2's default on two lines) is left unread, and stays so through the same edits.
+        const diamond = src.replace('part def D2 :> D1', 'part def D2 :> Q0').replace('part def D3 :> D2', 'part def D3 :> D1, D2');
+        load(diamond);
+        await reads('load of the diamond', false);
+        st().updateElement(nOfQ0(), { declaredName: 'M' });
+        st().updateElement(nOfQ0(), { declaredName: 'N' });
+        await reads('rename N to M and back in the diamond', false);
         // An edit that makes the shape (D2's `K` renamed to `N`, over D1's copy) is read as the file reads it.
         load(src.replace('attribute :>> N default = 15.0;', 'attribute K default = 15.0;'));
         st().updateElement(st().model.children(byName('D2').id).find((c) => c.declaredName === 'K')!.id, { declaredName: 'N' });
@@ -2738,7 +2754,8 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
       });
 
       // The stale copy two types up (D4 :> D3 :> D1, a usage typed by D4 whose own `bind` makes a copy) is found past, whichever
-      // of the two edits comes first: the page abstains on every lane where the file decides F/F/F/F (the chain is transitive).
+      // of the two edits comes first: the page decides no lane the file does not decide alike F/F/F/F (the chain is transitive;
+      // it may abstain on a lane, as the SMT lane does here, never read the other value).
       it('a stale copy two types up hides the feature the file binds, in either order of the two edits', async () => {
         const text = `package G {
   part def Q0 { attribute N default = 12.0; }
@@ -2750,6 +2767,7 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
   constraint c8 { u1.K2 == 16.0 }
   constraint c9 { u4.K2 == 16.0 }
 }`;
+        const cells = (row: string | undefined): string[] => (row ?? '').split('/');
         const steps: Record<string, (() => void)[]> = {
           'retype, then delete': [() => st().bindType(byName('u1').id, 'D3'), () => st().deleteElement(st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName('D1').id)!.id)],
           'delete, then retype': [() => st().deleteElement(st().model.all().find((e) => e.eClass === 'Subclassification' && e.source![0] === byName('D1').id)!.id), () => st().bindType(byName('u1').id, 'D3')],
@@ -2761,7 +2779,9 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
           const file = await surfaces(reopened(st().model));
           for (const row of ['G::c8', 'G::c9']) {
             expect(file[row], `${order}: ${row} in the file`).toBe('F/F/F/F');
-            expect(page[row], `${order}: ${row} on the page`).not.toMatch(/[TF]/);
+            cells(page[row]).forEach((c, i) => {
+              if (c === 'T' || c === 'F') expect(c, `${order}: ${row} on the page, lane ${i}`).toBe(cells(file[row])[i]);
+            });
           }
         }
       });

@@ -2471,6 +2471,32 @@ describe('L8 — the verification-case method gate', () => {
     const q = await verifyModel(quietModel, { engine: 'literal', sourceText: quiet });
     expect(q.cases.cases[0].method.declaresMethod).toBe(false);
     expect(q.cases.cases[0].judged).toBe(true);
+    // A redefinition cell of a method definition the file declares itself is resolved against it (the cell has a
+    // Redefinition, and no textual `redefines`): the method is read the same.
+    const local = `package LocalMethod {
+    metadata def VerificationMethod { attribute kind : ScalarValues::String; }
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification redefinedCell {
+        subject chassis : Chassis;
+        @VerificationMethod { attribute :>> kind = test; }
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const localModel = (await loadModelText(local, { fileName: 'local.sysml' })).model;
+    if (!localModel) throw new Error('the probe produced no model');
+    const cell = localModel.all().find((e) => e.attrs.value === 'test')!;
+    expect(cell.attrs.redefines).toBeUndefined();
+    expect(localModel.relationshipsFrom(cell.id).map((r) => r.eClass)).toEqual(['Redefinition']);
+    const l = await verifyModel(localModel, { engine: 'literal', sourceText: local });
+    expect(l.cases.cases[0].method.declared).toEqual(['test']);
+    expect(l.cases.cases[0].judged).toBe(false);
   });
 
   it('reads a case usage’s `verify` targets through the definition it specializes', async () => {

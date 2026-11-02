@@ -52,6 +52,7 @@ import {
   type Model,
 } from '@core/index';
 import { resolveFullName } from './bind';
+import { importedAnswers } from './resolve-names';
 import {
   EXCEPTIONAL_QUALIFIED_KEYWORD,
   SYSPROSE_VERIFICATION_PACKAGE,
@@ -146,6 +147,35 @@ export function resolveKeyword(
   return fromLibrary && isMetadataDefinition(fromLibrary) ? fromLibrary : undefined;
 }
 
+/**
+ * The `metadata def`s a bare keyword answers to when two imports of one scope expose different ones (a bare
+ * `#exceptional` with both `VendorHints` and `SysproseVerification` imported), or `undefined` when it is not
+ * ambiguous. {@link resolveKeyword} answers the first import, so what a keyword names would depend on the order of
+ * the imports; the notation calls the name ambiguous, and a caller that ACTS on a tag ({@link hasKeyword}) reads it
+ * as no tag, the same under either order. Asked at the nearest scope whose own members and imports answer to the
+ * name, as full name resolution is: a definition the scope declares itself shadows every import. A qualified
+ * keyword (`#Pkg::name`) names its package, and is not asked.
+ */
+export function ambiguousKeyword(
+  model: Model,
+  keyword: Keyword | string,
+  scopeId?: ElementId | null,
+): ElementRecord[] | undefined {
+  const kw = typeof keyword === 'string' ? parseKeyword(keyword) : keyword;
+  if (kw.name === '' || kw.qualifier.length > 0) return undefined;
+  const scope = scopeId !== undefined ? scopeId : (model.get(kw.elementId)?.ownerId ?? null);
+  const seen = new Set<ElementId>();
+  for (let cur = scope; !seen.has(cur as ElementId); cur = cur === null ? null : (model.get(cur)?.ownerId ?? null)) {
+    if (cur !== null) seen.add(cur);
+    const answers = importedAnswers(model, cur, kw.name, isMetadataDefinition);
+    if (answers === undefined) return undefined; // the scope's own member shadows the imports
+    if (answers.length > 1) return answers;
+    if (answers.length === 1) return undefined;
+    if (cur === null) break;
+  }
+  return undefined;
+}
+
 /** A keyword written as a bare string, with no element behind it. */
 function parseKeyword(written: string): Keyword {
   const segments = splitQualified(written).map((s) => unquoteName(s) ?? '');
@@ -186,6 +216,8 @@ export interface HasKeywordOptions {
  * (a `VendorHints::HardDefault` next to a Sysprose `HardDefault`), and the
  * notation tells them apart by their qualified names, so this does too.
  *
+ * A keyword two imports answer to ({@link ambiguousKeyword}) is no tag to this predicate, in either import order.
+ *
  * `definition` may be the definition's qualified name, which matches that name
  * exactly and is what an engine asks for; or its declared name or short name
  * (the keyword spelling), which match only a definition of one of the packages
@@ -203,6 +235,8 @@ export function hasKeyword(
   for (const keyword of keywordsOf(model, id)) {
     const def = resolveKeyword(model, keyword);
     if (!def) continue;
+    // An ambiguous keyword is no tag: which definition it names would depend on the order of the imports.
+    if (ambiguousKeyword(model, keyword) !== undefined) continue;
     if (qualified) {
       if (model.qualifiedName(def.id) === wanted) return true;
       continue;

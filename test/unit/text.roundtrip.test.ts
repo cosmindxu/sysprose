@@ -1365,6 +1365,47 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(serializeModel(parseModel(text).model)).toBe(text);
   });
 
+  it('resolves the redefinitions in the body of a metadata annotation against the metadata definition', () => {
+    // The standard's own `ref :>> approved = true;` in `@T about X { … }` names a feature of T: the annotation keeps
+    // its type as a string, with no typing, so T is added to the types the redefinition rule reads.
+    const text = `package A { part def X; metadata def Sec :> Base { attribute level; ref approved; }
+      metadata def Base { attribute note; }
+      @Sec about X { ref :>> approved = true; attribute :>> level = 3; attribute :>> note = "n"; }
+      @Sec { :>> level = 4; } }`;
+    const { model, diagnostics } = parseModel(text);
+    expect(diagnostics.filter((d) => d.code === 'ref/unresolved-specialization')).toEqual([]);
+    const cells = model.all().filter((e) => model.get(e.ownerId ?? '')?.eClass === 'MetadataUsage' && e.attrs.value !== undefined);
+    expect(cells.map((c) => [c.attrs.redefines, model.relationshipsFrom(c.id).map((r) => model.get(r.target![0]!)?.declaredName)])).toEqual([
+      [undefined, ['approved']],
+      [undefined, ['level']],
+      [undefined, ['note']],
+      [undefined, ['level']],
+    ]);
+    const out = serializeModel(model);
+    expect(out).toContain('ref :>> approved = true;');
+    expect(serializeModel(parseModel(out).model)).toBe(out);
+    // A type that is no metadata definition of the file leaves the name unresolved, as before.
+    const unknown = parseModel('package B { @Missing { attribute :>> k = 1; } }');
+    expect(unknown.diagnostics.filter((d) => d.code === 'ref/unresolved-specialization')).toHaveLength(1);
+  });
+
+  it('keeps the path a subsetting was written with, and saves it as written while it reads the same target', () => {
+    // `part p2 :> q.p1;` targets Q's p1 (what the path ends in); the chain is kept on the Subsetting, as a `satisfy`
+    // keeps its `sourceChain`, so Save writes `q.p1` and not `SC::Q::p1`. A plain name keeps no chain.
+    const text = 'package SC { part def Q { part p1; } part def W { part q : Q; part p2 :> q.p1; part p3 :> Q::p1; part p4 :> p2; } }';
+    const m = reparse(text);
+    const subsets = (name: string) => m.all().find((e) => e.eClass === 'Subsetting' && m.get(e.source![0]!)?.declaredName === name)!;
+    expect([subsets('p2').attrs.chain, subsets('p3').attrs.chain, subsets('p4').attrs.chain]).toEqual(['q.p1', undefined, undefined]);
+    const out = serializeModel(m);
+    expect(out).toContain('part p2 :> q.p1;');
+    expect(out).toContain('part p3 :> SC::Q::p1;');
+    expect(serializeModel(parseModel(out).model)).toBe(out);
+    // Retargeted to another usage, the stale path is not written: the next load would read the other one.
+    const p4 = m.all().find((e) => e.declaredName === 'p4')!;
+    m.update(subsets('p2').id, { target: [p4.id] });
+    expect(serializeModel(m)).not.toContain('part p2 :> q.p1;');
+  });
+
   it('reads the named, typed and visibility-prefixed `about` forms like their unprefixed twins, and saves them back', () => {
     // SysML 7.27.2 `metadata N : T about A, B;` and BNF MemberPrefix (`public metadata T about A;`, `public @T about A;`).
     // The annotation is the same element as the twin's; the name and the visibility word are kept, so Save writes them back.
@@ -1377,6 +1418,9 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       ['public metadata Sec about C, D { level = 3; }', 'public @Sec about C, D {', undefined, 'public'],
       ['private @Sec about C, D { level = 3; }', 'private @Sec about C, D {', undefined, 'private'],
       ['protected metadata sa : Sec about C, D { level = 3; }', 'protected metadata sa : Sec about C, D {', 'sa', 'protected'],
+      ['@sa : Sec about C, D { level = 3; }', 'metadata sa : Sec about C, D {', 'sa', undefined],
+      ['metadata <s1> sa : Sec about C, D { level = 3; }', 'metadata <s1> sa : Sec about C, D {', 'sa', undefined],
+      ['public @<s1> sa typed by Sec about C, D { level = 3; }', 'public metadata <s1> sa : Sec about C, D {', 'sa', 'public'],
     ];
     for (const [src, printed, name, vis] of cases) {
       const m = reparse(`${head}${src} }`);
@@ -1394,14 +1438,18 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     }
     // The unprefixed twin prints as ever.
     expect(serializeModel(twin)).toContain('@Sec about C, D {');
-    // A name on an annotation with no `about` (a rename in the editor) is not printed: `metadata n : Sec;` would reparse as a plain usage.
+    // A name (and a short name) on an annotation with no `about` prints in the `@` spelling, which reads it back
+    // (`metadata n : Sec;` would reparse as a plain usage).
     for (const src of ['@Sec;', '@Sec { level = 3; }']) {
       const m = reparse(`${head}${src} }`);
       const ann = m.all().find((e) => e.eClass === 'MetadataUsage' && e.attrs.annotation === true)!;
       m.update(ann.id, { declaredName: 'nn' });
+      m.setShortName(ann.id, 'n1');
       const text = serializeModel(m);
-      expect(text, src).toContain(src.slice(0, 4));
+      expect(text, src).toContain(`@<n1> nn : Sec${src.includes('{') ? ' {' : ';'}`);
       expect(text, src).not.toContain('metadata nn');
+      const back = reparse(text).all().find((e) => e.eClass === 'MetadataUsage' && e.attrs.annotation === true)!;
+      expect([back.declaredName, back.declaredShortName, back.attrs.type]).toEqual(['nn', 'n1', 'Sec']);
       expect(serializeModel(parseModel(text).model), src).toBe(text);
     }
   });

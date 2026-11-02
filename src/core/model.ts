@@ -720,7 +720,8 @@ export class Model {
   /**
    * The targets a Redefinition keeps when `gone` is removed: its own that stay, and for each that goes the nearest
    * feature it redefines that stays (a breadth-first walk over its Redefinitions). `undefined` when the redefinition
-   * has to go with them: its feature is removed, or a target that goes redefines nothing that stays.
+   * has to go with them: its feature is removed, or a target that goes redefines nothing that stays (the feature
+   * itself, reached round a cycle, does not count).
    */
   private survivingTargets(r: ElementRecord, gone: ReadonlySet<ElementId>): ElementId[] | undefined {
     if ((r.source ?? []).some((x) => gone.has(x)) || (r.target ?? []).length === 0) return undefined;
@@ -740,7 +741,8 @@ export class Model {
             if (seen.has(x) || !this.elements.has(x)) continue;
             seen.add(x);
             if (gone.has(x)) queue.push(x);
-            else if (found === undefined) found = x;
+            // A cycle (a -> b -> a) walks back to the feature itself: it is no survivor, or `b :>> b` would stay.
+            else if (found === undefined && !(r.source ?? []).includes(x)) found = x;
           }
         }
       }
