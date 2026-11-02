@@ -104,6 +104,14 @@ describe('relations — lowering a `[unit]` literal', () => {
     expect(lowered.resolved).toBe(true);
   });
 
+  it("an apostrophe inside a double-quoted string opens no name: the unit literal after it is still folded", () => {
+    const lowered = lowerUnitLiterals('s == "it\'s" and m <= 10.0 [g] and t == "that\'s"');
+    expect(lowered.literals.size).toBe(1);
+    expect(lowered.text).toContain('"it\'s"');
+    expect(lowered.text).toContain('"that\'s"');
+    expect(lowered.resolved).toBe(true);
+  });
+
   it('a prefixed literal is folded to its SI magnitude, not left in its own unit', () => {
     const lowered = lowerUnitLiterals('range >= 5 [km]');
     const [, literal] = [...lowered.literals][0];

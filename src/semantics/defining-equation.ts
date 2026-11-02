@@ -952,7 +952,9 @@ export class DefiningEquations {
       onPath.add(ownerId);
       for (const feat of this.features(ownerId)) {
         const name = this.nameOf(feat);
-        if (!name) continue;
+        // A name holding a dot ('a.b') is not offered: the path text `a.b` would read it, where the path `a` then `b` has no
+        // such member (a dot-named declaration answered an unresolved path).
+        if (!name || name.includes('.')) continue;
         // A value that a binding joins to a scope the page leaves unread is not offered: the saved file may find the other end
         // in a value of its own (a conflict, or this one gives way) or in none (this one stands), and the page cannot say.
         const joined = this.seedJoinedToUnread(feat);

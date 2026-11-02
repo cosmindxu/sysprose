@@ -85,13 +85,14 @@ export interface LoweredBody {
  * engines that predate it.)
  */
 const UNIT_LITERAL_RE =
-  /'(?:\\.|[^'\\])*'|(^|[^A-Za-z0-9_.])((?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*\[([^\]]*)\]/g;
+  /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(^|[^A-Za-z0-9_.])((?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*\[([^\]]*)\]/g;
 /**
  * Any bracket group (used to spot a unit on a non-literal operand). A single-quoted
  * unrestricted name is a NAME and is matched first, so `'rev 2 [x]'` is no literal
- * and no unit: both patterns step over it whole.
+ * and no unit: both patterns step over it whole. A double-quoted string is stepped
+ * over the same way, so an apostrophe inside one (`"it's"`) never opens a name.
  */
-const ANY_BRACKET_RE = /'(?:\\.|[^'\\])*'|\[[^\]]*\]/g;
+const ANY_BRACKET_RE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[[^\]]*\]/g;
 
 export function lowerUnitLiterals(raw: string): LoweredBody {
   const literals = new Map<string, LoweredLiteral>();

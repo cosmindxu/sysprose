@@ -4044,6 +4044,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         ].join('\n'),
       rows: { 'QT::P::cF': ['F/F/F/F', 'F'] },
     },
+    {
+      // A declaration named with a dot (`'a.b'`) is no member of `a`: the path `a.b` (or `'a'.'b'`) has none, so it abstains
+      // on every surface (before, the declaration answered it: violated / refuted). Its twin is the same model (the dot
+      // admits no bare spelling).
+      name: 'dotted',
+      build: () =>
+        [
+          'package QX {',
+          "  attribute 'a.b' : ScalarValues::Real = 25.0;",
+          '  attribute a : ScalarValues::Real = 3.0;',
+          '  constraint cTop { a.b <= 1.0 }',
+          "  constraint cQuoted { 'a'.'b' <= 1.0 }",
+          "  part def P { attribute 'a.b' : ScalarValues::Real = 25.0; attribute a : ScalarValues::Real = 3.0; constraint cIn { a.b <= 1.0 } constraint cA { a <= 10.0 } }",
+          '  part p : P;',
+          '}',
+        ].join('\n'),
+      rows: { 'QX::cTop': ['?/?/?/?', '?'], 'QX::cQuoted': ['?/?/?/?', '?'], 'QX::P::cIn': ['?/?/?/?', '?'], 'QX::P::cA': ['T/T/T/T', 'T'] },
+    },
   ];
   /** The names a {@link QUOTED_FAMILY} model is written with, quoted and plain (the keyword-like ones have no bare spelling, so the twin renames them). */
   const QUOTED_NAMES: Record<string, string> = { a: "'max load'", b: "'ref'", c: "'default'", d: "'part'" };

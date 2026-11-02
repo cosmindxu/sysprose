@@ -205,7 +205,8 @@ expression, where `'max load' <= 10.0 [kg]`, `'ref' == a * b` and `'in' + 'defau
 the features of those names, exactly as `maxLoad <= 10.0 [kg]` would. A string is
 double-quoted, so `"max load"` stays text. The one name an expression cannot hold is a
 quoted one that itself contains a `.` or a `:` (`'a.b'`), which a path would cut in two: every
-surface abstains on an expression holding one, and the check and numeric rows say why.
+surface abstains on an expression holding one, and the check and numeric rows say why. A
+feature declared with a dot in its name is read by no path either (`a.b` is not `'a.b'`).
 
 **Ports and connections.** A port is a typed interaction point with a direction;
 a connection wires two of them.
