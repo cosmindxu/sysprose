@@ -9297,6 +9297,33 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'T1L::t1': ['?/?/?/?', null],
     }),
+    // The same shape written the other ways a typed assert gives its parameter: `bind x = L` (T10), a constraint usage it
+    // specialises (U1) and a name the definition's body reads that is no parameter (U2, `limit`): all held alike.
+    'typed-ineq-bind': probe(`package T10 {
+        constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+        part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x; bind x = L; } }
+        part p : P;
+        constraint t1 { p.L == 200.0 }
+      }`, {
+      'T10::t1': ['?/?/?/?', null],
+    }),
+    'typed-ineq-specialised': probe(`package U1 {
+        constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+        part def P { attribute L : ScalarValues::Real; constraint e0 : Cd { in x = L; } assert constraint ea :> e0; }
+        part p : P;
+        constraint t1 { p.L == 200.0 }
+      }`, {
+      'U1::t1': ['?/?/?/?', null],
+    }),
+    'typed-ineq-body-name': probe(`package U2 {
+        attribute limit : ScalarValues::Real;
+        constraint def Cd { in x : ScalarValues::Real; x <= limit }
+        part def P { attribute L : ScalarValues::Real = 5.0; assert constraint ca : Cd { in x = L; } }
+        part p : P;
+        constraint t1 { limit == 1.0 }
+      }`, {
+      'U2::t1': ['?/?/?/?', null],
+    }),
     'typed-ineq-valued': probe(`package T1V {
         constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
         part def P { attribute L : ScalarValues::Real = 5.0; assert constraint ca : Cd { in x = L; } }

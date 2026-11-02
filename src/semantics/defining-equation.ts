@@ -7973,7 +7973,10 @@ function heldInstance(definitions: DefiningEquations, rootId: ElementId, path: s
   return `${definitions.instanceNameOf(rootId)}::${path.split('.').join('::')}`;
 }
 
-const ASSERT_HELD = new WeakMap<Model, { rev: number; held: ReadonlySet<ElementId>; typedBy: ReadonlyMap<ElementId, ElementRecord> }>();
+const ASSERT_HELD = new WeakMap<
+  Model,
+  { rev: number; held: ReadonlySet<ElementId>; typedBy: ReadonlyMap<ElementId, ElementRecord>; heldOnly: ReadonlyMap<ElementId, ElementRecord> }
+>();
 
 /** No `default` an assertion may replace ({@link replaceableDefaults}). */
 const NO_DEFAULTS: ReadonlySet<ElementId> = new Set();
@@ -8285,6 +8288,23 @@ export function typedAssertNames(model: Model, f: ElementRecord): boolean {
   return assertHeldIndex(model).typedBy.has(f.id);
 }
 
+/**
+ * The assert typed by an INEQUALITY-only constraint definition (`x >= 0.0 and x <= 100.0`) that constrains `f` through
+ * the values it gives the definition's parameters (`in x = L`, `bind x = L`, a usage it specialises, a name its body
+ * reads that is no parameter of it): the model constrains `f` in a form no surface reads as a definition of it. It
+ * defines nothing — a `default` stands against it, a value written with `=` is read as written — so the numeric
+ * surface holds a valueless `f` as no design freedom and no plain check fixes it ({@link typedAssertNames} is the
+ * equation's: that one leaves `f` unread).
+ */
+export function typedAssertHeldOnly(model: Model, f: ElementRecord): ElementRecord | undefined {
+  return assertHeldIndex(model).heldOnly.get(f.id);
+}
+
+/** Does any assert typed by an inequality-only definition constrain a feature ({@link typedAssertHeldOnly})? */
+export function typedAssertsHoldOnly(model: Model): boolean {
+  return assertHeldIndex(model).heldOnly.size > 0;
+}
+
 /** Does any assert typed by an equation's definition name a feature it may define ({@link typedAssertNames})? */
 export function typedAssertsName(model: Model): boolean {
   return assertHeldIndex(model).typedBy.size > 0;
@@ -8296,6 +8316,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
   if (hit && hit.rev === model.rev) return hit;
   const held = new Set<ElementId>();
   const typedBy = new Map<ElementId, ElementRecord>();
+  const heldOnly = new Map<ElementId, ElementRecord>();
   const owners = new Set<ElementId>();
   const defaults: ElementRecord[] = [];
   // The asserts typed by a constraint definition whose body holds an equation
@@ -8303,7 +8324,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
   // a conjunction, `a == 50.0 and a >= 0.0`, too), or a body this tool cannot
   // parse — each with the definitions that make it one. An inequality alone
   // defines nothing (U5).
-  const typedAsserts: Array<{ a: ElementRecord; types: ElementRecord[] }> = [];
+  const typedAsserts: Array<{ a: ElementRecord; types: ElementRecord[]; only?: true }> = [];
   // The local rule reads only the defaults an assertion may replace: none ({@link replaceableDefaults}).
   const replaceable = replaceableDefaults(model);
   for (const el of model.all()) {
@@ -8316,6 +8337,13 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
         return node === undefined || holdsEquation(node);
       });
       if (types.length > 0) typedAsserts.push({ a: el, types });
+      // The same assert's inequality-only definitions define nothing, and constrain all the same ({@link typedAssertHeldOnly}).
+      const inequalities = generalizationsOf(model, el.id).filter((t) => {
+        if (t.attrs.isLibrary === true || typeof t.attrs.expression !== 'string' || t.attrs.expression.trim() === '') return false;
+        const node = parseRelationBody(t.attrs.expression.trim())?.node;
+        return node !== undefined && !holdsEquation(node);
+      });
+      if (inequalities.length > 0) typedAsserts.push({ a: el, types: inequalities, only: true });
     } else if (el.attrs.defaultValue === true && el.attrs.value !== undefined && el.attrs.value !== null && replaceable.has(el.id)) defaults.push(el);
   }
   const named = new Map<ElementId, ReadonlyMap<string, ElementRecord>>();
@@ -8366,7 +8394,15 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
       return redefining.get(id) ?? [];
     };
     const stated = (g: ElementRecord): boolean => g.attrs.value !== undefined && g.attrs.value !== null;
+    let only = false;
     const target = (f: ElementRecord, a: ElementRecord): void => {
+      if (only) {
+        // An inequality defines nothing: every feature it reaches is held, whatever it states (a value is read as written).
+        for (const g of [f, ...redefinedClosure(model, f), ...redefinersOf(f.id)]) {
+          if (g.attrs.isLibrary !== true && !heldOnly.has(g.id)) heldOnly.set(g.id, a);
+        }
+        return;
+      }
       for (const g of [f, ...redefinedClosure(model, f)]) {
         if (stated(g) && g.attrs.defaultValue !== true) break;
         if (g.attrs.isLibrary !== true && !typedTargets.has(g.id)) typedTargets.set(g.id, a);
@@ -8396,7 +8432,8 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
         targetBelow(g, a, seen);
       }
     };
-    for (const { a, types } of typedAsserts) {
+    for (const { a, types, only: held } of typedAsserts) {
+      only = held === true;
       // Where its parameters are given values: the assert, and each constraint
       // usage it specialises (`constraint e0 : Eq { in x = p.load; }` under
       // `assert constraint ea :> e0;`), each resolved from its own owner.
@@ -8516,7 +8553,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
     const f = model.get(id);
     if (f?.attrs.defaultValue === true) held.add(id);
   }
-  const fresh = { rev: model.rev, held, typedBy };
+  const fresh = { rev: model.rev, held, typedBy, heldOnly };
   ASSERT_HELD.set(model, fresh);
   return fresh;
 }

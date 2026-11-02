@@ -501,6 +501,28 @@ describe('checkConstraintsNumeric — a feature an assert typed by an inequality
     }
   });
 
+  it('is not solved for either where the assert gives the parameter by a binding, a usage it specialises or a name the body reads', async () => {
+    const check = async (text: string, name: string) => {
+      const { model: m } = await loadModelText(text);
+      return checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === name)!;
+    };
+    const cd = 'constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }';
+    for (const body of [
+      'assert constraint ca : Cd { in x; bind x = L; }',
+      'constraint e0 : Cd { in x = L; } assert constraint ea :> e0;',
+    ]) {
+      const row = await check(`package TJ { ${cd} part def P { attribute L : ScalarValues::Real; ${body} } part p : P; constraint t1 { p.L == 200.0 } }`, 'TJ::t1');
+      expect([row.result, row.imposed ?? false]).toEqual(['unknown', false]);
+      expect(row.reason).toContain('a typed assert');
+    }
+    const row = await check(
+      `package TJ { attribute limit : ScalarValues::Real; constraint def Cd { in x : ScalarValues::Real; x <= limit }
+        part def P { attribute L : ScalarValues::Real = 5.0; assert constraint ca : Cd { in x = L; } } part p : P; constraint t1 { limit == 1.0 } }`,
+      'TJ::t1',
+    );
+    expect([row.result, row.imposed ?? false]).toEqual(['unknown', false]);
+  });
+
   it('is read as before where the feature states a value', async () => {
     const row = await rowOf(' = 5.0', true);
     expect(row.result).toBe('violated');
@@ -526,7 +548,8 @@ describe('optimize', () => {
       const objective = m.all().find((e) => e.declaredName === 'objectiveMeasure')!;
       const x = m.all().find((e) => e.declaredName === 'xVar')!;
       const res = optimize(m, objective.id, [x.id], { sense: 'min', bounds: { [x.id]: [0, 10] } });
-      // Where the first equation written was read, this was 50 (60 in the other order).
+      // A defensive guard: the solve already marks the objective unsettled, so no probe is known to reach the reread
+      // that read the first equation written (50, or 60 in the other order).
       expect(res.value).toBeNaN();
     }
   });

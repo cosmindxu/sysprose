@@ -103,8 +103,10 @@ import {
   sharedDefinitions,
   spelledIn,
   statedValueOf,
+  typedAssertHeldOnly,
   typedAssertHolding,
   typedAssertNames,
+  typedAssertsHoldOnly,
   typedAssertsName,
   writesStandingDefault,
   usageOwnedRefusal,
@@ -588,36 +590,12 @@ function holdVar(held: Map<ElementId, ElementId[]>, v: ElementId, by: ElementId)
  */
 function relationReads(model: Model, el: ElementRecord, instance?: string): ElementId[] {
   const raw = el.attrs.expression;
-  if (typeof raw !== 'string') return typedAssertReads(model, el, instance);
+  if (typeof raw !== 'string') return [];
   const node = parseRelationBody(raw)?.node ?? writtenNames(raw);
   if (!node) return [];
   const scope = relationScope(model, el);
   const keyed = keyedNames(model, el, node, scope, instance);
   return relationVarsOf(node, keyed?.nameToId ?? scope);
-}
-
-/**
- * The variables an ASSERT typed by a constraint definition constrains through the values it gives the
- * definition's parameters (`assert constraint ca : Cd { in x = L; }` reads L), where no equation of the solve
- * is read from it: the model constrains them, in a form this lane does not read ({@link GatheredSystem.held}).
- * Not one an assert typed by an equation's definition already holds as no design freedom ({@link
- * typedAssertNames}). A parameter bound (`bind x = L`) is not followed: a weaker fence, never a false one.
- */
-function typedAssertReads(model: Model, el: ElementRecord, instance?: string): ElementId[] {
-  if (!isAsserted(el)) return [];
-  let node: ExprNode | undefined;
-  for (const c of model.children(el.id)) {
-    if (typeof c.attrs.value !== 'string') continue;
-    const body = parseRelationBody(c.attrs.value)?.node ?? writtenNames(c.attrs.value);
-    node = node && body ? { kind: 'binary', op: '+', left: node, right: body } : (body ?? node);
-  }
-  if (!node) return [];
-  const scope = relationScope(model, el);
-  const keyed = keyedNames(model, el, node, scope, instance);
-  return relationVarsOf(node, keyed?.nameToId ?? scope).filter((v) => {
-    const f = model.get(baseIdOf(v));
-    return f !== undefined && !typedAssertNames(model, f);
-  });
 }
 
 /** A string literal in a relation body (a backslash escapes the next character): double-quoted, a single quote opens a NAME. */
@@ -823,6 +801,21 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
         }
       }
     }
+  }
+  // What an assert typed by an INEQUALITY-only definition constrains (`assert constraint ca : Cd { in x = L; }` over `x >=
+  // 0.0 and x <= 100.0`, whichever way it gives x: `bind x = L`, a usage it specialises, a name Cd's body reads) is held
+  // like an untyped inequality's: the model constrains it in a form this lane does not read ({@link GatheredSystem.held}).
+  // By FEATURE, in every instance that reads it — weaker than the instance's alone, never false.
+  if (typedAssertsHoldOnly(model)) {
+    const mark = (vars: readonly ElementId[]): void => {
+      for (const v of vars) {
+        const f = model.get(baseIdOf(v));
+        const a = f && !typedAssertNames(model, f) ? typedAssertHeldOnly(model, f) : undefined;
+        if (a) holdVar(held, v, a.id);
+      }
+    };
+    for (const eq of all) mark(eq.vars);
+    for (const iq of gatherInequalities(model, scopeId)) mark(iq.vars);
   }
   // A feature a value equation or an asserted equation derives from one whose value is not read has none either: the
   // solve held the one at its starting 0 and decided the other from it (`bind k = w.p.a` below an order scope, `attribute
@@ -1572,9 +1565,6 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           // One the solve reads no equation from — an inequality, a conjunction —
           // constrains the instance's variables all the same.
           if (!eq) for (const v of iq?.vars ?? relationReads(model, read, instance)) holdVar(system.held, v, c.id);
-        } else if (isAsserted(c) && typeof c.attrs.expression !== 'string') {
-          // An assert typed by a constraint definition constrains what it gives the parameters ({@link typedAssertReads}).
-          for (const v of relationReads(model, { ...c, ownerId: reader.id }, instance)) holdVar(system.held, v, c.id);
         } else if (isBindingEdge(c)) {
           enqueue(instanceBindingEquation(model, c, holder, reader, instance, memo, system));
         }

@@ -2023,7 +2023,9 @@ constrains (`assert constraint ca : Cd { in x = L; }` over `x >= 0.0 and x <= 10
 no design freedom, as one an untyped inequality constrains is not: a lone plain `p.L == 200.0` is
 not imposed over it, and is *unknown* on the numeric surface (*… an assert constrains it in a form
 the numeric solve does not read (ca, a typed assert) …*), where it was "satisfied by construction"
-past the definition's bound. A parameter bound with `bind x = L` is not followed. An equation that
+past the definition's bound. So it is where the assert gives the parameter by `bind x = L`, through a constraint usage it
+specialises (`assert constraint ea :> e0`) or as a name the definition's body reads (`x <= limit`): the feature is held in
+every instance that reads it. An equation that
 names a feature by its path, `assert constraint { p.x == 3.0 }` over `part p :
 P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
