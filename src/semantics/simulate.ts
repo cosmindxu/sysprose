@@ -24,7 +24,14 @@
  */
 
 import { type ElementId, type Model } from '@core/index';
-import { refusedStepSentence, runStateMachine, runsParallel, type StateStep } from './execute';
+import {
+  refusalStopsRun,
+  refusedStepSentence,
+  runStateMachine,
+  type StateFire,
+  type StateRunResult,
+  type StateStep,
+} from './execute';
 import { evaluate, parseExpr } from './expr';
 import { scopeFor } from './evaluate-model';
 import {
@@ -72,10 +79,17 @@ export interface SimRefusal extends SimFire {
   sentence: string;
   /**
    * True when the whole run stopped there. False on a parallel machine (set
-   * only through the API), whose regions are each driven on their own: the
-   * region the step came in stopped, and the other regions run on.
+   * only through the API), whose regions are each driven on their own, until
+   * every region has refused: the region the step came in stopped, and the
+   * regions that have not stopped run on.
    */
   stopsRun: boolean;
+  /**
+   * The other regions' refusals of a parallel machine, in region order, each
+   * with its own sentence. Absent unless a second region refused; this
+   * refusal is the first region's.
+   */
+  others?: Array<SimFire & { sentence: string }>;
 }
 
 /** An immutable snapshot of the machine at one point on the simulation timeline. */
@@ -303,18 +317,7 @@ export class SimulationSession {
       constraints: [],
       solved: {},
       solvedOk: true,
-      ...(res.refused === undefined
-        ? {}
-        : {
-            refused: {
-              id: res.refused.transitionId,
-              from: res.refused.from,
-              to: res.refused.to,
-              trigger: res.refused.trigger,
-              sentence: refusedStepSentence(this.model, this.behaviorId, res.refused.transitionId),
-              stopsRun: !runsParallel(this.model, this.behaviorId),
-            },
-          }),
+      ...(res.refused === undefined ? {} : { refused: this.refusalOf(res) }),
     };
     if (this.withSolve) {
       const { solved, ok } = this.solveSample(res.valueStore);
@@ -330,6 +333,28 @@ export class SimulationSession {
     );
     this.samples.push(sample);
     return sample;
+  }
+
+  /**
+   * The sample's refusal: the first region's, worded for how many regions have
+   * refused, with the others' beside it and `stopsRun` read over all of them.
+   */
+  private refusalOf(res: StateRunResult): SimRefusal {
+    const all = res.refusals ?? (res.refused === undefined ? [] : [res.refused]);
+    const regions = { stopped: all.length, of: res.regionCount ?? 1 };
+    const say = (f: StateFire): SimFire & { sentence: string } => ({
+      id: f.transitionId,
+      from: f.from,
+      to: f.to,
+      trigger: f.trigger,
+      sentence: refusedStepSentence(this.model, this.behaviorId, f.transitionId, regions),
+    });
+    const [first, ...rest] = all.map(say);
+    return {
+      ...first!,
+      stopsRun: refusalStopsRun(this.model, this.behaviorId, res),
+      ...(rest.length === 0 ? {} : { others: rest }),
+    };
   }
 
   /**

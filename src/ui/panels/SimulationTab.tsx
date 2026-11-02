@@ -282,7 +282,7 @@ export function SimulationTab(): JSX.Element {
               <div className="sim-line">
                 <span className="sim-k">Stopped</span>
                 <span className="sim-v" data-testid="sim-refused">
-                  {sample.refused.sentence}
+                  {[sample.refused, ...(sample.refused.others ?? [])].map((r) => r.sentence).join(' ')}
                 </span>
               </div>
             )}

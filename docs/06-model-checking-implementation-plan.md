@@ -2368,6 +2368,7 @@ run-to-completion the machine never comes to rest. `reach` now says so, as
   property refused before any walk 0 → 290 → 290 ms — that last is the walk the
   rows need, which no property took. `reach` on the same machine is about 240 ms
   at `5943654` and about 290 ms on this branch, the livelock pass's own cost.
+  The cost is accepted (§8.16).
   A WITHHELD row is filed there too, since `reporting-residuals` S3, as
   `verification/completion-livelock-withheld` (info, after the published rows,
   one per cycle of states, in the words of `reach`'s `withheld` line); `reach`
@@ -2685,8 +2686,8 @@ wave 2.
   and no walkable dwell. A trigger-less transition carrying `attrs.after` (set
   only through the API) is fired by a clock advance where the chase stopped, and
   the chase goes on: on `a ⇄ b` with `a -> b` such a dwell, one advance of 5
-  takes the run into `b` 65 times. So there the search still refuses, and that
-  is the shape `semantics.mc.patterns.test.ts` now pins the `completion` advice
+  takes the run into `b` 65 times. So there the search still refuses (permanently,
+  §8.16), and that is the shape `semantics.mc.patterns.test.ts` now pins the `completion` advice
   on. The H2 order of §8.5 stands: the budget gate is read before the violation
   test. `at most 40` and `at most 32` are `pass`, `at most 31` is `fail` on the
   run itself (a 63-step witness that replays). §8.5's own H2 probe (`absence x
@@ -2775,7 +2776,8 @@ wave 2.
   over the whole script, so the stop is the region's: the other regions fire
   on, and a sentence saying the run "takes no step after it" was contradicted
   by the Fired line of the same sample. The sentence now says the other regions
-  run on, and `SimRefusal.stopsRun` is false there, so Play goes on. And
+  run on, and `SimRefusal.stopsRun` is false there, so Play goes on (until every
+  region has refused, §8.16). And
   `executionReport` runs every element that owns a transition, a composite
   written inside a machine among them: a composite `C` holding `c2 -re-> C`,
   run alone, stops there too, since it has nothing above it to exit to, but
@@ -3061,14 +3063,7 @@ refuses it too, unless this plan and UML make a reading clear.
   no witness is withheld by it. It is a guard for a split the shared relation
   does not have today, as the differential's three flat-path machines were. The field is optional and set on the hierarchical path only; it is
   also on the SDK's `runStateMachine` result (`StateRunResult.fired[i].stack`), absent for a flat machine.
-- **Left open: every region's refusal on a parallel machine.** `refused` names
-  the first region's refusal only. Listing the others is not a data change
-  alone: `refusedStepSentence` says the machine's other regions run on, which
-  is false once every region has refused, and `SimRefusal.stopsRun` is true
-  only when the machine is not parallel, so Play would go on over a run that
-  nothing advances. It needs a sentence and a `stopsRun` that read all the
-  regions, and no verdict stands on a parallel machine (the walk refuses it), so
-  it stays a TODO entry.
+- **Every region's refusal on a parallel machine: closed by §8.16.**
 - **What moved.** Against `b635385` (this step on top of §8.14): the verdict
   differential, 637 of 637 models identical; v9, 25 of 25 surfaces identical;
   `reach` and `check-behaviour`, JSON and text, on the 54 state-bearing models
@@ -3080,3 +3075,64 @@ refuses it too, unless this plan and UML make a reading clear.
   words reach no capture; the replay's stack test withholds no witness (the
   replay sweep of `semantics.mc.differential.test.ts` is green and no
   `check-behaviour` row on the 55 files changes).
+
+### 8.16 Four open behaviour entries closed — `parser-pass`, 2026-11-02
+
+Three are decisions taken to leave the code as it stands and say so, and one is a
+change. The three decisions were delegated to this round by the coordinator under
+the standing instruction to continue without asking; each can be reversed by
+reopening the entry named.
+
+- **Every region's refusal on a parallel machine (changed).** A parallel
+  machine (`attrs.parallel`, API only) drives each region on its own over the
+  whole script, so a step a region does not take stops that region. Until now
+  `StateRunResult.refused` named the first region's refusal only, the sentence
+  said the machine's other regions run on whatever had happened to them, and
+  `SimRefusal.stopsRun` was false for every parallel machine, so Play ticked on
+  over a run that nothing advanced. Now `StateRunResult.refusals` lists every
+  region's refusal in region order (`refused` stays its first element) and
+  `regionCount` says how many regions were driven; both are set exactly when
+  `refused` is. `refusedStepSentence` takes the count (`regions`) and words it:
+  one region refused and the rest run on (the §8.12 sentence, unchanged);
+  several refused and the remaining ones run on; every region refused, *"and so
+  does every other region of the machine at a step it does not take, so the run
+  stops"*; and a parallel machine with a single region is the whole run, worded
+  as a machine that is not parallel (it used to say "the other regions run on"
+  with none to run). `refusalStopsRun` reads all the regions, so
+  `SimRefusal.stopsRun` is true exactly when the machine is not parallel or every
+  region has refused, and `simulationAtRest` stops Play there. `SimRefusal.others`
+  and the `executionReport` row's `refused.others` carry the other regions'
+  refusals, each with its own sentence, only where a second region refused; the
+  Stopped line and the Simulate trace print them all. No verdict stands on it,
+  since the walk refuses every parallel machine (`parallel-regions`). A machine
+  that is not parallel, and a parallel one where one region refused, read
+  exactly as before.
+- **A count past the budget where a trigger-less dwell follows: the completion
+  refusal is permanent (decided).** The case is a walkable trigger-less
+  transition that carries a numeric `attrs.after`, which only the API can set.
+  A clock advance fires it where the chase stopped and the chase goes on, so a
+  run's chase position is not its depth there, and `budgetEndsRun` (§8.12) does
+  not hold. A search on such a machine that comes to a step past the budget
+  refuses it (`boundHit: 'completion'`, inconclusive), and that stays. Carrying
+  the position and offering the advance where a chase stops would decide rows
+  that a refusal now withholds, on a shape no source text can write and no
+  corpus, example or v9 model has; a false decision is worse than an
+  abstention, and the refusal is sound. It moves no verdict.
+- **The Simulate trace of a composite stops at the boundary (decided).** A
+  composite state the Simulate button runs on its own, and that steps out to a
+  state of the machine that holds it, stops at that step (§8.14, the Stopped
+  line), where the explorer and the holding machine's own run take it as an
+  ordinary step. That is the intended behaviour: the trace of a composite run on
+  its own is the composite's machine, each machine steps only by its own
+  transitions, and there is nothing above the composite in that run to exit
+  into. To follow the holding machine the trace would have to run the holder,
+  which is what selecting the holder does. No corpus, example or v9 model has
+  such a step.
+- **The livelock pass's cost is accepted (decided).** The pass of §8.8 makes
+  `reach` about 20% slower than at `5943654` on a generated
+  9,641-configuration machine (about 240 ms against about 290 ms, the figures
+  in §8.8). It was not re-measured for this decision, because the machine was
+  not idle (other branches were running their gates); the §8.8 measurement,
+  taken paired and cold, stands as the last one. A cost of about 50 ms on a
+  machine of that size, for the finding of §8.8, is accepted. If it grows with
+  the machines, the pass is the place to optimise.

@@ -3760,7 +3760,9 @@ machines: a state or `state def` above it that owns a transition, with no other
 is the machine itself, and the sentence is the plain one above, the one `reach`
 prints for the same step. On a parallel machine, which only the API makes, each
 region runs on its own over the whole script, so the step stops only its own
-region, the other regions run on, and the sentence says so. The simulator used
+region, the regions that have not stopped run on, and the sentence says so; when
+every region has refused it says the run stops, lists each region's step, and
+**Play** stops. The simulator used
 to take it the old way, standing at the machine itself or at the node under the
 action, or restarting under the source's composite. A step across a machine's
 boundary, below, stops a run the same way. Until 2026-10-21 a step
@@ -4114,7 +4116,11 @@ step after it, and is not complete, and the **Stopped** line (`sim-refused`) say
 the step's far end lies outside the machine's region, as for a step into the
 machine's own root (above). The same holds for a composite the Simulate button
 runs on its own that steps out of itself to a state of the machine that holds it.
-It used to enter the far state and stay there.
+It used to enter the far state and stay there. That stop is the intended
+reading of a composite run on its own, not a gap: the run is the composite's
+own machine, which has nothing above it to exit into, and the holding machine's
+run, which takes the step as an ordinary one, is the one to start by selecting
+the holder.
 
 `check-behaviour --element Outer` checks `Outer` itself, also when a `state def`
 written inside it makes it hold a second machine: a reference that is a machine
