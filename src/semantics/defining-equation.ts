@@ -3228,7 +3228,9 @@ export class DefiningEquations {
       if (!reads.has(r.feature)) continue;
       const x = there.get(path);
       if (!x) return 'unread';
-      if (classified(this.model, contextId, x.component).valued.length > 1) return 'two-values';
+      const valued = classified(this.model, contextId, x.component).valued;
+      // Members that state one and the same value, exactly, are one value ({@link agreedValued}).
+      if (valued.length > 1 && agreedValued(this.model, contextId, valued) === undefined) return 'two-values';
     }
     return undefined;
   }
@@ -11053,7 +11055,15 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
     via: { bindingIds: componentBindingIds(model, best!.root, best!.component), source: valuePath },
   });
   if (cls.valued.length > 1) {
-    return { abstain: 'two-values', sentence: abstentionSentence(model, symbol, best.root, best.component, 'two-values') };
+    // Valued members that state one and the same value, exactly (X6's W `M = 3.0` beside Q's asserted `L ==
+    // 3.0`), are the one value: it is read from the first, as from a lone valued member. Any member whose value
+    // is no exact constant leaves them two ({@link agreedValued}).
+    const agreed = agreedValued(model, best.root, cls.valued);
+    if (agreed === undefined) {
+      return { abstain: 'two-values', sentence: abstentionSentence(model, symbol, best.root, best.component, 'two-values') };
+    }
+    if (memberInstance(definitions, best.root, agreed) === symbol) return undefined;
+    return source(agreed);
   }
   if (cls.valued.length === 1) {
     // The member that states the value IS the name's own path: today's reading
@@ -11085,6 +11095,63 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
       ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
       : abstentionSentence(model, symbol, best.root, best.component, 'free'),
   };
+}
+
+/**
+ * The path among `valued` (the valued members of a binding component read in `root`, {@link classified}) to read
+ * their one value from, or `undefined` where they do not state exactly one: a member is a value written with `=`
+ * (or a `default` that stands) or an asserted equation of its owner, of a feature it redefines or of the
+ * context, and each is an exact constant ({@link constantOf}, {@link exactConstant}); the constants must all be
+ * the same, unit and dimension included ({@link compareConstants}). A package's head (`#…`), an equation that
+ * reads a name, an assertion that is no equation, or one equation the others disagree with is no agreement.
+ * The first member written with `=` is the source, else the first.
+ */
+function agreedValued(model: Model, root: ElementId, valued: readonly string[]): string | undefined {
+  const rootEl = model.get(root);
+  const reading = bindingEnds(model).readings.get(root);
+  if (!rootEl || !reading) return undefined;
+  const definitions = sharedDefinitions(model);
+  const constants: Array<{ path: string; c: Constant; written: boolean }> = [];
+  for (const path of valued) {
+    if (path.startsWith('#')) return undefined;
+    const r = reading.get(path);
+    const g = r ? model.get(r.feature) : undefined;
+    if (!g) return undefined;
+    const written = valueSourceOf(model, g);
+    if (written) {
+      const c = constantOf(written);
+      if (!c) return undefined;
+      constants.push({ path, c, written: true });
+      continue;
+    }
+    // An asserted equation: every site an assertion that defines the end may sit at (assertDefinesEnd).
+    const sites: Array<[ElementId, string]> = [];
+    for (const f of [g, ...redefinedClosure(model, g)]) {
+      const n = definitions.nameOf(f);
+      if (f.ownerId != null && n !== undefined) sites.push([f.ownerId, n]);
+    }
+    sites.push([root, path]);
+    const segments = path.split('.');
+    let owner = root;
+    for (let i = 0; i < segments.length - 1; i++) {
+      const h = definitions.byName(owner).get(segments[i]!);
+      if (!h) return undefined;
+      const rest = segments.slice(i + 1).join('.');
+      for (const x of [h, ...redefinedClosure(model, h)]) sites.push([x.id, rest]);
+      owner = h.id;
+    }
+    const equations = sites.flatMap(([site, n]) => definitions.of(site, n));
+    if (equations.length === 0 || !assertDefinesEnd(model, g, rootEl, path)) return undefined;
+    for (const eq of equations) {
+      const c = exactConstant(eq.definition, eq.literals);
+      if (!c) return undefined;
+      constants.push({ path, c, written: false });
+    }
+  }
+  const first = constants[0];
+  if (!first) return undefined;
+  for (const x of constants) if (compareConstants(first.c, x.c) !== 'same') return undefined;
+  return (constants.find((x) => x.written) ?? first).path;
 }
 
 /**

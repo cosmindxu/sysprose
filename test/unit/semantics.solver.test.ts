@@ -477,9 +477,60 @@ describe('evaluateMoEs — a measure two asserted equations give two values', ()
   });
 });
 
+/*
+ * defaults-pass (TODO 250): a feature with no value that an assert typed by an inequality-only constraint
+ * definition constrains is no design freedom, as one a plain asserted inequality constrains is not. A lone plain
+ * `p.L == 200.0` was imposed over it, "satisfied by construction", past the definition's bound of 100.
+ */
+describe('checkConstraintsNumeric — a feature an assert typed by an inequality-only definition constrains', () => {
+  const rowOf = async (value: string, inP: boolean) => {
+    const { model: m } = await loadModelText(`package TI {
+      constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+      part def P { attribute L : ScalarValues::Real${value}; ${inP ? 'assert constraint ca : Cd { in x = L; }' : ''} }
+      part p : P${inP ? '' : ' { assert constraint ca : Cd { in x = L; } }'};
+      constraint t1 { p.L == 200.0 }
+    }`);
+    return checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === 'TI::t1')!;
+  };
+
+  it('is not solved for by a lone plain check, whether the assert is written in the definition or the usage', async () => {
+    for (const inP of [true, false]) {
+      const row = await rowOf('', inP);
+      expect([row.result, row.imposed ?? false]).toEqual(['unknown', false]);
+      expect(row.reason).toContain('a typed assert');
+    }
+  });
+
+  it('is read as before where the feature states a value', async () => {
+    const row = await rowOf(' = 5.0', true);
+    expect(row.result).toBe('violated');
+  });
+});
+
 /* ───────────────────────────── optimization ──────────────────────────── */
 
 describe('optimize', () => {
+  it('reads an objective two asserted equations give two values as none, never as the first one written', () => {
+    for (const eqs of [
+      'assert constraint c50 { objectiveMeasure == 50.0 } assert constraint c60 { objectiveMeasure == 60.0 }',
+      'assert constraint c60 { objectiveMeasure == 60.0 } assert constraint c50 { objectiveMeasure == 50.0 }',
+    ]) {
+      const { model: m, diagnostics } = parseModel(`package OC {
+        part def P {
+          attribute xVar : ScalarValues::Real;
+          attribute objectiveMeasure : ScalarValues::Real;
+          ${eqs}
+        }
+      }`);
+      expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+      const objective = m.all().find((e) => e.declaredName === 'objectiveMeasure')!;
+      const x = m.all().find((e) => e.declaredName === 'xVar')!;
+      const res = optimize(m, objective.id, [x.id], { sense: 'min', bounds: { [x.id]: [0, 10] } });
+      // Where the first equation written was read, this was 50 (60 in the other order).
+      expect(res.value).toBeNaN();
+    }
+  });
+
   it('minimises a bounded quadratic objective', () => {
     const m = new Model();
     const f = new ModelFactory(m);

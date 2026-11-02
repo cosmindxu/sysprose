@@ -588,12 +588,36 @@ function holdVar(held: Map<ElementId, ElementId[]>, v: ElementId, by: ElementId)
  */
 function relationReads(model: Model, el: ElementRecord, instance?: string): ElementId[] {
   const raw = el.attrs.expression;
-  if (typeof raw !== 'string') return [];
+  if (typeof raw !== 'string') return typedAssertReads(model, el, instance);
   const node = parseRelationBody(raw)?.node ?? writtenNames(raw);
   if (!node) return [];
   const scope = relationScope(model, el);
   const keyed = keyedNames(model, el, node, scope, instance);
   return relationVarsOf(node, keyed?.nameToId ?? scope);
+}
+
+/**
+ * The variables an ASSERT typed by a constraint definition constrains through the values it gives the
+ * definition's parameters (`assert constraint ca : Cd { in x = L; }` reads L), where no equation of the solve
+ * is read from it: the model constrains them, in a form this lane does not read ({@link GatheredSystem.held}).
+ * Not one an assert typed by an equation's definition already holds as no design freedom ({@link
+ * typedAssertNames}). A parameter bound (`bind x = L`) is not followed: a weaker fence, never a false one.
+ */
+function typedAssertReads(model: Model, el: ElementRecord, instance?: string): ElementId[] {
+  if (!isAsserted(el)) return [];
+  let node: ExprNode | undefined;
+  for (const c of model.children(el.id)) {
+    if (typeof c.attrs.value !== 'string') continue;
+    const body = parseRelationBody(c.attrs.value)?.node ?? writtenNames(c.attrs.value);
+    node = node && body ? { kind: 'binary', op: '+', left: node, right: body } : (body ?? node);
+  }
+  if (!node) return [];
+  const scope = relationScope(model, el);
+  const keyed = keyedNames(model, el, node, scope, instance);
+  return relationVarsOf(node, keyed?.nameToId ?? scope).filter((v) => {
+    const f = model.get(baseIdOf(v));
+    return f !== undefined && !typedAssertNames(model, f);
+  });
 }
 
 /** A string literal in a relation body (a backslash escapes the next character): double-quoted, a single quote opens a NAME. */
@@ -1548,6 +1572,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           // One the solve reads no equation from — an inequality, a conjunction —
           // constrains the instance's variables all the same.
           if (!eq) for (const v of iq?.vars ?? relationReads(model, read, instance)) holdVar(system.held, v, c.id);
+        } else if (isAsserted(c) && typeof c.attrs.expression !== 'string') {
+          // An assert typed by a constraint definition constrains what it gives the parameters ({@link typedAssertReads}).
+          for (const v of relationReads(model, { ...c, ownerId: reader.id }, instance)) holdVar(system.held, v, c.id);
         } else if (isBindingEdge(c)) {
           enqueue(instanceBindingEquation(model, c, holder, reader, instance, memo, system));
         }
@@ -4965,7 +4992,8 @@ export function optimize(
     if (core.unsettled.has(objectiveId)) return Number.POSITIVE_INFINITY;
     const at = determinedValues(core);
     let v = at.get(objectiveId);
-    if (v === undefined || !Number.isFinite(v)) {
+    if ((v === undefined || !Number.isFinite(v)) && !readsContradictedDefinition(model, objectiveId)) {
+      // Not for an objective two asserted equations give two values: the first one written is no value of it.
       const r = evaluateFeatureValue(model, objectiveId);
       v = 'value' in r && typeof r.value === 'number' && Number.isFinite(r.value) ? r.value : undefined;
     }
@@ -5067,6 +5095,9 @@ function objectiveValue(
   if (core.unsettled.has(objectiveId)) return undefined;
   const v = determinedValues(core).get(objectiveId);
   if (v !== undefined && Number.isFinite(v)) return v;
+  // A value two asserted equations give two values has none to read in their place (the first one written is
+  // no value of it, and it turned on the order of the text).
+  if (readsContradictedDefinition(model, objectiveId)) return undefined;
   // Objective not part of the solved system — evaluate its own value directly.
   const r = evaluateFeatureValue(model, objectiveId);
   if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) return r.value;
@@ -6410,7 +6441,9 @@ function heldSentence(model: Model, ids: readonly ElementId[], asserts: readonly
     const node = parseRelationBody(String(el?.attrs.expression ?? ''))?.node;
     const op = node?.kind === 'binary' ? node.op : undefined;
     const shape =
-      op === 'and'
+      typeof el?.attrs.expression !== 'string'
+        ? 'a typed assert'
+        : op === 'and'
         ? 'a conjunction'
         : op === 'or' || op === 'xor'
           ? 'a disjunction'

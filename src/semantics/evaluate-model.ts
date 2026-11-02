@@ -1732,12 +1732,14 @@ function contradictedApart(model: Model, pass: ScalarPass): ReadonlyMap<Contradi
           }
           // A side the readings above do not read (`a * 2.0` over `bind a = K`): the equation judged by the check
           // with the name it defines bound to the other side's reading, as f1f5ca5 judged the later equation
-          // against the first — only where it is read where it is written, the element the check reads it in.
+          // against the first — read where the pair meets: the element that writes it, or the context it is
+          // inherited into (a binding there joins the names it reads, as a row read in that context reads it).
           const site = set.sites[j]!;
           const el = site.equation.constraint;
           const expr = String(el.attrs.expression ?? '');
-          if (site.at !== el.ownerId || contradictedSideReadsAnother(model, set, site)) continue;
-          const judged = judgeConstraint(model, el, expr, pass, new Map([[site.name, boundOfReading(site.feature, a)]]));
+          if (contradictedSideReadsAnother(model, set, site)) continue;
+          const reading: ElementRecord = site.at === el.ownerId ? el : { ...el, ownerId: site.at };
+          const judged = judgeConstraint(model, reading, expr, pass, new Map([[site.name, boundOfReading(site.feature, a)]]));
           if (judged.result !== 'violated') continue;
           shown.set(i, a.shown);
           shown.set(j, `\`${expr.trim()}\` is false where ${site.name} is ${a.display}`);

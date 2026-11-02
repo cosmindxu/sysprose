@@ -1970,10 +1970,13 @@ written with `=` makes give way (a default gives way to a binding in its context
 — W's `bind q.p.load = M` at W's q's p, beside Q's `bind p.load = L`; a
 package's `bind P::load = M` in every P) reads what that binding gives it there.
 Where an asserted end of the same component states a value there too (Q's `L ==
-3.0`, joined to W's q's p's load), a relation over the default there is *could
-not be evaluated*, even where the two values agree, as here: this tool does not
-compare them there, a known gap; the assert itself is checked against M's 3 and
-holds. Where no such binding reaches (Q's own p), the default stands, as against
+3.0`, joined to W's q's p's load), the two are compared exactly: where they are one
+value, as here (3 and 3, in any form that is a number over `+ - * /` and `[unit]`
+literals: `6.0 / 2.0`, `3000.0 [g]` against `3.0 [kg]`), a relation over the load
+there reads that 3, and the assert is checked against it and holds; where they
+differ (M = 4.0), or one is not an exact number (a bare 3.0 against `3.0 [kg]`, a
+side that reads a name), a relation over the default there is *could not be
+evaluated* (*… joins two values the model states …*). Where no such binding reaches (Q's own p), the default stands, as against
 any assertion, and Q's binding is reported; so it does where such a binding
 reaches only another context — a specialisation or another instance that sets
 the bound feature with `=` (`part def Q5 :> Q { attribute :>> L = 7.0; }`, `part
@@ -2015,7 +2018,12 @@ a relation over either is *could not be evaluated* (*L is not read: its
 `default = 1.0` is named by `assert constraint e : Eq` in Q, whose equation this
 tool does not read*). A value written
 with `=` is read as written. Where it holds none (an inequality), the default stands, as
-beside an untyped inequality. An equation that
+beside an untyped inequality; and a feature with no value that such an assert
+constrains (`assert constraint ca : Cd { in x = L; }` over `x >= 0.0 and x <= 100.0`) is
+no design freedom, as one an untyped inequality constrains is not: a lone plain `p.L == 200.0` is
+not imposed over it, and is *unknown* on the numeric surface (*… an assert constrains it in a form
+the numeric solve does not read (ca, a typed assert) …*), where it was "satisfied by construction"
+past the definition's bound. A parameter bound with `bind x = L` is not followed. An equation that
 names a feature by its path, `assert constraint { p.x == 3.0 }` over `part p :
 P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
@@ -2128,7 +2136,9 @@ true with `check` silent. The two are compared exactly: each side that defines
 the feature is read as a number over `+ - * /` and `[unit]` literals, or a
 Boolean, the names it reads read where it is read — a value written (a usage's
 `:>> a = 30.0` in that usage), or what the asserted equations of a name with
-none give, while they agree. So `L == a * 2.0` with `a = 30.0` beside `L ==
+none give, while they agree. An equation inherited into the element where the pair meets is
+read there, so the binding that element writes joins the name it reads (P's `L == a * 2.0`
+beside Q :> P's `L == 50.0`, under Q's `bind a = K` with K = 30.0: the warning). So `L == a * 2.0` with `a = 30.0` beside `L ==
 50.0` is the warning, `L == 50.0 [kg]` and `50000.0 [g] == L` agree, and define
 it, as two equal ones always did, and so do `x == y * 2.0` beside `x == 6.0`
 with `y == 3.0`; `f == true` beside `f == false` is the warning. Two this tool
