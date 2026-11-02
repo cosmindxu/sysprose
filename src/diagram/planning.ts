@@ -61,7 +61,7 @@ function groupIdOf(model: Model, atomic: ElementRecord, config: PlanConfig): Ele
     // The requirement's `subject` feature; group = the type it is typed by.
     const subject = model.children(atomic.id).find((c) => c.attrs.requirementRole === 'subject');
     if (!subject) return undefined;
-    const type = model.typesOf(subject.id)[0];
+    const type = model.typesInBindOrder(subject.id)[0];
     return type?.id;
   }
   // Relationship-based (satisfy / refine / derive / trace): group = the OTHER

@@ -101,7 +101,7 @@ function shapeFromKeyword(raw: string): GeometryShape | undefined {
 
 /**
  * Infer a shape from the element's library-shape typing: walk the specialization
- * chain (bounded) via {@link Model.typesOf} and match the first recognised name.
+ * chain (bounded) via {@link Model.typesInBindOrder} and match the first recognised name.
  */
 function shapeFromTyping(model: Model, el: ElementRecord): GeometryShape | undefined {
   const seen = new Set<ElementId>();
@@ -109,7 +109,7 @@ function shapeFromTyping(model: Model, el: ElementRecord): GeometryShape | undef
   for (let depth = 0; depth < 6 && frontier.length; depth++) {
     const next: ElementRecord[] = [];
     for (const node of frontier) {
-      for (const type of model.typesOf(node.id)) {
+      for (const type of model.typesInBindOrder(node.id)) {
         if (seen.has(type.id)) continue;
         seen.add(type.id);
         const byName = type.declaredName ? shapeFromKeyword(type.declaredName) : undefined;

@@ -749,43 +749,84 @@ const specializationCycle: ValidationRule = {
   run(model) {
     const mk = diagBuilder(this.id, this.severity);
     const out: Diagnostic[] = [];
-    const edges = (id: ElementId): ElementId[] =>
-      model
-        .relationshipsFrom(id)
-        .filter((r) => isSpecialization(r.eClass))
-        .map((r) => r.target?.[0])
-        .filter((t): t is string => t !== undefined && model.has(t));
-    for (const start of model.all()) {
-      if (isLibraryElement(start)) continue;
-      // Iterative DFS following every specialization edge. If an edge returns
-      // to `start`, the element is on a cycle; back-edges to other path
-      // members are cycles owned by those members (reported from their start).
-      const path = new Set<ElementId>([start.id]);
-      const stack: Array<{ id: ElementId; idx: number }> = [{ id: start.id, idx: 0 }];
-      while (stack.length) {
-        const frame = stack[stack.length - 1];
+    const known = new Map<ElementId, ElementId[]>();
+    const edges = (id: ElementId): ElementId[] => {
+      let list = known.get(id);
+      if (list === undefined) {
+        list = model
+          .relationshipsFrom(id)
+          .filter((r) => isSpecialization(r.eClass))
+          .map((r) => r.target?.[0])
+          .filter((t): t is string => t !== undefined && model.has(t));
+        known.set(id, list);
+      }
+      return list;
+    };
+    // The strongly connected components of the specialization graph (Tarjan, iterative), over what the elements
+    // of the user's reach. An element is on a cycle exactly when its component holds another element or it
+    // specializes itself. A walk of every simple path from each element (which this rule once was) is
+    // exponential on a layered diamond or a DAG of subsettings.
+    const index = new Map<ElementId, number>();
+    const low = new Map<ElementId, number>();
+    const component = new Map<ElementId, number>();
+    let components = 0;
+    const open: ElementId[] = [];
+    const onOpen = new Set<ElementId>();
+    for (const root of model.all()) {
+      if (isLibraryElement(root) || index.has(root.id)) continue;
+      const work: Array<{ id: ElementId; idx: number }> = [{ id: root.id, idx: 0 }];
+      index.set(root.id, index.size);
+      low.set(root.id, index.get(root.id)!);
+      open.push(root.id);
+      onOpen.add(root.id);
+      while (work.length) {
+        const frame = work[work.length - 1];
         const next = edges(frame.id);
-        if (frame.idx >= next.length) {
-          stack.pop();
-          path.delete(frame.id);
+        if (frame.idx < next.length) {
+          const t = next[frame.idx++];
+          if (!index.has(t)) {
+            index.set(t, index.size);
+            low.set(t, index.get(t)!);
+            open.push(t);
+            onOpen.add(t);
+            work.push({ id: t, idx: 0 });
+          } else if (onOpen.has(t)) {
+            low.set(frame.id, Math.min(low.get(frame.id)!, index.get(t)!));
+          }
           continue;
         }
-        const t = next[frame.idx++];
-        if (t === start.id) {
-          out.push(
-            mk(
-              frame.id === start.id
-                ? `Element ${label(model, start)} specializes itself.`
-                : `Specialization cycle through ${label(model, start)}.`,
-              start.id,
-            ),
-          );
-          break;
+        work.pop();
+        if (work.length) {
+          const up = work[work.length - 1].id;
+          low.set(up, Math.min(low.get(up)!, low.get(frame.id)!));
         }
-        if (path.has(t)) continue;
-        path.add(t);
-        stack.push({ id: t, idx: 0 });
+        if (low.get(frame.id) !== index.get(frame.id)) continue;
+        const id = components++;
+        for (;;) {
+          const m = open.pop()!;
+          onOpen.delete(m);
+          component.set(m, id);
+          if (m === frame.id) break;
+        }
       }
+    }
+    for (const start of model.all()) {
+      if (isLibraryElement(start)) continue;
+      const mine = component.get(start.id);
+      const next = edges(start.id);
+      // What the walk reported for the first edge that closes a cycle, in the order the element lists its edges: a
+      // self-loop reads "specializes itself" unless an earlier edge leads back to the element through others.
+      const self = next.indexOf(start.id);
+      const back = next.findIndex((t) => t !== start.id && component.get(t) === mine);
+      if (self < 0 && back < 0) continue;
+      out.push(
+        mk(
+          self >= 0 && (back < 0 || self < back)
+            ? `Element ${label(model, start)} specializes itself.`
+            : `Specialization cycle through ${label(model, start)}.`,
+          start.id,
+        ),
+      );
     }
     return out;
   },

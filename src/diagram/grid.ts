@@ -68,7 +68,7 @@ const GRID_COLUMNS: { key: string; label: string }[] = [
 
 /** The types a feature is typed by / specialises, as a display string. */
 function typeCell(model: Model, el: ElementRecord): string {
-  const types = model.typesOf(el.id).map((t) => labelOf(t));
+  const types = model.typesInBindOrder(el.id).map((t) => labelOf(t));
   if (types.length) return types.join(', ');
   // Fall back to the plain `attrs.type` string the factory/parser records.
   return str(el.attrs.type);
