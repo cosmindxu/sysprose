@@ -1559,6 +1559,23 @@ package P {
     }
   }, 60_000);
 
+  it('does not say a foreign-spelled keyword two imports answer to names one of them, in either import order', async () => {
+    const sentences: string[] = [];
+    for (const imports of ['import A::*; import B::*;', 'import B::*; import A::*;']) {
+      const model = await load(`package A { metadata def <precondition> PreA; }
+package B { metadata def <precondition> PreB; }
+package P {
+  ${imports}
+  part def Sys { attribute x : Real = 1.0; }
+  requirement def R { subject s : Sys; #precondition constraint ok { s.x > 0.0 } }
+}`);
+      const row = obligationsOf(model, { fromKeywords: true }).find((o) => o.source === 'keyword');
+      expect(row?.provenance?.note).not.toContain('it names');
+      sentences.push(row!.provenance!.note);
+    }
+    expect(sentences[0]).toBe(sentences[1]);
+  }, 60_000);
+
   it('publishes one info per foreign spelling and one per keyword that names nothing', async () => {
     const model = await load(VOCABULARY);
     const r = contractReport(model, { keywords: true });

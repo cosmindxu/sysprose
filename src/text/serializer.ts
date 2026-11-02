@@ -811,7 +811,7 @@ const UNIT_OPERAND = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+)(?:(?:::|\.)(?:[A-Za-z_]
  * string would produce notation the parser rejects — `[SI::watt hour]` — and
  * a saved model that cannot be read back.
  */
-function unitLexeme(unit: string): string {
+export function unitLexeme(unit: string): string {
   const operands = unit.split(/[*/^]/);
   const bare = operands.every(
     (op) =>

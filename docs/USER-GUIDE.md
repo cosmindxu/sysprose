@@ -4610,7 +4610,7 @@ inventory names both (`verification/keyword-ambiguous`, information) and the key
 is read as no tag, in either order. Write it qualified (`#SysproseVerification::exceptional`)
 or import one package.
 
-Those two `verification/*` rows are **information** and they come from nowhere
+These `verification/*` rows are **information** and they come from nowhere
 but this command — except `verification/foreign-keyword`, which
 `obligations --from-keywords` also raises, once per row a keyword filed.
 `npm run check` does not judge a keyword: a misspelt one costs you nothing but
