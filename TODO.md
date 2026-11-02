@@ -1296,13 +1296,6 @@ tagged `[O1 …]` are what its steps and reviews left open.
       (ids, `hierarchyPath`, atoms, the edge census, what a redefined state or transition means, the
       properties a base carries, the names a report prints), with the witness replay green over
       them. [behaviour-small S1]
-- [ ] **Let the Simulate trace of a composite run on its own step out into its holding machine
-      (optional, low).** Since behaviour-small S1 the Simulate button's trace of a composite run on
-      its own stops at a step that leaves the composite for a state of the machine that holds it (it
-      used to enter that state on top of the composite); the explorer and the holding machine's own
-      run take the same step as an ordinary step (the `exits` row of the semantic profile does not
-      say it, `docs/06` §8.14 does). No corpus, example or v9 model has such a step. Decide whether
-      the Simulate trace should follow the holding machine there. [behaviour-small S1]
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
       groups.** The rule (`src/validation/rules.ts:1118`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
