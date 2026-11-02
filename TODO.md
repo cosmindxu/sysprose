@@ -237,12 +237,13 @@ headings.
       = p1; }`, where both subjects stand for one instance: r1's literal and SMT rows abstain with
       "the numeric surface never gathered this relation" (SAT2). [O9 S1]
 - [ ] **Name an unnamed nested redefinition's context row alike on every surface.** A context that
-      is an unnamed redefinition is named `... in q::«PartUsage»` by the check and numeric surfaces
-      and `... in q::r` / `q::p` by the literal and SMT engines (RF, RF2, RF3, CI1; the new
-      `dt_*_deep` files), and a model like RB5 with a relation on P gets two check rows named `P::c
-      in q1::p` (a specialiser reading and the group's enclosing-assert row), which makes the
-      four-surface harness throw (pre-existing at aac38fd). Every such row abstains or agrees.
-      Low. [O9 S2, review]
+      is an unnamed redefinition is filed by element id (`... in q::«PartUsage»`) on the check and
+      numeric surfaces and by instance path (`q::p`, `q::r`) on the literal and SMT engines (RF,
+      RF2, RF3, CI1, the dt_*_deep files). The four-surface harness therefore keys them as two rows,
+      each abstaining or agreeing, so a unified name needs the check's context rows to carry the
+      instance path (their ids, anchors and the numeric `context.contextId` change) and a re-pin of
+      about 40 table rows. Low. The RB5 duplicate (two check rows `P::c in q1::p`) is fixed in
+      naming-pass S1 (h5-rb5p). [O9 S2, naming-pass S1]
 - [ ] **Close the F section 2.8 rows still open, and the other end of an asserted equation's
       binding.** (1) GA6 `qa` reads T/-/?/- (target T/-/T/-; the numeric surface does not converge
       on that self-contradictory model). GA6 `pa` and GA12 `pa`/`qa` moved from a numeric T to `?`
@@ -747,7 +748,10 @@ true values. What follows is what that branch and the review of it left open; en
       per-instance-rest S3 a binding written in an instance makes its usage a group only where it
       reaches a path the relation reads. What a value the relation reads reads is still matched by
       feature: `m = t.extra * 2.0` beside q2's `bind p.s.extra = E` (BA7) forms an extra group of
-      rows read alike. That costs rows, never a verdict. [O2 S4, per-instance-rest S3]
+      rows read alike. That costs rows, never a verdict. Probe:
+      scratch/naming-pass-scratch/ba7.sysml. Skipped on 2026-11-02 (naming-pass): a safe fix needs
+      path-resolved dependencies through references, bound subjects and derived values, and a wrong
+      exclusion would drop a per-instance reading. [O2 S4, per-instance-rest S3]
 - [ ] **Contain a throw in a relation's own context walk.** A throw in
       DefiningEquations.readingContexts is contained since instance-pass (readingContextsOf: the
       check files one internal row, the obligations lane one refused row, instanceGroups groups none
@@ -911,26 +915,29 @@ true values. What follows is what that branch and the review of it left open; en
       footer-name, double-count, requirement-def specialisation, earlier-build sentence, frame-cap
       and raw-count items are done or were fixed by earlier reviewers
 - [ ] **Fold the per-instance findings of a cause a definition states by a derived value, or beside
-      another read.** S1 folds a violated group row into its lead only when its one read comes from
-      a plain number literal that a definition's usage states, and putting that read back to the
-      relation's own value mends the relation (`breakingRead`, asked once per distinct set of reads,
-      for the first five distinct sets of a group). A row whose value is derived (`L = 2.0 * K`, PB
-      in the PI-2 test), a default, one the line does not mend, one with a unit or `sides`, or a
-      sixth distinct reading in a group keeps its own finding, anchored at the part. Several reads
-      fold too when `breakingRead` names the shared read. Fix: anchor those at the shared member the
-      value comes from, or at the instance's own line that changes it. Probes: R2/R3 in e4-deep-spec
-      for the folded shape. [reporting-residuals S1, review]
+      another read.** naming-pass S1 anchors a violated instance whose one breaking read is a
+      derived value reached through a binding (M7: q2's `:>> K = 25.0` under Q's `L = 2.0 * K`) at
+      the single number-literal member the instance's own elements state of what the value reads,
+      only where no other number it reads is a redefinition outside the instance's own elements (a
+      shared default is fine). With two such members (M7b), or a redefined one stated in a
+      specialised definition (m7j), the finding stays at the part; that is fenced, not open. Still
+      open: (a) a derived value read with no via, as the unit-aware read of PB's `m2 = 10.0 - load`
+      (`breakingRead` abstains on si reads, so the finding stays anchored at the part); (b) folding
+      the instances of a definition that share a derived line (equal inputs) into one finding at
+      that line; (c) a default, a unit or `sides`, and a sixth distinct set, as before. Probes: PB
+      and M7 in test/unit/semantics.evaluate-model.test.ts. [reporting-residuals S1, review,
+      naming-pass S1]
 - [ ] **Name the breaking value in a unit-bearing violated instance.** `breakingRead` leaves
       `breaks` unset (the finding names the first bound read, as before) when any read carries a
       unit, an SI figure or sides, or when no single read, put back to the relation's own context
       value, makes the relation hold (both needed, or the relation is already violated there). It is
       decided on the scalar scope only, and for the first 5 violated rows of a group or 20 contexts.
-- [ ] **Name and anchor a value the instance redefines, which no read carries.** a value the
-      instance's own element redefines is not among the reads, so a finding never names or anchors
-      at it. In redef-breaks2 (q2 has `attribute :>> L = 2.0;` plus `part :>> p { attribute :>>
-      extra = 20.0; }` under `load + extra <= 10.0`) the finding points at `:>> L = 2.0` and names
-      `load = 2`, though putting load back to 1 still misses (1 + 20 > 10) and `extra = 20.0` breaks
-      it. Pinned in the PI-2 S1 test (G5) as the current, honest behaviour.
+- [ ] **Name and anchor a value the instance redefines, which no read carries.** Done for a group
+      row whose instance's own element (`readIn`) redefines a plain number literal that breaks the
+      relation (redef-breaks2 / G5: `extra = 20.0` is named and anchored). Still open: a context row
+      that is no group (no `readIn`); a redefined value that is derived or carries a unit (G5c
+      shape); and a row with no read at all, which a target-by-specialisation finding reports with
+      no instance anchor (probe scratch/naming-pass-scratch/nb12.sysml). [PI-2 S1, naming-pass S1]
 - [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small`
       S4 an edit's recompute yields to the page between its steps (`recomputeSteps`), but three
       tasks stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root
@@ -1234,7 +1241,12 @@ true values. What follows is what that branch and the review of it left open; en
       failed for the revision (see 'Contain a throw in a relation's own context walk.'). (4) A
       relation whose own context walk throws gets no per-instance rows at all; one internal row
       stands for its other contexts (test semantics.evaluate-model.test.ts, 'own context walk';
-      probes instance-pass-scratch/gen221). [instance-pass]
+      probes instance-pass-scratch/gen221). (5) The 193 anchor abstains and the finding stays at the
+      instance's own usage: when a derived value reads a redefinition outside the instance's own
+      elements beside the instance's own input (m7j), or when the instance states two numbers a
+      derived value reads (M7b); also a derived value read with no via (PB), a redefined value that
+      is derived or carries a unit (G5c), a context row that is no group, and a row with no read at
+      all (probes scratch/naming-pass-scratch/pb.sysml, nb12.sysml). [instance-pass, naming-pass]
 - [ ] **Abstentions left (keywords and metadata annotations) (rollup; sound, only weaker).** (1) A
       bare-keyword ambiguity is asked in the nearest scope with imports only, a qualified
       `#Pkg::name` is never asked, and an alias or inherited member is not enumerated
