@@ -2368,6 +2368,7 @@ run-to-completion the machine never comes to rest. `reach` now says so, as
   property refused before any walk 0 → 290 → 290 ms — that last is the walk the
   rows need, which no property took. `reach` on the same machine is about 240 ms
   at `5943654` and about 290 ms on this branch, the livelock pass's own cost.
+  The cost is accepted (§8.16).
   A WITHHELD row is filed there too, since `reporting-residuals` S3, as
   `verification/completion-livelock-withheld` (info, after the published rows,
   one per cycle of states, in the words of `reach`'s `withheld` line); `reach`

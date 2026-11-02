@@ -502,7 +502,7 @@ describe('SimulationSession — a step into the machine itself is not taken (doc
 
   it('on a parallel machine every region that refused is named, and the run stops when all of them have', () => {
     // Three regions, each `p -go-> Par` (the machine itself) except where noted.
-    const build = (refusing: number, regions: number) => {
+    const build = (refusing: number, regions: number, hier = false) => {
       const m = new Model();
       const f = new ModelFactory(m);
       const par = f.stateDef('Par');
@@ -512,48 +512,54 @@ describe('SimulationSession — a step into the machine itself is not taken (doc
         const r = f.state(`R${i}`, par.id);
         const p = f.state(`p${i}`, r.id);
         const q = f.state(`q${i}`, r.id);
+        // A nested composite under `q` sends the run down the hierarchical path.
+        if (hier) f.state(`c${i}`, f.state(`C${i}`, q.id).id);
         if (i < refusing) into.push(f.transition(p.id, par.id, { ownerId: r.id, trigger: 'go' }).id);
         else f.transition(p.id, q.id, { ownerId: r.id, trigger: 'go' });
       }
       return { m, par, into };
     };
 
-    // Two of three refused: both are listed, the third runs on, Play goes on.
-    {
-      const { m, par, into } = build(2, 3);
-      const run = runStateMachine(m, par.id, ['go']);
-      expect(run.refusals?.map((r) => r.transitionId)).toEqual(into);
-      expect(run.refused?.transitionId).toBe(into[0]);
-      expect(run.regionCount).toBe(3);
-      expect(refusalStopsRun(m, par.id, run)).toBe(false);
-      const sample = new SimulationSession(m, par.id).inject('go');
-      expect(sample.refused?.stopsRun).toBe(false);
-      expect(sample.refused?.others?.map((o) => o.id)).toEqual([into[1]]);
-      expect(sample.refused?.sentence).toContain('remaining regions, each run on its own over the whole script, run on');
-      expect(simulationAtRest(sample)).toBe(false);
-    }
-
-    // All three refused: the sentence no longer says the others run on, the run
-    // stops, and Play stops with it.
-    {
-      const { m, par, into } = build(3, 3);
-      const run = runStateMachine(m, par.id, ['go']);
-      expect(run.refusals?.map((r) => r.transitionId)).toEqual(into);
-      expect(refusalStopsRun(m, par.id, run)).toBe(true);
-      const sample = new SimulationSession(m, par.id).inject('go');
-      expect(sample.refused?.stopsRun).toBe(true);
-      expect(sample.refused?.others?.map((o) => o.id)).toEqual(into.slice(1));
-      for (const sentence of [sample.refused!.sentence, ...sample.refused!.others!.map((o) => o.sentence)]) {
-        expect(sentence).toContain('so the run stops');
-        expect(sentence).not.toContain('run on');
+    // The flat and the hierarchical run aggregate the regions alike.
+    for (const hier of [false, true]) {
+      // Two of three refused: both are listed, the third runs on, Play goes on.
+      {
+        const { m, par, into } = build(2, 3, hier);
+        const run = runStateMachine(m, par.id, ['go']);
+        expect(run.refusals?.map((r) => r.transitionId)).toEqual(into);
+        expect(run.refused?.transitionId).toBe(into[0]);
+        expect(run.regionCount).toBe(3);
+        expect(run.clock !== undefined).toBe(hier);
+        expect(refusalStopsRun(m, par.id, run)).toBe(false);
+        const sample = new SimulationSession(m, par.id).inject('go');
+        expect(sample.refused?.stopsRun).toBe(false);
+        expect(sample.refused?.others?.map((o) => o.id)).toEqual([into[1]]);
+        expect(sample.refused?.sentence).toContain('remaining regions, each run on its own over the whole script, run on');
+        expect(simulationAtRest(sample)).toBe(false);
       }
-      expect(simulationAtRest(sample)).toBe(true);
-      // The Simulate trace prints every region's stop. `executionReport` runs
-      // an element that owns a transition, so give the machine one of its own.
-      const [r0, r1] = m.children(par.id).filter((c) => c.eClass === 'StateUsage');
-      new ModelFactory(m).transition(m.children(r0!.id)[1]!.id, m.children(r1!.id)[1]!.id, { ownerId: par.id, trigger: 'go' });
-      const trace = executionReport(m).stateMachines.find((r) => r.stateMachine.id === par.id)!;
-      expect(trace.refused?.others?.map((o) => o.transitionId)).toEqual(into.slice(1));
+
+      // All three refused: the sentence no longer says the others run on, the run
+      // stops, and Play stops with it.
+      {
+        const { m, par, into } = build(3, 3, hier);
+        const run = runStateMachine(m, par.id, ['go']);
+        expect(run.refusals?.map((r) => r.transitionId)).toEqual(into);
+        expect(refusalStopsRun(m, par.id, run)).toBe(true);
+        const sample = new SimulationSession(m, par.id).inject('go');
+        expect(sample.refused?.stopsRun).toBe(true);
+        expect(sample.refused?.others?.map((o) => o.id)).toEqual(into.slice(1));
+        for (const sentence of [sample.refused!.sentence, ...sample.refused!.others!.map((o) => o.sentence)]) {
+          expect(sentence).toContain('so the run stops');
+          expect(sentence).not.toContain('run on');
+        }
+        expect(simulationAtRest(sample)).toBe(true);
+        // The Simulate trace prints every region's stop. `executionReport` runs
+        // an element that owns a transition, so give the machine one of its own.
+        const [r0, r1] = m.children(par.id).filter((c) => c.eClass === 'StateUsage');
+        new ModelFactory(m).transition(m.children(r0!.id)[1]!.id, m.children(r1!.id)[1]!.id, { ownerId: par.id, trigger: 'go' });
+        const trace = executionReport(m).stateMachines.find((r) => r.stateMachine.id === par.id)!;
+        expect(trace.refused?.others?.map((o) => o.transitionId)).toEqual(into.slice(1));
+      }
     }
 
     // A parallel machine with one region is the whole run: it stops there.
