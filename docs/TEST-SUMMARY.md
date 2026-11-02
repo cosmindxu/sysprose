@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5408 total — 5408 passed, 0 failed, 0 skipped
+- **Tests:** 5415 total — 5415 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -118,7 +118,7 @@
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
-| test/unit/semantics.expr.test.ts | 14 | 0 | 0 |
+| test/unit/semantics.expr.test.ts | 17 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 46 | 0 | 0 |
@@ -133,7 +133,7 @@
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
-| test/unit/semantics.relations.test.ts | 17 | 0 | 0 |
+| test/unit/semantics.relations.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.smt-encode.test.ts | 105 | 0 | 0 |
@@ -141,12 +141,12 @@
 | test/unit/semantics.solver-units.test.ts | 133 | 0 | 0 |
 | test/unit/semantics.solver.test.ts | 81 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
-| test/unit/semantics.units-eval.test.ts | 43 | 0 | 0 |
+| test/unit/semantics.units-eval.test.ts | 44 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 31 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 346 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 347 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 53 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
