@@ -57,7 +57,7 @@ The class has a name. Handbook of Model Checking ch 2 §2.3.2, Fig. 4, **book p.
 
 **Engine.** In-process TypeScript. The product BFS already carries `ProductNode.parent` (`patterns.ts`:805) and reconstructs the shortest path with `traceOf` (:1008); only the acceptance predicate flips. No solver.
 
-**Verdict vocabulary.** MAY say: `covered — witness trace of 3 step(s), a run this semantics admits`; `not covered under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet …}`; `inconclusive: bound exhausted — the not-covered claim is not made`.
+**Verdict vocabulary.** MAY say: `covered — witness trace of 3 step(s), a run this semantics admits`; `not covered under {maxConfigs 10000, maxDepth 200 events, maxCompletion 64, alphabet …}`; `inconclusive: bound exhausted — the not-covered claim is not made`.
 
 **MUST NEVER say:** "reachable" unqualified when the witness consumed a trigger. The walk offers every trigger in the alphabet wherever it can decide that the interpreter takes its next event — where no completion transition is due, or where the chase budget is spent with one still due (`docs/06` §8.5, §8.7) — so a cover witness is a claim about a *maximally cooperative environment* and the line must carry that sentence. Never "not covered" on a non-exhaustive walk — that is an absence claim and must be suppressed exactly as the unreachable list is. Never "verified". And it must not default to exit 1: a missing behaviour is not a violated requirement. Exit 2 with `verification/not-covered`, plus an opt-in `--cover-required` for teams that want it red.
 

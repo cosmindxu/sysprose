@@ -10771,9 +10771,23 @@ function abstentionSentence(
     );
   }
   if (kind === 'defaults-differ') {
+    // Each member that reads a `default` says it ("p.load (default 7.0), L (default 5.0)"), so the author sees
+    // which values differ without opening both ends; a member that states none stays its path.
+    const reading = bindingEnds(model).readings.get(root);
+    const rootEl = model.get(root);
+    const spelled = members.map((path) => {
+      const r = reading?.get(path);
+      const f = r ? model.get(r.feature) : undefined;
+      const v = f && rootEl ? endValue(model, f, rootEl, path) : undefined;
+      if (v?.kind !== 'default') return path;
+      const g = v.source;
+      const text = typeof g.attrs.valueText === 'string' ? g.attrs.valueText : String(g.attrs.value).trim();
+      const unit = typeof g.attrs.unit === 'string' && g.attrs.unit !== '' ? ` [${g.attrs.unit}]` : '';
+      return `${path} (default ${text}${unit})`;
+    });
     return (
       `${name} has no value in ${instance}: ${bind}${of} joins defaults that differ or are not constants ` +
-      `(${members.join(', ')}), and the model states neither`
+      `(${spelled.join(', ')}), and the model states neither`
     );
   }
   return `${name} has no value in ${instance}: ${bind}${of} joins it to ${members.join(', ')}, and none of them states one`;

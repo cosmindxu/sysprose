@@ -1402,6 +1402,12 @@ export interface SpecialisationInstance {
    */
   message: string;
   /**
+   * On a violated `assert` row whose `default` stood: why it did, and how to write the value instead
+   * ({@link standingDefaultSentence}). Already in {@link message}; kept apart so the numeric surface's
+   * row says it beside the relation's own reason.
+   */
+  standing?: string;
+  /**
    * For a reading in a context that specialises the constraint's owner
    * ({@link readInContexts}): the pipeline's own sentence — what a check of the
    * constraint in that context says (`Constraint violated: …`, `Could not
@@ -1558,7 +1564,7 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
           ? { result: 'unknown', message: `Could not evaluate: ${shared}`, gap: false }
           : judgeConstraint(model, el, expr, pass);
     // A violated `assert` over a `default` says why the default stood, and how to write the value it meant to give.
-    const standing = judged.result === 'violated' ? standingDefaultSentence(model, el) : undefined;
+    const standing = judged.result === 'violated' ? standingFor(model, el) : undefined;
     const check: ConstraintCheck = {
       id: el.id,
       ownerId: el.ownerId,
@@ -2781,13 +2787,7 @@ function readInContexts(
           : instanceAnchor(model, pass.definitions, readAs, several ? [broke.path] : names, several ? [broke] : judged.reads, undefined, x.id)?.id;
     // A violated `assert` says why a `default` stood at this instance, read as the instance reads its names (the
     // context is the owner): q's `:>> L = 50.0` is no default, and P's `load default = 1.0` is the one that stood.
-    // Only wording, so a failure of it never costs the row (A.2.9).
-    let kept: string | undefined;
-    try {
-      kept = judged.result === 'violated' ? standingDefaultSentence(model, reading) : undefined;
-    } catch {
-      kept = undefined;
-    }
+    const kept = judged.result === 'violated' ? standingFor(model, reading) : undefined;
     const said = instanceMessage(model, judged, shown, contextName, target, expr, scope);
     instances.push({
       contextId: x.id,
@@ -2799,6 +2799,7 @@ function readInContexts(
       result: judged.result,
       message: kept !== undefined ? `${said} — ${kept}` : said,
       detail: judged.message,
+      ...(kept !== undefined ? { standing: kept } : {}),
       ...(readAs !== undefined ? { via: true as const, readAs } : {}),
       ...(anchor !== undefined ? { anchorId: anchor } : {}),
       ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
@@ -4844,6 +4845,18 @@ function readThroughSpecialisers(
     instances.push(instance);
   }
   if (instances.length > 0) check.instances = instances;
+}
+
+/**
+ * {@link standingDefaultSentence} of the relation `reading`, contained: the sentence is wording, so a failure of it
+ * never costs the row it is for (A.2.9).
+ */
+function standingFor(model: Model, reading: ElementRecord): string | undefined {
+  try {
+    return standingDefaultSentence(model, reading);
+  } catch {
+    return undefined;
+  }
 }
 
 /** An element's path from the package that holds it, effective names (`q2::p` for q2's `part :>> p`). */

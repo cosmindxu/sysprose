@@ -2644,6 +2644,26 @@ describe('a design freedom no relation fixes is never judged at the solver’s p
     expect(byName(p5).get('lim')).toBe('violated');
   });
 
+  it('names an unnamed redefinition by the name it redefines in the numeric sentences, not by its element id', () => {
+    // `attribute :>> x;` has no declared name of its own: the sentences that list the features a relation
+    // reads printed its element id ("fixes 12ac9de4-…", "did not converge: f4bded69-… is where it stopped").
+    const imposed = rows(
+      parse(`package U1 { part def P { attribute L : ScalarValues::Real; }
+        part p : P { attribute :>> L; constraint t1 { L == 1.0 } } }`),
+    );
+    expect(imposed.get('t1')!.reason).toMatch(/^imposed by the solve: no value the model states fixes L, so/);
+    const stopped = rows(
+      parse(`package U2 { part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; }
+        part p : P { attribute :>> x; attribute :>> y;
+          constraint c1 { x / (1.0 + x * x) == 0.4 + y } constraint c2 { y == 0.001 * x - 0.001 * x }
+          constraint c3 { x >= 0.0 } } }`),
+    );
+    expect(stopped.get('c1')!.reason).toMatch(/^the solve did not converge: x and y are where it stopped/);
+    for (const r of [imposed, stopped]) {
+      for (const [name, row] of r) expect(row.reason ?? '', name).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+    }
+  });
+
   it('labels a PLAIN constraint the solve took as a design equation imposed by the solve', () => {
     const p5 = parse(`package P5 {
     attribute a;

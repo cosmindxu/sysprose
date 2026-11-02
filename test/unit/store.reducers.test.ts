@@ -3939,7 +3939,7 @@ describe('google drive — the boot, and opening a file’s text', () => {
     });
 
     it('gives the text and the results a task each once its task has run 10 ms, though under 40', () => {
-      vi.mocked(performance.now).mockImplementation(() => (clock += 1)); // 27 rules: 27 ms
+      vi.mocked(performance.now).mockImplementation(() => (clock += 1)); // 28 rules: 28 ms
       const write = textApi.serializeUserModelSignals;
       vi.spyOn(textApi, 'serializeUserModelSignals').mockImplementation((...args) => {
         clock += 20; // the text: 20 ms

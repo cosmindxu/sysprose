@@ -2645,6 +2645,8 @@ export interface BoundsReport {
   toolAbsent: boolean;
   /** The feature the run is about, or `null` when no relation reads it. */
   measure: MeasureRef | null;
+  /** The measure as asked (`w.p2.load`), set only on a run refused for a value an instance may read otherwise. */
+  asked?: string;
   bounds: Bound[];
   withRequirements: boolean;
   /** The feature values released, sorted. */
@@ -2832,6 +2834,7 @@ export async function boundsReport(
   return {
     toolAbsent: false,
     measure: result.measure,
+    ...(result.asked !== undefined ? { asked: result.asked } : {}),
     bounds: result.bounds,
     withRequirements: result.withRequirements,
     released: result.released,
@@ -2880,7 +2883,7 @@ function boundsExitCode(result: BoundsResult): 0 | 1 | 2 {
  */
 function boundsFindings(result: BoundsResult): Finding[] {
   const out: Finding[] = [];
-  const name = result.measure?.qualifiedName ?? '';
+  const name = result.asked ?? result.measure?.qualifiedName ?? '';
   for (const bound of result.bounds) {
     if (bound.code === null) continue;
     out.push({

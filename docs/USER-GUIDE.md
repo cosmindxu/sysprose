@@ -725,7 +725,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (27 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (28 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -2274,7 +2274,7 @@ or `assume` clause, so there is nothing to encode — its asserted `s.L == 50.0`
 (…::R::ca) is a fact of the model …*). The definition itself, and a requirement
 whose own body is only such an assert, file no requirement row at all: the
 assert is an axiom and nothing more, and `contracts` lists each of them as *no
-formal clause: prose only*. A relation over the value the assert contradicts is
+formal clause*, saying its asserted body is a fact of the model and not prose. A relation over the value the assert contradicts is
 decided by neither engine of `verify` (see *A `default` stands against every
 assertion*, above). `discharged` and `stale` are read back from an evidence record, so
 nothing is ever discharged here today.
@@ -2473,6 +2473,9 @@ there was at least one to discharge**, **1** at least one obligation
 obligation at all, or **any** inconclusive. On a degraded model the text report
 still prints its verdict lines, so it opens with a `degraded` line: they were
 read over what parsed, and none of them is a verdict on the model.
+`evidence-status` judges nothing, but its stale/current/overstated lines read the
+same way, so over a degraded load it opens with a `degraded` line of its own
+(its exit stays 1, the reporting contract's).
 
 The summary line leads with the **inconclusive** count, on purpose: it is the
 figure that decides the exit code, and a line that opened with the green number
@@ -3648,7 +3651,7 @@ $ npm run sysprose -- reach examples/uav-isr.sysml
 examples/uav-isr.sysml: 1 state machine(s), 1 walked to exhaustion; 4 configuration(s) explored
   a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
   UAVSurveillanceSystem::FlightModes [StateDefinition]
-    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
+    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200 events, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
     4 of 4 state(s) reachable; 5 of 5 transition(s) fired, 0 dead
     livelock     {manual, autonomous} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
     choice       UAVSurveillanceSystem::FlightModes::autonomous: 2 enabled as completion transitions (no trigger); the simulator takes autonomous -> manual, never autonomous -> failsafe
@@ -3766,14 +3769,14 @@ $ npm run sysprose -- reach examples/uav-isr.sysml --max-configs 2
     partial under {maxConfigs 2, …} — the configuration bound was reached; the unreachable and dead lists are lower bounds and are NOT reported as findings
 ```
 
-**The depth bound counts events, not steps.** `maxDepth 200` bounds the events
+**The depth bound counts events, not steps.** `maxDepth 200 events` bounds the events
 a run takes from the opening. The trigger-less steps of the chase after each
 event are not counted: the 64-step chase budget bounds those already. So four
 trigger-less cycles stacked one behind another, each left on an event, are
 walked to the end, though the fourth event's target is 260 steps out. The
 `depth` printed beside the configurations still counts every step, so it can be
 larger than the `maxDepth` printed in the bounds (`depth 260` beside `maxDepth
-200` there). Until 2026-10-21 the bound counted steps, and that machine stopped
+200 events` there). Until 2026-10-21 the bound counted steps, and that machine stopped
 at depth 200 with every list withheld. No flag raises the depth bound.
 
 A `check-behaviour` search can also come back short with no bound hit at all:
@@ -3936,7 +3939,7 @@ $ npm run sysprose -- reach test/fixtures/verification/models/trap-probe.sysml
 test/fixtures/verification/models/trap-probe.sysml: 1 state machine(s), 1 walked to exhaustion; 5 configuration(s) explored
   a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
   TrapProbe::Probe::Modes [StateDefinition]
-    5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
+    5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200 events, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
     5 of 5 state(s) reachable; 6 of 6 transition(s) fired, 0 dead
     trap         {failsafe, failsafeHold} — 2 configuration(s) nothing leaves; entered in 3 step(s) from standby
     livelock     {alpha, beta} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby
@@ -4240,7 +4243,7 @@ examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pas
     fail — witness trace of 3 step(s) …
     verification/refuted
     every run? potential — some run avoids it: the cycle manual → autonomous → manual never enters `failsafe` — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces
-    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} …
+    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200 events, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} …
     witness — a run this semantics admits:
        0  start → UAVSurveillanceSystem::FlightModes::standby
        1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual
@@ -4297,7 +4300,7 @@ model.sysml: CoverProbe::Reachable::Modes — 1 property: 0 pass, 0 fail, 0 vacu
   COVERED      `state failsafe` holds on some run, over the whole run
     from --pattern
     covered — witness trace of 2 step(s), a run this semantics admits: `state failsafe` holds on some run, over the whole run — the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes `abort` is a claim about that environment and not about one that withholds it
-    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space
+    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200 events, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge} — the count beside it is the product states seen up to the witness, not the size of the product space
     witness — a run this semantics admits:
        0  start → CoverProbe::Reachable::Modes::idle
        1  completion idle -> armed → CoverProbe::Reachable::Modes::armed
@@ -4374,7 +4377,7 @@ test/fixtures/verification/models/trap-probe.sysml: TrapProbe::Probe::Modes — 
     from --pattern
     not recoverable: 4 configuration(s) cannot reach `state standby`: {alpha, beta, failsafe, failsafeHold}; the nearest is entered in 1 step(s) from `standby`. Of these, 2 form a set nothing leaves — `reach` reports them as `verification/unrecoverable-mode`.
     verification/refuted
-    5 configuration(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
+    5 configuration(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200 events, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is undecided and takes no edge}
   semantic profile (the reading every verdict above holds under):
     ...
   error verification/refuted  `TrapProbe::Probe::Modes`: `state standby` is reachable from every reachable configuration, over the whole run — not recoverable: 4 configuration(s) cannot reach `state standby`: …
@@ -4967,7 +4970,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:562-579`, `996-1021` (the two rules that ask),
+`src/validation/rules.ts:562-579`, `1014-1039` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

@@ -231,12 +231,12 @@ async function run(args: string[], env?: Record<string, string>): Promise<Run> {
     // THE PROGRAM'S OWN ENDING, reproduced rather than improved on. `runMain`
     // (scripts/lib/exit.ts) turns a rejection into `sysprose: internal error:`
     // plus the stack on stderr and exit 2, and a case that asserts what the
-    // command does with a bad argument has to see what the command does — one
-    // refusal reaches a reader down exactly this path today (`bounds --measure`
-    // naming nothing throws `VerifyOptionError` past `main`, so its message is
-    // delivered under an internal-error banner with a stack; the L7 case that
-    // asserts the message and exit 2 passes either way, which is how it stayed
-    // unnoticed while these cases were spawned). The one thing that is NOT the
+    // command does with a bad argument has to see what the command does — a
+    // refusal that throws past `main` is delivered under an internal-error
+    // banner with a stack (`bounds --measure` naming nothing did, until
+    // `reportBounds` mapped `VerifyOptionError` to a `UsageError`; a case that
+    // asserts only the message and exit 2 passes either way, so the bounds case
+    // also asserts the banner is absent). The one thing that is NOT the
     // same both ways is the stack's own text — file paths and line numbers
     // differ under vitest's transform — so no bridge row below takes this path.
     process.stderr.write(
@@ -1817,7 +1817,21 @@ describe('L7 — sysprose reporting command', () => {
 }
 `,
     );
+    const asserted = join(dir, 'asserted.sysml');
+    writeFileSync(
+      asserted,
+      `package A {
+    part def P { attribute L : Real = 50.0; }
+    part x : P;
+    requirement r { subject s : P = x; assert constraint ca { s.L == 50.0 } }
+}
+`,
+    );
     try {
+      // A requirement whose only body is an assert is not prose: the row names the assert it carries.
+      const a = await run(['contracts', asserted]);
+      expect(a.stdout).toContain('no formal clause: its asserted `s.L == 50.0` is a fact of the model, an axiom the check judges');
+      expect(a.stdout).not.toContain('prose only');
       const r = await run(['contracts', file]);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain('no clause of its own: the clauses are on its definition P::MassLimit');
@@ -2820,6 +2834,14 @@ package P {
       const stats = await run(['stats', broken]);
       expect(stats.code).toBe(1);
       expect(stats.stdout).not.toMatch(/^degraded/);
+      // `evidence-status` judges nothing but prints a status per row, so it opens with the
+      // same fact on a degraded load (exit unchanged), and a clean load carries no such line.
+      const status = await run(['evidence-status', broken]);
+      expect(status.code).toBe(1);
+      expect(status.stdout.split('\n')[0]).toMatch(
+        /^degraded — .*broken\.sysml did not load cleanly \(\d+ error\(s\), \d+ warning\(s\)\); the statuses below are over what parsed/,
+      );
+      expect((await run(['evidence-status', broken, '--json'])).stdout).toContain('"degraded"');
       const asJson = await run(['verify', broken, '--engine', 'literal', '--json']);
       expect(JSON.parse(asJson.stdout).degraded).toBeTruthy();
     } finally {
@@ -3328,6 +3350,9 @@ package P {
     const missing = await run(['bounds', uav, '--measure', 'uav.nosuchthing']);
     expect(missing.code).toBe(2);
     expect(missing.stderr).toContain('--measure names nothing in this model');
+    expect(missing.stderr, 'a mistyped --measure reached the internal-error banner').not.toContain(
+      'internal error',
+    );
 
     // ITS `--help` PUBLISHES ITS OWN CONTRACT, and that contract has no exit 1:
     // this subcommand reports what the axioms admit and judges nothing. Spawned,
@@ -4580,7 +4605,7 @@ package P {
     expect(r.stdout).toContain('FlightModes');
     expect(r.stdout).toContain('4 of 4 state(s) reachable');
     expect(r.stdout).toContain('0 dead');
-    expect(r.stdout).toContain('exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64');
+    expect(r.stdout).toContain('exhaustive under {maxConfigs 10000, maxDepth 200 events, maxCompletion 64');
     expect(r.stdout).toContain('verification/nondeterministic-choice');
     expect(r.stdout).toContain('the simulator takes');
     // The machine is trigger-less, so the report may not print a trigger label

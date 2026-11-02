@@ -1798,7 +1798,7 @@ const initialServer = new SysmlApiServer(initialModel);
 /** The sample's text: the Text view's first contents, and the text the session starts saved at. */
 const initialText = textView(initialModel, '');
 
-// Coalesce the per-mutation RECOMPUTE — validation (27 rules), textual
+// Coalesce the per-mutation RECOMPUTE — validation (28 rules), textual
 // re-serialization, and the ELK diagram rebuild — into a single pass after a
 // burst of edits settles, instead of running all three synchronously on every
 // edit (findings C4, C5, L6 — the dominant large-model cost). `rev` is bumped
