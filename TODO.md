@@ -1169,17 +1169,25 @@ true values. What follows is what that branch and the review of it left open; en
       Not generated: a unit on k, a bound end three or more redefinitions deep, a `calc` body read.
       [fence-seed]
 
-- [ ] **Read a single-quoted name in an expression as a reference, not a string (wrong answer on the
-      check lane; abstention elsewhere; genericity).** `attribute 'max load' = 25.0;
-      constraint c { 'max load' <= 10.0 }` reads ?/U/?/U where the same model with `maxload` reads
-      F/F/F/F; `attribute 'ref'; assert constraint { 'ref' == a * b }` (satisfiable: d free, the bare
-      spelling reads T) reads F on the check lane with a `constraint-violation` warning, because the
-      expression lexer takes a single-quoted unrestricted name for a string literal ("String literals
-      are not unit-aware expressions") and compares it with the number. SysML v2 spells names with
-      spaces or keyword-like words this way, so every constraint over such a feature is unjudged and
-      some are judged wrongly. Declarations and paths outside expressions already accept quoted
-      names. Probes: genericity/verify/q1.sysml, q1b.sysml, q2.sysml, q2b.sysml (scratchpad). Found
-      by the rename audit of 2026-11-02 (rename-kw experiment). [genericity audit]
+- [ ] **Abstentions left in quoted names in expressions (rollup; sound, only weaker).** A quoted name
+      is now a name reference on every lane and in the edit path; a feature whose declared name
+      holds a dot is no longer registered under its dotted key. Left: (a) a quoted name that itself
+      holds `.` or `:` is refused and every surface abstains (probe fix-quoted-scratch/dot.sysml);
+      (b) `bareTie` (defining-equation.ts ~6861) and `NAME_TOKEN` (src/api/property.ts ~532) read
+      plain identifiers only, so a quoted tie `'K x' == 'L x'` counts as a taint source (more
+      abstention), and property.ts ~491 drafts a skeleton clause with the unquoted name
+      (`max load >= 5`), which does not parse (probe rv/d1.sysml); (c) a check-behaviour atom
+      `p=state 'deg A'` is answered INCONCLUSIVE "not read" where `state deg A` works (probe
+      rv/bh/s1.sysml); (d) on the unit-aware path the info message for a refused quoted name starts
+      with "a call, an index or a string literal" and gives the real cause only after a semicolon;
+      (e) a `//` comment holding an apostrophe inside an expression now reads "Unterminated quoted
+      name at N" where it read "Unterminated string literal" (both unknown; probe rv/cm.sysml);
+      (f) `bounds --measure` and `--free` take the printed unquoted qualified name but not a
+      spelling with quote marks (probe fix-quoted-scratch/bnd.mts); (g) a `::`-qualified reference
+      inside an expression is unread, quoted or bare; (h) the default `bounds` measure and the
+      instance labels follow name order, so a bare and a quoted-renamed model differ there (7
+      corpus models); about 407 of the 637 corpus models were not run through the quoted-rename
+      harness (fix-quoted-scratch/mm). [fix-quoted]
 
 - [ ] **Abstentions left under the genericity audit of 2026-11-02 (rollup; sound, only weaker).**
       Metamorphic audit over the 637-model corpus (rename: 636 transformed; reorder: 634; wrap and
