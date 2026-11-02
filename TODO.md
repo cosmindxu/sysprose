@@ -42,14 +42,17 @@ maintainer says `awaits user decision U<n>` and names the question.
       the assert, yet k2 is X). The numeric surface says 'the solve did not converge' for the paired
       equations instead of naming the contradiction. All sound, none false. [contradictory-models
       S1, S3, review]
-- [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.** A
-      requirement def with an assert-only body (R1::R), and a requirement usage that writes its own
-      assert (requirement r { subject s : P = x; assert constraint ca { s.L == 50.0 } }), file no
-      requirement row on obligations or verify. obligations.ts adds the owner to withClause, and the
-      no-formal-clause sweep skips it. contracts' emptyClauseLine (scripts/sysprose.ts:1322-1324)
-      prints 'no formal clause: prose only, nothing to encode' for R1::R, R1::r and RU::r.
-      noFormalClauseDetail already names the asserts. When this closes, re-word the USER-GUIDE
-      status-column paragraph to match.
+- [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.**
+      contracts no longer says "prose only" for R1::R, R1::r and RU::r: it names the asserted body
+      as a fact of the model, not a clause (wording-pass S1; USER-GUIDE status-column paragraph
+      reworded). R1::r already files a no-formal-clause row on obligations and verify, with a
+      sentence naming the assert. Still open: the definition R1::R and a requirement usage whose
+      only body is its own assert (RU::r: `requirement r { subject s : P = x; assert constraint ca {
+      s.L == 50.0 } }`) file no requirement row, because obligations.ts adds the asserting owner to
+      withClause (:619/:655). Filing one makes `verify` exit 2 where a model whose other obligations
+      all discharge exits 0 today, and the origin is marked UNCLEAR: it is a policy decision (is an
+      assert-only requirement a requirement with no formal clause, like a prose-only one?), so it
+      awaits the maintainer. [wording-pass S1]
 - [ ] **Narrow the abstention over two disagreeing asserted equations (optional).**
       contradicted-value S2 leaves undecided every reading of the feature, in every instance, and
       every value an asserted relation reads beside it (`contradictedTaint` taints by feature): one
@@ -68,33 +71,11 @@ maintainer says `awaits user decision U<n>` and names the question.
       p2 : P;` p2.L, which only P's equation defines, reads ?
       (review-2026-10-14/wave3-probes/contradictory-models/c6-use.sysml). The same holds for a pair
       filed at P beside the larger set at a specialisation P2 (G2). [contradictory-models S3]
-- [ ] **Read apart an undecided asserted-equation pair whose side is read in another element than
-      the one that writes it.** contradictedApart (src/semantics/evaluate-model.ts) judges a side
-      the unit-aware and scalar readings do not read (for example one over a bound name) only where
-      the equation is read in the element that writes it (site.at === owner). Otherwise the pair
-      stays info and `--strict` passes. A side over a value another pair leaves undecided also reads
-      nothing, by design. No probe was written for the first case.
-- [ ] **Give the own-sibling finding its own validation rule.** The Problems panel
-      (`src/ui/panels/BottomPanel.tsx:221`) labels the row `redefinition-conformance` while the CLI
-      prints `validation/redefinition-own-sibling`, and `excludeRuleIds:
-      ['redefinition-conformance']` also drops it. Add the rule `redefinition-own-sibling` so ruleId
-      and code match, and update the pinned rule counts in the same commit: docs/FEATURE-PARITY.md
-      lines 80 and 134 (27 to 28), docs/UI-ROADMAP.md, docs/USER-GUIDE.md near :703,
-      docs/architecture/05-data-flow.md and 06-sequence-diagrams.md, the `src/ui/store.ts` RECOMPUTE
-      comment, the rule count in docs/AGENT-AUTHORING-CAMPAIGN.md, and the pins in
-      validation.rules.test.ts and docs-counts. Optional, with it: raise the finding from warning to
-      error, as `validation/duplicate-name` is (a warning exits 0 and mbse-workflow never routes it
-      to repair; the corpus and v9 have 0 hits). [small-wording S1]
-- [ ] **`bounds`: map `VerifyOptionError` to a usage refusal.** `bounds --measure <name that
-      resolves to nothing>` prints `sysprose: internal error: VerifyOptionError ...` with four stack
-      frames (exit 2, also on a clean model); `verify` maps it to a `UsageError`
-      (`scripts/sysprose.ts`, near `reportVerify`'s mapping). Map it the same way and assert
-      `not.toContain("internal error")` in the existing `--measure` test in
-      `test/campaign/cli.sysprose.test.ts`. [small-wording S3, review]
-- [ ] **Mark a degraded load in the non-judging subcommands that print verdict-like lines
-      (optional).** `evidence-status` and its kind print such lines on a degraded load and get no
-      `degraded` header; small-wording S3 covered only the judging report's `pass` lines.
-      [small-wording S3]
+- [ ] **Give the own-sibling finding its own validation rule.** Residual: raise
+      `validation/redefinition-own-sibling` from warning to error? (Policy: a warning exits 0 and
+      mbse-workflow never routes it to repair; the corpus and v9 have 0 hits.) The rule itself
+      exists since wording-pass S1. Probe: `package P { part def B { attribute mass default = 1.2;
+      attribute :>> mass = 0.8; } }` reports a warning and exits 0. [small-wording S1; wording-pass]
 - [ ] **Read a usage that subsets a feature an instance reads otherwise in that instance.** Since
       subsetting-pass, every row read through W's `part p2 :> p1;` abstains wherever any context of
       W reads p1 otherwise (`subsettingOtherwise`, `subsettingTaint` in
@@ -132,20 +113,14 @@ maintainer says `awaits user decision U<n>` and names the question.
       subsetting-pass-scratch/wbr/ai.sysml). There the check abstains on `a` (?/-/?/-) and strict is
       OK, while SMT reads W's own p2 (1) and reports inconsistent-axioms on every row (`k`, `k2`
       T/T/T/X): an X the check no longer explains. [subsetting-pass S1, branch review]
-- [ ] **Spell a chained subsetting target as written in the subsetting sentence.** For W's `part p2
-      :> q.p1;`, the mapper records the Subsetting with target `Q::p1` and no chain (unlike a
-      Satisfy's `sourceChain`). So the sentence says "subsets `p1` … through SC::Q's own `p1`, never
-      as one of what `p1` is in SC::w::q", which is accurate but does not spell `q.p1`. Recording
-      the chain on the Subsetting in the mapper (src/text) would let it. It would also let the
-      instance test run in W with the path `q.p1` rather than in Q, which over-abstains where only
-      an unrelated Q instance changes p1. [subsetting-pass S1 review]
+- [ ] **Spell a chained subsetting target as written in the subsetting sentence.** The Subsetting
+      now keeps the path as written (`attrs.chain`), the sentence says "subsets `q.p1`" and Save
+      writes `q.p1`. Left: the instance test still runs in Q for `part p2 :> q.p1;`, not in W with
+      the path `q.p1`, so it over-abstains where only an unrelated Q instance changes p1; running it
+      in W is a verdict-moving step (generator with a hand oracle first). Only a path with a `.` is
+      kept; `Q::p1` is not. [subsetting-pass S1 review]
 - [ ] **Read a reference subsetting (`::>`) as a feature of what it subsets, or say the limit is the
       tool's in every surface; follow it in `spreadTaint` too.**
-- [ ] **Name a bounds measure by the path asked.** `bounds --measure w.p2.load` names the measure
-      `SA7::T0::load` (the definition's shared feature) in its sentences, not `w.p2.load`. 84fb971
-      printed "max `SA7::T0::load` = 1 exactly" with exit 0; since subsetting-pass the run is
-      correctly refused (exit 2), but the refusal sentence still names T0::load. [subsetting-pass
-      branch review]
 - [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
       the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
       `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
@@ -157,12 +132,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       on the hosted site is worth that cost. [N6 S4]
       DECIDED 2026-10-23 (U14): decide after Drive (U16); until then the hosted site keeps `not
       here` with the copyable command.
-- [ ] **Hold the same timeout floor on the hooks of the differential table.** The budget-aware guard
-      `ui-small` S5 added covers `test/campaign/verification.test.ts`. The two `beforeAll` hooks of
-      `test/integration/verification.differential.test.ts` (600_000 and 1_800_000 ms) drive z3
-      across the whole corpus, and the `withZ3` wrappers of that file and of `smt-z3.integration`
-      refuse only a timeout under 40 s at declaration time; neither file has a counter-backed last
-      case. A shared helper over `z3BudgetWatch()` would cover them. [ui-small S5, review]
 - [ ] **Decide whether a collaboration room's copy counts as saved for the tab's close question
       (optional).** Since `ui-small` S1 the tab asks before closing over text or boxes not saved
       (`askBeforeLeaving`, `leaveUnsaved`). In a collaboration room a peer's edit makes the text
@@ -380,27 +349,12 @@ headings.
       Since default-stands S2: item (4)'s '(which keeps its reading)' is obsolete: an untyped
       asserted equation over a default is checked against it, and the lexical reading also reads a
       default an assert names as its value (LP1, SLD, SLO, SLP).
-- [ ] **Read bindings deeper than 32 usages (optional).** A context more than `MAX_BINDING_SEGMENTS`
-      (32, `src/semantics/defining-equation.ts:2001`) usages below where its binding is written is
-      not read, so the check and the literal engine abstain on `chain33` and `chainPkg33` (four
-      rows; `DP33::negT` reads ?/?/T/T and `posF` ?/?/F/?). Sound, only weaker than it could be.
-      Raise the cap or make the instance walk iterative. Done when those rows decide on all four
-      surfaces. [review 2026-10-14 E10]
 - [ ] **Read the equation an asserted conjunction gives on the numeric surface (optional).** Since
       text-order S1 a valueless feature that an asserted `L == 50.0 and L >= 0.0` constrains is no
       design freedom, so the numeric surface reads `t50 { p.L == 50.0 }` unknown, which SMT proves,
       and t1, t60 unknown, both F. The check and the literal engine abstain too. Reading the
       conjunction's equation part as L's definition would decide them. Pinned: order-s1n-and,
       -s1kn-and, -s2enc-and, -s2spec-and, -s2use-and and their -rev twins. [text-order S1]
-- [ ] **Hold a feature an assert typed by an inequality-only constraint definition constrains.**
-      `assert constraint ca : Cd { in x = L; }` with `Cd = x >= 0.0 and x <= 100.0` is neither
-      collected as held (the usage carries no expression, so the numeric solve reads nothing from
-      it) nor named by `typedAssertNames` (typedAssertHolding keeps only definitions that hold an
-      equation). Two plain checks beside it abstain through the contested rule (t1, t2 unknown); a
-      lone `t1 { p.L == 1.0 }` is still imposed as a design equation, as at 84fb971. Fix: read the
-      typed assert's definition body, with the `in x = L` binding, in relationReads or in the
-      assertHeld index. Probe: review-2026-10-14/wave3-probes/text-order/g1.sysml (G1). [text-order
-      S1 review]
 - [ ] **Judge a lone plain check beside a satisfied requirement's require/assume.** A requirement
       clause is a goal in this tool (USER-GUIDE: clauses are goals), not an assert, so a lone plain
       check beside it is still taken as a design equation (RQK: `t1` and the requirement's own
@@ -408,25 +362,11 @@ headings.
       contested rule; this one does not turn on the order. Decide whether a satisfied requirement's
       clause is a fact for the design-equation choice. Probe:
       review-2026-10-14/wave3-probes/text-order/reqk.sysml. [text-order S1 review]
-- [ ] **Route the three direct readers of `evaluateFeatureValue` left through
-      `readsContradictedDefinition`.** `objectiveValue` and the `optimize` `scoreOf` fallback in
-      solver.ts and the String-valued stated read in refinement.ts (~l.2882) still return the first
-      equation written for a contradicted feature. No probe reaches the optimize fallback (11 shapes
-      return NaN or the stated value on 84fb971 and on text-order: the solve marks the objective
-      unsettled first), so this is unverified, not known false. [text-order S2 review]
 - [ ] **Solve the plain equations of a design component jointly over all roots (optional).** Since
       text-order the curved-root rule withholds `x * x == 4.0` beside `x == 2.0` in both orders
       where one root agrees (it read t/t before); a finer rule would solve the plain equations
       together over every root and keep the agreeing one. Sound as is, only weaker. [text-order S1
       review]
-- [ ] **Do not hold a unit symbol as a feature (optional).** `writtenNames` (the regex over an
-      unparsed asserted body) reads `[m]` in `M ** 2.0 == 4.0 [m]` as the feature `m`, so
-      `constraint t1 { p.m == 3.0 }` goes from t to ?. Sound, only weaker. Run the regex over
-      `lowerUnitLiterals(raw).text` or strip `[...]` and string literals first. Probe:
-      review-2026-10-14/wave3-probes/text-order/U3.sysml. The quotient half of this entry is closed
-      by numeric-curved: an equation one to one in the feature it fixes is single-root; what stays
-      withheld is a curved plain constraint beside another left unused, listed in the rollup
-      'Abstentions left in the numeric solver'. [text-order re-review; numeric-curved S2]
 - [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The guide
       says 'bar four cases'. Each abstains in one text order and reads a value in the other, never a
       different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
@@ -552,8 +492,9 @@ headings.
       review-2026-10-14/wave3-probes/fence-readings/s2/bq.sysml. Done when only the meeting instance
       abstains. [contradictory-models S3; fence-readings S2; fence-numeric4]
 - [ ] **Resolve a package-level chain end the same in either text order (loader).** The fence of
-      fence-readings S1 only withdraws the false verdict past the 32-usage cap: cap1r and cap2r read
-      ?/?/T/T and ?/?/F/?, as the forward text does. The root cause stays: bind.ts
+      fence-readings S1 withdrew the false verdict past the usage cap (instance-pass raised the cap from
+      32 to 48: the depth-33 probes cap1r and cap2r now read T/T/T/T on all four surfaces; a chain
+      past 48 still abstains on the check and literal engine). The root cause stays: bind.ts
       `mostSpecificRedefining` / `endCopyProto` and the mapper resolve a package `bind Y =
       top.a.….a.load` before T1's `bind a.load = L` has its end copy, so the chain end redefines
       only T0::load when the bind is written first. Resolve package-level chain ends after every
@@ -567,7 +508,16 @@ headings.
       so two contexts with equal nesting and the same reading key still file the first by text
       order. Low: both rows read the same today. Probe:
       review-2026-10-14/wave3-probes/text-order/65a411ed2025-e5-renamed.rev.sysml. Pins:
-      e5-renamed-rev, e5-renamed-silent, e5-renamed. [fence-readings S1]
+      e5-renamed-rev, e5-renamed-silent, e5-renamed. [fence-readings S1] Tried 2026-11-02
+      (subsetting-pass S1): a tie-break by qualified name in `contextsUncached` (listed contexts
+      given back in text order) is NOT sound. It moved the `DM3-diamond-own-redef` probe: the rows
+      `P::c in DM3::Q2::«PartUsage»`, `Q::p` and `q1::p` appeared or went, and `DM3::P::c in
+      DM3::Q3::p` read T on the literal and SMT lanes where the truth is F (a new false verdict). An
+      unnamed context (`part :>> p : P2`) has no usable name key; a canonical key would have to be
+      the effective name plus the reading, with DM2 to DM4 and the e5-renamed probes re-run. Probe:
+      test/integration/verification.differential.test.ts DM3-diamond-own-redef. Witness of the order
+      dependence on base: `part qb : Q2; part qa : Q2; part def Q2 :> Q { attribute :>> K = 25.0; }`
+      lists `qb` where `Q2` is listed when Q2 is written first.
 - [ ] **Bound the subsetting walk on dense layered diamonds and on a full DAG (cost;
       pre-existing).** Layered graphs where every usage subsets all eight of the layer above: 7x7
       12.9 s CPU, 8x8 52.6 s (5d9e806 49.8 s), 10x5 34 s, 8x10 (80 usages, 576 subsetting edges) not
@@ -610,7 +560,7 @@ headings.
       chain deeper than four values, or whose names the context does not denote, is not listed as
       bound-valued and its row is not filed (wave3-probes/contradictory-models/bound-vc-derived
       family, i5.sysml, i4.sysml); every binding read through an instance of a definition owning a
-      capped end is past the cap and abstains on the check and literal engine, including bindings
+      capped end (past 48 usages since instance-pass) is past the cap and abstains on the check and literal engine, including bindings
       the capped one does not reach in the reversed text (text-order/cap1r.sysml, cap2r.sysml). (10)
       Rows read through a subsetter whose subsetted usage an instance reads otherwise abstain
       together with the subsetted usage's rows
@@ -656,10 +606,6 @@ headings.
       inconsistent-axioms claim; unchanged from the base and in the USER-GUIDE limits. Done when SMT
       keys a symbol by instance, or the shapes are pinned in I7_ALLOWED with this reason.
       [contradictory-models S3, review]
-- [ ] **Name an unnamed redefinition by its effective name in the numeric surface sentences.**
-      `nameList` (solver.ts) prints the raw element id for `attribute :>> L;` ("fixes 12ac9de4-…",
-      "did not converge: f4bded69-… is where it stopped"); use `effectiveNameOf` or
-      `effectiveQualifiedName`. Wording only. [redefinition-target S1]
 - [ ] **Keep a redefinition on the more specific feature when an edit dissolves the join that kept
       it off it.** A redefinition kept off a more specific feature by a join an edit dissolves stays
       on the base feature, written by its path; the same names written by hand land on the more
@@ -747,14 +693,6 @@ headings.
       fence-save-name-scratch/zzb.test.ts; a stale-copy probe: seed 32180 (RV_RAW=1 RV_FIRST=32180
       RV_SEQ=1 RV_STEPS=5) and soak seq 42267 (page TT, file ?F on c6). [fence-redefs;
       fence-save-name]
-- [ ] **Stop a deleted Redefinition cycle member leaving a self-redefinition (low).** A cycle a -> b
-      -> a: deleting a leaves `b :>> b` (the saved text `attribute b :>> b;` reads Unresolved
-      reference). fence-redefs: the self-edge is now withheld on the page (the owner and the feature
-      read unknown), so the page abstains where the file decides (probe cases/cyc2.json). Fix: in
-      `Model.survivingTargets` treat a found target equal to the redefining feature as no survivor.
-      A cycle is already an invalid model. Probe:
-      review-2026-10-14/wave3-probes/redefinition-target/probe-selfred.test.ts. [redefinition-target
-      re-review; fence-redefs]
 - [ ] **Take the dangling-edge scan out of `Model.remove` (core cost).** `Model.remove` scans every
       element for dangling edges, so a settle that drops many redefinitions one remove at a time
       costs O(N) each: deleting a base attribute that 300 redefinitions end in costs about 0.9 s on
@@ -810,27 +748,32 @@ true values. What follows is what that branch and the review of it left open; en
       reaches a path the relation reads. What a value the relation reads reads is still matched by
       feature: `m = t.extra * 2.0` beside q2's `bind p.s.extra = E` (BA7) forms an extra group of
       rows read alike. That costs rows, never a verdict. [O2 S4, per-instance-rest S3]
-- [ ] **Contain a throw in a relation's own context walk.** Since per-instance-rest S3 these become
-      `internal` refusals: a throw while `instanceGroups` groups a usage, in a `groupGoalRows` row,
-      or while `equatedParts` lists the asserted equations no surface reads (tested through
-      `instanceIndexSeam`). A throw in `DefiningEquations.readingContexts` still ends the check;
-      `instanceGroups`, `readInContexts` and the obligations lane's `instanceRows` all ask it. A
-      failed asserts listing is kept for the revision, so every row abstains until the next edit,
-      even after a transient throw. [per-instance-rest S3, A.2.9]
+- [ ] **Contain a throw in a relation's own context walk.** A throw in
+      DefiningEquations.readingContexts is contained since instance-pass (readingContextsOf: the
+      check files one internal row, the obligations lane one refused row, instanceGroups groups none
+      of the relation's contexts). The check's context rows, the instance index, the obligations
+      lane's instanceRows, and bindingConflicts (evaluate-model.ts) and bindingInstanceRows
+      (obligations.ts), which ask changingContexts directly, now contain a throw too (instance-pass
+      review: before it, a throw there made loadModelText return no model; now bindingConflicts
+      files one unknown row '<binding>@contexts' and bindingInstanceRows one refused row '<binding>
+      in its other contexts'; the verify exit of that refused row, inconclusive, exit 2, was not
+      checked end to end). Left: a failed asserts listing (equatedParts' failed) is kept for the
+      revision, so every row abstains until the next edit, even after a transient throw. A retry
+      inside the revision is not sound: derivations, instance groups and the other per-revision
+      caches built while the listing failed would be mixed with the later complete one, so the fix
+      is to drop all of them together or retry only at the start of a pass. Also unprobed: the other
+      entry points of DefiningEquations that still call changingContexts directly
+      (defining-equation.ts:3823 and :3832). [per-instance-rest S3, A.2.9, instance-pass]
 - [ ] **Say why a default stood on the rows `standingDefaultSentence` still does not reach.** The
-      check's instance row and a default reached through a binding now say it (`carriedDefaultOf`,
-      save-and-wording S3). Still bare: the rows `groupInstanceRows` (F7 groups) and
-      `readThroughSpecialisers` (specialiser measures) print, the numeric surface's violated rows
-      (H2E: `NUM tie (ctx) violated | p.load == L`), and the carried-default sentence (RB3), which
-      has no redefinition spelling, only "write the analysis as the value of q::L". Optional, low.
-      [save-and-wording S3]
-- [ ] **Print the two defaults' values in the abstention for two defaults a binding joins (GA6).**
-      `bind p.load = L` joins P's `load default = 7.0` and Q's `L default = 5.0`. The sentence now
-      says the binding joins defaults that differ or are not constants (`p.load`, `L`), on the
-      numeric surface as on the check, but names the member paths, not the values (7.0, 5.0).
-      Printing them is a change to `abstentionSentence` in `defining-equation.ts`; the numeric
-      surface repeats the check's sentence, so one change fixes both. Optional, low.
-      [save-and-wording S3]
+      check's instance row, a default reached through a binding, and the numeric surface's violated
+      context rows now say it (`SpecialisationInstance.standing`, wording-pass S1). Still bare: the
+      rows `groupInstanceRows` (F7 groups) and `readThroughSpecialisers` (specialiser measures)
+      print, and the carried-default sentence (RB3), which has no redefinition spelling, only "write
+      the analysis as the value of q::L". No group row with a violated assert over a default that
+      stood was found (probes G1-G12 in wording-pass-scratch; every shape is either no group or a
+      binding makes the default give way), and a specialiser context may override the names the
+      sentence would speak about, so saying it there could be false. Optional, low; take it when a
+      reachable group row turns up. [save-and-wording S3; wording-pass S1]
 - [ ] **Read a `default` that an assert in an enclosing scope names, instead of abstaining (A.2.4
       lexical rule).** `assertAbove` / `enclosingAssertOn` still make a constraint over a `default`
       abstain when an assert in an enclosing scope names that default. Since decision 14 was amended
@@ -866,27 +809,34 @@ true values. What follows is what that branch and the review of it left open; en
       default-stands-scratch/brv/p/gi.sysml). It was kept on purpose: `L >= 5.0 and L <= 5.0` fixes
       the symbol as `L == 5.0` does. A fix carries only an asserted relation that cannot fix the
       symbol (no pair of bounds that meet), and names those moves. [default-stands review]
-- [ ] **Read a binding component whose valued members agree.** In X6, W's `bind q.p.load = M` (M =
-      3.0) sits beside Q's asserted `L == 3.0`. `X6::P::c in X6::W::q::p` and `in X6::w::q::p` read
-      ?/?/?/X ('joins two values the model states (q.p.load, q.L, M)') although the two values
-      agree. The fix: compare the valued members exactly in `boundSourceIn` before abstaining, as
-      `definedAgainstBoundIn` does, then re-pin stand-x6 and drop the 'known gap' clause from
-      USER-GUIDE ('even where the two values agree, as here'). Probe:
-      default-stands-scratch/fin/np/x6.sysml. [default-stands review]
 - [ ] **Encode a definition's binding in each usage's instance.** In x6n (X6 without Q's assert),
       the SMT engine proves `X6N::P::c in X6N::W::q::p` but finds a counterexample for `in
       X6N::w::q::p`. The witness gate then demotes it to 'witness not confirmed', because the
       numeric surface reads 3. It is safe, but a reading is lost. Identical at 414ba14. Probe:
       default-stands-scratch/branch-review/p4/x6n.sysml. [default-stands review]
-- [ ] **File a definition's context row under one name whatever the declaration order.** A relation
-      of P read in a specialisation P2 :> P whose one usage is p is filed `P::ca in P2` when P2 is
-      written first, and `P::ca in p` when p is, with the same verdict. This shows in H3, H6 and the
-      24 S3 spec cells of the soft-hard analysis with their members reversed (the M-generator prints
-      them RENAMED, 27 pairs). File the row under P2 wherever it is declared. [default-stands S2]
+- [ ] **File a definition's context row under one name whatever the declaration order.** Since
+      instance-pass a relation of P read in P2 :> P is filed P::ca in P2 whichever of P2 and its one
+      package-level usage p is written first (sort tie-break in contextsUncached; no verdict moves,
+      only worklist order and the filing name). Left: the same relation read in a usage written
+      inside a definition or a usage (part def Q { part p : P2; }) is still filed under Q::p or P2
+      by text order. Giving the definition priority there loses the instance rows of
+      binding-conflict shapes (P2 states load = v with = and Q binds p.load = L) and only the P2 row
+      survives. File it under P2 only with those rows kept. The M-generator's RENAMED pairs (27) and
+      the H3/H6/S3-spec cells live outside this repo; the in-repo differential table needed no
+      re-pin. [default-stands S2, instance-pass]
 - [ ] **Show `:=` (an initial value, not a binding) and the value's unit in `elements` and the grid;
-      the workflow readers then read them (optional).** Today `init := 4.0` prints `= 4`, `softInit
-      default := 3.0` prints `default 3`, and `= 7 [kg]` prints `= 7`. These predate small-defaults
-      S1. Sonnet, budget. [small-defaults S1]
+      the workflow readers then read them (optional).** Sysprose now prints `:=` and the unit (the
+      grid value cell is `[default] [:=] value [unit]`: `:= 4`, `default := 3`, `7 [kg]`; `elements
+      --json` `value` is the cell). The mbse-workflow reader `elements()` in
+      `src/sysprose/inprocess.ts` (line 256) strips only a leading `default `, so before its
+      SYSPROSE_REF moves past this change it must also read a leading `:= ` and a trailing ` [unit]`
+      (a value like `:= 4` or `7 [kg]` is no bare number to it); after a pin bump every `:=` or
+      unit-carrying value reaches its consumers as a non-number. 28 of 149 published example and
+      fixture files change in the value column only (for example uav-isr mass `1.2 [kg]`); the v9
+      gate captures no `elements` row, so 'v9 identical' does not cover it. Do not move SYSPROSE_REF
+      in either workflow repo past this branch until `elements()` reads both, and add a Grid-view
+      check to the tutorial re-record decision. Coordinator, cross-repo; Sonnet. [subsetting-pass
+      S1]
 - [ ] **Parse a declaration whose user-defined keyword stands without a reserved keyword.** SysML
       7.27.4 (sysml.txt:10327-10334) allows it for semantic metadata (`#situation def Failure;`,
       `#situation batteryLow;`); BNF ExtendedDefinition and ExtendedUsage (kebnf:1695-1701) admit it
@@ -906,35 +856,38 @@ true values. What follows is what that branch and the review of it left open; en
       method; both spellings, including `about` naming the owner itself). When it lands, lift that
       blanket refusal. A keyword annotation's `about` targets are raw qualified names no consumer
       resolves. [small-defaults S2, review]
-- [ ] **Resolve a metadata body redefinition (optional, low).** In `@T about X { ref :>> approved =
-      true; }`, `@T { ref :>> x }` and the keyword form the redefined name is looked up with no
-      typing for the annotation (the MetadataUsage has only the string `attrs.type`, no
-      FeatureTyping), so the standard's own `ref :>> approved` example files
-      `ref/unresolved-specialization` warnings. Resolving it against the metadata definition T (add
-      T to `redefinitionGenerals` in `src/semantics/bind.ts`) makes the cell lose its textual
-      `attrs.redefines`, which `kindCells` in `src/semantics/verify.ts` (and `holdsMethodKind` in
-      the mapper) read for `attribute :>> kind = test` in a VerificationMethod carrier (pinned by
-      test/campaign/verification.test.ts:2410): do the resolution only together with making
-      `kindCells` (and any other reader of a cell's `attrs.redefines` text) follow the Redefinition
-      relationship, and gate on the verdict differential. [parse-and-show S1]
-- [ ] **Parse a short name and the `@` spelling in the named metadata annotation (optional, low).**
-      `metadata <sn> N : T about A;` and `@N : T about A;` (BNF MetadataUsage with Identification,
-      kebnf:1666-1676) still fail with `parse/no-viable-alt`; `metadata N : T about A;`, `public
-      metadata T about A;` and `public @T about A;` parse since parse-and-show S1. [parse-and-show
-      S1]
+- [ ] **Resolve a metadata body redefinition (optional, low).** A body redefinition in an annotation
+      typed by a metadata definition of the file now resolves (`@T about X { ref :>> approved =
+      true; }`; T and what it specialises are added in `redefinitionGenerals`; `kindCells` follows
+      the Redefinition). A feature the metadata definition binds with `=` and an annotation
+      redefines with another value now files validation/constraint-violation (warning) plus an F row
+      `MD::«MetadataUsage»::«AttributeUsage»#binding`, the same rule as for ordinary usages ("a
+      redefinition may override only a `default`"); before, it filed only
+      ref/unresolved-specialization (probe subsetting-pass-scratch/wbr/md1.sysml; no false answer
+      found). Left: an annotation typed by a LIBRARY metadata definition
+      (`@VerificationCases::VerificationMethod { attribute :>> kind = test; }`) keeps its textual
+      `redefines` and files `ref/unresolved-specialization`, as a library-typed usage does (`part y
+      : ISQ::MassValue { attribute :>> num }`): the library merges after the mapper resolves. Done
+      when the library binder resolves the cell too and every reader of `attrs.redefines` text
+      (kindCells reads both now) keeps working. [parse-and-show S1; subsetting-pass S1]
 - [ ] **Ask FailureMode by its qualified name when it ships.** `machineFailureModes`
       (src/semantics/fault-tree.ts) counts a model's own FailureMode through `hasKeyword(..., {
       anyPackage: true })` because the definition is not in SysproseVerification yet. When the
       vocabulary commit ships it, add FAILURE_MODE_QUALIFIED_NAME, ask for it and drop the option;
       the campaign test then declares the definition in SysproseVerification and its "model's own
       definition is counted" sentence changes. [small-defaults S3]
-- [ ] **Report an ambiguous keyword as ambiguous (optional).** When two imported definitions answer
-      to a keyword (a bare `#exceptional` with both VendorHints and SysproseVerification imported)
-      it resolves to the first import in `resolveFullName`, so `contracts --keywords` and the
-      fault-tree label depend on import order; the rule fails safe (no label). Report it as
-      ambiguous. Also `statement-kind.ts` reads `#prose` and `#prompt` from the spelling alone, so a
-      foreign `<prose>` is still read as a statement kind: needs its own decision. [small-defaults
-      S3]
+- [ ] **Report an ambiguous keyword as ambiguous (optional).** `statement-kind.ts` reads `#prose`
+      and `#prompt` from the spelling alone, so a foreign `<prose>` is still read as a statement
+      kind: needs its own decision. (The two-imports ambiguity of a bare keyword is reported:
+      `verification/keyword-ambiguous`, origin `ambiguous`, and `hasKeyword` reads it as no tag in
+      either import order; `obligations --from-keywords` names nothing for it in either order; a
+      qualified keyword is not asked, and only the nearest scope with imports is.) Left: an
+      ambiguous foreign-aliased keyword (a bare #precondition two imports answer to) is not reported
+      as ambiguous: `contracts --keywords` files it as `foreign` and never raises
+      verification/keyword-ambiguous, and fault-tree.ts counts via hasKeyword, so an ambiguous
+      #failureMode or #exceptional makes 'found none of' read as a plain absence. Probe:
+      subsetting-pass-scratch/wbr/kw2.sysml via `scripts/sysprose.ts contracts --keywords`.
+      [small-defaults S3; subsetting-pass S1]
 - [ ] **Hold: an opt-in tag that lets an assertion adjust a written number (for example
       `#provisional`).** DECIDED to hold (analysis Q2): a soft value is written as a value until a
       model needs the tag, as `#Observable` was held
@@ -1044,11 +997,6 @@ true values. What follows is what that branch and the review of it left open; en
       (`settleRedefinitions`) as before. Probes: wave3-probes/fence-order/gen3.mts, req.mts,
       inl.mts; fence-text-scratch/review/dup3.mts, sk.mts; fence-editor2-scratch/s2/probes/p1.sysml.
       [fence-editor S2; fence-editor2; fence-save-name; fence-text; fence-order]
-- [ ] **Contain the own-row `standingDefaultSentence` call like the instance-row one (optional,
-      low).** `readInContexts` wraps the sentence in a try/catch that yields no sentence (the
-      sentence is wording and must not cost the row); the call on a constraint's own row (`standing
-      = standingDefaultSentence(model, el)` in `evaluate-model.ts`) is not wrapped. No reachable
-      throw was found. [save-and-wording review]
 - [ ] **Z3 constraint classes: classes-3 (rollup, plan
       ~/.claude/plans/z3-constraint-classes.md).** classes-1 merged the census and
       `src/semantics/smt/shape.ts`; classes-2 merged the classifier, pinned.ts, the maturity
@@ -1133,25 +1081,6 @@ true values. What follows is what that branch and the review of it left open; en
       'Observed once on a hand-written probe model' until CC-46 lands; the strict census step costs
       about 12 CPU-minutes (31 min wall at load 50), so a cheaper strict (one census process, or the
       recount alone) is a follow-up if the per-commit gate is too slow. [classes-2]
-- [ ] **Land an implicit end copy on the nearest override, whatever the text order.** fence-copy
-      only fences it. Verified fix (scratch tree, not in this branch): make endCopyProto
-      (src/semantics/bind.ts) accept special, the unique most specific feature the types have for
-      the name, also when `hit` is an implicit copy and special is no copy and redefines something
-      `hit` redefines: `if (!special || special === hit) return hit; if (redefinedClosure(model,
-      special).includes(hit)) return special; if (hit.attrs.implicit === true &&
-      special.attrs.implicit !== true) { const of = redefinedClosure(model, hit); if (of.length > 0
-      && redefinedClosure(model, special).some((g) => of.includes(g))) return special; } return
-      hit;`. Both the mapper (map-to-model.ts resolveChainEnd) and the settle (serializer.ts
-      endCopyProtoOf) call endCopyProto, so one change keeps them equal. An equivalent pair (a
-      nearestPastCopy helper called from the mapper and, as `nearestPastCopy(...) ??
-      endCopyProto(...)`, from endCopyProtoOf) in a scratch tree reads u1.N = 15 in all 6 member
-      orders, with zero wrong cells and 24 abstentions on the 400-model generators; the mapper-only
-      variant fails the store.reducers 300-sequence property test at sequence 42, which is why this
-      branch ships the fence. The bind.ts variant has not been run against the property test. Done
-      when `copy-nearest-n` (test/integration/verification.differential.test.ts) reads CNF::c12
-      F/F/F/F and CNF::c15 T/T/T/T and the fence in leavesOutOverride (map-to-model.ts) is narrowed
-      to the diamond and the clash (D3 :> D1, D2 or D2, D2b). The bind.ts and serializer.ts parts
-      need the fence-rename and fence-text owners at merge. [sweep 2026-10-31]
 - [ ] **Abstentions left in seeds against an unread bound end (rollup; sound, only weaker).** (1) A
       feature that writes a value and is bound to an end under an unread scope reads ? even when
       every candidate end gives way to it or is valueless (with the end under `order`, k = 5.0 beside
@@ -1248,7 +1177,62 @@ true values. What follows is what that branch and the review of it left open; en
       unchanged. (8) A live-aware endCopyFeature (a lookup that skips stale copies in
       resolveInherited and findTypeFeature) would let the page decide where it now abstains; it
       needs a bind.ts change to childNamed, which the page's other readers share, so it is over the
-      40-line fence. [fence-copy; fence-copy2]
+      40-line fence. subsetting-pass: (9) a rename of the feature an implicit end copy redefines,
+      and back (N to M and N), leaves its binding parted, so the page abstains where the saved file
+      decides 15 (test/unit/store.reducers.test.ts, 'a copy lands on the nearest override…', the
+      `weaker` step). (10) A diamond (`D3 :> D1, D2`) and a clash (`D3 :> D2, D2b`) of overrides
+      under an end copy stay fenced on every surface (pins copy-nearest-diamond,
+      copy-nearest-clash). (11) 'A stale copy two types up hides the feature the file binds': the
+      page now decides F on three lanes and abstains on the SMT lane where the file decides F/F/F/F
+      (test/unit/store.reducers.test.ts). (12) Six editor-soak seeds fail pre-existing, identically
+      on add25f6: `SYSPROSE_RT_FIRST=<n> SYSPROSE_RT_SEQUENCES=1 SYSPROSE_RT_STEPS=6` at n = 1120,
+      1618, 4318, 4992, 5045 and 6751 ('a full settle of the freshly loaded model moved 1
+      redefinition(s)'). [fence-copy; fence-copy2]
+- [ ] **Abstentions left (wording and refusals) (rollup; sound, only weaker).** (1) `bounds
+      --measure` lists an instance-qualified `::` path (A7::q2::p::extra, N::Q0::p::load) under
+      'Readable here' but accepts only the dotted instance spelling (q2.p.extra): a
+      readable-list/accept mismatch, loud exit 2, never a wrong answer. Probe: `npx tsx
+      scripts/sysprose.ts bounds review-2026-10-14/A/probes/a7-body-binding-default.sysml --measure
+      A7::q2::p::extra`. (2) A violated group row (F7) where a default stood and a violated
+      specialiser-context row have no 'why' sentence (no reachable shape found; wording only; see
+      'Say why a default stood on the rows `standingDefaultSentence` still does not reach.'). (3) An
+      assert-only requirement files no requirement row (policy; see 'File a row, and say so in
+      contracts, for a requirement whose only body is an assert.'). [wording-pass]
+- [ ] **Abstentions left (defaults) (rollup; sound, only weaker).** (a) Agreeing valued members are
+      read only as exact constants, so a name-reading side such as `L == K * 2.0` against `M = 3.0`,
+      and a package head (#), still read two-values (probes defaults-pass-scratch/m218b, m218). (b)
+      A context row `P::c in W::q::p` reads unknown beside the satisfied instance row when load has
+      no value, and the differential harness throws two check rows on it, so probes need a default
+      on load (defaults-pass-scratch/x6a.sysml, pre-existing). (c) Rows `P::c in W::q::p` are absent
+      when the definitions are written W, Q, P with a default on load
+      (defaults-pass-scratch/m218/G009-eqT.sysml; same on base, probably the existing 'File a
+      definition's context row under one name' entry). (d) The typed-inequality hold is by feature,
+      so a `P::L` held by a typed assert in one instance also holds p2's L where the assert sits in
+      a usage only (weaker, never false; test/integration/verification.differential.test.ts
+      'typed-ineq-*' rows, scratch review/m7/T1..T10). A typed assert whose parameter is bound with
+      `bind x = L` is NOT an abstention left: it is held (fixed in the review of 'Hold a feature an
+      assert typed by an inequality-only constraint definition constrains'). [defaults-pass]
+- [ ] **Abstentions left (per-instance binding chains and context walks) (rollup; sound, only
+      weaker).** (1) A binding chain deeper than 48 usages (chain49/chainPkg49 and the cap rows at
+      depth 49): the check and literal engines abstain; on chainPkg49 posF the SMT surface also
+      abstains ('?/?/F/?'), and numeric reads it (probe instance-pass-scratch/gen221/g66-new.jsonl).
+      (2) A usage-body binding chain at depth n=33..~46 (the CHAIN shape of
+      semantics.evaluate-model.test.ts ~8777, review/enc66.mts): the check and literal engines
+      decide, with values correct against a hand oracle, while SMT abstains from about n=34..40
+      because obligations.ts MAX_NESTED_BINDING_DEPTH stays 32 (independent of MAX_BINDING_SEGMENTS,
+      48); before the cap raise all three abstained from n=32. (3) A failed asserts listing stays
+      failed for the revision (see 'Contain a throw in a relation's own context walk.'). (4) A
+      relation whose own context walk throws gets no per-instance rows at all; one internal row
+      stands for its other contexts (test semantics.evaluate-model.test.ts, 'own context walk';
+      probes instance-pass-scratch/gen221). [instance-pass]
+- [ ] **Abstentions left (keywords and metadata annotations) (rollup; sound, only weaker).** (1) A
+      bare-keyword ambiguity is asked in the nearest scope with imports only, a qualified
+      `#Pkg::name` is never asked, and an alias or inherited member is not enumerated
+      (src/semantics/keywords.ts ambiguousKeyword). (2) An ambiguous foreign-aliased keyword is
+      filed `foreign` by `contracts --keywords` and never raises verification/keyword-ambiguous (see
+      'Report an ambiguous keyword as ambiguous (optional).'). (3) A library-typed annotation's body
+      redefinition stays textual (probe subsetting-pass-scratch/s2/md4.mts; see 'Resolve a metadata
+      body redefinition (optional, low).'). [subsetting-pass]
 - [ ] **Abstentions left in renames and name clashes (rollup; sound, only weaker).** fence-rename:
       (1) names unrelated to the clash inside a flagged scope are withheld along with it (e.g.
       `w.p.x`, or an unrelated `a = 15.0` beside a clash on `b`), because the fence is the whole
@@ -1311,13 +1295,6 @@ tagged `[O1 …]` are what its steps and reviews left open.
       search still refuses the step past the budget (`completion`, inconclusive). Done when such a
       search carries the chase position and offers the clock advance where a chase stops, or the
       refusal is documented as permanent. [behaviour-rest S1]
-- [ ] **Say in the bounds sentence that `maxDepth` counts events (optional).** Since
-      `behaviour-rest` S1 the depth bound counts the events a run takes from the opening, not its
-      steps (`DEFAULT_MAX_DEPTH`, docs/06 §8.12), while the `depth` figure beside it still counts
-      steps, so `reach` can print `depth 260` beside `maxDepth 200` (four stacked completion
-      cycles). The guide and the code say so; the printed bounds sentence does not. Rewording it
-      (for example `maxDepth 200 events`) re-records every qualification string in every report and
-      pin, so it is its own step, with the corpus diff named. [behaviour-rest S1]
 - [ ] **Name every region's refusal on a parallel machine (optional).** `StateRunResult.refused`
       names the first region's refusal only. Listing the others needs `refusedStepSentence`
       reworded, because "the machine's other regions run on" is false once every region has refused;
@@ -1342,12 +1319,6 @@ tagged `[O1 …]` are what its steps and reviews left open.
 From the review of the speed2 branch (66704a8, 79f7350, merged by 607e783): no verdict, code, exit
 code or value changed, and the claimed gains reproduce. These three are what it left.
 
-- [ ] **Skip the READINGS key until a second read is possible (optional, low).** On v9
-      `obligationsOf` makes 78 `readRelation` reads through the cache (`src/semantics/contracts.ts`
-      near `:678`, `:710-741`) with 0 hits: the JSON key and the Map get and set cost about 0.6 ms
-      (about 1.5%) per pass and gain nothing there. A cheaper key, or no key until a second read can
-      happen, would recover it; it is below what paired process timing resolves, so cold-check S2
-      did not attempt it. [cold-check S2, C-F5]
 
 ## Docs, tutorials and what waits on others — review 2026-10-14
 
