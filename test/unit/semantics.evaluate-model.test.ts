@@ -5645,6 +5645,31 @@ describe('a value, a reference and a binding that equate two parts or structured
       expect([c.result, numeric(x!, `${name}::k`)], name).toEqual(['unknown', 'unknown']);
       expect(c.message, name).toBe(`Could not evaluate: ${sentence}, so no relation that reads through it is read`);
     }
+    // A reference subsetting `::>` is not read as a feature of what it subsets (a delegated decision, 2026-11-02): a name
+    // through one is a limit of this tool with its own sentence on the check, the numeric solve and the SMT gate, whether
+    // or not the usage is a `ref`. No verdict moves: the rows abstained before, with a generic sentence.
+    for (const [name, usage] of [
+      ['RF1', 'ref part p2 ::> p1;'],
+      ['RF2', 'part p2 ::> p1;'],
+    ] as const) {
+      const { model: x } = await loadModelText(
+        `package ${name} { ${T0} part def W { part p1 : T0; ${usage} } part w : W { part :>> p1 { attribute :>> load = 50.0; } } constraint k { w.p2.load <= 5.0 } }`,
+      );
+      const c = check(x!, `${name}::k`);
+      expect([c.result, numeric(x!, `${name}::k`), goal(x!, `${name}::k`).encodable], name).toMatchObject(['unknown', 'unknown', { reason: 'unread-binding' }]);
+      const sentence = `\`p2\` in ${name}::W is a reference subsetting (\`::>\`) of \`p1\`: this tool does not read a \`::>\` as a feature of what it subsets, so \`w.p2.load\` is not read`;
+      expect(c.message, name).toBe(`Could not evaluate: ${sentence}`);
+      expect(goal(x!, `${name}::k`).encodable, name).toMatchObject({ detail: sentence });
+    }
+    // A name the subsetted usage does not have is a typo, not a limit of this tool: it keeps the generic unresolved name.
+    {
+      const { model: x } = await loadModelText(
+        `package RF3 { ${T0} part def W { part p1 : T0; ref part p2 ::> p1; } part w : W { part :>> p1 { attribute :>> load = 50.0; } } constraint k { w.p2.nonesuch <= 5.0 } }`,
+      );
+      const c = check(x!, 'RF3::k');
+      expect([c.result, goal(x!, 'RF3::k').encodable]).toMatchObject(['unknown', { reason: 'unresolved-name' }]);
+      expect(c.message).not.toContain('reference subsetting');
+    }
     // Two `satisfy`s a package writes of a requirement whose `part q :> s;` subsets its subject: listing the
     // subsetting usages asks each, and the second one asks the listing again, which is refused and lists that
     // `satisfy` (the re-entry guard). R's row abstains; no throw reaches the load, and no row reads `internal`.

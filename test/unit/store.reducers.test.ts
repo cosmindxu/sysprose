@@ -34,6 +34,7 @@ vi.mock('../../src/library/standard-library', () => ({
 const relay = vi.hoisted(() => ({
   status: null as ((e: { status: string }) => void) | null,
   doc: null as import('yjs').Doc | null,
+  awareness: null as import('y-protocols/awareness').Awareness | null,
 }));
 vi.mock('../../src/collab/provider', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../src/collab/provider')>();
@@ -43,6 +44,7 @@ vi.mock('../../src/collab/provider', async (importOriginal) => {
     connect: (doc: ConstructorParameters<typeof Awareness>[0]) => {
       relay.doc = doc;
       const awareness = new Awareness(doc);
+      relay.awareness = awareness;
       return {
         provider: {
           on: (event: string, listener: (e: { status: string }) => void) => {
@@ -7260,6 +7262,46 @@ describe('unsaved work — what a command that replaces the model asks about', (
     expect(asks(), 'but the tab: the commit goes with it').toBe(true);
     await st().saveProject('Swarm');
     expect(asks(), 'Save holds it').toBe(false);
+  });
+
+  it('counts a collaboration room’s copy as saved for the tab’s question, and still asks over what the room does not hold', async () => {
+    const asks = () => askBeforeLeaving(new Event('beforeunload', { cancelable: true }));
+    const box = (x: number) => ({ 'general|': { [rootId()]: { x, y: 20 } } });
+    edit('Relay');
+    expect(asks(), 'an edit nothing holds, no room').toBe(true);
+    relay.status = null;
+    st().connectCollab('close-room');
+    try {
+      expect(asks(), 'the relay is not up yet: no room yet').toBe(true);
+      relay.status!({ status: 'connected' });
+      expect(st().collab.connected).toBe(true);
+      expect(asks(), 'connected and alone: the relay keeps nothing once the last peer leaves').toBe(true);
+      // A peer's presence, as the relay would bring it.
+      const { Doc } = await import('yjs');
+      const { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } = await import('y-protocols/awareness');
+      const other = new Awareness(new Doc());
+      other.setLocalState({ user: { name: 'Heron', color: '#4363d8' } });
+      applyAwarenessUpdate(relay.awareness!, encodeAwarenessUpdate(other, [other.clientID]), 'test');
+      expect(st().collab.peers.map((p) => p.name)).toEqual(['Heron']);
+      expect(asks(), 'a peer is here: the room holds the model').toBe(false);
+      edit('Kite');
+      expect(asks(), 'a later edit, here or a peer’s: the room holds it too').toBe(false);
+      st().setTextBuffer(st().textBuffer.replace('Kite', 'Falcon'));
+      expect(asks(), 'text typed and not applied: the room does not hold it').toBe(true);
+      st().setTextBuffer(st().textBuffer.replace('Falcon', 'Kite'));
+      expect(asks(), 'typed back').toBe(false);
+      useAppStore.setState({ diagramPins: box(10) });
+      expect(asks(), 'a box moved by hand: the room does not hold it').toBe(true);
+      useAppStore.setState({ diagramPins: {} });
+      st().refreshVersions();
+      st().commitVersion('in a room');
+      expect(asks(), 'a Versions repository goes with the tab').toBe(true);
+    } finally {
+      st().disconnectCollab();
+    }
+    expect(asks(), 'left the room: the model is held by nothing again').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save').toBe(false);
   });
 
   it('asks before the tab closes over a branch switch or a merge no browser save holds', async () => {

@@ -222,6 +222,10 @@ export function refusalTail(reason: RefusalReason, detail = ''): string {
   if (reason === 'unread-binding' && /, so no name of \S+ is read/.test(detail)) {
     return 'This is a limit of this tool, not a defect in the relation: the scope is withheld, so `--allow-inconclusive` does not forgive it';
   }
+  // A name through a reference subsetting (`::>`) is no feature this tool reads: the model may give it a value, or none.
+  if (reason === 'unread-binding' && /is a reference subsetting \(`::>`\) of /.test(detail)) {
+    return 'This is a limit of this tool, not a defect in the relation: a `::>` is not read as a feature of what it subsets, so `--allow-inconclusive` does not forgive it';
+  }
   return reason === 'unread-binding'
     ? 'This is a limit of this tool, not a defect in the relation: the model gives it a value, so ' +
         '`--allow-inconclusive` does not forgive it'

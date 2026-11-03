@@ -754,6 +754,24 @@ describe('solve — the order of the text decides no design equation', () => {
     }
   });
 
+  it('reads a satisfied requirement’s clause over its own subject: a lone plain constraint beside it is still the design equation', async () => {
+    // Decided 2026-11-02 (the USER-GUIDE): `require`/`assume` clauses are goals. Were they facts, t1 would not fix p's L
+    // at 1. Both orders read the same.
+    const P = 'part def P { attribute L : ScalarValues::Real; }';
+    const R = 'requirement def R { subject s : P; require constraint { s.L == 50.0 } }';
+    for (const text of [
+      `package RQK { ${P} ${R} part p : P; satisfy R by p; constraint t1 { p.L == 1.0 } constraint k { p.L <= 10.0 } }`,
+      `package RQK { constraint k { p.L <= 10.0 } constraint t1 { p.L == 1.0 } satisfy R by p; part p : P; ${R} ${P} }`,
+    ]) {
+      const r = await rows(text);
+      expect([r.get('t1')!.result, r.get('t1')!.imposed, r.get('k')!.result]).toEqual(['satisfied', true, 'satisfied']);
+    }
+    // An `assume` clause is a premise of the requirement over its own subject, and ties nothing to the satisfier either.
+    const RA = 'requirement def R { subject s : P; assume constraint { s.L == 50.0 } }';
+    const a = await rows(`package RQK { ${P} ${RA} part p : P; satisfy R by p; constraint t1 { p.L == 1.0 } constraint k { p.L <= 10.0 } }`);
+    expect([a.get('t1')!.result, a.get('t1')!.imposed, a.get('k')!.result]).toEqual(['satisfied', true, 'satisfied']);
+  });
+
   it('reads the freedom off the model’s own equations alone, never off a check it may not take', async () => {
     // P's asserted `M == L * 2.0` carries what `L >= 0.0 and L <= 1.0` holds to M: `tM` may not fix M at 100 (and L
     // at 50), and the freedom L and M keep is no point to judge `k { p.L <= 0.5 }` at.
