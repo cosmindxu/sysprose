@@ -7262,6 +7262,38 @@ describe('unsaved work — what a command that replaces the model asks about', (
     expect(asks(), 'Save holds it').toBe(false);
   });
 
+  it('counts a collaboration room’s copy as saved for the tab’s question, and still asks over what the room does not hold', async () => {
+    const asks = () => askBeforeLeaving(new Event('beforeunload', { cancelable: true }));
+    const box = (x: number) => ({ 'general|': { [rootId()]: { x, y: 20 } } });
+    edit('Relay');
+    expect(asks(), 'an edit nothing holds, no room').toBe(true);
+    relay.status = null;
+    st().connectCollab('close-room');
+    try {
+      expect(asks(), 'the relay is not up yet: no room yet').toBe(true);
+      relay.status!({ status: 'connected' });
+      expect(st().collab.connected).toBe(true);
+      expect(asks(), 'the room holds the model').toBe(false);
+      edit('Kite');
+      expect(asks(), 'a later edit, here or a peer’s: the room holds it too').toBe(false);
+      st().setTextBuffer(st().textBuffer.replace('Kite', 'Falcon'));
+      expect(asks(), 'text typed and not applied: the room does not hold it').toBe(true);
+      st().setTextBuffer(st().textBuffer.replace('Falcon', 'Kite'));
+      expect(asks(), 'typed back').toBe(false);
+      useAppStore.setState({ diagramPins: box(10) });
+      expect(asks(), 'a box moved by hand: the room does not hold it').toBe(true);
+      useAppStore.setState({ diagramPins: {} });
+      st().refreshVersions();
+      st().commitVersion('in a room');
+      expect(asks(), 'a Versions repository goes with the tab').toBe(true);
+    } finally {
+      st().disconnectCollab();
+    }
+    expect(asks(), 'left the room: the model is held by nothing again').toBe(true);
+    await st().saveProject('Swarm');
+    expect(asks(), 'Save').toBe(false);
+  });
+
   it('asks before the tab closes over a branch switch or a merge no browser save holds', async () => {
     const asks = () => askBeforeLeaving(new Event('beforeunload', { cancelable: true }));
     st().refreshVersions();

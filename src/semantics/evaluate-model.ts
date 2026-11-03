@@ -4027,7 +4027,8 @@ function chainCauses(
       clashCause(model, el, n, pass) ??
       contradictionCause(model, el, n, pass) ??
       (n.includes('.') ? chainCause(model, el, n, pass) : undefined) ??
-      calculationCause(model, el, n, pass),
+      calculationCause(model, el, n, pass) ??
+      referenceSubsettingCause(model, el, n, pass),
   );
   return causes.length > 0 && causes.every((c) => c !== undefined) ? causes.join('; ') : undefined;
 }
@@ -4372,14 +4373,45 @@ function partedSentence(el: ElementRecord, name: string, pass: ScalarPass): stri
 }
 
 /**
- * Why the names `names` a relation of `el` reads are left unread by a scope the page withholds ({@link partedCause}), when
- * every one is: the sentence of the cause. The SMT encoder asks it of the names it finds no symbol for, so a withheld
+ * Why a dotted name `name` a body reads resolves to nothing when the usage it passes through is a reference subsetting
+ * (`ref part p2 ::> p1;`, then `p2.load`): this tool does not read a `::>` as a feature of what it subsets, on every
+ * surface, so the name is a limit of this tool and not a defect in the relation. The longest prefix of the name that
+ * resolves decides; `undefined` where it is no reference subsetting, or the name resolves.
+ */
+function referenceSubsettingCause(model: Model, el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
+  const parts = name.split('.');
+  if (parts.length < 2) return undefined;
+  const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
+  if (pass.definitions.chain(contexts, name) !== undefined) return undefined;
+  for (let k = parts.length - 1; k >= 1; k--) {
+    const hit = pass.definitions.chain(contexts, parts.slice(0, k).join('.'));
+    if (!hit) continue;
+    const f = hit.feature;
+    const target = model
+      .relationshipsFrom(f.id)
+      .filter((r) => r.eClass === 'ReferenceSubsetting')
+      .flatMap((r) => r.target ?? [])
+      .map((t) => model.get(t))
+      .find((g): g is ElementRecord => g !== undefined && g.id !== f.id);
+    const own = pass.definitions.nameOf(f);
+    const of = target ? pass.definitions.nameOf(target) : undefined;
+    if (!target || own === undefined || of === undefined) return undefined;
+    const home = f.ownerId != null ? pass.definitions.qualifiedNameOf(f.ownerId) : '';
+    return `\`${own}\`${home ? ` in ${home}` : ''} is a reference subsetting (\`::>\`) of \`${of}\`: this tool does not read a \`::>\` as a feature of what it subsets, so \`${name}\` is not read`;
+  }
+  return undefined;
+}
+
+/**
+ * Why the names `names` a relation of `el` reads are left unread — by a scope the page withholds ({@link partedCause}),
+ * or by a reference subsetting this tool does not read as a feature of what it subsets ({@link referenceSubsettingCause})
+ * — when every one is: the sentence of the cause. The SMT encoder asks it of the names it finds no symbol for, so such a
  * scope is a limit of this tool with its own sentence, not a name that resolves to nothing.
  */
 export function withheldNamesCause(model: Model, el: ElementRecord, names: readonly string[]): string | undefined {
   if (names.length === 0) return undefined;
   const pass = newPass(model);
-  const causes = [...new Set(names)].map((n) => partedCause(el, n, pass));
+  const causes = [...new Set(names)].map((n) => partedCause(el, n, pass) ?? referenceSubsettingCause(model, el, n, pass));
   return causes.every((c) => c !== undefined) ? causes.join('; ') : undefined;
 }
 

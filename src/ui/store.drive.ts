@@ -516,10 +516,21 @@ export function driveFileView(file: DriveFile | null): (DriveFileMeta & { opened
  * replace a model, which let an attached file decide alone, the tab asks for
  * the boxes of a Drive-attached model too: no Drive file holds them, and the
  * browser keeps them only with Save.
+ *
+ * Connected to a collaboration room, the room's copy counts as saved (decided
+ * 2026-11-02): the relay and this browser's y-indexeddb hold the model the
+ * peers share, so the text a peer's edit left unsaved is not asked about. Still
+ * asked: text typed in the Text view and not applied (the room does not hold
+ * it), boxes moved by hand (it does not hold them) and a Versions repository
+ * (it goes with the tab).
  */
 export function leaveUnsaved(
-  s: Pick<AppState, 'drive' | 'textBuffer' | 'serializeError' | 'savedText' | 'diagramPins' | 'savedPins' | 'savedInVersions'>,
+  s: Pick<
+    AppState,
+    'drive' | 'textBuffer' | 'serializeError' | 'savedText' | 'diagramPins' | 'savedPins' | 'savedInVersions' | 'collab' | 'textDirty'
+  >,
 ): boolean {
+  if (s.collab.connected && !s.textDirty) return pinsMark(s.diagramPins) !== s.savedPins || s.savedInVersions;
   return driveDirty(s) || browserDirty(s) || s.savedInVersions;
 }
 

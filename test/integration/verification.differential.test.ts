@@ -1627,6 +1627,33 @@ describe('a value read where its inputs are changed is that context’s own, and
     }
   }), 120_000);
 
+  const REF_SUBSETTING = 'a reference subsetting (::>) is no feature of what it subsets: a limit of this tool under its own sentence on the literal and the SMT engine, exit 2, never forgiven (decisions-pass)';
+  it(REF_SUBSETTING, () => note(REF_SUBSETTING, 120_000, async () => {
+    for (const usage of ['ref part p2 ::> p1;', 'part p2 ::> p1;']) {
+      const text = `package RSU {
+      part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      part def W { part p1 : T0; ${usage} }
+      part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+      constraint k { w.p2.load <= 5.0 } }`;
+      const m = await contextModel(text, 'RSU');
+      const goal = obligationsOf(m).find((o) => o.role !== 'axiom' && o.expression === 'w.p2.load <= 5.0')!;
+      expect(goal.encodable, usage).toMatchObject({ reason: 'unread-binding' });
+      for (const engine of backendPresent ? (['literal', 'smt'] as const) : (['literal'] as const)) {
+        for (const allowInconclusive of [false, true]) {
+          const report = await verifyModel(m, { engine, sourceText: text, allowInconclusive });
+          const rows = report.results.filter((r) => r.expression === 'w.p2.load <= 5.0');
+          expect(rows.length, engine).toBeGreaterThan(0);
+          for (const row of rows) {
+            expect([row.code, report.exitCode], `${usage} ${engine} ${allowInconclusive}`).toEqual(['verification/not-evaluable', 2]);
+            expect(row.detail, engine).toContain('(unread-binding): `p2` in RSU::W is a reference subsetting (`::>`) of `p1`');
+            expect(row.detail, engine).toContain('a `::>` is not read as a feature of what it subsets, so `--allow-inconclusive` does not forgive it');
+            expect(row.detail, engine).not.toContain('This is a defect in the relation');
+          }
+        }
+      }
+    }
+  }), 120_000);
+
   withZ3('refine reads a contract over an unread value as the feature it names', async () => {
     const pack = (top: string, cell: string) => `package RF {
     part def Cell {
