@@ -3965,6 +3965,15 @@ export class DefiningEquations {
         dens.slice(0, -1).every((x) => this.subjectOf(x!.reader, x!.feature) === undefined);
       if (!plain) {
         if (ids.has(d.feature.id) || ids.has(this.carrier(d.reader, d.feature).id)) return true;
+        // A link of the name that is a reference stands for another feature (`r = x`): an end at, or on the way to,
+        // that feature (`bind sub.x = o2`) is read by the name too.
+        for (let k = 1; k < segments.length; k++) {
+          const p = denoted.get(segments.slice(0, k).join('.'));
+          if (!p) continue;
+          if (ids.has(p.feature.id)) return true;
+          const s = this.subjectOf(p.reader, p.feature);
+          if (s && (ids.has(s.id) || ids.has(this.carrier(p.reader, s).id))) return true;
+        }
         continue;
       }
       const k = Math.min(dens.length, links.length);
@@ -4783,7 +4792,9 @@ function bindingsIntoRedefiners(model: Model): ReadonlyMap<ElementId, ReadonlyAr
     if (!holderEl) continue;
     for (const end of new Set(ids)) {
       const f = model.get(end);
-      if (!f || endValue(model, f, holderEl, '').kind === 'value') continue;
+      // A reference valued with a feature (`ref part r : T0 = x`) is no value a binding competes with: it joins `r`
+      // to what `x` stands for, and `bind sub.r = o2` joins that to o2 as `bind sub.x = o2` does.
+      if (!f || (endValue(model, f, holderEl, '').kind === 'value' && ![f, ...redefinedClosure(model, f)].some((g) => g.attrs.isRef === true && VALUED_PART_KINDS.has(g.eClass) && typeof g.attrs.value === 'string'))) continue;
       const seen = new Set<ElementId>();
       for (let o: ElementRecord | undefined = f; o && !seen.has(o.id); o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
         if (seen.size > 0 && !isUsage(o.eClass)) break;
@@ -5220,7 +5231,8 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     for (const { e, path, found } of valued) {
       const holder = e.ownerId!;
       // Below its owner, or in a package: the one instance of a namespace every instance of the owner reads alike
-      // (RF2's `part :>> p = other` stands for the package's `other` in q, and in every Q).
+      // (RF2's `part :>> p = other` stands for the package's `other` in the element that writes it: q, or every
+      // instance of a definition that writes it).
       const scopeEl = found !== undefined ? model.get(found.scope) : undefined;
       const links = found !== undefined && (found.scope === holder || (scopeEl?.eClass === 'Package' && scopeEl.attrs.isLibrary !== true)) ? found.links : undefined;
       const g = links?.[links.length - 1];

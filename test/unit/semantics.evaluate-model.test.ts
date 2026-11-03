@@ -5322,6 +5322,24 @@ describe('a value, a reference and a binding that equate two parts or structured
       ['COWN3G::w0::sub', 'satisfied'],
     ]);
     expect(numeric(grpOwn!, 'COWN3G::W::sub::c')).toBe('satisfied');
+    // A part-valued binding into the part the reference stands for (`bind sub.x = o2`, or `bind sub.r = o2`, which
+    // joins x to o2 alike) is read as the one without the reference: w's sub holds o2's 50 for `r.load`, so its row is
+    // not read (it formed no group row, and the relation was proved, with no mention of w's sub).
+    for (const bind of ['sub.x', 'sub.r']) {
+      const { model: bnd } = await loadModelText(`package Q2N { ${T0}
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } }
+        part w : W { bind ${bind} = o2; }
+        part w0 : W;
+      }`);
+      expect(
+        check(bnd!, 'Q2N::W::sub::c').instances!.map((i) => [i.instance ?? bnd!.qualifiedName(i.contextId), i.result]),
+        bind,
+      ).toEqual([
+        ['Q2N::w::sub', 'unknown'],
+        ['Q2N::w0::sub', 'satisfied'],
+      ]);
+    }
     // W's sub's `r = p1` names W's p1, around sub: read at W's own p1 (1) for every W, where w's is 50, both the
     // relation sub writes and the package's read through w's sub held on all four surfaces. Each abstains now.
     const W = `part def W { part p1 : T0; part sub { ref part r : T0 = p1; constraint c { r.load <= 5.0 } } }`;

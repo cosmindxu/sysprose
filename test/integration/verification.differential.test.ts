@@ -11069,7 +11069,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // RF2: q's `part :>> p = other` makes q's p other, whose x keeps its 2 against Q's tie (decision 14 amended
     // 2026-10-22): the model contradicts itself there, so its rows settle nothing (ref null). The value names a
-    // part of the package, one instance every Q holds, and the tie reads only a feature that states a value, so it
+    // part of the package, one instance the element that writes it holds (q's, not another Q's), and the tie reads only a feature that states a value, so it
     // defines nothing of the part: the rows read as RF's (every row abstained as an unread source until reads-pass).
     'h5-rf2': probe(`package RF2 {
         part def P { attribute x : ScalarValues::Real default = 2.0; constraint c { x <= 10.0 } }
@@ -11964,6 +11964,149 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'COWN3::W::sub::c in COWN3::w::sub': ['F/F/F/F', 'F'],
       'COWN3::k': ['F/F/F/F', 'F'],
       'COWN3::k2': ['F/F/F/F', 'F'],
+    }),
+    // A part-valued binding into the part a reference stands for (`bind sub.x = o2` over W's `ref part r : T0 = x`,
+    // reads-pass review): w's sub reads r as o2, whose load of 50 breaks `r.load <= 5.0`, though no feature the
+    // name ends on is bound. The relation is read in each instance and abstains in the bound one (it passed on all
+    // four, and verify proved it, with no row for w's sub). Without the reference (`x.load`, Q2NX) it always did.
+    // Q2N binds an instance, R2 a part of W, R3 reads it through a definition S, R4 binds in a part of Top, R5 in a
+    // specialisation; R1 binds the reference itself (`bind sub.r = o2`), which joins x to o2 alike.
+    'ref-bound-q2n': probe(`package Q2N {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } }
+        part w : W { bind sub.x = o2; }
+        part w0 : W;
+      }`, {
+      'Q2N::W::sub::c': ['T/T/T/T', 'T'],
+      'Q2N::W::sub::c in Q2N::w0::sub': ['T/T/T/T', 'T'],
+      'Q2N::W::sub::c in Q2N::w::sub': ['?/?/?/?', 'F'],
+    }),
+    'ref-bound-r1': probe(`package R1 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } }
+        part w : W { bind sub.r = o2; }
+        part w0 : W;
+      }`, {
+      'R1::W::sub::c': ['T/T/T/T', 'T'],
+      'R1::W::sub::c in R1::w0::sub': ['T/T/T/T', 'T'],
+      'R1::W::sub::c in R1::w::sub': ['?/?/?/?', 'F'],
+    }),
+    'ref-bound-r2': probe(`package R2 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { part ext : T0; part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } }
+        part w : W { bind sub.x = ext; part :>> ext { attribute :>> load = 50.0; } }
+        part w0 : W;
+      }`, {
+      'R2::W::sub::c': ['T/T/T/T', 'T'],
+      'R2::W::sub::c in R2::w0::sub': ['T/T/T/T', 'T'],
+      'R2::W::sub::c in R2::w::sub': ['?/?/?/?', 'F'],
+    }),
+    'ref-bound-r3': probe(`package R3 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def S { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } }
+        part def W { part sub : S; }
+        part w : W { bind sub.x = o2; }
+        part w0 : W;
+      }`, {
+      'R3::S::c': ['T/T/T/T', 'T'],
+      'R3::S::c in R3::W::sub': ['T/T/T/T', 'T'],
+      'R3::S::c in R3::w0::sub': ['T/T/T/T', 'T'],
+      'R3::S::c in R3::w::sub': ['?/?/?/?', 'F'],
+    }),
+    'ref-bound-r4': probe(`package R4 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } }
+        part def Top { part w : W { bind sub.x = o2; } }
+        part top : Top;
+        part w0 : W;
+      }`, {
+      'R4::W::sub::c': ['T/T/T/T', 'T'],
+      'R4::W::sub::c in R4::Top::w::sub': ['?/?/?/?', 'F'],
+      'R4::W::sub::c in R4::top::w::sub': ['?/?/?/?', 'F'],
+      'R4::W::sub::c in R4::w0::sub': ['T/T/T/T', 'T'],
+    }),
+    'ref-bound-r5': probe(`package R5 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } }
+        part def W2 :> W { bind sub.x = o2; }
+        part w : W2;
+        part w0 : W;
+      }`, {
+      'R5::W::sub::c': ['T/T/T/T', 'T'],
+      'R5::W::sub::c in R5::W2::sub': ['?/?/?/?', 'F'],
+      'R5::W::sub::c in R5::w0::sub': ['T/T/T/T', 'T'],
+      'R5::W::sub::c in R5::w::sub': ['?/?/?/?', 'F'],
+    }),
+    // A part-valued binding at an instance beside a group row read through a reference (reads-pass review): w2's
+    // sub reads r as o2 while y carries K, so w2's row abstains and w's reads (r is x, load 1, y 5).
+    'ref-bound-beside': probe(`package J1 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { attribute K : ScalarValues::Real default = 1.0; part sub { part x : T0; part y : T0; ref part r : T0 = x; constraint c { r.load + y.load <= 60.0 } } bind sub.y.load = K; }
+        part w : W { attribute :>> K = 5.0; }
+        part w2 : W { attribute :>> K = 5.0; bind sub.x = o2; }
+        constraint kw { w.sub.r.load + w.sub.y.load <= 60.0 }
+        constraint kw2 { w2.sub.r.load + w2.sub.y.load <= 60.0 }
+      }`, {
+      'J1::W::sub::c': ['T/T/?/T', 'T'],
+      'J1::W::sub::c in J1::w::sub': ['T/T/T/T', 'T'],
+      'J1::W::sub::c in J1::w2::sub': ['?/?/?/?', 'T'],
+      'J1::kw': ['T/T/?/T', 'T'],
+      'J1::kw2': ['?/?/?/?', 'T'],
+    }),
+    // X17 with a binding into the part the reference stands for (`bind s.k = K`, reads-pass review): q2's p reads
+    // r as q2's s, whose x doubles its k of 50, so its row abstains whichever instance writes the binding.
+    'ref-around-x17k': probe(`package X1 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; attribute K : ScalarValues::Real default = 1.0; part s : R; part p : P { ref part :>> r = s; } bind p.load = L; bind s.k = K; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> K = 50.0; }
+      }`, {
+      'X1::P::c': ['T/T/T/T', 'T'],
+      'X1::P::c in X1::Q::p': ['T/T/T/T', 'T'],
+      'X1::P::c in X1::q1::p': ['?/?/?/?', 'T'],
+      'X1::P::c in X1::q2::p': ['?/?/?/?', 'F'],
+    }),
+    // An assert that mixes a feature with a value (x) and one without (w) over the package's part (reads-pass
+    // review): it defines w, so q's p is read through no value it checks only, and the rows abstain.
+    'h5-rf2-mixed': probe(`package A5 {
+        part def P { attribute x : ScalarValues::Real default = 2.0; attribute w : ScalarValues::Real; constraint c { x <= 10.0 } }
+        part def Q { part p : P; assert constraint tie { p.x + p.w == 50.0 } }
+        part other : P;
+        part q : Q { part :>> p = other; }
+        constraint top { other.x <= 10.0 }
+        constraint top2 { q.p.w <= 10.0 }
+      }`, {
+      'A5::P::c': ['T/T/T/T', 'T'],
+      'A5::P::c in A5::other': ['?/?/?/?', 'T'],
+      'A5::P::c in A5::q::p': ['-/?/-/?', 'T'],
+      'A5::P::c in A5::q::«PartUsage»': ['?/-/?/-', 'T'],
+      'A5::Q::tie': ['?/-/T/-', null],
+      'A5::Q::tie in A5::q': ['?/-/?/-', null],
+      'A5::top': ['?/?/?/?', 'T'],
+      'A5::top2': ['?/?/?/?', 'F'],
+    }),
+    // A name Q's own `other` shadows (`part :>> p = other` in q reads Q's member, not the package's; reads-pass
+    // review): q's p is Q's other, whose x keeps its 2 against the tie's 50, and the package's other breaks c.
+    'h5-rf2-shadow': probe(`package J3 {
+        part def P { attribute x : ScalarValues::Real default = 2.0; constraint c { x <= 10.0 } }
+        part other : P { attribute :>> x = 20.0; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } part other : P; }
+        part q : Q { part :>> p = other; }
+        constraint top2 { q.p.x <= 10.0 }
+      }`, {
+      'J3::P::c': ['T/X/T/X', 'T'],
+      'J3::P::c in J3::other': ['F/F/F/X', 'F'],
+      'J3::Q::tie': ['F/-/F/-', null],
+      'J3::Q::tie in J3::q': ['F/-/F/-', null],
+      'J3::top2': ['T/X/T/X', null],
     }),
     'ref-outward-cown2': probe(`package COWN2 {
         part def T0 { attribute load : ScalarValues::Real default = 1.0; }
@@ -15531,6 +15674,16 @@ package L3 {
   const ALL_FOUR = ['literal: bindings', 'literal: record', 'smt: bindings', 'smt: record'] as const;
   const WITNESS_UNPRINTED = new Map<string, readonly string[]>([
     ['k5 | K5::n', ALL_FOUR],
+    // The bound instance's row of a reference read through a part-valued binding (reads-pass review) abstains: the SMT
+    // engine prints the compared path with no value.
+    ['ref-bound-q2n | Q2N::W::sub::c in Q2N::w::sub', ['smt: bindings', 'smt: record']],
+    ['ref-bound-r1 | R1::W::sub::c in R1::w::sub', ['smt: bindings', 'smt: record']],
+    ['ref-bound-r2 | R2::W::sub::c in R2::w::sub', ['smt: bindings', 'smt: record']],
+    ['ref-bound-r3 | R3::S::c in R3::w::sub', ['smt: bindings', 'smt: record']],
+    ['ref-bound-r4 | R4::W::sub::c in R4::Top::w::sub', ['smt: bindings', 'smt: record']],
+    ['ref-bound-r4 | R4::W::sub::c in R4::top::w::sub', ['smt: bindings', 'smt: record']],
+    ['ref-bound-r5 | R5::W::sub::c in R5::W2::sub', ['smt: bindings', 'smt: record']],
+    ['ref-bound-r5 | R5::W::sub::c in R5::w::sub', ['smt: bindings', 'smt: record']],
     ['w4-nested | W4N::P::c', ALL_FOUR],
     // The literal rows of these two abstain with no bindings at all; the SMT rows print them, valueless.
     ['refute-r1d | R1D::P::cd in R1D::q1::p', ['smt: bindings', 'smt: record']],
@@ -15562,6 +15715,15 @@ package L3 {
     ['bound-vc-ivalue-j3 | J3::k', 'q2’s p reads the 50 q2’s `:>> L = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q2’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at q’s 5'],
     ['bound-vc-ivalue-default | KD::qq4', 'q4’s p reads the 50 q4’s `:>> L default = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q4’s p, F): the SMT engine and the literal engine read the axioms inconsistent beside the F the check, the numeric surface and the literal exit give `q4.L == 4.0`'],
     ['bound-vc-derived | I5::k', 'q’s p reads the 50 Q’s `L = 50.0` gives it through Q’s binding, and its m2 (−40) misses P’s `m2 >= 0.0` (the check files the row of q’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at its 50, as with the twin that redefines `load` itself'],
+    // J3: q's `part :>> p = other` reads Q's own `other` (x keeps its 2 against Q's tie, as RF2's), so `top2` and Q's c
+    // read the 2 and the SMT engine reports the axioms inconsistent; the package's `other` (x = 20) is no part of it.
+    ...['J3::P::c', 'J3::P::c in J3::other', 'J3::top2'].map(
+      (row) =>
+        [
+          `h5-rf2-shadow | ${row}`,
+          'Q’s asserted `p.x == 50.0` against P’s `default` 2, which no assertion replaces (decision 14 amended 2026-10-22), in the model with q’s p valued with Q’s own `other` (which shadows the package’s): the model contradicts itself, and the SMT engine reads P’s generic x apart from it (RF2’s shape)',
+        ] as const,
+    ),
     ...['rf | RF::P::c', 'rf2 | RF2::P::c', 'rf3 | RF3::P::c', 'rf3 | RF3::t0'].map(
       (key) =>
         [
