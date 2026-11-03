@@ -360,10 +360,8 @@ export function Properties(): JSX.Element {
   const docReadOnly = inLibrary(model, id);
 
   // Read-only relationship facets.
-  const types = model.typesOf(id);
-  const specializations = model
-    .relationshipsFrom(id)
-    .filter((r) => isSpecialization(r.eClass));
+  const types = model.typesInBindOrder(id);
+  const specializations = model.specializationsFrom(id);
   // Connection-like edges touching this element, excluding the specialization
   // and membership families already covered above / by containment.
   const connections = model

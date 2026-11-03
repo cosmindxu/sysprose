@@ -625,9 +625,10 @@ the page, in a terminal over the saved file and on every peer, whatever order
 the model lists them in; the impact closure, which walks it, follows. So do the SDK's
 `traverse`, an element's relationships (the REST `relationships` of an element), the impact
 graph's neighbours and the specialisers a finding names (`what specialises it (LA::areaFraction,
-PA::areaFraction)`). What stays: a typing beside a subsetting or redefinition of one
-element, made in the app, is listed in the order they were made in the Properties panel's
-Types and Specializations lists; a terminal lists the subsetting before the typing and the typing before the redefinition.
+PA::areaFraction)`). So do the Properties panel's Types and Specializations lists and a table's
+Type column: the relationships of one element come in a fixed order (`:>` before typings before
+redefinitions, the order where-used uses), whichever order they were made in; it is not the order a
+terminal lists them in, which depends on where the element stands.
 
 ### The Text tab, in both directions
 
@@ -4995,7 +4996,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:562-579`, `1014-1039` (the two rules that ask),
+`src/validation/rules.ts:562-579`, `1055-1080` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

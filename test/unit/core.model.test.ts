@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Model, ModelFactory, buildSampleModel, type ChangeEvent } from '@core/index';
+import { Model, ModelFactory, buildSampleModel, type ChangeEvent, type ElementRecord } from '@core/index';
+import { loadModelText } from '@text/load';
+import { serializeUserModelSignals } from '@text/index';
+import { RULES_BY_ID } from '@validation/index';
 
 describe('Model core', () => {
   it('creates and indexes containment', () => {
@@ -253,6 +256,35 @@ describe('Model core', () => {
     expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A', 'X', 'B']);
     m.remove(typing.id);
     expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A']);
+  });
+
+  // The page lists a relationship an edit adds after the ones the element had. The lists the page shows read a fixed
+  // order (the `:>` family, typings, redefinitions), so they do not change on a save and reopen.
+  it('typesInBindOrder and specializationsFrom list one element\'s relationships in a fixed order, the same after a save and reopen', async () => {
+    const base = 'package W { part def D; part def D2; part v; part s; part y; }';
+    const kinds = { T: ['FeatureTyping', 'D'], T2: ['FeatureTyping', 'D2'], S: ['Subsetting', 's'], R: ['Redefinition', 'v'] } as const;
+    const named = (m: Model, n: string) => m.all().find((e) => e.declaredName === n)!;
+    const orders = ['T S', 'S T', 'T R', 'R T', 'T S R', 'S T R', 'R T S', 'T T2 S', 'T2 S T R'];
+    const read = (m: Model) => {
+      const y = named(m, 'y').id;
+      return { types: m.typesInBindOrder(y).map((t) => t.declaredName), specs: m.specializationsFrom(y).map((r) => r.eClass[0] + '>' + (r.target ?? []).map((t) => m.get(t)?.declaredName)) };
+    };
+    for (const order of orders) {
+      const page = (await loadModelText(base, { fileName: 'm.sysml', library: 'none' })).model!;
+      const y = named(page, 'y');
+      for (const k of order.split(' ') as Array<keyof typeof kinds>) {
+        page.create(kinds[k][0], { ownerId: y.id, source: [y.id], target: [named(page, kinds[k][1]).id] });
+      }
+      page.adoptSerialOrder();
+      const saved = serializeUserModelSignals(page).text;
+      const terminal = (await loadModelText(saved, { fileName: 'm.sysml', library: 'none' })).model!;
+      expect(read(page), `${order}: ${saved}`).toEqual(read(terminal));
+    }
+    // The order itself: the `:>` family first, then typings, then redefinitions, each as the model lists them.
+    const m = (await loadModelText(base, { fileName: 'm.sysml', library: 'none' })).model!;
+    const y = named(m, 'y');
+    for (const k of ['R', 'T', 'T2', 'S'] as const) m.create(kinds[k][0], { ownerId: y.id, source: [y.id], target: [named(m, kinds[k][1]).id] });
+    expect(read(m)).toEqual({ types: ['s', 'D', 'D2', 'v'], specs: ['S>s', 'F>D', 'F>D2', 'R>v'] });
   });
 
   it('round-trips through JSON without loss', () => {
@@ -689,5 +721,73 @@ describe('Model core', () => {
       expect(m.orderChildren(c.id, [d.id, e.id, f.id, tc.id, libU.id]), 'a peer that held it among them: seated so').toBe(false);
       expect(m.all().every((el, i) => el === m.inSerialOrder()[i])).toBe(true);
     });
+  });
+});
+
+// The specialization-cycle rule reads the components of the graph, not every simple path from each element.
+describe('specialization-cycle — the same findings as a walk of every simple path, at the cost of the edges', () => {
+  /** The rule as it was written: every simple path from each element, first closing edge reported. */
+  function everyPath(adj: number[][]): Array<'itself' | 'cycle' | null> {
+    return adj.map((_, start) => {
+      const path = new Set<number>([start]);
+      const stack = [{ id: start, idx: 0 }];
+      while (stack.length) {
+        const frame = stack[stack.length - 1]!;
+        const next = adj[frame.id]!;
+        if (frame.idx >= next.length) {
+          stack.pop();
+          path.delete(frame.id);
+          continue;
+        }
+        const t = next[frame.idx++]!;
+        if (t === start) return frame.id === start ? 'itself' : 'cycle';
+        if (path.has(t)) continue;
+        path.add(t);
+        stack.push({ id: t, idx: 0 });
+      }
+      return null;
+    });
+  }
+
+  it('reads what a walk of every simple path read, on 300 random graphs (self-loops, back edges, duplicates)', () => {
+    let seed = 12345;
+    const rnd = (n: number): number => Math.floor(((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32) * n);
+    let flagged = 0;
+    for (let g = 0; g < 300; g++) {
+      const n = 2 + rnd(6);
+      const adj: number[][] = Array.from({ length: n }, () => []);
+      const edges = rnd(n * 2 + 1);
+      for (let e = 0; e < edges; e++) adj[rnd(n)]!.push(rnd(n));
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const p = f.pkg('P');
+      const els = adj.map((_, i) => f.partDef(`A${i}`, p.id));
+      // Edges are created per source in the order its list gives them.
+      for (let i = 0; i < n; i++) for (const t of adj[i]!) m.create('Subsetting', { ownerId: els[i]!.id, source: [els[i]!.id], target: [els[t]!.id] });
+      const got = new Map(RULES_BY_ID.get('specialization-cycle')!.run(m).map((d) => [d.elementId, d.message.includes('itself') ? 'itself' : 'cycle']));
+      const want = everyPath(adj);
+      for (let i = 0; i < n; i++) expect(got.get(els[i]!.id) ?? null, `graph ${g} element ${i}: ${JSON.stringify(adj)}`).toBe(want[i]);
+      flagged += want.filter((w) => w !== null).length;
+    }
+    expect(flagged).toBeGreaterThan(300);
+  });
+
+  it('is linear in the edges: a layered diamond of 12 layers of 12 and a full DAG of 40 finish at once', () => {
+    const t0 = Date.now();
+    for (const [layers, width] of [[12, 12], [40, 1]] as const) {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const p = f.pkg('P');
+      const layer = (l: number): ElementRecord[] => Array.from({ length: l === 0 && width === 1 ? 1 : width }, (_, k) => f.partDef(`N${l}_${k}`, p.id));
+      const all = Array.from({ length: layers }, (_, l) => layer(l));
+      // width 12: each element subsets the whole layer above; width 1: each subsets every element above it.
+      for (let l = 1; l < layers; l++) {
+        for (const el of all[l]!) {
+          for (const up of width === 1 ? all.slice(0, l).flat() : all[l - 1]!) m.create('Subsetting', { ownerId: el.id, source: [el.id], target: [up.id] });
+        }
+      }
+      expect(RULES_BY_ID.get('specialization-cycle')!.run(m)).toHaveLength(0);
+    }
+    expect(Date.now() - t0).toBeLessThan(5000);
   });
 });

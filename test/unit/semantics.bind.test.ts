@@ -667,4 +667,24 @@ describe('unreadScopes — the owners whose features the saved file may read oth
     // A cycle: a1 onto a2, which redefines a1.
     expect(retargeted('a1', (_m, id) => id('a2'))).toEqual(['U::P1::a1:redefinition', 'U::P1:redefinition', 'U::P2::a2:redefinition', 'U::P2:redefinition']);
   });
+
+  it('lists the features of every bad redefinition of an owner, whichever the walk of the redefinitions meets first', () => {
+    // P holds an attribute that redefines a part (another kind: the owner) and two parts that redefine each other (a
+    // cycle: the owner and both features). A walk that stopped marking features once the owner was marked left f and g
+    // unlisted when the first redefinition it met was the other kind.
+    const SRC2 = 'package W { part def Q { part a; } part def P :> Q { attribute q; part f; part g; } }';
+    const read = (cycleFirst: boolean): string[] => {
+      const { model } = parsed(SRC2);
+      const of = (n: string) => model.all().find((e) => e.declaredName === n && e.attrs.isLibrary !== true)!.id;
+      const redefine = (from: string, to: string): void => void model.create('Redefinition', { ownerId: of(from), source: [of(from)], target: [of(to)] });
+      const kind = (): void => redefine('q', 'a');
+      const cycle = (): void => (redefine('f', 'g'), redefine('g', 'f'));
+      if (cycleFirst) (cycle(), kind());
+      else (kind(), cycle());
+      return named(model, unreadScopes(model));
+    };
+    const want = ['W::P::f:redefinition', 'W::P::g:redefinition', 'W::P:redefinition'];
+    expect(read(true)).toEqual(want);
+    expect(read(false)).toEqual(want);
+  });
 });

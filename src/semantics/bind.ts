@@ -264,7 +264,9 @@ export function unreadScopes(model: Model): Map<ElementId, UnreadScope> {
   for (const r of model.ofKind('Redefinition')) {
     const f = model.get((r.source ?? [])[0] ?? '');
     const t = model.get((r.target ?? [])[0] ?? '');
-    if (!f || !t || !typed(f.ownerId) || f.attrs.isLibrary === true || out.has(f.ownerId)) continue;
+    // An owner of twins keeps that scope. One a redefinition marked already is marked again, and the feature of this one too:
+    // skipping it left the feature of a second bad redefinition unlisted whenever the walk met another of its owner first.
+    if (!f || !t || !typed(f.ownerId) || f.attrs.isLibrary === true || out.get(f.ownerId) === 'twins') continue;
     // The keyword-less `:>> x` is a reference usage that redefines a feature of any kind (the mapper makes one in a metadata body).
     const otherKind = t.eClass !== f.eClass && f.eClass !== 'ReferenceUsage' && t.eClass !== 'ReferenceUsage';
     if (otherKind) out.set(f.ownerId, 'redefinition');

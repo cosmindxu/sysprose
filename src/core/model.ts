@@ -496,20 +496,55 @@ export class Model {
   /**
    * The types a feature/usage specialises (FeatureTyping/Subclassification
    * targets). Returns resolved target elements where they exist in-model.
+   *
+   * In the order the model LISTS the relationships, which depends on the order they were made in: a typing an
+   * edit adds (Properties' Type field) is listed after the subsetting or redefinition the element had. The readings
+   * walk this order, and abstain where it decides (`order` of bind.ts `unreadScopes`); a list that SHOWS the types
+   * reads {@link typesInBindOrder}. No single key makes this the terminal's raw listing either: a usage body lists a
+   * typing before a redefinition, a `part def` body the reverse (TODO.md).
    */
   typesOf(id: ElementId): ElementRecord[] {
+    return this.targetsOf(this.typingsFrom(id));
+  }
+
+  /**
+   * {@link typesOf} in a fixed order that does not depend on the order the relationships were made in
+   * ({@link bindOrder}, the order where-used uses), the same on the page, after a save and reopen and on every peer of
+   * a room: for a list a person reads (Properties, a table cell, a diagram's grouping). It is not the terminal's own
+   * `typesOf` listing, which differs by context.
+   */
+  typesInBindOrder(id: ElementId): ElementRecord[] {
+    return this.targetsOf(bindOrder(this.typingsFrom(id)));
+  }
+
+  private typingsFrom(id: ElementId): ElementRecord[] {
     // One pass over the edge index, no copy of it: every walk of the generals of a type asks this once per type it
     // meets, so on a deep lattice the copies and filters were most of a parse.
     this.ensureEdgeIndex();
     const out: ElementRecord[] = [];
     for (const r of this._sourceIndex.get(id) ?? []) {
-      if (!isRelationship(r.eClass) || !isTypingSpecialization(r.eClass)) continue;
+      if (isRelationship(r.eClass) && isTypingSpecialization(r.eClass)) out.push(r);
+    }
+    return out;
+  }
+
+  private targetsOf(rels: readonly ElementRecord[]): ElementRecord[] {
+    const out: ElementRecord[] = [];
+    for (const r of rels) {
       for (const t of r.target ?? []) {
         const general = this.elements.get(t);
         if (general) out.push(general);
       }
     }
     return out;
+  }
+
+  /**
+   * The specialization-family relationships whose source is `id`, in the fixed order of {@link bindOrder}: the list
+   * Properties shows beside {@link typesInBindOrder}.
+   */
+  specializationsFrom(id: ElementId): ElementRecord[] {
+    return bindOrder(this.relationshipsFrom(id).filter((r) => isSpecialization(r.eClass)));
   }
 
   /* ─────────────────────────────── Update ─────────────────────────────── */
@@ -949,11 +984,12 @@ export class Model {
    * another order, stays where it was. `where-used` and the impact closure
    * do not follow it: they list in the order of the text
    * ({@link edgesInTextOrder}), as do the SDK's traverse, an element's
-   * relationships, the impact graph and the specialisers a finding names. What
-   * is left is a typing beside a subsetting or redefinition of ONE element
-   * (`typesOf`, Properties' lists) and the consumers that walk `ofKind` of a
-   * kind a load lists later, which no output has been found to depend on
-   * (TODO.md).
+   * relationships, the impact graph and the specialisers a finding names, and
+   * so do the lists a person reads of ONE element's typings and specialisations
+   * (Properties, a table's Type cell, {@link typesInBindOrder}: the `:>` family,
+   * typings, redefinitions, the order where-used uses). What is left is `typesOf` itself, which the
+   * readings walk in the order listed (TODO.md), and the consumers that walk
+   * `ofKind` of a kind a load lists later, which no output depends on.
    */
   adoptSerialOrder(opts: { whole?: boolean } = {}): boolean {
     const whole = opts.whole === true;
@@ -1187,6 +1223,24 @@ export class Model {
 
 /** The kinds a load lists after the declarations, in the order its binding passes make them: `:>` family, typings, redefinitions. */
 const BIND_FAMILY: Readonly<Record<string, number>> = { FeatureTyping: 1, Redefinition: 2 };
+
+/**
+ * `rels` (the specialization-family relationships of ONE element, in the order the model lists them) in a fixed
+ * order: the `:>` family, then typings, then redefinitions, each in the order given. The same rule as
+ * {@link Model.edgesInTextOrder}'s tie (the order where-used uses), so that a list built from one element's
+ * relationships does not depend on the order they were made in: it reads alike on the page, after a save and reopen
+ * and on every peer of a room. It is not the terminal's raw `typesOf` listing (a usage body lists a typing before a
+ * redefinition, a `part def` body the reverse). `rels` itself when it is in that order already.
+ */
+function bindOrder(rels: ElementRecord[]): ElementRecord[] {
+  let sorted = true;
+  for (let i = 1; i < rels.length && sorted; i++) sorted = (BIND_FAMILY[rels[i - 1]!.eClass] ?? 0) <= (BIND_FAMILY[rels[i]!.eClass] ?? 0);
+  if (sorted) return rels;
+  return rels
+    .map((r, i) => ({ r, i }))
+    .sort((x, y) => (BIND_FAMILY[x.r.eClass] ?? 0) - (BIND_FAMILY[y.r.eClass] ?? 0) || x.i - y.i)
+    .map((x) => x.r);
+}
 
 /**
  * Whether a load lists an element after the elements the text declares, rather

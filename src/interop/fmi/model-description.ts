@@ -102,7 +102,9 @@ export interface FmiExportOptions {
 function declaredTypeName(model: Model, feat: ElementRecord): string {
   const attrType = feat.attrs.type ?? feat.attrs.typeRef;
   if (typeof attrType === 'string' && attrType.trim() !== '') return attrType.trim();
-  return model.typesOf(feat.id)[0]?.declaredName ?? '';
+  // The first typing, not the first type: a subsetting listed before a typing an edit added is not the declared type.
+  const typing = model.relationshipsFrom(feat.id).find((r) => r.eClass === 'FeatureTyping');
+  return (typing?.target ?? []).map((t) => model.get(t)?.declaredName).find((n) => n !== undefined) ?? '';
 }
 
 const INT_TYPE_NAMES = new Set([
