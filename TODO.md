@@ -180,13 +180,14 @@ feature without a value is defined by an asserted equation. The residuals are th
 false verdicts the review of 2026-10-14 found in the per-instance code itself follow under their own
 headings.
 
-- [ ] **Read another part's own rows past an assert read through a part valued with it (RF2).**
-      Unchanged on dca0014. `P::c in other` and `top` read ?/?/?/?, and `Q::tie in q` reads ?/-/?/-.
-      RF and RF3 read T/T/T/X, and their tie F. [O9 S2, default-stands S2]
 - [ ] **Read a local equation where a binding gives its other side a value (PA, PA4, PA2, PA0).**
-      Unchanged on dca0014. `P::qa in p2` reads ?/-/?/- (ref F). P's own `qa` reads T/-/?/- (the
-      numeric surface abstains over the bound M). `top2` reads T/T/T/X and the `#bind` row F/-/F/-.
-      [O9 S2, default-stands S2]
+      Awaits a ruling. Unchanged on e2d104d: `P::qa in p2` reads ?/-/?/- (ref F), P's own `qa` reads
+      T/-/?/- (the numeric surface abstains over the bound M), `top2` reads T/X/T/X, and the `#bind`
+      row F/-/F/-. Reading qa at p2 as F takes M as the binding's 9, while the `#bind` row F takes M
+      as the equation's 2. The model states both (A.5, U11: all abstain), so deciding it files two F
+      rows that claim two values for M. Rule either that the ref of `qa in p2` is ? (A.5, a pin
+      change), or that a binding's `=` value is M's value there and the equation a check. Probe:
+      reads-pass-scratch/pa4.sysml. [O9 S2, default-stands S2, reads-pass]
 - [ ] **Read a satisfaction, a subject or a reference a definition writes in each instance of it.**
       Since per-instance-rest S1 these are read at the values of the element they are written in,
       and each of their rows abstains (`unread-binding`, naming the instance) where an instance of
@@ -211,12 +212,6 @@ headings.
       reference redefinition read at the redefined value, or the walk reading such a copy as what
       the reference it copies names. Done when sd0, sbj0, SM1, cown2, RC7, VR1 and RBB4K read F for
       w on all four surfaces. [per-instance-rest S1]
-- [ ] **Read a group's row through a reference its usage writes, now the walk reads it per
-      instance.** cown3's `W::sub::c in w::sub` abstains (`not-enumerated`: "this tool resolves what
-      a reference stands for only where its value is written"), while since per-instance-rest S1 the
-      walk reads W's sub's `ref part r : T0 = x`, reached as `w.sub.r`, in w's sub (cown3's k reads
-      F). The coverage guard (`instanceReadsOtherwise`) could read the row in that instance instead.
-      Sound, only weaker. [per-instance-rest S1]
 - [ ] **Read what two steps of standing-for, a call, or a second subject would decide.** All sound,
       all weaker: (1) a shared-usage (group) row read through two steps of standing-for (a reference
       to a reference, or to an equated part, written in the usage's definition) abstains with "this
@@ -231,11 +226,11 @@ headings.
 - [ ] **Name an unnamed nested redefinition's context row alike on every surface.** A context that
       is an unnamed redefinition is filed by element id (`... in q::«PartUsage»`) on the check and
       numeric surfaces and by instance path (`q::p`, `q::r`) on the literal and SMT engines (RF,
-      RF2, RF3, CI1, the dt_*_deep files). The four-surface harness therefore keys them as two rows,
-      each abstaining or agreeing, so a unified name needs the check's context rows to carry the
-      instance path (their ids, anchors and the numeric `context.contextId` change) and a re-pin of
-      about 40 table rows. Low. The RB5 duplicate (two check rows `P::c in q1::p`) is fixed in
-      naming-pass S1 (h5-rb5p). [O9 S2, naming-pass S1]
+      RF3, CI1, the dt_*_deep files). The four-surface harness therefore keys them as two rows, each
+      abstaining or agreeing, so a unified name needs the check's context rows to carry the instance
+      path (their ids, anchors and the numeric `context.contextId` change) and a re-pin of about 40
+      table rows. Low. The RB5 duplicate (two check rows `P::c in q1::p`) is fixed in naming-pass S1
+      (h5-rb5p). [O9 S2, naming-pass S1]
 - [ ] **Close the F section 2.8 rows still open, and the other end of an asserted equation's
       binding.** (1) GA6 `qa` reads T/-/?/- (target T/-/T/-; the numeric surface does not converge
       on that self-contradictory model). GA6 `pa` and GA12 `pa`/`qa` moved from a numeric T to `?`
@@ -430,14 +425,6 @@ headings.
       binding to a valued feature joined to another end still reads a decided T beside a
       contradictory file reading (probes rev/m/valk-eq-fwd.sysml, rev/m6/dfl-L2-fwd.sysml). It is
       consistent across the lanes and not new. [fence-numeric3; fence-numeric4]
-- [ ] **Read Q's assert at an instance whose binding joins the asserted path to defaults that differ
-      (RB5E).** `part q1 : Q { attribute K default = 9.0; attribute J default = 8.0; bind p.x = K;
-      bind p.x = J; }` under Q's `assert constraint tie { p.x == 50.0 }` gives q1's p.x no value to
-      read (`defaults-differ`), so `Q::tie` is not read in q1 and every reading of the pair abstains
-      (`unread-binding`, `standingUnderInstance`); the model may contradict itself unreported.
-      Pinned as `h5-rb5-differ`
-      (review-2026-10-14/wave3-probes/contradictory-models/h5-rb5-differ.sysml). Done when the
-      assert is filed in q1 with the cause, or the two defaults are read. [contradictory-models S1]
 - [ ] **Read `assert not constraint c { ... }` as the negation.** The form (also `require not`,
       `assume not`) is now refused at load with its own error, `mapper/negated-assert-unread`: the
       load degrades, the judging commands exit 2 and the reporting ones exit 1, the app's checks
@@ -477,17 +464,6 @@ headings.
       review-2026-10-14/wave3-probes/contradictory-models/c6-nested-swap.sysml,
       review-2026-10-14/wave3-probes/fence-readings/s2/bq.sysml. Done when only the meeting instance
       abstains. [contradictory-models S3; fence-readings S2; fence-numeric4]
-- [ ] **Resolve a package-level chain end the same in either text order (loader).** The fence of
-      fence-readings S1 withdrew the false verdict past the usage cap (instance-pass raised the cap from
-      32 to 48: the depth-33 probes cap1r and cap2r now read T/T/T/T on all four surfaces; a chain
-      past 48 still abstains on the check and literal engine). The root cause stays: bind.ts
-      `mostSpecificRedefining` / `endCopyProto` and the mapper resolve a package `bind Y =
-      top.a.….a.load` before T1's `bind a.load = L` has its end copy, so the chain end redefines
-      only T0::load when the bind is written first. Resolve package-level chain ends after every
-      definition's own end copies exist. Done when the loader's redefinedClosure of that end is the
-      same in both orders (a unit test on the closure) and the reversed corpus models pin the same
-      cells for the same reason. Probes: review-2026-10-14/wave3-probes/text-order/cap1r.sysml,
-      cap2r.sysml, cap1f.sysml, cap2f.sysml. Pins: cap1rev, cap2, cap2rev. [fence-readings S1]
 - [ ] **Give the specialisers of a usage-owned group one canonical order (optional).** The
       group-order fence of fence-readings S1 is a stable sort by usage-ancestor count in
       `contextsUncached`; `specialisersOf` itself and the context-key dedup have no canonical order,
@@ -730,11 +706,16 @@ true values. What follows is what that branch and the review of it left open; en
       sentence would speak about, so saying it there could be false. Optional, low; take it when a
       reachable group row turns up. [save-and-wording S3; wording-pass S1]
 - [ ] **Read a `default` that an assert in an enclosing scope names, instead of abstaining (A.2.4
-      lexical rule).** `assertAbove` / `enclosingAssertOn` still make a constraint over a `default`
-      abstain when an assert in an enclosing scope names that default. Since decision 14 was amended
-      no assertion changes a default, so this abstention is now only conservative: read the default,
-      and check the assert against it as for a value written with `=`. Pin each row against its `=`
-      twin. [default-stands S1]
+      lexical rule).** Since defaults2-pass an enclosing assert that names a feature stating a value
+      of its own (a default or =, no binding end and no binding-held default) is read at that value
+      and the assert is checked against it, as for = (statesStandingValue; refute-r1, r1u, r1d, h1c,
+      q4b, sfh, stand-enc-*). Still abstaining (enclosing-assert): an assert naming a feature a
+      binding gives its value, such as A2E p.load >= 0.5 over Q's bind p.load = L; a feature with no
+      value; a name the assert reaches only by prefix. Done when the first reads the binding's value
+      (the RB5 route, valuedByBinding) and the assert is checked against it, each row pinned against
+      its = twin. Probes: defaults2-pass-scratch/p6/se-none.sysml, differential A2E-enclosing-assert
+      and stand-enc-bound. The dead enclosing-owner code of the sibling entry 'Remove the
+      decision-14 default machinery' was left untouched. [default-stands S1, defaults2-pass]
 - [ ] **Remove the decision-14 default machinery, or ship the held tag (analysis Q2).**
       `replaceableDefaults` (always empty) gates code that is now unreachable: the local rule
       (`assertHeldIndex`), the enclosing rule's owner loop (`enclosingAsserts`), the binding route's
@@ -753,9 +734,15 @@ true values. What follows is what that branch and the review of it left open; en
       the assert's 50 into L0 (u1 T/T/T/X). But its L rows abstain (ca ?/-/F/-, t1 ?/?/?/X, t50
       ?/?/F/X) where H2 decides (ca F/-/F/-, t1 T/T/T/X, t50 F/F/F/X). The cause: H2's `L = L0`
       gives L a value, so the assert is checked against L0's 1; H2f's L is valueless, so the assert
-      defines it and the binding gives it a second value. Read a binding from a valueless end to a
-      valued feature as giving that end the value, as `=` does. Then H2f decides as H2 on all four
-      surfaces, and its `=` twin as H2's; pin all four with I14. [default-stands S1, G2]
+      defines it and the binding gives it a second value. Five places decide that the assert defines
+      L and must change together: (1) the binding component classification (endValue, heldDefaults'
+      defined branch, classified, agreedValued); (2) the check's valueDefinedByEquation and
+      definedAgainstHere; (3) the #bind conflict row in bindingConflicts; (4) the numeric solver's
+      design equation for the assert; (5) the literal engine's contradictedDefinitions. Changing (1)
+      alone read L as 50 and gave a false verdict (ca T, t50 T, t1 F), so it was reverted. Done when
+      the five readers give a valueless end bound to a valued feature that feature's value, with an
+      oracle over order swaps, instances, default and = twins, and the #bind row gone. Probes:
+      defaults2-pass-scratch/p2/h2f.sysml and p5/. [default-stands S1, G2, defaults2-pass]
 - [ ] **Carry an asserted inequality over a `default` a binding makes give way with no value, on the
       SMT lane.** Since default-stands S1, `gateRelation` refuses every asserted relation over such
       a default (`givenWayUnvalued`), inequalities included. perf9b (per-instance/rv) goes from 2 to
@@ -1194,7 +1181,15 @@ true values. What follows is what that branch and the review of it left open; en
       a usage only (weaker, never false; test/integration/verification.differential.test.ts
       'typed-ineq-*' rows, scratch review/m7/T1..T10). A typed assert whose parameter is bound with
       `bind x = L` is NOT an abstention left: it is held (fixed in the review of 'Hold a feature an
-      assert typed by an inequality-only constraint definition constrains'). [defaults-pass]
+      assert typed by an inequality-only constraint definition constrains'). (e) An enclosing assert
+      naming a binding-carried feature (A2E q2 p.load >= 0.5 over bind p.load = L;
+      defaults2-pass-scratch/p6/se-none.sysml, differential A2E-enclosing-assert and
+      stand-enc-bound), an enclosing assert on a valueless feature, and = plus a redefinition of
+      that = under an enclosing assert (stays unknown through the existing #bind contradiction;
+      gen211 models G60, G72, G96) still abstain. (f) Literal X on generic rows of a file whose
+      instance contradicts a default under an enclosing assert
+      (defaults2-pass-scratch/review/m2/with/MM10.sysml, MM88.sysml; 9 cells in 2 of 240 probe
+      models; sound). [defaults-pass, defaults2-pass]
 - [ ] **Abstentions left (per-instance binding chains and context walks) (rollup; sound, only
       weaker).** (1) A binding chain deeper than 48 usages (chain49/chainPkg49 and the cap rows at
       depth 49): the check and literal engines abstain; on chainPkg49 posF the SMT surface also
@@ -1212,7 +1207,23 @@ true values. What follows is what that branch and the review of it left open; en
       elements beside the instance's own input (m7j), or when the instance states two numbers a
       derived value reads (M7b); also a derived value read with no via (PB), a redefined value that
       is derived or carries a unit (G5c), a context row that is no group, and a row with no read at
-      all (probes scratch/naming-pass-scratch/pb.sysml, nb12.sysml). [instance-pass, naming-pass]
+      all (probes scratch/naming-pass-scratch/pb.sysml, nb12.sysml). (6) A reference valued with
+      another reference inside a nested usage with a binding into the last one (`ref r = q`, `ref q
+      = x`, bind sub.x.load = K) still abstains (reads-pass-scratch/g179b shape twoRefs; already the
+      'two steps of standing-for' entry); a reference valued with a feature AROUND the instance that
+      a binding reaches into (X17's `r = s`) still abstains (g179b/g179c enclosing); a part valued
+      with a package part under an assert that reads a feature with NO value, or that mixes a valued
+      and a valueless feature, still abstains (g206 xform none); a part valued with a package part
+      whose types the partner lacks (`p : P2`, other : P) still abstains
+      (reads-pass-scratch/man/b.sysml); a reference read to depth one is fenced, but a name through
+      two chained references, `bind sub.r = o2` where r is a reference valued by an
+      attribute-structured part, and a part-valued binding whose reference lives in a library part
+      are unprobed (reads-pass-scratch/review/p/miss2). (7) A package-level end's redefinedClosure
+      still differs by text order when several definitions each own a chain bind and the end is
+      below the 48 cap: closure differs below the cap, no verdict moves. The cappedDefs fence covers
+      only ends past the cap. Probes: ep-review/fuzz.mts and ep-review/genm.py with out/mnew
+      (150-model fuzz: 25 closure differences on editor-pass, 0 with NOKI=1). [instance-pass,
+      naming-pass, reads-pass, editor-pass]
 - [ ] **Abstentions left (keywords and metadata annotations) (rollup; sound, only weaker).** (1) A
       bare-keyword ambiguity is asked in the nearest scope with imports only, a qualified
       `#Pkg::name` is never asked, and an alias or inherited member is not enumerated
