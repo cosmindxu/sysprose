@@ -1273,6 +1273,19 @@ From the reviews of the behaviour lane (reach and check-behaviour in the palette
 merge. The branch `behaviour-sound` (merged by `e0d8040`) closed the completion budget, the nested
 `state def`, the method text and the completion livelock (C1, H2, C3, H1, M3, M1, U1); the entries
 tagged `[O1 …]` are what its steps and reviews left open.
+      (8) A bind written in a package other than the one that declares the instance (nested,
+      sibling, outer, `Lib::top.L`), on a package-level feature joined by that package's own
+      binding, or on a definition head (`bind T1::L = XX` beside T1's `bind load = L`) was ignored
+      by the check, literal and numeric lanes (the default was read: a true constraint read
+      violated). Fenced by fence-pkgbind: the default gives way to the bind and the check and
+      literal engines abstain with their own sentence (cap kind `package`); the numeric and SMT
+      surfaces decide what they can read. Cost, all sound abstentions: the unbound second instance
+      of the same definition (`top2 : T1`) abstains too; a direct feature bound across the
+      package abstains where it read correctly before; rows right only because the default and the
+      true reading agree now abstain; the SMT lane abstains on an F row where the witness gate
+      demotes. The proper reading (joining the instance's own context to the definition's
+      binding) stays open. Probes: ep-review/v/s3.sysml, s7.sysml, s11.sysml, s12.sysml and
+      fence-pkgbind-scratch/gen4/pkgbind-*.sysml. [editor-pass review; fence-pkgbind]
 
 - [ ] **Walk a step written over inherited states.** A control edge written outside a machine's
       region that touches one of its states refuses both machines (`machine-boundary`, `docs/06`
