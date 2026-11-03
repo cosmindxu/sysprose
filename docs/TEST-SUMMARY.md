@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5435 total — 5435 passed, 0 failed, 0 skipped
+- **Tests:** 5442 total — 5442 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -68,14 +68,14 @@
 | test/unit/collab.binding.test.ts | 36 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
-| test/unit/core.model.test.ts | 25 | 0 | 0 |
+| test/unit/core.model.test.ts | 28 | 0 | 0 |
 | test/unit/diagnostic-codes.test.ts | 15 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.exports.test.ts | 3 | 0 | 0 |
 | test/unit/diagram.geometry.test.ts | 18 | 0 | 0 |
 | test/unit/diagram.geometry3d.test.ts | 14 | 0 | 0 |
-| test/unit/diagram.grid.test.ts | 15 | 0 | 0 |
+| test/unit/diagram.grid.test.ts | 16 | 0 | 0 |
 | test/unit/diagram.layout.test.ts | 4 | 0 | 0 |
 | test/unit/diagram.layout2.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
@@ -89,7 +89,7 @@
 | test/unit/drive.test.ts | 179 | 0 | 0 |
 | test/unit/duplicate.test.ts | 6 | 0 | 0 |
 | test/unit/fmi-cosim.test.ts | 25 | 0 | 0 |
-| test/unit/fmi-export.test.ts | 27 | 0 | 0 |
+| test/unit/fmi-export.test.ts | 28 | 0 | 0 |
 | test/unit/fmi-import.test.ts | 12 | 0 | 0 |
 | test/unit/graph-algorithms.test.ts | 19 | 0 | 0 |
 | test/unit/graph-analysis.test.ts | 19 | 0 | 0 |
@@ -108,7 +108,7 @@
 | test/unit/reparent-target.test.ts | 14 | 0 | 0 |
 | test/unit/requirements-table.test.ts | 20 | 0 | 0 |
 | test/unit/scenarios.test.ts | 3 | 0 | 0 |
-| test/unit/semantics.bind.test.ts | 31 | 0 | 0 |
+| test/unit/semantics.bind.test.ts | 32 | 0 | 0 |
 | test/unit/semantics.conformance.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraint-class.test.ts | 82 | 0 | 0 |
@@ -162,7 +162,7 @@
 | test/unit/text.roundtrip.test.ts | 226 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
-| test/unit/ui.properties-facets.test.ts | 26 | 0 | 0 |
+| test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 29 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
