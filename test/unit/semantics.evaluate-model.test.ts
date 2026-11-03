@@ -4963,13 +4963,48 @@ describe('a value, a reference and a binding that equate two parts or structured
     const sentence =
       '`pq = top.a` in PPQ values a part, port, item or structured attribute with another, which equates the two as a ' +
       'binding does; this tool reads through such a value only where the feature says nothing else of its own and its ' +
-      'value is a path, below where it is written, to one as plain, and that is not so here, so no relation that may ' +
+      'value is a path, below where it is written or in a package, to one as plain, and that is not so here, so no relation that may ' +
       'read a value it carries is read';
     for (const rel of ['PPQ::qT', 'PPQ::pT', 'PPQ::aT']) {
       expect([check(q!, rel).result, check(q!, rel).message], rel).toEqual(['unknown', `Could not evaluate: ${sentence}`]);
       expect(goal(q!, rel).encodable, rel).toEqual({ reason: 'unread-binding', detail: sentence });
     }
     expect([check(q!, 'PPQ::oT').result, numeric(q!, 'PPQ::oT'), goal(q!, 'PPQ::oT').encodable]).toEqual(['satisfied', 'satisfied', true]);
+  });
+
+  it('reads a part valued with a package part under an assert over a value, and not under one that defines a feature (RF2)', async () => {
+    const mk = (x: string, tie: string) => `package RF2 {
+      part def P { ${x} constraint c { x <= 10.0 } }
+      part def Q { part p : P; assert constraint tie { ${tie} } }
+      part other : P;
+      part q : Q { part :>> p = other; }
+      constraint top { other.x <= 10.0 }
+      constraint top2 { q.p.x <= 10.0 }
+    }`;
+    // x keeps its `default` against Q's tie (decision 14): other's and q's p's x are 2, the tie is reported violated at q.
+    const { model: dflt } = await loadModelText(mk('attribute x : ScalarValues::Real default = 2.0;', 'p.x == 50.0'));
+    for (const rel of ['RF2::top', 'RF2::top2']) {
+      expect([check(dflt!, rel).result, numeric(dflt!, rel), goal(dflt!, rel).encodable], rel).toEqual(['satisfied', 'satisfied', true]);
+    }
+    expect(check(dflt!, 'RF2::Q::tie').instances!.map((i) => [dflt!.qualifiedName(i.contextId), i.result])).toEqual([['RF2::q', 'violated']]);
+    expect(numeric(dflt!, 'RF2::Q::tie')).toBe('violated');
+    // The same under a value below its owner (PPV's `pp = top.a`): an assert over pp's load, which states a value, no
+    // longer leaves pp an unread source; pp is top's a, whose load the binding gives top's L of 50.
+    const { model: below } = await loadModelText(`package RF2B {
+      part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+      part top : T1 { attribute :>> L = 50.0; }
+      part pp : T0 = top.a;
+      assert constraint ap { pp.load == 3.0 }
+      constraint pT { pp.load >= 40.0 }
+    }`);
+    // (The assert contradicts the stated values, so the numeric surface and the engines abstain or report inconsistent axioms.)
+    expect([check(below!, 'RF2B::pT').result, check(below!, 'RF2B::ap').result]).toEqual(['satisfied', 'violated']);
+    // With no value the tie defines other's x as 50, which a read through the equated part must see: nothing here reads it.
+    const { model: none } = await loadModelText(mk('attribute x : ScalarValues::Real;', 'p.x == 50.0'));
+    for (const rel of ['RF2::top', 'RF2::top2']) {
+      expect([check(none!, rel).result, numeric(none!, rel)], rel).toEqual(['unknown', 'unknown']);
+    }
   });
 
   it('reads a binding or a value between two structured attributes as one between two parts (R8A, R8V)', async () => {
@@ -5274,6 +5309,37 @@ describe('a value, a reference and a binding that equate two parts or structured
     }`);
     expect(sharedDefinitions(own!).denote(named(own!, 'COWN3').id).get('w.sub.r.load')!.instance).toBe('COWN3::w::sub::x');
     expect([check(own!, 'COWN3::k').result, numeric(own!, 'COWN3::k'), goal(own!, 'COWN3::k').encodable]).toEqual(['violated', 'violated', true]);
+    // The relation sub writes (`constraint c { r.load <= 5.0 }`) is read in w's sub the same way: its x carries w's K of
+    // 50, F on all four surfaces beside W's own T; it abstained (`not-enumerated`) for the binding that reaches into x.
+    // A second instance that sets no K reads x at K's default and holds.
+    const { model: grpOwn } = await loadModelText(`package COWN3G { ${T0}
+      part def W { attribute K : ScalarValues::Real default = 1.0; part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } bind sub.x.load = K; }
+      part w : W { attribute :>> K = 50.0; }
+      part w0 : W;
+    }`);
+    expect(check(grpOwn!, 'COWN3G::W::sub::c').instances!.map((i) => [i.instance ?? grpOwn!.qualifiedName(i.contextId), i.result])).toEqual([
+      ['COWN3G::w::sub', 'violated'],
+      ['COWN3G::w0::sub', 'satisfied'],
+    ]);
+    expect(numeric(grpOwn!, 'COWN3G::W::sub::c')).toBe('satisfied');
+    // A part-valued binding into the part the reference stands for (`bind sub.x = o2`, or `bind sub.r = o2`, which
+    // joins x to o2 alike) is read as the one without the reference: w's sub holds o2's 50 for `r.load`, so its row is
+    // not read (it formed no group row, and the relation was proved, with no mention of w's sub).
+    for (const bind of ['sub.x', 'sub.r']) {
+      const { model: bnd } = await loadModelText(`package Q2N { ${T0}
+        part o2 : T0 { attribute :>> load = 50.0; }
+        part def W { part sub { part x : T0; ref part r : T0 = x; constraint c { r.load <= 5.0 } } }
+        part w : W { bind ${bind} = o2; }
+        part w0 : W;
+      }`);
+      expect(
+        check(bnd!, 'Q2N::W::sub::c').instances!.map((i) => [i.instance ?? bnd!.qualifiedName(i.contextId), i.result]),
+        bind,
+      ).toEqual([
+        ['Q2N::w::sub', 'unknown'],
+        ['Q2N::w0::sub', 'satisfied'],
+      ]);
+    }
     // W's sub's `r = p1` names W's p1, around sub: read at W's own p1 (1) for every W, where w's is 50, both the
     // relation sub writes and the package's read through w's sub held on all four surfaces. Each abstains now.
     const W = `part def W { part p1 : T0; part sub { ref part r : T0 = p1; constraint c { r.load <= 5.0 } } }`;

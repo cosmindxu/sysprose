@@ -3965,6 +3965,15 @@ export class DefiningEquations {
         dens.slice(0, -1).every((x) => this.subjectOf(x!.reader, x!.feature) === undefined);
       if (!plain) {
         if (ids.has(d.feature.id) || ids.has(this.carrier(d.reader, d.feature).id)) return true;
+        // A link of the name that is a reference stands for another feature (`r = x`): an end at, or on the way to,
+        // that feature (`bind sub.x = o2`) is read by the name too.
+        for (let k = 1; k < segments.length; k++) {
+          const p = denoted.get(segments.slice(0, k).join('.'));
+          if (!p) continue;
+          if (ids.has(p.feature.id)) return true;
+          const s = this.subjectOf(p.reader, p.feature);
+          if (s && (ids.has(s.id) || ids.has(this.carrier(p.reader, s).id))) return true;
+        }
         continue;
       }
       const k = Math.min(dens.length, links.length);
@@ -4783,7 +4792,9 @@ function bindingsIntoRedefiners(model: Model): ReadonlyMap<ElementId, ReadonlyAr
     if (!holderEl) continue;
     for (const end of new Set(ids)) {
       const f = model.get(end);
-      if (!f || endValue(model, f, holderEl, '').kind === 'value') continue;
+      // A reference valued with a feature (`ref part r : T0 = x`) is no value a binding competes with: it joins `r`
+      // to what `x` stands for, and `bind sub.r = o2` joins that to o2 as `bind sub.x = o2` does.
+      if (!f || (endValue(model, f, holderEl, '').kind === 'value' && ![f, ...redefinedClosure(model, f)].some((g) => g.attrs.isRef === true && VALUED_PART_KINDS.has(g.eClass) && typeof g.attrs.value === 'string'))) continue;
       const seen = new Set<ElementId>();
       for (let o: ElementRecord | undefined = f; o && !seen.has(o.id); o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
         if (seen.size > 0 && !isUsage(o.eClass)) break;
@@ -5140,10 +5151,27 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     );
     // The names an asserted relation reads a feature THROUGH (`pp` of `pp.load
     // == 3.0`): such a relation says something of the part.
+    // `definingThrough`: those among them an asserted relation that defines something does — one whose every feature
+    // states a value only checks (decision 14, {@link statesOwnValue}), so the part it reads through says nothing.
     const through = new Set<string>();
+    const definingThrough = new Set<string>();
     for (const c of model.all()) {
       if (c.attrs.isLibrary === true || !isAsserted(c) || typeof c.attrs.expression !== 'string') continue;
-      for (const n of relationNamesOf(c.attrs.expression)) n.split('.').slice(0, -1).forEach((s) => through.add(s));
+      const names = relationNamesOf(c.attrs.expression);
+      const owner = c.ownerId;
+      const checksOnly =
+        owner != null &&
+        names.every((n) => {
+          const last = featuresAlongValue(model, owner, n)?.links.at(-1);
+          // Read from the attributes alone: this sweep is what the model-wide readings ask ({@link statesOwnValue} asks it).
+          return last !== undefined && [last, ...redefinedClosure(model, last)].some((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+        });
+      for (const n of names) {
+        for (const s of n.split('.').slice(0, -1)) {
+          through.add(s);
+          if (!checksOnly) definingThrough.add(s);
+        }
+      }
     }
     const kinds = (e: ElementRecord): Set<ElementId> =>
       new Set(generalizationsOf(model, e.id).filter((t) => isDefinition(t.eClass)).map((t) => t.id));
@@ -5160,7 +5188,7 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     const silent = (f: ElementRecord, holder: ElementId, binds: number, valuedBy: boolean): boolean => {
       if ((count.get(f.id) ?? 0) !== binds || redefined.has(f.id)) return false;
       const name = effectiveNameOf(model, f);
-      if (name === undefined || through.has(name)) return false;
+      if (name === undefined || (valuedBy ? definingThrough : through).has(name)) return false;
       // Read below the binding's owner, the partner is resolved in that owner's
       // instance, which only a package has one of ({@link
       // DefiningEquations.equatedPart}).
@@ -5202,13 +5230,17 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     // it is read.
     for (const { e, path, found } of valued) {
       const holder = e.ownerId!;
-      const links = found?.scope === holder ? found.links : undefined;
+      // Below its owner, or in a package: the one instance of a namespace every instance of the owner reads alike
+      // (RF2's `part :>> p = other` stands for the package's `other` in the element that writes it: q, or every
+      // instance of a definition that writes it).
+      const scopeEl = found !== undefined ? model.get(found.scope) : undefined;
+      const links = found !== undefined && (found.scope === holder || (scopeEl?.eClass === 'Package' && scopeEl.attrs.isLibrary !== true)) ? found.links : undefined;
       const g = links?.[links.length - 1];
       const clean = links?.every(
         (l) => l.id !== e.id && l.attrs.isRef !== true && l.attrs.requirementRole !== 'subject' && !count.has(l.id),
       );
       if (g && clean && silent(e, holder, 0, true) && partnerOf(e, g)) {
-        standsFor.set(e.id, { path, from: holder });
+        standsFor.set(e.id, { path, from: found!.scope });
         continue;
       }
       unread.push(e);
@@ -6324,7 +6356,7 @@ function equatedSentence(model: Model, b: ElementRecord): string {
       `\`${effectiveNameOf(model, b) ?? b.id} = ${String(b.attrs.value).trim()}\` in ${effectiveQualifiedName(model, b.ownerId!)} ` +
       'values a part, port, item or structured attribute with another, which equates the two as a binding does; this ' +
       'tool reads through such a value only where the feature says nothing else of its own and its value is a path, ' +
-      'below where it is written, to one as plain, and that is not so here'
+      'below where it is written or in a package, to one as plain, and that is not so here'
     );
   }
   const [l, r] = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, b.ownerId!) : undefined));
@@ -12210,8 +12242,10 @@ function standsAs(model: Model, e: ElementRecord, t: ElementRecord): boolean {
  * along the site's path back to its root, and the root's owners, that is or
  * specialises it; the path is read there again. A package is one namespace
  * for every instance. A phrase where the reading differs, a binding reaches
- * into the feature it stands for (its value may then differ per instance),
- * or this tool cannot tell; `undefined` where it is the same.
+ * into the feature it stands for (its value may then differ per instance)
+ * and that feature is around the instance, or this tool cannot tell;
+ * `undefined` where it is the same, and where the feature is the instance's
+ * own (below it), which the group reads in each instance.
  */
 function crossingReadsOtherwise(
   definitions: DefiningEquations,
@@ -12259,6 +12293,11 @@ function crossingReadsOtherwise(
     return `its ${crossing.path} there stands for ${named(mine?.[mine.length - 1])}, not ${named(resolved.feature)}`;
   }
   const head = its[0]!;
+  // A value written below the instance itself (COWN3's `ref part r : T0 = x` in W's sub, x a part of that sub) stands
+  // for the instance's own feature (`w.sub.x`): the group reads a value a binding carries into it there, as it reads
+  // the feature by its own name. Only a value that names a feature AROUND the instance (X17's `r = s` in Q's p, Q's
+  // s) is a binding's to change per instance, and is not read.
+  if (chain.indexOf(at) <= chain.indexOf(element)) return undefined;
   for (const id of bindingEndsOf(model)) {
     for (let e = model.get(id); e; e = e.ownerId != null ? model.get(e.ownerId) : undefined) {
       if (e.id === head.id) {
