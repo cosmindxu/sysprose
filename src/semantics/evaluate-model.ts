@@ -43,6 +43,7 @@ import {
   standsAgainstAssertsIn,
   assertDefinitionIn,
   enclosingAssertOn,
+  statesStandingValue,
   equatedPartsFailed,
   equatedPartsRefusal,
   contradictedDefinitionConflict,
@@ -419,6 +420,9 @@ function answerFor(
         const defined = assertDefinitionIn(model, den.feature, instance);
         if (defined !== undefined) return assertedAnswer(model, contextId, den.feature, ownName, instance, defined, pass);
         ea = enclosingAssertOn(model, contextId, den.enclosing, name, inst);
+        // An assert naming the very path read cannot change a value the feature states (a `default` stands, as `=`
+        // does): it is read, and the assert is checked against it.
+        if (ea?.exact === true && statesStandingValue(model, den.feature, instance)) ea = undefined;
       } catch (e) {
         // A.2.9: the walk's throw is this read's abstention, never the check's.
         return failedReading(ownName, instance, e);

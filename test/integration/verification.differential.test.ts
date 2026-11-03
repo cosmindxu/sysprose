@@ -4684,9 +4684,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // SMT lane gives q1's p's x a variable of its own: one variable for x had made the default's axiom and
     // the assert contradict (T/T/T/X, I7), and every reading of q1's p's x abstained (A.2.4).
     // Since decision 14 was amended (2026-10-22) no assertion replaces a `default`: q1's p's x is P's 2, q1's `tie`
-    // is reported violated against it, every reading of q1's p's x abstains on the check and the literal engine
-    // (A.2.4), and the SMT lane's axioms are inconsistent (I7) — the literal engine's too, since Q4, on every row
-    // that reads x, which q1's assert reads under P's one symbol.
+    // is reported violated against it, and every reading of q1's p's x reads that 2 — it abstained on the check and
+    // the literal engine under q1's assert (A.2.4) until defaults2-pass, which reads a value the assert names where
+    // the feature states one — while the SMT lane's axioms are inconsistent (I7), the literal engine's too, since Q4,
+    // on every row that reads x, which q1's assert reads under P's one symbol.
     'refute-r1': probe(`package R1 {
         part def P {
           attribute load : ScalarValues::Real default = 1.0;
@@ -4700,10 +4701,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R1::P::c': ['T/X/T/X', 'T'],
       'R1::P::c in R1::Q::p': ['T/X/T/X', 'T'],
-      'R1::P::c in R1::q1::p': ['?/?/?/X', null],
+      'R1::P::c in R1::q1::p': ['T/X/T/X', null],
       'R1::P::c in R1::q2::p': ['T/X/T/X', 'T'],
       'R1::q1::tie': ['F/-/F/-', 'F'],
-      'R1::top1': ['?/?/T/X', null],
+      'R1::top1': ['T/X/T/X', null],
     }),
     // Two defaults a binding joins with no value beside them stand only as one CONSTANT (A.4 Part 0): R3a's
     // one `2.0 * K` read at a1.v and a2.v is 2 and 10, R3b's and R3c's two alike texts read two Ks. Agreed
@@ -8254,7 +8255,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // every surface, and the unit-aware reading reads no default an enclosing assert defines somewhere. Sh7:
     // the same in a tree, the assert in top's `part :>> b`, over `m = load * k` (5 × 50 under top).
     // Since decision 14 was amended (2026-10-22) no assertion replaces a `default`: x keeps its 2; rows read for
-    // q1's p under q1's assert abstain (A.2.4), through a derived value too, and print no witness value (I6).
+    // q1's p under q1's assert read it (defaults2-pass), through a derived value too, and print their values (I6).
     'refute-r1d': probe(`package R1D {
         part def P {
           attribute load : ScalarValues::Real default = 1.0;
@@ -8269,10 +8270,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R1D::P::cd': ['T/X/T/X', 'T'],
       'R1D::P::cd in R1D::Q::p': ['T/X/T/X', 'T'],
-      'R1D::P::cd in R1D::q1::p': ['?/?/?/X', null],
+      'R1D::P::cd in R1D::q1::p': ['T/X/T/X', null],
       'R1D::P::cd in R1D::q2::p': ['T/X/T/X', 'T'],
       'R1D::q1::tie': ['F/-/F/-', 'F'],
-      'R1D::topd': ['?/?/T/X', null],
+      'R1D::topd': ['T/X/T/X', null],
     }),
     'sh7-tree-assert-derived': probe(`package Sh7 {
         part def T0 {
@@ -8288,7 +8289,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Sh7::T0::c': ['T/X/T/X', 'T'],
       'Sh7::T0::c in Sh7::T1::a': ['T/X/T/X', 'T'],
       'Sh7::T0::c in Sh7::T2::b::a': ['T/X/T/X', 'T'],
-      'Sh7::T0::c in Sh7::top::b::a': ['?/?/?/X', null],
+      'Sh7::T0::c in Sh7::top::b::a': ['T/X/T/X', null],
       'Sh7::top::«PartUsage»::«ConstraintUsage»': ['F/-/F/-', 'F'],
     }),
     // H5 (plan J decision 14, O5 S1): an asserted EQUATION of the feature's owner, or of a type its owner
@@ -10201,6 +10202,129 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RB5E::Q::tie in RB5E::q1': ['?/-/?/-', 'F'],
       'RB5E::top': ['?/?/?/?', null],
     }),
+    // defaults2-pass (TODO 211, the A.2.4 lexical rule): an assert of an instance around the one read, or of the
+    // package, that names a feature stating a value — x's `default = 2.0` or `= 2.0` — changes nothing: the row
+    // reads the 2 at q1's p and the assert is checked against it, as against a value written with `=` (I14 reads
+    // each pair alike). The rows abstained (`enclosing-assert`) whatever the assert and whatever the value. The
+    // assert is met (SEI, the assert of the usage; SES, of its type), or violated (SEV) — the model contradicts
+    // itself there, every SMT row of the file `inconsistent-axioms`, the ref of what it reaches null — in the
+    // usage, or in the package (SEP).
+    ...standing('stand-enc-inst', `package SEI {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          constraint c { load + x <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.x <= 5.0 } }
+        part q2 : Q;
+        constraint top1 { q1.p.load + q1.p.x <= 10.0 }
+      }`, {
+      'SEI::P::c': ['T/T/T/T', 'T'],
+      'SEI::P::c in SEI::Q::p': ['T/T/T/T', 'T'],
+      'SEI::P::c in SEI::q1::p': ['T/T/T/T', 'T'],
+      'SEI::P::c in SEI::q2::p': ['T/T/T/T', 'T'],
+      'SEI::q1::tie': ['T/-/T/-', 'T'],
+      'SEI::top1': ['T/T/T/T', 'T'],
+    }, '2.0'),
+    ...standing('stand-enc-viol', `package SEV {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          constraint c { load + x <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.x == 50.0 } }
+        part q2 : Q;
+        constraint top1 { q1.p.load + q1.p.x <= 10.0 }
+        constraint top2 { q1.p.x >= 9.0 }
+      }`, {
+      'SEV::P::c': ['T/X/T/X', 'T'],
+      'SEV::P::c in SEV::Q::p': ['T/X/T/X', 'T'],
+      'SEV::P::c in SEV::q1::p': ['T/X/T/X', null],
+      'SEV::P::c in SEV::q2::p': ['T/X/T/X', 'T'],
+      'SEV::q1::tie': ['F/-/F/-', 'F'],
+      'SEV::top1': ['T/X/T/X', null],
+      'SEV::top2': ['F/X/F/X', null],
+    }, '2.0'),
+    ...standing('stand-enc-pkg', `package SEP {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          constraint c { load + x <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; }
+        part q2 : Q;
+        assert constraint tie { q1.p.x >= 5.0 }
+        constraint top1 { q1.p.load + q1.p.x <= 10.0 }
+      }`, {
+      'SEP::P::c': ['T/X/T/X', 'T'],
+      'SEP::P::c in SEP::Q::p': ['T/X/T/X', 'T'],
+      'SEP::P::c in SEP::q1::p': ['T/X/T/X', null],
+      'SEP::P::c in SEP::q2::p': ['T/X/T/X', 'T'],
+      'SEP::tie': ['F/-/F/-', 'F'],
+      'SEP::top1': ['T/X/T/X', null],
+    }, '2.0'),
+    // The assert in q1's own redefinition of p (x written there: 4), and the assert of Q2, the type of q1.
+    'stand-enc-redef': probe(`package SER {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          constraint c { load + x <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; part :>> p { attribute :>> x = 4.0; } assert constraint tie { p.x <= 5.0 } }
+        part q2 : Q;
+        constraint top1 { q1.p.load + q1.p.x <= 10.0 }
+      }`, {
+      'SER::P::c': ['T/T/T/T', 'T'],
+      'SER::P::c in SER::Q::p': ['T/T/T/T', 'T'],
+      'SER::P::c in SER::q1::p': ['T/T/T/T', 'T'],
+      'SER::P::c in SER::q2::p': ['T/T/T/T', 'T'],
+      'SER::q1::tie': ['T/-/T/-', 'T'],
+      'SER::top1': ['T/T/T/T', 'T'],
+    }),
+    'stand-enc-spec': probe(`package SES {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          constraint c { load + x <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { assert constraint tie { p.x <= 5.0 } }
+        part q1 : Q2 { attribute :>> L = 3.0; }
+        part q2 : Q;
+        constraint top1 { q1.p.load + q1.p.x <= 10.0 }
+      }`, {
+      'SES::P::c': ['T/T/T/T', 'T'],
+      'SES::P::c in SES::Q::p': ['T/T/T/T', 'T'],
+      'SES::P::c in SES::Q2::p': ['T/T/T/T', 'T'],
+      'SES::P::c in SES::q1::p': ['T/T/T/T', 'T'],
+      'SES::P::c in SES::q2::p': ['T/T/T/T', 'T'],
+      'SES::Q2::tie': ['T/-/T/-', 'T'],
+      'SES::top1': ['T/T/T/T', 'T'],
+    }),
+    // The assert names `load`, which Q's `bind p.load = L` gives its value: the RB5 family, still not read in q1's
+    // p under an enclosing assert (A.2.4) — the sound abstention left of this rule (ref T: 3 + 2 <= 10).
+    'stand-enc-bound': probe(`package SEN {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          constraint c { load + x <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.load >= 0.5 } }
+        part q2 : Q;
+        constraint top1 { q1.p.load + q1.p.x <= 10.0 }
+      }`, {
+      'SEN::P::c': ['T/T/T/T', 'T'],
+      'SEN::P::c in SEN::Q::p': ['T/T/T/T', 'T'],
+      'SEN::P::c in SEN::q1::p': ['?/?/?/T', 'T'],
+      'SEN::P::c in SEN::q2::p': ['T/T/T/T', 'T'],
+      'SEN::q1::tie': ['T/-/T/-', 'T'],
+      'SEN::top1': ['?/?/T/T', 'T'],
+    }),
     // fence-assert-not S1: `assert not constraint c { … }` was a parse error whose recovery left `c` a PLAIN constraint,
     // read T on all four surfaces while it holds (h1; h2 in the instance whose binding carries the value) — the clause
     // states the opposite. No reader negates it, so the clause is refused with a finding of its own
@@ -10569,7 +10693,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // and an assert inherited from the instance's type (H1F2's `Q2 :> Q`), which no reading saw: q1's p and
     // Q2's own p read T at x's default.
     // Since decision 14 was amended (2026-10-22) no assertion replaces a `default`: q1's p's x is P's 2 kg; the rows
-    // read for q1's p abstain under q1's assert (A.2.4), in units or not, and the package's rows read the 2.
+    // read for q1's p read it under q1's assert (defaults2-pass; they abstained, A.2.4), in units or not, and so do
+    // the package's rows.
     'h5-r1u': probe(`package R1U {
         part def P {
           attribute load : ScalarValues::Real default = 1.0;
@@ -10587,17 +10712,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R1U::P::c': ['T/X/T/X', 'T'],
       'R1U::P::c in R1U::Q::p': ['T/X/T/X', 'T'],
-      'R1U::P::c in R1U::q1::p': ['?/?/?/X', null],
+      'R1U::P::c in R1U::q1::p': ['T/X/T/X', null],
       'R1U::P::c in R1U::q2::p': ['T/X/T/X', 'T'],
       'R1U::q1::tie': ['F/-/F/-', 'F'],
-      'R1U::top2': ['?/?/T/X', null],
-      'R1U::top4': ['?/?/T/X', null],
-      'R1U::top6': ['?/?/T/X', null],
-      'R1U::top7': ['?/?/T/X', null],
+      'R1U::top2': ['T/X/T/X', null],
+      'R1U::top4': ['T/X/T/X', null],
+      'R1U::top6': ['T/X/T/X', null],
+      'R1U::top7': ['T/X/T/X', null],
     }),
     // Since decision 14 was amended (2026-10-22) no assertion replaces a `default`: the package's and Q2's asserts
-    // are checked against x's 2, which every instance reads; rows read for an instance under an assert of its frame
-    // abstain (A.2.4).
+    // are checked against x's 2, which every instance reads, the rows read for an instance under an assert of its
+    // frame included (defaults2-pass; they abstained, A.2.4).
     'h5-h1c': probe(`package H1C {
         part def P {
           attribute load : ScalarValues::Real default = 1.0;
@@ -10612,7 +10737,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'H1C::P::c': ['T/X/T/X', 'T'],
       'H1C::P::c in H1C::Q::p': ['T/X/T/X', 'T'],
-      'H1C::P::c in H1C::q1::p': ['?/?/?/X', null],
+      'H1C::P::c in H1C::q1::p': ['T/X/T/X', null],
       'H1C::P::c in H1C::q2::p': ['T/X/T/X', 'T'],
       'H1C::t': ['F/-/F/-', 'F'],
       'H1C::top1': ['T/X/T/X', null],
@@ -10658,7 +10783,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'HX4::q1::t1': ['F/-/F/-', 'F'],
       'HX4::q3::t3': ['F/-/F/-', 'F'],
       'HX4::q4::t4': ['F/-/F/-', 'F'],
-      'HX4::top4': ['?/?/T/X', null],
+      'HX4::top4': ['T/X/T/X', null],
     }),
     // The planted bug P5's shape (literals counted in `readsOtherwise`): a literal `default` the local rule
     // overrides (Q's `L default = 7.0` under `L == 2.0 * K`) is the equation's value, and q1, whose K is 25,
@@ -10794,10 +10919,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'Q4B::P::c': ['T/X/T/X', 'T'],
       'Q4B::P::c in Q4B::Q::p': ['T/X/T/X', 'T'],
-      'Q4B::P::c in Q4B::q1::p': ['?/?/?/X', '?'],
+      'Q4B::P::c in Q4B::q1::p': ['T/X/T/X', null],
       'Q4B::P::c in Q4B::q2::p': ['T/X/T/X', 'T'],
       'Q4B::q1::tie': ['F/-/F/-', null],
-      'Q4B::top1': ['?/?/T/X', null],
+      'Q4B::top1': ['T/X/T/X', null],
     }),
     // The same equation of Q over a name q states with `=` (the corpus's h2e): q's `:>> L = 50.0` is no
     // default, so in q the equation reads it and defines q's p's load as 50 — m2 is −40. Q's own row keeps
@@ -11154,7 +11279,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint k2 { q.p.x >= 40.0 }
       }`, {
       'SFH::k': ['T/X/T/X', null],
-      'SFH::k2': ['?/?/F/X', null],
+      'SFH::k2': ['F/X/F/X', null],
       'SFH::q::tie': ['F/-/F/-', 'F'],
     }),
     // Since decision 14 was amended (2026-10-22) no assertion replaces a `default`: x is P's 2 at q1's p too; both
@@ -15523,15 +15648,12 @@ package L3 {
    * such a quantity too, beside its correct refutation. W4N's P's own `m2`, derived from the load a package's
    * `bind P::load = L` gives, is K5's shape: a derived value over a bound default.
    */
-  // R1D's q1's p's `cd` and Sh7's top's b's a's `c` read no value under an enclosing assert over a `default` (A.2.4)
-  // since decision 14 was amended (2026-10-22; they read the assert's value): the engines print the paths with none.
+  // R1D's q1's p's `cd` and Sh7's top's b's a's `c` read the default under an enclosing assert that names it
+  // (defaults2-pass), as the other rows of their probes do: they print the values they compared.
   const ALL_FOUR = ['literal: bindings', 'literal: record', 'smt: bindings', 'smt: record'] as const;
   const WITNESS_UNPRINTED = new Map<string, readonly string[]>([
     ['k5 | K5::n', ALL_FOUR],
     ['w4-nested | W4N::P::c', ALL_FOUR],
-    // The literal rows of these two abstain with no bindings at all; the SMT rows print them, valueless.
-    ['refute-r1d | R1D::P::cd in R1D::q1::p', ['smt: bindings', 'smt: record']],
-    ['sh7-tree-assert-derived | Sh7::T0::c in Sh7::top::b::a', ['smt: bindings', 'smt: record']],
   ]);
   /**
    * I7's exceptions: an SMT `inconsistent-axioms` beside a T or F elsewhere, `probe | row` → reason.
@@ -15799,8 +15921,36 @@ package L3 {
           [
             'refute-r1 | R1::P::c',
             'refute-r1 | R1::P::c in R1::Q::p',
+            'refute-r1 | R1::P::c in R1::q1::p',
             'refute-r1 | R1::P::c in R1::q2::p',
             'refute-r1 | R1::top1',
+          ],
+        ],
+        [
+          'an asserted `p.x == 50.0` in q1 (SEV), or `q1.p.x >= 5.0` in the package (SEP), over x’s `default = 2.0` or `= 2.0`: x keeps its 2 at q1’s p, which every row reads, and the assert is reported violated',
+          [
+            'stand-enc-viol | SEV::P::c',
+            'stand-enc-viol | SEV::P::c in SEV::Q::p',
+            'stand-enc-viol | SEV::P::c in SEV::q1::p',
+            'stand-enc-viol | SEV::P::c in SEV::q2::p',
+            'stand-enc-viol | SEV::top1',
+            'stand-enc-viol | SEV::top2',
+            'stand-enc-viol-eq | SEV::P::c',
+            'stand-enc-viol-eq | SEV::P::c in SEV::Q::p',
+            'stand-enc-viol-eq | SEV::P::c in SEV::q1::p',
+            'stand-enc-viol-eq | SEV::P::c in SEV::q2::p',
+            'stand-enc-viol-eq | SEV::top1',
+            'stand-enc-viol-eq | SEV::top2',
+            'stand-enc-pkg | SEP::P::c',
+            'stand-enc-pkg | SEP::P::c in SEP::Q::p',
+            'stand-enc-pkg | SEP::P::c in SEP::q1::p',
+            'stand-enc-pkg | SEP::P::c in SEP::q2::p',
+            'stand-enc-pkg | SEP::top1',
+            'stand-enc-pkg-eq | SEP::P::c',
+            'stand-enc-pkg-eq | SEP::P::c in SEP::Q::p',
+            'stand-enc-pkg-eq | SEP::P::c in SEP::q1::p',
+            'stand-enc-pkg-eq | SEP::P::c in SEP::q2::p',
+            'stand-enc-pkg-eq | SEP::top1',
           ],
         ],
         [
@@ -15808,6 +15958,7 @@ package L3 {
           [
             'refute-r1d | R1D::P::cd',
             'refute-r1d | R1D::P::cd in R1D::Q::p',
+            'refute-r1d | R1D::P::cd in R1D::q1::p',
             'refute-r1d | R1D::P::cd in R1D::q2::p',
             'refute-r1d | R1D::topd',
           ],
@@ -15818,6 +15969,7 @@ package L3 {
             'sh7-tree-assert-derived | Sh7::T0::c',
             'sh7-tree-assert-derived | Sh7::T0::c in Sh7::T1::a',
             'sh7-tree-assert-derived | Sh7::T0::c in Sh7::T2::b::a',
+            'sh7-tree-assert-derived | Sh7::T0::c in Sh7::top::b::a',
           ],
         ],
         [
@@ -15825,6 +15977,7 @@ package L3 {
           [
             'h5-r1u | R1U::P::c',
             'h5-r1u | R1U::P::c in R1U::Q::p',
+            'h5-r1u | R1U::P::c in R1U::q1::p',
             'h5-r1u | R1U::P::c in R1U::q2::p',
             'h5-r1u | R1U::top2',
             'h5-r1u | R1U::top4',
@@ -15851,6 +16004,7 @@ package L3 {
           [
             'h5-h1c | H1C::P::c',
             'h5-h1c | H1C::P::c in H1C::Q::p',
+            'h5-h1c | H1C::P::c in H1C::q1::p',
             'h5-h1c | H1C::P::c in H1C::q2::p',
             'h5-h1c | H1C::top1',
             'h5-h1f2 | H1F2::P::c',
@@ -15882,6 +16036,7 @@ package L3 {
             'h5-q4p | Q4P::ex2',
             'h5-q4b | Q4B::P::c',
             'h5-q4b | Q4B::P::c in Q4B::Q::p',
+            'h5-q4b | Q4B::P::c in Q4B::q1::p',
             'h5-q4b | Q4B::P::c in Q4B::q2::p',
             'h5-q4b | Q4B::top1',
           ],
@@ -16366,6 +16521,7 @@ package L3 {
     'stand-g1s', 'stand-g1c', 'stand-g2', 'stand-g2f', 'stand-g3b', 'stand-g3e', 'stand-m8ab', 'stand-m8ba', 'stand-use',
     'stand-eqmd', 'stand-w4a', 'stand-w4b', 'stand-redef-use', 'stand-redef-spec', 'stand-lexdef', 'stand-lexonly',
     'stand-lexpkg', 'stand-lexineq', 'stand-t1c', 'cv-a1', 'cv-m11', 'h5-rb5', 'h5-rb5c', 'h5-rb5d', 'h5-rb5f',
+    'stand-enc-inst', 'stand-enc-viol', 'stand-enc-pkg',
   ].map((k) => [k, `${k}-eq`] as const);
   /**
    * The pairs whose other rows differ by design (two values written with `=` where the default gives way to the
