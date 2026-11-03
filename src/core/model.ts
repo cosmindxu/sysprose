@@ -497,18 +497,21 @@ export class Model {
    * The types a feature/usage specialises (FeatureTyping/Subclassification
    * targets). Returns resolved target elements where they exist in-model.
    *
-   * In the order the model LISTS the relationships, which is not always the order a terminal binds them in: a typing an
+   * In the order the model LISTS the relationships, which depends on the order they were made in: a typing an
    * edit adds (Properties' Type field) is listed after the subsetting or redefinition the element had. The readings
    * walk this order, and abstain where it decides (`order` of bind.ts `unreadScopes`); a list that SHOWS the types
-   * reads {@link typesInBindOrder}.
+   * reads {@link typesInBindOrder}. No single key makes this the terminal's raw listing either: a usage body lists a
+   * typing before a redefinition, a `part def` body the reverse (TODO.md).
    */
   typesOf(id: ElementId): ElementRecord[] {
     return this.targetsOf(this.typingsFrom(id));
   }
 
   /**
-   * {@link typesOf} in the order a terminal binds them ({@link bindOrder}), the same on the page, in a terminal over the saved
-   * text and on every peer of a room: for a list a person reads (Properties, a table cell, a diagram's grouping).
+   * {@link typesOf} in a fixed order that does not depend on the order the relationships were made in
+   * ({@link bindOrder}, the order where-used uses), the same on the page, after a save and reopen and on every peer of
+   * a room: for a list a person reads (Properties, a table cell, a diagram's grouping). It is not the terminal's own
+   * `typesOf` listing, which differs by context.
    */
   typesInBindOrder(id: ElementId): ElementRecord[] {
     return this.targetsOf(bindOrder(this.typingsFrom(id)));
@@ -537,8 +540,8 @@ export class Model {
   }
 
   /**
-   * The specialization-family relationships whose source is `id`, in bind order ({@link bindOrder}): the list
-   * Properties shows beside {@link typesOf}.
+   * The specialization-family relationships whose source is `id`, in the fixed order of {@link bindOrder}: the list
+   * Properties shows beside {@link typesInBindOrder}.
    */
   specializationsFrom(id: ElementId): ElementRecord[] {
     return bindOrder(this.relationshipsFrom(id).filter((r) => isSpecialization(r.eClass)));
@@ -984,7 +987,7 @@ export class Model {
    * relationships, the impact graph and the specialisers a finding names, and
    * so do the lists a person reads of ONE element's typings and specialisations
    * (Properties, a table's Type cell, {@link typesInBindOrder}: the `:>` family,
-   * typings, redefinitions). What is left is `typesOf` itself, which the
+   * typings, redefinitions, the order where-used uses). What is left is `typesOf` itself, which the
    * readings walk in the order listed (TODO.md), and the consumers that walk
    * `ofKind` of a kind a load lists later, which no output depends on.
    */
@@ -1222,11 +1225,12 @@ export class Model {
 const BIND_FAMILY: Readonly<Record<string, number>> = { FeatureTyping: 1, Redefinition: 2 };
 
 /**
- * `rels` (the specialization-family relationships of ONE element, in the order the model lists them) in the order a
- * terminal binds them: the `:>` family, then typings, then redefinitions, each in the order given. The same rule as
- * {@link Model.edgesInTextOrder}'s tie, so that a list built from one element's relationships reads alike on the page
- * (where an edit lists a relationship after those the element had), in a terminal over the saved text and on every
- * peer of a room. `rels` itself when it is in that order already.
+ * `rels` (the specialization-family relationships of ONE element, in the order the model lists them) in a fixed
+ * order: the `:>` family, then typings, then redefinitions, each in the order given. The same rule as
+ * {@link Model.edgesInTextOrder}'s tie (the order where-used uses), so that a list built from one element's
+ * relationships does not depend on the order they were made in: it reads alike on the page, after a save and reopen
+ * and on every peer of a room. It is not the terminal's raw `typesOf` listing (a usage body lists a typing before a
+ * redefinition, a `part def` body the reverse). `rels` itself when it is in that order already.
  */
 function bindOrder(rels: ElementRecord[]): ElementRecord[] {
   let sorted = true;

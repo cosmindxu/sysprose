@@ -258,9 +258,9 @@ describe('Model core', () => {
     expect(m.typesOf(c!.id).map((t) => t.declaredName)).toEqual(['A']);
   });
 
-  // The page lists a relationship an edit adds after the ones the element had; a terminal over the saved text binds the
-  // `:>` family, then typings, then redefinitions. The lists the page shows read the terminal's order.
-  it('typesInBindOrder and specializationsFrom list one element\'s relationships in bind order, as a terminal over the saved text does', async () => {
+  // The page lists a relationship an edit adds after the ones the element had. The lists the page shows read a fixed
+  // order (the `:>` family, typings, redefinitions), so they do not change on a save and reopen.
+  it('typesInBindOrder and specializationsFrom list one element\'s relationships in a fixed order, the same after a save and reopen', async () => {
     const base = 'package W { part def D; part def D2; part v; part s; part y; }';
     const kinds = { T: ['FeatureTyping', 'D'], T2: ['FeatureTyping', 'D2'], S: ['Subsetting', 's'], R: ['Redefinition', 'v'] } as const;
     const named = (m: Model, n: string) => m.all().find((e) => e.declaredName === n)!;

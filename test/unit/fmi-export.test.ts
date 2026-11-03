@@ -387,4 +387,13 @@ describe('fmiModelDescription — a feature two asserted equations give two valu
     // no equation reaches it. An expression written is withheld there: what it reads is unknown.
     expect(starts(md)).toEqual({ L: '0', M: '0', K: '7', B: 'true', S: 'abc', X: '0' });
   });
+
+  it('reads the declared type from the typing, not from a subsetting an edit listed before it', () => {
+    const { model } = parseModel('package W { attribute def Integer; part def Blk { attribute m; attribute n :> m; } }');
+    const n = model.all().find((e) => e.declaredName === 'n' && e.attrs.isLibrary !== true)!;
+    const int = model.all().find((e) => e.declaredName === 'Integer')!;
+    model.create('FeatureTyping', { ownerId: n.id, source: [n.id], target: [int.id] });
+    const blk = model.all().find((e) => e.declaredName === 'Blk')!;
+    expect(fmiModelDescription(model, blk.id).variables.find((v) => v.name === 'n')!.type).toBe('Int64');
+  });
 });

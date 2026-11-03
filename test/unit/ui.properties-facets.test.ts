@@ -512,4 +512,14 @@ describe('Properties — Ctrl/Cmd+S typed into a field', () => {
     expect(useAppStore.getState().undoStack.length).toBe(before.depth);
     expect(document.activeElement).toBe(box);
   });
+
+  it('lists the Types and Specializations of one element in a fixed order, a typing an edit adds after a redefinition included', () => {
+    const { view, model, id } = mount('package W { part def D; part v; part y :>> v; }', 'y');
+    const d = model.all().find((e) => e.declaredName === 'D')!;
+    model.create('FeatureTyping', { ownerId: id, source: [id], target: [d.id] });
+    act(() => useAppStore.setState({ rev: useAppStore.getState().rev + 1 }));
+    const list = (label: string) => Array.from(view.getByText(label).parentElement!.querySelectorAll('li')).map((li) => li.textContent);
+    expect(list('Types')).toEqual(['D', 'v']);
+    expect(list('Specializations').map((t) => t!.replace(/\s+/g, ' '))).toEqual(['«FeatureTyping» → D', '«Redefinition» → v']);
+  });
 });

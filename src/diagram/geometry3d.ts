@@ -13,7 +13,7 @@
  *  - **shape** — `attrs.shape` ('box'|'sphere'|'cylinder', plus common synonyms)
  *    when present, else inferred from the element's library-shape *typing*
  *    (a Box/Cuboid → box, Sphere/Ellipsoid → sphere, Cylinder/Cone → cylinder via
- *    {@link Model.typesOf}); default `box`.
+ *    {@link Model.typesInBindOrder}); default `box`.
  *  - **position** — `attrs.position` ({x,y,z}) when numeric, else a deterministic
  *    3D grid layout keyed by the item's index.
  *  - **size** — `attrs.size` ({w,h,d} / {width,height,depth} / {x,y,z}) when

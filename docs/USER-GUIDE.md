@@ -626,8 +626,9 @@ the model lists them in; the impact closure, which walks it, follows. So do the 
 `traverse`, an element's relationships (the REST `relationships` of an element), the impact
 graph's neighbours and the specialisers a finding names (`what specialises it (LA::areaFraction,
 PA::areaFraction)`). So do the Properties panel's Types and Specializations lists and a table's
-Type column: the relationships of one element come in the order a terminal binds them (`:>`
-before typings before redefinitions), whichever order they were made in.
+Type column: the relationships of one element come in a fixed order (`:>` before typings before
+redefinitions, the order where-used uses), whichever order they were made in; it is not the order a
+terminal lists them in, which depends on where the element stands.
 
 ### The Text tab, in both directions
 

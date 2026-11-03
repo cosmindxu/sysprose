@@ -71,6 +71,15 @@ describe('buildGrid — columns and rows', () => {
     expect(row.cells.type).toBe('Vehicle');
   });
 
+  it('lists the subsetting of a feature before its typing whichever an edit made first (the Type cell)', () => {
+    const { model } = parseModel('package W { part def D; part s; part y; }');
+    const named = (n: string) => model.all().find((e) => e.declaredName === n)!;
+    const [y, d, s0] = [named('y'), named('D'), named('s')];
+    model.create('FeatureTyping', { ownerId: y.id, source: [y.id], target: [d.id] });
+    model.create('Subsetting', { ownerId: y.id, source: [y.id], target: [s0.id] });
+    expect(buildGrid(model).rows.find((r) => r.id === y.id)!.cells.type).toBe('s, D');
+  });
+
   it('reads multiplicity and value cells from attrs', () => {
     const row = grid.rows.find((r) => r.id === ids.mass)!;
     expect(row.cells.multiplicity).toBe('0..1');
