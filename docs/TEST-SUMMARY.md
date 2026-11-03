@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5442 total — 5442 passed, 0 failed, 0 skipped
+- **Tests:** 5445 total — 5445 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -39,7 +39,7 @@
 | test/integration/smt-z3.integration.test.ts | 43 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
-| test/integration/verification.differential.test.ts | 229 | 0 | 0 |
+| test/integration/verification.differential.test.ts | 230 | 0 | 0 |
 | test/interop/self-roundtrip.test.ts | 10 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
@@ -139,14 +139,14 @@
 | test/unit/semantics.smt-encode.test.ts | 105 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 134 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 85 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 86 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 44 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 347 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 348 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 53 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 13 | 0 | 0 |
