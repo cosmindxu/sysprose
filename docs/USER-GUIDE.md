@@ -1719,7 +1719,16 @@ through a binding joined to such a one, end to end or through a feature an end
 redefines (a package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 49
 usages down that gives that load its value: Y's `default` gives way, and the
 check reads no value for Y), nor through one whose end has no instance in a
-context it holds in (R's nested Q used outside any R); a binding read through an instance
+context it holds in (R's nested Q used outside any R), nor through one written in a package
+other than the one that declares the instance it names a feature of (a nested package's `bind
+top.L = XX` beside G's `part top : T1` and T1's `bind load = L`, a sibling's `bind Lib::top.L =
+XX`, the package above's `bind Sub::top.L = XX`), nor through a package's `bind T1::L = XX` on
+the head of a definition that binds that feature itself (*a binding of this model joins a
+feature of an instance that a package other than the one it is written in declares*): every
+`default` joined to them gives way, the check and the literal engine read no value for top's
+load, and the same text written in one package reads as before. Another instance of that
+definition (`top2 : T1`), which no such binding reaches, abstains with them; a
+binding read through an instance
 of a definition that owns a capped end is capped, whichever of the two is written
 first. A binding joins such a
 one through a feature an end redefines only where that feature is itself another
