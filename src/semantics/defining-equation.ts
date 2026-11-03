@@ -7914,9 +7914,10 @@ function pastCapComponents(
     }
   }
   // The component above joins ends through what they redefine, and what an end redefines turns on the text order
-  // (CAP1's `bind Y = top.a.….a.load` redefines only T0's load when it is written before T1, whose own `bind a.load =
-  // L` has no end copy yet when the chain resolves): an end read through an instance of a definition that owns a
-  // capped end is past that cap too, whichever way the text was written.
+  // for a definition-owned `bind` (CAPD's `bind Y = x.a.….a.load` in a part def U redefines only T0's load when U is
+  // written before T1, whose own `bind a.load = L` has no end copy yet when the chain resolves; the loader orders a
+  // package-level end after every definition's end copies, CAP1's, but not this): an end read through an instance of a
+  // definition that owns a capped end is past that cap too, whichever way the text was written.
   const cappedDefs = new Map<ElementId, BindingCap>();
   for (const [cid, met] of overCap) {
     for (let cur = model.get(cid); cur && cur.ownerId != null; cur = model.get(cur.ownerId)) {

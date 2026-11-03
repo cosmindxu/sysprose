@@ -559,6 +559,24 @@ function resolveChainEnd(
 }
 
 /**
+ * `els` with the connectors a package (or the file's root) owns after all the others, each group in its own order.
+ * A connector's chain end is made of the end copies the walk finds on the types it passes through: a package-level
+ * `bind Y = top.a.a.load` written BEFORE the definition `T1 { bind a.load = L; part a : T0; }` found only T0's `load`
+ * (T1's own `bind` had no end copy yet), where written after it finds T1's copy that redefines T0's, so the chain end
+ * redefined less in one text order than in the other. A package-level connector is owned by no type, so no other
+ * connector is made of what it leaves: resolving it last gives the closure of its end in either order of the text.
+ */
+function packageLevelLast(model: Model, els: readonly ElementRecord[]): ElementRecord[] {
+  const packageLevel = (el: ElementRecord): boolean => {
+    if (!CHAIN_CONNECTOR_CLASSES.has(el.eClass)) return false;
+    if (el.ownerId === null) return true;
+    const owner = model.get(el.ownerId)?.eClass;
+    return owner === 'Package' || owner === 'LibraryPackage';
+  };
+  return [...els.filter((el) => !packageLevel(el)), ...els.filter(packageLevel)];
+}
+
+/**
  * Post-type-binding pass: re-resolve still-textual connector endpoints as
  * feature chains. Needed when a chain traverses a type only bound AFTER parse
  * time (a standard-library type resolved by `resolveTypeReferences`). Safe to
@@ -571,7 +589,7 @@ function resolveChainEnd(
 export function resolveConnectorFeatureChains(model: Model): number {
   let resolved = 0;
   model.transaction(() => {
-    for (const el of model.all()) {
+    for (const el of packageLevelLast(model, model.all())) {
       if (!CHAIN_CONNECTOR_CLASSES.has(el.eClass)) continue;
       if (el.attrs.isLibrary === true) continue;
       resolved += resolveChainEndpointsOf(model, el);
@@ -1418,7 +1436,7 @@ class Mapper {
    * Runs over a snapshot: relationships created above are not revisited.
    */
   private bindEndpointRefs(): void {
-    const worklist = this.model.all();
+    const worklist = packageLevelLast(this.model, this.model.all());
     for (const el of worklist) {
       // Capture the scope once — the reparent below mutates el.ownerId, and
       // every ref in this statement resolves against the scope it was written
