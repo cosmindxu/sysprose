@@ -15875,6 +15875,162 @@ package PS {
       'PDI::ldT': ['?/?/T/T', 'T'],
       },
     ),
+    // fence-pkgbind review fixes: the fence reaches the same defect beyond the instance (the head of a definition
+    // through an inherited end `bind T0::L = XX` or through a nested usage `bind T1::sub.L = XX`, a feature of a
+    // package that another package binds beside the declaring package's own binding), and not what only looks like it:
+    // a binding written in a definition or a usage of the SAME package as the instance (pkgbind-same-holder), an
+    // enclosing instance's feature read in a nested usage (pkgbind-enclosed: a definition that binds `a = L` and
+    // whose nested `part p : P` binds `load = L`), and an unrelated definition and instance beside a cross-package
+    // bind (pkgbind-unrelated), all read as before.
+    ...reversed(
+      'pkgbind-head-inherited',
+      `package PHI {
+  part def T0 { attribute L : ScalarValues::Real default = 1.0; }
+  part def T1 :> T0 { attribute load : ScalarValues::Real default = 1.0; bind load = L; }
+  part top : T1;
+  attribute XX : ScalarValues::Real = 50.0;
+  bind T0::L = XX;
+  constraint ldT { top.load >= 49.0 }
+  constraint ldM { top.load <= 1.0 }
+}`,
+      reversedMembers(`package PHI {
+  part def T0 { attribute L : ScalarValues::Real default = 1.0; }
+  part def T1 :> T0 { attribute load : ScalarValues::Real default = 1.0; bind load = L; }
+  part top : T1;
+  attribute XX : ScalarValues::Real = 50.0;
+  bind T0::L = XX;
+  constraint ldT { top.load >= 49.0 }
+  constraint ldM { top.load <= 1.0 }
+}`),
+      {
+      'PHI::ldT': ['?/?/T/T', 'T'],
+      'PHI::ldM': ['?/?/F/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'pkgbind-head-usage',
+      `package PHU {
+  part def T2 { attribute L : ScalarValues::Real default = 1.0; }
+  part def T1 { part sub : T2; attribute load : ScalarValues::Real default = 1.0; bind load = sub.L; }
+  part top : T1;
+  attribute XX : ScalarValues::Real = 50.0;
+  bind T1::sub.L = XX;
+  constraint ldT { top.load >= 49.0 }
+  constraint ldM { top.load <= 1.0 }
+}`,
+      reversedMembers(`package PHU {
+  part def T2 { attribute L : ScalarValues::Real default = 1.0; }
+  part def T1 { part sub : T2; attribute load : ScalarValues::Real default = 1.0; bind load = sub.L; }
+  part top : T1;
+  attribute XX : ScalarValues::Real = 50.0;
+  bind T1::sub.L = XX;
+  constraint ldT { top.load >= 49.0 }
+  constraint ldM { top.load <= 1.0 }
+}`),
+      {
+      'PHU::ldT': ['?/?/T/T', 'T'],
+      'PHU::ldM': ['?/?/F/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'pkgbind-global',
+      `package PG {
+  attribute Y : ScalarValues::Real default = 1.0;
+  attribute Z : ScalarValues::Real default = 1.0;
+  bind Z = Y;
+  constraint cT { Z >= 49.0 }
+  constraint cM { Z <= 1.0 }
+  package Sub { attribute XX : ScalarValues::Real = 50.0; bind PG::Y = XX; }
+}`,
+      reversedMembers(`package PG {
+  attribute Y : ScalarValues::Real default = 1.0;
+  attribute Z : ScalarValues::Real default = 1.0;
+  bind Z = Y;
+  constraint cT { Z >= 49.0 }
+  constraint cM { Z <= 1.0 }
+  package Sub { attribute XX : ScalarValues::Real = 50.0; bind PG::Y = XX; }
+}`),
+      {
+      'PG::cT': ['?/?/T/T', 'T'],
+      'PG::cM': ['?/?/F/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'pkgbind-same-holder',
+      `package PSH {
+  part def T1 { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real default = 1.0; bind load = L; }
+  part top : T1;
+  attribute XX : ScalarValues::Real = 50.0;
+  part def Q { bind top.L = XX; }
+  part q : Q;
+  constraint ldT { top.load >= 49.0 }
+  constraint ldM { top.load <= 1.0 }
+}`,
+      reversedMembers(`package PSH {
+  part def T1 { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real default = 1.0; bind load = L; }
+  part top : T1;
+  attribute XX : ScalarValues::Real = 50.0;
+  part def Q { bind top.L = XX; }
+  part q : Q;
+  constraint ldT { top.load >= 49.0 }
+  constraint ldM { top.load <= 1.0 }
+}`),
+      {
+      'PSH::ldT': ['T/T/T/T', 'T'],
+      'PSH::ldM': ['F/F/F/F', 'F'],
+      },
+    ),
+    ...reversed(
+      'pkgbind-enclosed',
+      `package PE {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  part def R { attribute L : ScalarValues::Real default = 1.0; attribute a : ScalarValues::Real default = 1.0; bind a = L; part p : P { bind load = L; } }
+  part r : R { attribute :>> L = 7.0; }
+  constraint cT { r.p.load >= 6.0 }
+  constraint cM { r.p.load <= 1.0 }
+  constraint cA { r.a >= 6.0 }
+}`,
+      reversedMembers(`package PE {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  part def R { attribute L : ScalarValues::Real default = 1.0; attribute a : ScalarValues::Real default = 1.0; bind a = L; part p : P { bind load = L; } }
+  part r : R { attribute :>> L = 7.0; }
+  constraint cT { r.p.load >= 6.0 }
+  constraint cM { r.p.load <= 1.0 }
+  constraint cA { r.a >= 6.0 }
+}`),
+      {
+      'PE::cT': ['T/T/T/T', 'T'],
+      'PE::cM': ['F/F/F/F', 'F'],
+      'PE::cA': ['T/T/T/T', 'T'],
+      },
+    ),
+    ...reversed(
+      'pkgbind-unrelated',
+      `package PUN {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+  part q : Q { attribute :>> L = 50.0; }
+  constraint cQ { q.p.load >= 49.0 }
+  constraint cQM { q.p.load <= 1.0 }
+  part def T1 { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real default = 1.0; bind load = L; }
+  part top : T1;
+  package Sub { attribute XX : ScalarValues::Real = 50.0; bind top.L = XX; }
+}`,
+      reversedMembers(`package PUN {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+  part q : Q { attribute :>> L = 50.0; }
+  constraint cQ { q.p.load >= 49.0 }
+  constraint cQM { q.p.load <= 1.0 }
+  part def T1 { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real default = 1.0; bind load = L; }
+  part top : T1;
+  package Sub { attribute XX : ScalarValues::Real = 50.0; bind top.L = XX; }
+}`),
+      {
+      'PUN::cQ': ['T/T/T/T', 'T'],
+      'PUN::cQM': ['F/F/F/F', 'F'],
+      },
+    ),
     ...quotedFamilyProbes(),
   };
 
