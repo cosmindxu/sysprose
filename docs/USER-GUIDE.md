@@ -758,12 +758,12 @@ Two names worth separating:
   asserted `x`): `y == 7.0` beside it is violated, never the value y is
   solved to, wherever the check is written: the model's own equations are
   solved first, and a check fixes only what they leave. A satisfied
-  requirement's `require` and `assume` clauses are goals, not facts of the model
-  (decided 2026-11-02): they are what the design is checked against, so they fix
-  no value and do not stop a lone plain constraint beside them (`constraint t1 {
-  p.L == 1.0 }` beside `satisfy R by p`, where `R` requires `s.L == 50.0`) from
-  being taken as the design equation, exactly as it is with no requirement
-  there. An `assert` is the way to state a fact. The test is local: each
+  requirement's clauses (`require`, and `assume` as a premise of them) are read over
+  the requirement's own subject and tie nothing to the satisfier
+  (decided 2026-11-02): they do not stop a lone plain constraint beside them
+  (`constraint t1 { p.L == 1.0 }` beside `satisfy R by p`, where `R` requires
+  `s.L == 50.0`) from being taken as `p`'s design equation, exactly as it is with
+  no requirement there. An `assert` is the way to state a fact. The test is local: each
   of two separate roots (`x * x == 4.0`) reads as determined, not free.
   **No design equation turns on the order of the text, bar four cases of where the solve
   starts or of the digits a value is given to (the end of this passage).** Two plain
@@ -1667,15 +1667,17 @@ multiplicity, so a `p1` other members fill abstains too. Where no instance reads
 p1 otherwise and no usage of its component says anything of its own, it reads as
 written. Which of several usages a sentence names (the nearest, then the lowest
 qualified name) does not turn on the order the text is written in.
-A reference subsetting (`ref part p2 ::> p1;`) is not read as a feature of what it
-subsets (decided 2026-11-02): a name that passes through one (`p2.load`, the package's
-`w.p2.load`) is *could not be evaluated* on every surface, in a sentence that names the
+A reference subsetting that declares no type of its own (`ref part p2 ::> p1;`) is not
+read as a feature of what it subsets (decided 2026-11-02): a name that the subsetted usage
+has and that passes through one (`p2.load`, the package's `w.p2.load`) is *could not be
+evaluated* on every surface (a name `p1` does not have stays an unresolved name), in a sentence that names the
 usage, the one it subsets and the name (`p2` in W is a reference subsetting (`::>`) of
 `p1`: this tool does not read a `::>` as a feature of what it subsets), and a
 `verify` or `obligations` row over it is `unread-binding` — a limit of this tool,
 whether or not `p2` is a `ref`, never forgiven by `--allow-inconclusive`. The
 usages and rows that read through a `::>` are withdrawn with those that read through
-a `:>`.
+a `:>`. One that declares a type (`ref part p2 : T0 ::> p1;`) is read as its type has
+it, or abstains under the subsetting sentence above where an instance reads `p1` otherwise.
 An end of a connection the model connects to features (`connection cn : C connect
 w.p1 to t;`) is the feature it connects, which may state what the end's type does not
 (w's `part :>> p1 { attribute :>> load = 50.0; }`): `cn.a.load` is *could not be
@@ -5029,7 +5031,7 @@ automatically.
 | A project you pressed **Save** on | IndexedDB (`sysmlv2-modeler`), falling back to localStorage | **Yes** — reopen it with **Open ▾** |
 | Boxes you moved by hand on a diagram | with that project, beside the model — never in its text, a SysML or JSON export, or a Drive file | **Yes**, with the project — **Open ▾** puts them back |
 | A file you saved to Drive | your Google Drive (`drive.file` scope: only files made or chosen with this app) | **Yes** — Drive ▾ → Recent, Browse Drive…, or its link |
-| Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work (closing or reloading the tab asks first) |
+| Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work (closing or reloading the tab asks first; in a room with a peer in it, the peer's tab holds the model) |
 | Versions-tab commits, branches, merges | memory | **No** |
 | Regroup scenarios | localStorage (`sysmlv2-scenarios`) | Yes |
 | Light/dark theme | localStorage (`theme`) | Yes |
@@ -5126,9 +5128,10 @@ the model has work no save holds — the same text and boxes as above, an edit
 the Text view has not caught up with yet, and an attached Drive file's unsaved
 changes as well — and asks nothing once **Save** has kept them (a Drive file
 does not hold the boxes: with one attached, a box moved by hand still makes the
-tab ask). Connected to a collaboration room, the room's copy counts as saved —
-the relay and this browser hold the model the peers share, so the text a peer's
-edit left unsaved is not asked about — but text typed in the Text view and not
+tab ask). Connected to a collaboration room with a peer in it, the room's copy counts as saved —
+while a peer is connected, the model is also in their tab, so the text a peer's
+edit left unsaved is not asked about (the relay keeps nothing once the last peer
+leaves, so alone in a room the tab asks as ever) — but text typed in the Text view and not
 applied, a box moved by hand and a Versions repository still make the tab ask:
 the room holds none of them. A commit, a branch switch or a merge in the Versions tab does not stop
 the tab asking, nor does New or Open ▾ over them: those are kept in memory and go

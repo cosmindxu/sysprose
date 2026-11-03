@@ -5661,6 +5661,15 @@ describe('a value, a reference and a binding that equate two parts or structured
       expect(c.message, name).toBe(`Could not evaluate: ${sentence}`);
       expect(goal(x!, `${name}::k`).encodable, name).toMatchObject({ detail: sentence });
     }
+    // A name the subsetted usage does not have is a typo, not a limit of this tool: it keeps the generic unresolved name.
+    {
+      const { model: x } = await loadModelText(
+        `package RF3 { ${T0} part def W { part p1 : T0; ref part p2 ::> p1; } part w : W { part :>> p1 { attribute :>> load = 50.0; } } constraint k { w.p2.nonesuch <= 5.0 } }`,
+      );
+      const c = check(x!, 'RF3::k');
+      expect([c.result, goal(x!, 'RF3::k').encodable]).toMatchObject(['unknown', { reason: 'unresolved-name' }]);
+      expect(c.message).not.toContain('reference subsetting');
+    }
     // Two `satisfy`s a package writes of a requirement whose `part q :> s;` subsets its subject: listing the
     // subsetting usages asks each, and the second one asks the listing again, which is refused and lists that
     // `satisfy` (the re-entry guard). R's row abstains; no throw reaches the load, and no row reads `internal`.

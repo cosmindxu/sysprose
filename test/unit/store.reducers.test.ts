@@ -34,6 +34,7 @@ vi.mock('../../src/library/standard-library', () => ({
 const relay = vi.hoisted(() => ({
   status: null as ((e: { status: string }) => void) | null,
   doc: null as import('yjs').Doc | null,
+  awareness: null as import('y-protocols/awareness').Awareness | null,
 }));
 vi.mock('../../src/collab/provider', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../src/collab/provider')>();
@@ -43,6 +44,7 @@ vi.mock('../../src/collab/provider', async (importOriginal) => {
     connect: (doc: ConstructorParameters<typeof Awareness>[0]) => {
       relay.doc = doc;
       const awareness = new Awareness(doc);
+      relay.awareness = awareness;
       return {
         provider: {
           on: (event: string, listener: (e: { status: string }) => void) => {
@@ -7273,7 +7275,15 @@ describe('unsaved work — what a command that replaces the model asks about', (
       expect(asks(), 'the relay is not up yet: no room yet').toBe(true);
       relay.status!({ status: 'connected' });
       expect(st().collab.connected).toBe(true);
-      expect(asks(), 'the room holds the model').toBe(false);
+      expect(asks(), 'connected and alone: the relay keeps nothing once the last peer leaves').toBe(true);
+      // A peer's presence, as the relay would bring it.
+      const { Doc } = await import('yjs');
+      const { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } = await import('y-protocols/awareness');
+      const other = new Awareness(new Doc());
+      other.setLocalState({ user: { name: 'Heron', color: '#4363d8' } });
+      applyAwarenessUpdate(relay.awareness!, encodeAwarenessUpdate(other, [other.clientID]), 'test');
+      expect(st().collab.peers.map((p) => p.name)).toEqual(['Heron']);
+      expect(asks(), 'a peer is here: the room holds the model').toBe(false);
       edit('Kite');
       expect(asks(), 'a later edit, here or a peer’s: the room holds it too').toBe(false);
       st().setTextBuffer(st().textBuffer.replace('Kite', 'Falcon'));

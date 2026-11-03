@@ -4396,6 +4396,8 @@ function referenceSubsettingCause(model: Model, el: ElementRecord, name: string,
     const own = pass.definitions.nameOf(f);
     const of = target ? pass.definitions.nameOf(target) : undefined;
     if (!target || own === undefined || of === undefined) return undefined;
+    // Only a name the subsetted usage has is a limit of this tool: a typo stays the generic unresolved name.
+    if (pass.definitions.chain(contexts, [...parts.slice(0, k - 1), of, ...parts.slice(k)].join('.')) === undefined) return undefined;
     const home = f.ownerId != null ? pass.definitions.qualifiedNameOf(f.ownerId) : '';
     return `\`${own}\`${home ? ` in ${home}` : ''} is a reference subsetting (\`::>\`) of \`${of}\`: this tool does not read a \`::>\` as a feature of what it subsets, so \`${name}\` is not read`;
   }
