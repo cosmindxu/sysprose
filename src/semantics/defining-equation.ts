@@ -9556,6 +9556,22 @@ export function defaultGivesWayIn(model: Model, f: ElementRecord, inst: string |
 }
 
 /**
+ * Does `f`, read at the instance `inst`, state a value of its own that nothing overrides there — one written with
+ * `=`, or a `default`, on it or on a feature it redefines — and is it no end of a binding and no feature a binding
+ * holds anywhere? An assert of an enclosing element cannot change such a value (decision 14, amended: a `default`
+ * stands against every assertion, as a value written with `=` does): the reading reads that value, and the assert
+ * is checked against it. A feature that states none (a valueless one), or reads what a binding gives it (RB5), is
+ * a value the enclosing assert may constrain or fix together with the binding's, and its reading abstains
+ * ({@link enclosingAssertOn}).
+ */
+export function statesStandingValue(model: Model, f: ElementRecord, inst: string | undefined): boolean {
+  const chain = [f, ...redefinedClosure(model, f)];
+  const ends = bindingEndsOf(model);
+  if (chain.some((g) => ends.has(g.id) || defaultGivesWaySomewhere(model, g))) return false;
+  return chain.some((g) => g.attrs.value !== undefined && g.attrs.value !== null && !defaultGivesWayIn(model, g, inst) && hasStatedValue(model, g));
+}
+
+/**
  * {@link assertDefinitionsAt} for `f` read at `inst` — the instance of its
  * owner (`R1::q1::p`) or its own (`R1::q1::p::x`), as {@link
  * defaultGivesWayIn} is asked either.
@@ -10915,7 +10931,7 @@ export type InstanceLookup =
       enclosing: readonly InstanceFrame[];
       name: string;
       inst: string;
-      answer: { frame: ElementId; expr: string } | undefined;
+      answer: { frame: ElementId; expr: string; exact?: true } | undefined;
     };
 
 /** The lookups of the reading {@link recordingLookups} is recording, while it runs. */
@@ -11047,7 +11063,7 @@ export function lookupsHold(model: Model, lookups: readonly InstanceLookup[], fr
           ? l.enclosing.map((f) => ({ instance: respell(f.instance, from, to), reader: f.reader }))
           : l.enclosing;
         const a = enclosingAssertOn(model, l.contextId, enclosing, l.name, respell(l.inst, from, to));
-        if (a?.frame !== l.answer?.frame || a?.expr !== l.answer?.expr) return false;
+        if (a?.frame !== l.answer?.frame || a?.expr !== l.answer?.expr || a?.exact !== l.answer?.exact) return false;
       }
     }
     return true;
@@ -12584,7 +12600,7 @@ function instanceReadsOtherwise(
         'and this tool does not decide per instance which of the two it reads',
     );
   }
-  const assert = assertAbove(definitions, sites, element, [...own.paths.keys()]);
+  const assert = assertAbove(definitions, sites, element, [...own.paths.keys()], instance);
   if (assert !== undefined) {
     return {
       kind: 'enclosing-assert',
@@ -12606,15 +12622,31 @@ function instanceReadsOtherwise(
  * `part :>> p { … }` reading `load`. A.2.4: an enclosing assert constrains
  * the value, and a reading in `element` reads none of it — save an asserted
  * equation that defines a `default` there, which the reading reads at the
- * instance (H5, {@link enclosingAsserts}). `undefined` where none does.
+ * instance (H5, {@link enclosingAsserts}). `undefined` where none does. An
+ * assert that names the exact path read, over a feature that states a value
+ * ({@link statesStandingValue}), is checked against that value and does not
+ * make the reading abstain.
  */
 function assertAbove(
   definitions: DefiningEquations,
   sites: readonly InstanceSite[],
   element: ElementRecord,
   paths: readonly string[],
+  instance: string,
 ): { frame: ElementId; expr: string } | undefined {
   const model = definitions.model;
+  // A path the assert names exactly and the element reads a stated value of is no reason to abstain: a `default`
+  // stands against the assert, as `=` does, and the assert is checked against it ({@link statesStandingValue}).
+  const stands = new Map<string, boolean>();
+  const standing = (p: string): boolean => {
+    let hit = stands.get(p);
+    if (hit === undefined) {
+      const f = featuresAlong(definitions, element.id, p)?.at(-1);
+      hit = f !== undefined && statesStandingValue(model, f, instance);
+      stands.set(p, hit);
+    }
+    return hit;
+  };
   for (const site of sites) {
     if (site.path === '') continue;
     const steps = site.path.split('.');
@@ -12648,6 +12680,7 @@ function assertAbove(
             for (const p of paths) {
               const remaining = `${below}.${p}`;
               if (n === remaining && defining?.get(n)?.some((eq) => eq.constraint.id === child.id)) continue;
+              if (n === remaining && standing(p)) continue;
               if (n === remaining || n.startsWith(`${remaining}.`) || remaining.startsWith(`${n}.`)) {
                 return { frame: holder.id, expr };
               }
@@ -13042,7 +13075,10 @@ function groupsOf(model: Model): InstanceGroup[] {
  * constrains. Each frame is checked against the name as it is spelled below
  * that frame (`q1.p.x` read in R1, q1's `assert { p.x == 50.0 }` references the
  * remaining `p.x`). `{ frame, expr }` names the first such frame and its
- * expression; `undefined` where none does.
+ * expression; `exact` is set where the assert names the very path read, which
+ * the caller reads past where the feature states a value of its own
+ * ({@link statesStandingValue}: the assert is checked against it, it does not
+ * change it). `undefined` where none does.
  *
  * `inst` is the instance the context is read for. Where it is not the
  * context's own — a group row reads Q's p for `R1::q1::p`, a derived value is
@@ -13053,7 +13089,8 @@ function groupsOf(model: Model): InstanceGroup[] {
  * below it. Read through the usage's frames alone, R1's group row `P::c in
  * R1::q1::p` read x's default past q1's `assert constraint { p.x == 50.0 }`,
  * decided where the own row `top1`, the same quantity at the same instance,
- * abstained (A-H1). The package is the outermost such frame (H1C's `assert
+ * abstained (A-H1; both now read the default, an exact assert over a stated
+ * value being no reason to abstain). The package is the outermost such frame (H1C's `assert
  * constraint { q1.p.x == 50.0 }` constrains q1's p's x as q1's own does). A
  * type definition's own instance (`R1::Q` above `R1::Q::p`) is no such frame:
  * its asserts hold of every instance of it, and a reading in its usage reads
@@ -13066,7 +13103,7 @@ export function enclosingAssertOn(
   enclosing: readonly InstanceFrame[],
   name: string,
   inst?: string,
-): { frame: ElementId; expr: string } | undefined {
+): { frame: ElementId; expr: string; exact?: true } | undefined {
   const answer = assertEnclosing(model, contextId, enclosing, name, inst);
   // Where nothing is asserted, the answer is the same for every instance: no question of its spelling.
   if (inst !== undefined && recording !== undefined && sharedDefinitions(model).anyAsserted()) {
@@ -13082,16 +13119,18 @@ function assertEnclosing(
   enclosing: readonly InstanceFrame[],
   name: string,
   inst?: string,
-): { frame: ElementId; expr: string } | undefined {
+): { frame: ElementId; expr: string; exact?: true } | undefined {
   const definitions = sharedDefinitions(model);
   if (!definitions.anyAsserted()) return undefined;
   const root = definitions.instanceNameOf(contextId);
   const segments = name.split('.');
-  const constrains = (reader: ElementRecord, remaining: string): { frame: ElementId; expr: string } | undefined => {
+  // `exact`: the assert names the very path read, so it states a relation over that feature's value
+  // ({@link statesStandingValue} reads a stated value past it).
+  const constrains = (reader: ElementRecord, remaining: string): { frame: ElementId; expr: string; exact?: true } | undefined => {
     for (const { expr, names } of definitions.assertsOf(reader.id)) {
       for (const n of names) {
         if (n === remaining || n.startsWith(`${remaining}.`) || remaining.startsWith(`${n}.`)) {
-          return { frame: reader.id, expr };
+          return { frame: reader.id, expr, ...(n === remaining ? { exact: true as const } : {}) };
         }
       }
     }

@@ -4305,6 +4305,89 @@ describe('checkConstraints — a default stands against an asserted equation (de
     // And, since the soft/hard analysis' Q5, the pair is reported once, where the two meet: the package.
     expect(two.filter((c) => c.conflict === 'equations').map((c) => [t!.qualifiedName(c.ownerId!), c.result])).toEqual([['TWO', 'violated']]);
   });
+
+  // defaults2-pass (the A.2.4 lexical rule): an enclosing assert that names a feature stating a value — a `default`
+  // or one written with `=` — cannot change it, so the instance reads that value and the assert is checked against
+  // it; each probe is read alike written either way. A feature that states none, or that a binding gives its value
+  // (`load`, bound to Q's L), is still not read under an enclosing assert that names it (A.2.4).
+  it('reads a stated value an enclosing assert names, a default as a value written with `=`, and abstains on a bound one (211)', async () => {
+    const text = (spelled: string, where: 'inst' | 'pkg' | 'spec', assertion: string) => `package EN {
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute x : ScalarValues::Real ${spelled} 2.0;
+        constraint c { load + x <= 10.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      ${where === 'spec' ? `part def Q2 :> Q { assert constraint tie { p.${assertion} } }` : ''}
+      part q1 : ${where === 'spec' ? 'Q2' : 'Q'} { attribute :>> L = 3.0; ${where === 'inst' ? `assert constraint tie { p.${assertion} }` : ''} }
+      part q2 : Q;
+      ${where === 'pkg' ? `assert constraint tie { q1.p.${assertion} }` : ''}
+      constraint top { q1.p.load + q1.p.x <= 10.0 }
+    }`;
+    for (const where of ['inst', 'pkg', 'spec'] as const) {
+      for (const [assertion, tie] of [['x == 50.0', 'violated'], ['x <= 5.0', 'satisfied']] as const) {
+        const seen = [];
+        for (const spelled of ['default =', '=']) {
+          const { model: m } = await loadModelText(text(spelled, where, assertion));
+          const c = checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'EN::P::c')!;
+          const top = checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'EN::top')!;
+          const q1 = (c.instances ?? []).find((i) => i.instance === 'EN::q1::p');
+          // x is P's 2 at q1's p whatever the assert says: 3 + 2 <= 10 on the instance row and on the package's.
+          expect([q1?.result, top.result], `${where} ${assertion} ${spelled}`).toEqual(['satisfied', 'satisfied']);
+          const tieRow = checkConstraints(m!).find((k) => m!.qualifiedName(k.id).endsWith('::tie'))!;
+          expect(tieRow.result, `${where} ${assertion} ${spelled}`).toBe(tie);
+          seen.push([q1?.result, top.result, tieRow.result]);
+        }
+        expect(seen[0]).toEqual(seen[1]);
+      }
+    }
+    // The bound `load` is the RB5 family, not read under an assert that names it.
+    const { model: b } = await loadModelText(`package ENB {
+      part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.load >= 0.5 } }
+      part q2 : Q;
+    }`);
+    const bc = checkConstraints(b!).find((k) => b!.qualifiedName(k.id) === 'ENB::P::c')!;
+    expect((bc.instances ?? []).find((i) => i.instance === 'ENB::q1::p')?.result).toBe('unknown');
+    // Guards of the exception: a valueless feature states nothing to read, and a `=`-valued one that is an end of a
+    // binding is read through it (RB5): each abstains under an assert naming it.
+    const cause = async (body: string) => {
+      const { model: g } = await loadModelText(body);
+      const k = checkConstraints(g!).find((c) => g!.qualifiedName(c.id) === 'GD::P::c')!;
+      const row = (k.instances ?? []).find((i) => i.instance === 'GD::q1::p');
+      return [row?.result, row?.cause];
+    };
+    expect(await cause(`package GD {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute y : ScalarValues::Real; constraint c { load + y <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.y <= 5.0 } }
+    }`)).toEqual(['unknown', 'enclosing-assert']);
+    // x, derived and joined to M by a binding in q1, is no value this tool reads under Q's assert over it.
+    expect((await cause(`package GD {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = load * 2.0; constraint c { x <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; assert constraint tie { p.x >= 1.0 } }
+      part q1 : Q { attribute :>> L = 3.0; attribute M : ScalarValues::Real default = 20.0; bind p.x = M; }
+    }`))[0]).toBe('unknown');
+  });
+
+  // RB5E (209): a binding in q1 that joins p.x to two defaults that differ gives q1's p no value to read. The assert
+  // Q states over p.x is filed in q1 all the same, as an unknown row naming the binding and both defaults, and the
+  // generic row stays unread with the same cause; nothing is decided over a value the model does not state.
+  it('files an assert in the instance whose binding joins defaults that differ, with the cause (209, RB5E)', async () => {
+    const { model: m } = await loadModelText(`package RB5E {
+      part def P { attribute x : ScalarValues::Real; }
+      part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+      part q1 : Q { attribute K : ScalarValues::Real default = 9.0; attribute J : ScalarValues::Real default = 8.0; bind p.x = K; bind p.x = J; }
+      constraint top { q1.p.x <= 10.0 }
+    }`);
+    const tie = checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'RB5E::Q::tie')!;
+    expect(tie.result).toBe('unknown');
+    const row = (tie.instances ?? []).find((i) => m!.qualifiedName(i.contextId) === 'RB5E::q1')!;
+    expect([row.result, row.cause]).toEqual(['unknown', 'defaults-differ']);
+    expect(row.message).toContain('joins defaults that differ or are not constants (q1.p.x, q1.K (default 9.0), q1.J (default 8.0))');
+    expect(checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'RB5E::top')!.result).toBe('unknown');
+  });
 });
 
 /*
@@ -4423,9 +4506,10 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       assert constraint t { q1.p.x == 50.0 }
       constraint top1 { q1.p.load + q1.p.x <= 10.0 }
     }`);
-    // q1's p's x is P's 2 (it read the package's 50): the package's own top1 reads it, 3 + 2; q1's p's row, under
-    // the package's assert, is not read (A.2.4), as for a value written with `=`.
-    expect(rows(c!, 'H1C::P::c')).toEqual(['own satisfied', 'generic satisfied', 'H1C::q1::p unknown', 'H1C::q2::p satisfied']);
+    // q1's p's x is P's 2 (it read the package's 50): the package's own top1 reads it, 3 + 2, and so does q1's p's
+    // row under the package's assert — it names x itself, x states a default that stands, and the assert is checked
+    // against it (A.2.4 abstains only where x states no value of its own, as for a value written with `=`).
+    expect(rows(c!, 'H1C::P::c')).toEqual(['own satisfied', 'generic satisfied', 'H1C::q1::p satisfied', 'H1C::q2::p satisfied']);
     expect([...rows(c!, 'H1C::t'), ...rows(c!, 'H1C::top1')]).toEqual(['own violated', 'own satisfied']);
     const { model: f } = await loadModelText(`package H1F2 { ${body}
       part def Q2 :> Q { assert constraint tie { p.x == 50.0 } }
@@ -7012,18 +7096,18 @@ describe('the instance index — frames, components, and bound sources', () => {
       );
     const { model: m } = await loadModelText(text(''));
     expect(sharedDefinitions(m!).framesAbove('G::q1::p')!.map((f) => f.instance)).toEqual(['G', 'G::q1']);
-    const q1Assert =
-      "Could not evaluate: x is not read in G::q1::p: G::q1's asserted `p.x == 50.0` constrains it there, and this tool does " +
-      'not read a value an enclosing assert constrains';
+    // q1's assert names x itself, and x states a default that stands: q1's p reads x at P's 2 (3 + 8 >= 0, m2 =
+    // 10 - 2), and the assert is checked against it (violated). Only a feature that states no value of its own,
+    // or reads what a binding gives it, is still not read under an enclosing assert (A.2.4; `load` below).
     expect(rowsOf(m!)).toEqual([
       ['generic', 'satisfied', ''],
-      ['G::q1::p', 'unknown', q1Assert],
+      ['G::q1::p', 'satisfied', ''],
       ['G::q2::p', 'satisfied', ''],
     ]);
     const { model: d } = await loadModelText(text('assert constraint qx { p.x == 2.0 }'));
     expect(rowsOf(d!)).toEqual([
       ['generic', 'satisfied', ''],
-      ['G::q1::p', 'unknown', q1Assert],
+      ['G::q1::p', 'satisfied', ''],
       ['G::q2::p', 'satisfied', ''],
     ]);
     // The package is the outermost of q1's p's frames (H1C3, the review of O2 S3): its `assert constraint {
@@ -7046,16 +7130,16 @@ describe('the instance index — frames, components, and bound sources', () => {
     const hRows = (checkConstraints(h!).find((c) => h!.qualifiedName(c.id) === 'H::P::c')!.instances ?? []).map(
       (i) => [i.instance ?? h!.qualifiedName(i.contextId), i.result, i.result === 'unknown' ? i.message : ''],
     );
-    // q1's p and q2's p abstain on the package's asserts (q1's read the assert's 50 there, violated; q2's, read
-    // in its own `part :>> p`, read the 50 too, and abstained on its own load, a default its redefinition writes
-    // that q2's L's binding joins): the assert is the guard's now, read before what q2's p's own element states.
+    // The package's asserts name x itself, and x states a default that stands: q1's p reads it (3 + 2, satisfied)
+    // and each assert is checked against it. q2's p still abstains, on its own load, not on the assert: the
+    // default its redefinition writes (4) and q2's L's (1) are two defaults a binding joins, which state no value.
     expect(hRows.map(([i, r]) => `${i} ${r}`)).toEqual([
       'H::Q::p satisfied',
       'H::q2::p unknown',
-      'H::q1::p unknown',
+      'H::q1::p satisfied',
       'H::q3::p satisfied',
     ]);
-    expect(hRows[1]![2]).toContain("H's asserted `q2.p.x == 50.0` constrains it there");
+    expect(hRows[1]![2]).toContain('a binding joins defaults that differ or are not constants');
   });
 
   // The guard's other causes (the review of O2 S1). A reference's value is resolved once, where it is
@@ -7301,10 +7385,10 @@ describe('a value a binding carries is read in the unit its feature declares (A.
   });
 
   it('reads an enclosing assert in units too (A-H1, the units twin of R1)', async () => {
-    // q1's assert constrains x at q1's p, and the unit-aware reading of the body, given load's quantity, abstains
-    // there as the scalar one does (A.2.4), never reading P's default x past it (3 + 2 <= 10, T). Under H5's
-    // enclosing rule it read the assert's 50 (3 + 50 kg); no assertion replaces a default since decision 14 was
-    // amended (2026-10-22).
+    // q1's assert names x itself, and x states a default that stands: the unit-aware reading of the body reads P's
+    // x (3 + 2 <= 10, satisfied) as the scalar one does, and q1's assert is checked against it. Under H5's enclosing
+    // rule it read the assert's 50 (3 + 50 kg); no assertion replaces a default since decision 14 was amended
+    // (2026-10-22), and A.2.4's abstention is left to a feature that states no value of its own.
     const { model: m } = await loadModelText(`package R1U {
       part def P {
         attribute load : ISQ::MassValue default = 1.0 [SI::kg];
@@ -7318,7 +7402,7 @@ describe('a value a binding carries is read in the unit its feature declares (A.
     }`);
     const checks = checkConstraints(m!);
     for (const rel of ['R1U::P::c', 'R1U::P::b']) {
-      expect(instanceRows(m!, checks, rel)).toEqual({ 'R1U::q1::p': 'unknown', 'R1U::q2::p': 'satisfied' });
+      expect(instanceRows(m!, checks, rel)).toEqual({ 'R1U::q1::p': 'satisfied', 'R1U::q2::p': 'satisfied' });
     }
   });
 
@@ -7326,9 +7410,10 @@ describe('a value a binding carries is read in the unit its feature declares (A.
   // it derived that value at the instance, x read at P's default past q1's assert: `s <= 10.0` held at s = 5
   // in q1's p where `load + x <= 10.0`, the same quantity, abstained — and so did a package relation over
   // `q1.p.s` beside top1's abstention over `q1.p.x`. Under H5's enclosing rule (O5 S3) q1's assert defined x
-  // there (s 53); no assertion replaces a default since decision 14 was amended (2026-10-22), and the derived
-  // value abstains at q1's p as x does, in units or not, on the check and the numeric surface alike.
-  it('abstains past an enclosing assert through a value derived from what it constrains too (R1D)', async () => {
+  // there (s 53); no assertion replaces a default since decision 14 was amended (2026-10-22), and x's default
+  // stands under q1's assert, which names it: the derived value reads it at q1's p (s = 5) as x does, in units or
+  // not, on the check and the numeric surface alike.
+  it('reads a value derived from what an enclosing assert constrains at its default too (R1D)', async () => {
     for (const [type, unit] of [
       ['ScalarValues::Real', ''],
       ['ISQ::MassValue', ' [SI::kg]'],
@@ -7346,14 +7431,15 @@ describe('a value a binding carries is read in the unit its feature declares (A.
         constraint topd { q1.p.s <= 10.0${unit} }
       }`);
       const checks = checkConstraints(m!);
-      expect(instanceRows(m!, checks, 'R1D::P::cd'), unit).toEqual({ 'R1D::q1::p': 'unknown', 'R1D::q2::p': 'satisfied' });
+      expect(instanceRows(m!, checks, 'R1D::P::cd'), unit).toEqual({ 'R1D::q1::p': 'satisfied', 'R1D::q2::p': 'satisfied' });
       const topd = checks.find((c) => m!.qualifiedName(c.id) === 'R1D::topd')!;
-      expect(topd.result, unit).toBe('unknown');
+      expect(topd.result, unit).toBe('satisfied');
       // The numeric surface reads the instance rows the check gives (`contextRows`).
       const numeric = checkConstraintsNumeric(m!).find((r) => r.id.endsWith(`@R1D::q1::p`) && m!.qualifiedName(r.id.split('@')[0]!) === 'R1D::P::cd');
-      expect(numeric?.result, unit).toBe('unknown');
+      expect(numeric?.result, unit).toBe('satisfied');
     }
-    // In a tree: top's `part :>> b` asserts its a's k, and m = load * k is read for top's b's a: not read there.
+    // In a tree: top's `part :>> b` asserts its a's k, a default that stands (1): m = load * k is read for top's b's
+    // a at top's L of 5 (5 <= 10), and the assert is checked against k.
     const { model: t } = await loadModelText(`package Sh7 {
       part def T0 {
         attribute load : ScalarValues::Real default = 1.0;
@@ -7365,7 +7451,7 @@ describe('a value a binding carries is read in the unit its feature declares (A.
       part def T2 { attribute L : ScalarValues::Real default = 1.0; part b : T1; bind b.L = L; }
       part top : T2 { attribute :>> L = 5.0; part :>> b { assert constraint { a.k == 50.0 } } }
     }`);
-    expect(instanceRows(t!, checkConstraints(t!), 'Sh7::T0::c')).toEqual({ 'Sh7::T2::b::a': 'satisfied', 'Sh7::top::b::a': 'unknown' });
+    expect(instanceRows(t!, checkConstraints(t!), 'Sh7::T0::c')).toEqual({ 'Sh7::T2::b::a': 'satisfied', 'Sh7::top::b::a': 'satisfied' });
   });
 
   it('reads no value of another dimension: both comparisons abstain, in their own sentences', async () => {

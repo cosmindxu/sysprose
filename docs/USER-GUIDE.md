@@ -1515,17 +1515,19 @@ equation of the instance's own element over a `default` changes nothing the row
 reads: the default stands against it (below), so q2's `part :>> p { assert
 constraint { extra == 20.0 } }` over P's `extra default = 0.0` reads q2's p's
 extra at 0, as every P does, and the assert is reported violated. An instance
-row that reads a value an `assert` of an instance around it constrains, the
-package's included, is *could not be evaluated*, read in its own element (`part
-q2 : Q { part :>> p { … } assert constraint { p.load >= 0.5 } }`) or through
-the usage (`part q1 : Q { assert constraint { p.x >= 5.0 } }`, or the
-package's `assert constraint { q1.p.x >= 5.0 }`, for q1's p's x), whatever
-the assert and whatever the value — a `default` or one written with `=`. So is one that reads such a
-value through a value derived from it (P's `s = load + x` in `s <= 10.0`), in
-units or not, and so is a check or literal row of a relation outside the
-instance's rows that reads it there (a package constraint over `q1.p.x` or
-`q1.p.s`); the numeric surface reads x's `default` past an inequality, which
-leaves it standing. A relation read through a part a
+row that reads a value an `assert` of an instance around it names, the
+package's included (`part q1 : Q { assert constraint { p.x >= 5.0 } }`, or the
+package's `assert constraint { q1.p.x >= 5.0 }`, for q1's p's x), reads the
+value the feature states, a `default` or one written with `=`: the assert
+changes neither, and is checked against it (reported violated where it fails).
+So does a row that reads such a value through a value derived from it (P's `s =
+load + x` in `s <= 10.0`), in units or not, and a check or literal row of a
+relation outside the instance's rows that reads it there (a package constraint
+over `q1.p.x` or `q1.p.s`). Where the feature states no value of its own, or
+reads what a binding gives it (`part q2 : Q { part :>> p { … } assert
+constraint { p.load >= 0.5 } }` over Q's `bind p.load = L`), the row is *could
+not be evaluated*: an enclosing assert constrains a value this tool does not
+read there. A relation read through a part a
 binding joins to another (`bind p.r = s`, the relation reading `r.x`) is read
 per instance nowhere, the usage's own row included: that row is *could not be
 evaluated*, as it was before any instance was read. A relation written in such
