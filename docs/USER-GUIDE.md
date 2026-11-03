@@ -1504,7 +1504,10 @@ surface, and counted *not read* in the roll-up (in a group of one, an info
 finding of its own); so is one where a reference the
 relation is read through stands for another feature than where its value is
 written (`ref part :>> r = s` written in Q's p is Q's `s`, and q2's p reads
-q2's own `s`), or for one a binding reaches into; one whose path inherits a
+q2's own `s`), or for one around the instance that a binding reaches into
+(Q's `bind s.k = K` under `r = s` written in Q's p; a value written below the
+instance itself, `r = x` in W's sub over W's `bind sub.x.load = K`, is read in
+each instance: w's sub's x carries w's K); one whose path inherits a
 name twice, neither feature redefining the other (`part def Q3 :> Q2, Q4` over
 Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, or `part q3 : Q2, Q4`: q3's
 p is P2's and P4's at once, and no one element stands for it). An asserted
@@ -1583,11 +1586,17 @@ relation, at exit 2, which `--allow-inconclusive` does not lower; `bounds`
 claims no bound of a measure such a binding may carry. One valued with
 another (`part pp : T0 = top.a`, `attribute q : V = top.pos`) equates the two
 the same way: where it says nothing else of its own and its value is a path
-below where it is written, it is read as that other, as a plain end of a
-binding is; otherwise (`part pp : T0 = top.a { attribute :>> load = 50.0;
-}`, `part :>> p = other` under an `assert` that reads through p, a part or an
-attribute of a structured type valued with any other expression, a call
-included) such rows are *could not be evaluated*, in a sentence that names
+below where it is written, or to a part of a package (`part :>> p = other` in
+q, which stands for the package's `other` in every Q), it is read as that
+other, as a plain end of a binding is. An `assert` that reads through the part
+(Q's `p.x == 50.0`) says nothing of it where every feature the assert reads
+states a value, a `default` included: the value stands and the assert is
+checked against it (decision 14), so q's p and `other` read x's 2 and the
+assert is reported violated; one that reads a feature with no value defines it,
+and is read as below. Otherwise (`part pp : T0 = top.a { attribute :>> load =
+50.0; }`, `part :>> p = other` under an `assert` that defines a feature of p, a
+part or an attribute of a structured type valued with any other expression, a
+call included) such rows are *could not be evaluated*, in a sentence that names
 the value — and, where it says something of its own or has a type the other
 lacks, so are those that read what the value names (top's a, which has pp's
 50), as a binding's other end. A reference valued so is read as what
