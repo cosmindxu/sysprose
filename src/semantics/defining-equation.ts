@@ -12583,7 +12583,10 @@ function instanceReadsOtherwise(
  * `part :>> p { … }` reading `load`. A.2.4: an enclosing assert constrains
  * the value, and a reading in `element` reads none of it — save an asserted
  * equation that defines a `default` there, which the reading reads at the
- * instance (H5, {@link enclosingAsserts}). `undefined` where none does.
+ * instance (H5, {@link enclosingAsserts}). `undefined` where none does. An
+ * assert that names the exact path read, over a feature that states a value
+ * ({@link statesStandingValue}), is checked against that value and does not
+ * make the reading abstain.
  */
 function assertAbove(
   definitions: DefiningEquations,
@@ -13033,7 +13036,10 @@ function groupsOf(model: Model): InstanceGroup[] {
  * constrains. Each frame is checked against the name as it is spelled below
  * that frame (`q1.p.x` read in R1, q1's `assert { p.x == 50.0 }` references the
  * remaining `p.x`). `{ frame, expr }` names the first such frame and its
- * expression; `undefined` where none does.
+ * expression; `exact` is set where the assert names the very path read, which
+ * the caller reads past where the feature states a value of its own
+ * ({@link statesStandingValue}: the assert is checked against it, it does not
+ * change it). `undefined` where none does.
  *
  * `inst` is the instance the context is read for. Where it is not the
  * context's own — a group row reads Q's p for `R1::q1::p`, a derived value is
@@ -13044,7 +13050,8 @@ function groupsOf(model: Model): InstanceGroup[] {
  * below it. Read through the usage's frames alone, R1's group row `P::c in
  * R1::q1::p` read x's default past q1's `assert constraint { p.x == 50.0 }`,
  * decided where the own row `top1`, the same quantity at the same instance,
- * abstained (A-H1). The package is the outermost such frame (H1C's `assert
+ * abstained (A-H1; both now read the default, an exact assert over a stated
+ * value being no reason to abstain). The package is the outermost such frame (H1C's `assert
  * constraint { q1.p.x == 50.0 }` constrains q1's p's x as q1's own does). A
  * type definition's own instance (`R1::Q` above `R1::Q::p`) is no such frame:
  * its asserts hold of every instance of it, and a reading in its usage reads
@@ -13079,7 +13086,7 @@ function assertEnclosing(
   const root = definitions.instanceNameOf(contextId);
   const segments = name.split('.');
   // `exact`: the assert names the very path read, so it states a relation over that feature's value
-  // ({@link standsAgainstEnclosing} reads a stated value past it).
+  // ({@link statesStandingValue} reads a stated value past it).
   const constrains = (reader: ElementRecord, remaining: string): { frame: ElementId; expr: string; exact?: true } | undefined => {
     for (const { expr, names } of definitions.assertsOf(reader.id)) {
       for (const n of names) {

@@ -409,7 +409,8 @@ function answerFor(
   // value there (H5's enclosing rule): read it. Any other enclosing assert
   // constrains the value (A.2.4): abstain, never read it — one of an instance
   // enclosing `inst` too, where the context is read for an instance not its
-  // own (a group row, A-H1).
+  // own (a group row, A-H1). An assert that names the very path read, over a feature that states a value
+  // (`statesStandingValue`), is checked against that value and does not abstain.
   if (inst !== undefined) {
     const den = pass.definitions.denote(contextId).get(name);
     if (den) {

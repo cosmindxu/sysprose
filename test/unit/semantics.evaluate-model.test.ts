@@ -4350,6 +4350,25 @@ describe('checkConstraints — a default stands against an asserted equation (de
     }`);
     const bc = checkConstraints(b!).find((k) => b!.qualifiedName(k.id) === 'ENB::P::c')!;
     expect((bc.instances ?? []).find((i) => i.instance === 'ENB::q1::p')?.result).toBe('unknown');
+    // Guards of the exception: a valueless feature states nothing to read, and a `=`-valued one that is an end of a
+    // binding is read through it (RB5): each abstains under an assert naming it.
+    const cause = async (body: string) => {
+      const { model: g } = await loadModelText(body);
+      const k = checkConstraints(g!).find((c) => g!.qualifiedName(c.id) === 'GD::P::c')!;
+      const row = (k.instances ?? []).find((i) => i.instance === 'GD::q1::p');
+      return [row?.result, row?.cause];
+    };
+    expect(await cause(`package GD {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute y : ScalarValues::Real; constraint c { load + y <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.y <= 5.0 } }
+    }`)).toEqual(['unknown', 'enclosing-assert']);
+    // x, derived and joined to M by a binding in q1, is no value this tool reads under Q's assert over it.
+    expect((await cause(`package GD {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = load * 2.0; constraint c { x <= 10.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; assert constraint tie { p.x >= 1.0 } }
+      part q1 : Q { attribute :>> L = 3.0; attribute M : ScalarValues::Real default = 20.0; bind p.x = M; }
+    }`))[0]).toBe('unknown');
   });
 
   // RB5E (209): a binding in q1 that joins p.x to two defaults that differ gives q1's p no value to read. The assert
