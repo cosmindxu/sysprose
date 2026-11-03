@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { parseModel, serializeModel, resolveConnectorFeatureChains } from '@text/index';
 import { buildDiagram } from '@diagram/index';
 import { Model } from '@core/index';
-import { redefinedBy } from '@semantics/inheritance';
+import { redefinedBy, redefinedClosure } from '@semantics/inheritance';
 import { scopeFor } from '@semantics/evaluate-model';
 
 const TYPES_FIRST = `package P {
@@ -285,5 +285,36 @@ describe('connector feature-chain endpoints (types-first models)', () => {
     const again = connOf(model);
     expect(model.qualifiedName(again.source![0])).toBe(srcQ);
     expect(again.attrs.sourceRef).toBeUndefined();
+  });
+
+  // 289: a package-level chain end is resolved after every definition's own end copies exist, so what it redefines does
+  // not turn on the text order (written before T1's `bind a.load = L` it found only T0's `load`).
+  it('a package-level bind chain end redefines the same in either text order (289)', () => {
+    const members = [
+      'part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }',
+      'part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }',
+      'part def T2 { part a : T1; }',
+      'part top : T2;',
+      'attribute X : ScalarValues::Real = 50.0;',
+      'bind top.a.L = X;',
+      'attribute Y : ScalarValues::Real;',
+      'bind Y = top.a.a.load;',
+    ];
+    const ends = (list: string[]): string[] => {
+      const { model } = parseModel(`package P {\n  ${list.join('\n  ')}\n}`);
+      const out: string[] = [];
+      for (const e of model.all()) {
+        if (e.eClass !== 'BindingConnectorAsUsage') continue;
+        for (const id of [...(e.source ?? []), ...(e.target ?? [])]) {
+          const end = model.get(id)!;
+          out.push(`${model.qualifiedName(id)} -> ${redefinedClosure(model, end).map((g) => model.qualifiedName(g.id)).sort().join(', ')}`);
+        }
+      }
+      return out.sort();
+    };
+    const written = ends(members);
+    expect(written).toContain('P::top::a::a::load -> P::T0::load, P::T1::a::load');
+    expect(ends([...members].reverse())).toEqual(written);
+    expect(ends([...members.slice(4), ...members.slice(0, 4)])).toEqual(written);
   });
 });

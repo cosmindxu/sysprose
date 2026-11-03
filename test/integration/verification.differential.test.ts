@@ -3924,6 +3924,27 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         ].join('\n'),
       );
   const CAP2_TEXT = (): string => CAP1_TEXT(false);
+  /**
+   * CAP1's chain ends owned by a part definition `U` (instance `u`) instead of the package: `bind x.a.….L = XX` and `bind
+   * Y = x.a.….load` stand in U, which types `x` by the 49-deep chain. The loader resolves a package-level end after every
+   * definition's own end copies (editor-pass, 289) but a definition-owned end in its own order, so what the end redefines
+   * still turns on the text order here; the cap's component rule (`pastCapComponents`) reads both orders past the cap.
+   */
+  const CAPD_TEXT = (): string => {
+    const as = (n: number) => Array.from({ length: n }, () => 'a').join('.');
+    return [
+      'package CAPD {',
+      '  part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }',
+      '  part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }',
+      ...Array.from({ length: PAST_CAP - 1 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
+      `  part def U { part x : T${PAST_CAP}; attribute XX : ScalarValues::Real = 50.0; bind x.${as(PAST_CAP - 1)}.L = XX; attribute Y : ScalarValues::Real default = 1.0; bind Y = x.${as(PAST_CAP)}.load; }`,
+      '  part u : U;',
+      '  constraint yT { u.Y >= 40.0 }',
+      '  constraint yF { u.Y <= 5.0 }',
+      `  constraint negT { u.x.${as(PAST_CAP)}.m2 <= 0.0 }`,
+      '}',
+    ].join('\n');
+  };
 
   /**
    * The same package with its members written in the reverse order (the first line is the header, the last the
@@ -5970,8 +5991,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // cap1-per-binding and cap2-per-binding-valueless reversed): the package's `bind Y = top.a.….a.load` was resolved before
     // T1's `bind a.load = L` had an end copy, so its chain end redefined only T0's load and was never joined to the capped
     // binding — yT and negT read F/F/F/X, yF and posF T/T/T/X, where Y is 50 (a false verdict on the check, the literal engine
-    // and the numeric surface that turned on the text order). An end read through an instance of a definition that owns a
-    // capped end is past the cap whichever way the text was written: the rows read as in the written order.
+    // and the numeric surface that turned on the text order). The loader now resolves a package-level end after every
+    // definition's own end copies (editor-pass, 289: the closure of the end is the same in either order, pinned by a unit
+    // test), and an end read through an instance of a definition that owns a capped end is past the cap too, which still
+    // holds a definition-owned end (capdrev): the rows read as in the written order.
     cap1rev: probe(reversedMembers(CAP1_TEXT()), {
       'CAP1::negT': ['?/?/T/T', 'T'],
       'CAP1::posF': ['?/?/F/?', 'F'],
@@ -5989,6 +6012,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'CAP2::posF': ['?/?/F/?', 'F'],
       'CAP2::yT': ['?/?/T/T', 'T'],
       'CAP2::yF': ['?/?/F/?', 'F'],
+    }),
+    // The same chain ends owned by a definition (CAPD_TEXT): the written and the reversed order read alike, past the cap.
+    capd: probe(CAPD_TEXT(), {
+      'CAPD::negT': ['?/?/T/T', 'T'],
+      'CAPD::yT': ['?/?/T/T', 'T'],
+      'CAPD::yF': ['?/?/F/?', 'F'],
+    }),
+    capdrev: probe(reversedMembers(CAPD_TEXT()), {
+      'CAPD::negT': ['?/?/T/T', 'T'],
+      'CAPD::yT': ['?/?/T/T', 'T'],
+      'CAPD::yF': ['?/?/F/?', 'F'],
     }),
     // CAPU2 (the review of O2 S3): chainPkg49 plus U's own `bind a.load = M` on its `part a : T0`. Both U's end
     // and T1's capped one redefine T0's load, and joined through it U's binding was held past T1's cap: M and
