@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5445 total — 5445 passed, 0 failed, 0 skipped
+- **Tests:** 5449 total — 5449 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -114,7 +114,7 @@
 | test/unit/semantics.constraint-class.test.ts | 82 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 284 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 287 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
@@ -149,7 +149,7 @@
 | test/unit/store.reducers.test.ts | 348 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 53 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
-| test/unit/text.connectors.test.ts | 13 | 0 | 0 |
+| test/unit/text.connectors.test.ts | 14 | 0 | 0 |
 | test/unit/text.export-fidelity.test.ts | 3 | 0 | 0 |
 | test/unit/text.grammar2.test.ts | 14 | 0 | 0 |
 | test/unit/text.lexer.test.ts | 6 | 0 | 0 |
