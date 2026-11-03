@@ -519,16 +519,6 @@ headings.
       test/integration/verification.differential.test.ts DM3-diamond-own-redef. Witness of the order
       dependence on base: `part qb : Q2; part qa : Q2; part def Q2 :> Q { attribute :>> K = 25.0; }`
       lists `qb` where `Q2` is listed when Q2 is written first.
-- [ ] **Bound the subsetting walk on dense layered diamonds and on a full DAG (cost;
-      pre-existing).** Layered graphs where every usage subsets all eight of the layer above: 7x7
-      12.9 s CPU, 8x8 52.6 s (5d9e806 49.8 s), 10x5 34 s, 8x10 (80 usages, 576 subsetting edges) not
-      finished after 7 CPU-minutes; a full DAG `part u_i :> u_1, ..., u_(i-1) [1]`: n=22 about 11 s,
-      n=26 99-105 s (174-192 s with a redefinition), n=30 over 4 minutes. Chains of 150-300, zigzags
-      and cycles stay at 5-8 s. The fixpoint of fence-readings is cheap; the super-linear step is in
-      the per-instance walk or `contextsOf`. Unchanged by fence-readings. Probes:
-      review-2026-10-14/wave3-probes/fence-readings/cost/grid{4x5,5x6,6x6,7x7,8x8,10x5,8x10}.sysml
-      and review-2026-10-14/wave3-probes/fence-readings/repro/R14-dense-subsetting-cost.sysml (n=22;
-      generate larger n). Done when 8x8 and n=26 finish in seconds. [fence-readings final review]
 - [ ] **Abstentions left in the readings (rollup; sound, only weaker).** Each reads unknown where an
       answer exists; none gives a wrong answer. (1) The subsetting component fence is per usage, not
       per instance: the usage an instance redefines itself (w.p1 beside `p2 :> p1`), every instance
@@ -952,28 +942,35 @@ true values. What follows is what that branch and the review of it left open; en
       margin on slower CI cores: if the first CI run is red, make the assertion relative. [ui-small
       S4, review 2026-10-14 D-3]
 - [ ] **List what a load binds later in the order a terminal binds it, on the page and on every peer
-      of a room.** Done by fence-coremodel and fence-order: where-used, the impact closure, SDK
-      traverse, REST relationships of an element, the impact graph's neighbours and the specialisers
-      a finding names list in text order on the page, in a terminal and on every peer of a room.
-      What stays: (1) a typing beside a subsetting or redefinition of ONE element, made in the app,
-      is listed in creation order by `typesOf` and the Properties Types and Specializations lists: a
-      typing beside a subsetting is listed in creation order on the page with the subsetting first
-      in a terminal; a typing beside a redefinition has the typing first in a terminal. This is
-      display order only: no check, verify, validate or where-used cell differed in 200 generated
-      models (probe wave3-probes/fence-order/gen.mts, cell `prop`, 30 of 200). A sort would not
-      match the terminal in the corpus's s1-spec, so it was not done. (2) Consumers that walk
-      `ofKind` of Redefinition, FeatureTyping, Subsetting or Subclassification in `all()` order
-      (rules.ts 833 and 941, bind.ts 264, defining-equation, units-eval): no validate() output
-      depends on the walk order in rules.ts 833 and 941, but bind.ts 264, defining-equation and
-      units-eval were not re-probed, so for them it is not proven. The claim that no validate cell
-      differed covers the SET of validate() output, not its ORDER: validate() ends with a sort by
-      severity, element id, rule and id, and element ids are fresh per load, so its order differs
-      between a page, a terminal and a JSON copy whatever the walk order is (see 'Abstentions left
-      in the order of listings'). Done when a typing beside a subsetting or redefinition lists in
-      one order on the page and in a terminal, and the three unprobed consumers are shown not to
-      depend on the walk order. Probes: wave3-probes/fence-order/gen.mts, pb.mts;
-      fence-coremodel-scratch/cand.mts, late-dump.mts, gen-wu.mts. [review 2026-10-14 D-1,
-      collab-order; fence-coremodel; fence-order; fence-order review]
+      of a room.** Done by fence-coremodel, fence-order and core-pass: where-used, the impact
+      closure, SDK traverse, REST relationships, the impact graph and the specialisers a finding
+      names list in text order, and so do Properties' Types and Specializations lists, a table's
+      Type cell, the diagram's subject grouping and the 3D shape inference (Model.typesInBindOrder
+      and Model.specializationsFrom: the colon-greater family, then typings, then redefinitions).
+      These lists use a fixed order that does not depend on the order the relationships were made in
+      (the order where-used uses); it is not the terminal's `typesOf` listing, and no single sort
+      key matches the terminal's raw listing (s1-spec lists the typing before the redefinition, a
+      def-body `:>> p : P2` the reverse). What stays: (1) Model.typesOf, which the readings walk,
+      still lists in the order the model lists the relationships, so a typing made in the app beside
+      a subsetting or redefinition reads in another order than in a terminal. The order scope in
+      bind.ts unreadScopes fences the shapes where the order decides a name, so no cell has been
+      seen to differ (140 generated models). typesOf stays unsorted pending a user decision: sorting
+      it changed a pinned abstention into a decided reading
+      (test/unit/semantics.evaluate-model.test.ts 'abstains where no one element stands for an
+      instance...', around line 6856, model `part def Q2 :> Q { part :>> p : P2; }` with `P2 :> P {
+      attribute :>> extra = 9.5 }`: generic and G::q2::p went from unknown to violated, which is the
+      KerML reading since P2::extra redefines P::extra, but it widens a verdict; decide the
+      abstention, or keep it). Other consumers read `typesOf()[0]` the same way:
+      consistency.ts:1211, conformance.ts:77 and contracts.ts:1393. (2) The walks of ofKind
+      Redefinition/Subsetting/FeatureTyping/Subclassification are shown not to depend on the walk
+      order (bind.ts 264 was order dependent and is fixed; units-eval reads only within-family text
+      order; the defining-equation walks and the rest: 179 corpus models under two perturbations, 0
+      differences). The FMI `declaredTypeName` (src/interop/fmi/model-description.ts) was a
+      page-versus-file difference (an attribute whose typing is made by an edit beside a subsetting:
+      Float64 on the page, Int64 after Save and reopen; probe core-pass-scratch/rv/p3.mts); it now
+      takes the first FeatureTyping target and is fixed. validate() ordering across loads is the
+      separate entry 'Abstentions left in the order of listings'. Done when typesOf lists alike on
+      the page and in a terminal, which waits for the decision in (1). [core-pass]
 - [ ] **Make a reset in a collaboration room cost what it changes (optional, measure first).** An
       Undo, Redo, Apply or Import in a room clears the room's document and writes every element
       again, library included. On v9 with its library, the editing peer's reseed plus one other
@@ -1164,7 +1161,10 @@ true values. What follows is what that branch and the review of it left open; en
       findings in different orders (probe wave3-probes/fence-order/gen.mts with the `.sort()`
       removed, 150 seeds, 59 cells; fence-order-scratch/gen-unsorted.mts and vo.mts). It is sorted
       but not stable across loads, not a wrong answer, and pre-existing; a stable order would need a
-      text-order sort key in validate.ts. [fence-order review]
+      text-order sort key in validate.ts. (2) `typesOf` order decides a name between a redefined
+      feature and its typing (the Q2/P2 model, test/unit/semantics.evaluate-model.test.ts around
+      line 6856); the pinned abstention stays until the user decides it; core-pass added no new
+      abstention. [fence-order review; core-pass]
 - [ ] **Abstentions left in the editor's copies (rollup; sound, only weaker).** fence-copy: (1) an
       implicit copy hiding an override: the forward member order of a nearest-N chain (D1 and D3
       bind N, D2 overrides, 54 of 120 gen2 models and 3 of 160 gen1 models), a diamond or clash of
