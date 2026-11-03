@@ -119,8 +119,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       the path `q.p1`, so it over-abstains where only an unrelated Q instance changes p1; running it
       in W is a verdict-moving step (generator with a hand oracle first). Only a path with a `.` is
       kept; `Q::p1` is not. [subsetting-pass S1 review]
-- [ ] **Read a reference subsetting (`::>`) as a feature of what it subsets, or say the limit is the
-      tool's in every surface; follow it in `spreadTaint` too.**
 - [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
       the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
       `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
@@ -132,12 +130,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       on the hosted site is worth that cost. [N6 S4]
       DECIDED 2026-10-23 (U14): decide after Drive (U16); until then the hosted site keeps `not
       here` with the copyable command.
-- [ ] **Decide whether a collaboration room's copy counts as saved for the tab's close question
-      (optional).** Since `ui-small` S1 the tab asks before closing over text or boxes not saved
-      (`askBeforeLeaving`, `leaveUnsaved`). In a collaboration room a peer's edit makes the text
-      read unsaved while the relay and y-indexeddb hold the room's copy, so every collaborator gets
-      the question on close. It only errs toward asking. Decide whether the room's copy counts as
-      saved. [ui-small S1, review]
 - [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
       checks in the page behind a queue and a mutex. Left: Cancel drops the answer but cannot stop
       z3, so the check ends at its own time budget and a Run started meanwhile queues behind it; a
@@ -356,13 +348,6 @@ headings.
       and t1, t60 unknown, both F. The check and the literal engine abstain too. Reading the
       conjunction's equation part as L's definition would decide them. Pinned: order-s1n-and,
       -s1kn-and, -s2enc-and, -s2spec-and, -s2use-and and their -rev twins. [text-order S1]
-- [ ] **Judge a lone plain check beside a satisfied requirement's require/assume.** A requirement
-      clause is a goal in this tool (USER-GUIDE: clauses are goals), not an assert, so a lone plain
-      check beside it is still taken as a design equation (RQK: `t1` and the requirement's own
-      constraint both read imposed, k satisfied). The multi-check order cases are closed by the
-      contested rule; this one does not turn on the order. Decide whether a satisfied requirement's
-      clause is a fact for the design-equation choice. Probe:
-      review-2026-10-14/wave3-probes/text-order/reqk.sysml. [text-order S1 review]
 - [ ] **Solve the plain equations of a design component jointly over all roots (optional).** Since
       text-order the curved-root rule withholds `x * x == 4.0` beside `x == 2.0` in both orders
       where one root agrees (it read t/t before); a finer rule would solve the plain equations
@@ -710,30 +695,6 @@ they cannot, and the four-surface table pins A1–A9, A4, CAP1, X-shapes and the
 true values. What follows is what that branch and the review of it left open; entries tagged
 `[O2 …]` come from its steps and reviews.
 
-- [ ] **Make the per-instance check cheaper after an edit, and bring tree10 back under 2x.**
-      cold-check S1 finds the connectors that join a component by connector end (358e0b7). Paired on
-      f3004c6 (median, min-max, load <=6): big-bind-1200 cold 1.95 s (1.77-7.95, n=9) to 1.77 s
-      (1.63-1.84, n=7); big-bind-600 cold 0.82 to 0.78 s, within the spread; perf9b and tree10 cold
-      unchanged. The cold target of 1 s is NOT met and the entry is not closed on the warm figure,
-      because tree10 misses its warm target. big-bind-1200 cold, three-way on this machine: 4ac2fff
-      (O2 merge) 1.48 s (1.37-1.58, n=7), f3004c6 1.95 s, cold-check S1 1.77 s, output identical;
-      about 0.5 s of the cold figure came in after O2, cause not isolated. tree10 warm, four-way,
-      alternating, n=8: 7277a97 9 ms (9-10), 4ac2fff 16 (15-17), f3004c6 35 (34-37), cold-check S1
-      36 (33-38): about 4x 7277a97 against the <= 2x target (tree10 output changed after O2). The
-      absolute warm targets hold: big-bind-1200 0.55 s (target 1 s), big-bind-600 0.27 s (700 ms),
-      perf9b 0.15 s (300 ms). Where the cold time goes: the per-instance reading itself
-      (groupInstanceRows, instanceGroups and bindingConflicts re-asking each row's names, about 1.7
-      s of 1,201 rows) and abstainedRead (about 0.15 to 0.2 s of big-bind-1200 cold). abstainedRead
-      cannot be restricted to models that assert something: with that restriction the test "a bound
-      read that throws is the read's abstention, not a depth limit (valueBoundInInstance, P17)" (T1
-      has no assert) turns from unknown to satisfied, a read failure dropped (probe:
-      cold-check-scratch/review-s1/mut-assert; vitest fails at
-      semantics.evaluate-model.test.ts:6521). A specialiser's lexical two-values, a bound source's
-      past-cap / defaults-differ and an internal throw are further possible no-assert abstentions,
-      not shown. Done when a model-level test proves that no abstention can arise or the per-row
-      answers are shared with collectReads, big-bind-1200 is under 1 s cold and tree10 is within 2x
-      7277a97 warm, or each is restated with a measured reason. [cold-check S1, O2 S5, review
-      2026-10-14 A-H2]
 - [ ] **Match a binding into an instance by path through a value too (optional, low).** Since
       per-instance-rest S3 a binding written in an instance makes its usage a group only where it
       reaches a path the relation reads. What a value the relation reads reads is still matched by
@@ -971,13 +932,6 @@ true values. What follows is what that branch and the review of it left open; en
       takes the first FeatureTyping target and is fixed. validate() ordering across loads is the
       separate entry 'Abstentions left in the order of listings'. Done when typesOf lists alike on
       the page and in a terminal, which waits for the decision in (1). [core-pass]
-- [ ] **Make a reset in a collaboration room cost what it changes (optional, measure first).** An
-      Undo, Redo, Apply or Import in a room clears the room's document and writes every element
-      again, library included. On v9 with its library, the editing peer's reseed plus one other
-      peer's reconcile take about 28 to 30 s in node on a quiet machine (80 to 100 s at load 30 to
-      35), at 87e8c0f and at `collab-order` alike. The whole document goes as one message, which
-      runs into the relay's message cap (64 MiB since collab-ui S2). Fix: write only what the reset changed (a diff of the snapshot
-      against the document). The library is already out of the document (fence-roomlib). Pre-existing. [collab-order S2]
 - [ ] **Save the unnamed end by a name, instead of leaving it out (a loud note today; sound, only
       weaker).** Rechecked read-only on a683620 (2026-11-02): 240 neighbour cases lost or moved no
       statement and every end Save cannot name gets the `// Not saved:` note, so the page and the
@@ -1155,6 +1109,18 @@ true values. What follows is what that branch and the review of it left open; en
       pass cost (about 20%, 240 to 290 ms on the 9,641-configuration model) is accepted, and the
       Simulate trace stopping at a composite step's holding machine is the intended behaviour;
       re-add the entry with its original title to reverse one. [parser-pass]
+      (3) 251, 173, 245, 170 and 191 were closed on 2026-11-03 under the standing instruction to
+      continue, three by a delegated decision and two by measurement, and can be reversed by
+      re-adding the entry with its original title: 251 (a satisfied requirement's require/assume
+      clauses are goals; behaviour kept and documented), 173 (a room's copy counts as saved for the
+      tab's close question while a peer is connected and the text is not dirty), 245 (a reference
+      subsetting `::>` that declares no type is not read as a feature of what it subsets; the limit
+      is stated as the tool's, reason unread-binding); 170 (a reset on v9 costs about 0.85 s now,
+      the premise of 28 to 30 s is gone) and 191 (cold big-bind-1200 is 0.50 to 0.59 s; after an
+      edit tree10 costs 2.3 to 2.4 times 7277a97, 3,070 per-instance rows against 2: a change would
+      have to cut instanceSitesOf, readingContextsOf and the per-context name walk without changing
+      a reading). A name read through an untyped `ref part p2 ::> p1;` stays unread on every surface
+      (probes decisions-pass-scratch/p/ref2.sysml, nref.sysml). [decisions-pass, cost-pass]
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
