@@ -4590,8 +4590,12 @@ interface BindingEnds {
   /**
    * The ends of the bindings read in fewer contexts than they hold in — past
    * {@link MAX_BINDING_FRAMES}, or a context deeper than
-   * {@link MAX_BINDING_SEGMENTS} usages left out ({@link heldDefaults}) — each
-   * with the cap its own binding met, and every end of a binding joined to one
+   * {@link MAX_BINDING_SEGMENTS} usages left out ({@link heldDefaults}) — or
+   * written in a package other than the one that declares the instance an
+   * end is a feature of ({@link endCrossesPackage}), or on the head of a
+   * definition that binds the feature itself ({@link endJoinedInItsDefinition}):
+   * `package`, read in no context that meets the binding the definition writes —
+   * each with the cap its own binding met, and every end of a binding joined to one
    * of them in the global component of the connectors' ends, through what an
    * end redefines too ({@link pastCapComponents}): such a binding carries the
    * capped value on. Per component, never model-wide. Only a reading of one of
@@ -4685,9 +4689,11 @@ interface ComponentFacts {
 /**
  * The cap a binding's reading met ({@link BindingEnds.partial}) — or, for one
  * binding alone, `outside`: a context it holds in where an end it joins is no
- * feature this tool finds ({@link BindingEnds.unread}).
+ * feature this tool finds ({@link BindingEnds.unread}), or `package`: written in
+ * a package other than the one that declares what it joins ({@link
+ * endCrossesPackage}, {@link endJoinedInItsDefinition}).
  */
-export type BindingCap = 'frames' | 'segments' | 'outside';
+export type BindingCap = 'frames' | 'segments' | 'outside' | 'package';
 
 /**
  * The lazy indexes over {@link BindingEnds.readings}: each context's
@@ -7415,13 +7421,16 @@ export type BoundAbove = ElementRecord | { pastCap: BindingCap };
 
 /**
  * The sentence a cap answers a bound read with ({@link BindingEnds.overCap}):
- * the binding it belongs to held in more contexts than this tool reads, or is
- * read deeper than {@link MAX_BINDING_SEGMENTS} usages.
+ * the binding it belongs to held in more contexts than this tool reads, is
+ * read deeper than {@link MAX_BINDING_SEGMENTS} usages, or joins a feature of
+ * a definition or an instance another package declares (`package`).
  */
 function bindingCapSentence(cap: BindingCap): string {
   return cap === 'frames'
     ? `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
-    : `a binding of this model is read deeper than ${MAX_BINDING_SEGMENTS} usages`;
+    : cap === 'package'
+      ? 'a binding of this model joins a feature of a definition or an instance that a package other than the one it is written in declares'
+      : `a binding of this model is read deeper than ${MAX_BINDING_SEGMENTS} usages`;
 }
 
 /**
@@ -7440,6 +7449,12 @@ export function boundAboveSentence(definitions: DefiningEquations, contextId: El
       );
     }
     const cap = bindingCapSentence(above.pastCap);
+    if (above.pastCap === 'package') {
+      return (
+        `the relation is read in ${where} and reads a value a binding joins, and ${cap}: ` +
+        'so it reads no value the binding gives for any one instance, and the relation is not carried'
+      );
+    }
     return (
       `the relation is read in ${where} and reads a value a binding joins, and ${cap}: past that, this tool ` +
       'reads no bound value for any one instance, so it is not carried'
@@ -7621,6 +7636,36 @@ function heldDefaults(
     }
     return root;
   };
+  // The features a binding written in a definition or a usage joins, each with what it redefines where the writer inherits it
+  // (T1's `bind load = L` joins T1's copy of T0's L; not a nested `p : P`'s load, which a binding beside `bind P::load = M`
+  // reads as before), by the elements they are written in.
+  const joinedBy = new Map<ElementId, Set<ElementId>>();
+  for (const b of bindings) {
+    const w = b.ownerId != null ? model.get(b.ownerId) : undefined;
+    if (!w || isPackage(w)) continue;
+    const kin = new Set<ElementId>([w.id, ...generalizationsOf(model, w.id).map((t) => t.id)]);
+    for (const e of [...(b.source ?? []), ...(b.target ?? [])]) {
+      const f = model.get(e);
+      if (!f) continue;
+      for (const g of [f, ...redefinedClosure(model, f).filter((r) => kin.has(r.ownerId ?? ''))]) {
+        const set = joinedBy.get(g.id) ?? new Set<ElementId>();
+        set.add(w.id);
+        joinedBy.set(g.id, set);
+      }
+    }
+  }
+  // The package each binding is written in (the nearest one, the element itself if it is one), by each end it names.
+  const homesOf = new Map<ElementId, Set<ElementId>>();
+  for (const b of bindings) {
+    let home: ElementRecord | undefined = b.ownerId != null ? model.get(b.ownerId) : undefined;
+    while (home && !isPackage(home)) home = home.ownerId != null ? model.get(home.ownerId) : undefined;
+    if (!home) continue;
+    for (const e of [...(b.source ?? []), ...(b.target ?? [])]) {
+      const set = homesOf.get(e) ?? new Set<ElementId>();
+      set.add(home.id);
+      homesOf.set(e, set);
+    }
+  }
   for (const b of bindings) {
     const holder = model.get(b.ownerId!);
     const left = b.source?.[0];
@@ -7629,6 +7674,19 @@ function heldDefaults(
     const pair = [left, right] as const;
     const places = [endPlace(model, left, holder), endPlace(model, right, holder)] as const;
     places.forEach((place, k) => place.kind === 'enclosed' && enclosed.add(pair[k]));
+    // A binding whose end is a feature of an instance a PACKAGE other than the one it is written in declares (`bind
+    // top.L = XX` in `package Sub` beside G's `part top : T1`, a sibling's `bind Lib::top.L = XX`), or the head of a
+    // definition that binds the feature itself (`bind T1::L = XX` beside T1's `bind load = L`), is read in no
+    // context that meets the binding T1 writes: T1's `bind load = L` joins top's load to top's L in G, and the
+    // binding's reading never meets it, so top's `load default = 1.0` stood beside the 50 the binding gives L — a
+    // false verdict on the check, the literal engine and the numeric surface, and the SMT engine's inconsistent
+    // axioms. Held past a cap of its own, `package`: every default joined to its ends gives way ({@link
+    // pastCapComponents}) and no value is read through it for any one instance.
+    if (pair.some((end) => endCrossesPackage(model, end, holder, homesOf) || endJoinedInItsDefinition(model, end, holder, joinedBy) && places[end === left ? 0 : 1].kind !== 'enclosed')) {
+      // (a frames or segments cap an end met wins the sentence, whichever binding is read first)
+      for (const id of pair) if (!overCap.has(id)) overCap.set(id, 'package');
+      holdEnds(holder, pair);
+    }
     // The contexts it holds in, each with the path its ends are read at — and,
     // for an end of an instance that encloses the holder (R's `L` in `part q :
     // Q { bind p.load = L; }`), the path from the context to that instance
@@ -7954,7 +8012,7 @@ function pastCapComponents(
   for (const [cid, met] of overCap) {
     for (let cur = model.get(cid); cur && cur.ownerId != null; cur = model.get(cur.ownerId)) {
       const owner = model.get(cur.ownerId);
-      if (owner && isDefinition(owner.eClass)) {
+      if (owner && isDefinition(owner.eClass) && !(met === 'package' && isPackage(owner))) {
         cappedDefs.set(owner.id, met);
         break;
       }
@@ -9729,6 +9787,56 @@ function endPlace(model: Model, end: ElementId, holder: ElementRecord): EndPlace
 }
 
 /**
+ * Is `end` a feature of an instance (a usage) that a package declares, where that package is not `holder` and no
+ * usage on the way up is `holder` or encloses it — `bind top.L = X` written in a nested package of the one that
+ * declares `part top`, `bind Lib::top.L = X` in a sibling, `bind Sub::top.L = X` in the package above? Not a feature
+ * of a definition (a package's head, `bind P::load = M`), not one below `holder` through usages, not one of an
+ * instance enclosing `holder` ({@link EndPlace}'s `enclosed`).
+ */
+function endCrossesPackage(model: Model, end: ElementId, holder: ElementRecord, homesOf: ReadonlyMap<ElementId, ReadonlySet<ElementId>>): boolean {
+  const inside = new Set<ElementId>();
+  for (let h: ElementRecord | undefined = holder; h && !inside.has(h.id); h = h.ownerId != null ? model.get(h.ownerId) : undefined) {
+    inside.add(h.id);
+  }
+  let usages = 0;
+  for (let cur = model.get(end); cur; ) {
+    const owner = cur.ownerId != null ? model.get(cur.ownerId) : undefined;
+    if (!owner || owner.id === holder.id || owner.attrs.isLibrary === true) return false;
+    if (isPackage(owner)) {
+      let home: ElementRecord | undefined = holder;
+      while (home && !isPackage(home)) home = home.ownerId != null ? model.get(home.ownerId) : undefined;
+      return home?.id !== owner.id && (usages > 0 || (homesOf.get(cur.id)?.has(owner.id) ?? false));
+    }
+    if (!isUsage(owner.eClass) || inside.has(owner.id)) return false;
+    usages++;
+    cur = owner;
+  }
+  return false;
+}
+
+/**
+ * Is `end` a feature of a definition (not a package) that a binding written OUTSIDE it holds (`holder` is not the
+ * definition: a package's `bind T1::L = XX`, the head of {@link DefinitionHead}), which a binding written in that
+ * definition joins to another feature too (T1's `bind load = L`)? The head's reading is per context, and the
+ * definition's binding joins the two in a context the head's never meets.
+ */
+function endJoinedInItsDefinition(model: Model, end: ElementId, holder: ElementRecord, joinedBy: ReadonlyMap<ElementId, ReadonlySet<ElementId>>): boolean {
+  let def: ElementRecord | undefined;
+  for (let cur = model.get(end); cur; ) {
+    const owner = cur.ownerId != null ? model.get(cur.ownerId) : undefined;
+    if (!owner || owner.attrs.isLibrary === true || isPackage(owner)) return false;
+    if (isDefinition(owner.eClass)) {
+      def = owner;
+      break;
+    }
+    if (!isUsage(owner.eClass)) return false;
+    cur = owner;
+  }
+  if (!def || def.id === holder.id) return false;
+  return [...(joinedBy.get(end) ?? [])].some((w) => w !== holder.id);
+}
+
+/**
  * A binding `edge` written in `holder`, read for `instance` (an instance of
  * `holder` or of what it is a type of), whose one end is a feature of an
  * instance ENCLOSING `holder` ({@link endPlace}'s `enclosed`: R's `L` in `part
@@ -10062,9 +10170,11 @@ export function heldPastCapSentence(name: string, cap: BindingCap): string {
   const held =
     cap === 'outside'
       ? 'a binding that joins a feature outside where it is written, which this tool finds no instance of in a context the binding holds in'
-      : cap === 'frames'
-        ? `a binding that holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
-        : `a binding read deeper than ${MAX_BINDING_SEGMENTS} usages`;
+      : cap === 'package'
+        ? 'a binding that joins a feature of a definition or an instance that a package other than the one it is written in declares'
+        : cap === 'frames'
+          ? `a binding that holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
+          : `a binding read deeper than ${MAX_BINDING_SEGMENTS} usages`;
   return `${name} is held by ${held}, so no value the binding gives it is read for any one instance`;
 }
 
