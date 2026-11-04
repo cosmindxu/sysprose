@@ -245,8 +245,7 @@ export interface Obligation {
   /**
    * Set on an asserted bare bound over a `default` a binding makes give way and gives no value, while the worklist
    * is built (`RelationReading.givenWay`): {@link refuseMeetingBounds} carries it or refuses it, and drops the field. The
-   * pass reads the rows of the worklist it is given, so a SCOPED worklist (`opts.scopeId`) may carry a bound the whole
-   * model refuses as meeting a bound outside the scope; that is sound, since the partner is no axiom there either.
+   * pass reads the axiom rows of the WHOLE model, also for a scoped worklist (`opts.scopeId`), so both list the same carry.
    */
   givenWay?: { path: string; why: string };
   /**
@@ -617,7 +616,7 @@ function statusOf(encodable: Encodable): ObligationStatus {
  * and omitting it would let `--missing` under-state exactly what it exists to
  * measure.
  */
-export function obligationsOf(model: Model, opts: ObligationOptions = {}): Obligation[] {
+export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefused = false): Obligation[] {
   const inScope = scopeFilter(model, opts.scopeId);
   const memo: DerivationMemo = new Map();
   // A relation read for several instances is kept from its second read on, and copied per instance.
@@ -807,7 +806,9 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     o.encodable = { reason: 'unread-binding', detail: equated };
     o.status = statusOf(o.encodable);
   }
-  refuseMeetingBounds(out);
+  // The meeting facts come from the whole model: a scoped worklist sees only its own axiom rows, and would carry a
+  // bound the whole-model verify refuses as meeting a partner outside the scope.
+  if (!unrefused) refuseMeetingBounds(out, opts.scopeId === undefined ? out : obligationsOf(model, {}, true));
   if (opts.missing) return out.filter((o) => o.status === 'no-formal-clause' || o.status === 'not-encodable');
   if (opts.scopeId === undefined && !opts.fromKeywords && opts.maxInstanceGoals === undefined) {
     DEFAULT_WORKLISTS.set(out, { model, rev: model.rev });
@@ -825,7 +826,7 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
  * be compared in raw magnitudes (a unit, an integer sort, a restricted domain on any of them) is refused whole.
  * Drops the {@link Obligation.givenWay} field, which only this pass reads.
  */
-function refuseMeetingBounds(out: Obligation[]): void {
+function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): void {
   const flagged = out.filter((o) => o.givenWay !== undefined);
   if (flagged.length === 0) return;
   const parent = new Map<string, string>();
@@ -839,7 +840,7 @@ function refuseMeetingBounds(out: Obligation[]): void {
     const v = row.vars.find((x) => x.path === path);
     return v ? (v.symbol ?? v.qualifiedName) : undefined;
   };
-  const axioms = out.filter((o) => o.role === 'axiom' && o.encodable === true && o.node !== null);
+  const axioms = facts.filter((o) => o.role === 'axiom' && o.encodable === true && o.node !== null);
   // What a member can be compared as: false for a unit, an integer or Boolean sort, a restricted domain.
   const plain = new Map<string, boolean>();
   const note = (row: Obligation, v: Obligation['vars'][number]): string => {
