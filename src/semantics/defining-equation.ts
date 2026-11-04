@@ -8157,8 +8157,10 @@ export function writesStandingDefault(model: Model, f: ElementRecord): boolean {
  * 0.0`, `x <= 10.0`) on a unitless Real constrains the symbol and fixes no
  * value, unless a pair of bounds on the binding's features meets (`L >= 5.0`
  * with `L <= 5.0` fixes it as `L == 5.0` does) or cannot be compared (a unit,
- * an integer sort): the worklist refuses those (`refuseMeetingBounds` of
- * ./obligations), naming the move.
+ * an integer sort), or meets through a derived value (`s = load * 2.0`): the
+ * worklist refuses a meeting pair and an incomparable component in words of
+ * their own (`refuseMeetingBounds` of ./obligations); a bound the gate cannot
+ * read (a unit, an integer sort, a conjunction) is refused in the generic one.
  */
 export function givenWayUnvalued(model: Model, contextId: ElementId, name: string): string | undefined {
   if (!hasUserBindings(model)) return undefined;

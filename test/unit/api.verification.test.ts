@@ -1958,6 +1958,21 @@ describe('a bare bound over a default a binding makes give way', () => {
     }
   });
 
+  it('refuses bounds linked by a derived value, which meet through it, and still carries a lower bound alone', async () => {
+    const derived = `part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; assert constraint hs { s <= 4.0 } }`;
+    const refused = await axioms(`package D { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`);
+    const inQ = Object.entries(refused).filter(([k]) => k === 'D::Q::ql');
+    expect(inQ.length).toBeGreaterThan(0);
+    for (const [, v] of inQ) expect(v).toEqual(['unread-definition']);
+    const rows = obligationsOf(await load(`package D2 { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`)).filter(
+      (o) => o.source === 'assert' && o.encodable !== true && o.element.qualifiedName === 'D2::Q::ql',
+    );
+    expect(rows.map((o) => o.encodable !== true && o.encodable.detail).join()).toMatch(/its bounds meet through a derived value/);
+    // A lower bound alone, beside the same derived row, meets nothing.
+    const lone = await axioms(`package D3 { part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; } ${Q('assert constraint ql { L >= 2.0 }')} }`);
+    expect(lone['D3::Q::ql']).toEqual([true]);
+  });
+
   it('refuses an equation, an integer sort and a sum, which are no bare bound on a Real', async () => {
     for (const [name, text] of [
       ['equation', `package E { ${P('assert constraint a { load == 2.0 }')} ${Q('')} }`],

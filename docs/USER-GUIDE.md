@@ -2027,7 +2027,7 @@ the check and the literal engine, never the asserted `L == 50.0` read through
 Q's binding, and the solver lane finds q's values contradict themselves, as
 beside `load = 1.0`. A `default` a binding makes give way is no feature without
 a value either: where that binding gives it none (two defaults that differ), no
-asserted equation gives it one, on any surface — the SMT engine carries no axiom
+asserted equation gives it one, on any surface — the SMT engine carries no equation
 over it, nor over a feature with no value whose bindings carry the equation's
 value to such defaults through a package's binding on a definition's feature
 (`bind p2.load = L` beside `L == 5.0`, under `bind P::load = M` with M's
@@ -2041,8 +2041,10 @@ numeric surface included; that surface alone still reads the slot itself at the 
 asserted bound over such a default (`assert constraint { load >= 0.0 }`, a plain number on a unitless Real)
 fixes no value, so the SMT engine carries it and can prove a goal every value the bounds allow satisfies
 (`load <= 11.0` beside `load <= 10.0`) where the other surfaces read none; a pair of bounds on the binding's
-features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equation does), and a bound it
-cannot compare with the others (a unit, an integer sort), are not carried, and the row says which. An
+features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equation does), or that meets
+through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lower and an upper bound on features
+an asserted relation links), is not carried, and the row says which; a bound it cannot compare (a unit, an integer
+sort, a conjunction) is not carried either, under the sentence that no assertion gives a default a value. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
 def Eq { in a; a == 50.0 }`) is read by no surface, and files no row of its own.
 Where the definition's body holds an equation — alone, or in a conjunction (`a

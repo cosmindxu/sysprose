@@ -9941,6 +9941,40 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GWM2::Q::qa': ['?/-/?/-', '?'],
       'GWM2::g': ['?/?/?/?', '?'],
     }),
+    // Bounds that meet THROUGH A DERIVED VALUE (`s = load * 2.0`, `M = 2.0 * L`) fix the value as a direct pair does, and no
+    // component compares them: the group holding a bare lower and a bare upper bound is refused whole, on every surface.
+    'stand-gw-ineq-derived': probe(`package GWD {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; assert constraint hs { s <= 4.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint ql { L >= 2.0 } }
+        part q : Q;
+        constraint g1 { q.p.load <= 2.0 }
+        constraint g2 { q.p.load == 2.0 }
+        constraint g3 { q.p.load >= 2.5 }
+      }`, {
+      'GWD::P::hs': ['T/-/T/-', 'T'],
+      'GWD::P::hs in GWD::Q::p': ['?/-/?/-', '?'],
+      'GWD::Q::ql': ['?/-/?/-', '?'],
+      'GWD::g1': ['?/?/?/?', '?'],
+      'GWD::g2': ['?/?/?/?', '?'],
+      'GWD::g3': ['?/?/?/?', '?'],
+    }),
+    'stand-gw-ineq-derived2': probe(`package GWE {
+        part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint hs { load <= 4.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint ql { L >= 2.0 } attribute M : ScalarValues::Real = 2.0 * L; assert constraint qm { M <= 4.0 } }
+        part q : Q;
+        constraint g1 { q.p.load <= 2.0 }
+        constraint g2 { q.p.load == 2.0 }
+        constraint g3 { q.p.load >= 2.5 }
+      }`, {
+      'GWE::P::hs': ['T/-/T/-', 'T'],
+      'GWE::P::hs in GWE::Q::p': ['?/-/?/-', '?'],
+      'GWE::Q::ql': ['?/-/?/-', '?'],
+      'GWE::Q::qm': ['?/-/?/-', '?'],
+      'GWE::Q::qm in GWE::q': ['?/-/?/-', '?'],
+      'GWE::g1': ['?/?/?/?', '?'],
+      'GWE::g2': ['?/?/?/?', '?'],
+      'GWE::g3': ['?/?/?/?', '?'],
+    }),
     // An instance that states L reads it (q2: 4, in [2, 20)); q's L gives way and is bounded by Q's pair, which proves
     // `load >= 1.0` and not `load >= 3.0`.
     'stand-gw-ineq-inst': probe(`package GWM3 {

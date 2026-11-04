@@ -244,7 +244,9 @@ export interface Obligation {
   shadowed?: string[];
   /**
    * Set on an asserted bare bound over a `default` a binding makes give way and gives no value, while the worklist
-   * is built (`RelationReading.givenWay`): {@link refuseMeetingBounds} carries it or refuses it, and drops the field.
+   * is built (`RelationReading.givenWay`): {@link refuseMeetingBounds} carries it or refuses it, and drops the field. The
+   * pass reads the rows of the worklist it is given, so a SCOPED worklist (`opts.scopeId`) may carry a bound the whole
+   * model refuses as meeting a bound outside the scope; that is sound, since the partner is no axiom there either.
    */
   givenWay?: { path: string; why: string };
   /**
@@ -861,6 +863,9 @@ function refuseMeetingBounds(out: Obligation[]): void {
     upper?: { value: number; strict: boolean; at: string };
     comparable: boolean;
     pinned?: string;
+    /** A bare bound (not a `== number`) sits on this side of the component. */
+    bareLower?: boolean;
+    bareUpper?: boolean;
   }
   const components = new Map<string, Component>();
   const componentOf = (sym: string): Component => {
@@ -880,7 +885,12 @@ function refuseMeetingBounds(out: Obligation[]): void {
     const b = bareBoundOf(n);
     if (b) {
       const sym = symbolOf(row, b.path);
-      if (sym !== undefined) take(componentOf(sym), b.side, b.value, b.strict, row.expression);
+      if (sym !== undefined) {
+        const c = componentOf(sym);
+        take(c, b.side, b.value, b.strict, row.expression);
+        if (b.side === 'lower') c.bareLower = true;
+        else c.bareUpper = true;
+      }
       continue;
     }
     // `x == 5.0`: both bounds at once.
@@ -894,6 +904,35 @@ function refuseMeetingBounds(out: Obligation[]): void {
       }
     }
   }
+  // Components a derived row links (`s = load * 2.0` reads two roots without merging them): a lower bound on one and
+  // an upper bound on another can meet through the row, and nothing compares them, so such a group holding both
+  // kinds of bare bound is refused whole. Only the bare bounds count: a `== number` row would pull a whole tree in.
+  const link = new Map<string, string>();
+  const lfind = (a: string): string => {
+    let r = a;
+    while (link.has(r) && link.get(r) !== r) r = link.get(r)!;
+    return r;
+  };
+  const linkedRoots = new Set<string>();
+  for (const row of axioms) {
+    const roots = [...new Set(row.vars.map((v) => find(v.symbol ?? v.qualifiedName)))];
+    for (let i = 1; i < roots.length; i++) link.set(lfind(roots[0]!), lfind(roots[i]!));
+    if (roots.length > 1) for (const r of roots) linkedRoots.add(r);
+  }
+  const linked = new Map<string, { lower: boolean; upper: boolean }>();
+  for (const [root, c] of components) {
+    if (!linkedRoots.has(root)) continue;
+    const g = lfind(root);
+    const e = linked.get(g) ?? { lower: false, upper: false };
+    e.lower ||= c.bareLower === true;
+    e.upper ||= c.bareUpper === true;
+    linked.set(g, e);
+  }
+  const meetsThroughDerived = (sym: string): boolean => {
+    const root = find(sym);
+    const e = linkedRoots.has(root) ? linked.get(lfind(root)) : undefined;
+    return e !== undefined && e.lower && e.upper;
+  };
   const meets = (c: Component): boolean =>
     c.lower !== undefined &&
     c.upper !== undefined &&
@@ -909,7 +948,9 @@ function refuseMeetingBounds(out: Obligation[]): void {
         ? 'bounds on the features it is joined to cannot be compared (a unit, an integer sort or a restricted domain)'
         : meets(c)
           ? `its asserted bounds meet (\`${c.lower!.at}\` and \`${c.upper!.at}\`), which would give it a value`
-          : undefined;
+          : sym !== undefined && meetsThroughDerived(sym)
+            ? 'its bounds meet through a derived value (a lower bound on one feature and an upper bound on another, linked by an asserted relation), which could give it a value'
+            : undefined;
     if (reason === undefined) continue;
     row.encodable = {
       reason: 'unread-definition',
