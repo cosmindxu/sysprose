@@ -659,7 +659,7 @@ function valueBodyOf(
     return { node: body.node, nameToId, markers: body.literals };
   }
   const constraint = derivation.definedBy !== undefined ? model.get(derivation.definedBy) : undefined;
-  const side = constraint && el.declaredName ? definedSideOf(constraint, el.declaredName) : undefined;
+  const side = constraint && el.declaredName ? definedSideOf(model, constraint, el.declaredName) : undefined;
   if (!constraint || !side) return undefined;
   return { node: side.node, nameToId: relationScope(model, constraint), markers: side.literals };
 }

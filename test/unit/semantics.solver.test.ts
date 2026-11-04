@@ -761,13 +761,13 @@ describe('solve — the order of the text decides no design equation', () => {
   }
 
   it('takes no plain constraint as a design equation over a feature an assert holds in a form it does not read', async () => {
-    const P = 'part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 50.0 and L >= 0.0 } }';
+    const P = 'part def P { attribute L : ScalarValues::Real; assert constraint ca { L >= 20.0 and L <= 100.0 } }';
     for (const text of [
       `package X3K { ${P} part p : P; constraint t1 { p.L == 1.0 } constraint k { p.L <= 10.0 } }`,
       `package X3K { constraint k { p.L <= 10.0 } constraint t1 { p.L == 1.0 } part p : P; ${P} }`,
     ]) {
       const r = await rows(text);
-      // t1 fixed p's L at 1, and k read satisfied where the assert makes L 50.
+      // t1 fixed p's L at 1, and k read satisfied where the assert keeps L at 20 or more.
       expect([r.get('t1')!.result, r.get('k')!.result, r.get('t1')!.imposed]).toEqual(['unknown', 'unknown', undefined]);
       expect(r.get('k')!.reason).toBe(
         'X3K::p::L has no value, and an assert constrains it in a form the numeric solve does not read (ca, a ' +
@@ -775,6 +775,9 @@ describe('solve — the order of the text decides no design equation', () => {
       );
       const { model: m } = await loadModelText(text);
       expect([...solve(m!).values.keys()].map((id) => id.split('@')[1])).not.toContain('X3K::p::L');
+      // TODO 249: a conjunct that is an equation defines L, as the assert it would be written alone does: L is 50.
+      const r50 = await rows(text.replace('L >= 20.0 and L <= 100.0', 'L == 50.0 and L >= 0.0'));
+      expect([r50.get('t1')!.result, r50.get('k')!.result, r50.get('t1')!.imposed]).toEqual(['violated', 'violated', undefined]);
     }
   });
 

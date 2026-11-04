@@ -113,6 +113,11 @@ describe('semantics — expression parser + evaluator', () => {
     expect(evalStr('true or x')).toBe(true);
     // but unknown genuinely propagates when it matters
     expect(evalStr('true and x')).toBe(UNKNOWN);
+    // a false conjunct decides `and` whichever side it is written on (TODO 249: an asserted conjunction's row is the
+    // AND of its conjuncts read apart)
+    expect(evalStr('x and false')).toBe(false);
+    expect(evalStr('x and (1 > 2)')).toBe(false);
+    expect(evalStr('x and true')).toBe(UNKNOWN);
   });
 
   it('produces a well-formed AST for a compound expression', () => {

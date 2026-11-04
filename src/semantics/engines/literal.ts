@@ -55,6 +55,7 @@ import {
   bindingHolder,
   contradictedDefinitionNaming,
   contradictedDefinitions,
+  equationText,
   isFailedReading,
   isShadowedBody,
   readsContradictedDefinition,
@@ -553,7 +554,7 @@ function contradictionsOf(
   for (const set of apartSets) {
     if (filed.has(set)) continue;
     unplaced.push({
-      expression: set.equations.map((c) => String(c.attrs.expression ?? '').trim()).join(' and '),
+      expression: set.sites.map((site) => equationText(site.equation).trim()).join(' and '),
       qualifiedName: model.qualifiedName(set.context.id),
       kind: 'equations',
       set,

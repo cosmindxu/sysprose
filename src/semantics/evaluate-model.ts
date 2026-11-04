@@ -17,6 +17,9 @@ import { type ElementId, type ElementRecord, type Model, isDefinition, isUsage }
 import {
   DefiningEquations,
   GUARD_CONTACT,
+  assertConjuncts,
+  equationRecord,
+  equationText,
   MAX_DERIVATION_DEPTH,
   chooseDefinition,
   definedSide,
@@ -794,7 +797,7 @@ function byEquation(
     const d = equationDerivation(
       model,
       feature.id,
-      equation.constraint.attrs.expression as string,
+      equationText(equation),
       pass.memo,
       contextId,
       name.includes('.') ? name : undefined,
@@ -835,7 +838,7 @@ function byEquation(
     dimension: kind.dimension ?? DIMENSIONLESS,
     ...(exact ? { exact } : {}),
   };
-  const judged = evaluateConstraintQuantityDetailed(model, equation.constraint, {
+  const judged = evaluateConstraintQuantityDetailed(model, equationRecord(equation), {
     fallback: (ref) => (ref === name ? asQuantity : undefined),
     memo: pass.memo,
   });
@@ -851,9 +854,12 @@ function byEquation(
  */
 export function definedFeatureOf(model: Model, constraint: ElementRecord): ElementRecord | undefined {
   if (constraint.ownerId == null || !isAsserted(constraint)) return undefined;
+  // A conjunction is no definition: its row is the conjunction, judged whole, and each equation in it defines
+  // what it does as the conjunct it is ({@link assertConjuncts}).
+  if (assertConjuncts(model, constraint).length > 1) return undefined;
   // The equation as every reader of definitions parses it — a `[unit]`
   // literal included (`e == 640.0 [Wh] / power`).
-  for (const name of namesDefinedBy(constraint)) {
+  for (const name of namesDefinedBy(model, constraint)) {
     const feature = effectiveFeatures(model, constraint.ownerId).find(
       (f) => effectiveNameOf(model, f) === name && !hasStatedValue(model, f) && !writesStandingDefault(model, f),
     );
@@ -1700,7 +1706,7 @@ function definitionConflicts(model: Model, apart: ReadonlyMap<ContradictedDefini
     return {
       id: `${set.feature.id}@${set.context.id}`,
       ownerId: set.context.id,
-      expression: set.equations.map((c) => String(c.attrs.expression ?? '').trim()).join(' and '),
+      expression: set.sites.map((site) => equationText(site.equation).trim()).join(' and '),
       result: differs ? 'violated' : 'unknown',
       message: differs ? `Constraint violated: ${sentence}` : `Could not evaluate: ${sentence}`,
       conflict: 'equations' as const,
@@ -1758,8 +1764,8 @@ function contradictedApart(model: Model, pass: ScalarPass): ReadonlyMap<Contradi
           // against the first — read where the pair meets: the element that writes it, or the context it is
           // inherited into (a binding there joins the names it reads, as a row read in that context reads it).
           const site = set.sites[j]!;
-          const el = site.equation.constraint;
-          const expr = String(el.attrs.expression ?? '');
+          const el = equationRecord(site.equation);
+          const expr = equationText(site.equation);
           if (contradictedSideReadsAnother(model, set, site)) continue;
           const reading: ElementRecord = site.at === el.ownerId ? el : { ...el, ownerId: site.at };
           const judged = judgeConstraint(model, reading, expr, pass, new Map([[site.name, boundOfReading(site.feature, a)]]));
@@ -1807,7 +1813,7 @@ function readSide(
   site: ContradictedDefinition['sites'][number],
 ): SideReading | undefined {
   if (contradictedSideReadsAnother(model, set, site)) return undefined;
-  const expr = String(site.equation.constraint.attrs.expression ?? '');
+  const expr = equationText(site.equation);
   // The defining side as written: the one across the first `==` (or `=`) from the name it defines.
   const text = expr.trim();
   const eq = /==|(?<![<>!=])=(?!=)/.exec(text);
@@ -4761,7 +4767,7 @@ function hasUnassertedEquation(model: Model, ownerId: ElementId, name: string): 
       (c) =>
         (c.eClass === 'ConstraintUsage' || c.eClass === 'RequirementUsage') &&
         !isAsserted(c) &&
-        definedSide(c, name) !== undefined,
+        definedSide(model, c, name) !== undefined,
     );
 }
 
@@ -5312,7 +5318,7 @@ function givenWayCause(model: Model, ownerId: ElementId, feature: ElementRecord,
     const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
     return (
       `${name} has no value: its \`default = ${shown}\` gives way to ${effectiveQualifiedName(model, site)}'s asserted ` +
-      `\`${String(eq.constraint.attrs.expression ?? '').trim()}\` (an asserted equation overrides a default), and that ` +
+      `\`${equationText(eq).trim()}\` (an asserted equation overrides a default), and that ` +
       'equation gives it none here'
     );
   }

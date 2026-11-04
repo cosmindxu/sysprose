@@ -43,10 +43,10 @@ import {
   redefinedClosure,
 } from './inheritance';
 import { resolveFullName, unreadScopes, type UnreadScope } from './bind';
-import { writtenChains, type ExprNode } from './expr';
+import { exprEqual, writtenChains, type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
-import { NO_MARKERS, parseRelationBody, type MarkerDimensions } from './unit-literals';
+import { NO_MARKERS, parseRelationBody, substituteLiterals, type MarkerDimensions } from './unit-literals';
 import { DIMENSIONLESS, dimEqual, divideDim, multiplyDim, resolveUnit, type Dimension } from './units';
 
 /** An asserted equation that may define a name: `name == <expr>`, or `<expr> == name`. */
@@ -61,6 +61,47 @@ export interface DefiningEquation {
    * marker name for each ({@link ./unit-literals}). Empty for a body without.
    */
   literals: MarkerDimensions;
+  /** The conjunct of an asserted conjunction the equation is ({@link assertConjuncts}); absent for a body that is one. */
+  part?: ClausePart;
+}
+
+/** The text of the equation `eq` is: its constraint's body, or the conjunct it is ({@link DefiningEquation.part}). */
+export function equationText(eq: DefiningEquation): string {
+  return eq.part?.text ?? String(eq.constraint.attrs.expression ?? '');
+}
+
+/**
+ * The record a reader of one relation body reads `eq` through: its constraint,
+ * or — for a conjunct ({@link DefiningEquation.part}) — the constraint with the
+ * conjunct for its body, so what it judges is the equation, never the
+ * conjunction it is one of.
+ */
+export function equationRecord(eq: DefiningEquation): ElementRecord {
+  return eq.part ? conjunctRecord(eq.part, eq.constraint) : eq.constraint;
+}
+
+/** The conjunct each record {@link conjunctRecord} made is the body of. */
+const CONJUNCT_OF = new WeakMap<ElementRecord, ClausePart>();
+
+/**
+ * `of` — the conjunct's clause, or a record read for it (an instance's copy)
+ * — with the conjunct `part` for its body: what every reader of one relation
+ * body reads as the assert the conjunct would be written alone.
+ */
+export function conjunctRecord(part: ClausePart, of: ElementRecord = part.clause): ElementRecord {
+  const r: ElementRecord = { ...of, attrs: { ...of.attrs, expression: part.text } };
+  CONJUNCT_OF.set(r, part);
+  return r;
+}
+
+/** The conjunct a record of {@link conjunctRecord} is the body of; `undefined` for any other record. */
+export function conjunctOf(r: ElementRecord): ClausePart | undefined {
+  return CONJUNCT_OF.get(r);
+}
+
+/** Are `a` and `b` one equation: the same constraint's body, or the same conjunct of it? */
+export function sameEquation(a: DefiningEquation, b: DefiningEquation): boolean {
+  return a.constraint.id === b.constraint.id && a.part?.index === b.part?.index;
 }
 
 const SHADOWED = new WeakMap<DefiningEquation, readonly string[]>();
@@ -76,7 +117,7 @@ const SHADOWED = new WeakMap<DefiningEquation, readonly string[]>();
 export function shadowedEquation(model: Model, eq: DefiningEquation): readonly string[] {
   let hit = SHADOWED.get(eq);
   if (!hit) {
-    const whole = equationOf(eq.constraint);
+    const whole = eq.part ?? equationOf(eq.constraint);
     hit = whole ? shadowedNamesOf(model, eq.constraint, refsIn(whole.node, whole.literals)) : [];
     SHADOWED.set(eq, hit);
   }
@@ -123,15 +164,16 @@ function equationsByName(model: Model, ownerId: ElementId): Map<string, Defining
   };
   for (const c of model.children(ownerId)) {
     if (!isAsserted(c)) continue;
-    const eq = equationOf(c);
-    if (!eq) continue;
-    const { node, literals } = eq;
-    // A DOTTED defined name (`assert constraint { p.x == 3.0 }`) indexes under
-    // the whole path; a single-segment ref is the bare name it always was.
-    const l = definedName(node.left, literals);
-    const r = definedName(node.right, literals);
-    if (l !== undefined) add(left, l, { constraint: c, definition: node.right, left: true, literals });
-    if (r !== undefined && r !== l) add(right, r, { constraint: c, definition: node.left, left: false, literals });
+    // Each conjunct of an asserted conjunction, as the assert it would be written alone ({@link assertConjuncts}).
+    for (const { node, literals, part } of equationsOf(model, c)) {
+      const of = part ? { part } : {};
+      // A DOTTED defined name (`assert constraint { p.x == 3.0 }`) indexes under
+      // the whole path; a single-segment ref is the bare name it always was.
+      const l = definedName(node.left, literals);
+      const r = definedName(node.right, literals);
+      if (l !== undefined) add(left, l, { constraint: c, definition: node.right, left: true, literals, ...of });
+      if (r !== undefined && r !== l) add(right, r, { constraint: c, definition: node.left, left: false, literals, ...of });
+    }
   }
   for (const [name, list] of right) {
     const first = left.get(name);
@@ -4411,30 +4453,28 @@ export function isAsserted(el: ElementRecord): boolean {
  * When `constraint` reads `name == <expr>` or `<expr> == name`, the `<expr>`
  * side; else `undefined`. `=` is the same equation in the solver's spelling.
  */
-export function definedSide(constraint: ElementRecord, name: string): ExprNode | undefined {
-  return definedSideOf(constraint, name)?.node;
+export function definedSide(model: Model, constraint: ElementRecord, name: string): ExprNode | undefined {
+  return definedSideOf(model, constraint, name)?.node;
 }
 
-/** {@link definedSide}, with the `[unit]` literals the side may read. */
+/** {@link definedSide}, with the `[unit]` literals the side may read — of the first of its equations ({@link equationsOf}) that has one. */
 export function definedSideOf(
+  model: Model,
   constraint: ElementRecord,
   name: string,
 ): { node: ExprNode; literals: MarkerDimensions } | undefined {
-  const eq = equationOf(constraint);
-  if (!eq) return undefined;
-  const { node, literals } = eq;
-  if (bareName(node.left, literals) === name) return { node: node.right, literals };
-  if (bareName(node.right, literals) === name) return { node: node.left, literals };
+  for (const { node, literals } of equationsOf(model, constraint)) {
+    if (bareName(node.left, literals) === name) return { node: node.right, literals };
+    if (bareName(node.right, literals) === name) return { node: node.left, literals };
+  }
   return undefined;
 }
 
-/** The bare names either side of the equation `constraint` states is — the names it may define. */
-export function namesDefinedBy(constraint: ElementRecord): string[] {
-  const eq = equationOf(constraint);
-  if (!eq) return [];
-  const names = [bareName(eq.node.left, eq.literals), bareName(eq.node.right, eq.literals)].filter(
-    (n): n is string => n !== undefined,
-  );
+/** The bare names either side of each equation `constraint` states ({@link equationsOf}) — the names it may define. */
+export function namesDefinedBy(model: Model, constraint: ElementRecord): string[] {
+  const names = equationsOf(model, constraint)
+    .flatMap((eq) => [bareName(eq.node.left, eq.literals), bareName(eq.node.right, eq.literals)])
+    .filter((n): n is string => n !== undefined);
   return [...new Set(names)];
 }
 
@@ -4460,6 +4500,153 @@ function equationOf(
   const node = body.node;
   if (node.kind !== 'binary' || (node.op !== '==' && node.op !== '=')) return undefined;
   return { node, literals: body.literals.size > 0 ? body.literals : NO_MARKERS };
+}
+
+/**
+ * The equations `constraint` states that may define a name: the one its body
+ * is ({@link equationOf}), or — an asserted conjunction ({@link
+ * assertConjuncts}) — each conjunct that is one, with the part it is.
+ */
+export function equationsOf(
+  model: Model,
+  constraint: ElementRecord,
+): Array<{ node: Extract<ExprNode, { kind: 'binary' }>; literals: MarkerDimensions; part?: ClausePart }> {
+  const parts = assertConjuncts(model, constraint);
+  if (parts.length < 2) {
+    const eq = equationOf(constraint);
+    return eq ? [eq] : [];
+  }
+  const out: Array<{ node: Extract<ExprNode, { kind: 'binary' }>; literals: MarkerDimensions; part: ClausePart }> = [];
+  for (const part of parts) {
+    const node = part.node;
+    if (node.kind === 'binary' && (node.op === '==' || node.op === '=')) out.push({ node, literals: part.literals, part });
+  }
+  return out;
+}
+
+/** One conjunct of an asserted conjunction ({@link assertConjuncts}). */
+export interface ClausePart {
+  clause: ElementRecord;
+  /** Its place among the clause's conjuncts, from 0. */
+  index: number;
+  /** The conjunct as written, between two top-level `and`s of the clause's body. */
+  text: string;
+  /** The conjunct parsed on its own, as every relation body is ({@link parseRelationBody}). */
+  node: ExprNode;
+  literals: MarkerDimensions;
+}
+
+/**
+ * The conjuncts an asserted clause states: `assert constraint ca { L == 50.0
+ * and L >= 0.0 }` says what `assert constraint ca { L == 50.0 } assert
+ * constraint cb { L >= 0.0 }` says, and every surface reads it so — each
+ * conjunct that is an equation may define a name, the others hold what they
+ * read as an inequality assert does. The clause's own row is the conjunction,
+ * judged whole. Read as no equation before, L had no value anywhere on the
+ * check, was no design freedom on the numeric surface, and `p.L == 1.0` was
+ * refuted by no surface.
+ *
+ * Only the `and` spine of an untyped asserted body is split: an `or`, a `not`,
+ * an `implies`, an `xor` or an `if` is never split through, nor is a body a
+ * constraint definition types (its body is read with the definition's, {@link
+ * assertHeldIndex}), nor one whose text does not split back into the
+ * conjuncts its parse has. `[whole]` for a body of one node; `[]` for any
+ * other clause.
+ */
+export function assertConjuncts(model: Model, el: ElementRecord): readonly ClausePart[] {
+  const raw = el.attrs.expression;
+  if (!isAsserted(el) || typeof raw !== 'string') return [];
+  const split = conjunctsOf(raw);
+  if (split.length === 0) return [];
+  if (split.length > 1 && model.typesOf(el.id).some((t) => t.attrs.isLibrary !== true)) return [];
+  return split.map((s, index) => ({ clause: el, index, ...s }));
+}
+
+type Conjunct = { text: string; node: ExprNode; literals: MarkerDimensions };
+
+/** {@link conjunctsOf} by body text, which alone decides it. */
+const CONJUNCTS = new Map<string, readonly Conjunct[]>();
+const MAX_CONJUNCTS = 4096;
+
+/**
+ * The conjuncts of a relation body: its text cut at every `and` outside
+ * brackets, string literals and quoted names, a conjunct wrapped in one pair
+ * of parentheses cut again — kept only when each piece parses to the leaf of
+ * the body's own `and` tree in its place, number for number. One piece for a
+ * body that is no conjunction, or does not cut back into the one it parses
+ * to; none for one that does not parse, or carries a `[unit]` nothing lowers.
+ */
+function conjunctsOf(raw: string): readonly Conjunct[] {
+  let hit = CONJUNCTS.get(raw);
+  if (hit === undefined) {
+    hit = readConjuncts(raw);
+    if (CONJUNCTS.size >= MAX_CONJUNCTS) CONJUNCTS.clear();
+    CONJUNCTS.set(raw, hit);
+  }
+  return hit;
+}
+
+function readConjuncts(raw: string): readonly Conjunct[] {
+  const body = parseRelationBody(raw);
+  if (!body || (body.hadUnit && !body.resolved)) return [];
+  const whole: Conjunct = { text: raw, node: body.node, literals: body.literals.size > 0 ? body.literals : NO_MARKERS };
+  if (body.node.kind !== 'binary' || body.node.op !== 'and') return [whole];
+  const leaves: ExprNode[] = [];
+  const flatten = (n: ExprNode): void => {
+    if (n.kind === 'binary' && n.op === 'and') {
+      flatten(n.left);
+      flatten(n.right);
+    } else leaves.push(substituteLiterals(n, body.literals));
+  };
+  flatten(body.node);
+  const pieces = cutConjuncts(raw);
+  if (pieces.length !== leaves.length) return [whole];
+  const out: Conjunct[] = [];
+  for (const [i, text] of pieces.entries()) {
+    const p = parseRelationBody(text);
+    if (!p || (p.hadUnit && !p.resolved) || !exprEqual(substituteLiterals(p.node, p.literals), leaves[i]!)) return [whole];
+    out.push({ text, node: p.node, literals: p.literals.size > 0 ? p.literals : NO_MARKERS });
+  }
+  return out;
+}
+
+/** {@link conjunctsOf}'s cut: the text between top-level `and`s, a piece in one pair of parentheses cut again. */
+function cutConjuncts(raw: string): string[] {
+  const ident = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0-9_]/.test(c);
+  const pieces: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i]!;
+    if (c === '"' || c === "'") {
+      for (i++; i < raw.length && raw[i] !== c; i++) if (raw[i] === '\\') i++;
+    } else if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    else if (depth === 0 && raw.startsWith('and', i) && !ident(raw[i - 1]) && !ident(raw[i + 3])) {
+      pieces.push(raw.slice(start, i));
+      start = i + 3;
+      i += 2;
+    }
+  }
+  pieces.push(raw.slice(start));
+  return pieces.flatMap((p) => {
+    const t = p.trim();
+    return enclosed(t) ? cutConjuncts(t.slice(1, -1)) : [t];
+  });
+}
+
+/** Is `t` one parenthesised group, its first `(` closed by its last `)`? */
+function enclosed(t: string): boolean {
+  if (!t.startsWith('(') || !t.endsWith(')')) return false;
+  let depth = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i]!;
+    if (c === '"' || c === "'") {
+      for (i++; i < t.length && t[i] !== c; i++) if (t[i] === '\\') i++;
+    } else if (c === '(') depth++;
+    else if (c === ')' && --depth === 0 && i < t.length - 1) return false;
+  }
+  return true;
 }
 
 /**
@@ -5446,7 +5633,16 @@ function spreadTaint(
   const users = model.all().filter((el) => el.attrs.isLibrary !== true);
   const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
   const valued = users.filter((el) => isUsage(el.eClass) && typeof el.attrs.value === 'string');
-  const asserted = users.filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string');
+  // Each asserted relation — each conjunct of an asserted conjunction as the assert it would be written alone ({@link
+  // assertConjuncts}), a source by its clause's id or by `<id>#<index>`.
+  const asserted = users
+    .filter((el) => isAsserted(el) && typeof el.attrs.expression === 'string')
+    .flatMap((el) => {
+      const conjuncts = assertConjuncts(model, el);
+      return conjuncts.length > 1
+        ? conjuncts.map((c) => ({ a: el, text: c.text, source: sources.has(el.id) || sources.has(`${el.id}#${c.index}`) }))
+        : [{ a: el, text: el.attrs.expression as string, source: sources.has(el.id) }];
+    });
   const narrowing = [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting')];
   seed(add);
   const endsOf = (b: ElementRecord): ElementRecord[] =>
@@ -5466,10 +5662,10 @@ function spreadTaint(
         .find((x) => x !== undefined);
       if (hit) add(f, hit);
     }
-    for (const a of asserted) {
-      if (sources.has(a.id)) continue;
+    for (const { a, text, source } of asserted) {
+      if (source) continue;
       const roots = [a.ownerId, a.id].filter((x): x is ElementId => x != null);
-      const names = relationNamesOf(a.attrs.expression as string);
+      const names = relationNamesOf(text);
       const hit = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
       if (!hit) continue;
       for (const n of names) {
@@ -6568,7 +6764,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
   const gather = (x: ElementRecord, path: string, feature: ElementRecord): Gathered[] => {
     const out: Gathered[] = [];
     const push = (eq: DefiningEquation, f: ElementRecord | undefined, at: ElementId, name: string): void => {
-      if (out.some((c) => c.eq.constraint.id === eq.constraint.id)) return;
+      if (out.some((c) => sameEquation(c.eq, eq))) return;
       if (f && sameSlot(feature, f)) out.push({ eq, named: f, at, name, readAs: named(at, name) ?? f });
     };
     const take = (owner: ElementRecord, name: string, at: ElementId): void => {
@@ -6814,7 +7010,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
           grew = true;
           if (statesValue(g)) continue;
           for (const eq of gather(x, j.path, g)) {
-            if (!own.some((c) => c.eq.constraint.id === eq.eq.constraint.id) && !partners.some((c) => c.eq.eq.constraint.id === eq.eq.constraint.id)) {
+            if (!own.some((c) => sameEquation(c.eq, eq.eq)) && !partners.some((c) => sameEquation(c.eq.eq, eq.eq))) {
               partners.push({ eq, via, path: j.path });
             }
           }
@@ -6924,8 +7120,14 @@ function spreadContradiction(
   // whichever of the two equations comes first (parentheses round a name change nothing: `(K) == (L)`). `L == a * 2.0`
   // defines L and ties a to nothing.
   const bareTie = /^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*==\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*$/;
+  // A conjunct of an asserted conjunction is a member by itself ({@link spreadTaint}): the other conjuncts spread as asserts
+  // of their own — `M == 2.0 * L` beside `L == 50.0 and L == 1.0` makes M the L it reads.
   const sources = new Set(
-    index.sets.flatMap((s) => s.equations.filter((c) => !(typeof c.attrs.expression === 'string' && bareTie.test(c.attrs.expression.replace(/[()]/g, ' ')))).map((c) => c.id)),
+    index.sets.flatMap((s) =>
+      s.sites
+        .filter((site) => !bareTie.test(equationText(site.equation).replace(/[()]/g, ' ')))
+        .map((site) => (site.equation.part ? `${site.equation.constraint.id}#${site.equation.part.index}` : site.equation.constraint.id)),
+    ),
   );
   return spreadTaint(
     model,
@@ -7069,7 +7271,7 @@ function contradictedDefinitionClause(model: Model, set: ContradictedDefinition)
  * and `L == 60.0` (P::c2) each define `L` in P" (`contradictedDetail` of ./engines/literal too).
  */
 export function contradictedDefinitionNaming(model: Model, set: ContradictedDefinition): string {
-  const named = set.equations.map((c) => `\`${String(c.attrs.expression ?? '').trim()}\` (${effectiveQualifiedName(model, c.id)})`);
+  const named = set.sites.map(({ equation: eq }) => `\`${equationText(eq).trim()}\` (${effectiveQualifiedName(model, eq.constraint.id)})`);
   const listed = named.length <= 2 ? named.join(' and ') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]!}`;
   const joined = set.joined !== undefined && set.joined.length > 0 ? ` (joined ${set.joined.join(', ')})` : '';
   return `the asserted ${listed} each define \`${set.path}\`${joined} in ${effectiveQualifiedName(model, set.context.id)}`;
@@ -8249,17 +8451,17 @@ export function givenWayThroughHead(model: Model, contextId: ElementId, name: st
  */
 export function standingDefaultSentence(model: Model, el: ElementRecord): string | undefined {
   if (el.ownerId == null || !isAsserted(el)) return undefined;
-  const eq = equationOf(el);
-  if (!eq) return undefined;
+  const eqs = equationsOf(model, el);
+  if (eqs.length === 0) return undefined;
   const ownerId = el.ownerId;
   const denoted = sharedDefinitions(model).denote(ownerId);
   const valueOf = (f: ElementRecord): ElementRecord | undefined =>
     [f, ...redefinedClosure(model, f)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
   const said = new Map<ElementId, string>();
-  for (const [side, other] of [
-    [eq.node.left, eq.node.right],
-    [eq.node.right, eq.node.left],
-  ] as const) {
+  for (const [side, other, eq] of eqs.flatMap((eq) => [
+    [eq.node.left, eq.node.right, eq],
+    [eq.node.right, eq.node.left, eq],
+  ] as const)) {
     const n = definedName(side, eq.literals);
     if (n === undefined) continue;
     const reads = refsIn(other, eq.literals);
@@ -9076,7 +9278,7 @@ function enclosingAsserts(model: Model): EnclosingAsserts {
         }
       };
       const said = (eq: DefiningEquation): string =>
-        `the asserted \`${String(eq.constraint.attrs.expression ?? '').trim()}\` in ${effectiveQualifiedName(model, o)}`;
+        `the asserted \`${equationText(eq).trim()}\` in ${effectiveQualifiedName(model, o)}`;
       if (stopped && read.length > 0 && stopped.kind === 'elsewhere' && defaultEnd(lastOf(stopped.h, stopped.at))) {
         const { h } = stopped;
         const standing = [h, ...redefinersOf(h.id)];
@@ -9277,7 +9479,7 @@ function standingUnderInstance(
           constraint: eq.constraint,
           taint: [hit.e],
           why:
-            `the asserted \`${String(eq.constraint.attrs.expression ?? '').trim()}\` in ${effectiveQualifiedName(model, o)} is not ` +
+            `the asserted \`${equationText(eq).trim()}\` in ${effectiveQualifiedName(model, o)} is not ` +
             `read where \`bind ${sides[0]} = ${sides[1]}\` in ${effectiveQualifiedName(model, at)} joins ${path} to a \`default\`, ` +
             'which no assertion replaces: the assert holds in that instance too, and this tool does not read it there, so ' +
             'the model may contradict itself unreported',
@@ -10023,10 +10225,10 @@ function assertDefinesEnd(
   // Given a `cache`, each owner's asserted names are gathered once (a package of thousands of usages is
   // the root of every held member it reads).
   const definedIn = (ownerId: ElementId, n: string): boolean => {
-    if (!cache) return model.children(ownerId).some((c) => isAsserted(c) && namesDefinedBy(c).includes(n));
+    if (!cache) return model.children(ownerId).some((c) => isAsserted(c) && namesDefinedBy(model, c).includes(n));
     let hit = cache.get(ownerId);
     if (!hit) {
-      hit = new Set(model.children(ownerId).flatMap((c) => (isAsserted(c) ? namesDefinedBy(c) : [])));
+      hit = new Set(model.children(ownerId).flatMap((c) => (isAsserted(c) ? namesDefinedBy(model, c) : [])));
       cache.set(ownerId, hit);
     }
     return hit.has(n);
@@ -10734,9 +10936,8 @@ function headsOfReadings(
   }
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true || el.ownerId == null || !isAsserted(el)) continue;
-    const eq = equationOf(el);
-    if (!eq) continue;
-    const paths = [definedName(eq.node.left, eq.literals), definedName(eq.node.right, eq.literals)];
+    const paths = equationsOf(model, el).flatMap((eq) => [definedName(eq.node.left, eq.literals), definedName(eq.node.right, eq.literals)]);
+    if (paths.length === 0) continue;
     for (const { head } of all) {
       if (head.fixed !== undefined) continue;
       if (paths.some((p) => p !== undefined && slotOf(el.ownerId!, p, head))) {

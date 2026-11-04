@@ -13246,6 +13246,14 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // 3.0` that agree are both design equations (imposed), whichever is written first; `k { x <= 5.0 }` is judged at
     // the point they reach (the design-equation reading, out of the decisions' scope: null). Z125: the requirement's
     // `s.d == 3.0E15` written above P's `d = a * b` was oriented for d before d's own value was read (`T/T/t/T`).
+    // Since an asserted conjunction reads as its conjuncts written as asserts of their own (TODO 249), the `-and`
+    // shapes and X3K read L 50 on every surface, in either order: t50 T, t1 and t60 F, where every surface but the
+    // SMT engine's proof of t50 abstained — and S2spec as its single assert `L == 50.0` reads there: the check reads
+    // no value for p's L through P2 beside `q : P`, and the numeric surface decides. `-split` is the same model with
+    // the two conjuncts written apart, which I14 reads alike row for row. AND-CLASH: `L == 50.0 and L >= 60.0`
+    // defines L 50 and is itself violated there, as the split `cx`, `cy` read T and F (the model contradicts itself:
+    // X on the literal and SMT engines). AND-HELD: the conjunct over M (`M >= L`) holds M, no design freedom, as the
+    // split `cy` does: m and m2 are not judged.
     ...reversed(
       'order-s1n-and',
       `package S1_N_and {
@@ -13258,10 +13266,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package S1_N_and { constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 } part p : P;
         part def P { assert constraint ca { L == 50.0 and L >= 0.0 } attribute L : ScalarValues::Real; } }`,
       {
-        'S1_N_and::P::ca': ['?/-/?/-', null],
-        'S1_N_and::t1': ['?/?/?/?', 'F'],
-        'S1_N_and::t50': ['?/?/?/T', 'T'],
-        'S1_N_and::t60': ['?/?/?/?', 'F'],
+        'S1_N_and::P::ca': ['T/-/T/-', null],
+        'S1_N_and::t1': ['F/F/F/F', 'F'],
+        'S1_N_and::t50': ['T/T/T/T', 'T'],
+        'S1_N_and::t60': ['F/F/F/F', 'F'],
       },
     ),
     ...reversed(
@@ -13276,10 +13284,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package S1_KN_and { constraint t60 { p.L == 60.0 [kg] } constraint t1 { p.L == 1.0 [kg] } constraint t50 { p.L == 50.0 [kg] }
         part p : P; part def P { assert constraint ca { L == 50.0 [kg] and L >= 0.0 [kg] } attribute L : ISQ::MassValue; } }`,
       {
-        'S1_KN_and::P::ca': ['?/-/?/-', null],
-        'S1_KN_and::t1': ['?/?/?/?', 'F'],
-        'S1_KN_and::t50': ['?/?/?/T', 'T'],
-        'S1_KN_and::t60': ['?/?/?/?', 'F'],
+        'S1_KN_and::P::ca': ['T/-/T/-', null],
+        'S1_KN_and::t1': ['F/F/F/F', 'F'],
+        'S1_KN_and::t50': ['T/T/T/T', 'T'],
+        'S1_KN_and::t60': ['F/F/F/F', 'F'],
       },
     ),
     ...reversed(
@@ -13295,10 +13303,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package S2enc_N_and { constraint t60 { w.p.L == 60.0 } constraint t1 { w.p.L == 1.0 } constraint t50 { w.p.L == 50.0 } part w : W;
         part def W { assert constraint ca { p.L == 50.0 and p.L >= 0.0 } part p : P; } part def P { attribute L : ScalarValues::Real; } }`,
       {
-        'S2enc_N_and::W::ca': ['?/-/?/-', null],
-        'S2enc_N_and::t1': ['?/?/?/?', 'F'],
-        'S2enc_N_and::t50': ['?/?/?/T', 'T'],
-        'S2enc_N_and::t60': ['?/?/?/?', 'F'],
+        'S2enc_N_and::W::ca': ['T/-/T/-', null],
+        'S2enc_N_and::t1': ['F/F/F/F', 'F'],
+        'S2enc_N_and::t50': ['T/T/T/T', 'T'],
+        'S2enc_N_and::t60': ['F/F/F/F', 'F'],
       },
     ),
     ...reversed(
@@ -13316,11 +13324,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package S2spec_N_and { constraint q1 { q.L == 1.0 } constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 }
         part q : P; part p : P2; part def P2 :> P { assert constraint ca { L == 50.0 and L >= 0.0 } } part def P { attribute L : ScalarValues::Real; } }`,
       {
-        'S2spec_N_and::P2::ca': ['?/-/?/-', null],
+        'S2spec_N_and::P2::ca': ['T/-/T/-', null],
+        'S2spec_N_and::P2::ca in S2spec_N_and::p': ['?/-/?/-', null],
         'S2spec_N_and::q1': ['?/?/t/?', '?'],
-        'S2spec_N_and::t1': ['?/?/?/?', 'F'],
-        'S2spec_N_and::t50': ['?/?/?/T', 'T'],
-        'S2spec_N_and::t60': ['?/?/?/?', 'F'],
+        'S2spec_N_and::t1': ['?/?/F/?', 'F'],
+        'S2spec_N_and::t50': ['?/?/T/T', 'T'],
+        'S2spec_N_and::t60': ['?/?/F/?', 'F'],
       },
     ),
     ...reversed(
@@ -13335,10 +13344,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package S2use_N_and { constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 }
         part p : P { assert constraint ca { L == 50.0 and L >= 0.0 } } part def P { attribute L : ScalarValues::Real; } }`,
       {
-        'S2use_N_and::p::ca': ['?/-/?/-', null],
-        'S2use_N_and::t1': ['?/?/?/?', 'F'],
-        'S2use_N_and::t50': ['?/?/?/T', 'T'],
-        'S2use_N_and::t60': ['?/?/?/?', 'F'],
+        'S2use_N_and::p::ca': ['T/-/T/-', null],
+        'S2use_N_and::t1': ['F/F/F/F', 'F'],
+        'S2use_N_and::t50': ['T/T/T/T', 'T'],
+        'S2use_N_and::t60': ['F/F/F/F', 'F'],
       },
     ),
     ...reversed(
@@ -13393,9 +13402,98 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package X3K { constraint k { p.L <= 10.0 } constraint t1 { p.L == 1.0 } part p : P;
         part def P { assert constraint ca { L == 50.0 and L >= 0.0 } attribute L : ScalarValues::Real; } }`,
       {
-        'X3K::P::ca': ['?/-/?/-', null],
-        'X3K::k': ['?/?/?/?', 'F'],
-        'X3K::t1': ['?/?/?/?', 'F'],
+        'X3K::P::ca': ['T/-/T/-', null],
+        'X3K::k': ['F/F/F/F', 'F'],
+        'X3K::t1': ['F/F/F/F', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-s1n-split',
+      `package S1_N_and {
+        part def P { attribute L : ScalarValues::Real; assert constraint cx { L == 50.0 } assert constraint cy { L >= 0.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+        constraint t60 { p.L == 60.0 }
+      }`,
+      `package S1_N_and { constraint t60 { p.L == 60.0 } constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 } part p : P;
+        part def P { assert constraint cy { L >= 0.0 } assert constraint cx { L == 50.0 } attribute L : ScalarValues::Real; } }`,
+      {
+        'S1_N_and::P::cx': ['T/-/T/-', 'T'],
+        'S1_N_and::P::cy': ['T/-/T/-', 'T'],
+        'S1_N_and::t1': ['F/F/F/F', 'F'],
+        'S1_N_and::t50': ['T/T/T/T', 'T'],
+        'S1_N_and::t60': ['F/F/F/F', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-and-clash',
+      `package AndClash {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 50.0 and L >= 60.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+      }`,
+      `package AndClash { constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 } part p : P;
+        part def P { assert constraint ca { L == 50.0 and L >= 60.0 } attribute L : ScalarValues::Real; } }`,
+      {
+        'AndClash::P::ca': ['F/-/F/-', null],
+        'AndClash::t1': ['F/X/F/X', null],
+        'AndClash::t50': ['T/X/T/X', null],
+      },
+    ),
+    ...reversed(
+      'order-and-clash-split',
+      `package AndClash {
+        part def P { attribute L : ScalarValues::Real; assert constraint cx { L == 50.0 } assert constraint cy { L >= 60.0 } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint t1 { p.L == 1.0 }
+      }`,
+      `package AndClash { constraint t1 { p.L == 1.0 } constraint t50 { p.L == 50.0 } part p : P;
+        part def P { assert constraint cy { L >= 60.0 } assert constraint cx { L == 50.0 } attribute L : ScalarValues::Real; } }`,
+      {
+        'AndClash::P::cx': ['T/-/T/-', null],
+        'AndClash::P::cy': ['F/-/F/-', null],
+        'AndClash::t1': ['F/X/F/X', null],
+        'AndClash::t50': ['T/X/T/X', null],
+      },
+    ),
+    ...reversed(
+      'order-and-held',
+      `package AndHeld {
+        part def P { attribute L : ScalarValues::Real; attribute M : ScalarValues::Real; assert constraint ca { L == 50.0 and M >= L } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint m { p.M <= 10.0 }
+        constraint m2 { p.M == 70.0 }
+      }`,
+      `package AndHeld { constraint m2 { p.M == 70.0 } constraint m { p.M <= 10.0 } constraint t50 { p.L == 50.0 } part p : P;
+        part def P { assert constraint ca { L == 50.0 and M >= L } attribute M : ScalarValues::Real; attribute L : ScalarValues::Real; } }`,
+      {
+        'AndHeld::P::ca': ['?/-/?/-', null],
+        'AndHeld::m': ['?/?/?/?', null],
+        'AndHeld::m2': ['?/?/?/?', null],
+        'AndHeld::t50': ['T/T/T/T', 'T'],
+      },
+    ),
+    ...reversed(
+      'order-and-held-split',
+      `package AndHeld {
+        part def P { attribute L : ScalarValues::Real; attribute M : ScalarValues::Real; assert constraint cx { L == 50.0 } assert constraint cy { M >= L } }
+        part p : P;
+        constraint t50 { p.L == 50.0 }
+        constraint m { p.M <= 10.0 }
+        constraint m2 { p.M == 70.0 }
+      }`,
+      `package AndHeld { constraint m2 { p.M == 70.0 } constraint m { p.M <= 10.0 } constraint t50 { p.L == 50.0 } part p : P;
+        part def P { assert constraint cy { M >= L } assert constraint cx { L == 50.0 } attribute M : ScalarValues::Real; attribute L : ScalarValues::Real; } }`,
+      {
+        'AndHeld::P::cx': ['T/-/T/-', 'T'],
+        'AndHeld::P::cy': ['?/-/?/-', null],
+        'AndHeld::m': ['?/?/?/?', null],
+        'AndHeld::m2': ['?/?/?/?', null],
+        'AndHeld::t50': ['T/T/T/T', 'T'],
       },
     ),
     ...reversed(
@@ -16684,6 +16782,16 @@ package PS {
     'a value that stands — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or one written with `=` (HP, and each `-eq` twin) — so the model contradicts itself, and the SMT engine reports its axioms inconsistent beside the check’s and the numeric surface’s reading of the value (and the literal engine’s, where the row reads no value that contradiction reaches; it reports them inconsistent too where it does, Q4 for an assert and D1 for a binding the check reports violated)';
   const I7_ALLOWED = new Map<string, string>([
     ['n4 | N4::zl', 'an asserted `x * x == -1.0` admits no model; the numeric surface reads z apart from it (out of scope)'],
+    // TODO 249: AND-CLASH, as one conjunction or as two asserts.
+    ...['order-and-clash', 'order-and-clash-rev', 'order-and-clash-split', 'order-and-clash-split-rev'].flatMap((name) =>
+      ['t1', 't50'].map(
+        (row) =>
+          [
+            `${name} | AndClash::${row}`,
+            'the asserted `L == 50.0` gives the valueless L its 50, and the asserted `L >= 60.0` beside it misses that 50, as one conjunction or as two asserts: the model contradicts itself, which the SMT engine and the literal engine report; the check and the numeric surface read L’s 50',
+          ] as const,
+      ),
+    ),
     ['h5-hp | HP::c', 'L’s plain `= 2.0` against the asserted `L == 5.0`: the strict-KerML contradiction (decision 1); the check reads L’s value'],
     ['h5-rbind | RB::top', 'q’s plain `L = 4.0`, bound to q.p.x, against the asserted `q.p.x == 3.0`: the contradiction of decision 1'],
     ['h5-rbind | RB::P::c in RB::q::p', 'q’s plain `L = 4.0`, bound to q.p.x, against the asserted `q.p.x == 3.0`: the contradiction of decision 1; P’s c is read at the binding’s 4'],
@@ -17607,6 +17715,11 @@ package PS {
     ...['s1n-and', 's1kn-and', 's2enc-and', 's2spec-and', 's2use-and', 's1n-plain', 's1n-eqmn', 'x3k', 'pg', 'lk', 'pl2', 'dup', 'z125', 'k1', 'root', 'root2'].map(
       (k) => [`order-${k}`, `order-${k}-rev`] as const,
     ),
+    // 249: an asserted conjunction and its conjuncts written as asserts of their own (the clause rows are named apart), in either order.
+    ...[['s1n-and', 's1n-split'], ['and-clash', 'and-clash-split'], ['and-held', 'and-held-split']].flatMap(([c, k]) =>
+      [`order-${k}`, `order-${k}-rev`].map((t) => [`order-${c}`, t] as const),
+    ),
+    ...['and-clash', 'and-held'].map((k) => [`order-${k}`, `order-${k}-rev`] as const),
     // numeric-curved S1: a curved equation, plain or the model's own, beside another plain constraint or an inequality.
     ...['sys', 'prod', 'assert', 'stated', 'asserted', 'chain', 'mod', 'ineq', 'free', 'sq', 'loop', 'loopin', 'cyc', 'stloop', 'dep', 'plaindep', 'quot', 'qfix', 'qlink', 'density', 'qclash', 'pole-a', 'pole-b', 'pole-c', 'unit', 'self', 'selfpair', 'selfthree', 'cross', 'crosspair', 'crossexp', 'crossassert', 'lonepole', 'lonepolek'].map(
       (k) => [`order-curved-${k}`, `order-curved-${k}-rev`] as const,

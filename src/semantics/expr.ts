@@ -512,6 +512,9 @@ function evalBinary(
       if (!isUnknown(l) && l.value === true) return { value: true };
     }
     const r = evaluate(node.right, scope);
+    // `x and false` is false as `false and x` is, whichever conjunct is written first: an asserted conjunction's
+    // row is the AND of its conjuncts read apart (TODO 249), and an unknown beside a false one decides nothing.
+    if (op === 'and' && isUnknown(l) && !isUnknown(r) && r.value === false) return { value: false };
     if (op === 'implies') {
       if (!isUnknown(l) && l.value === false) return { value: true };
       if (!isUnknown(r) && r.value === true) return { value: true };

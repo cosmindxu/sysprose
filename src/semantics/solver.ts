@@ -82,7 +82,10 @@ import {
   type ConstraintCheck,
 } from './evaluate-model';
 import {
+  assertConjuncts,
   baseIdOf,
+  conjunctOf,
+  conjunctRecord,
   defaultGivesWay,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
@@ -667,29 +670,34 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
     // statement in the model asked for.
     if (RELATION_KINDS.has(el.eClass)) {
       if (isNonNormativeStatement(model, el.id)) continue;
-      // A calculation's value body refused is a value nothing reads; so is
-      // what a refused asserted equation is the definition of.
-      const eq = relationEquation(model, el, memo, false, () => {
-        if (hasStatedValue(model, el) || isParameterisedCalculation(model, el)) unreadable.add(el.id);
-        for (const { id } of featuresDefinedBy(model, el, memo)) unreadable.add(id);
-      });
-      // Two sides the same expression fix nothing ({@link identicalSides}).
-      if (eq && identicalSides(el)) continue;
-      // An assert the solve reads no equation from still constrains what it
-      // reads ({@link heldByUnreadAsserts}).
-      if (!eq && isAsserted(el)) for (const v of relationReads(model, el)) holdVar(held, v, el.id);
-      if (!eq) continue;
-      const defines = definitionsOf(model, el, memo);
-      if (isAsserted(el)) {
-        const body = parseRelationBody(String(el.attrs.expression));
-        for (const key of body ? instanceKeysDefinedBy(model, body.node, eq) : []) {
-          if (!defines.includes(key)) defines.push(key);
+      // An asserted conjunction is read as its conjuncts, each the assert it
+      // would be written alone ({@link assertConjuncts}); its own row is judged whole.
+      const parts = assertConjuncts(model, el);
+      for (const rel of parts.length > 1 ? parts.map((p) => conjunctRecord(p)) : [el]) {
+        // A calculation's value body refused is a value nothing reads; so is
+        // what a refused asserted equation is the definition of.
+        const eq = relationEquation(model, rel, memo, false, () => {
+          if (hasStatedValue(model, rel) || isParameterisedCalculation(model, rel)) unreadable.add(rel.id);
+          for (const { id } of featuresDefinedBy(model, rel, memo)) unreadable.add(id);
+        });
+        // Two sides the same expression fix nothing ({@link identicalSides}).
+        if (eq && identicalSides(rel)) continue;
+        // An assert the solve reads no equation from still constrains what it
+        // reads ({@link heldByUnreadAsserts}).
+        if (!eq && isAsserted(rel)) for (const v of relationReads(model, rel)) holdVar(held, v, el.id);
+        if (!eq) continue;
+        const defines = definitionsOf(model, rel, memo);
+        if (isAsserted(rel)) {
+          const body = parseRelationBody(String(rel.attrs.expression));
+          for (const key of body ? instanceKeysDefinedBy(model, body.node, eq) : []) {
+            if (!defines.includes(key)) defines.push(key);
+          }
         }
+        if (defines.length > 0) eq.defines = defines;
+        if (isAsserted(rel)) eq.asserted = true;
+        eqs.push(eq);
+        relationOf.set(eq, rel);
       }
-      if (defines.length > 0) eq.defines = defines;
-      if (isAsserted(el)) eq.asserted = true;
-      eqs.push(eq);
-      relationOf.set(eq, el);
       continue;
     }
 
@@ -1708,30 +1716,36 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       for (const c of model.children(holder.id)) {
         if (c.attrs.isLibrary === true) continue;
         if (isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
-          const read: ElementRecord = { ...c, ownerId: reader.id };
-          const eq = relationEquation(model, read, memo, false, undefined, instance);
-          // Two sides the same expression fix nothing ({@link identicalSides}).
-          if (eq && identicalSides(c)) continue;
-          if (eq) {
-            eq.asserted = true;
-            READER_OF.set(eq, reader.id);
-            // An asserted equation defines, in the instance, the valueless
-            // features it names: the instance's own, never a check's to fix.
-            const body = parseRelationBody(String(c.attrs.expression));
-            const defines = body ? instanceKeysDefinedBy(model, body.node, eq) : [];
-            if (defines.length > 0) eq.defines = defines;
-            system.eqs.push(eq);
-            enqueue(eq);
+          const whole: ElementRecord = { ...c, ownerId: reader.id };
+          // An asserted conjunction's conjuncts, each as the assert it would be written alone ({@link assertConjuncts}).
+          const parts = assertConjuncts(model, c);
+          const split = parts.length > 1;
+          for (const read of split ? parts.map((p) => conjunctRecord(p, whole)) : [whole]) {
+            const eq = relationEquation(model, read, memo, false, undefined, instance);
+            // Two sides the same expression fix nothing ({@link identicalSides}).
+            if (eq && identicalSides(read)) continue;
+            if (eq) {
+              eq.asserted = true;
+              READER_OF.set(eq, reader.id);
+              // An asserted equation defines, in the instance, the valueless
+              // features it names: the instance's own, never a check's to fix.
+              const body = parseRelationBody(String(read.attrs.expression));
+              const defines = body ? instanceKeysDefinedBy(model, body.node, eq) : [];
+              if (defines.length > 0) eq.defines = defines;
+              system.eqs.push(eq);
+              enqueue(eq);
+            }
+            // A conjunct's inequality is no row of its own: the clause's row is the conjunction, judged whole.
+            const iq = eq || split ? undefined : relationInequality(model, read, memo, instance);
+            if (iq) {
+              iq.id = `${c.id}@${instance}`;
+              system.ineqs.push(iq);
+              enqueue(iq);
+            }
+            // One the solve reads no equation from — an inequality, a conjunction —
+            // constrains the instance's variables all the same.
+            if (!eq) for (const v of iq?.vars ?? relationReads(model, read, instance)) holdVar(system.held, v, c.id);
           }
-          const iq = eq ? undefined : relationInequality(model, read, memo, instance);
-          if (iq) {
-            iq.id = `${c.id}@${instance}`;
-            system.ineqs.push(iq);
-            enqueue(iq);
-          }
-          // One the solve reads no equation from — an inequality, a conjunction —
-          // constrains the instance's variables all the same.
-          if (!eq) for (const v of iq?.vars ?? relationReads(model, read, instance)) holdVar(system.held, v, c.id);
         } else if (isBindingEdge(c)) {
           enqueue(instanceBindingEquation(model, c, holder, reader, instance, memo, system));
         }
@@ -2362,7 +2376,8 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   const relations = new Set<ElementId>();
   const imposed = new Set<ElementId>();
   for (const [eq, el] of relationOf) {
-    relations.add(el.id);
+    // A conjunct is no relation the solve reads whole: its clause's row is the conjunction ({@link assertConjuncts}).
+    if (conjunctOf(el) === undefined) relations.add(el.id);
     if (used.has(eq) && el.eClass === 'ConstraintUsage' && !isAsserted(el)) imposed.add(el.id);
   }
   // Where the solve stopped OFF one of its own equations, what it produced
@@ -5665,7 +5680,8 @@ function unreadRelations(
   relationOf: ReadonlyMap<Equation, ElementRecord>,
 ): Set<ElementId> {
   const read = new Set<ElementId>(ineqs.map((iq) => iq.id));
-  for (const el of relationOf.values()) read.add(el.id);
+  // Not a conjunction one of whose conjuncts is an equation: its row is the conjunction, judged at the point.
+  for (const el of relationOf.values()) if (conjunctOf(el) === undefined) read.add(el.id);
   const inScope = scopeFilter(model, scopeId);
   const out = new Set<ElementId>();
   for (const el of model.all()) {
