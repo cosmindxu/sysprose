@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseExpr, evaluate } from '../../src/semantics/index';
-import { exprRef, writtenChains } from '../../src/semantics/expr';
+import { exprEqual, exprRef, writtenChains } from '../../src/semantics/expr';
 
 /** Evaluate a source string against an optional variable map. */
 function evalStr(src: string, vars: Record<string, unknown> = {}): unknown {
@@ -128,5 +128,17 @@ describe('semantics — expression parser + evaluator', () => {
   it('throws on malformed input', () => {
     expect(() => parseExpr('1 +')).toThrow();
     expect(() => parseExpr('(1 + 2')).toThrow();
+  });
+
+  it('exprEqual compares two trees node for node, every numeral as written', () => {
+    const same = (a: string, b: string) => exprEqual(parseExpr(a), parseExpr(b));
+    expect(same('(x + y) * 2.0', '(x+y)*2.0')).toBe(true);
+    expect(same('if a > 1 then p.q else -r', 'if a > 1 then p.q else -r')).toBe(true);
+    expect(same('x + y', 'y + x')).toBe(false);
+    expect(same('x * 2.0', 'x * 2.5')).toBe(false);
+    expect(same('x - y', 'x + y')).toBe(false);
+    expect(same('p.q', 'p.r')).toBe(false);
+    // Two numerals one double: past fifteen digits the numeral written decides.
+    expect(same('0.3', '0.29999999999999999')).toBe(false);
   });
 });

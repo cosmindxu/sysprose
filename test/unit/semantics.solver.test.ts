@@ -52,6 +52,30 @@ describe('solve — parametric chains', () => {
     expect(eqs[0].vars.length).toBe(3); // force, mass, acceleration
     expect(eqs[0].raw).toContain('mass * acceleration');
   });
+
+  // TODO 286 (d): an equation whose sides are the same expression, or the same polynomial, fixes nothing and is
+  // gathered as no design equation; one that has a value at fewer points (`y / z == y / z`), or that is no identity,
+  // still is.
+  it('gathers no equation whose two sides are the same expression or the same polynomial', async () => {
+    const bodies = [
+      'y == y',
+      '(y + 1.0) * 2.0 == (y + 1.0) * 2.0',
+      'y * 2.0 == 2.0 * y',
+      'y - y == 0.0',
+      'y / 4.0 == 0.25 * y',
+      '(y + z) ^ 2.0 == y * y + 2.0 * y * z + z * z',
+      'y * 2.0 [m] == 2.0 [m] * y',
+    ];
+    // Two numerals one double are not one number past fifteen digits; a `[unit]` literal is compared as written.
+    const kept = ['y / z == y / z', 'y * y == 0.0', 'y * 0.3 == y * 0.29999999999999999', 'y * 2.0 [m] == y * 2000.0 [mm]', 'y == 0.5'];
+    for (const [body, n] of [...bodies.map((b) => [b, 0] as const), ...kept.map((b) => [b, 1] as const)]) {
+      for (const kw of ['constraint', 'assert constraint']) {
+        const text = `package G { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; ${kw} c { ${body} } }`;
+        const model = (await loadModelText(text, { fileName: 'g.sysml' })).model!;
+        expect(gatherConstraints(model).length, `${kw} { ${body} }`).toBe(n);
+      }
+    }
+  });
 });
 
 /* ─────────────────────────── binding equality ────────────────────────── */

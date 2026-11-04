@@ -13470,6 +13470,80 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'DUP::k': ['?/?/T/?', null],
       },
     ),
+    // An equation whose two sides are the same expression, or the same polynomial, fixes nothing (TODO 286 (d)).
+    // TAUT's `c0 { y == y }` was a design equation for y that oriented nothing: beside `c1 { y == 0.5 }` the two
+    // read as plain constraints that disagree with c0 written first (every row `?`), and c1 imposed with it written
+    // after. Asserted, TAUTA's `y * 2.0 == 2.0 * y` gave y the solve's starting value, at which c1 read violated in
+    // both orders (`?/?/F/?`, a false F), and TAUTI's `y - y == 0.0` in a part definition did the same through the
+    // instance's solve. Neither is gathered nor holds what it reads now: c1 is imposed and k judged at its point, in
+    // either order, and the tautology's own row is judged there.
+    ...reversed(
+      'order-taut-eq',
+      `package TAUT {
+        attribute y : ScalarValues::Real;
+        constraint c0 { y == y }
+        constraint c1 { y == 0.5 }
+        constraint k { y <= 1.0 }
+      }`,
+      `package TAUT { constraint k { y <= 1.0 } constraint c1 { y == 0.5 } constraint c0 { y == y } attribute y : ScalarValues::Real; }`,
+      {
+        'TAUT::c0': ['?/?/T/T', 'T'],
+        'TAUT::c1': ['?/?/t/?', '?'],
+        'TAUT::k': ['?/?/T/?', null],
+      },
+    ),
+    ...reversed(
+      'order-taut-assert',
+      `package TAUTA {
+        attribute y : ScalarValues::Real;
+        assert constraint c0 { y * 2.0 == 2.0 * y }
+        constraint c1 { y == 0.5 }
+        constraint k { y <= 1.0 }
+      }`,
+      `package TAUTA { constraint k { y <= 1.0 } constraint c1 { y == 0.5 } assert constraint c0 { y * 2.0 == 2.0 * y }
+        attribute y : ScalarValues::Real; }`,
+      {
+        'TAUTA::c0': ['?/-/T/-', 'T'],
+        'TAUTA::c1': ['?/?/t/?', '?'],
+        'TAUTA::k': ['?/?/T/?', null],
+      },
+    ),
+    ...reversed(
+      'order-taut-inst',
+      `package TAUTI {
+        part def P { attribute y : ScalarValues::Real; assert constraint c0 { y - y == 0.0 } }
+        part p : P;
+        constraint c1 { p.y == 0.5 }
+        constraint k { p.y <= 0.1 }
+      }`,
+      `package TAUTI { constraint k { p.y <= 0.1 } constraint c1 { p.y == 0.5 } part p : P;
+        part def P { assert constraint c0 { y - y == 0.0 } attribute y : ScalarValues::Real; } }`,
+      {
+        'TAUTI::P::c0': ['?/-/?/-', 'T'],
+        'TAUTI::c1': ['?/?/t/?', '?'],
+        'TAUTI::k': ['?/?/F/?', null],
+      },
+    ),
+    // TAUTZ: an equation that does not read its one unknown at the values the others have (`y * z == 0.0` at a stated
+    // z of 0, every y a root) fixes nothing either: taken as the model's own value for y, the root the search stopped
+    // at read c1 violated, in both orders (`?/?/F/?`, a false F).
+    ...reversed(
+      'order-taut-zero',
+      `package TAUTZ {
+        attribute y : ScalarValues::Real;
+        attribute z : ScalarValues::Real = 0.0;
+        assert constraint c0 { y * z == 0.0 }
+        constraint c1 { y == 0.5 }
+        constraint k { y <= 1.0 }
+      }`,
+      `package TAUTZ { constraint k { y <= 1.0 } constraint c1 { y == 0.5 } assert constraint c0 { y * z == 0.0 }
+        attribute z : ScalarValues::Real = 0.0; attribute y : ScalarValues::Real; }`,
+      {
+        'TAUTZ::c0': ['?/-/T/-', 'T'],
+        'TAUTZ::c1': ['?/?/t/?', '?'],
+        'TAUTZ::k': ['?/?/T/?', null],
+      },
+    ),
     ...reversed(
       'order-z125',
       `package Z125 {

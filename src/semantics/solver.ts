@@ -58,13 +58,18 @@
 
 import { type ElementId, type ElementRecord, type Model, isUsage, refSegments } from '@core/index';
 import {
+  addRationals,
+  divideRationals,
   evaluateDecided,
+  multiplyRationals,
+  negateRational,
   statedRational,
   tieSentence,
   writtenRational,
   type ExactScope,
+  type Rational,
 } from './exact';
-import { parseExpr, evaluate, writtenChains, type ExprNode } from './expr';
+import { parseExpr, evaluate, exprEqual, writtenChains, type ExprNode } from './expr';
 import { isBindingEdge, propagateValues } from './connectors';
 import {
   anchorFor,
@@ -668,6 +673,8 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
         if (hasStatedValue(model, el) || isParameterisedCalculation(model, el)) unreadable.add(el.id);
         for (const { id } of featuresDefinedBy(model, el, memo)) unreadable.add(id);
       });
+      // Two sides the same expression fix nothing ({@link identicalSides}).
+      if (eq && identicalSides(el)) continue;
       // An assert the solve reads no equation from still constrains what it
       // reads ({@link heldByUnreadAsserts}).
       if (!eq && isAsserted(el)) for (const v of relationReads(model, el)) holdVar(held, v, el.id);
@@ -1018,6 +1025,164 @@ function relationEquation(
   }
 
   return undefined;
+}
+
+/**
+ * Is a relation an equation whose two sides are the same expression (`y ==
+ * y`, `(x + y) * 2.0 == (x + y) * 2.0`), compared after its `[unit]`
+ * literals are lowered ({@link exprEqual}), or the same polynomial (`y * 2.0
+ * == 2.0 * y`, `y - y == 0.0`: {@link polynomialOf})? It holds wherever its
+ * side has a value, so it fixes nothing: gathered, it was a design equation
+ * for `y` that oriented nothing, and beside `c1 { y == 0.5 }` the two read as
+ * plain constraints that disagree — every relation over `y` unjudged with `c0`
+ * written first, `c1` imposed with it written after — and, asserted, it gave
+ * `y` the solve's starting value, at which that `c1` read violated. It is
+ * neither gathered nor held ({@link gatherSystem}, {@link buildInstanceSystem});
+ * its own row is still judged at the values found. A side that divides by
+ * what is not a number, takes a remainder or raises to what is not a small
+ * whole number has no value at some points, where the equation does not hold;
+ * it is read as before.
+ */
+function identicalSides(el: ElementRecord): boolean {
+  const raw = el.attrs.expression;
+  if (typeof raw !== 'string') return false;
+  let known = IDENTICAL_SIDES.get(raw);
+  if (known === undefined) {
+    known = readsIdenticalSides(raw);
+    if (IDENTICAL_SIDES.size >= MAX_IDENTICAL_SIDES) IDENTICAL_SIDES.clear();
+    IDENTICAL_SIDES.set(raw, known);
+  }
+  return known;
+}
+
+/** {@link identicalSides} by body text, which alone decides it: every gather asks it of every relation. */
+const IDENTICAL_SIDES = new Map<string, boolean>();
+const MAX_IDENTICAL_SIDES = 4096;
+
+function readsIdenticalSides(raw: string): boolean {
+  const body = parseRelationBody(raw);
+  if (!body) return false;
+  const node = body.node;
+  if (node.kind !== 'binary' || (node.op !== '==' && node.op !== '=')) return false;
+  const left = substituteLiterals(node.left, body.literals);
+  const right = substituteLiterals(node.right, body.literals);
+  if (exprEqual(left, right) && isTotal(left)) return true;
+  const l = polynomialOf(left);
+  const r = l && polynomialOf(right);
+  const d = l && r && addPolynomials(l, negatePolynomial(r));
+  return d !== undefined && d.size === 0;
+}
+
+/** A polynomial with exact coefficients: each monomial, keyed by its atoms and their powers, to its nonzero coefficient. */
+type Polynomial = Map<string, { atoms: ReadonlyMap<string, number>; c: Rational }>;
+
+/** The most monomials {@link polynomialOf} expands to before it gives up. */
+const MAX_MONOMIALS = 64;
+
+/**
+ * A side as a polynomial over its names, with exact coefficients — every
+ * number as the encoder reads it ({@link writtenRational}), a lowered `[unit]`
+ * literal as an atom of its own — or `undefined` past {@link MAX_MONOMIALS}
+ * or for what is no polynomial: a division by what is not a nonzero number, a
+ * power to anything but a whole number from 1 to 8, a remainder, an `if`, a comparison.
+ */
+function polynomialOf(node: ExprNode): Polynomial | undefined {
+  switch (node.kind) {
+    case 'num': {
+      if (node.literal !== undefined) return monomial(`#${JSON.stringify(node.literal)}`);
+      const c = writtenRational(node.value, node.text);
+      return c && constantPolynomial(c);
+    }
+    case 'ref':
+      return monomial(node.path.join('.'));
+    case 'unary': {
+      if (node.op === 'not') return undefined;
+      const p = polynomialOf(node.operand);
+      return p && (node.op === '-' ? negatePolynomial(p) : p);
+    }
+    case 'binary': {
+      const a = polynomialOf(node.left);
+      if (!a) return undefined;
+      if (node.op === '^') {
+        const e = node.right.kind === 'num' && node.right.literal === undefined ? node.right.value : undefined;
+        if (e === undefined || !Number.isInteger(e) || e < 1 || e > 8) return undefined;
+        let out: Polynomial | undefined = a;
+        for (let i = 1; i < e && out; i++) out = multiplyPolynomials(out, a);
+        return out;
+      }
+      if (node.op === '/') {
+        const k = node.right.kind === 'num' && node.right.literal === undefined ? writtenRational(node.right.value, node.right.text) : undefined;
+        const inverse = k && divideRationals({ num: 1n, den: 1n }, k);
+        return inverse && multiplyPolynomials(a, constantPolynomial(inverse));
+      }
+      const b = polynomialOf(node.right);
+      if (!b) return undefined;
+      if (node.op === '+') return addPolynomials(a, b);
+      if (node.op === '-') return addPolynomials(a, negatePolynomial(b));
+      if (node.op === '*') return multiplyPolynomials(a, b);
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+function monomial(atom: string): Polynomial {
+  const atoms = new Map([[atom, 1]]);
+  return new Map([[monomialKey(atoms), { atoms, c: { num: 1n, den: 1n } }]]);
+}
+
+function constantPolynomial(c: Rational): Polynomial {
+  return c.num === 0n ? new Map() : new Map([['', { atoms: new Map(), c }]]);
+}
+
+function monomialKey(atoms: ReadonlyMap<string, number>): string {
+  return JSON.stringify([...atoms].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+function negatePolynomial(p: Polynomial): Polynomial {
+  return new Map([...p].map(([k, m]) => [k, { atoms: m.atoms, c: negateRational(m.c) }]));
+}
+
+function addPolynomials(a: Polynomial, b: Polynomial): Polynomial | undefined {
+  const out: Polynomial = new Map([...a]);
+  for (const [k, m] of b) {
+    const had = out.get(k);
+    const c = had ? addRationals(had.c, m.c) : m.c;
+    if (!c) return undefined;
+    if (c.num === 0n) out.delete(k);
+    else out.set(k, { atoms: m.atoms, c });
+  }
+  return out.size > MAX_MONOMIALS ? undefined : out;
+}
+
+function multiplyPolynomials(a: Polynomial, b: Polynomial): Polynomial | undefined {
+  let out: Polynomial = new Map();
+  for (const x of a.values()) {
+    for (const y of b.values()) {
+      const atoms = new Map([...x.atoms]);
+      for (const [atom, n] of y.atoms) atoms.set(atom, (atoms.get(atom) ?? 0) + n);
+      const c = multiplyRationals(x.c, y.c);
+      const sum = c && addPolynomials(out, new Map([[monomialKey(atoms), { atoms, c }]]));
+      if (!sum) return undefined;
+      out = sum;
+    }
+  }
+  return out;
+}
+
+/** A side with a value wherever its names have one: no `/`, `%` or `^` in it. */
+function isTotal(node: ExprNode): boolean {
+  switch (node.kind) {
+    case 'unary':
+      return isTotal(node.operand);
+    case 'binary':
+      return node.op !== '/' && node.op !== '%' && node.op !== '^' && isTotal(node.left) && isTotal(node.right);
+    case 'if':
+      return isTotal(node.cond) && isTotal(node.then) && isTotal(node.else);
+    default:
+      return true;
+  }
 }
 
 /** Does a body read a name its own element declares, which its owner's scope answers with another feature? */
@@ -1545,6 +1710,8 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
         if (isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
           const read: ElementRecord = { ...c, ownerId: reader.id };
           const eq = relationEquation(model, read, memo, false, undefined, instance);
+          // Two sides the same expression fix nothing ({@link identicalSides}).
+          if (eq && identicalSides(c)) continue;
           if (eq) {
             eq.asserted = true;
             READER_OF.set(eq, reader.id);
@@ -2111,7 +2278,10 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     const reads = eq.vars.map((v) => values.get(v)).join(',');
     if (missedAt.get(eq) === reads) return false;
     const val = solveForSingle(eq, u, values, tol);
-    if (val === undefined || !Number.isFinite(val)) {
+    // One with one root at most in `u` that holds as well a step either side of it, the others where they are, does not
+    // read `u` there — `y * z == 0.0` at a stated z of 0, where every y is a root — and fixes nothing: taken as the
+    // model's own value for y, it was the root the search stopped at, and `c1 { y == 0.5 }` read violated there.
+    if (val === undefined || !Number.isFinite(val) || (!isCurved(eq, [u]) && flatAbout(eq, u, val, values))) {
       missedAt.set(eq, reads);
       return false;
     }
@@ -3850,6 +4020,24 @@ function solveForSingle(
     if ('value' in l && typeof l.value === 'number') return toStorage(l.value);
   }
   return solveScalar(eq, u, values, tol);
+}
+
+/**
+ * Does `eq` hold exactly a step either side of `val` in `u` as well (`|val| + 1`), the others where they are? Of an
+ * equation with one root at most in `u` ({@link isCurved}), that says its residual does not read `u` at those values.
+ */
+function flatAbout(eq: Equation, u: ElementId, val: number, values: Map<ElementId, number>): boolean {
+  const prev = values.get(u);
+  try {
+    const h = Math.abs(val) + 1;
+    return [val - h, val + h].every((t) => {
+      values.set(u, t);
+      return residualOf(eq, values) === 0;
+    });
+  } finally {
+    if (prev === undefined) values.delete(u);
+    else values.set(u, prev);
+  }
 }
 
 /** Is `node` a bare reference resolving (via the equation's scope) to `u`? */

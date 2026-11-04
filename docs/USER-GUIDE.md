@@ -768,7 +768,14 @@ Two names worth separating:
   **No design equation turns on the order of the text, bar four cases of where the solve
   starts or of the digits a value is given to (the end of this passage).** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
-  `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
+  `x`) are both *imposed by the solve*. An equation whose two sides are the same expression or the
+  same polynomial (`c0 { y == y }`, `y * 2.0 == 2.0 * y`, `y - y == 0.0`), plain or asserted, fixes
+  nothing and is no design equation: beside `c1 { y == 0.5 }` c1 is *imposed* in either order, and
+  the equation's own row is judged at the value found. So does one that does not read its one unknown
+  at the values the others have (`y * z == 0.0` at a stated `z` of 0, where every y is a root): it gives y
+  no value, and c1 is *imposed* beside it. One whose side divides by a feature, takes a
+  remainder or raises to what is not a small whole number (`y / z == y / z`, no value where z is 0)
+  is read as any other equation. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
   taken, and every relation over that value is *unjudged* (*… only plain
   constraints that disagree (t50 and t60): which of them holds would turn on the
