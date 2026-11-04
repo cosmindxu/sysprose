@@ -64,7 +64,7 @@ import {
   PROPERTY_PATTERN_QUALIFIED_NAME,
 } from '@semantics/verification-vocabulary';
 import { resolveName } from '@semantics/resolve-names';
-import { RM_METADATA_NAME, VERIFICATION_METHOD_VALUES } from '@semantics/requirements';
+import { RM_METADATA_NAME, VERIFICATION_METHOD_VALUES, negatedClauseExpression } from '@semantics/requirements';
 import { VERIFICATION_METHOD_DEF } from '@semantics/verify';
 import type { AstNode } from 'langium';
 import type { ParseResult, ParseDiagnostic } from '../types';
@@ -2277,13 +2277,14 @@ class Mapper {
       this.bareVerifyClauses.set(rel.id, unquoteName(node.name) ?? '');
       return;
     }
-    if (node.negated) {
-      // `assert not constraint c { B }` states that B does NOT hold (`require not` and `assume not` are no published
-      // form, and are refused the same way). Read as the plain assert it states the opposite:
-      // `c` checked as a fact (T while B holds, so a model that contradicts itself passes), the body asserted as an
-      // axiom, or the clause dropped from a proof it restricts. No reader negates it, so the clause is refused: the
-      // load degrades, the checks abstain, and it is kept as written with no expression for any reader to take as
-      // the plain clause (the save re-emits its text, as it does for a keyword this tool does not model).
+    // `assert not constraint c { B }` states that B does NOT hold (`require not` and `assume not` are no published form,
+    // and are read alike). It is read as the plain clause over `not (B)`: the clause the workaround `assert constraint c
+    // { not (B) }` writes, which every reader already judges, so the four surfaces cannot read it otherwise than that
+    // clause, and the save writes it back as it was written (`negated`, {@link negatedClauseBody}). Only a clause with a
+    // body that is one expression is read so: a negated clause that names a constraint (`assert not constraint c : K;`),
+    // or has no body or members of its own, has no expression to negate here, and is refused with a finding of its own
+    // (the load degrades, the checks abstain), kept as written with no expression for any reader to take as the plain clause.
+    if (node.negated && !this.readsNegatedClause(node)) {
       const code = 'mapper/negated-assert-unread';
       const name = unquoteName(node.name);
       this.diagnostics.push({
@@ -2333,10 +2334,25 @@ class Mapper {
         // `constraint` unconditionally rewrote every reference into a
         // declaration on every save.
         ...(node.declares ? { declares: node.declares } : {}),
+        ...(node.negated ? { negated: true } : {}),
       },
     });
     for (const spec of node.specializations) this.applySpecialization(el, spec);
     this.mapRequirementClauseTail(node, el);
+    // The negated clause's expression is the negation of its body, as the plain clause `{ not (B) }` states it.
+    const body = this.model.get(el.id)?.attrs.expression;
+    if (node.negated && typeof body === 'string') this.model.setAttrs(el.id, { expression: negatedClauseExpression(body) });
+  }
+
+  /** Is this negated clause one this tool reads as the negation of its body ({@link negatedClauseExpression})? */
+  private readsNegatedClause(node: RequirementClause): boolean {
+    return (
+      node.body === undefined &&
+      node.members.length === 0 &&
+      node.expr !== undefined &&
+      node.specializations.length === 0 &&
+      node.declares !== 'requirement'
+    );
   }
 
   /**

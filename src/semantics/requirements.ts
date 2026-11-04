@@ -521,3 +521,35 @@ export function setRequirementAttr(
   model.setAttrs(cell.id, { value: valueLiteral(value), valueText: undefined });
   return target;
 }
+
+/**
+ * The expression a negated clause (`assert not constraint c { B }`, also `require not` and `assume not`) is read as:
+ * the negation of its body, `not (B)`, the plain clause `{ not (B) }` writes, which every reader already judges
+ * ({@link negatedClauseBody} is its inverse, for the save).
+ */
+export function negatedClauseExpression(body: string): string {
+  return `not (${body})`;
+}
+
+/**
+ * The body `B` of an expression written `not (B)` as one whole — the opening parenthesis closes at the last character —
+ * or `undefined` for any other text (`not (a) and (b)`, `not (a) or not (b)`, a body with no `not`). A string literal
+ * and a quoted name are skipped, so a parenthesis in one is no parenthesis.
+ */
+export function negatedClauseBody(expression: string): string | undefined {
+  const text = expression.trim();
+  const m = /^not\s*\(/.exec(text);
+  if (!m || !text.endsWith(')')) return undefined;
+  let depth = 0;
+  for (let i = m[0].length - 1; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"' || c === "'") {
+      i++;
+      while (i < text.length && text[i] !== c) i += text[i] === '\\' ? 2 : 1;
+      continue;
+    }
+    if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return i === text.length - 1 ? text.slice(m[0].length, i) : undefined;
+  }
+  return undefined;
+}

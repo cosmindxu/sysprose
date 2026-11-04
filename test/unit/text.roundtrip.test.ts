@@ -1522,23 +1522,45 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(codes('package A { state def M; metadata Safety about M { level = 3; } }')).toEqual([]);
   });
 
-  it('refuses `assert not constraint c { … }` with a finding of its own, keeps it as written, and reads no body from it', () => {
-    // The negation of an assert (and `require not`, `assume not`, no published form) read as the plain clause says the
-    // opposite: `c` checked as a fact, its body asserted as an axiom. Nothing negates it, so the clause is refused (the
-    // load degrades), kept with no expression, and written back as it was read — the save re-parses to the same finding.
+  it('reads `assert not constraint c { … }` as the negation of its body, writes it back as written, and refuses a negated clause with no expression to negate', () => {
+    // The negation of an assert (and `require not`, `assume not`, no published form) is the plain clause over `not (body)`,
+    // the one `assert constraint c { not (…) }` writes, so every reader judges it as that clause; the element keeps
+    // `negated` and the save writes the `not` back. One with no expression to negate (a name, a specialisation, a body of
+    // members) has nothing the readers could negate: it is refused with a finding of its own, kept as written.
     const src = (clause: string) => `package A { part def P { attribute load : ScalarValues::Real = 50.0; ${clause} } part p : P; }`;
-    const forms = [
-      'assert not constraint c { load > 10.0 }',
-      'assert not constraint { load > 10.0 }',
-      'assert not c { load > 10.0 }',
+    const read: Array<[string, string]> = [
+      ['assert not constraint c { load > 10.0 }', 'not (load > 10.0)'],
+      ['assert not constraint { load > 10.0 }', 'not (load > 10.0)'],
+      ['assert not c { load > 10.0 }', 'not (load > 10.0)'],
+      ['private assert not constraint c { load > 10.0 }', 'not (load > 10.0)'],
+      ['require not constraint c { load > 10.0 }', 'not (load > 10.0)'],
+      ['assume not constraint c { load > 10.0 and load < 100.0 }', 'not (load > 10.0 and load < 100.0)'],
+      ['assert not constraint c { not (load > 10.0) }', 'not (not (load > 10.0))'],
+    ];
+    for (const [form, expression] of read) {
+      const { model, diagnostics } = parseModel(src(form));
+      expect(diagnostics.filter((d) => d.severity === 'error'), form).toEqual([]);
+      const kept = model.all().filter((e) => e.attrs.negated === true);
+      expect(kept.length, form).toBe(1);
+      expect(kept[0]!.attrs.expression, form).toBe(expression);
+      expect(kept[0]!.attrs.unparsedText, form).toBeUndefined();
+      const saved = serializeModel(model);
+      expect(saved.replace(/\s+/g, ' '), form).toContain(form);
+      const again = parseModel(saved);
+      expect(again.diagnostics.filter((d) => d.severity === 'error'), form).toEqual([]);
+      expect(serializeModel(again.model), form).toBe(saved);
+      // An expression edited since (the flag is stale) is written plain, never behind a `not` it does not state.
+      model.setAttrs(kept[0]!.id, { expression: 'load > 20.0' });
+      expect(serializeModel(model), form).toContain('load > 20.0');
+      expect(serializeModel(model), form).not.toMatch(/\bnot\b/);
+    }
+    const refused = [
       'assert not requirement q { require constraint z { load > 10.0 } }',
       'assert not constraint c :> Base { load > 10.0 }',
       'assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y }',
-      'private assert not constraint c { load > 10.0 }',
-      'require not constraint c { load > 10.0 }',
-      'assume not constraint c { load > 10.0 }',
+      'assert not constraint c;',
     ];
-    for (const form of forms) {
+    for (const form of refused) {
       const { model, diagnostics } = parseModel(src(form));
       expect(
         diagnostics.filter((d) => d.severity === 'error').map((d) => [d.code, d.range !== undefined]),
@@ -1548,7 +1570,6 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       expect(kept.length, form).toBe(1);
       expect(kept[0]!.attrs.expression, form).toBeUndefined();
       expect(kept[0]!.attrs.unparsedText, form).toBe(form);
-      expect(model.all().filter((e) => typeof e.attrs.expression === 'string' && e.eClass === 'ConstraintUsage'), form).toEqual([]);
       const saved = serializeModel(model);
       expect(saved, form).toContain(form);
       const again = parseModel(saved);
@@ -1562,10 +1583,11 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       expect(diagnostics.filter((d) => d.severity === 'error'), form).toEqual([]);
       expect(model.all().filter((e) => e.attrs.negated !== undefined), form).toEqual([]);
     }
-    // The negation spelled in the body is the plain clause, read as it states.
+    // The negation spelled in the body is the plain clause, read as it states: the same expression, and no flag.
     const spelled = parseModel(src('assert constraint c { not (load > 10.0) }'));
     expect(spelled.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     expect(spelled.model.all().find((e) => e.declaredName === 'c')!.attrs.expression).toBe('not (load > 10.0)');
+    expect(spelled.model.all().find((e) => e.declaredName === 'c')!.attrs.negated).toBeUndefined();
   });
 
   it('resolves a forward disjoint / subset target and leaves genuine typos unresolved (F4)', () => {

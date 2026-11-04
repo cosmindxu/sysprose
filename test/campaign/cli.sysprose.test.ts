@@ -2302,16 +2302,17 @@ package P {
     }
   }, 120_000);
 
-  it('verify, consistency, bounds and refine refuse a model with a negated assert: its own finding, and exit 2', () => {
+  it('verify, consistency, bounds and refine refuse a model with a negated assert they cannot read: its own finding, and exit 2', () => {
     // `assert not constraint c { load > 10.0 }` over load = 50 was a parse error whose recovery left `c` a plain
     // constraint, read T by every surface while it holds: the negated assert is violated, and the model passed.
-    // The clause is refused with a finding of its own; the load degrades, so no command judges the file.
+    // A body of members has no expression to negate: the clause is refused with a finding of its own; the load
+    // degrades, so no command judges the file.
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-negated-assert-'));
     try {
       const file = join(dir, 'h1.sysml');
       writeFileSync(
         file,
-        'package H1 {\n  part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { load > 10.0 } }\n  part p : P;\n}\n',
+        'package H1 {\n  part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y } }\n  part p : P;\n}\n',
       );
       for (const args of [['verify', file, '--engine', 'literal'], ['consistency', file], ['bounds', file, '--measure', 'p.load'], ['refine', file]]) {
         const r = spawnCli(args);
@@ -2320,6 +2321,26 @@ package P {
         expect(r.code, `${args[0]} gave an answer over a clause it could not read`).toBe(2);
         expect(r.stderr, args[0]).toContain('did not load cleanly');
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('verify reads a negated assert as the negation of its body: the model that contradicts itself is reported, not refused', () => {
+    // The same clause with a body that is one expression is the plain clause over `not (load > 10.0)`: it is violated at
+    // load = 50, the load stays clean, and the relation beside it abstains in a sentence that names the clause.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-negated-assert-read-'));
+    try {
+      const file = join(dir, 'h1.sysml');
+      writeFileSync(
+        file,
+        'package H1 {\n  part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { load > 10.0 } }\n  part p : P;\n  constraint t { p.load <= 100.0 }\n}\n',
+      );
+      const r = spawnCli(['verify', file, '--engine', 'literal']);
+      expect(r.stdout + r.stderr).not.toContain('mapper/negated-assert-unread');
+      expect(r.stdout + r.stderr).toContain('Constraint violated: not (load > 10.0)');
+      expect(r.stdout).toContain('the asserted `not (load > 10.0)` (H1::P::c) is false at them');
+      expect(r.code, 'a model that contradicts itself was passed').toBe(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

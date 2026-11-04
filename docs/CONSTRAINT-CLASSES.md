@@ -57,19 +57,19 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 483 | 72 | 2 | 6 | 585 (256) | 0 | none | `differential-tested` |
+| `lra` | 483 | 72 | 2 | 6 | 577 (252) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `units` | 98 | 40 | 2 | 5 | 27 (14) | 0 | none | `differential-tested` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `stated-value` | 311 | 78 | 1 | 7 | 580 (254) | 0 | none | `differential-tested` |
+| `stated-value` | 311 | 78 | 1 | 7 | 572 (250) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
-| `bind-equality` | 9 | 5 | 1 | 0 | 226 (134) | 0 | none | `experimental` |
+| `bind-equality` | 9 | 5 | 1 | 0 | 222 (132) | 0 | none | `experimental` |
 | `asserted-fact` | 27 | 8 | 1 | 0 | 15 (7) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 322 (209) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 280 (130) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 318 (207) | 0 | none | `differential-tested` |
+| `per-instance` | 1 | 1 | 1 | 0 | 276 (128) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 5 | 4 | 2 | — | — | — | none | `fenced` |
@@ -216,7 +216,7 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 - **Encodes.** `assert constraint`.
 - **Level of `asserted-fact`.** `experimental` (first unmet: a decided golden row, have 0).
 - **Open defects.**
-  - `D-assert-not` (wrong-verdict): Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read.
+  - `D-assert-not` (wrong-verdict): Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); the shapes with no expression to negate (a constraint named without a body, a specialised one, `assert not requirement`, a body of members) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”
 

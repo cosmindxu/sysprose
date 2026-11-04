@@ -8,7 +8,7 @@
         "asserted-fact"
       ],
       "kind": "wrong-verdict",
-      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read."
+      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); the shapes with no expression to negate (a constraint named without a body, a specialised one, `assert not requirement`, a body of members) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read."
     },
     {
       "id": "D-inconsistent-axioms",

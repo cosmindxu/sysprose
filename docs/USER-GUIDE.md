@@ -1085,17 +1085,21 @@ judges, so it has to be what a solver judges as well; filing it as an axiom
 would let one false constraint make the whole axiom set unsatisfiable and turn
 every real violation in the run into "cannot tell".
 
-**A negated assert is refused.** The published grammar's `assert not constraint c { load > 10.0 }`
-states that the body does *not* hold. This tool reads no negation of a clause, and every other reading
-is wrong: as the plain assert it states the opposite (`c` checked as a fact, true while the body holds, so
-a model that contradicts itself passes; its body an axiom), and dropped from a proof it restricts it
-would let a refutation stand that the negation rules out. So the clause is refused with a finding of
-its own, `mapper/negated-assert-unread` (an error, on the clause; `require not` and `assume not`, which
-are no published form, are refused the same way). The load degrades like any load with an error: the
-reporting commands exit 1 with the degraded banner, `verify`, `consistency`, `bounds`, `refine` and
-`fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no surface
-files a row for the clause, and the save writes it back as it was read. State the negation in the body
-instead, `assert constraint c { not (load > 10.0) }`, an ordinary assert that this tool reads.
+**A negated assert is read as the negation of its body.** The published grammar's
+`assert not constraint c { load > 10.0 }` states that the body does *not* hold. This tool reads it as
+the plain clause `assert constraint c { not (load > 10.0) }`, so every surface reads it as that clause: `c`
+is violated where its body holds (load 50), the model that contradicts itself reports so (the literal
+engine and the SMT engine report their axioms inconsistent beside it, as for any violated assert), and a
+`not (… == …)` defines no value. `require not` and `assume not`, which are no published form, are read the
+same way, and the save writes the clause back as it was written (`assert not constraint c { load > 10.0 }`).
+A negated clause with no expression to negate is refused with a finding of its own,
+`mapper/negated-assert-unread` (an error, on the clause): one that names a constraint without a body, one
+that specialises a constraint (`assert not constraint c :> K { … }`), a requirement
+(`assert not requirement r { … }`) and one whose body holds members. The load degrades like any load with an
+error: the reporting commands exit 1 with the degraded banner, `verify`, `consistency`, `bounds`, `refine`
+and `fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no
+surface files a row for the clause, and the save writes it back as it was read. State the negation in the
+body instead, `assert constraint c { not (…) }`, which this tool reads.
 
 **A redefinition is the feature in its context, and `=` binds.** In `part p : P
 { attribute :>> m = 20.0 [kg]; }` every surface reads `p.m` as p's own feature —
@@ -1892,12 +1896,19 @@ numeric surface, which reads P's `m` once for every instance, reads it nowhere.
 For a package's binding on a definition's feature (`bind P::m = M`, M written
 with `=`) against an instance's own `:>> m = 25.0 [kg]`, only that instance's
 own value goes unread: M, a package's feature and so one instance, and another
-instance's `m`, which the binding makes M, are still read on the check and the
-literal engine, though not on the numeric surface, which reads P's `m` once for
-every instance; and no binding finding reports the pair. The solver lane holds
-that instance to the binding as well, units or none, so its axioms are
-inconsistent, and the SMT engine says so beside the other surfaces' *could not be
-evaluated*.
+instance's `m`, which the binding makes M, are still read on the check, though
+not on the numeric surface, which reads P's `m` once for every instance. The
+binding's own row is reported violated at that instance (*`bind P.m = M` binds
+P.m to M in every instance of P, and the instance states m = 25.0 [kg] where M
+= 50.0 [kg]*), so the literal engine marks a relation over M or over another
+instance's `m` inconclusive beside the check's verdict, as it does for every
+violated binding. Only a constant the two sides state with `=` that differs
+(units converted) is reported, one definition feature below the binding, in an
+instance that redefines it directly: an expression, a `default`, a deeper end
+or a value that takes an evaluation to compare is read as before, with no
+finding. The solver lane holds that instance to the binding as well, units or
+none, so its axioms are inconsistent, and the SMT engine says so beside the
+other surfaces' *could not be evaluated*.
 
 **A `default` stands against every assertion.** `attribute L default = 2.0;`
 beside `assert constraint qa { L == 5.0 }` is L = 2 on every surface, as `attribute
