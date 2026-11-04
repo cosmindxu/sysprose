@@ -3221,8 +3221,12 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
         const failures: string[] = [];
         let handChecks = 0;
         let deletes = 0;
+        let fellBack = 0;
+        let retargets = 0;
         for (let seq = FIRST; seq < FIRST + SEQUENCES && failures.length < 3; seq++) {
           const rnd = seeded(seq * 7919 + 13);
+          // A stream of its own for the user's retarget of a redefinition, so the draws above are the ones they always were.
+          const extra = seeded(seq * 15485863 + 5);
           const pick = <T,>(xs: readonly T[]): T | undefined => xs[Math.floor(rnd() * xs.length)];
           let text = randomModel(rnd, seeded(seq * 104729 + 31));
           load(text);
@@ -3230,6 +3234,7 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
           // by different names, the file writes one of them) is a limit of the text, not of the edit: the sequence runs on
           // the model without the bindings.
           if (copiesApart(st().model, reopened(st().model)).length > 0) {
+            fellBack++;
             text = randomModel(seeded(seq * 7919 + 13));
             load(text);
           }
@@ -3255,7 +3260,29 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
             let did = '';
             let handText: string | null = null;
             let watchedSources: string[] = [];
-            if (kind === 0 && usages.length > 0) {
+            // The user's retarget of a redefinition (Properties, `updateElement` on the edge) to another feature of a
+            // general of its owner: the settle that follows lands every redefinition where the saved file puts it. Drawn
+            // from a stream of its own; a draw that finds no feature to retarget to leaves the step as it always was.
+            const edges = user.filter((e) => e.eClass === 'Redefinition' && e.attrs.implicit !== true && (e.source ?? []).length === 1 && (e.target ?? []).length === 1);
+            const drawn = edges.length > 0 && extra() < 0.2 ? edges[Math.floor(extra() * edges.length)]! : undefined;
+            const source = drawn !== undefined ? m.get(drawn.source![0]!)! : undefined;
+            let retargetTo: ElementRecord | undefined;
+            if (source !== undefined) {
+              const generals = new Set<string>();
+              const walk = (id: string): void => {
+                for (const g of m.typesOf(id)) if (!generals.has(g.id)) (generals.add(g.id), walk(g.id));
+              };
+              if (source.ownerId !== null) walk(source.ownerId);
+              // Not onto a feature a sibling of the source redefines already: two features of one owner on one line is outside this oracle (TODO).
+              const taken = new Set(edges.filter((e) => m.get(e.source![0]!)?.ownerId === source.ownerId).map((e) => e.target![0]!));
+              const options = features.filter((x) => x.id !== source.id && !taken.has(x.id) && x.ownerId !== null && generals.has(x.ownerId));
+              retargetTo = options.length > 0 ? options[Math.floor(extra() * options.length)] : undefined;
+            }
+            if (drawn !== undefined && source !== undefined && retargetTo !== undefined) {
+              did = `retarget redefinition of ${place(m, source.id)} to ${place(m, retargetTo.id)}`;
+              retargets++;
+              st().updateElement(drawn.id, { target: [retargetTo.id] });
+            } else if (kind === 0 && usages.length > 0) {
               const u = pick(usages)!;
               const d = pick(defs)!;
               did = `bindType ${u.declaredName} ${d.declaredName}`;
@@ -3390,10 +3417,15 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
           }
         }
         expect(failures).toEqual([]);
+        if (process.env.SYSPROSE_RT_REPORT) console.log(`property window ${FIRST}+${SEQUENCES}x${STEPS}: ${fellBack} fell back to the binding-free model, ${retargets} retargets, ${deletes} deletes, ${handChecks} hand checks`);
         // The second oracle ran: some deletes were compared with the text without the feature. How many a seed window
         // can compare is up to its models (most hold a named redefinition, which puts them outside it), so only the
         // gate's own window must have compared one; any other window must at least have drawn deletes.
         if (SEQUENCES >= 100) expect(deletes).toBeGreaterThan(0);
+        // The sequences that fell back to the model without bindings are few (none in the gate's window): the bindings are
+        // exercised; and the user's retarget of a redefinition was drawn.
+        if (SEQUENCES >= 100) expect(fellBack).toBeLessThan(SEQUENCES / 4);
+        if (SEQUENCES >= 100) expect(retargets).toBeGreaterThan(0);
         if (FIRST === 0 && SEQUENCES === 300 && STEPS === 4) expect(handChecks).toBeGreaterThan(0);
       }, 600_000);
     });

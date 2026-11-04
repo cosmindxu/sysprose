@@ -722,6 +722,103 @@ describe('Model core', () => {
       expect(m.all().every((el, i) => el === m.inSerialOrder()[i])).toBe(true);
     });
   });
+
+  // `remove` finds the edges that name a removed element through an index kept by every edit (a loop of removals
+  // does not scan the model each time). The scan it replaced: every element in the order of the map, an edge that
+  // names a member of the set so far joining it, repeated while the set grows — so an edge the map lists BEFORE an
+  // edge that goes with the removal and names it goes too, and none keeps an endpoint naming a removed element.
+  describe('remove finds the dangling edges as a scan of every element does (275)', () => {
+    const scanned = (m: Model, id: string, cascade: boolean): string[] => {
+      const gone = new Set<string>([id]);
+      if (cascade) for (const d of m.descendants(id)) gone.add(d.id);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const r of m.all()) {
+          if (gone.has(r.id)) continue;
+          if ([...(r.source ?? []), ...(r.target ?? [])].some((ref) => gone.has(ref))) {
+            gone.add(r.id);
+            grew = true;
+          }
+        }
+      }
+      return [...gone];
+    };
+
+    it('an edge listed before the edge it names goes with it (no endpoint names a removed element)', () => {
+      const m = new Model();
+      const a = m.create('PartUsage', { declaredName: 'a' });
+      const b = m.create('PartUsage', { declaredName: 'b' });
+      m.create('Succession', { id: 'c2', source: ['c1'], target: [b.id] });
+      m.create('Succession', { id: 'c1', source: [a.id], target: [b.id] });
+      expect(m.remove(a.id).sort()).toEqual([a.id, 'c1', 'c2']);
+      for (const el of m.all()) for (const ref of [...(el.source ?? []), ...(el.target ?? [])]) expect(m.has(ref), el.id).toBe(true);
+    });
+
+    it('a patch that cannot be copied leaves the index as it was', () => {
+      const m = new Model();
+      const a = m.create('PartUsage', { declaredName: 'a' });
+      const z = m.create('PartUsage', { declaredName: 'z' });
+      const e = m.create('Dependency', { source: [a.id], target: [z.id] });
+      m.remove(m.create('PartUsage', { declaredName: 'tmp' }).id); // builds the index
+      expect(() => m.update(e.id, { source: 5 as unknown as string[] })).toThrow();
+      expect(m.get(e.id)!.source).toEqual([a.id]);
+      expect(m.remove(a.id).sort()).toEqual([a.id, e.id].sort());
+    });
+
+    it('removes the same elements in the same order over random edits, whichever edit kept the index', () => {
+      let state = 0x9e3779b9;
+      const rnd = (n: number): number => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return Math.floor((state / 2 ** 32) * n);
+      };
+      let removals = 0;
+      let edgesToEdges = 0;
+      for (let seq = 0; seq < 150; seq++) {
+        const m = new Model();
+        const ids: string[] = [];
+        const live = (): string[] => ids.filter((i) => m.has(i));
+        for (let step = 0; step < 60; step++) {
+          const alive = live();
+          const op = rnd(10);
+          if (alive.length < 3 || op < 3) {
+            ids.push(m.create('PartUsage', { declaredName: `p${step}`, ownerId: alive.length > 0 && rnd(2) ? alive[rnd(alive.length)]! : null }).id);
+          } else if (op < 6) {
+            // An edge between any two elements, an edge among them, owned or not.
+            const [a, b] = [alive[rnd(alive.length)]!, alive[rnd(alive.length)]!];
+            const e = m.create('Dependency', { source: [a], target: rnd(3) === 0 ? [b, alive[rnd(alive.length)]!] : [b] });
+            if (m.get(a)!.source || m.get(b)!.target) edgesToEdges++;
+            ids.push(e.id);
+          } else if (op < 7) {
+            const e = alive.find((i) => m.get(i)!.source !== undefined);
+            if (e !== undefined) m.update(e, rnd(2) ? { target: [alive[rnd(alive.length)]!] } : { source: [alive[rnd(alive.length)]!] });
+          } else if (op < 8 && removals % 3 === 0) {
+            m.reset(m.toJSON());
+          } else {
+            const id = alive[rnd(alive.length)]!;
+            const cascade = rnd(4) !== 0;
+            const want = scanned(m, id, cascade);
+            expect(m.remove(id, { cascade }), `seq ${seq} step ${step}`).toEqual(want);
+            removals++;
+          }
+        }
+      }
+      expect(removals).toBeGreaterThan(500);
+      expect(edgesToEdges).toBeGreaterThan(50);
+    });
+
+    it('a loop of removals does not scan the model each time', () => {
+      const m = new Model();
+      const pkg = m.create('Package', { declaredName: 'P' });
+      for (let i = 0; i < 20000; i++) m.create('PartUsage', { declaredName: `p${i}`, ownerId: pkg.id });
+      const reds: string[] = [];
+      for (let i = 0; i < 2000; i++) reds.push(m.create('Dependency', { source: [pkg.id], target: [pkg.id] }).id);
+      const t0 = Date.now();
+      for (const r of reds) expect(m.remove(r)).toEqual([r]);
+      // 2000 scans of 22000 elements took about 1.5 s; the index does it in a few ms (the bound leaves a loaded machine room).
+      expect(Date.now() - t0).toBeLessThan(500);
+    });
+  });
 });
 
 // The specialization-cycle rule reads the components of the graph, not every simple path from each element.
