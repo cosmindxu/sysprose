@@ -18,6 +18,7 @@ import {
   effectiveQualifiedName,
 } from '@semantics/index';
 import { parseDocument } from '@text/langium/module';
+import { negatedClauseBody } from '@semantics/requirements';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
 const KEY_ATTRS = [
@@ -1554,6 +1555,11 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       expect(serializeModel(model), form).toContain('load > 20.0');
       expect(serializeModel(model), form).not.toMatch(/\bnot\b/);
     }
+    // A parenthesis in a comment is no parenthesis: only the one `not (…)` closing at the last character reads as a body.
+    expect(negatedClauseBody('not (a > 1.0) // (')).toBeUndefined();
+    expect(negatedClauseBody('not ( // )\n a > 1.0 /* ) */)')).toBe(' // )\n a > 1.0 /* ) */');
+    expect(negatedClauseBody('not ( // (\n a) and (b // )\n)')).toBeUndefined();
+    expect(negatedClauseBody('not (a) and (b)')).toBeUndefined();
     const refused = [
       'assert not requirement q { require constraint z { load > 10.0 } }',
       'assert not constraint c :> Base { load > 10.0 }',

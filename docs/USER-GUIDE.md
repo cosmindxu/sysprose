@@ -2262,7 +2262,7 @@ the instances around it, too: `p4.load` over p4's `:>> load = 7.0 [kg]` beside
 the package's `bind P::load = L` (L 50 kg), or `r2.q.p.load` over r2's q's p's
 `:>> load = 3.0` beside R's q's `bind p.load = L` (r2's L 50) — the model then
 states two values, which the SMT engine reports as inconsistent axioms, where the
-other surfaces read neither. A value the same in every
+other surfaces read neither value (the check files the binding's violated row at p4, as above). A value the same in every
 instance — a literal, or arithmetic over literals the instance changes nothing
 of — keeps the feature's own name. A verify row prints a path read through
 an instance at that instance's value (`bindings`, and the evidence record's

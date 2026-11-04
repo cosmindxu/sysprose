@@ -533,8 +533,8 @@ export function negatedClauseExpression(body: string): string {
 
 /**
  * The body `B` of an expression written `not (B)` as one whole — the opening parenthesis closes at the last character —
- * or `undefined` for any other text (`not (a) and (b)`, `not (a) or not (b)`, a body with no `not`). A string literal
- * and a quoted name are skipped, so a parenthesis in one is no parenthesis.
+ * or `undefined` for any other text (`not (a) and (b)`, `not (a) or not (b)`, a body with no `not`). A string literal,
+ * a quoted name and a comment are skipped, so a parenthesis in one is no parenthesis.
  */
 export function negatedClauseBody(expression: string): string | undefined {
   const text = expression.trim();
@@ -546,6 +546,12 @@ export function negatedClauseBody(expression: string): string | undefined {
     if (c === '"' || c === "'") {
       i++;
       while (i < text.length && text[i] !== c) i += text[i] === '\\' ? 2 : 1;
+      continue;
+    }
+    if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) {
+      const end = text[i + 1] === '/' ? text.indexOf('\n', i) : text.indexOf('*/', i + 2);
+      if (end < 0) return undefined;
+      i = text[i + 1] === '/' ? end : end + 1;
       continue;
     }
     if (c === '(') depth++;
