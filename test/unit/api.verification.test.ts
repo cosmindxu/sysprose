@@ -1912,3 +1912,77 @@ package P {
     expect(use.resolvedTo?.qualifiedName).toBe('MyTool::MyPrecondition');
   }, 60_000);
 });
+
+/**
+ * An asserted BARE BOUND over a `default` a binding makes give way and gives no value (two defaults that differ) is an
+ * axiom, since it fixes no value; an asserted equation over it, or a pair of bounds that meets, is not, as no assertion
+ * gives a default a value (decision 14). reads2 S1.
+ */
+describe('a bare bound over a default a binding makes give way', () => {
+  const P = (asserts: string, type = 'ScalarValues::Real') =>
+    `part def P { attribute load : ${type} default = 1.0; ${asserts} }`;
+  const Q = (asserts: string, type = 'ScalarValues::Real') =>
+    `part def Q { attribute L : ${type} default = 7.0; ${asserts} part p : P; bind p.load = L; } part q : Q;`;
+  /** The encodability of each asserted relation's rows, by name, `true` or the refusal's reason. */
+  async function axioms(text: string): Promise<Record<string, unknown[]>> {
+    const rows = obligationsOf(await load(text)).filter((o) => o.role === 'axiom' && o.source === 'assert');
+    const out: Record<string, unknown[]> = {};
+    for (const o of rows) {
+      expect((o as { givenWay?: unknown }).givenWay, 'the working field never leaves the worklist').toBeUndefined();
+      (out[o.element.qualifiedName] ??= []).push(o.encodable === true ? true : o.encodable.reason);
+    }
+    return out;
+  }
+
+  it('carries bounds that leave the value open, in a definition and across the binding', async () => {
+    const rows = await axioms(
+      `package A { ${P('assert constraint lo { load >= 0.0 } assert constraint hi { load <= 10.0 }')} ${Q('assert constraint qa { L > 1.0 }')} }`,
+    );
+    expect(rows['A::P::lo in A::Q::p']).toEqual([true]);
+    expect(rows['A::P::hi in A::Q::p']).toEqual([true]);
+    expect(rows['A::Q::qa']).toEqual([true]);
+  });
+
+  it('refuses a pair that meets, in one definition or across the binding, and says which', async () => {
+    for (const [name, p, q] of [
+      ['one', 'assert constraint a { load >= 5.0 } assert constraint b { load <= 5.0 }', ''],
+      ['across', 'assert constraint a { load <= 5.0 }', 'assert constraint qa { L >= 5.0 }'],
+    ] as const) {
+      const model = await load(`package M${name} { ${P(p)} ${Q(q)} }`);
+      const refused = obligationsOf(model).filter((o) => o.source === 'assert' && o.encodable !== true && o.instance?.baseId !== undefined);
+      expect(refused.length, name).toBeGreaterThan(0);
+      for (const o of refused) {
+        expect(o.encodable !== true && o.encodable.reason, name).toBe('unread-definition');
+        expect(o.encodable !== true && o.encodable.detail, name).toMatch(/its asserted bounds meet \(`.*` and `.*`\), which would give it a value/);
+      }
+    }
+  });
+
+  it('refuses bounds linked by a derived value, which meet through it, and still carries a lower bound alone', async () => {
+    const derived = `part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; assert constraint hs { s <= 4.0 } }`;
+    const refused = await axioms(`package D { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`);
+    const inQ = Object.entries(refused).filter(([k]) => k === 'D::Q::ql');
+    expect(inQ.length).toBeGreaterThan(0);
+    for (const [, v] of inQ) expect(v).toEqual(['unread-definition']);
+    const rows = obligationsOf(await load(`package D2 { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`)).filter(
+      (o) => o.source === 'assert' && o.encodable !== true && o.element.qualifiedName === 'D2::Q::ql',
+    );
+    expect(rows.map((o) => o.encodable !== true && o.encodable.detail).join()).toMatch(/its bounds meet through a derived value/);
+    // A lower bound alone, beside the same derived row, meets nothing.
+    const lone = await axioms(`package D3 { part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; } ${Q('assert constraint ql { L >= 2.0 }')} }`);
+    expect(lone['D3::Q::ql']).toEqual([true]);
+  });
+
+  it('refuses an equation, an integer sort and a sum, which are no bare bound on a Real', async () => {
+    for (const [name, text] of [
+      ['equation', `package E { ${P('assert constraint a { load == 2.0 }')} ${Q('')} }`],
+      ['integer', `package I { ${P('assert constraint a { load >= 0.0 }', 'ScalarValues::Integer')} ${Q('', 'ScalarValues::Integer')} }`],
+      ['sum', `package S { ${P('assert constraint a { load + 1.0 >= 0.0 }')} ${Q('')} }`],
+    ] as const) {
+      const rows = await axioms(text);
+      const inQ = Object.entries(rows).filter(([k]) => k.includes(' in '));
+      expect(inQ.length, name).toBeGreaterThan(0);
+      for (const [, v] of inQ) expect(v, name).toEqual(['unread-definition']);
+    }
+  });
+});

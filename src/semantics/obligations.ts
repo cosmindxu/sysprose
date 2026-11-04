@@ -73,6 +73,7 @@ import {
   claimedVerdictOf,
   contractsOf,
   gateRelation,
+  bareBoundOf,
   isUserModelElement,
   readRelation,
   withInstances,
@@ -241,6 +242,12 @@ export interface Obligation {
    * An ASSUMPTION that is one is no premise a proof may stand on.
    */
   shadowed?: string[];
+  /**
+   * Set on an asserted bare bound over a `default` a binding makes give way and gives no value, while the worklist
+   * is built (`RelationReading.givenWay`): {@link refuseMeetingBounds} carries it or refuses it, and drops the field. The
+   * pass reads the axiom rows of the WHOLE model, also for a scoped worklist (`opts.scopeId`), so both list the same carry.
+   */
+  givenWay?: { path: string; why: string };
   /**
    * Set on a row that reads a relation, or a binding, of a definition IN A
    * CONTEXT that specialises it — not where it is written. `baseId` is the
@@ -609,7 +616,7 @@ function statusOf(encodable: Encodable): ObligationStatus {
  * and omitting it would let `--missing` under-state exactly what it exists to
  * measure.
  */
-export function obligationsOf(model: Model, opts: ObligationOptions = {}): Obligation[] {
+export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefused = false): Obligation[] {
   const inScope = scopeFilter(model, opts.scopeId);
   const memo: DerivationMemo = new Map();
   // A relation read for several instances is kept from its second read on, and copied per instance.
@@ -799,11 +806,161 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     o.encodable = { reason: 'unread-binding', detail: equated };
     o.status = statusOf(o.encodable);
   }
+  // The meeting facts come from the whole model: a scoped worklist sees only its own axiom rows, and would carry a
+  // bound the whole-model verify refuses as meeting a partner outside the scope.
+  if (!unrefused) refuseMeetingBounds(out, opts.scopeId === undefined ? out : obligationsOf(model, {}, true));
   if (opts.missing) return out.filter((o) => o.status === 'no-formal-clause' || o.status === 'not-encodable');
   if (opts.scopeId === undefined && !opts.fromKeywords && opts.maxInstanceGoals === undefined) {
     DEFAULT_WORKLISTS.set(out, { model, rev: model.rev });
   }
   return out;
+}
+
+/**
+ * Carry the asserted bare bounds over a `default` a binding makes give way and gives no value
+ * ({@link RelationReading.givenWay}), or refuse them: `x >= 0.0` and `x <= 10.0` (perf9b's N0) constrain the symbol
+ * and fix nothing, but a pair that meets (`L >= 5.0` with `L <= 5.0`) fixes it as `L == 5.0` does, and no assertion
+ * gives a default a value (decision 14), so those are refused, as every asserted relation over such a default was.
+ * The symbols an identity axiom joins (a binding, `a == b`) are one component, and the bounds of a component are
+ * every bare bound and every `== number` of an axiom row over one of its symbols. A component whose members cannot
+ * be compared in raw magnitudes (a unit, an integer sort, a restricted domain on any of them) is refused whole.
+ * Drops the {@link Obligation.givenWay} field, which only this pass reads.
+ */
+function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): void {
+  const flagged = out.filter((o) => o.givenWay !== undefined);
+  if (flagged.length === 0) return;
+  const parent = new Map<string, string>();
+  const find = (a: string): string => {
+    let r = a;
+    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(a, r);
+    return r;
+  };
+  const symbolOf = (row: Obligation, path: string): string | undefined => {
+    const v = row.vars.find((x) => x.path === path);
+    return v ? (v.symbol ?? v.qualifiedName) : undefined;
+  };
+  const axioms = facts.filter((o) => o.role === 'axiom' && o.encodable === true && o.node !== null);
+  // What a member can be compared as: false for a unit, an integer or Boolean sort, a restricted domain.
+  const plain = new Map<string, boolean>();
+  const note = (row: Obligation, v: Obligation['vars'][number]): string => {
+    const sym = v.symbol ?? v.qualifiedName;
+    const ok =
+      row.sortPerVar[v.path] === 'Real' && v.unit === null && v.siFactor === 1 && v.siOffset === 0 && v.restricted === undefined && !row.scaled;
+    plain.set(sym, (plain.get(sym) ?? true) && ok);
+    return sym;
+  };
+  for (const row of axioms) {
+    for (const v of row.vars) note(row, v);
+    const n = row.node!;
+    if (n.kind === 'binary' && n.op === '==' && n.left.kind === 'ref' && n.right.kind === 'ref') {
+      const a = symbolOf(row, n.left.path.join('.'));
+      const b = symbolOf(row, n.right.path.join('.'));
+      if (a !== undefined && b !== undefined) parent.set(find(a), find(b));
+    }
+  }
+  interface Component {
+    lower?: { value: number; strict: boolean; at: string };
+    upper?: { value: number; strict: boolean; at: string };
+    comparable: boolean;
+    pinned?: string;
+    /** A bare bound (not a `== number`) sits on this side of the component. */
+    bareLower?: boolean;
+    bareUpper?: boolean;
+  }
+  const components = new Map<string, Component>();
+  const componentOf = (sym: string): Component => {
+    const root = find(sym);
+    let c = components.get(root);
+    if (!c) components.set(root, (c = { comparable: true }));
+    return c;
+  };
+  for (const [sym, ok] of plain) if (!ok) componentOf(sym).comparable = false;
+  const take = (c: Component, side: 'lower' | 'upper', value: number, strict: boolean, at: string): void => {
+    const cur = c[side];
+    const tighter = !cur || (side === 'lower' ? value > cur.value : value < cur.value) || (value === cur.value && strict);
+    if (tighter) c[side] = { value, strict, at };
+  };
+  for (const row of axioms) {
+    const n = row.node!;
+    const b = bareBoundOf(n);
+    if (b) {
+      const sym = symbolOf(row, b.path);
+      if (sym !== undefined) {
+        const c = componentOf(sym);
+        take(c, b.side, b.value, b.strict, row.expression);
+        if (b.side === 'lower') c.bareLower = true;
+        else c.bareUpper = true;
+      }
+      continue;
+    }
+    // `x == 5.0`: both bounds at once.
+    if (n.kind === 'binary' && n.op === '==' && (n.left.kind === 'ref') !== (n.right.kind === 'ref')) {
+      const [r, k] = n.left.kind === 'ref' ? [n.left, n.right] : [n.right, n.left];
+      const sym = r.kind === 'ref' ? symbolOf(row, r.path.join('.')) : undefined;
+      if (sym !== undefined && k.kind === 'num') {
+        const c = componentOf(sym);
+        take(c, 'lower', k.value, false, row.expression);
+        take(c, 'upper', k.value, false, row.expression);
+      }
+    }
+  }
+  // Components a derived row links (`s = load * 2.0` reads two roots without merging them): a lower bound on one and
+  // an upper bound on another can meet through the row, and nothing compares them, so such a group holding both
+  // kinds of bare bound is refused whole. Only the bare bounds count: a `== number` row would pull a whole tree in.
+  const link = new Map<string, string>();
+  const lfind = (a: string): string => {
+    let r = a;
+    while (link.has(r) && link.get(r) !== r) r = link.get(r)!;
+    return r;
+  };
+  const linkedRoots = new Set<string>();
+  for (const row of axioms) {
+    const roots = [...new Set(row.vars.map((v) => find(v.symbol ?? v.qualifiedName)))];
+    for (let i = 1; i < roots.length; i++) link.set(lfind(roots[0]!), lfind(roots[i]!));
+    if (roots.length > 1) for (const r of roots) linkedRoots.add(r);
+  }
+  const linked = new Map<string, { lower: boolean; upper: boolean }>();
+  for (const [root, c] of components) {
+    if (!linkedRoots.has(root)) continue;
+    const g = lfind(root);
+    const e = linked.get(g) ?? { lower: false, upper: false };
+    e.lower ||= c.bareLower === true;
+    e.upper ||= c.bareUpper === true;
+    linked.set(g, e);
+  }
+  const meetsThroughDerived = (sym: string): boolean => {
+    const root = find(sym);
+    const e = linkedRoots.has(root) ? linked.get(lfind(root)) : undefined;
+    return e !== undefined && e.lower && e.upper;
+  };
+  const meets = (c: Component): boolean =>
+    c.lower !== undefined &&
+    c.upper !== undefined &&
+    c.lower.value >= c.upper.value;
+  for (const row of flagged) {
+    const { path, why } = row.givenWay!;
+    delete row.givenWay;
+    if (row.encodable !== true) continue;
+    const sym = symbolOf(row, path);
+    const c = sym !== undefined ? components.get(find(sym)) : undefined;
+    const reason =
+      c === undefined || !c.comparable
+        ? 'bounds on the features it is joined to cannot be compared (a unit, an integer sort or a restricted domain)'
+        : meets(c)
+          ? `its asserted bounds meet (\`${c.lower!.at}\` and \`${c.upper!.at}\`), which would give it a value`
+          : sym !== undefined && meetsThroughDerived(sym)
+            ? 'its bounds meet through a derived value (a lower bound on one feature and an upper bound on another, linked by an asserted relation), which could give it a value'
+            : undefined;
+    if (reason === undefined) continue;
+    row.encodable = {
+      reason: 'unread-definition',
+      detail:
+        `the axiom reads \`${path}\`, a \`default\` a binding makes give way and gives no value (${why}); ${reason}, and no ` +
+        'assertion gives a default a value, so the axiom is not carried',
+    };
+    row.status = statusOf(row.encodable);
+  }
 }
 
 /**
@@ -949,8 +1106,9 @@ export function rowElement(model: Model, row: Pick<Obligation, 'element' | 'inst
 }
 
 /** The fields a row takes from what its reading met: unread names, their inputs, shadowed names. */
-function readFields(reading: RelationReading): Pick<Obligation, 'unread' | 'unreadDeps' | 'shadowed'> {
+function readFields(reading: RelationReading): Pick<Obligation, 'unread' | 'unreadDeps' | 'shadowed' | 'givenWay'> {
   return {
+    ...(reading.givenWay ? { givenWay: reading.givenWay } : {}),
     ...(reading.unread ? { unread: reading.unread } : {}),
     ...(reading.unreadDeps && reading.unreadDeps.length > 0 ? { unreadDeps: reading.unreadDeps } : {}),
     ...(reading.shadowed ? { shadowed: reading.shadowed } : {}),

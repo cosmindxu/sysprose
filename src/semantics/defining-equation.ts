@@ -8153,7 +8153,14 @@ export function writesStandingDefault(model: Model, f: ElementRecord): boolean {
  * assertion replaces a default (decision 14 amended 2026-10-22): the
  * verification lane carries no such axiom (`gateRelation` of ./contracts).
  * Carried, Q's asserted `L == 2.0` proved `P::c in Q::p` (`load >= 1.5`) at 2
- * on the SMT engine alone.
+ * on the SMT engine alone. One shape is carried: an asserted BARE BOUND (`x >=
+ * 0.0`, `x <= 10.0`) on a unitless Real constrains the symbol and fixes no
+ * value, unless a pair of bounds on the binding's features meets (`L >= 5.0`
+ * with `L <= 5.0` fixes it as `L == 5.0` does) or cannot be compared (a unit,
+ * an integer sort), or meets through a derived value (`s = load * 2.0`): the
+ * worklist refuses a meeting pair and an incomparable component in words of
+ * their own (`refuseMeetingBounds` of ./obligations); a bound the gate cannot
+ * read (a unit, an integer sort, a conjunction) is refused in the generic one.
  */
 export function givenWayUnvalued(model: Model, contextId: ElementId, name: string): string | undefined {
   if (!hasUserBindings(model)) return undefined;
