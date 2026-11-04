@@ -12,9 +12,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 8,
       "rows": 27,
-      "tableAgree": 15,
+      "tableAgree": 23,
       "tableDisagree": 0,
-      "tableProbes": 7
+      "tableProbes": 11
     },
     "bind-equality": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 578,
+      "tableAgree": 586,
       "tableDisagree": 0,
-      "tableProbes": 253
+      "tableProbes": 257
     },
     "nira/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 277,
+      "tableAgree": 279,
       "tableDisagree": 0,
-      "tableProbes": 129
+      "tableProbes": 131
     },
     "requirement-clause": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 318,
+      "tableAgree": 326,
       "tableDisagree": 0,
-      "tableProbes": 207
+      "tableProbes": 211
     },
     "stated-value": {
       "battery": null,
@@ -431,7 +431,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-assert-not",
       "kind": "wrong-verdict",
-      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); the shapes with no expression to negate (a constraint named without a body, a specialised one, `assert not requirement`, a body of members) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.",
+      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); a comment, `doc` or attribute member with a `=` value or none beside the expression is mapped as the plain clause maps it and only the expression is negated (solver2 S4); the shapes with no expression to negate or another member (a constraint named without a body, a specialised one, `assert not requirement`, a body of members only, a nested clause, part or calc, a `default` or `:=` member) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.",
       "todo": "Read `assert not constraint c { ... }` as the negation."
     },
     {
@@ -538,9 +538,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "8c1bb8791ffab27b2a73b545883f233123e2a4694ec4d9dc794f422b770f0010",
+    "defects": "10df570f89f44528d7fb386f234fd7678702e83207b33eb735500c3244cfc818",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "2c4847531916dbaec05dc128037c0c244c441616905432640355726518ed5a43"
+    "probes": "df3551987ba1b3a89f301efa5e53d990edc5fd8650b8cc82f23ca32ff8ed5fd7"
   },
   "fences": {
     "fence/collection-valued": {

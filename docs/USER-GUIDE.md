@@ -1099,10 +1099,15 @@ is violated where its body holds (load 50), the model that contradicts itself re
 engine and the SMT engine report their axioms inconsistent beside it, as for any violated assert), and a
 `not (… == …)` defines no value. `require not` and `assume not`, which are no published form, are read the
 same way, and the save writes the clause back as it was written (`assert not constraint c { load > 10.0 }`).
+A comment, a `doc` or an attribute with a `=` value or none beside the expression stays as written, and only
+the expression is negated: `assert not constraint c { attribute y = 2.0; load > y }` is read as
+`assert constraint c { attribute y = 2.0; not (load > y) }`.
 A negated clause with no expression to negate is refused with a finding of its own,
 `mapper/negated-assert-unread` (an error, on the clause): one that names a constraint without a body, one
 that specialises a constraint (`assert not constraint c :> K { … }`), a requirement
-(`assert not requirement r { … }`) and one whose body holds members. The load degrades like any load with an
+(`assert not requirement r { … }`), one whose body holds members and no expression, and one whose body holds
+another kind of member (a nested constraint, requirement, part or calc, or an attribute with a `default` or
+`:=` value). The load degrades like any load with an
 error: the reporting commands exit 1 with the degraded banner, `verify`, `consistency`, `bounds`, `refine`
 and `fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no
 surface files a row for the clause, and the save writes it back as it was read. State the negation in the

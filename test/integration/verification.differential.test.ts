@@ -10510,8 +10510,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // body holds (50 > 10), and the model that contradicts itself reads so beside it (the literal engine and the SMT engine
     // report the axioms inconsistent on the rows beside it, I7_ALLOWED). Pinned in either text order and member order, with
     // a binding-carried instance, then a specialisation, a nested definition, an instance of an instance, an anonymous
-    // clause, and `require not` / `assume not`, which are no published form and are read alike. `neg-assert-refused` keeps
-    // the shapes with no expression to negate (a body of members): refused with the finding of its own, no row for `c`.
+    // clause, and `require not` / `assume not`, which are no published form and are read alike. `neg-assert-members` (solver2
+    // S4): a body whose comment, `doc` and attribute members the negation leaves standing is read as `assert constraint c
+    // { attribute y = 2.0; not (load > y) }` (only the expression is negated), in either text order and member order.
+    // `neg-assert-refused` keeps a shape that stays refused (a `default` member, whose interplay with decision 14 under the
+    // negation is unsettled): refused with the finding of its own, no row for `c`.
     'neg-assert-h1': probe(`package NA1 {
         part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { load > 10.0 } }
         part p : P;
@@ -10574,8 +10577,28 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'NA5::topP2': ['F/X/F/X', 'F'],
       'NA5::topR': ['T/X/T/X', 'T'],
     }),
+    ...reversed(
+      'neg-assert-members',
+      `package NA7 {
+        part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { /* the load stays at or under y */ doc /* y is the limit */ attribute y : ScalarValues::Real = 2.0; load > y } }
+        part p : P;
+        constraint topT { p.load <= 100.0 }
+        constraint topF { p.load >= 100.0 }
+      }`,
+      `package NA7 {
+        constraint topF { p.load >= 100.0 }
+        constraint topT { p.load <= 100.0 }
+        part p : P;
+        part def P { assert not constraint c { attribute y : ScalarValues::Real = 2.0; doc /* y is the limit */ /* the load stays at or under y */ load > y } attribute load : ScalarValues::Real = 50.0; }
+      }`,
+      {
+        'NA7::P::c': ['F/-/F/-', 'F'],
+        'NA7::topF': ['F/X/F/X', 'F'],
+        'NA7::topT': ['T/X/T/X', 'T'],
+      },
+    ),
     'neg-assert-refused': probe(`package NA6 {
-        part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y } }
+        part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { attribute y : ScalarValues::Real default = 2.0; load > y } }
         part p : P;
         constraint topT { p.load <= 100.0 }
         constraint topF { p.load >= 100.0 }
@@ -16841,6 +16864,10 @@ package PS {
       'neg-assert-family | NA5::P::r',
       'neg-assert-family | NA5::topP2',
       'neg-assert-family | NA5::topR',
+      'neg-assert-members | NA7::topF',
+      'neg-assert-members | NA7::topT',
+      'neg-assert-members-rev | NA7::topF',
+      'neg-assert-members-rev | NA7::topT',
     ].map(
       (key) =>
         [
@@ -17831,10 +17858,12 @@ package PS {
   });
 
   // numeric2 S1: a negated clause is read as the plain clause over `not (body)` and kept as written (`negated`), and
-  // files its row on the surfaces that file an assert's; one with no expression to negate is refused with a finding of
-  // its own, as before, kept as a constraint with no expression and written back as it was read.
+  // files its row on the surfaces that file an assert's, beside the comment, `doc` and attribute members the negation
+  // leaves standing (solver2 S4); one with no expression to negate, or with a member of another kind (here a `default`
+  // one), is refused with a finding of its own, as before, kept as a constraint with no expression and written back as
+  // it was read.
   it('neg-assert-*: a negated assert is read as the negation of its body; one with no expression to negate is refused', async () => {
-    for (const name of ['neg-assert-h1', 'neg-assert-h1-rev', 'neg-assert-h2', 'neg-assert-h2-rev', 'neg-assert-family']) {
+    for (const name of ['neg-assert-h1', 'neg-assert-h1-rev', 'neg-assert-h2', 'neg-assert-h2-rev', 'neg-assert-family', 'neg-assert-members', 'neg-assert-members-rev']) {
       const { model, report } = await loadModelText(PROBES[name]!.text, { fileName: `${name}.sysml`, strict: true });
       expect(report.diagnostics.filter((d) => d.code === 'mapper/negated-assert-unread'), name).toEqual([]);
       expect(report.diagnostics.filter((d) => d.severity === 'error'), name).toEqual([]);
