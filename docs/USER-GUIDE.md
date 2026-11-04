@@ -2237,9 +2237,15 @@ against it, in any order; so is one an asserted relation reads beside L (`M =
 ends of a binding that reaches one end through a part (`bind p.L = M`, `L == 50.0`
 in p's type and `M == 60.0` in the element) are one feature's two values too: the
 binding makes q's p's L and q's M one quantity, and they read as the pair above,
-so every row over either is *could not be evaluated*. The pair is read where the
-binding meets it, which leaves p's type's L undecided in every use of that type
-(a `part p2 : P` beside it too): a price of reading it so. `K == L`, a bare name on
+so every row over either is *could not be evaluated*; so are two in the types of
+the two parts a binding reaches (`bind p.L = r.K`, `L == 50.0` in P, `K == 60.0`
+in R), where the element writes none. The pair is read where the binding meets
+it: in every Q's p (a specialiser's, a usage's `part :>> p`, a Q a part holds),
+and P's own rows, which stand for every P. A `part p2 : P` beside it, which no Q
+holds, reads P's equation. Where another instance may be a Q's p — a reference or
+a value names it (`ref part rr : P = q.p`), a binding, a subsetting, a `satisfy`
+or an alias does, or a usage redefines p with a value (`part :>> p = p2`) — every
+P's L stays undecided: a price of reading it so. `K == L`, a bare name on
 each side beside such an L, ties K to it like `K == L + 0.0` or `bind K = L`, so K's
 FMI `start`, its measure of effectiveness and a check over it read neither value,
 in either order of the equations. Limits of this tool: the SMT engine holds one symbol for a feature across the usages of

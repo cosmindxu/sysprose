@@ -2131,6 +2131,51 @@ describe('checkConstraints — two asserted equations that give one feature two 
     }
   });
 
+  it('a pair a binding meets through a part leaves every instance of that part undecided, and no other (equated-ends-meet)', async () => {
+    const verdicts = async (text: string) => Object.fromEntries((await rows(text)).filter(([n]) => /::[tu]\w*$/.test(n)));
+    for (const [x, y, u, v] of [['50.0', '60.0', 'satisfied', 'violated'], ['60.0', '50.0', 'violated', 'satisfied']] as const) {
+      // `bind p.L = M` in Q: every Q's p — q's, a Q a W holds, a specialiser's, a usage's that redefines p — has two
+      // values of L; p2, a P5 and a P a W holds beside its q are no Q's p. P's `bind L = K` carries it to K in each.
+      expect(
+        await verdicts(`package EQ {
+          part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind L = K; assert constraint cl { L == ${x} } }
+          part def P5 :> P;
+          part def Q { part p : P; attribute M : ScalarValues::Real; bind p.L = M; assert constraint cm { M == ${y} } }
+          part def Q3 :> Q;
+          part def W { part q : Q; part pw : P; }
+          part q : Q; part q3 : Q3; part qr : Q { part :>> p; } part w : W; part p2 : P; part p5 : P5;
+          constraint tq { q.p.L == 50.0 } constraint tK { q.p.K == 50.0 } constraint t3 { q3.p.L == 50.0 }
+          constraint tr { qr.p.L == 50.0 } constraint tw { w.q.p.L == 50.0 } constraint tM { q.M == 50.0 }
+          constraint u2 { p2.L == 50.0 } constraint uK { p2.K == 50.0 } constraint u5 { p5.L == 50.0 } constraint uw { w.pw.L == 50.0 }
+        }`),
+      ).toEqual({
+        'EQ::t3': 'unknown', 'EQ::tK': 'unknown', 'EQ::tM': 'unknown', 'EQ::tq': 'unknown', 'EQ::tr': 'unknown', 'EQ::tw': 'unknown',
+        'EQ::u2': u, 'EQ::u5': u, 'EQ::uK': u, 'EQ::uw': u,
+      });
+      // Both ends through a part, each equation in its part's type, none in Q: the check read q.p.L as P's value and
+      // q.r.K as R's, where the binding makes them one; they abstain now, and p2 and r2 read their own.
+      expect(
+        await verdicts(`package E2 {
+          part def P { attribute L : ScalarValues::Real; assert constraint cl { L == ${x} } }
+          part def R { attribute K : ScalarValues::Real; assert constraint ck { K == ${y} } }
+          part def Q { part p : P; part r : R; bind p.L = r.K; }
+          part q : Q; part p2 : P; part r2 : R;
+          constraint tL { q.p.L == 50.0 } constraint tK { q.r.K == 50.0 } constraint uL { p2.L == 50.0 } constraint uK { r2.K == 50.0 }
+        }`),
+      ).toEqual({ 'E2::tK': 'unknown', 'E2::tL': 'unknown', 'E2::uK': v, 'E2::uL': u });
+      // Where another instance may be a Q's p — a reference to it, a usage that values it with p2 — every P abstains.
+      expect(
+        await verdicts(`package ES {
+          part def P { attribute L : ScalarValues::Real; assert constraint cl { L == ${x} } }
+          part def Q { part p : P; attribute M : ScalarValues::Real; bind p.L = M; assert constraint cm { M == ${y} } }
+          part q : Q; part q4 : Q { part :>> p = p2; } part p2 : P; part p6 : P;
+          ref part rr : P = q.p;
+          constraint t2 { p2.L == 50.0 } constraint tr { rr.L == 50.0 } constraint u6 { p6.L == 50.0 }
+        }`),
+      ).toEqual({ 'ES::t2': 'unknown', 'ES::tr': 'unknown', 'ES::u6': 'unknown' });
+    }
+  });
+
   it('a name the walk places nowhere reads no value of a pair, in either order (contradicted-pair-meet)', async () => {
     // Two features under one name (`w`) leave the package's names unread, and a renamed redefinition (`a2 :>> a`)
     // hides `a`: no set was seen to reach `p.L` or `r.a.L`, and the check read the first equation written (T, and F

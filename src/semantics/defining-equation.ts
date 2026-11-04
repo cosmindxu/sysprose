@@ -6916,8 +6916,11 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       specific.set(g, list);
     }
   }
+  // So is each element a binding holds in whose end is read through a part (`bind p.L = r.K` in Q, beside P's `L ==
+  // 50.0` and R's `K == 60.0`): Q writes no equation, but the binding makes the two one value in every Q.
+  const dotted = (h: ElementId): string[] => (joins.get(h) ?? []).flatMap((j) => [j.left, j.right]).filter((n) => n.includes('.'));
   const anchors = new Set<ElementId>();
-  for (const queue = [...byOwner.keys(), ...lexical.keys()]; queue.length > 0; ) {
+  for (const queue = [...byOwner.keys(), ...lexical.keys(), ...[...joins.keys()].filter((h) => dotted(h).length > 0)]; queue.length > 0; ) {
     const id = queue.pop()!;
     if (anchors.has(id)) continue;
     anchors.add(id);
@@ -6931,14 +6934,17 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
   const found = new Map<string, Array<{ set: ContradictedDefinition; general: ReadonlySet<ElementId> }>>();
   for (const x of model.all()) {
     if (x.attrs.isLibrary === true || !anchors.has(x.id)) continue;
-    if (!holds(x) && !isUsage(x.eClass) && !isDefinition(x.eClass)) continue;
+    if (!holds(x) && !joins.has(x.id) && !isUsage(x.eClass) && !isDefinition(x.eClass)) continue;
     const general = generalizationsOf(model, x.id);
     const owners = [x, ...general].filter(holds);
-    if (owners.length === 0) continue;
-    const paths = owners.flatMap((y) => [...(byOwner.get(y.id)?.keys() ?? []), ...(lexical.get(y.id)?.keys() ?? [])]);
     const holders = [x, ...general];
     const joining = holders.some((h) => joins.has(h.id));
-    for (const path of new Set(paths)) {
+    if (owners.length === 0 && !joining) continue;
+    const paths = new Set(owners.flatMap((y) => [...(byOwner.get(y.id)?.keys() ?? []), ...(lexical.get(y.id)?.keys() ?? [])]));
+    // A binding's end read through a part, after the names an equation defines: one whose equations are written in
+    // the part's types alone. A set met under it never renames one met under such a name.
+    const ends = new Set(holders.flatMap((h) => dotted(h.id)).filter((n) => !paths.has(n)));
+    for (const path of [...paths, ...ends]) {
       // One equation of a bare name among the owners meets no other: only a dotted one reads more, below, and one a
       // binding joins to a name that has equations of its own.
       if (!path.includes('.') && !joining && owners.reduce((n, y) => n + countOf(y, path), 0) < 2) continue;
@@ -7029,7 +7035,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       // the feature declared first — not the equation written first, whose order decides nothing.
       if (met.some((m) => mine.has(m.set.context.id))) continue;
       const again = met.find((m) => m.set.context.id === x.id);
-      if (again !== undefined && order.get(again.set.feature.id)! <= order.get(feature.id)!) continue;
+      if (again !== undefined && (ends.has(path) || order.get(again.set.feature.id)! <= order.get(feature.id)!)) continue;
       const kept = met.filter((m) => m !== again && !m.general.has(x.id));
       kept.push({
         set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features, sites, ...(joined.length > 0 ? { joined } : {}) },
@@ -7081,6 +7087,7 @@ function spreadContradiction(
   const sources = new Set(
     index.sets.flatMap((s) => s.equations.filter((c) => !(typeof c.attrs.expression === 'string' && bareTie.test(c.attrs.expression.replace(/[()]/g, ' ')))).map((c) => c.id)),
   );
+  const plain = standsForNothing(model);
   return spreadTaint(
     model,
     sources,
@@ -7089,15 +7096,84 @@ function spreadContradiction(
         const first = set.equations[0]!;
         // A pair that meets in a usage (`L == 60.0` in `part p : P { … }` beside P's `L == 50.0`) gives L two values in
         // that instance alone: every other P reads P's equation. One that meets in a definition or a package holds
-        // in every instance of it.
+        // in every instance of it — but for what it reads through a part ({@link meetsThroughPart}).
         const within = isUsage(set.context.eClass) ? set.context.id : undefined;
-        for (const c of set.equations) add(c, first, undefined, within);
-        for (const f of set.features) add(f, first, undefined, within);
+        for (const c of set.equations) add(c, first, undefined, within ?? meetsThroughPart(model, set, c, plain));
+        for (const f of set.features) add(f, first, undefined, within ?? meetsThroughPart(model, set, f, plain));
       }
     },
     false,
     (e) => isUsage(e.eClass) && statesOwnValue(model, e),
   );
+}
+
+/**
+ * The part through which a set met in a definition or a package defines `e` — one of its equations or features —
+ * where that is one part every instance of which holds `e` in the meeting, or `undefined` (everywhere). `bind p.L = M`
+ * in Q, beside P's `L == 50.0` and Q's `M == 60.0`, gives L two values in every Q's p and in no other P (a `part p2 :
+ * P` reads P's equation): P's L and `cl` are read through Q's p alone (each site that names `e`, and the set's own
+ * path, reads it there), and are features of P, not of Q. `undefined` where `e` is one of the context's own (Q's M
+ * holds in every Q), is read through two parts or none, or where `plain` says another instance may be that part.
+ */
+function meetsThroughPart(
+  model: Model,
+  set: ContradictedDefinition,
+  e: ElementRecord,
+  plain: (u: ElementRecord) => boolean,
+): ElementId | undefined {
+  const at = new Set<ElementId>();
+  if (e.id === set.feature.id) {
+    const cut = set.path.lastIndexOf('.');
+    const holder = cut < 0 ? set.context : featureNamedBelow(model, set.context.id, set.path.slice(0, cut));
+    if (!holder) return undefined;
+    at.add(holder.id);
+  }
+  for (const s of set.sites) {
+    if (s.equation.constraint.id === e.id || s.feature.id === e.id || redefinedClosure(model, s.feature).some((g) => g.id === e.id)) at.add(s.at);
+  }
+  if (at.size !== 1 || e.ownerId == null) return undefined;
+  let u = model.get([...at][0]!);
+  if (!u || u.id === set.context.id || !isUsage(u.eClass)) return undefined;
+  // The copy a binding's end makes of an inherited part (Q2's `p` for `bind p.L = M` in `Q2 :> Q`) is read as the part
+  // it copies: a usage's `part :>> p` redefines Q's p, never the copy, and every Q2's p is a Q's p.
+  if (u.attrs.implicit === true) u = redefinedClosure(model, u).find((g) => g.attrs.implicit !== true);
+  if (!u) return undefined;
+  const home = (id: ElementId): ReadonlySet<ElementId> => new Set([id, ...generalizationsOf(model, id).map((g) => g.id)]);
+  if (home(set.context.id).has(e.ownerId) || !home(u.id).has(e.ownerId)) return undefined;
+  return plain(u) ? u.id : undefined;
+}
+
+/**
+ * Is a part, read in each instance that has it, only that instance's own — does nothing else of `model` stand for it?
+ * Not where it, what it redefines, or a usage that redefines it is a reference, a subject or states a value (`part
+ * :>> p = p2` makes q's p another part); nor where any other relationship names one of them — a binding's end (`bind
+ * pb = q.p`), a subsetting (`part p3 :> q.p`), a `satisfy`, an alias — nor a value whose path ends at one (`ref part
+ * rr : P = q.p`). Each of those reads that part's features under another name, through no link of the part. Their own
+ * typings, redefinitions and subsettings say what they are, and stand for nothing. Once per part.
+ */
+function standsForNothing(model: Model): (u: ElementRecord) => boolean {
+  const memo = new Map<ElementId, boolean>();
+  let users: ElementRecord[] | undefined;
+  return (u) => {
+    const known = memo.get(u.id);
+    if (known !== undefined) return known;
+    users ??= model.all().filter((x) => x.attrs.isLibrary !== true);
+    const ids = new Set([u.id, ...redefinedClosure(model, u).map((g) => g.id)]);
+    for (const x of users) if (isUsage(x.eClass) && redefinedClosure(model, x).some((g) => ids.has(g.id))) ids.add(x.id);
+    const standsElsewhere = (g: ElementRecord | undefined): boolean =>
+      !g || g.attrs.isRef === true || g.attrs.requirementRole === 'subject' || (g.attrs.value !== undefined && g.attrs.value !== null);
+    let answer = ![...ids].some((id) => standsElsewhere(model.get(id)));
+    for (const x of answer ? users : []) {
+      const touches = [...(x.source ?? []), ...(x.target ?? [])].some((id) => ids.has(id));
+      if (touches && !(isTypingSpecialization(x.eClass) && (x.source ?? []).some((id) => ids.has(id)))) answer = false;
+      else if (isUsage(x.eClass) && typeof x.attrs.value === 'string') {
+        answer = !valuePartners(model, x, x.attrs.value).some(({ partner }) => [partner, ...redefinedClosure(model, partner)].some((g) => ids.has(g.id)));
+      }
+      if (!answer) break;
+    }
+    memo.set(u.id, answer);
+    return answer;
+  };
 }
 
 /**

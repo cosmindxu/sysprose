@@ -14345,8 +14345,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // Two asserted equations on the two ends of a binding that reaches one end through a part (`bind p.L = M`, `L ==
     // 50.0` in P, `M == 60.0` in Q) are one feature's two values: q.p.L == 50.0 read T and q.M == 50.0 F, the same
-    // quantity (the check and the numeric surface). The pair is read where the binding meets them, so every P's L is
-    // undecided with it, p2's too (the fence's price: P's own `cl` and p2 read nothing although p2 meets no binding).
+    // quantity (the check and the numeric surface). The pair is read where the binding meets them: in every Q's p,
+    // which abstains with Q's M, P's own `cl` too (it stands for every P). p2 is no Q's p, so its u50 reads P's
+    // equation alone, T, and F with the two exchanged, on the check (equated-ends-meet; the solve meets the pair and
+    // does not converge, the literal and SMT engines read the axioms inconsistent).
     ...exchanged('bind-through-part', (x, y) => `package BQ {
         part def P { attribute L : ScalarValues::Real; assert constraint cl { L == ${x} } }
         part def Q { part p : P; attribute M : ScalarValues::Real; bind p.L = M; assert constraint cm { M == ${y} } }
@@ -14367,7 +14369,85 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'BQ::m60': ['?/?/?/X', null],
       'BQ::t50': ['?/?/?/X', null],
       'BQ::t60': ['?/?/?/X', null],
-      'BQ::u50': ['?/?/?/X', null],
+      'BQ::u50': ['T/X/?/X', 'T'],
+    }, {
+      'BQ::u50': ['F/X/?/X', 'F'],
+    }),
+    // The same with both ends through a part and each equation in that part's type (`bind p.L = r.K` in Q, P's `L ==
+    // 50.0`, R's `K == 60.0`): Q writes no equation, and the check read q.p.L as P's 50 and q.r.K as R's 60, T and F
+    // where they are one quantity (and P's `cl` read in q's p T). The pair is now read where the binding meets it, in
+    // every Q, one `#equations` row; q's p and q's r abstain, and p2 and r2, which no Q holds, read their own.
+    ...exchanged('bind-through-two-parts', (x, y) => `package B2 {
+        part def P { attribute L : ScalarValues::Real; assert constraint cl { L == ${x} } }
+        part def R { attribute K : ScalarValues::Real; assert constraint ck { K == ${y} } }
+        part def Q { part p : P; part r : R; bind p.L = r.K; }
+        part q : Q;
+        part p2 : P;
+        part r2 : R;
+        constraint t50 { q.p.L == 50.0 }
+        constraint k50 { q.r.K == 50.0 }
+        constraint u50 { p2.L == 50.0 }
+        constraint v50 { r2.K == 50.0 }
+      }`, {
+      'B2::k50': ['?/?/?/X', null],
+      'B2::P::cl': ['?/-/?/-', null],
+      'B2::P::cl in B2::Q::p': ['?/-/?/-', null],
+      'B2::Q::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'B2::Q::p::L in B2::Q#equations': ['F/-/F/-', 'F'],
+      'B2::R::ck': ['?/-/?/-', null],
+      'B2::R::ck in B2::Q::r': ['?/-/?/-', null],
+      'B2::t50': ['?/?/?/X', null],
+      'B2::u50': ['T/X/?/X', 'T'],
+      'B2::v50': ['F/X/?/X', 'F'],
+    }, {
+      'B2::u50': ['F/X/?/X', 'F'],
+      'B2::v50': ['T/X/?/X', 'T'],
+    }),
+    // Written in a specialisation of the definition that declares p (`Q2 :> Q`), the binding reads Q2's copy of p;
+    // a usage's `part :>> p` redefines Q's own p, so every Q's p abstains, and p2 reads its own.
+    ...exchanged('bind-through-inherited-part', (x, y) => `package BS {
+        part def P { attribute L : ScalarValues::Real; assert constraint cl { L == ${x} } }
+        part def Q { part p : P; attribute M : ScalarValues::Real; }
+        part def Q2 :> Q { bind p.L = M; assert constraint cm { M == ${y} } }
+        part q : Q2 { part :>> p; }
+        part p2 : P;
+        constraint t50 { q.p.L == 50.0 }
+        constraint u50 { p2.L == 50.0 }
+      }`, {
+      'BS::P::cl': ['?/-/?/-', null],
+      'BS::Q2::«BindingConnectorAsUsage» in BS::q#bind': ['?/-/?/-', null],
+      'BS::Q2::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'BS::Q2::cm': ['?/-/?/-', null],
+      'BS::Q2::cm in BS::q': ['?/-/?/-', null],
+      'BS::Q2::M in BS::Q2#equations': ['F/-/F/-', 'F'],
+      'BS::t50': ['?/?/?/X', null],
+      'BS::u50': ['T/X/?/X', 'T'],
+    }, {
+      'BS::u50': ['F/X/?/X', 'F'],
+    }),
+    // Where another instance may be a Q's p — a usage that values it (`part :>> p = p2` makes q4's p p2), a reference
+    // to it (`rr = q.p`), a binding, a subsetting, a `satisfy`, an alias — p2 and rr are read through no link of p,
+    // and every P abstains as before.
+    ...exchanged('bind-through-part-stood-for', (x, y) => `package BR {
+        part def P { attribute L : ScalarValues::Real; assert constraint cl { L == ${x} } }
+        part def Q { part p : P; attribute M : ScalarValues::Real; bind p.L = M; assert constraint cm { M == ${y} } }
+        part q : Q;
+        part q4 : Q { part :>> p = p2; }
+        part p2 : P;
+        ref part rr : P = q.p;
+        constraint u50 { p2.L == 50.0 }
+        constraint r50 { rr.L == 50.0 }
+      }`, {
+      'BR::P::cl': ['?/-/?/-', null],
+      'BR::P::cl in BR::p2': ['?/-/?/-', null],
+      'BR::P::cl in BR::Q::p': ['?/-/?/-', null],
+      'BR::P::cl in BR::q4::«PartUsage»': ['?/-/?/-', null],
+      'BR::Q::«BindingConnectorAsUsage» in BR::q4#bind': ['?/-/?/-', null],
+      'BR::Q::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'BR::Q::cm': ['?/-/?/-', null],
+      'BR::Q::M in BR::Q#equations': ['F/-/F/-', 'F'],
+      'BR::r50': ['?/?/?/X', null],
+      'BR::u50': ['?/?/?/?', null],
     }),
     // A feature that redefines one its OWN owner declares (`validation/redefinition-own-sibling`) states the feature
     // twice: the check, literal and numeric surfaces read the redefinition's 0.8 over the `default` (a), the `default`
@@ -17375,6 +17455,24 @@ package PS {
         [
           key,
           'two asserted equations that meet in another instance (p) give its L two values: the SMT engine reports the axioms inconsistent on every row of the file, and the literal engine on this one, which reads the L its symbols share with p’s, beside the check’s reading of p2’s L at the one equation that holds in p2',
+        ] as const,
+    ),
+    // equated-ends-meet: two asserted equations a binding meets through a part give L two values in every instance of
+    // that part alone, so an instance of the type no such part is reads the one that holds in it.
+    ...[
+      'bind-through-part-ab | BQ::u50',
+      'bind-through-part-ba | BQ::u50',
+      'bind-through-two-parts-ab | B2::u50',
+      'bind-through-two-parts-ab | B2::v50',
+      'bind-through-two-parts-ba | B2::u50',
+      'bind-through-two-parts-ba | B2::v50',
+      'bind-through-inherited-part-ab | BS::u50',
+      'bind-through-inherited-part-ba | BS::u50',
+    ].map(
+      (key) =>
+        [
+          key,
+          'two asserted equations a binding meets through a part (every Q’s p) give its L two values: the SMT engine reports the axioms inconsistent on every row of the file, and the literal engine on this one, which reads the L its symbols share with q’s p’s, beside the check’s reading of p2’s L at the one equation that holds in p2',
         ] as const,
     ),
     // contradictory-models S2: a binding the check reports violated, or an assert it reports violated in an instance, that
