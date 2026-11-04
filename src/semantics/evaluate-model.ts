@@ -56,6 +56,8 @@ import {
   hasUndecidedPartners,
   joinedTo,
   hasUserBindings,
+  headBindingConflicts,
+  headBindingSentence,
   readsPerInstance,
   readingContextsOf,
   heldPastCapSentence,
@@ -2692,6 +2694,18 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
         conflict: 'bind',
       });
     }
+  }
+  // A package's binding on a definition's feature, against an instance's own value that differs from the one the binding
+  // joins it to: the binding is read where it is written, so none of the above names the pair (W4o's p4).
+  for (const c of headBindingConflicts(model)) {
+    out.push({
+      id: `${c.binding.id}@${c.instance.id}`,
+      ownerId: c.instance.id,
+      expression: `${c.left} == ${c.right}`,
+      result: 'violated',
+      message: `Constraint violated: ${headBindingSentence(model, c)}`,
+      conflict: 'bind',
+    });
   }
   return out;
 }

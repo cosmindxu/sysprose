@@ -23,9 +23,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 5,
       "rows": 9,
-      "tableAgree": 226,
+      "tableAgree": 222,
       "tableDisagree": 0,
-      "tableProbes": 134
+      "tableProbes": 132
     },
     "bool": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 585,
+      "tableAgree": 577,
       "tableDisagree": 0,
-      "tableProbes": 256
+      "tableProbes": 252
     },
     "nira/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 280,
+      "tableAgree": 276,
       "tableDisagree": 0,
-      "tableProbes": 130
+      "tableProbes": 128
     },
     "requirement-clause": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 322,
+      "tableAgree": 318,
       "tableDisagree": 0,
-      "tableProbes": 209
+      "tableProbes": 207
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 580,
+      "tableAgree": 572,
       "tableDisagree": 0,
-      "tableProbes": 254
+      "tableProbes": 250
     },
     "text-as-real": {
       "battery": null,
@@ -431,7 +431,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-assert-not",
       "kind": "wrong-verdict",
-      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. The form is now refused at load (mapper/negated-assert-unread) and no surface files a row for it, so no wrong verdict is reachable; the cap stays until the clause is read.",
+      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); the shapes with no expression to negate (a constraint named without a body, a specialised one, `assert not requirement`, a body of members) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.",
       "todo": "Read `assert not constraint c { ... }` as the negation."
     },
     {
@@ -556,9 +556,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "3ef3924b47868583560237e6ce7d1a2bd50b19b23f17eeddff10058e46571c1b",
+    "defects": "c5596d673fc5dbdb46fa70fdd59a929b3184f0bc82dda9c26496d9066c18c83c",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "0e702f0758a20b178529b6b5589bd6167c9af2f2e73c813415d74f4221a5fafd"
+    "probes": "e6f0f9e453ff4b1942a457448b0dbe461dd37e4c3bb2ada79e145eee2b4fb640"
   },
   "fences": {
     "fence/collection-valued": {

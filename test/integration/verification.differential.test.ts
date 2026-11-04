@@ -3585,7 +3585,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     const copy = text.replace(
       /(^|[^\w])(constraint\s+)([A-Za-z_]\w*)(\s*\{)([^{}\n]*)(\})/g,
       (all, before: string, kw: string, name: string, open: string, body: string, close: string, at: number, whole: string) => {
-        if (/\b(?:assert|assume|require)\s*$/.test(whole.slice(Math.max(0, at - 12), at + before.length))) return all;
+        if (/\b(?:assert|assume|require)\s+(?:not\s+)?$/.test(whole.slice(Math.max(0, at - 16), at + before.length))) return all;
         // One the model names elsewhere (a redefinition `constraint :>> c2 { … }` in q2) is read otherwise there.
         if ((whole.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length > 1) return all;
         any = true;
@@ -7635,10 +7635,70 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c5 { p5.load >= 40.0 }
       }`, {
       'W4o::c4': ['?/?/?/X', '?'],
-      'W4o::c5': ['T/T/?/X', 'T'],
+      'W4o::c5': ['T/X/?/X', 'T'],
+      'W4o::«BindingConnectorAsUsage» in W4o::p4#bind': ['F/-/F/-', 'F'],
     }),
-    // The same pair in units (O6's branch review): the check, the literal engine and the numeric surface read
-    // neither value. The SMT engine encoded no binding axiom for p4 here and proved c4lo at p4's 7 kg (T/T/T/T
+    // numeric2 S1: the package's binding on P's feature holds in p4 too, where p4's own `load = 7.0` meets the L of 50: the
+    // check files the binding's row at p4 (no binding finding named a package head's pair before), so the literal engine
+    // marks a relation over L, or over another instance's load, inconclusive beside it (W4o's c5 read the 50 as a plain
+    // fact). Only a constant both sides state with `=` that differs is filed: p6's own 50 is the binding's, the `default`
+    // of HC3's p4 gives way, and a unit converts (HC2: p4's 7000 [g] is L's 7 [kg], p5's 7 [g] is not). HC3's nested p9
+    // and its specialisation are read alike. Pinned in either text order.
+    ...reversed(
+      'head-conflict',
+      `package HC1 {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  attribute L : ScalarValues::Real = 50.0;
+  bind P::load = L;
+  part p4 : P { attribute :>> load = 7.0; }
+  part p5 : P;
+  part p6 : P { attribute :>> load = 50.0; }
+  constraint c5 { p5.load >= 40.0 }
+  constraint c6 { p6.load >= 40.0 }
+}`,
+      `package HC1 {
+  constraint c6 { p6.load >= 40.0 }
+  constraint c5 { p5.load >= 40.0 }
+  part p6 : P { attribute :>> load = 50.0; }
+  part p5 : P;
+  part p4 : P { attribute :>> load = 7.0; }
+  bind P::load = L;
+  attribute L : ScalarValues::Real = 50.0;
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+}`,
+      {
+        'HC1::c5': ['T/X/?/X', 'T'],
+        'HC1::c6': ['T/X/T/X', 'T'],
+        'HC1::«BindingConnectorAsUsage» in HC1::p4#bind': ['F/-/F/-', 'F'],
+      },
+    ),
+    'head-conflict-unit': probe(`package HC2 {
+  part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; }
+  attribute L : ISQ::MassValue = 7.0 [kg];
+  bind P::load = L;
+  part p4 : P { attribute :>> load = 7000.0 [g]; }
+  part p5 : P { attribute :>> load = 7.0 [g]; }
+  constraint c4 { p4.load <= 8.0 [kg] }
+  constraint c6 { L <= 8.0 [kg] }
+}`, {
+      'HC2::c4': ['T/X/T/X', 'T'],
+      'HC2::c6': ['T/X/?/X', 'T'],
+      'HC2::«BindingConnectorAsUsage» in HC2::p5#bind': ['F/-/F/-', 'F'],
+    }),
+    'head-conflict-nested': probe(`package HC3 {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  attribute L : ScalarValues::Real = 50.0;
+  bind P::load = L;
+  part def P2 :> P;
+  part p4 : P2 { attribute :>> load default = 7.0; }
+  part top { part p9 : P { attribute :>> load = 9.0; } }
+  constraint c5 { L >= 40.0 }
+}`, {
+      'HC3::c5': ['T/X/?/X', 'T'],
+      'HC3::«BindingConnectorAsUsage» in HC3::top::p9#bind': ['F/-/F/-', 'F'],
+    }),
+    // The same pair in units (O6's branch review): the check files the binding's row at p4 (numeric2 S1); the check, the
+    // literal engine and the numeric surface read neither value. The SMT engine encoded no binding axiom for p4 here and proved c4lo at p4's 7 kg (T/T/T/T
     // at 755352c) until per-instance-rest S3 held p4, whose own load the rows read, to its type's package
     // binding: inconsistent, as the plain-number model above.
     'w4-unit': probe(`package W4u {
@@ -7651,6 +7711,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'W4u::c4hi': ['?/?/?/X', '?'],
       'W4u::c4lo': ['?/?/?/X', '?'],
+      'W4u::«BindingConnectorAsUsage» in W4u::p4#bind': ['F/-/F/-', 'F'],
     }),
     // The package's binding makes L one value with every instance's load, so a slot an instance fixes OUTSIDE the
     // binding fixes L and every other instance: Q's `bind p.load = M` (W4X1, W4X6), the package's own `bind p2.load
@@ -10359,21 +10420,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'SEN::q1::tie': ['T/-/T/-', 'T'],
       'SEN::top1': ['?/?/T/T', 'T'],
     }),
-    // fence-assert-not S1: `assert not constraint c { … }` was a parse error whose recovery left `c` a PLAIN constraint,
-    // read T on all four surfaces while it holds (h1; h2 in the instance whose binding carries the value) — the clause
-    // states the opposite. No reader negates it, so the clause is refused with a finding of its own
-    // (`mapper/negated-assert-unread`, an error: the load degrades and the checks abstain) and kept as written: no
-    // surface files a row for `c`, and the rows beside it are what they were. Pinned in either text order and member
-    // order, with a binding-carried instance, then a specialisation, a nested definition, an instance of an instance,
-    // an anonymous clause, and `require not` / `assume not`, which are no published form and are refused the same way.
+    // fence-assert-not S1 / numeric2 S1: `assert not constraint c { … }` was a parse error whose recovery left `c` a PLAIN
+    // constraint, read T on all four surfaces while it holds (h1; h2 in the instance whose binding carries the value), then
+    // a clause refused with a finding of its own. It is read now as the plain clause over `not (body)`, which the workaround
+    // `assert constraint c { not (…) }` writes, so the four surfaces read it as that clause: `c` is violated where its
+    // body holds (50 > 10), and the model that contradicts itself reads so beside it (the literal engine and the SMT engine
+    // report the axioms inconsistent on the rows beside it, I7_ALLOWED). Pinned in either text order and member order, with
+    // a binding-carried instance, then a specialisation, a nested definition, an instance of an instance, an anonymous
+    // clause, and `require not` / `assume not`, which are no published form and are read alike. `neg-assert-refused` keeps
+    // the shapes with no expression to negate (a body of members): refused with the finding of its own, no row for `c`.
     'neg-assert-h1': probe(`package NA1 {
         part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { load > 10.0 } }
         part p : P;
         constraint topT { p.load <= 100.0 }
         constraint topF { p.load >= 100.0 }
       }`, {
-      'NA1::topF': ['F/F/F/F', 'F'],
-      'NA1::topT': ['T/T/T/T', 'T'],
+      'NA1::P::c': ['F/-/F/-', 'F'],
+      'NA1::topF': ['F/X/F/X', 'F'],
+      'NA1::topT': ['T/X/T/X', 'T'],
     }),
     'neg-assert-h1-rev': probe(`package NA1R {
         constraint topF { p.load >= 100.0 }
@@ -10381,8 +10445,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         part def P { assert not constraint c { load > 10.0 } attribute load : ScalarValues::Real = 50.0; }
       }`, {
-      'NA1R::topF': ['F/F/F/F', 'F'],
-      'NA1R::topT': ['T/T/T/T', 'T'],
+      'NA1R::P::c': ['F/-/F/-', 'F'],
+      'NA1R::topF': ['F/X/F/X', 'F'],
+      'NA1R::topT': ['T/X/T/X', 'T'],
     }),
     'neg-assert-h2': probe(`package NA2 {
         part def P { attribute load : ScalarValues::Real; assert not constraint c { load > 10.0 } }
@@ -10391,8 +10456,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topT { q.p.load <= 100.0 }
         constraint topF { q.p.load >= 100.0 }
       }`, {
-      'NA2::topF': ['F/F/F/F', 'F'],
-      'NA2::topT': ['T/T/T/T', 'T'],
+      'NA2::P::c': ['?/-/?/-', null],
+      'NA2::P::c in NA2::Q::p': ['F/-/F/-', 'F'],
+      'NA2::topF': ['F/X/F/X', 'F'],
+      'NA2::topT': ['T/X/T/X', 'T'],
     }),
     'neg-assert-h2-rev': probe(`package NA2R {
         constraint topF { q.p.load >= 100.0 }
@@ -10401,8 +10468,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def Q { bind p.load = L; attribute L : ScalarValues::Real = 50.0; part p : P; }
         part def P { assert not constraint c { load > 10.0 } attribute load : ScalarValues::Real; }
       }`, {
-      'NA2R::topF': ['F/F/F/F', 'F'],
-      'NA2R::topT': ['T/T/T/T', 'T'],
+      'NA2R::P::c': ['?/-/?/-', null],
+      'NA2R::P::c in NA2R::Q::p': ['F/-/F/-', 'F'],
+      'NA2R::topF': ['F/X/F/X', 'F'],
+      'NA2R::topT': ['T/X/T/X', 'T'],
     }),
     'neg-assert-family': probe(`package NA5 {
         part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint { load > 10.0 } require not constraint r { load < 100.0 } }
@@ -10415,8 +10484,21 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topR { r.p.load <= 100.0 }
         constraint topP2 { p2.load >= 100.0 }
       }`, {
-      'NA5::topP2': ['F/F/F/F', 'F'],
-      'NA5::topR': ['T/T/T/T', 'T'],
+      'NA5::Outer::Inner::c': ['F/-/F/-', 'F'],
+      'NA5::P2::a': ['F/-/F/-', 'F'],
+      'NA5::P::r': ['F/X/F/X', 'F'],
+      'NA5::P::«ConstraintUsage»': ['F/-/F/-', 'F'],
+      'NA5::topP2': ['F/X/F/X', 'F'],
+      'NA5::topR': ['T/X/T/X', 'T'],
+    }),
+    'neg-assert-refused': probe(`package NA6 {
+        part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y } }
+        part p : P;
+        constraint topT { p.load <= 100.0 }
+        constraint topF { p.load >= 100.0 }
+      }`, {
+      'NA6::topF': ['F/F/F/F', 'F'],
+      'NA6::topT': ['T/T/T/T', 'T'],
     }),
     // C1 (contradictory-models S1): a definition's assert read in the instance whose binding gives the value it reads.
     // P's `load` has no value, Q's `bind p.load = L` and `L = 50.0` give Q's p the 50 P's `load <= 10.0` misses: the
@@ -16452,6 +16534,26 @@ package PS {
     ['bound-vc-ivalue-j3 | J3::k', 'q2’s p reads the 50 q2’s `:>> L = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q2’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at q’s 5'],
     ['bound-vc-ivalue-default | KD::qq4', 'q4’s p reads the 50 q4’s `:>> L default = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q4’s p, F): the SMT engine and the literal engine read the axioms inconsistent beside the F the check, the numeric surface and the literal exit give `q4.L == 4.0`'],
     ['bound-vc-derived | I5::k', 'q’s p reads the 50 Q’s `L = 50.0` gives it through Q’s binding, and its m2 (−40) misses P’s `m2 >= 0.0` (the check files the row of q’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at its 50, as with the twin that redefines `load` itself'],
+    // numeric2 S1: a negated assert whose body holds at the values is violated, and the model contradicts itself.
+    ...[
+      'neg-assert-h1 | NA1::topF',
+      'neg-assert-h1 | NA1::topT',
+      'neg-assert-h1-rev | NA1R::topF',
+      'neg-assert-h1-rev | NA1R::topT',
+      'neg-assert-h2 | NA2::topF',
+      'neg-assert-h2 | NA2::topT',
+      'neg-assert-h2-rev | NA2R::topF',
+      'neg-assert-h2-rev | NA2R::topT',
+      'neg-assert-family | NA5::P::r',
+      'neg-assert-family | NA5::topP2',
+      'neg-assert-family | NA5::topR',
+    ].map(
+      (key) =>
+        [
+          key,
+          'a negated assert (`assert not constraint c { load > 10.0 }`, `require not`, `assume not`) whose body holds at the values the model states is violated, as the plain clause over `not (body)` is: the model contradicts itself, which the SMT engine reports as inconsistent axioms on every row of the file, and the literal engine on a row that reads a value the clause reaches; the check and the numeric surface read the values',
+        ] as const,
+    ),
     // J3: q's `part :>> p = other` reads Q's own `other` (x keeps its 2 against Q's tie, as RF2's), so `top2` and Q's c
     // read the 2 and the SMT engine reports the axioms inconsistent; the package's `other` (x = 20) is no part of it.
     ...['J3::P::c', 'J3::P::c in J3::other', 'J3::top2'].map(
@@ -16516,7 +16618,17 @@ package PS {
         ] as const,
     ),
     ['h5-hi | HI::top', 'an inequality defines nothing (U5): x’s default stands and q1’s asserted `p.x >= 5.0` contradicts it; the check reads the default'],
-    ['w4-plain | W4o::c5', 'p4’s own `load = 7.0` against the package’s bound L (50): the contradiction of decision 1 the SMT engine reports; p5’s load, which the binding makes L, is read at 50 by the check and the literal engine'],
+    [
+      'w4-plain | W4o::c5',
+      'p4’s own `load = 7.0` against the package’s bound L (50): the contradiction of decision 1, which the check reports on the binding’s row at p4 (numeric2 S1), so the literal engine and the SMT engine abstain; p5’s load, which the binding makes L, is read at 50 by the check',
+    ],
+    ...['head-conflict | HC1::c5', 'head-conflict | HC1::c6', 'head-conflict-rev | HC1::c5', 'head-conflict-rev | HC1::c6', 'head-conflict-unit | HC2::c4', 'head-conflict-unit | HC2::c6', 'head-conflict-nested | HC3::c5'].map(
+      (key) =>
+        [
+          key,
+          'a package’s binding on P’s feature against an instance’s own value written with `=` that differs from the one the binding joins it to (HC1’s p4, HC2’s p5, HC3’s p9): the contradiction of decision 1, which the check reports on the binding’s row at that instance, so the literal engine and the SMT engine abstain on a row over L or over another instance’s load, where the check reads the values the binding gives',
+        ] as const,
+    ),
     ...['encl-eb4 | EB4::P::c', 'encl-eb4 | EB4::P::c in EB4::Q::p', 'encl-eb5 | EB5::P::c', 'encl-eb5 | EB5::P::c in EB5::Q::p', 'encl-eb5 | EB5::P::c in EB5::R::q::p'].map(
       (key) =>
         [
@@ -17419,24 +17531,27 @@ package PS {
     expect(report.diagnostics.filter((d) => d.code === 'validation/specialization-cycle').length).toBeGreaterThan(0);
   });
 
-  // fence-assert-not S1: each negated clause of the probes above is one error of its own, with a range, on the file as
-  // written; the clause is kept as a constraint with no expression and the save writes it as it was read.
-  it('neg-assert-*: a negated assert is refused with a finding of its own, and no surface files a row for it', async () => {
-    const wrote = new Map([['neg-assert-h1', 1], ['neg-assert-h1-rev', 1], ['neg-assert-h2', 1], ['neg-assert-h2-rev', 1], ['neg-assert-family', 4]]);
-    for (const [name, count] of wrote) {
+  // numeric2 S1: a negated clause is read as the plain clause over `not (body)` and kept as written (`negated`), and
+  // files its row on the surfaces that file an assert's; one with no expression to negate is refused with a finding of
+  // its own, as before, kept as a constraint with no expression and written back as it was read.
+  it('neg-assert-*: a negated assert is read as the negation of its body; one with no expression to negate is refused', async () => {
+    for (const name of ['neg-assert-h1', 'neg-assert-h1-rev', 'neg-assert-h2', 'neg-assert-h2-rev', 'neg-assert-family']) {
       const { model, report } = await loadModelText(PROBES[name]!.text, { fileName: `${name}.sysml`, strict: true });
-      const found = report.diagnostics.filter((d) => d.code === 'mapper/negated-assert-unread');
-      expect(found.map((d) => [d.severity, d.range !== undefined]), name).toEqual(Array(count).fill(['error', true]));
-      expect(report.ok, name).toBe(false);
+      expect(report.diagnostics.filter((d) => d.code === 'mapper/negated-assert-unread'), name).toEqual([]);
+      expect(report.diagnostics.filter((d) => d.severity === 'error'), name).toEqual([]);
       const kept = model!.all().filter((e) => e.attrs.negated === true);
-      expect(kept.length, name).toBe(count);
-      for (const e of kept) {
-        expect(e.attrs.expression, `${name}: the body of a negated clause is no expression any reader takes`).toBeUndefined();
-        expect(String(e.attrs.unparsedText), name).toMatch(/^(?:assert|require|assume) not\b/);
-      }
-      const refused = kept.map((e) => model!.qualifiedName(e.id));
-      expect([...(seen.get(name)?.keys() ?? [])].filter((row) => refused.some((q) => row === q || row.startsWith(`${q} in `))), `${name}: a row for a negated clause`).toEqual([]);
+      expect(kept.length, name).toBeGreaterThan(0);
+      for (const e of kept) expect(String(e.attrs.expression), name).toMatch(/^not \(.+\)$/);
     }
+    const { model, report } = await loadModelText(PROBES['neg-assert-refused']!.text, { fileName: 'neg-assert-refused.sysml', strict: true });
+    expect(report.diagnostics.filter((d) => d.code === 'mapper/negated-assert-unread').map((d) => [d.severity, d.range !== undefined])).toEqual([['error', true]]);
+    expect(report.ok).toBe(false);
+    const kept = model!.all().filter((e) => e.attrs.negated === true);
+    expect(kept.length).toBe(1);
+    expect(kept[0]!.attrs.expression, 'the body of a refused clause is no expression any reader takes').toBeUndefined();
+    expect(String(kept[0]!.attrs.unparsedText)).toMatch(/^assert not\b/);
+    const refused = model!.qualifiedName(kept[0]!.id);
+    expect([...(seen.get('neg-assert-refused')?.keys() ?? [])].filter((row) => row === refused || row.startsWith(`${refused} in `)), 'a row for a refused clause').toEqual([]);
   });
 
   // PI-1: a usage-owned relation's one other instance (pi1-r17's q1::p) was refuted by verify while

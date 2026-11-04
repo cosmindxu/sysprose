@@ -3145,6 +3145,49 @@ describe('checkConstraints — a bound partner is read only where every instance
     ]);
   });
 
+  it('reports a package\'s binding on a definition\'s feature violated at the instance whose own value differs (numeric2 S1)', async () => {
+    // W4o's `bind P::load = L` holds in every instance of P: p4's own `load = 7.0` against L's 50 is two values the
+    // model states. The binding is read where it is written, so no row named the pair, and the literal engine read p5's
+    // load (which the binding makes L) with nothing to say the model contradicts itself.
+    const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; }';
+    const rowsOf = async (body: string, L = 'attribute L : ScalarValues::Real = 50.0;') => {
+      const { model: m } = await loadModelText(`package W { ${P} ${L} bind P::load = L; ${body} }`);
+      return checkConstraints(m!)
+        .filter((c) => c.conflict === 'bind')
+        .map((c) => [m!.qualifiedName(c.ownerId!), c.expression, c.result] as const);
+    };
+    expect(await rowsOf('part p4 : P { attribute :>> load = 7.0; } part p5 : P;')).toEqual([['W::p4', 'P.load == L', 'violated']]);
+    // Each instance whose value differs, and only those: p6 states the 50 the binding joins.
+    expect(await rowsOf('part p4 : P { attribute :>> load = 7.0; } part p6 : P { attribute :>> load = 50.0; } part p7 : P { attribute :>> load = 9.0; }')).toEqual([
+      ['W::p4', 'P.load == L', 'violated'],
+      ['W::p7', 'P.load == L', 'violated'],
+    ]);
+    // The instance of a specialisation of P is the same pair.
+    expect((await rowsOf('part def P2 :> P; part p4 : P2 { attribute :>> load = 7.0; }')).length).toBe(1);
+    // A `default` (it gives way), a value both sides state alike, a `default` on the other side or an expression the two sides
+    // do not state as one constant (L = 2.0 * K reads a name) is not reported.
+    expect(await rowsOf('part p4 : P { attribute :>> load default = 7.0; }')).toEqual([]);
+    expect(await rowsOf('part p4 : P { attribute :>> load = 50.0; }')).toEqual([]);
+    expect(await rowsOf('part p4 : P { attribute :>> load = 7.0; }', 'attribute L : ScalarValues::Real default = 50.0;')).toEqual([]);
+    expect(await rowsOf('part p4 : P { attribute :>> load = 7.0; }', 'attribute K : ScalarValues::Real = 3.0; attribute L : ScalarValues::Real = 2.0 * K;')).toEqual([]);
+    // A unit converts: 7000.0 [g] is the 7 [kg] of L, 7.0 [g] is not.
+    const kg = (g: string) => `package WU { part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; } attribute L : ISQ::MassValue = 7.0 [kg];
+      bind P::load = L; part p4 : P { attribute :>> load = ${g}; } }`;
+    for (const [g, n] of [['7000.0 [g]', 0], ['7.0 [g]', 1]] as const) {
+      const { model: m } = await loadModelText(kg(g));
+      expect(checkConstraints(m!).filter((c) => c.conflict === 'bind' && c.result === 'violated').length, g).toBe(n);
+    }
+    // sysml-check reports it, at p4's line, in a sentence that names both values.
+    const { report } = await loadModelText(`package W { ${P} attribute L : ScalarValues::Real = 50.0; bind P::load = L;\n part p4 : P { attribute :>> load = 7.0; } }`, { fileName: 'w.sysml', strict: true });
+    expect(report.diagnostics.filter((d) => d.severity === 'warning').map((d) => [d.code, d.message])).toEqual([
+      [
+        'validation/constraint-violation',
+        'Constraint violated: W\'s `bind P.load = L` binds P.load to L in every instance of W::P, and W::p4 states p4::load = 7.0 where W::L = 50.0 — ' +
+          'a binding holds in every instance, as a value written with `=` does, so the model states both values',
+      ],
+    ]);
+  });
+
   /** R's `L = 2.0 * K`, bound into its q's p by a binding written in q's body (or in a definition nested in R). */
   const enclosed = (pkg: string, nested: boolean, override: boolean) => `package ${pkg} {
     ${P}

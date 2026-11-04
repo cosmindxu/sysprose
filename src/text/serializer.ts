@@ -33,6 +33,7 @@ import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
 import { generalizationsWithImplicit } from '@semantics/featuring';
 import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
+import { negatedClauseBody } from '@semantics/requirements';
 
 const INDENT = '    ';
 
@@ -670,6 +671,7 @@ function renderWithBody(
   el: ElementRecord,
   indent: number,
   head: string,
+  expressionText?: string,
 ): string {
   const pad = INDENT.repeat(indent);
   const lines: string[] = [];
@@ -690,7 +692,7 @@ function renderWithBody(
   // Constraint/calculation expression body — emitted LAST because the grammar
   // Body is `'{' members* expr? '}'` (a trailing expression must follow the
   // members, else the reparse fails). Emitted even when members are present.
-  const expr = el.attrs.expression;
+  const expr = expressionText ?? el.attrs.expression;
   if (typeof expr === 'string' && expr.length) {
     lines.push(`${INDENT.repeat(indent + 1)}${expr}`);
   }
@@ -961,10 +963,15 @@ function clauseDeclarator(el: ElementRecord): string[] {
 function requirementClauseLine(model: Model, el: ElementRecord, indent: number): string {
   const role = String(el.attrs.requirementRole);
   const parts = [...visibilityPrefix(el), role];
+  // A negated clause (`assert not constraint c { B }`) holds the expression `not (B)`: it is written back as it was
+  // read. One whose expression is any other text has been edited since (the flag is stale) and is written plain.
+  const expression = typeof el.attrs.expression === 'string' ? el.attrs.expression : undefined;
+  const negatedBody = el.attrs.negated === true && expression !== undefined ? negatedClauseBody(expression) : undefined;
+  if (negatedBody !== undefined || (el.attrs.negated === true && expression === undefined)) parts.push('not');
   if (CONSTRAINT_CLAUSE_KINDS.has(role)) parts.push(...clauseDeclarator(el));
   if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
-  return renderWithBody(model, el, indent, parts.join(' '));
+  return renderWithBody(model, el, indent, parts.join(' '), negatedBody);
 }
 
 /** State behaviour: `entry` / `do` / `exit` (optionally named). */

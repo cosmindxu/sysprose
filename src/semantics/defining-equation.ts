@@ -14133,3 +14133,87 @@ export function baseIdOf(key: string): ElementId {
 export function definitionKey(featureId: ElementId, contextId: ElementId): string {
   return `${featureId} defined in ${contextId}`;
 }
+
+/**
+ * An instance whose own value, written with `=`, differs from the one a package's binding on its definition's feature
+ * joins that feature to ({@link headBindingConflicts}).
+ */
+export interface HeadBindingConflict {
+  /** The package's binding (`bind P::load = L`). */
+  binding: ElementRecord;
+  /** The definition whose feature the binding is written on (`P`). */
+  definition: ElementRecord;
+  /** The usage that states the differing value (`part p4 : P`). */
+  instance: ElementRecord;
+  /** The redefinition that states it (`attribute :>> load = 7.0`), and the value the binding's other end states. */
+  stated: ElementRecord;
+  other: ElementRecord;
+  /** The binding's two ends, spelled as the package reads them (`P.load`, `L`). */
+  left: string;
+  right: string;
+}
+
+const HEAD_CONFLICTS = new WeakMap<Model, { rev: number; list: readonly HeadBindingConflict[] }>();
+
+/**
+ * The instances of a definition whose own value, written with `=`, differs from the value written with `=` that a
+ * package's binding on the definition's feature joins it to (W4o's `bind P::load = L` with L = 50.0, beside `part p4
+ * : P { attribute :>> load = 7.0; }`): the binding holds in every instance of the definition, so the model states two
+ * values for p4's load. The binding is read where it is written, never in p4 ({@link bindingHolder}), so no
+ * binding finding named the pair. One end must be the definition's own feature (one segment below it) and the other a
+ * feature of the package or of an instance, each stating a constant that differs ({@link compareWrittenValues}); an
+ * expression, a `default`, a deeper end or a value that only an evaluation could compare is not reported, only read as
+ * before. Once per revision.
+ */
+export function headBindingConflicts(model: Model): readonly HeadBindingConflict[] {
+  const hit = HEAD_CONFLICTS.get(model);
+  if (hit && hit.rev === model.rev) return hit.list;
+  const list: HeadBindingConflict[] = [];
+  if (hasUserBindings(model)) {
+    outsideBindingsOf(model, '' as ElementId);
+    const outside = bindingEnds(model).outside;
+    // The redefinitions that state a value of their own with `=`, once.
+    const stating = outside?.size
+      ? model.all().filter((x) => x.attrs.isLibrary !== true && isUsage(x.eClass) && x.ownerId != null && x.attrs.value !== undefined && x.attrs.value !== null && x.attrs.defaultValue !== true)
+      : [];
+    for (const [definitionId, bindings] of outside ?? []) {
+      const definition = model.get(definitionId);
+      if (!definition) continue;
+      for (const { binding, ends } of bindings) {
+        const side = ends[0] !== undefined && ends[1] === undefined ? 0 : ends[1] !== undefined && ends[0] === undefined ? 1 : -1;
+        const below = side === 0 ? ends[0] : side === 1 ? ends[1] : undefined;
+        if (side < 0 || below === undefined || below === '' || below.includes('.')) continue;
+        const headId = (side === 0 ? binding.source : binding.target)?.[0];
+        const otherId = (side === 0 ? binding.target : binding.source)?.[0];
+        const head = headId !== undefined ? model.get(headId) : undefined;
+        const other = otherId !== undefined ? model.get(otherId) : undefined;
+        const holder = binding.ownerId != null ? model.get(binding.ownerId) : undefined;
+        const read = holder ? bindingHolder(model, binding) : undefined;
+        if (!head || !other || !read || read.left === undefined || read.right === undefined || binding.attrs.isLibrary === true) continue;
+        const written = valueSourceOf(model, other);
+        if (!written || written.attrs.defaultValue === true) continue;
+        const slot = new Set<ElementId>([head.id, ...redefinedClosure(model, head).map((g) => g.id)]);
+        for (const x of stating) {
+          if (!redefinedClosure(model, x).some((g) => slot.has(g.id))) continue;
+          const instance = model.get(x.ownerId!);
+          if (!instance || !isUsage(instance.eClass) || instance.attrs.isLibrary === true) continue;
+          if (!generalizationsOf(model, instance.id).some((g) => g.id === definition.id)) continue;
+          if (compareWrittenValues(x, written) !== 'differs') continue;
+          list.push({ binding, definition, instance, stated: x, other: written, left: read.left, right: read.right });
+        }
+      }
+    }
+  }
+  HEAD_CONFLICTS.set(model, { rev: model.rev, list });
+  return list;
+}
+
+/** {@link headBindingConflicts}' finding, in words: the binding, the instance's value and the one the binding joins it to. */
+export function headBindingSentence(model: Model, c: HeadBindingConflict): string {
+  return (
+    `${effectiveQualifiedName(model, c.binding.ownerId ?? c.binding.id)}'s \`bind ${c.left} = ${c.right}\` binds ${c.left} to ${c.right} ` +
+    `in every instance of ${effectiveQualifiedName(model, c.definition.id)}, and ${effectiveQualifiedName(model, c.instance.id)} states ` +
+    `${writtenName(model, c.stated)} = ${writtenValue(c.stated)} where ${writtenName(model, c.other)} = ${writtenValue(c.other)} — a binding holds ` +
+    'in every instance, as a value written with `=` does, so the model states both values'
+  );
+}
