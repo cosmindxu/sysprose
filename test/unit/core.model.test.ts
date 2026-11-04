@@ -751,7 +751,7 @@ describe('Model core', () => {
       const b = m.create('PartUsage', { declaredName: 'b' });
       m.create('Succession', { id: 'c2', source: ['c1'], target: [b.id] });
       m.create('Succession', { id: 'c1', source: [a.id], target: [b.id] });
-      expect(m.remove(a.id).sort()).toEqual([a.id, 'c1', 'c2']);
+      expect(m.remove(a.id).sort()).toEqual([a.id, 'c1', 'c2'].sort());
       for (const el of m.all()) for (const ref of [...(el.source ?? []), ...(el.target ?? [])]) expect(m.has(ref), el.id).toBe(true);
     });
 

@@ -5,12 +5,12 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5449 total — 5449 passed, 0 failed, 0 skipped
+- **Tests:** 5461 total — 5461 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 123 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 124 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
 | test/campaign/verification.test.ts | 189 | 0 | 0 |
@@ -58,7 +58,7 @@
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
 | test/unit/api.rest2.test.ts | 11 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 12 | 0 | 0 |
-| test/unit/api.verification.test.ts | 82 | 0 | 0 |
+| test/unit/api.verification.test.ts | 86 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
@@ -68,7 +68,7 @@
 | test/unit/collab.binding.test.ts | 36 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
-| test/unit/core.model.test.ts | 28 | 0 | 0 |
+| test/unit/core.model.test.ts | 32 | 0 | 0 |
 | test/unit/diagnostic-codes.test.ts | 15 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
@@ -114,7 +114,7 @@
 | test/unit/semantics.constraint-class.test.ts | 82 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 287 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 290 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
