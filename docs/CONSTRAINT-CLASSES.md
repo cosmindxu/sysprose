@@ -205,7 +205,6 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
   - A bare `connection` is not an equality unless `--connections-as-equalities`.
 - **Open defects.**
   - `D-inconsistent-axioms` (wrong-statement): One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim.
-  - `D-ub6-w4o` (abstains): Two rows decide on the literal engine beside SMT X because the check files no violated row for their contradiction.
   - `D-default-machinery` (abstains): Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”

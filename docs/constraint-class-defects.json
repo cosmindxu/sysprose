@@ -58,15 +58,6 @@
       "note": "The subsetting component fence is per usage, not per instance, and the other abstentions of the rollup. None gives a wrong answer."
     },
     {
-      "id": "D-ub6-w4o",
-      "todo": "File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine can seed from it.",
-      "classes": [
-        "bind-equality"
-      ],
-      "kind": "abstains",
-      "note": "Two rows decide on the literal engine beside SMT X because the check files no violated row for their contradiction."
-    },
-    {
       "id": "D-default-machinery",
       "todo": "Remove the decision-14 default machinery, or ship the held tag (analysis Q2).",
       "classes": [
@@ -126,6 +117,10 @@
     {
       "todo": "Say why a default stood on the rows `standingDefaultSentence` still does not reach.",
       "by": "closed by a documented decision in round 9 (no reachable row is known); see the TODO rollup 'parallel machines and Simulate' item (5)"
+    },
+    {
+      "todo": "File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine can seed from it.",
+      "by": "closed by a documented decision in round 9: UB6 is ruled permanent; see the TODO rollup 'parallel machines and Simulate' item (5)"
     }
   ],
   "pending": [

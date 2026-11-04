@@ -446,18 +446,6 @@ headings.
       note */ load > 10.0 }`). Done when those are read: the negation of a typed or named constraint
       needs that constraint's body judged under `not`, and a members body needs the members in the
       negated scope. [contradictory-models S1 review; fence-assert-not; numeric2 S1]
-- [ ] **File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine
-      can seed from it.**
-      Since numeric2 S1 the check files the binding's row at an instance whose own `=` constant
-      differs from the one a package's binding on a definition's feature joins it to (W4o's p4:
-      `headBindingConflicts`), so the literal engine marks W4o::c5 inconclusive (T/X/?/X; pinned
-      w4-plain, w4-unit, head-conflict*). What is left is unit-blind-assert UB6::cT: q's asserted
-      `p.load >= 1000.0` reads the 50 kg a binding carries into an untyped load as 50 in SI, where
-      it fails, and the check abstains on that pair by design (a bare number has no unit to compare
-      in), so it can file no violated row; the literal engine's T on cT is right (K is 25 kg
-      wherever it is read) and SMT's X is its SI reading. Done when the maintainer rules the row
-      permanent (recommended: a violated row would claim a comparison the check refuses to make) or
-      the check reads the pair. [contradictory-models S3; numeric2 S1]
 - [ ] **Read two asserted equations on the two ends of a binding that reaches an end through a part
       only where they meet (the scope decision).** fence-readings S2 made the two readings abstain
       together on every surface, so the entry's first done-when holds and is pinned
@@ -1135,7 +1123,11 @@ true values. What follows is what that branch and the review of it left open; en
       stood on the rows `standingDefaultSentence` still does not reach' (277) closed because no
       reachable row is known (probes G1-G12 of wording-pass; a specialiser context may override the
       names the sentence would speak about, so saying it there could be false); re-add it if a
-      reachable group row turns up. [round 9]
+      reachable group row turns up; 'File a violated row for the contradiction SMT reports in UB6
+      and W4o' (263) closed with UB6 ruled permanent (the check abstains on that pair by design: a bare
+      number has no unit to compare in, so a violated row would claim a comparison it refuses to make;
+      the literal engine's T on UB6::cT is right and SMT's X is its SI reading; W4o was fixed by
+      numeric2 S1). [round 9]
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
