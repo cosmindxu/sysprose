@@ -22,6 +22,7 @@ import {
   boundPartnerSafe,
   boundSourceIn,
   classified,
+  contradictedDefinitionRefusal,
   contradictedDefinitions,
   defaultGivesWay,
   defaultGivesWayIn,
@@ -8740,6 +8741,64 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       // The numeric surface reads the same refusal, and `verify` prints no value of a name it cannot place.
       expect(checkConstraintsNumeric(m!).filter((r) => r.result !== 'unknown' && r.conflict === undefined)).toEqual([]);
       expect(readsContradictedDefinition(m!, m!.all().find((e) => m!.qualifiedName(e.id) === 'CT0::K')!.id)).toBe(true);
+    });
+
+    it('a taint said to hold in one instance reaches every generic row, and an instance reading only where its walk meets that instance (taintReaches)', async () => {
+      // No taint is built with an instance yet (every surface reads as before): the seam plants one on every entry of
+      // the pair's, to show where a scoped taint reaches.
+      const real = instanceIndexSeam.spreadContradiction;
+      let where = '';
+      vi.spyOn(instanceIndexSeam, 'spreadContradiction').mockImplementation((model, index, sets) => {
+        const within = model.all().find((e) => model.qualifiedName(e.id) === where)?.id;
+        return new Map([...real(model, index, sets)].map(([id, t]) => [id, { ...t, within }]));
+      });
+      const text = `package TW0 {
+        part def P { attribute L : ScalarValues::Real; assert constraint c50 { L == 50.0 } assert constraint c60 { L == 60.0 } }
+        part def O { attribute L : ScalarValues::Real; }
+        part p : P;
+        part o : O;
+        constraint k { p.L <= 70.0 }
+      }`;
+      const read = async (w: string) => {
+        where = w;
+        const { model: m } = await loadModelText(text);
+        const id = (q: string): string => m!.all().find((e) => m!.qualifiedName(e.id) === q)!.id;
+        const refused = (q: string, expression: string, at?: { contextId: string; path?: string }): boolean =>
+          contradictedDefinitionRefusal(m!, id(q), expression, at) !== undefined;
+        return {
+          rows: checkConstraints(m!)
+            .filter((c) => c.conflict === undefined)
+            .map((c) => [m!.qualifiedName(c.id), c.result]),
+          feature: readsContradictedDefinition(m!, id('TW0::P::L')),
+          // c50 read in o (o's own L): neither its context's owner chain nor a walk meets p; read for an instance no
+          // element spells, it cannot be placed. k's own row walks p (`p.L`).
+          reads: [
+            refused('TW0::P::c50', 'L == 50.0', { contextId: id('TW0::o') }),
+            refused('TW0::P::c50', 'L == 50.0', { contextId: id('TW0::p') }),
+            refused('TW0::P::c50', 'L == 50.0', { contextId: id('TW0::o'), path: 'TW0::nowhere' }),
+            refused('TW0::k', 'p.L <= 70.0'),
+          ],
+        };
+      };
+      const all = [
+        ['TW0::P::c50', 'unknown'],
+        ['TW0::P::c60', 'unknown'],
+        ['TW0::k', 'unknown'],
+      ];
+      // Everywhere (no instance): every row abstains, as unplanted.
+      expect(await read('')).toEqual({ rows: all, feature: true, reads: [true, true, true, true] });
+      // In p: P's own rows are generic and stand for p, c50 read in p is in p, and k walks p.
+      expect(await read('TW0::p')).toEqual({ rows: all, feature: true, reads: [false, true, true, true] });
+      // In o: the generic rows still abstain, c50 read in o is in o, and k — whose walk meets p alone — reads.
+      expect(await read('TW0::o')).toEqual({
+        rows: [
+          ['TW0::P::c50', 'unknown'],
+          ['TW0::P::c60', 'unknown'],
+          ['TW0::k', 'satisfied'],
+        ],
+        feature: true,
+        reads: [true, false, true, false],
+      });
     });
 
     it('listing what an instance reads otherwise that throws leaves every row unknown, never the load (satisfierTaint)', async () => {

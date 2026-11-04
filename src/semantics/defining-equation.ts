@@ -3400,7 +3400,7 @@ export class DefiningEquations {
     // reads through them ({@link subsettingTaint}) — none asked while they are
     // being listed: their own test is this walk ({@link
     // instanceReadingOtherwise}). `null`: listing them threw.
-    let subsetting: ReadonlyMap<ElementId, ElementRecord> | null | undefined;
+    let subsetting: ScopedTaint | null | undefined;
     if (!subsettingsBeingListed(this.model)) {
       try {
         const t = subsettingTaint(this.model).taint;
@@ -4918,7 +4918,7 @@ const EQUATED_PARTS = new WeakMap<
      */
     partnerEnds: ReadonlySet<ElementId>;
     /** {@link equatedTaint}, built on first ask. */
-    taint?: ReadonlyMap<ElementId, ElementRecord>;
+    taint?: ScopedTaint;
     /** Set where listing the asserted equations no surface reads threw (A.2.9): the sentence every row abstains in. */
     failed?: string;
   }
@@ -5386,7 +5386,7 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
  * read through none of them, for an instance below none of them, reads what
  * the binding carries nowhere ({@link equatedPartsRefusal}).
  */
-function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
+function equatedTaint(model: Model): ScopedTaint {
   const parts = equatedParts(model);
   if (parts.taint) return parts.taint;
   if (parts.unread.length === 0) return (parts.taint = new Map());
@@ -5419,25 +5419,29 @@ function equatedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
  * step taints an element `stated` holds (a feature that states its own value, {@link spreadContradiction}), and the
  * asserted-relation step taints the feature each name denotes, not its first link, where the name is dotted and
  * that feature is one: a part above it holds features that state their own values.
+ *
+ * A seed may say the instance its taint holds in (`within`, {@link TaintEntry}); every seed says none today. What a
+ * step of the fixpoint adds holds everywhere, whatever the entry it was reached from: where a carried value goes
+ * from one instance's reading is not followed, so it reaches every reading ({@link taintReaches}), which fails closed.
  */
 function spreadTaint(
   model: Model,
   sources: ReadonlySet<ElementId>,
-  seed: (add: (e: ElementRecord, b: ElementRecord, holder?: ElementId) => void) => void,
+  seed: (add: (e: ElementRecord, b: ElementRecord, holder?: ElementId, within?: ElementId) => void) => void,
   holders = true,
   stated?: (e: ElementRecord) => boolean,
-): Map<ElementId, ElementRecord> {
+): Map<ElementId, TaintEntry> {
   const parts = equatedParts(model);
-  const taint = new Map<ElementId, ElementRecord>();
+  const taint = new Map<ElementId, TaintEntry>();
   const defs = sharedDefinitions(model);
   const ownerOf = (e: ElementRecord): ElementRecord | undefined => (e.ownerId != null ? model.get(e.ownerId) : undefined);
   let grew = true;
   // `e`, and with `holder` each usage above it up to `holder`.
-  const add = (e: ElementRecord, b: ElementRecord, holder?: ElementId): void => {
+  const add = (e: ElementRecord, b: ElementRecord, holder?: ElementId, within?: ElementId): void => {
     for (let cur: ElementRecord | undefined = e; cur && cur.id !== holder; cur = ownerOf(cur)) {
       if (cur !== e && !isUsage(cur.eClass)) break;
       if (!taint.has(cur.id)) {
-        taint.set(cur.id, b);
+        taint.set(cur.id, within === undefined ? { source: b } : { source: b, within });
         grew = true;
       }
       if (holder === undefined) break;
@@ -5508,16 +5512,93 @@ function spreadTaint(
   return taint;
 }
 
-/** The binding whose value `e`, or a usage above it, may carry ({@link equatedTaint}). */
-function taintedAt(model: Model, taint: ReadonlyMap<ElementId, ElementRecord>, e: ElementRecord | undefined): ElementRecord | undefined {
+/**
+ * One element of a taint ({@link equatedTaint}, {@link contradictedTaint}, {@link satisfierTaint}, {@link
+ * subsettingTaint}): the source it is tainted by and, where the taint holds in one instance only, that instance
+ * (`within`, a usage). `within` undefined is everywhere: no instance is told apart. Every taint is built so today
+ * ({@link spreadTaint}), so every reading is reached as before.
+ */
+interface TaintEntry {
+  source: ElementRecord;
+  within?: ElementId;
+}
+type ScopedTaint = ReadonlyMap<ElementId, TaintEntry>;
+
+/**
+ * Does `t` reach a reading made at `at` (undefined: the element's own row, which stands for EVERY instance), through
+ * the instances `denoted` a dotted name walked? Fails closed: a taint everywhere reaches every reading; a generic
+ * reading (no `at`, no instance on the walk) is reached, `within` included; otherwise the taint reaches the reading
+ * where `within` is on the owner chain of `at.contextId`, on the walk, an instance `at.path` is at or below, or a
+ * usage one of those redefines or specialises (a `:>> p` is p); and wherever this cannot place the reading (no
+ * frames for `at.path`, a throw), it is reached.
+ */
+function taintReaches(model: Model, t: TaintEntry, at: { contextId: ElementId; path?: string } | undefined, denoted?: () => readonly ElementId[]): boolean {
+  const within = t.within;
+  if (within === undefined) return true;
+  try {
+    const walked = (denoted?.() ?? []).filter((id) => {
+      const x = model.get(id);
+      return x !== undefined && isUsage(x.eClass);
+    });
+    if (at === undefined && walked.length === 0) return true;
+    const defs = sharedDefinitions(model);
+    const instances = new Set<ElementId>(walked);
+    if (at !== undefined) {
+      const seen = new Set<ElementId>();
+      for (let o: ElementId | null = at.contextId; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? null) {
+        seen.add(o);
+        instances.add(o);
+      }
+      if (at.path !== undefined) {
+        const frames = defs.framesAbove(at.path);
+        if (frames === undefined) return true;
+        for (const fr of frames) instances.add(fr.reader);
+        const name = defs.instanceNameOf(within);
+        if (at.path === name || at.path.startsWith(`${name}::`)) return true;
+      }
+    }
+    const specialisers = defs.specialisersOf(within);
+    for (const id of instances) {
+      if (id === within || specialisers.some((s) => s.id === id)) return true;
+      const x = model.get(id);
+      if (x && redefinedClosure(model, x).some((g) => g.id === within)) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The entry of `taint` that `e`, or a usage above it, is tainted by and that reaches the reading `at` through
+ * `denoted` ({@link taintReaches}); a usage above whose entry does not reach it is walked past.
+ */
+function taintEntryAt(
+  model: Model,
+  taint: ScopedTaint,
+  e: ElementRecord | undefined,
+  at?: { contextId: ElementId; path?: string },
+  denoted?: () => readonly ElementId[],
+): TaintEntry | undefined {
   const seen = new Set<ElementId>();
   for (let cur = e; cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
     seen.add(cur.id);
     const hit = taint.get(cur.id);
-    if (hit) return hit;
+    if (hit && taintReaches(model, hit, at, denoted)) return hit;
     if (!isUsage(cur.eClass)) return undefined;
   }
   return undefined;
+}
+
+/** The binding whose value `e`, or a usage above it, may carry ({@link equatedTaint}), as read at `at` ({@link taintEntryAt}). */
+function taintedAt(
+  model: Model,
+  taint: ScopedTaint,
+  e: ElementRecord | undefined,
+  at?: { contextId: ElementId; path?: string },
+  denoted?: () => readonly ElementId[],
+): ElementRecord | undefined {
+  return taintEntryAt(model, taint, e, at, denoted)?.source;
 }
 
 /**
@@ -5533,14 +5614,28 @@ function taintedAt(model: Model, taint: ReadonlyMap<ElementId, ElementRecord>, e
  * value no surface reads through (it read w's top as a fresh T1). So, last,
  * is every feature such a link lands on on the way ({@link
  * DefiningEquations.standsThrough}): W's `r2 = r1` read in w lands on w's own
- * r1 before the part it names.
+ * r1 before the part it names. Read at `at`, an entry counts only where it
+ * reaches that reading through the instances the name walked ({@link
+ * taintReaches}).
  */
 function readsTainted(
   model: Model,
-  taint: ReadonlyMap<ElementId, ElementRecord>,
+  taint: ScopedTaint,
   roots: readonly ElementId[],
   name: string | undefined,
+  at?: { contextId: ElementId; path?: string },
 ): ElementRecord | undefined {
+  return readsTaintEntry(model, taint, roots, name, at)?.source;
+}
+
+/** {@link readsTainted}, with the entry the name is read through. */
+function readsTaintEntry(
+  model: Model,
+  taint: ScopedTaint,
+  roots: readonly ElementId[],
+  name: string | undefined,
+  at?: { contextId: ElementId; path?: string },
+): TaintEntry | undefined {
   if (name === undefined || roots.length === 0) return undefined;
   const defs = sharedDefinitions(model);
   const segments = name.split('.');
@@ -5555,15 +5650,19 @@ function readsTainted(
   }
   for (const r of scopes) {
     const denoted = defs.denote(r);
+    // The features the shorter links landed on: with each link's reader and enclosing instances, the walk ({@link taintReaches}).
+    const links: ElementId[] = [];
     for (let k = 1; k <= segments.length; k++) {
       const d = denoted.get(segments.slice(0, k).join('.'));
+      const walk = d ? (): readonly ElementId[] => [...d.enclosing.map((fr) => fr.reader), d.reader, ...links] : undefined;
       const hit = d
-        ? (taintedAt(model, taint, d.feature) ??
-          taintedAt(model, taint, model.get(d.reader)) ??
-          d.enclosing.map((fr) => (fr.reader === r ? undefined : taintedAt(model, taint, model.get(fr.reader)))).find((x) => x !== undefined) ??
-          defs.standsThrough(d.reader, d.feature).map((s) => taintedAt(model, taint, s)).find((x) => x !== undefined))
+        ? (taintEntryAt(model, taint, d.feature, at, walk) ??
+          taintEntryAt(model, taint, model.get(d.reader), at, walk) ??
+          d.enclosing.map((fr) => (fr.reader === r ? undefined : taintEntryAt(model, taint, model.get(fr.reader), at, walk))).find((x) => x !== undefined) ??
+          defs.standsThrough(d.reader, d.feature).map((s) => taintEntryAt(model, taint, s, at, walk)).find((x) => x !== undefined))
         : undefined;
       if (hit) return hit;
+      if (d) links.push(d.feature.id);
     }
   }
   return undefined;
@@ -5646,8 +5745,8 @@ const SATISFIERS_OTHERWISE = new WeakMap<Model, SatisfiersOtherwise>();
  */
 interface SatisfiersOtherwise {
   rev: number;
-  taint: ReadonlyMap<ElementId, ElementRecord>;
-  grouped: ReadonlyMap<ElementId, ElementRecord>;
+  taint: ScopedTaint;
+  grouped: ScopedTaint;
   why: ReadonlyMap<ElementId, ReadOtherwise>;
   failed?: string;
 }
@@ -5675,7 +5774,7 @@ function satisfierTaint(model: Model): SatisfiersOtherwise {
 
 /** {@link satisfierTaint}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. */
 function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
-  const taint = new Map<ElementId, ElementRecord>();
+  const taint = new Map<ElementId, TaintEntry>();
   const why = new Map<ElementId, ReadOtherwise>();
   const subjects = model.all().filter(
     (x) => x.attrs.isLibrary !== true && x.attrs.requirementRole === 'subject' && typeof x.attrs.value === 'string' && x.ownerId != null,
@@ -5689,28 +5788,28 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
     for (const rel of satisfies) {
       const answer = defs.satisfierOtherwise(rel.id);
       if (!answer) continue;
-      taint.set(rel.id, rel);
+      taint.set(rel.id, { source: rel });
       why.set(rel.id, answer);
     }
     for (const subject of subjects) {
       const answer = defs.satisfierOtherwise(subject.ownerId!);
       if (answer) {
-        taint.set(subject.id, subject);
+        taint.set(subject.id, { source: subject });
         why.set(subject.id, answer);
-        if (!taint.has(subject.ownerId!)) taint.set(subject.ownerId!, subject);
+        if (!taint.has(subject.ownerId!)) taint.set(subject.ownerId!, { source: subject });
         continue;
       }
       // Read through from outside (`w.q.s.load`), the subject reads any feature below its path, not only what
       // R's clauses read: R's rows in q read as before, every read through the subject abstains.
       const wide = defs.subjectOtherwise(subject);
       if (!wide) continue;
-      taint.set(subject.id, subject);
+      taint.set(subject.id, { source: subject });
       why.set(subject.id, wide);
     }
     for (const r of references) {
       const answer = defs.referenceOtherwise(r);
       if (!answer) continue;
-      taint.set(r.id, r);
+      taint.set(r.id, { source: r });
       why.set(r.id, answer);
     }
   }
@@ -5730,12 +5829,12 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
     const valued = redefinedClosure(model, source).find((g) => typeof g.attrs.value === 'string');
     const scope = model.get(source.ownerId);
     if (!valued || !scope || (copy && valued.attrs.isRef !== true)) continue;
-    taint.set(source.id, source);
+    taint.set(source.id, { source });
     why.set(source.id, { kind: 'valueless', written: source, scope, path: String(valued.attrs.value).trim(), instance: undefined, redefined: valued });
   }
   // A usage that subsets a feature an instance reads otherwise ({@link subsettingTaint}), with what reads through it.
   const subsetting = subsettingTaint(model);
-  for (const [id, source] of subsetting.taint) if (!taint.has(id)) taint.set(id, source);
+  for (const [id, entry] of subsetting.taint) if (!taint.has(id)) taint.set(id, entry);
   for (const [id, answer] of subsetting.why) if (!why.has(id)) why.set(id, answer);
   // An end of a connection the model connects to features (`connection cn : C connect w.p1 to t;`) is the feature it is
   // connected to, which may state what the end's type does not (w's `p1` redefines `load = 50.0`); the walk reads the end
@@ -5748,7 +5847,7 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
       if (type.attrs.isLibrary === true) continue;
       for (const end of effectiveFeatures(model, type.id)) {
         if (end.attrs.isEnd !== true || end.attrs.isLibrary === true || taint.has(end.id)) continue;
-        taint.set(end.id, end);
+        taint.set(end.id, { source: end });
         if (!why.has(end.id)) why.set(end.id, { kind: 'end', written: c, scope: type, path: effectiveNameOf(model, end) ?? '', instance: undefined, redefined: end });
       }
     }
@@ -5756,7 +5855,7 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
   // What subsets one by reference (`ref part r2 ::> r;`) too, as {@link subsettingTaint} follows.
   if (taint.size > 0) spreadOtherwise(model, taint, [...model.ofKind('Redefinition'), ...model.ofKind('Subsetting', 'ReferenceSubsetting')]);
   // Only a reference itself is left to a group's own re-resolution: what reads through it is not.
-  const grouped = new Map([...taint].filter(([id, source]) => !(id === source.id && why.get(id)?.kind === 'reference')));
+  const grouped = new Map([...taint].filter(([id, { source }]) => !(id === source.id && why.get(id)?.kind === 'reference')));
   return { rev: model.rev, taint, grouped, why };
 }
 
@@ -5767,7 +5866,7 @@ function satisfiersOtherwise(model: Model): SatisfiersOtherwise {
  * names), and the source of each of `narrowing` (the redefinitions and subsettings) whose target is one, each with
  * the source of what it reads through.
  */
-function spreadOtherwise(model: Model, taint: Map<ElementId, ElementRecord>, narrowing: readonly ElementRecord[]): void {
+function spreadOtherwise(model: Model, taint: Map<ElementId, TaintEntry>, narrowing: readonly ElementRecord[]): void {
   const users = model.all().filter((el) => el.attrs.isLibrary !== true);
   // A calculation's body reads like a value written beside it (`calc m1 { 10.0 - p1.load }` in W).
   const valueText = (el: ElementRecord): string | undefined =>
@@ -5781,7 +5880,7 @@ function spreadOtherwise(model: Model, taint: Map<ElementId, ElementRecord>, nar
   let grew = true;
   const join = (e: ElementRecord, source: ElementRecord): void => {
     if (taint.has(e.id) || e.attrs.isLibrary === true) return;
-    taint.set(e.id, source);
+    taint.set(e.id, { source });
     grew = true;
   };
   while (grew) {
@@ -5822,7 +5921,7 @@ function spreadOtherwise(model: Model, taint: Map<ElementId, ElementRecord>, nar
     for (const r of narrowing) {
       const target = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
       const source = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
-      const hit = target ? taint.get(target.id) : undefined;
+      const hit = target ? taint.get(target.id)?.source : undefined;
       if (hit && source) join(source, hit);
     }
   }
@@ -5864,7 +5963,7 @@ function subsettingsBeingListed(model: Model): boolean {
 /** {@link SUBSETTINGS_OTHERWISE}' entry. */
 interface SubsettingsOtherwise {
   rev: number;
-  taint: ReadonlyMap<ElementId, ElementRecord>;
+  taint: ScopedTaint;
   why: ReadonlyMap<ElementId, ReadOtherwise>;
 }
 
@@ -5893,7 +5992,7 @@ function subsettingTaint(model: Model): SubsettingsOtherwise {
  * lowest qualified name — not the order the relations were written in.
  */
 function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
-  const taint = new Map<ElementId, ElementRecord>();
+  const taint = new Map<ElementId, TaintEntry>();
   const why = new Map<ElementId, ReadOtherwise>();
   const subsettings = model.ofKind('Subsetting', 'ReferenceSubsetting').filter((r) => r.attrs.isLibrary !== true);
   if (subsettings.length === 0) return { rev: model.rev, taint, why };
@@ -5920,7 +6019,7 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
     for (const [id, { answer, hop }] of offers) {
       const g = model.get(id);
       if (!g || taint.has(id)) continue;
-      taint.set(id, g);
+      taint.set(id, { source: g });
       why.set(id, answer);
       hops.set(id, hop);
       any = true;
@@ -5978,7 +6077,7 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
   if (taint.size === 0) return { rev: model.rev, taint, why };
   const narrowing = [...model.ofKind('Redefinition'), ...subsettings].map((r) => ({ r, key: nameKey(r) })).sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0)).map((x) => x.r);
   const answerOf = (x: ElementRecord): ReadOtherwise | undefined => {
-    const source = taint.get(x.id);
+    const source = taint.get(x.id)?.source;
     return source ? why.get(source.id) : undefined;
   };
   for (let grew = true; grew; ) {
@@ -5991,7 +6090,7 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
         const scope = g.ownerId != null ? model.get(g.ownerId) : undefined;
         // f's own distance from the usage a context reads otherwise: its accepted hop, else (joined by what reads through a
         // tainted usage) one more than the usage it was joined from.
-        const own = hops.get(f.id) ?? (hops.get(taint.get(f.id)!.id) ?? 0) + 1;
+        const own = hops.get(f.id) ?? (hops.get(taint.get(f.id)!.source.id) ?? 0) + 1;
         offer(g, { ...a, written: g, scope: scope ?? a.scope, reader: a.reader ?? a.scope, subsetter: f, root: seed.id === f.id ? undefined : seed }, own + 1);
       }
     }
@@ -6024,10 +6123,10 @@ function satisfierRefusal(
   const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
   const b =
     relationNamesOf(expression)
-      .map((n) => readsTainted(model, taint, roots, n))
+      .map((n) => readsTainted(model, taint, roots, n, at))
       .find((x) => x !== undefined) ??
-    taintedAt(model, taint, context) ??
-    subsettingAround(model, at ? context : rel?.ownerId != null ? model.get(rel.ownerId) : undefined);
+    taintedAt(model, taint, context, at) ??
+    subsettingAround(model, at ? context : rel?.ownerId != null ? model.get(rel.ownerId) : undefined, at);
   const answer = b ? why.get(b.id) : undefined;
   return answer ? satisfierSentence(model, answer) : undefined;
 }
@@ -6045,7 +6144,7 @@ function satisfierRefusal(
  * 1 for every T1's sub — true on all four surfaces, where w's p2's sub reads
  * 50. So the row abstains.
  */
-function subsettingAround(model: Model, el: ElementRecord | undefined): ElementRecord | undefined {
+function subsettingAround(model: Model, el: ElementRecord | undefined, at?: { contextId: ElementId; path?: string }): ElementRecord | undefined {
   const { taint } = subsettingTaint(model);
   if (taint.size === 0) return undefined;
   const defs = sharedDefinitions(model);
@@ -6055,7 +6154,7 @@ function subsettingAround(model: Model, el: ElementRecord | undefined): ElementR
     const owner = model.get(cur.ownerId);
     if (!owner || isPackage(owner)) return undefined;
     for (const s of defs.specialisersOf(owner.id)) {
-      const hit = taintedAt(model, taint, s);
+      const hit = taintedAt(model, taint, s, at);
       if (hit) return hit;
     }
     cur = owner;
@@ -6079,11 +6178,11 @@ function unreadRefusal(
   const rel = model.get(relationId);
   const context = at ? model.get(at.contextId) : rel;
   const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
-  let b = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
-  b ??= taintedAt(model, taint, context);
+  let b = names.map((n) => readsTainted(model, taint, roots, n, at)).find((x) => x !== undefined);
+  b ??= taintedAt(model, taint, context, at);
   if (!b && at?.path !== undefined) {
     const frames = sharedDefinitions(model).framesAbove(at.path);
-    b = frames === undefined ? unread[0] : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
+    b = frames === undefined ? unread[0] : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader), at)).find((x) => x !== undefined);
   }
   if (!b) return undefined;
   return b.eClass === 'Satisfy'
@@ -6420,9 +6519,9 @@ interface ContradictedDefinitions {
   /** Each equation of a set by its id: the set a row it reaches is refused for. */
   bySource: ReadonlyMap<ElementId, ContradictedDefinition>;
   /** {@link contradictedTaint}, built on first ask. */
-  taint?: ReadonlyMap<ElementId, ElementRecord>;
+  taint?: ScopedTaint;
   /** {@link contradictedTaint} of each set alone, built on first ask ({@link contradictedSideReadsAnother}). */
-  taintOf?: Map<ContradictedDefinition, ReadonlyMap<ElementId, ElementRecord>>;
+  taintOf?: Map<ContradictedDefinition, ScopedTaint>;
   /** Set where listing them threw (A.2.9): the sentence every row that reads a name abstains in. */
   failed?: string;
 }
@@ -6899,7 +6998,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
  * one), every value tied to them — a binding's end alone, not the part that holds it (`bind k.K = p.L` leaves
  * k's own W read). Once per revision.
  */
-function contradictedTaint(model: Model): ReadonlyMap<ElementId, ElementRecord> {
+function contradictedTaint(model: Model): ScopedTaint {
   const index = contradictedDefinitions(model);
   if (index.taint) return index.taint;
   if (index.sets.length === 0) return (index.taint = new Map());
@@ -6918,7 +7017,7 @@ function spreadContradiction(
   model: Model,
   index: ContradictedDefinitions,
   sets: readonly ContradictedDefinition[],
-): ReadonlyMap<ElementId, ElementRecord> {
+): ScopedTaint {
   // An equation of a set taints the names it reads beside a tainted one only where it ties two features, a bare name
   // on each side: `K == L` beside `L == 50.0` and `L == 60.0` is a member of the set and still makes K the L it reads,
   // whichever of the two equations comes first (parentheses round a name change nothing: `(K) == (L)`). `L == a * 2.0`
@@ -7027,14 +7126,14 @@ export function contradictedDefinitionRefusalOf(
     const rel = model.get(relationId);
     const context = at ? model.get(at.contextId) : rel;
     const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
-    let b = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
-    b ??= taintedAt(model, taint, context) ?? taintedAt(model, taint, rel);
+    let b = names.map((n) => readsTainted(model, taint, roots, n, at)).find((x) => x !== undefined);
+    b ??= taintedAt(model, taint, context, at) ?? taintedAt(model, taint, rel, at);
     if (!b && at?.path !== undefined) {
       const frames = sharedDefinitions(model).framesAbove(at.path);
       b =
         frames === undefined
           ? index.sets[0]!.equations[0]
-          : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader))).find((x) => x !== undefined);
+          : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader), at)).find((x) => x !== undefined);
     }
     const set = b ? index.bySource.get(b.id) : undefined;
     return set ? { sentence: contradictedDefinitionSentence(model, set), verdict: set.verdict, set } : undefined;
@@ -12930,7 +13029,7 @@ export const instanceIndexSeam = {
     model: Model,
     index: ContradictedDefinitions,
     sets: readonly ContradictedDefinition[],
-  ): ReadonlyMap<ElementId, ElementRecord> => spreadContradiction(model, index, sets),
+  ): ScopedTaint => spreadContradiction(model, index, sets),
   assertHeldInSome: (model: Model, f: ElementRecord): boolean => assertHeldInSome(model, f),
   instanceSitesOf: (definitions: DefiningEquations, usage: ElementRecord): ReturnType<typeof instanceSitesOf> =>
     instanceSitesOf(definitions, usage),
