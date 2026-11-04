@@ -67,15 +67,6 @@
       "note": "Two rows decide on the literal engine beside SMT X because the check files no violated row for their contradiction."
     },
     {
-      "id": "D-default-sentence",
-      "todo": "Say why a default stood on the rows `standingDefaultSentence` still does not reach.",
-      "classes": [
-        "bind-equality"
-      ],
-      "kind": "abstains",
-      "note": "A wording gap on rows that already decide; optional, low."
-    },
-    {
       "id": "D-default-machinery",
       "todo": "Remove the decision-14 default machinery, or ship the held tag (analysis Q2).",
       "classes": [
@@ -131,7 +122,12 @@
       "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation” although they are constructs the expression reader does not take; an enum comparison is unparseable (verification/not-evaluable), which no flag forgives."
     }
   ],
-  "resolved": [],
+  "resolved": [
+    {
+      "todo": "Say why a default stood on the rows `standingDefaultSentence` still does not reach.",
+      "by": "closed by a documented decision in round 9 (no reachable row is known); see the TODO rollup 'parallel machines and Simulate' item (5)"
+    }
+  ],
   "pending": [
     {
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",

@@ -492,15 +492,6 @@ export const CLASS_FACTS: ClassFacts = {
     },
     {
       "classes": [
-        "bind-equality"
-      ],
-      "id": "D-default-sentence",
-      "kind": "abstains",
-      "note": "A wording gap on rows that already decide; optional, low.",
-      "todo": "Say why a default stood on the rows `standingDefaultSentence` still does not reach."
-    },
-    {
-      "classes": [
         "bind-equality",
         "defining-equation"
       ],
@@ -556,7 +547,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "c5596d673fc5dbdb46fa70fdd59a929b3184f0bc82dda9c26496d9066c18c83c",
+    "defects": "ab57032e9b26f050b055a3280327cdaccea731c8cc8296c8f438bb2363691943",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
     "probes": "2c4847531916dbaec05dc128037c0c244c441616905432640355726518ed5a43"
   },
