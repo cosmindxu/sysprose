@@ -644,6 +644,14 @@ export interface RelationReading {
    * from one it merely could not encode. Absent when there are none.
    */
   shadowed?: string[];
+  /**
+   * Set on an ASSERTED bare bound (`x >= 0.0`) over a `default` a binding makes give way and gives no value
+   * ({@link givenWayUnvalued}), which is carried on one condition the worklist asks of all its rows at once
+   * (`refuseMeetingBounds` of ./obligations): that no pair of asserted bounds on the binding's features meets, since
+   * a pair that meets (`L >= 5.0` and `L <= 5.0`) fixes the symbol as `L == 5.0` does, and no assertion gives a
+   * default a value. `path` is the name the bound reads, `why` the binding's sentence.
+   */
+  givenWay?: { path: string; why: string };
 }
 
 /** A reading that failed at `refusal`, carrying whatever was learned first. */
@@ -1040,7 +1048,8 @@ export function gateRelation(
   }
   // An asserted relation over a `default` a binding made give way and gives no value is no axiom: no assertion
   // gives a default a value (decision 14 amended 2026-10-22), and the check, the literal engine and the numeric
-  // surface read none there. Carried, it fixed the symbol, and a goal over it was PROVED on this lane alone.
+  // surface read none there. Carried, it fixed the symbol, and a goal over it was PROVED on this lane alone. A bare
+  // bound is the exception below: it fixes nothing, unless it meets another.
   const givenWay =
     readBy && readBy.binding !== true && isAsserted(readBy.el) && readBy.el.ownerId != null
       ? pathsOf(node)
@@ -1048,7 +1057,23 @@ export function gateRelation(
           .map((p) => ({ p, why: givenWayUnvalued(model, readBy.el.ownerId!, p) }))
           .find((x) => x.why !== undefined)
       : undefined;
-  if (givenWay) {
+  // An asserted BARE BOUND over one (`x >= 0.0`, a plain number on a unitless Real) fixes no symbol by itself: it is
+  // carried, flagged, and the worklist refuses it where bounds on the binding's features meet (`refuseMeetingBounds`).
+  const bound = givenWay ? bareBoundOf(node) : undefined;
+  const boundVar = bound ? variables.find((v) => v.path === bound.path) : undefined;
+  const carried =
+    givenWay !== undefined &&
+    bound !== undefined &&
+    boundVar !== undefined &&
+    givenWay.p === bound.path &&
+    !hadUnit &&
+    markers.size === 0 &&
+    boundVar.unit === null &&
+    boundVar.siFactor === 1 &&
+    boundVar.siOffset === 0 &&
+    boundVar.restricted === undefined &&
+    sortPerVar[boundVar.path] === 'Real';
+  if (givenWay && !carried) {
     return refused(
       expression,
       {
@@ -1136,7 +1161,44 @@ export function gateRelation(
     nonlinear,
     fragment: nonlinear ? 'qf-nra' : 'qf-lra',
     ...(unread.length > 0 ? { unread, unreadDeps } : {}),
+    ...(carried && givenWay ? { givenWay: { path: givenWay.p, why: givenWay.why! } } : {}),
   };
+}
+
+/** A relation that is one bound on one name against a plain number: `x >= 0.0`, `5.0 < x` (a lower bound), `x <= -2.0`. */
+export interface BareBound {
+  path: string;
+  side: 'lower' | 'upper';
+  strict: boolean;
+  value: number;
+}
+
+/**
+ * `node` as a {@link BareBound}, or `undefined` for anything else: an equation, a unit literal (a lowered `[unit]`
+ * one carries its `literal`), a numeral written with more digits than a double carries (its `text`), a name on both
+ * sides, or arithmetic.
+ */
+export function bareBoundOf(node: ExprNode | null): BareBound | undefined {
+  if (node === null || node.kind !== 'binary' || !['<', '<=', '>', '>='].includes(node.op)) return undefined;
+  const number = (n: ExprNode): number | undefined => {
+    if (n.kind === 'num') return n.literal === undefined && n.text === undefined ? n.value : undefined;
+    if (n.kind === 'unary' && (n.op === '-' || n.op === '+') && n.operand.kind === 'num') {
+      const v = number(n.operand);
+      return v === undefined ? undefined : n.op === '-' ? -v : v;
+    }
+    return undefined;
+  };
+  const strict = node.op === '<' || node.op === '>';
+  const up = node.op === '<' || node.op === '<=';
+  if (node.left.kind === 'ref') {
+    const value = number(node.right);
+    return value === undefined ? undefined : { path: node.left.path.join('.'), side: up ? 'upper' : 'lower', strict, value };
+  }
+  if (node.right.kind === 'ref') {
+    const value = number(node.left);
+    return value === undefined ? undefined : { path: node.right.path.join('.'), side: up ? 'lower' : 'upper', strict, value };
+  }
+  return undefined;
 }
 
 /**

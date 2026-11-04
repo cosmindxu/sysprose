@@ -9911,6 +9911,55 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GWM::P::d in GWM::Q::p': ['?/?/?/?', '?'],
       'GWM::Q::qa': ['?/-/?/-', '?'],
     }),
+    // An asserted BARE BOUND over such a default is no value for it (reads2 S1, TODO 217): P's `lo { load >= 0.0 }` and `hi
+    // { load <= 10.0 }` are carried by the SMT engine, which proves `load <= 11.0` for every load they allow where the other
+    // three read no value; `load <= 5.0` follows from neither, so it stays open (perf9b's 766 N0::lo axioms are carried).
+    'stand-gw-ineq': probe(`package GWI {
+        part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint lo { load >= 0.0 } assert constraint hi { load <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; }
+        part q : Q;
+        constraint gT { q.p.load <= 11.0 }
+        constraint gF { q.p.load <= 5.0 }
+      }`, {
+      'GWI::P::hi': ['T/-/T/-', 'T'],
+      'GWI::P::hi in GWI::Q::p': ['?/-/?/-', '?'],
+      'GWI::P::lo': ['T/-/T/-', 'T'],
+      'GWI::P::lo in GWI::Q::p': ['?/-/?/-', '?'],
+      'GWI::gF': ['?/?/?/?', '?'],
+      'GWI::gT': ['?/?/?/T', 'T'],
+    }),
+    // The bounds of one binding's features that MEET fix the value as an equation would (P's `load <= 5.0` with Q's `L >=
+    // 5.0`, joined by `bind p.load = L`): no assertion gives a default a value, so neither bound is carried, on any surface.
+    'stand-gw-ineq-meet': probe(`package GWM2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint lo { load <= 5.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 7.0; assert constraint qa { L >= 5.0 } part p : P; bind p.load = L; }
+        part q : Q;
+        constraint g { q.p.load <= 6.0 }
+      }`, {
+      'GWM2::P::lo': ['T/-/T/-', 'T'],
+      'GWM2::P::lo in GWM2::Q::p': ['?/-/?/-', '?'],
+      'GWM2::Q::qa': ['?/-/?/-', '?'],
+      'GWM2::g': ['?/?/?/?', '?'],
+    }),
+    // An instance that states L reads it (q2: 4, in [2, 20)); q's L gives way and is bounded by Q's pair, which proves
+    // `load >= 1.0` and not `load >= 3.0`.
+    'stand-gw-ineq-inst': probe(`package GWM3 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 7.0; assert constraint qa { L >= 2.0 } assert constraint qb { L < 20.0 } part p : P; bind p.load = L; }
+        part q : Q;
+        part q2 : Q { attribute :>> L = 4.0; }
+        constraint g { q.p.load >= 1.0 }
+        constraint g2 { q2.p.load >= 1.0 }
+        constraint g3 { q.p.load >= 3.0 }
+      }`, {
+      'GWM3::Q::qa': ['?/-/?/-', '?'],
+      'GWM3::Q::qa in GWM3::q2': ['T/-/T/-', 'T'],
+      'GWM3::Q::qb': ['?/-/?/-', '?'],
+      'GWM3::Q::qb in GWM3::q2': ['T/-/T/-', 'T'],
+      'GWM3::g': ['?/?/?/T', 'T'],
+      'GWM3::g2': ['T/T/T/T', 'T'],
+      'GWM3::g3': ['?/?/?/?', '?'],
+    }),
     // S2's dotted assert does not reach a feature a binding joins (the end copy `bind p.x = L` makes): the
     // binding's value is read and the assert is checked against it, as before S2. RB's plain `L = 4.0` makes
     // the model contradict itself (decision 1). RB3's `L default = 4.0`: under decision 14 the package's assert

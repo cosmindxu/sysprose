@@ -2038,6 +2038,11 @@ p2 (the equation may sit in a definition that encloses W and name the feature by
 path, or in a supertype or a subtype of W), and where the assert fixes the slot itself with no binding at it (`p2.load == 5.0`,
 under the same two defaults that differ): p3's load and M are read on no surface, the
 numeric surface included; that surface alone still reads the slot itself at the assert's 5). An
+asserted bound over such a default (`assert constraint { load >= 0.0 }`, a plain number on a unitless Real)
+fixes no value, so the SMT engine carries it and can prove a goal every value the bounds allow satisfies
+(`load <= 11.0` beside `load <= 10.0`) where the other surfaces read none; a pair of bounds on the binding's
+features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equation does), and a bound it
+cannot compare with the others (a unit, an integer sort), are not carried, and the row says which. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
 def Eq { in a; a == 50.0 }`) is read by no surface, and files no row of its own.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
