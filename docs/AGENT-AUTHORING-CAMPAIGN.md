@@ -3095,7 +3095,7 @@ holds along the freedom and stays `satisfied`; a PLAIN constraint (no `assert`)
 the solve took as a design equation to fix a value is `satisfied` with
 `imposed: true` and the reason *imposed by the solve* — it holds because the
 solve made it hold, not as a check passed. No design equation turns on the order of the
-text, bar four cases of where the solve starts or of the digits a value is given to (below): the model's own equations are solved first and a check fixes only
+text, bar three cases of where the solve starts or of the digits a value is given to (below): the model's own equations are solved first and a check fixes only
 what they leave; plain equalities that agree over a value only they fix are all
 imposed; ones that disagree, or an equation that may have more than one root beside a plain
 constraint (a curved one, plain or the model's own — a stated `s = x * x`, an
@@ -3117,8 +3117,9 @@ x = 4, and a bisection that closed on it gave 4 where `x == 3.0 * y` written aft
 closes on it to the last digit, a pole it closes on being no root, so `6.0 - 3.0 / (x + 1.0) == 3.0`, root 0 beside the
 pole −1, is read at 0 whether `x == 0.0` is written before it or after it, as are `1.0 / x == 100.0` and
 `10.0 ^ (2.0 * x + 8.0) == 1.0`; the limit of that search: a root in the same gap as its pole between two of
-those points is not found, and the equation alone reads `unknown` in every order, never a value —
-`1.0 / (x - 5.0) == 2.0`, root 5.5, pole 5, between 4 and 8; `3.0 / (x + 1.5) == 10.0`; a plain constraint that
+those points is not found unless Newton reaches it from a start it is run again from (`3.0 / (x + 1.5) == 10.0`,
+root −1.2, is reached from −1), and the equation alone reads `unknown` in every order, never a value —
+`1.0 / (x - 5.0) == 2.0`, root 5.5, pole 5, between 4 and 8; a plain constraint that
 states the value supplies it, in either order); the same quotient or exponential set equal to a side that varies with the same
 feature can cross it more than once and is read as if it did (`x == 6.0 / (x +
 1.0)` at 2 and −3, `6.0 / y == 5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1; `0.5 ^ x == x`
@@ -3129,11 +3130,11 @@ form the solve does not read (an inequality, a conjunction, a disjunction, a bod
 that does not parse) is solved for by no check (`unknown`, *… has no value, and
 an assert constrains it in a form the numeric solve does not read …*): the names
 such a body constrains are those it writes outside its strings and `[unit]`
-literals (the `m` of `4.0 [m]` is a metre). What still turns on the order is where the
-solve starts, and the cases known read an abstention in one order where the other reads a
-value, never a different verdict: a divisor that is zero at the starting guess (`c0 { x / y
-== 3.0 }` and `c2 { w / y == x }` beside `c1 { x >= 0.0 }` over a `y` nothing fixes is not
-converged when `c2` is written first), and two asserted equations that share one of their
+literals (the `m` of `4.0 [m]` is a metre). A solve that stops off its equations where one divides by a
+feature it solves for is run again from a fixed list of starts for what the divisor reads (`c0 { x / y
+== 3.0 }` and `c2 { w / y == x }` beside `c1 { x >= 0.0 }` over a `y` nothing fixes impose c0 and c2
+in every order). What still turns on the order is where the solve starts, and the cases known read
+an abstention in one order where the other reads a value, never a different verdict: two asserted equations that share one of their
 roots (`x == 6.0 / (x + 1.0)` beside `x == -3.0`, in a usage), and a steep one-to-one equation (a quotient whose root is close to its
 pole) judged at a value that another equation gives to fewer digits than its slope needs: a pin written to ten digits
 (`x == 0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, root 3.0000000012e-06, reads both imposed with the equation first

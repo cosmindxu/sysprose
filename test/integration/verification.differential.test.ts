@@ -14063,6 +14063,35 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'CQ6::k': ['?/?/F/?', null],
       },
     ),
+    // CQ7 (TODO 286 (b)): from x = y = w = 1 the Newton step of `x / y == 3.0` beside `w / y == x` lands on the pole y = 0, where the
+    // linearised step was solved with the rows in one order and not in the other: written features first every row read `?` ("did not
+    // converge"), and the reverse read the two equations imposed. A run that ends off the gate with a divisor is taken again from a fixed
+    // list of starts for the features the divisor reads, so both orders read c0 and c2 imposed; x stays a design freedom and c1 `?`. CQ8 is
+    // the same over a usage's features, which the instance's own solve reads.
+    ...reversed(
+      'order-quot-start',
+      `package CQ7 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute w : ScalarValues::Real;
+        constraint c0 { x / y == 3.0 } constraint c2 { w / y == x } constraint c1 { x >= 0.0 } }`,
+      `package CQ7 { constraint c1 { x >= 0.0 } constraint c2 { w / y == x } constraint c0 { x / y == 3.0 }
+        attribute w : ScalarValues::Real; attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'CQ7::c0': ['?/?/t/?', '?'],
+        'CQ7::c1': ['?/?/?/?', '?'],
+        'CQ7::c2': ['?/?/t/?', '?'],
+      },
+    ),
+    ...reversed(
+      'order-quot-start-dot',
+      `package CQ8 { part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute w : ScalarValues::Real; }
+        part p : P; constraint c0 { p.x / p.y == 3.0 } constraint c2 { p.w / p.y == p.x } constraint c1 { p.x >= 0.0 } }`,
+      `package CQ8 { constraint c1 { p.x >= 0.0 } constraint c2 { p.w / p.y == p.x } constraint c0 { p.x / p.y == 3.0 } part p : P;
+        part def P { attribute w : ScalarValues::Real; attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; } }`,
+      {
+        'CQ8::c0': ['?/?/t/?', '?'],
+        'CQ8::c1': ['?/?/?/?', '?'],
+        'CQ8::c2': ['?/?/t/?', '?'],
+      },
+    ),
     // CU: the `m` of `4.0 [m]` in an asserted body that does not parse is a metre, not the feature `m` the assert would constrain (U3):
     // `t1 { p.m == 3.0 }` is solved for, where it was held as a feature the assert reads; M and L, which the body names, are held.
     ...reversed(

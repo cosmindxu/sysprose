@@ -765,7 +765,7 @@ Two names worth separating:
   `s.L == 50.0`) from being taken as `p`'s design equation, exactly as it is with
   no requirement there. An `assert` is the way to state a fact. The test is local: each
   of two separate roots (`x * x == 4.0`) reads as determined, not free.
-  **No design equation turns on the order of the text, bar four cases of where the solve
+  **No design equation turns on the order of the text, bar three cases of where the solve
   starts or of the digits a value is given to (the end of this passage).** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
   `x`) are both *imposed by the solve*. An equation whose two sides are the same expression or the
@@ -810,9 +810,9 @@ Two names worth separating:
   by a value another equation fixes has the one root. Where the solve's own start finds none, the root is
   searched for along the line, at 0 and ±2^k, for a sign change between neighbours, closed on to the last digit (a
   pole it closes on is no root). **The limit of that search: a root that lies in the same gap as its pole,
-  between two of those points, is not found** — `1.0 / (x - 5.0) == 2.0` (root 5.5, pole 5, between 4 and 8)
-  and `3.0 / (x + 1.5) == 10.0` (root −1.2, pole −1.5, between −2 and −1) read *unknown* alone, in every
-  order, never a value (a plain constraint that states the value, `x == 5.5`, supplies it, and the equation is
+  between two of those points, is not found** unless Newton reaches it from a start it is run again from (below:
+  `3.0 / (x + 1.5) == 10.0`, root −1.2, pole −1.5, is reached from −1) — `1.0 / (x - 5.0) == 2.0` (root 5.5,
+  pole 5, between 4 and 8) reads *unknown* alone, in every order, never a value (a plain constraint that states the value, `x == 5.5`, supplies it, and the equation is
   then *imposed* beside it in either order). A residual under the gate is a root's only where the equation is
   steep enough there, to first order. A flat one (`1.0 / x == 0.000001`, slope 1e-12) is under the gate 227
   from its root 1e6, which is found, so `x >= 999999.0` beside it is satisfied; one that tends to its asymptote
@@ -861,13 +861,13 @@ Two names worth separating:
   its first search finds no witness it searches again from where the plain
   equations that are not curved put the value, so `x * x == 4.0` beside `x ==
   -2.0` is feasible with x = −2 in either order of the text; where that finds
-  none either, the answer stays undecided. What still turns on the order of the
-  text is where the solve starts, and the cases known read an abstention in one
-  order where the other reads a value, never a different verdict: a divisor that
-  is zero at its starting guess (`c0 { x / y == 3.0 }` and `c2 { w / y == x }`
-  beside `c1 { x >= 0.0 }`, over a `y` nothing fixes) leaves the solve not
-  converged when `c2` is written first, so all three read *unknown*, where the
-  other order imposes `c0` and `c2`; and two asserted equations that share one of
+  none either, the answer stays undecided. A solve that stops off its equations where
+  one divides by a feature it solves for is run again from a fixed list of starts for
+  what the divisor reads (its step may land on the divisor's zero): `c0 { x / y == 3.0 }`
+  and `c2 { w / y == x }` beside `c1 { x >= 0.0 }`, over a `y` nothing fixes, impose
+  `c0` and `c2` in every order (`c1` is unjudged: x is free). What still turns on the order of the text is where the solve
+  starts, and the cases known read an abstention in one order where the other reads
+  a value, never a different verdict: two asserted equations that share one of
   their roots (`a0 { x == 6.0 / (x + 1.0) }` beside `a1 { x == -3.0 }`, in a
   usage) read a constraint over their value *unknown* in one order and decided
   in the other; and a steep one-to-one equation (a quotient whose root is close to

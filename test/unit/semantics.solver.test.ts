@@ -1332,10 +1332,14 @@ describe('solve — the order of the text decides no design equation', () => {
     // The search samples 0 and ±2^k and closes on a sign change between neighbours. `1.0 / (x - 5.0) == 2.0` has its root (5.5) and its
     // pole (5) in the same gap between two samples (4 and 8): no sample between them, no sign change, no root found, whichever way the
     // equation is written. `2.0 ^ x == -4.0` has no root at all. Both are an abstention alone, and the pin supplies the value.
+    // `3.0 / (x + 1.5) == 10.0` (root −1.2, pole −1.5, between −2 and −1) is reached by Newton from the start −1 it is run again from
+    // (TODO 286 (b)): its one root is imposed, and `k` judged there, in both orders.
     for (const [e, root] of [['1.0 / (x - 5.0) == 2.0', 5.5], ['3.0 / (x + 1.5) == 10.0', -1.2]] as const) {
       for (const list of [[`constraint e0 { ${e} }`, 'constraint k { x <= 0.0 }'], [`constraint k { x <= 0.0 }`, `constraint e0 { ${e} }`]]) {
         const r = await rows(`package K { ${X} ${list.join(' ')} }`);
-        expect(['e0', 'k'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), list.join(' ')).toEqual(Array(2).fill(['unknown', undefined]));
+        expect(['e0', 'k'].map((n) => [r.get(n)!.result, r.get(n)!.imposed]), list.join(' ')).toEqual(
+          root > 0 ? Array(2).fill(['unknown', undefined]) : [['satisfied', true], ['satisfied', undefined]],
+        );
       }
       for (const text of inEveryOrder(X, [`constraint e0 { ${e} }`, `constraint q1 { x == ${root} }`])) {
         const r = await rows(text);
@@ -1581,6 +1585,28 @@ describe('solve — the order of the text decides no design equation', () => {
       orders.add(['c0', 'c1', 'c2', 'k'].map((n) => `${r.get(n)!.result}/${r.get(n)!.imposed}`).join(' '));
     }
     expect([...orders]).toEqual(['satisfied/true satisfied/true satisfied/true violated/undefined']);
+  });
+
+  it('takes the Newton step again from a fixed start when it stepped onto a pole, so no order of the text leaves it unsolved', async () => {
+    // TODO 286 (b): from x = y = w = 1, `x / y == 3.0` beside `w / y == x` steps onto the pole y = 0, where the linearised step could be
+    // solved with the rows in one order and not in the other: in three of the six orders every row read unknown ("did not converge").
+    // Moved off the divisor to the first start of a fixed list, the run ends on a root in every order, written in the package or over a
+    // usage's features (the instance's own solve), plain or asserted; x is still a design freedom, so `c1` is not judged.
+    const D = 'attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute w : ScalarValues::Real;';
+    for (const [kw, decl, pre] of [
+      ['constraint', D, ''],
+      ['constraint', `part def P { ${D} } part p : P;`, 'p.'],
+      ['assert constraint', D, ''],
+    ] as const) {
+      const members = [`${kw} c0 { ${pre}x / ${pre}y == 3.0 }`, `${kw} c2 { ${pre}w / ${pre}y == ${pre}x }`, `constraint c1 { ${pre}x >= 0.0 }`];
+      const orders = new Set<string>();
+      for (const text of inEveryOrder(decl, members)) {
+        const r = await rows(text);
+        orders.add(['c0', 'c2', 'c1'].map((n) => `${r.get(n)!.result}/${r.get(n)!.imposed}`).join(' '));
+      }
+      const own = kw === 'constraint' ? 'satisfied/true' : 'satisfied/undefined';
+      expect([...orders], `${kw} ${pre}`).toEqual([`${own} ${own} unknown/undefined`]);
+    }
   });
 
   it('does not read the symbol of a unit, or a string, in an asserted body that does not parse as a feature', async () => {

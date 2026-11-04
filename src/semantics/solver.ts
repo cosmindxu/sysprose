@@ -4353,7 +4353,7 @@ function newtonStep(
         }
         return out;
       });
-    if (newtonCore(active, x, values, residuals, tol, maxIter).aborted) return { moved: false, left };
+    if (newtonCore(active, x, values, residuals, tol, maxIter, divisorColumns(active, unknowns)).aborted) return { moved: false, left };
     // Only what an active equation drives is written back, and the step is
     // progress only when it MOVED something: "converged" without a move — the
     // unknowns already at a root — said progress to the outer loop, which then
@@ -4369,10 +4369,58 @@ function newtonStep(
   return { moved, left };
 }
 
+/** The starts a {@link newtonCore} run is taken again from, the same whatever the text order. */
+const DIVISOR_STARTS = [1, -1, 2, -2, 0.5, -0.5];
+
+/**
+ * The positions in `unknowns` of those the divisor of a quotient in `eqs` reads — directly, or `through` a feature it reads that is
+ * computed from them ({@link substitutedNewton}'s definitions).
+ */
+function divisorColumns(
+  eqs: readonly Equation[],
+  unknowns: readonly ElementId[],
+  through?: ReadonlyMap<ElementId, ReadonlySet<ElementId>>,
+): number[] {
+  const read = new Set<ElementId>();
+  for (const eq of eqs) {
+    const refs = (n: ExprNode): void => {
+      if (n.kind === 'ref') {
+        const id = eq.nameToId.get(n.path.join('.'));
+        if (id !== undefined) read.add(id);
+      } else if (n.kind === 'unary') refs(n.operand);
+      else if (n.kind === 'binary') {
+        refs(n.left);
+        refs(n.right);
+      } else if (n.kind === 'if') {
+        refs(n.cond);
+        refs(n.then);
+        refs(n.else);
+      }
+    };
+    const visit = (n: Extract<ExprNode, { kind: 'binary' }>): void => {
+      if (n.op === '/') refs(n.right);
+    };
+    forEachOp(eq.lhs, visit);
+    forEachOp(eq.rhs, visit);
+  }
+  if (through !== undefined) for (const id of [...read]) for (const u of through.get(id) ?? []) read.add(u);
+  return unknowns.flatMap((u, i) => (read.has(u) ? [i] : []));
+}
+
 /**
  * The bounded least-squares Newton of {@link newtonStep}, over the unknowns
  * `x` (moved in place) and the residuals of `active` at them. `aborted` when a
  * probe or a step could not be read — nothing found is then written back.
+ *
+ * `divisors` are the columns of `x` a divisor of `active` reads. A run that
+ * ends off the gate with one is taken again with them moved to each start of
+ * {@link DIVISOR_STARTS} in turn, the first that ends on it kept: from x = y =
+ * w = 1, `x / y == 3.0` beside `w / y == x` stepped onto the pole y = 0, where
+ * the linearised step could not be solved in one order of the rows and was in
+ * the other, so one text order read the design equations and the other did
+ * not. A point a restart ends at passes the same gate, and the same tests
+ * after it, as one the first run ends at; none ending on it, the first run's
+ * point is kept, as before.
  */
 function newtonCore(
   active: readonly Equation[],
@@ -4381,7 +4429,32 @@ function newtonCore(
   residuals: (xv: number[]) => number[] | undefined,
   tol: number,
   maxIter: number,
+  divisors: readonly number[] = [],
 ): { aborted: boolean } {
+  const start = x.slice();
+  const first = newtonRun(active, x, values, residuals, tol, maxIter);
+  if (first.met || divisors.length === 0) return { aborted: first.aborted };
+  for (const s of DIVISOR_STARTS) {
+    if (divisors.every((j) => start[j] === s)) continue;
+    const xr = start.slice();
+    for (const j of divisors) xr[j] = s;
+    const run = newtonRun(active, xr, values, residuals, tol, maxIter);
+    if (!run.met) continue;
+    xr.forEach((v, i) => (x[i] = v));
+    return { aborted: false };
+  }
+  return { aborted: first.aborted };
+}
+
+/** One {@link newtonCore} run from `x`: `met` when it ends on the gate, not aborted. */
+function newtonRun(
+  active: readonly Equation[],
+  x: number[],
+  values: Map<ElementId, number>,
+  residuals: (xv: number[]) => number[] | undefined,
+  tol: number,
+  maxIter: number,
+): { aborted: boolean; met: boolean } {
   const n = x.length;
   // Per-equation residual acceptance scale (finding M6 — coupled-systems arm).
   // The scalar solver already scales to the equation's own magnitude; the
@@ -4428,7 +4501,7 @@ function newtonCore(
       const xp = x.slice();
       xp[j] += h;
       const Fp = residuals(xp);
-      if (!Fp) return { aborted: true };
+      if (!Fp) return { aborted: true, met: false };
       for (let i = 0; i < m; i++) J[i][j] = (Fp[i] - F[i]) / h;
     }
 
@@ -4469,19 +4542,21 @@ function newtonCore(
     let step = 0;
     for (let j = 0; j < n; j++) {
       const d = delta[j] * colScale[j];
-      if (!Number.isFinite(d)) return { aborted: true };
+      if (!Number.isFinite(d)) return { aborted: true, met: false };
       x[j] += d;
       step = Math.max(step, Math.abs(d));
       stepped = true;
     }
     if (step <= tol * xScale()) break;
   }
+  const end = residuals(x);
+  const met = end !== undefined && accepts(end);
 
   // A point a step reached under the gate the caller judges it by ({@link convergenceGate}) is a root's only where the equations that go
   // flat towards an asymptote are steep enough there ({@link nearRoot}): `y == 2.0 ^ x` beside `y == 0.0` was met at x = −23 (residual
   // 1e-7, the step under `tol`) and written back as a root.
   if (stepped && active.some(quotientOrPower)) {
-    const F = residuals(x);
+    const F = end;
     if (F?.every((fv, i) => Math.abs(fv) <= (anyScaled ? RESIDUAL_FLOOR * eqScales[i]! : Math.max(tol, 1e-6, RESIDUAL_FLOOR * eqScales[i]!)))) {
       const slope = F.map(() => 0);
       for (let j = 0; j < n; j++) {
@@ -4489,18 +4564,18 @@ function newtonCore(
         const xp = x.slice();
         xp[j] += h;
         const Fp = residuals(xp);
-        if (!Fp) return { aborted: false };
+        if (!Fp) return { aborted: false, met };
         for (let i = 0; i < F.length; i++) slope[i] += ((Fp[i] - F[i]) / h) ** 2;
       }
       const size = anyScaled ? xScale() : xScale() + Math.max(0, ...x.map(Math.abs));
       const flat = F.some((fv, i) =>
         quotientOrPower(active[i]) && (fv === 0 ? slope[i] === 0 : Math.abs(fv) > ROOT_DISTANCE * size * Math.sqrt(slope[i])),
       );
-      if (flat) return { aborted: true };
+      if (flat) return { aborted: true, met: false };
     }
   }
 
-  return { aborted: false };
+  return { aborted: false, met };
 }
 
 /**
@@ -4657,7 +4732,8 @@ function substitutedNewton(
         }
         return out;
       });
-    if (newtonCore(c.eqs, xc, values, residuals, tol, maxIter).aborted) return false;
+    const divisors = divisorColumns([...c.eqs, ...which.map((u) => defining.get(u)!)], c.vars, reads);
+    if (newtonCore(c.eqs, xc, values, residuals, tol, maxIter, divisors).aborted) return false;
     c.vars.forEach((u, i) => x.set(u, xc[i]!));
   }
 
