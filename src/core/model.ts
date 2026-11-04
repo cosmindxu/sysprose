@@ -140,6 +140,16 @@ export class Model {
   private _edgeIndexRev = -1;
   private _sourceIndex = new Map<ElementId, ElementRecord[]>();
   private _targetIndex = new Map<ElementId, ElementRecord[]>();
+  /**
+   * The elements that name an id as an endpoint (id → the ids of the elements whose `source` or `target` holds it) and
+   * each element's place in the element map ({@link remove}'s dangling-edge search), built when a removal first asks
+   * and then kept by every create, update and removal, so a loop of removals does not scan the model each time. A
+   * whole-map replacement drops them (`null`). An id stays a key after its element goes: an element that still names
+   * it is found, as a scan of the model finds it.
+   */
+  private _referrers: Map<ElementId, Set<ElementId>> | null = null;
+  private _place: Map<ElementId, number> | null = null;
+  private _nextPlace = 0;
   /** Lazy containment pre-order ranks ({@link edgesInTextOrder}), keyed by rev. */
   private _rankRev = -1;
   private _rank = new Map<ElementId, number>();
@@ -230,6 +240,8 @@ export class Model {
       this.noteSeat(ownerId);
     }
     this.elements.set(id, el);
+    this._place?.set(id, this._nextPlace++);
+    this.noteReferrers(el);
     this.indexChild(ownerId, id);
     this.emit({ type: 'add', id, element: el });
     return el;
@@ -239,6 +251,7 @@ export class Model {
   private insertRaw(el: ElementRecord): void {
     if (el.attrs.isLibrary === true) this._sawLibrary = true;
     this.elements.set(el.id, el);
+    this._referrers = this._place = null;
   }
 
   /* ─────────────────────────────── Read ───────────────────────────────── */
@@ -564,8 +577,10 @@ export class Model {
     if (placingOf(el) !== placing) this.notePlacing(el);
     const previousSource = patch.source !== undefined ? el.source : undefined;
     const previousTarget = patch.target !== undefined ? el.target : undefined;
+    if (patch.source !== undefined || patch.target !== undefined) this.dropReferrers(el);
     if (patch.source !== undefined) el.source = [...patch.source];
     if (patch.target !== undefined) el.target = [...patch.target];
+    if (patch.source !== undefined || patch.target !== undefined) this.noteReferrers(el);
     const fields = (['eClass', 'declaredName', 'declaredShortName', 'attrs', 'source', 'target'] as const).filter(
       (k) => patch[k] !== undefined,
     );
@@ -713,14 +728,10 @@ export class Model {
     // is the store's settle (a command, an SDK call, a raw call on the model on screen outside a room, a REST commit),
     // so only a model nobody watches (the command line) keeps the copy where this walk puts it.
     const moved = new Map<ElementId, ElementId[]>();
-    for (const r of this.elements.values()) {
-      if (toRemove.has(r.id)) continue;
-      const refs = [...(r.source ?? []), ...(r.target ?? [])];
-      if (refs.length > 0 && refs.some((ref) => toRemove.has(ref))) {
-        const targets = r.eClass === 'Redefinition' ? this.survivingTargets(r, toRemove) : undefined;
-        if (targets !== undefined) moved.set(r.id, targets);
-        else toRemove.add(r.id);
-      }
+    for (const r of this.danglingEdges(toRemove)) {
+      const targets = r.eClass === 'Redefinition' ? this.survivingTargets(r, toRemove) : undefined;
+      if (targets !== undefined) moved.set(r.id, targets);
+      else toRemove.add(r.id);
     }
     const afterwards: Array<() => void> = [];
     if (moved.size > 0) {
@@ -743,6 +754,8 @@ export class Model {
         if (!rec) continue;
         this.deindexChild(rec.ownerId, rid);
         this.childrenIndex.delete(rid);
+        this.dropReferrers(rec);
+        this._place?.delete(rid);
         this.elements.delete(rid);
         removed.push(rid);
         this.emit({ type: 'remove', id: rid, element: rec });
@@ -750,6 +763,74 @@ export class Model {
       for (const after of afterwards) after();
       return removed;
     });
+  }
+
+  /**
+   * The elements outside `gone` that name a member of it as an endpoint, in the order of the element map — each
+   * yielded when the walk reaches it, with `gone` as it stands then, so an edge added to `gone` by the caller makes
+   * the edges that name it come up if they lie further on (those the map lists earlier were passed, as in a scan of
+   * every element). The referrer index finds them without scanning the model ({@link _referrers}).
+   */
+  private *danglingEdges(gone: ReadonlySet<ElementId>): Generator<ElementRecord> {
+    const referrers = (this._referrers ??= this.buildReferrers());
+    const place = this._place!;
+    const queue: Array<{ id: ElementId; at: number }> = [];
+    const queued = new Set<ElementId>();
+    let head = 0;
+    const enqueue = (member: ElementId, after: number): void => {
+      for (const rid of referrers.get(member) ?? []) {
+        const at = place.get(rid);
+        if (at === undefined || at <= after || queued.has(rid) || gone.has(rid)) continue;
+        queued.add(rid);
+        // Kept in the order of the map: a binary search for the place among those not yet yielded.
+        let lo = head;
+        let hi = queue.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (queue[mid]!.at < at) lo = mid + 1;
+          else hi = mid;
+        }
+        queue.splice(lo, 0, { id: rid, at });
+      }
+    };
+    for (const member of gone) enqueue(member, -1);
+    while (head < queue.length) {
+      const { id, at } = queue[head++]!;
+      const r = this.elements.get(id);
+      if (!r || gone.has(id)) continue;
+      yield r;
+      // The caller added it to `gone` if it goes: the edges that name it, further on, come up.
+      if (gone.has(id)) enqueue(id, at);
+    }
+  }
+
+  private buildReferrers(): Map<ElementId, Set<ElementId>> {
+    this._referrers = new Map();
+    this._place = new Map();
+    this._nextPlace = 0;
+    for (const el of this.elements.values()) {
+      this._place.set(el.id, this._nextPlace++);
+      this.noteReferrers(el);
+    }
+    return this._referrers;
+  }
+
+  /** Record `el`'s endpoints in {@link _referrers} (when it is kept). */
+  private noteReferrers(el: ElementRecord): void {
+    const referrers = this._referrers;
+    if (!referrers) return;
+    for (const ref of [...(el.source ?? []), ...(el.target ?? [])]) {
+      const set = referrers.get(ref);
+      if (set) set.add(el.id);
+      else referrers.set(ref, new Set([el.id]));
+    }
+  }
+
+  /** Forget `el`'s endpoints in {@link _referrers} (before they change, or the element goes). */
+  private dropReferrers(el: ElementRecord): void {
+    const referrers = this._referrers;
+    if (!referrers) return;
+    for (const ref of [...(el.source ?? []), ...(el.target ?? [])]) referrers.get(ref)?.delete(el.id);
   }
 
   /**
@@ -1007,6 +1088,7 @@ export class Model {
     }
     if (!same) {
       this.elements = new Map(listed.map((el) => [el.id, el]));
+      this._referrers = this._place = null;
       this._rev++;
     }
     // A seat holds an owner's children in another order: announced, as by `orderChildren`, so that a
@@ -1150,6 +1232,7 @@ export class Model {
   /** Replace all contents from another serialised model and notify once. */
   reset(data?: SerializedModel): void {
     this.elements = new Map();
+    this._referrers = this._place = null;
     this.childrenIndex = new Map();
     this.childrenIndex.set(null, []);
     this._sawLibrary = false; // rebuilt from scratch below by `insertRaw`
@@ -1204,6 +1287,7 @@ export class Model {
     const keptEls = this.inSerialOrder(preserve);
 
     this.elements = new Map();
+    this._referrers = this._place = null;
     this.childrenIndex = new Map();
     this.childrenIndex.set(null, []);
     this._sawLibrary = false; // rebuilt from scratch below by `insertRaw`

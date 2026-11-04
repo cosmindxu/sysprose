@@ -8534,6 +8534,36 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       expect(() => checkConstraintsNumeric(m!)).not.toThrow();
     });
 
+    it('a throw in the walk of a requirement clause, which asks changingContexts for each clause of its requirement, is contained too (readingContexts)', async () => {
+      // `readingContexts` reads a requirement whole: it asks `changingContexts` for EVERY clause of the requirement, not
+      // only the clause being read. Only the `assume` clause's walk throws, and the `require` clause is asked.
+      const real = DefiningEquations.prototype.changingContexts;
+      const walk = vi.spyOn(DefiningEquations.prototype, 'changingContexts').mockImplementation(function (this: DefiningEquations, el, names) {
+        if (el.attrs.requirementRole === 'assume') throw new RangeError('changingContexts, planted to throw');
+        return real.call(this, el, names);
+      });
+      const { model: m } = await loadModelText(`package T2 {
+    import Missing::*;
+    part def P { attribute x : ScalarValues::Real default = 3.0; attribute load : ScalarValues::Real default = 1.0;
+      requirement r { assume constraint a { x >= 0.0 } require constraint c { load + x <= 10.0 } } }
+    part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+    part q1 : Q { attribute :>> L = 2.0; }
+    part q2 : Q { attribute :>> L = 20.0; }
+    constraint other { q1.L >= 100.0 }
+  }`);
+      expect(m).toBeDefined();
+      const checks = checkConstraints(m!);
+      expect(walk.mock.results.some((r) => r.type === 'throw'), 'the planted throw is met').toBe(true);
+      const clause = checks.find((x) => m!.qualifiedName(x.id).endsWith('::r::c'))!;
+      expect(clause).toBeDefined();
+      // The clause's own row stands; no context is decided from an empty list: its other contexts are one unread row.
+      expect(clause.instances!.map((i) => [i.result, i.abstention])).toEqual([['unknown', 'internal']]);
+      expect(checks.find((x) => m!.qualifiedName(x.id) === 'T2::other')!.result).toBe('violated');
+      expect(survivors(m!)).toEqual(['constraint-violation', 'unresolved-import']);
+      expect(() => checkConstraintsNumeric(m!)).not.toThrow();
+      expect(() => obligationsOf(m!)).not.toThrow();
+    });
+
     it('a throw in a binding’s own context walk files its other contexts unread, never ends the check or the load (changingContexts)', async () => {
       const real = DefiningEquations.prototype.changingContexts;
       vi.spyOn(DefiningEquations.prototype, 'changingContexts').mockImplementation(function (this: DefiningEquations, el, names) {
@@ -9286,5 +9316,59 @@ describe('a binding the check reports violated contradicts the values it joins o
       ['refuted', 'verification/refuted'],
     ]);
     expect(report.exitCode).toBe(1);
+  });
+});
+
+/**
+ * The literal engine seeds its contradictions from the check's violated `bind` rows only. The check's other violated
+ * binding rows (a redefinition's value against the binding it overrides, `conflict: 'binding'`) and clash rows (two
+ * bindings a context inherits under one name, `conflict: 'clash'`) are not seeded, because no row beside one is
+ * decided: every relation that reads what the contradiction touches is refused where it is derived. Neighbours of the
+ * four probes of the differential table (r14, mapper-mi1, mapper-mi1d, mapper-mi3), in both text orders, hold that:
+ * if a model ever decides a row beside such a row, this fails, and the engine must seed it (TODO 'Seed the literal
+ * engine from the check's other violated binding rows').
+ */
+describe('no row is decided beside a violated binding or clash row (the literal engine, 264)', () => {
+  const reads = (p: string): string[] => [`${p} <= 10.0`, `${p} >= 1.0`, `${p} == 50.0`, `${p} == 1.0`, `${p} == 60.0`];
+  const constraints = (xs: string[]): string => xs.map((x, i) => `  constraint c${i} { ${x} }`).join('\n');
+  const bindingRow = (order: 0 | 1, derived: boolean, bound: boolean): { text: string; conflict: string } => {
+    const P = `  part def P { attribute load : ScalarValues::Real = 1.0; ${derived ? 'attribute m2 : ScalarValues::Real = 10.0 - load;' : ''} }`;
+    const p = `  part p : P { attribute :>> load = 50.0; }`;
+    const w = `  attribute w : ScalarValues::Real;\n  ${bound ? 'bind w = p.load;' : ''}`;
+    const rows = [...reads('p.load'), ...(derived ? ['p.m2 >= 0.0', 'p.m2 == 9.0'] : []), ...(bound ? reads('w') : [])];
+    return { text: `package V {\n${(order ? [p, P, w] : [P, p, w]).join('\n')}\n${constraints(rows)}\n}`, conflict: 'binding' };
+  };
+  const clashRow = (shape: 'general' | 'usage' | 'redefined', swap: 0 | 1, reversed: 0 | 1): { text: string; conflict: string } => {
+    const [a, b] = swap ? ['Q3', 'Q2'] : ['Q2', 'Q3'];
+    const defs = ['  part def Q2 :> Q { attribute :>> L = 50.0; }', '  part def Q3 :> Q { attribute :>> L = 60.0; }'];
+    const usage =
+      shape === 'general'
+        ? `  part def Q23 :> ${a}, ${b};\n  part q : Q23 { bind p.load = L; }`
+        : shape === 'usage'
+          ? `  part q : ${a}, ${b} { bind p.load = L; }`
+          : `  part def Q23 :> ${a}, ${b};\n  part q : Q23 { attribute :>> L; bind p.load = L; }`;
+    const rows = [...reads('q.L'), ...reads('q.p.load'), 'q.p.m2 >= 0.0', 'q.p.m2 == 9.0'];
+    const text = `package V {\n  part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; }\n  part def Q { attribute L; part p : P; }\n${(swap ? [...defs].reverse() : defs).join('\n')}\n${usage}\n${constraints(reversed ? [...rows].reverse() : rows)}\n}`;
+    return { text, conflict: 'clash' };
+  };
+
+  it('decides no relation beside a redefinition against a binding, or two bindings under one name', async () => {
+    const models = [
+      ...([0, 1] as const).flatMap((order) => [false, true].map((on) => bindingRow(order, on, on))),
+      ...(['general', 'usage', 'redefined'] as const).flatMap((shape) => ([0, 1] as const).map((swap) => clashRow(shape, swap, swap))),
+    ];
+    expect(models).toHaveLength(10);
+    for (const { text, conflict } of models) {
+      const { model: m } = await loadModelText(text);
+      expect(m, text).toBeDefined();
+      // The model states the contradiction the check reports (the generator draws what it means to).
+      expect(checkConstraints(m!).some((c) => c.conflict === conflict && c.result === 'violated'), text).toBe(true);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      expect(report.results.map((r) => r.claim), text).toEqual(report.results.map(() => 'inconclusive'));
+      // Nor does the check: every relation beside it could not be evaluated.
+      const beside = checkConstraints(m!).filter((x) => /^V::c\d+$/.test(m!.qualifiedName(x.id)));
+      expect(beside.length, text).toBeGreaterThan(0);
+      expect(beside.map((x) => x.result), text).toEqual(beside.map(() => 'unknown'));
+    }
   });
 });
