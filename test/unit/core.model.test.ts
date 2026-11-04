@@ -725,17 +725,46 @@ describe('Model core', () => {
 
   // `remove` finds the edges that name a removed element through an index kept by every edit (a loop of removals
   // does not scan the model each time). The scan it replaced: every element in the order of the map, an edge that
-  // names a member of the set so far joining it — so an edge that names an edge the map lists LATER is not found.
+  // names a member of the set so far joining it, repeated while the set grows — so an edge the map lists BEFORE an
+  // edge that goes with the removal and names it goes too, and none keeps an endpoint naming a removed element.
   describe('remove finds the dangling edges as a scan of every element does (275)', () => {
     const scanned = (m: Model, id: string, cascade: boolean): string[] => {
       const gone = new Set<string>([id]);
       if (cascade) for (const d of m.descendants(id)) gone.add(d.id);
-      for (const r of m.all()) {
-        if (gone.has(r.id)) continue;
-        if ([...(r.source ?? []), ...(r.target ?? [])].some((ref) => gone.has(ref))) gone.add(r.id);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const r of m.all()) {
+          if (gone.has(r.id)) continue;
+          if ([...(r.source ?? []), ...(r.target ?? [])].some((ref) => gone.has(ref))) {
+            gone.add(r.id);
+            grew = true;
+          }
+        }
       }
       return [...gone];
     };
+
+    it('an edge listed before the edge it names goes with it (no endpoint names a removed element)', () => {
+      const m = new Model();
+      const a = m.create('PartUsage', { declaredName: 'a' });
+      const b = m.create('PartUsage', { declaredName: 'b' });
+      m.create('Succession', { id: 'c2', source: ['c1'], target: [b.id] });
+      m.create('Succession', { id: 'c1', source: [a.id], target: [b.id] });
+      expect(m.remove(a.id).sort()).toEqual([a.id, 'c1', 'c2']);
+      for (const el of m.all()) for (const ref of [...(el.source ?? []), ...(el.target ?? [])]) expect(m.has(ref), el.id).toBe(true);
+    });
+
+    it('a patch that cannot be copied leaves the index as it was', () => {
+      const m = new Model();
+      const a = m.create('PartUsage', { declaredName: 'a' });
+      const z = m.create('PartUsage', { declaredName: 'z' });
+      const e = m.create('Dependency', { source: [a.id], target: [z.id] });
+      m.remove(m.create('PartUsage', { declaredName: 'tmp' }).id); // builds the index
+      expect(() => m.update(e.id, { source: 5 as unknown as string[] })).toThrow();
+      expect(m.get(e.id)!.source).toEqual([a.id]);
+      expect(m.remove(a.id).sort()).toEqual([a.id, e.id].sort());
+    });
 
     it('removes the same elements in the same order over random edits, whichever edit kept the index', () => {
       let state = 0x9e3779b9;

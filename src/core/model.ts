@@ -150,6 +150,8 @@ export class Model {
   private _referrers: Map<ElementId, Set<ElementId>> | null = null;
   private _place: Map<ElementId, number> | null = null;
   private _nextPlace = 0;
+  /** Set by {@link danglingEdges} when it passes over an edge that names a member of `gone` but lies before it in the map. */
+  private _passedOver = false;
   /** Lazy containment pre-order ranks ({@link edgesInTextOrder}), keyed by rev. */
   private _rankRev = -1;
   private _rank = new Map<ElementId, number>();
@@ -577,9 +579,12 @@ export class Model {
     if (placingOf(el) !== placing) this.notePlacing(el);
     const previousSource = patch.source !== undefined ? el.source : undefined;
     const previousTarget = patch.target !== undefined ? el.target : undefined;
-    if (patch.source !== undefined || patch.target !== undefined) this.dropReferrers(el);
-    if (patch.source !== undefined) el.source = [...patch.source];
-    if (patch.target !== undefined) el.target = [...patch.target];
+    // Both copies first: a patch that cannot be copied (a JS caller's null) throws before the index is touched.
+    const source = patch.source !== undefined ? [...patch.source] : undefined;
+    const target = patch.target !== undefined ? [...patch.target] : undefined;
+    if (source !== undefined || target !== undefined) this.dropReferrers(el);
+    if (source !== undefined) el.source = source;
+    if (target !== undefined) el.target = target;
     if (patch.source !== undefined || patch.target !== undefined) this.noteReferrers(el);
     const fields = (['eClass', 'declaredName', 'declaredShortName', 'attrs', 'source', 'target'] as const).filter(
       (k) => patch[k] !== undefined,
@@ -728,11 +733,20 @@ export class Model {
     // is the store's settle (a command, an SDK call, a raw call on the model on screen outside a room, a REST commit),
     // so only a model nobody watches (the command line) keeps the copy where this walk puts it.
     const moved = new Map<ElementId, ElementId[]>();
-    for (const r of this.danglingEdges(toRemove)) {
-      const targets = r.eClass === 'Redefinition' ? this.survivingTargets(r, toRemove) : undefined;
-      if (targets !== undefined) moved.set(r.id, targets);
-      else toRemove.add(r.id);
-    }
+    // An edge the map lists BEFORE an edge that goes with the removal and names it is passed by the walk (a scan
+    // passes it too), so the walk is repeated while one was passed over: it would keep an endpoint naming a removed
+    // element, and the saved text would break. The first pass is the scan's; a later one only adds edges.
+    do {
+      this._passedOver = false;
+      for (const r of this.danglingEdges(toRemove)) {
+        const targets = r.eClass === 'Redefinition' ? this.survivingTargets(r, toRemove) : undefined;
+        if (targets !== undefined) moved.set(r.id, targets);
+        else {
+          moved.delete(r.id);
+          toRemove.add(r.id);
+        }
+      }
+    } while (this._passedOver);
     const afterwards: Array<() => void> = [];
     if (moved.size > 0) {
       for (const plan of this.removalPlanners) {
@@ -780,7 +794,11 @@ export class Model {
     const enqueue = (member: ElementId, after: number): void => {
       for (const rid of referrers.get(member) ?? []) {
         const at = place.get(rid);
-        if (at === undefined || at <= after || queued.has(rid) || gone.has(rid)) continue;
+        if (at === undefined || queued.has(rid) || gone.has(rid)) continue;
+        if (at <= after) {
+          this._passedOver = true;
+          continue;
+        }
         queued.add(rid);
         // Kept in the order of the map: a binary search for the place among those not yet yielded.
         let lo = head;
@@ -830,7 +848,10 @@ export class Model {
   private dropReferrers(el: ElementRecord): void {
     const referrers = this._referrers;
     if (!referrers) return;
-    for (const ref of [...(el.source ?? []), ...(el.target ?? [])]) referrers.get(ref)?.delete(el.id);
+    for (const ref of [...(el.source ?? []), ...(el.target ?? [])]) {
+      const set = referrers.get(ref);
+      if (set?.delete(el.id) && set.size === 0) referrers.delete(ref);
+    }
   }
 
   /**

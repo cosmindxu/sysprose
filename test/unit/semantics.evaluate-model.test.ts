@@ -9325,8 +9325,8 @@ describe('a binding the check reports violated contradicts the values it joins o
  * bindings a context inherits under one name, `conflict: 'clash'`) are not seeded, because no row beside one is
  * decided: every relation that reads what the contradiction touches is refused where it is derived. Neighbours of the
  * four probes of the differential table (r14, mapper-mi1, mapper-mi1d, mapper-mi3), in both text orders, hold that:
- * if a model ever decides a row beside such a row, this fails, and the engine must seed it (TODO 'Seed the literal
- * engine from the check's other violated binding rows').
+ * if a model ever decides a row beside such a row, this fails, and the engine must seed it from the check's other
+ * violated binding rows.
  */
 describe('no row is decided beside a violated binding or clash row (the literal engine, 264)', () => {
   const reads = (p: string): string[] => [`${p} <= 10.0`, `${p} >= 1.0`, `${p} == 50.0`, `${p} == 1.0`, `${p} == 60.0`];
