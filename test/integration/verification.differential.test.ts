@@ -3831,11 +3831,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * A probe whose two asserted equations give a feature the values `x` and `y` (`${name}-ab`: 50 then 60), and its
    * twin with the two exchanged (`${name}-ba`: the 60 written first, or where the 50 was), pinned alike: which
    * value is written where, and first, decides nothing (Q5 of the soft/hard analysis). I14 reads each pair row
-   * for row.
+   * for row. `ba` pins the twin's rows that read otherwise by design: an instance the pair does not meet in reads
+   * the one equation that holds there, so its row's verdict follows that equation's value (contradicted-pair-meet).
    */
-  const exchanged = (name: string, text: (x: string, y: string) => string, rows: Record<string, [string, Ref]>) => ({
+  const exchanged = (
+    name: string,
+    text: (x: string, y: string) => string,
+    rows: Record<string, [string, Ref]>,
+    ba: Record<string, [string, Ref]> = {},
+  ) => ({
     [`${name}-ab`]: probe(text('50.0', '60.0'), rows),
-    [`${name}-ba`]: probe(text('60.0', '50.0'), rows),
+    [`${name}-ba`]: probe(text('60.0', '50.0'), { ...rows, ...ba }),
   });
   /**
    * A probe whose two asserted equations `a` and `b` are written in that order (`${name}-ab`), and its twin with
@@ -8734,10 +8740,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // T/T/?/X with the literal engine's exit 0, and F/F/?/X with exit 1 with the two exchanged (M8; the analysis'
     // `reconcile/n-ab.sysml`, `n-ba.sysml`), and one in P beside one in p read both T, the check silent (F1). Every
     // reading of the feature now abstains on the check, the literal engine and the numeric surface — the equations'
-    // own rows, every instance's (Q5F1's p2), and a value derived from it, bound to it or read beside it by an
-    // asserted relation (Q5R) — and the SMT engine's axioms are inconsistent; the pair is one `#equations` row where
-    // the equations meet: P, p, the definition specialising both types, Q around p, the package. A value nothing
-    // ties to the feature (Q5R's tz) is read as before. Each is pinned with its twin.
+    // own rows, every instance's, and a value derived from it, bound to it or read beside it by an asserted relation
+    // (Q5R) — and the SMT engine's axioms are inconsistent; the pair is one `#equations` row where the equations meet:
+    // P, p, the definition specialising both types, Q around p, the package. A value nothing ties to the feature
+    // (Q5R's tz) is read as before. Where they meet in a usage (Q5F1's p), every other instance reads the one equation
+    // that holds there (contradicted-pair-meet): p2's u50 is P's value, T, and F with the two exchanged, on the check
+    // (the solve meets the pair, and does not converge; the literal engine and the SMT engine read the model's axioms
+    // inconsistent). Each is pinned with its twin.
     ...exchanged('q5-m8', (x, y) => `package Q5M8 {
         part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == ${x} } assert constraint c2 { L == ${y} } }
         part p : P;
@@ -8763,7 +8772,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Q5F1::p::cb': ['?/-/?/-', null],
       'Q5F1::t50': ['?/?/?/X', null],
       'Q5F1::t60': ['?/?/?/X', null],
-      'Q5F1::u50': ['?/?/?/X', null],
+      'Q5F1::u50': ['T/X/?/X', 'T'],
+    }, {
+      'Q5F1::u50': ['F/X/?/X', 'F'],
     }),
     ...exchanged('q5-types', (x, y) => `package Q5T {
         part def T0 { attribute L : ScalarValues::Real; }
@@ -9130,6 +9141,65 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'BN5::tk': ['?/?/?/X', null],
       'BN5::tl': ['?/?/?/X', null],
       'BN5::tn': ['?/?/?/X', null],
+    }),
+    // The pair on the two ends of P's binding met in a usage (contradictory-models S3's c6-use): p's L and K read
+    // nothing, and p2's, which only P's equation defines, read it — T, and F with the two exchanged, on the check
+    // (contradicted-pair-meet; they read ? in every instance before).
+    ...exchanged('cv-bnd-use', (x, y) => `package BU {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind L = K; assert constraint cl { L == ${x} } }
+        part p : P { assert constraint ck { K == ${y} } }
+        part p2 : P;
+        constraint t50 { p.L == 50.0 }
+        constraint k50 { p.K == 50.0 }
+        constraint u50 { p2.L == 50.0 }
+        constraint v50 { p2.K == 50.0 }
+      }`, {
+      'BU::P::L in BU::p#equations': ['F/-/F/-', 'F'],
+      'BU::P::«BindingConnectorAsUsage» in BU::p#bind': ['?/-/?/-', null],
+      'BU::P::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'BU::P::cl': ['?/-/?/-', null],
+      'BU::p::ck': ['?/-/?/-', null],
+      'BU::k50': ['?/?/?/X', null],
+      'BU::t50': ['?/?/?/X', null],
+      'BU::u50': ['T/X/?/X', 'T'],
+      'BU::v50': ['T/X/?/X', 'T'],
+    }, {
+      'BU::u50': ['F/X/?/X', 'F'],
+      'BU::v50': ['F/X/?/X', 'F'],
+    }),
+    // A name the walk places nowhere (contradicted-pair-meet's review): in a package that holds two features under one
+    // name (Q5W2's `w`), whose names the walk withholds, and through a usage a renamed redefinition hides (Q5H's `r.a`,
+    // which `a2 :>> a` redefines). No set was seen to reach `p.L` or `r.a.L`, and the check and the literal engine read
+    // the first equation written: t50 T and t60 F, the reverse with the two exchanged (and Q5H's t50 F on the SMT
+    // engine too). Every surface abstains now.
+    ...exchanged('q5-twins', (x, y) => `package Q5W2 {
+        part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == ${x} } assert constraint c2 { L == ${y} } }
+        part p : P;
+        attribute w : ScalarValues::Real = 1.0;
+        attribute w : ScalarValues::Real = 2.0;
+        constraint t50 { p.L == 50.0 }
+        constraint t60 { p.L == 60.0 }
+      }`, {
+      'Q5W2::P::L in Q5W2::P#equations': ['F/-/F/-', 'F'],
+      'Q5W2::P::c1': ['?/-/?/-', null],
+      'Q5W2::P::c2': ['?/-/?/-', null],
+      'Q5W2::t50': ['?/?/?/?', null],
+      'Q5W2::t60': ['?/?/?/?', null],
+    }),
+    ...exchanged('q5-hidden', (x, y) => `package Q5H {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+        part def R { part a : P; }
+        part r : R { part a2 :>> a { assert constraint cb { L == ${y} } } }
+        constraint t50 { r.a.L == 50.0 }
+        constraint t60 { r.a.L == 60.0 }
+        constraint u50 { r.a2.L == 50.0 }
+      }`, {
+      'Q5H::P::L in Q5H::r::a2#equations': ['F/-/F/-', 'F'],
+      'Q5H::P::ca': ['?/-/?/-', null],
+      'Q5H::r::a2::cb': ['?/-/?/-', null],
+      'Q5H::t50': ['?/?/?/?', null],
+      'Q5H::t60': ['?/?/?/?', null],
+      'Q5H::u50': ['?/?/?/X', null],
     }),
     // A value written with `=` is read whatever its asserts (the branch review): M, which `s` reads beside L, is not
     // left undecided by L's pair, so `cm { M <= 10.0 }` is the warning at M's stated 20 — beside a pair this tool
@@ -17298,6 +17368,15 @@ package PS {
           'an assert the model holds false at its values contradicts a value this row reads, or one the model’s values, bindings and assertions tie to it: the literal engine and the SMT engine report the axioms inconsistent, naming the assert, beside the check’s and the numeric surface’s reading of the value',
         ] as const,
     ),
+    // contradicted-pair-meet: two asserted equations that meet in a usage give its feature two values there alone, so
+    // another instance of the type reads the one that holds in it.
+    ...['q5-f1-ab | Q5F1::u50', 'q5-f1-ba | Q5F1::u50', 'cv-bnd-use-ab | BU::u50', 'cv-bnd-use-ab | BU::v50', 'cv-bnd-use-ba | BU::u50', 'cv-bnd-use-ba | BU::v50'].map(
+      (key) =>
+        [
+          key,
+          'two asserted equations that meet in another instance (p) give its L two values: the SMT engine reports the axioms inconsistent on every row of the file, and the literal engine on this one, which reads the L its symbols share with p’s, beside the check’s reading of p2’s L at the one equation that holds in p2',
+        ] as const,
+    ),
     // contradictory-models S2: a binding the check reports violated, or an assert it reports violated in an instance, that
     // the worklist now files in the instance it holds in (C3, C5): the SMT engine's axioms are inconsistent on every row of
     // the file, beside the check's reading of the values (the literal engine's too, where the row reads a value the
@@ -17526,7 +17605,7 @@ package PS {
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
-    ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc', 'cv-bnd2', 'cv-bnd2x', 'cv-bnd3', 'cv-bnd3u'].map(
+    ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc', 'cv-bnd2', 'cv-bnd2x', 'cv-bnd3', 'cv-bnd3u', 'cv-bnd-use', 'q5-twins', 'q5-hidden'].map(
       (k) => [`${k}-ab`, `${k}-ba`] as const,
     ),
     // text-order S1: a model and its members in the reverse order ({@link reversed}).
@@ -17547,7 +17626,9 @@ package PS {
       }
     }
     for (const [a, b] of STAND_ALIKE) {
-      for (const row of [...seen.get(a)!.keys()].filter((r) => seen.get(b)!.has(r))) {
+      // A row the two pin apart reads apart by design ({@link exchanged}'s `ba`), and I3 holds each to its pin.
+      const apartByDesign = (row: string) => PROBES[a]!.rows[row]?.[0] !== PROBES[b]!.rows[row]?.[0];
+      for (const row of [...seen.get(a)!.keys()].filter((r) => seen.get(b)!.has(r) && !apartByDesign(r))) {
         if (letters(a, row) !== letters(b, row)) apart.push(`${a} | ${row}: ${letters(a, row)}, ${b} ${letters(b, row)}`);
       }
     }

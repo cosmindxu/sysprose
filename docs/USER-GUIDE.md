@@ -2151,8 +2151,15 @@ that judges a relation reads it. Every relation over L, or over a value tied to
 it (derived from it, bound to it, or read beside it by an asserted relation —
 but not a value written with `=` or as a `default`, which is read whatever its
 asserts), is *could not be evaluated* on the check and the literal engine, and
-unknown on the numeric surface — the equations' own rows included, in every
-instance of the feature, P's own L and every P's — in a sentence naming each
+unknown on the numeric surface — the equations' own rows included, P's own L
+and every P's where they meet in a definition or a package; where they meet in a
+usage (one in P and one in `part p : P { … }`), p's L, and that of a usage that
+subsets or redefines p, while another `part p2 : P` reads P's equation on the
+check (the numeric surface's solve meets the pair and does not converge there,
+and the literal engine, whose p2.L shares its symbol with p's, marks it
+`verification/inconsistent-axioms`); and a name the tool places nowhere (in a
+scope that holds two features under one name, or through a usage a renamed
+redefinition hides) is never read as one equation's value — in a sentence naming each
 equation (*L is not read: the asserted `L == 50.0` (…::P::c50) and `L == 60.0`
 (…::P::c60) each define `L` in …::P, which states no value, and give it two
 different values — the model contradicts itself there, whichever is written

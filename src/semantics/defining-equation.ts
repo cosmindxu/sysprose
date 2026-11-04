@@ -5420,9 +5420,14 @@ function equatedTaint(model: Model): ScopedTaint {
  * asserted-relation step taints the feature each name denotes, not its first link, where the name is dotted and
  * that feature is one: a part above it holds features that state their own values.
  *
- * A seed may say the instance its taint holds in (`within`, {@link TaintEntry}); every seed says none today. What a
- * step of the fixpoint adds holds everywhere, whatever the entry it was reached from: where a carried value goes
- * from one instance's reading is not followed, so it reaches every reading ({@link taintReaches}), which fails closed.
+ * A seed may say the instance its taint holds in (`within`, {@link TaintEntry}): {@link contradictedTaint}'s, for a
+ * pair that meets in a usage. What a step adds holds there too only where the step stays in each instance of the
+ * element its relation is written in (`local`): a binding between, a value or an asserted relation over, or a
+ * redefinition of, features of that element alone (one name each, declared in it or in a type it specialises), and
+ * every entry it was reached from holds in that one instance. Any other step — a dotted name, a feature of another
+ * part, a package's relation, a `satisfy`, an equated part — leaves the instance, and what it adds holds everywhere.
+ * An element reached as holding in two places, or everywhere, holds everywhere: each widens at most twice, so the
+ * fixpoint ends, and every widening reaches more readings ({@link taintReaches}), which fails closed.
  */
 function spreadTaint(
   model: Model,
@@ -5436,16 +5441,44 @@ function spreadTaint(
   const defs = sharedDefinitions(model);
   const ownerOf = (e: ElementRecord): ElementRecord | undefined => (e.ownerId != null ? model.get(e.ownerId) : undefined);
   let grew = true;
-  // `e`, and with `holder` each usage above it up to `holder`.
+  // `e`, and with `holder` each usage above it up to `holder`; one already held in another instance, or reached now
+  // as held everywhere, holds everywhere (keeping the source it was first tainted by).
   const add = (e: ElementRecord, b: ElementRecord, holder?: ElementId, within?: ElementId): void => {
     for (let cur: ElementRecord | undefined = e; cur && cur.id !== holder; cur = ownerOf(cur)) {
       if (cur !== e && !isUsage(cur.eClass)) break;
-      if (!taint.has(cur.id)) {
+      const had = taint.get(cur.id);
+      if (!had) {
         taint.set(cur.id, within === undefined ? { source: b } : { source: b, within });
+        grew = true;
+      } else if (had.within !== undefined && had.within !== within) {
+        taint.set(cur.id, { source: had.source });
         grew = true;
       }
       if (holder === undefined) break;
     }
+  };
+  // The element `holder` and the types it specialises: a feature one of them declares is a feature of every instance
+  // of holder, read in that instance.
+  const homes = new Map<ElementId, ReadonlySet<ElementId>>();
+  const homeOf = (holder: ElementId): ReadonlySet<ElementId> => {
+    let hit = homes.get(holder);
+    if (!hit) homes.set(holder, (hit = new Set([holder, ...generalizationsOf(model, holder).map((g) => g.id)])));
+    return hit;
+  };
+  // Is `f` (or the feature the one name `name` denotes read in holder) a feature of every instance of holder itself?
+  const local = (holder: ElementId | null | undefined, f: ElementRecord | undefined, name?: string): boolean => {
+    if (holder == null) return false;
+    if (name !== undefined) {
+      if (name.includes('.')) return false;
+      f = defs.denote(holder).get(name)?.feature;
+    }
+    return f?.ownerId != null && homeOf(holder).has(f.ownerId);
+  };
+  // Where what a step adds holds: the instance every entry it was reached from holds in, where the step is `local`.
+  const scope = (hits: ReadonlyArray<TaintEntry | undefined>, isLocal: boolean): ElementId | undefined => {
+    const reached = hits.filter((h): h is TaintEntry => h !== undefined);
+    const w = reached[0]?.within;
+    return isLocal && w !== undefined && reached.every((h) => h.within === w) ? w : undefined;
   };
   const users = model.all().filter((el) => el.attrs.isLibrary !== true);
   const bindings = users.filter((el) => isBindingConnector(el) && el.ownerId != null);
@@ -5459,23 +5492,30 @@ function spreadTaint(
     grew = false;
     for (const b of bindings) {
       const ends = endsOf(b);
-      const hit = ends
-        .map((e) => taintedAt(model, taint, e) ?? readsTainted(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)))
-        .find((x) => x !== undefined);
-      if (hit) for (const e of ends) if (!stated?.(e)) add(e, hit, holders ? b.ownerId! : undefined);
+      const hits = ends.map(
+        (e) => taintEntryAt(model, taint, e) ?? readsTaintEntry(model, taint, [b.ownerId!], bindingEndPath(model, e.id, b.ownerId!)),
+      );
+      const hit = hits.find((x) => x !== undefined);
+      if (!hit) continue;
+      const within = scope(hits, ends.every((e) => local(b.ownerId, e)));
+      for (const e of ends) if (!stated?.(e)) add(e, hit.source, holders ? b.ownerId! : undefined, within);
     }
     for (const f of valued) {
-      const hit = namesOfValue(f.attrs.value as string)
-        .map((n) => readsTainted(model, taint, [f.ownerId!], n))
-        .find((x) => x !== undefined);
-      if (hit) add(f, hit);
+      const names = namesOfValue(f.attrs.value as string);
+      const hits = names.map((n) => readsTaintEntry(model, taint, [f.ownerId!], n));
+      const hit = hits.find((x) => x !== undefined);
+      if (hit) add(f, hit.source, undefined, scope(hits, names.every((n, k) => hits[k] === undefined || local(f.ownerId, undefined, n))));
     }
     for (const a of asserted) {
       if (sources.has(a.id)) continue;
       const roots = [a.ownerId, a.id].filter((x): x is ElementId => x != null);
       const names = relationNamesOf(a.attrs.expression as string);
-      const hit = names.map((n) => readsTainted(model, taint, roots, n)).find((x) => x !== undefined);
-      if (!hit) continue;
+      const hits = names.map((n) => readsTaintEntry(model, taint, roots, n));
+      const found = hits.find((x) => x !== undefined);
+      if (!found) continue;
+      const hit = found.source;
+      // Every name it reads is a feature of each instance of its owner (each is tainted), or none holds in one instance.
+      const within = scope(hits, names.every((n) => local(a.ownerId, undefined, n)));
       for (const n of names) {
         const head = n.split('.')[0]!;
         for (const r of roots) {
@@ -5488,15 +5528,16 @@ function spreadTaint(
             }
           }
           const d = defs.denote(r).get(head);
-          if (d && !stated?.(d.feature)) add(d.feature, hit);
+          if (d && !stated?.(d.feature)) add(d.feature, hit, undefined, local(a.ownerId, d.feature) ? within : undefined);
         }
       }
     }
     for (const r of narrowing) {
       const target = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
       const source = r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
-      const hit = target ? taintedAt(model, taint, target) : undefined;
-      if (hit && source) add(source, hit);
+      const hit = target ? taintEntryAt(model, taint, target) : undefined;
+      // `:>> L` in p is L in each p: where L holds in one instance, so does p's own.
+      if (hit && source) add(source, hit.source, undefined, scope([hit], local(source.ownerId, target)));
     }
     for (const [id, { path, from }] of parts.standsFor) {
       const end = model.get(id);
@@ -5628,6 +5669,29 @@ function readsTainted(
   return readsTaintEntry(model, taint, roots, name, at)?.source;
 }
 
+/** The scopes a name whose first link is `head` is read in from `roots`: those that denote it, else each namespace enclosing the first root. */
+function nameScopes(model: Model, roots: readonly ElementId[], head: string): ElementId[] {
+  const defs = sharedDefinitions(model);
+  const scopes = roots.filter((r) => defs.denote(r).has(head));
+  if (scopes.length > 0) return scopes;
+  const seen = new Set<ElementId>();
+  for (let o = model.get(roots[0]!)?.ownerId ?? null; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? null) {
+    seen.add(o);
+    scopes.push(o);
+  }
+  return scopes;
+}
+
+/**
+ * Does the walk place `name` read in `roots` — does a scope {@link readsTaintEntry} reads it in denote the whole name?
+ * One it places nowhere is seen to reach no taint, whatever it reads.
+ */
+function placedName(model: Model, roots: readonly ElementId[], name: string): boolean {
+  if (roots.length === 0) return false;
+  const defs = sharedDefinitions(model);
+  return nameScopes(model, roots, name.split('.')[0]!).some((r) => defs.denote(r).has(name));
+}
+
 /** {@link readsTainted}, with the entry the name is read through. */
 function readsTaintEntry(
   model: Model,
@@ -5639,16 +5703,7 @@ function readsTaintEntry(
   if (name === undefined || roots.length === 0) return undefined;
   const defs = sharedDefinitions(model);
   const segments = name.split('.');
-  let scopes = roots.filter((r) => defs.denote(r).has(segments[0]!));
-  if (scopes.length === 0) {
-    scopes = [];
-    const seen = new Set<ElementId>();
-    for (let o = model.get(roots[0]!)?.ownerId ?? null; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? null) {
-      seen.add(o);
-      scopes.push(o);
-    }
-  }
-  for (const r of scopes) {
+  for (const r of nameScopes(model, roots, segments[0]!)) {
     const denoted = defs.denote(r);
     // The features the shorter links landed on: with each link's reader and enclosing instances, the walk ({@link taintReaches}).
     const links: ElementId[] = [];
@@ -7032,8 +7087,12 @@ function spreadContradiction(
     (add) => {
       for (const set of sets) {
         const first = set.equations[0]!;
-        for (const c of set.equations) add(c, first);
-        for (const f of set.features) add(f, first);
+        // A pair that meets in a usage (`L == 60.0` in `part p : P { … }` beside P's `L == 50.0`) gives L two values in
+        // that instance alone: every other P reads P's equation. One that meets in a definition or a package holds
+        // in every instance of it.
+        const within = isUsage(set.context.eClass) ? set.context.id : undefined;
+        for (const c of set.equations) add(c, first, undefined, within);
+        for (const f of set.features) add(f, first, undefined, within);
       }
     },
     false,
@@ -7135,6 +7194,11 @@ export function contradictedDefinitionRefusalOf(
           ? index.sets[0]!.equations[0]
           : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader), at)).find((x) => x !== undefined);
     }
+    // A name the walk places nowhere — in a scope it withholds (two features under one name: `unreadScopes`), or
+    // through a usage a renamed redefinition hides (`part a2 :>> a`, then `r.a.L`) — is seen to reach no set, while
+    // the check's evaluator may still read it through the first equation written (`p.L == 50.0` T, and F with the two
+    // exchanged): it may read one, so it is read as reaching one.
+    if (!b && names.some((n) => !placedName(model, roots, n))) b = index.sets[0]!.equations[0];
     const set = b ? index.bySource.get(b.id) : undefined;
     return set ? { sentence: contradictedDefinitionSentence(model, set), verdict: set.verdict, set } : undefined;
   } catch (e) {

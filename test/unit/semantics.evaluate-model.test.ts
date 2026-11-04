@@ -2026,25 +2026,25 @@ describe('checkConstraints — two asserted equations that give one feature two 
   });
 
   it('in an element and a usage of it (F1), in two types a definition specialises, and around the instance', async () => {
-    // The two in two elements: the twins exchange the values, so each row keeps its name.
-    expect(
-      await exchanged((x, y) => `package F1 {
+    // The two in two elements: the twins exchange the values, so each row keeps its name. They meet in p, so p2's
+    // L, which only P's equation defines, is read: P's value, whichever is written where (contradicted-pair-meet).
+    const f1 = (x: string, y: string) => `package F1 {
         part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
         part p : P { assert constraint cb { L == ${y} } }
         part p2 : P;
         constraint t50 { p.L == 50.0 }
         constraint t60 { p.L == 60.0 }
         constraint u50 { p2.L == 50.0 }
-      }`),
-    ).toEqual([
+      }`;
+    const p = [
       ['F1::P::ca', 'unknown'],
       ['F1::p#equations', 'violated'],
       ['F1::p::cb', 'unknown'],
       ['F1::t50', 'unknown'],
       ['F1::t60', 'unknown'],
-      // Every reading of the feature: p2's L, which only P's equation defines, too.
-      ['F1::u50', 'unknown'],
-    ]);
+    ];
+    expect(await rows(f1('50.0', '60.0'))).toEqual([...p, ['F1::u50', 'satisfied']]);
+    expect(await rows(f1('60.0', '50.0'))).toEqual([...p, ['F1::u50', 'violated']]);
     expect(
       await exchanged((x, y) => `package DIA {
         part def T0 { attribute L : ScalarValues::Real; }
@@ -2069,6 +2069,100 @@ describe('checkConstraints — two asserted equations that give one feature two 
       ['ENQ::Q::cq', 'unknown'],
       ['ENQ::t50', 'unknown'],
     ]);
+  });
+
+  it('a pair that meets in a usage leaves that instance undecided, and every other one reads its own (contradicted-pair-meet)', async () => {
+    // `u` reads only P's equation in p2 (and, P's `bind L = K` joining K to L in every P, p2's K), at P's value
+    // whichever of the two is written where; `t` reads the instance they meet in, or one that is it.
+    const verdicts = async (text: string) => Object.fromEntries((await rows(text)).filter(([n]) => /::[tu]\w*$/.test(n)));
+    for (const [x, y, u] of [['50.0', '60.0', 'satisfied'], ['60.0', '50.0', 'violated']] as const) {
+      // On the two ends of P's binding (c6-use), a usage that subsets p (p3, which holds p's equation), a value P derives from L.
+      expect(
+        await verdicts(`package MU {
+          part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; attribute V : ScalarValues::Real = L * 2.0;
+            bind L = K; assert constraint cl { L == ${x} } }
+          part p : P { assert constraint ck { K == ${y} } }
+          part p2 : P;
+          part p3 :> p;
+          constraint tL { p.L == 50.0 } constraint tK { p.K == 50.0 } constraint t3 { p3.L == 50.0 } constraint tV { p.V == 100.0 }
+          constraint uL { p2.L == 50.0 } constraint uK { p2.K == 50.0 } constraint uV { p2.V == 100.0 }
+        }`),
+      ).toEqual({
+        'MU::t3': 'unknown',
+        'MU::tK': 'unknown',
+        'MU::tL': 'unknown',
+        'MU::tV': 'unknown',
+        'MU::uK': u,
+        'MU::uL': u,
+        'MU::uV': u,
+      });
+      // Met in the p of every Q: q's and q2's alike; p2 is no Q's p.
+      expect(
+        await verdicts(`package MQ {
+          part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+          part def Q { part p : P { assert constraint cb { L == ${y} } } }
+          part q : Q;
+          part q2 : Q;
+          part p2 : P;
+          constraint tq { q.p.L == 50.0 } constraint tq2 { q2.p.L == 50.0 } constraint u2 { p2.L == 50.0 }
+        }`),
+      ).toEqual({ 'MQ::tq': 'unknown', 'MQ::tq2': 'unknown', 'MQ::u2': u });
+      // Met in a definition (P2, which specialises P): no instance is told apart, and every reading of L abstains, p2's
+      // too. A value outside the instance the pair ties to it (a package's `bind w = p.L`) abstains wherever it is read.
+      expect(
+        await verdicts(`package MD {
+          part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+          part def P2 :> P { assert constraint cb { L == ${y} } }
+          part p : P2;
+          part p2 : P;
+          constraint t { p.L == 50.0 } constraint u2 { p2.L == 50.0 }
+        }`),
+      ).toEqual({ 'MD::t': 'unknown', 'MD::u2': 'unknown' });
+      expect(
+        await verdicts(`package MW {
+          part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+          part p : P { assert constraint cb { L == ${y} } }
+          part p2 : P;
+          attribute w : ScalarValues::Real;
+          bind w = p.L;
+          constraint tw { w == 50.0 } constraint u2 { p2.L == 50.0 }
+        }`),
+      ).toEqual({ 'MW::tw': 'unknown', 'MW::u2': u });
+    }
+  });
+
+  it('a name the walk places nowhere reads no value of a pair, in either order (contradicted-pair-meet)', async () => {
+    // Two features under one name (`w`) leave the package's names unread, and a renamed redefinition (`a2 :>> a`)
+    // hides `a`: no set was seen to reach `p.L` or `r.a.L`, and the check read the first equation written (T, and F
+    // with the two exchanged) where every surface now abstains.
+    for (const [x, y] of [['50.0', '60.0'], ['60.0', '50.0']] as const) {
+      expect(
+        await rows(`package TW {
+          part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == ${x} } assert constraint c2 { L == ${y} } }
+          part p : P;
+          attribute w : ScalarValues::Real = 1.0;
+          attribute w : ScalarValues::Real = 2.0;
+          constraint t50 { p.L == 50.0 }
+          constraint t60 { p.L == 60.0 }
+        }`),
+      ).toEqual([
+        ['TW::P#equations', 'violated'],
+        ['TW::P::c1', 'unknown'],
+        ['TW::P::c2', 'unknown'],
+        ['TW::t50', 'unknown'],
+        ['TW::t60', 'unknown'],
+      ]);
+      const { model: m } = await loadModelText(`package RA {
+          part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+          part def RR { part a : P; }
+          part r : RR { part a2 :>> a { assert constraint cb { L == ${y} } } }
+          constraint a50 { r.a.L == 50.0 }
+          constraint a60 { r.a.L == 60.0 }
+        }`);
+      for (const n of ['RA::a50', 'RA::a60']) expect(checkOf(m!, n).result, n).toBe('unknown');
+      const literal = await verifyModel(m!, { engine: 'literal' });
+      for (const n of ['RA::a50', 'RA::a60']) expect(literal.results.find((r) => r.clause.qualifiedName === n)!.claim, n).not.toMatch(/proved|refuted|holds-at-values/);
+    }
   });
 
   it('reaches a value derived from it, bound to it, or read beside it by an asserted relation — and no other', async () => {
