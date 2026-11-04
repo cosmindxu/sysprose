@@ -71,11 +71,6 @@ maintainer says `awaits user decision U<n>` and names the question.
       p2 : P;` p2.L, which only P's equation defines, reads ?
       (review-2026-10-14/wave3-probes/contradictory-models/c6-use.sysml). The same holds for a pair
       filed at P beside the larger set at a specialisation P2 (G2). [contradictory-models S3]
-- [ ] **Give the own-sibling finding its own validation rule.** Residual: raise
-      `validation/redefinition-own-sibling` from warning to error? (Policy: a warning exits 0 and
-      mbse-workflow never routes it to repair; the corpus and v9 have 0 hits.) The rule itself
-      exists since wording-pass S1. Probe: `package P { part def B { attribute mass default = 1.2;
-      attribute :>> mass = 0.8; } }` reports a warning and exits 0. [small-wording S1; wording-pass]
 - [ ] **Read a usage that subsets a feature an instance reads otherwise in that instance.** Since
       subsetting-pass, every row read through W's `part p2 :> p1;` abstains wherever any context of
       W reads p1 otherwise (`subsettingOtherwise`, `subsettingTaint` in
@@ -730,16 +725,6 @@ true values. What follows is what that branch and the review of it left open; en
       scratch/naming-pass-scratch/ba7.sysml. Skipped on 2026-11-02 (naming-pass): a safe fix needs
       path-resolved dependencies through references, bound subjects and derived values, and a wrong
       exclusion would drop a per-instance reading. [O2 S4, per-instance-rest S3]
-- [ ] **Say why a default stood on the rows `standingDefaultSentence` still does not reach.** The
-      check's instance row, a default reached through a binding, and the numeric surface's violated
-      context rows now say it (`SpecialisationInstance.standing`, wording-pass S1). Still bare: the
-      rows `groupInstanceRows` (F7 groups) and `readThroughSpecialisers` (specialiser measures)
-      print, and the carried-default sentence (RB3), which has no redefinition spelling, only "write
-      the analysis as the value of q::L". No group row with a violated assert over a default that
-      stood was found (probes G1-G12 in wording-pass-scratch; every shape is either no group or a
-      binding makes the default give way), and a specialiser context may override the names the
-      sentence would speak about, so saying it there could be false. Optional, low; take it when a
-      reachable group row turns up. [save-and-wording S3; wording-pass S1]
 - [ ] **Read a `default` that an assert in an enclosing scope names, instead of abstaining (A.2.4
       lexical rule).** Since defaults2-pass an enclosing assert that names a feature stating a value
       of its own (a default or =, no binding end and no binding-held default) is read at that value
@@ -1141,6 +1126,16 @@ true values. What follows is what that branch and the review of it left open; en
       row for the contradiction SMT reports in UB6 and W4o' (263) stays narrowed to UB6, pending a
       ruling that UB6 is permanent. 217 closed (done for a bare bound on a unitless Real) and 219
       closed as obsolete (x6n proves both instances on 514f547). [merge-c10]
+      (5) Rulings of the 2026-11-04 round 9 (small-pass found nothing closable by code), closed by a
+      documented decision and reversible by re-adding the entry with its original title; to confirm:
+      'Give the own-sibling finding its own validation rule' (238) closed with `redefinition-own-sibling`
+      staying a warning (a warning exits 0 and mbse-workflow never routes it to repair; the corpus and
+      v9 have 0 hits; raising it to an error is a one-line severity change plus the catalogue, the
+      USER-GUIDE and the test expectations; probe small-pass-scratch/a.sysml); 'Say why a default
+      stood on the rows `standingDefaultSentence` still does not reach' (277) closed because no
+      reachable row is known (probes G1-G12 of wording-pass; a specialiser context may override the
+      names the sentence would speak about, so saying it there could be false); re-add it if a
+      reachable group row turns up. [round 9]
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
