@@ -425,33 +425,44 @@ headings.
       binding to a valued feature joined to another end still reads a decided T beside a
       contradictory file reading (probes rev/m/valk-eq-fwd.sysml, rev/m6/dfl-L2-fwd.sysml). It is
       consistent across the lanes and not new. [fence-numeric3; fence-numeric4]
-- [ ] **Read `assert not constraint c { ... }` as the negation.** The form (also `require not`,
-      `assume not`) is now refused at load with its own error, `mapper/negated-assert-unread`: the
-      load degrades, the judging commands exit 2 and the reporting ones exit 1, the app's checks
-      stand down, the save keeps the clause verbatim, and no surface files a row for it. Before, h1
-      and h2 already failed to load as an unnamed parse error whose recovery left c a plain
-      constraint on the in-process surfaces (T on all four). Done when the clause is read: the
-      mapper keeps `negated` and the body, the check, the numeric solve and the instance rows judge
-      the NEGATION of the body, the SMT axiom role asserts `not (body)`, `isAsserted` does not make
-      a negated `==` define a value, and the refusal is lifted. Probes:
-      review-2026-10-14/wave3-probes/contradictory-models/h1.sysml, h2.sysml; pinned as
-      neg-assert-h1/-rev, neg-assert-h2/-rev, neg-assert-family. [contradictory-models S1 review;
-      fence-assert-not]
+      numeric2-pass: (h) a package head's pair whose side is an expression or a `default` (`L = 2.0
+      * K`), whose end is deeper than one segment below the definition, or whose instance sits in a
+      definition that redefines the head (not a usage), files no binding row and is read as before
+      (probes numeric2-pass-scratch/gen2 D56-D58, t5/hc3.sysml); (i) a package head whose binding
+      sits in a third package that spells neither end (Defs/Vals/Bind; `package Bind { import
+      Defs::*; import Vals::*; bind P::load = L; }`, probe numeric2-review-scratch/nb/h.sysml) files
+      no head-conflict row, so c4 reads the instance's own value (holds-at-values on the literal
+      engine, proved on SMT, sysml-check silent), identical to 514f547 and not widened, the proper
+      reading staying open with fence-pkgbind; (j) the literal engine answers X on any relation over
+      a value a reported package-head conflict joins, as it does for every other violated binding
+      (probe t5/hc1.sysml). [numeric2-pass]
+- [ ] **Read `assert not constraint c { ... }` as the negation.**
+      Since numeric2 S1 a negated clause (also `require not`, `assume not`) whose body is one
+      expression is read as the plain clause over `not (body)` on every surface, the same clause
+      `assert constraint c { not (...) }` writes, and the save writes it back as `assert not
+      constraint c { body }` (the element keeps `negated`; pinned neg-assert-h1/-rev, h2/-rev,
+      family; hand oracle 280 models x both text orders: 0 wrong decided cells, 0 differences from
+      the workaround spelling). Still refused with `mapper/negated-assert-unread` (the load
+      degrades, the checks abstain, the save keeps the text): a negated clause that names a
+      constraint with no body (`assert not constraint c;`), one that specialises a constraint
+      (`assert not constraint c :> K { ... }`), `assert not requirement r { ... }`, one whose body
+      holds members (`assert not constraint c { attribute y = 2.0; load > y }`; pinned neg-assert-
+      refused), and one whose body holds a comment or `doc` member (`assert not constraint c { /*
+      note */ load > 10.0 }`). Done when those are read: the negation of a typed or named constraint
+      needs that constraint's body judged under `not`, and a members body needs the members in the
+      negated scope. [contradictory-models S1 review; fence-assert-not; numeric2 S1]
 - [ ] **File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine
-      can seed from it.** Since contradictory-models S3 the literal engine marks the rows over the
-      values a binding the check reports violated joins inconclusive. Two rows still decide on the
-      literal engine beside SMT X because the check files no violated row for their contradiction:
-      unit-blind-assert UB6::cT (q's asserted p.load >= 1000.0 reads the 50 kg a binding carries
-      into an untyped load as 50 in SI) and w4-plain W4o::c5 (p4's own load = 7.0 against the
-      package's bind P::load = L: no binding finding reports a package head's pair; the USER-GUIDE
-      says so). Done when the check files the row and the literal engine marks both inconclusive, or
-      the rows are ruled permanent. [contradictory-models S3]
-- [ ] **Seed the literal engine from the check's other violated binding rows (optional).** Only bind
-      rows (conflict "bind", a connector) seed the literal engine's contradictions. The check's
-      binding rows (a redefinition's value against the binding it overrides: r14) and clash rows
-      (two bindings a context inherits: mapper-mi1, mi1d, mi3) do not. Every row of those four
-      probes abstains on the literal engine today, so no false verdict is known. Seed them if a
-      model decides a row beside one. [contradictory-models S3]
+      can seed from it.**
+      Since numeric2 S1 the check files the binding's row at an instance whose own `=` constant
+      differs from the one a package's binding on a definition's feature joins it to (W4o's p4:
+      `headBindingConflicts`), so the literal engine marks W4o::c5 inconclusive (T/X/?/X; pinned
+      w4-plain, w4-unit, head-conflict*). What is left is unit-blind-assert UB6::cT: q's asserted
+      `p.load >= 1000.0` reads the 50 kg a binding carries into an untyped load as 50 in SI, where
+      it fails, and the check abstains on that pair by design (a bare number has no unit to compare
+      in), so it can file no violated row; the literal engine's T on cT is right (K is 25 kg
+      wherever it is read) and SMT's X is its SI reading. Done when the maintainer rules the row
+      permanent (recommended: a violated row would claim a comparison the check refuses to make) or
+      the check reads the pair. [contradictory-models S3; numeric2 S1]
 - [ ] **Read two asserted equations on the two ends of a binding that reaches an end through a part
       only where they meet (the scope decision).** fence-readings S2 made the two readings abstain
       together on every surface, so the entry's first done-when holds and is pinned
@@ -533,16 +544,39 @@ headings.
       unknown because the library states no value); past 10,000 owners of one context
       (MAX_NAME_WALK_OWNERS) the names below it read unknown with the sentence 'the names below
       <ctx> are not all read'. v9 enters at most 542 owners, the examples 59. [fence-loader]
+      reads2-pass (an asserted bare bound on a unitless Real over a give-way default is carried on
+      the SMT lane; `bounds`, `consistency` and `refine` carry it too): (12) an asserted inequality
+      over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L
+      + N >= K`), a bound with a `[unit]` or on a unit-bearing feature, an Integer or restricted-
+      domain sort, a conjunction (`load >= 0.0 and load <= 10.0`); the unit, Integer and conjunction
+      shapes keep the generic sentence 'no assertion gives a default a value' rather than one naming
+      the move (reads2-pass-scratch/h217/h2.sysml, gen217/models shapes 'int' and 'unit'); (13) a
+      usage that redefines the default itself (`part q : Q { attribute :>> L default = 9.0; }`)
+      beside bounds abstains where the hand oracle could prove (20 cells: reads2-pass-
+      scratch/gen217b/models/m45f.sysml, m46f.sysml, m52f.sysml); (14) bounds linked through a
+      derived relation are refused whole, including a lower and an upper bound in the same component
+      of a linked group (B5, B7: review-scratch/pr/b5.sysml, b7.sysml; pinned stand-gw-ineq-derived,
+      -derived2); (15) a scoped worklist (`obligationsOf` with scopeId, the Checks 'Obligations'
+      listing) may carry a bound the whole model refuses as meeting (review-scratch/scope.mts;
+      sound, the partner is no axiom there); (16) a usage that subsets a feature an instance reads
+      otherwise (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
+      `satisfierTaint` feeds about eight readers; probes sub-sa7, sub-sa3, sub-sa5, sub-def-sa7d,
+      sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). 249 (an asserted conjunction as an
+      equation) stays open and skipped: it needs conjunct splitting at about ten call sites over
+      four lanes. [reads2-pass; numeric2-pass]
 - [ ] **Abstentions left in the negated assert (rollup; sound, only weaker).** (a) A model with
-      `assert not`, `require not` or `assume not` degrades as a whole, not only the dependent rows;
-      (b) `assert not satisfy R by s;` parses as the bare clause `assert not` plus a plain `satisfy
-      R by s;`: the error is raised but the satisfy edge is read plain and the sentence names the
-      clause (`not satisfy` and `satisfy not` stay generic parse errors); (c) members declared
-      inside a refused body are not mapped (kept verbatim in the save), and `assert not x > 1.0;`
-      swallows `x` as the clause's name, giving a `validation/duplicate-name` finding beside the new
-      error; (d) a caller that runs the engines on a model whose load report it ignores sees the
-      clause dropped from the axiom set; (e) a degraded `contracts` / `obligations` report shows a
-      requirement whose only clause was refused as having no formal clause. [fence-assert-not]
+      `assert not requirement`, a negated clause that names a constraint with no body, one that
+      specialises a constraint, or one whose body holds members, a comment or a `doc` member
+      degrades as a whole, not only the dependent rows (a negated clause with a one-expression body
+      is read since numeric2 S1, see 'Read `assert not constraint c { ... }`'); (b) `assert not
+      satisfy R by s;` parses as the bare clause `assert not` plus a plain `satisfy R by s;`: the
+      error is raised but the satisfy edge is read plain and the sentence names the clause (`not
+      satisfy` and `satisfy not` stay generic parse errors); (c) members declared inside a refused
+      body are not mapped (kept verbatim in the save), and `assert not x > 1.0;` swallows `x` as the
+      clause's name, giving a `validation/duplicate-name` finding beside the new error; (d) a caller
+      that runs the engines on a model whose load report it ignores sees the clause dropped from the
+      axiom set; (e) a degraded `contracts` / `obligations` report shows a requirement whose only
+      clause was refused as having no formal clause. [fence-assert-not; numeric2-pass]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** One symbol per feature across the usages of one definition: `part def P { attribute
       L; attribute K; bind L = K; } part a : P { assert constraint ea { L == 50.0 } } part b : P {
@@ -645,23 +679,40 @@ headings.
       fence-save-name-scratch/zzb.test.ts; a stale-copy probe: seed 32180 (RV_RAW=1 RV_FIRST=32180
       RV_SEQ=1 RV_STEPS=5) and soak seq 42267 (page TT, file ?F on c6). [fence-redefs;
       fence-save-name]
-- [ ] **Take the dangling-edge scan out of `Model.remove` (core cost).** `Model.remove` scans every
-      element for dangling edges, so a settle that drops many redefinitions one remove at a time
-      costs O(N) each: deleting a base attribute that 300 redefinitions end in costs about 0.9 s on
-      a 12.7k-element model. Find the dangling edges through the edge indexes, keeping the removal
-      and event order. Also: a 300-deep chain with two named siblings per definition parses at 1.16
-      to 1.30x of 84fb971 (`chainsib300`; skip `joinsTwo`'s reach walk when no sibling redefines
-      anything), and a retype on a usage of 1500 `:>>` settles in 343 to 453 ms.
-      [redefinition-target S2, S3]
+- [ ] **Take the dangling-edge scan out of `Model.remove` (core cost).**
+      Model.remove finds dangling edges through a referrer index kept by create, update and remove
+      (misc-pass), in the old scan's order and with the walk repeated while an edge listed before an
+      edge that goes was passed over; 300 one-at-a-time removes on 13k elements went from 100 ms to
+      3 ms. The first remove after the index is dropped (reset, resetPreserving, adoptSerialOrder
+      when the order changed, fromJSON) costs more than the old scan, since the index is built then:
+      on the v9 model 26 to 34 ms against 9 to 15 ms, later removes 0.01 ms against 5 ms, and
+      removing a definition with 30,000 incoming typings 227 ms against 52 ms; a trade-off, not a
+      wrong answer. Left: (a) a removal that moves a Redefinition still asks relationshipsFrom, so
+      the per-revision edge index is rebuilt each time (250 chain-member removals 62 ms at 13k
+      elements); an incrementally kept source/target index in element order would end it, and would
+      also be the place to fix a later dangling edge if one is found; (b) a 300-deep chain with two
+      named siblings parses at 1.16 to 1.30x of 84fb971; skipping joinsTwo's reach walk was tried
+      and gives no measurable gain (12 parses each, 0.40 to 0.45 s both ways), so the ratio is not
+      from that walk; (c) a retype on a usage of 1500 :>> settles in 343 to 453 ms. Done when (a)
+      holds with the order unchanged and (b) and (c) have a measured cause. [redefinition-target S2,
+      S3; misc-pass]
 - [ ] **Widen the random edit generator of the store property test (optional).**
-      `store.reducers.test.ts` draws `bind` in definitions and usages since the re-review fixes.
-      Still to add: nested `part :>> p { attribute :>> load; }`, standalone `redefinition`
-      statements, a user retarget of a redefinition (Properties, `updateElement` on the edge), the
-      SDK edits, and the duplicate-name stop; a verdict oracle (a copy bound to a valueless Zb plus
-      `u.Zb == v` constraints, definite check and numeric contradictions between page and reopened
-      file) and a count of the sequences that fell back to the binding-free model; the hand-text
-      oracle is thin (1 comparison in the 300 x 4 gate window); compare the four-surface verdicts in
-      a subset of the sequences. [redefinition-target S2, re-review]
+      store.reducers.test.ts draws bind in definitions and usages, a user retarget of a redefinition
+      (updateElement on the edge, to another feature of a general of its owner and not onto one a
+      sibling already redefines; its own random stream, 190 retargets in the 300x4 gate window), and
+      counts the sequences that fell back to the binding-free model (0 in the gate window, asserted
+      below a quarter). Still to add: nested `part :>> p { attribute :>> load; }`, standalone
+      `redefinition` statements, the SDK edits, the duplicate-name stop as a counted outcome; a
+      verdict oracle (a copy bound to a valueless Zb plus `u.Zb == v` constraints, definite check
+      and numeric contradictions between page and reopened file); the hand-text oracle is thin (1
+      comparison in the 300x4 gate window); compare the four-surface verdicts in a subset of the
+      sequences. Finding of the new draw (no wrong answer, the page equals the file):
+      SYSPROSE_RT_FIRST=1700 SYSPROSE_RT_SEQUENCES=1400 SYSPROSE_RT_STEPS=6 fails at seq 2264 step 5
+      ('a full settle of the page still moved 1 redefinition(s)') after a user retarget and a
+      rename; retargeting onto a feature a sibling already redefines is excluded from the generator
+      and is outside the oracle, like two features of an owner on one line. Soak seeds 1120 and 1618
+      are the known pre-existing ones (rollup 'fence-copy2' item 12). [redefinition-target S2, re-
+      review; misc-pass]
 ## Per-instance soundness — review 2026-10-14
 
 From the soundness review of F3–F8 and 3e3b0ff (Sysprose 5943654 against 7277a97). The branch
@@ -679,22 +730,6 @@ true values. What follows is what that branch and the review of it left open; en
       scratch/naming-pass-scratch/ba7.sysml. Skipped on 2026-11-02 (naming-pass): a safe fix needs
       path-resolved dependencies through references, bound subjects and derived values, and a wrong
       exclusion would drop a per-instance reading. [O2 S4, per-instance-rest S3]
-- [ ] **Contain a throw in a relation's own context walk.** A throw in
-      DefiningEquations.readingContexts is contained since instance-pass (readingContextsOf: the
-      check files one internal row, the obligations lane one refused row, instanceGroups groups none
-      of the relation's contexts). The check's context rows, the instance index, the obligations
-      lane's instanceRows, and bindingConflicts (evaluate-model.ts) and bindingInstanceRows
-      (obligations.ts), which ask changingContexts directly, now contain a throw too (instance-pass
-      review: before it, a throw there made loadModelText return no model; now bindingConflicts
-      files one unknown row '<binding>@contexts' and bindingInstanceRows one refused row '<binding>
-      in its other contexts'; the verify exit of that refused row, inconclusive, exit 2, was not
-      checked end to end). Left: a failed asserts listing (equatedParts' failed) is kept for the
-      revision, so every row abstains until the next edit, even after a transient throw. A retry
-      inside the revision is not sound: derivations, instance groups and the other per-revision
-      caches built while the listing failed would be mixed with the later complete one, so the fix
-      is to drop all of them together or retry only at the start of a pass. Also unprobed: the other
-      entry points of DefiningEquations that still call changingContexts directly
-      (defining-equation.ts:3823 and :3832). [per-instance-rest S3, A.2.9, instance-pass]
 - [ ] **Say why a default stood on the rows `standingDefaultSentence` still does not reach.** The
       check's instance row, a default reached through a binding, and the numeric surface's violated
       context rows now say it (`SpecialisationInstance.standing`, wording-pass S1). Still bare: the
@@ -743,19 +778,6 @@ true values. What follows is what that branch and the review of it left open; en
       the five readers give a valueless end bound to a valued feature that feature's value, with an
       oracle over order swaps, instances, default and = twins, and the #bind row gone. Probes:
       defaults2-pass-scratch/p2/h2f.sysml and p5/. [default-stands S1, G2, defaults2-pass]
-- [ ] **Carry an asserted inequality over a `default` a binding makes give way with no value, on the
-      SMT lane.** Since default-stands S1, `gateRelation` refuses every asserted relation over such
-      a default (`givenWayUnvalued`), inequalities included. perf9b (per-instance/rv) goes from 2 to
-      768 refused obligations: 766 `N0::lo` (`x >= 0.0`) axioms are `unread-definition`. GI's gT
-      `q.p.load >= -1.0` loses its SMT proof (?/?/?/T at 414ba14, ?/?/?/? now; probe
-      default-stands-scratch/brv/p/gi.sysml). It was kept on purpose: `L >= 5.0 and L <= 5.0` fixes
-      the symbol as `L == 5.0` does. A fix carries only an asserted relation that cannot fix the
-      symbol (no pair of bounds that meet), and names those moves. [default-stands review]
-- [ ] **Encode a definition's binding in each usage's instance.** In x6n (X6 without Q's assert),
-      the SMT engine proves `X6N::P::c in X6N::W::q::p` but finds a counterexample for `in
-      X6N::w::q::p`. The witness gate then demotes it to 'witness not confirmed', because the
-      numeric surface reads 3. It is safe, but a reading is lost. Identical at 414ba14. Probe:
-      default-stands-scratch/branch-review/p4/x6n.sysml. [default-stands review]
 - [ ] **File a definition's context row under one name whatever the declaration order.** Since
       instance-pass a relation of P read in P2 :> P is filed P::ca in P2 whichever of P2 and its one
       package-level usage p is written first (sort tie-break in contextsUncached; no verdict moves,
@@ -1108,6 +1130,17 @@ true values. What follows is what that branch and the review of it left open; en
       have to cut instanceSitesOf, readingContextsOf and the per-context name walk without changing
       a reading). A name read through an untyped `ref part p2 ::> p1;` stays unread on every surface
       (probes decisions-pass-scratch/p/ref2.sysml, nref.sysml). [decisions-pass, cost-pass]
+      (4) Rulings of the 2026-11 merge of misc-pass, numeric2-pass and reads2-pass, closed by a
+      documented decision and reversible by re-adding the entry with its original title; to confirm:
+      'Contain a throw in a relation's own context walk' (183) closed as permanent (the throw is
+      contained since instance-pass; a failed asserts listing abstains until the next edit, see the
+      per-instance rollup item 3); 'Seed the literal engine from the check's other violated binding
+      rows' (264) closed on evidence of absence (78 neighbours of r14, mapper-mi1, mi1d and mi3 in
+      both text orders plus 7 added shapes: no row decided beside a violated binding or clash row;
+      the 10-model test in semantics.evaluate-model.test.ts fails if one ever is); 'File a violated
+      row for the contradiction SMT reports in UB6 and W4o' (263) stays narrowed to UB6, pending a
+      ruling that UB6 is permanent. 217 closed (done for a bare bound on a unitless Real) and 219
+      closed as obsolete (x6n proves both instances on 514f547). [merge-c10]
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
@@ -1199,7 +1232,9 @@ true values. What follows is what that branch and the review of it left open; en
       decide, with values correct against a hand oracle, while SMT abstains from about n=34..40
       because obligations.ts MAX_NESTED_BINDING_DEPTH stays 32 (independent of MAX_BINDING_SEGMENTS,
       48); before the cap raise all three abstained from n=32. (3) A failed asserts listing stays
-      failed for the revision (see 'Contain a throw in a relation's own context walk.'). (4) A
+      failed for the revision; ruled permanent in misc-pass (it abstains; a retry inside a revision
+      would mix caches built while the listing failed with a later complete one; reopen only if a
+      throw is seen to be transient). (4) A
       relation whose own context walk throws gets no per-instance rows at all; one internal row
       stands for its other contexts (test semantics.evaluate-model.test.ts, 'own context walk';
       probes instance-pass-scratch/gen221). (5) The 193 anchor abstains and the finding stays at the
