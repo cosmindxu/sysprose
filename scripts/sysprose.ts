@@ -1456,7 +1456,9 @@ function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
       ? [
           requirementsInModel > 0
             ? `  no contract was read, although this model declares ${requirementsInModel} requirement-shaped statement(s) — see the exclusions below`
-            : '  this model declares no requirement and no case objective',
+            : scope
+              ? '  this scope holds no requirement and no case objective'
+              : '  this model declares no requirement and no case objective',
         ]
       : []),
     ...r.contracts.flatMap((c) => {
@@ -1578,7 +1580,7 @@ function reportObligations(model: Model, name: string, args: ParsedArgs): Report
         ]
       : []),
     ...(r.obligations.length === 0 && !missing
-      ? ['  this model states no relation at all']
+      ? [scope ? '  this scope holds no relation' : '  this model states no relation at all']
       : r.obligations.flatMap(obligationLines)),
     ...(refusals.length > 0
       ? [

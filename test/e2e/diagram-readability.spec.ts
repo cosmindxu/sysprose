@@ -12,6 +12,8 @@
  *    its lines running from the boxes that point at it.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { captureErrors, findElementId, gotoApp, selectElementById, viewportSettled } from './fixtures';
 
@@ -421,6 +423,52 @@ test('a column header stays on screen in a frozen strip, at Fit and while pannin
   expect(own.y + own.height, "the headers' own bands are above the canvas").toBeLessThan((await canvas.boundingBox())!.y);
   await expect.poll(async () => await cells.allTextContents()).toContain('PA');
   await expectStripOnScreen();
+  expect(errors).toEqual([]);
+});
+
+test('at the drone-swarm model\'s whole Fit, every column header is findable: in the strip, or by holding the pointer over the column', async ({ page }, testInfo) => {
+  test.setTimeout(240_000);
+  const errors = captureErrors(page);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const source = readFileSync(resolve(testInfo.project.testDir, '../fixtures/drone-swarm-v9.sysml.txt'), 'utf8');
+  await page.route('**/linked/Swarm.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: source }));
+  await page.goto('/?model=linked/Swarm.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 120_000 });
+  await expect
+    .poll(async () => ((await current(page).catch(() => null)) as { columns?: unknown[] } | null)?.columns?.length ?? 0, { timeout: 120_000 })
+    .toBeGreaterThan(10);
+  await viewportSettled(page);
+
+  const columns = ((await current(page)) as unknown as { columns: { id: string; label: string; x: number; y: number; w: number; bottom: number }[] }).columns;
+  const view = await page.evaluate(() => {
+    const m = /translate\(([-\d.e]+)px,\s*([-\d.e]+)px\) scale\(([\d.e-]+)\)/.exec((document.querySelector('.react-flow__viewport') as HTMLElement).style.transform)!;
+    const box = document.querySelector('.react-flow')!.getBoundingClientRect();
+    return { x: Number(m[1]) + box.left, y: Number(m[2]) + box.top, zoom: Number(m[3]) };
+  });
+  expect(view.zoom, 'the whole model is fitted').toBeLessThan(0.1);
+  const stripBox = (await page.getByTestId('column-strip').boundingBox())!;
+  const cells = await page.getByTestId('column-strip-cell').evaluateAll((els) =>
+    els.map((e) => ({ label: e.textContent ?? '', left: e.getBoundingClientRect().left, right: e.getBoundingClientRect().right })),
+  );
+  const missed: string[] = [];
+  let byPointer = 0;
+  for (const c of columns) {
+    const centre = view.x + (c.x + c.w / 2) * view.zoom;
+    // Named by the strip: a cell of its label over its x-range, while its piece reaches the strip's rows.
+    if (view.y + c.y * view.zoom < stripBox.y + stripBox.height && cells.some((k) => k.label === c.label && k.left <= centre && centre <= k.right)) continue;
+    await page.mouse.move(centre, view.y + ((c.y + c.bottom) / 2) * view.zoom);
+    // The label follows a React update after the native pointermove: wait for it, and clear it before the next column so a stale one is never read.
+    const hover = page.getByTestId('column-hover');
+    const named = await expect(hover).toHaveText(c.label, { timeout: 2000 }).then(() => true, () => false);
+    if (named) byPointer += 1;
+    else missed.push(`${c.id} (${c.label})`);
+  }
+  expect(columns.length, 'the 21 headers of the whole model').toBeGreaterThanOrEqual(21);
+  expect(missed, 'columns with neither a strip cell nor a pointer label').toEqual([]);
+  expect(byPointer, 'columns the strip leaves to the pointer at Fit').toBeGreaterThan(0);
+  // Off the canvas the label goes.
+  await page.mouse.move(2, 2);
+  await expect(page.getByTestId('column-hover')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

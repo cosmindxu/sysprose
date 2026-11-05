@@ -789,6 +789,24 @@ describe('the solver checks in the page', () => {
     expect(clean.verdict, 'over a clean load, it holds').toBe('holds');
   }, 60_000);
 
+  it('judges bounds over the load health too: a measure of a model that does not load cleanly is never holds, and the bounds themselves are still listed', async () => {
+    const model = (await loadModelText(power, { fileName: 'power.sysml' })).model!;
+    const measure = 'UAVPowerBudget::BatteryPack::availablePower';
+    const on = ctx({ model, isolated: true, selectionId: model.resolveQualifiedName(measure)!.id, selectionName: measure });
+    const bounds = spec('bounds');
+    expect(bounds.readsLoadHealth, 'bounds reads the load health').toBe(true);
+    const clean = await runSolverCheck(bounds, on);
+    expect(clean.verdict, clean.summary).not.toBe('undecided');
+    const bad = await runSolverCheck(bounds, { ...on, loadHealth: degradedHealth({ errors: 2, saved: { parseErrors: 2 }, exported: { parseErrors: 2 } }) });
+    expect(bad.verdict, bad.summary).toBe('undecided');
+    expect(bad.rows[0]).toMatchObject({ code: 'checks/degraded' });
+    expect(bad.rows[0].message).toContain('`bounds` on a file holding that text exits 2');
+    expect(bad.summary).toContain('the model did not load cleanly, so nothing is judged over it');
+    expect(bad.rows.length, 'the solver rows follow the degraded one').toBe(clean.rows.length + 1);
+    const unread = await runSolverCheck(bounds, { ...on, loadHealth: undefined });
+    expect(unread.verdict, 'with no health read').toBe('undecided');
+  }, 60_000);
+
   it('measures the load of a palette run first when the page has not, then runs the check over it', async () => {
     FakeWorker.made = [];
     setCheckWorkerFactory(() => new FakeWorker());
