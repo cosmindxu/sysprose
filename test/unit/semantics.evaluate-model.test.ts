@@ -4010,7 +4010,8 @@ describe('checkConstraints — a default stands against an asserted equation (de
     // Read on its own row and in q2, the assert is named once (the branch review).
     expect(bnd.row('BND::top2').detail).toContain('the asserted `p.x == 50.0` (BND::Q::tie, and in 1 instance(s)) is false at them');
     // An instance's own value row is joined to its feature, so the binding filed for the feature in Q carries
-    // the contradiction of `a2 in Q3::p` (load 1 against 50) to q3's L, and to every Q's L read as one symbol.
+    // the contradiction of `a2 in Q3::p` (load 1 against 50) to q3's L (and, before literal-reach, to every Q's L read
+    // as one symbol).
     const sp2 = await literal(`package SP2 {
       part def P { attribute load : ScalarValues::Real; }
       part def P2 :> P { assert constraint a2 { load == 50.0 } }
@@ -4059,6 +4060,92 @@ describe('checkConstraints — a default stands against an asserted equation (de
     }`);
     expect(contradicted(kc.row('KC::t1'))).toEqual(X);
     expect(kc.row('KC::t1').detail).toContain('the asserted `1.0 == 2.0` (KC::never) reads no feature and is false whatever the values');
+  });
+
+  it('reads a violated assert’s contradiction in the instances it holds in, and where an axiom carries it, on the literal engine (literal-reach)', async () => {
+    const literal = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      const row = (q: string) => report.results.find((r) => r.clause.qualifiedName.replace(/ \([^()]*'s own\)$/, '') === q)!;
+      return (q: string) => [row(q).claim, row(q).code ?? null];
+    };
+    const X = ['inconclusive', 'verification/inconsistent-axioms'];
+    const T = ['holds-at-values', null];
+    const F = ['refuted', 'verification/refuted'];
+    // q1's assert contradicts P's x in q1's p alone: P's own c and Q's p's stand for every P and Q's p, q1's among
+    // them; q2's p, read under the same symbol, is read at its own values. A package's binding to q3's p's x carries
+    // the contradiction there; q3's L, which nothing ties to x, is read.
+    for (const [carry, reach] of [['', T], ['bind q1.p.x = q3.p.x;', X]] as const) {
+      const r1 = await literal(`package R1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real default = 2.0; constraint c { load + x <= 4.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { assert constraint tie { p.x == 50.0 } }
+        part q2 : Q { attribute :>> L = 3.0; }
+        part q3 : Q;
+        ${carry}
+        constraint k2 { q2.p.x <= 10.0 } constraint k3 { q3.p.x <= 10.0 } constraint kL { q3.L <= 2.0 }
+      }`);
+      expect(
+        ['R1::P::c', 'R1::P::c in R1::Q::p', 'R1::P::c in R1::q2::p', 'R1::k2', 'R1::k3', 'R1::kL'].map(r1),
+        carry,
+      ).toEqual([X, X, F, T, reach, T]);
+    }
+    // A def-level seed (P2's `load == 50.0`, in every Q3's p) reaches q3, and every Q a Q3 is or holds, not qq.
+    for (const [qq, reach] of [['part qq : Q;', T], ['part qq : Q3;', X], ['part qq : Q { part :>> p : P2; }', X], ['part def W { part q : Q3; } part qq : W;', X]] as const) {
+      const sp2 = await literal(`package SP2 {
+        part def P { attribute load : ScalarValues::Real; }
+        part def P2 :> P { assert constraint a2 { load == 50.0 } }
+        part def Q { attribute L : ScalarValues::Real = 1.0; part p : P; bind p.load = L; }
+        part def Q3 :> Q { part :>> p : P2; }
+        part q3 : Q3;
+        ${qq}
+        constraint k { q3.L <= 10.0 }
+        constraint kq { ${qq.includes('W') ? 'qq.q.L' : 'qq.L'} <= 10.0 }
+      }`);
+      expect([sp2('SP2::k'), sp2('SP2::kq')], qq).toEqual([X, reach]);
+    }
+    // Two asserted equations that meet in p give its L two values there alone, which no surface reads: p2 reads P's
+    // (contradicted-pair-meet).
+    const pair = await literal(`package PM {
+      part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 50.0 } }
+      part p : P { assert constraint cb { L == 60.0 } }
+      part p2 : P;
+      constraint tp { p.L <= 100.0 } constraint t2 { p2.L == 50.0 }
+    }`);
+    expect([pair('PM::tp'), pair('PM::t2')]).toEqual([['inconclusive', 'verification/not-evaluable'], T]);
+    // Fails closed where an instance may stand for another: a reference to q1's p reads it under another name.
+    const ref = await literal(`package RF {
+      part def P { attribute x : ScalarValues::Real default = 2.0; }
+      part def Q { part p : P; }
+      part q1 : Q { assert constraint tie { p.x == 50.0 } }
+      part q2 : Q;
+      ref part rr : P = q1.p;
+      constraint k2 { q2.p.x <= 10.0 } constraint kr { rr.x <= 10.0 }
+    }`);
+    expect([ref('RF::k2'), ref('RF::kr')]).toEqual([X, X]);
+  });
+
+  it('judges no relation on the literal engine beside an assert the worklist cannot read (literal-reach fence)', async () => {
+    const { model: m } = await loadModelText(`package UA {
+      part def P { attribute x : ScalarValues::Real default = 2.0; }
+      part def Q { part p : P; }
+      part q1 : Q { assert constraint tie { q2.p.x == 50.0 } }
+      part q2 : Q;
+      constraint k1 { q1.p.x <= 10.0 }
+      constraint k2 { q2.p.x <= 10.0 }
+    }`);
+    const report = await verifyModel(m!, { engine: 'literal' });
+    for (const q of ['UA::k1', 'UA::k2']) {
+      const r = report.results.find((x) => x.clause.qualifiedName === q)!;
+      expect([r.claim, r.code], q).toEqual(['inconclusive', 'verification/not-evaluable']);
+      expect(r.detail, q).toContain('the model asserts `q2.p.x == 50.0` (UA::q1::tie), which this tool cannot read (unresolved-name:');
+    }
+    // The check still reads the values; it could not read the assert.
+    expect(checkConstraints(m!).map((c) => [m!.qualifiedName(c.id), c.result])).toEqual([
+      ['UA::q1::tie', 'unknown'],
+      ['UA::k1', 'satisfied'],
+      ['UA::k2', 'satisfied'],
+    ]);
   });
 
   it('marks an obligation over a name two disagreeing asserted equations read inconclusive on the literal engine, naming both (Q4, Q5)', async () => {

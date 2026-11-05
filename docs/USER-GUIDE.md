@@ -1801,7 +1801,18 @@ is 5 holds. The check and the numeric surface keep deciding the relations beside
 violation (`kL { q.L >= 0.0 }`) at the values they read; the literal engine marks one
 inconclusive where the violated assert reaches it, and the SMT engine, which files that
 assert in q's p as an axiom, reports its axioms inconsistent (a plain `constraint` of P
-files no axiom, so kL reads 50 on every surface). The contexts a relation is filed at do not
+files no axiom, so kL reads 50 on every surface). What the assert reaches, the literal
+engine reads by instance: the instance it is violated in, every instance that is, holds or
+specialises it, and every one an axiom carries it to from there (a package's `bind q1.p.x =
+q3.p.x` beside q1's violated `assert constraint tie { p.x == 50.0 }`); another instance
+read under the same name (`q2.p.x`, P's one `default = 2.0`) is decided at its own values,
+while P's own row and Q's p's, which stand for every instance, stay inconclusive. Where an
+instance may stand for another (a reference, a subject, a part a binding, a subsetting, a
+`satisfy` or a value names) every relation over a value the assert reaches stays
+inconclusive. An `assert` this tool cannot read at all (a path it does not resolve, a body
+it does not parse) that the check cannot hold true leaves every relation of the file
+undecided on the literal engine (`verification/not-evaluable`, naming the assert), as the
+SMT engine claims no proof beside it. The contexts a relation is filed at do not
 turn on the order the text is written in: a renamed redefinition (`part p2 :>> p` in
 `q2 : Q`) written before `part def Q` leaves Q's p, and every other instance, filed as
 they are when Q comes first. A binding that gives the instance
@@ -2155,9 +2166,8 @@ unknown on the numeric surface — the equations' own rows included, P's own L
 and every P's where they meet in a definition or a package; where they meet in a
 usage (one in P and one in `part p : P { … }`), p's L, and that of a usage that
 subsets or redefines p, while another `part p2 : P` reads P's equation on the
-check (the numeric surface's solve meets the pair and does not converge there,
-and the literal engine, whose p2.L shares its symbol with p's, marks it
-`verification/inconsistent-axioms`); and a name the tool places nowhere (in a
+check and on the literal engine (the numeric surface's solve meets the pair and
+does not converge there); and a name the tool places nowhere (in a
 scope that holds two features under one name, or through a usage a renamed
 redefinition hides) is never read as one equation's value — in a sentence naming each
 equation (*L is not read: the asserted `L == 50.0` (…::P::c50) and `L == 60.0`

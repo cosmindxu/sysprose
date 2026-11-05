@@ -2163,14 +2163,7 @@ export class DefiningEquations {
   instanceReadings(el: ElementRecord, paths: readonly string[], instance?: string): Map<string, InstanceReading> {
     const out = new Map<string, InstanceReading>();
     const roots = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
-    const rebase = (symbol: string, root: ElementId): string => {
-      if (instance === undefined) return symbol;
-      const own = root === el.ownerId;
-      const from = this.instanceNameOf(own ? root : el.id);
-      const to = own ? instance : `${instance}::${effectiveNameOf(this.model, el) ?? el.declaredShortName ?? `«${el.eClass}»`}`;
-      if (symbol === from) return to;
-      return symbol.startsWith(`${from}::`) ? `${to}${symbol.slice(from.length)}` : symbol;
-    };
+    const rebase = this.rebaseFor(el, instance);
     for (const path of paths) {
       for (const root of roots) {
         const d = this.denote(root).get(path);
@@ -2198,6 +2191,37 @@ export class DefiningEquations {
       }
     }
     return out;
+  }
+
+  /**
+   * The instance each of `paths`, read by `el`, is read in — the walk's ({@link Denotation}), re-rooted at `instance`
+   * as {@link instanceReadings} re-roots it — for every path a walk denotes, a value the same in every instance
+   * included (`x` of P's `c` read for `R1::q2::p` is read in `R1::q2::p`). A path no walk denotes is left out.
+   */
+  instancesRead(el: ElementRecord, paths: readonly string[], instance?: string): Map<string, string> {
+    const out = new Map<string, string>();
+    const rebase = this.rebaseFor(el, instance);
+    for (const path of paths) {
+      for (const root of [el.ownerId, el.id].filter((c): c is ElementId => c != null)) {
+        const d = this.denote(root).get(path);
+        if (!d) continue;
+        out.set(path, rebase(d.instance, root));
+        break;
+      }
+    }
+    return out;
+  }
+
+  /** The re-rooting of {@link instanceReadings}: a name read by `el` (from its owner's scope, or its own) for `instance`. */
+  private rebaseFor(el: ElementRecord, instance: string | undefined): (symbol: string, root: ElementId) => string {
+    return (symbol, root) => {
+      if (instance === undefined) return symbol;
+      const own = root === el.ownerId;
+      const from = this.instanceNameOf(own ? root : el.id);
+      const to = own ? instance : `${instance}::${effectiveNameOf(this.model, el) ?? el.declaredShortName ?? `«${el.eClass}»`}`;
+      if (symbol === from) return to;
+      return symbol.startsWith(`${from}::`) ? `${to}${symbol.slice(from.length)}` : symbol;
+    };
   }
 
   /**
@@ -7173,6 +7197,95 @@ function standsForNothing(model: Model): (u: ElementRecord) => boolean {
     }
     memo.set(u.id, answer);
     return answer;
+  };
+}
+
+/**
+ * Where the readings of `model` are made, as the literal engine's reach of a contradiction places them
+ * (`contradictionsOf` of ./engines/literal) — each place a set of the elements whose own reading may read its instance
+ * ({@link instanceHolders}) — or `undefined` where an instance of `model` may stand for another: a usage other than an
+ * attribute that {@link standsForNothing} does not clear (a reference, a subject, a part a binding, subsetting,
+ * `satisfy` or value names), whose features are read under one name there and under another elsewhere, through no
+ * link of the instance.
+ */
+export interface InstancePlaces {
+  /**
+   * For `el` reading `paths` (re-rooted at `instance`, as a row read for an instance is), one place per instance it
+   * reads in: its own context first, then each path read outside it — for a package's own feature, that package alone
+   * (one value, read alike wherever it is read) — and `undefined` for a path read nowhere this places (a name no walk
+   * denotes, two elements read as one instance, an `undefined` path). A path read in the context, or below it, adds no
+   * place: what a definition's row reads there is that definition's, in each of its instances apart.
+   */
+  read(el: ElementRecord, paths: readonly (string | undefined)[], instance?: string): (ReadonlySet<ElementId> | undefined)[];
+  /** The place of `x`'s own instance. */
+  of(x: ElementRecord): ReadonlySet<ElementId>;
+}
+
+/** The {@link InstancePlaces} of `model`, or `undefined` where an instance may stand for another. */
+export function instancePlaces(model: Model): InstancePlaces | undefined {
+  const defs = sharedDefinitions(model);
+  const users = model.all().filter((x) => x.attrs.isLibrary !== true);
+  const plain = standsForNothing(model);
+  if (users.some((u) => isUsage(u.eClass) && u.eClass !== 'AttributeUsage' && !plain(u))) return undefined;
+  // Each user element by the instance it is read as; a name two elements answer to places neither (`null`).
+  const byName = new Map<string, ElementRecord | null>();
+  for (const e of users) {
+    if (!isUsage(e.eClass) && !isDefinition(e.eClass)) continue;
+    const name = defs.instanceNameOf(e.id);
+    byName.set(name, byName.has(name) ? null : e);
+  }
+  // The element an instance is, or the nearest one holding it (`R1::q1` for `R1::q1::p`, a `p` q1 does not redefine).
+  const elementAt = (inst: string): ElementRecord | undefined => {
+    const segments = inst.split('::');
+    for (let k = segments.length; k > 0; k--) {
+      const e = byName.get(segments.slice(0, k).join('::'));
+      if (e !== undefined) return e ?? undefined;
+    }
+    return undefined;
+  };
+  const holders = instanceHolders(model);
+  const read = (el: ElementRecord, paths: readonly (string | undefined)[], instance?: string): (ReadonlySet<ElementId> | undefined)[] => {
+    const context = el.ownerId != null ? model.get(el.ownerId) : undefined;
+    const at = instance !== undefined ? elementAt(instance) : context;
+    const home = at && !isPackage(at) ? at : undefined;
+    const homeName = home === undefined ? undefined : (instance ?? defs.instanceNameOf(home.id));
+    const readIn = defs.instancesRead(el, paths.filter((p): p is string => p !== undefined), instance);
+    const out: (ReadonlySet<ElementId> | undefined)[] = home ? [holders(home)] : [];
+    for (const p of paths) {
+      const inst = p !== undefined ? readIn.get(p) : undefined;
+      if (inst !== undefined && homeName !== undefined && (inst === homeName || inst.startsWith(`${homeName}::`))) continue;
+      const e = inst !== undefined ? elementAt(inst) : undefined;
+      out.push(e === undefined ? undefined : isPackage(e) ? new Set([e.id]) : holders(e));
+    }
+    return out;
+  };
+  return { read, of: holders };
+}
+
+/**
+ * The elements whose own reading may read an instance of `x` ({@link instancePlaces}): x, every element that
+ * specialises, redefines or subsets it ({@link DefiningEquations.specialisersOf}: q3 for `part q3 : Q3`, Q3's `part :>>
+ * p` for Q's p), and every element that holds one of those, to the package — and so on: Q3 holds Q3's p, q3 is a Q3.
+ * Once per element.
+ */
+function instanceHolders(model: Model): (x: ElementRecord) => ReadonlySet<ElementId> {
+  const defs = sharedDefinitions(model);
+  const memo = new Map<ElementId, ReadonlySet<ElementId>>();
+  return (x) => {
+    const known = memo.get(x.id);
+    if (known) return known;
+    const out = new Set<ElementId>();
+    const queue: ElementRecord[] = [x];
+    while (queue.length > 0) {
+      const y = queue.pop()!;
+      if (out.has(y.id) || isPackage(y)) continue;
+      out.add(y.id);
+      queue.push(...defs.specialisersOf(y.id));
+      const owner = y.ownerId != null ? model.get(y.ownerId) : undefined;
+      if (owner) queue.push(owner);
+    }
+    memo.set(x.id, out);
+    return out;
   };
 }
 

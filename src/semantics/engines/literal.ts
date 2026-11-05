@@ -49,12 +49,13 @@
  * arguments.
  */
 
-import { type ElementId, type Model } from '@core/index';
+import { isUsage, type ElementId, type ElementRecord, type Model } from '@core/index';
 import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
 import {
   bindingHolder,
   contradictedDefinitionNaming,
   contradictedDefinitions,
+  instancePlaces,
   isFailedReading,
   isShadowedBody,
   readsContradictedDefinition,
@@ -426,6 +427,15 @@ interface UnplacedContradiction extends ContradictingAssert {
  * assertions tie to it, is read by no verdict. A binding is violated anywhere as an assert is: every row of it is a
  * seed, as the SMT engine holds every one as an axiom. The check keeps deciding the values beside it. A violated
  * binding the worklist files no row of that reads a feature reaches every relation.
+ *
+ * What a contradiction reaches is read per instance ({@link instanceReach}): an assert violated in q1 reaches what
+ * q1 reads, every definition's row read in an instance like q1's, and what an axiom carries from there, never q2's
+ * own p, which the same symbol names.
+ *
+ * And an `assert` the worklist reads no feature of because it cannot read it (`unread`: a name it does not resolve,
+ * a body it does not parse), which the check does not hold true, is a fact of the model no surface reads: it may
+ * contradict any value (q1's `q2.p.x == 50.0` over `x default = 2.0`), so no relation is judged beside it, as the SMT
+ * engine claims no proof beside it.
  */
 function contradictionsOf(
   model: Model,
@@ -434,9 +444,18 @@ function contradictionsOf(
   checks: ReadonlyMap<ElementId, ConstraintCheck>,
 ): {
   unplaced: UnplacedContradiction[];
+  unread: UnreadAssert[];
   reach: (row: Obligation, premises: readonly Obligation[]) => ContradictedRead | undefined;
 } {
-  const none = { unplaced: [], reach: () => undefined };
+  const unread: UnreadAssert[] = [];
+  for (const row of rows) {
+    if (row.role !== 'axiom' || row.source !== 'assert' || row.vars.length > 0 || row.encodable === true) continue;
+    if (checks.get(row.element.id)?.result === 'satisfied') continue;
+    const qualifiedName = model.qualifiedName(row.instance?.baseId ?? row.element.id);
+    if (unread.some((u) => u.qualifiedName === qualifiedName)) continue;
+    unread.push({ expression: row.expression, qualifiedName, why: `${row.encodable.reason}: ${row.encodable.detail}` });
+  }
+  const none = { unplaced: [], unread, reach: () => undefined };
   // The asserts the check reports violated, anywhere, and the row ids (with their aliases, as
   // `checksByRow` keys them) of each violated reading.
   const violatedAnywhere = new Set<ElementId>();
@@ -580,12 +599,25 @@ function contradictionsOf(
     const root = find(symbolOf(a.vars[0]!));
     byRoot.set(root, [...(byRoot.get(root) ?? []), a]);
   }
-  const reached = (vars: readonly ContractVariable[], into: Set<Obligation>): string[] => {
+  // Two asserted equations that meet in a usage give its feature two values there alone (`contradictedDefinitions`); an
+  // equation of two such sets is read where either meets.
+  const setsOf = new Map<ElementId, number>();
+  for (const set of apartSets) for (const c of new Set(set.equations.map((e) => e.id))) setsOf.set(c, (setsOf.get(c) ?? 0) + 1);
+  const meets = instanceReach(
+    model,
+    rows,
+    (row) => find(symbolOf(row.vars[0]!)),
+    (seed) => {
+      const context = setOf.get(seed)?.context;
+      return context !== undefined && isUsage(context.eClass) && setsOf.get(baseOf(seed)) === 1 ? context : undefined;
+    },
+  );
+  const reached = (row: Obligation, into: Set<Obligation>): string[] => {
     const paths: string[] = [];
-    for (const v of vars) {
+    for (const v of row.vars) {
       const s = symbolOf(v);
-      const hit = parent.has(s) ? byRoot.get(find(s)) : undefined;
-      if (hit === undefined) continue;
+      const hit = (parent.has(s) ? byRoot.get(find(s)) : undefined)?.filter((a) => meets(a, row));
+      if (hit === undefined || hit.length === 0) continue;
       for (const a of hit) into.add(a);
       if (!paths.includes(v.path)) paths.push(v.path);
     }
@@ -593,11 +625,12 @@ function contradictionsOf(
   };
   return {
     unplaced,
+    unread,
     reach: (row, premises) => {
       const asserts = new Set<Obligation>();
-      const paths = reached(row.vars, asserts);
+      const paths = reached(row, asserts);
       const onPremises = premises
-        .map((p) => ({ expression: p.expression, paths: reached(p.vars, asserts) }))
+        .map((p) => ({ expression: p.expression, paths: reached(p, asserts) }))
         .filter((p) => p.paths.length > 0);
       if (asserts.size === 0) return undefined;
       const hit = seeds.filter((a) => asserts.has(a));
@@ -611,6 +644,86 @@ function contradictionsOf(
       };
     },
   };
+}
+
+/**
+ * Does the contradiction `seed` reads ({@link contradictionsOf}) reach what `row` reads, by the instances each is read
+ * in ({@link instancePlaces})? A component of symbols joins every instance read under one symbol: P's `x`, the same
+ * `default = 2.0` in every P, is one symbol for q1's p's x, which q1's `assert constraint tie { p.x == 50.0 }`
+ * contradicts, and for q2's p's, which nothing contradicts. A seed reaches a row read in other instances only through
+ * an axiom of its component read in both, so it holds where the seed is read — for two asserted equations that meet
+ * in a usage (`meetsIn`), in that usage alone, as the check reads them — and wherever such an axiom carries it from
+ * there (a package's `bind q1.p.x = q2.p.x`, read in q1 and q2); the row is reached where one of its places is one of
+ * those. A definition's own row, and one read for a usage a definition holds (`P::c in Q::p`), stands for every
+ * instance of it and is reached wherever one of them is. Fails closed: where any place is not known (an instance that
+ * may stand for another, a name no walk denotes) the seed reaches every row its component does, as before.
+ */
+function instanceReach(
+  model: Model,
+  rows: readonly Obligation[],
+  componentOf: (row: Obligation) => string,
+  meetsIn: (seed: Obligation) => ElementRecord | undefined,
+): (seed: Obligation, row: Obligation) => boolean {
+  const places = instancePlaces(model);
+  if (places === undefined) return () => true;
+  const placed = new Map<Obligation, (ReadonlySet<ElementId> | undefined)[]>();
+  const placesOf = (row: Obligation): (ReadonlySet<ElementId> | undefined)[] => {
+    const known = placed.get(row);
+    if (known) return known;
+    let el = rowElement(model, row);
+    let paths: (string | undefined)[] = row.vars.map((v) => v.path);
+    // A binding's own row reads its two ends (`__l`, `__r`) where the binding holds them.
+    if (el && row.source === 'bind' && row.instance === undefined) {
+      const read = bindingHolder(model, el);
+      el = read ? { ...el, ownerId: read.holder.id } : undefined;
+      paths = row.vars.map((v) => (v.path === '__l' ? read?.left : v.path === '__r' ? read?.right : undefined));
+    }
+    const at = el ? places.read(el, paths, row.instance?.path) : [undefined];
+    placed.set(row, at);
+    return at;
+  };
+  const axioms = new Map<string, Obligation[]>();
+  for (const row of rows) {
+    if (row.role !== 'axiom' || row.vars.length === 0) continue;
+    const c = componentOf(row);
+    axioms.set(c, [...(axioms.get(c) ?? []), row]);
+  }
+  const meet = (a: ReadonlySet<ElementId>, b: ReadonlySet<ElementId>): boolean => [...a].some((id) => b.has(id));
+  const families = new Map<Obligation, ReadonlySet<ElementId> | undefined>();
+  const familyOf = (seed: Obligation): ReadonlySet<ElementId> | undefined => {
+    if (families.has(seed)) return families.get(seed);
+    const usage = meetsIn(seed);
+    const own = usage !== undefined ? [places.of(usage)] : placesOf(seed);
+    let family: Set<ElementId> | undefined = own.some((p) => p === undefined) ? undefined : new Set(own.flatMap((p) => [...p!]));
+    const tied = axioms.get(componentOf(seed)) ?? [];
+    for (let grew = true; grew && family !== undefined; ) {
+      grew = false;
+      for (const ax of tied) {
+        const at = placesOf(ax);
+        if (at.some((p) => p === undefined)) {
+          family = undefined;
+          break;
+        }
+        if (at.length < 2 || !at.some((p) => meet(p!, family!))) continue;
+        for (const id of at.flatMap((p) => [...p!])) {
+          if (family.has(id)) continue;
+          family.add(id);
+          grew = true;
+        }
+      }
+    }
+    families.set(seed, family);
+    return family;
+  };
+  return (seed, row) => {
+    const family = familyOf(seed);
+    return family === undefined || placesOf(row).some((p) => p === undefined || meet(p, family));
+  };
+}
+
+/** An `assert` the worklist cannot read ({@link contradictionsOf}), and why. */
+interface UnreadAssert extends ContradictingAssert {
+  why: string;
 }
 
 /** A binding the check reports violated: one of its readings, whether it is violated where it is written, and the contexts it is read violated in. */
@@ -801,7 +914,7 @@ function judgeOne(
   checks: ReadonlyMap<ElementId, ConstraintCheck>,
   premisesByRequirement: ReadonlyMap<ElementId, Obligation[]>,
   memo: DerivationMemo = new Map(),
-  contradicted: ReturnType<typeof contradictionsOf> = { unplaced: [], reach: () => undefined },
+  contradicted: ReturnType<typeof contradictionsOf> = { unplaced: [], unread: [], reach: () => undefined },
 ): LiteralJudgement {
   const premises = (row.requirement ? premisesByRequirement.get(row.requirement.id) : undefined) ?? [];
   const readings = premises.map((p) => readPremise(p, checks));
@@ -870,6 +983,18 @@ function judgeOne(
     }
     const against = contradicted.reach(row, premises);
     if (against !== undefined) return { ...base, outcome: 'contradicted', detail: contradictedDetail(model, against, holds) };
+    const [unread, ...more] = contradicted.unread;
+    if (unread !== undefined) {
+      return {
+        ...base,
+        outcome: 'not-evaluable',
+        detail:
+          `not judged at the model's values: the model asserts \`${unread.expression}\` (${unread.qualifiedName}), which ` +
+          `this tool cannot read (${unread.why})${more.length > 0 ? ` (and ${more.length} other such assertion(s))` : ''}, so ` +
+          `those values may be ones the model rules out. The relation ${holds ? 'holds' : 'is false'} at them, but no ` +
+          'pass or failure there is unconditional: write the assertion in a form this tool reads',
+      };
+    }
   }
 
   if (check?.result === 'satisfied') {
