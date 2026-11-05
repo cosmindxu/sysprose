@@ -23,25 +23,30 @@ maintainer says `awaits user decision U<n>` and names the question.
       that a hang keeps the async mutex held until reload is gone (the lock is per module now). Also
       make the soak repeatable from the repository: the header of `test/campaign/z3-soak.soak.ts`
       carries the invocation. [z3-bump, review]
-- [ ] **Narrow the literal engine's contradiction reach to the instance the violated assert reads.**
-      Since S1, table rows with a decided ref abstain on the literal engine as they do on SMT
-      (T/X/T/X). An assert in one instance reads the symbol shared by every instance it does not
-      tell apart: refute-r1 P::c and q2's p, R1D, Sh7, H1C, H1F2, R1U, Q4B, PIN2/3/5, PA, PA4,
-      PL2/5T/6/7, HQ, HQ2, SFW, N4T, N5, H5B, T4D::c5, SP2::kq and R27F::Q::c. A sum also ties a
-      sibling (CVSIB::tb). Narrowing needs the SMT instance split (plan section 1.5). Done when
-      those rows read their ref on the literal engine and no contradicted row reads decided.
-      More probes (contradictory-models): in `bound-vc-inst` k2 (q2's L = 5) and kr (R's M = 3),
-      `bound-vc-spec` VCS::k (`Q2 :> Q { :>> L = 5.0 }`, T/X/T/? with SMT undecided) and
-      `h5-rb5-ineq` RB5I::top2 (T/T/T/X) the literal engine reads the same feature in another
-      instance as one value with the violated one, though the relation's own instance meets the
-      assert. A pair or a violated binding in one instance also makes the literal engine, and the
-      SMT engine file-wide, inconclusive on relations about another, consistent instance:
-      review-2026-10-14/wave3-probes/contradictory-models/g5.sysml (`part a : P` consistent, `part b
-      : P { assert constraint ck { K == 60.0 } }`: `a.L == 50.0` is `?` on the check and X on the
-      literal engine and SMT), g4.sysml (p3 consistent, t3 `?`/X) and a1.sysml (q2's `L = 5.0` meets
-      the assert, yet k2 is X). The numeric surface says 'the solve did not converge' for the paired
-      equations instead of naming the contradiction. All sound, none false. [contradictory-models
-      S1, S3, review]
+- [ ] **Narrow the literal engine's contradiction reach to the instance the violated assert
+      reads.** Since instance2-pass S4 (literal-reach) the literal engine reads a contradiction (a
+      violated assert, a violated binding, a pair that meets in a usage) in the instances it is read
+      in, and in every one an axiom of its component carries it to (a package's `bind q1.p.x =
+      q3.p.x`). These rows read their ref (T/T/T/X): q2's p in refute-r1, R1D, H1C, H1F2, R1U, Q4B,
+      SEV and SEP; q1's p in H5B and HLX; PIN3's t4, PIN5's t0, SP2's and SP2N's kq, RB4's and RBB's
+      top2, G340's ctlA, g5's ta; Q5F1's and BU's p2 rows. Still abstaining, all sound: a
+      definition's own row, and one read for a usage a definition holds, which stand for the
+      violated instance (P::c and Q::p of R1, R1D, H1C, H1F2, R1U, Q4B and H5B; PIN2/3/5, PA, PA4,
+      PL2/5T/6/7, HQ, HQ2, SFW, N4T, N5, R27F's Q::c; Sh7's T1::a and T2::b::a; VCS::k through Q's
+      p); a reading in the same top-level instance as the violated one (w.qb beside w's `part :>> qa
+      { assert … }`); an assert whose own generic row the check reads `?`, which seeds every
+      instance (bound-vc-inst k2/kr, a1's k2); a pair met in a definition through a part
+      (bind-through-part, -two-parts, -inherited-part: BQ/B2/BS u50 read X); an equation of two
+      contradicted sets; every row of a model where an instance may stand for another (a reference,
+      a subject, a part binding, a subsetting, a `satisfy`, a part valued with another); a sum that
+      ties a sibling (CVSIB::tb); an assert the worklist leaves unencoded because of an operator (`x
+      % 4.0 >= 2.5`) or reads only in part, which leaves the whole file undecided on the literal
+      engine although SMT decides (the `unread-assert` fence; probe v2-refused-axiom-inst-ok); `x ==
+      L` with L an unplaceable outer name (lex-lr1 Q::c, topT, topF read `?`). Done when those read
+      their ref or are ruled permanent. Left, by decision 1: SMT reports `inconsistent-axioms`
+      file-wide (g5, g4, a1, k2 on SMT), the defined reading of a model that contradicts itself. The
+      numeric surface's 'did not converge' wording for paired equations: plan step 6.
+      [contradictory-models S1, S3, review; instance2-pass S4]
 - [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.**
       contracts no longer says "prose only" for R1::R, R1::r and RU::r: it names the asserted body
       as a fact of the model, not a clause (wording-pass S1; USER-GUIDE status-column paragraph
@@ -53,24 +58,28 @@ maintainer says `awaits user decision U<n>` and names the question.
       all discharge exits 0 today, and the origin is marked UNCLEAR: it is a policy decision (is an
       assert-only requirement a requirement with no formal clause, like a prose-only one?), so it
       awaits the maintainer. [wording-pass S1]
-- [ ] **Narrow the abstention over two disagreeing asserted equations (optional).**
-      contradicted-value S2 leaves undecided every reading of the feature, in every instance, and
-      every value an asserted relation reads beside it (`contradictedTaint` taints by feature): one
-      equation in P and one in `part p : P { … }` leave p2 : P's L, which P's equation alone
-      defines, undecided (`q5-f1`'s `u50`); `assert constraint { L + N >= K }` leaves K's stated
-      value undecided; and a pair found in P (`L == a * 2.0`, a = 30, beside `L == 50.0`) stays
-      undecided in a usage whose `:>> a = 25.0` makes the two agree. It also abstains where it
-      cannot compare: a bare `L == 50.0` beside `L == 50.0 [kg]` (`q5-unitagree`, T on all four
-      surfaces at f1f5ca5), and a side over a name a binding joins. Sound, but readings are lost.
-      Taint only the instance where they meet, keeping the feature-wide taint where they meet in the
-      feature's owner; read a bare literal in the feature's declared unit. [contradicted-value S2]
+- [ ] **Narrow the abstention over two disagreeing asserted equations (optional).** Since
+      instance2-pass S2 (contradicted-pair-meet), a pair that meets in a usage taints that instance
+      alone, and a usage that subsets or redefines it: one equation in P and one in `part p : P { …
+      }` leave p2 : P's L read at P's equation on the check (`q5-f1`'s `u50`, c6-use's `p2.L`: T,
+      and F with the two values exchanged). The literal engine now decides these too (Q5F1::u50
+      T/T/?/X; BU::u50 and BU::v50 the same). The numeric surface still reads 'did not converge'
+      there (the whole-model solve meets the pair; step 6), and also on the through-part siblings
+      (BQ::u50, B2::u50 and v50, BS::u50: T/X/?/X, where the literal engine reads X). Still
+      abstaining, sound but readings lost: a pair that meets in the feature's owner (P, or a
+      specialisation: G2's P2), read in a usage whose `:>> a = 25.0` makes the two agree; two usages
+      that each contradict P (every P's L abstains again); a value the pair reaches through a dotted
+      name or a relation outside the instance (P's `bind s.M = L`, `attribute M = p.L`, a package's
+      `bind w2 = p2.L`), which taints every instance; a P nested in the contradicted instance
+      (`p.inner.L`); a bare `L == 50.0` beside `L == 50.0 [kg]` (`q5-unitagree`, T on all four
+      surfaces at f1f5ca5); a side over a name a binding joins; a definition's own rows over a usage
+      it holds, and a value over a dotted name (`Z = p.L` in Q), which stay undecided in every
+      instance of a pair that meets in a usage. Read a bare literal in the feature's declared unit.
+      [contradicted-value S2]
       The FMI `start` and the Solve measure value inherit this breadth (text-order S2): `part def P { attribute load; assert constraint c1 { load == 1.0 } }` with `part def Q { part p : P { attribute :>> load; assert constraint c50 { load == 50.0 } } }` takes P::load's start from 1 to the type default 0 (marked in the variable's description) while only an instance elsewhere contradicts it (also r8-redef-novalue-assert-dflt, S4_N_PP, S4_N_PU). A literal written beside a contradicted pair keeps its start in both orders (`attribute L : Real = 5.0;` beside `L == 50.0` and `L == 60.0`); decision 14's removal in wave 3b settles whether an asserted equation overrides a written value for an export. [text-order S2]
-      A pair on the two ends of a binding (contradictory-models S3) taints both features in every
-      instance, as a pair on one feature does: in `part def P { attribute L; attribute K; bind L =
-      K; assert constraint cl { L == 50.0 } } part p : P { assert constraint ck { K == 60.0 } } part
-      p2 : P;` p2.L, which only P's equation defines, reads ?
-      (review-2026-10-14/wave3-probes/contradictory-models/c6-use.sysml). The same holds for a pair
-      filed at P beside the larger set at a specialisation P2 (G2). [contradictory-models S3]
+      A pair on the two ends of a binding met in a usage (c6-use) now reads p2.L; one filed at P
+      beside the larger set at a specialisation P2 (G2) still taints every P. [contradictory-models
+      S3]
 - [ ] **Read a usage that subsets a feature an instance reads otherwise in that instance.** Since
       subsetting-pass, every row read through W's `part p2 :> p1;` abstains wherever any context of
       W reads p1 otherwise (`subsettingOtherwise`, `subsettingTaint` in
@@ -446,18 +455,6 @@ headings.
       note */ load > 10.0 }`). Done when those are read: the negation of a typed or named constraint
       needs that constraint's body judged under `not`, and a members body needs the members in the
       negated scope. [contradictory-models S1 review; fence-assert-not; numeric2 S1]
-- [ ] **Read two asserted equations on the two ends of a binding that reaches an end through a part
-      only where they meet (the scope decision).** fence-readings S2 made the two readings abstain
-      together on every surface, so the entry's first done-when holds and is pinned
-      (`bind-through-part`, `u50`). What is left is precision only: the taint
-      (equatedTaint/spreadTaint) is per feature on all four lanes (check, literal, numeric and SMT),
-      so a `part p2 : P` beside the meeting instance, and every other P, stay undecided on `L ==
-      50.0` once such a binding exists. Taint only the instance where the two equations meet (q's p
-      and q's M) instead. That is a change across the four lanes, far over the 120-line fence, and
-      needs no user decision to stay fenced. Probes:
-      review-2026-10-14/wave3-probes/contradictory-models/c6-nested-swap.sysml,
-      review-2026-10-14/wave3-probes/fence-readings/s2/bq.sysml. Done when only the meeting instance
-      abstains. [contradictory-models S3; fence-readings S2; fence-numeric4]
 - [ ] **Give the specialisers of a usage-owned group one canonical order (optional).** The
       group-order fence of fence-readings S1 is a stable sort by usage-ancestor count in
       `contextsUncached`; `specialisersOf` itself and the context-key dedup have no canonical order,
@@ -793,6 +790,12 @@ true values. What follows is what that branch and the review of it left open; en
       method; both spellings, including `about` naming the owner itself). When it lands, lift that
       blanket refusal. A keyword annotation's `about` targets are raw qualified names no consumer
       resolves. [small-defaults S2, review]
+- [ ] **Resolve a dotted path to a package-level usage from inside a usage body.** `q2.p.x` in q1's
+      `assert` or `constraint` is `unresolved-name` today. Since instance2-pass S4 the literal
+      engine abstains for the whole file beside such an assert (the `unread-assert` fence); the
+      check and the numeric surface still read the values beside it (T/?/T/?), as they do beside any
+      contradiction. Done when the path resolves to the package-level usage on all four surfaces and
+      the fence no longer fires on it. Weaker, not wrong: no false verdict. [instance2-pass S4]
 - [ ] **Resolve a metadata body redefinition (optional, low).** A body redefinition in an annotation
       typed by a metadata definition of the file now resolves (`@T about X { ref :>> approved =
       true; }`; T and what it specialises are added in `redefinitionGenerals`; `kindCells` follows
@@ -1244,8 +1247,17 @@ true values. What follows is what that branch and the review of it left open; en
       still differs by text order when several definitions each own a chain bind and the end is
       below the 48 cap: closure differs below the cap, no verdict moves. The cappedDefs fence covers
       only ends past the cap. Probes: ep-review/fuzz.mts and ep-review/genm.py with out/mnew
-      (150-model fuzz: 25 closure differences on editor-pass, 0 with NOKI=1). [instance-pass,
-      naming-pass, reads-pass, editor-pass]
+      (150-model fuzz: 25 closure differences on editor-pass, 0 with NOKI=1).
+      (8) instance2-pass (per-instance reads): a pair met in two usages widens to every instance; a
+      dotted name or a non-local relation that reaches the pair widens to every instance; a P nested
+      inside the contradicted instance; a pair met in a definition P2 still taints p2 : P; `bind
+      a.p.L = M` taints every A's p (within is the innermost link); a binding written in `Q2 :> Q`
+      taints every Q's p through the lifted copy; any reference, value, binding, subsetting, satisfy
+      or alias naming the part keeps every P's L undecided; a package binding on a sibling's end
+      (`bind w2 = p2.L`) widens p2's copy of L to everywhere; readsContradictedDefinition (FMI
+      start, MoE, literal printing, refinement) stays feature-wide. Probes under
+      instance2-pass-scratch/{s2,s3,s4}/gen*. [instance-pass,
+      naming-pass, reads-pass, editor-pass, instance2-pass]
 - [ ] **Abstentions left (keywords and metadata annotations) (rollup; sound, only weaker).** (1) A
       bare-keyword ambiguity is asked in the nearest scope with imports only, a qualified
       `#Pkg::name` is never asked, and an alias or inherited member is not enumerated
