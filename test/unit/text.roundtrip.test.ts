@@ -18,6 +18,7 @@ import {
   effectiveQualifiedName,
 } from '@semantics/index';
 import { parseDocument } from '@text/langium/module';
+import { loadModelText } from '@text/load';
 import { negatedClauseBody } from '@semantics/requirements';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
@@ -1389,6 +1390,26 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     const unknown = parseModel('package B { @Missing { attribute :>> k = 1; } }');
     expect(unknown.diagnostics.filter((d) => d.code === 'ref/unresolved-specialization')).toHaveLength(1);
   });
+
+  it('binds a body redefinition of an annotation typed by a LIBRARY metadata definition once the library is merged', async () => {
+    // The parse cannot see the library, so `:>> kind` stays a name; the library binder reads it by the same rule, onto
+    // a feature of the definition only. A misspelt name and a library-typed usage's `:>>` keep their warning.
+    const text = `package P { verification def V { @VerificationCases::VerificationMethod { attribute :>> kind = test; } }
+      @VerificationCases::VerificationMethod { attribute :>> kindd = test; }
+      part y : ISQ::MassValue { attribute :>> num = 1; } }`;
+    const { model, report } = await loadModelText(text, { fileName: 'md.sysml' });
+    expect(report.diagnostics.filter((d) => d.code === 'ref/unresolved-specialization').map((d) => d.message)).toEqual([
+      "Unresolved reference 'kindd'",
+      "Unresolved reference 'num'",
+    ]);
+    const cell = model!.all().find((e) => e.attrs.value === 'test' && e.attrs.redefines === undefined)!;
+    expect(model!.relationshipsFrom(cell.id).filter((r) => r.eClass === 'Redefinition').map((r) => model!.qualifiedName(r.target![0]!))).toEqual([
+      'VerificationCases::VerificationMethod::kind',
+    ]);
+    const out = serializeModel(model!);
+    expect(out).toContain('attribute :>> kind = test;');
+    expect(out).toContain('attribute :>> kindd = test;');
+  }, 60_000);
 
   it('keeps the path a subsetting was written with, and saves it as written while it reads the same target', () => {
     // `part p2 :> q.p1;` targets Q's p1 (what the path ends in); the chain is kept on the Subsetting, as a `satisfy`

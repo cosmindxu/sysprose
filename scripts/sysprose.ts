@@ -1391,7 +1391,8 @@ function keywordLine(use: KeywordUse): string {
         // A foreign SPELLING that also names something in this model is two
         // facts, and printing one of them would tell a reader their own
         // definition was ignored.
-        (use.resolvedTo ? `; it names ${use.resolvedTo.qualifiedName} here` : '')
+        (use.resolvedTo ? `; it names ${use.resolvedTo.qualifiedName} here` : '') +
+        (use.ambiguousBetween ? `; ${use.ambiguousBetween.join(' and ')} both answer to it, so it names neither` : '')
       );
     case 'ambiguous':
       return `    ambiguous: #${use.keyword} ${on} — ${(use.ambiguousBetween ?? []).join(' and ')} both answer to it; read as no tag`;

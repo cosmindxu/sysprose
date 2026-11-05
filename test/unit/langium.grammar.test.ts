@@ -237,6 +237,31 @@ describe('Langium SysML grammar — extended construct families', () => {
     `);
   });
 
+  it('parses a declaration a user-defined keyword leads without a reserved one (SysML 7.27.4, ExtendedDefinition and ExtendedUsage)', () => {
+    const ast = parseClean(`
+      package M {
+        #situation def Failure;
+        #situation batteryLow;
+        #a #b public cell : Real;
+        part q : Q { #k :>> L = 3; }
+        constraint c { #k.x > 0 }
+      }
+    `);
+    const members = (ast.members[0] as Definition).body!.members as Definition[];
+    expect(members.map((m) => [m.isDef, m.keyword, m.name, m.prefixMeta.map((p) => p.type)])).toEqual([
+      [true, undefined, 'Failure', ['situation']],
+      [false, undefined, 'batteryLow', ['situation']],
+      [false, undefined, 'cell', ['a', 'b']],
+      [false, 'part', 'q', []],
+      [false, 'constraint', 'c', []],
+    ]);
+    const redef = members[3].body!.members[0] as Definition;
+    expect([redef.prefixMeta.map((p) => p.type), redef.specializations[0]?.op]).toEqual([['k'], ':>>']);
+    // A body that ends in a `#` metadata access is still that expression, not a member.
+    expect(members[4].body!.members).toHaveLength(0);
+    expect(members[4].body!.expr?.$type).toBe('BinaryExpr');
+  });
+
   it('parses the keyword annotation `metadata T about A, B { … }` (SysML 7.27.2) as an Annotation', () => {
     const ast = parseClean(`
       package M {

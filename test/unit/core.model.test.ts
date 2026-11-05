@@ -807,6 +807,77 @@ describe('Model core', () => {
       expect(edgesToEdges).toBeGreaterThan(50);
     });
 
+    it('a removal that moves a redefinition walks the kept index, to the targets the edge index gives, in its order', () => {
+      // The reference: the walk as written over `relationshipsFrom` (the per-revision edge index, rebuilt after every
+      // removal), breadth first over the Redefinitions of each target that goes.
+      const reference = (m: Model, r: { source?: string[]; target?: string[] }, gone: Set<string>): string[] | undefined => {
+        if ((r.source ?? []).some((x) => gone.has(x)) || (r.target ?? []).length === 0) return undefined;
+        const out: string[] = [];
+        for (const t of r.target ?? []) {
+          if (!gone.has(t)) { if (!out.includes(t)) out.push(t); continue; }
+          const seen = new Set([t]);
+          const queue = [t];
+          let found: string | undefined;
+          for (let i = 0; i < queue.length && found === undefined; i++) {
+            for (const e of m.relationshipsFrom(queue[i]!)) {
+              if (e.eClass !== 'Redefinition') continue;
+              for (const x of e.target ?? []) {
+                if (seen.has(x) || !m.has(x)) continue;
+                seen.add(x);
+                if (gone.has(x)) queue.push(x);
+                else if (found === undefined && !(r.source ?? []).includes(x)) found = x;
+              }
+            }
+          }
+          if (found === undefined) return undefined;
+          if (!out.includes(found)) out.push(found);
+        }
+        return out;
+      };
+      let state = 0x2545f491;
+      const rnd = (n: number): number => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return Math.floor((state / 2 ** 32) * n);
+      };
+      let moved = 0;
+      for (let seq = 0; seq < 120; seq++) {
+        const m = new Model();
+        const feats: string[] = [];
+        for (let i = 0; i < 14; i++) feats.push(m.create('AttributeUsage', { declaredName: `f${i}` }).id);
+        // Several lines through each feature, two targets on some, cycles allowed; created in a random order.
+        for (let i = 0; i < 26; i++) {
+          const [a, b, c] = [feats[rnd(14)]!, feats[rnd(14)]!, feats[rnd(14)]!];
+          m.create('Redefinition', { ownerId: a, source: [a], target: rnd(4) === 0 ? [b, c] : [b] });
+        }
+        for (let k = 0; k < 4; k++) {
+          const alive = feats.filter((f) => m.has(f));
+          const id = alive[rnd(alive.length)]!;
+          const gone = new Set([id]);
+          const want = new Map<string, string[] | undefined>();
+          for (const r of m.all()) {
+            if (r.eClass === 'Redefinition' && (r.target ?? []).includes(id)) want.set(r.id, reference(m, r, gone));
+          }
+          m.remove(id, { cascade: false });
+          for (const [rid, targets] of want) {
+            if (targets === undefined) expect(m.has(rid), `seq ${seq}`).toBe(false);
+            else {
+              moved++;
+              expect(m.get(rid)?.target, `seq ${seq}`).toEqual(targets);
+            }
+          }
+        }
+      }
+      expect(moved).toBeGreaterThan(100);
+      // And the removals never ask the per-revision edge index, which each of them would rebuild over the model.
+      const m = new Model();
+      const chain = Array.from({ length: 40 }, (_, i) => m.create('AttributeUsage', { declaredName: `c${i}` }).id);
+      for (let i = 1; i < chain.length; i++) m.create('Redefinition', { ownerId: chain[i]!, source: [chain[i]!], target: [chain[i - 1]!] });
+      const asked = vi.spyOn(m, 'relationshipsFrom');
+      for (let i = 1; i < chain.length - 1; i++) m.remove(chain[i]!, { cascade: false });
+      expect(asked).not.toHaveBeenCalled();
+      expect(m.relationshipsFrom(chain[chain.length - 1]!).map((r) => r.target)).toEqual([[chain[0]]]);
+    });
+
     it('a loop of removals does not scan the model each time', () => {
       const m = new Model();
       const pkg = m.create('Package', { declaredName: 'P' });

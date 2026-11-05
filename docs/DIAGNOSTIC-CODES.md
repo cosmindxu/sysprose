@@ -168,6 +168,13 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 - **Fires when:** A declaration keyword the grammar accepts has no metaclass in this tool — the KerML type/feature family (namespace, class, feature, step, connector, …).
 - **Hint given:** This KerML keyword {found} is not modelled; the declaration and its body are preserved verbatim and re-emitted unchanged on save. Rewrite it with a supported keyword such as part, attribute, item, port, action or state.
 
+### `mapper/extended-definition`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** A definition is written with a user-defined keyword and no reserved one (`#situation def Failure;`, SysML 7.27.4, BNF ExtendedDefinition). That is a plain Definition, which this tool has no metaclass for. A usage written so (`#situation batteryLow;`, `#k :>> L = 3;`) is read as the keyword-less feature it would be without the tag.
+- **Hint given:** The definition {found} is not modelled; it is preserved verbatim and re-emitted unchanged on save. Add the reserved keyword of its kind (`#situation occurrence def Failure;`, `#situation part def Failure;`).
+
 ### `mapper/carrier-about-unread`
 
 - **Severity:** error
@@ -506,7 +513,7 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** A bare `#keyword` is answered by two imports of one scope with different `metadata def`s (`VendorHints` and `SysproseVerification` both declare `<exceptional>`, both imported), so which it names would depend on the order of the imports. Emitted by `contracts --keywords` alone.
+- **Fires when:** A bare `#keyword` is answered by two imports of one scope with different `metadata def`s (`VendorHints` and `SysproseVerification` both declare `<exceptional>`, both imported), so which it names would depend on the order of the imports; also beside `verification/foreign-keyword` when the keyword is a third-party spelling (`#precondition`) two imports declare, which the alias table still reads by its spelling. Emitted by `contracts --keywords` alone.
 - **Hint given:** Write the keyword qualified (`#SysproseVerification::exceptional`) or import only one of the packages. The keyword is read as no tag meanwhile, whichever import comes first.
 
 ### `verification/vacuous-pass`
@@ -950,4 +957,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*122 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*123 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

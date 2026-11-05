@@ -37,7 +37,9 @@ import {
 import {
   resolveFullName,
   resolveImportTargets as bindImportTargets,
+  resolveRedefinedFeature,
 } from '../semantics/bind';
+import { generalizationsWithImplicit } from '../semantics/featuring';
 import { resolveQualifiedNameFull } from '../semantics/resolve-names';
 
 // `findLibraryType` lives in core (src/core/scope.ts) so that the semantics
@@ -78,17 +80,32 @@ function addFeatureTyping(model: Model, featureId: ElementId, typeId: ElementId)
  * source — and drop the name it replaces from `attrs.specializes`, which is
  * also what retracts the name's "Unresolved reference" warning.
  */
-function addSpecialization(model: Model, id: ElementId, targetId: ElementId, name: string): void {
+function addSpecialization(model: Model, id: ElementId, targetId: ElementId, name: string, key: 'specializes' | 'redefines' = 'specializes'): void {
   const el = model.get(id);
   if (!el) return;
-  model.create(el.eClass.endsWith('Definition') ? 'Subclassification' : 'Subsetting', {
+  model.create(key === 'redefines' ? 'Redefinition' : el.eClass.endsWith('Definition') ? 'Subclassification' : 'Subsetting', {
     ownerId: id,
     source: [id],
     target: [targetId],
   });
-  const rest = (el.attrs.specializes as string[]).filter((n) => n !== name);
-  if (rest.length > 0) model.setAttrs(id, { specializes: rest });
-  else clearAttr(model, id, 'specializes');
+  const rest = (el.attrs[key] as string[]).filter((n) => n !== name);
+  if (rest.length > 0) model.setAttrs(id, { [key]: rest });
+  else clearAttr(model, id, key);
+}
+
+/**
+ * The library `metadata def` an annotation types `cell`'s owner by (`@VerificationCases::VerificationMethod { attribute
+ * :>> kind = test; }`), with the types it specialises: the features a `:>>` in its body may redefine. The parse reads
+ * such a body against a metadata definition of the file only (bind.ts `annotationDefinition`), so the cell keeps its
+ * `:>>` as a name until the library is merged. Empty for any other owner, and for a type of the user's own, which the
+ * parse already read.
+ */
+function libraryAnnotationHomes(model: Model, cell: ElementRecord): Set<ElementId> {
+  const owner = cell.ownerId !== null ? model.get(cell.ownerId) : undefined;
+  if (owner?.eClass !== 'MetadataUsage' || owner.attrs.annotation !== true || typeof owner.attrs.type !== 'string') return new Set();
+  const def = resolveDeclaredTypeName(model, owner.attrs.type, owner.ownerId, owner.id);
+  if (def?.eClass !== 'MetadataDefinition' || def.attrs.isLibrary !== true) return new Set();
+  return new Set([def.id, ...generalizationsWithImplicit(model, def.id).map((g) => g.id)]);
 }
 
 /**
@@ -205,6 +222,8 @@ interface PendingBinding {
    * from `attrs.specializes` once the relationship stands in for it.
    */
   specializes?: string;
+  /** Set for a `:>>` the parse left unresolved: the name as written, to drop from `attrs.redefines`. */
+  redefines?: string;
 }
 
 /**
@@ -252,6 +271,22 @@ export function resolveTypeReferences(model: Model): number {
         }
       }
 
+      // (1b) A `:>>` in the body of an annotation typed by a LIBRARY metadata definition, by the redefinition rule the
+      //      parse reads every other `:>>` by, and only onto a feature of that definition or what it specialises: the
+      //      rule's last resort (a name anywhere in scope) binds nothing here. A library-typed usage's `:>>` (`part y :
+      //      ISQ::MassValue { attribute :>> num; }`) is not read so and keeps its warning.
+      const redefines = el.attrs.redefines;
+      if (Array.isArray(redefines)) {
+        const homes = libraryAnnotationHomes(model, el);
+        for (const name of homes.size > 0 ? redefines : []) {
+          if (typeof name !== 'string' || name.trim() === '') continue;
+          const target = resolveRedefinedFeature(model, name, el.id, el.ownerId);
+          if (target && target.ownerId !== null && homes.has(target.ownerId)) {
+            pending.push({ elementId: el.id, targetId: target.id, clearTypeRef: false, redefines: name });
+          }
+        }
+      }
+
       // (2) Plain feature typing preserved as attrs.typeRef (PartUsage, PortUsage…).
       const typeRef = el.attrs.typeRef;
       if (typeof typeRef === 'string' && typeRef.trim() !== '') {
@@ -292,6 +327,8 @@ export function resolveTypeReferences(model: Model): number {
       for (const b of pending) {
         if (b.specializes !== undefined) {
           addSpecialization(model, b.elementId, b.targetId, b.specializes);
+        } else if (b.redefines !== undefined) {
+          addSpecialization(model, b.elementId, b.targetId, b.redefines, 'redefines');
         } else {
           addFeatureTyping(model, b.elementId, b.targetId);
           if (b.clearTypeRef) clearAttr(model, b.elementId, 'typeRef');

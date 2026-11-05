@@ -55,7 +55,7 @@
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { type ContractRef, type ContractSubject, type Fragment } from './contracts';
-import { hasKeyword } from './keywords';
+import { ambiguousKeyword, hasKeyword, keywordsOf } from './keywords';
 import { machineStates, stateMachinesIn } from './mc/explore';
 import {
   faultInjectionTargets,
@@ -499,12 +499,32 @@ export function machineFailureModes(model: Model, machineId: ElementId): Machine
   return { failureModeFlags, exceptionalStates };
 }
 
+/**
+ * The attributes and states under the machine whose keyword two imports answer to ({@link ambiguousKeyword}), one of
+ * them a definition {@link machineFailureModes} counts: {@link hasKeyword} reads such a keyword as no tag, in either
+ * import order, so it is in neither count, and the sentence names it apart rather than let 0 read as a plain absence.
+ */
+function ambiguousTags(model: Model, machineId: ElementId): number {
+  const counts = (e: ElementRecord, def: ElementRecord): boolean =>
+    e.eClass === 'AttributeUsage'
+      ? def.declaredName === FAILURE_MODE_DEFINITION || def.declaredShortName === FAILURE_MODE_DEFINITION
+      : model.qualifiedName(def.id) === EXCEPTIONAL_QUALIFIED_NAME;
+  const states = new Set(machineStates(model, machineId).map((s) => s.id));
+  return model
+    .descendants(machineId)
+    .filter((e) => e.eClass === 'AttributeUsage' || states.has(e.id))
+    .filter((e) => keywordsOf(model, e.id).some((k) => (ambiguousKeyword(model, k) ?? []).some((d) => counts(e, d))))
+    .length;
+}
+
 /** The measured answer for one machine — see {@link MachineAnswer}. */
 export function machineAnswer(model: Model, machineId: ElementId): MachineAnswer {
   const qualifiedName = model.qualifiedName(machineId) || machineId;
   const { failureModeFlags, exceptionalStates } = machineFailureModes(model, machineId);
+  const ambiguous = ambiguousTags(model, machineId);
   const counts =
-    `${failureModeFlags} failure-mode flag(s), ${exceptionalStates} \`#exceptional\` state(s)`;
+    `${failureModeFlags} failure-mode flag(s), ${exceptionalStates} \`#exceptional\` state(s)` +
+    (ambiguous > 0 ? `, ${ambiguous} keyword(s) two imports answer to, read as no tag` : '');
   // TWO TAILS, BECAUSE ONE WOULD BE FALSE. "No fault variable to inject" is
   // the truth about every machine in this repository, and a lie about a model
   // that declared its own `FailureMode` definition and applied it — the

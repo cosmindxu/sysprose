@@ -532,7 +532,8 @@ function redefinitionGenerals(model: Model, owningType: ElementId): ElementRecor
  * The `metadata def` an annotation is typed by (`@T about X { ref :>> approved = true; }`, `metadata T about X { … }`),
  * with what it specialises: the MetadataUsage keeps its type as the string `attrs.type`, with no FeatureTyping, so the
  * features its body redefines are T's. Empty for any other owner, and when T is not a metadata definition of the model
- * (a library type resolves later: the cell keeps its textual `attrs.redefines`).
+ * (a library type resolves later: the cell keeps its textual `attrs.redefines` until the library binder,
+ * `src/library/resolve.ts`, reads it by this rule).
  */
 function annotationDefinition(model: Model, ownerId: ElementId): ElementRecord[] {
   const owner = model.get(ownerId);
