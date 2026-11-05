@@ -457,8 +457,10 @@ test('at the drone-swarm model\'s whole Fit, every column header is findable: in
     // Named by the strip: a cell of its label over its x-range, while its piece reaches the strip's rows.
     if (view.y + c.y * view.zoom < stripBox.y + stripBox.height && cells.some((k) => k.label === c.label && k.left <= centre && centre <= k.right)) continue;
     await page.mouse.move(centre, view.y + ((c.y + c.bottom) / 2) * view.zoom);
+    // The label follows a React update after the native pointermove: wait for it, and clear it before the next column so a stale one is never read.
     const hover = page.getByTestId('column-hover');
-    if ((await hover.count()) === 1 && (await hover.textContent()) === c.label) byPointer += 1;
+    const named = await expect(hover).toHaveText(c.label, { timeout: 2000 }).then(() => true, () => false);
+    if (named) byPointer += 1;
     else missed.push(`${c.id} (${c.label})`);
   }
   expect(columns.length, 'the 21 headers of the whole model').toBeGreaterThanOrEqual(21);

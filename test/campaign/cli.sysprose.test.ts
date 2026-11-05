@@ -1583,6 +1583,38 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.obligations.refusedByReason).toEqual({});
   }, 90_000);
 
+  it('an --element scope that holds no row says so of the scope, never of the model', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    const file = join(dir, 'scope.sysml');
+    writeFileSync(
+      file,
+      `package E5 {
+    part def P { attribute load default = 20.0; constraint c { load <= 10.0 } }
+    part def Q { part p : P; }
+    part q2 : Q { part p2 :>> p; }
+}
+`,
+    );
+    try {
+      // The model states a relation and the scope holds none: the sentence is about the scope.
+      const scoped = await run(['obligations', file, '--element', 'E5::q2']);
+      expect(scoped.code).toBe(0);
+      expect(scoped.stdout).toContain('scoped to E5::q2');
+      expect(scoped.stdout).toContain('this scope holds no relation');
+      expect(scoped.stdout).not.toContain('this model states no relation at all');
+      const whole = await run(['obligations', file]);
+      expect(whole.stdout).not.toContain('holds no relation');
+      expect(whole.stdout).not.toContain('states no relation at all');
+      // The same for contracts: the file declares requirement defs, the scope holds none.
+      const none = await run(['contracts', resolve(process.cwd(), 'examples/uav-power-budget.sysml'), '--element', 'UAVPowerBudget::BatteryPack']);
+      expect(none.code).toBe(0);
+      expect(none.stdout).toContain('this scope holds no requirement and no case objective');
+      expect(none.stdout).not.toContain('this model declares no requirement');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('obligations --missing lists only what this lane would not decide', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'missing.sysml');

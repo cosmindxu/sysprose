@@ -3459,9 +3459,9 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
         // exercised; and the user's retarget of a redefinition was drawn.
         if (SEQUENCES >= 100) expect(fellBack).toBeLessThan(SEQUENCES / 4);
         if (SEQUENCES >= 100) expect(retargets).toBeGreaterThan(0);
-        // The verdict oracle ran, and the stops that leave a step outside the oracle stay the minority of the steps drawn.
+        // The verdict oracle ran, and the stops that leave a step outside the oracle (one per sequence at most) stay the minority of the sequences.
         if (SEQUENCES >= 100) expect(verdictChecks).toBeGreaterThan(0);
-        if (SEQUENCES >= 100) expect(sameName + copyLost).toBeLessThan((SEQUENCES * STEPS) / 4);
+        if (SEQUENCES >= 100) expect(sameName + copyLost).toBeLessThan(SEQUENCES / 2);
         if (FIRST === 0 && SEQUENCES === 300 && STEPS === 4) expect(handChecks).toBeGreaterThan(0);
       }, 600_000);
     });
