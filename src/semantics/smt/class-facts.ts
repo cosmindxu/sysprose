@@ -232,9 +232,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 0,
       "rows": 0,
-      "tableAgree": 60,
+      "tableAgree": 67,
       "tableDisagree": 0,
-      "tableProbes": 54
+      "tableProbes": 61
     },
     "ite": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 586,
+      "tableAgree": 607,
       "tableDisagree": 0,
-      "tableProbes": 257
+      "tableProbes": 262
     },
     "nira/free": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 324,
+      "tableAgree": 338,
       "tableDisagree": 0,
-      "tableProbes": 209
+      "tableProbes": 214
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 571,
+      "tableAgree": 592,
       "tableDisagree": 0,
-      "tableProbes": 249
+      "tableProbes": 254
     },
     "text-as-real": {
       "battery": null,
@@ -451,7 +451,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-subsetting-contradiction",
       "kind": "abstains",
-      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check. Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell.",
+      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell.",
       "todo": "Report a model that contradicts itself through a subsetting usage."
     },
     {
@@ -469,7 +469,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-subsets-otherwise",
       "kind": "abstains",
-      "note": "Re-read: every row read through the subsetting usage abstains wherever any context reads the subsetted feature otherwise. Sound, only weaker.",
+      "note": "Since instance3-pass S2 a subsetting usage that is the subsetted feature again (its kind and type, saying nothing of its own, named by no binding end or asserted equation) is read below, in each context that redefines that feature, as one of that context's (sa7: W::c T, W::c in w F, k F, w0.p2.load T; V7 T); a hand-oracle generator of 1,200 models (both text orders) gives no wrong decided cell. Every other shape, and a reading of the usage itself (a satisfy, a subject, a reference), still abstains wherever any context reads the subsetted feature otherwise (TC8, O2, RQ4, SA3S, RE3, AE3, AE4, RFN). Sound, only weaker.",
       "todo": "Read a usage that subsets a feature an instance reads otherwise in that instance."
     },
     {
@@ -538,9 +538,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "79727cc70905d3fab8e4d81b80847f8a7c9154e0b627c902511fab2de9399628",
+    "defects": "9d8f260f7aaa8987cc7ee8ea8a78c08409dd78516934f573c6ff6d5c5f02076f",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "20563238b5009cb343da80d6f4c01b9925ce1df3ab56bb8f308c21892d27f18d"
+    "probes": "5900b2eec4849e7a7ef99433aa30d14efa99b88512d2896ff05d4a3a4c034155"
   },
   "fences": {
     "fence/collection-valued": {

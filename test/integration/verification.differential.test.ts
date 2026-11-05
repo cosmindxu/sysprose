@@ -1579,8 +1579,6 @@ describe('a value read where its inputs are changed is that context’s own, and
       ['SB', `package SB { ${T0} requirement def RF { subject s : T0; } part def W { part p1 : T0; requirement q : RF { subject s = p1; } } part w : W { ${p50} } }`, 'w.q.s.load', '`subject s = p1` in SB::W::q'],
       ['RO', `package RO { ${T0} part def W { part p1 : T0; part sub { ref part r : T0 = p1; attribute m : ScalarValues::Real = r.load; } } part w : W { ${p50} } }`, 'w.sub.m', '`r = p1` in RO::W::sub'],
       ['VL', `package VL { ${T0} part def W { part x : T0 { attribute :>> load = 50.0; } ref part r : T0 = x; } part w : W { ref part :>> r; } }`, 'w.r.load', '`r` in VL::w redefines VL::W::r'],
-      // w's p2 is one of w's p1s (subsetting-pass S1): `w.p2.load` was bounded at T0's own load, "1 exactly".
-      ['SA7', `package SA7 { ${T0} part def W { part p1 : T0; part p2 :> p1; } part w : W { ${p50} } }`, 'w.p2.load', '`p2` in SA7::W subsets `p1`, which SA7::w reads otherwise'],
       // An asserted equation that reads through either gives what else it names that value (decision 14): W's `x ==
       // p2.load`, a package's `y == w.p2.load` and W's sub's `x == r.load` were bounded at 1 exactly, where it is 50.
       ['AX', `package AX { ${T0} part def W { part p1 : T0; part p2 :> p1; attribute x : ScalarValues::Real; assert constraint ax { x == p2.load } } part w : W { ${p50} } }`, 'w.x', '`p2` in AX::W subsets `p1`, which AX::w reads otherwise'],
@@ -1597,6 +1595,10 @@ describe('a value read where its inputs are changed is that context’s own, and
     // Where no instance reads p1 otherwise, the reference reads as written: bounded at W's p1's 1.
     const same = `package RS { ${T0} part def W { part p1 : T0; part sub { ref part r : T0 = p1; } } part w : W; }`;
     expect((await bound(same, 'RS', 'w.sub.r.load')).slice(0, 2)).toEqual([[['optimum', null, 1]], 0]);
+    // w's p2 is one of w's p1s (subsetting-pass S1): `w.p2.load` was bounded at T0's own load, "1 exactly", then
+    // claimed nothing. Read below as one of w's p1s (instance3-pass S2), it is bounded at w's p1's 50.
+    const sa7 = `package SA7 { ${T0} part def W { part p1 : T0; part p2 :> p1; } part w : W { ${p50} } }`;
+    expect((await bound(sa7, 'SA7', 'w.p2.load')).slice(0, 2)).toEqual([[['optimum', null, 50]], 0]);
   });
 
   const UNREAD_BINDING = 'files a binding it does not read under its own reason: a limit of this tool, exit 2, never forgiven (O9 S1)';
@@ -13163,7 +13165,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // for every instance, the usage the instance redefines itself included (another instance may redefine the root or a
     // usage below it, and the taint is per usage; fence-readings round 3). W's own p1 at 50 (sa5) reads as written. Each probe is pinned beside its reversed twin (`<=` read `>=`): written `= 1.0` instead, w's `:>> load
     // = 50.0` contradicts T0's value and no reading is tested. The refs are W's own values for W's `c` and w's for
-    // the rest, a satisfaction being a claim about every W.
+    // the rest, a satisfaction being a claim about every W. Since instance3-pass S2 a p2 that is p1 again (p1's kind and
+    // type, saying nothing of its own, named by no binding end or asserted equation) is read below, in each context
+    // that redefines p1, as one of that context's p1s: W's `c` reads W's 1 (T) beside a row of its own in w (F), and
+    // `k`, `k1` read w's 50, on all four surfaces; a `w0 : W` that changes nothing reads W's 1 (sub-sa7-w0, either
+    // text order). A reading of p2 itself (sa3's `satisfy RF by p2`) abstains as before.
     'sub-sa7': probe(`package SA7 {
   part def T0 { attribute load default = 1.0; }
   part def W { part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 } }
@@ -13171,9 +13177,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   constraint k { w.p2.load <= 5.0 }
   constraint k1 { w.p1.load <= 5.0 }
 }`, {
-      'SA7::W::c': ['?/?/?/?', 'T'],
-      'SA7::k': ['?/?/?/?', 'F'],
-      'SA7::k1': ['?/?/?/?', 'F'],
+      'SA7::W::c': ['T/T/T/T', 'T'],
+      'SA7::W::c in SA7::w': ['F/F/F/F', 'F'],
+      'SA7::k': ['F/F/F/F', 'F'],
+      'SA7::k1': ['F/F/F/F', 'F'],
     }),
     'sub-sa7-rev': probe(`package SA7 {
   part def T0 { attribute load default = 1.0; }
@@ -13182,9 +13189,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   constraint k { w.p2.load >= 5.0 }
   constraint k1 { w.p1.load >= 5.0 }
 }`, {
-      'SA7::W::c': ['?/?/?/?', 'F'],
-      'SA7::k': ['?/?/?/?', 'T'],
-      'SA7::k1': ['?/?/?/?', 'T'],
+      'SA7::W::c': ['F/F/F/F', 'F'],
+      'SA7::W::c in SA7::w': ['T/T/T/T', 'T'],
+      'SA7::k': ['T/T/T/T', 'T'],
+      'SA7::k1': ['T/T/T/T', 'T'],
     }),
     'sub-sa3': probe(`package SA3 {
   part def T0 { attribute load default = 1.0; }
@@ -13227,18 +13235,20 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // The same where what reads p1 otherwise is a definition W2 specialises (SA7D), p2 is nested in W (SA7N) or
     // reached through a second subsetting (SA7C), or w binds p1's load (SA7B): `k` read T and `kR` F on all four
     // surfaces, W's `c` T. An attribute that subsets one (SA7A: `a2 :> a1`, no value of its own) is read nowhere,
-    // as before. An instance that changes nothing p1 reads (SA7S: none, `part :>> p1;`, another part) reads as
+    // as before. Since instance3-pass S2, SA7D and SA7B read p2 below as one of W2's, w's p1s (W2's `:>> p1`, and the
+    // copy of p1 w's binding end makes): `c` T beside its row in W2 or w (F), `k` F, `kR` T; SA7N, SA7C and SA7A
+    // abstain as before (p2 is not a feature of p1's owner, is subsetted itself, or is an attribute). An instance that changes nothing p1 reads (SA7S: none, `part :>> p1;`, another part) reads as
     // written, as does a feature of a package, one instance (SA7P: p1's 50).
     ...Object.fromEntries(
       (
         [
-          ['sub-def-sa7d', 'SA7D', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', 'part def W2 :> W { part :>> p1 { attribute :>> load = 50.0; } } part w : W2;', 'w.p2.load', 'W::c'],
-          ['sub-nest-sa7n', 'SA7N', 'part p1 : T0; part sub { part p2 :> p1; constraint c { p2.load <= 5.0 } }', 'part w : W { part :>> p1 { attribute :>> load = 50.0; } }', 'w.sub.p2.load', 'W::sub::c'],
-          ['sub-chain-sa7c', 'SA7C', 'part p1 : T0; part p2 :> p1; part p3 :> p2; constraint c { p3.load <= 5.0 }', 'part w : W { part :>> p1 { attribute :>> load = 50.0; } }', 'w.p3.load', 'W::c'],
-          ['sub-bind-sa7b', 'SA7B', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', 'part w : W { attribute K : ScalarValues::Real = 50.0; bind p1.load = K; }', 'w.p2.load', 'W::c'],
-          ['sub-attr-sa7a', 'SA7A', 'attribute a1 : ScalarValues::Real default = 1.0; attribute a2 :> a1; constraint c { a2 <= 5.0 }', 'part w : W { attribute :>> a1 = 50.0; }', 'w.a2', 'W::c'],
+          ['sub-def-sa7d', 'SA7D', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', 'part def W2 :> W { part :>> p1 { attribute :>> load = 50.0; } } part w : W2;', 'w.p2.load', 'W::c', 'W2'],
+          ['sub-nest-sa7n', 'SA7N', 'part p1 : T0; part sub { part p2 :> p1; constraint c { p2.load <= 5.0 } }', 'part w : W { part :>> p1 { attribute :>> load = 50.0; } }', 'w.sub.p2.load', 'W::sub::c', undefined],
+          ['sub-chain-sa7c', 'SA7C', 'part p1 : T0; part p2 :> p1; part p3 :> p2; constraint c { p3.load <= 5.0 }', 'part w : W { part :>> p1 { attribute :>> load = 50.0; } }', 'w.p3.load', 'W::c', undefined],
+          ['sub-bind-sa7b', 'SA7B', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', 'part w : W { attribute K : ScalarValues::Real = 50.0; bind p1.load = K; }', 'w.p2.load', 'W::c', 'w'],
+          ['sub-attr-sa7a', 'SA7A', 'attribute a1 : ScalarValues::Real default = 1.0; attribute a2 :> a1; constraint c { a2 <= 5.0 }', 'part w : W { attribute :>> a1 = 50.0; }', 'w.a2', 'W::c', undefined],
         ] as const
-      ).map(([name, pkg, W, w, read, c]) => [
+      ).map(([name, pkg, W, w, read, c, at]) => [
         name,
         probe(`package ${pkg} {
         part def T0 { attribute load : ScalarValues::Real default = 1.0; }
@@ -13246,10 +13256,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         ${w}
         constraint k { ${read} <= 5.0 }
         constraint kR { ${read} >= 5.0 }
-      }`, {
+      }`, at === undefined ? {
           [`${pkg}::${c}`]: ['?/?/?/?', 'T'],
           [`${pkg}::k`]: ['?/?/?/?', 'F'],
           [`${pkg}::kR`]: ['?/?/?/?', 'T'],
+        } : {
+          [`${pkg}::${c}`]: ['T/T/T/T', 'T'],
+          [`${pkg}::${c} in ${pkg}::${at}`]: ['F/F/F/F', 'F'],
+          [`${pkg}::k`]: ['F/F/F/F', 'F'],
+          [`${pkg}::kR`]: ['T/T/T/T', 'T'],
         }),
       ]),
     ),
@@ -13263,6 +13278,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint kR { w2.p2.load >= 5.0 }
       }`, {
       'SA7S::W::c': ['T/T/T/T', 'T'],
+      'SA7S::W::c in SA7S::w2': ['T/T/T/T', 'T'],
       'SA7S::k': ['T/T/T/T', 'T'],
       'SA7S::kR': ['F/F/F/F', 'F'],
     }),
@@ -13275,6 +13291,40 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'SA7P::W::c': ['F/F/F/F', 'F'],
       'SA7P::k': ['F/F/F/F', 'F'],
+    }),
+    // A sibling `w0 : W` that changes nothing beside w (instance3-pass S2): its p2 is one of its p1s, W's own (1), so
+    // `k0` holds where `k` (w's 50) fails; W's `c` reads W's 1 and its row in w F. Both read `?/?/?/?` before, `k0`'s
+    // sentence naming w. And V7: an instance that changes only a feature of p1 that nothing reads through p2 (w's
+    // `tag`) reads T0's load 1 in w too: W's `c`, its row in w and `k` T where all abstained.
+    ...reversed('sub-sa7-w0', `package SA7W {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        part w0 : W;
+        constraint k { w.p2.load <= 5.0 }
+        constraint k0 { w0.p2.load <= 5.0 }
+      }`, `package SA7W {
+        constraint k0 { w0.p2.load <= 5.0 }
+        constraint k { w.p2.load <= 5.0 }
+        part w0 : W;
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        part def W { constraint c { p2.load <= 5.0 } part p2 :> p1; part p1 : T0; }
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+      }`, {
+      'SA7W::W::c': ['T/T/T/T', 'T'],
+      'SA7W::W::c in SA7W::w': ['F/F/F/F', 'F'],
+      'SA7W::k': ['F/F/F/F', 'F'],
+      'SA7W::k0': ['T/T/T/T', 'T'],
+    }),
+    'sub-tag-v7': probe(`package V7 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute tag : ScalarValues::Real default = 0.0; }
+        part def W { part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 } }
+        part w : W { part :>> p1 { attribute :>> tag = 9.0; } }
+        constraint k { w.p2.load <= 5.0 }
+      }`, {
+      'V7::W::c': ['T/T/T/T', 'T'],
+      'V7::W::c in V7::w': ['T/T/T/T', 'T'],
+      'V7::k': ['T/T/T/T', 'T'],
     }),
     // A requirement usage whose subject is p2 read W's p2 too (SA3Q, its row and `w.q.s.load` T on all four), and a
     // part a requirement subsets its subject with read R's own s, never the satisfier's 50 (SA3S: T on all four). The
@@ -13409,8 +13459,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // (load 50), so W's `assert constraint a { p2.load <= 5.0 }` is violated in w. Its row abstained, the SMT axiom read
     // W's own p2 (1) alone, and `w.x <= 5.0` read T and `w.x >= 5.0` F on all four surfaces beside a contradiction
     // nothing reported (v11). The assert is read again in w, p2 re-rooted onto w's p1: F there on the check and the
-    // numeric surface, and the SMT engine reports the axioms inconsistent (I7_ALLOWED). W's own row abstains as before.
-    // Where it holds in w (`<= 60.0`, V11H) every other row is decided. Pinned in either text order.
+    // numeric surface, and the SMT engine reports the axioms inconsistent (I7_ALLOWED). W's own row abstained; since
+    // instance3-pass S2 p2 is p1 again here, read below as one of w's p1s, and W's own row reads W's 1 (T). Where it
+    // holds in w (`<= 60.0`, V11H) every other row is decided. Pinned in either text order.
     ...Object.fromEntries(
       (
         [
@@ -13432,7 +13483,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           [
             `sub-contra-v11${twin}`,
             probe(`package V11 {\n        ${body('5.0')}\n      }`, {
-              'V11::W::a': ['?/-/?/-', 'T'],
+              'V11::W::a': ['T/-/T/-', 'T'],
               'V11::W::a in V11::w': ['F/-/F/-', 'F'],
               'V11::W::c': ['T/T/T/X', 'T'],
               'V11::k': ['T/T/T/X', 'T'],
@@ -13442,7 +13493,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           [
             `sub-contra-holds${twin}`,
             probe(`package V11H {\n        ${body('60.0')}\n      }`, {
-              'V11H::W::a': ['?/-/?/-', 'T'],
+              'V11H::W::a': ['T/-/T/-', 'T'],
               'V11H::W::a in V11H::w': ['T/-/T/-', 'T'],
               'V11H::W::c': ['T/T/T/T', 'T'],
               'V11H::k': ['T/T/T/T', 'T'],
@@ -15407,7 +15458,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // written (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in the one that declares w; NQ5 without the
     // subsetting; NQ7 in a part body), recorded W's own p1: a requirement w's 50 breaks held (T, `verify` exit 0). It
     // abstains for the requirement and for w's p1 now, naming w. NQ3 (the same satisfy in the package that declares
-    // w) files w's F row as before, and NQ8 (no instance reads p1 otherwise) keeps its T.
+    // w) files w's F row, which abstained with W's p2's subsetting component until instance3-pass S2 read p1 as
+    // written beside a p2 that is p1 again, and NQ8 (no instance reads p1 otherwise) keeps its T.
     ...reversed('sat-nested-nq1', `package NQ1 {
         part def T0 { attribute load default = 1.0; }
         requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
@@ -15450,8 +15502,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         satisfy RF by w.p1;
       }`, {
       'NQ3::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
-      'NQ3::RF::«ConstraintUsage» in NQ3::«Satisfy»': ['?/-/?/-', 'F'],
-      'NQ3::RF::«ConstraintUsage» in NQ3::w::p1': ['-/?/-/?', 'F'],
+      'NQ3::RF::«ConstraintUsage» in NQ3::«Satisfy»': ['F/-/F/-', 'F'],
+      'NQ3::RF::«ConstraintUsage» in NQ3::w::p1': ['-/F/-/F', 'F'],
     }),
     'sat-nested-nq5': probe(`package NQ5 {
         part def T0 { attribute load default = 1.0; }

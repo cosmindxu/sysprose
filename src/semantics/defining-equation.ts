@@ -367,6 +367,12 @@ export interface ReadOtherwise {
   bridge?: { via: ElementRecord; sayer: ElementRecord };
   /** For `subsetting` carried up a chain or across a usage with two supers: the element whose instances read the first usage otherwise, when it is not {@link scope}. */
   reader?: ElementRecord;
+  /**
+   * For `subsetting`: the walk reads below the usage, in every context that reads the subsetted feature otherwise, as
+   * one of what that feature is there ({@link DefiningEquations.rerootedSubsettings}), so only a reading of the usage
+   * itself — its whole value, or a reading in it — is not read ({@link TaintEntry.whole}).
+   */
+  whole?: true;
 }
 
 /**
@@ -483,6 +489,8 @@ export class DefiningEquations {
   private readonly satisfierAsking = new Set<ElementId>();
   /** {@link subsettingOtherwise} per usage (`null`: read as written). */
   private readonly subsettingAsked = new Map<ElementId, ReadOtherwise | null>();
+  /** {@link rerootedSubsettings}, once asked. */
+  private rerooting?: ReadonlyMap<ElementId, ElementRecord>;
 
   constructor(readonly model: Model) {
     this.rev = model.rev;
@@ -1030,15 +1038,18 @@ export class DefiningEquations {
           }
         }
         // A subject something binds is read through what it stands for, in
-        // the instance it stands for.
-        const into = this.subjectOf(ownerId, feat) ?? feat;
-        const bound = into !== feat ? this.boundInstance(ownerId, feat, into, { instance, enclosing }) : undefined;
+        // the instance it stands for; a usage that subsets a feature the instance
+        // redefines, as one of what that feature is there ({@link subsettedIn}).
+        const subject = this.subjectOf(ownerId, feat);
+        const subsetted = subject === undefined ? this.subsettedIn(ownerId, feat) : undefined;
+        const into = subject ?? subsetted ?? feat;
+        const bound = subject !== undefined && into !== feat ? this.boundInstance(ownerId, feat, into, { instance, enclosing }) : undefined;
         visit(
           into.id,
           prefix ? `${prefix}.${name}` : name,
           own || ownsBody(feat),
           inCall || isCall(this.model, feat),
-          bound?.instance ?? this.instanceBelow(instance, feat, name, prefix === ''),
+          bound?.instance ?? (subsetted ? this.instanceBelow(instance, subsetted, this.nameOf(subsetted) ?? name, prefix === '') : this.instanceBelow(instance, feat, name, prefix === '')),
           bound?.enclosing ?? [...enclosing, { instance, reader: ownerId }],
         );
       }
@@ -1848,7 +1859,9 @@ export class DefiningEquations {
     // package, which the test above does not ask.
     const subsetting = subsettingTaint(this.model);
     if (subsetting.taint.size === 0) return undefined;
-    for (const n of names) {
+    // The satisfier itself first: the subject stands for that usage, which no walk below it re-roots (`satisfy RF by
+    // w.p2` reads W's own p2 below it, where `w.p2.load` read by name is w's p1's; {@link TaintEntry.whole}).
+    for (const n of [path, ...names]) {
       const b = readsTainted(this.model, subsetting.taint, [scope.id], n);
       const via = b ? subsetting.why.get(b.id) : undefined;
       if (via) return { kind, written, scope, path, instance: via.instance, via };
@@ -2007,11 +2020,90 @@ export class DefiningEquations {
         const names = [...this.denote(scope.id).keys()].filter((k) => k === path || k.startsWith(`${path}.`));
         const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} subsetting`, scope, names) : undefined;
         if (!otherwise) continue;
+        // Read below it in each instance as one of what g is there, where every context that reads g otherwise
+        // redefines it ({@link subsettedIn}): only a reading of the usage itself is read as the element's own.
+        const listed = this.contextsOf({ id: `${f.id} subsetting`, ownerId: scope.id }, names).listed;
+        const whole =
+          this.rerootedSubsettings().get(f.id)?.id === g.id && listed.length > 0 && listed.every((x) => this.subsettedIn(x.id, f) !== undefined);
         const key = this.qualifiedNameOf(g.id);
-        if (!best || key < best.key) best = { answer: { kind: 'subsetting', written: f, scope, path, instance: otherwise.instance, redefined: g }, key };
+        if (!best || key < best.key) {
+          best = { answer: { kind: 'subsetting', written: f, scope, path, instance: otherwise.instance, redefined: g, ...(whole ? { whole: true as const } : {}) }, key };
+        }
       }
     }
     return best?.answer;
+  }
+
+  /**
+   * The usages the walk reads, in an instance that redefines the feature each subsets, as one of what that feature is
+   * there ({@link subsettedIn}), each with that feature, once per revision: `part p2 :> p1;` beside `part p1 : T0;` in
+   * W. Only a usage that subsets that one feature of its own owner and says nothing of its own ({@link
+   * cleanSubsetting}), of p1's kind and typed by nothing p1 is not (`part p2 : T1 :> p1;` holds T1's features, which
+   * p1 does not), neither a reference nor an attribute, and that no binding end or asserted equation of the model
+   * names (`bind p2.load = K` or `assert constraint { p2.load == 7.0 }` gives every p1 that value, which the walk
+   * reads at p1's own): every w's p2 is then one of w's p1s, whatever is below it.
+   */
+  rerootedSubsettings(): ReadonlyMap<ElementId, ElementRecord> {
+    if (this.rerooting) return this.rerooting;
+    // Asked again while it is built (the clean test reads no walk, but guard it): nothing is re-rooted meanwhile.
+    this.rerooting = new Map();
+    const built = new Map<ElementId, ElementRecord>();
+    // The model's own elements, its binding ends and asserted equations, read once a candidate needs them.
+    let users: ElementRecord[] | undefined;
+    let bindings: ElementRecord[] = [];
+    let equations: string[] = [];
+    const typesOf = (x: ElementRecord): ElementRecord[] => this.model.typesOf(x.id).filter((t) => !isUsage(t.eClass));
+    for (const r of this.model.ofKind('Subsetting')) {
+      if (r.attrs.isLibrary === true) continue;
+      const f = r.source?.[0] !== undefined ? this.model.get(r.source[0]) : undefined;
+      const g = r.target?.[0] !== undefined ? this.model.get(r.target[0]) : undefined;
+      if (!f || !g || f.id === g.id || f.ownerId == null || f.ownerId !== g.ownerId || built.has(f.id)) continue;
+      if (!isUsage(f.eClass) || f.eClass !== g.eClass || f.eClass === 'AttributeUsage' || f.attrs.isRef === true || g.attrs.isRef === true) continue;
+      const owner = this.model.get(f.ownerId);
+      const name = this.nameOf(f);
+      if (!owner || isPackage(owner) || name === undefined) continue;
+      const theirs = new Set<ElementId>();
+      for (const t of typesOf(g)) for (const x of [t, ...generalizationsOf(this.model, t.id)]) theirs.add(x.id);
+      if (typesOf(f).some((t) => !theirs.has(t.id))) continue;
+      if (!users) {
+        users = this.model.all().filter((x) => x.attrs.isLibrary !== true);
+        bindings = users.filter((x) => isBindingConnector(x) && x.ownerId != null);
+        equations = users.flatMap((x) => (isAsserted(x) && typeof x.attrs.expression === 'string' && x.attrs.expression.includes('==') ? [x.attrs.expression] : []));
+      }
+      if (!cleanSubsetting(this.model, this, f, g)) continue;
+      const token = new RegExp(`(?<![\\w$'])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$'])`);
+      if (equations.some((e) => token.test(e))) continue;
+      const writes = bindings.some((b) =>
+        [b.source?.[0], b.target?.[0]].some((id) => {
+          const path = bindingEndPath(this.model, id, b.ownerId!);
+          if (path !== undefined) return path.split('.').includes(name);
+          // An end this cannot spell: any on or below the usage, or one whose element it cannot place.
+          const seen = new Set<ElementId>();
+          for (let cur = id !== undefined ? this.model.get(id) : undefined; cur && !seen.has(cur.id); cur = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined) {
+            seen.add(cur.id);
+            if (cur.id === f.id || effectiveNameOf(this.model, cur) === name) return true;
+          }
+          return id === undefined || this.model.get(id) === undefined;
+        }),
+      );
+      if (writes) continue;
+      built.set(f.id, g);
+    }
+    this.rerooting = built;
+    return built;
+  }
+
+  /**
+   * The feature of `ownerId` that the walk reads `feat` as there: where `feat` is one of {@link rerootedSubsettings}
+   * and `ownerId`, an instance of its owner (`part w : W { part :>> p1 { attribute :>> load = 50.0; } }`), redefines
+   * the feature it subsets, that redefinition — every w's p2 is one of w's p1s, so `w.p2.load` is w's p1's 50, never
+   * W's own 1. `undefined` in the owner itself and wherever the feature is not redefined: there p2 is read as the
+   * element's own, which reads p1 as written.
+   */
+  private subsettedIn(ownerId: ElementId, feat: ElementRecord): ElementRecord | undefined {
+    const g = this.rerootedSubsettings().get(feat.id);
+    if (!g || ownerId === feat.ownerId) return undefined;
+    return this.features(ownerId).find((x) => x.id !== g.id && x.id !== feat.id && redefinedClosure(this.model, x).some((y) => y.id === g.id));
   }
 
   /**
@@ -5782,6 +5874,12 @@ function spreadTaint(
 interface TaintEntry {
   source: ElementRecord;
   within?: ElementId;
+  /**
+   * The usage itself only ({@link ReadOtherwise.whole}): a name that reads below it, through it or through the instance
+   * it is read in, is read as the walk reads it, and passes it ({@link readsTaintEntry}); the usage as a name's last
+   * link, and a reading at or below it, are reached.
+   */
+  whole?: true;
 }
 type ScopedTaint = ReadonlyMap<ElementId, TaintEntry>;
 
@@ -5853,12 +5951,14 @@ function taintEntryAt(
   e: ElementRecord | undefined,
   at?: { contextId: ElementId; path?: string },
   denoted?: () => readonly ElementId[],
+  below = false,
 ): TaintEntry | undefined {
   const seen = new Set<ElementId>();
   for (let cur = e; cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
     seen.add(cur.id);
     const hit = taint.get(cur.id);
-    if (hit && taintReaches(model, hit, at, denoted)) return hit;
+    // `below`: `e` is read below the element a name lands on, which a {@link TaintEntry.whole} entry passes.
+    if (hit && !(hit.whole && below) && taintReaches(model, hit, at, denoted)) return hit;
     if (!isUsage(cur.eClass)) return undefined;
   }
   return undefined;
@@ -5943,11 +6043,13 @@ function readsTaintEntry(
     for (let k = 1; k <= segments.length; k++) {
       const d = denoted.get(segments.slice(0, k).join('.'));
       const walk = d ? (): readonly ElementId[] => [...d.enclosing.map((fr) => fr.reader), d.reader, ...links] : undefined;
+      // A link the name goes on below, and the instances it is read in, pass a {@link TaintEntry.whole} entry.
+      const on = k < segments.length;
       const hit = d
-        ? (taintEntryAt(model, taint, d.feature, at, walk) ??
-          taintEntryAt(model, taint, model.get(d.reader), at, walk) ??
-          d.enclosing.map((fr) => (fr.reader === r ? undefined : taintEntryAt(model, taint, model.get(fr.reader), at, walk))).find((x) => x !== undefined) ??
-          defs.standsThrough(d.reader, d.feature).map((s) => taintEntryAt(model, taint, s, at, walk)).find((x) => x !== undefined))
+        ? (taintEntryAt(model, taint, d.feature, at, walk, on) ??
+          taintEntryAt(model, taint, model.get(d.reader), at, walk, true) ??
+          d.enclosing.map((fr) => (fr.reader === r ? undefined : taintEntryAt(model, taint, model.get(fr.reader), at, walk, true))).find((x) => x !== undefined) ??
+          defs.standsThrough(d.reader, d.feature).map((s) => taintEntryAt(model, taint, s, at, walk, true)).find((x) => x !== undefined))
         : undefined;
       if (hit) return hit;
       if (d) links.push(d.feature.id);
@@ -6314,7 +6416,7 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
     for (const [id, { answer, hop }] of offers) {
       const g = model.get(id);
       if (!g || taint.has(id)) continue;
-      taint.set(id, { source: g });
+      taint.set(id, answer.whole && answer.written.id === id ? { source: g, whole: true } : { source: g });
       why.set(id, answer);
       hops.set(id, hop);
       any = true;
@@ -6362,10 +6464,13 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
   }
   // The usages that subset a feature an instance reads otherwise, and the subsetted usage of a subsetter that is
   // (RV1): it is the subsetter's value that fills it there, which the walk reads at the owner's own values.
+  // A usage the walk reads in each instance as one of what g is there ({@link DefiningEquations.rerootedSubsettings})
+  // says nothing of g's values: the instance test that reads its names otherwise is that walk's.
+  const rerooted = defs.rerootedSubsettings();
   for (const { f, g } of pairs) {
     const own = defs.subsettingOtherwise(f);
     if (own) offer(f, own, 0);
-    const other = defs.subsettedOtherwise(f, g);
+    const other = rerooted.get(f.id)?.id === g.id ? undefined : defs.subsettedOtherwise(f, g);
     if (other) offer(g, other, 0);
   }
   accept();
@@ -6380,7 +6485,8 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
     for (let more = true; more; more = accept()) {
       for (const { f, g } of pairs) {
         const a = answerOf(f);
-        if (!a || taint.has(g.id) || g.id === f.id || g.attrs.isLibrary === true || !isUsage(g.eClass)) continue;
+        // A usage read below as one of what g is there leaves g's readings as written ({@link TaintEntry.whole}).
+        if (!a || taint.get(f.id)?.whole || taint.has(g.id) || g.id === f.id || g.attrs.isLibrary === true || !isUsage(g.eClass)) continue;
         const seed = a.root ?? a.subsetter ?? a.written;
         const scope = g.ownerId != null ? model.get(g.ownerId) : undefined;
         // f's own distance from the usage a context reads otherwise: its accepted hop, else (joined by what reads through a

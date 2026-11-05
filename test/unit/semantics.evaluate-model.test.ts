@@ -5957,15 +5957,29 @@ describe('a value, a reference and a binding that equate two parts or structured
     const p50 = 'part :>> p1 { attribute :>> load = 50.0; }';
     // Every w's p2 is one of w's p1s (load 50), but the walk read w's p2 as W's own, a T0 of load 1: W's `c` filed no
     // row for w, and `w.p2.load <= 5.0` held on all four surfaces (the review of per-instance-rest), its reverse
-    // refuted. Each row read through p2 abstains now, W's own too, naming w, on every surface; `w.p1.load` reads as
-    // written. So when what changes p1 is a definition W2 specialises, p2 is nested in W, or reached through a
-    // second subsetting, an attribute subsets one, or w binds p1's load.
+    // refuted. Each row read through p2 abstained, W's own too, naming w, on every surface. Since instance3-pass S2 a p2
+    // that is p1 again (p1's kind and type, saying nothing of its own) is read below, in each context that redefines
+    // p1, as one of that context's p1s: W's `c` reads W's 1 beside a row of its own in w (or in W2, which specialises
+    // W, or in w whose binding end copies p1), `k` reads 50, on every surface.
+    for (const [name, w, at] of [
+      ['SA7', `part w : W { ${p50} }`, 'w'],
+      ['SA7D', `part def W2 :> W { ${p50} } part w : W2;`, 'W2'],
+      ['SA7B', 'part w : W { attribute K : ScalarValues::Real = 50.0; bind p1.load = K; }', 'w'],
+    ] as const) {
+      const { model: x } = await loadModelText(`package ${name} { ${T0} part def W { part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 } } ${w}
+        constraint k { w.p2.load <= 5.0 } constraint kR { w.p2.load >= 5.0 } }`);
+      const c = check(x!, `${name}::W::c`);
+      expect([c.result, numeric(x!, `${name}::W::c`), (c.instances ?? []).map((i) => [i.context, i.result])], name).toEqual(['satisfied', 'satisfied', [[at, 'violated']]]);
+      for (const [rel, want] of [[`${name}::k`, 'violated'], [`${name}::kR`, 'satisfied']] as const) {
+        expect([check(x!, rel).result, numeric(x!, rel)], rel).toEqual([want, want]);
+        expect(JSON.stringify(goal(x!, rel).encodable), rel).not.toContain('unread-binding');
+      }
+    }
+    // Still so where p2 is nested in W, reached through a second subsetting, or the shape is otherwise one this tool
+    // does not read below as p1 again.
     for (const [name, W, w, read, who] of [
-      ['SA7', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', `part w : W { ${p50} }`, 'w.p2.load', 'w'],
-      ['SA7D', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', `part def W2 :> W { ${p50} } part w : W2;`, 'w.p2.load', 'W2'],
       ['SA7N', 'part p1 : T0; part sub { part p2 :> p1; constraint c { p2.load <= 5.0 } }', `part w : W { ${p50} }`, 'w.sub.p2.load', 'w'],
       ['SA7C', 'part p1 : T0; part p2 :> p1; part p3 :> p2; constraint c { p3.load <= 5.0 }', `part w : W { ${p50} }`, 'w.p3.load', 'w'],
-      ['SA7B', 'part p1 : T0; part p2 :> p1; constraint c { p2.load <= 5.0 }', 'part w : W { attribute K : ScalarValues::Real = 50.0; bind p1.load = K; }', 'w.p2.load', 'w'],
     ] as const) {
       const { model: x, report } = await loadModelText(`package ${name} { ${T0} part def W { ${W} } ${w}
         constraint k { ${read} <= 5.0 } constraint kR { ${read} >= 5.0 } }`, { fileName: `${name}.sysml`, strict: true });
@@ -5985,9 +5999,9 @@ describe('a value, a reference and a binding that equate two parts or structured
     }
     const { model: sa7 } = await loadModelText(`package SA7 { ${T0} part def W { part p1 : T0; part p2 :> p1; } part w : W { ${p50} }
       constraint k1 { w.p1.load <= 5.0 } }`);
-    // w's own p1 abstains with the rest of the component (fence-readings round 3): another instance may redefine the root or a
-    // usage below it, and the taint is per usage — the usage the instance redefines itself is no longer read as written.
-    expect([check(sa7!, 'SA7::k1').result, numeric(sa7!, 'SA7::k1'), goal(sa7!, 'SA7::k1').encodable]).toMatchObject(['unknown', 'unknown', { reason: 'unread-binding' }]);
+    // w's own p1 abstained with the rest of the component (fence-readings round 3): another instance may redefine the root
+    // or a usage below it. Beside a p2 that is p1 again (instance3-pass S2) nothing else states p1's values: w's 50.
+    expect([check(sa7!, 'SA7::k1').result, numeric(sa7!, 'SA7::k1')]).toEqual(['violated', 'violated']);
     // An attribute that subsets one w gives a value of its own.
     const { model: attr } = await loadModelText(`package SA7A {
       part def W { attribute a1 : ScalarValues::Real default = 1.0; attribute a2 :> a1; constraint c { a2 <= 5.0 } }
@@ -5999,8 +6013,9 @@ describe('a value, a reference and a binding that equate two parts or structured
     // usage whose subject is p2 read W's p2 too. Each row abstains now, naming p2 and w.
     const RF = 'requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }';
     for (const [name, W, ctx, said] of [
-      ['SA3', 'part p1 : T0; part p2 :> p1; satisfy RF by p2;', 'SA3::W::«Satisfy»', 'SA3::w reads its satisfier otherwise, through `p2`, which subsets `p1`'],
-      ['SA3Q', 'part p1 : T0; part p2 :> p1; requirement q : RF { subject s = p2; }', 'SA3Q::W::q', 'SA3Q::w reads what it names otherwise, through `p2`, which subsets `p1`'],
+      // Read below as one of w's p1s (instance3-pass S2), p2 is read otherwise in w, which the satisfier's own test now finds.
+      ['SA3', 'part p1 : T0; part p2 :> p1; satisfy RF by p2;', 'SA3::W::«Satisfy»', '`satisfy RF by p2` in SA3::W is read at SA3::W\'s own values only, never in each instance of it, and SA3::w reads its satisfier otherwise'],
+      ['SA3Q', 'part p1 : T0; part p2 :> p1; requirement q : RF { subject s = p2; }', 'SA3Q::W::q', '`subject s = p2` in SA3Q::W::q is read at SA3Q::W\'s own values only, never in each instance of it, and SA3Q::w reads what it names otherwise'],
     ] as const) {
       const { model: x, report } = await loadModelText(`package ${name} { ${T0} ${RF} part def W { ${W} } part w : W { ${p50} } }`, {
         fileName: `${name}.sysml`,
@@ -6070,8 +6085,8 @@ describe('a value, a reference and a binding that equate two parts or structured
       expect(report.diagnostics.filter((d) => d.severity !== 'info').map((d) => d.message), op).toEqual(op === '<=' ? [] : ['Constraint violated: s.load >= 5.0']);
     }
     const { model: plain } = await loadModelText(`package IQ { ${T0} ${RF('<=')} ${W} satisfy RF by w.p1; }`);
-    // w's own p1 abstains with the component (round 3): the satisfier the instance redefines itself is read through p1.
-    expect(check(plain!, 'IQ::RF::«ConstraintUsage»').instances!.map((i) => i.result)).toEqual(['unknown']);
+    // w's own p1 abstained with the component (round 3); beside a p2 that is p1 again (instance3-pass S2) it is w's 50.
+    expect(check(plain!, 'IQ::RF::«ConstraintUsage»').instances!.map((i) => i.result)).toEqual(['violated']);
     // An asserted equation that reads through p2 gives what else it names w's 50 (decision 14): W's `x == p2.load`
     // and a package's `y == w.p2.load` made `w.x` and `y` read W's own p2 (1) on all four surfaces, `<= 5.0` T and
     // `>= 5.0` F. So through a reference W's sub values with p1 (`x == r.load`).

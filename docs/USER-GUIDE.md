@@ -1667,7 +1667,20 @@ one of w's, so each row read through p2 — W's own `constraint c { p2.load <=
 binding, an asserted equation (`x == p2.load`) or a further subsetting reads
 through it — is *could not be evaluated*, in a sentence that names p2, the
 element whose own p1 it is read through and w, and `bounds` claims no bound of
-a measure read so — a limit of this tool. So is a relation of p2's type read
+a measure read so — a limit of this tool. Except where p2 subsets p1 alone and is
+p1 again under another name: of p1's kind, typed by nothing p1 is not (`part p2 : T0
+:> p1;` over `part p1 : T0;`, not a `part p2 : T1 :> p1;` whose T1 holds features of
+its own), saying nothing of its own, neither a `ref` nor an attribute, with nothing
+else redefining or subsetting either and no binding end or asserted equation of the
+model naming p2 — and every context that reads p1 otherwise redefines it (w's `part
+:>> p1 { … }`, or a specialisation's). There each name read below p2 is read, in each
+such context, as one of that context's p1s, on every surface and in `bounds`:
+`w.p2.load` is w's p1's 50, `w0.p2.load` (a `w0 : W` that changes nothing) W's own 1,
+`w.p1.load` w's 50, and W's own `c` reads W's own values (*satisfied*) beside a row
+of its own in w (*violated*). A reading of p2 itself is *could not be evaluated*:
+a package's `satisfy R by w.p2`, a reference or a subject's value `= p2` as above,
+and a `satisfy R by p2` or `subject s = p2` W writes in the sentence of a satisfier
+w reads otherwise. So is a relation of p2's type read
 in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
 W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
 nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
@@ -1715,10 +1728,14 @@ whether or not `p2` is a `ref`, never forgiven by `--allow-inconclusive`. The
 usages and rows that read through a `::>` are withdrawn with those that read through
 a `:>`. One that declares a type (`ref part p2 : T0 ::> p1;`) is read as its type has
 it, or abstains under the subsetting sentence above where an instance reads `p1` otherwise.
-An `assert` read through such a usage is read again in each instance that reads the
-subsetted feature otherwise, the usage read as one of what that feature is there: W's
+An `assert` read below a p2 that is p1 again (above) is read as any relation is: W's
 `assert constraint a { p2.load <= 5.0 }` beside w's `part :>> p1 { attribute :>> load =
-50.0; }` files the row `W::a in w`, read as `p1.load <= 5.0` in w, *violated* on the
+50.0; }` is *satisfied* at W's own values and *violated* in its row in w, and `verify
+--engine smt` reports `verification/inconsistent-axioms` on every row of the file.
+Any other `assert` read through such a usage is read again in each instance that reads the
+subsetted feature otherwise, the usage read as one of what that feature is there: the same
+`a` over `part p2 : T1 :> p1;`, whose T1 holds a feature of its own, files the row `W::a
+in w`, read as `p1.load <= 5.0` in w, *violated* on the
 check and the numeric surface (`sysml-check --strict` fails, in a sentence that says p2
 subsets p1), and `verify --engine smt` reports `verification/inconsistent-axioms` on every
 row of the file: the model contradicts itself in w. W's own row of `a` is *could not be
