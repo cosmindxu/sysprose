@@ -43,21 +43,21 @@ maintainer says `awaits user decision U<n>` and names the question.
       % 4.0 >= 2.5`) or reads only in part, which leaves the whole file undecided on the literal
       engine although SMT decides (the `unread-assert` fence; probe v2-refused-axiom-inst-ok); `x ==
       L` with L an unplaceable outer name (lex-lr1 Q::c, topT, topF read `?`). Done when those read
-      their ref or are ruled permanent. Left, by decision 1: SMT reports `inconsistent-axioms`
-      file-wide (g5, g4, a1, k2 on SMT), the defined reading of a model that contradicts itself. The
+      their ref or are ruled permanent. Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)' item (6)): SMT reporting `inconsistent-axioms` file-wide (g5, g4, a1, k2 on SMT) in a model that contradicts itself (decision 1). The
       numeric surface's 'did not converge' wording for paired equations: plan step 6.
       [contradictory-models S1, S3, review; instance2-pass S4]
 - [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.**
-      contracts no longer says "prose only" for R1::R, R1::r and RU::r: it names the asserted body
-      as a fact of the model, not a clause (wording-pass S1; USER-GUIDE status-column paragraph
-      reworded). R1::r already files a no-formal-clause row on obligations and verify, with a
-      sentence naming the assert. Still open: the definition R1::R and a requirement usage whose
-      only body is its own assert (RU::r: `requirement r { subject s : P = x; assert constraint ca {
-      s.L == 50.0 } }`) file no requirement row, because obligations.ts adds the asserting owner to
-      withClause (:619/:655). Filing one makes `verify` exit 2 where a model whose other obligations
-      all discharge exits 0 today, and the origin is marked UNCLEAR: it is a policy decision (is an
-      assert-only requirement a requirement with no formal clause, like a prose-only one?), so it
-      awaits the maintainer. [wording-pass S1]
+      Ruling made 2026-11-05 (maintainer): file a requirement row whose verdict is the assert's own,
+      so contracts and obligations agree on the clause count. contracts no longer says "prose only"
+      for R1::R, R1::r and RU::r: it names the asserted body as a fact of the model, not a clause
+      (wording-pass S1; USER-GUIDE status-column paragraph reworded). R1::r already files a
+      no-formal-clause row on obligations and verify, with a sentence naming the assert. Left to
+      build: the definition R1::R and a requirement usage whose only body is its own assert (RU::r:
+      `requirement r { subject s : P = x; assert constraint ca { s.L == 50.0 } }`) file no
+      requirement row, because obligations.ts adds the asserting owner to withClause (:619/:655);
+      file one with the assert's verdict (`verify` then exits 2 where such a model exits 0 today),
+      make contracts and obligations agree on the clause count, fix `emptyClauseLine`
+      (scripts/sysprose.ts) and the USER-GUIDE paragraph. [wording-pass S1]
 - [ ] **Narrow the abstention over two disagreeing asserted equations (optional).** Since
       instance2-pass S2 (contradicted-pair-meet), a pair that meets in a usage taints that instance
       alone, and a usage that subsets or redefines it: one equation in P and one in `part p : P { …
@@ -80,6 +80,10 @@ maintainer says `awaits user decision U<n>` and names the question.
       A pair on the two ends of a binding met in a usage (c6-use) now reads p2.L; one filed at P
       beside the larger set at a specialisation P2 (G2) still taints every P. [contradictory-models
       S3]
+      Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
+      item (6)): a pair made to agree by a usage's `:>>` (the pair that meets in the owner), and the
+      breadth of FMI `start` (readsContradictedDefinition stays feature-wide). Left: the
+      unit-agreement part and the shapes above.
 - [ ] **Read a usage that subsets a feature an instance reads otherwise in that instance.** Since
       subsetting-pass, every row read through W's `part p2 :> p1;` abstains wherever any context of
       W reads p1 otherwise (`subsettingOtherwise`, `subsettingTaint` in
@@ -123,38 +127,29 @@ maintainer says `awaits user decision U<n>` and names the question.
       the path `q.p1`, so it over-abstains where only an unrelated Q instance changes p1; running it
       in W is a verdict-moving step (generator with a hand oracle first). Only a path with a `.` is
       kept; `Q::p1` is not. [subsetting-pass S1 review]
-- [ ] **Run the palette's solver checks in the page on the hosted site too (optional).** Since N6 S4
-      the dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and
-      `Cross-Origin-Embedder-Policy: require-corp` (`SYSPROSE_NO_ISOLATION=1` turns them off for
-      local Google Drive testing), and the palette's five solver checks run z3 in the page there and
-      land in the Checks tab. The GitHub Pages site cannot send the headers and decision U14 ruled
-      out a service worker, so on it they keep `not here` with the copyable command. Done only by
-      moving the model site to a host that sends the headers, which would break the Google Drive
-      sign-in popup and Picker iframe there too. Awaits user decision U14 (host): whether in-page z3
-      on the hosted site is worth that cost. [N6 S4]
-      DECIDED 2026-10-23 (U14): decide after Drive (U16); until then the hosted site keeps `not
-      here` with the copyable command.
 - [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
-      checks in the page behind a queue and a mutex. Left: Cancel drops the answer but cannot stop
-      z3, so the check ends at its own time budget and a Run started meanwhile queues behind it; a
-      model edit during a run can give a torn read across awaits (the result lands against the
-      click's revision and shows stale; documented, not snapshotted); a z3 module that dies in the
-      page is unverified in a real browser (the lock is per module since z3 5.3.1); an in-page
-      check keeps no evidence record (`verify --record` is terminal-only); the encoding cost
+      checks in the page behind a queue and a mutex. Left: a model edit during a run can give a torn
+      read across awaits (the result lands against the click's revision and shows stale; documented,
+      not snapshotted), which is the open fix (a revision check); a z3 module that dies in the page
+      is unverified in a real browser (the lock is per module since z3 5.3.1); the encoding cost
       (`obligationsOf`, script building, `resolveFreeFeatures`) runs on the page thread and is not
       measured on v9, with no long-task guard over solver checks; the `bounds` check's degraded path
       has no test of its own; and the isolated E2E fails if the run sets `SYSPROSE_NO_ISOLATION=1`.
-      [N6 S4, review]
+      Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
+      item (6)): Cancel drops the answer but cannot stop z3 until a safe interrupt is proven (the
+      check ends at its own time budget and a Run started meanwhile queues behind it), and an
+      in-page evidence record (`verify --record` stays terminal-only). [N6 S4, review]
 - [ ] **Move the first Apply's parse off the page (P3, the rest).** N6 S5 builds the Chevrotain
       parser while the page is idle after the Text view opens, so the first Apply no longer pays the
-      ~1.3 s build; the parse itself is still on the page and synchronous (`applyText`,
-      `typedTextFirst`). Left: a worker parse needs an Apply that is in flight (the buffer edited
-      during the parse, Undo and carried ids across the wait, the `ParseResult` rebuilt on the page,
-      a page fallback); callers that parse before the Text view has been opened still pay the build
-      at their click (opening a `.sysml` file, and the Drive guard's `typedTextFault` before the
-      Text view mounted), and would need a second trigger such as the Open menu; and the warm-up is
-      best-effort, covered only by a unit test with injected dependencies, with no E2E that the
-      stall happens once. [N6 S5, `docs/UI-ROADMAP.md` P3]
+      ~1.3 s build; the parse itself stays on the page and synchronous (`applyText`,
+      `typedTextFirst`). Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines
+      and Simulate)' item (6)): moving the parse into a worker (the gain is 4-9 ms warm against five
+      new ways for the page to differ from its text) and the parser build itself. Left: callers that
+      parse before the Text view has been opened still pay the build at their click (opening a
+      `.sysml` file, and the Drive guard's `typedTextFault` before the Text view mounted); the
+      warm-up needs a second trigger on the Open menu, the file chooser and the text buffer paths,
+      and it is best-effort, covered only by a unit test with injected dependencies, with no E2E
+      that the stall happens once. [N6 S5, `docs/UI-ROADMAP.md` P3]
 - [ ] **Make the frozen column-header strip read at the whole v9 Fit.** Since N6 S1 a layered
       General view's column headers are a frozen strip along the canvas top, clipped to each column
       and clamped to its piece, with the label at a legible size at any zoom, and Fit keeps the
@@ -185,12 +180,10 @@ false verdicts the review of 2026-10-14 found in the per-instance code itself fo
 headings.
 
 - [ ] **Read a local equation where a binding gives its other side a value (PA, PA4, PA2, PA0).**
-      Awaits a ruling. Unchanged on e2d104d: `P::qa in p2` reads ?/-/?/- (ref F), P's own `qa` reads
-      T/-/?/- (the numeric surface abstains over the bound M), `top2` reads T/X/T/X, and the `#bind`
-      row F/-/F/-. Reading qa at p2 as F takes M as the binding's 9, while the `#bind` row F takes M
-      as the equation's 2. The model states both (A.5, U11: all abstain), so deciding it files two F
-      rows that claim two values for M. Rule either that the ref of `qa in p2` is ? (A.5, a pin
-      change), or that a binding's `=` value is M's value there and the equation a check. Probe:
+      Ruling made 2026-11-05 (maintainer): `qa in p2` reads UNKNOWN (A.5); P's own `qa` row stays as
+      it is (checked sound, 'defines M = 2', the same convention as PIN3/PIN5); PA2 and PA0 are not
+      pinned probes. Left to build, two pin changes and one sentence: change the ref of `qa in p2`
+      from F to ? on h5-pina and h5-pina4, and add the USER-GUIDE sentence that says so. Probe:
       reads-pass-scratch/pa4.sysml. [O9 S2, default-stands S2, reads-pass]
 - [ ] **Read a satisfaction, a subject or a reference a definition writes in each instance of it.**
       Since per-instance-rest S1 these are read at the values of the element they are written in,
@@ -216,6 +209,11 @@ headings.
       reference redefinition read at the redefined value, or the walk reading such a copy as what
       the reference it copies names. Done when sd0, sbj0, SM1, cown2, RC7, VR1 and RBB4K read F for
       w on all four surfaces. [per-instance-rest S1]
+      Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
+      item (6)): a call as a part's value (h5-ppcall, h5-r8expr; 219 item 2), the T side of a
+      definition's own row (only F can be lifted; a finite list of instances cannot prove 'every
+      W'), chains past the cap or cyclic ones, groups past the instance cap, a type-narrowing
+      redefinition with its own value. The rest above stays open.
 - [ ] **Read what two steps of standing-for, a call, or a second subject would decide.** All sound,
       all weaker: (1) a shared-usage (group) row read through two steps of standing-for (a reference
       to a reference, or to an equated part, written in the usage's definition) abstains with "this
@@ -227,6 +225,8 @@ headings.
       a part or a structured value; (3) a `satisfy R by p1` beside `requirement r1 : R { subject s
       = p1; }`, where both subjects stand for one instance: r1's literal and SMT rows abstain with
       "the numeric surface never gathered this relation" (SAT2). [O9 S1]
+      Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
+      item (6)): (2), a call as a part's value; (1) and (3) stay open.
 - [ ] **Name an unnamed nested redefinition's context row alike on every surface.** A context that
       is an unnamed redefinition is filed by element id (`... in q::«PartUsage»`) on the check and
       numeric surfaces and by instance path (`q::p`, `q::r`) on the literal and SMT engines (RF,
@@ -341,19 +341,6 @@ headings.
       Since default-stands S2: item (4)'s '(which keeps its reading)' is obsolete: an untyped
       asserted equation over a default is checked against it, and the lexical reading also reads a
       default an assert names as its value (LP1, SLD, SLO, SLP).
-- [ ] **Solve the plain equations of a design component jointly over all roots (optional).**
-      Since solver2-pass S5 a component whose affine equations (then those one to one in what is
-      left)
-      fix every feature alone is read at that point, in every order, the curved equations judged
-      there
-      (`x * x == 4.0` beside `x == 2.0`: both imposed; beside `x == 5.0`: disagreeing; `a + b ==
-      4.0`,
-      `a - b == 0.0`, `z == a * a`: k F). Left: a component the non-curved equations do not fix
-      (`x *
-      x == 4.0` beside `x <= 0.0`, `x * y == 4.0` beside `x == y`), and a curved equation of the
-      model's own beside a plain constraint that fixes the point (CV3), withheld as before.
-      Recommended to rule permanent (design-solver-entries (c) 1). Sound as is, only weaker.
-      [text-order S1 review]
 - [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The
       guide says 'bar two cases'. Each abstains in one text order and reads a value in the other,
       never a different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
@@ -459,26 +446,6 @@ headings.
       one order and T in the other (s3/Q2x156f.sysml, Q2x156r.sysml); (q) an affine core past 32
       features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) the
       286(a) digits cases (s5/A6x086f, A5x092f, A5x240f). [numeric2-pass; solver2-pass]
-- [ ] **Read `assert not constraint c { ... }` as the negation.** Since numeric2 S1 a negated
-      clause (also `require not`, `assume not`) whose body is one expression is read as the plain
-      clause over `not (body)` on every surface, the same clause `assert constraint c { not (...) }`
-      writes, and the save writes it back as `assert not constraint c { body }` (the element keeps
-      `negated`; pinned neg-assert-h1/-rev, h2/-rev, family; hand oracle 280 models x both text
-      orders: 0 wrong decided cells, 0 differences from the workaround spelling). Since solver2 S4
-      the
-      body may also hold comment, `doc` and attribute members (an attribute with a `=` value or
-      none,
-      typed at most): they are mapped as the plain clause maps them and only the expression is
-      negated, so `assert not constraint c { attribute y = 2.0; load > y }` reads as `assert
-      constraint c { attribute y = 2.0; not (load > y) }` (pinned neg-assert-members/-rev; hand
-      oracle
-      404 models over both text orders: 0 wrong decided cells, 0 differences from the workaround
-      spelling). Still refused: a bodiless clause, a specialising one, `assert not requirement`,
-      and a
-      members body holding a nested clause, part, calc or `default` member (ruled permanent: see
-      design-solver-entries (c) 2-3). [contradictory-models S1 review; fence-assert-not; numeric2
-      S1;
-      solver2-pass S4]
 - [ ] **Give the specialisers of a usage-owned group one canonical order (optional).** The
       group-order fence of fence-readings S1 is a stable sort by usage-ancestor count in
       `contextsUncached`; `specialisersOf` itself and the context-key dedup have no canonical order,
@@ -764,7 +731,7 @@ true values. What follows is what that branch and the review of it left open; en
       (`assertHeldIndex`), the enclosing rule's owner loop (`enclosingAsserts`), the binding route's
       replaceable branch in `heldDefaults`, the guard's `assertedDefault`, `assertDefinitionsAt`,
       `unreadAsserts` from the owner loop, `givenWayCause`'s untyped branch, and `assertedAnswer`
-      over defaults. Remove it unless the soft tag ships. Keep `standingUnderInstance` (the RB5
+      over defaults. The tag is ruled out (190 closed by decision 2026-11-05), so only the removal remains. Keep `standingUnderInstance` (the RB5
       abstention) and the head-slot read (`headSlots` / `definedAgainstHead`): they serve the
       amended rule. Planted bug P5 sits in the dead code and is an equivalent mutant again: move it
       or retire it. [default-stands S1] Name the dead user-facing strings so they go with it:
@@ -809,13 +776,6 @@ true values. What follows is what that branch and the review of it left open; en
       in either workflow repo past this branch until `elements()` reads both, and add a Grid-view
       check to the tutorial re-record decision. Coordinator, cross-repo; Sonnet. [subsetting-pass
       S1]
-- [ ] **Parse a declaration whose user-defined keyword stands without a reserved keyword.** SysML
-      7.27.4 (sysml.txt:10327-10334) allows it for semantic metadata (`#situation def Failure;`,
-      `#situation batteryLow;`); BNF ExtendedDefinition and ExtendedUsage (kebnf:1695-1701) admit it
-      for any metadata, so `#k :>> L = 3;` is a usage redefining L, tagged k. The grammar rejects
-      all three today (mismatched-token / unknown-keyword). It matters only if a tag such as
-      `#provisional` ships, and then it must be read in every `@`, `#` and `about` form.
-      [small-defaults S2]
 - [ ] **Read a bare `metadata T;` as typed by T.** Per BNF `MetadataUsageDeclaration`, `metadata T;`
       and `metadata T {...}` are an unnamed usage typed by T. This tool reads `metadata N {...}` as
       a usage NAMED N with no type (requirements.ts RM_METADATA_NAME, the verification tests and the
@@ -853,7 +813,7 @@ true values. What follows is what that branch and the review of it left open; en
       anyPackage: true })` because the definition is not in SysproseVerification yet. When the
       vocabulary commit ships it, add FAILURE_MODE_QUALIFIED_NAME, ask for it and drop the option;
       the campaign test then declares the definition in SysproseVerification and its "model's own
-      definition is counted" sentence changes. [small-defaults S3]
+      definition is counted" sentence changes. [small-defaults S3] Kept held 2026-11-05 until the SysproseVerification vocabulary commit ships (blocked on that commit, not on a decision).
 - [ ] **Report an ambiguous keyword as ambiguous (optional).** `statement-kind.ts` reads `#prose`
       and `#prompt` from the spelling alone, so a foreign `<prose>` is still read as a statement
       kind: needs its own decision. (The two-imports ambiguity of a bare keyword is reported:
@@ -866,16 +826,6 @@ true values. What follows is what that branch and the review of it left open; en
       #failureMode or #exceptional makes 'found none of' read as a plain absence. Probe:
       subsetting-pass-scratch/wbr/kw2.sysml via `scripts/sysprose.ts contracts --keywords`.
       [small-defaults S3; subsetting-pass S1]
-- [ ] **Hold: an opt-in tag that lets an assertion adjust a written number (for example
-      `#provisional`).** DECIDED to hold (analysis Q2): a soft value is written as a value until a
-      model needs the tag, as `#Observable` was held
-      (`src/semantics/verification-vocabulary.ts:17-21`). If built: metadata cannot change a model's
-      meaning in the standard (KerML 7.4.13), so a tool without the tag reads the value as hard; it
-      must (M1-M5) gate both index builders and the binding route, be inherited by a redefinition
-      that does not repeat it with an explicit opt-out (Q6 = inherited), be identified by its
-      package (ask `hasKeyword` for its qualified name, as `#exceptional` is since small-defaults
-      S3), and be read in every `@`, `#` and `about` form. v9 and the six Sysprose examples use no
-      `default`. Opus; about 45M. [soft-hard analysis Q2, Q3, Q6]
 - [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations --element`
       (and the app's scoped checks) filters by the relation's own element only (`scopeFilter` in
       `obligations.ts`), so a relation read per instance in the scoped element lists none of its
@@ -917,14 +867,15 @@ true values. What follows is what that branch and the review of it left open; en
       tasks stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root
       in a single pass: 40 to 90 ms at load about 4, up to about 180 ms at load 25. The edit's own
       task (the undo snapshot `model.toJSONWhere` plus the SDK update) takes 54 to 109 ms warm, up
-      to about 296 ms at load 25, and 238 ms on the session's first edit when cold. The last step
-      (the results set plus the synchronous `buildDiagram`) takes 90 to 156 ms at load 25. Fix: a
-      step-wise serializer, or moving the undo snapshot and the diagram build apart. Not done by
-      design: incremental validation (unsound for cross-element rules) and the text in a worker (a
-      model transfer per edit costs about what the write does). Done when no task of an edit and its
-      recompute is over 200 ms at load 25. The `palette-checks` step 4 bound (200 ms) has a thin
-      margin on slower CI cores: if the first CI run is red, make the assertion relative. [ui-small
-      S4, review 2026-10-14 D-3]
+      to about 296 ms at load 25. The last step (the results set plus the synchronous
+      `buildDiagram`) takes 90 to 156 ms at load 25. Left: a step-wise serializer, an idle-time undo
+      snapshot, and the diagram build as a separate task. Ruled permanent 2026-11-05 (the rollup
+      'Abstentions left (parallel machines and Simulate)' item (6)): incremental validation (unsound
+      for cross-element rules), a worker serializer (a model transfer per edit costs about what the
+      write does), and the cold first edit (238 ms). Done when no task of an edit and its recompute
+      is over 200 ms at load 25. The `palette-checks` step 4 bound (200 ms) has a thin margin on
+      slower CI cores: if the first CI run is red, make the assertion relative. [ui-small S4, review
+      2026-10-14 D-3]
 - [ ] **List what a load binds later in the order a terminal binds it, on the page and on every peer
       of a room.** Done by fence-coremodel, fence-order and core-pass: where-used, the impact
       closure, SDK traverse, REST relationships, the impact graph and the specialisers a finding
@@ -1162,6 +1113,42 @@ true values. What follows is what that branch and the review of it left open; en
       number has no unit to compare in, so a violated row would claim a comparison it refuses to make;
       the literal engine's T on UB6::cT is right and SMT's X is its SI reading; W4o was fixed by
       numeric2 S1). [round 9]
+      (6) Closed by decision 2026-11-05 (maintainer: "all of them"; all reversible), the shapes
+      below ruled permanent (abstention kept by decision; reverse one by re-adding it to its entry):
+      (a) 228 'Narrow the literal engine's contradiction reach...': the SMT surface reading
+      `inconsistent-axioms` file-wide in a model that contradicts itself (decision 1); the other
+      residual shapes stay open. (b) 176 'Read a satisfaction, a subject or a reference a definition
+      writes in each instance of it.': a call as a part's value (h5-ppcall, h5-r8expr; 219 item 2),
+      the T side of a definition's own row (only F can be lifted; a finite list of instances cannot
+      prove 'every W'), chains past the cap or cyclic ones, groups past the instance cap, a
+      type-narrowing redefinition with its own value; the buildable rest stays open. (c) 219 'Read
+      what two steps of standing-for, a call, or a second subject would decide.': a call as a part's
+      value; the rest stays open. (d) 233 'Narrow the abstention over two disagreeing asserted
+      equations (optional).': a pair made to agree by a usage's `:>>` (the pair that meets in the
+      owner), and the breadth of FMI `start` (readsContradictedDefinition stays feature-wide); the
+      unit-agreement part stays open. (e) 255 'Solve the plain equations of a design component
+      jointly over all roots (optional).': the general all-roots solve; entry closed. (f) 262 'Read
+      `assert not constraint c { ... }` as the negation.': the refused shapes (a bodiless clause, a
+      specialising one, `assert not requirement`, and a members body holding a nested clause, part,
+      calc or `default` member); entry closed. (g) 'Move the first Apply's parse off the page (P3,
+      the rest).': moving the parse into a worker (the gain is 4-9 ms warm against five new ways for
+      the page to differ from its text) and the parser build itself; the entry stays for the warm-up
+      on the Open menu, file chooser and text buffer paths. (h) 'Divide the text step and the edit's
+      own task on the drone-swarm v9 model.': incremental validation, a worker serializer, the cold
+      first edit (238 ms); the entry stays for the step-wise serializer, the idle-time undo snapshot
+      and a separate diagram task. (i) 'Stop an in-page solver check from stalling or tearing the
+      page.': Cancel cannot stop z3 until a safe interrupt is proven, and an in-page evidence
+      record; the entry stays for the revision-check fix.
+      (j) 190 'Hold: an opt-in tag that lets an assertion adjust a written number (for example
+      `#provisional`).': the tag will not ship; entry closed (reversible; a model that needs a soft value
+      reopens it).
+      (k) 199 'Parse a declaration whose user-defined keyword stands without a reserved keyword.': the
+      grammar keeps rejecting these forms with its current error; entry closed (reversible; reopen if a
+      tag ever ships; the text-pass branch may still change the parser, the coordinator reconciles).
+      (l) 5 'Run the palette's solver checks in the page on the hosted site too (optional).': the
+      hosted site keeps `not here` with the copyable command and in-page z3 stays on the dev and
+      preview servers; entry closed (reversible; a host that sends the isolation headers reopens it).
+      [decision 2026-11-05]
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same

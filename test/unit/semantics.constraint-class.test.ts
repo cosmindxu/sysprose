@@ -999,7 +999,8 @@ describe('the defect sidecar names real entries and the register reads it', () =
 
   it('attributes the open wrong answers the plan names to the classes the plan names', () => {
     const by = (id: string) => sidecar.defects.find((d) => d.id === id)!;
-    expect(by('D-assert-not')).toMatchObject({ classes: ['asserted-fact'], kind: 'wrong-verdict' });
+    // the negated-assert refusals were ruled permanent on 2026-11-05: the defect is resolved, not open
+    expect(sidecar.defects.some((d) => d.id === 'D-assert-not')).toBe(false);
     // gate 4 asserts the divisor guard since the review of classes-2: the defect that capped nra-div there is closed
     expect(sidecar.defects.some((d) => d.id === 'D-gate4-guard')).toBe(false);
     expect(by('D-inconsistent-axioms')).toMatchObject({ classes: ['bind-equality', 'per-instance'], kind: 'wrong-statement' });

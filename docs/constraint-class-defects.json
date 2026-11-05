@@ -2,15 +2,6 @@
   "version": 1,
   "defects": [
     {
-      "id": "D-assert-not",
-      "todo": "Read `assert not constraint c { ... }` as the negation.",
-      "classes": [
-        "asserted-fact"
-      ],
-      "kind": "wrong-verdict",
-      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); a comment, `doc` or attribute member with a `=` value or none beside the expression is mapped as the plain clause maps it and only the expression is negated (solver2 S4); the shapes with no expression to negate or another member (a constraint named without a body, a specialised one, `assert not requirement`, a body of members only, a nested clause, part or calc, a `default` or `:=` member) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read."
-    },
-    {
       "id": "D-inconsistent-axioms",
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself.",
       "classes": [
@@ -121,6 +112,10 @@
     {
       "todo": "File a violated row for the contradiction SMT reports in UB6 and W4o, so the literal engine can seed from it.",
       "by": "closed by a documented decision in round 9: UB6 is ruled permanent; see the TODO rollup 'parallel machines and Simulate' item (5)"
+    },
+    {
+      "todo": "Read `assert not constraint c { ... }` as the negation.",
+      "by": "decision 2026-11-05"
     }
   ],
   "pending": [

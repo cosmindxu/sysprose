@@ -427,15 +427,6 @@ export const CLASS_FACTS: ClassFacts = {
   "defects": [
     {
       "classes": [
-        "asserted-fact"
-      ],
-      "id": "D-assert-not",
-      "kind": "wrong-verdict",
-      "note": "Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); a comment, `doc` or attribute member with a `=` value or none beside the expression is mapped as the plain clause maps it and only the expression is negated (solver2 S4); the shapes with no expression to negate or another member (a constraint named without a body, a specialised one, `assert not requirement`, a body of members only, a nested clause, part or calc, a `default` or `:=` member) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.",
-      "todo": "Read `assert not constraint c { ... }` as the negation."
-    },
-    {
-      "classes": [
         "bind-equality",
         "per-instance"
       ],
@@ -538,7 +529,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "10df570f89f44528d7fb386f234fd7678702e83207b33eb735500c3244cfc818",
+    "defects": "8e6d30cc5af5f7182c9852f271db34af6b1134a0b22432f4dad56c8477d9c373",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
     "probes": "1bcd105006400cfc75bc2012a20e2d4a25f1ba3151e339a7f8baf8bd9d4a9a86"
   },

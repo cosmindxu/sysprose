@@ -213,8 +213,6 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 
 - **Encodes.** `assert constraint`.
 - **Level of `asserted-fact`.** `experimental` (first unmet: a decided golden row, have 0).
-- **Open defects.**
-  - `D-assert-not` (wrong-verdict): Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); a comment, `doc` or attribute member with a `=` value or none beside the expression is mapped as the plain clause maps it and only the expression is negated (solver2 S4); the shapes with no expression to negate or another member (a constraint named without a body, a specialised one, `assert not requirement`, a body of members only, a nested clause, part or calc, a `default` or `:=` member) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”
 
