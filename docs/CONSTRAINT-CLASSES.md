@@ -57,19 +57,19 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 483 | 72 | 2 | 6 | 578 (253) | 0 | none | `differential-tested` |
+| `lra` | 483 | 72 | 2 | 6 | 588 (259) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `nra-div/pinned` | 17 | 9 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `nra-div/pinned` | 17 | 9 | 1 | 1 | 2 (2) | 0 | none | `tested` |
 | `units` | 98 | 40 | 2 | 5 | 27 (14) | 0 | none | `differential-tested` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `stated-value` | 311 | 78 | 1 | 7 | 573 (251) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 222 (132) | 0 | none | `experimental` |
-| `asserted-fact` | 27 | 8 | 1 | 0 | 15 (7) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 318 (207) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 277 (129) | 0 | none | `experimental` |
+| `asserted-fact` | 27 | 8 | 1 | 0 | 23 (11) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 326 (211) | 0 | none | `differential-tested` |
+| `per-instance` | 1 | 1 | 1 | 0 | 281 (133) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 5 | 4 | 2 | — | — | — | none | `fenced` |
@@ -141,7 +141,7 @@ What z3 is asked: the `set-logic` the relation’s own bytes need. A relation th
 
 - **Encodes.** `(/ a b)` with a symbol-carrying divisor, plus the guard `(distinct b 0.0)` asserted as `side:`.
 - **Logic.** `QF_NRA`.
-- **Level of `nra-div/pinned`.** `tested` (first unmet: 20 four-surface rows agree, have 0).
+- **Level of `nra-div/pinned`.** `tested` (first unmet: 20 four-surface rows agree, have 2).
 - **Limits.**
   - The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0 when the divisor is pinned to zero. Pinned by `test/integration/smt-z3.integration.test.ts`: “does not call a division by a zero value a proof, and says so in the class (CC-46)”.
   - Division in the goal surfaces as `vacuous`, never as `proved`, when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`. Pinned by `test/integration/smt-z3.integration.test.ts`: “does not call a division by a zero value a proof, and says so in the class (CC-46)”.
@@ -214,7 +214,7 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 - **Encodes.** `assert constraint`.
 - **Level of `asserted-fact`.** `experimental` (first unmet: a decided golden row, have 0).
 - **Open defects.**
-  - `D-assert-not` (wrong-verdict): Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); the shapes with no expression to negate (a constraint named without a body, a specialised one, `assert not requirement`, a body of members) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.
+  - `D-assert-not` (wrong-verdict): Before the fence a negated assert was read as a plain constraint and decided T on all four surfaces. A negated clause whose body is one expression is now read as the plain clause over `not (body)` on every surface (numeric2 S1); a comment, `doc` or attribute member with a `=` value or none beside the expression is mapped as the plain clause maps it and only the expression is negated (solver2 S4); the shapes with no expression to negate or another member (a constraint named without a body, a specialised one, `assert not requirement`, a body of members only, a nested clause, part or calc, a `default` or `:=` member) are refused at load (mapper/negated-assert-unread) and no surface files a row for them, so no wrong verdict is reachable; the cap stays until those are read.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”
 

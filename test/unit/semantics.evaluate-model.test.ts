@@ -13,6 +13,7 @@ import { featureIdsFor, unreadValuesOf, valueAtPath, valueKey, withEveryInstance
 import { idScopeFor } from '../../src/semantics/relations';
 import {
   DefiningEquations,
+  assertConjuncts,
   assertDefinitionsIn,
   assertHeldInSome,
   bindingCapOf,
@@ -29,6 +30,7 @@ import {
   defaultGivesWaySomewhere,
   defaultStandsIn,
   equatedPartsMeasureRefusal,
+  equationsOf,
   hasUserBindings,
   instanceGroups,
   instanceIndexSeam,
@@ -38,6 +40,7 @@ import {
   lookupsHold,
   lookupsOf,
   lookupsWhile,
+  namesDefinedBy,
   pastCapEnd,
   readsContradictedDefinition,
   readsOtherwise,
@@ -686,6 +689,42 @@ describe('semantics — a valueless feature fixed by an equation beside it (CV-1
     expect(equation.message).toBe('Constraint satisfied: defines watched = 0.78216');
     const target = checks.find((c) => c.expression === 'watched >= 0.9')!;
     expect(target.result).toBe('violated');
+  });
+
+  // TODO 249: an asserted conjunction reads as its conjuncts written as asserts of their own; its own row is the
+  // conjunction, judged whole at the value its equation gives (`L == 50.0 and L >= 60.0` violated, never satisfied).
+  it('reads each conjunct of an asserted conjunction as the assert it would be written alone', () => {
+    const at = (body: string, kw = 'assert constraint') => {
+      const m = parseModel(`package A { constraint def Cd { attribute x; x >= 0.0 } attribute L; attribute M; attribute s; ${kw} ca { ${body} } }`).model;
+      return { m, ca: m.all().find((e) => e.declaredName === 'ca')! };
+    };
+    const texts = (body: string, kw?: string) => {
+      const { m, ca } = at(body, kw);
+      return assertConjuncts(m, ca).map((p) => p.text);
+    };
+    expect(texts('L == 50.0 and L >= 0.0')).toEqual(['L == 50.0', 'L >= 0.0']);
+    expect(texts('(L == 50.0 and M == L * 2.0) and (L >= 0.0)')).toEqual(['L == 50.0', 'M == L * 2.0', 'L >= 0.0']);
+    expect(texts('L == 50.0 [kg] and s == "a and b"')).toEqual(['L == 50.0 [kg]', 's == "a and b"']);
+    // Never through another connective, and never a body a definition types, nor a clause that is no assert.
+    expect(texts('L == 50.0 or L >= 0.0')).toEqual(['L == 50.0 or L >= 0.0']);
+    expect(texts('not (L == 50.0 and L >= 0.0)')).toEqual(['not (L == 50.0 and L >= 0.0)']);
+    expect(texts('L == 50.0 and L >= 0.0', 'assert constraint ca : Cd')).toEqual([]);
+    expect(texts('L == 50.0 and L >= 0.0', 'require constraint')).toEqual([]);
+    const { m, ca } = at('L == 50.0 and L >= 0.0 and M == L * 2.0');
+    expect(equationsOf(m, ca).map((e) => e.part?.index)).toEqual([0, 2]);
+    expect(namesDefinedBy(m, ca)).toEqual(['L', 'M']);
+
+    const read = (body: string) => {
+      const model = parseModel(`package P { attribute L; assert constraint ca { ${body} } constraint t50 { L == 50.0 } constraint t1 { L == 1.0 } }`).model;
+      const by = (rows: ReadonlyArray<{ id: string; result: string }>) => (n: string) => rows.find((r) => r.id === model.all().find((e) => e.declaredName === n)!.id)!.result;
+      return { check: by(checkConstraints(model)), numeric: by(checkConstraintsNumeric(model)) };
+    };
+    for (const surface of Object.values(read('L == 50.0 and L >= 0.0'))) {
+      expect([surface('ca'), surface('t50'), surface('t1')]).toEqual(['satisfied', 'satisfied', 'violated']);
+    }
+    for (const surface of Object.values(read('L == 50.0 and L >= 60.0'))) {
+      expect([surface('ca'), surface('t50'), surface('t1')]).toEqual(['violated', 'satisfied', 'violated']);
+    }
   });
 
   it('answers unknown, not a hang, for two equations that define each other', () => {

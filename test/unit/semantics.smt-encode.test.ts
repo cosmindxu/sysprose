@@ -1539,6 +1539,30 @@ describe('the script shape is the logic line', () => {
     );
   });
 
+  it('writes every read of a fixed Integer as its value, declares it no more, and fixes nothing else', () => {
+    const vars = [v('x'), v('n', { sort: 'Int' }), v('m', { sort: 'Int' }), v('k', { sort: 'Int' })];
+    const term = '(and (< (+ |P::x| (to_real |P::n|)) 1.0) (> (* 2.0 (to_real |P::m|)) (to_real |P::n|)))';
+    const fixed = new Map([
+      ['P::n', -3n],
+      ['P::m', 7n],
+      ['P::x', 2n],
+      ['P::k', 1n],
+    ]);
+    const script = encodeScript({ variables: vars, assertions: [{ kind: 'goal', name: 'g', term }], nonlinear: false, fixedIntegers: fixed });
+    expect(script.text).toContain('(assert (! (and (< (+ |P::x| (- 3.0)) 1.0) (> (* 2.0 7.0) (- 3.0))) :named |goal:g|))');
+    // A Real is never fixed, and neither is a symbol no assertion reads; no constant is defined, so none is
+    // left in the context a later script shares.
+    expect(script.fixed).toEqual(['P::n', 'P::m']);
+    expect(script.symbols).toEqual(['P::x']);
+    expect(script.text).not.toContain('define-fun');
+    expect(script.logic).toBe('QF_LRA');
+    // A symbol read other than through `to_real` keeps every read of it: never half a branch.
+    const bare = '(and (= |P::n| 2) (> (to_real |P::n|) |P::x|))';
+    const half = encodeScript({ variables: vars, assertions: [{ kind: 'goal', name: 'g', term: bare }], nonlinear: false, fixedIntegers: fixed });
+    expect(half.fixed).toEqual([]);
+    expect(half.text).toBe(encodeScript({ variables: vars, assertions: [{ kind: 'goal', name: 'g', term: bare }], nonlinear: false }).text);
+  });
+
   it('CC-04: a name two variables share is typed by the first one, as the script declares it', () => {
     const twin = [v('x'), v('x', { sort: 'Int' })];
     const term = '(< |P::x| 1.0)';

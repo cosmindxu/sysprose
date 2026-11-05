@@ -3095,18 +3095,21 @@ holds along the freedom and stays `satisfied`; a PLAIN constraint (no `assert`)
 the solve took as a design equation to fix a value is `satisfied` with
 `imposed: true` and the reason *imposed by the solve* — it holds because the
 solve made it hold, not as a check passed. No design equation turns on the order of the
-text, bar four cases of where the solve starts or of the digits a value is given to (below): the model's own equations are solved first and a check fixes only
+text, bar two cases of the digits a value is given to (below): the model's own equations are solved first and a check fixes only
 what they leave; plain equalities that agree over a value only they fix are all
 imposed; ones that disagree, or an equation that may have more than one root beside a plain
 constraint (a curved one, plain or the model's own — a stated `s = x * x`, an
 assert, a loop of definitions of more than one root such as `x == y * y + 1.0`
 beside `y == 3.0 - x` — or a product of two unknowns the other equations still link: `x * x ==
-4.0` beside `x == -2.0` or `x == 2.0`, or beside `y == x + 1.0` and `y <= 0.0`,
-used or not; the shape is an over-approximation, so an odd power, `x ^ 3.0 == 8.0`, which has one real root, and
+4.0` beside `y == x + 1.0` and `y <= 0.0`, used or not; the shape is an over-approximation, so an odd power, `x ^ 3.0 == 8.0`, which has one real root, and
 a double root, `x * x == 0.0`, are read the same), leave that value withheld — no value, every relation over it
 `unknown` (*… only plain constraints that disagree …*,
 *… one of them that may have more than one root …*, *… the equations over it may leave more than
-one root …*); a lone curved plain constraint is imposed at the root found and an
+one root …*) — unless the equations affine in those features fix every one of them alone: the solve takes that
+point before any equation takes a root, in every order, and judges the others there (`x * x == 4.0` beside
+`x == -2.0` or `x == 2.0`: both imposed; beside `x == 5.0`: disagreeing; the asserted `x == 6.0 / (x + 1.0)`
+beside `x + y == 1.0` and `x - y == -7.0`: all hold at (−3, 4)), save where a curved equation of the model's own
+is beside a plain constraint that fixes the point; a lone curved plain constraint is imposed at the root found and an
 inequality over its value is `unknown`; an equation one to one in the feature it
 fixes (at most one root), with the feature on one side of the equation only (a quotient by a value another
 equation fixes, `x / y == 3.0` beside `y == 2.0` and `x == 6.0`; an exponential) has at
@@ -3117,24 +3120,24 @@ x = 4, and a bisection that closed on it gave 4 where `x == 3.0 * y` written aft
 closes on it to the last digit, a pole it closes on being no root, so `6.0 - 3.0 / (x + 1.0) == 3.0`, root 0 beside the
 pole −1, is read at 0 whether `x == 0.0` is written before it or after it, as are `1.0 / x == 100.0` and
 `10.0 ^ (2.0 * x + 8.0) == 1.0`; the limit of that search: a root in the same gap as its pole between two of
-those points is not found, and the equation alone reads `unknown` in every order, never a value —
-`1.0 / (x - 5.0) == 2.0`, root 5.5, pole 5, between 4 and 8; `3.0 / (x + 1.5) == 10.0`; a plain constraint that
+those points is not found unless Newton reaches it from a start it is run again from (`3.0 / (x + 1.5) == 10.0`,
+root −1.2, is reached from −1), and the equation alone reads `unknown` in every order, never a value —
+`1.0 / (x - 5.0) == 2.0`, root 5.5, pole 5, between 4 and 8; a plain constraint that
 states the value supplies it, in either order); the same quotient or exponential set equal to a side that varies with the same
 feature can cross it more than once and is read as if it did (`x == 6.0 / (x +
 1.0)` at 2 and −3, `6.0 / y == 5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1; `0.5 ^ x == x`
 crosses once and is read the same),
 whatever the size of its component (a chain of seventy equations beside `z == x0 * x0`
 over `x0 == 3.0` reads as a short one); and a feature with no value that an `assert` constrains in a
-form the solve does not read (an inequality, a conjunction, a disjunction, a body
+form the solve does not read (an inequality, a conjunct that is none (`M >= L` in `L == 50.0 and M >= L`), a disjunction, a body
 that does not parse) is solved for by no check (`unknown`, *… has no value, and
 an assert constrains it in a form the numeric solve does not read …*): the names
 such a body constrains are those it writes outside its strings and `[unit]`
-literals (the `m` of `4.0 [m]` is a metre). What still turns on the order is where the
-solve starts, and the cases known read an abstention in one order where the other reads a
-value, never a different verdict: a divisor that is zero at the starting guess (`c0 { x / y
-== 3.0 }` and `c2 { w / y == x }` beside `c1 { x >= 0.0 }` over a `y` nothing fixes is not
-converged when `c2` is written first), and two asserted equations that share one of their
-roots (`x == 6.0 / (x + 1.0)` beside `x == -3.0`, in a usage), and a steep one-to-one equation (a quotient whose root is close to its
+literals (the `m` of `4.0 [m]` is a metre). A solve that stops off its equations where one divides by a
+feature it solves for is run again from a fixed list of starts for what the divisor reads (`c0 { x / y
+== 3.0 }` and `c2 { w / y == x }` beside `c1 { x >= 0.0 }` over a `y` nothing fixes impose c0 and c2
+in every order). What still turns on the order is the digits a value is given to, and the cases known read
+an abstention in one order where the other reads a value, never a different verdict: a steep one-to-one equation (a quotient whose root is close to its
 pole) judged at a value that another equation gives to fewer digits than its slope needs: a pin written to ten digits
 (`x == 0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, root 3.0000000012e-06, reads both imposed with the equation first
 and unknown with the pin first, the equation's residual at the pin being over its gate), and a value taken through an affine link, which
@@ -3148,7 +3151,8 @@ took (2, for `c0 { x * x == 4.0 }` written above `c1 { x == -2.0 }`) it stalls b
 witness nor decides anything it searches again from where the equations that are not
 curved put those values (−2, for the pair), the same point in either order of the text,
 and every gate below is run again there. Where no such equation puts a value
-(`x * x == 4.0` beside `x <= 0.0`) it stays undecided, and where they leave it
+(`x * x == 4.0` beside `x <= 0.0`) it stays undecided; where they fix the point alone, a constraint that
+breaks it there (`x >= 0.0` beside the pair) makes the model infeasible; and where they leave it
 open the search is as local as it was: it can find the witness in one order of
 the text and stop short in another, never claim a point that is none. Its point must meet
 every asserted equation, binding and feature value, and every plain equation

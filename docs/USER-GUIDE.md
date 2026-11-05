@@ -330,7 +330,7 @@ instead of a verdict nobody measured.
 | State | States and transitions labelled `trigger [guard] / effect` | What modes does it have, and what moves it between them? | `tb-view-state` |
 | Requirement | Requirements with their satisfy / refine / verify endpoints | Which requirements exist, and what meets them? | `tb-view-requirement` |
 | Tree | Pure containment, one branch at a time: a box that owns more shows **+N**; click it to open that branch (the Explorer opens with it), **−** to close it | What owns what? | `tb-view-tree` |
-| Parametric | Constraint nodes, each showing its expression in a monospace compartment (an unnamed one is headed by the expression alone), and the parameters bound into them. An attribute that states no value beside an asserted equation, `assert constraint { x == … }`, takes the value the equation fixes — Problems reads *Constraint satisfied: defines x = …*, with the unit when the equation derives a dimensioned quantity — so an estimate can be arithmetic over the model's own values rather than a literal, values other asserted equations fix included — the chain is derived link by link with its units. Where a name stands alone in several asserted equations, the first that gives it a value is its definition — those of the `x == …` form are tried first, then the rest, each in the order written — so one that would read a value back into its own derivation, or whose input nothing fixes, is passed over, and while the equations agree the order they are written in does not matter. Where two give it different values (`x == 50.0` beside `x == 60.0`, or beside `x == a * 2.0` with `a = 30.0`), or values this tool cannot compare, no surface that judges a relation reads x — the check, the literal engine and the numeric surface: every relation over it is *could not be evaluated*, the SMT engine's axioms are inconsistent where the model states both, and Problems reports the pair once (see *Two asserted equations that disagree*). A loop of equations is refused, naming every link, and so is a chain nested more than 64 definitions deep: a definition that deep, tried before one that gives a value, is the name's answer, refused, rather than passed over. A constraint beside it reads that quantity: a dimensioned derivation is compared against a unit literal (`x >= 45 [min]`), never as a bare number, while a dimensionless one — like a kinded literal, `limit : ISQ::MassValue = 25.0` — reads a bare literal in the feature's declared unit, for `==` and `!=` exactly as for `<=` and `>=`. Only an asserted equation defines: the same equation as a `require constraint`, a plain `constraint` or a requirement's `require`/`assume` is a check of a value given elsewhere, and with none given it cannot be evaluated (*x has no value anywhere, no asserted equation, and nothing specialises it*); an equation the unit-aware evaluator refuses (two dimensions, an offset scale) defines nothing, and says why — through a chain too, naming the link it refused | Which equations connect which values? | `tb-view-parametric` |
+| Parametric | Constraint nodes, each showing its expression in a monospace compartment (an unnamed one is headed by the expression alone), and the parameters bound into them. An attribute that states no value beside an asserted equation, `assert constraint { x == … }`, takes the value the equation fixes — and so beside an asserted conjunction, which reads as its conjuncts written as asserts of their own (`x == 50.0 and x >= 0.0` as `x == 50.0` and `x >= 0.0`; its own row is the conjunction, judged whole, and reads plain *Constraint satisfied*, with no *defines*) — Problems reads *Constraint satisfied: defines x = …*, with the unit when the equation derives a dimensioned quantity — so an estimate can be arithmetic over the model's own values rather than a literal, values other asserted equations fix included — the chain is derived link by link with its units. Where a name stands alone in several asserted equations, the first that gives it a value is its definition — those of the `x == …` form are tried first, then the rest, each in the order written — so one that would read a value back into its own derivation, or whose input nothing fixes, is passed over, and while the equations agree the order they are written in does not matter. Where two give it different values (`x == 50.0` beside `x == 60.0`, or beside `x == a * 2.0` with `a = 30.0`), or values this tool cannot compare, no surface that judges a relation reads x — the check, the literal engine and the numeric surface: every relation over it is *could not be evaluated*, the SMT engine's axioms are inconsistent where the model states both, and Problems reports the pair once (see *Two asserted equations that disagree*). A loop of equations is refused, naming every link, and so is a chain nested more than 64 definitions deep: a definition that deep, tried before one that gives a value, is the name's answer, refused, rather than passed over. A constraint beside it reads that quantity: a dimensioned derivation is compared against a unit literal (`x >= 45 [min]`), never as a bare number, while a dimensionless one — like a kinded literal, `limit : ISQ::MassValue = 25.0` — reads a bare literal in the feature's declared unit, for `==` and `!=` exactly as for `<=` and `>=`. Only an asserted equation defines: the same equation as a `require constraint`, a plain `constraint` or a requirement's `require`/`assume` is a check of a value given elsewhere, and with none given it cannot be evaluated (*x has no value anywhere, no asserted equation, and nothing specialises it*); an equation the unit-aware evaluator refuses (two dimensions, an offset scale) defines nothing, and says why — through a chain too, naming the link it refused | Which equations connect which values? | `tb-view-parametric` |
 | Case | Use cases and the cases that include them | What is the system for? | `tb-view-case` |
 | Sequence | Lifelines and time-ordered messages, falling back to control flow when the model has no explicit flows | Who talks to whom, in what order? | `tb-view-sequence` |
 | Geometry | One primitive solid per structural part, from `shape` / `position` / `size` / `color` attributes, orbitable in 3D | Roughly how big is it, and what is inside what? | `tb-view-geometry` |
@@ -765,10 +765,17 @@ Two names worth separating:
   `s.L == 50.0`) from being taken as `p`'s design equation, exactly as it is with
   no requirement there. An `assert` is the way to state a fact. The test is local: each
   of two separate roots (`x * x == 4.0`) reads as determined, not free.
-  **No design equation turns on the order of the text, bar four cases of where the solve
-  starts or of the digits a value is given to (the end of this passage).** Two plain
+  **No design equation turns on the order of the text, bar two cases of the digits a value
+  is given to (the end of this passage).** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
-  `x`) are both *imposed by the solve*. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
+  `x`) are both *imposed by the solve*. An equation whose two sides are the same expression or the
+  same polynomial (`c0 { y == y }`, `y * 2.0 == 2.0 * y`, `y - y == 0.0`), plain or asserted, fixes
+  nothing and is no design equation: beside `c1 { y == 0.5 }` c1 is *imposed* in either order, and
+  the equation's own row is judged at the value found. So does one that does not read its one unknown
+  at the values the others have (`y * z == 0.0` at a stated `z` of 0, where every y is a root): it gives y
+  no value, and c1 is *imposed* beside it. One whose side divides by a feature, takes a
+  remainder or raises to what is not a small whole number (`y / z == y / z`, no value where z is 0)
+  is read as any other equation. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
   taken, and every relation over that value is *unjudged* (*… only plain
   constraints that disagree (t50 and t60): which of them holds would turn on the
@@ -779,17 +786,28 @@ Two names worth separating:
   and a double root such as `x * x == 0.0` are read the same), a
   stated value (`attribute s = x * x`) or an assert (`s == x * x`) as much as a
   plain one, or a product of two unknowns that the other equations still link
-  (`x * y == 4.0` beside `x == y`). `a { x * x == 4.0 }` beside `b { x == -2.0 }`,
-  and beside `b { x == 2.0 }`, where one root agrees; `c0 { s == 4.0 }` beside
+  (`x * y == 4.0` beside `x == y`). `c0 { s == 4.0 }` beside
   `c1 { x == -2.0 }` over that stated `s`, which agree at −2; `c0 { x * x ==
   4.0 }`, `c1 { y == x + 1.0 }` and `c2 { y <= 0.0 }`, where the root (2, 3)
   breaks c2 and (−2, −1) meets all three: the root the solve takes, and so
   whether the others hold, would turn on which equation it took first or on the
   root itself, so none is read, whether or not a plain constraint was left
-  unused (*… only plain constraints, one of them that may have more than one root (a and
-  b) …*, or, with the model's own equation among them, *… and the equations over
+  unused (*… only plain constraints, one of them that may have more than one root (c0 and
+  c1) …*, or, with the model's own equation among them, *… and the equations over
   it may leave more than one root (`s = x * x`) …*). The features the equations link
-  are one, those the solve left free among them. What the other equations fix
+  are one, those the solve left free among them. **Unless the equations of those features that are
+  affine in them fix every one of them alone**: the point they fix is then the only one where all the
+  equations can hold, the solve takes it before any equation takes a root, whatever the order of the
+  text, and every other equation is judged there. `a { x * x == 4.0 }` beside `b { x == -2.0 }`, or
+  beside `b { x == 2.0 }`, is read at the value b fixes, where a holds: both are *imposed*, in either
+  order, and `k { x >= 1.0 }` beside the second is judged at 2; beside `b { x == 5.0 }` the two
+  disagree (*… only plain constraints that disagree (a and b) …*). The affine equations may fix the
+  point together (`x + y == 1.0` and `x - y == -7.0` beside the asserted `x == 6.0 / (x + 1.0)`: (−3, 4),
+  where all three hold) and the curved one may read several of them (`w * w + b == 0.5` beside two
+  plain equations that fix w and b). Not where an equation of the model's own that may have more than one
+  root (an assert, a stated value) is beside a plain constraint that fixes the point (`assert constraint
+  a { x * x == 4.0 }` beside `b { p.x == -2.0 }`): which of its roots is the model's, the plain constraint
+  does not say, and the value is withheld as before. What the other equations fix
   one at a time has the one root and is read as before: `z == x * x` over `x ==
   3.0`, and `mass == density * volume` over the two it multiplies; and `z == x *
   y` beside `z == 9.0` leaves x and y free along the curve, not two roots. So does
@@ -803,9 +821,9 @@ Two names worth separating:
   by a value another equation fixes has the one root. Where the solve's own start finds none, the root is
   searched for along the line, at 0 and ±2^k, for a sign change between neighbours, closed on to the last digit (a
   pole it closes on is no root). **The limit of that search: a root that lies in the same gap as its pole,
-  between two of those points, is not found** — `1.0 / (x - 5.0) == 2.0` (root 5.5, pole 5, between 4 and 8)
-  and `3.0 / (x + 1.5) == 10.0` (root −1.2, pole −1.5, between −2 and −1) read *unknown* alone, in every
-  order, never a value (a plain constraint that states the value, `x == 5.5`, supplies it, and the equation is
+  between two of those points, is not found** unless Newton reaches it from a start it is run again from (below:
+  `3.0 / (x + 1.5) == 10.0`, root −1.2, pole −1.5, is reached from −1) — `1.0 / (x - 5.0) == 2.0` (root 5.5,
+  pole 5, between 4 and 8) reads *unknown* alone, in every order, never a value (a plain constraint that states the value, `x == 5.5`, supplies it, and the equation is
   then *imposed* beside it in either order). A residual under the gate is a root's only where the equation is
   steep enough there, to first order. A flat one (`1.0 / x == 0.000001`, slope 1e-12) is under the gate 227
   from its root 1e6, which is found, so `x >= 999999.0` beside it is satisfied; one that tends to its asymptote
@@ -833,8 +851,8 @@ Two names worth separating:
   can cross it more than once, so the equation is read as a whole and as if it had more than one
   root, like `x * x == 4.0`: `x == 6.0 / (x + 1.0)` is met at 2 and −3, `6.0 / y ==
   5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1 (and `0.5 ^ x == x`, which is
-  met once, is read the same). Beside `c1 { x == -3.0 }`
-  it reads no value, and an inequality over a lone one (`k { x <= 0.0 }`) is
+  met once, is read the same). Beside `c1 { x == -3.0 }`, which fixes x alone,
+  it is judged at −3, where it holds (both *imposed*, as above), and an inequality over a lone one (`k { x <= 0.0 }`) is
   unjudged, in either order of the text; the size of the component does not change that (a chain of seventy equations beside
   `z == x0 * x0` over `x0 == 3.0` reads as a short one). A loop
   of definitions is read the same way: the asserts `x == y * y + 1.0` and `y ==
@@ -854,16 +872,15 @@ Two names worth separating:
   its first search finds no witness it searches again from where the plain
   equations that are not curved put the value, so `x * x == 4.0` beside `x ==
   -2.0` is feasible with x = −2 in either order of the text; where that finds
-  none either, the answer stays undecided. What still turns on the order of the
-  text is where the solve starts, and the cases known read an abstention in one
-  order where the other reads a value, never a different verdict: a divisor that
-  is zero at its starting guess (`c0 { x / y == 3.0 }` and `c2 { w / y == x }`
-  beside `c1 { x >= 0.0 }`, over a `y` nothing fixes) leaves the solve not
-  converged when `c2` is written first, so all three read *unknown*, where the
-  other order imposes `c0` and `c2`; and two asserted equations that share one of
-  their roots (`a0 { x == 6.0 / (x + 1.0) }` beside `a1 { x == -3.0 }`, in a
-  usage) read a constraint over their value *unknown* in one order and decided
-  in the other; and a steep one-to-one equation (a quotient whose root is close to
+  none either, the answer stays undecided — unless the equations that are not curved fix the
+  point alone, so that a constraint that breaks it there (`x >= 0.0` beside those two) makes the
+  model infeasible. A solve that stops off its equations where
+  one divides by a feature it solves for is run again from a fixed list of starts for
+  what the divisor reads (its step may land on the divisor's zero): `c0 { x / y == 3.0 }`
+  and `c2 { w / y == x }` beside `c1 { x >= 0.0 }`, over a `y` nothing fixes, impose
+  `c0` and `c2` in every order (`c1` is unjudged: x is free). What still turns on the order of the text is the
+  digits a value is given to, and the cases known read an abstention in one order where the other reads
+  a value, never a different verdict: a steep one-to-one equation (a quotient whose root is close to
   its pole) judged at a value that another equation gives to fewer digits than its
   slope needs, in two ways: a pin written to ten digits (`x == 0.000003000000001`
   beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, whose root is 3.0000000012e-06)
@@ -873,8 +890,8 @@ Two names worth separating:
   1.0014000000014 }`, then `l1 { y == 2.0 * x + 1.0 }`, then `e0 { -3333.33333 ==
   7.0 / (-3.0 * x) }`) reads *unknown* in that order, and *imposed* in the other five
   orders of the three. A feature with no value that an `assert`
-  constrains in a form the solve does not read — an inequality, a conjunction
-  (`L == 50.0 and L >= 0.0`), a disjunction, or a body that does not parse
+  constrains in a form the solve does not read — an inequality, a conjunct that
+  is none (`M >= L` in `L == 50.0 and M >= L`), a disjunction, or a body that does not parse
   (`M == max(L, 20.0)`, which the model reports; it constrains the names it
   writes outside its strings and `[unit]` literals, so the `m` of `M ** 2.0 ==
   4.0 [m]` is a metre, not the feature `m`) — is no design freedom for a
@@ -1092,10 +1109,15 @@ is violated where its body holds (load 50), the model that contradicts itself re
 engine and the SMT engine report their axioms inconsistent beside it, as for any violated assert), and a
 `not (… == …)` defines no value. `require not` and `assume not`, which are no published form, are read the
 same way, and the save writes the clause back as it was written (`assert not constraint c { load > 10.0 }`).
+A comment, a `doc` or an attribute with a `=` value or none beside the expression stays as written, and only
+the expression is negated: `assert not constraint c { attribute y = 2.0; load > y }` is read as
+`assert constraint c { attribute y = 2.0; not (load > y) }`.
 A negated clause with no expression to negate is refused with a finding of its own,
 `mapper/negated-assert-unread` (an error, on the clause): one that names a constraint without a body, one
 that specialises a constraint (`assert not constraint c :> K { … }`), a requirement
-(`assert not requirement r { … }`) and one whose body holds members. The load degrades like any load with an
+(`assert not requirement r { … }`), one whose body holds members and no expression, and one whose body holds
+another kind of member (a nested constraint, requirement, part or calc, or an attribute with a `default` or
+`:=` value). The load degrades like any load with an
 error: the reporting commands exit 1 with the degraded banner, `verify`, `consistency`, `bounds`, `refine`
 and `fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no
 surface files a row for the clause, and the save writes it back as it was read. State the negation in the
@@ -3261,7 +3283,7 @@ same sentence:
 
 | Answer | What it means |
 |---|---|
-| `optimum` | νZ established its optimality (on an Integer-and-Real script, two plain checks confirmed it beside νZ) and a design attains it — the witness is printed |
+| `optimum` | νZ established its optimality (on an Integer-and-Real script, two plain checks confirmed it beside νZ, or it was established over an integer branch) and a design attains it — the witness is printed |
 | `supremum` / `infimum` | exact, and **never attained** (`x < 5` has no maximum) |
 | `unbounded` | z3 proved there is no finite bound in that direction — over a **linear** script, the only shape νZ is complete for |
 | `bound-without-optimality` | a bound z3 reached over a **nonlinear** script, which νZ does not certify — finite or `oo` alike |
@@ -3286,12 +3308,23 @@ z3's νZ, given a script that declares both an Integer and a Real feature,
 answered `min x` with an *infimum* of 3/4 that was never attained, where `x = 0`
 with `y = 1` is a design (`x` Real in `[0, 1]`, `y` Integer, `y + x > 0.5`), and
 `max x` with `1 + epsilon` where 2 is attained, with no strict
-comparison anywhere. For such a script `bounds` keeps an `optimum` only when two
+comparison anywhere. For such a script `bounds` keeps an `optimum` when two
 plain checks, which are not νZ, agree with it (nothing feasible lies beyond the
-value, and the value itself is taken); an infimum, a supremum or *unbounded* is
-`inconclusive` with `verification/optimality-not-established` at exit **2**, with
-no number and a sentence that says the script mixes the two sorts. A model whose
-features are all Real or all Integer is decided as before.
+value, and the value itself is taken). Any other answer is replaced by one
+**established over an integer branch**: every Integer feature is fixed at the value
+a feasible point gives it, νZ optimises the pure-Real rest (the arithmetic it is
+trusted on in an all-Real model), and one plain check over the whole script shows
+nothing feasible lies beyond the value (strictly beyond an attained one, at or
+beyond one only approached). If that check finds such a point, the next branch
+starts from it. An *unbounded* branch makes the whole model unbounded and needs no
+check. So the example above reads `min x = 0`, attained at `y = 1`, and the row
+says it was established over an integer branch. A row stays `inconclusive` with
+`verification/optimality-not-established` at exit **2**, with no number and a
+sentence that says the script mixes the two sorts and why no branch established it:
+16 branches tried, a check that did not answer, or a measure that
+is itself an Integer and has no bound (it is constant in a branch, so no
+branch shows it is *unbounded*). A model whose features are all Real or all
+Integer is decided as before.
 
 **A feature typed `Natural`, `Positive` or `UnlimitedNatural` is not read.** This
 tool derives no domain axiom from a type, and a Natural was an unbounded

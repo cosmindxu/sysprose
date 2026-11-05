@@ -2305,14 +2305,14 @@ package P {
   it('verify, consistency, bounds and refine refuse a model with a negated assert they cannot read: its own finding, and exit 2', () => {
     // `assert not constraint c { load > 10.0 }` over load = 50 was a parse error whose recovery left `c` a plain
     // constraint, read T by every surface while it holds: the negated assert is violated, and the model passed.
-    // A body of members has no expression to negate: the clause is refused with a finding of its own; the load
-    // degrades, so no command judges the file.
+    // A body holding a `default` member is not read under the negation (its interplay with decision 14 there is
+    // unsettled): the clause is refused with a finding of its own; the load degrades, so no command judges the file.
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-negated-assert-'));
     try {
       const file = join(dir, 'h1.sysml');
       writeFileSync(
         file,
-        'package H1 {\n  part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y } }\n  part p : P;\n}\n',
+        'package H1 {\n  part def P { attribute load : ScalarValues::Real = 50.0; assert not constraint c { attribute y : ScalarValues::Real default = 2.0; load > y } }\n  part p : P;\n}\n',
       );
       for (const args of [['verify', file, '--engine', 'literal'], ['consistency', file], ['bounds', file, '--measure', 'p.load'], ['refine', file]]) {
         const r = spawnCli(args);

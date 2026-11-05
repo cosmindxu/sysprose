@@ -410,6 +410,39 @@ export function parseExpr(text: string): ExprNode {
   return new Parser(tokenize(text)).parse();
 }
 
+/**
+ * Two trees the same expression, node for node: the same operators, the same
+ * names, and every number the same numeral — its value, the digits written
+ * past a double's ({@link DOUBLE_DIGITS}) and, for a lowered `[unit]` literal,
+ * the magnitude and factor written. Structural only: `a + b` and `b + a` are
+ * not the same here, and `2.0 [m]` and `2000.0 [mm]` are not either.
+ */
+export function exprEqual(a: ExprNode, b: ExprNode): boolean {
+  switch (a.kind) {
+    case 'num':
+      return (
+        b.kind === 'num' &&
+        a.value === b.value &&
+        a.text === b.text &&
+        JSON.stringify(a.literal ?? null) === JSON.stringify(b.literal ?? null)
+      );
+    case 'str':
+      return b.kind === 'str' && a.value === b.value;
+    case 'bool':
+      return b.kind === 'bool' && a.value === b.value;
+    case 'null':
+      return b.kind === 'null';
+    case 'ref':
+      return b.kind === 'ref' && a.path.join('.') === b.path.join('.');
+    case 'unary':
+      return b.kind === 'unary' && a.op === b.op && exprEqual(a.operand, b.operand);
+    case 'binary':
+      return b.kind === 'binary' && a.op === b.op && exprEqual(a.left, b.left) && exprEqual(a.right, b.right);
+    case 'if':
+      return b.kind === 'if' && exprEqual(a.cond, b.cond) && exprEqual(a.then, b.then) && exprEqual(a.else, b.else);
+  }
+}
+
 /* ────────────────────────────── evaluator ────────────────────────────── */
 
 const UNKNOWN: EvalResult = { unknown: true };
@@ -479,6 +512,9 @@ function evalBinary(
       if (!isUnknown(l) && l.value === true) return { value: true };
     }
     const r = evaluate(node.right, scope);
+    // `x and false` is false as `false and x` is, whichever conjunct is written first: an asserted conjunction's
+    // row is the AND of its conjuncts read apart (TODO 249), and an unknown beside a false one decides nothing.
+    if (op === 'and' && isUnknown(l) && !isUnknown(r) && r.value === false) return { value: false };
     if (op === 'implies') {
       if (!isUnknown(l) && l.value === false) return { value: true };
       if (!isUnknown(r) && r.value === true) return { value: true };

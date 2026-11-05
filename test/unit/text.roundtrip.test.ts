@@ -1526,8 +1526,10 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
   it('reads `assert not constraint c { … }` as the negation of its body, writes it back as written, and refuses a negated clause with no expression to negate', () => {
     // The negation of an assert (and `require not`, `assume not`, no published form) is the plain clause over `not (body)`,
     // the one `assert constraint c { not (…) }` writes, so every reader judges it as that clause; the element keeps
-    // `negated` and the save writes the `not` back. One with no expression to negate (a name, a specialisation, a body of
-    // members) has nothing the readers could negate: it is refused with a finding of its own, kept as written.
+    // `negated` and the save writes the `not` back. Members the negation leaves standing (a comment, a `doc`, an attribute
+    // with a `=` value or none) are mapped as the plain clause maps them, and only the expression is negated. One with no
+    // expression to negate (a name, a specialisation, a requirement, a body of members only) or with any other member has
+    // nothing the readers could negate as that clause: it is refused with a finding of its own, kept as written.
     const src = (clause: string) => `package A { part def P { attribute load : ScalarValues::Real = 50.0; ${clause} } part p : P; }`;
     const read: Array<[string, string]> = [
       ['assert not constraint c { load > 10.0 }', 'not (load > 10.0)'],
@@ -1537,6 +1539,11 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       ['require not constraint c { load > 10.0 }', 'not (load > 10.0)'],
       ['assume not constraint c { load > 10.0 and load < 100.0 }', 'not (load > 10.0 and load < 100.0)'],
       ['assert not constraint c { not (load > 10.0) }', 'not (not (load > 10.0))'],
+      ['assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y }', 'not (load > y)'],
+      ['assert not constraint c { /* a note */ load > 10.0 }', 'not (load > 10.0)'],
+      ['assert not constraint c { doc /* why */ load > 10.0 }', 'not (load > 10.0)'],
+      ['assert not constraint c { comment about load /* x */ load > 10.0 }', 'not (load > 10.0)'],
+      ['assert not constraint c { attribute y; doc /* d */ attribute w = 2.0; load > w }', 'not (load > w)'],
     ];
     for (const [form, expression] of read) {
       const { model, diagnostics } = parseModel(src(form));
@@ -1545,6 +1552,10 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       expect(kept.length, form).toBe(1);
       expect(kept[0]!.attrs.expression, form).toBe(expression);
       expect(kept[0]!.attrs.unparsedText, form).toBeUndefined();
+      // The members are the clause's own, as in the plain clause.
+      const members = model.all().filter((e) => e.ownerId === kept[0]!.id);
+      expect(members.length > 0, form).toBe(/\b(attribute|doc|comment)\b|\/\*/.test(form));
+      if (/\battribute\b/.test(form)) expect(members.some((e) => e.eClass === 'AttributeUsage'), form).toBe(true);
       const saved = serializeModel(model);
       expect(saved.replace(/\s+/g, ' '), form).toContain(form);
       const again = parseModel(saved);
@@ -1563,8 +1574,15 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     const refused = [
       'assert not requirement q { require constraint z { load > 10.0 } }',
       'assert not constraint c :> Base { load > 10.0 }',
-      'assert not constraint c { attribute y : ScalarValues::Real = 2.0; load > y }',
       'assert not constraint c;',
+      'assert not constraint c { attribute y : ScalarValues::Real default = 2.0; load > y }',
+      'assert not constraint c { attribute y := 2.0; load > y }',
+      'assert not constraint c { constraint z { load > 1.0 } load > 10.0 }',
+      'assert not constraint c { part q; load > 10.0 }',
+      'assert not constraint c { in attribute y = 2.0; load > y }',
+      'assert not constraint c { attribute y :>> load = 2.0; load > y }',
+      'assert not constraint c { rep language "ocl" /* load > 10 */ load > 10.0 }',
+      'assert not constraint c { attribute y = 2.0; }',
     ];
     for (const form of refused) {
       const { model, diagnostics } = parseModel(src(form));

@@ -67,6 +67,8 @@ import {
   writesStandingDefault,
   boundAgainstAssertSentence,
   failedReadingSentence,
+  conjunctOf,
+  equationText,
   namesDefinedBy,
   rebaseInstance,
   replayLookups,
@@ -1228,6 +1230,8 @@ function evalQBinary(
     }
     const r = evalQ(node.right, scope, tol, every);
     if (op === 'implies' && !isQUnknown(r) && 'b' in r && r.b === true) return { b: true };
+    // And `x and false`, x a value this scope does not read: never a refusal, which the caller must hear of.
+    if (op === 'and' && isQUnknown(l) && !isRefusalReason(l.reason) && !isQUnknown(r) && 'b' in r && r.b === false) return { b: false };
     if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
     if (!('b' in l) || !('b' in r)) return unknownQ('not-boolean');
     switch (op) {
@@ -1841,6 +1845,8 @@ export interface FeatureDerivation {
    * value the validation surface says the equation defines.
    */
   definedBy?: ElementId;
+  /** Of an asserted conjunction, the conjunct that equation is ({@link ClausePart.index}). */
+  definedPart?: number;
 }
 
 const claimOnly =(claim: DimensionClaim, reason?: QReason, detail?: string, message?: string): FeatureDerivation => ({
@@ -1937,7 +1943,7 @@ function deriveFeatureUncached(
     const defined = assertDefinitionIn(model, feat, inst);
     if (defined !== undefined && 'abstain' in defined) return claimOnly('unknown', 'unresolved');
     if (defined !== undefined && defined.constant) {
-      return equationDerivation(model, id, String(defined.equation.constraint.attrs.expression), memo, defined.frame.reader, defined.path);
+      return equationDerivation(model, id, equationText(defined.equation), memo, defined.frame.reader, defined.path);
     }
   }
   const literal = givesWay ? undefined : evaluateQuantity(model, id);
@@ -2073,7 +2079,7 @@ export function equationDerivation(
   // back from an input is then an echo of it, as on any other path.
   const via = passOf(model, memo)
     .definitions.of(context, name)
-    .find((c) => c.constraint.attrs.expression === equation)?.constraint.id;
+    .find((c) => equationText(c) === equation)?.constraint.id;
   return deriveByEquation(model, featureId, name, equation, memo, context, new Map([[featureId, via]]));
 }
 
@@ -2157,13 +2163,14 @@ export function featuresDefinedBy(
   if (constraint.ownerId == null || !isAsserted(constraint)) return [];
   const { definitions } = passOf(model, memo);
   const out: Array<{ id: ElementId; derivation: FeatureDerivation }> = [];
-  for (const name of namesDefinedBy(constraint)) {
+  for (const name of namesDefinedBy(model, constraint)) {
     const feature = definitions.feature(constraint.ownerId, name);
     const candidates = definitions.of(constraint.ownerId, name);
     // Not one that writes a `default` a binding made give way: no assert defines it (`writesStandingDefault`).
     if (!feature || candidates.length === 0 || out.some((f) => f.id === feature.id) || writesStandingDefault(model, feature)) continue;
     const d = definitionOf(model, feature.id, name, candidates, memo, constraint.ownerId, new Map());
-    if (d.definedBy === constraint.id) out.push({ id: feature.id, derivation: d });
+    // Of a conjunction, the conjunct `constraint` is ({@link conjunctRecord}): the clause whole defines nothing itself.
+    if (d.definedBy === constraint.id && d.definedPart === conjunctOf(constraint)?.index) out.push({ id: feature.id, derivation: d });
   }
   return out;
 }
@@ -2262,8 +2269,9 @@ function defineUncached(
       return {
         ...(shadowed.length > 0
           ? claimOnly('unknown', 'shadowed', shadowedSentence(model, c.constraint, shadowed))
-          : deriveByEquation(model, featureId, name, c.constraint.attrs.expression as string, memo, context, inFlight)),
+          : deriveByEquation(model, featureId, name, equationText(c), memo, context, inFlight)),
         definedBy: c.constraint.id,
+        ...(c.part ? { definedPart: c.part.index } : {}),
       };
     },
     (d) => ({ answered: answered(d), deep: d.reason === 'depth', contact: d.contact, cause: d.cause }),

@@ -2646,7 +2646,8 @@ describe('a design freedom no relation fixes is never judged at the solver’s p
 
   it('names an unnamed redefinition by the name it redefines in the numeric sentences, not by its element id', () => {
     // `attribute :>> x;` has no declared name of its own: the sentences that list the features a relation
-    // reads printed its element id ("fixes 12ac9de4-…", "did not converge: f4bded69-… is where it stopped").
+    // reads printed its element id ("fixes 12ac9de4-…", "did not converge: f4bded69-… is where it stopped"). `0.6 + y` is a value
+    // x / (1 + x²) never reaches, so the solve stops off it from every start it is run from.
     const imposed = rows(
       parse(`package U1 { part def P { attribute L : ScalarValues::Real; }
         part p : P { attribute :>> L; constraint t1 { L == 1.0 } } }`),
@@ -2655,7 +2656,7 @@ describe('a design freedom no relation fixes is never judged at the solver’s p
     const stopped = rows(
       parse(`package U2 { part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; }
         part p : P { attribute :>> x; attribute :>> y;
-          constraint c1 { x / (1.0 + x * x) == 0.4 + y } constraint c2 { y == 0.001 * x - 0.001 * x }
+          constraint c1 { x / (1.0 + x * x) == 0.6 + y } constraint c2 { y == 0.001 * x - 0.001 * x }
           constraint c3 { x >= 0.0 } } }`),
     );
     expect(stopped.get('c1')!.reason).toMatch(/^the solve did not converge: x and y are where it stopped/);

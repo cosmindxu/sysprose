@@ -935,7 +935,7 @@ function multiply(a: Rational, b: Rational): Rational {
 }
 
 /** A rational as an SMT-LIB Real term, in lowest terms. */
-function renderRational(r: Rational): string {
+export function renderRational(r: Rational): string {
   const negative = r.num < 0n;
   let num = negative ? -r.num : r.num;
   let den = r.den;
@@ -1069,6 +1069,8 @@ export interface SmtScript {
   symbols: string[];
   /** The `:named` labels, in assertion order — what an UNSAT core comes back as. */
   labels: string[];
+  /** The Integer symbols {@link ScriptRequest.fixedIntegers} fixed, which are therefore not declared. */
+  fixed: string[];
   /**
    * The shape of the script's bytes ({@link shapeOfTerm}) over every assertion it holds, the guards
    * included. {@link logic} is {@link logicFromShape} of it, so the two cannot disagree. A label:
@@ -1102,6 +1104,18 @@ export interface ScriptRequest {
   syntacticNonlinear?: boolean;
   /** Emit `(set-option :produce-unsat-cores true)`. Default true. */
   cores?: boolean;
+  /**
+   * Integer symbols fixed at a value, by qualified name: every read of one, `(to_real |…::y|)`, is written as
+   * the value (`3.0`) and the symbol is not declared, so the script is the same assertions over that one
+   * integer branch ({@link SmtScript.fixed} lists the ones it fixed). `bounds` builds the pure-Real branches of
+   * a script that mixes the two sorts with it ({@link ../bounds}).
+   *
+   * NOT a `define-fun`: z3 keeps a `define-fun` an Optimize parsed in the context every later script shares,
+   * and a later model then carried the constant beside its own value (`y = 1` printed where the point had
+   * `y = -3`). A symbol read other than through `to_real`, a Real, and every symbol of a script holding a
+   * string literal (where a `|` need not delimit a symbol) are left as they are.
+   */
+  fixedIntegers?: ReadonlyMap<string, bigint>;
 }
 
 /**
@@ -1128,6 +1142,7 @@ const HEADER = [
  * parsing the script.
  */
 export function encodeScript(req: ScriptRequest): SmtScript {
+  const { assertions, fixed } = fixIntegers(req);
   const read = new Set<string>();
   // Every quoted symbol the assertions mention, read once per assertion — a
   // term with a string literal, where a `|` need not delimit a symbol, is
@@ -1135,7 +1150,7 @@ export function encodeScript(req: ScriptRequest): SmtScript {
   // model with thousands of instance symbols spent seconds here.
   const quoted = new Set<string>();
   const literal: string[] = [];
-  for (const a of req.assertions) {
+  for (const a of assertions) {
     if (a.term.includes('"')) literal.push(a.term);
     else for (const m of a.term.matchAll(/\|[^|]*\|/g)) quoted.add(m[0]);
   }
@@ -1161,11 +1176,11 @@ export function encodeScript(req: ScriptRequest): SmtScript {
   // refuses outright. `shape.ts` reads the bytes; the declared symbols are the
   // ones they mention, so it is given those and not the whole environment.
   const shape = shapeOfTerm(
-    req.assertions.map((a) => a.term),
+    assertions.map((a) => a.term),
     declared,
     {
       syntacticNonlinear: req.syntacticNonlinear === true,
-      hasSideConditions: req.assertions.some((a) => a.kind === 'side'),
+      hasSideConditions: assertions.some((a) => a.kind === 'side'),
       reads: [],
     },
   );
@@ -1182,7 +1197,7 @@ export function encodeScript(req: ScriptRequest): SmtScript {
 
   const labels: string[] = [];
   const used = new Set<string>();
-  for (const a of req.assertions) {
+  for (const a of assertions) {
     // Uniqueness is decided AFTER the mangling, and the mangled string is what
     // is reported. `|` and `\` cannot appear inside a quoted SMT symbol, so a
     // name holding either is written with `_` — and two names that differ only
@@ -1205,8 +1220,39 @@ export function encodeScript(req: ScriptRequest): SmtScript {
     fragment: req.nonlinear ? 'qf-nra' : 'qf-lra',
     symbols,
     labels,
+    fixed,
     shape,
   };
+}
+
+/**
+ * The assertions with every read of a fixed Integer written as its value ({@link ScriptRequest.fixedIntegers}),
+ * and the symbols so fixed. All or nothing per symbol: one left read other than through `to_real` keeps every
+ * read of it, so a script is never half of a branch.
+ */
+function fixIntegers(req: ScriptRequest): { assertions: readonly ScriptAssertion[]; fixed: string[] } {
+  const wanted = req.fixedIntegers;
+  if (wanted === undefined || wanted.size === 0 || req.assertions.some((a) => a.term.includes('"'))) {
+    return { assertions: req.assertions, fixed: [] };
+  }
+  let terms = req.assertions.map((a) => a.term);
+  const fixed: string[] = [];
+  const typed = new Set<string>();
+  for (const v of req.variables) {
+    // A name two variables share is typed by the first one, as the script declares it.
+    if (typed.has(v.qualifiedName)) continue;
+    typed.add(v.qualifiedName);
+    const k = wanted.get(v.qualifiedName);
+    const symbol = symbolOf(v.qualifiedName);
+    if (v.sort !== 'Int' || k === undefined || symbol === undefined) continue;
+    if (!terms.some((t) => t.includes(symbol))) continue;
+    const value = renderRational({ num: k, den: 1n });
+    const next = terms.map((t) => t.split(`(to_real ${symbol})`).join(value));
+    if (next.some((t) => t.includes(symbol))) continue;
+    terms = next;
+    fixed.push(v.qualifiedName);
+  }
+  return { assertions: req.assertions.map((a, i) => ({ ...a, term: terms[i]! })), fixed };
 }
 
 /** A label as an SMT symbol: the two characters a quoted symbol cannot hold. */

@@ -2281,9 +2281,11 @@ class Mapper {
     // and are read alike). It is read as the plain clause over `not (B)`: the clause the workaround `assert constraint c
     // { not (B) }` writes, which every reader already judges, so the four surfaces cannot read it otherwise than that
     // clause, and the save writes it back as it was written (`negated`, {@link negatedClauseBody}). Only a clause with a
-    // body that is one expression is read so: a negated clause that names a constraint (`assert not constraint c : K;`),
-    // or has no body or members of its own, has no expression to negate here, and is refused with a finding of its own
-    // (the load degrades, the checks abstain), kept as written with no expression for any reader to take as the plain clause.
+    // body that is one expression is read so, beside members the negation leaves standing ({@link negationKeepsMember}:
+    // a comment, a `doc`, an attribute with a `=` value or none, mapped as the plain clause maps them): a negated clause
+    // that names or specialises a constraint (`assert not constraint c :> K { … }`), a requirement, one with no body or
+    // no expression, or one holding any other member is refused with a finding of its own (the load degrades, the checks
+    // abstain), kept as written with no expression for any reader to take as the plain clause.
     if (node.negated && !this.readsNegatedClause(node)) {
       const code = 'mapper/negated-assert-unread';
       const name = unquoteName(node.name);
@@ -2348,7 +2350,7 @@ class Mapper {
   private readsNegatedClause(node: RequirementClause): boolean {
     return (
       node.body === undefined &&
-      node.members.length === 0 &&
+      node.members.every((m) => negationKeepsMember(m)) &&
       node.expr !== undefined &&
       node.specializations.length === 0 &&
       node.declares !== 'requirement'
@@ -2798,6 +2800,53 @@ function normalizeSpecOp(op: string): string {
       return ':';
     default:
       return op; // already one of ':' ':>' ':>>' '::>'
+  }
+}
+
+/**
+ * Is this member of a negated clause's body one the negation leaves standing, so the clause is read as the plain
+ * clause over `not (expr)` with the member mapped as the positive clause maps it (`assert constraint c { attribute y =
+ * 2.0; not (load > y) }`)? A `comment`, a `doc` or a bare block comment means nothing a reader judges. An attribute usage
+ * with a `=` value or none, typed at most, is a feature of the clause that holds whatever its result is: only the
+ * result expression is negated. Anything else is refused: a nested constraint, requirement, part or calc (what a
+ * clause nested under `not` states is unsettled), a `default` or `:=` value (its interplay with decision 14 under the
+ * negation is unsettled), a textual representation in a language (it may be the clause's own expression), and any
+ * prefix, subsetting, redefinition, multiplicity or body of the attribute's own.
+ */
+function negationKeepsMember(m: Member): boolean {
+  switch (m.$type) {
+    case 'Doc':
+    case 'Comment':
+      return true;
+    case 'TextualRep': {
+      const tr = m as TextualRepNode;
+      return tr.language === undefined && tr.name === undefined;
+    }
+    case 'Definition': {
+      const d = m as Definition;
+      return (
+        d.keyword === 'attribute' &&
+        !d.isDef &&
+        !d.isSufficient &&
+        d.succession === undefined &&
+        d.prefixes.length === 0 &&
+        d.prefixMeta.length === 0 &&
+        d.modifiers.length === 0 &&
+        d.preMult.length === 0 &&
+        d.multiplicity.length === 0 &&
+        d.specializations.every((s) => !s.conjugated && s.types.length === 1 && normalizeSpecOp(s.op) === ':') &&
+        (d.valueOp === undefined || d.valueOp === '=') &&
+        d.body === undefined &&
+        d.via === undefined &&
+        d.ofPayload === undefined &&
+        d.flowFrom === undefined &&
+        d.connectSource === undefined &&
+        d.sendTarget === undefined &&
+        d.ctrl === undefined
+      );
+    }
+    default:
+      return false;
   }
 }
 

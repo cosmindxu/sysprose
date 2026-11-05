@@ -202,24 +202,29 @@ describe('solveFeasible', () => {
   it('judges nothing at a point the solve stopped at without converging, and reads no rank there (r10b)', () => {
     // The same divergence: the numeric surface and the analysis report read
     // c1, c2 and `x >= 0.0` violated at x = −106760, and published that x as
-    // a solved — determined — value.
-    const m = new Model();
-    const f = new ModelFactory(m);
-    const p = f.partDef('P');
-    const x = f.attribute('x', p.id, { type: 'Real' });
-    const y = f.attribute('y', p.id, { type: 'Real' });
-    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'x / (1.0 + x * x) == 0.4 + y' } });
-    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'y == 0.001 * x - 0.001 * x' } });
-    m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'x >= 0.0' } });
+    // a solved — determined — value. With 0.4 + y the run taken again from
+    // x = 2 (TODO 286 (b)) is on a root, one of two (0.5 and 2), and the
+    // component is withheld as one that may have more than one; 0.6 + y,
+    // which x / (1 + x²) never reaches, still stops off its equations.
+    for (const c of ['0.6', '0.4']) {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const p = f.partDef('P');
+      const x = f.attribute('x', p.id, { type: 'Real' });
+      const y = f.attribute('y', p.id, { type: 'Real' });
+      m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: `x / (1.0 + x * x) == ${c} + y` } });
+      m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'y == 0.001 * x - 0.001 * x' } });
+      m.create('ConstraintUsage', { ownerId: p.id, attrs: { expression: 'x >= 0.0' } });
 
-    const solved = solve(m);
-    expect(solved.converged).toBe(false);
-    expect([solved.values.has(x.id), solved.values.has(y.id), solved.free]).toEqual([false, false, []]);
-    const rows = checkConstraintsNumeric(m);
-    expect(rows.map((r) => r.result)).toEqual(['unknown', 'unknown', 'unknown']);
-    for (const r of rows) expect(r.reason, r.raw).toMatch(/^the solve did not converge/);
-    const report = analysisReport(m);
-    expect([report.feasible, report.violations, report.unknowns.length, report.values]).toEqual([true, [], 3, []]);
+      const solved = solve(m);
+      expect(solved.converged, c).toBe(c === '0.4');
+      expect([solved.values.has(x.id), solved.values.has(y.id), solved.free], c).toEqual([false, false, []]);
+      const rows = checkConstraintsNumeric(m);
+      expect(rows.map((r) => r.result), c).toEqual(['unknown', 'unknown', 'unknown']);
+      for (const r of rows) expect(r.reason, r.raw).toMatch(c === '0.6' ? /^the solve did not converge/ : /may have more than one root \(/);
+      const report = analysisReport(m);
+      expect([report.feasible, report.violations, report.unknowns.length, report.values], c).toEqual([true, [], 3, []]);
+    }
 
     // Nor does feasibility hold what the solve did not settle, where every
     // other equation it met lies within tolerance: q's p's `load = L`, which

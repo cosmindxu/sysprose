@@ -3942,10 +3942,11 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
 
   // z3's νZ answers a script over an Integer and a Real feature with a bound that a feasible point lies beyond
   // (x in [0, 1], y Integer, y + x > 0.5 gave `min x = infimum 3/4` where x = 0, y = 1 is feasible; y - x > 0.5
-  // gave `max x = supremum 0` where x = 1, y = 2 is). The row abstains instead, in the text order of the file and
-  // reversed, in a part def and inline. An optimum two plain checks confirm is kept (the non-strict twin), and
-  // the single-sort twins are decided as before.
-  withZ3('a bound over an Integer and a Real feature is withheld unless an optimum is confirmed', async () => {
+  // gave `max x = supremum 0` where x = 1, y = 2 is). Such an answer is never published: an optimum two plain
+  // checks confirm is kept (the non-strict twin), any other is replaced by one established over an integer branch
+  // (the true 0 and 1 here), in the text order of the file and reversed, in a part def and inline, and the
+  // single-sort twins are decided as before.
+  withZ3('a bound over an Integer and a Real feature is published only once it is confirmed or established', async () => {
     const strict = (op: string, inline: boolean, reversed: boolean): string => {
       const members = [
         'attribute x : Real;',
@@ -3959,34 +3960,65 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
     for (const inline of [false, true]) {
       for (const reversed of [false, true]) {
         // y + x > 0.5: min x = 0 (not the infimum 3/4), max x = 1; y - x > 0.5: min x = 0, max x = 1 (not the
-        // supremum 0). The strict bound νZ calls approached is withheld; the optimum beside it is confirmed. z3
-        // 5.3.1 answers the sensed row wrongly, so it is withheld; a later z3 that answers it right keeps the hand
-        // value, which this accepts too. What may never appear is an infimum, a supremum or an unbounded row.
-        for (const [op, sense, hand] of [
-          ['y + x > 0.5', 'min', 0],
-          ['y - x > 0.5', 'max', 1],
-        ] as const) {
+        // supremum 0). Both rows are the attained hand optimum, the one νZ got wrong established over a branch
+        // (z3 5.3.1 answers it wrongly; a later z3 that answers it right has it confirmed by the two checks).
+        for (const op of ['y + x > 0.5', 'y - x > 0.5']) {
           const r = await boundsOf(strict(op, inline, reversed), 'p.x');
-          const b = r.bounds.find((x) => x.sense === sense)!;
-          expect(['inconclusive', 'optimum'], `${op} ${inline} ${reversed}`).toContain(b.outcome);
-          if (b.outcome === 'inconclusive') {
-            expect(b.code).toBe('verification/optimality-not-established');
-            expect(b.value).toBeNull();
-            expect(b.detail).toContain('mixes Integer and Real features');
-            expect(r.exitCode).toBe(2);
-          } else {
-            expect(b.value).toBe(hand);
-          }
-          for (const kept of r.bounds.filter((x) => x.outcome !== 'inconclusive')) {
-            expect(kept.outcome).toBe('optimum');
-            expect(kept.value).toBe(kept.sense === 'min' ? 0 : 1);
+          expect(r.bounds.map((b) => [b.sense, b.outcome, b.value]), `${op} ${inline} ${reversed}`).toEqual([
+            ['min', 'optimum', 0],
+            ['max', 'optimum', 1],
+          ]);
+          expect(r.exitCode).toBe(0);
+          for (const b of r.bounds) {
+            // The witness carries the Integer feature at the value its branch fixed, and the point is a design.
+            const y = b.witness.find((w) => w.symbol.endsWith('::y'))?.value;
+            const x = b.witness.find((w) => w.symbol.endsWith('::x'))?.value;
+            expect(Number.isInteger(y), `${op} ${b.sense}`).toBe(true);
+            expect(x).toBe(b.value);
+            expect(op.startsWith('y +') ? (y as number) + (x as number) : (y as number) - (x as number)).toBeGreaterThan(0.5);
           }
         }
       }
     }
+    const withheldRow = (b: { outcome: string; code: string | null; value: number | null; detail: string }) => {
+      expect(b.outcome).toBe('inconclusive');
+      expect(b.code).toBe('verification/optimality-not-established');
+      expect(b.value).toBeNull();
+      expect(b.detail).toContain('mixes Integer and Real features');
+    };
+    // An infimum and an unbounded row, decided only once a branch establishes them: x > 0 beside y + x > 0.5 with y in
+    // [0, 2] has no least x (y = 1 lets x approach 0) and x below 1; with no ceiling on x, max x has no bound.
+    const open = await boundsOf(
+      partText([
+        'attribute x : Real;',
+        'attribute y : Integer;',
+        'assert constraint c0 { x > 0.0 }',
+        'assert constraint c1 { y + x > 0.5 }',
+        'assert constraint c2 { y >= 0.0 }',
+        'assert constraint c3 { y <= 2.0 }',
+      ]),
+      'p.x',
+    );
+    expect(open.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'infimum', 0],
+      ['max', 'unbounded', null],
+    ]);
+    for (const b of open.bounds) expect(b.detail).toContain('established over an integer branch');
+    // An Integer measure is constant in a branch, so no branch establishes that it is unbounded: max y over
+    // y + x > 0.5, x <= 1 climbs branch after branch and stops at the cap, withheld; min y = 0 is attained.
+    const climb = await boundsOf(
+      partText(['attribute x : Real;', 'attribute y : Integer;', 'assert constraint c0 { x <= 1.0 }', 'assert constraint c1 { y + x > 0.5 }']),
+      'p.y',
+    );
+    expect(climb.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'optimum', 0],
+      ['max', 'inconclusive', null],
+    ]);
+    withheldRow(climb.bounds[1]);
+    expect(climb.bounds[1].detail).toContain('the cap of 16 integer branches was reached');
     // The non-strict twin is an optimum two plain checks confirm, at the values a hand computation gives. The
     // second model is one where νZ itself answered `max x = 1 + epsilon` with no strict comparison: x in [0, 2]
-    // beside y - 2x <= 1 and y in [-4, 2], where x = 2 is attained. It is withheld, or the true 2.
+    // beside y - 2x <= 1 and y in [-4, 2], where x = 2 is attained. It is the true 2.
     const nonStrict = await boundsOf(strict('y + x >= 0.5', false, false), 'p.x');
     expect(nonStrict.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
       ['min', 'optimum', 0],
@@ -4005,9 +4037,10 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
       ]),
       'p.x',
     );
-    const [closedMin, closedMax] = closed.bounds;
-    expect(['inconclusive', 'optimum']).toContain(closedMin.outcome);
-    expect(closedMax.outcome === 'inconclusive' || (closedMax.outcome === 'optimum' && closedMax.value === 2)).toBe(true);
+    expect(closed.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'optimum', 0],
+      ['max', 'optimum', 2],
+    ]);
     // Every feature Real, and every feature Integer, with a strict comparison: decided as before.
     const real = await boundsOf(
       partText(['attribute x : Real;', 'attribute y : Real;', 'assert constraint c0 { x > 0.0 }', 'assert constraint c1 { x <= 1.0 }', 'assert constraint c2 { y + x > 0.5 }']),

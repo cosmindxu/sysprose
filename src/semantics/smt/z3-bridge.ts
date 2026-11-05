@@ -179,6 +179,11 @@ export interface ObjectiveBound {
   infinite: number;
   /** The finite part as a JS number, or `null` when it is not one. */
   value: number | null;
+  /**
+   * The finite part as z3 wrote it (`(/ 3.0 4.0)`): the exact rational {@link value} rounds. Absent where the
+   * answer carried none; a caller that must compare against the bound exactly reads it or does not compare.
+   */
+  finite?: string;
   /** The epsilon coefficient: non-zero for a bound that is approached, never reached. */
   epsilon: number;
 }
@@ -1171,6 +1176,7 @@ function boundOfObjective(opt: Z3Optimize, sense: OptimizeSense): ObjectiveBound
     term,
     infinite: asNumber(parts[0]),
     value: typeof rational === 'number' ? rational : null,
+    finite: parts[1],
     epsilon: asNumber(parts[2]),
   };
 }
