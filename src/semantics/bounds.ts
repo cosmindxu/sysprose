@@ -89,7 +89,7 @@ import {
 } from './contracts';
 import { isLiteralValueAxiom } from './consistency';
 import { equatedPartsMeasureRefusal } from './defining-equation';
-import { rereadRelation, tieSentence, type PointValues } from './exact';
+import { rereadRelation, termRational, tieSentence, type PointValues } from './exact';
 import {
   isCurrentWorklist,
   isFreedValueAxiom,
@@ -105,10 +105,12 @@ import {
   encodeRelation,
   encodeScript,
   encodeVariables,
+  renderRational,
   symbolOf,
   type EncodeVariable,
   type EncodedRelation,
   type ScriptAssertion,
+  type SmtScript,
 } from './smt/encode';
 import {
   attachClasses,
@@ -1006,7 +1008,8 @@ async function checkBoundsInner(model: Model, opts: BoundsOptions, rollup: Class
     checks += 1;
     // A MIXED-SORT SCRIPT'S ANSWER IS CHECKED, NOT TRUSTED (see {@link mixesSorts}). An optimum is
     // kept when two plain checks agree with it, a decision procedure that is not νZ: nothing feasible lies
-    // beyond it and the value itself is taken. An infimum, a supremum and `oo` are withheld.
+    // beyond it and the value itself is taken. Any other answer is replaced by one established over an integer
+    // branch ({@link establishedOverBranches}), or withheld.
     if (mixed && prepared.relevantRefusals.length === 0 && outcome.status === 'sat' && outcome.bound !== null) {
       const b = outcome.bound;
       const at = `(to_real ${symbol})`;
@@ -1030,6 +1033,23 @@ async function checkBoundsInner(model: Model, opts: BoundsOptions, rollup: Class
         }
       }
       if (!kept) {
+        const branched = prepared.syntacticNonlinear
+          ? { why: 'the script is not linear, so no branch of it is the pure linear real arithmetic νZ decides', checks: 0 }
+          : await establishedOverBranches(sense, {
+              prepared,
+              opts,
+              script,
+              preamble,
+              symbol: symbol!,
+              symbols,
+              objectiveSort,
+              census,
+            });
+        checks += branched.checks;
+        if ('row' in branched) {
+          bounds.push({ ...branched.row, checks: checks - before });
+          continue;
+        }
         bounds.push({
           sense,
           outcome: 'inconclusive',
@@ -1038,8 +1058,10 @@ async function checkBoundsInner(model: Model, opts: BoundsOptions, rollup: Class
             `no ${sense} of \`${prepared.measure.qualifiedName}\` is claimed: the script mixes Integer and Real ` +
             `features, a shape on which z3’s νZ was found to answer with a bound that a feasible point lies beyond ` +
             `(an infimum or a supremum approached from outside the feasible set, or an optimum that is not the ` +
-            `tightest), so an answer of that kind is withheld unless two plain checks confirm an optimum. A limit of ` +
-            `this tool, not a defect in the model. ${census}`,
+            `tightest), so an answer of that kind is withheld unless it is established: an optimum two plain checks ` +
+            `confirm, or a bound νZ finds over one integer branch (every Integer feature fixed at a feasible ` +
+            `point’s value) that one plain check shows nothing feasible lies beyond. None was: ${branched.why}. A ` +
+            `limit of this tool, not a defect in the model. ${census}`,
           value: null,
           siValue: null,
           term: '',
@@ -1089,6 +1111,147 @@ function mixesSorts(symbols: readonly string[], variables: readonly EncodeVariab
     if (sort !== undefined) sorts.add(sort);
   }
   return sorts.has('Int') && sorts.has('Real');
+}
+
+/** How many integer branches {@link establishedOverBranches} tries before it keeps the withheld answer. */
+export const MIXED_BRANCH_CAP = 16;
+
+/** What a mixed-sort row stands on in place of νZ alone, said on every row it established. */
+const BRANCH_ESTABLISHED_NOTE =
+  'established over an integer branch: every Integer feature fixed at a feasible point’s value, z3’s νZ over the ' +
+  'pure-Real rest, and one plain check over the whole script that nothing feasible lies beyond it';
+
+/**
+ * A MIXED-SORT ANSWER ESTABLISHED OVER ONE INTEGER BRANCH, or the reason there is none.
+ *
+ * The feasible set is the union of its integer branches: the same assertions with every Integer symbol fixed at
+ * one value. Fixed (`fixedIntegers` of {@link encodeScript}), a branch is linear real arithmetic, the fragment νZ is
+ * trusted on in every all-Real script. So, starting from a feasible point a plain check gives:
+ *  1. fix every Integer symbol at the point's value and optimise the branch with νZ, which gives `v`;
+ *  2. check the WHOLE script for a point beyond `v` — strictly beyond for an attained value, at or beyond for
+ *     a value the branch only approaches. `unsat` establishes `v`: the branch reaches it, nothing feasible
+ *     lies past it, and nothing attains an approached one;
+ *  3. `sat` is a feasible point beyond `v`: the next branch starts from it.
+ * An unbounded branch is a subset of the feasible set, so the whole set is unbounded and needs no check. An
+ * Integer measure is constant in a branch, so its unboundedness is never established this way. What this relies
+ * on is the plain check over a mixed script (as the two checks beside νZ already do) and νZ over linear real
+ * arithmetic (as every all-Real bound does). After {@link MIXED_BRANCH_CAP} branches, or on any answer that is
+ * not one of these, the row stays withheld and says why.
+ */
+async function establishedOverBranches(
+  sense: OptimizeSense,
+  run: {
+    prepared: Prepared;
+    opts: BoundsOptions;
+    script: SmtScript;
+    preamble: string;
+    symbol: string;
+    symbols: readonly string[];
+    objectiveSort: string;
+    census: string;
+  },
+): Promise<{ row: Bound; checks: number } | { why: string; checks: number }> {
+  const { prepared, opts, script, preamble, symbol, symbols } = run;
+  let checks = 0;
+  const declared = new Set(script.symbols);
+  const integers = symbols.filter((n) => prepared.variables.find((v) => v.qualifiedName === n)?.sort === 'Int');
+  const unfixed = integers.find((n) => !declared.has(n));
+  if (unfixed !== undefined) {
+    return { why: `the encoder cannot fix the integer symbol \`${unfixed}\`, which no assertion reads`, checks };
+  }
+  const intMeasure = run.objectiveSort === 'Int';
+  const ask = (text: string) => opts.backend.check(text, { timeoutMs: opts.timeoutMs, variables: symbols });
+  let point = await ask(`${script.text}${preamble}`);
+  checks += 1;
+  if (point.status !== 'sat') return { why: `the plain check for a feasible point answered ${point.status}`, checks };
+  for (let branch = 1; branch <= MIXED_BRANCH_CAP; branch += 1) {
+    const fixed = new Map<string, bigint>();
+    for (const name of integers) {
+      const term = [...point.witness, ...point.completion].find((w) => w.symbol === name)?.term;
+      const k = term === undefined ? undefined : integerOfTerm(term);
+      if (k === undefined) return { why: `a feasible point gave \`${name}\` no integer value to fix`, checks };
+      fixed.set(name, k);
+    }
+    const branchScript = encodeScript({
+      variables: prepared.variables,
+      assertions: prepared.assertions.map((a) => a.assertion),
+      nonlinear: prepared.nonlinear,
+      syntacticNonlinear: prepared.syntacticNonlinear,
+      fixedIntegers: fixed,
+    });
+    const left = integers.find((n) => !branchScript.fixed.includes(n));
+    if (left !== undefined) {
+      return { why: `the encoder cannot fix the integer symbol \`${left}\`, which is read other than as a number`, checks };
+    }
+    // An Integer measure is fixed with the rest: its branch optimum is its value.
+    const measured = intMeasure ? fixed.get(prepared.measure!.qualifiedName) : undefined;
+    const objective = measured === undefined ? symbol : renderRational({ num: measured, den: 1n });
+    const answer = await opts.backend.optimize(
+      `${branchScript.text}${preamble}(${sense === 'max' ? 'maximize' : 'minimize'} ${objective})\n`,
+      sense,
+      { timeoutMs: opts.timeoutMs, variables: symbols },
+    );
+    checks += 1;
+    const b = answer.bound;
+    if (answer.status !== 'sat' || b === null) {
+      return { why: `νZ over integer branch ${branch} answered ${answer.status}${answer.reason ? ` (${answer.reason})` : ''}`, checks };
+    }
+    // The fixed values are the branch's own point, in the order the symbols are printed: a point without them
+    // is one the re-read cannot read, and a witness without them is not the design.
+    const values = new Map(answer.witness.map((w) => [w.symbol, w] as const));
+    for (const [name, k] of fixed) values.set(name, { symbol: name, term: integerTerm(k), value: Number(k) });
+    const outcome = {
+      ...answer,
+      witness: symbols.flatMap((n) => values.get(n) ?? []),
+      completion: answer.completion.filter((w) => !fixed.has(w.symbol)),
+    };
+    const toward = sense === 'max' ? 1 : -1;
+    if (b.infinite !== 0) {
+      if (b.infinite !== toward || intMeasure) {
+        return { why: `νZ over integer branch ${branch} answered \`${b.term}\`, which no branch establishes`, checks };
+      }
+      return { row: establishedRow(boundRow(sense, outcome, prepared, run.census, 0), run.census), checks };
+    }
+    const v = b.finite === undefined ? undefined : termRational(b.finite);
+    // An approached bound lies on the far side of the sense: `v + ε` for a min, `v − ε` for a max.
+    if (v === undefined || (b.epsilon !== 0 && (intMeasure || Math.sign(b.epsilon) !== -toward))) {
+      return { why: `νZ over integer branch ${branch} answered \`${b.term}\`, which no plain check can compare`, checks };
+    }
+    const beyond = sense === 'max' ? (b.epsilon === 0 ? '>' : '>=') : b.epsilon === 0 ? '<' : '<=';
+    const past = await ask(`${script.text}${preamble}(assert (${beyond} (to_real ${symbol}) ${renderRational(v)}))\n`);
+    checks += 1;
+    if (past.status === 'unsat') {
+      return { row: establishedRow(boundRow(sense, outcome, prepared, run.census, 0), run.census), checks };
+    }
+    if (past.status !== 'sat') {
+      return { why: `the plain check beyond the value of integer branch ${branch} answered ${past.status}`, checks };
+    }
+    point = past;
+  }
+  return { why: `the cap of ${MIXED_BRANCH_CAP} integer branches was reached before one was established`, checks };
+}
+
+/** A row {@link establishedOverBranches} decided, saying what it stands on; an undecided one as it is. */
+function establishedRow(row: Bound, census: string): Bound {
+  if (row.outcome === 'optimum') {
+    return { ...row, detail: row.detail.replace('optimality established by z3’s νZ', BRANCH_ESTABLISHED_NOTE) };
+  }
+  if (row.outcome !== 'unbounded' && row.outcome !== 'supremum' && row.outcome !== 'infimum') return row;
+  const head = row.detail.endsWith(census) ? row.detail.slice(0, row.detail.length - census.length) : `${row.detail} `;
+  return { ...row, detail: `${head}(${BRANCH_ESTABLISHED_NOTE}) ${census}` };
+}
+
+/** z3's rendering of an integer (`3`, `(- 2)`) as the integer it is, or `undefined` for anything else. */
+function integerOfTerm(term: string): bigint | undefined {
+  const t = term.trim();
+  const neg = /^\(-\s+(\d+)\)$/.exec(t);
+  if (neg) return -BigInt(neg[1]);
+  return /^\d+$/.test(t) ? BigInt(t) : undefined;
+}
+
+/** An integer as z3 writes it. */
+function integerTerm(k: bigint): string {
+  return k < 0n ? `(- ${-k})` : `${k}`;
 }
 
 /** One optimiser answer as a row, with the claim it is allowed to make. */

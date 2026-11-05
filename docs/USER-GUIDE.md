@@ -3257,7 +3257,7 @@ same sentence:
 
 | Answer | What it means |
 |---|---|
-| `optimum` | νZ established its optimality (on an Integer-and-Real script, two plain checks confirmed it beside νZ) and a design attains it — the witness is printed |
+| `optimum` | νZ established its optimality (on an Integer-and-Real script, two plain checks confirmed it beside νZ, or it was established over an integer branch) and a design attains it — the witness is printed |
 | `supremum` / `infimum` | exact, and **never attained** (`x < 5` has no maximum) |
 | `unbounded` | z3 proved there is no finite bound in that direction — over a **linear** script, the only shape νZ is complete for |
 | `bound-without-optimality` | a bound z3 reached over a **nonlinear** script, which νZ does not certify — finite or `oo` alike |
@@ -3282,12 +3282,23 @@ z3's νZ, given a script that declares both an Integer and a Real feature,
 answered `min x` with an *infimum* of 3/4 that was never attained, where `x = 0`
 with `y = 1` is a design (`x` Real in `[0, 1]`, `y` Integer, `y + x > 0.5`), and
 `max x` with `1 + epsilon` where 2 is attained, with no strict
-comparison anywhere. For such a script `bounds` keeps an `optimum` only when two
+comparison anywhere. For such a script `bounds` keeps an `optimum` when two
 plain checks, which are not νZ, agree with it (nothing feasible lies beyond the
-value, and the value itself is taken); an infimum, a supremum or *unbounded* is
-`inconclusive` with `verification/optimality-not-established` at exit **2**, with
-no number and a sentence that says the script mixes the two sorts. A model whose
-features are all Real or all Integer is decided as before.
+value, and the value itself is taken). Any other answer is replaced by one
+**established over an integer branch**: every Integer feature is fixed at the value
+a feasible point gives it, νZ optimises the pure-Real rest (the arithmetic it is
+trusted on in an all-Real model), and one plain check over the whole script shows
+nothing feasible lies beyond the value (strictly beyond an attained one, at or
+beyond one only approached). If that check finds such a point, the next branch
+starts from it. An *unbounded* branch makes the whole model unbounded and needs no
+check. So the example above reads `min x = 0`, attained at `y = 1`, and the row
+says it was established over an integer branch. A row stays `inconclusive` with
+`verification/optimality-not-established` at exit **2**, with no number and a
+sentence that says the script mixes the two sorts and why no branch established it:
+16 branches tried, a check that did not answer, or a measure that
+is itself an Integer and has no bound (it is constant in a branch, so no
+branch shows it is *unbounded*). A model whose features are all Real or all
+Integer is decided as before.
 
 **A feature typed `Natural`, `Positive` or `UnlimitedNatural` is not read.** This
 tool derives no domain axiom from a type, and a Natural was an unbounded
