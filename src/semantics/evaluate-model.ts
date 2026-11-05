@@ -117,6 +117,7 @@ import {
   parseRelationBody,
   relationVarsOf,
   unitsOfDimension,
+  lexicalPackageOf,
   valueFaultOf,
   type MarkerDimensions,
 } from './relations';
@@ -487,6 +488,10 @@ function answerFor(
     // instance (`two-values`), not an instance left unread.
     const lexical = answer === undefined ? pass.definitions.lexicalRefusal(contextId, name) : undefined;
     if (lexical !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: lexical } };
+    // A dotted path to a package's usage (`q2.p.x` in q1's body) is read in the package, as every surface reads it
+    // (`lexicalPackageOf` of ./relations): one feature, not one per instance of the context.
+    const pkg = answer === undefined ? lexicalPackageOf(model, contextId, name) : undefined;
+    if (pkg !== undefined) return answerFor(model, pkg, name, pass);
   }
   // A decided answer is never replaced. Only a valueless one is read through
   // the binding the name meets in the instance (A.2.1) — never one two values

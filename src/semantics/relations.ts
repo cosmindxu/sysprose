@@ -655,7 +655,7 @@ function valueBodyOf(
   if (typeof raw === 'string') {
     const body = parseRelationBody(raw.trim());
     if (!body || (body.hadUnit && !body.resolved)) return undefined;
-    const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id);
+    const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id, raw);
     return { node: body.node, nameToId, markers: body.literals };
   }
   const constraint = derivation.definedBy !== undefined ? model.get(derivation.definedBy) : undefined;
@@ -1033,7 +1033,9 @@ function collectVarIds(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>,
 
 /** Name→id scope for a relation: its owner (subject) merged with itself. */
 export function relationScope(model: Model, el: ElementRecord): Map<string, ElementId> {
-  return mergedScope(model, el.ownerId ?? undefined, el.id);
+  // The text the relation is written in (a constraint's expression, a feature's stated value): the names the scope is asked for.
+  const parts = [el.attrs.expression, el.attrs.value].filter((t): t is string => typeof t === 'string');
+  return mergedScope(model, el.ownerId ?? undefined, el.id, parts.length > 0 ? parts.join(' ') : undefined);
 }
 
 /**
@@ -1044,11 +1046,119 @@ export function relationScope(model: Model, el: ElementRecord): Map<string, Elem
  * of 600 bindings). No `outer` reads the inner scope alone. The caller may
  * change the map.
  */
-export function mergedScope(model: Model, outer: ElementId | undefined, inner: ElementId): Map<string, ElementId> {
+export function mergedScope(
+  model: Model,
+  outer: ElementId | undefined,
+  inner: ElementId,
+  text?: string,
+): Map<string, ElementId> {
   const definitions = sharedDefinitions(model);
   const out = outer !== undefined ? new Map(definitions.scope(outer, 'all')) : new Map<string, ElementId>();
   for (const [k, v] of definitions.scope(inner, 'all')) if (!out.has(k)) out.set(k, v);
+  if (outer === undefined || text === undefined) return out;
+  const lexical = lexicalPaths(model, definitions, outer, text);
+  if (lexical.size === 0) return out;
+  const heads = headsOf(definitions, inner);
+  for (const [k, v] of lexical) if (!heads.has(headOf(k)) && !out.has(k)) out.set(k, v.id);
   return out;
+}
+
+function headOf(name: string): string {
+  const dot = name.indexOf('.');
+  return dot < 0 ? name : name.slice(0, dot);
+}
+
+type Definitions = ReturnType<typeof sharedDefinitions>;
+
+/** The first segments of the names `id`'s scope answers, by scope builder (a model revision builds a fresh one). */
+const HEADS = new WeakMap<object, Map<ElementId, ReadonlySet<string>>>();
+function headsOf(definitions: Definitions, id: ElementId): ReadonlySet<string> {
+  let byId = HEADS.get(definitions);
+  if (!byId) HEADS.set(definitions, (byId = new Map()));
+  let heads = byId.get(id);
+  if (!heads) {
+    heads = new Set<string>();
+    for (const k of definitions.scope(id, 'all').keys()) (heads as Set<string>).add(headOf(k));
+    byId.set(id, heads);
+  }
+  return heads;
+}
+
+/** A package's dotted names by first segment, by scope builder: built once, so a body names its heads, not the package's scope. */
+const DOTTED = new WeakMap<object, Map<ElementId, ReadonlyMap<string, [string, ElementId][]>>>();
+function dottedOf(definitions: Definitions, pkg: ElementId): ReadonlyMap<string, [string, ElementId][]> {
+  let byPkg = DOTTED.get(definitions);
+  if (!byPkg) DOTTED.set(definitions, (byPkg = new Map()));
+  let index = byPkg.get(pkg);
+  if (!index) {
+    const built = new Map<string, [string, ElementId][]>();
+    for (const [k, id] of definitions.scope(pkg, 'all')) {
+      if (!k.includes('.')) continue;
+      const head = headOf(k);
+      const at = built.get(head);
+      if (at) at.push([k, id]);
+      else built.set(head, [[k, id]]);
+    }
+    byPkg.set(pkg, (index = built));
+  }
+  return index;
+}
+
+/**
+ * The dotted names a body in `outer` reads through the packages that enclose
+ * `outer` (KerML name resolution: an inner namespace first, then each
+ * enclosing one), with the package each is read in: `q2.p.x` in q1's body,
+ * where q2 is q1's sibling in the package. Only a DOTTED name, whose first
+ * segment no nearer scope answers — `outer`'s own, then each owner's on the
+ * way up, an enclosing usage's included — so a name of the body's own or its
+ * owner's shadows it, and a bare name reads as it did. Only a PACKAGE's: its
+ * usage's feature is one feature wherever it is read, where an enclosing
+ * usage's may be another in each instance of it. A path no package answers
+ * stays unresolved (`unresolved-name`), and so does one whose value an
+ * instance on the path changes. Only the names whose first segment the body's
+ * `text` mentions are looked at: a package of a thousand usages is not walked
+ * for a body that names none of them.
+ */
+function lexicalPaths(
+  model: Model,
+  definitions: Definitions,
+  outer: ElementId,
+  text: string,
+): ReadonlyMap<string, { id: ElementId; at: ElementId }> {
+  const out = new Map<string, { id: ElementId; at: ElementId }>();
+  const near: ReadonlySet<string>[] = [headsOf(definitions, outer)];
+  const seen = new Set<ElementId>([outer]);
+  for (let o = model.get(outer)?.ownerId ?? undefined; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? undefined) {
+    seen.add(o);
+    const kind = model.get(o)?.eClass;
+    if (kind === 'Package' || kind === 'LibraryPackage') {
+      const denoted = definitions.denote(o);
+      for (const [head, entries] of dottedOf(definitions, o)) {
+        if (!text.includes(head) || near.some((h) => h.has(head))) continue;
+        for (const [k, id] of entries) {
+          if (out.has(k)) continue;
+          // Only a path whose value is its feature's own (the symbol every engine reads it by): one an instance
+          // reads otherwise (P's `m2 = 10.0 - load` read as `p.m2`, in a p whose `:>> load` changes it) is read
+          // by an instance symbol the relation's own reading does not key, so it stays unresolved.
+          const d = denoted.get(k);
+          if (d === undefined || definitions.symbolOf(d) !== definitions.qualifiedNameOf(id)) continue;
+          out.set(k, { id, at: o });
+        }
+      }
+    }
+    near.push(headsOf(definitions, o));
+  }
+  return out;
+}
+
+/**
+ * The package a dotted `name` read in `contextId` resolves through
+ * ({@link lexicalPaths}) — where the context's own scope has no feature by the
+ * name's first segment — or `undefined`. The check reads the name there.
+ */
+export function lexicalPackageOf(model: Model, contextId: ElementId, name: string): ElementId | undefined {
+  if (!name.includes('.')) return undefined;
+  return lexicalPaths(model, sharedDefinitions(model), contextId, name).get(name)?.at;
 }
 
 /**

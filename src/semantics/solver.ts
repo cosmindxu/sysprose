@@ -1256,7 +1256,7 @@ function assignmentEquation(
     return undefined;
   }
 
-  const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id);
+  const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id, raw);
   nameToId.set(name, el.id); // the assignment target resolves to this feature
   const lhs: ExprNode = { kind: 'ref', path: [name] };
   const identity = node.kind === 'ref' && !body.hadUnit;
@@ -1578,7 +1578,7 @@ function valueEquation(
     onRefused?.();
     return undefined;
   }
-  const nameToId = mergedScope(model, context.id, feature.id);
+  const nameToId = mergedScope(model, context.id, feature.id, s);
   nameToId.set(name, feature.id);
   const identity = body.node.kind === 'ref' && !body.hadUnit;
   const lhs: ExprNode = { kind: 'ref', path: [name] };

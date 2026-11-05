@@ -1834,7 +1834,11 @@ instance may stand for another (a reference, a subject, a part a binding, a subs
 inconclusive. An `assert` this tool cannot read, in whole or in part (a path it does not resolve, a body
 it does not parse) that the check cannot hold true leaves every relation of the file
 undecided on the literal engine (`verification/not-evaluable`, naming the assert), as the
-SMT engine claims no proof beside it. The contexts a relation is filed at do not
+SMT engine claims no proof beside it. A dotted path to a package's usage written in a usage's
+body (`q2.p.x` in q1's `assert`, q2 q1's sibling in the package) is resolved, as KerML
+resolves it, and read in the package on every surface, unless a feature of the body's own
+context answers its first segment (q1's own `part q2`); a path nothing answers there
+(`q2.p.w`) stays unresolved. The contexts a relation is filed at do not
 turn on the order the text is written in: a renamed redefinition (`part p2 :>> p` in
 `q2 : Q`) written before `part def Q` leaves Q's p, and every other instance, filed as
 they are when Q comes first. A binding that gives the instance

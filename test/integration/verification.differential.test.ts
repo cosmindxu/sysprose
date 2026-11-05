@@ -4765,10 +4765,24 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'LRC::kL': ['T/T/T/X', 'T'],
       'LRC::q1::tie': ['F/-/F/-', 'F'],
     }),
-    // A fence beside literal-reach: an `assert` the worklist cannot read (q1's `q2.p.x == 50.0`, a path this tool does
-    // not resolve from inside a usage) left the literal engine deciding k2 at q2's p's 2 the model asserts is 50, where
-    // the SMT engine claims no proof beside it. No relation is judged on the literal engine beside an assert no surface
-    // reads, in a sentence naming it.
+    // A fence beside literal-reach: an `assert` the worklist cannot read (q1's `q2.p.w == 50.0`, a path nothing
+    // resolves: P has no w) left the literal engine deciding k2 at q2's p's 2, where the SMT engine claims no proof
+    // beside it. No relation is judged on the literal engine beside an assert no surface reads, in a sentence naming it.
+    'unread-assert-miss': probe(`package UA0 {
+        part def P { attribute x : ScalarValues::Real default = 2.0; }
+        part def Q { part p : P; }
+        part q1 : Q { assert constraint tie { q2.p.w == 50.0 } }
+        part q2 : Q;
+        constraint k1 { q1.p.x <= 10.0 }
+        constraint k2 { q2.p.x <= 10.0 }
+      }`, {
+      'UA0::k1': ['T/?/T/?', 'T'],
+      'UA0::k2': ['T/?/T/?', null],
+      'UA0::q1::tie': ['?/-/?/-', null],
+    }),
+    // A dotted path to a package's usage from inside a usage body (q1's `q2.p.x == 50.0`, q2 q1's sibling) is read in
+    // the package on every surface (name-reads S1), where it was `unresolved-name` and fenced the literal engine (the
+    // probe above): the assert is violated at q2's p's 2, and the literal and SMT engines read the contradiction.
     'unread-assert': probe(`package UA {
         part def P { attribute x : ScalarValues::Real default = 2.0; }
         part def Q { part p : P; }
@@ -4777,13 +4791,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint k1 { q1.p.x <= 10.0 }
         constraint k2 { q2.p.x <= 10.0 }
       }`, {
-      'UA::k1': ['T/?/T/?', 'T'],
-      'UA::k2': ['T/?/T/?', null],
-      'UA::q1::tie': ['?/-/?/-', 'F'],
+      'UA::k1': ['T/X/T/X', 'T'],
+      'UA::k2': ['T/X/T/X', null],
+      'UA::q1::tie': ['F/-/F/-', 'F'],
     }),
-    // The same when the worklist reads the assert in part: one name of `q2.p.x + p.x == 52.0` resolves (q1's own p.x) and
-    // one does not (q2.p.x), so the row it files has a name and no encoding. The model's defaults (2 + 2) violate it all
-    // the same, and no relation is judged on the literal engine beside it, in a usage or in a definition.
+    // The same where the body reads q1's own p.x beside the package's `q2.p.x` (2 + 2 violates `== 52.0`), in a usage
+    // or in a definition.
     'unread-assert-part': probe(`package UA2 {
         part def P { attribute x : ScalarValues::Real default = 2.0; }
         part def Q { part p : P; }
@@ -4792,9 +4805,20 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint k1 { q1.p.x <= 10.0 }
         constraint k2 { q2.p.x <= 10.0 }
       }`, {
-      'UA2::k1': ['T/?/T/?', 'T'],
-      'UA2::k2': ['T/?/T/?', null],
-      'UA2::q1::tie': ['?/-/?/-', 'F'],
+      'UA2::k1': ['T/X/T/X', 'T'],
+      'UA2::k2': ['T/X/T/X', null],
+      'UA2::q1::tie': ['F/-/F/-', 'F'],
+    }),
+    // A path whose value an instance on it changes is not read so (p's `:>> load = 50.0` under P's `m2 = 10.0 - load`):
+    // the numeric surface read it by P's own m2 (9) and filed c2 violated, where p's m2 is −40. It stays unresolved.
+    'lexical-instance': probe(`package R17 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part p : P { attribute :>> load = 50.0; }
+        requirement r1 { require constraint c1 { p.load >= 10.0 } }
+        requirement r2 { require constraint c2 { p.m2 <= 0.0 } }
+      }`, {
+      'R17::r1::c1': ['T/T/T/T', 'T'],
+      'R17::r2::c2': ['?/?/?/?', 'T'],
     }),
     'unread-assert-def': probe(`package UA4 {
         part def P { attribute x : ScalarValues::Real default = 2.0; }
@@ -4803,8 +4827,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q2 : Q;
         constraint k1 { q1.p.x <= 10.0 }
       }`, {
-      'UA4::k1': ['T/?/T/?', 'T'],
-      'UA4::Q::tie': ['?/-/?/-', 'F'],
+      'UA4::k1': ['T/X/T/X', 'T'],
+      'UA4::Q::tie': ['F/-/F/-', 'F'],
     }),
     // An operator the worklist does not encode (`x % 4.0 >= 2.5`) leaves the assert unread too: P's own default (5) violates
     // it and the usage's value (7) holds it. The check does not hold it true everywhere, so the literal engine judges no
@@ -8103,7 +8127,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // package's `L default = 50.0` an assert outside its package names (LP1) was such a name too, which gave way
     // with x's (U7), until default-stands S2: no assertion replaces a `default`, so L is 50 and x is 1, and p's
     // assert is checked against the two (violated: the model contradicts itself), as with `=`. LR1's `x == L` is read in
-    // part (x, not L), so the literal engine judges no relation beside it (unread-assert-part).
+    // part (x, not L), so the literal engine judges no relation beside it (unread-assert-miss).
     'lex-lp1': probe(`package LP1 {
         attribute L : ScalarValues::Real default = 50.0;
         part def P { attribute x : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - x; }
@@ -17865,6 +17889,14 @@ package PS {
       'reach-carry | LRC::P::c in LRC::Q::p',
       'reach-carry | LRC::P::c in LRC::q3::p',
       'reach-carry | LRC::k3',
+      // A package's usage's path read from inside q1's body (name-reads S1): q1's assert over q2's p's x is violated,
+      // and the literal engine places the contradiction at q2's p and at the assert's owner q1 too (UA's k1: weaker, not
+      // wrong, where the package-level twin reads k1 T).
+      'unread-assert | UA::k1',
+      'unread-assert | UA::k2',
+      'unread-assert-part | UA2::k1',
+      'unread-assert-part | UA2::k2',
+      'unread-assert-def | UA4::k1',
       // An instance's own value row, joined to its feature, carries the contradiction through the binding filed
       // for that feature in the definition (q3's L in M3T, as CV-SP2; R27F's Q's c).
       'h5-m3t | M3T::k',
