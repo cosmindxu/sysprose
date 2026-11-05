@@ -765,8 +765,8 @@ Two names worth separating:
   `s.L == 50.0`) from being taken as `p`'s design equation, exactly as it is with
   no requirement there. An `assert` is the way to state a fact. The test is local: each
   of two separate roots (`x * x == 4.0`) reads as determined, not free.
-  **No design equation turns on the order of the text, bar three cases of where the solve
-  starts or of the digits a value is given to (the end of this passage).** Two plain
+  **No design equation turns on the order of the text, bar two cases of the digits a value
+  is given to (the end of this passage).** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
   `x`) are both *imposed by the solve*. An equation whose two sides are the same expression or the
   same polynomial (`c0 { y == y }`, `y * 2.0 == 2.0 * y`, `y - y == 0.0`), plain or asserted, fixes
@@ -786,17 +786,28 @@ Two names worth separating:
   and a double root such as `x * x == 0.0` are read the same), a
   stated value (`attribute s = x * x`) or an assert (`s == x * x`) as much as a
   plain one, or a product of two unknowns that the other equations still link
-  (`x * y == 4.0` beside `x == y`). `a { x * x == 4.0 }` beside `b { x == -2.0 }`,
-  and beside `b { x == 2.0 }`, where one root agrees; `c0 { s == 4.0 }` beside
+  (`x * y == 4.0` beside `x == y`). `c0 { s == 4.0 }` beside
   `c1 { x == -2.0 }` over that stated `s`, which agree at −2; `c0 { x * x ==
   4.0 }`, `c1 { y == x + 1.0 }` and `c2 { y <= 0.0 }`, where the root (2, 3)
   breaks c2 and (−2, −1) meets all three: the root the solve takes, and so
   whether the others hold, would turn on which equation it took first or on the
   root itself, so none is read, whether or not a plain constraint was left
-  unused (*… only plain constraints, one of them that may have more than one root (a and
-  b) …*, or, with the model's own equation among them, *… and the equations over
+  unused (*… only plain constraints, one of them that may have more than one root (c0 and
+  c1) …*, or, with the model's own equation among them, *… and the equations over
   it may leave more than one root (`s = x * x`) …*). The features the equations link
-  are one, those the solve left free among them. What the other equations fix
+  are one, those the solve left free among them. **Unless the equations of those features that are
+  affine in them fix every one of them alone**: the point they fix is then the only one where all the
+  equations can hold, the solve takes it before any equation takes a root, whatever the order of the
+  text, and every other equation is judged there. `a { x * x == 4.0 }` beside `b { x == -2.0 }`, or
+  beside `b { x == 2.0 }`, is read at the value b fixes, where a holds: both are *imposed*, in either
+  order, and `k { x >= 1.0 }` beside the second is judged at 2; beside `b { x == 5.0 }` the two
+  disagree (*… only plain constraints that disagree (a and b) …*). The affine equations may fix the
+  point together (`x + y == 1.0` and `x - y == -7.0` beside the asserted `x == 6.0 / (x + 1.0)`: (−3, 4),
+  where all three hold) and the curved one may read several of them (`w * w + b == 0.5` beside two
+  plain equations that fix w and b). Not where an equation of the model's own that may have more than one
+  root (an assert, a stated value) is beside a plain constraint that fixes the point (`assert constraint
+  a { x * x == 4.0 }` beside `b { p.x == -2.0 }`): which of its roots is the model's, the plain constraint
+  does not say, and the value is withheld as before. What the other equations fix
   one at a time has the one root and is read as before: `z == x * x` over `x ==
   3.0`, and `mass == density * volume` over the two it multiplies; and `z == x *
   y` beside `z == 9.0` leaves x and y free along the curve, not two roots. So does
@@ -840,8 +851,8 @@ Two names worth separating:
   can cross it more than once, so the equation is read as a whole and as if it had more than one
   root, like `x * x == 4.0`: `x == 6.0 / (x + 1.0)` is met at 2 and −3, `6.0 / y ==
   5.0 - y` at 2 and 3, `2.0 ^ y == y + 1.0` at 0 and 1 (and `0.5 ^ x == x`, which is
-  met once, is read the same). Beside `c1 { x == -3.0 }`
-  it reads no value, and an inequality over a lone one (`k { x <= 0.0 }`) is
+  met once, is read the same). Beside `c1 { x == -3.0 }`, which fixes x alone,
+  it is judged at −3, where it holds (both *imposed*, as above), and an inequality over a lone one (`k { x <= 0.0 }`) is
   unjudged, in either order of the text; the size of the component does not change that (a chain of seventy equations beside
   `z == x0 * x0` over `x0 == 3.0` reads as a short one). A loop
   of definitions is read the same way: the asserts `x == y * y + 1.0` and `y ==
@@ -861,16 +872,15 @@ Two names worth separating:
   its first search finds no witness it searches again from where the plain
   equations that are not curved put the value, so `x * x == 4.0` beside `x ==
   -2.0` is feasible with x = −2 in either order of the text; where that finds
-  none either, the answer stays undecided. A solve that stops off its equations where
+  none either, the answer stays undecided — unless the equations that are not curved fix the
+  point alone, so that a constraint that breaks it there (`x >= 0.0` beside those two) makes the
+  model infeasible. A solve that stops off its equations where
   one divides by a feature it solves for is run again from a fixed list of starts for
   what the divisor reads (its step may land on the divisor's zero): `c0 { x / y == 3.0 }`
   and `c2 { w / y == x }` beside `c1 { x >= 0.0 }`, over a `y` nothing fixes, impose
-  `c0` and `c2` in every order (`c1` is unjudged: x is free). What still turns on the order of the text is where the solve
-  starts, and the cases known read an abstention in one order where the other reads
-  a value, never a different verdict: two asserted equations that share one of
-  their roots (`a0 { x == 6.0 / (x + 1.0) }` beside `a1 { x == -3.0 }`, in a
-  usage) read a constraint over their value *unknown* in one order and decided
-  in the other; and a steep one-to-one equation (a quotient whose root is close to
+  `c0` and `c2` in every order (`c1` is unjudged: x is free). What still turns on the order of the text is the
+  digits a value is given to, and the cases known read an abstention in one order where the other reads
+  a value, never a different verdict: a steep one-to-one equation (a quotient whose root is close to
   its pole) judged at a value that another equation gives to fewer digits than its
   slope needs, in two ways: a pin written to ten digits (`x == 0.000003000000001`
   beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, whose root is 3.0000000012e-06)

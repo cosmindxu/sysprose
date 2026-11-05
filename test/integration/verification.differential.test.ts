@@ -13707,17 +13707,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ),
     // The root of a curved plain equation (`x * x == 4.0`, two roots) beside another plain equation was the one place the
     // order of the text still showed: written above `b { x == -2.0 }` it took the root 2 and left both unjudged, written
-    // below it took −2 and imposed both. The pair is contested in both orders now — the roots are not compared, so
-    // `x == 2.0`, where one root agrees, reads alike (ROOT2) — and a lone curved equation is still imposed (ROOT1), though an
-    // inequality over it is not judged (numeric-curved S1: it read T at 2, where −2 breaks it). UPR: an asserted relation the parser rejects (`M == max(L, 20.0)`) still constrains
+    // below it took −2 and imposed both. The affine `b` alone fixes x (solver2-pass S5, 286 c), so the pair is read at that
+    // point in both orders: the curved one holds there, and both are imposed (ROOT, and ROOT2 at 2). A lone curved equation
+    // is still imposed (ROOT1), though an inequality over it is not judged (numeric-curved S1: it read T at 2, where −2 breaks it). UPR: an asserted relation the parser rejects (`M == max(L, 20.0)`) still constrains
     // what it names, so `t1 { p.M == 3.0 }` is no design equation over a feature it holds (it was imposed, `?/?/t/?`).
     ...reversed(
       'order-root',
       `package ROOT { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint b { x == -2.0 } }`,
       `package ROOT { constraint b { x == -2.0 } constraint a { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
       {
-        'ROOT::a': ['?/?/?/?', '?'],
-        'ROOT::b': ['?/?/?/?', '?'],
+        'ROOT::a': ['?/?/t/?', '?'],
+        'ROOT::b': ['?/?/t/?', '?'],
       },
     ),
     ...reversed(
@@ -13725,8 +13725,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package ROOT2 { attribute x : ScalarValues::Real; constraint a { x * x == 4.0 } constraint b { x == 2.0 } }`,
       `package ROOT2 { constraint b { x == 2.0 } constraint a { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
       {
-        'ROOT2::a': ['?/?/?/?', '?'],
-        'ROOT2::b': ['?/?/?/?', '?'],
+        'ROOT2::a': ['?/?/t/?', '?'],
+        'ROOT2::b': ['?/?/t/?', '?'],
       },
     ),
     'order-root1': probe(
@@ -14138,7 +14138,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // and −3: `k { x <= 0.0 }` read F at 2 where −3 meets it, `m { x >= 0.0 }` read T where −3 breaks it; the lone equation is imposed.
     // CV12 and CV13: `c1 { x == -3.0 }` beside it read t above it and ? below it. CV14: `6.0 / y == 5.0 - y` (2 and 3) beside the
     // inequalities that split the roots, CV15 the same beside `y == 3.0`, CV16 `2.0 ^ y == y + 1.0` (0 and 1) beside `y == 1.0`, CV17
-    // the asserted form of CV14: the model's own equation, and the inequalities beside it are not judged either.
+    // the asserted form of CV14: the model's own equation, and the inequalities beside it are not judged either. Since solver2-pass
+    // S5 (286 c) the affine equation beside it fixes the point alone, and the crossing is judged there in both orders: CV12, CV13,
+    // CV15 and CV16 read imposed, and CV13's k is judged at −3 (a design reading: no value the model states, so no hand verdict).
     ...reversed(
       'order-curved-self',
       `package CV11 { attribute x : ScalarValues::Real;
@@ -14156,8 +14158,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package CV12 { attribute x : ScalarValues::Real; constraint c0 { x == 6.0 / (x + 1.0) } constraint c1 { x == -3.0 } }`,
       `package CV12 { constraint c1 { x == -3.0 } constraint c0 { x == 6.0 / (x + 1.0) } attribute x : ScalarValues::Real; }`,
       {
-        'CV12::c0': ['?/?/?/?', '?'],
-        'CV12::c1': ['?/?/?/?', '?'],
+        'CV12::c0': ['?/?/t/?', '?'],
+        'CV12::c1': ['?/?/t/?', '?'],
       },
     ),
     ...reversed(
@@ -14167,9 +14169,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package CV13 { constraint k { x <= -1.0 } constraint c1 { x == -3.0 } constraint c0 { x == 6.0 / (x + 1.0) }
         attribute x : ScalarValues::Real; }`,
       {
-        'CV13::c0': ['?/?/?/?', '?'],
-        'CV13::c1': ['?/?/?/?', '?'],
-        'CV13::k': ['?/?/?/?', '?'],
+        'CV13::c0': ['?/?/t/?', '?'],
+        'CV13::c1': ['?/?/t/?', '?'],
+        'CV13::k': ['?/?/T/?', null],
       },
     ),
     ...reversed(
@@ -14189,8 +14191,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package CV15 { attribute y : ScalarValues::Real; constraint c0 { 6.0 / y == 5.0 - y } constraint c1 { y == 3.0 } }`,
       `package CV15 { constraint c1 { y == 3.0 } constraint c0 { 6.0 / y == 5.0 - y } attribute y : ScalarValues::Real; }`,
       {
-        'CV15::c0': ['?/?/?/?', '?'],
-        'CV15::c1': ['?/?/?/?', '?'],
+        'CV15::c0': ['?/?/t/?', '?'],
+        'CV15::c1': ['?/?/t/?', '?'],
       },
     ),
     ...reversed(
@@ -14198,8 +14200,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package CV16 { attribute y : ScalarValues::Real; constraint c0 { 2.0 ^ y == y + 1.0 } constraint c1 { y == 1.0 } }`,
       `package CV16 { constraint c1 { y == 1.0 } constraint c0 { 2.0 ^ y == y + 1.0 } attribute y : ScalarValues::Real; }`,
       {
-        'CV16::c0': ['?/U/?/U', null],
-        'CV16::c1': ['?/?/?/?', '?'],
+        'CV16::c0': ['?/U/t/U', null],
+        'CV16::c1': ['?/?/t/?', '?'],
       },
     ),
     ...reversed(
@@ -14212,6 +14214,74 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'CV17::a': ['?/-/T/-', null],
         'CV17::k': ['?/?/?/?', '?'],
         'CV17::k2': ['?/?/?/?', '?'],
+      },
+    ),
+    // The affine equations of a component are solved before a curved one takes a root, whatever the text order (solver2-pass S5:
+    // 286 c, 255 narrowed). AF1: in a usage, the asserted `x == 6.0 / (x + 1.0)` (2 and −3) above `x == -3.0` took the root 2, the
+    // other assert missed it, and every row was `?` on the numeric surface; below it, all T. AF2: `c0 { x * x == 4.0 }` beside
+    // `c1 { x == 2.0 }` was withheld in both orders; c1 alone fixes x, c0 holds there. AF3: three asserts, the affine pair fixing
+    // (−3, 4) together, the curved one holding there: the model's values, so k is F. AF4: plain, the curved `w * w + b == 0.5` reading
+    // both, at the (−1, −0.5) the pair fixes. AF5: the curved one misses the point `x == 3.0` fixes: contested, in both orders.
+    ...reversed(
+      'order-affine-usage',
+      `package AF1 { part def P { attribute x : ScalarValues::Real; }
+        part p : P { assert constraint a0 { x == 6.0 / (x + 1.0) } assert constraint a1 { x == -3.0 } } constraint k { p.x <= 0.0 } }`,
+      `package AF1 { constraint k { p.x <= 0.0 }
+        part p : P { assert constraint a1 { x == -3.0 } assert constraint a0 { x == 6.0 / (x + 1.0) } } part def P { attribute x : ScalarValues::Real; } }`,
+      {
+        'AF1::k': ['T/T/T/T', 'T'],
+        'AF1::p::a0': ['T/-/T/-', 'T'],
+        'AF1::p::a1': ['T/-/T/-', 'T'],
+      },
+    ),
+    ...reversed(
+      'order-affine-root',
+      `package AF2 { attribute x : ScalarValues::Real; constraint c0 { x * x == 4.0 } constraint c1 { x == 2.0 } constraint k { x >= 1.0 } }`,
+      `package AF2 { constraint k { x >= 1.0 } constraint c1 { x == 2.0 } constraint c0 { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'AF2::c0': ['?/?/t/?', '?'],
+        'AF2::c1': ['?/?/t/?', '?'],
+        'AF2::k': ['?/?/T/?', null],
+      },
+    ),
+    ...reversed(
+      'order-affine-core',
+      `package AF3 { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real;
+        assert constraint e0 { x == 6.0 / (x + 1.0) } assert constraint e1 { x + y == 1.0 } assert constraint e2 { x - y == -7.0 }
+        constraint k { y >= 2.0 * x + 11.0 } }`,
+      `package AF3 { constraint k { y >= 2.0 * x + 11.0 }
+        assert constraint e2 { x - y == -7.0 } assert constraint e1 { x + y == 1.0 } assert constraint e0 { x == 6.0 / (x + 1.0) }
+        attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      {
+        'AF3::e0': ['?/-/T/-', 'T'],
+        'AF3::e1': ['?/-/T/-', 'T'],
+        'AF3::e2': ['?/-/T/-', 'T'],
+        'AF3::k': ['?/?/F/?', 'F'],
+      },
+    ),
+    ...reversed(
+      'order-affine-joint',
+      `package AF4 { attribute w : ScalarValues::Real; attribute b : ScalarValues::Real;
+        constraint e0 { 0.5 * w + b * 2.5 == -1.75 } constraint e1 { w - b / 2.0 == -0.75 } constraint c { w * w + b == 0.5 }
+        constraint k { b >= -0.25 } }`,
+      `package AF4 { constraint k { b >= -0.25 }
+        constraint c { w * w + b == 0.5 } constraint e1 { w - b / 2.0 == -0.75 } constraint e0 { 0.5 * w + b * 2.5 == -1.75 }
+        attribute b : ScalarValues::Real; attribute w : ScalarValues::Real; }`,
+      {
+        'AF4::c': ['?/?/t/?', '?'],
+        'AF4::e0': ['?/?/t/?', '?'],
+        'AF4::e1': ['?/?/t/?', '?'],
+        'AF4::k': ['?/?/F/?', null],
+      },
+    ),
+    ...reversed(
+      'order-affine-missed',
+      `package AF5 { attribute x : ScalarValues::Real; constraint c0 { x * x == 4.0 } constraint c1 { x == 3.0 } constraint k { x >= 1.0 } }`,
+      `package AF5 { constraint k { x >= 1.0 } constraint c1 { x == 3.0 } constraint c0 { x * x == 4.0 } attribute x : ScalarValues::Real; }`,
+      {
+        'AF5::c0': ['?/?/?/?', '?'],
+        'AF5::c1': ['?/?/?/?', '?'],
+        'AF5::k': ['?/?/?/?', '?'],
       },
     ),
     // A lone one-to-one equation whose root lies across its pole from where the root-find starts (numeric-curved, re-review). CW1:

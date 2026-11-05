@@ -2283,19 +2283,33 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // equation with one unknown left, and a one-to-one equation that finds no root searches the line for one (203 samples and the
   // poles among them): in a chain that takes a pass to fix each link, that was once per link per equation.
   const missedAt = new Map<Equation, string>();
-  // Fix the one unknown `eq` reads, where it may: whether it did.
-  const orient = (eq: Equation): boolean => {
+  // Whether `eq` is curved in `u` ({@link isCurved}), once per pair: every sweep asks it of every equation with one unknown left.
+  const curvedPairs = new Map<Equation, Map<ElementId, boolean>>();
+  const curvedIn = (eq: Equation, u: ElementId): boolean => {
+    let known = curvedPairs.get(eq);
+    if (known === undefined) curvedPairs.set(eq, (known = new Map()));
+    let c = known.get(u);
+    if (c === undefined) known.set(u, (c = isCurved(eq, [u])));
+    return c;
+  };
+  // The one unknown `eq` reads, where it may fix it: none fixed by the caller, and none another equation is the definition of.
+  const loneUnknown = (eq: Equation): ElementId | undefined => {
     const unknowns = eq.vars.filter((v) => !values.has(v));
-    if (unknowns.length !== 1) return false;
-    const u = unknowns[0];
-    if (fixedIds.has(u) || !mayOrient(eq, u, binding)) return false;
+    if (unknowns.length !== 1) return undefined;
+    const u = unknowns[0]!;
+    return fixedIds.has(u) || !mayOrient(eq, u, binding) ? undefined : u;
+  };
+  // Fix the one unknown `eq` reads, where it may and it is curved in it as `curved` says ({@link sweepFacts}): whether it did.
+  const orient = (eq: Equation, curved = false): boolean => {
+    const u = loneUnknown(eq);
+    if (u === undefined || curvedIn(eq, u) !== curved) return false;
     const reads = eq.vars.map((v) => values.get(v)).join(',');
     if (missedAt.get(eq) === reads) return false;
     const val = solveForSingle(eq, u, values, tol);
     // One with one root at most in `u` that holds as well a step either side of it, the others where they are, does not
     // read `u` there — `y * z == 0.0` at a stated z of 0, where every y is a root — and fixes nothing: taken as the
     // model's own value for y, it was the root the search stopped at, and `c1 { y == 0.5 }` read violated there.
-    if (val === undefined || !Number.isFinite(val) || (!isCurved(eq, [u]) && flatAbout(eq, u, val, values))) {
+    if (val === undefined || !Number.isFinite(val) || (!curved && flatAbout(eq, u, val, values))) {
       missedAt.set(eq, reads);
       return false;
     }
@@ -2303,8 +2317,89 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     used.add(eq);
     // A root of an equation with more than one is one of several: no value the model fixes ({@link designReadings}); that of an
     // equation one to one in it (`d / t`, `2.0 ^ y`) is the only.
-    if (!isCheck(eq) && eq.vars.every((v) => v === u || known.has(v) || factFixed.has(v)) && !isCurved(eq, [u])) factFixed.add(u);
+    if (!isCheck(eq) && eq.vars.every((v) => v === u || known.has(v) || factFixed.has(v)) && !curved) factFixed.add(u);
     return true;
+  };
+  // Is `eq` curved in the one unknown it may fix — about to take a root?
+  const readyCurved = (eq: Equation): boolean => {
+    const u = loneUnknown(eq);
+    return u !== undefined && curvedIn(eq, u);
+  };
+  // What the equations of `pool` affine in their unknowns fix TOGETHER, before an equation curved in one of those unknowns
+  // takes a root, whatever the text order: per set of unknowns they link that holds one such, where they fix every one of
+  // them ({@link affinePoint}) and each holds at that point. Taken a root first, `x * x == 4.0` set x to 2 beside the
+  // asserted `x + y == 1.0` and `x - y == -5.0`, which then missed, where −2 meets all three. The model's own equations
+  // alone, over the values it states or its own equations fixed, fix values of the model's; with a check among them,
+  // design values. `ready`: of an equation about to take a root of its one unknown ({@link readyCurved}) — an asserted
+  // affine equation fixes that unknown though the curved one is its definition (`x == 6.0 / (x + 1.0)`: every
+  // asserted equation holds, the definition among them). Otherwise of one curved in what it reads with nothing left to
+  // fix one at a time, before the Newton step drives them all from wherever it starts (`w * w + b == 0.5` beside
+  // `0.5 * w + b * 2.5 == -1.75` and `w - b / 2.0 == -0.75`, met at (−1, −0.5) or, in the other text order, not at all).
+  const affineFirst = (pool: readonly Equation[], ready: boolean): boolean => {
+    const target = new Set<ElementId>();
+    for (const eq of pool) {
+      if (ready) {
+        if (readyCurved(eq)) target.add(loneUnknown(eq)!);
+        continue;
+      }
+      const us = eq.vars.filter((v) => !values.has(v) && !fixedIds.has(v));
+      if (us.length > 0 && (isCurved(eq, us) || (us.length > 1 && isJointlyCurved(eq, us)))) for (const u of us) target.add(u);
+    }
+    if (target.size === 0) return false;
+    // A curved definition about to take a root binds its feature against the checks, never against the model's own equations.
+    const definedByRoot = (eq: Equation, u: ElementId): boolean =>
+      ready && !isCheck(eq) && target.has(u) && !unreadable.has(u) && !givenWay.has(u) && !held.has(u);
+    const rows = new Map<Equation, ElementId[]>();
+    for (const eq of pool) {
+      const us = eq.vars.filter((v) => !values.has(v));
+      if (us.length === 0 || us.some((u) => fixedIds.has(u) || !(mayOrient(eq, u, binding) || definedByRoot(eq, u)))) continue;
+      if (equationShape(eq, (id) => id !== undefined && us.includes(id), true) === 'affine') rows.set(eq, us);
+    }
+    const parent = new Map<ElementId, ElementId>();
+    const find = (a: ElementId): ElementId => {
+      while (parent.get(a) !== a) a = parent.get(a)!;
+      return a;
+    };
+    for (const us of rows.values()) {
+      for (const v of us) if (!parent.has(v)) parent.set(v, v);
+      for (const v of us.slice(1)) parent.set(find(v), find(us[0]!));
+    }
+    const comps = new Map<ElementId, { vars: Set<ElementId>; eqs: Equation[] }>();
+    for (const [eq, us] of rows) {
+      const root = find(us[0]!);
+      let c = comps.get(root);
+      if (c === undefined) comps.set(root, (c = { vars: new Set(), eqs: [] }));
+      for (const v of us) c.vars.add(v);
+      c.eqs.push(eq);
+    }
+    let any = false;
+    for (const { vars, eqs: core } of comps.values()) {
+      if (![...vars].some((v) => target.has(v))) continue;
+      const point = affinePoint(core, [...vars], values);
+      if (point === undefined || point.size !== vars.size) continue;
+      for (const [v, x] of point) values.set(v, x);
+      if (!core.every((eq) => holdsAt(eq, values, tol))) {
+        for (const v of vars) values.delete(v);
+        continue;
+      }
+      any = true;
+      for (const eq of core) used.add(eq);
+      if (core.every((eq) => !isCheck(eq) && eq.vars.every((v) => vars.has(v) || known.has(v) || factFixed.has(v)))) {
+        for (const v of vars) factFixed.add(v);
+      }
+    }
+    return any;
+  };
+  // One sweep of the model's own equations: each that is affine or one to one in its one unknown fixes it, then the affine
+  // ones fix together what they can ({@link affineFirst}), and only then does one curved in its unknown take a root — of
+  // those ready when the sweep began. Swept in text order as one, `x == 6.0 / (x + 1.0)` written above `x == -3.0` took
+  // its root 2 and `x == -3.0` missed; below it, x was −3 and both held.
+  const sweepFacts = (): boolean => {
+    let any = false;
+    for (const eq of facts) if (orient(eq)) any = true;
+    if (any || affineFirst(facts, true)) return true;
+    for (const eq of facts.filter(readyCurved)) if (orient(eq, true)) any = true;
+    return any;
   };
   // The facts to their fixpoint: after every check that fixes a value as well,
   // so a fact the check unblocks is read before the next check is — in the
@@ -2314,10 +2409,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // checks that disagree, whichever came first.
   const orientFacts = (): boolean => {
     let any = false;
-    for (let more = true; more; ) {
-      more = false;
-      for (const eq of facts) if (orient(eq)) more = any = true;
-    }
+    while (sweepFacts()) any = true;
     return any;
   };
 
@@ -2341,13 +2433,31 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
         }
       }
 
-      for (const eq of facts) if (orient(eq)) changed = true;
+      if (sweepFacts()) changed = true;
+      // The checks as the facts: those affine or one to one in their unknown, then what the affine equations fix together,
+      // and only then a root of one curved in it — `c0 { x * x == 4.0 }` above `c1 { x == 2.0 }` read x = 2 from c1.
       if (!changed) {
         for (const eq of checks) {
           if (!orient(eq)) continue;
           changed = true;
           orientFacts();
         }
+      }
+      if (!changed && affineFirst(eqs, true)) {
+        changed = true;
+        orientFacts();
+      }
+      if (!changed) {
+        for (const eq of checks.filter(readyCurved)) {
+          if (!orient(eq, true)) continue;
+          changed = true;
+          orientFacts();
+        }
+      }
+      // Nothing left to fix one at a time: before the Newton step, what the affine equations fix of a curved one's unknowns.
+      if (!changed && (affineFirst(facts, false) || affineFirst(own, false))) {
+        changed = true;
+        orientFacts();
       }
       if (changed) progressing = true;
     }
@@ -2580,6 +2690,178 @@ function isCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
 function isJointlyCurved(eq: Equation, unknowns: readonly ElementId[]): boolean {
   const set = new Set<ElementId>(unknowns);
   return equationShape(eq, (id) => id !== undefined && set.has(id), true) === 'curved';
+}
+
+/** The most features an {@link affinePoint} solves together, by exact elimination: past it the solve reads the system as before. */
+const AFFINE_CORE_MAX = 32;
+
+/**
+ * `node` as `Σ a·v + b` over the features `unknown` picks out, each `a` exact — built of numerals only, as the encoder reads
+ * them ({@link writtenRational}), and a unit's factor into SI — and `b` the double the rest evaluates to, every other feature
+ * at its value in `scope`; `undefined` where it is not affine in them ({@link shapeOver}), or a coefficient is no number
+ * written: a feature's value (`k * x`) or a `[unit]` literal multiplying one of them.
+ */
+function affineForm(
+  node: ExprNode,
+  eq: Equation,
+  unknown: (id: ElementId | undefined) => boolean,
+  scope: (name: string) => unknown,
+): { a: Map<ElementId, Rational>; b: number; exact?: Rational } | undefined {
+  if (shapeOver(node, eq.nameToId, unknown) === 'const') {
+    const r = evaluate(node, scope);
+    if (!('value' in r) || typeof r.value !== 'number' || !Number.isFinite(r.value)) return undefined;
+    // Exact only where it is built of numerals: the multiplier of a feature must be a number the model writes.
+    const exact = numeralsValue(node);
+    return { a: new Map(), b: r.value, ...(exact ? { exact } : {}) };
+  }
+  switch (node.kind) {
+    case 'ref': {
+      const id = eq.nameToId.get(node.path.join('.'))!;
+      const s = eq.scale?.get(id);
+      const factor = s ? writtenRational(s.factor) : { num: 1n, den: 1n };
+      return factor ? { a: new Map([[id, factor]]), b: s ? s.offset : 0 } : undefined;
+    }
+    case 'unary': {
+      if (node.op === 'not') return undefined;
+      const f = affineForm(node.operand, eq, unknown, scope);
+      if (!f || node.op === '+') return f;
+      return { a: new Map([...f.a].map(([v, c]) => [v, negateRational(c)])), b: -f.b };
+    }
+    case 'binary': {
+      const l = affineForm(node.left, eq, unknown, scope);
+      const r = l && affineForm(node.right, eq, unknown, scope);
+      if (!l || !r) return undefined;
+      const scaled = (f: typeof l, k: Rational, by: number, divide: boolean): typeof l | undefined => {
+        const a = new Map<ElementId, Rational>();
+        for (const [v, c] of f.a) {
+          const q = divide ? divideRationals(c, k) : multiplyRationals(c, k);
+          if (!q) return undefined;
+          a.set(v, q);
+        }
+        return { a, b: divide ? f.b / by : f.b * by };
+      };
+      switch (node.op) {
+        case '+':
+        case '-': {
+          const a = new Map([...l.a]);
+          for (const [v, c] of r.a) {
+            const prev = a.get(v);
+            const q = prev ? addRationals(prev, node.op === '+' ? c : negateRational(c)) : node.op === '+' ? c : negateRational(c);
+            if (!q) return undefined;
+            a.set(v, q);
+          }
+          return { a, b: node.op === '+' ? l.b + r.b : l.b - r.b };
+        }
+        case '*':
+          if (l.a.size === 0 && l.exact) return scaled(r, l.exact, l.b, false);
+          if (r.a.size === 0 && r.exact) return scaled(l, r.exact, r.b, false);
+          return undefined;
+        case '/':
+          return r.a.size === 0 && r.exact && r.exact.num !== 0n ? scaled(l, r.exact, r.b, true) : undefined;
+        default:
+          return undefined;
+      }
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The exact value of `node` where it is numerals under `+ − × ÷` alone ({@link writtenRational}); `undefined` otherwise. */
+function numeralsValue(node: ExprNode): Rational | undefined {
+  switch (node.kind) {
+    case 'num':
+      return node.literal === undefined ? writtenRational(node.value, node.text) : undefined;
+    case 'unary': {
+      const v = node.op === 'not' ? undefined : numeralsValue(node.operand);
+      return v && (node.op === '-' ? negateRational(v) : v);
+    }
+    case 'binary': {
+      const l = numeralsValue(node.left);
+      const r = l && numeralsValue(node.right);
+      if (!l || !r) return undefined;
+      if (node.op === '+') return addRationals(l, r);
+      if (node.op === '-') return addRationals(l, negateRational(r));
+      if (node.op === '*') return multiplyRationals(l, r);
+      return node.op === '/' ? divideRationals(l, r) : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The values the equations `eqs`, each affine in the features `vars` ({@link affineForm}), fix together, every other
+ * feature at its value: by EXACT elimination over the numbers written, so no pivot is binary64 noise and a freedom is
+ * never read as a value. A feature is fixed where its pivot row reads none of the features the rows leave free (all
+ * of them: full column rank). The values are the exact solution of the rows that carry a pivot, taken in the order of
+ * the relations' text, not of where it is written, and are no claim that the other rows hold: the caller judges every
+ * row there. `undefined` where a row is not affine with coefficients written, or past {@link AFFINE_CORE_MAX} features.
+ */
+function affinePoint(
+  eqs: readonly Equation[],
+  vars: readonly ElementId[],
+  values: Map<ElementId, number>,
+): Map<ElementId, number> | undefined {
+  const n = vars.length;
+  if (n === 0 || n > AFFINE_CORE_MAX) return undefined;
+  const col = new Map(vars.map((v, i) => [v, i]));
+  const unknown = (id: ElementId | undefined): boolean => id !== undefined && col.has(id);
+  const zero: Rational = { num: 0n, den: 1n };
+  const rows: { key: string; row: Rational[] }[] = [];
+  for (const eq of eqs) {
+    const scope = idScope(eq, values);
+    const l = affineForm(eq.lhs, eq, unknown, scope);
+    const r = l && affineForm(eq.rhs, eq, unknown, scope);
+    const b = l && r && writtenRational(r.b - l.b);
+    if (!l || !r || !b) return undefined;
+    const row: Rational[] = vars.map(() => zero);
+    for (const [v, c] of l.a) row[col.get(v)!] = c;
+    for (const [v, c] of r.a) {
+      const q = addRationals(row[col.get(v)!]!, negateRational(c));
+      if (!q) return undefined;
+      row[col.get(v)!] = q;
+    }
+    row.push(b);
+    rows.push({ key: `${eq.raw} ${row.map((q) => `${q.num}/${q.den}`).join(' ')}`, row });
+  }
+  rows.sort((p, q) => (p.key < q.key ? -1 : p.key > q.key ? 1 : 0));
+  const M = rows.map((r) => r.row);
+  const pivots: number[] = [];
+  for (let c = 0; c < n && pivots.length < M.length; c++) {
+    const at = pivots.length;
+    const p = M.findIndex((row, i) => i >= at && row[c]!.num !== 0n);
+    if (p < 0) continue;
+    [M[at], M[p]] = [M[p]!, M[at]!];
+    const pivot = M[at]!;
+    for (let i = 0; i < M.length; i++) {
+      if (i === at || M[i]![c]!.num === 0n) continue;
+      const f = divideRationals(M[i]![c]!, pivot[c]!);
+      for (let k = 0; k <= n && f; k++) {
+        const t = multiplyRationals(f, pivot[k]!);
+        const q = t && addRationals(M[i]![k]!, negateRational(t));
+        if (!q) return undefined;
+        M[i]![k] = q;
+      }
+      if (!f) return undefined;
+    }
+    pivots.push(c);
+  }
+  const free = vars.map((_, c) => c).filter((c) => !pivots.includes(c));
+  const out = new Map<ElementId, number>();
+  pivots.forEach((c, i) => {
+    if (free.some((f) => M[i]![f]!.num !== 0n)) return;
+    const q = divideRationals(M[i]![n]!, M[i]![c]!);
+    const x = q && Number(q.num) / Number(q.den);
+    if (x !== undefined && Number.isFinite(x)) out.set(vars[c]!, x);
+  });
+  return out;
+}
+
+/** Does `eq` hold at `values` as the solve judges its own equations: under its {@link convergenceGate}, at a root ({@link nearRoot})? */
+function holdsAt(eq: Equation, values: Map<ElementId, number>, tol: number): boolean {
+  const r = residualOf(eq, values);
+  return r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol) && nearRoot(eq, values, r);
 }
 
 /**
@@ -2925,6 +3207,50 @@ function designReadings(
   // The design components: those a plain constraint the solve took fixes a value of.
   const design = new Set<ElementId>();
   for (const eq of used) if (isCheck(eq) && eq.vars.some(produced)) design.add(rootOf(eq));
+  // Do the component's equations fix every one of its open features alone, at the point the solve stopped at — those affine in
+  // what is left fixing what they can together ({@link affinePoint}), then one not curved in the one feature it reads that is
+  // left fixing it (its one root), round by round? Then that point is the only one where they all hold, whatever root an
+  // equation curved in them has elsewhere: each of the others is judged there, as one the solve did not take is
+  // (`c0 { a + b == 4.0 }` and `c1 { a - b == 0.0 }` fix a and b, then `q { z == a * a }` fixes z: `k { z >= 5.0 }` is
+  // violated). Not where a curved equation of the model's own is beside a plain constraint that fixes the point: which
+  // of its roots is the model's, the plain constraint does not say.
+  const affineFixed = (comp: readonly Equation[]): boolean => {
+    const vars = [...new Set(comp.flatMap(openOf))];
+    if (vars.some(loose)) return false;
+    const at = new Map<ElementId, number>();
+    const fixing = new Set<Equation>();
+    for (let grew = true; grew && at.size < vars.length; ) {
+      grew = false;
+      const rest = vars.filter((v) => !at.has(v));
+      const inRest = (id: ElementId | undefined): boolean => id !== undefined && rest.includes(id);
+      const affine = comp.filter((eq) => equationShape(eq, inRest, true) === 'affine');
+      const point = affine.length === 0 ? undefined : affinePoint(affine, rest, values);
+      if (point !== undefined && point.size > 0) {
+        for (const [v, x] of point) at.set(v, x);
+        for (const eq of affine) fixing.add(eq);
+        grew = true;
+        continue;
+      }
+      // Every one that fixes a feature this round, whatever the order of the component: each is judged at the point below.
+      const lone = comp.flatMap((eq) => {
+        const left = openOf(eq).filter((v) => !at.has(v));
+        return fixing.has(eq) || left.length !== 1 || isCurved(eq, left) || flatAbout(eq, left[0]!, values.get(left[0]!)!, values)
+          ? []
+          : [[eq, left[0]!] as const];
+      });
+      for (const [eq, v] of lone) {
+        at.set(v, values.get(v)!);
+        fixing.add(eq);
+        grew = true;
+      }
+    }
+    if (at.size < vars.length) return false;
+    if (comp.some((eq) => !fixing.has(eq) && !isCheck(eq)) && [...fixing].some(isCheck)) return false;
+    return (
+      vars.every((v) => Math.abs(values.get(v)! - at.get(v)!) <= 1e-9 * (Math.abs(at.get(v)!) + 1)) &&
+      [...fixing].every((eq) => holdsAt(eq, values, tol))
+    );
+  };
   const rivalRoots = new Map<ElementId, 'plain' | 'model'>();
   const curvedRoots = new Map<ElementId, Equation[]>();
   const plainRoots = new Map<ElementId, Equation[]>();
@@ -2941,7 +3267,7 @@ function designReadings(
       plain.some((eq) => unused.includes(eq)) &&
       plain.some((eq) => touching.has(eq) && isCurved(eq, eq.vars.filter(produced)));
     const roots = comp.filter((eq) => seeded.equations.has(eq) || rooted(eq, comp));
-    if (roots.length === 0 && !asBefore) continue;
+    if ((roots.length === 0 && !asBefore) || affineFixed(comp)) continue;
     if (roots.length > 0) curvedRoots.set(root, roots);
     const model = roots.some((eq) => !isCheck(eq));
     if (model ? plain.length >= 1 : plain.length >= 2) rivalRoots.set(root, model ? 'model' : 'plain');
