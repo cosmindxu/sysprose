@@ -517,14 +517,30 @@ function ambiguousTags(model: Model, machineId: ElementId): number {
     .length;
 }
 
+/**
+ * The `#failureMode` tags under the machine on a usage that is not an attribute (`#failureMode ref x`, or a tag with
+ * no keyword ahead of it): {@link machineFailureModes} counts attributes only, so they are in neither number, and the
+ * sentence names them apart rather than tell a reader who tagged them that the machine carries nothing.
+ */
+function uncountedFailureModeTags(model: Model, machineId: ElementId): number {
+  return model
+    .descendants(machineId)
+    .filter(
+      (e) =>
+        e.eClass !== 'AttributeUsage' && hasKeyword(model, e.id, FAILURE_MODE_DEFINITION, { anyPackage: true }),
+    ).length;
+}
+
 /** The measured answer for one machine — see {@link MachineAnswer}. */
 export function machineAnswer(model: Model, machineId: ElementId): MachineAnswer {
   const qualifiedName = model.qualifiedName(machineId) || machineId;
   const { failureModeFlags, exceptionalStates } = machineFailureModes(model, machineId);
   const ambiguous = ambiguousTags(model, machineId);
+  const uncounted = uncountedFailureModeTags(model, machineId);
   const counts =
     `${failureModeFlags} failure-mode flag(s), ${exceptionalStates} \`#exceptional\` state(s)` +
-    (ambiguous > 0 ? `, ${ambiguous} keyword(s) two imports answer to, read as no tag` : '');
+    (ambiguous > 0 ? `, ${ambiguous} keyword(s) two imports answer to, read as no tag` : '') +
+    (uncounted > 0 ? `, ${uncounted} \`#failureMode\` tag(s) on a usage that is not an attribute, not counted` : '');
   // TWO TAILS, BECAUSE ONE WOULD BE FALSE. "No fault variable to inject" is
   // the truth about every machine in this repository, and a lie about a model
   // that declared its own `FailureMode` definition and applied it — the
@@ -533,7 +549,7 @@ export function machineAnswer(model: Model, machineId: ElementId): MachineAnswer
   // "found none of", "found and does not inject"), so `--help` and the report
   // publish one reason for one exit code whichever tail is printed.
   const sentence =
-    failureModeFlags === 0
+    failureModeFlags === 0 && uncounted === 0
       ? `\`${qualifiedName}\` is a state machine whose failure modes this command found none of: ` +
         `${counts} — the behavioural lane has no fault variable to inject here`
       : `\`${qualifiedName}\` is a state machine whose failure modes this command found and does not ` +

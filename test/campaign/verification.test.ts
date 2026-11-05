@@ -4572,6 +4572,28 @@ package P {
     expect(machineAnswer(model, machineId).sentence).not.toContain('two imports');
   });
 
+  it('a `#failureMode` tag on a usage that is not an attribute is named apart, never read as a plain absence', async () => {
+    // The tag resolves (keyword-less spelling, or `ref`), but `machineFailureModes` counts attributes only: "no fault
+    // variable to inject here" would tell the reader who tagged it that the machine carries nothing. Same exit row.
+    for (const usage of ['#failureMode navFail = false;', '#failureMode ref navFail : Boolean = false;']) {
+      const text = `package P {
+  metadata def <failureMode> FailureMode;
+  state def Modes {
+    ${usage}
+    state nominal; state degraded;
+    transition nominal accept fail then degraded;
+  }
+}`;
+      const model = (await loadModelText(text, { fileName: 'fm.sysml', library: 'none' })).model!;
+      const machine = model.all().find((e) => e.declaredName === 'Modes')!;
+      const { sentence } = machineAnswer(model, machine.id);
+      expect(sentence, usage).toContain('1 `#failureMode` tag(s) on a usage that is not an attribute, not counted');
+      expect(sentence, usage).toContain('found and does not inject');
+      expect(sentence, usage).not.toContain('found none of');
+      expect(sentence, usage).not.toContain('no fault variable to inject here');
+    }
+  });
+
   it('a state inside a machine, or a state def that owns no transition, is refused rather than measured', async () => {
     // ONE POPULATION FOR THE ROUTE AND THE CENSUS. Measured before this case:
     // a leaf state named as `--element` was answered about its own descendants

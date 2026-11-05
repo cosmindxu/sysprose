@@ -4757,7 +4757,7 @@ with `A::PreA` and `B::PreB` both imported) stays a `third-party spelling` row, 
 the alias table reads it by its spelling, and the row and the inventory add that it
 names neither (`verification/keyword-ambiguous` beside `verification/foreign-keyword`).
 `fault-tree` on a machine counts a tag two imports answer to apart (`2 keyword(s) two
-imports answer to, read as no tag`) rather than fold it into `0` flags or states.
+imports answer to, read as no tag`) rather than fold it into `0` flags or states; a `#failureMode` on a usage that is not an attribute (`#failureMode ref x`, or the keyword-less `#failureMode x = false;`) is counted apart too (`1 \`#failureMode\` tag(s) on a usage that is not an attribute, not counted`) and the sentence then claims no absence.
 
 These `verification/*` rows are **information** and they come from nowhere
 but this command — except `verification/foreign-keyword`, which
