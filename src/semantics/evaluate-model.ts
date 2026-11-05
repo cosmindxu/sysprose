@@ -2927,12 +2927,19 @@ function readInContexts(
       };
     });
     const contextName = effectiveNameOf(model, satisfied?.satisfier ?? x) ?? nameOf(satisfied?.satisfier ?? x);
-    // The read whose value breaks the relation, where it read several (PI-2).
+    // The read whose value breaks the relation, where it read several (PI-2); or, where the context is an
+    // element of its own instance (`instanceAnchor`'s `mine`), a value it redefines that no read lists (194).
+    const ownsFrame =
+      readAs !== undefined &&
+      x.attrs.isLibrary !== true &&
+      x.attrs.implicit !== true &&
+      (isUsage(x.eClass) || (isDefinition(x.eClass) && x.eClass !== 'Package' && x.eClass !== 'LibraryPackage')) &&
+      pass.definitions.instanceNameOf(x.id) === readAs;
     const broke =
       readAs !== undefined && judged.result === 'violated' && broken++ < TARGET_CONTEXT_FOLD
-        ? breakingRead(model, el, reading, expr, pass, undefined, judged)
+        ? breakingRead(model, el, reading, expr, pass, undefined, judged, ownsFrame)
         : undefined;
-    const several = broke !== undefined && (judged.reads?.length ?? 0) > 1;
+    const several = broke !== undefined && (broke.redefined === true || (judged.reads?.length ?? 0) > 1);
     // The renamed end, for a row it leaves unread: the line an author edits.
     const anchor =
       readAs === undefined
@@ -2961,6 +2968,7 @@ function readInContexts(
       ...(causeOf(judged) !== undefined ? { cause: causeOf(judged) } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
       ...(broke !== undefined ? { breaks: broke.path } : {}),
+      ...(broke?.redefined === true ? { redefined: broke } : {}),
       ...(judged.sides ? { sides: judged.sides } : {}),
     });
   }

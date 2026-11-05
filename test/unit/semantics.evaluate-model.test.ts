@@ -8268,6 +8268,21 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         )
       ).map((f) => f.slice(0, 4)),
     ).toEqual([['G0::q2', 4, 'attribute E : ScalarValues::Real = 20.0', 'E']]);
+    // A value the context's own instance redefines (no group, no read lists it) is named and anchored as in a
+    // group row (G5): `p.extra` put back to 0 holds `p.load + p.extra <= 10.0`, `p.load` (2) put back does not.
+    expect(
+      (
+        await findings(
+          [
+            'package G5d {',
+            ...defs.slice(0, 1),
+            '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c2 { p.load + p.extra <= 10.0 } }',
+            '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }',
+            '}',
+          ].join('\n'),
+        )
+      ).map((f) => f.slice(0, 4)),
+    ).toEqual([['G5d::q2', 4, 'attribute :>> extra = 20.0', 'extra']]);
     // Only the one read there is: named too, where no binding carries it (it had no value clause).
     expect(
       await findings(['package G2 {', ...defs, '  part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
