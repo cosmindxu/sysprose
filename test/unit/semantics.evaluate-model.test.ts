@@ -8357,8 +8357,9 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         ['package G5 {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }', '}'].join('\n'),
       ),
     ).toEqual([['G5::q2::p', 8, 'attribute :>> extra = 20.0', 'extra', ' is violated in G5::q2::p: extra = 20']]);
-    // A read that mends it alone is still named first (a redefinition beside it does not take its place), and a
-    // redefined value that is no plain number (derived, or a default the instance does not redefine) is not named.
+    // A read that mends it alone is still named first (a redefinition beside it does not take its place). A derived
+    // redefinition (`5.0 * K`) is named with its text, at its line; one whose text reads a read (`10.0 * load`) is
+    // read through that read, so the finding stays at the read's line, not the redefinition's.
     expect(
       await findings(
         ['package G5b {', ...defs, '  part q2 : Q { attribute :>> L = 20.0; part :>> p { attribute :>> extra = 0.5; } }', '}'].join('\n'),
@@ -8368,7 +8369,12 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
       await findings(
         ['package G5c {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; attribute K : ScalarValues::Real = 4.0; part :>> p { attribute :>> extra = 5.0 * K; } }', '}'].join('\n'),
       ),
-    ).toEqual([['G5c::q2::p', 8, 'attribute :>> L = 2.0', 'L', " is violated in G5c::q2::p: load = 2 — q2.L = 2 through G5c::Q's `bind p.load = L`"]]);
+    ).toEqual([['G5c::q2::p', 8, 'attribute :>> extra = 5.0 * K', 'extra', ' is violated in G5c::q2::p: extra = 20 (= 5.0 * K)']]);
+    expect(
+      await findings(
+        ['package G5d {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 10.0 * load; } }', '}'].join('\n'),
+      ),
+    ).toEqual([['G5d::q2::p', 8, 'attribute :>> L = 2.0', 'L', ' is violated in G5d::q2::p: extra = 20']]);
     // Reads that carry a unit are put back in the unit-aware reading that judged them: `load` (2000 g) put back to
     // 1 kg still misses, `extra` (20 kg) put back to 0 kg holds, so `extra` is named, at the line stating it.
     const unitDefs = [
@@ -8382,6 +8388,10 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(
       await findings(['package GU {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n')),
     ).toEqual([['GU::q2::p', 8, 'attribute E : ISQ::MassValue = 20.0 [kg]', 'E', ' is violated in GU::q2::p: extra = 20 [kg]']]);
+    // A redefined quantity no read lists is named the same way, in its unit, at the line stating it.
+    expect(
+      await findings(['package GUR {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; part :>> p { attribute :>> extra = 20.0 [kg]; } }', '}'].join('\n')),
+    ).toEqual([['GUR::q2::p', 8, 'attribute :>> extra = 20.0 [kg]', 'extra', ' is violated in GUR::q2::p: extra = 20 [kg]']]);
     // That row carries its sides in SI: they are kept as judged, and name nothing of their own.
     const { model: gu } = await loadModelText(
       ['package GU {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n'),

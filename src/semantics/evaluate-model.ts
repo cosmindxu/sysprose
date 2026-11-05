@@ -1525,6 +1525,8 @@ export interface InstanceRead {
   unit?: string;
   /** Set on the one value {@link SpecialisationInstance.redefined} names: the feature is the redefinition that states it. */
   redefined?: true;
+  /** On a {@link redefined} value that is no plain number: the text that states it (`5.0 * K`), which the finding quotes. */
+  text?: string;
   /** `exact` is SI, read the way the encoder reads the feature — set on the unit-aware reads alone; every other read's `exact` is in the stored magnitude or the declared `unit`. */
   si?: true;
   via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string; sourceValue?: number | boolean | string; sourceUnit?: string };
@@ -1909,6 +1911,11 @@ function isNumberLiteral(text: unknown): boolean {
   return typeof text === 'string' && /^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(text.trim());
 }
 
+/** {@link isNumberLiteral}, or one number written in a unit (`20.0 [kg]`). */
+function isQuantityLiteral(text: unknown): boolean {
+  return typeof text === 'string' && isNumberLiteral(text.replace(/\s*\[[^\]]*\]\s*$/, ''));
+}
+
 /**
  * The read whose value breaks a violated relation at an instance (PI-2): one
  * that makes the relation hold when it alone is put back to the value the
@@ -1927,7 +1934,21 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
   if (judged.result !== 'violated' || reads === undefined || reads.length === 0) return undefined;
   try {
     if (judged.sides !== undefined || reads.some((r) => typeof r.value !== 'number' || r.si === true || r.unit !== undefined)) {
-      return judged.requote !== undefined ? quantityBreak(model, own, judged.requote, reads) : undefined;
+      if (judged.requote === undefined) return undefined;
+      const read = quantityBreak(model, own, judged.requote, reads);
+      if (read !== undefined || !ownElement || reading.ownerId == null || judged.quote === undefined) return read;
+      // A redefined quantity no read lists (`:>> extra = 20.0 [kg]`), as for numbers below: named where the
+      // reading read the very quantity the line states (one written as a number in a unit; a derived one is
+      // not compared, so not named) and putting it back to the relation's own quantity holds the reading.
+      const { requote, quote } = judged;
+      const opts: ConstraintQuantityOptions = readsPerInstance(model) ? { instances: true } : {};
+      return redefinedBreak(model, reading.ownerId, expr, pass, reads, (name, stated, text) => {
+        const read = quote(name);
+        const written = isQuantityLiteral(text) ? evaluateQuantity(model, stated.id) : undefined;
+        if (read === undefined || written === undefined || read.unit === undefined || read.magnitude !== written.magnitude || read.unit !== written.unit) return undefined;
+        const there = quantityOf(model, own, name, opts);
+        return there !== undefined && requote((n) => (n === name ? there : undefined)) === 'satisfied' ? { value: read.magnitude, unit: read.unit } : undefined;
+      });
     }
     const node = parseExpr(expr);
     const here = combinedScope(model, reading, pass, inst);
@@ -1943,24 +1964,15 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
     // No read mends it: a value the instance's own element redefines (`part :>> p { attribute :>> extra =
     // 20.0; }`), which no binding carries and no read lists, may. It is named by the redefinition that
     // states it, which is the instance's own line (194); the row's `reads` stay as the engines read them.
-    const definitions = pass.definitions;
-    const root = reading.ownerId;
-    const inside = (el: ElementRecord): boolean => {
-      for (let cur: ElementRecord | undefined = el; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
-        if (cur.id === root) return true;
-      }
-      return false;
-    };
-    for (const name of namesIn(expr)) {
-      if (reads.some((r) => r.path === name)) continue;
-      const d = definitions.denote(root).get(name);
-      const stated = d !== undefined ? definitions.carrier(d.reader, d.feature) : undefined;
+    // A derived value (`5.0 * K`) is the stated one where its text, read where it is stated, gives the value read.
+    return redefinedBreak(model, reading.ownerId, expr, pass, reads, (name, stated, text) => {
       const value = here(name);
-      if (stated === undefined || stated.attrs.isLibrary === true || stated.attrs.implicit === true || !inside(stated)) continue;
-      if (typeof value !== 'number' || !hasStatedValue(model, stated) || !isNumberLiteral(stated.attrs.valueText) || value !== stated.attrs.value || !mends(name)) continue;
-      return { path: name, featureId: stated.id, symbol: definitions.qualifiedNameOf(stated.id), value, redefined: true };
-    }
-    return undefined;
+      if (typeof value !== 'number' || !mends(name)) return undefined;
+      if (isNumberLiteral(text)) return value === stated.attrs.value ? { value } : undefined;
+      const at = stated.ownerId != null ? model.get(stated.ownerId) : undefined;
+      const own = at !== undefined ? evaluate(parseExpr(text), combinedScope(model, at, pass)) : undefined;
+      return own !== undefined && 'value' in own && own.value === value ? { value } : undefined;
+    });
   } catch {
     return undefined;
   }
@@ -1980,6 +1992,50 @@ function quantityBreak(model: Model, own: ElementRecord, requote: NonNullable<Ju
     const there = quantityOf(model, own, r.path, opts);
     return there !== undefined && requote((n) => (n === r.path ? there : undefined)) === 'satisfied';
   });
+}
+
+/**
+ * The redefined value {@link breakingRead} names where no read mends the relation (194): a name the relation
+ * reads that no read lists, stated by a user member inside the instance's own element (`root`), whose stated
+ * text reads no name a read lists (else the read, not the line, is the change). `holds` gives the value the
+ * relation read, where it is the stated one and putting it back mends the relation; a derived value keeps its
+ * stated text (`5.0 * K`) for the message.
+ */
+function redefinedBreak(
+  model: Model,
+  root: ElementId,
+  expr: string,
+  pass: ScalarPass,
+  reads: readonly InstanceRead[],
+  holds: (name: string, stated: ElementRecord, text: string) => { value: number; unit?: string } | undefined,
+): InstanceRead | undefined {
+  const definitions = pass.definitions;
+  const inside = (el: ElementRecord): boolean => {
+    for (let cur: ElementRecord | undefined = el; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+      if (cur.id === root) return true;
+    }
+    return false;
+  };
+  for (const name of namesIn(expr)) {
+    if (reads.some((r) => r.path === name)) continue;
+    const d = definitions.denote(root).get(name);
+    const stated = d !== undefined ? definitions.carrier(d.reader, d.feature) : undefined;
+    if (stated === undefined || stated.attrs.isLibrary === true || stated.attrs.implicit === true || !inside(stated) || !hasStatedValue(model, stated)) continue;
+    const text = typeof stated.attrs.valueText === 'string' ? stated.attrs.valueText : stated.attrs.value;
+    if (typeof text !== 'string' || namesIn(text).some((n) => reads.some((r) => r.path === n))) continue;
+    const held = holds(name, stated, text);
+    if (held === undefined) continue;
+    return {
+      path: name,
+      featureId: stated.id,
+      symbol: definitions.qualifiedNameOf(stated.id),
+      value: held.value,
+      ...(held.unit !== undefined ? { unit: held.unit } : {}),
+      ...(isQuantityLiteral(text) ? {} : { text: text.trim() }),
+      redefined: true,
+    };
+  }
+  return undefined;
 }
 
 /** What {@link breakingRead} depends on in a violated row: its reads' names, values and units, and where the relation is read. */
@@ -2487,7 +2543,7 @@ function violatedInstanceMessage(model: Model, relation: string, expr: string, i
   const read = inst.breaks !== undefined ? (inst.reads?.find((r) => r.path === inst.breaks) ?? inst.redefined) : inst.reads?.find((r) => r.via !== undefined);
   let detail = '';
   if (read && !read.via && inst.breaks !== undefined) {
-    detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)}`;
+    detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)}${read.text !== undefined ? ` (= ${read.text})` : ''}`;
   } else if (read?.via) {
     const v = read.via;
     const source = v.sourceValue !== undefined ? ` = ${String(v.sourceValue)}${v.sourceUnit !== undefined ? ` [${v.sourceUnit}]` : ''}` : '';
@@ -3278,6 +3334,8 @@ interface Judgement {
    * serialised, never a verdict.
    */
   requote?: (put: (name: string) => Quantity | undefined) => 'satisfied' | 'violated' | 'unknown';
+  /** Beside {@link requote}: the quantity that reading reads a name as. Never serialised. */
+  quote?: (name: string) => Quantity | undefined;
 }
 
 /**
@@ -3622,7 +3680,7 @@ function carriedVerdict(
     if (refused) return { result: 'unknown', message: refused, gap: false };
     const reads = collectReads(model, el, pass, names, own, at);
     const message = ua.result === 'satisfied' ? `Constraint satisfied${readsClause(model, reads)}` : `Constraint violated: ${expr}${readsClause(model, reads)}`;
-    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}), ...(ua.requote ? { requote: ua.requote } : {}) };
+    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}), ...(ua.requote ? { requote: ua.requote } : {}), ...(ua.quote ? { quote: ua.quote } : {}) };
   }
   if (isRefusalReason(ua.reason)) {
     return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: false, ...(ua.reason === 'tie' ? { tie: true as const } : {}) };
@@ -4825,7 +4883,8 @@ function unitAwareVerdict(
   if (ua.verdict === 'violated') {
     const requote = (put: (name: string) => Quantity | undefined): 'satisfied' | 'violated' | 'unknown' =>
       evaluateConstraintQuantityDetailed(model, el, { ...opts, bind: (name) => put(name) ?? opts.bind?.(name) }).verdict;
-    return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false, ...sides, requote };
+    const quote = (name: string): Quantity | undefined => quantityOf(model, el, name, opts);
+    return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false, ...sides, requote, quote };
   }
   return ua;
 }
