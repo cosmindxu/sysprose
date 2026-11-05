@@ -1572,6 +1572,13 @@ package P {
       const row = obligationsOf(model, { fromKeywords: true }).find((o) => o.source === 'keyword');
       expect(row?.provenance?.note).not.toContain('it names');
       sentences.push(row!.provenance!.note);
+      // The inventory files the spelling as foreign AND says it is ambiguous, in either import order.
+      const r = contractReport(model, { keywords: true });
+      expect([r.keywords[0]!.origin, [...r.keywords[0]!.ambiguousBetween!].sort()]).toEqual(['foreign', ['A::PreA', 'B::PreB']]);
+      expect(r.diagnostics.filter((d) => d.code?.startsWith('verification/keyword') || d.code === 'verification/foreign-keyword').map((d) => d.code)).toEqual([
+        'verification/foreign-keyword',
+        'verification/keyword-ambiguous',
+      ]);
     }
     expect(sentences[0]).toBe(sentences[1]);
   }, 60_000);

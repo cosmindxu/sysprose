@@ -872,8 +872,7 @@ export class Model {
       const queue: ElementId[] = [t];
       let found: ElementId | undefined;
       for (let i = 0; i < queue.length && found === undefined; i++) {
-        for (const e of this.relationshipsFrom(queue[i]!)) {
-          if (e.eClass !== 'Redefinition') continue;
+        for (const e of this.redefinitionsFromKept(queue[i]!)) {
           for (const x of e.target ?? []) {
             if (seen.has(x) || !this.elements.has(x)) continue;
             seen.add(x);
@@ -887,6 +886,23 @@ export class Model {
       if (!out.includes(found)) out.push(found);
     }
     return out;
+  }
+
+  /**
+   * The Redefinitions whose `source` holds `id`, in the order of the element map: what `relationshipsFrom(id)` lists
+   * of them, read off the referrer index {@link remove} keeps ({@link _referrers}, {@link _place}) rather than off the
+   * per-revision edge index, which each removal would rebuild over the whole model (one remove's walk is all at one
+   * revision, a loop of removes is not).
+   */
+  private redefinitionsFromKept(id: ElementId): ElementRecord[] {
+    const referrers = (this._referrers ??= this.buildReferrers());
+    const place = this._place!;
+    const found: Array<{ e: ElementRecord; at: number }> = [];
+    for (const rid of referrers.get(id) ?? []) {
+      const e = this.elements.get(rid);
+      if (e?.eClass === 'Redefinition' && (e.source ?? []).includes(id)) found.push({ e, at: place.get(rid) ?? Number.MAX_SAFE_INTEGER });
+    }
+    return found.sort((x, y) => x.at - y.at).map((x) => x.e);
   }
 
   /* ─────────────────────────── Index maintenance ──────────────────────── */

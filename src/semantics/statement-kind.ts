@@ -340,10 +340,11 @@ export function canCarryStatementKind(model: Model, id: ElementId): boolean {
   if (el.attrs.stateSubaction !== undefined) return false;
 
   // An enum literal (`low = 0.25;`) is a ReferenceUsage declared with no
-  // keyword. This one DOES reach `header()`, which would happily emit
-  // `#prose low = 0.25;` — and that file no longer parses, because the
-  // keyword-less literal form has no prefix-metadata slot in the grammar. It is
-  // the one shape where a silent loss would have been the better failure.
+  // keyword. This one DOES reach `header()`, which would emit `#prose low =
+  // 0.25;`. That file once did not parse (the keyword-less form had no
+  // prefix-metadata slot); a user-defined keyword may now lead a keyword-less
+  // feature (SysML 7.27.4), so it reads back. The refusal is kept: it is the
+  // weaker answer, and no writer test pins the tagged literal's save.
   if (el.eClass === 'ReferenceUsage' && el.attrs.keywordless === true) return false;
 
   return true;

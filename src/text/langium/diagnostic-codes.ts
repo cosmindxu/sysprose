@@ -124,6 +124,14 @@ const CODES = [
   },
 
   {
+    code: 'mapper/extended-definition',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A definition is written with a user-defined keyword and no reserved one (`#situation def Failure;`, SysML 7.27.4, BNF ExtendedDefinition). That is a plain Definition, which this tool has no metaclass for. A usage written so (`#situation batteryLow;`, `#k :>> L = 3;`) is read as the keyword-less feature it would be without the tag.',
+    hint: 'The definition {found} is not modelled; it is preserved verbatim and re-emitted unchanged on save. Add the reserved keyword of its kind (`#situation occurrence def Failure;`, `#situation part def Failure;`).',
+  },
+
+  {
     code: 'mapper/carrier-about-unread',
     source: 'mapper',
     severity: 'error',
@@ -541,7 +549,7 @@ const CODES = [
     code: 'verification/keyword-ambiguous',
     source: 'verification',
     severity: 'info',
-    when: 'A bare `#keyword` is answered by two imports of one scope with different `metadata def`s (`VendorHints` and `SysproseVerification` both declare `<exceptional>`, both imported), so which it names would depend on the order of the imports. Emitted by `contracts --keywords` alone.',
+    when: 'A bare `#keyword` is answered by two imports of one scope with different `metadata def`s (`VendorHints` and `SysproseVerification` both declare `<exceptional>`, both imported), so which it names would depend on the order of the imports; also beside `verification/foreign-keyword` when the keyword is a third-party spelling (`#precondition`) two imports declare, which the alias table still reads by its spelling. Emitted by `contracts --keywords` alone.',
     hint: 'Write the keyword qualified (`#SysproseVerification::exceptional`) or import only one of the packages. The keyword is read as no tag meanwhile, whichever import comes first.',
   },
 

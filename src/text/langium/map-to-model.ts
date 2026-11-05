@@ -2423,9 +2423,32 @@ class Mapper {
       } else {
         eClass = KEYWORD_TO_ECLASS.get(node.keyword + (node.isDef ? 'def' : ''));
       }
-    } else {
-      // Keyword-less feature: `out fuelOut : Fuel;` (port) or `end p : T;` (ref).
+    } else if (!node.isDef) {
+      // Keyword-less feature: `out fuelOut : Fuel;` (port) or `end p : T;` (ref), and one a user-defined keyword
+      // leads (`#situation batteryLow;`, `#k :>> L = 3;`: BNF ExtendedUsage), which is read as the same feature tagged.
       eClass = direction ? 'PortUsage' : 'ReferenceUsage';
+    } else {
+      // `#situation def Failure;` (BNF ExtendedDefinition): a plain Definition, which this tool models no metaclass
+      // for. Kept verbatim, as an unsupported keyword is, so a save neither drops nor rewrites it.
+      const code = 'mapper/extended-definition';
+      const found = `${(node.prefixMeta ?? []).map((p) => `#${p.type}`).join(' ')} def`;
+      this.diagnostics.push({
+        message: `A definition with no reserved keyword ('${found}') is not modelled`,
+        ...posOf(node),
+        severity: 'error',
+        source: 'mapper',
+        code,
+        found,
+        hint: renderHint(code, { found }),
+        ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+      });
+      const verbatim = node.$cstNode?.text;
+      this.create('ReferenceUsage', {
+        ownerId: ownerId ?? undefined,
+        declaredName: unquoteName(node.name),
+        attrs: { keywordless: true, ...(verbatim ? { unparsedText: verbatim } : {}) },
+      });
+      return;
     }
     if (!eClass) {
       // A keyword the GRAMMAR accepts but this tool models no metaclass for —

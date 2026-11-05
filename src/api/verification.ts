@@ -291,8 +291,9 @@ export interface KeywordUse {
   } | null;
   origin: KeywordOrigin;
   /**
-   * For an `ambiguous` keyword: the qualified names of the definitions two imports answer with, in import order.
-   * Absent otherwise. `resolvedTo` is `null`: which of them the keyword names would depend on the order of the imports.
+   * For an `ambiguous` keyword, and for a `foreign` spelling two imports answer to: the qualified names of the
+   * definitions two imports answer with, in import order. Absent otherwise. `resolvedTo` is `null`: which of them the
+   * keyword names would depend on the order of the imports.
    */
   ambiguousBetween?: string[];
   /**
@@ -643,6 +644,18 @@ function keywordFindings(uses: readonly KeywordUse[]): Finding[] {
         code: 'verification/foreign-keyword',
         hint: `It is read as ${use.foreign.readAs} only where a command asks for it (\`obligations --from-keywords\`); this row is an inventory and changes no obligation.`,
       });
+      // The spelling is read by the alias table either way, but what it NAMES in the model is ambiguous, and a reader
+      // told only the foreign reading would take the keyword to name one of their two definitions.
+      if (use.ambiguousBetween) {
+        out.push({
+          severity: 'info',
+          message: `\`#${use.keyword}\` on ${use.element.qualifiedName} is ambiguous: ${use.ambiguousBetween.join(' and ')} both answer to it.`,
+          elementId: use.element.id,
+          elementName: use.element.qualifiedName,
+          code: 'verification/keyword-ambiguous',
+          hint: `Write the keyword qualified or import only one of the packages. It names neither meanwhile, whichever import comes first; the third-party spelling is still read as ${use.foreign.readAs} where a command asks for it.`,
+        });
+      }
     } else if (use.origin === 'ambiguous' && use.ambiguousBetween) {
       out.push({
         severity: 'info',

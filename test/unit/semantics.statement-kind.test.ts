@@ -657,20 +657,23 @@ describe('statement kinds — what the writer accepts, a save keeps', () => {
   );
 
   /**
-   * The one shape where the guard is not protecting against a silent loss but
-   * against a corrupt save: `header()` DOES emit the prefix on a keyword-less
-   * enum literal, and the file it writes no longer parses.
+   * The guard refuses a keyword-less enum literal: `header()` DOES emit the prefix on it. That file used to be
+   * rejected by the parser, which made the refusal a protection against a corrupt save; a user-defined keyword may
+   * now lead a keyword-less feature, so the file written by hand reads back (as the untagged literal, tagged), and
+   * the refusal stays as the weaker answer.
    */
-  it('refuses an enum literal, whose emitted prefix would not parse back', () => {
+  it('refuses an enum literal, though its emitted prefix now parses back', () => {
     const { model } = parseModel(`package M {\n    enum def Level {\n        low = 0.25;\n    }\n}`);
     const low = byName(model, 'low');
     expect(low.attrs.keywordless).toBe(true);
     expect(canCarryStatementKind(model, low.id)).toBe(false);
     expect(() => setStatementKind(model, low.id, 'prose')).toThrow(/cannot carry/i);
-    // Ground truth for the refusal: written by hand, that file is rejected.
     const byHand = parseModel(
       `package M {\n    enum def Level {\n        #prose low = 0.25;\n    }\n}`,
     );
-    expect(byHand.diagnostics.filter((d) => d.severity === 'error').length).toBeGreaterThan(0);
+    expect(byHand.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const tagged = byName(byHand.model, 'low');
+    expect(tagged.attrs.keywordless).toBe(true);
+    expect(tagged.attrs.metadata).toEqual(['prose']);
   });
 });

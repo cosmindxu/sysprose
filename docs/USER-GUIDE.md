@@ -3546,6 +3546,10 @@ must win is the one a consumer parses.
 
 **The verdict facet is derived, never accepted.** Beside the carrier,
 `evidence-attach` writes `metadata RequirementMetadata { attribute verdict = …; }`
+(read here, on purpose, as a metadata usage NAMED `RequirementMetadata` with no
+type: the standard's grammar reads a bare `metadata T { … }` as typed by `T`, and this
+tool keeps the named reading every saved file already carries; `metadata T about X`
+and `@T { … }` are typed by `T`)
 — and it writes it **from the record's claim**, by one rule: `pass` for `proved`,
 `fail` for `refuted`, `inconclusive` for everything else. A `--engine literal`
 record claims `holds-at-values`, so it writes `inconclusive`. There is no path
@@ -4748,7 +4752,12 @@ scope (`VendorHints` and `SysproseVerification`, say) each declare a `metadata d
 it answers to. Which one it names would depend on the order of the imports, so the
 inventory names both (`verification/keyword-ambiguous`, information) and the keyword
 is read as no tag, in either order. Write it qualified (`#SysproseVerification::exceptional`)
-or import one package.
+or import one package. A third-party spelling two imports declare (`#precondition`
+with `A::PreA` and `B::PreB` both imported) stays a `third-party spelling` row, since
+the alias table reads it by its spelling, and the row and the inventory add that it
+names neither (`verification/keyword-ambiguous` beside `verification/foreign-keyword`).
+`fault-tree` on a machine counts a tag two imports answer to apart (`2 keyword(s) two
+imports answer to, read as no tag`) rather than fold it into `0` flags or states; a `#failureMode` on a usage that is not an attribute (`#failureMode ref x`, or the keyword-less `#failureMode x = false;`) is counted apart too (`1 \`#failureMode\` tag(s) on a usage that is not an attribute, not counted`) and the sentence then claims no absence.
 
 These `verification/*` rows are **information** and they come from nowhere
 but this command — except `verification/foreign-keyword`, which
@@ -4815,7 +4824,11 @@ names them as this tool's own and never as a keyword that names nothing:
     sysprose vocabulary: #prose on P::Why — read from the spelling; declare or import SysproseStatements to bind it
 ```
 
-A tag this tool acted on is not a tag it failed to find.
+A tag this tool acted on is not a tag it failed to find. The spelling decides,
+on purpose: a model that declares its own `metadata def <prose>` has its `#prose`
+statements left out of the worklist like any other, and the inventory lists the
+keyword as `other vocabulary` naming that definition, so the census line and the
+inventory say the same thing.
 
 **Somebody else's spelling.** Four third-party spellings are recognised, and
 each of them prints where it came from wherever it is used:
@@ -4916,6 +4929,13 @@ The keyword goes in front of the declaration:
     doc /* Written for the reader. Nothing has to satisfy it. */
 }
 ```
+
+A keyword may also lead a declaration that has no reserved keyword (SysML 7.27.4):
+`#situation batteryLow;` or `#k :>> L = 3;` is the keyword-less feature it would be without
+the tag, tagged. A definition written so, `#situation def Failure;`, is a plain
+Definition this tool has no metaclass for: it is kept verbatim, saved unchanged
+and refused (`mapper/extended-definition`, an error), so the checks abstain on the
+file; write the reserved keyword of its kind (`#situation occurrence def Failure;`).
 
 Three keywords, one of them awkward: `#prose`, `#prompt` and `#'requirement'`.
 The last is quoted because `requirement` is a hard keyword of the notation, and

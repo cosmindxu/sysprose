@@ -190,6 +190,21 @@ describe('recovery honesty — a grammar-legal keyword this tool does not model'
     expect(kept?.attrs.unparsedText).toBe('namespace N { part x; }');
     expect(serializeModel(model)).toContain('namespace N { part x; }');
   });
+
+  it('keeps a definition a user-defined keyword alone leads (`#situation def Failure`) verbatim and refuses it', async () => {
+    const SRC = 'package P {\n    metadata def situation;\n    #situation def Failure { attribute x = 1; }\n    #situation batteryLow;\n}\n';
+    const report = await checkText(SRC, { library: 'none' });
+    const d = report.diagnostics.find((x) => x.code === 'mapper/extended-definition');
+    expect([d?.severity, d?.found, report.ok]).toEqual(['error', '#situation def', false]);
+    expect(d?.range).toBeDefined();
+    const { model } = parseModel(SRC);
+    expect(named(model, 'Failure')?.attrs.unparsedText).toBe('#situation def Failure { attribute x = 1; }');
+    // The usage is the keyword-less feature it is without the tag, tagged.
+    expect([named(model, 'batteryLow')?.eClass, named(model, 'batteryLow')?.attrs.metadata]).toEqual(['ReferenceUsage', ['situation']]);
+    const saved = serializeModel(model);
+    expect(saved).toContain('#situation def Failure { attribute x = 1; }');
+    expect(saved).toContain('#situation batteryLow;');
+  });
 });
 
 describe('recovery honesty — the mark never costs more than it saves', () => {

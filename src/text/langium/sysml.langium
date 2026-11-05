@@ -349,7 +349,15 @@ Definition infers Definition:
     | (visibility=Visibility)?
       name=Name
       ( specializations+=Specialization DeclSpecs )?
-      DeclMiddle (body=Body | ';');
+      DeclMiddle (body=Body | ';')
+      // A user-defined keyword standing without a reserved one (SysML 7.27.4; BNF ExtendedDefinition and
+      // ExtendedUsage): `#situation def Failure;`, `#situation batteryLow;`, `#k :>> L = 3;`. The usage forms are the
+      // two keyword-less alternatives above, tagged; the definition is refused by the mapper (no metaclass).
+    | (prefixMeta+=PrefixMetadata)+
+      (visibility=Visibility)?
+      ( isDef?='def' DeclarationTail
+      | specializations+=Specialization DeclSpecs DeclTailRest
+      | name=Name ( specializations+=Specialization DeclSpecs )? DeclMiddle (body=Body | ';') );
 
 // Declaration tail after a consumed BaseKeyword. The name may itself be a
 // noun-like reserved word (`action behavior;`, `part step;`), so the broader

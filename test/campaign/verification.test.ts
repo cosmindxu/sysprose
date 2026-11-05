@@ -4544,6 +4544,56 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     expect(machineAnswer(spelled.model, spelled.machineId).sentence).toContain('found none of');
   });
 
+  it('a tag two imports answer to is named apart, never read as a plain absence, in either import order', async () => {
+    // `hasKeyword` reads an ambiguous keyword as no tag, so neither count holds it; "found none of" over it alone
+    // would say the machine carries nothing where it carries two tags this command could not attribute.
+    for (const imports of ['import A::*; import B::*;', 'import B::*; import A::*;']) {
+      const text = `package A { metadata def <failureMode> FailureMode; }
+package B { metadata def <failureMode> FailureMode; }
+package SysproseVerification { metadata def <exceptional> ExceptionalOutcome; }
+package VendorHints { metadata def <exceptional> ExceptionalOutcome; }
+package P {
+  ${imports} import SysproseVerification::*; import VendorHints::*;
+  state def Modes {
+    #failureMode attribute navFail : Boolean = false;
+    state nominal; #exceptional state hazard;
+    transition nominal accept fail then hazard;
+  }
+}`;
+      const model = (await loadModelText(text, { fileName: 'amb.sysml', library: 'none' })).model!;
+      const machine = model.all().find((e) => e.declaredName === 'Modes')!;
+      expect(machineFailureModes(model, machine.id)).toEqual({ failureModeFlags: 0, exceptionalStates: 0 });
+      expect(machineAnswer(model, machine.id).sentence).toContain(
+        '0 failure-mode flag(s), 0 `#exceptional` state(s), 2 keyword(s) two imports answer to, read as no tag',
+      );
+    }
+    // One answer only: no clause appears where nothing is ambiguous.
+    const { model, machineId } = machineWith({ exceptional: true, flag: true });
+    expect(machineAnswer(model, machineId).sentence).not.toContain('two imports');
+  });
+
+  it('a `#failureMode` tag on a usage that is not an attribute is named apart, never read as a plain absence', async () => {
+    // The tag resolves (keyword-less spelling, or `ref`), but `machineFailureModes` counts attributes only: "no fault
+    // variable to inject here" would tell the reader who tagged it that the machine carries nothing. Same exit row.
+    for (const usage of ['#failureMode navFail = false;', '#failureMode ref navFail : Boolean = false;']) {
+      const text = `package P {
+  metadata def <failureMode> FailureMode;
+  state def Modes {
+    ${usage}
+    state nominal; state degraded;
+    transition nominal accept fail then degraded;
+  }
+}`;
+      const model = (await loadModelText(text, { fileName: 'fm.sysml', library: 'none' })).model!;
+      const machine = model.all().find((e) => e.declaredName === 'Modes')!;
+      const { sentence } = machineAnswer(model, machine.id);
+      expect(sentence, usage).toContain('1 `#failureMode` tag(s) on a usage that is not an attribute, not counted');
+      expect(sentence, usage).toContain('found and does not inject');
+      expect(sentence, usage).not.toContain('found none of');
+      expect(sentence, usage).not.toContain('no fault variable to inject here');
+    }
+  });
+
   it('a state inside a machine, or a state def that owns no transition, is refused rather than measured', async () => {
     // ONE POPULATION FOR THE ROUTE AND THE CENSUS. Measured before this case:
     // a leaf state named as `--element` was answered about its own descendants
