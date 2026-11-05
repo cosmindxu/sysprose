@@ -49,7 +49,9 @@
  * SYSPROSE_SOAK_MODEL=test/fixtures/drone-swarm-v9.sysml.txt
  * SYSPROSE_SOAK_MEASURES=SurveillanceDroneSwarm::LA::areaUnderWatchFraction,SurveillanceDroneSwarm::PA::areaUnderWatchFraction,SurveillanceDroneSwarm::LA::coverageUnderMeshJammingFraction,SurveillanceDroneSwarm::PA::coverageLossAfterMemberLossFraction
  * npx vitest run test/campaign/z3-soak.soak.ts`, beside twelve `node -e
- * 'for(;;){}'` loops. A plain `npm run soak:z3` skips the load case.
+ * 'for(;;){}'` loops. A plain `npm run soak:z3` skips the load case;
+ * `npm run soak:z3:load` (`scripts/soak-z3-load.sh`) runs exactly this, with
+ * `PROCS`, `LOOPS`, `CHECKS` and `ITERATIONS` to shorten it.
  *
  * OPT-IN, AND NOT A SKIP. Run it as `npm run soak:z3`: `SYSPROSE_SOAK=1` is
  * what makes `vitest.config.ts` collect a `*.soak.ts` at all, and

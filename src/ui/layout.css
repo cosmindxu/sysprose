@@ -107,6 +107,26 @@
   text-overflow: ellipsis;
 }
 
+/* The pointer's label for a column no header names at the zoom (columnHoverLabel in column-headers.ts). */
+.column-hover {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  height: 22px; /* COLUMN_STRIP_H */
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px; /* COLUMN_STRIP_LABEL_PX */
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* Simulation: the currently-active state(s) pulse with a success-hued glow. */
 .react-flow__node.rf-sim-active {
   outline: 2px solid var(--dgm-green, #1a7f37);

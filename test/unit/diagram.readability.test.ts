@@ -53,6 +53,8 @@ import {
   columnLabelSize,
   columnLabelSizeAt,
   columnLabelSizeFor,
+  columnAtPoint,
+  columnHoverLabel,
   columnSpans,
   columnStripCells,
   fitColumnLabel,
@@ -791,6 +793,63 @@ describe('column headers — the frozen strip, at the drone swarm\'s size', () =
   it('skips a column too narrow on screen to hold its label', () => {
     const tiny = [col('tiny', 0, 800, 0, 1_000)];
     expect(columnStripCells(tiny, fit, 1400, stripTop)).toEqual([]);
+  });
+
+  describe('the pointer names a column no header names', () => {
+    const canvas = { width: 1400, height: 900 };
+    // The same shape with the smaller pieces' columns 8 to 17 px wide on screen, as the real model's are at Fit.
+    const narrow = rest.map((c, i) => ({ ...c, w: 400 + (i % 4) * 280 }));
+    const all = [...main, ...narrow];
+    const centre = (c: DiagramColumn, zoom: number, view: { x: number; y: number }) => ({
+      x: view.x + (c.x + c.w / 2) * zoom,
+      y: view.y + ((c.y + c.bottom) / 2) * zoom,
+    });
+
+    it('finds every one of the 21 headers at the whole model\'s Fit: in the strip, or under the pointer', () => {
+      expect(all).toHaveLength(21);
+      const inStrip = new Set(columnStripCells(all, fit, 1400, stripTop).map((c) => c.id));
+      expect(inStrip.size).toBe(5);
+      for (const c of all) {
+        if (inStrip.has(c.id)) continue;
+        const at = centre(c, fit.zoom, fit);
+        expect(columnHoverLabel(all, fit, canvas, stripTop, at), `${c.label} has neither a strip cell nor a hover label at Fit`).toMatchObject({ id: c.id, label: c.label });
+      }
+      expect(Math.min(...narrow.map((c) => c.w * fit.zoom))).toBeLessThan(COLUMN_STRIP_H);
+    });
+
+    it('resolves a diagram point to the column whose piece holds it, and to none outside', () => {
+      expect(columnAtPoint(all, { x: 100, y: 100 })?.id).toBe('main0');
+      expect(columnAtPoint(all, { x: 12_000 * 4 + 100, y: 18_000 })?.id).toBe('main4');
+      expect(columnAtPoint(all, { x: 100, y: 19_200 })).toBeUndefined();
+      expect(columnAtPoint(all, { x: 100, y: 19_600 })?.id).toBe('rest00');
+      expect(columnAtPoint(all, { x: 3_500 * 2 + 100, y: 20_000 })?.id).toBe('rest02');
+      expect(columnAtPoint(all, { x: 700_000, y: 100 })).toBeUndefined();
+    });
+
+    it('says nothing where a header or the strip already names the column, or where there is no column', () => {
+      // Zoom 1: the 640 px bands read at their place.
+      const near = { x: 100, y: stripTop, zoom: 1 };
+      expect(columnHoverLabel(all, near, canvas, stripTop, { x: 300, y: stripTop + 300 })).toBeNull();
+      // Panned so the strip names main0: its cell is the name.
+      const panned = { x: -100, y: stripTop - 5_000, zoom: 1 };
+      expect(columnHoverLabel(all, panned, canvas, stripTop, { x: 300, y: 300 })).toBeNull();
+      // Between the pieces, and off the right of the drawing.
+      expect(columnHoverLabel(all, fit, canvas, stripTop, { x: 100, y: stripTop + 19_300 * fit.zoom })).toBeNull();
+      expect(columnHoverLabel(all, fit, canvas, stripTop, { x: 1_399, y: 800 })).toBeNull();
+    });
+
+    it('keeps its label inside the canvas, beside the pointer', () => {
+      const c = narrow[15]!;
+      const at = centre(c, fit.zoom, fit);
+      const label = columnHoverLabel(all, fit, canvas, stripTop, at)!;
+      expect(label.left).toBeGreaterThan(at.x);
+      expect(label.top).toBeGreaterThan(at.y);
+      const small = { width: Math.ceil(at.x) + 20, height: Math.ceil(at.y) + 20 };
+      const flipped = columnHoverLabel(all, fit, small, stripTop, at)!;
+      expect(flipped.left).toBeLessThan(at.x);
+      expect(flipped.top).toBeLessThan(at.y);
+      expect(flipped.left).toBeGreaterThanOrEqual(0);
+    });
   });
 });
 

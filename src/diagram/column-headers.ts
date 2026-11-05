@@ -153,3 +153,46 @@ export function columnStripCells(
   }
   return cells;
 }
+
+/** The column whose piece holds the diagram point `at` (over the column's x-range, from the piece's top to its bottom), if any. */
+export function columnAtPoint(columns: readonly DiagramColumn[], at: { x: number; y: number }): DiagramColumn | undefined {
+  return columns.find((c) => at.x >= c.x && at.x <= c.x + c.w && at.y >= c.y && at.y <= c.bottom);
+}
+
+/** A hover label for a column no header names at this zoom, in screen px from the canvas's top left. */
+export interface ColumnHoverLabel {
+  id: string;
+  label: string;
+  left: number;
+  top: number;
+}
+
+/** Gap (screen px) between the pointer and its hover label. */
+const COLUMN_HOVER_OFFSET = 14;
+
+/**
+ * The label the canvas shows beside the pointer at `pointer` (screen px from the
+ * canvas's top left) for the column under it: only where nothing else names that
+ * column, that is, where its own band is too small to read on screen and the
+ * frozen strip has no cell for it. A far zoom leaves such columns (a whole
+ * model's smaller pieces: bands about a pixel tall, columns a few px wide), and
+ * hovering is how one is found. The label sits below the pointer and right of it
+ * where there is room, else above or left of it, inside the canvas.
+ */
+export function columnHoverLabel(
+  columns: readonly DiagramColumn[],
+  view: { x: number; y: number; zoom: number },
+  canvasSize: { width: number; height: number },
+  stripTop: number,
+  pointer: { x: number; y: number },
+): ColumnHoverLabel | null {
+  const column = columnAtPoint(columns, { x: (pointer.x - view.x) / view.zoom, y: (pointer.y - view.y) / view.zoom });
+  if (!column) return null;
+  const readable = column.h * view.zoom >= COLUMN_STRIP_H && column.w * view.zoom >= COLUMN_STRIP_MIN_W;
+  if (readable) return null;
+  if (columnStripCells([column], view, canvasSize.width, stripTop).length > 0) return null;
+  const width = textWidth(column.label, `600 ${COLUMN_STRIP_LABEL_PX}px system-ui, sans-serif`, COLUMN_STRIP_LABEL_PX * 0.6) + 16;
+  const left = pointer.x + COLUMN_HOVER_OFFSET + width > canvasSize.width ? pointer.x - COLUMN_HOVER_OFFSET - width : pointer.x + COLUMN_HOVER_OFFSET;
+  const top = pointer.y + COLUMN_HOVER_OFFSET + COLUMN_STRIP_H > canvasSize.height ? pointer.y - COLUMN_HOVER_OFFSET - COLUMN_STRIP_H : pointer.y + COLUMN_HOVER_OFFSET;
+  return { id: column.id, label: column.label, left: Math.max(0, left), top: Math.max(0, top) };
+}

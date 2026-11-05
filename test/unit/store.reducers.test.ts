@@ -3126,7 +3126,7 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
        * and a definition-level one (`attribute Zd1; bind Zd1 = M;` in a part def) gives the definition a copy that every
        * usage of it, and every `:>>` the page re-resolves, has to leave aside.
        */
-      function randomModel(rnd: () => number, bind?: () => number): string {
+      function randomModel(rnd: () => number, bind?: () => number, constraints = false): string {
         const int = (lo: number, hi: number): number => lo + Math.floor(rnd() * (hi - lo + 1));
         const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
         let value = 10;
@@ -3205,15 +3205,21 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
         }
         const decl = (kw: string, op: string, d: { name: string; generals: string[]; features: string[] }): string =>
           `  ${kw} ${d.name}${d.generals.length > 0 ? ` ${op} ${d.generals.join(', ')}` : ''} { ${d.features.join(' ')} }`;
+        // With `constraints`: one equation per feature a usage inherits, so that the four surfaces have a verdict to give
+        // (read from the usage's definitions, drawing nothing: the models are the ones they always were).
+        const reads = constraints
+          ? usages.flatMap((u) => [...unionOf(u.generals)].sort().slice(0, 3).map((x) => `  constraint c${u.name}${x} { ${u.name}.${x} == 11.0 }`))
+          : [];
         return [
           'package G {',
           ...defs.map((d) => decl('part def', ':>', d)),
           ...usages.map((u) => decl('part', ':', u)),
+          ...reads,
           '}',
         ].join('\n');
       }
 
-      it('300 sequences of 4 commands: after each, the page holds the redefinitions its saved file holds', () => {
+      it('300 sequences of 4 commands: after each, the page holds the redefinitions its saved file holds', async () => {
         // SYSPROSE_RT_SEQUENCES / _STEPS / _FIRST widen the search for a soak; the defaults are the gate's.
         const SEQUENCES = Number(process.env.SYSPROSE_RT_SEQUENCES ?? 300);
         const STEPS = Number(process.env.SYSPROSE_RT_STEPS ?? 4);
@@ -3223,19 +3229,25 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
         let deletes = 0;
         let fellBack = 0;
         let retargets = 0;
+        // The sequences a step ended outside the oracle, by why (the duplicate-name stop and the copy the file does not
+        // make), and the sequences whose end state had its four-surface verdicts compared between the page and its file.
+        let sameName = 0;
+        let copyLost = 0;
+        let verdictChecks = 0;
         for (let seq = FIRST; seq < FIRST + SEQUENCES && failures.length < 3; seq++) {
           const rnd = seeded(seq * 7919 + 13);
           // A stream of its own for the user's retarget of a redefinition, so the draws above are the ones they always were.
           const extra = seeded(seq * 15485863 + 5);
           const pick = <T,>(xs: readonly T[]): T | undefined => xs[Math.floor(rnd() * xs.length)];
-          let text = randomModel(rnd, seeded(seq * 104729 + 31));
+          const withReads = seq % 20 === 0;
+          let text = randomModel(rnd, seeded(seq * 104729 + 31), withReads);
           load(text);
           // A binding the file does not read back onto the copy the page made at the load (two bindings that name one copy
           // by different names, the file writes one of them) is a limit of the text, not of the edit: the sequence runs on
           // the model without the bindings.
           if (copiesApart(st().model, reopened(st().model)).length > 0) {
             fellBack++;
-            text = randomModel(seeded(seq * 7919 + 13));
+            text = randomModel(seeded(seq * 7919 + 13), undefined, withReads);
             load(text);
           }
           // A full settle of the model as the file made it moves no redefinition: the page starts from the file's.
@@ -3246,6 +3258,7 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
           if (fresh > 0) failures.push(`sequence ${seq}: a full settle of the freshly loaded model moved ${fresh} redefinition(s)\n${text}`);
           if (fresh > 0) continue;
           const log: string[] = [];
+          let compared = false;
           for (let step = 0; step < STEPS; step++) {
             const m = st().model;
             const user = m.all().filter((e) => e.attrs.isLibrary !== true && e.attrs.implicit !== true);
@@ -3364,12 +3377,18 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
             // mapper takes the first of the two there too.
             const bears = (c: ElementRecord): string | undefined =>
               c.declaredName ?? (copies(page).size > 0 ? effectiveNameOf(page, c) : undefined);
-            if (page.all().some((e) => page.children(e.id).some((c, i, kids) => !isRelationship(c.eClass) && bears(c) !== undefined && kids.findIndex((o) => !isRelationship(o.eClass) && bears(o) === bears(c)) !== i))) break;
+            if (page.all().some((e) => page.children(e.id).some((c, i, kids) => !isRelationship(c.eClass) && bears(c) !== undefined && kids.findIndex((o) => !isRelationship(o.eClass) && bears(o) === bears(c)) !== i))) {
+              sameName++;
+              break;
+            }
             const reread = reopened(page);
             // A copy the file does not make (its name is inherited by nothing now) stays where it was on the page, and
             // the page proves through it where the file reads an unresolved name: outside this oracle (TODO).
             const there = copies(reread);
-            if ([...copies(page).keys()].some((k) => !there.has(k))) break;
+            if ([...copies(page).keys()].some((k) => !there.has(k))) {
+              copyLost++;
+              break;
+            }
             const after = targets(page);
             const file = targets(reread);
             const problems: string[] = [];
@@ -3410,6 +3429,20 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
               st().redo();
               if (targets(st().model).join('\n') !== after.join('\n')) problems.push('redo');
             }
+            // The four surfaces (check, literal, numeric, SMT) read the page as they read its file: the page decides no
+            // cell the file does not decide alike (the file may decide more). On every 20th sequence, once, at its first
+            // step after the first that the oracle above did not set aside.
+            if (problems.length === 0 && seq % 20 === 0 && step >= 1 && !compared) {
+              compared = true;
+              verdictChecks++;
+              const onPage = await surfaces(page);
+              const inFile = await surfaces(reread);
+              for (const [k, row] of Object.entries(onPage)) {
+                row.split('/').forEach((c, i) => {
+                  if ((c === 'T' || c === 'F') && inFile[k]?.split('/')[i] !== c) problems.push(`verdict ${k} lane ${i}: page ${row}, file ${inFile[k] ?? 'absent'}`);
+                });
+              }
+            }
             if (problems.length > 0) {
               failures.push(`sequence ${seq} step ${step}: ${log.join(' ; ')}\n${text}\n${problems.join('\n')}`);
               break;
@@ -3417,7 +3450,7 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
           }
         }
         expect(failures).toEqual([]);
-        if (process.env.SYSPROSE_RT_REPORT) console.log(`property window ${FIRST}+${SEQUENCES}x${STEPS}: ${fellBack} fell back to the binding-free model, ${retargets} retargets, ${deletes} deletes, ${handChecks} hand checks`);
+        if (process.env.SYSPROSE_RT_REPORT) console.log(`property window ${FIRST}+${SEQUENCES}x${STEPS}: ${fellBack} fell back to the binding-free model, ${retargets} retargets, ${deletes} deletes, ${handChecks} hand checks, ${sameName} same-name stops, ${copyLost} lost-copy stops, ${verdictChecks} verdict comparisons`);
         // The second oracle ran: some deletes were compared with the text without the feature. How many a seed window
         // can compare is up to its models (most hold a named redefinition, which puts them outside it), so only the
         // gate's own window must have compared one; any other window must at least have drawn deletes.
@@ -3426,6 +3459,9 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
         // exercised; and the user's retarget of a redefinition was drawn.
         if (SEQUENCES >= 100) expect(fellBack).toBeLessThan(SEQUENCES / 4);
         if (SEQUENCES >= 100) expect(retargets).toBeGreaterThan(0);
+        // The verdict oracle ran, and the stops that leave a step outside the oracle stay the minority of the steps drawn.
+        if (SEQUENCES >= 100) expect(verdictChecks).toBeGreaterThan(0);
+        if (SEQUENCES >= 100) expect(sameName + copyLost).toBeLessThan((SEQUENCES * STEPS) / 4);
         if (FIRST === 0 && SEQUENCES === 300 && STEPS === 4) expect(handChecks).toBeGreaterThan(0);
       }, 600_000);
     });

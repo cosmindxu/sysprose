@@ -65,7 +65,11 @@ test('a solver check offers its command instead of a verdict it cannot give, on 
   await expect(result).toContainText('sysprose -- fault-tree');
 });
 
+/** z3 runs in the page only on a cross-origin-isolated one: a run with `SYSPROSE_NO_ISOLATION` set (vite.config.ts reads it) has the preview send no COOP and COEP. */
+const NOT_ISOLATED_RUN = !['', '0', undefined].includes(process.env.SYSPROSE_NO_ISOLATION);
+
 test('a solver check runs z3 in the page on the isolated preview server and lands its verdict', async ({ page }) => {
+  test.skip(NOT_ISOLATED_RUN, 'SYSPROSE_NO_ISOLATION is set: the preview sends no COOP and COEP, so z3 cannot run in the page');
   const errors = captureErrors(page);
   const source = readFileSync(resolve('examples/uav-power-budget.sysml'), 'utf8');
   await page.route('**/linked/Power.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: source }));
@@ -88,6 +92,51 @@ test('a solver check runs z3 in the page on the isolated preview server and land
   await page.getByTestId('tb-new').click();
   await expect(page.locator('[data-testid="checks-result"][data-check="verify"]')).toHaveAttribute('data-verdict', 'stale');
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a z3 that dies in the page ends that Run as findings, and the next Run starts a fresh z3', async ({ page }) => {
+  test.skip(NOT_ISOLATED_RUN, 'SYSPROSE_NO_ISOLATION is set: the preview sends no COOP and COEP, so z3 cannot run in the page');
+  test.setTimeout(240_000);
+  // z3's thread pool is real Workers; keep a handle on each so the test can stop them, as a dead module would be.
+  await page.addInitScript(() => {
+    const Native = window.Worker;
+    const made: Worker[] = [];
+    (window as unknown as { __z3Workers: Worker[] }).__z3Workers = made;
+    window.Worker = class extends Native {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes('z3')) made.push(this);
+      }
+    };
+  });
+  const source = readFileSync(resolve('examples/uav-power-budget.sysml'), 'utf8');
+  await page.route('**/linked/Power.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: source }));
+  await page.goto('/?model=linked/Power.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect.poll(() => userRoots(page)).toContain('UAVPowerBudget');
+  await page.getByTestId('tb-view-requirement').click();
+  const verify = checkRow(page, 'verify');
+  await verify.getByTestId('palette-check-run').click();
+  await expect(verify).toHaveAttribute('data-verdict', 'holds', { timeout: 60_000 });
+
+  // Stop every z3 thread: the module is dead under the next call, which hangs until the bridge's margin passes.
+  const stopped = await page.evaluate(() => {
+    const made = (window as unknown as { __z3Workers: Worker[] }).__z3Workers;
+    made.forEach((w) => w.terminate());
+    return made.length;
+  });
+  expect(stopped, 'z3 started worker threads the test could stop').toBeGreaterThan(0);
+
+  await verify.getByTestId('palette-check-run').click();
+  await expect(verify).toHaveAttribute('data-verdict', 'issues', { timeout: 120_000 });
+  const result = page.locator('[data-testid="checks-result"][data-check="verify"]');
+  await expect(result).toHaveAttribute('data-verdict', 'issues');
+  await expect(result.getByTestId('checks-row').first()).toContainText('checks/internal-error');
+
+  // The next Run starts a fresh z3 and decides.
+  await verify.getByTestId('palette-check-run').click();
+  await expect(verify).toHaveAttribute('data-verdict', 'holds', { timeout: 60_000 });
+  await expect(verify.locator('.palette-check-summary')).toHaveText('0 inconclusive, 6 discharged, 0 refuted');
 });
 
 test('contracts and obligations read the selection as --element does, and say when they cover the whole model', async ({ page }) => {
