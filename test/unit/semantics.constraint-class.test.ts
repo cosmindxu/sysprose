@@ -1003,7 +1003,8 @@ describe('the defect sidecar names real entries and the register reads it', () =
     // gate 4 asserts the divisor guard since the review of classes-2: the defect that capped nra-div there is closed
     expect(sidecar.defects.some((d) => d.id === 'D-gate4-guard')).toBe(false);
     expect(by('D-inconsistent-axioms')).toMatchObject({ classes: ['bind-equality', 'per-instance'], kind: 'wrong-statement' });
-    expect(by('D-subsetting-contradiction')).toMatchObject({ classes: ['inherited-context', 'per-instance'], kind: 'wrong-statement' });
+    // Read again in the instance, or fenced on the SMT engine, since instance3-pass S1: no longer a wrong statement.
+    expect(by('D-subsetting-contradiction')).toMatchObject({ classes: ['inherited-context', 'per-instance'], kind: 'abstains' });
     expect(by('D-bound-detail')).toMatchObject({ classes: ['text-as-real'], kind: 'wrong-statement' });
   });
 });

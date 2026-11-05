@@ -27,8 +27,8 @@
         "inherited-context",
         "per-instance"
       ],
-      "kind": "wrong-statement",
-      "note": "A model that contradicts itself through a subsetting usage decides other rows (w.x <= 5.0 T, w.x >= 5.0 F) where decision 1 says the axioms are inconsistent, and nothing reports it. The entry may be a wrong decided cell; read as a wrong-statement until probed."
+      "kind": "abstains",
+      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check. Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell."
     },
     {
       "id": "D-literal-reach",

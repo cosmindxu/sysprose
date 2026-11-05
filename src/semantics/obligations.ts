@@ -99,6 +99,8 @@ import {
   equatedPartsRefusal,
   failedReadingSentence,
   readingContextsOf,
+  subsettingRereadsOf,
+  type SubsettingReread,
   hasUserBindings,
   hasStatedValue,
   isAsserted,
@@ -1183,7 +1185,11 @@ function instanceRows(
       shared: [],
     };
   }
-  const contexts = walked.contexts;
+  // An asserted relation read through a usage that subsets a feature an instance reads otherwise is read again in
+  // each such instance, the usage read as one of what that feature is there ({@link subsettingRereadsOf}): an axiom
+  // of its own. Unread, the axiom read W's own p2 alone, and a model w makes contradict itself was consistent.
+  const rereads = only || filed.role !== 'axiom' ? new Map<ElementId, SubsettingReread>() : subsettingRereadsOf(model, el.id);
+  const contexts = [...walked.contexts, ...[...rereads.values()].map((r) => r.context).filter((c) => !walked.contexts.some((x) => x.id === c.id))];
   // Each expanded group's share of the run's goal budget, taken in the order
   // its context comes (as the loop below files it): only a group whose rows
   // are filed reads, in its row for an element's own instance, the relation
@@ -1224,14 +1230,25 @@ function instanceRows(
     // (M7's q2) has its goal read at its own instance, as the check reads it
     // (E7) — refused in the check's sentence over a member stated twice there —
     // and an assert adds no axiom there.
-    const boundOnly = !only && definitions.readsBoundOnly(el, names, context.id);
+    const reread = rereads.get(context.id);
+    const text = reread?.expression ?? raw;
+    const read = reread ? relationNamesOf(text) : names;
+    const boundOnly = !only && definitions.readsBoundOnly(el, read, context.id);
     if (boundOnly && filed.role === 'axiom') continue;
-    const here = boundOnly ? definitions.boundStatedTwiceIn(el, names, context.id) : undefined;
+    const here = boundOnly ? definitions.boundStatedTwiceIn(el, read, context.id) : undefined;
     // Read for the context's own instance: a feature the relation owns (a
     // constraint's `attribute k`) is the context's, one per context, and not
     // the symbol the relation's own reading and every other context share.
     const instance = definitions.instanceNameOf(context.id);
-    const reading = readRelation(model, { ...el, ownerId: context.id }, raw, memo, undefined, undefined, instance);
+    const reading = readRelation(
+      model,
+      reread ? { ...el, ownerId: context.id, attrs: { ...el.attrs, expression: text } } : { ...el, ownerId: context.id },
+      text,
+      memo,
+      undefined,
+      undefined,
+      instance,
+    );
     const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
     const shared = filed.role === 'axiom' && own === true ? sharedSymbolsOf(model, context, reading) : [];
     if (shared.length > 0) sharedOut.push({ context, vars: shared });
@@ -1244,7 +1261,7 @@ function instanceRows(
         : boundAbove(
             model,
             context,
-            names,
+            read,
             filed.role === 'axiom' ? sharedSymbolAxiom(model, context, reading, own) : reading.encodable,
           );
     out.push({

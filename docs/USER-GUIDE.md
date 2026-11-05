@@ -1715,6 +1715,25 @@ whether or not `p2` is a `ref`, never forgiven by `--allow-inconclusive`. The
 usages and rows that read through a `::>` are withdrawn with those that read through
 a `:>`. One that declares a type (`ref part p2 : T0 ::> p1;`) is read as its type has
 it, or abstains under the subsetting sentence above where an instance reads `p1` otherwise.
+An `assert` read through such a usage is read again in each instance that reads the
+subsetted feature otherwise, the usage read as one of what that feature is there: W's
+`assert constraint a { p2.load <= 5.0 }` beside w's `part :>> p1 { attribute :>> load =
+50.0; }` files the row `W::a in w`, read as `p1.load <= 5.0` in w, *violated* on the
+check and the numeric surface (`sysml-check --strict` fails, in a sentence that says p2
+subsets p1), and `verify --engine smt` reports `verification/inconsistent-axioms` on every
+row of the file: the model contradicts itself in w. W's own row of `a` is *could not be
+evaluated*, as above. Only where that is p2's value in each such instance: the assert
+written in the element p1 and p2 are features of, naming p2 at the head of a dotted name,
+and p2 subsetting p1 alone and saying nothing of its own, with nothing else redefining or
+subsetting either. Any other assert read through such a usage — through a value or an
+asserted equation that reads it (`x == p2.load`), through a `::>`, beside a binding the
+instance writes, or an assert of p2's type (T1's `assert constraint tc { load <= 5.0 }`
+under `part p2 : T1 :> p1;`) — and a subsetting usage that says something of its own
+where an instance reads what it subsets otherwise (`part p2 :> p1 { attribute :>> load =
+2.0; }`: every w's p2 has two loads) leave the model's axioms unread there, and the SMT
+engine decides no row of the file (`verification/not-evaluable`, in a sentence that names
+the assert or the usage; never forgiven): a proof from axioms that may contradict each
+other is void. The other three surfaces read each row as before.
 An end of a connection the model connects to features (`connection cn : C connect
 w.p1 to t;`) is the feature it connects, which may state what the end's type does not
 (w's `part :>> p1 { attribute :>> load = 50.0; }`): `cn.a.load` is *could not be

@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 588,
+      "tableAgree": 586,
       "tableDisagree": 0,
-      "tableProbes": 259
+      "tableProbes": 257
     },
     "nira/free": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 326,
+      "tableAgree": 324,
       "tableDisagree": 0,
-      "tableProbes": 211
+      "tableProbes": 209
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 573,
+      "tableAgree": 571,
       "tableDisagree": 0,
-      "tableProbes": 251
+      "tableProbes": 249
     },
     "text-as-real": {
       "battery": null,
@@ -450,8 +450,8 @@ export const CLASS_FACTS: ClassFacts = {
         "per-instance"
       ],
       "id": "D-subsetting-contradiction",
-      "kind": "wrong-statement",
-      "note": "A model that contradicts itself through a subsetting usage decides other rows (w.x <= 5.0 T, w.x >= 5.0 F) where decision 1 says the axioms are inconsistent, and nothing reports it. The entry may be a wrong decided cell; read as a wrong-statement until probed.",
+      "kind": "abstains",
+      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check. Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell.",
       "todo": "Report a model that contradicts itself through a subsetting usage."
     },
     {
@@ -538,9 +538,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "10df570f89f44528d7fb386f234fd7678702e83207b33eb735500c3244cfc818",
+    "defects": "79727cc70905d3fab8e4d81b80847f8a7c9154e0b627c902511fab2de9399628",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "1bcd105006400cfc75bc2012a20e2d4a25f1ba3151e339a7f8baf8bd9d4a9a86"
+    "probes": "20563238b5009cb343da80d6f4c01b9925ce1df3ab56bb8f308c21892d27f18d"
   },
   "fences": {
     "fence/collection-valued": {

@@ -5994,6 +5994,13 @@ export function equatedPartsRefusal(
   expression: string,
   at?: { contextId: ElementId; path?: string },
 ): string | undefined {
+  // A row an asserted relation is read again in, through a subsetting usage ({@link subsettingRereadsOf}), reads the
+  // relation as it is read there, the usage and the feature it subsets as written.
+  const reread = rereadAt(model, relationId, at);
+  if (reread !== undefined) {
+    const exempt = subsettingRereads(model).exempt.get(relationId);
+    return unreadRefusal(model, relationId, reread.expression, at) ?? satisfierRefusal(model, relationId, reread.expression, at, exempt);
+  }
   return unreadRefusal(model, relationId, expression, at) ?? satisfierRefusal(model, relationId, expression, at);
 }
 
@@ -6395,16 +6402,34 @@ function satisfierRefusal(
   relationId: ElementId,
   expression: string,
   at?: { contextId: ElementId; path?: string },
+  exempt?: ReadonlySet<ElementId>,
 ): string | undefined {
-  const { taint: all, grouped, why, failed } = satisfierTaint(model);
+  const { failed } = satisfierTaint(model);
   if (failed !== undefined) return relationNamesOf(expression).length > 0 ? `${failed}, so no relation that may read one is read` : undefined;
+  const answer = satisfierAnswer(model, relationId, expression, at, exempt);
+  return answer ? satisfierSentence(model, answer) : undefined;
+}
+
+/**
+ * {@link satisfierRefusal}'s answer — what the row reads otherwise — before it is spelled; the entries `exempt` keys
+ * are read as written ({@link subsettingRereads}).
+ */
+function satisfierAnswer(
+  model: Model,
+  relationId: ElementId,
+  expression: string,
+  at?: { contextId: ElementId; path?: string },
+  exempt?: ReadonlySet<ElementId>,
+): ReadOtherwise | undefined {
+  const { taint: every, grouped: groupedEvery, why } = satisfierTaint(model);
+  const all = without(every, exempt);
   if (all.size === 0) return undefined;
   // A row of an expanded group — an instance's (`at.path`), or the usage's own, beside which every other
   // instance is a row of its own — reads a reference in its own instance ({@link instanceGroups}).
   const inGroup =
     at !== undefined &&
     (at.path !== undefined || instanceGroups(model).some((g) => g.expanded && g.relationId === relationId && g.usageId === at.contextId));
-  const taint = inGroup ? grouped : all;
+  const taint = inGroup ? without(groupedEvery, exempt) : all;
   if (taint.size === 0) return undefined;
   const rel = model.get(relationId);
   const context = at ? model.get(at.contextId) : rel;
@@ -6415,8 +6440,7 @@ function satisfierRefusal(
       .find((x) => x !== undefined) ??
     taintedAt(model, taint, context, at) ??
     subsettingAround(model, at ? context : rel?.ownerId != null ? model.get(rel.ownerId) : undefined, at);
-  const answer = b ? why.get(b.id) : undefined;
-  return answer ? satisfierSentence(model, answer) : undefined;
+  return b ? why.get(b.id) : undefined;
 }
 
 /**
@@ -6448,6 +6472,285 @@ function subsettingAround(model: Model, el: ElementRecord | undefined, at?: { co
     cur = owner;
   }
   return undefined;
+}
+
+/**
+ * An asserted relation read again in an instance that reads a feature otherwise which a usage the relation reads
+ * through subsets ({@link subsettingRereadsOf}): `context` is that instance, `expression` the relation with each
+ * such usage's name replaced by the subsetted feature's (W's `p2.load <= 5.0` over `part p2 :> p1;`, read in `w :
+ * W { part :>> p1 { attribute :>> load = 50.0; } }`, is `p1.load <= 5.0` read in w), `via` the usages so read.
+ */
+export interface SubsettingReread {
+  context: ElementRecord;
+  expression: string;
+  via: ReadonlyArray<{ usage: ElementRecord; subsetted: ElementRecord }>;
+}
+
+/** {@link subsettingRereadsOf}' answer for a model revision. */
+interface SubsettingRereads {
+  rev: number;
+  /** Per asserted relation, per context, its {@link SubsettingReread}. */
+  byRelation: ReadonlyMap<ElementId, ReadonlyMap<ElementId, SubsettingReread>>;
+  /** Per asserted relation, the taint entries its rereads read as written: the usages re-rooted and the subsetted feature (with what redefines them). */
+  exempt: ReadonlyMap<ElementId, ReadonlySet<ElementId>>;
+  /** Per asserted relation read through such a usage that no reread covers, the sentence why it is not read in every instance it holds in. */
+  unread: ReadonlyMap<ElementId, string>;
+  /** A subsetting usage that states a value of its own while an instance reads the feature it subsets otherwise, if any: the model may state two values for one feature there. */
+  values?: { name: string; sentence: string };
+}
+const SUBSETTING_REREADS = new WeakMap<Model, SubsettingRereads>();
+/** The models whose {@link SubsettingRereads} are being worked out: their own gates read every row as written meanwhile. */
+const SUBSETTING_REREADING = new WeakSet<Model>();
+
+/**
+ * The asserted relations of `model` that read through a usage that subsets a feature an instance reads otherwise
+ * ({@link subsettingTaint}), read again in each such instance, once per revision. Every w's p2 is one of w's p1s, so
+ * W's `assert constraint a { p2.load <= 5.0 }` over `part p2 :> p1;` beside `part w : W { part :>> p1 { attribute
+ * :>> load = 50.0; } }` is violated in w: the model contradicts itself. The walk reads p2 in w as W's own (T0's 1),
+ * so `a`'s row abstained, the SMT axiom read W's own p2 (1) alone, and the rows beside it were decided where the
+ * axioms are inconsistent (v11: `w.x <= 5.0` T and `w.x >= 5.0` F on all four surfaces), with nothing reporting it.
+ * Read again, the relation is read in every context that reads the subsetted feature's names otherwise ({@link
+ * DefiningEquations.readingContexts}), with the usage's names re-rooted onto that feature: a row of its own on the
+ * check and the numeric surface, and an axiom of its own for the literal and SMT engines.
+ *
+ * Only where that is the usage's value in each such instance: the relation written in the element both are features
+ * of; read through the usage by a dotted name (`p2.load`); the usage typed as the subsetted feature is, saying
+ * nothing of its own ({@link DefiningEquations.saysOwnOver}), redefined and subsetted by nothing, subsetting that one
+ * feature alone; the subsetted feature subsetting and redefining nothing, and subsetted by nothing else (a sibling
+ * that says something of its own makes its values two). Any other relation read through such a usage is listed in
+ * `unread`, with its sentence: the SMT engine claims nothing beside it ({@link Obligation.consistencyUnread} of
+ * ./obligations), since whether its axioms hold together is unknown. A throw lists every asserted relation (A.2.9).
+ */
+function subsettingRereads(model: Model): SubsettingRereads {
+  const hit = SUBSETTING_REREADS.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const empty: SubsettingRereads = { rev: model.rev, byRelation: new Map(), exempt: new Map(), unread: new Map() };
+  if (SUBSETTING_REREADING.has(model) || subsettingsBeingListed(model)) return empty;
+  SUBSETTING_REREADING.add(model);
+  let fresh: SubsettingRereads;
+  try {
+    fresh = subsettingRereadsUncached(model);
+  } catch (e) {
+    const sentence = failedReadingSentence('the asserted relations read through a usage that subsets a feature an instance reads otherwise', 'their instances', e);
+    fresh = { ...empty, values: { name: 'the subsetting usages', sentence } };
+  } finally {
+    SUBSETTING_REREADING.delete(model);
+  }
+  SUBSETTING_REREADS.set(model, fresh);
+  return fresh;
+}
+
+/** {@link subsettingRereads}, worked out. */
+function subsettingRereadsUncached(model: Model): SubsettingRereads {
+  const byRelation = new Map<ElementId, Map<ElementId, SubsettingReread>>();
+  const exemptOf = new Map<ElementId, Set<ElementId>>();
+  const unread = new Map<ElementId, string>();
+  const out: SubsettingRereads = { rev: model.rev, byRelation, exempt: exemptOf, unread };
+  const { taint, why, failed } = satisfierTaint(model);
+  if (failed !== undefined) return { ...out, values: { name: 'the subsetting usages', sentence: failed } };
+  const subsetting = subsettingTaint(model);
+  if (subsetting.taint.size === 0) return out;
+  const defs = sharedDefinitions(model);
+  // A subsetting usage that states a value of its own (`part p2 :> p1 { attribute :>> load = 2.0; }`) while an
+  // instance reads the feature it subsets otherwise (w's `:>> load = 50.0`), or one usage of a component across a
+  // usage with two supers that says something of its own: every w's p2 is one of w's p1s, so the model may state two
+  // values for one feature, on symbols the axioms never join.
+  for (const r of model.ofKind('Subsetting', 'ReferenceSubsetting').sort((a, b) => (defs.qualifiedNameOf(a.source?.[0] ?? '') < defs.qualifiedNameOf(b.source?.[0] ?? '') ? -1 : 1))) {
+    const f = r.attrs.isLibrary !== true && r.source?.[0] !== undefined ? model.get(r.source[0]) : undefined;
+    const g = r.target?.[0] !== undefined ? model.get(r.target[0]) : undefined;
+    if (!f || !g || (!subsetting.taint.has(f.id) && !subsetting.taint.has(g.id))) continue;
+    const bridged = [f, g].map((x) => subsetting.why.get(x.id)).find((a) => a?.bridge !== undefined);
+    if (!bridged && !defs.saysOwnOver(f, g, true)) continue;
+    const answer = bridged ?? subsetting.why.get(f.id) ?? subsetting.why.get(g.id);
+    const fName = `\`${defs.nameOf(f) ?? f.id}\``;
+    const gName = `\`${defs.nameOf(g) ?? g.id}\``;
+    const who = answer?.instance ? defs.qualifiedNameOf(answer.instance.id) : 'an instance';
+    out.values = {
+      name: defs.qualifiedNameOf(f.id),
+      sentence:
+        `${fName} in ${f.ownerId != null ? defs.qualifiedNameOf(f.ownerId) : 'its owner'} subsets ${gName} and says something of its own, while ${who} ` +
+        `reads ${gName} otherwise: each of its ${fName} is one of its ${gName}, so the model may state two values for one feature, which this tool does not read`,
+    };
+    break;
+  }
+  const isSubsetting = (s: ReadOtherwise | undefined): boolean => s?.kind === 'subsetting';
+  for (const el of model.ofKind('ConstraintUsage')) {
+    if (el.attrs.isLibrary === true || !isAsserted(el) || el.ownerId == null) continue;
+    const expr = el.attrs.expression;
+    if (typeof expr !== 'string' || expr.trim() === '') continue;
+    const names = relationNamesOf(expr);
+    if (names.length === 0) continue;
+    const owner = model.get(el.ownerId);
+    if (!owner) continue;
+    const roots = [owner.id, el.id];
+    const contexts = defs.readingContexts(el, names);
+    // Which rows of the relation read through such a usage: its own, or one in a context.
+    const reached =
+      isSubsetting(satisfierAnswer(model, el.id, expr)) || contexts.some((x) => isSubsetting(satisfierAnswer(model, el.id, expr, { contextId: x.id })));
+    if (!reached) continue;
+    const refuse = (sentence: string): void => {
+      unread.set(el.id, `${defs.qualifiedNameOf(el.id)} is not read in every instance it holds in: ${sentence}`);
+    };
+    // A row read in such a usage, or below one (a relation of the type of `part p2 : T1 :> p1;`), whatever its names.
+    const placed = (x: ElementRecord | undefined, at?: { contextId: ElementId }): ReadOtherwise | undefined => {
+      const b = taintedAt(model, taint, x, at) ?? subsettingAround(model, at ? x : owner, at);
+      return b ? why.get(b.id) : undefined;
+    };
+    const around = [placed(el), ...contexts.map((x) => placed(x, { contextId: x.id }))].find(isSubsetting);
+    if (around !== undefined) {
+      refuse(satisfierSentence(model, around));
+      continue;
+    }
+    // Each name read through such a usage: through the usage itself, re-rooted onto the feature it subsets; through
+    // the subsetted feature, read as it is read in each instance — both only where nothing else in the subsetting says
+    // something of its own.
+    const rewrite = new Map<string, string>();
+    const via: Array<{ usage: ElementRecord; subsetted: ElementRecord }> = [];
+    const component = new Set<ElementId>();
+    let left: string | undefined;
+    const denoted = defs.denote(owner.id);
+    for (const n of names) {
+      const entry = readsTaintEntry(model, taint, roots, n);
+      const answer = entry ? why.get(entry.source.id) : undefined;
+      if (!entry || !isSubsetting(answer)) continue;
+      const s = entry.source;
+      const plain = !answer!.root && !answer!.bridge && !answer!.chain && answer!.written.id === s.id;
+      const pair: { f: ElementRecord; g: ElementRecord } | undefined = !plain
+        ? undefined
+        : answer!.redefined && !answer!.subsetter
+          ? { f: s, g: answer!.redefined }
+          : answer!.subsetter && answer!.redefined?.id === s.id
+            ? { f: answer!.subsetter, g: s }
+            : undefined;
+      if (!pair || !cleanSubsetting(model, defs, pair.f, pair.g)) {
+        left ??= satisfierSentence(model, answer!);
+        continue;
+      }
+      component.add(pair.f.id).add(pair.g.id);
+      if (s.id !== pair.f.id) continue;
+      // Read through the usage: only as the head of a dotted name, in the element both are features of.
+      const head = n.split('.')[0]!;
+      const gName = defs.nameOf(pair.g);
+      // …and where the name reaches the same feature through the subsetted one (`p2 : T1 :> p1` over a T1 that declares a `load` of its own does not).
+      const same = gName !== undefined && denoted.get(n) !== undefined && denoted.get(`${gName}${n.slice(head.length)}`)?.feature.id === denoted.get(n)!.feature.id;
+      if (n === head || !same || denoted.get(head)?.feature.id !== pair.f.id || answer!.scope.id !== owner.id || !defs.features(owner.id).some((x) => x.id === pair.g.id)) {
+        left ??= satisfierSentence(model, answer!);
+        continue;
+      }
+      rewrite.set(head, gName!);
+      if (!via.some((v) => v.usage.id === pair.f.id)) via.push({ usage: pair.f, subsetted: pair.g });
+    }
+    if (left !== undefined) {
+      refuse(left);
+      continue;
+    }
+    // The taint entries read as written: the usages, the features they subset, and what redefines those. Any other
+    // that a row of the relation reaches is one this tool does not read past.
+    const exempt = new Set<ElementId>();
+    for (const [k, e] of taint) {
+      if (!component.has(e.source.id)) continue;
+      const x = model.get(k);
+      if (component.has(k) || (x && redefinedClosure(model, x).some((y) => component.has(y.id)))) exempt.add(k);
+    }
+    const stray = [undefined, ...contexts].map((x) => satisfierAnswer(model, el.id, expr, x ? { contextId: x.id } : undefined, exempt)).find(isSubsetting);
+    if (stray !== undefined) {
+      refuse(satisfierSentence(model, stray));
+      continue;
+    }
+    if (rewrite.size === 0) continue;
+    // The name replaced where it heads a dotted name, and nowhere else (`x.p2.load` is another feature's p2).
+    let expression = expr;
+    for (const [from, to] of rewrite) {
+      expression = expression.replace(new RegExp(`(?<![\\w.'$])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s*\\.)`, 'g'), to);
+    }
+    const reNames = relationNamesOf(expression);
+    const expected = names.map((n) => {
+      const head = n.split('.')[0]!;
+      const to = rewrite.get(head);
+      return to !== undefined ? `${to}${n.slice(head.length)}` : n;
+    });
+    if (reNames.length !== new Set(expected).size || !expected.every((n) => reNames.includes(n))) {
+      refuse('its text could not be re-rooted onto the feature it reads through');
+      continue;
+    }
+    const rereads = new Map<ElementId, SubsettingReread>();
+    for (const x of defs.readingContexts(el, reNames)) {
+      if (x.id === owner.id || x.id === el.id) continue;
+      const answer = satisfierAnswer(model, el.id, expression, { contextId: x.id }, exempt);
+      if (isSubsetting(answer)) {
+        left = satisfierSentence(model, answer!);
+        break;
+      }
+      // One listed only because a binding member reads its own value there files no axiom of the assert there
+      // (obligations' `readsBoundOnly`): read again, its contradiction would reach no axiom.
+      if (defs.readsBoundOnly(el, reNames, x.id)) {
+        left = `${defs.contextName(x.id)} reads it through a binding, which this tool does not read again there`;
+        break;
+      }
+      rereads.set(x.id, { context: x, expression, via });
+    }
+    if (left !== undefined) {
+      refuse(left);
+      continue;
+    }
+    if (rereads.size > 0) {
+      byRelation.set(el.id, rereads);
+      exemptOf.set(el.id, exempt);
+    }
+  }
+  return out;
+}
+
+/**
+ * Does the usage `f` subset `g` and nothing else, saying nothing of its own, its type included ({@link
+ * DefiningEquations.saysOwnOver}), redefined and subsetted by nothing — and `g` subset, and redefined, by nothing
+ * else, subsetting and redefining nothing itself? Then each value of `f` in an instance is one of `g`'s there, and
+ * `g`'s values are read there as written ({@link subsettingRereads}): a sibling that says something of its own would
+ * make them two.
+ */
+function cleanSubsetting(model: Model, defs: DefiningEquations, f: ElementRecord, g: ElementRecord): boolean {
+  const users = model.all().filter((r) => r.attrs.isLibrary !== true);
+  const subsettings = users.filter((r) => r.eClass === 'Subsetting' || r.eClass === 'ReferenceSubsetting');
+  const narrowing = [...subsettings, ...users.filter((r) => r.eClass === 'Redefinition')];
+  const into = (r: ElementRecord, ids: readonly ElementId[]): boolean => (r.target ?? []).some((t) => ids.includes(t));
+  const from = (r: ElementRecord, id: ElementId): boolean => r.source?.[0] === id;
+  const redefiners = users.filter((x) => isUsage(x.eClass) && redefinedClosure(model, x).some((y) => y.id === g.id)).map((x) => x.id);
+  return (
+    f.id !== g.id &&
+    !defs.saysOwnOver(f, g) &&
+    !narrowing.some((r) => into(r, [f.id])) &&
+    subsettings.filter((r) => from(r, f.id)).every((r) => (r.target ?? []).every((t) => t === g.id)) &&
+    !narrowing.some((r) => from(r, g.id)) &&
+    !subsettings.some((r) => into(r, [g.id, ...redefiners]) && !from(r, f.id))
+  );
+}
+
+/** `taint` without the entries keyed by `exempt`. */
+function without(taint: ScopedTaint, exempt: ReadonlySet<ElementId> | undefined): ScopedTaint {
+  if (!exempt || exempt.size === 0) return taint;
+  return new Map([...taint].filter(([k]) => !exempt.has(k)));
+}
+
+/** The {@link SubsettingReread}s of the asserted relation `relationId`, by context; empty for any other. */
+export function subsettingRereadsOf(model: Model, relationId: ElementId): ReadonlyMap<ElementId, SubsettingReread> {
+  return subsettingRereads(model).byRelation.get(relationId) ?? new Map();
+}
+
+/**
+ * What a model whose axioms are read through a usage that subsets a feature an instance reads otherwise leaves unread
+ * ({@link subsettingRereads}): the asserted relations no reread covers, each with its sentence, and a subsetting
+ * usage that states a value of its own there. The SMT engine claims nothing beside either: whether the model's axioms
+ * hold together is unknown.
+ */
+export function subsettingUnread(model: Model): { relations: ReadonlyMap<ElementId, string>; values?: { name: string; sentence: string } } {
+  const r = subsettingRereads(model);
+  return { relations: r.unread, ...(r.values ? { values: r.values } : {}) };
+}
+
+/** The {@link SubsettingReread} a row of `relationId` read at `at` is, or `undefined`. */
+function rereadAt(model: Model, relationId: ElementId, at: { contextId: ElementId; path?: string } | undefined): SubsettingReread | undefined {
+  if (at === undefined || at.path !== undefined) return undefined;
+  return subsettingRereads(model).byRelation.get(relationId)?.get(at.contextId);
 }
 
 /** {@link equatedPartsRefusal} for what {@link equatedParts} leaves unread. */
@@ -7578,6 +7881,8 @@ export function contradictedDefinitionRefusalOf(
   expression: string,
   at?: { contextId: ElementId; path?: string },
 ): { sentence: string; verdict: ContradictedDefinition['verdict'] | 'failed'; set?: ContradictedDefinition } | undefined {
+  // A row an asserted relation is read again in through a subsetting usage reads it as it is read there.
+  expression = rereadAt(model, relationId, at)?.expression ?? expression;
   const index = contradictedDefinitions(model);
   if (index.failed === undefined && index.sets.length === 0) return undefined;
   const names = relationNamesOf(expression);

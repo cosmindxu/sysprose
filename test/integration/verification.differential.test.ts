@@ -13405,6 +13405,82 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'VB::km': ['?/?/?/?', 'F'],
       'VB::kx': ['?/?/?/?', 'F'],
     }),
+    // A model that contradicts itself through a subsetting usage (instance3-pass S1): every w's p2 is one of w's p1s
+    // (load 50), so W's `assert constraint a { p2.load <= 5.0 }` is violated in w. Its row abstained, the SMT axiom read
+    // W's own p2 (1) alone, and `w.x <= 5.0` read T and `w.x >= 5.0` F on all four surfaces beside a contradiction
+    // nothing reported (v11). The assert is read again in w, p2 re-rooted onto w's p1: F there on the check and the
+    // numeric surface, and the SMT engine reports the axioms inconsistent (I7_ALLOWED). W's own row abstains as before.
+    // Where it holds in w (`<= 60.0`, V11H) every other row is decided. Pinned in either text order.
+    ...Object.fromEntries(
+      (
+        [
+          ['', false],
+          ['-rev', true],
+        ] as const
+      ).flatMap(([twin, rev]) => {
+        const body = (lim: string): string => {
+          const members = [
+            'part def T0 { attribute load : ScalarValues::Real default = 1.0; }',
+            `part def W { part p1 : T0; part p2 :> p1; assert constraint a { p2.load <= ${lim} } attribute x : ScalarValues::Real default = 3.0; constraint c { x <= 5.0 } }`,
+            'part w : W { part :>> p1 { attribute :>> load = 50.0; } }',
+            'constraint k { w.x <= 5.0 }',
+            'constraint kF { w.x >= 5.0 }',
+          ];
+          return (rev ? [...members].reverse() : members).join('\n        ');
+        };
+        return [
+          [
+            `sub-contra-v11${twin}`,
+            probe(`package V11 {\n        ${body('5.0')}\n      }`, {
+              'V11::W::a': ['?/-/?/-', 'T'],
+              'V11::W::a in V11::w': ['F/-/F/-', 'F'],
+              'V11::W::c': ['T/T/T/X', 'T'],
+              'V11::k': ['T/T/T/X', 'T'],
+              'V11::kF': ['F/F/F/X', 'F'],
+            }),
+          ],
+          [
+            `sub-contra-holds${twin}`,
+            probe(`package V11H {\n        ${body('60.0')}\n      }`, {
+              'V11H::W::a': ['?/-/?/-', 'T'],
+              'V11H::W::a in V11H::w': ['T/-/T/-', 'T'],
+              'V11H::W::c': ['T/T/T/T', 'T'],
+              'V11H::k': ['T/T/T/T', 'T'],
+              'V11H::kF': ['F/F/F/F', 'F'],
+            }),
+          ],
+        ];
+      }),
+    ),
+    // Where the axioms are read through such a usage in a shape this tool does not read again, the SMT engine claims
+    // nothing (the same branch): a subsetting usage that states a value of its own (SV2: p2's 2 and w's p1's 50, two
+    // values of one feature on symbols no axiom joins), and an assert of the type of `part p2 : T1 :> p1;` (STC: T1's
+    // `tc { load <= 5.0 }`, which w's p2 breaks). Both read `x <= 5.0` T and `x >= 5.0` F on all four surfaces.
+    'sub-contra-two': probe(`package SV2 {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def W { part p1 : T0; part p2 :> p1 { attribute :>> load = 2.0; } }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        attribute x : ScalarValues::Real = 3.0;
+        constraint k { x <= 5.0 }
+        constraint kF { x >= 5.0 }
+      }`, {
+      'SV2::k': ['T/T/T/?', 'T'],
+      'SV2::kF': ['F/F/F/?', 'F'],
+    }),
+    'sub-contra-tc': probe(`package STC {
+        part def T0 { attribute load : ScalarValues::Real default = 1.0; }
+        part def T1 :> T0 { assert constraint tc { load <= 5.0 } }
+        part def W { part p1 : T0; part p2 : T1 :> p1; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        attribute x : ScalarValues::Real = 3.0;
+        constraint k { x <= 5.0 }
+        constraint kF { x >= 5.0 }
+      }`, {
+      'STC::T1::tc': ['T/-/T/-', 'T'],
+      'STC::T1::tc in STC::W::p2': ['?/-/?/-', 'T'],
+      'STC::k': ['T/T/T/?', 'T'],
+      'STC::kF': ['F/F/F/?', 'F'],
+    }),
     // A subsetting usage an instance writes (GI: w's `part p3 :> p1;`) and one that subsets through a chain (SC: W's
     // `part p2 :> q.p1;`, which w's q changes): read as before through the subsetted feature's own element, `k` read T
     // on all four surfaces, where w's load is 50 (true F); each abstains, its sentence naming the usage's owner.
@@ -16366,6 +16442,9 @@ package AT {
       'CC::c_M_2': ['?/?/?/X', '?'],
       'CC::s::«AttributeUsage»#binding': ['F/-/F/-', 'F'],
     }),
+    // W3's `q :> p2 { attribute :>> load = 50.0; }` says something of its own while w reads p2 otherwise: the SMT engine
+    // claims nothing on any row of the file since instance3-pass S1 (the model may state two values for one feature;
+    // here p1's is a `default`, which gives way, so RF's own T is true and the SMT engine's `?` an abstention).
     'sub-rv3-sentence-spec': probe(`package SE {
   part def T0 { attribute load default = 1.0; }
   requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
@@ -16376,7 +16455,7 @@ package AT {
   constraint k2 { w.p2.load <= 5.0 }
   satisfy RF by w.p1;
 }`, {
-      'SE::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SE::RF::«ConstraintUsage»': ['T/T/T/?', 'T'],
       'SE::RF::«ConstraintUsage» in SE::w::p1': ['-/?/-/?', 'F'],
       'SE::RF::«ConstraintUsage» in SE::«Satisfy»': ['?/-/?/-', 'F'],
       'SE::W3::c': ['?/?/?/?', 'F'],
@@ -16393,7 +16472,7 @@ package AT {
   requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
   part def T0 { attribute load default = 1.0; }
 }`, {
-      'SE::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SE::RF::«ConstraintUsage»': ['T/T/T/?', 'T'],
       'SE::RF::«ConstraintUsage» in SE::w::p1': ['-/?/-/?', 'F'],
       'SE::RF::«ConstraintUsage» in SE::«Satisfy»': ['?/-/?/-', 'F'],
       'SE::W3::c': ['?/?/?/?', 'F'],
@@ -17956,6 +18035,14 @@ package PS {
         [
           key,
           'a violated binding, or a violated assert in an instance a binding gives its value, which the worklist files in that instance as an axiom: the SMT engine reports the axioms inconsistent on every row of the file, beside the check’s and the numeric surface’s reading of the values this row reads, which the contradiction does not reach (or, where the literal engine reads a value it reaches, beside its own inconsistent axioms)',
+        ] as const,
+    ),
+    // instance3-pass S1: an assert read again in an instance through a subsetting usage, violated there.
+    ...['sub-contra-v11', 'sub-contra-v11-rev'].flatMap((probe) => ['V11::W::c', 'V11::k', 'V11::kF'].map((row) => `${probe} | ${row}`)).map(
+      (key) =>
+        [
+          key,
+          'every w’s p2 is one of w’s p1s (load 50), so W’s `assert constraint a { p2.load <= 5.0 }` is violated in w, which the check reports (`W::a in w`, F): the SMT engine reports the axioms inconsistent on every row of the file, beside the check’s, the literal engine’s and the numeric surface’s reading of x, which the contradiction does not reach',
         ] as const,
     ),
     // Q4 for two asserted equations `check` reports giving one feature two values (the branch review): a value one
