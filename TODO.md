@@ -341,47 +341,47 @@ headings.
       Since default-stands S2: item (4)'s '(which keeps its reading)' is obsolete: an untyped
       asserted equation over a default is checked against it, and the lexical reading also reads a
       default an assert names as its value (LP1, SLD, SLO, SLP).
-- [ ] **Read the equation an asserted conjunction gives on the numeric surface (optional).** Since
-      text-order S1 a valueless feature that an asserted `L == 50.0 and L >= 0.0` constrains is no
-      design freedom, so the numeric surface reads `t50 { p.L == 50.0 }` unknown, which SMT proves,
-      and t1, t60 unknown, both F. The check and the literal engine abstain too. Reading the
-      conjunction's equation part as L's definition would decide them. Pinned: order-s1n-and,
-      -s1kn-and, -s2enc-and, -s2spec-and, -s2use-and and their -rev twins. [text-order S1]
-- [ ] **Solve the plain equations of a design component jointly over all roots (optional).** Since
-      text-order the curved-root rule withholds `x * x == 4.0` beside `x == 2.0` in both orders
-      where one root agrees (it read t/t before); a finer rule would solve the plain equations
-      together over every root and keep the agreeing one. Sound as is, only weaker. [text-order S1
-      review]
-- [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The guide
-      says 'bar four cases'. Each abstains in one text order and reads a value in the other, never a
-      different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
+- [ ] **Solve the plain equations of a design component jointly over all roots (optional).**
+      Since solver2-pass S5 a component whose affine equations (then those one to one in what is
+      left)
+      fix every feature alone is read at that point, in every order, the curved equations judged
+      there
+      (`x * x == 4.0` beside `x == 2.0`: both imposed; beside `x == 5.0`: disagreeing; `a + b ==
+      4.0`,
+      `a - b == 0.0`, `z == a * a`: k F). Left: a component the non-curved equations do not fix
+      (`x *
+      x == 4.0` beside `x <= 0.0`, `x * y == 4.0` beside `x == y`), and a curved equation of the
+      model's own beside a plain constraint that fixes the point (CV3), withheld as before.
+      Recommended to rule permanent (design-solver-entries (c) 1). Sound as is, only weaker.
+      [text-order S1 review]
+- [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The
+      guide says 'bar two cases'. Each abstains in one text order and reads a value in the other,
+      never a different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
       0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`) reads t/t equation-first and
-      ?/? pin-first (review-2026-10-14/wave3-probes/numeric-curved/fix3-pm/D1, D2), and a value
-      taken through an affine link by finite differences, accurate to about 3e-11 (fix3-pg/G4 reads
-      ?, G3 and G5..G8 read t); (b) a zero divisor at the Newton start (`c0 { x / y == 3.0 }`, `c2 {
-      w / y == x }`, `c1 { x >= 0.0 }`: qa0..qa5 in review-2026-10-14/wave3-probes/text-order/); (c)
-      two asserted equations sharing a root, written in a usage (`a0 { x == 6.0 / (x + 1.0) }`, `a1
-      { x == -3.0 }`: G8101x099); (d) `y == y` beside `y == 0.5`. Fix: polish the affine Newton step
-      or judge agreement both ways (a); start the root-find away from a zero divisor (b).
-      [numeric-curved]
+      ?/? pin-first (review-2026-10-14/wave3-probes/numeric-curved/fix3-pm/D1, D2), a value taken
+      through an affine link by finite differences, accurate to about 3e-11 (fix3-pg/G4 reads ?, G3
+      and G5..G8 read t), and `y / 2.0 == 0.0` is solved to 2.9e-11 beside `z * y == 0.0`
+      (solver2-pass-scratch/s5/A6x086, A5x092, A5x240). Fix: polish the affine Newton step or judge
+      agreement both ways. [numeric-curved; solver2-pass S1, S3, S5]
 - [ ] **Abstentions left in the numeric solver (rollup; sound, only weaker).** Each reads unknown
       where an answer exists; none gives a wrong answer. (1) designReadings withholds the whole
       component a curved equation links, where only what its root reaches need be withheld (`z` of
-      `dz { z == 5000000.0 * q }`, `s == 4.0` over a stated `s = x * x`, every feature of a loop of
-      definitions with more than one root). (2) A lone curved equation is still published at the
+      `dz { z == 5000000.0 * q }`, `s == 4.0` over a stated `s = x * x`, every feature of a loop
+      of definitions with more than one root), where the non-curved equations do not fix the
+      component. (2) A lone curved equation is still published at the
       root found (`x * x == 4.0` alone: the FMI start, a measure of effectiveness). (3) A relation
       over a multi-root component that holds, or fails, at every root reads unknown (E4, n5-damped,
       y4); `solveFeasible` reads undecided where it was infeasible and the analysis report's
       `feasible` should then read undecided. (4) The freedom analysis's row order among the model's
-      own equations (G33x067, CV10). (5) A coupled affine subsystem beside a square is not seen as
-      fixing its features (`c0 { a + b == 4.0 }`, `c1 { a - b == 0.0 }`, `q { z == a * a }`, `k { z
-      >= 5.0 }` read all ?, b635385 read k F; a ring `x{i+1} == 0.5 * x{i} + 1.0` beside `z{i} ==
-      x{i} * x{i}`). (6) An odd power is read as curved (`x ^ 3.0 == 8.0` beside `x >= 0.0` and `x
+      own equations (G33x067, CV10). (6) An odd power is read as curved (`x ^ 3.0 == 8.0` beside
+      `x >= 0.0` and `x
       <= 1.0` reads ?/?, b635385 read T and F). (7) A root in the same gap as its pole between two
-      of 0 and +-2^k is not found (`1.0 / (x - 5.0) == 2.0`: 175 of 744 sweep equations). (8)
+      of 0 and +-2^k is not found unless Newton reaches it from one of the fixed starts it is run
+      again from (`1.0 / (x - 5.0) == 2.0`; `3.0 / (x + 1.5) == 10.0` is reached from -1). (8)
       `solveFeasible` starts its descent at one root of a curved equation: `x * x == 4.0` beside `x
       <= 0.0` reads undecided in every order though x = -2 is feasible (CV1, F11x005). (9) A curved
-      plain constraint beside another left unused is withheld (`x / y == 3.0` beside `y == 2.0` and
+      plain constraint beside another left unused is withheld where the other equations do not fix
+      the point alone (`x / y == 3.0` beside `y == 2.0` and
       `x == 6.0`). (10) Cost: `fixedByOthers` is rebuilt per curved equation, quadratic per
       component (about 1.2x b635385 on a chain of 400 with a curved leaf per member), and
       `optimize()` re-solves without a cache. (11) A fenced head carry (fence-numeric): numeric
@@ -439,22 +439,46 @@ headings.
       engine, proved on SMT, sysml-check silent), identical to 514f547 and not widened, the proper
       reading staying open with fence-pkgbind; (j) the literal engine answers X on any relation over
       a value a reported package-head conflict joins, as it does for every other violated binding
-      (probe t5/hc1.sysml). [numeric2-pass]
-- [ ] **Read `assert not constraint c { ... }` as the negation.**
-      Since numeric2 S1 a negated clause (also `require not`, `assume not`) whose body is one
-      expression is read as the plain clause over `not (body)` on every surface, the same clause
-      `assert constraint c { not (...) }` writes, and the save writes it back as `assert not
-      constraint c { body }` (the element keeps `negated`; pinned neg-assert-h1/-rev, h2/-rev,
-      family; hand oracle 280 models x both text orders: 0 wrong decided cells, 0 differences from
-      the workaround spelling). Still refused with `mapper/negated-assert-unread` (the load
-      degrades, the checks abstain, the save keeps the text): a negated clause that names a
-      constraint with no body (`assert not constraint c;`), one that specialises a constraint
-      (`assert not constraint c :> K { ... }`), `assert not requirement r { ... }`, one whose body
-      holds members (`assert not constraint c { attribute y = 2.0; load > y }`; pinned neg-assert-
-      refused), and one whose body holds a comment or `doc` member (`assert not constraint c { /*
-      note */ load > 10.0 }`). Done when those are read: the negation of a typed or named constraint
-      needs that constraint's body judged under `not`, and a members body needs the members in the
-      negated scope. [contradictory-models S1 review; fence-assert-not; numeric2 S1]
+      (probe t5/hc1.sysml).
+      solver2-pass: (k) a tautology's own row over a feature nothing fixes reads numeric `?`
+      (`assert
+      constraint t0 { x - x == 0.0 }` alone; solver2-pass-scratch gen G1x004); (l) a curved equation
+      that does not read its unknown at the model's values (`x * x * w0 == 0.0` at a stated w0 of 0)
+      abstains, in one text order only in a contradictory model (gen G2x085, G2x089, G2x012); (m) an
+      identity whose side divides by a feature, takes a remainder or raises to a non-literal power
+      (`y
+      / z == y / z`) is still gathered and abstains (probes solver2-pass-scratch/f3.sysml,
+      f14.sysml,
+      h1-h5.sysml); (n) a sum like `2.0 [m] == 2000.0 [mm]` or a numeral past 15 digits is not taken
+      as the same polynomial; (o) a quotient set to 0 beside another over the same divisor (`b / u
+      ==
+      0.0`, `w / q == 0.0` beside `w / q == y`) reads imposed or T in one text order and `?` in the
+      other (solver2-pass-scratch/s3/Q1x113f.sysml, Q1x113r.sysml, Q2x083f.sysml, Q2x190f.sysml);
+      (p)
+      a plain quotient over an asserted zero divisor (`A z == 0.0` beside `r / z == q`) reads `?` in
+      one order and T in the other (s3/Q2x156f.sysml, Q2x156r.sysml); (q) an affine core past 32
+      features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) the
+      286(a) digits cases (s5/A6x086f, A5x092f, A5x240f). [numeric2-pass; solver2-pass]
+- [ ] **Read `assert not constraint c { ... }` as the negation.** Since numeric2 S1 a negated
+      clause (also `require not`, `assume not`) whose body is one expression is read as the plain
+      clause over `not (body)` on every surface, the same clause `assert constraint c { not (...) }`
+      writes, and the save writes it back as `assert not constraint c { body }` (the element keeps
+      `negated`; pinned neg-assert-h1/-rev, h2/-rev, family; hand oracle 280 models x both text
+      orders: 0 wrong decided cells, 0 differences from the workaround spelling). Since solver2 S4
+      the
+      body may also hold comment, `doc` and attribute members (an attribute with a `=` value or
+      none,
+      typed at most): they are mapped as the plain clause maps them and only the expression is
+      negated, so `assert not constraint c { attribute y = 2.0; load > y }` reads as `assert
+      constraint c { attribute y = 2.0; not (load > y) }` (pinned neg-assert-members/-rev; hand
+      oracle
+      404 models over both text orders: 0 wrong decided cells, 0 differences from the workaround
+      spelling). Still refused: a bodiless clause, a specialising one, `assert not requirement`,
+      and a
+      members body holding a nested clause, part, calc or `default` member (ruled permanent: see
+      design-solver-entries (c) 2-3). [contradictory-models S1 review; fence-assert-not; numeric2
+      S1;
+      solver2-pass S4]
 - [ ] **Give the specialisers of a usage-owned group one canonical order (optional).** The
       group-order fence of fence-readings S1 is a stable sort by usage-ancestor count in
       `contextsUncached`; `specialisersOf` itself and the context-key dedup have no canonical order,
@@ -528,7 +552,10 @@ headings.
       the SMT lane; `bounds`, `consistency` and `refine` carry it too): (12) an asserted inequality
       over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L
       + N >= K`), a bound with a `[unit]` or on a unit-bearing feature, an Integer or restricted-
-      domain sort, a conjunction (`load >= 0.0 and load <= 10.0`); the unit, Integer and conjunction
+      domain sort, a conjunction (`load >= 0.0 and load <= 10.0`: the bounds, consistency and
+      refine lanes read an asserted bound alone and were left as they were, while the check,
+      literal, numeric and SMT surfaces read a conjunction's conjuncts apart since solver2-pass
+      S2); the unit, Integer and conjunction
       shapes keep the generic sentence 'no assertion gives a default a value' rather than one naming
       the move (reads2-pass-scratch/h217/h2.sysml, gen217/models shapes 'int' and 'unit'); (13) a
       usage that redefines the default itself (`part q : Q { attribute :>> L default = 9.0; }`)
@@ -541,22 +568,33 @@ headings.
       sound, the partner is no axiom there); (16) a usage that subsets a feature an instance reads
       otherwise (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
       `satisfierTaint` feeds about eight readers; probes sub-sa7, sub-sa3, sub-sa5, sub-def-sa7d,
-      sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). 249 (an asserted conjunction as an
-      equation) stays open and skipped: it needs conjunct splitting at about ten call sites over
-      four lanes. [reads2-pass; numeric2-pass]
+      sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). (17) solver2-pass S2: the check
+      refuses a whole conjunction when one conjunct hits a gate refusal (probe
+      solver2-pass-scratch/s2/x25c.sysml, split twin x25s.sysml); `refused and false` stays a
+      refusal while `false and refused` is false, and `x or true` stays unknown; a conjunct
+      inequality is not gathered for solveFeasible/optimize; a conjunction typed by a constraint
+      definition is not split, by design; the SMT engine refuses a whole asserted conjunction when
+      one conjunct cannot be encoded (a String equality) where the split asserts are proved
+      (solver2-pass-scratch/review/p/bra2.sysml vs bra2s.sysml). [reads2-pass; numeric2-pass;
+      solver2-pass]
 - [ ] **Abstentions left in the negated assert (rollup; sound, only weaker).** (a) A model with
       `assert not requirement`, a negated clause that names a constraint with no body, one that
-      specialises a constraint, or one whose body holds members, a comment or a `doc` member
-      degrades as a whole, not only the dependent rows (a negated clause with a one-expression body
-      is read since numeric2 S1, see 'Read `assert not constraint c { ... }`'); (b) `assert not
+      specialises a constraint, or one whose body holds members and no expression or a member
+      other than a comment, a `doc` or an attribute with a `=` value or none degrades as a whole,
+      not only the dependent rows (a one-expression body is read since numeric2 S1, beside
+      comment, `doc` and attribute members since solver2 S4); (b) `assert not
       satisfy R by s;` parses as the bare clause `assert not` plus a plain `satisfy R by s;`: the
       error is raised but the satisfy edge is read plain and the sentence names the clause (`not
       satisfy` and `satisfy not` stay generic parse errors); (c) members declared inside a refused
-      body are not mapped (kept verbatim in the save), and `assert not x > 1.0;` swallows `x` as the
+      body (the shapes of (a)) are not mapped (kept verbatim in the save); and `assert not x >
+      1.0;` swallows `x` as the
       clause's name, giving a `validation/duplicate-name` finding beside the new error; (d) a caller
       that runs the engines on a model whose load report it ignores sees the clause dropped from the
       axiom set; (e) a degraded `contracts` / `obligations` report shows a requirement whose only
-      clause was refused as having no formal clause. [fence-assert-not; numeric2-pass]
+      clause was refused as having no formal clause. (f) in a negated clause, an attribute member
+      with `:=`, a prefix (e.g. `in`), a subsetting or redefinition, a multiplicity or a body of
+      its own, a `rep language` member, and annotations are refused (probe
+      solver2-pass-scratch/s4/gen Z187-Z199). [fence-assert-not; numeric2-pass; solver2-pass]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** One symbol per feature across the usages of one definition: `part def P { attribute
       L; attribute K; bind L = K; } part a : P { assert constraint ea { L == 50.0 } } part b : P {
@@ -949,21 +987,14 @@ true values. What follows is what that branch and the review of it left open; en
       fence-only no-clause rows carry no ninth reading; a row with zero symbols is `ground`).
       classes-3 waits for the wrong-answer count at or below 15. [classes-1, classes-2]
 
-- [ ] **z3 νZ answers a script over an Integer and a Real feature with a bound that a feasible point
-      lies beyond (the wrong answer is fenced; the full reading is left, sound, only weaker).** The
-      original defect: `bounds` on a model that declares both an Integer and a
-      Real feature published 'min x = infimum 3/4, never attained' where x = 0 is feasible, 'max x =
-      supremum 0' where x = 1 is, and (no strict comparison needed) 'max x = 1 + epsilon' where 2 is
-      attained. fence-bounds: such a script keeps an optimum only when two plain checks confirm it,
-      and withholds an infimum, a supremum and `oo` as inconclusive with
-      verification/optimality-not-established. The full reading (a sound encoding or an own
-      optimiser for mixed scripts) is not done. Probes: fence-bounds-scratch/p/mix2.sysml and
-      mix3.sysml (`npm run sysprose -- bounds <f> --measure p.x --sense both`); battery
-      fence-bounds-scratch/gen/genmix.py seeds 1-3. [sweep 2026-10-31; fence-bounds]
-- [ ] **Abstentions left in bounds and consistency (rollup; sound, only weaker).** (1) Mixed Integer
-      and Real bounds: an infimum, a supremum or `oo` is withheld even when correct (14 to 49 per
-      300 cells in the battery were decided on base and abstain now, some of them right); probe
-      fence-bounds-scratch/gen/s2.cases.json. (2) A relation that reads a feature typed Natural,
+- [ ] **Abstentions left in bounds and consistency (rollup; sound, only weaker).** (1) Mixed
+      Integer and Real bounds: since solver2-pass S6 a bound is established over an integer branch
+      (Integer features fixed at a feasible point, νZ over the pure-Real rest, one plain check
+      beyond the value); still withheld when the branch cap is reached (16 witnesses: a Real
+      measure unbounded only through an unbounded Integer, e.g. `x - 2.0 * y > 0.0` min x, and an
+      Integer measure with no bound) or the encoder cannot fix an integer symbol (read other than
+      through `to_real`, or a script with a string literal); probe
+      solver2-pass-scratch/s6/gen/u.cases.json. (2) A relation that reads a feature typed Natural,
       Positive or UnlimitedNatural is refused in the z3 lane, so bounds, consistency, verify and
       refine abstain on it even where a literal pins the feature (`k : Natural = 3` with `x <= k *
       2.0` used to give max 6); probe fence-bounds-scratch/gen/f5.cases.json; the full reading
