@@ -15,14 +15,6 @@ the review's artifact folder, which is not in this repository. Entries tagged `[
 merged branch `behaviour-sound` (the plan's O1) left open, by step. An entry that waits on the
 maintainer says `awaits user decision U<n>` and names the question.
 
-- [ ] **Exercise a z3 death in a real browser.** The USER-GUIDE says a z3 that dies mid-session ends
-      that Run with a `checks/internal-error` row and the next Run starts a fresh z3, 'not yet
-      exercised in a real browser'; the bridge's `onAbort` rejection of a worker-thread trap is
-      covered only by the fake, and the page-side hang is unverified. Add an E2E (or a manual probe
-      recorded in UI-ROADMAP) that kills the module in the page and runs again. The old N6 S4 clause
-      that a hang keeps the async mutex held until reload is gone (the lock is per module now). Also
-      make the soak repeatable from the repository: the header of `test/campaign/z3-soak.soak.ts`
-      carries the invocation. [z3-bump, review]
 - [ ] **Narrow the literal engine's contradiction reach to the instance the violated assert
       reads.** Since instance2-pass S4 (literal-reach) the literal engine reads a contradiction (a
       violated assert, a violated binding, a pair that meets in a usage) in the instances it is read
@@ -127,18 +119,16 @@ maintainer says `awaits user decision U<n>` and names the question.
       the path `q.p1`, so it over-abstains where only an unrelated Q instance changes p1; running it
       in W is a verdict-moving step (generator with a hand oracle first). Only a path with a `.` is
       kept; `Q::p1` is not. [subsetting-pass S1 review] Do it only with a pin-bump evidence re-mint: keeping `Q::p1` in attrs.chain moved v9's model-graph digest on 12 of 25 surfaces with no verdict move (text-pass-scratch/gate-S1-with-qualified-chain/v9.log).
-- [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
-      checks in the page behind a queue and a mutex. Left: a model edit during a run can give a torn
-      read across awaits (the result lands against the click's revision and shows stale; documented,
-      not snapshotted), which is the open fix (a revision check); a z3 module that dies in the page
-      is unverified in a real browser (the lock is per module since z3 5.3.1); the encoding cost
-      (`obligationsOf`, script building, `resolveFreeFeatures`) runs on the page thread and is not
-      measured on v9, with no long-task guard over solver checks; the `bounds` check's degraded path
-      has no test of its own; and the isolated E2E fails if the run sets `SYSPROSE_NO_ISOLATION=1`.
-      Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
-      item (6)): Cancel drops the answer but cannot stop z3 until a safe interrupt is proven (the
-      check ends at its own time budget and a Run started meanwhile queues behind it), and an
-      in-page evidence record (`verify --record` stays terminal-only). [N6 S4, review]
+- [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five
+      solver checks in the page behind a queue and a mutex. Left: Cancel drops the answer but
+      cannot stop z3, so the check ends at its own time budget and a Run started meanwhile queues
+      behind it; a model edit during a run can give a torn read across awaits (the result lands
+      against the click's revision and shows stale; documented, not snapshotted); an in-page check
+      keeps no evidence record (`verify --record` is terminal-only); the encoding cost
+      (`obligationsOf`, script building, `resolveFreeFeatures`) runs on the page thread, is not
+      measured on v9, and has no long-task guard over solver checks. Cancel and the long-task
+      guard each need a bridge or measurement change, more than 150 sound lines. [N6 S4, review,
+      ui-pass S1]
 - [ ] **Move the first Apply's parse off the page (P3, the rest).** N6 S5 builds the Chevrotain
       parser while the page is idle after the Text view opens, so the first Apply no longer pays the
       ~1.3 s build; the parse itself stays on the page and synchronous (`applyText`,
@@ -150,18 +140,18 @@ maintainer says `awaits user decision U<n>` and names the question.
       warm-up needs a second trigger on the Open menu, the file chooser and the text buffer paths,
       and it is best-effort, covered only by a unit test with injected dependencies, with no E2E
       that the stall happens once. [N6 S5, `docs/UI-ROADMAP.md` P3]
-- [ ] **Make the frozen column-header strip read at the whole v9 Fit.** Since N6 S1 a layered
-      General view's column headers are a frozen strip along the canvas top, clipped to each column
-      and clamped to its piece, with the label at a legible size at any zoom, and Fit keeps the
-      first row of boxes clear of it. Left: at the whole drone-swarm v9 Fit (1400×900, zoom about
-      0.021) 16 of the 21 headers (those over the pieces below the first row) are not in the strip,
-      because their bands are about 1 px tall and their columns 8–17 px wide on screen, and a column
-      under 28 px wide has no strip label; the strip floats about 56 px below the canvas top (under
-      the toolbar), so on a deep pan boxes show above the header that names them; when two pieces
-      are closer than about 22 px minus the band and gap on screen, the next piece's cell can
-      overlap the leaving one for a few px of scroll; and the E2E uses a generated tall-column
-      model, not the v9-sized one. Done when every header of the v9 Fit is findable (a strip row per
-      piece, or a hover label) and a guard holds it. [review 2026-10-14 D-7, N6 S1]
+- [ ] **Make the frozen column-header strip read at the whole v9 Fit.** since N6 S1 a layered
+      General view's column headers are a frozen strip along the canvas top. Since ui-pass S1 a
+      column that no header or strip cell names at the zoom (whole v9 Fit, 1400x900, zoom about
+      0.021, 16 of the 21 headers: bands about 1 px tall, columns 8 to 17 px wide) is named by a
+      label that follows the pointer over it (`column-hover`; unit guard and an E2E on the real v9
+      model). Left: the strip floats about 56 px below the canvas top (under the toolbar), so on a
+      deep pan boxes show above the header that names them; when two pieces are closer than about
+      22 px minus the band and gap on screen the next piece's cell can overlap the leaving one for
+      a few px of scroll; the pointer label is mouse-only; the tutorial recordings that show that
+      Fit with a resting pointer (videos 1 and 4 at least) may now carry a stray label: check the
+      contact sheets of the next re-record or park the pointer outside the canvas. [review
+      2026-10-14 D-7, N6 S1, ui-pass S1]
 
 ## Per-instance readings — follow-ups and known-false rows
 
@@ -665,22 +655,22 @@ headings.
       RV_SEQ=1 RV_STEPS=5) and soak seq 42267 (page TT, file ?F on c6). [fence-redefs;
       fence-save-name]
 - [ ] **Widen the random edit generator of the store property test (optional).**
-      store.reducers.test.ts draws bind in definitions and usages, a user retarget of a redefinition
-      (updateElement on the edge, to another feature of a general of its owner and not onto one a
-      sibling already redefines; its own random stream, 190 retargets in the 300x4 gate window), and
-      counts the sequences that fell back to the binding-free model (0 in the gate window, asserted
-      below a quarter). Still to add: nested `part :>> p { attribute :>> load; }`, standalone
-      `redefinition` statements, the SDK edits, the duplicate-name stop as a counted outcome; a
-      verdict oracle (a copy bound to a valueless Zb plus `u.Zb == v` constraints, definite check
-      and numeric contradictions between page and reopened file); the hand-text oracle is thin (1
-      comparison in the 300x4 gate window); compare the four-surface verdicts in a subset of the
-      sequences. Finding of the new draw (no wrong answer, the page equals the file):
-      SYSPROSE_RT_FIRST=1700 SYSPROSE_RT_SEQUENCES=1400 SYSPROSE_RT_STEPS=6 fails at seq 2264 step 5
-      ('a full settle of the page still moved 1 redefinition(s)') after a user retarget and a
-      rename; retargeting onto a feature a sibling already redefines is excluded from the generator
-      and is outside the oracle, like two features of an owner on one line. Soak seeds 1120 and 1618
-      are the known pre-existing ones (rollup 'fence-copy2' item 12). [redefinition-target S2, re-
-      review; misc-pass]
+      store.reducers.test.ts now draws bind in definitions and usages and a user retarget of a
+      redefinition (its own random stream, onto another feature of a general of its owner, never
+      onto one a sibling already redefines); it counts the sequences that fell back to the
+      binding-free model (0 in the 300x4 gate window) and the sequences that stop outside the
+      oracle (123 same-name stops, 1 lost-copy stop, asserted below half of the sequences); on
+      every 20th sequence it compares the four-surface verdicts of the page and of its reopened
+      file (up to three `uN.x == 11.0` equations per usage, 9 to 11 comparisons per window). Still
+      to add: nested `part :>> p { attribute :>> load; }` (needs part features in the generated
+      definitions); standalone `redefinition` statements; the SDK edits; a verdict oracle that
+      plants values (a copy bound to a valueless Zb plus `u.Zb == v` constraints); the hand-text
+      oracle is thin (1 comparison in the gate window). Finding, no wrong answer, the page equals
+      the file: SYSPROSE_RT_FIRST=1700 SYSPROSE_RT_SEQUENCES=1400 SYSPROSE_RT_STEPS=6 fails at seq
+      2264 step 5 ('a full settle of the page still moved 1 redefinition(s)') after a user
+      retarget and a rename; retargeting onto a feature a sibling already redefines is outside the
+      generator and the oracle. Soak seeds 1120 and 1618 are the known pre-existing ones (rollup
+      'fence-copy2' item 12). [redefinition-target S2, re-review; misc-pass; ui-pass S1]
 ## Per-instance soundness — review 2026-10-14
 
 From the soundness review of F3–F8 and 3e3b0ff (Sysprose 5943654 against 7277a97). The branch
@@ -778,16 +768,20 @@ true values. What follows is what that branch and the review of it left open; en
       vocabulary commit ships it, add FAILURE_MODE_QUALIFIED_NAME, ask for it and drop the option;
       the campaign test then declares the definition in SysproseVerification and its "model's own
       definition is counted" sentence changes. [small-defaults S3] Kept held 2026-11-05 until the SysproseVerification vocabulary commit ships (blocked on that commit, not on a decision).
-- [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations --element`
-      (and the app's scoped checks) filters by the relation's own element only (`scopeFilter` in
-      `obligations.ts`), so a relation read per instance in the scoped element lists none of its
-      rows: `--element E5::q2` on the e5-renamed probe (`part q2 : Q { part p2 :>> p; ... }`) shows
-      0 rows although `P::c in E5::q2::p2` is violated; decide whether the scope should include the
-      rows read in a context under the scoped element. big-bind-600's cold check is 17% slower than
-      before the routing change (577 to 675 ms; the cold-check branch measures it). (2) The evidence
-      record does not record the instance path of a shared-usage reading (`satisfy LoadReq by
-      Sys::p` records only the own row), and `verify` prints a moved reading as `H::LoadReq in
-      H::p1` where the record says `H::massR in H::p1`. [reporting-residuals S2]'. The quoting,
+- [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations
+      --element` (and the app's scoped checks) filters by the relation's own element only
+      (`scopeFilter` in obligations.ts), so a relation read per instance in the scoped element
+      lists none of its rows (`--element E5::q2` on the e5-renamed probe shows 0 rows although
+      `P::c in E5::q2::p2` is violated). DECIDED by the conservative reading (ui-pass S1,
+      reversible): the scope lists the relations the scoped element owns or contains, and the
+      USER-GUIDE Checks row says so; the empty scoped report now says 'this scope holds no
+      relation' / 'this scope holds no requirement and no case objective'. Still open: big-
+      bind-600's cold check is 17% slower than before the routing change (577 to 675 ms; the cold-
+      check branch measures it). (2) The evidence record does not record the instance path of a
+      shared-usage reading (`satisfy LoadReq by Sys::p` records only the own row), and `verify`
+      prints a moved reading as `H::LoadReq in H::p1` where the record says `H::massR in H::p1`.
+      [reporting-residuals S2; ui-pass S1]
+      The quoting,
       footer-name, double-count, requirement-def specialisation, earlier-build sentence, frame-cap
       and raw-count items are done or were fixed by earlier reviewers
 - [ ] **Fold the per-instance findings of a cause a definition states by a derived value, or beside

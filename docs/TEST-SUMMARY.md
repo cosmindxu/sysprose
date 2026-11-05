@@ -5,15 +5,15 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5474 total — 5474 passed, 0 failed, 0 skipped
+- **Tests:** 5486 total — 5486 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 124 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 125 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
-| test/campaign/verification.test.ts | 189 | 0 | 0 |
+| test/campaign/verification.test.ts | 191 | 0 | 0 |
 | test/conformance/api-contract.test.ts | 22 | 0 | 0 |
 | test/conformance/corpus.test.ts | 16 | 0 | 0 |
 | test/conformance/oslc-conformance.test.ts | 8 | 0 | 0 |
@@ -62,13 +62,13 @@
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 138 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 139 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 36 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
-| test/unit/core.model.test.ts | 32 | 0 | 0 |
+| test/unit/core.model.test.ts | 33 | 0 | 0 |
 | test/unit/diagnostic-codes.test.ts | 15 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
@@ -80,7 +80,7 @@
 | test/unit/diagram.layout2.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
 | test/unit/diagram.parametric.test.ts | 10 | 0 | 0 |
-| test/unit/diagram.readability.test.ts | 59 | 0 | 0 |
+| test/unit/diagram.readability.test.ts | 63 | 0 | 0 |
 | test/unit/diagram.sequence.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.svg-export.test.ts | 22 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
@@ -94,7 +94,7 @@
 | test/unit/graph-algorithms.test.ts | 19 | 0 | 0 |
 | test/unit/graph-analysis.test.ts | 19 | 0 | 0 |
 | test/unit/langium.direction.test.ts | 5 | 0 | 0 |
-| test/unit/langium.grammar.test.ts | 50 | 0 | 0 |
+| test/unit/langium.grammar.test.ts | 51 | 0 | 0 |
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
 | test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
@@ -156,10 +156,10 @@
 | test/unit/text.literal-form.test.ts | 24 | 0 | 0 |
 | test/unit/text.load.test.ts | 14 | 0 | 0 |
 | test/unit/text.parser.test.ts | 14 | 0 | 0 |
-| test/unit/text.recovery-honesty.test.ts | 30 | 0 | 0 |
+| test/unit/text.recovery-honesty.test.ts | 31 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 226 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 227 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |
