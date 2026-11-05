@@ -2982,6 +2982,35 @@ export interface ConstraintQuantityResult {
 
 const COMPARISONS = new Set<QBinOp>(['<', '<=', '>', '>=', '==', '!=', '=']);
 
+/** The name resolver {@link evaluateConstraintQuantityDetailed} reads a body by: `bind`, the owner, the element itself, then `fallback`. */
+function constraintScope(model: Model, el: ElementRecord, opts: ConstraintQuantityOptions): QScope {
+  const inFlight: InFlight = new Map();
+  const memo = opts.memo ?? new Map();
+  const inst = opts.instances === true ? (opts.instance ?? (el.ownerId != null ? sharedDefinitions(model).instanceNameOf(el.ownerId) : undefined)) : undefined;
+  const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo, undefined, inst) : undefined;
+  const selfScope = quantityScopeFor(model, el.id, inFlight, memo, undefined, inst);
+  return (name) => {
+    const bound = opts.bind?.(name);
+    if (bound !== undefined) return { q: bound };
+    const fromOwner = ownerScope?.(name);
+    if (fromOwner !== undefined) return fromOwner;
+    const fromSelf = selfScope(name);
+    if (fromSelf !== undefined) return fromSelf;
+    const fb = opts.fallback?.(name);
+    return fb === undefined ? undefined : { q: fb };
+  };
+}
+
+/**
+ * The quantity a constraint `el`'s body reads for `name`, by the resolver its
+ * verdict reads it by ({@link evaluateConstraintQuantityDetailed}), or
+ * `undefined` where that reads no quantity (an unknown, a boolean, no value).
+ */
+export function quantityOf(model: Model, el: ElementRecord, name: string, opts: ConstraintQuantityOptions = {}): Quantity | undefined {
+  const r = constraintScope(model, el, opts)(name);
+  return r !== undefined && !isQUnknown(r) && 'q' in r ? r.q : undefined;
+}
+
 /**
  * Evaluate a constraint/requirement boolean expression with the unit-aware
  * evaluator, classifying it as `satisfied` / `violated` / `unknown` and, for
@@ -3005,21 +3034,7 @@ export function evaluateConstraintQuantityDetailed(
     return { verdict: 'unknown', reason: 'parse', detail: (e as Error).message };
   }
 
-  const inFlight: InFlight = new Map();
-  const memo = opts.memo ?? new Map();
-  const inst = opts.instances === true ? (opts.instance ?? (el.ownerId != null ? sharedDefinitions(model).instanceNameOf(el.ownerId) : undefined)) : undefined;
-  const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo, undefined, inst) : undefined;
-  const selfScope = quantityScopeFor(model, el.id, inFlight, memo, undefined, inst);
-  const scope: QScope = (name) => {
-    const bound = opts.bind?.(name);
-    if (bound !== undefined) return { q: bound };
-    const fromOwner = ownerScope?.(name);
-    if (fromOwner !== undefined) return fromOwner;
-    const fromSelf = selfScope(name);
-    if (fromSelf !== undefined) return fromSelf;
-    const fb = opts.fallback?.(name);
-    return fb === undefined ? undefined : { q: fb };
-  };
+  const scope = constraintScope(model, el, opts);
   const tol: DecideOptions = { absTol: opts.absTol ?? 0, searched: opts.searched === true };
 
   let r: QEval;

@@ -135,6 +135,7 @@ import {
   dimensionClaimDetail,
   dimensionalFacets,
   evaluateConstraintQuantityDetailed,
+  quantityOf,
   evaluateQuantity,
   isRefusalReason,
   quantityAtInstance,
@@ -1914,10 +1915,10 @@ function isNumberLiteral(text: unknown): boolean {
  * relation's own context gives it — the
  * difference, where `load + extra <= 10.0` reads `load = 2` from one binding
  * and `extra = 20` from another (`load` put back to 1 still misses). Read in
- * the scalar scope the judgement itself used, so only where that reproduces
- * the verdict and no value is a quantity in a unit: `undefined` otherwise (and
- * where it throws), when the finding keeps naming the first read a binding
- * carried. With `ownElement`, a value the instance's own element redefines as a number
+ * the scalar scope the judgement itself used, where that reproduces the
+ * verdict; where a value is a quantity in a unit, in the unit-aware reading
+ * that decided it ({@link quantityBreak}); `undefined` otherwise (and where it
+ * throws), when the finding keeps naming the first read a binding carried. With `ownElement`, a value the instance's own element redefines as a number
  * may be named although no read lists it: the result is then a read the row does not
  * list (`redefined`), so a caller finds it by its `featureId`, not among `reads`.
  */
@@ -1925,7 +1926,9 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
   const reads = judged.reads;
   if (judged.result !== 'violated' || reads === undefined || reads.length === 0) return undefined;
   try {
-    if (judged.sides !== undefined || reads.some((r) => typeof r.value !== 'number' || r.si === true || r.unit !== undefined)) return undefined;
+    if (judged.sides !== undefined || reads.some((r) => typeof r.value !== 'number' || r.si === true || r.unit !== undefined)) {
+      return judged.requote !== undefined ? quantityBreak(model, own, judged.requote, reads) : undefined;
+    }
     const node = parseExpr(expr);
     const here = combinedScope(model, reading, pass, inst);
     const base = evaluate(node, here);
@@ -1961,6 +1964,22 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
   } catch {
     return undefined;
   }
+}
+
+/**
+ * {@link breakingRead} of a violated relation the unit-aware reading decided
+ * (a read in a unit, an SI figure, sides): the first read that, put back to the
+ * quantity the relation's own context gives it, makes the same reading hold.
+ * Only where the reading, read again, is still violated; an `unknown` (an
+ * offset unit put back, a name with no quantity there) never mends.
+ */
+function quantityBreak(model: Model, own: ElementRecord, requote: NonNullable<Judgement['requote']>, reads: readonly InstanceRead[]): InstanceRead | undefined {
+  if (requote(() => undefined) !== 'violated') return undefined;
+  const opts: ConstraintQuantityOptions = readsPerInstance(model) ? { instances: true } : {};
+  return reads.find((r) => {
+    const there = quantityOf(model, own, r.path, opts);
+    return there !== undefined && requote((n) => (n === r.path ? there : undefined)) === 'satisfied';
+  });
 }
 
 /** What {@link breakingRead} depends on in a violated row: its reads' names, values and units, and where the relation is read. */
@@ -3244,6 +3263,13 @@ interface Judgement {
    * {@link SpecialisationInstance.cause}.
    */
   cause?: InstanceAbstention;
+  /**
+   * A `violated` the unit-aware reading decided, read again with some names
+   * put to other quantities (`put`, before the judgement's own bindings):
+   * how {@link breakingRead} names a read that carries a unit. Never
+   * serialised, never a verdict.
+   */
+  requote?: (put: (name: string) => Quantity | undefined) => 'satisfied' | 'violated' | 'unknown';
 }
 
 /**
@@ -3588,7 +3614,7 @@ function carriedVerdict(
     if (refused) return { result: 'unknown', message: refused, gap: false };
     const reads = collectReads(model, el, pass, names, own, at);
     const message = ua.result === 'satisfied' ? `Constraint satisfied${readsClause(model, reads)}` : `Constraint violated: ${expr}${readsClause(model, reads)}`;
-    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}) };
+    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}), ...(ua.requote ? { requote: ua.requote } : {}) };
   }
   if (isRefusalReason(ua.reason)) {
     return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: false, ...(ua.reason === 'tie' ? { tie: true as const } : {}) };
@@ -4788,7 +4814,11 @@ function unitAwareVerdict(
       ? { sides: { lhsSI: ua.lhsSI, rhsSI: ua.rhsSI, dimension: dimToString(ua.dimension) } }
       : {};
   if (ua.verdict === 'satisfied') return { result: 'satisfied', message: 'Constraint satisfied', gap: false, ...sides };
-  if (ua.verdict === 'violated') return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false, ...sides };
+  if (ua.verdict === 'violated') {
+    const requote = (put: (name: string) => Quantity | undefined): 'satisfied' | 'violated' | 'unknown' =>
+      evaluateConstraintQuantityDetailed(model, el, { ...opts, bind: (name) => put(name) ?? opts.bind?.(name) }).verdict;
+    return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false, ...sides, requote };
+  }
   return ua;
 }
 

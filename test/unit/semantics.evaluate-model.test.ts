@@ -8354,6 +8354,46 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         ['package G5c {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; attribute K : ScalarValues::Real = 4.0; part :>> p { attribute :>> extra = 5.0 * K; } }', '}'].join('\n'),
       ),
     ).toEqual([['G5c::q2::p', 8, 'attribute :>> L = 2.0', 'L', " is violated in G5c::q2::p: load = 2 — q2.L = 2 through G5c::Q's `bind p.load = L`"]]);
+    // Reads that carry a unit are put back in the unit-aware reading that judged them: `load` (2000 g) put back to
+    // 1 kg still misses, `extra` (20 kg) put back to 0 kg holds, so `extra` is named, at the line stating it.
+    const unitDefs = [
+      '  part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; attribute extra : ISQ::MassValue default = 0.0 [kg]; }',
+      '  part def Q {',
+      '    attribute L : ISQ::MassValue default = 1.0 [kg];',
+      '    part p : P { constraint c2 { load + extra <= 10.0 [kg] } }',
+      '    bind p.load = L;',
+      '  }',
+    ];
+    expect(
+      await findings(['package GU {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['GU::q2::p', 8, 'attribute E : ISQ::MassValue = 20.0 [kg]', 'E', ' is violated in GU::q2::p: extra = 20 [kg]']]);
+    // That row carries its sides in SI: they are kept as judged, and name nothing of their own.
+    const { model: gu } = await loadModelText(
+      ['package GU {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n'),
+    );
+    const guRow = checkConstraints(gu!).find((c) => gu!.qualifiedName(c.id) === 'GU::Q::p::c2')!.instances!.find((i) => i.instance === 'GU::q2::p')!;
+    expect([guRow.result, guRow.breaks, guRow.sides]).toEqual(['violated', 'extra', { lhsSI: 22, rhsSI: 10, dimension: 'M' }]);
+    // On an offset scale (°C) the values are only ordered, and a put-back is a comparison too: `extra` (5 °C) put
+    // back to its 60 °C holds `load <= extra`, `load` (50 °C) put back to 10 °C does not.
+    expect(
+      await findings(
+        [
+          'package GT {',
+          '  part def P { attribute load : ISQ::TemperatureValue default = 10.0 [°C]; attribute extra : ISQ::TemperatureValue default = 60.0 [°C]; }',
+          '  part def Q {',
+          '    attribute L : ISQ::TemperatureValue default = 10.0 [°C];',
+          '    part p : P { constraint c2 { load <= extra } }',
+          '    bind p.load = L;',
+          '  }',
+          '  part q2 : Q { attribute :>> L = 50.0 [°C]; attribute E : ISQ::TemperatureValue = 5.0 [°C]; bind p.extra = E; }',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([['GT::q2::p', 8, 'attribute E : ISQ::TemperatureValue = 5.0 [°C]', 'E', ' is violated in GT::q2::p: extra = 5 [°C]']]);
+    // Both needed (neither put back alone holds it): still the first read a binding carried, as for numbers (G3).
+    expect(
+      await findings(['package GUB {', ...unitDefs, '  part q2 : Q { attribute :>> L = 20000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['GUB::q2::p', 8, 'attribute :>> L = 20000.0 [g]', 'L', " is violated in GUB::q2::p: load = 20 [kg] — q2.L = 20000 [g] through GUB::Q's `bind p.load = L`"]]);
   });
 
   it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {
