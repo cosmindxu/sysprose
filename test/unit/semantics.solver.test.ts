@@ -1903,3 +1903,20 @@ describe('solve — a binding whose end goes through a scope the page leaves unr
     expect(await rows([...members].reverse())).toEqual(['cA:satisfied']);
   });
 });
+
+describe('solve — an asserted String equality', () => {
+  // The equality has no number to bring to zero: it leaves the convergence of the numeric solve as it found it, alone, as a
+  // conjunct, or split into asserts of their own (the same three readings).
+  it('does not make the solve read not converged, alone or as a conjunct', async () => {
+    const tank = (asserts: string) =>
+      `package BRA { part def TankB { attribute mode : String = "auto"; attribute depth : ISQ::LengthValue = 1.0 [m]; ${asserts} } part b : TankB; }`;
+    for (const asserts of [
+      'assert constraint capB { depth <= 9.0 [m] and mode == "auto" }',
+      'assert constraint capB1 { depth <= 9.0 [m] } assert constraint capB2 { mode == "auto" }',
+      'assert constraint capB2 { mode == "auto" }',
+    ]) {
+      const { model } = await loadModelText(tank(asserts), { fileName: 'p.sysml', strict: true });
+      expect(solve(model!).converged).toBe(true);
+    }
+  });
+});

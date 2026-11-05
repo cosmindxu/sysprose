@@ -3129,7 +3129,7 @@ feature can cross it more than once and is read as if it did (`x == 6.0 / (x +
 crosses once and is read the same),
 whatever the size of its component (a chain of seventy equations beside `z == x0 * x0`
 over `x0 == 3.0` reads as a short one); and a feature with no value that an `assert` constrains in a
-form the solve does not read (an inequality, a conjunction, a disjunction, a body
+form the solve does not read (an inequality, a conjunct that is none (`M >= L` in `L == 50.0 and M >= L`), a disjunction, a body
 that does not parse) is solved for by no check (`unknown`, *… has no value, and
 an assert constrains it in a form the numeric solve does not read …*): the names
 such a body constrains are those it writes outside its strings and `[unit]`

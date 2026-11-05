@@ -3738,6 +3738,9 @@ function residualSummary(
   // genuinely-violated constraint whose residual merely looks small beside a
   // huge additive offset (finding M6 follow-up).
   for (const eq of eqs) {
+    // An equality with a String literal on one side has no numeric residual: the check reads it, and it leaves the solve's
+    // convergence as it found it (`mode == "auto"` beside `depth <= 9.0 [m]`, alone or as a conjunct).
+    if (stringEquality(eq)) continue;
     if (eq.vars.some((v) => !values.has(v))) {
       determined = false;
       continue;
@@ -3753,6 +3756,13 @@ function residualSummary(
   // Each within its gate alone is not a root of them together ({@link jointMissed}).
   if (withinTol && jointMissed(eqs, values).length > 0) withinTol = false;
   return { residual, determined, withinTol };
+}
+
+/** An equation between a String literal and another literal or a feature: no number to bring to zero. */
+function stringEquality(eq: Equation): boolean {
+  const text = (n: ExprNode): boolean => n.kind === 'str';
+  const plain = (n: ExprNode): boolean => n.kind === 'str' || n.kind === 'ref';
+  return (text(eq.lhs) && plain(eq.rhs)) || (text(eq.rhs) && plain(eq.lhs));
 }
 
 /**
