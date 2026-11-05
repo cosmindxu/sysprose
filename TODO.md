@@ -126,7 +126,7 @@ maintainer says `awaits user decision U<n>` and names the question.
       writes `q.p1`. Left: the instance test still runs in Q for `part p2 :> q.p1;`, not in W with
       the path `q.p1`, so it over-abstains where only an unrelated Q instance changes p1; running it
       in W is a verdict-moving step (generator with a hand oracle first). Only a path with a `.` is
-      kept; `Q::p1` is not. [subsetting-pass S1 review]
+      kept; `Q::p1` is not. [subsetting-pass S1 review] Do it only with a pin-bump evidence re-mint: keeping `Q::p1` in attrs.chain moved v9's model-graph digest on 12 of 25 surfaces with no verdict move (text-pass-scratch/gate-S1-with-qualified-chain/v9.log).
 - [ ] **Stop an in-page solver check from stalling or tearing the page.** N6 S4 runs the five solver
       checks in the page behind a queue and a mutex. Left: a model edit during a run can give a torn
       read across awaits (the result lands against the click's revision and shows stale; documented,
@@ -664,23 +664,6 @@ headings.
       fence-save-name-scratch/zzb.test.ts; a stale-copy probe: seed 32180 (RV_RAW=1 RV_FIRST=32180
       RV_SEQ=1 RV_STEPS=5) and soak seq 42267 (page TT, file ?F on c6). [fence-redefs;
       fence-save-name]
-- [ ] **Take the dangling-edge scan out of `Model.remove` (core cost).**
-      Model.remove finds dangling edges through a referrer index kept by create, update and remove
-      (misc-pass), in the old scan's order and with the walk repeated while an edge listed before an
-      edge that goes was passed over; 300 one-at-a-time removes on 13k elements went from 100 ms to
-      3 ms. The first remove after the index is dropped (reset, resetPreserving, adoptSerialOrder
-      when the order changed, fromJSON) costs more than the old scan, since the index is built then:
-      on the v9 model 26 to 34 ms against 9 to 15 ms, later removes 0.01 ms against 5 ms, and
-      removing a definition with 30,000 incoming typings 227 ms against 52 ms; a trade-off, not a
-      wrong answer. Left: (a) a removal that moves a Redefinition still asks relationshipsFrom, so
-      the per-revision edge index is rebuilt each time (250 chain-member removals 62 ms at 13k
-      elements); an incrementally kept source/target index in element order would end it, and would
-      also be the place to fix a later dangling edge if one is found; (b) a 300-deep chain with two
-      named siblings parses at 1.16 to 1.30x of 84fb971; skipping joinsTwo's reach walk was tried
-      and gives no measurable gain (12 parses each, 0.40 to 0.45 s both ways), so the ratio is not
-      from that walk; (c) a retype on a usage of 1500 :>> settles in 343 to 453 ms. Done when (a)
-      holds with the order unchanged and (b) and (c) have a measured cause. [redefinition-target S2,
-      S3; misc-pass]
 - [ ] **Widen the random edit generator of the store property test (optional).**
       store.reducers.test.ts draws bind in definitions and usages, a user retarget of a redefinition
       (updateElement on the edge, to another feature of a general of its owner and not onto one a
@@ -776,11 +759,6 @@ true values. What follows is what that branch and the review of it left open; en
       in either workflow repo past this branch until `elements()` reads both, and add a Grid-view
       check to the tutorial re-record decision. Coordinator, cross-repo; Sonnet. [subsetting-pass
       S1]
-- [ ] **Read a bare `metadata T;` as typed by T.** Per BNF `MetadataUsageDeclaration`, `metadata T;`
-      and `metadata T {...}` are an unnamed usage typed by T. This tool reads `metadata N {...}` as
-      a usage NAMED N with no type (requirements.ts RM_METADATA_NAME, the verification tests and the
-      fixture L8-evidence-stale rely on it). Changing it means moving the RequirementMetadata
-      carrier to a spelling that survives; a design choice, Opus. [small-defaults S2]
 - [ ] **Read an annotation's `about` targets (attach a carrier to the element it names).** Every
       consumer takes a carrier from its owner. Until then a carrier written with `about` is refused
       with `mapper/carrier-about-unread` (PropertyPattern, Evidence, FaultHypothesis,
@@ -794,38 +772,12 @@ true values. What follows is what that branch and the review of it left open; en
       check and the numeric surface still read the values beside it (T/?/T/?), as they do beside any
       contradiction. Done when the path resolves to the package-level usage on all four surfaces and
       the fence no longer fires on it. Weaker, not wrong: no false verdict. [instance2-pass S4]
-- [ ] **Resolve a metadata body redefinition (optional, low).** A body redefinition in an annotation
-      typed by a metadata definition of the file now resolves (`@T about X { ref :>> approved =
-      true; }`; T and what it specialises are added in `redefinitionGenerals`; `kindCells` follows
-      the Redefinition). A feature the metadata definition binds with `=` and an annotation
-      redefines with another value now files validation/constraint-violation (warning) plus an F row
-      `MD::«MetadataUsage»::«AttributeUsage»#binding`, the same rule as for ordinary usages ("a
-      redefinition may override only a `default`"); before, it filed only
-      ref/unresolved-specialization (probe subsetting-pass-scratch/wbr/md1.sysml; no false answer
-      found). Left: an annotation typed by a LIBRARY metadata definition
-      (`@VerificationCases::VerificationMethod { attribute :>> kind = test; }`) keeps its textual
-      `redefines` and files `ref/unresolved-specialization`, as a library-typed usage does (`part y
-      : ISQ::MassValue { attribute :>> num }`): the library merges after the mapper resolves. Done
-      when the library binder resolves the cell too and every reader of `attrs.redefines` text
-      (kindCells reads both now) keeps working. [parse-and-show S1; subsetting-pass S1]
 - [ ] **Ask FailureMode by its qualified name when it ships.** `machineFailureModes`
       (src/semantics/fault-tree.ts) counts a model's own FailureMode through `hasKeyword(..., {
       anyPackage: true })` because the definition is not in SysproseVerification yet. When the
       vocabulary commit ships it, add FAILURE_MODE_QUALIFIED_NAME, ask for it and drop the option;
       the campaign test then declares the definition in SysproseVerification and its "model's own
       definition is counted" sentence changes. [small-defaults S3] Kept held 2026-11-05 until the SysproseVerification vocabulary commit ships (blocked on that commit, not on a decision).
-- [ ] **Report an ambiguous keyword as ambiguous (optional).** `statement-kind.ts` reads `#prose`
-      and `#prompt` from the spelling alone, so a foreign `<prose>` is still read as a statement
-      kind: needs its own decision. (The two-imports ambiguity of a bare keyword is reported:
-      `verification/keyword-ambiguous`, origin `ambiguous`, and `hasKeyword` reads it as no tag in
-      either import order; `obligations --from-keywords` names nothing for it in either order; a
-      qualified keyword is not asked, and only the nearest scope with imports is.) Left: an
-      ambiguous foreign-aliased keyword (a bare #precondition two imports answer to) is not reported
-      as ambiguous: `contracts --keywords` files it as `foreign` and never raises
-      verification/keyword-ambiguous, and fault-tree.ts counts via hasKeyword, so an ambiguous
-      #failureMode or #exceptional makes 'found none of' read as a plain absence. Probe:
-      subsetting-pass-scratch/wbr/kw2.sysml via `scripts/sysprose.ts contracts --keywords`.
-      [small-defaults S3; subsetting-pass S1]
 - [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations --element`
       (and the app's scoped checks) filters by the relation's own element only (`scopeFilter` in
       `obligations.ts`), so a relation read per instance in the scoped element lists none of its
@@ -1277,13 +1229,29 @@ true values. What follows is what that branch and the review of it left open; en
       instance2-pass-scratch/{s2,s3,s4}/gen*. [instance-pass,
       naming-pass, reads-pass, editor-pass, instance2-pass]
 - [ ] **Abstentions left (keywords and metadata annotations) (rollup; sound, only weaker).** (1) A
-      bare-keyword ambiguity is asked in the nearest scope with imports only, a qualified
-      `#Pkg::name` is never asked, and an alias or inherited member is not enumerated
-      (src/semantics/keywords.ts ambiguousKeyword). (2) An ambiguous foreign-aliased keyword is
-      filed `foreign` by `contracts --keywords` and never raises verification/keyword-ambiguous (see
-      'Report an ambiguous keyword as ambiguous (optional).'). (3) A library-typed annotation's body
-      redefinition stays textual (probe subsetting-pass-scratch/s2/md4.mts; see 'Resolve a metadata
-      body redefinition (optional, low).'). [subsetting-pass]
+      bare-keyword ambiguity is asked in the nearest scope with imports only, a qualified `#Pkg::name`
+      is never asked, and an alias or inherited member is not enumerated (src/semantics/keywords.ts
+      ambiguousKeyword). (2) A library-typed USAGE keeps its body `:>>` textual with
+      ref/unresolved-specialization (`part y : ISQ::MassValue { attribute :>> num = 1; }`); only an
+      annotation typed by a library metadata definition is bound by the library binder. (3) A
+      definition a user-defined keyword alone leads (`#situation def Failure;`) is refused
+      (mapper/extended-definition) rather than read as a plain Definition. (4) A semantic metadata
+      baseType is not read for a tag on a keyword-less usage, as for a keyword-led one. (5) A
+      keyword-less enum literal still cannot carry a statement kind (canCarryStatementKind refuses
+      it) although `#prose low = 0.25;` now parses back and round-trips. (6) fault-tree --json
+      carries ambiguous and uncounted `#failureMode` tag counts only in the sentence string, not as
+      structured fields. (7) The prefix-order shapes `abstract #k def X` and `ref #k x` stay parse
+      errors. (8) The keyword inventory prints "third-party spelling: #precondition read as an assume
+      clause" on a non-constraint element although obligations --from-keywords files constraints
+      only. Decided in text-pass, reversible: a bare `metadata T {…}` is read as typed by T (named
+      reading), and statement kinds are read by spelling even against a model's own `metadata def
+      <prose>`; both documented in USER-GUIDE as intended. [text-pass]
+- [ ] **Save launders two `#`-led shapes that still fail to parse (weaker; soundness-adjacent).**
+      `#k [2] :> y;` saves as `:> y; … #k [2] }`; `#k abstract def X;` saves as `#k abstract ref;
+      X;`: serializeModel(parseModel(text)) reparses with 0 errors and a different meaning; the app
+      keeps back a text with a syntax error, so only the API/SDK path (L6) reaches it. Done when both
+      shapes keep their error through a save or are added to L6 SAVE_KEEPS_THE_ERROR. Probe
+      text-pass-scratch/review/rt.mts cases 10 and 13. [text-pass]
 - [ ] **Abstentions left in renames and name clashes (rollup; sound, only weaker).** fence-rename:
       (1) names unrelated to the clash inside a flagged scope are withheld along with it (e.g.
       `w.p.x`, or an unrelated `a = 15.0` beside a clash on `b`), because the fence is the whole
