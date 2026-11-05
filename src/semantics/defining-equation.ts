@@ -5605,7 +5605,20 @@ function taintReaches(model: Model, t: TaintEntry, at: { contextId: ElementId; p
       const x = model.get(id);
       return x !== undefined && isUsage(x.eClass);
     });
-    if (at === undefined && walked.length === 0) return true;
+    // A usage a definition holds (Q's p, W's q) stands for every instance of it: a reading no usage outside a
+    // definition pins (on the walk, or above at's context) is generic, and reached.
+    const free = (id: ElementId): boolean => {
+      const seen = new Set<ElementId>();
+      for (let o: ElementId | null = id; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? null) {
+        seen.add(o);
+        const x = model.get(o);
+        if (!x) return true;
+        if (isDefinition(x.eClass) && !isPackage(x)) return false;
+      }
+      return true;
+    };
+    const pinned = walked.some(free) || (at !== undefined && free(at.contextId));
+    if (!pinned) return true;
     const defs = sharedDefinitions(model);
     const instances = new Set<ElementId>(walked);
     if (at !== undefined) {

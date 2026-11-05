@@ -432,8 +432,8 @@ interface UnplacedContradiction extends ContradictingAssert {
  * q1 reads, every definition's row read in an instance like q1's, and what an axiom carries from there, never q2's
  * own p, which the same symbol names.
  *
- * And an `assert` the worklist reads no feature of because it cannot read it (`unread`: a name it does not resolve,
- * a body it does not parse), which the check does not hold true, is a fact of the model no surface reads: it may
+ * And an `assert` the worklist reads no feature of, or only a part of, because it cannot read it (`unread`: a name it
+ * does not resolve, a body it does not parse), which the check does not hold true, is a fact of the model no surface reads: it may
  * contradict any value (q1's `q2.p.x == 50.0` over `x default = 2.0`), so no relation is judged beside it, as the SMT
  * engine claims no proof beside it.
  */
@@ -449,7 +449,11 @@ function contradictionsOf(
 } {
   const unread: UnreadAssert[] = [];
   for (const row of rows) {
-    if (row.role !== 'axiom' || row.source !== 'assert' || row.vars.length > 0 || row.encodable === true) continue;
+    if (row.role !== 'axiom' || row.source !== 'assert' || row.encodable === true) continue;
+    // A row read in part (`vars`) and left out because a value gives way (a `default` no assertion replaces, a binding this
+    // tool does not read through) is no fact of the model that a value contradicts, as the SMT engine reads it. One left out
+    // because a name or a body cannot be read (`q2.p.x + p.x == 52.0`, p.x read and q2.p.x not) may be, as one read in no part is.
+    if (row.vars.length > 0 && (row.encodable.reason === 'unread-definition' || row.encodable.reason === 'unread-binding')) continue;
     if (checks.get(row.element.id)?.result === 'satisfied') continue;
     const qualifiedName = model.qualifiedName(row.instance?.baseId ?? row.element.id);
     if (unread.some((u) => u.qualifiedName === qualifiedName)) continue;

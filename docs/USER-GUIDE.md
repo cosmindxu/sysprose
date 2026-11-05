@@ -1809,7 +1809,7 @@ read under the same name (`q2.p.x`, P's one `default = 2.0`) is decided at its o
 while P's own row and Q's p's, which stand for every instance, stay inconclusive. Where an
 instance may stand for another (a reference, a subject, a part a binding, a subsetting, a
 `satisfy` or a value names) every relation over a value the assert reaches stays
-inconclusive. An `assert` this tool cannot read at all (a path it does not resolve, a body
+inconclusive. An `assert` this tool cannot read, in whole or in part (a path it does not resolve, a body
 it does not parse) that the check cannot hold true leaves every relation of the file
 undecided on the literal engine (`verification/not-evaluable`, naming the assert), as the
 SMT engine claims no proof beside it. The contexts a relation is filed at do not
@@ -2167,7 +2167,9 @@ and every P's where they meet in a definition or a package; where they meet in a
 usage (one in P and one in `part p : P { … }`), p's L, and that of a usage that
 subsets or redefines p, while another `part p2 : P` reads P's equation on the
 check and on the literal engine (the numeric surface's solve meets the pair and
-does not converge there); and a name the tool places nowhere (in a
+does not converge there); the rows of a definition that holds p (Q's `p.L == 50.0`),
+which stand for every Q, and a value over a dotted name (`Z = p.L` in Q) stay
+undecided in every instance; and a name the tool places nowhere (in a
 scope that holds two features under one name, or through a usage a renamed
 redefinition hides) is never read as one equation's value — in a sentence naming each
 equation (*L is not read: the asserted `L == 50.0` (…::P::c50) and `L == 60.0`
@@ -2252,7 +2254,8 @@ the two parts a binding reaches (`bind p.L = r.K`, `L == 50.0` in P, `K == 60.0`
 in R), where the element writes none. The pair is read where the binding meets
 it: in every Q's p (a specialiser's, a usage's `part :>> p`, a Q a part holds),
 and P's own rows, which stand for every P. A `part p2 : P` beside it, which no Q
-holds, reads P's equation. Where another instance may be a Q's p — a reference or
+holds, reads P's equation on the check (the literal and SMT engines read the axioms
+inconsistent there, and the numeric solve does not converge). Where another instance may be a Q's p — a reference or
 a value names it (`ref part rr : P = q.p`), a binding, a subsetting, a `satisfy`
 or an alias does, or a usage redefines p with a value (`part :>> p = p2`) — every
 P's L stays undecided: a price of reading it so. `K == L`, a bare name on

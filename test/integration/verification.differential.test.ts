@@ -3827,6 +3827,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     [name]: probe(text, rows),
     [`${name}-eq`]: probe(text.replaceAll(`default = ${value}`, `= ${value}`), rows),
   });
+  /** The rows an `exchanged` twin pins apart from its `ab` (its `ba` argument), as `${name}-ba | ${row}`. */
+  const EXCHANGED_APART = new Set<string>();
   /**
    * A probe whose two asserted equations give a feature the values `x` and `y` (`${name}-ab`: 50 then 60), and its
    * twin with the two exchanged (`${name}-ba`: the 60 written first, or where the 50 was), pinned alike: which
@@ -3839,10 +3841,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     text: (x: string, y: string) => string,
     rows: Record<string, [string, Ref]>,
     ba: Record<string, [string, Ref]> = {},
-  ) => ({
-    [`${name}-ab`]: probe(text('50.0', '60.0'), rows),
-    [`${name}-ba`]: probe(text('60.0', '50.0'), { ...rows, ...ba }),
-  });
+  ) => {
+    for (const row of Object.keys(ba)) EXCHANGED_APART.add(`${name}-ba | ${row}`);
+    return {
+      [`${name}-ab`]: probe(text('50.0', '60.0'), rows),
+      [`${name}-ba`]: probe(text('60.0', '50.0'), { ...rows, ...ba }),
+    };
+  };
   /**
    * A probe whose two asserted equations `a` and `b` are written in that order (`${name}-ab`), and its twin with
    * the two written the other way round (`${name}-ba`), pinned alike: I14 reads each pair row for row.
@@ -4775,6 +4780,46 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'UA::k1': ['T/?/T/?', 'T'],
       'UA::k2': ['T/?/T/?', null],
       'UA::q1::tie': ['?/-/?/-', 'F'],
+    }),
+    // The same when the worklist reads the assert in part: one name of `q2.p.x + p.x == 52.0` resolves (q1's own p.x) and
+    // one does not (q2.p.x), so the row it files has a name and no encoding. The model's defaults (2 + 2) violate it all
+    // the same, and no relation is judged on the literal engine beside it, in a usage or in a definition.
+    'unread-assert-part': probe(`package UA2 {
+        part def P { attribute x : ScalarValues::Real default = 2.0; }
+        part def Q { part p : P; }
+        part q1 : Q { assert constraint tie { q2.p.x + p.x == 52.0 } }
+        part q2 : Q;
+        constraint k1 { q1.p.x <= 10.0 }
+        constraint k2 { q2.p.x <= 10.0 }
+      }`, {
+      'UA2::k1': ['T/?/T/?', 'T'],
+      'UA2::k2': ['T/?/T/?', null],
+      'UA2::q1::tie': ['?/-/?/-', 'F'],
+    }),
+    'unread-assert-def': probe(`package UA4 {
+        part def P { attribute x : ScalarValues::Real default = 2.0; }
+        part def Q { part p : P; assert constraint tie { q2.p.x + p.x == 52.0 } }
+        part q1 : Q;
+        part q2 : Q;
+        constraint k1 { q1.p.x <= 10.0 }
+      }`, {
+      'UA4::k1': ['T/?/T/?', 'T'],
+      'UA4::Q::tie': ['?/-/?/-', 'F'],
+    }),
+    // An operator the worklist does not encode (`x % 4.0 >= 2.5`) leaves the assert unread too: P's own default (5) violates
+    // it and the usage's value (7) holds it. The check does not hold it true everywhere, so the literal engine judges no
+    // relation beside it (the SMT engine decides g at p's 7): sound, and weaker than the engine read here.
+    'unread-assert-op': probe(`package V2 {
+        part def P {
+          attribute x : ScalarValues::Real default = 5.0;
+          assert constraint a { x % 4.0 >= 2.5 }
+        }
+        part p : P { attribute :>> x = 7.0; }
+        constraint g { p.x >= 5.0 }
+      }`, {
+      'V2::g': ['T/?/T/T', 'T'],
+      'V2::P::a': ['F/-/F/-', 'F'],
+      'V2::P::a in V2::p': ['T/-/T/-', 'T'],
     }),
     // Two defaults a binding joins with no value beside them stand only as one CONSTANT (A.4 Part 0): R3a's
     // one `2.0 * K` read at a1.v and a2.v is 2 and 10, R3b's and R3c's two alike texts read two Ks. Agreed
@@ -8057,7 +8102,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // every surface abstains, where x's default 1 was read before (topF T, topT F on three surfaces). The
     // package's `L default = 50.0` an assert outside its package names (LP1) was such a name too, which gave way
     // with x's (U7), until default-stands S2: no assertion replaces a `default`, so L is 50 and x is 1, and p's
-    // assert is checked against the two (violated: the model contradicts itself), as with `=`.
+    // assert is checked against the two (violated: the model contradicts itself), as with `=`. LR1's `x == L` is read in
+    // part (x, not L), so the literal engine judges no relation beside it (unread-assert-part).
     'lex-lp1': probe(`package LP1 {
         attribute L : ScalarValues::Real default = 50.0;
         part def P { attribute x : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - x; }
@@ -8082,10 +8128,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topT { q.p.m2 <= 0.0 }
         constraint topF { q.p.m2 >= 0.0 }
       }`, {
-      'LR1::Q::c': ['F/F/F/?', 'F'],
+      'LR1::Q::c': ['F/?/F/?', 'F'],
       'LR1::Q::p::t': ['?/-/?/-', null],
-      'LR1::topF': ['T/T/T/?', null],
-      'LR1::topT': ['F/F/F/?', null],
+      'LR1::topF': ['T/?/T/?', null],
+      'LR1::topT': ['F/?/F/?', null],
     }),
     // A bare name that one feature nested below the context answers (`part p : P` with P's `K = 7.0`) was read
     // as that feature before the name its owners declare (the package's `K = 50.0`, which KerML resolves): A's
@@ -8819,6 +8865,57 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Q5F1::u50': ['T/T/?/X', 'T'],
     }, {
       'Q5F1::u50': ['F/F/?/X', 'F'],
+    }),
+    // A definition's own rows, and a value over a dotted name, read through its usage: Q's `kq` (`p.L == 50.0`), `kd` (`p.D`,
+    // D = L * 2.0) and `kz` (`Z == 50.0`, Z = p.L) stand for every Q, among them the q whose p meets the pair, so they abstain
+    // with q's own t50, tz and tz60 (q.Z is p.L: 50 and 60 at once, a `T` or an `F` is false). Another Q's rows read P's one
+    // equation, but Z over a dotted name stays undecided there (uz). The same when the binding meets the pair in W's q's p.
+    ...exchanged('q5-def-rows', (x, y) => `package DR {
+        part def P { attribute L : ScalarValues::Real; attribute D : ScalarValues::Real = L * 2.0; assert constraint ca { L == ${x} } }
+        part def Q { part p : P; attribute Z : ScalarValues::Real = p.L; constraint kq { p.L == 50.0 } constraint kd { p.D == 100.0 } constraint kz { Z == 50.0 } }
+        part q : Q { part :>> p { assert constraint cb { L == ${y} } } }
+        part q2 : Q;
+        constraint t50 { q.p.L == 50.0 }
+        constraint tz { q.Z == 50.0 }
+        constraint tz60 { q.Z == 60.0 }
+        constraint u50 { q2.p.L == 50.0 }
+        constraint uz { q2.Z == 50.0 }
+      }`, {
+      'DR::P::L in DR::q::«PartUsage»#equations': ['F/-/F/-', 'F'],
+      'DR::P::ca': ['?/-/?/-', null],
+      'DR::q::«PartUsage»::cb': ['?/-/?/-', null],
+      'DR::Q::kd': ['?/?/?/X', null],
+      'DR::Q::kq': ['?/?/?/X', null],
+      'DR::Q::kz': ['?/?/?/X', null],
+      'DR::t50': ['?/?/?/X', null],
+      'DR::tz': ['?/?/?/X', null],
+      'DR::tz60': ['?/?/?/X', null],
+      'DR::u50': ['T/T/?/X', 'T'],
+      'DR::uz': ['?/?/?/X', null],
+    }, {
+      'DR::u50': ['F/F/?/X', 'F'],
+    }),
+    ...exchanged('q5-def-rows-bound', (x, y) => `package DRW {
+        part def P { attribute L : ScalarValues::Real; assert constraint ca { L == ${x} } }
+        part def Q { part p : P; constraint kq { p.L == 50.0 } }
+        part def W { part q : Q { part :>> p; } attribute M : ScalarValues::Real; bind q.p.L = M; assert constraint cm { M == ${y} } constraint kw { q.p.L == 50.0 } }
+        part w : W;
+        part q2 : Q;
+        constraint t50 { w.q.p.L == 50.0 }
+        constraint u50 { q2.p.L == 50.0 }
+      }`, {
+      'DRW::P::ca': ['?/-/?/-', null],
+      'DRW::P::ca in DRW::W::q::«PartUsage»': ['?/-/?/-', null],
+      'DRW::Q::kq': ['?/?/?/X', null],
+      'DRW::Q::kq in DRW::W::q': ['?/?/?/X', null],
+      'DRW::t50': ['?/?/?/X', null],
+      'DRW::u50': ['T/X/?/X', 'T'],
+      'DRW::W::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'DRW::W::cm': ['?/-/?/-', null],
+      'DRW::W::kw': ['?/?/?/X', null],
+      'DRW::W::M in DRW::W#equations': ['F/-/F/-', 'F'],
+    }, {
+      'DRW::u50': ['F/X/?/X', 'F'],
     }),
     ...exchanged('q5-types', (x, y) => `package Q5T {
         part def T0 { attribute L : ScalarValues::Real; }
@@ -17502,7 +17599,7 @@ package PS {
     ),
     // contradicted-pair-meet: two asserted equations that meet in a usage give its feature two values there alone, so
     // another instance of the type reads the one that holds in it.
-    ...['q5-f1-ab | Q5F1::u50', 'q5-f1-ba | Q5F1::u50', 'cv-bnd-use-ab | BU::u50', 'cv-bnd-use-ab | BU::v50', 'cv-bnd-use-ba | BU::u50', 'cv-bnd-use-ba | BU::v50'].map(
+    ...['q5-f1-ab | Q5F1::u50', 'q5-f1-ba | Q5F1::u50', 'q5-def-rows-ab | DR::u50', 'q5-def-rows-ba | DR::u50', 'cv-bnd-use-ab | BU::u50', 'cv-bnd-use-ab | BU::v50', 'cv-bnd-use-ba | BU::u50', 'cv-bnd-use-ba | BU::v50'].map(
       (key) =>
         [
           key,
@@ -17520,6 +17617,8 @@ package PS {
       'bind-through-two-parts-ba | B2::v50',
       'bind-through-inherited-part-ab | BS::u50',
       'bind-through-inherited-part-ba | BS::u50',
+      'q5-def-rows-bound-ab | DRW::u50',
+      'q5-def-rows-bound-ba | DRW::u50',
     ].map(
       (key) =>
         [
@@ -17762,7 +17861,7 @@ package PS {
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
-    ...['q5-m8', 'q5-f1', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc', 'cv-bnd2', 'cv-bnd2x', 'cv-bnd3', 'cv-bnd3u', 'cv-bnd-use', 'q5-twins', 'q5-hidden'].map(
+    ...['q5-m8', 'q5-f1', 'q5-def-rows', 'q5-def-rows-bound', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc', 'cv-bnd2', 'cv-bnd2x', 'cv-bnd3', 'cv-bnd3u', 'cv-bnd-use', 'q5-twins', 'q5-hidden'].map(
       (k) => [`${k}-ab`, `${k}-ba`] as const,
     ),
     // text-order S1: a model and its members in the reverse order ({@link reversed}).
@@ -17783,8 +17882,8 @@ package PS {
       }
     }
     for (const [a, b] of STAND_ALIKE) {
-      // A row the two pin apart reads apart by design ({@link exchanged}'s `ba`), and I3 holds each to its pin.
-      const apartByDesign = (row: string) => PROBES[a]!.rows[row]?.[0] !== PROBES[b]!.rows[row]?.[0];
+      // A row an `exchanged` twin pins apart from its `ab` reads apart by design ({@link exchanged}'s `ba`), and I3 holds each to its pin.
+      const apartByDesign = (row: string) => EXCHANGED_APART.has(`${b} | ${row}`);
       for (const row of [...seen.get(a)!.keys()].filter((r) => seen.get(b)!.has(r) && !apartByDesign(r))) {
         if (letters(a, row) !== letters(b, row)) apart.push(`${a} | ${row}: ${letters(a, row)}, ${b} ${letters(b, row)}`);
       }
