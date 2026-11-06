@@ -2223,6 +2223,26 @@ function instanceAnchor(
   }
 }
 
+/**
+ * The anchor of a violated context row no binding carries (a target's, `target-by-specialisation`), where the
+ * feature it would point at is a line a definition states for every usage it types (P2's `:>> load = 5.0`
+ * under q2's `part :>> p : P2 { attribute :>> extra = 12.0; }`): the context itself, its innermost own element,
+ * naming nothing. `undefined` (the feature, as before) where that feature lies inside the context or inside a
+ * usage (the satisfier's own redefinition, read through a subject), or where the context is no user usage or
+ * definition of its own.
+ */
+function sharedFeatureAnchor(model: Model, x: ElementRecord, featureId: ElementId | undefined): ElementId | undefined {
+  const frame = (el: ElementRecord): boolean =>
+    isUsage(el.eClass) || (isDefinition(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage');
+  if (featureId === undefined || x.attrs.isLibrary === true || x.attrs.implicit === true || !frame(x)) return undefined;
+  const f = model.get(featureId);
+  for (let cur = f?.ownerId != null ? model.get(f.ownerId) : undefined; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    if (cur.id === x.id || isUsage(cur.eClass)) return undefined;
+    if (frame(cur)) return x.id;
+  }
+  return undefined;
+}
+
 /** One row of {@link instanceRollup}: a finding the rule and the app's Check format identically. */
 export interface InstanceRollupRow {
   /** Where the row points — the relation for a roll-up, the anchor rule otherwise. */
@@ -3056,7 +3076,7 @@ function readInContexts(
     // The renamed end, for a row it leaves unread: the line an author edits.
     const anchor =
       readAs === undefined
-        ? undefined
+        ? judged.result === 'violated' ? sharedFeatureAnchor(model, x, shown[0]?.featureId) : undefined
         : renamed !== undefined && judged.result === 'unknown'
           ? renamed.member.id
           : instanceAnchor(model, pass.definitions, readAs, several ? [broke.path] : names, several ? [broke] : judged.reads, undefined, x.id, broke !== undefined)?.id;
