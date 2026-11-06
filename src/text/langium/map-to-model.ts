@@ -761,6 +761,14 @@ class Mapper {
   }> = [];
 
   /**
+   * Keyword-less usages that hold nothing but a prefix (`abstract`, `#k abstract`) and end exactly at the token
+   * before a fault: the declaration that prefix led (`abstract def X;`, whose `def` the grammar does not take
+   * after a modifier) is the next element. Filled where the usage is built, turned into residues by
+   * {@link markUnparsedResidue}, which drops the prefix element once its text lives on the next one.
+   */
+  private readonly faultPrefixes: ElementId[] = [];
+
+  /**
    * The `Verify` elements built from a BARE `verify R;` requirement clause, and
    * the name each one would have declared had it been read as a clause.
    *
@@ -949,7 +957,10 @@ class Mapper {
    */
   private noteResidueOfFault(expr: Expression | undefined, weldedTo: ElementId): void {
     const cst = expr?.$cstNode;
-    if (expr === undefined || cst === undefined || expr.$type !== 'RefExpr') return;
+    // A `#`-led expression is a metadata prefix the declaration after it never took
+    // (`#k [2] :> y;` parses `#k [2]` as the body's expression and faults at `:>`).
+    if (expr === undefined || cst === undefined) return;
+    if (expr.$type !== 'RefExpr' && !cst.text.startsWith('#')) return;
     for (const e of this.faultErrors) {
       const prev = e.previousToken;
       if (prev === undefined) continue;
@@ -1007,9 +1018,27 @@ class Mapper {
    *    first `;`, which would re-parse to a DIFFERENT fault.
    */
   private markUnparsedResidue(text: string): void {
-    if (this.faultResidues.length === 0) return;
+    if (this.faultResidues.length === 0 && this.faultPrefixes.length === 0) return;
     const pairs = bracePairs(text);
     if (pairs === undefined) return;
+    // A prefix-only usage that ends at the token before a fault is the residue's FIRST half: its text starts the
+    // residue, and the element goes once the next element carries the whole statement.
+    const dropped = new Map<number, ElementId>();
+    for (const id of this.faultPrefixes) {
+      const r = this.ranges.get(id);
+      const el = this.model.get(id);
+      if (r === undefined || el === undefined || this.model.children(id).length > 0) continue;
+      const own = text.slice(r.start.offset, r.end.offset);
+      // Only tags and modifier words: nothing a save could not write again from the next element's text.
+      if (!/^(?:#[\w:.']+\s+)*[a-z]+(?:\s+[a-z]+)*$/i.test(own)) continue;
+      for (const e of this.faultErrors) {
+        const prev = e.previousToken;
+        if (prev === undefined || prev.endOffset === undefined || r.end.offset !== prev.endOffset + 1) continue;
+        this.faultResidues.push({ start: r.start.offset, tokenOffset: e.tokenOffset, weldedTo: id });
+        dropped.set(r.start.offset, id);
+        break;
+      }
+    }
     /** The `{` of the innermost body containing `offset`; -1 at file level. */
     const scopeOf = (offset: number): number => {
       let best = -1;
@@ -1033,7 +1062,17 @@ class Mapper {
           !/[;}]/.test(text.slice(residue.tokenOffset, x.start)) &&
           this.canCarryResidue(x.id),
       );
-      if (target === undefined) continue;
+      if (target === undefined) {
+        // A prefix with nothing after it to carry the statement (`abstract def;`) carries it itself, up to the
+        // `;` that ends it, when no `{` or `}` comes first.
+        const prefix = dropped.get(residue.start);
+        const semi = prefix === undefined ? -1 : text.indexOf(';', residue.tokenOffset);
+        if (prefix === undefined || prefix !== residue.weldedTo || semi < 0) continue;
+        const verbatim = text.slice(residue.start, semi + 1);
+        if (/[{}]/.test(verbatim) || scopeOf(semi) !== scope) continue;
+        if (typeof this.model.get(prefix)?.attrs.unparsedText !== 'string') this.model.setAttrs(prefix, { unparsedText: verbatim });
+        continue;
+      }
       const el = this.model.get(target.id);
       if (el === undefined || typeof el.attrs.unparsedText === 'string') continue;
       const verbatim = text.slice(residue.start, target.end);
@@ -1041,7 +1080,11 @@ class Mapper {
       this.model.setAttrs(target.id, { unparsedText: verbatim });
       // The other half of the mark: the text now lives on the residue element,
       // so it must not ALSO stay welded onto the body that swallowed it.
-      this.model.setAttrs(residue.weldedTo, { expression: undefined });
+      const prefix = dropped.get(residue.start);
+      if (prefix !== undefined && prefix === residue.weldedTo) {
+        this.model.remove(prefix);
+        this.ranges.delete(prefix);
+      } else this.model.setAttrs(residue.weldedTo, { expression: undefined });
     }
   }
 
@@ -2551,6 +2594,13 @@ class Mapper {
       declaredShortName,
       attrs,
     });
+
+    if (
+      eClass === 'ReferenceUsage' && !node.keyword && !node.isDef && declaredName === undefined && !node.body &&
+      node.specializations.length === 0 && !node.multiplicity?.length && !node.valueOp && this.faultErrors.length > 0
+    ) {
+      this.faultPrefixes.push(el.id);
+    }
 
     // Specializations (resolved against the model built so far).
     for (const spec of node.specializations) this.applySpecialization(el, spec);
