@@ -985,7 +985,11 @@ async function checkOn(
  * fresh module's checks must not wait behind it. Two modules do not share a
  * heap, so their checks cannot race each other.
  */
+/** Experiment switch: SYSPROSE_Z3_GUARDS=off disables the queue, the overlap assertion and the explicit release. */
+const guardsOff = (): boolean => process.env.SYSPROSE_Z3_GUARDS === 'off';
+
 function serially<T>(entry: CachedModule, fn: () => Promise<T>): Promise<T> {
+  if (guardsOff()) return fn();
   const turn = entry.tail.then(fn);
   entry.tail = turn.catch(() => undefined);
   return turn;
@@ -1000,6 +1004,7 @@ function serially<T>(entry: CachedModule, fn: () => Promise<T>): Promise<T> {
  * second async call is one of the {@link DEATH_SIGNATURES}.
  */
 function enter(entry: CachedModule): void {
+  if (guardsOff()) return;
   if (entry.inFlight > 0) {
     throw new Error(
       'z3 checks must not overlap: a second check was started on a module while one was in ' +
@@ -1020,6 +1025,7 @@ function enter(entry: CachedModule): void {
  * traps marks the module dead; its throw goes on to {@link classify}.
  */
 function leave(entry: CachedModule, settled: boolean, made: { release?(): void } | undefined): void {
+  if (guardsOff()) return;
   const clean = settled && !entry.dead;
   try {
     if (clean) safeRelease(made);
@@ -1046,6 +1052,7 @@ function leave(entry: CachedModule, settled: boolean, made: { release?(): void }
  * release was explicit, the same free trapped from a finalizer, loudly.
  */
 function safeRelease(obj: { release?(): void } | undefined): void {
+  if (guardsOff()) return;
   try {
     obj?.release?.();
   } catch (err) {
