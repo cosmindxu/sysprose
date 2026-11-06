@@ -225,6 +225,9 @@ describe('recovery honesty — the mark never costs more than it saves', () => {
     'package P {\n    blok 5;\n    part def B { part y; }\n}\n',
     'package P {\n    namespace N { part x; }\n}\n',
     'package P {\n    blok q : T;\n}\n',
+    'package P {\n    metadata def k;\n    part def S {\n        #k [2] :> y;\n        attribute y;\n    }\n}\n',
+    'package P {\n    metadata def k;\n    #k abstract def X;\n}\n',
+    'package P {\n    abstract def X { part p; }\n    part def Z;\n}\n',
   ];
 
   it('writes out every scrap of text it claims to be keeping', () => {
@@ -236,6 +239,68 @@ describe('recovery honesty — the mark never costs more than it saves', () => {
         if (typeof kept !== 'string') continue;
         expect(out, `kept text dropped by the save for ${JSON.stringify(src)}`).toContain(kept);
       }
+    }
+  });
+
+  it('a save keeps the error of a `#`-led statement that does not parse (`#k [2] :> y;`, `#k abstract def X;`)', async () => {
+    // Both used to save as clean text: the first welded `#k [2]` onto the body and wrote it after the body's
+    // members, the second wrote its prefix as an unnamed `#k abstract ref;` and the declaration after it as `X;`.
+    const wrap = (s: string): string[] => [
+      `package M {\n    metadata def k;\n    metadata def j;\n    part def Y;\n    ${s}\n}\n`,
+      `package M {\n    metadata def k;\n    metadata def j;\n    part def S {\n        attribute y;\n        ${s}\n        part def After;\n    }\n}\n`,
+    ];
+    const SHAPES = [
+      '#k [2] :> y;',
+      '#k #j [2] :> y, z;',
+      '#k [2..3] :>> y;',
+      '#k abstract def X;',
+      '#k #j abstract def X :> Y;',
+      '#k abstract def X { part p; }',
+      'abstract def X;',
+      'abstract def X :> Y;',
+    ];
+    for (const src of SHAPES.flatMap(wrap)) {
+      const before = await checkText(src, { library: 'none' });
+      expect(before.summary.errors, `fails on the way in: ${src}`).toBeGreaterThan(0);
+      const saved = serializeModel(parseModel(src).model);
+      const after = await checkText(saved, { library: 'none' });
+      expect(after.summary.errors, `a save laundered its error away:\n${src}\n--- saved ---\n${saved}`).toBeGreaterThan(0);
+      // The statement is written once, as typed, and a healthy neighbour is not touched.
+      const stmt = src.match(/(#k[^\n]*|abstract def[^\n]*)\n/)![1]!;
+      expect(saved.split(stmt).length - 1, `written once: ${saved}`).toBe(1);
+      expect(serializeModel(parseModel(saved).model), 'a second save is the same text').toBe(saved);
+    }
+  });
+
+  it('a prefix-only usage never takes an earlier residue\'s text with it (`blok abstract def X;`)', async () => {
+    // The unknown word is already kept on the prefix element; dropping that element would lose the word for good.
+    const tail = '    part def S {\n        METHOD\n    }\n}\n';
+    for (const stmt of ['blok abstract def X;', 'a::b ref def X;', '#k [2] abstract def X;', '#\'my tag\' abstract def X;']) {
+      const src = `package P {\n    metadata def k;\n${tail.replace('METHOD', stmt)}`;
+      const saved = serializeModel(parseModel(src).model);
+      const lead = stmt.split(/\s+(?:abstract|ref)\b/)[0]!;
+      expect(saved, `the leading text survives the save: ${stmt}`).toContain(lead);
+      const after = await checkText(saved, { library: 'none' });
+      expect(after.summary.errors, `a save laundered its error away: ${stmt}\n${saved}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps a prefix statement whole when a string holds a `;`', async () => {
+    const src = 'package P {\n    abstract def "a;b" ;\n}\n';
+    const saved = serializeModel(parseModel(src).model);
+    expect(serializeModel(parseModel(saved).model), 'a second save is the same text').toBe(saved);
+    expect(saved.split('"a;b"').length - 1, `the string is written once: ${saved}`).toBe(1);
+    expect((await checkText(saved, { library: 'none' })).summary.errors, 'the error is kept').toBeGreaterThan(0);
+  });
+
+  it('writes a prefixed declaration that DOES parse unchanged (no residue mark)', () => {
+    for (const src of [
+      'package M {\n    metadata def k;\n    #k abstract part def X;\n}\n',
+      'package M {\n    metadata def k;\n    part def S {\n        attribute y;\n        #k x :> y;\n    }\n}\n',
+    ]) {
+      const { model, diagnostics } = parseModel(src);
+      expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+      expect(model.all().filter((e) => e.attrs.unparsedText !== undefined)).toEqual([]);
     }
   });
 

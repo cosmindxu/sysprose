@@ -2861,9 +2861,13 @@ different fault.
 **What "a faulted save stays honest" does NOT cover.** The guarantee is
 deliberately narrow, and everything outside it saves to a file that checks
 clean. Precisely: only a bare REFERENCE swallowed as a body's trailing
-expression is recognised as residue, and only when the tail of the same
-statement parsed into an element of its own that the serializer writes as a
-statement. Everything else keeps the pre-existing behaviour — the swallowed
+expression (or a `#`-led one, `#k [2] :> y;`) is recognised as residue, and only
+when the tail of the same statement parsed into an element of its own that the
+serializer writes as a statement. One more shape is marked: a prefix of metadata
+tags and modifier words that ends at the fault (`abstract def X;`, `#k abstract
+def X;`, whose `def` the grammar does not take after a modifier) hands its text to
+the element after it, or carries it itself when nothing follows (`#k abstract
+def;`); only the FIRST fault of a body is marked, never one at file level. Everything else keeps the pre-existing behaviour — the swallowed
 word stays welded onto the enclosing body as a trailing expression — because
 losing the text BOTH ways is the one outcome worse than laundering. The known
 shapes:
