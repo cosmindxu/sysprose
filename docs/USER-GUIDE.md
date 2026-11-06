@@ -1497,7 +1497,7 @@ violation that one value from one line they share breaks (put back to the relati
 value, it holds) are one finding: `part def R { part q : Q {
 attribute :>> L = 50.0; } }` read by R's own q and by each `part r1 : R` points at that
 line once, named for what it redefines (`elementName` is `L`), and lists the others
-(*; the same line breaks it in r1::q::p, r2::q::p*); one the line does not mend (the
+(*; the same line breaks it in r1::q::p, r2::q::p*), and so does R's q `:>> K = 5.5` read through Q's `L = 2.0 * K`; one the line does not mend (the
 relation fails on a default too), or a sixth distinct set of values read in a group,
 keeps its own finding. A path with a
 segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; in a context row's sentence too, `'X in Y'::'est@1' = 0.78 misses Common::t …`; the `instance` and

@@ -2189,6 +2189,22 @@ function instanceAnchor(
         const ids = [...new Set(states.filter(inOwn).map((f) => f.id))];
         if (ids.length === 1) return { id: ids[0]! };
       }
+      // No own element states an input, and the one input in force (Q's `K default = 0.5` being redefined) is a
+      // redefinition a definition's usage states, on a frame every instance typed by it shares (R's q `:>> K =
+      // 5.5` under Q's `L = 2.0 * K`, for r1's q and r2's): that line, the one cause of each of their findings,
+      // which {@link instanceRollup} folds as it does the shared literal above (193).
+      const hidden = new Set(states.flatMap((f) => redefinedClosure(model, f).map((g) => g.id)));
+      const live = [...new Set(states.filter((f) => !hidden.has(f.id)))];
+      const onShared = (f: ElementRecord): boolean => {
+        for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+          const id = cur.id;
+          const el = cur;
+          const frame = isUsage(el.eClass) || (isDefinition(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage');
+          if (frame && user(el) && !owned.has(id) && frames.some((fr) => fr.reader === id)) return true;
+        }
+        return false;
+      };
+      if (live.length === 1 && !states.some(inOwn) && redefinedClosure(model, live[0]!).length > 0 && onShared(live[0]!)) return { id: live[0]!.id, shared: true };
     }
     // No read names a source of its own: the stated member, from the innermost own element, the names
     // spelled from it and only its own paths read.

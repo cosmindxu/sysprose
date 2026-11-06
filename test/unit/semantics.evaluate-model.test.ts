@@ -8339,6 +8339,23 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(many.filter((f) => f[2] === 'attribute :>> L = 50.0')).toHaveLength(1);
     expect(many.map((f) => f[0])).toEqual(['FC::R::q::p']);
     expect(String(many[0]![4])).toContain('… and 2 more');
+    // A derived value (`L = 2.0 * K`) whose one input a definition's usage states (R's q `:>> K = 5.5`): every part
+    // typed by R reads it from that one line, so one finding there (193). Where r2 restates K (over R's default),
+    // the line is not every instance's cause: r1's finding folds into it, r2's is its own.
+    const derivedDefs = [
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+      '  part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }',
+    ];
+    const foldDerived = await findings(['package FD {', ...derivedDefs, '  part def R { part q : Q { attribute :>> K = 5.5; } }', '  part r1 : R;', '  part r2 : R;', '}'].join('\n'));
+    expect(foldDerived.map((f) => [f[0], f[2]])).toEqual([['FD::R::q::p', 'attribute :>> K = 5.5']]);
+    expect(String(foldDerived[0]![4])).toContain('the same line breaks it in FD::r1::q::p, FD::r2::q::p');
+    const apart = await findings(['package FE {', ...derivedDefs, '  part def R { part q : Q { attribute :>> K default 5.5; } }', '  part r1 : R;', '  part r2 : R { part :>> q { attribute :>> K = 6.0; } }', '}'].join('\n'));
+    expect(apart.map((f) => [f[0], f[2]])).toEqual([
+      ['FE::R::q::p', 'attribute :>> K default 5.5'],
+      ['FE::r2::q::p', 'attribute :>> K = 6.0'],
+    ]);
+    expect(String(apart[0]![4])).toContain('the same line breaks it in FE::r1::q::p');
+    expect(String(apart[1]![4])).not.toContain('the same line breaks it');
     // A finding about a context that reaches a value through a reference names the context's instance, not
     // the feature the last link ends at (p50's `load`, q2's p1's): the line to edit is the instance's.
     const named = async (text: string) =>
