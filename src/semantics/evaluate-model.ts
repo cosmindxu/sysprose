@@ -2921,7 +2921,8 @@ function readInContexts(
       return {
         name: n,
         featureId,
-        ...(through ? { instance: instancePathOf(model, satisfied?.satisfier ?? x) } : {}),
+        // A reread names the context too: the feature it reads is not the context's own `p1` (`w::p1.load`).
+        ...(through || reread !== undefined ? { instance: instancePathOf(model, satisfied?.satisfier ?? x) } : {}),
         // A value read in the context is the context's own: named by it.
         qualifiedName: own(n)
           ? `${pass.definitions.contextName(x.id)}::${n}`

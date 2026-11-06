@@ -12,9 +12,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 8,
       "rows": 27,
-      "tableAgree": 23,
+      "tableAgree": 24,
       "tableDisagree": 0,
-      "tableProbes": 11
+      "tableProbes": 12
     },
     "bind-equality": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 607,
+      "tableAgree": 608,
       "tableDisagree": 0,
-      "tableProbes": 262
+      "tableProbes": 263
     },
     "nira/free": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 338,
+      "tableAgree": 339,
       "tableDisagree": 0,
-      "tableProbes": 214
+      "tableProbes": 215
     },
     "stated-value": {
       "battery": null,
@@ -419,9 +419,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 5,
       "models": 40,
       "rows": 98,
-      "tableAgree": 27,
+      "tableAgree": 28,
       "tableDisagree": 0,
-      "tableProbes": 14
+      "tableProbes": 15
     }
   },
   "defects": [
@@ -451,7 +451,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-subsetting-contradiction",
       "kind": "abstains",
-      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell.",
+      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (p1 `[2]`, p2 `[0..1]`, a quoted name in an asserted equation or a declaration), where an equation naming the usage, or a multiplicity beyond one value, leaves it unrerooted and abstaining.",
       "todo": "Report a model that contradicts itself through a subsetting usage."
     },
     {
@@ -469,7 +469,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-subsets-otherwise",
       "kind": "abstains",
-      "note": "Since instance3-pass S2 a subsetting usage that is the subsetted feature again (its kind and type, saying nothing of its own, named by no binding end or asserted equation) is read below, in each context that redefines that feature, as one of that context's (sa7: W::c T, W::c in w F, k F, w0.p2.load T; V7 T); a hand-oracle generator of 1,200 models (both text orders) gives no wrong decided cell. Every other shape, and a reading of the usage itself (a satisfy, a subject, a reference), still abstains wherever any context reads the subsetted feature otherwise (TC8, O2, RQ4, SA3S, RE3, AE3, AE4, RFN). Sound, only weaker.",
+      "note": "Since instance3-pass S2 a subsetting usage that is the subsetted feature again (its kind and type, saying nothing of its own, named by no binding end or asserted equation, and its only value) is read below, in each context that redefines that feature, as one of that context's (sa7: W::c T, W::c in w F, k F, w0.p2.load T; V7 T); a hand-oracle generator of 1,200 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (a name an asserted equation spells with a quote, a usage declared `part 'p 2' :> p1;`, p1 or its redefinition `[2]`, p2 `[0..1]`): the usage is p1 again only where it is p1's one value. Every other shape, and a reading of the usage itself (a satisfy, a subject, a reference), still abstains wherever any context reads the subsetted feature otherwise (TC8, O2, RQ4, SA3S, RE3, AE3, AE4, RFN). Sound, only weaker.",
       "todo": "Read a usage that subsets a feature an instance reads otherwise in that instance."
     },
     {
@@ -538,9 +538,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "9d8f260f7aaa8987cc7ee8ea8a78c08409dd78516934f573c6ff6d5c5f02076f",
+    "defects": "277cfa458c18ca807a7d796f317b77ee55cd9cef3c9eebe5ddf58f5d2f8a8d5d",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "5900b2eec4849e7a7ef99433aa30d14efa99b88512d2896ff05d4a3a4c034155"
+    "probes": "6cebd2d1c5dde067976abfe89d21c59852af848f100c7b87cb21e43802bd3ea6"
   },
   "fences": {
     "fence/collection-valued": {

@@ -57,18 +57,18 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 483 | 72 | 2 | 6 | 607 (262) | 0 | none | `differential-tested` |
+| `lra` | 483 | 72 | 2 | 6 | 608 (263) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 2 (2) | 0 | none | `tested` |
-| `units` | 98 | 40 | 2 | 5 | 27 (14) | 0 | none | `differential-tested` |
+| `units` | 98 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `stated-value` | 311 | 78 | 1 | 7 | 592 (254) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 222 (132) | 0 | none | `experimental` |
-| `asserted-fact` | 27 | 8 | 1 | 0 | 23 (11) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 338 (214) | 0 | none | `differential-tested` |
+| `asserted-fact` | 27 | 8 | 1 | 0 | 24 (12) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 339 (215) | 0 | none | `differential-tested` |
 | `per-instance` | 1 | 1 | 1 | 0 | 281 (133) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
@@ -231,7 +231,7 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 - **Level of `per-instance`.** `experimental` (first unmet: a decided golden row, have 0).
 - **Open defects.**
   - `D-inconsistent-axioms` (wrong-statement): One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim.
-  - `D-subsetting-contradiction` (abstains): Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell.
+  - `D-subsetting-contradiction` (abstains): Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (p1 `[2]`, p2 `[0..1]`, a quoted name in an asserted equation or a declaration), where an equation naming the usage, or a multiplicity beyond one value, leaves it unrerooted and abstaining.
   - `D-readings-rollup` (abstains): The subsetting component fence is per usage, not per instance, and the other abstentions of the rollup. None gives a wrong answer.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”

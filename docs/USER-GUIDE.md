@@ -1671,8 +1671,10 @@ a measure read so — a limit of this tool. Except where p2 subsets p1 alone and
 p1 again under another name: of p1's kind, typed by nothing p1 is not (`part p2 : T0
 :> p1;` over `part p1 : T0;`, not a `part p2 : T1 :> p1;` whose T1 holds features of
 its own), saying nothing of its own, neither a `ref` nor an attribute, with nothing
-else redefining or subsetting either and no binding end or asserted equation of the
-model naming p2 — and every context that reads p1 otherwise redefines it (w's `part
+else redefining or subsetting either, no binding end or asserted equation of the
+model naming p2 (quoted or not), p2 stated `[1]` or with no multiplicity and p1, and
+whatever redefines it, `[1]`, `[0..1]` or none (where p1 may hold two values, or p2 may
+be empty, an axiom on p2 binds one p1 at most) — and every context that reads p1 otherwise redefines it (w's `part
 :>> p1 { … }`, or a specialisation's). There each name read below p2 is read, in each
 such context, as one of that context's p1s, on every surface and in `bounds`:
 `w.p2.load` is w's p1's 50, `w0.p2.load` (a `w0 : W` that changes nothing) W's own 1,

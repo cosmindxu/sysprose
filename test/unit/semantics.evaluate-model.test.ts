@@ -4253,10 +4253,13 @@ describe('checkConstraints — a default stands against an asserted equation (de
       part p : P;
     }`);
     expect([checkOf(m!, 'RF::P::cm').result, checkOf(m!, 'RF::P::s').result]).toEqual(['violated', 'unknown']);
-    expect(validate(m!).filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning').map((d) => m!.qualifiedName(d.elementId!))).toEqual([
-      'RF::P',
-      'RF::P::cm',
-    ]);
+    // The order the diagnostics come in is the model's element order, which differs run to run: compared as a set.
+    expect(
+      validate(m!)
+        .filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning')
+        .map((d) => m!.qualifiedName(d.elementId!))
+        .sort(),
+    ).toEqual(['RF::P', 'RF::P::cm']);
   });
 
   it('says that an `assert` a requirement def writes is a fact a usage typed by it does not check (M11)', async () => {
@@ -6248,6 +6251,18 @@ describe('a value, a reference and a binding that equate two parts or structured
       const c = check(same!, rel);
       expect([c.result, c.instances ?? [], numeric(same!, rel)], rel).toEqual(['satisfied', [], 'satisfied']);
     }
+  });
+
+  it('spells the reread row by the instance, never by a feature the instance has not (instance3-pass review)', async () => {
+    // W's `p2.load == 7.0` over `part p2 :> p1;` is read again in w, p2 as w's p1: its sentence said `p1::p1.load = 50`, a
+    // feature that does not exist, where it is `w::p1.load` (V11's row says `w::p2.load`).
+    const { model: e3 } = await loadModelText(`package E3 {
+      part def T0 { attribute load default = 1.0; }
+      part def W { part p1 : T0; part p2 :> p1; assert constraint e { p2.load == 7.0 } }
+      part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+    }`);
+    const row = check(e3!, 'E3::W::e').instances!.find((i) => i.context === 'w')!;
+    expect(row.message).toContain('w::p1.load = 50 misses W::e (p2.load == 7.0)');
   });
 });
 

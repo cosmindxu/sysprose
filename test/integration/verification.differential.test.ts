@@ -1599,6 +1599,10 @@ describe('a value read where its inputs are changed is that context’s own, and
     // claimed nothing. Read below as one of w's p1s (instance3-pass S2), it is bounded at w's p1's 50.
     const sa7 = `package SA7 { ${T0} part def W { part p1 : T0; part p2 :> p1; } part w : W { ${p50} } }`;
     expect((await bound(sa7, 'SA7', 'w.p2.load')).slice(0, 2)).toEqual([[['optimum', null, 50]], 0]);
+    // Not where p1 admits two values (MU0): W's `assert constraint a { p2.load <= 5.0 }` binds one of them at most, and
+    // `w.p1.load` was bounded at 5 exactly (exit 0). It claims nothing, as before the step.
+    const mu0 = `package MU0 { part def T0 { attribute load; attribute m default = 1.0; } part def W { part p1 : T0[2]; part p2 :> p1; assert constraint a { p2.load <= 5.0 } } part w : W { part :>> p1 { attribute :>> m = 3.0; } } }`;
+    expect((await bound(mu0, 'MU0', 'w.p1.load')).slice(0, 2)).toEqual([[['inconclusive', 'verification/not-evaluable', null]], 2]);
   });
 
   const UNREAD_BINDING = 'files a binding it does not read under its own reason: a limit of this tool, exit 2, never forgiven (O9 S1)';
@@ -13557,6 +13561,32 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'STC::k': ['T/T/T/?', 'T'],
       'STC::kF': ['F/F/F/?', 'F'],
     }),
+    // Review fixes (instance3-pass): p2 is p1 again only where it is p1's only value, and no asserted equation names
+    // it, however the name is spelt. An equation over `'p2'.load` (SQ, SQ2: the quote is no word boundary) or over a
+    // usage declared `part 'p 2' :> p1;` (Q5) names it, so p2 is not re-rooted: it was, and `w.p1.load <= 10.0` read T
+    // on the check beside the numeric surface's F (SQ) and `W::e` met 50 against 7 (SQ2). A multiplicity breaks it
+    // too: p1 `[2]` (MU0), `[2]` on w's redefinition only (MR) or p2 `[0..1]` (MP), where the assert on p2 constrains
+    // one p1 at most, and the SMT engine proved `w.p1.load <= 5.0` (holds, exit 0, `bounds` 5 exactly). Each abstains as
+    // before the step, in either text order.
+    ...Object.fromEntries(
+      (
+        [
+          ['sub-quote-sq', 'SQ', 'part def T0 { attribute load; }\npart def W { part p1 : T0; part p2 :> p1; assert constraint e { \'p2\'.load == 7.0 } }\npart w : W { part :>> p1 { attribute :>> load = 50.0; } }\nconstraint k { w.p2.load <= 10.0 }\nconstraint k1 { w.p1.load <= 10.0 }', { 'W::e': '?/-/?/-', k: '?/?/?/?', k1: '?/?/?/?' }],
+          ['sub-quote-sq2', 'SQ2', 'part def T0 { attribute load; }\npart def W { part p1 : T0; part p2 :> p1; assert constraint e { \'p2\'.load == 7.0 } constraint c { p2.load <= 10.0 } }\npart w : W { part :>> p1 { attribute :>> load = 50.0; } }\npart u : W;', { 'W::e': '?/-/?/-', 'W::c': '?/?/?/?' }],
+          ['sub-quote-q5', 'Q5', "part def T0 { attribute load; }\npart def W { part p1 : T0; part 'p 2' :> p1; assert constraint e { 'p 2'.load == 7.0 } }\npart w : W { part :>> p1 { attribute :>> load = 50.0; } }\nconstraint k { w.'p 2'.load <= 10.0 }\nconstraint k1 { w.p1.load <= 10.0 }", { 'W::e': '?/-/?/-', k: '?/?/?/?', k1: '?/?/?/?' }],
+          ['sub-mult-mu0', 'MU0', 'part def T0 { attribute load; attribute m default = 1.0; }\npart def W { part p1 : T0[2]; part p2 :> p1; assert constraint a { p2.load <= 5.0 } }\npart w : W { part :>> p1 { attribute :>> m = 3.0; } }\nconstraint k { w.p1.load <= 5.0 }', { 'W::a': '?/-/?/-', k: '?/?/?/?' }],
+          ['sub-mult-mr', 'MR', 'part def T0 { attribute load; attribute m default = 1.0; }\npart def W { part p1 : T0; part p2 :> p1; assert constraint a { p2.load <= 5.0 } }\npart w : W { part :>> p1[2] { attribute :>> m = 3.0; } }\nconstraint k { w.p1.load <= 5.0 }', { 'W::a': '?/-/?/-', k: '?/?/?/?' }],
+          ['sub-mult-mp', 'MP', 'part def T0 { attribute load; attribute m default = 1.0; }\npart def W { part p1 : T0; part p2[0..1] :> p1; assert constraint a { p2.load <= 5.0 } }\npart w : W { part :>> p1 { attribute :>> m = 3.0; } }\nconstraint k { w.p1.load <= 5.0 }', { 'W::a': '?/-/?/-', k: '?/?/?/?' }],
+        ] as const
+      ).flatMap(([name, pkg, members, cells]) => {
+        const rows = Object.fromEntries(Object.entries(cells).map(([row, cell]) => [`${pkg}::${row}`, [cell, null] as [string, Ref]]));
+        const text = (m: string): string => `package ${pkg} {\n${m}\n}`;
+        return [
+          [name, probe(text(members), rows)],
+          [`${name}-rev`, probe(text(members.split('\n').reverse().join('\n')), rows)],
+        ];
+      }),
+    ),
     // A subsetting usage an instance writes (GI: w's `part p3 :> p1;`) and one that subsets through a chain (SC: W's
     // `part p2 :> q.p1;`, which w's q changes): read as before through the subsetted feature's own element, `k` read T
     // on all four surfaces, where w's load is 50 (true F); each abstains, its sentence naming the usage's owner.

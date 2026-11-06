@@ -2053,6 +2053,25 @@ export class DefiningEquations {
     let bindings: ElementRecord[] = [];
     let equations: string[] = [];
     const typesOf = (x: ElementRecord): ElementRecord[] => this.model.typesOf(x.id).filter((t) => !isUsage(t.eClass));
+    // Multiplicity: the subsetting usage has exactly one value (none stated, `[1]`, `[1..1]`), and the subsetted feature
+    // and every usage that redefines it at most one (`[0..1]` too), so w's p2 is w's only p1 whatever redefines it.
+    const singleValued = (f: ElementRecord, g: ElementRecord): boolean => {
+      const bound = (m: unknown): [string, string] | undefined => {
+        if (m === undefined) return ['1', '1'];
+        if (typeof m !== 'string') return undefined;
+        const [lo, hi] = m.replace(/^\[|\]$/g, '').split('..').map((x) => x.trim());
+        return hi === undefined ? [lo!, lo!] : [lo!, hi];
+      };
+      const own = bound(f.attrs.multiplicity);
+      if (!own || own[0] !== '1' || own[1] !== '1') return false;
+      return this.model
+        .all()
+        .filter((x) => x.id === g.id || (x.attrs.isLibrary !== true && isUsage(x.eClass) && redefinedClosure(this.model, x).some((y) => y.id === g.id)))
+        .every((x) => {
+          const b = bound(x.attrs.multiplicity);
+          return b !== undefined && (b[1] === '0' || b[1] === '1');
+        });
+    };
     for (const r of this.model.ofKind('Subsetting')) {
       if (r.attrs.isLibrary === true) continue;
       const f = r.source?.[0] !== undefined ? this.model.get(r.source[0]) : undefined;
@@ -2071,8 +2090,12 @@ export class DefiningEquations {
         equations = users.flatMap((x) => (isAsserted(x) && typeof x.attrs.expression === 'string' && x.attrs.expression.includes('==') ? [x.attrs.expression] : []));
       }
       if (!cleanSubsetting(this.model, this, f, g)) continue;
-      const token = new RegExp(`(?<![\\w$'])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$'])`);
-      if (equations.some((e) => token.test(e))) continue;
+      // Only if p2 is p1's only value in an instance: an axiom on p2 is then one on all of p1.
+      if (!singleValued(f, g)) continue;
+      // A name an equation reads, spelt either way (`p2` or `'p2'`, `'p 2'`): by the names it parses to, and the text
+      // for one that does not parse; the quote is no boundary, so a spelling this misses only abstains.
+      const token = new RegExp(`(?<![\\w$])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`);
+      if (equations.some((e) => token.test(e) || relationNamesOf(e).some((n) => n.split('.').includes(name)))) continue;
       const writes = bindings.some((b) =>
         [b.source?.[0], b.target?.[0]].some((id) => {
           const path = bindingEndPath(this.model, id, b.ownerId!);
