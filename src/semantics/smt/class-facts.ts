@@ -12,9 +12,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 8,
       "rows": 27,
-      "tableAgree": 23,
+      "tableAgree": 24,
       "tableDisagree": 0,
-      "tableProbes": 11
+      "tableProbes": 12
     },
     "bind-equality": {
       "battery": null,
@@ -232,9 +232,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 0,
       "rows": 0,
-      "tableAgree": 60,
+      "tableAgree": 67,
       "tableDisagree": 0,
-      "tableProbes": 54
+      "tableProbes": 61
     },
     "ite": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 485,
-      "tableAgree": 588,
+      "tableAgree": 608,
       "tableDisagree": 0,
-      "tableProbes": 259
+      "tableProbes": 263
     },
     "nira/free": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 326,
+      "tableAgree": 339,
       "tableDisagree": 0,
-      "tableProbes": 211
+      "tableProbes": 215
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 573,
+      "tableAgree": 592,
       "tableDisagree": 0,
-      "tableProbes": 251
+      "tableProbes": 254
     },
     "text-as-real": {
       "battery": null,
@@ -419,9 +419,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 5,
       "models": 40,
       "rows": 98,
-      "tableAgree": 27,
+      "tableAgree": 28,
       "tableDisagree": 0,
-      "tableProbes": 14
+      "tableProbes": 15
     }
   },
   "defects": [
@@ -441,8 +441,8 @@ export const CLASS_FACTS: ClassFacts = {
         "per-instance"
       ],
       "id": "D-subsetting-contradiction",
-      "kind": "wrong-statement",
-      "note": "A model that contradicts itself through a subsetting usage decides other rows (w.x <= 5.0 T, w.x >= 5.0 F) where decision 1 says the axioms are inconsistent, and nothing reports it. The entry may be a wrong decided cell; read as a wrong-statement until probed.",
+      "kind": "abstains",
+      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (p1 `[2]`, p2 `[0..1]`, a quoted name in an asserted equation or a declaration), where an equation naming the usage, or a multiplicity beyond one value, leaves it unrerooted and abstaining.",
       "todo": "Report a model that contradicts itself through a subsetting usage."
     },
     {
@@ -460,7 +460,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-subsets-otherwise",
       "kind": "abstains",
-      "note": "Re-read: every row read through the subsetting usage abstains wherever any context reads the subsetted feature otherwise. Sound, only weaker.",
+      "note": "Since instance3-pass S2 a subsetting usage that is the subsetted feature again (its kind and type, saying nothing of its own, named by no binding end or asserted equation, and its only value) is read below, in each context that redefines that feature, as one of that context's (sa7: W::c T, W::c in w F, k F, w0.p2.load T; V7 T); a hand-oracle generator of 1,200 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (a name an asserted equation spells with a quote, a usage declared `part 'p 2' :> p1;`, p1 or its redefinition `[2]`, p2 `[0..1]`): the usage is p1 again only where it is p1's one value. Every other shape, and a reading of the usage itself (a satisfy, a subject, a reference), still abstains wherever any context reads the subsetted feature otherwise (TC8, O2, RQ4, SA3S, RE3, AE3, AE4, RFN). Sound, only weaker.",
       "todo": "Read a usage that subsets a feature an instance reads otherwise in that instance."
     },
     {
@@ -529,9 +529,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "8e6d30cc5af5f7182c9852f271db34af6b1134a0b22432f4dad56c8477d9c373",
+    "defects": "fd6d6e9e6fdfd85db238b40f3f8911d191cb6f3464259845d52508d2c1bff007",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "a1d0367243e4365c51498df315a7064d1e4c45a7b802d958102ebd962d749277"
+    "probes": "1a5058b39a72d42c1b2bc101d168db6844233f88e911f51936def8b2671876c0"
   },
   "fences": {
     "fence/collection-valued": {

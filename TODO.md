@@ -36,7 +36,7 @@ maintainer says `awaits user decision U<n>` and names the question.
       engine although SMT decides (the `unread-assert` fence; probe v2-refused-axiom-inst-ok); `x ==
       L` with L an unplaceable outer name (lex-lr1 Q::c, topT, topF read `?`). Done when those read
       their ref or are ruled permanent. Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)' item (6)): SMT reporting `inconsistent-axioms` file-wide (g5, g4, a1, k2 on SMT) in a model that contradicts itself (decision 1). The
-      numeric surface's 'did not converge' wording for paired equations: plan step 6.
+      numeric surface's whole-model solve still meets the pair and does not converge; since instance3-pass S3 its sentence names the pair.
       [contradictory-models S1, S3, review; instance2-pass S4]
 - [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.**
       Ruling made 2026-11-05 (maintainer): file a requirement row whose verdict is the assert's own,
@@ -55,18 +55,16 @@ maintainer says `awaits user decision U<n>` and names the question.
       alone, and a usage that subsets or redefines it: one equation in P and one in `part p : P { …
       }` leave p2 : P's L read at P's equation on the check (`q5-f1`'s `u50`, c6-use's `p2.L`: T,
       and F with the two values exchanged). The literal engine now decides these too (Q5F1::u50
-      T/T/?/X; BU::u50 and BU::v50 the same). The numeric surface still reads 'did not converge'
-      there (the whole-model solve meets the pair; step 6), and also on the through-part siblings
+      T/T/?/X; BU::u50 and BU::v50 the same). The numeric surface's whole-model solve still meets the pair and does not converge there; since instance3-pass S3 its sentence names the pair, and also on the through-part siblings
       (BQ::u50, B2::u50 and v50, BS::u50: T/X/?/X, where the literal engine reads X). Still
       abstaining, sound but readings lost: a pair that meets in the feature's owner (P, or a
       specialisation: G2's P2), read in a usage whose `:>> a = 25.0` makes the two agree; two usages
       that each contradict P (every P's L abstains again); a value the pair reaches through a dotted
       name or a relation outside the instance (P's `bind s.M = L`, `attribute M = p.L`, a package's
       `bind w2 = p2.L`), which taints every instance; a P nested in the contradicted instance
-      (`p.inner.L`); a bare `L == 50.0` beside `L == 50.0 [kg]` (`q5-unitagree`, T on all four
-      surfaces at f1f5ca5); a side over a name a binding joins; a definition's own rows over a usage
+      (`p.inner.L`); a side over a name a binding joins; a definition's own rows over a usage
       it holds, and a value over a dotted name (`Z = p.L` in Q), which stay undecided in every
-      instance of a pair that meets in a usage. Read a bare literal in the feature's declared unit.
+      instance of a pair that meets in a usage.
       [contradicted-value S2]
       The FMI `start` and the Solve measure value inherit this breadth (text-order S2): `part def P { attribute load; assert constraint c1 { load == 1.0 } }` with `part def Q { part p : P { attribute :>> load; assert constraint c50 { load == 50.0 } } }` takes P::load's start from 1 to the type default 0 (marked in the variable's description) while only an instance elsewhere contradicts it (also r8-redef-novalue-assert-dflt, S4_N_PP, S4_N_PU). A literal written beside a contradicted pair keeps its start in both orders (`attribute L : Real = 5.0;` beside `L == 50.0` and `L == 60.0`); decision 14's removal in wave 3b settles whether an asserted equation overrides a written value for an export. [text-order S2]
       A pair on the two ends of a binding met in a usage (c6-use) now reads p2.L; one filed at P
@@ -75,44 +73,52 @@ maintainer says `awaits user decision U<n>` and names the question.
       Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
       item (6)): a pair made to agree by a usage's `:>>` (the pair that meets in the owner), and the
       breadth of FMI `start` (readsContradictedDefinition stays feature-wide). Left: the
-      unit-agreement part and the shapes above.
+      shapes above. Since instance3-pass S3 a bare number beside a quantity of the feature's kind
+      is one value in the kind's coherent SI unit (q5-unitagree-ab T/T/T/T; -ba T/?/T/?: written
+      second, the bare equation is refused on the literal and SMT engines, derived-bare-literal). A
+      feature that declares a unit other than its kind's coherent SI one (`L : MassValue [g]`) is
+      defined by no bare equation on the check, literal or numeric surfaces (`declared-unit`); the
+      SMT engine reads it in the declared unit.
 - [ ] **Read a usage that subsets a feature an instance reads otherwise in that instance.** Since
-      subsetting-pass, every row read through W's `part p2 :> p1;` abstains wherever any context of
-      W reads p1 otherwise (`subsettingOtherwise`, `subsettingTaint` in
-      src/semantics/defining-equation.ts). So does every row read in such a usage (`T1::tc in W::p2`
-      for `part p2 : T1 :> p1;`), and the own row of a relation nested in its type
-      (`subsettingAround`: TC8's `T1::sub::tc`, for every T1's sub). The taint is on the usage, not
-      on the instance, so true rows abstain too: W's own rows (sa7's `W::c`, T at W's values); a
-      sibling `w0 : W` that changes nothing (`w0.p2.load <= 5.0` ?/?/?/? on all four surfaces, its
-      sentence naming w); an instance that changes only a feature of p1 that nothing reads through
-      p2 (V7: `part :>> p1 { attribute :>> tag = 9.0; }`); TC8R's `T1::sub::tc` (`v >= 5.0`, F at
-      T1's own values at 84fb971) for T1's own sub; a package's `satisfy RF by v.p2` for a `v : W`
-      that changes nothing (O2); a requirement's own row where only a `satisfy` context that
-      abstains for its own reason lists the subsetted feature (RQ4); R's own row standing for
-      package `satisfy R by p50` / `by p1` over R's `part q :> s;`, which file no row of their own
-      (SA3S, RE3); `refine` and `fault-tree`, which go from decided to inconclusive (RFN: `satisfy
-      Top by w` reads `s.p2.load` beside W's `satisfy RF by p2`; 84fb971 gave `refined` with exit 0,
-      and `{RF}` as a single point of failure with a confirmed witness and exit 1, both true; both
-      now exit 2, because the unread-binding refusal reaches those lanes); and, since the asserted
-      step, the first link of every other name of an asserted relation that reads through any
-      satisfierTaint element (AE3: a package's `w.x == w.p2.load` taints w, so `w.p1.load`, true F,
-      abstains; AE4: W's `p1.load == p2.load` taints W's p1). Reading them needs the walk to read a
-      subsetting usage in an instance as one of that instance's subsetted feature (as it re-roots a
-      bound subject), keeping its own features, with a value both state read as two values; and the
-      asserted step to taint the defined feature rather than its first link where that feature is
-      not a shared definition feature. Done when sa7's `W::c` reads T, `W::c in w` F, `k` F and
-      `w0.p2.load` T, and TC8's `T1::sub::tc` reads T for T1's own sub and F for w's p2's. Sound,
-      only weaker. [subsetting-pass S1, branch review]
-- [ ] **Report a model that contradicts itself through a subsetting usage.** Take W's `assert
-      constraint a { p2.load <= 5.0 }` over `part p2 :> p1;` beside w's `part :>> p1 { attribute :>>
-      load = 50.0; }`. Every w's p2 is one of w's p1s, so the model contradicts itself. Since
-      subsetting-pass, `a`'s row abstains (it read T), but the SMT axiom still reads W's own p2 (1).
-      So other rows are decided (v11: `w.x <= 5.0` T, `w.x >= 5.0` F) where decision 1 says the
-      axioms are inconsistent, and nothing reports the contradiction. The model with `assert
-      constraint a { p2.load >= 40.0 }` holds for its only instance w (50) (AI, in
-      subsetting-pass-scratch/wbr/ai.sysml). There the check abstains on `a` (?/-/?/-) and strict is
-      OK, while SMT reads W's own p2 (1) and reports inconsistent-axioms on every row (`k`, `k2`
-      T/T/T/X): an X the check no longer explains. [subsetting-pass S1, branch review]
+      instance3-pass S2, a usage that is the subsetted feature again is read below in each context
+      that redefines it, as one of that context's p1s (rerootedSubsettings and subsettedIn in
+      src/semantics/defining-equation.ts). Such a usage has p1's kind and type, says nothing of its
+      own, is neither a ref nor an attribute, has nothing else redefining or subsetting either, and
+      no binding end or asserted equation names it. Results: sa7 `W::c` T, `W::c in w` F, k and k1
+      F, w0.p2.load T; V7, SA7D, SA7B and NQ3 decided; bounds of w.p2.load is 50. Still abstaining
+      (sound, readings lost): a reading of p2 itself (sa3's `satisfy RF by p2`, a package's
+      `satisfy RF by w.p2` / `v.p2` (O2), a subject's or reference's value `= p2`); TC8's
+      T1::sub::tc (a T1 that adds features is not p1 again, and no lane files a row for w's p2's
+      sub); RFN refine and fault-tree still inconclusive (they need the per-instance satisfy read,
+      176's satisfy half); `::>`, nested (SA7N), chained (SA7C), attribute (SA7A) and sibling
+      subsetters; a binding end or asserted equation naming p2 (VB, AX, PX, AE3, AE4; the design's
+      asserted-step change was not done); a context that reads p1 otherwise without redefining it
+      (RQ4's satisfy context, SA3S and RE3's `q :> s`, a binding from above). Brief done-when items
+      not met: TC8 T1::sub::tc (T for T1's own sub, F for w's p2's), RFN refine `refined` with exit 0
+      and fault-tree `{RF}` with exit 1. [subsetting-pass S1, branch review; instance3-pass S2]
+- [ ] **Report a model that contradicts itself through a subsetting usage.** Since instance3-pass S1
+      an `assert` read through a usage that subsets a feature an instance reads otherwise is read
+      again in each such instance, the usage re-rooted onto that feature: W's `assert constraint a {
+      p2.load <= 5.0 }` over `part p2 :> p1;` beside w's `part :>> p1 { attribute :>> load = 50.0;
+      }` files `W::a in w` (F on the check and the numeric surface, `sysml-check --strict` fails)
+      and an axiom of its own, so the SMT engine reports inconsistent-axioms on every row (v11:
+      `w.x <= 5.0` T/T/T/X); where it holds in w every row is decided (V11H). Only where that is
+      the usage's value: the assert written in the element both are features of, naming the usage at
+      the head of a dotted name, the usage subsetting that one feature and saying nothing of its
+      own, nothing else redefining or subsetting either. Since S2, beside a usage read below as p1
+      again, W's own row of the assert reads W's values (V11 `W::a` T/-/T/-; AI's `W::a` F/-/F/-,
+      which strict reports), `W::a in w` stays F (AI: T/-/T/-) and SMT stays X (AI's k, k2
+      T/T/T/X). S1's reread applies now only to the shapes the walk does not re-root (`part p2 : T1
+      :> p1;`, an equation over p2). Left, sound: every other shape makes the SMT engine decide no
+      row of the file (`not-evaluable`), the check abstaining as before: an assert reading the usage
+      through a value or an asserted equation (`y == p2.load`, AX), a package assert through
+      `w.p2.load` (PX), a `::>`, an instance that binds the subsetted feature (`bind p1.load = K`),
+      an assert of the usage's type (T1's `tc` under `part p2 : T1 :> p1;`, STC), a chain or a usage
+      with two supers, a quoted name an asserted equation spells, a multiplicity beyond one value
+      (p1 or its redefinition `[2]`, p2 `[0..1]`, p2 with a multiplicity other than `[1]`), and a
+      subsetting usage that says something of its own where an instance reads what it subsets
+      otherwise (SV2's two loads; also where the other value is a `default` that gives way: SE's RF
+      row, T/T/T/?). [instance3-pass S1, S2]
 - [ ] **Spell a chained subsetting target as written in the subsetting sentence.** The Subsetting
       now keeps the path as written (`attrs.chain`), the sentence says "subsets `q.p1`" and Save
       writes `q.p1`. Left: the instance test still runs in Q for `part p2 :> q.p1;`, not in W with
@@ -459,8 +465,7 @@ headings.
       answer exists; none gives a wrong answer. (1) The subsetting component fence is per usage, not
       per instance: the usage an instance redefines itself (w.p1 beside `p2 :> p1`), every instance
       of what the component's usages are features of, and a package subsetter's subsetted usage
-      abstain even where the reading would be right (pins sub-rv1-diamond k2, sub-sa7 k1, the two
-      satisfy rows of sat-nested-nq3; corpus model e1-subset); a sound per-instance skip needs
+      abstain even where the reading would be right (pin sub-rv1-diamond k2; corpus model e1-subset; since instance3-pass S2 sub-sa7 k1 reads F/F/F/F and nq3's rows F/-/F/- and -/F/-/F); a sound per-instance skip needs
       per-context answers. (2) A bridge, chain-target or package fence fires on any member that
       states a value, at any depth, or whose type states one, even where the values agree. (3) A
       line of parts, a merged line and a twice-stated feature fence every name they reach (dependent
@@ -526,7 +531,7 @@ headings.
       -derived2); (15) a scoped worklist (`obligationsOf` with scopeId, the Checks 'Obligations'
       listing) may carry a bound the whole model refuses as meeting (review-scratch/scope.mts;
       sound, the partner is no axiom there); (16) a usage that subsets a feature an instance reads
-      otherwise (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
+      otherwise, narrowed by instance3-pass S2 to the shapes still fenced (TC8, AE3, SA3, O2, RQ4, SA3S, RE3, RFN, and the `::>`, nested, chained, attribute and sibling subsetters) plus a name an asserted equation spells with a quote and a multiplicity beyond one value (sub-sa7 and sub-def-sa7d now read) (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
       `satisfierTaint` feeds about eight readers; probes sub-sa7, sub-sa3, sub-sa5, sub-def-sa7d,
       sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). (17) solver2-pass S2: the check
       refuses a whole conjunction when one conjunct hits a gate refusal (probe
@@ -1019,6 +1024,22 @@ true values. What follows is what that branch and the review of it left open; en
       check; an assert typed by a constraint definition with no body makes the literal and SMT
       surfaces abstain file-wide; a non-asserted constraint typed by a constraint definition files
       no row. [names-pass]
+      (6) Subsetting (instance3-pass): p2 `[0..1]` or `[0..*]` reads as present in S1's reread rows of
+      an assert: `W::a in w` F and SMT X where p2 may be empty; this is the engine's existing stance
+      for optional parts, a limit of multiplicity reading. A usage with a multiplicity other than
+      `[1]`, or a subsetted feature that may hold more than one value, stays unre-rooted, so its
+      rows keep abstaining. The SMT fence is file-wide, not per component, and its two-values test
+      also fences a value whose partner is a `default` that gives way (SE's RF own row, T/T/T/T to
+      T/T/T/?). The `consistency` and `bounds` commands read the worklist but not
+      `subsettingUnread`; not probed for a contradiction through structural axioms only. The
+      catalogue entry for `verification/not-evaluable` does not yet mention the new SMT sentence
+      (USER-GUIDE does). Numeric: `declared-unit` shapes abstain on three surfaces instead of being
+      read in the declared unit (needs a decision on a bare equation over a multiplicity-unit
+      feature); `sameKind` is conservative (a redefinition with no typing of its own, a declared
+      coherent unit `[kg]`, a kind reached only through a specialisation stay undecided); the
+      numeric sentence names only `differs` sets, an `undecided` set keeps 'did not converge'. The
+      differential test's 1 h beforeAll hook timeout is fragile under heavy load (3095 to 7151 s
+      seen). [instance3-pass]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,
@@ -1079,7 +1100,7 @@ true values. What follows is what that branch and the review of it left open; en
       value; the rest stays open. (d) 233 'Narrow the abstention over two disagreeing asserted
       equations (optional).': a pair made to agree by a usage's `:>>` (the pair that meets in the
       owner), and the breadth of FMI `start` (readsContradictedDefinition stays feature-wide); the
-      unit-agreement part stays open. (e) 255 'Solve the plain equations of a design component
+      the declared-unit shapes stay open (instance3-pass S3). (e) 255 'Solve the plain equations of a design component
       jointly over all roots (optional).': the general all-roots solve; entry closed. (f) 262 'Read
       `assert not constraint c { ... }` as the negation.': the refused shapes (a bodiless clause, a
       specialising one, `assert not requirement`, and a members body holding a nested clause, part,
