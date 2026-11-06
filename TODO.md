@@ -772,22 +772,20 @@ true values. What follows is what that branch and the review of it left open; en
       vocabulary commit ships it, add FAILURE_MODE_QUALIFIED_NAME, ask for it and drop the option;
       the campaign test then declares the definition in SysproseVerification and its "model's own
       definition is counted" sentence changes. [small-defaults S3] Kept held 2026-11-05 until the SysproseVerification vocabulary commit ships (blocked on that commit, not on a decision).
-- [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations
-      --element` (and the app's scoped checks) filters by the relation's own element only
-      (`scopeFilter` in obligations.ts), so a relation read per instance in the scoped element
-      lists none of its rows (`--element E5::q2` on the e5-renamed probe shows 0 rows although
-      `P::c in E5::q2::p2` is violated). DECIDED by the conservative reading (ui-pass S1,
-      reversible): the scope lists the relations the scoped element owns or contains, and the
-      USER-GUIDE Checks row says so; the empty scoped report now says 'this scope holds no
-      relation' / 'this scope holds no requirement and no case objective'. Still open: big-
-      bind-600's cold check is 17% slower than before the routing change (577 to 675 ms; the cold-
-      check branch measures it). (2) The evidence record does not record the instance path of a
-      shared-usage reading (`satisfy LoadReq by Sys::p` records only the own row), and `verify`
-      prints a moved reading as `H::LoadReq in H::p1` where the record says `H::massR in H::p1`.
-      [reporting-residuals S2; ui-pass S1]
-      The quoting,
-      footer-name, double-count, requirement-def specialisation, earlier-build sentence, frame-cap
-      and raw-count items are done or were fixed by earlier reviewers
+- [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) DECIDED by the
+      conservative reading (ui-pass S1, reversible): `obligations --element` lists the relations
+      the scoped element owns or contains, the USER-GUIDE Checks row says so, and the empty scoped
+      report says "this scope holds no relation" / "this scope holds no requirement and no case
+      objective". Still open there: big-bind-600 cold check is 17% slower than before the routing
+      change (577 to 675 ms); measurement only, to be taken on an idle machine. (2) `satisfy
+      LoadReq by Sys::p` (a path through a shared usage, naming a feature of Sys from outside it)
+      reads as a `not-evaluable` row, and its v2 record names `S::LoadReq in S::Sys::p`, not the
+      instances `q1::p` and `q2::p` (probe small2-pass-scratch/shared.sysml); recording instance
+      paths needs the per-instance read in src/semantics/evaluate-model.ts. `verify` prints a moved
+      reading as `H::LoadReq in H::p1` where the record says `H::massR in H::p1`: DECIDED by the
+      conservative reading as intended and documented in the USER-GUIDE (the report names the
+      clause owner, the record the requirement the `satisfy` names), reversible.
+      [reporting-residuals S2; ui-pass S1; small2-pass S1]
 - [ ] **Fold the per-instance findings of a cause a definition states by a derived value, or beside
       another read.** naming-pass S1 anchors a violated instance whose one breaking read is a
       derived value reached through a binding (M7: q2's `:>> K = 25.0` under Q's `L = 2.0 * K`) at
@@ -1249,12 +1247,24 @@ true values. What follows is what that branch and the review of it left open; en
       only. Decided in text-pass, reversible: a bare `metadata T {…}` is read as typed by T (named
       reading), and statement kinds are read by spelling even against a model's own `metadata def
       <prose>`; both documented in USER-GUIDE as intended. [text-pass]
-- [ ] **Save launders two `#`-led shapes that still fail to parse (weaker; soundness-adjacent).**
-      `#k [2] :> y;` saves as `:> y; … #k [2] }`; `#k abstract def X;` saves as `#k abstract ref;
-      X;`: serializeModel(parseModel(text)) reparses with 0 errors and a different meaning; the app
-      keeps back a text with a syntax error, so only the API/SDK path (L6) reaches it. Done when both
-      shapes keep their error through a save or are added to L6 SAVE_KEEPS_THE_ERROR. Probe
-      text-pass-scratch/review/rt.mts cases 10 and 13. [text-pass]
+- [ ] **Abstentions left in laundering shapes (rollup; weaker, soundness-adjacent).** A save still
+      launders these recovery shapes into text that checks clean (130 of the 410 faulted neighbours
+      in the generator probe; also listed as Known limitations in docs/AGENT-AUTHORING-CAMPAIGN.md):
+      bare `def X;`, `public def X;`, `in def X;`, `#k [2] = 3;`, bare `[2] :> y;`, `#k [2] :> y;`,
+      `#k abstract def X;`, `abstract def }` and `#k abstract def }` (the `;` is missing and a brace
+      closes the statement, so it saves `abstract ref;`), `abstract def X }` (also moves `X` to the
+      end of the package), `#k abstract [2] :> y;` (a modifier between the tag and the
+      multiplicity), `end def;` and `individual def;`. `in def X;` could reuse the prefix mark if
+      the recorded-usage test also accepted a PortUsage that carries only a direction; not widened.
+      In a body with several faulted statements only the FIRST is marked (`abstract def X; abstract
+      def Y; abstract def Z;` saves the first kept and the others as `abstract ref; Y;`), and a
+      fault at file level is not marked. A prefix-only usage that follows an earlier residue keeps
+      the earlier word but drops its own `def` (as on base): sound but weaker. A `;` inside a
+      multi-line string or an unterminated string still stops the scan at the line end, as in
+      bracePairs. The ordering shape `abstract #k def X` and `ref #k x` stays as stated above. The
+      app keeps back a text with a syntax error, so only the API/SDK path (L6) reaches these.
+      Probes small2-pass-scratch/gen1.mts, gen1-mine2.json (rows with e1>0 and e2==0);
+      text-pass-scratch/review/rt.mts. [text-pass; small2-pass S1]
 - [ ] **Abstentions left in renames and name clashes (rollup; sound, only weaker).** fence-rename:
       (1) names unrelated to the clash inside a flagged scope are withheld along with it (e.g.
       `w.p.x`, or an unrelated `a = 15.0` beside a clash on `b`), because the fence is the whole

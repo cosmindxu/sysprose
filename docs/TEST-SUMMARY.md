@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5487 total — 5487 passed, 0 failed, 0 skipped
+- **Tests:** 5491 total — 5491 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -156,7 +156,7 @@
 | test/unit/text.literal-form.test.ts | 24 | 0 | 0 |
 | test/unit/text.load.test.ts | 14 | 0 | 0 |
 | test/unit/text.parser.test.ts | 14 | 0 | 0 |
-| test/unit/text.recovery-honesty.test.ts | 31 | 0 | 0 |
+| test/unit/text.recovery-honesty.test.ts | 35 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
 | test/unit/text.roundtrip.test.ts | 227 | 0 | 0 |
