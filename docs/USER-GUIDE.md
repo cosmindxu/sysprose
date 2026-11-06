@@ -1478,7 +1478,7 @@ that breaks the relation is reported against that instance — at the line that
 makes it differ: the member of its own stating the value the binding carries in
 (q's `attribute :>> L = 50.0`; where two values reach the instance, the one that
 breaks the relation — the one that makes it hold when it alone is put back to the value
-the relation's own context gives it; where none does, or a value carries a unit, the first value a binding carried; a value the instance's own element redefines and no binding carries is named too, and points at the redefinition that states it — `attribute :>> extra = 20.0` in q2's `part :>> p` — and a derived value that breaks it points at the one member of the instance that states a number it reads, where no other number it reads is a redefinition outside the instance's own elements, q2's `:>> K = 25.0` under `L = 2.0 * K`), else the element the instance is read in, else
+the relation's own context gives it; where none does, or a value carries a unit, the first value a binding carried; a value the instance's own element redefines and no binding carries is named too, and points at the redefinition that states it — `attribute :>> extra = 20.0` in q2's `part :>> p` — and a derived value that breaks it — one a binding carries, or one whose own definition reads values bindings carry (P's `m2 = 10.0 - load`) — points at the one member of the instance that states a number it reads, where no other number it reads is a redefinition outside the instance's own elements, q2's `:>> K = 25.0` under `L = 2.0 * K`), else the element the instance is read in, else
 its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never the usage the instances share — and the check rolls
 two or more of them up into one finding for each usage (past twenty usages of one
 relation, into one finding for the relation, counting every instance and naming
@@ -1500,7 +1500,7 @@ violation that one value from one line they share breaks (put back to the relati
 value, it holds) are one finding: `part def R { part q : Q {
 attribute :>> L = 50.0; } }` read by R's own q and by each `part r1 : R` points at that
 line once, named for what it redefines (`elementName` is `L`), and lists the others
-(*; the same line breaks it in r1::q::p, r2::q::p*); one the line does not mend (the
+(*; the same line breaks it in r1::q::p, r2::q::p*), and so does R's q `:>> K = 5.5` read through Q's `L = 2.0 * K`; one the line does not mend (the
 relation fails on a default too), or a sixth distinct set of values read in a group,
 keeps its own finding. A path with a
 segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; in a context row's sentence too, `'X in Y'::'est@1' = 0.78 misses Common::t …`; the `instance` and

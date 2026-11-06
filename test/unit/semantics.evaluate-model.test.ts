@@ -8284,8 +8284,9 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     // agent edited the definition. It points at the member stating the value the binding carries in (q1's
     // `:>> L`, also where the relation reads a value derived from the bound one), else at the redefinition
     // that states the value breaking it (q2's `:>> extra = 20.0`, 194), else at the element the
-    // instance is read in (q2's `part :>> p`), else at the instance's innermost own usage (r1, whose K the
-    // bound L derives from — never the `sys` r1 and r2 share).
+    // instance is read in (q2's `part :>> p`), else at the one member the instance states of what a derived
+    // breaking value reads through a binding (r1's `:>> K`, which the bound L that P's `m2 = 10.0 - load` reads
+    // derives from, 193), else at the instance's innermost own usage — never the `sys` r1 and r2 share.
     const anchored = async (text: string) => {
       const { report } = await loadModelText(text, { fileName: 'pi2.sysml' });
       return report.diagnostics
@@ -8321,9 +8322,27 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         ].join('\n'),
       ),
     ).toEqual([
-      ['PB::sys::r1::p', 5, 'part r1 : R'],
-      ['PB::sys::r2::p', 6, 'part r2 : R'],
+      ['PB::sys::r1::p', 5, 'attribute :>> K = 5.5'],
+      ['PB::sys::r2::p', 6, 'attribute :>> K = 6.0'],
     ]);
+    // Where the derived line reads a name no binding carries (PBu's `k`), or is itself a redefinition outside the
+    // instance's own elements (PBr's P2 `:>> m2`), the K is not shown to be the one change: it stays at the usage.
+    const pb = (name: string, p: string, k: string) =>
+      [
+        `package ${name} {`,
+        p,
+        `  part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : ${k} { constraint c2 { m2 >= 0.0 } } bind p.load = L; }`,
+        '  part sys {',
+        '    part r1 : R { attribute :>> K = 5.5; }',
+        '  }',
+        '}',
+      ].join('\n');
+    expect(
+      await anchored(pb('PBu', '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute k : ScalarValues::Real default = 0.0; attribute m2 : ScalarValues::Real = 10.0 - load - k; }', 'P')),
+    ).toEqual([['PBu::sys::r1::p', 5, 'part r1 : R']]);
+    expect(
+      await anchored(pb('PBr', '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; } part def P2 :> P { attribute :>> m2 = 9.0 - load; }', 'P2')),
+    ).toEqual([['PBr::sys::r1::p', 5, 'part r1 : R']]);
     expect(
       await anchored(
         [
@@ -8395,6 +8414,21 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         )
       ).map((f) => f.slice(0, 4)),
     ).toEqual([['G0::q2', 4, 'attribute E : ScalarValues::Real = 20.0', 'E']]);
+    // A value the context's own instance redefines (no group, no read lists it) is named and anchored as in a
+    // group row (G5): `p.extra` put back to 0 holds `p.load + p.extra <= 10.0`, `p.load` (2) put back does not.
+    expect(
+      (
+        await findings(
+          [
+            'package G5d {',
+            ...defs.slice(0, 1),
+            '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c2 { p.load + p.extra <= 10.0 } }',
+            '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }',
+            '}',
+          ].join('\n'),
+        )
+      ).map((f) => f.slice(0, 4)),
+    ).toEqual([['G5d::q2', 4, 'attribute :>> extra = 20.0', 'extra']]);
     // Only the one read there is: named too, where no binding carries it (it had no value clause).
     expect(
       await findings(['package G2 {', ...defs, '  part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }', '}'].join('\n')),
@@ -8432,6 +8466,23 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(many.filter((f) => f[2] === 'attribute :>> L = 50.0')).toHaveLength(1);
     expect(many.map((f) => f[0])).toEqual(['FC::R::q::p']);
     expect(String(many[0]![4])).toContain('… and 2 more');
+    // A derived value (`L = 2.0 * K`) whose one input a definition's usage states (R's q `:>> K = 5.5`): every part
+    // typed by R reads it from that one line, so one finding there (193). Where r2 restates K (over R's default),
+    // the line is not every instance's cause: r1's finding folds into it, r2's is its own.
+    const derivedDefs = [
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+      '  part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }',
+    ];
+    const foldDerived = await findings(['package FD {', ...derivedDefs, '  part def R { part q : Q { attribute :>> K = 5.5; } }', '  part r1 : R;', '  part r2 : R;', '}'].join('\n'));
+    expect(foldDerived.map((f) => [f[0], f[2]])).toEqual([['FD::R::q::p', 'attribute :>> K = 5.5']]);
+    expect(String(foldDerived[0]![4])).toContain('the same line breaks it in FD::r1::q::p, FD::r2::q::p');
+    const apart = await findings(['package FE {', ...derivedDefs, '  part def R { part q : Q { attribute :>> K default 5.5; } }', '  part r1 : R;', '  part r2 : R { part :>> q { attribute :>> K = 6.0; } }', '}'].join('\n'));
+    expect(apart.map((f) => [f[0], f[2]])).toEqual([
+      ['FE::R::q::p', 'attribute :>> K default 5.5'],
+      ['FE::r2::q::p', 'attribute :>> K = 6.0'],
+    ]);
+    expect(String(apart[0]![4])).toContain('the same line breaks it in FE::r1::q::p');
+    expect(String(apart[1]![4])).not.toContain('the same line breaks it');
     // A finding about a context that reaches a value through a reference names the context's instance, not
     // the feature the last link ends at (p50's `load`, q2's p1's): the line to edit is the instance's.
     const named = async (text: string) =>
@@ -8469,8 +8520,9 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         ['package G5 {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }', '}'].join('\n'),
       ),
     ).toEqual([['G5::q2::p', 8, 'attribute :>> extra = 20.0', 'extra', ' is violated in G5::q2::p: extra = 20']]);
-    // A read that mends it alone is still named first (a redefinition beside it does not take its place), and a
-    // redefined value that is no plain number (derived, or a default the instance does not redefine) is not named.
+    // A read that mends it alone is still named first (a redefinition beside it does not take its place). A derived
+    // redefinition (`5.0 * K`) is named with its text, at its line; one whose text reads a read (`10.0 * load`) is
+    // read through that read, so the finding stays at the read's line, not the redefinition's.
     expect(
       await findings(
         ['package G5b {', ...defs, '  part q2 : Q { attribute :>> L = 20.0; part :>> p { attribute :>> extra = 0.5; } }', '}'].join('\n'),
@@ -8480,7 +8532,56 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
       await findings(
         ['package G5c {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; attribute K : ScalarValues::Real = 4.0; part :>> p { attribute :>> extra = 5.0 * K; } }', '}'].join('\n'),
       ),
-    ).toEqual([['G5c::q2::p', 8, 'attribute :>> L = 2.0', 'L', " is violated in G5c::q2::p: load = 2 — q2.L = 2 through G5c::Q's `bind p.load = L`"]]);
+    ).toEqual([['G5c::q2::p', 8, 'attribute :>> extra = 5.0 * K', 'extra', ' is violated in G5c::q2::p: extra = 20 (= 5.0 * K)']]);
+    expect(
+      await findings(
+        ['package G5d {', ...defs, '  part q2 : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 10.0 * load; } }', '}'].join('\n'),
+      ),
+    ).toEqual([['G5d::q2::p', 8, 'attribute :>> L = 2.0', 'L', ' is violated in G5d::q2::p: extra = 20']]);
+    // Reads that carry a unit are put back in the unit-aware reading that judged them: `load` (2000 g) put back to
+    // 1 kg still misses, `extra` (20 kg) put back to 0 kg holds, so `extra` is named, at the line stating it.
+    const unitDefs = [
+      '  part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; attribute extra : ISQ::MassValue default = 0.0 [kg]; }',
+      '  part def Q {',
+      '    attribute L : ISQ::MassValue default = 1.0 [kg];',
+      '    part p : P { constraint c2 { load + extra <= 10.0 [kg] } }',
+      '    bind p.load = L;',
+      '  }',
+    ];
+    expect(
+      await findings(['package GU {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['GU::q2::p', 8, 'attribute E : ISQ::MassValue = 20.0 [kg]', 'E', ' is violated in GU::q2::p: extra = 20 [kg]']]);
+    // A redefined quantity no read lists is named the same way, in its unit, at the line stating it.
+    expect(
+      await findings(['package GUR {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; part :>> p { attribute :>> extra = 20.0 [kg]; } }', '}'].join('\n')),
+    ).toEqual([['GUR::q2::p', 8, 'attribute :>> extra = 20.0 [kg]', 'extra', ' is violated in GUR::q2::p: extra = 20 [kg]']]);
+    // That row carries its sides in SI: they are kept as judged, and name nothing of their own.
+    const { model: gu } = await loadModelText(
+      ['package GU {', ...unitDefs, '  part q2 : Q { attribute :>> L = 2000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n'),
+    );
+    const guRow = checkConstraints(gu!).find((c) => gu!.qualifiedName(c.id) === 'GU::Q::p::c2')!.instances!.find((i) => i.instance === 'GU::q2::p')!;
+    expect([guRow.result, guRow.breaks, guRow.sides]).toEqual(['violated', 'extra', { lhsSI: 22, rhsSI: 10, dimension: 'M' }]);
+    // On an offset scale (°C) the values are only ordered, and a put-back is a comparison too: `extra` (5 °C) put
+    // back to its 60 °C holds `load <= extra`, `load` (50 °C) put back to 10 °C does not.
+    expect(
+      await findings(
+        [
+          'package GT {',
+          '  part def P { attribute load : ISQ::TemperatureValue default = 10.0 [°C]; attribute extra : ISQ::TemperatureValue default = 60.0 [°C]; }',
+          '  part def Q {',
+          '    attribute L : ISQ::TemperatureValue default = 10.0 [°C];',
+          '    part p : P { constraint c2 { load <= extra } }',
+          '    bind p.load = L;',
+          '  }',
+          '  part q2 : Q { attribute :>> L = 50.0 [°C]; attribute E : ISQ::TemperatureValue = 5.0 [°C]; bind p.extra = E; }',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([['GT::q2::p', 8, 'attribute E : ISQ::TemperatureValue = 5.0 [°C]', 'E', ' is violated in GT::q2::p: extra = 5 [°C]']]);
+    // Both needed (neither put back alone holds it): still the first read a binding carried, as for numbers (G3).
+    expect(
+      await findings(['package GUB {', ...unitDefs, '  part q2 : Q { attribute :>> L = 20000.0 [g]; attribute E : ISQ::MassValue = 20.0 [kg]; bind p.extra = E; }', '}'].join('\n')),
+    ).toEqual([['GUB::q2::p', 8, 'attribute :>> L = 20000.0 [g]', 'L', " is violated in GUB::q2::p: load = 20 [kg] — q2.L = 20000 [g] through GUB::Q's `bind p.load = L`"]]);
   });
 
   it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {
