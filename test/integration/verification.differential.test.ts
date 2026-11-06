@@ -9514,6 +9514,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint t50 { p.L == 50.0 }
         constraint t1 { p.L == 1.0 }
       }`, {
+      'ST::P::ca': ['?/-/?/-', 'T'],
       'ST::t1': ['?/?/?/?', null],
       'ST::t50': ['?/?/?/?', null],
     }),
@@ -9679,13 +9680,17 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // defaults-pass (TODO 250): L states no value and an assert typed by an inequality-only constraint definition
     // constrains it, so a lone plain check over it is no design equation (the numeric surface read t1 imposed at 1,
-    // or at 200, past the definition's bound), and a feature with a value is read as before (T1V).
+    // or at 200, past the definition's bound), and a feature with a value is read as before (T1V) on the check and the
+    // numeric surface. Each typed assert's own row abstains since names-pass S2 (A4), and the literal and SMT engines
+    // abstain beside it (T1V's t1 was T/T/T/T): they read no body of it, and one may contradict a value written with
+    // `=` (name-cd-eq).
     'typed-ineq-lone': probe(`package T1L {
         constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
         part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x = L; } }
         part p : P;
         constraint t1 { p.L == 200.0 }
       }`, {
+      'T1L::P::ca': ['?/-/?/-', null],
       'T1L::t1': ['?/?/?/?', null],
     }),
     // The same shape written the other ways a typed assert gives its parameter: `bind x = L` (T10), a constraint usage it
@@ -9696,6 +9701,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t1 { p.L == 200.0 }
       }`, {
+      'T10::P::ca': ['?/-/?/-', null],
       'T10::t1': ['?/?/?/?', null],
     }),
     'typed-ineq-specialised': probe(`package U1 {
@@ -9704,6 +9710,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t1 { p.L == 200.0 }
       }`, {
+      'U1::P::ea': ['?/-/?/-', null],
       'U1::t1': ['?/?/?/?', null],
     }),
     'typed-ineq-body-name': probe(`package U2 {
@@ -9713,6 +9720,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t1 { limit == 1.0 }
       }`, {
+      'U2::P::ca': ['?/-/?/-', null],
       'U2::t1': ['?/?/?/?', null],
     }),
     'typed-ineq-valued': probe(`package T1V {
@@ -9721,7 +9729,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t1 { p.L == 5.0 }
       }`, {
-      'T1V::t1': ['T/T/T/T', 'T'],
+      'T1V::P::ca': ['?/-/?/-', 'T'],
+      'T1V::t1': ['T/?/T/?', 'T'],
     }),
     // default-stands' branch review. A binding to a value written with `=` that holds a `default` only in ANOTHER
     // context — a specialisation never instantiated (T4C's `Q5 :> Q { :>> L = 7.0 }`) or a sibling instance (T4D's
@@ -12996,6 +13005,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // 50.0` refuted on all four (O6 S1's review). Since per-instance-rest S3 the default gives way, read
     // nowhere, in a sentence naming the assert, and is no design freedom to the numeric surface, which took
     // `L == 50.0` as a design equation until S3's review (CD13 below: one that disagrees decided other rows).
+    // The assert's own row (`e`, and each typed assert below) filed nothing on any surface until names-pass S2
+    // (A4): it abstains now on the check and the numeric surface, in a sentence naming the definition, and is a
+    // refused axiom on the other two (an assert files no goal there). The ref is decision 14's: `a == 50.0` holds.
     'name-cd1': probe(`package CD1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         constraint def Eq { in a : ScalarValues::Real; a == 50.0 }
@@ -13011,6 +13023,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topL { q.L == 50.0 }
       }`, {
       'CD1::Q::c': ['?/?/?/?', 'F'],
+      'CD1::Q::e': ['?/-/?/-', 'T'],
       'CD1::Q::cl': ['?/?/?/?', 'T'],
       'CD1::topF': ['?/?/?/?', 'F'],
       'CD1::topL': ['?/?/?/?', 'T'],
@@ -13033,6 +13046,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q;
       }`, {
       'CD13::Q::c': ['?/?/?/?', 'F'],
+      'CD13::Q::e': ['?/-/?/-', 'T'],
       'CD13::Q::c2': ['?/?/?/?', 'T'],
       'CD13::Q::cl': ['?/?/?/?', 'F'],
     }),
@@ -13055,6 +13069,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topL { q.L == 50.0 }
       }`, {
       'CD9::Q::c': ['?/?/?/?', 'T'],
+      'CD9::q::e': ['?/-/?/-', 'T'],
       'CD9::Q::cl': ['?/?/?/?', 'F'],
       'CD9::topF': ['?/?/?/?', 'F'],
       'CD9::topL': ['?/?/?/?', 'T'],
@@ -13069,6 +13084,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.L == 50.0 }
       }`, {
       'CD4::Q::cl': ['?/?/?/?', 'F'],
+      'CD4::q::e': ['?/-/?/-', 'T'],
       'CD4::top': ['?/?/?/?', 'T'],
     }),
     'name-cd8': probe(`package CD8 {
@@ -13086,6 +13102,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topL { q.L == 50.0 }
       }`, {
       'CD8::Q::c': ['?/?/?/?', 'F'],
+      'CD8::Q::e': ['?/-/?/-', 'T'],
       'CD8::Q::cl': ['?/?/?/?', 'T'],
       'CD8::topF': ['?/?/?/?', 'F'],
       'CD8::topL': ['?/?/?/?', 'T'],
@@ -13104,6 +13121,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topL { q.p.load == 50.0 }
       }`, {
       'CD2::Q::c': ['?/?/?/?', 'F'],
+      'CD2::Q::e': ['?/-/?/-', 'T'],
       'CD2::Q::cl': ['?/?/?/?', 'T'],
       'CD2::topF': ['?/?/?/?', 'F'],
       'CD2::topL': ['?/?/?/?', 'T'],
@@ -13119,6 +13137,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.load <= 10.0 }
       }`, {
       'CD6::P::c': ['?/?/?/?', 'T'],
+      'CD6::Q::e': ['?/-/?/-', 'T'],
       'CD6::top': ['?/?/?/?', 'F'],
     }),
     'name-cd5': probe(`package CD5 {
@@ -13132,6 +13151,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.L == 50.0 }
       }`, {
       'CD5::Q::cl': ['?/?/?/?', 'F'],
+      'CD5::e': ['?/-/?/-', 'T'],
       'CD5::top': ['?/?/?/?', 'T'],
     }),
     // A typed assert's body that reads a parameter's feature (`x.load` over `in x = p`) defines p's load, and one
@@ -13149,6 +13169,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.load <= 10.0 }
       }`, {
       'TP1::Q::c': ['?/?/?/?', 'F'],
+      'TP1::Q::e': ['?/-/?/-', 'T'],
       'TP1::top': ['?/?/?/?', 'F'],
     }),
     'name-tp2': probe(`package TP2 {
@@ -13164,7 +13185,26 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.load <= 10.0 }
       }`, {
       'TP2::Q::c': ['?/?/?/?', 'F'],
+      'TP2::Q::ea': ['?/-/?/-', 'T'],
       'TP2::top': ['?/?/?/?', 'F'],
+    }),
+    // A typed assert over a value written with `=` that its definition's equation contradicts (`a == 50.0` over `in
+    // a = Z`, Z = 3): the untyped twin (`assert constraint e { Z == 50.0 }`) reads e F and Z's readers X on literal and
+    // SMT; this one filed no row, and literal and SMT read top3, and top2, which reads nothing it names, T at 3 — a
+    // pass over a model that contradicts itself (names-pass S2). Its own row files the refused axiom now, and both
+    // surfaces abstain on every row in the existing sentences (an assert this tool cannot read; a proof whose context a
+    // gate refused). The check reads the values as written, as for the twin.
+    'name-cd-eq': probe(`package CDE {
+        attribute Z : ScalarValues::Real = 3.0;
+        attribute W : ScalarValues::Real = 9.0;
+        constraint def D { in a : ScalarValues::Real; a == 50.0 }
+        assert constraint e : D { in a = Z; }
+        constraint top2 { W <= 10.0 }
+        constraint top3 { Z <= 10.0 }
+      }`, {
+      'CDE::e': ['?/-/?/-', null],
+      'CDE::top2': ['T/?/T/?', null],
+      'CDE::top3': ['T/?/T/?', null],
     }),
     // A binding into one instance reaches the path it binds, not every feature typed alike (O2 S4's residual):
     // q2's `bind p.s.extra = E` is no reason to read P's `t.extra <= 10.0` per instance. Matched by feature, it

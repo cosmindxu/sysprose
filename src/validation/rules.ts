@@ -1071,7 +1071,7 @@ const constraintViolation: ValidationRule = {
         out.push(mk(check.message, el.id, 'warning'));
       } else if (check.result === 'unknown') {
         out.push(
-          mk(`Constraint could not be evaluated ("${check.expression}"): ${check.message}.`, el.id, 'info'),
+          mk(`Constraint could not be evaluated${check.expression ? ` ("${check.expression}")` : ''}: ${check.message}.`, el.id, 'info'),
         );
       }
     }

@@ -2094,7 +2094,7 @@ through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lowe
 an asserted relation links), is not carried, and the row says which; a bound it cannot compare (a unit, an integer
 sort, a conjunction) is not carried either, under the sentence that no assertion gives a default a value. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
-def Eq { in a; a == 50.0 }`) is read by no surface, and files no row of its own.
+def Eq { in a; a == 50.0 }`) is read by no surface. Its own row abstains on the check and the numeric surface (`unread-definition`: *`e` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*), and the literal and SMT engines read it as an assertion they cannot read, so every row they judge in that model abstains (*the model asserts …, which this tool cannot read*; *proof not claimed …*): the assertion may contradict a value the model writes with `=`.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
 == 50.0 and a >= 0.0`) — what it may define is read nowhere: every feature a
 name in it reads — each value it gives a parameter, bare or dotted (`in a =

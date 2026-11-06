@@ -31,6 +31,7 @@
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf } from './defining-equation';
 import { type ExprNode } from './expr';
+import { generalizationsOf } from './inheritance';
 import {
   declaredFacetsOf,
   derivationOf,
@@ -1029,6 +1030,30 @@ function collectVarIds(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>,
     default:
       return;
   }
+}
+
+/**
+ * The sentence an assert typed by a constraint definition files as its own row, on every surface (A4): one that
+ * writes no body of its own (`assert constraint e : Eq { in a = L; }`, `assert constraint ea :> e0;` over `e0 :
+ * Eq`) asserts its definition's body with the values it gives the parameters, and this tool does not read that body
+ * so. It filed no row at all: an assert no surface mentioned, beside which literal and SMT read `Z <= 10.0` T over `in
+ * a = Z`, `Z = 3.0`, where `a == 50.0` contradicts Z. Its own row abstains now (`unread-definition`), on the check and
+ * the numeric surface; as a refused axiom it makes the literal and SMT engines abstain as for any assert they cannot
+ * read. What it names gives way as before ({@link typedAssertHolding}). `undefined` for any other element:
+ * one with a body of its own is read as written, and one whose types state no body asserts nothing this tool sees.
+ */
+export function typedAssertRefusal(model: Model, el: ElementRecord): string | undefined {
+  if (el.eClass !== 'ConstraintUsage' || el.attrs.requirementRole !== 'assert' || el.attrs.isLibrary === true) return undefined;
+  if (typeof el.attrs.expression === 'string' && el.attrs.expression.trim() !== '') return undefined;
+  const bodied = (t: ElementRecord): boolean =>
+    t.attrs.isLibrary !== true && typeof t.attrs.expression === 'string' && t.attrs.expression.trim() !== '';
+  const types = generalizationsOf(model, el.id).filter(bodied);
+  const def = types.find((t) => t.eClass === 'ConstraintDefinition') ?? types[0];
+  if (def === undefined) return undefined;
+  const name = el.declaredName ?? el.declaredShortName;
+  const typeName = def.declaredName ?? def.declaredShortName ?? 'an unnamed definition';
+  const kind = def.eClass === 'ConstraintDefinition' ? 'typed by the constraint definition' : 'typed through';
+  return `${name !== undefined ? `\`${name}\`` : 'This assert'} is ${kind} \`${typeName}\`, whose body this tool does not read with the parameters' values`;
 }
 
 /** Name→id scope for a relation: its owner (subject) merged with itself. */

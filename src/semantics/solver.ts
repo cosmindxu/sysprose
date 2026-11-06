@@ -134,6 +134,7 @@ import {
   relationVarsOf,
   scaleOfRelation,
   substituteLiterals,
+  typedAssertRefusal,
   withValueUnit,
   type LoweredBody,
   type MarkerDimensions,
@@ -6447,7 +6448,14 @@ function numericRows(
     // `violated` row here as a warning in the same Problems panel.
     if (isNonNormativeStatement(model, el.id)) continue;
     const raw = el.attrs.expression;
-    if (typeof raw !== 'string' || raw.trim() === '') continue;
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
+      const typed = typedAssertRefusal(model, el);
+      if (typed !== undefined) {
+        out.push({ id: el.id, name: el.declaredName ?? '', raw: '', kind: 'boolean', result: 'unknown', slack: null, amount: 0, reason: typed });
+      }
+      continue;
+    }
 
     // Parse for SHAPE only — a `[unit]` literal is lowered so a body like
     // `mass <= 2000 [kg]` is recognised as the inequality it is instead of

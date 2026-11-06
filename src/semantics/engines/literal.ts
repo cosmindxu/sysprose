@@ -994,7 +994,7 @@ function judgeOne(
         ...base,
         outcome: 'not-evaluable',
         detail:
-          `not judged at the model's values: the model asserts \`${unread.expression}\` (${unread.qualifiedName}), which ` +
+          `not judged at the model's values: the model asserts ${unread.expression !== '' ? `\`${unread.expression}\` (${unread.qualifiedName})` : unread.qualifiedName}, which ` +
           `this tool cannot read (${unread.why})${more.length > 0 ? ` (and ${more.length} other such assertion(s))` : ''}, so ` +
           `those values may be ones the model rules out. The relation ${holds ? 'holds' : 'is false'} at them, but no ` +
           'pass or failure there is unconditional: write the assertion in a form this tool reads',

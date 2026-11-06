@@ -118,6 +118,7 @@ import {
   relationVarsOf,
   unitsOfDimension,
   lexicalPackageOf,
+  typedAssertRefusal,
   valueFaultOf,
   type MarkerDimensions,
 } from './relations';
@@ -1575,7 +1576,12 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
   }
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     const expr = el.attrs.expression;
-    if (typeof expr !== 'string' || expr.trim() === '') continue;
+    if (typeof expr !== 'string' || expr.trim() === '') {
+      // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
+      const typed = typedAssertRefusal(model, el);
+      if (typed !== undefined) out.push({ id: el.id, ownerId: el.ownerId, expression: '', result: 'unknown', message: `Could not evaluate: ${typed}` });
+      continue;
+    }
 
     const groups = groupsByRelation.get(el.id) ?? [];
     // A relation OWNED by a usage U (R17c/R17, R1-M2): its own row is U's
