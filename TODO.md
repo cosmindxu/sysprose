@@ -656,12 +656,7 @@ headings.
       (`effectiveNameOf`, `effectiveQualifiedName`): re-run the edge property
       (scratchpad/rev-redefs/zzedge.test.ts) when the serializer changes; 51 of 5222 steps differ
       page against file in the edge, 5 with the owner not flagged, no row difference in 820
-      constraint replays. fence-save-name: (15) page `FF`/file `??` rows seqs 44248 and 40746
-      (identical on base, no note in the saved text) and about 390 per window 'page ?? / file
-      decides' rows; probe fence-save-name-scratch/soak/mine-4*.log, generator
-      fence-save-name-scratch/zzb.test.ts; a stale-copy probe: seed 32180 (RV_RAW=1 RV_FIRST=32180
-      RV_SEQ=1 RV_STEPS=5) and soak seq 42267 (page TT, file ?F on c6). [fence-redefs;
-      fence-save-name]
+      constraint replays. [fence-redefs]
 - [ ] **Widen the random edit generator of the store property test (optional).**
       store.reducers.test.ts now draws bind in definitions and usages and a user retarget of a
       redefinition (its own random stream, onto another feature of a general of its owner, never
@@ -1145,8 +1140,9 @@ true values. What follows is what that branch and the review of it left open; en
       decided correctly (fence-copy-review/p/k11-usage-override.sysml: c15 F and c20 T at base); the
       fence cannot tell it from the diamond without reading usage-level overrides separately. (3)
       mapper-me9 `part def S :> Q2, Q3 { bind p.load = L; }` where both lines write the same 50.0
-      with `=` is a fenced scope, and its two instance rows (P::c in S::p, P::c in s::p) are no
-      longer listed; the agreeing-values case could be read. (4) The whole-model SMT lane abstains
+      with `=` is a fenced scope; its two instance rows (P::c in S::p, P::c in s::p) are listed and
+      read ?/?/?/? in the scope's sentence (ends-fence S0); the agreeing-values case could be read
+      (names-pass S3, design-name-reads.md:108). (4) The whole-model SMT lane abstains
       on a model that holds a withheld scope, so one fenced bind loses every SMT proof, not only the
       rows that name the scope; a per-scope SMT withholding would be a separate change in
       src/semantics/smt. fence-copy2: (5) a stale copy beside a live feature of the same name in a
@@ -1169,10 +1165,19 @@ true values. What follows is what that branch and the review of it left open; en
       under an end copy stay fenced on every surface (pins copy-nearest-diamond,
       copy-nearest-clash). (11) 'A stale copy two types up hides the feature the file binds': the
       page now decides F on three lanes and abstains on the SMT lane where the file decides F/F/F/F
-      (test/unit/store.reducers.test.ts). (12) Six editor-soak seeds fail pre-existing, identically
-      on add25f6: `SYSPROSE_RT_FIRST=<n> SYSPROSE_RT_SEQUENCES=1 SYSPROSE_RT_STEPS=6` at n = 1120,
-      1618, 4318, 4992, 5045 and 6751 ('a full settle of the freshly loaded model moved 1
-      redefinition(s)'). [fence-copy; fence-copy2]
+      (test/unit/store.reducers.test.ts). ends-fence: (12) S4's pins leave page-? / file-decides cells
+      in seed 4318 (c1, c2), 32180 (c4, c6), 42267 (c1-c3, c5-c7) and 1618's parted copy, owned by
+      S9/S8; the stale-copy order fence also withholds a stale copy's specialisers where the file
+      decides, until S8 makes stale copies invisible to readers. (13) Held (unread) instances:
+      `evaluate-model.ts` tags a boundAbove abstention 'past-cap', so a multi-instance roll-up
+      names 'more instances than the tool reads' for such a generic row (t7); in the diamond cause,
+      usage and nested holders keep their live-site row ('a referenced value is unknown') rather
+      than the scope sentence; the SMT surface on held instances is pinned only by the three
+      differential probes, not by the 144-model generator. When one group lists an instance as held
+      and a later group lists the same instance as live, the cross-group dedupe keeps the held row
+      and drops the live one (sound, weaker). A group with held instances and no live site is
+      refused as not-enumerated with the held sentence (review fix). [fence-copy; fence-copy2;
+      ends-fence S0, S4]
 - [ ] **Abstentions left (wording and refusals) (rollup; sound, only weaker).** (1) `bounds
       --measure` lists an instance-qualified `::` path (A7::q2::p::extra, N::Q0::p::load) under
       'Readable here' but accepts only the dotted instance spelling (q2.p.extra): a
