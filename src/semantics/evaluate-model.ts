@@ -2122,31 +2122,72 @@ function instanceAnchor(
     // The value that breaks it is derived (`L = 2.0 * K`, which no member of the instance states, M7's and PB's): the one
     // member the instance's own elements state of what that value reads (q2's `:>> K = 25.0`), the instance's own
     // changing line — where it is the only one (193). Only where putting the read back mends the relation.
-    const derived = mends && reads?.length === 1 ? reads[0]!.via : undefined;
-    if (derived !== undefined) {
+    const one = mends && reads?.length === 1 ? reads[0]! : undefined;
+    const owned = new Set(mine.map((m) => m.reader));
+    const inOwn = (f: ElementRecord): boolean => {
+      for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+        if (owned.has(cur.id)) return true;
+      }
+      return false;
+    };
+    // The stated numbers a source's value reads, from the innermost own element spelling it; `undefined` where none does.
+    // A number the parser kept no lexeme for (`5.5`, which prints as it reads) is a literal too.
+    const inputsOf = (sourceSymbol: string): ElementRecord[] | undefined => {
       for (let k = mine.length - 1; k >= 0; k--) {
         const { instance, reader } = mine[k]!;
-        if (derived.sourceSymbol === instance || !spellsInstance(derived.sourceSymbol, instance)) continue;
-        const d = definitions.denote(reader).get(derived.sourceSymbol.slice(instance.length + 2).split('::').join('.'));
+        if (sourceSymbol === instance || !spellsInstance(sourceSymbol, instance)) continue;
+        const d = definitions.denote(reader).get(sourceSymbol.slice(instance.length + 2).split('::').join('.'));
         if (!d) continue;
-        const own = new Set(mine.map((m) => m.reader));
-        const inOwn = (f: ElementRecord): boolean => {
-          for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
-            if (own.has(cur.id)) return true;
-          }
-          return false;
-        };
-        const states = definitions
+        return definitions
           .dependencies(d.reader, d.feature)
           .map((id) => model.get(id))
-          .filter((f): f is ElementRecord => user(f) && hasStatedValue(model, f) && isNumberLiteral(f.attrs.valueText));
-        // Another stated input that is a redefinition outside the instance's own elements (Q2's `:>> K = 25.0`
-        // beside the instance's own `J`) may be what breaks it: the own line is not shown to be the cause (m7j).
-        // A declaration nothing redefines (Q's `J default = 0.0`) is what the relation's own context reads too.
-        if (states.some((f) => !inOwn(f) && redefinedClosure(model, f).length > 0)) break;
+          .filter((f): f is ElementRecord => user(f) && hasStatedValue(model, f) && (isNumberLiteral(f.attrs.valueText) || (f.attrs.valueText === undefined && typeof f.attrs.value === 'number')));
+      }
+      return undefined;
+    };
+    // A breaking read no binding carries, whose value its definition derives from names a binding does carry
+    // (PB's `m2 = 10.0 - load`, its `load` bound to R's `L = 2.0 * K`): those bindings' sources, read as a
+    // carried read's source is. Only where the derived line is a declaration outside the instance's own
+    // elements (what the relation's own context reads too), every name it reads is bound, and no source is a
+    // redefinition outside them; else none (193).
+    const derivedSources = (read: InstanceRead): string[] | undefined => {
+      const at = read.symbol.lastIndexOf('::');
+      if (at < 0) return undefined;
+      for (let k = mine.length - 1; k >= 0; k--) {
+        const { instance, reader } = mine[k]!;
+        if (read.symbol === instance || !spellsInstance(read.symbol, instance)) continue;
+        const d = definitions.denote(reader).get(read.symbol.slice(instance.length + 2).split('::').join('.'));
+        if (!d) continue;
+        const carrier = definitions.carrier(d.reader, d.feature);
+        const text = typeof carrier.attrs.valueText === 'string' ? carrier.attrs.valueText : carrier.attrs.value;
+        if (!user(carrier) || inOwn(carrier) || !hasStatedValue(model, carrier) || typeof text !== 'string' || isNumberLiteral(text)) return undefined;
+        if (redefinedClosure(model, carrier).length > 0) return undefined;
+        const names = namesIn(text);
+        const out: string[] = [];
+        for (const n of names) {
+          if (!definitions.denote(d.reader).has(n)) return undefined;
+          const src = boundSourceIn(model, `${read.symbol.slice(0, at)}::${n.split('.').join('::')}`);
+          if (src === undefined || 'abstain' in src) return undefined;
+          const sd = definitions.denote(src.root).get(src.via.source);
+          if (!sd) return undefined;
+          const stated = definitions.carrier(sd.reader, sd.feature);
+          if (!inOwn(stated) && redefinedClosure(model, stated).length > 0) return undefined;
+          out.push(definitions.symbolOf(sd));
+        }
+        return out.length > 0 ? out : undefined;
+      }
+      return undefined;
+    };
+    const sourcesRead = one === undefined ? undefined : one.via !== undefined ? [one.via.sourceSymbol] : derivedSources(one);
+    const inputs = sourcesRead?.map(inputsOf);
+    if (inputs !== undefined && inputs.length > 0 && inputs.every((s) => s !== undefined)) {
+      const states = inputs.flat();
+      // Another stated input that is a redefinition outside the instance's own elements (Q2's `:>> K = 25.0`
+      // beside the instance's own `J`) may be what breaks it: the own line is not shown to be the cause (m7j).
+      // A declaration nothing redefines (Q's `J default = 0.0`) is what the relation's own context reads too.
+      if (!states.some((f) => !inOwn(f) && redefinedClosure(model, f).length > 0)) {
         const ids = [...new Set(states.filter(inOwn).map((f) => f.id))];
         if (ids.length === 1) return { id: ids[0]! };
-        break;
       }
     }
     // No read names a source of its own: the stated member, from the innermost own element, the names

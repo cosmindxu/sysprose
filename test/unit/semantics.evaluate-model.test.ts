@@ -8157,8 +8157,9 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     // agent edited the definition. It points at the member stating the value the binding carries in (q1's
     // `:>> L`, also where the relation reads a value derived from the bound one), else at the redefinition
     // that states the value breaking it (q2's `:>> extra = 20.0`, 194), else at the element the
-    // instance is read in (q2's `part :>> p`), else at the instance's innermost own usage (r1, whose K the
-    // bound L derives from — never the `sys` r1 and r2 share).
+    // instance is read in (q2's `part :>> p`), else at the one member the instance states of what a derived
+    // breaking value reads through a binding (r1's `:>> K`, which the bound L that P's `m2 = 10.0 - load` reads
+    // derives from, 193), else at the instance's innermost own usage — never the `sys` r1 and r2 share.
     const anchored = async (text: string) => {
       const { report } = await loadModelText(text, { fileName: 'pi2.sysml' });
       return report.diagnostics
@@ -8194,9 +8195,27 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
         ].join('\n'),
       ),
     ).toEqual([
-      ['PB::sys::r1::p', 5, 'part r1 : R'],
-      ['PB::sys::r2::p', 6, 'part r2 : R'],
+      ['PB::sys::r1::p', 5, 'attribute :>> K = 5.5'],
+      ['PB::sys::r2::p', 6, 'attribute :>> K = 6.0'],
     ]);
+    // Where the derived line reads a name no binding carries (PBu's `k`), or is itself a redefinition outside the
+    // instance's own elements (PBr's P2 `:>> m2`), the K is not shown to be the one change: it stays at the usage.
+    const pb = (name: string, p: string, k: string) =>
+      [
+        `package ${name} {`,
+        p,
+        `  part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : ${k} { constraint c2 { m2 >= 0.0 } } bind p.load = L; }`,
+        '  part sys {',
+        '    part r1 : R { attribute :>> K = 5.5; }',
+        '  }',
+        '}',
+      ].join('\n');
+    expect(
+      await anchored(pb('PBu', '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute k : ScalarValues::Real default = 0.0; attribute m2 : ScalarValues::Real = 10.0 - load - k; }', 'P')),
+    ).toEqual([['PBu::sys::r1::p', 5, 'part r1 : R']]);
+    expect(
+      await anchored(pb('PBr', '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; } part def P2 :> P { attribute :>> m2 = 9.0 - load; }', 'P2')),
+    ).toEqual([['PBr::sys::r1::p', 5, 'part r1 : R']]);
     expect(
       await anchored(
         [
