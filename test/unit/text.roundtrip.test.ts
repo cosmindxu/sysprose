@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildSampleModel, isRelationship, Model, ModelFactory, type ChangeEvent, type ElementRecord } from '@core/index';
 import {
   measureTextHealth,
@@ -905,6 +907,32 @@ describe('serializer — the reference form the resolver agrees with', () => {
   part v : R { attribute :>> M2 = 5.0; attribute M2 = 9.0; }
 }`).model;
     expect(serializeModel(parseModel(serializeModel(loaded)).model)).toBe(serializeModel(loaded));
+  });
+
+  // I-A, load is a fixed point: the page starts from the file's redefinitions, end copies and binding marks, so the
+  // first edit's settle moves only what the edit asks it to. Over every example and fixture model.
+  it('a full settle of every loaded corpus, example and fixture model changes nothing', () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true })
+        .flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : d.name.endsWith('.sysml') ? [join(dir, d.name)] : []))
+        .sort();
+    const files = [...walk('examples'), ...walk('test/fixtures')];
+    expect(files.length).toBeGreaterThan(200);
+    const changed: string[] = [];
+    for (const file of files) {
+      const m = parseModel(readFileSync(file, 'utf8')).model;
+      const user = m.all().filter((e) => e.attrs.isLibrary !== true);
+      const before = user.map((e) => JSON.stringify(e)).join('\n');
+      const moved = settleRedefinitions(m, user.filter((e) => !isRelationship(e.eClass)).map((e) => e.id));
+      // Marks too: a binding the settle would mark (stale or parted) changes its attrs, and the record with it.
+      if (moved > 0 || m.all().filter((e) => e.attrs.isLibrary !== true).map((e) => JSON.stringify(e)).join('\n') !== before) changed.push(`${file}: moved ${moved}`);
+      // And no orphan (the serializer's dropOrphanCopies rule): something outside each implicit copy's subtree refers into it.
+      for (const c of user.filter((e) => e.attrs.implicit === true && !isRelationship(e.eClass))) {
+        const own = new Set([c.id, ...m.descendants(c.id).map((d) => d.id)]);
+        if (![...own].some((id) => m.edgesOf(id).some((e) => !own.has(e.id)))) changed.push(`${file}: orphan copy ${m.qualifiedName(c.id)}`);
+      }
+    }
+    expect(changed).toEqual([]);
   });
 
   // The edits `settleRedefinitions` is asked about, as the store's listener names them.
