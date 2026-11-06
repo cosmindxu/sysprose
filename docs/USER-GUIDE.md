@@ -2291,8 +2291,10 @@ in either order of the equations. An equation a usage or a specialisation assert
 only, so P's own rows do not read it. Limits of this tool: where a specialisation declares
 a name anew without `:>>` (`part def P2 :> P { attribute K; … }`, which KerML does not
 allow), P's body is re-read there by name, so P's `assert constraint { K == 50.0 }`
-and P2's `K == 70.0` are reported as a contradiction (a violated row), and a binding of P's
-read so may give *inconsistent axioms*: write `attribute :>> K` or rename it.
+and P2's `K == 70.0` are reported as a contradiction (a violated row), and a binding or an
+assert of P's read so may decide a value P2's K gives P's other features (`p.L` from P's
+`bind K = L`). The SMT engine does not read such a binding of P's in P2 (it says so, and the
+proofs over its two ends are not claimed): write `attribute :>> K` or rename it.
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -

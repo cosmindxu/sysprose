@@ -12,9 +12,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 8,
       "rows": 27,
-      "tableAgree": 23,
-      "tableDisagree": 0,
-      "tableProbes": 11
+      "tableAgree": 25,
+      "tableDisagree": 2,
+      "tableProbes": 13
     },
     "bind-equality": {
       "battery": null,
@@ -23,9 +23,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 5,
       "rows": 9,
-      "tableAgree": 222,
+      "tableAgree": 226,
       "tableDisagree": 0,
-      "tableProbes": 132
+      "tableProbes": 136
     },
     "bool": {
       "battery": null,
@@ -232,9 +232,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 0,
       "rows": 0,
-      "tableAgree": 60,
+      "tableAgree": 62,
       "tableDisagree": 0,
-      "tableProbes": 54
+      "tableProbes": 56
     },
     "ite": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 614,
-      "tableDisagree": 0,
-      "tableProbes": 279
+      "tableAgree": 620,
+      "tableDisagree": 2,
+      "tableProbes": 283
     },
     "nira/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 307,
-      "tableDisagree": 0,
-      "tableProbes": 153
+      "tableAgree": 311,
+      "tableDisagree": 2,
+      "tableProbes": 157
     },
     "requirement-clause": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 326,
+      "tableAgree": 328,
       "tableDisagree": 0,
-      "tableProbes": 211
+      "tableProbes": 213
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 573,
+      "tableAgree": 577,
       "tableDisagree": 0,
-      "tableProbes": 251
+      "tableProbes": 253
     },
     "text-as-real": {
       "battery": null,
@@ -432,7 +432,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-inconsistent-axioms",
       "kind": "wrong-verdict",
-      "note": "A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: a false inconsistent-axioms; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.",
+      "note": "A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: the SMT binding rows fenced by G-mask; G8B/G8A: p.L read T from P2's K on the check, literal and numeric surfaces, KNOWN_FALSE; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.",
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself."
     },
     {
@@ -529,9 +529,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "b43f561f39cb8b99020fc5edf94f07b61d05b8fcb5b28db0f64839962d252aa3",
+    "defects": "b7f36d3adc21c5f6e4db4dddb93235d1da805d7d52af604e1d84b0d6ae73a06a",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "eb775f8b6ae77d5da971b0313cdce75966507cc97f4a579fe5180540c98e48bb"
+    "probes": "4db7b62bd02b68a92d2fd32b9a3e542da96fd3f7b1ef32e88374dda73d17ba32"
   },
   "fences": {
     "fence/collection-valued": {
@@ -621,7 +621,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   },
   "knownFalse": {
-    "entries": 2,
+    "entries": 8,
     "parsed": true,
     "unattributed": 0
   },

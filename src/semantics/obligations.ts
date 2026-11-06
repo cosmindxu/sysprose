@@ -115,7 +115,7 @@ import {
   type InstanceGroup,
 } from './defining-equation';
 import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
-import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
+import { effectiveNameOf, effectiveQualifiedName, generalizationsOf, hiddenByName } from './inheritance';
 import { ambiguousKeyword, foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
 import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
 import { getRequirementAttr } from './requirements';
@@ -2075,7 +2075,10 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
       undefined,
       definitions.instanceNameOf(context.id),
     );
-    const encodable = sharedSymbolAxiom(model, context, reading, reading.encodable);
+    // A name the context declares anew without `:>>` (g8): refused, with the two ends' variables kept (G-mask).
+    const hidden = hiddenEndSentence(model, el.ownerId, context.id, [left, right]);
+    const encodable: Encodable =
+      hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : sharedSymbolAxiom(model, context, reading, reading.encodable);
     out.push({
       requirement: null,
       shortId: '',
@@ -2084,7 +2087,7 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
       source: 'bind',
       element: instanceRef(model, el, context),
       expression: reading.expression,
-      node: reading.node,
+      node: hidden !== undefined ? null : reading.node,
       vars: reading.variables,
       sortPerVar: reading.sortPerVar,
       scaled: reading.scale !== undefined,
@@ -2523,6 +2526,9 @@ function instanceBindRow(
     const read = { ...el, ownerId: context.id };
     reading = withInstances(model, read, gateRelation(model, node, nameToId, NO_MARKERS, false, memo, true, expression), path);
   }
+  // A name the context declares anew without `:>>` (g8): refused, with the two ends' variables kept (G-mask).
+  const hidden = up === undefined ? hiddenEndSentence(model, holder.id, context.id, [left, right]) : undefined;
+  const encodable: Encodable = hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : reading.encodable;
   return {
     requirement: null,
     shortId: '',
@@ -2531,19 +2537,49 @@ function instanceBindRow(
     source: 'bind',
     element: instanceElement(model, el, path),
     expression: reading.expression,
-    node: reading.node,
+    node: hidden !== undefined ? null : reading.node,
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
     scaled: reading.scale !== undefined,
-    encodable: reading.encodable,
+    encodable,
     nonlinear: reading.nonlinear,
     verifiedBy: [],
     method: null,
     evidence: [],
-    status: statusOf(reading.encodable),
+    status: statusOf(encodable),
     ...readFields(reading),
     instance: { baseId: el.id, contextId: context.id, path },
   };
+}
+
+/**
+ * Why a binding `writer` wrote is not read in `context`, where an end's first name names a feature the context declares
+ * anew without `:>>` beside the one `writer` meant ({@link hiddenByName}, g8): re-spelled there by name, the binding
+ * would join the context's feature, not the general's. `undefined` where neither end is hidden. The caller keeps the
+ * row's variables, so the refusal reaches only the proofs that read them.
+ */
+function hiddenEndSentence(
+  model: Model,
+  writer: ElementId,
+  context: ElementId,
+  ends: readonly (string | undefined)[],
+): string | undefined {
+  if (writer === context) return undefined;
+  const entries = hiddenByName(model, context);
+  if (entries.size === 0) return undefined;
+  const definitions = sharedDefinitions(model);
+  for (const end of ends) {
+    const n = end?.split('.')[0];
+    const entry = n !== undefined ? entries.get(n) : undefined;
+    const meant = n !== undefined ? definitions.scope(writer, 'all').get(n) : undefined;
+    if (entry === undefined || meant === undefined || !entry.hidden.includes(meant)) continue;
+    return (
+      `\`bind ${ends[0] ?? '…'} = ${ends[1] ?? '…'}\` of ${effectiveQualifiedName(model, writer)} is not read in ${definitions.contextName(context)}: ` +
+      `there \`${n}\` names ${effectiveQualifiedName(model, entry.own)}, declared anew without \`:>>\` beside the ` +
+      `${effectiveQualifiedName(model, meant)} it inherits, which KerML does not allow, so this tool does not read which feature the binding joins`
+    );
+  }
+  return undefined;
 }
 
 /** The dotted path of feature `id` below `ownerId`, by effective names — `undefined` when it is not below it. */

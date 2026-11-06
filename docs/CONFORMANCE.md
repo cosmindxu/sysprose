@@ -1532,8 +1532,8 @@ Every relation the `verify` lane sends to z3, and every one it refuses to send, 
 | Level | Cells | Which |
 |---|---:|---|
 | `experimental` | 8 | `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance` |
-| `tested` | 2 | `lira`, `nra-div/pinned` |
-| `differential-tested` | 5 | `lra`, `units`, `stated-value`, `defining-equation`, `requirement-clause` |
+| `tested` | 3 | `lra`, `lira`, `nra-div/pinned` |
+| `differential-tested` | 4 | `units`, `stated-value`, `defining-equation`, `requirement-clause` |
 | `fenced` | 6 | `fence/no-formal-clause`, `fence/unresolved-name`, `fence/dimension-clash`, `fence/offset-arithmetic`, `fence/refused-derivation`, `fence/non-numeric-operand` |
 | `fenced-defect` | 1 | `fence/unsupported-operator` |
 | `unpinned` | 2 | `fence/unparseable`, `fence/unit-unresolved` |

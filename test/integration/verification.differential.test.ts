@@ -9556,6 +9556,172 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'G8C::P::ck in G8C::P2': ['?/-/?/-', null],
       'G8C::t70': ['?/?/?/X', null],
     }),
+    // P's `bind K = L` re-spelled by name in P2, which declares K anew without `:>>` (g8; KerML calls the shape
+    // ill-formed, §7.3.2.1): the SMT engine joined P2's K to L and read the axioms inconsistent, where the check and the
+    // literal engine read P's binding by identity. The re-spelled row is refused (G-mask) and keeps its two ends'
+    // variables: the goals that read them abstain, and a goal of another package (`mask-far`) stays proved. Masking in a
+    // usage (`mask-use`) is the same shape; with `:>> K` (`mask-redef`, G8R) the contradiction is real and stays X; a
+    // parameter declared again (`mask-param`) redefines the general's and hides nothing.
+    ...reversed('mask-bind', `package G8 {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+        part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        part p : P2;
+        constraint kl { p.L == 50.0 }
+        constraint kn { p.N == 70.0 }
+      }`, `package G8 {
+        constraint kn { p.N == 70.0 }
+        constraint kl { p.L == 50.0 }
+        part p : P2;
+        part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+      }`, {
+      'G8::P2::cn': ['T/-/T/-', null],
+      'G8::P::cl': ['T/-/T/-', null],
+      'G8::P::cl in G8::P2': ['T/-/T/-', null],
+      'G8::kl': ['T/T/T/?', null],
+      'G8::kn': ['T/T/T/?', null],
+    }),
+    ...reversed('mask-far', `package G8 {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+        part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        part p : P2;
+        constraint kl { p.L == 50.0 }
+        constraint kn { p.N == 70.0 }
+      }
+      package Far {
+        part def Q { attribute a : ScalarValues::Real; attribute b : ScalarValues::Real; bind a = b; assert constraint ca { b == 3.0 } }
+        part q : Q;
+        constraint tf { q.a == 3.0 }
+      }`, `package Far {
+        constraint tf { q.a == 3.0 }
+        part q : Q;
+        part def Q { attribute a : ScalarValues::Real; attribute b : ScalarValues::Real; bind a = b; assert constraint ca { b == 3.0 } }
+      }
+      package G8 {
+        constraint kn { p.N == 70.0 }
+        constraint kl { p.L == 50.0 }
+        part p : P2;
+        part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+      }`, {
+      'Far::Q::ca': ['T/-/T/-', 'T'],
+      'Far::tf': ['T/T/T/T', 'T'],
+      'G8::P2::cn': ['T/-/T/-', null],
+      'G8::P::cl': ['T/-/T/-', null],
+      'G8::P::cl in G8::P2': ['T/-/T/-', null],
+      'G8::kl': ['T/T/T/?', null],
+      'G8::kn': ['T/T/T/?', null],
+    }),
+    ...reversed('mask-use', `package G8U {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+        part p : P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        constraint kl { p.L == 50.0 }
+        constraint kn { p.N == 70.0 }
+      }`, `package G8U {
+        constraint kn { p.N == 70.0 }
+        constraint kl { p.L == 50.0 }
+        part p : P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+      }`, {
+      'G8U::P::cl': ['T/-/T/-', null],
+      'G8U::P::cl in G8U::p': ['T/-/T/-', null],
+      'G8U::kl': ['T/T/T/?', null],
+      'G8U::kn': ['T/T/T/?', null],
+      'G8U::p::cn': ['T/-/T/-', null],
+    }),
+    // The #equations row of G8R's pair is keyed by the first of the two names the text order meets.
+    'mask-redef': probe(`package G8R {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+        part def P2 :> P { attribute :>> K; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        part p : P2;
+        constraint kl { p.L == 50.0 }
+        constraint kn { p.N == 70.0 }
+      }`, {
+      'G8R::P2::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'G8R::P2::cn': ['?/-/?/-', null],
+      'G8R::P::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'G8R::P::«BindingConnectorAsUsage» in G8R::P2#bind': ['?/-/?/-', null],
+      'G8R::P::L in G8R::P2#equations': ['F/-/F/-', 'F'],
+      'G8R::P::cl': ['?/-/?/-', null],
+      'G8R::P::cl in G8R::P2': ['?/-/?/-', null],
+      'G8R::kl': ['?/?/?/X', null],
+      'G8R::kn': ['?/?/?/X', null],
+    }),
+    'mask-redef-rev': probe(`package G8R {
+        constraint kn { p.N == 70.0 }
+        constraint kl { p.L == 50.0 }
+        part p : P2;
+        part def P2 :> P { attribute :>> K; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+      }`, {
+      'G8R::P2::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'G8R::P2::cn': ['?/-/?/-', null],
+      'G8R::P::«BindingConnectorAsUsage»#bind': ['?/-/?/-', null],
+      'G8R::P::«BindingConnectorAsUsage» in G8R::P2#bind': ['?/-/?/-', null],
+      'G8R::P2::N in G8R::P2#equations': ['F/-/F/-', 'F'],
+      'G8R::P::cl': ['?/-/?/-', null],
+      'G8R::P::cl in G8R::P2': ['?/-/?/-', null],
+      'G8R::kl': ['?/?/?/X', null],
+      'G8R::kn': ['?/?/?/X', null],
+    }),
+    // The same shape read by name on the other surfaces (gen-mask, found by G-mask): P's `bind K = L` (G8B) or P's
+    // asserted `K == L` (G8A), re-read in P2 where K is declared anew, gives p.L P2's 50 on the check, the literal and
+    // the numeric surface (and on SMT through G8A's assert), where the reading of the two Ks as two features leaves
+    // p.L free. KNOWN_FALSE: the binding rows of the SMT engine are fenced (G8B's `?`); the others are G-pair-b's.
+    ...reversed('mask-bind-name', `package G8B {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; }
+        part def P2 :> P { attribute K : ScalarValues::Real; assert constraint qe { K == 50.0 } }
+        part p : P2;
+        constraint tl { p.L == 50.0 }
+      }`, `package G8B {
+        constraint tl { p.L == 50.0 }
+        part p : P2;
+        part def P2 :> P { attribute K : ScalarValues::Real; assert constraint qe { K == 50.0 } }
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; }
+      }`, {
+      'G8B::P2::qe': ['T/-/T/-', 'T'],
+      'G8B::tl': ['T/T/T/?', '?'],
+    }),
+    ...reversed('mask-assert-name', `package G8A {
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; assert constraint pe { K == L } }
+        part def P2 :> P { attribute K : ScalarValues::Real; assert constraint qe { K == 50.0 } }
+        part p : P2;
+        constraint tl { p.L == 50.0 }
+      }`, `package G8A {
+        constraint tl { p.L == 50.0 }
+        part p : P2;
+        part def P2 :> P { attribute K : ScalarValues::Real; assert constraint qe { K == 50.0 } }
+        part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; assert constraint pe { K == L } }
+      }`, {
+      'G8A::P2::qe': ['T/-/T/-', 'T'],
+      'G8A::P::pe': ['?/-/T/-', '?'],
+      'G8A::P::pe in G8A::P2': ['T/-/T/-', null],
+      'G8A::tl': ['T/T/T/T', '?'],
+    }),
+    ...reversed('mask-param', `package MP {
+        constraint def Rule { in cap : ScalarValues::Real; in need : ScalarValues::Real; cap >= need }
+        part def V { attribute c : ScalarValues::Real = 10.0; attribute d : ScalarValues::Real = 4.0;
+          assert constraint holds : Rule { in cap = c; in need = d; } }
+        part v : V;
+        constraint tc { v.c >= v.d }
+        part def A { in attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = 5.0; bind x = y; }
+        part def B :> A { in attribute x : ScalarValues::Real; }
+        part b : B;
+        constraint tx { b.x == 5.0 }
+      }`, `package MP {
+        constraint tx { b.x == 5.0 }
+        part b : B;
+        part def B :> A { in attribute x : ScalarValues::Real; }
+        part def A { in attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = 5.0; bind x = y; }
+        constraint tc { v.c >= v.d }
+        part v : V;
+        part def V { attribute c : ScalarValues::Real = 10.0; attribute d : ScalarValues::Real = 4.0;
+          assert constraint holds : Rule { in cap = c; in need = d; } }
+        constraint def Rule { in cap : ScalarValues::Real; in need : ScalarValues::Real; cap >= need }
+      }`, {
+      'MP::tc': ['T/T/T/T', 'T'],
+      'MP::tx': ['T/T/T/T', 'T'],
+    }),
     // A name the walk places nowhere (contradicted-pair-meet's review): in a package that holds two features under one
     // name (Q5W2's `w`), whose names the walk withholds, and through a usage a renamed redefinition hides (Q5H's `r.a`,
     // which `a2 :>> a` redefines). No set was seen to reach `p.L` or `r.a.L`, and the check and the literal engine read
@@ -17394,7 +17560,17 @@ package PS {
   /** G8C's false F (closing-readings P-pin): the `#equations` row of a general's assert re-read by name. */
   const MASK_ASSERT_FALSE =
     'H1 pending: P’s `K == 50.0` re-read by name in P2, which declares K anew without `:>>` (ill-formed under KerML §7.3.2.1), and paired with P2’s `K == 70.0`, a contradiction the reading of the two Ks as two features does not state; G-pair-a fences';
+  const MASK_NAME_FALSE =
+    'H1 pending: P’s binding or assert re-read by name in P2, which declares K anew without `:>>` (ill-formed under KerML §7.3.2.1), so p.L reads P2’s 50, where the reading of the two Ks as two features leaves it free; the SMT binding rows are fenced (G-mask), the check, literal and numeric readers and the SMT assert rows are G-pair-b’s';
+  const MASK_DEF_FALSE =
+    'NO STEP yet: P’s own row `K == L` read T on the numeric surface from P2’s `K == 50.0` over the K P2 declares anew (gen-mask, found by G-mask); a definition’s own row is never T from a specialisation’s facts';
   const KNOWN_FALSE = new Map<string, string>([
+    ['mask-bind-name | G8B::tl', MASK_NAME_FALSE],
+    ['mask-bind-name-rev | G8B::tl', MASK_NAME_FALSE],
+    ['mask-assert-name | G8A::tl', MASK_NAME_FALSE],
+    ['mask-assert-name-rev | G8A::tl', MASK_NAME_FALSE],
+    ['mask-assert-name | G8A::P::pe', MASK_DEF_FALSE],
+    ['mask-assert-name-rev | G8A::P::pe', MASK_DEF_FALSE],
     ['mask-assert | G8C::P2::K in G8C::P2#equations', MASK_ASSERT_FALSE],
     ['mask-assert-rev | G8C::P2::K in G8C::P2#equations', MASK_ASSERT_FALSE],
   ]);
