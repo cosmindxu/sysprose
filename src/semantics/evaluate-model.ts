@@ -104,7 +104,7 @@ import {
 } from './defining-equation';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
-import { evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { GroupingError, evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
   NO_MARKERS,
   bareLiteralRefusal,
@@ -3340,6 +3340,8 @@ function judgeBound(
   try {
     node = parseExpr(expr);
   } catch (e) {
+    // A connective chain KerML groups otherwise is not read, by any surface (FP1).
+    if (e instanceof GroupingError) return { result: 'unknown', message: e.message, gap: false };
     // The scalar grammar rejects unit literals (`2000 [kg]`); retry with the
     // unit-aware evaluator before giving up. When the text does carry a
     // bracket, the unit-aware reason is the real one — "Unexpected character

@@ -17278,6 +17278,49 @@ package PS {
       'E2CS::cM': ['T/T/T/T', 'T'],
       'E2CS::fix': ['T/-/T/-', 'T'],
     }),
+    // a5 (2026-11-06) FP1: the grouping fence. KerML groups a chain of `implies` to the left and binds `xor` tighter
+    // than `or` (KerML 8.2.5.8.1, Table 6); both readers grouped them otherwise, and every surface decided kImp T and
+    // kXor F, the letters of the other grouping (KerML: F and T). FP1 reads neither chain (`GroupingError`, the
+    // SMT gate's `unsupported-operator`); the parenthesised twins and `a xor b or c` stay decided. FP2 (H8) reads them.
+    'a5-kimp': probe(`package PREC {
+  attribute x : ScalarValues::Real = 0.0;
+  attribute y : ScalarValues::Real = 2.0;
+  attribute z : ScalarValues::Real = 0.0;
+  constraint kImp { x > 1.0 implies y > 1.0 implies z > 1.0 }
+}`, { 'PREC::kImp': ['?/U/?/U', 'F'] }),
+    'a5-kimpl': probe(`package PREC {
+  attribute x : ScalarValues::Real = 0.0;
+  attribute y : ScalarValues::Real = 2.0;
+  attribute z : ScalarValues::Real = 0.0;
+  constraint kImpL { (x > 1.0 implies y > 1.0) implies z > 1.0 }
+}`, { 'PREC::kImpL': ['F/F/F/F', 'F'] }),
+    'a5-kxor': probe(`package PREC {
+  attribute u : ScalarValues::Real = 2.0;
+  attribute v : ScalarValues::Real = 2.0;
+  attribute w : ScalarValues::Real = 2.0;
+  constraint kXor { u > 1.0 or v > 1.0 xor w > 1.0 }
+  constraint kXorL { u > 1.0 xor v > 1.0 or w > 1.0 }
+}`, { 'PREC::kXor': ['?/U/?/U', 'T'], 'PREC::kXorL': ['T/T/T/T', 'T'] }),
+    'a5-kxorp': probe(`package PREC {
+  attribute u : ScalarValues::Real = 2.0;
+  attribute v : ScalarValues::Real = 2.0;
+  attribute w : ScalarValues::Real = 2.0;
+  constraint kXorP { u > 1.0 or (v > 1.0 xor w > 1.0) }
+}`, { 'PREC::kXorP': ['T/T/T/T', 'T'] }),
+    // The chain in an assert and in a requirement a part satisfies: no surface reads it in any instance either.
+    'a5-imp3': probe(`package IMP3 {
+  attribute x : ScalarValues::Real = 0.0;
+  attribute y : ScalarValues::Real = 2.0;
+  attribute z : ScalarValues::Real = 0.0;
+  part def H { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real;
+    assert constraint ax { x > 1.0 implies y > 1.0 implies z > 1.0 } }
+  part h : H { attribute :>> x = 0.0; attribute :>> y = 2.0; attribute :>> z = 0.0; }
+  requirement def RQ { subject s : H; require constraint { s.x > 1.0 implies s.y > 1.0 implies s.z > 1.0 } }
+  satisfy RQ by h;
+}`, {
+      'IMP3::H::ax': ['?/-/?/-', null],
+      'IMP3::RQ::«ConstraintUsage»': ['?/U/?/U', null],
+    }),
     ...quotedFamilyProbes(),
   };
 

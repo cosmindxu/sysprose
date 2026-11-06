@@ -90,7 +90,7 @@ import {
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
-import { DOUBLE_DIGITS, readQuotedName, significantDigitsOf } from './expr';
+import { DOUBLE_DIGITS, checkGrouping, readQuotedName, significantDigitsOf } from './expr';
 import {
   addRationals,
   compareRationals,
@@ -783,6 +783,8 @@ export const UNIT_AWARE_OPERATORS: { readonly binary: readonly string[]; readonl
 
 class QParser {
   private pos = 0;
+  /** Binary nodes built by this parse that no parenthesis wraps (expr.ts `checkGrouping`). */
+  private readonly bare = new WeakSet<object>();
   constructor(private readonly toks: QTok[]) {}
 
   private peek(): QTok {
@@ -815,7 +817,9 @@ class QParser {
       this.next();
       const nextMin = Q_RIGHT_ASSOC.has(op) ? prec : prec + 1;
       const right = this.parseBinary(nextMin);
+      checkGrouping(op, left, right, this.bare);
       left = { kind: 'binary', op: op as QBinOp, left, right };
+      this.bare.add(left);
     }
     return left;
   }
@@ -864,6 +868,7 @@ class QParser {
       case 'lparen': {
         const inner = this.parseBinary(0);
         if (this.next().t !== 'rparen') throw new SyntaxError('Expected )');
+        this.bare.delete(inner);
         return inner;
       }
       case 'str':
