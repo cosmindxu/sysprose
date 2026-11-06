@@ -2286,13 +2286,13 @@ or an alias does, or a usage redefines p with a value (`part :>> p = p2`) — ev
 P's L stays undecided: a price of reading it so. `K == L`, a bare name on
 each side beside such an L, ties K to it like `K == L + 0.0` or `bind K = L`, so K's
 FMI `start`, its measure of effectiveness and a check over it read neither value,
-in either order of the equations. Limits of this tool: the SMT engine holds one symbol for a feature across the usages of
-one definition, so two usages that each assert one end of a binding the
-definition writes (`bind L = K` in P, `part a : P { assert constraint ea { L ==
-50.0 } }`, `part b : P { assert constraint eb { K == 60.0 } }`) read *inconsistent
-axioms* on its rows though neither instance contradicts itself — the literal
-engine decides those rows, and the numeric surface does not judge them (*the
-solve did not converge*).
+in either order of the equations. An equation a usage or a specialisation asserts
+(`part a : P { assert constraint ea { L == 50.0 } }`) holds in that usage's instances
+only, so P's own rows do not read it. Limits of this tool: where a specialisation declares
+a name anew without `:>>` (`part def P2 :> P { attribute K; … }`, which KerML does not
+allow), P's body is re-read there by name, so P's `assert constraint { K == 50.0 }`
+and P2's `K == 70.0` are reported as a contradiction (a violated row), and a binding of P's
+read so may give *inconsistent axioms*: write `attribute :>> K` or rename it.
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -

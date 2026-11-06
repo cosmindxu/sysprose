@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 483,
-      "tableAgree": 588,
+      "tableAgree": 614,
       "tableDisagree": 0,
-      "tableProbes": 259
+      "tableProbes": 279
     },
     "nira/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 281,
+      "tableAgree": 307,
       "tableDisagree": 0,
-      "tableProbes": 133
+      "tableProbes": 153
     },
     "requirement-clause": {
       "battery": null,
@@ -428,11 +428,11 @@ export const CLASS_FACTS: ClassFacts = {
     {
       "classes": [
         "bind-equality",
-        "per-instance"
+        "inherited-context"
       ],
       "id": "D-inconsistent-axioms",
-      "kind": "wrong-statement",
-      "note": "One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim.",
+      "kind": "wrong-verdict",
+      "note": "A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: a false inconsistent-axioms; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.",
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself."
     },
     {
@@ -529,9 +529,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "8e6d30cc5af5f7182c9852f271db34af6b1134a0b22432f4dad56c8477d9c373",
+    "defects": "b43f561f39cb8b99020fc5edf94f07b61d05b8fcb5b28db0f64839962d252aa3",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "1bcd105006400cfc75bc2012a20e2d4a25f1ba3151e339a7f8baf8bd9d4a9a86"
+    "probes": "eb775f8b6ae77d5da971b0313cdce75966507cc97f4a579fe5180540c98e48bb"
   },
   "fences": {
     "fence/collection-valued": {
@@ -621,7 +621,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   },
   "knownFalse": {
-    "entries": 0,
+    "entries": 2,
     "parsed": true,
     "unattributed": 0
   },

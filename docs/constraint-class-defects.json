@@ -6,10 +6,10 @@
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself.",
       "classes": [
         "bind-equality",
-        "per-instance"
+        "inherited-context"
       ],
-      "kind": "wrong-statement",
-      "note": "One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim."
+      "kind": "wrong-verdict",
+      "note": "A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: a false inconsistent-axioms; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin."
     },
     {
       "id": "D-subsetting-contradiction",

@@ -2316,8 +2316,34 @@ export class DefiningEquations {
     const name = this.nameOf(f);
     if (name === undefined || f.ownerId == null) return false;
     const site = this.of(contextId, name).length > 0 ? contextId : this.of(f.ownerId, name).length > 0 ? f.ownerId : undefined;
-    if (site === undefined || (site !== contextId && !this.sameIn(contextId, f, site))) return false;
+    // Only an equation written in f's owner defines f alike in every
+    // instance: one written in the context itself (a usage, a specialising
+    // definition) defines it in that context's instances only (265 c6). A
+    // redefinition of f's owner, where a binding joins f to a feature that
+    // states a value (Q2's `part :>> p { … }` over the end copy of Q's `bind
+    // p.load = L`, L `default = 1.0`), is read as that owner, as before: its own
+    // symbol would not carry that value, which the binding's row reports
+    // against the equation.
+    const owner = site === f.ownerId || (site === contextId && this.redefinesBoundOwner(site, f));
+    if (site === undefined || !owner || (site !== contextId && !this.sameIn(contextId, f, site))) return false;
     return this.of(site, name).every((eq) => this.namesPinnedIn(site, refsIn(eq.definition, eq.literals)));
+  }
+
+  /**
+   * Does `site` redefine f's owner, where a binding of the user's joins f to a feature that states a value
+   * ({@link statesOwnValue})? ({@link pinnedUncached})
+   */
+  private redefinesBoundOwner(site: ElementId, f: ElementRecord): boolean {
+    const el = this.model.get(site);
+    if (!el || !redefinedClosure(this.model, el).some((g) => g.id === f.ownerId)) return false;
+    return bindingEnds(this.model).connectors.some((b) => {
+      const ends = [...(b.source ?? []), ...(b.target ?? [])];
+      if (!ends.includes(f.id)) return false;
+      return ends.some((e) => {
+        const g = e !== f.id ? this.model.get(e) : undefined;
+        return g !== undefined && statesOwnValue(this.model, g);
+      });
+    });
   }
 
   /** Is every one of `names`, read in `contextId`, a value the same in every instance ({@link pinnedIn})? */
