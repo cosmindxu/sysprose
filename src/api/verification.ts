@@ -80,7 +80,7 @@ import {
   type AxiomCensus,
   type SmtOutcome,
 } from '../semantics/engines/smt';
-import { sharedDefinitions } from '../semantics/defining-equation';
+import { sharedDefinitions, WITHHELD_CAUSE_PHRASE } from '../semantics/defining-equation';
 import { DEFAULT_TIMEOUT_MS, loadZ3, type Z3Load } from '../semantics/smt/z3-bridge';
 import type { WitnessValue } from '../semantics/smt/z3-bridge';
 import {
@@ -1122,14 +1122,6 @@ const LITERAL_CLAIM: Record<LiteralOutcome, { claim: EvidenceClaim; code: string
  * refutation carried `null`, so the loudest verdict in the run was the only one
  * absent from the diagnostic list.
  */
-/** What a model holds that the SMT lane leaves unread ({@link DefiningEquations.withheldCauses}), as a clause of its detail. */
-const WITHHELD_CAUSE = {
-  binding: 'a binding whose end is a copy the saved file reads as another feature',
-  copy: 'a binding whose end is a copy standing on one of several features the order of the text chooses between',
-  twins: 'two features under one name, which the saved file may read the other way',
-  redefinition: 'a redefinition the saved file does not keep as it stands',
-  order: 'two inherited features for one name, which the saved file may read the other way round',
-} as const;
 const SMT_CLAIM: Record<SmtOutcome, { claim: EvidenceClaim; code: string | null }> = {
   proved: { claim: 'proved', code: null },
   refuted: { claim: 'refuted', code: 'verification/refuted' },
@@ -1709,7 +1701,7 @@ async function judge(input: {
           claim: 'inconclusive',
           code: 'verification/not-evaluable',
           detail:
-            `the model holds ${causes.map((c) => WITHHELD_CAUSE[c]).join(' and ')}, so the solver’s axioms may not be ` +
+            `the model holds ${causes.map((c) => WITHHELD_CAUSE_PHRASE[c]).join(' and ')}, so the solver’s axioms may not be ` +
             'those of the saved file: no proof or refutation is read from them',
           premises: [],
           bindings: [],

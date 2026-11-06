@@ -531,7 +531,7 @@ export const CLASS_FACTS: ClassFacts = {
   "digests": {
     "defects": "8e6d30cc5af5f7182c9852f271db34af6b1134a0b22432f4dad56c8477d9c373",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "1bcd105006400cfc75bc2012a20e2d4a25f1ba3151e339a7f8baf8bd9d4a9a86"
+    "probes": "c9ac14c2f0f834181695d31e8501514b4fa89e4c80c22a9bf267c8c9e5c90e62"
   },
   "fences": {
     "fence/collection-valued": {

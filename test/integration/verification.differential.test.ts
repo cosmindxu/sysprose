@@ -6358,8 +6358,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'ME9::P::c in ME9::Q2::p': ['T/T/T/?', 'T'],
       'ME9::P::c in ME9::Q3::p': ['T/T/T/?', 'T'],
       // S's `bind p.load = L` copies L over the two unrelated lines Q2 and Q3 (each `:>> L = 50.0`): the copy hides an
-      // override the text order picks between, so S's scope is left unread (copy-nearest-diamond) and the two instances of c in
-      // S's p and s's p are no rows any more (they read ?/?/?/? and were F by hand).
+      // override the text order picks between, so S's scope is left unread (copy-nearest-diamond). The two instances of c
+      // in S's p and s's p are rows all the same, listed and not decided on every surface, in the scope's sentence: as no
+      // rows, a literal run read 4 discharged and passed over a violated instance (S0; F by hand, m2 = -40).
+      'ME9::P::c in ME9::S::p': ['?/?/?/?', 'F'],
+      'ME9::P::c in ME9::s::p': ['?/?/?/?', 'F'],
     }),
     // A usage's own valueless redefinition (`attribute :>> L;`) of a feature a specialising definition redefines
     // without a name (Q2's `:>> L = 50.0`), found by per-instance-rest S3's finish: the mapper resolved `L` to Q's
@@ -17090,6 +17093,47 @@ package PS {
       },
     ),
     ...quotedFamilyProbes(),
+    // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
+    // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
+    // passed over its violation. A scope held for a copy over a diamond of overrides (defs, a definition holds it), for
+    // twins in a usage (own), and for twins beside a value over a `default` (twins-default). Each instance is F by hand
+    // (load = 50 or 60 > 10).
+    'withheld-instance-defs': probe(`package WID {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; constraint c { m2 >= 0.0 } }
+        part def Q { attribute L; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part def Q3 :> Q { attribute :>> L = 60.0; }
+        part def S :> Q2, Q3 { bind p.load = L; }
+        part s : S;
+      }`, {
+      'WID::P::c': ['T/T/T/X', 'T'],
+      'WID::P::c in WID::Q::p': ['T/T/T/X', 'T'],
+      'WID::P::c in WID::Q2::p': ['T/T/T/X', 'T'],
+      'WID::P::c in WID::Q3::p': ['T/T/T/X', 'T'],
+      'WID::P::c in WID::S::p': ['?/?/?/?', 'F'],
+      'WID::P::c in WID::s::p': ['?/?/?/?', 'F'],
+      'WID::Q3::«AttributeUsage» in WID::S#clash': ['F/-/F/-', 'F'],
+    }),
+    'withheld-instance-own': probe(`package WIO {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; constraint c { m2 >= 0.0 } }
+        part def Q { attribute L default = 1.0; part p : P; bind p.load = L; }
+        part s : Q { attribute z = 1.0; attribute z = 2.0; attribute :>> L = 50.0; }
+      }`, {
+      'WIO::P::c': ['T/T/T/X', 'T'],
+      'WIO::P::c in WIO::Q::p': ['T/T/T/X', 'T'],
+      'WIO::P::c in WIO::s::p': ['?/?/?/?', 'F'],
+    }),
+    'withheld-instance-twins-default': probe(`package WIT {
+        part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; constraint c { m2 >= 0.0 } }
+        part def Q { attribute L default = 1.0; part p : P; bind p.load = L; }
+        part def S :> Q { attribute z = 1.0; attribute z = 2.0; attribute :>> L = 50.0; }
+        part s : S;
+      }`, {
+      'WIT::P::c': ['T/T/T/X', 'T'],
+      'WIT::P::c in WIT::Q::p': ['T/T/T/X', 'T'],
+      'WIT::P::c in WIT::S::p': ['?/?/?/?', 'F'],
+      'WIT::P::c in WIT::s::p': ['?/?/?/?', 'F'],
+    }),
   };
 
   /**
@@ -17215,6 +17259,24 @@ package PS {
     ['bound-vc-ivalue-j3 | J3::k', 'q2’s p reads the 50 q2’s `:>> L = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q2’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at q’s 5'],
     ['bound-vc-ivalue-default | KD::qq4', 'q4’s p reads the 50 q4’s `:>> L default = 50.0` gives it through Q’s binding, which P’s `load <= 10.0` misses (the check files the row of q4’s p, F): the SMT engine and the literal engine read the axioms inconsistent beside the F the check, the numeric surface and the literal exit give `q4.L == 4.0`'],
     ['bound-vc-derived | I5::k', 'q’s p reads the 50 Q’s `L = 50.0` gives it through Q’s binding, and its m2 (−40) misses P’s `m2 >= 0.0` (the check files the row of q’s p, F): the SMT engine and the literal engine read the axioms inconsistent, where the check and the numeric surface decide k at its 50, as with the twin that redefines `load` itself'],
+    // S0: the withheld probes state a feature twice with two values, or a copy over a diamond of overrides that gives it 50
+    // and 60: the model contradicts itself, which the SMT engine reports on the rows beside the instances it leaves unread.
+    ...[
+      'withheld-instance-defs | WID::P::c',
+      'withheld-instance-defs | WID::P::c in WID::Q::p',
+      'withheld-instance-defs | WID::P::c in WID::Q2::p',
+      'withheld-instance-defs | WID::P::c in WID::Q3::p',
+      'withheld-instance-own | WIO::P::c',
+      'withheld-instance-own | WIO::P::c in WIO::Q::p',
+      'withheld-instance-twins-default | WIT::P::c',
+      'withheld-instance-twins-default | WIT::P::c in WIT::Q::p',
+    ].map(
+      (key) =>
+        [
+          key,
+          'a withheld scope states a feature under two values (twins, or 50 and 60 through a diamond of overrides): the model contradicts itself, which the SMT engine reports; the check reads P’s c at its own default, and the instance the scope holds is listed apart, unread',
+        ] as const,
+    ),
     // numeric2 S1: a negated assert whose body holds at the values is violated, and the model contradicts itself.
     ...[
       'neg-assert-h1 | NA1::topF',
@@ -18237,6 +18299,11 @@ package PS {
     ['line-twice-units', 'TU::c5', /TU::a redefines `x` twice, with 5\.0 \[kg\] and 5000\.0 \[g\], so the model states both/],
     ['line-sentence-twice-renamed', 'ST::c5y', /ST::a redefines `x` twice, with 6\.0 and 5\.0, so the model states both for the one feature and neither is read/],
     ['line-of-parts', 'LP::cX5', /LP::Q2::X redefines `M` and `N` together, so in LP::s they are one feature/],
+    // S0: an instance a withheld scope holds, in the scope's sentence (the cause clause is the SMT lane's, byte for byte).
+    ['withheld-instance-defs', 'WID::P::c in WID::S::p', /WID::P::c is not read in WID::S::p: WID::S owns, or joins a feature of, a binding whose end is a copy standing on one of several features the order of the text chooses between, so this instance is listed and not decided/],
+    ['withheld-instance-defs', 'WID::P::c in WID::s::p', /WID::P::c is not read in WID::s::p: WID::s owns, or joins a feature of, a binding whose end is a copy standing on one of several features/],
+    ['withheld-instance-own', 'WIO::P::c in WIO::s::p', /WIO::P::c is not read in WIO::s::p: WIO::s owns, or joins a feature of, two features under one name, which the saved file may read the other way, so this instance is listed and not decided/],
+    ['withheld-instance-twins-default', 'WIT::P::c in WIT::S::p', /WIT::P::c is not read in WIT::S::p: WIT::S owns, or joins a feature of, two features under one name/],
   ];
   withZ3('I16: the sentences of the round-3 fences are the ones pinned, whichever way the text is ordered', () => {
     const wrong: string[] = [];
