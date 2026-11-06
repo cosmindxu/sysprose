@@ -12,7 +12,7 @@ import {
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
-import { defaultStandsIn, instanceIndexSeam } from '../../src/semantics/defining-equation';
+import { defaultStandsIn, headStandsAgainstAt, instanceIndexSeam } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -648,6 +648,42 @@ describe('solve — a default a binding holds per feature stands in the instance
     expect(load?.role).toBe('axiom');
     // q1's L is 50: no standing-default row, the binding carries the value.
     expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'W2::Q::p::load in W2::q1::p')).toBeUndefined();
+  });
+});
+
+describe('checkConstraintsNumeric — a package head joined to an instance’s standing value an assert contradicts (F0)', () => {
+  const text = (fix: string) => `package E2C {
+    part def P { attribute m : ScalarValues::Real; }
+    bind P::m = M;
+    attribute M : ScalarValues::Real;
+    part p4 : P { attribute :>> m default = 7.0; }
+    part p5 : P;
+    assert constraint fix { ${fix} }
+    constraint cM { M >= 6.0 }
+    constraint c5 { p5.m >= 6.0 }
+    constraint c4 { p4.m >= 6.0 }
+  }`;
+
+  it('decides no row that reads M or a slot that carries it, bare or not; p4.m keeps its own 7', async () => {
+    for (const fix of ['M == 5.0', '2.0 * M == 10.0', 'p5.m == 5.0']) {
+      const { model: m } = await loadModelText(text(fix));
+      const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'E2C')!.id;
+      expect(headStandsAgainstAt(m!, pkg, 'M'), fix).toBeDefined();
+      expect(headStandsAgainstAt(m!, pkg, 'p5.m'), fix).toBeDefined();
+      expect(headStandsAgainstAt(m!, pkg, 'p4.m'), fix).toBeUndefined();
+      const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `E2C::${n}`)!;
+      // Solved from the assert alone, M was 5: `cM` and `c5` F where the model contradicts itself.
+      expect(['cM', 'c5', 'fix', 'c4'].map((n) => numeric(n).result), fix).toEqual(['unknown', 'unknown', 'unknown', 'satisfied']);
+      expect(numeric('cM').reason, fix).toBe(headStandsAgainstAt(m!, pkg, 'M'));
+    }
+  });
+
+  it('reads M where the assert holds exactly at the standing value', async () => {
+    const { model: m } = await loadModelText(text('M == 7.0'));
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'E2C')!.id;
+    expect(headStandsAgainstAt(m!, pkg, 'M')).toBeUndefined();
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `E2C::${n}`)!;
+    expect(['cM', 'c5', 'fix', 'c4'].map((n) => numeric(n).result)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied']);
   });
 });
 

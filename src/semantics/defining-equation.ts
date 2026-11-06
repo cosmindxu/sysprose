@@ -43,6 +43,7 @@ import {
   redefinedClosure,
 } from './inheritance';
 import { resolveFullName, unreadScopes, type UnreadScope } from './bind';
+import { evaluateDecided } from './exact';
 import { exprEqual, writtenChains, type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
@@ -8502,6 +8503,13 @@ function heldDefaults(
     if (path !== '' && (held.has(f.id) || held.has(source.id))) standingAt.add(`${rootId} ${path}`);
     else standing.add(f.id);
   }
+  // What each head's redefinitions state that no binding gives way to ({@link DefinitionHead.stands}).
+  for (const list of heads.values()) {
+    for (const head of list) {
+      const stands = (byRedefined?.get(head.feature) ?? []).filter((r) => r.ownerId != null && (r.attrs.defaultValue !== true || !held.has(r.id)));
+      if (stands.length > 0) head.stands = stands.map((r) => ({ root: r.ownerId!, written: r }));
+    }
+  }
   return { held, standing, standingAt, headSlots, readings, unread, enclosed, heldIn, heldSomewhere, overCap, heads, ...(cap !== undefined ? { cap } : {}) };
 }
 
@@ -11208,6 +11216,14 @@ interface DefinitionHead {
    * {@link heldDefaults}.
    */
   states?: boolean;
+  /**
+   * The redefinitions of the member that state a value of their own no binding gives way to — one written with `=`,
+   * or a `default` the component's bindings do not hold ({@link heldDefaults}) — each with the instance it is written
+   * in (`part p4 : P { attribute :>> m default = 7.0; }` under `bind P::m = M`): the binding holds in p4 too, so the
+   * component carries p4's 7 wherever it is read ({@link definedAgainstBoundIn}, {@link headStandsAgainstAt}). Set by
+   * {@link heldDefaults}, after every hold.
+   */
+  stands?: Array<{ root: ElementId; written: ElementRecord }>;
 }
 
 /** Does `h`'s slot take, outside its component, a value a `default` in it gives way to ({@link DefinitionHead.states})? */
@@ -11584,6 +11600,10 @@ function abstentionSentence(
       `(${spelled.join(', ')}), and the model states neither`
     );
   }
+  // A package head's slot an instance states a value at, which an asserted relation contradicts (F0): named, never
+  // "none of them states one".
+  const stood = headStandsIn(model, root, component);
+  if (stood !== undefined) return `${name} is not read in ${instance}: ${stood}`;
   return `${name} has no value in ${instance}: ${bind}${of} joins it to ${members.join(', ')}, and none of them states one`;
 }
 
@@ -12199,6 +12219,28 @@ function definedAgainstBoundUncached(
     }
     found ??= { verdict: 'undecided', written };
   }
+  // A package head in the component (`bind P::m = M`) whose slot an instance's redefinition states a value at that no
+  // binding gives way to ({@link DefinitionHead.stands}: E2C's `part p4 : P { attribute :>> m default = 7.0; }`):
+  // the binding holds in p4 too, so the component is p4's 7 there, compared as an in-component member is. Read as
+  // before, the check, the literal engine and the numeric surface read M at the equation's 5 where the model also
+  // gives it 7 — F on every surface where the model contradicts itself.
+  let standsIn: ElementRecord | undefined;
+  if (!found) {
+    for (const head of bindingEnds(model).heads.get(best.root) ?? []) {
+      if (head.component !== best.component || found?.verdict === 'differs') continue;
+      for (const { root: at, written } of head.stands ?? []) {
+        if (closure.has(written.id)) continue;
+        const compared = compareStands(constants, written);
+        if (compared === 'same') continue;
+        if (found === undefined || compared === 'differs') standsIn = model.get(at);
+        if (compared === 'differs' && stated === undefined) {
+          found = { verdict: 'differs', written };
+          break;
+        }
+        found ??= { verdict: 'undecided', written };
+      }
+    }
+  }
   const eq = equations[0]!.constraint;
   if (!found) {
     const viaHead = definedAgainstHead(model, best.root, best.component, constants, stated);
@@ -12220,7 +12262,8 @@ function definedAgainstBoundUncached(
   const { bind, of } = componentBindingWords(model, best.root, best.component);
   const head =
     `${name} is not read in ${instance}: ${effectiveQualifiedName(model, eq.ownerId ?? eq.id)}'s asserted ` +
-    `\`${String(eq.attrs.expression ?? '').trim()}\` defines it, and ${bind}${of} joins it to ${standingText(model, found.written)}`;
+    `\`${String(eq.attrs.expression ?? '').trim()}\` defines it, and ${bind}${of} joins it` +
+    `${standsIn !== undefined ? `, in ${effectiveQualifiedName(model, standsIn.id)},` : ''} to ${standingText(model, found.written)}`;
   if (stated !== undefined) {
     return {
       verdict: 'undecided',
@@ -12238,6 +12281,18 @@ function definedAgainstBoundUncached(
         : `${head}: a binding holds in every instance, and whether the two meet there takes an evaluation this tool ` +
           'does not make, so it is not read',
   };
+}
+
+/**
+ * How the exact constants an asserted equation gives a feature compare with the value `written` states
+ * ({@link DefinitionHead.stands}): `same` only where every one is that value exactly; `undecided` where either is no
+ * constant.
+ */
+function compareStands(constants: ReadonlyArray<Constant | undefined>, written: ElementRecord): WrittenComparison {
+  const w = constantOf(written);
+  if (!w || constants.some((c) => c === undefined)) return 'undecided';
+  const each = constants.map((c) => compareConstants(c!, w));
+  return each.every((x) => x === 'same') ? 'same' : each.some((x) => x === 'differs') ? 'differs' : 'undecided';
 }
 
 /**
@@ -12329,6 +12384,93 @@ function definedAgainstHead(
       if (compared === 'same') continue;
       return { verdict: compared === 'differs' && stated === undefined ? 'differs' : 'undecided', written, head, root: headRoot, slot };
     }
+  }
+  return undefined;
+}
+
+const HEAD_STANDS = new WeakMap<Model, { rev: number; byComponent: Map<string, string | null> }>();
+
+/**
+ * Why `name`, read in the package `contextId`, is not read there (F0): it is a member of a binding component that a
+ * package head ({@link DefinitionHead}: `bind P::m = M`) joins, in every instance of P, to the value an instance's
+ * redefinition states and no binding gives way to ({@link DefinitionHead.stands}: E2C's `part p4 : P { attribute :>>
+ * m default = 7.0; }`), and an asserted relation of the package over the component does not hold exactly at that
+ * value (`M == 5.0`, `2.0 * M == 10.0`, `p2.m == 5.0`) — or two such values are not one constant. The model then
+ * states two values for the component (decision 1), and no surface reads M or a slot it carries (p5.m); read as
+ * before, the numeric surface solved M from the assert alone. The redefinition's own slot (p4.m) keeps its value
+ * and is not refused. A relation that holds exactly at the standing value (`M == 7.0`) leaves the component read.
+ * `undefined` where any of that does not hold. Once per component per revision.
+ */
+export function headStandsAgainstAt(model: Model, contextId: ElementId, name: string): string | undefined {
+  if (!hasUserBindings(model)) return undefined;
+  const ends = bindingEnds(model);
+  const heads = ends.heads.get(contextId);
+  if (!heads?.some((h) => h.stands !== undefined)) return undefined;
+  const reading = ends.readings.get(contextId);
+  const componentOfName = (n: string): string | undefined => reading?.get(n)?.component ?? definitionHeadMatch(model, contextId, n)?.component;
+  const component = componentOfName(name);
+  if (component === undefined) return undefined;
+  const stands = heads.filter((h) => h.component === component).flatMap((h) => h.stands ?? []);
+  if (stands.length === 0) return undefined;
+  // The slot a redefinition states its own value at reads that value.
+  const at = name.includes('.') ? featuresAtPath(model, sharedDefinitions(model), contextId, name) : undefined;
+  const last = at?.[at.length - 1];
+  if (last && stands.some((s) => s.written.id === last.id || valueSourceOf(model, last) === s.written)) return undefined;
+  const sentence = headStandsIn(model, contextId, component);
+  return sentence === undefined ? undefined : `${name.slice(name.lastIndexOf('.') + 1)} is not read in ${effectiveQualifiedName(model, contextId)}: ${sentence}`;
+}
+
+/** {@link headStandsAgainstAt}'s reason for the component `component` of the package `root`'s reading, or `undefined`. */
+function headStandsIn(model: Model, root: ElementId, component: string): string | undefined {
+  const ends = bindingEnds(model);
+  const stands = (ends.heads.get(root) ?? []).filter((h) => h.component === component).flatMap((h) => h.stands ?? []);
+  if (stands.length === 0) return undefined;
+  let memo = HEAD_STANDS.get(model);
+  if (!memo || memo.rev !== model.rev) HEAD_STANDS.set(model, (memo = { rev: model.rev, byComponent: new Map() }));
+  const key = `${root} ${component}`;
+  if (!memo.byComponent.has(key)) {
+    const reading = ends.readings.get(root);
+    const componentOfName = (n: string): string | undefined => reading?.get(n)?.component ?? definitionHeadMatch(model, root, n)?.component;
+    memo.byComponent.set(key, headStandsSentence(model, root, component, stands, componentOfName) ?? null);
+  }
+  return memo.byComponent.get(key) ?? undefined;
+}
+
+/** {@link headStandsAgainstAt}'s reason for the component `component` of `root`'s reading, or `undefined`. */
+function headStandsSentence(
+  model: Model,
+  root: ElementId,
+  component: string,
+  stands: ReadonlyArray<{ root: ElementId; written: ElementRecord }>,
+  componentOfName: (n: string) => string | undefined,
+): string | undefined {
+  const { bind, of } = componentBindingWords(model, root, component);
+  const joined = (s: { root: ElementId; written: ElementRecord }): string =>
+    `${bind}${of} joins it, in ${effectiveQualifiedName(model, s.root)}, to ${standingText(model, s.written)}`;
+  const first = stands[0]!;
+  const w = constantOf(first.written);
+  const other = stands.find((s) => s !== first && (w === undefined || compareStands([w], s.written) !== 'same'));
+  if (other !== undefined) {
+    return `${joined(first)}, and to ${standingText(model, other.written)} in ${effectiveQualifiedName(model, other.root)}: a binding holds in every instance, and the two are not one value this tool reads exactly, so it is not read`;
+  }
+  for (const el of model.children(root)) {
+    if (el.attrs.isLibrary === true || !isAsserted(el)) continue;
+    const text = String(el.attrs.expression ?? '').trim();
+    const names = relationNamesOf(text);
+    const mine = names.filter((n) => componentOfName(n) === component);
+    if (mine.length === 0) continue;
+    const body = parseRelationBody(text);
+    // Read exactly at the standing value: a bare number, every name of the component that value, and nothing else.
+    let holds = false;
+    if (body && !body.hadUnit && w !== undefined && w.dimension === undefined && mine.length === names.length) {
+      const folded = evaluateDecided(body.node, (n) => (mine.includes(n) ? Number(w.si.num) / Number(w.si.den) : undefined), (n) => (mine.includes(n) ? w.si : undefined));
+      holds = !('unknown' in folded) && folded.value === true;
+    }
+    if (holds) continue;
+    return (
+      `${joined(first)}, and ${effectiveQualifiedName(model, root)}'s asserted \`${text}\` does not hold exactly at that value: ` +
+      'a binding holds in every instance, so the model states two values for it, and it is not read'
+    );
   }
   return undefined;
 }

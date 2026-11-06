@@ -71,7 +71,7 @@ import {
   type ConstraintCheck,
   type SpecialisationInstance,
 } from '@semantics/evaluate-model';
-import { contradictedDefinitions, readsContradictedDefinition } from '@semantics/defining-equation';
+import { contradictedDefinitions, headStandsAgainstAt, readsContradictedDefinition, relationNamesOf } from '@semantics/defining-equation';
 import { effectiveQualifiedName } from '@semantics/inheritance';
 import { obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, evaluateMoEs, solveFeasible } from '@semantics/solver';
@@ -17153,6 +17153,131 @@ package PS {
       'PUN::cQM': ['F/F/F/F', 'F'],
       },
     ),
+    // a5 (2026-11-06) F0: the package-head default family. A package's `bind P::m = M` holds in every instance of P, so
+    // an instance's standing value on its redefinition of m (p4's `default = 7.0`, or `= 7.0`) is M's too, and an asserted
+    // relation over M that does not hold exactly at 7 makes the model contradict itself (decision 1): M is not read,
+    // nor any slot that carries it (p5.m, p3.load), and the binding's own row reports the pair where the assert is bare.
+    // Before F0 the check, the literal engine and the numeric surface read M at the assert's 5 (E2C, E2CP, E1QPM: `cM`
+    // F/F/F/X), or the numeric surface alone did (E1QP, E2CU: ?/?/F/X); controls E2A/E2B/E2D (no head) are unchanged.
+    'a5-e2c': probe(`package E2C {
+  part def P { attribute m : ScalarValues::Real; }
+  bind P::m = M;
+  attribute M : ScalarValues::Real;
+  part p4 : P { attribute :>> m default = 7.0; }
+  assert constraint fix { M == 5.0 }
+  constraint cM { M >= 6.0 }
+}`, {
+      'E2C::cM': ['?/?/?/X', '?'],
+      'E2C::fix': ['?/-/?/-', null],
+      'E2C::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-e2cr': probe(reversedMembers(`package E2C {
+  part def P { attribute m : ScalarValues::Real; }
+  bind P::m = M;
+  attribute M : ScalarValues::Real;
+  part p4 : P { attribute :>> m default = 7.0; }
+  assert constraint fix { M == 5.0 }
+  constraint cM { M >= 6.0 }
+}`), {
+      'E2C::cM': ['?/?/?/X', '?'],
+      'E2C::fix': ['?/-/?/-', null],
+      'E2C::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-e2cp': probe(`package E2CP {
+  part def P { attribute m : ScalarValues::Real; }
+  bind P::m = M;
+  attribute M : ScalarValues::Real;
+  part p4 : P { attribute :>> m default = 7.0; }
+  part p5 : P;
+  assert constraint fix { M == 5.0 }
+  constraint cM { M >= 6.0 }
+  constraint c5 { p5.m >= 6.0 }
+  constraint c4 { p4.m >= 6.0 }
+}`, {
+      'E2CP::c4': ['T/X/T/X', null],
+      'E2CP::c5': ['?/?/?/X', '?'],
+      'E2CP::cM': ['?/?/?/X', '?'],
+      'E2CP::fix': ['?/-/?/-', null],
+      'E2CP::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-e1qpm': probe(`package E1QPM {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real;
+  bind P::load = M;
+  part p4 : P { attribute :>> load default = 7.0; }
+  assert constraint fix { M == 5.0 }
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint c3F { p3.load >= 6.0 }
+  constraint cM { M >= 6.0 }
+}`, {
+      'E1QPM::c3F': ['?/?/?/X', '?'],
+      'E1QPM::c3T': ['?/?/?/X', '?'],
+      'E1QPM::cM': ['?/?/?/X', '?'],
+      'E1QPM::fix': ['?/-/?/-', null],
+      'E1QPM::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-e1qp': probe(`package E1QP {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real;
+  bind P::load = M;
+  part p4 : P { attribute :>> load default = 7.0; }
+  part p2 : P;
+  assert constraint fix { p2.load == 5.0 }
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint c3F { p3.load >= 6.0 }
+  constraint c2T { p2.load <= 6.0 }
+  constraint cM { M >= 6.0 }
+}`, {
+      'E1QP::c2T': ['?/?/?/X', '?'],
+      'E1QP::c3F': ['?/?/?/X', '?'],
+      'E1QP::c3T': ['?/?/?/X', '?'],
+      'E1QP::cM': ['?/?/?/X', '?'],
+      'E1QP::fix': ['?/-/?/-', null],
+    }),
+    'a5-e1qpr': probe(reversedMembers(`package E1QP {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real;
+  bind P::load = M;
+  part p4 : P { attribute :>> load default = 7.0; }
+  part p2 : P;
+  assert constraint fix { p2.load == 5.0 }
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint c3F { p3.load >= 6.0 }
+  constraint c2T { p2.load <= 6.0 }
+  constraint cM { M >= 6.0 }
+}`), {
+      'E1QP::c2T': ['?/?/?/X', '?'],
+      'E1QP::c3F': ['?/?/?/X', '?'],
+      'E1QP::c3T': ['?/?/?/X', '?'],
+      'E1QP::cM': ['?/?/?/X', '?'],
+      'E1QP::fix': ['?/-/?/-', null],
+    }),
+    'a5-e2cu': probe(`package E2CU {
+  part def P { attribute m : ScalarValues::Real; }
+  attribute M : ScalarValues::Real;
+  bind P::m = M;
+  part p4 : P { attribute :>> m default = 7.0; }
+  assert constraint fix { 2.0 * M == 10.0 }
+  constraint cM { M >= 6.0 }
+}`, {
+      'E2CU::cM': ['?/?/?/X', '?'],
+      'E2CU::fix': ['?/-/?/-', null],
+    }),
+    // An assert that holds exactly at the standing value is no contradiction: every surface reads M at 7.
+    'a5-e2c-same': probe(`package E2CS {
+  part def P { attribute m : ScalarValues::Real; }
+  bind P::m = M;
+  attribute M : ScalarValues::Real;
+  part p4 : P { attribute :>> m default = 7.0; }
+  assert constraint fix { M == 7.0 }
+  constraint cM { M >= 6.0 }
+}`, {
+      'E2CS::cM': ['T/T/T/T', 'T'],
+      'E2CS::fix': ['T/-/T/-', 'T'],
+    }),
     ...quotedFamilyProbes(),
   };
 
@@ -17261,6 +17386,10 @@ package PS {
   const AXIOMS =
     'a value that stands — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or one written with `=` (HP, and each `-eq` twin) — so the model contradicts itself, and the SMT engine reports its axioms inconsistent beside the check’s and the numeric surface’s reading of the value (and the literal engine’s, where the row reads no value that contradiction reaches; it reports them inconsistent too where it does, Q4 for an assert and D1 for a binding the check reports violated)';
   const I7_ALLOWED = new Map<string, string>([
+    [
+      'a5-e2cp | E2CP::c4',
+      'p4’s own standing `default = 7.0` under the package’s `bind P::m = M` beside the asserted `M == 5.0`: the contradiction of decision 1, which the check reports on the binding’s row (F0), so the literal engine abstains; p4.m keeps its own 7 on the check and the numeric surface, as E2A::cp does',
+    ],
     ['n4 | N4::zl', 'an asserted `x * x == -1.0` admits no model; the numeric surface reads z apart from it (out of scope)'],
     // TODO 249: AND-CLASH, as one conjunction or as two asserts.
     ...['order-and-clash', 'order-and-clash-rev', 'order-and-clash-split', 'order-and-clash-split-rev'].flatMap((name) =>
@@ -18238,6 +18367,9 @@ package PS {
     ['stand-eqmd', 'stand-eqmd-rev'],
     ['stand-eqmd', 'stand-eqmd-alleq'],
     ['stand-hlx', 'stand-hlx-eqx'],
+    // a5 F0: the package-head default family in either text order.
+    ['a5-e2c', 'a5-e2cr'],
+    ['a5-e1qp', 'a5-e1qpr'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
@@ -18327,6 +18459,33 @@ package PS {
       }
     }
     expect(wrong).toEqual([]);
+  });
+
+  /**
+   * I17 (a5 F0, INV-E): no numeric or SMT row of a package's relation that reads a name {@link headStandsAgainstAt}
+   * refuses — a package head joined to an instance's standing value an asserted relation contradicts — is T or F; X
+   * is allowed (the axioms are inconsistent). Read over every probe with a package binding on a definition's feature.
+   */
+  withZ3('I17: no numeric or SMT row decides a name a package head joins to a contradicted standing value', async () => {
+    const wrong: string[] = [];
+    let fenced = 0;
+    for (const [name, p] of Object.entries(PROBES)) {
+      if (!/\bbind\s+[\w']+(::[\w']+)+\s*=/.test(p.text)) continue;
+      const { model } = await loadModelText(p.text, { fileName: `${name}.sysml` });
+      if (!model) continue;
+      for (const el of model.all()) {
+        if (el.eClass !== 'ConstraintUsage' || el.ownerId == null || typeof el.attrs.expression !== 'string') continue;
+        const ownerId = el.ownerId;
+        if (!relationNamesOf(el.attrs.expression).some((n) => headStandsAgainstAt(model, ownerId, n) !== undefined)) continue;
+        const got = seen.get(name)?.get(model.qualifiedName(el.id));
+        if (!got) continue;
+        fenced++;
+        for (const s of [2, 3]) if (decided(got.verdicts[s]!)) wrong.push(`${name} | ${model.qualifiedName(el.id)}: ${SURFACES[s]} ${got.verdicts[s]}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+    // Not vacuous: the a5 F0 probes hold such rows.
+    expect(fenced).toBeGreaterThan(10);
   });
 
   // The cycle pin's comment names the error the model is: a subsetting cycle is the specialization-cycle finding, and the
