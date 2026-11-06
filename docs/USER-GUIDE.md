@@ -2288,13 +2288,16 @@ each side beside such an L, ties K to it like `K == L + 0.0` or `bind K = L`, so
 FMI `start`, its measure of effectiveness and a check over it read neither value,
 in either order of the equations. An equation a usage or a specialisation asserts
 (`part a : P { assert constraint ea { L == 50.0 } }`) holds in that usage's instances
-only, so P's own rows do not read it. Limits of this tool: where a specialisation declares
-a name anew without `:>>` (`part def P2 :> P { attribute K; … }`, which KerML does not
-allow), P's body is re-read there by name, so P's `assert constraint { K == 50.0 }`
-and P2's `K == 70.0` are reported as a contradiction (a violated row), and a binding or an
-assert of P's read so may decide a value P2's K gives P's other features (`p.L` from P's
-`bind K = L`). The SMT engine does not read such a binding of P's in P2 (it says so, and the
-proofs over its two ends are not claimed): write `attribute :>> K` or rename it.
+only, so P's own rows do not read it. Where a specialisation declares a name anew
+without `:>>` (`part def P2 :> P { attribute K; … }`, which KerML does not allow), P's
+body names P's K and P2's own names P2's: this tool does not read which one P's body means
+in a P2, so no surface reads K there, nor a value a binding joins to it (`p.L`, over P's
+`bind K = L` or `assert constraint { K == L }`), each in a sentence that names both Ks. P's
+`assert constraint { K == 50.0 }` beside P2's `K == 70.0` is no contradiction it reports
+(the `#equations` row is undecided, not violated), and the SMT engine refuses P's
+relations re-read in P2, so a proof over K is not claimed. Limit of this tool: P2's own
+relations over K abstain too, and the shape is not yet reported: write `attribute :>> K`
+or rename it.
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -

@@ -10,7 +10,7 @@ import {
   ownFeatures,
   redefinedBy,
 } from '../../src/semantics/index';
-import { hiddenByName, mostSpecificOwned } from '../../src/semantics/inheritance';
+import { anyHiddenByName, hiddenByName, mostSpecificOwned } from '../../src/semantics/inheritance';
 import { parseModel } from '../../src/text/index';
 
 describe('semantics — inheritance', () => {
@@ -202,6 +202,9 @@ describe('semantics — inheritance', () => {
     expect(read('G8::R')).toEqual([]);
     expect(read('G8::P')).toEqual([]);
     expect(read('G8::V::holds')).toEqual([]);
+    // g8-fence: the readers ask whether the model holds any such name before they ask a context.
+    expect(anyHiddenByName(model)).toBe(true);
+    expect(anyHiddenByName(parseModel(`package R { part def P { attribute K : ScalarValues::Real; } part def R :> P { attribute :>> K; } }`).model)).toBe(false);
   });
   // The one of several features whose owner specialises the owner of every other. The answer is the all-pairs
   // definition (the first feature, in order, whose owner has every other owner among its generals, and no other

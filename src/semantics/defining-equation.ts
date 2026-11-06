@@ -33,10 +33,12 @@
 
 import { type AttrValue, type ElementId, type ElementRecord, type Model, TEXTUAL_KEYWORD, isDefinition, isTypingSpecialization, isUsage, splitQualified, unquoteName } from '@core/index';
 import {
+  anyHiddenByName,
   effectiveFeatures,
   effectiveNameOf,
   effectiveQualifiedName,
   generalizationsOf,
+  hiddenByName,
   inheritedNameClashes,
   maskedByName,
   ownFeatures,
@@ -2822,7 +2824,41 @@ export class DefiningEquations {
       for (const [name, shadow] of this.lexicalShadows(contextId)) if (!out.has(name)) out.set(name, shadow);
       for (const [name, merged] of this.mergedLines(contextId)) if (!out.has(name)) out.set(name, merged);
       for (const [name, twice] of this.redefinedTwice(contextId)) if (!out.has(name)) out.set(name, twice);
+      for (const [name, hidden] of this.hiddenNames(contextId)) if (!out.has(name)) out.set(name, hidden);
       this.clashes.set(contextId, out);
+    }
+    return out;
+  }
+
+  /**
+   * The names `contextId` declares anew without `:>>` beside the feature a general type's body names by them ({@link
+   * hiddenByName}: g8's `part def P2 :> P { attribute K; … }` over P's `bind K = L`, G8C's over P's `K == 50.0`), which
+   * KerML does not allow (§7.3.2.1). P's body re-read in a P2 by name meets P2's K, read by identity P's; the check,
+   * the literal and the numeric surface read it by name in some places and by identity in others (G8B's `p.L == 50.0`
+   * held from P2's `K == 50.0` through P's `bind K = L`, and G8C's two asserts were paired into a contradiction). One
+   * walk cannot give the name both meanings, so the context reads neither ({@link NameClash}'s `hidden`), its own
+   * bodies included: weaker, never false. The verification lane reads the context's own bodies over it, and refuses
+   * the general's rows re-read there (./obligations), so a contradiction the context's own bodies state stays one.
+   */
+  private hiddenNames(contextId: ElementId): Map<string, NameClash> {
+    const out = new Map<string, NameClash>();
+    const context = this.model.get(contextId);
+    if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage') || !anyHiddenByName(this.model)) return out;
+    const entries = hiddenByName(this.model, contextId);
+    if (entries.size === 0) return out;
+    const byName = this.byName(contextId);
+    for (const [name, entry] of entries) {
+      const kept = byName.get(name);
+      // An implicit connector-end copy redefines what it copies: it hides nothing a body names.
+      const other = entry.hidden.map((id) => this.model.get(id)).find((g) => g !== undefined && g.attrs.implicit !== true);
+      if (kept === undefined || other === undefined || kept.id !== entry.own || other.ownerId == null) continue;
+      // Only a name the general's body reads: a feature declared anew beside one no body of the general names is read
+      // alike either way (a retyped usage's own `:>> P::Q::M` beside Z's M).
+      const general = other.ownerId;
+      const bound = (b: ElementRecord): boolean =>
+        isBindingConnector(b) && [b.source?.[0], b.target?.[0]].some((e) => bindingEndPath(this.model, e, general)?.split('.')[0] === name);
+      if (!this.namesWritten(general).has(name) && !this.model.children(general).some(bound)) continue;
+      out.set(name, { kept, other, keptValue: kept, otherValue: other, contradiction: false, decided: false, hidden: { general: this.model.require(other.ownerId) } });
     }
     return out;
   }
@@ -6824,6 +6860,13 @@ export interface ContradictedDefinition {
    * read there by the check's own evaluator (`definitionConflicts` of ./evaluate-model).
    */
   sites: ReadonlyArray<{ equation: DefiningEquation; at: ElementId; name: string; feature: ElementRecord }>;
+  /**
+   * Set where an equation of a general names a feature `context` declares anew without `:>>` beside it (G8C's `K == 50.0`
+   * in P beside P2's own K: {@link hiddenByName}), so the two are paired by name only. KerML does not allow the shape:
+   * read with P's K and P2's K as two features, the model states no contradiction. No reading of the feature is decided,
+   * as for any set, but the check reports no contradiction.
+   */
+  hidden?: true;
 }
 
 /** {@link contradictedDefinitions}' entry, once per revision. */
@@ -6966,9 +7009,26 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     if (!hit) slots.set(f.id, (hit = new Set([f.id, ...overriddenBy(model, f).map((g) => g.id)])));
     return hit;
   };
+  // A feature declared anew without `:>>` (G8C: {@link hiddenByName}) masks what it hides by name only, which KerML does
+  // not allow: a set that pairs a general's equation over the hidden feature with one over it is `hidden`.
+  const pairSlots = new Map<ElementId, ReadonlySet<ElementId>>();
+  const pairSlotOf = (f: ElementRecord): ReadonlySet<ElementId> => {
+    let hit = pairSlots.get(f.id);
+    if (!hit) {
+      const name = f.ownerId != null ? effectiveNameOf(model, f) : undefined;
+      const entry = name !== undefined ? hiddenByName(model, f.ownerId!).get(name) : undefined;
+      const hidden = new Set(entry?.own === f.id ? entry.hidden : []);
+      pairSlots.set(f.id, (hit = hidden.size === 0 ? slotOf(f) : new Set([...slotOf(f)].filter((id) => !hidden.has(id)))));
+    }
+    return hit;
+  };
   const sameSlot = (f: ElementRecord, g: ElementRecord): boolean => {
     const mine = slotOf(f);
     return [...slotOf(g)].some((id) => mine.has(id));
+  };
+  const samePair = (f: ElementRecord, g: ElementRecord): boolean => {
+    const mine = pairSlotOf(f);
+    return [...pairSlotOf(g)].some((id) => mine.has(id));
   };
   /**
    * The asserted equations that define `path` read in X (`feature`, there), each with the element the names its
@@ -7296,8 +7356,20 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       const again = met.find((m) => m.set.context.id === x.id);
       if (again !== undefined && (ends.has(path) || order.get(again.set.feature.id)! <= order.get(feature.id)!)) continue;
       const kept = met.filter((m) => m !== again && !m.general.has(x.id));
+      const hidden = own.some((c) => !samePair(feature, c.named));
       kept.push({
-        set: { context: x, path, feature, equations, verdict, ...(why ? { why } : {}), features, sites, ...(joined.length > 0 ? { joined } : {}) },
+        set: {
+          context: x,
+          path,
+          feature,
+          equations,
+          verdict,
+          ...(why ? { why } : {}),
+          features,
+          sites,
+          ...(joined.length > 0 ? { joined } : {}),
+          ...(hidden ? { hidden: true as const } : {}),
+        },
         general: mine,
       });
       found.set(key, kept);
@@ -7668,9 +7740,70 @@ export function contradictedDefinitionNaming(model: Model, set: ContradictedDefi
   return `the asserted ${listed} each define \`${set.path}\`${joined} in ${effectiveQualifiedName(model, set.context.id)}`;
 }
 
+/**
+ * The first of `names` (by its first segment) that `writer`'s body means as a feature `context` hides ({@link
+ * hiddenByName}): a name the context declares anew without `:>>` beside the one `writer` names (g8, G8A, G8C), so
+ * that `writer`'s body re-read there by name meets the context's feature, and by identity `writer`'s. `undefined`
+ * where none is, and where `context` is `writer` itself.
+ */
+export function hiddenReadOf(
+  model: Model,
+  writer: ElementId,
+  context: ElementId,
+  names: readonly (string | undefined)[],
+): { name: string; own: ElementId; meant: ElementId } | undefined {
+  if (writer === context || !anyHiddenByName(model)) return undefined;
+  const entries = hiddenByName(model, context);
+  if (entries.size === 0) return undefined;
+  const definitions = sharedDefinitions(model);
+  for (const path of names) {
+    const n = path?.split('.')[0];
+    const entry = n !== undefined ? entries.get(n) : undefined;
+    const meant = n !== undefined && entry !== undefined ? definitions.scope(writer, 'all').get(n) : undefined;
+    if (entry === undefined || meant === undefined || !entry.hidden.includes(meant)) continue;
+    return { name: n!, own: entry.own, meant };
+  }
+  return undefined;
+}
+
+/**
+ * Why `text`, a relation `writer` writes, is not read in `context` ({@link hiddenReadOf}), or `undefined`: every
+ * surface's sentence for a general's assert, constraint or binding re-read where a name it reads is declared anew.
+ */
+export function hiddenReadSentence(
+  model: Model,
+  text: string,
+  writer: ElementId,
+  context: ElementId,
+  names: readonly (string | undefined)[],
+): string | undefined {
+  const hit = hiddenReadOf(model, writer, context, names);
+  if (hit === undefined) return undefined;
+  const general = effectiveQualifiedName(model, writer);
+  return (
+    `\`${text}\` of ${general} is not read in ${sharedDefinitions(model).contextName(context)}: there \`${hit.name}\` names ` +
+    `${effectiveQualifiedName(model, hit.own)}, declared anew without \`:>>\` beside the ${effectiveQualifiedName(model, hit.meant)} ` +
+    `${general}'s body names, which KerML does not allow; this tool does not read which of the two it means there`
+  );
+}
+
+/**
+ * A `hidden` set's equations, and why they are not read as a contradiction: the context declares the name anew without
+ * `:>>` beside the feature a general's equation names (G8C), which KerML does not allow (§7.3.2.1).
+ */
+function hiddenPairClause(model: Model, set: ContradictedDefinition): string {
+  const name = effectiveNameOf(model, set.feature) ?? set.path;
+  const theirs = [...new Set(set.features.filter((f) => f.id !== set.feature.id).map((f) => effectiveQualifiedName(model, f.id)))];
+  return (
+    `${contradictedDefinitionNaming(model, set)}, which declares \`${name}\` anew without \`:>>\` beside ${theirs.join(' and ')} the general's ` +
+    'body names, which KerML does not allow; this tool does not read which of the two each equation means there'
+  );
+}
+
 /** Why a row {@link contradictedDefinitionRefusal} refuses is not read: the feature, and the equations that give it two values. */
 export function contradictedDefinitionSentence(model: Model, set: ContradictedDefinition): string {
   const name = effectiveNameOf(model, set.feature) ?? set.path;
+  if (set.hidden) return `${name} is not read: ${hiddenPairClause(model, set)}, so it reads neither, and no relation that may read it is decided`;
   return set.verdict === 'differs'
     ? `${name} is not read: ${contradictedDefinitionClause(model, set)} — the model contradicts itself there, ` +
         'whichever is written first, and this tool reads neither value, so no relation that may read it is decided'
@@ -7686,6 +7819,7 @@ export function contradictedDefinitionSentence(model: Model, set: ContradictedDe
  */
 export function contradictedDefinitionConflict(model: Model, set: ContradictedDefinition, apart?: readonly string[]): string {
   const name = effectiveNameOf(model, set.feature) ?? set.path;
+  if (set.hidden) return `${hiddenPairClause(model, set)}: it reports no contradiction, reads neither, and decides no relation that may read ${name}`;
   const contradicts =
     ' — an asserted equation is a fact of every instance it holds of, so the model states both values and ' +
     `contradicts itself, whichever is written first; no relation that may read ${name} is decided`;
@@ -7845,6 +7979,7 @@ export function boundClashOf(
   model: Model,
   contextId: ElementId,
   name: string,
+  only?: (clash: NameClash) => boolean,
 ): { contextId: ElementId; clash: NameClash } | undefined {
   if (!hasUserBindings(model)) return undefined;
   const at = componentOf(model, contextId, name);
@@ -7854,7 +7989,7 @@ export function boundClashOf(
     if (r.component !== at.component) continue;
     const f = model.get(r.feature);
     const clash = f?.ownerId != null ? definitions.clash(f.ownerId, f) : undefined;
-    if (clash) return { contextId: f!.ownerId!, clash };
+    if (clash && (only === undefined || only(clash))) return { contextId: f!.ownerId!, clash };
   }
   return undefined;
 }
@@ -13940,6 +14075,11 @@ export interface NameClash {
    */
   shadow?: { writer: ElementRecord; general: ElementRecord };
   /**
+   * Set where the context declares the name anew without `:>>` beside the feature `other` a body of `general` names by
+   * it ({@link DefiningEquations.hiddenNames}): never a contradiction.
+   */
+  hidden?: { general: ElementRecord };
+  /**
    * Set where the name is one of the features a general type's `line` redefines together (`attribute X :>> M, N;`)
    * beside a redefinition of one of them in the context ({@link DefiningEquations.mergedLines}): never a
    * contradiction, and `other` is that line.
@@ -13990,6 +14130,13 @@ export function clashSentence(model: Model, contextId: ElementId, clash: NameCla
       `${context} declares \`${name}\` itself, and \`${body}\` in ${effectiveQualifiedName(model, general.id)} reads \`${name}\` as ` +
       `${effectiveQualifiedName(model, clash.other.id)}, as KerML resolves it where it is written; one reading of ${context} ` +
       'cannot give the name both meanings, so neither is read there'
+    );
+  }
+  if (clash.hidden) {
+    return (
+      `${context} reads \`${name}\` as ${effectiveQualifiedName(model, clash.kept.id)}, declared anew without \`:>>\` beside the ` +
+      `${effectiveQualifiedName(model, clash.other.id)} the body of ${effectiveQualifiedName(model, clash.hidden.general.id)} names, which KerML does not allow; ` +
+      'this tool does not read which of the two it means there, so neither is read'
     );
   }
   if (clash.twice) {

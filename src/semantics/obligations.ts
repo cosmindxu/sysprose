@@ -106,6 +106,8 @@ import {
   isParameterisedCalculation,
   MAX_INSTANCE_GOALS,
   MAX_INSTANCE_RELATIONS,
+  hiddenReadOf,
+  hiddenReadSentence,
   relationNamesOf,
   outsideBindingsOf,
   sharedDefinitions,
@@ -115,7 +117,7 @@ import {
   type InstanceGroup,
 } from './defining-equation';
 import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
-import { effectiveNameOf, effectiveQualifiedName, generalizationsOf, hiddenByName } from './inheritance';
+import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import { ambiguousKeyword, foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
 import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
 import { getRequirementAttr } from './requirements';
@@ -1235,7 +1237,7 @@ function instanceRows(
     const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
     const shared = filed.role === 'axiom' && own === true ? sharedSymbolsOf(model, context, reading) : [];
     if (shared.length > 0) sharedOut.push({ context, vars: shared });
-    const encodable: Encodable = group?.refusal
+    const read: Encodable = group?.refusal
       ? { reason: 'unread-definition', detail: group.refusal.sentence }
       : here !== undefined
         ? reading.encodable === true
@@ -1247,6 +1249,10 @@ function instanceRows(
             names,
             filed.role === 'axiom' ? sharedSymbolAxiom(model, context, reading, own) : reading.encodable,
           );
+    // A name the context declares anew without `:>>` beside the one the relation's writer names (G8A, G8C): refused,
+    // with the variables kept, so the goals that read them abstain (G-pair-b).
+    const hidden = el.ownerId != null ? hiddenReadSentence(model, raw, el.ownerId, context.id, names) : undefined;
+    const encodable: Encodable = hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : read;
     out.push({
       // A requirement's clauses read in one context are a requirement of their
       // own there: its assumptions are the premises of its goals, never of
@@ -1258,7 +1264,7 @@ function instanceRows(
       source: filed.source,
       element: instanceRef(model, el, context),
       expression: reading.expression,
-      node: reading.node,
+      node: hidden !== undefined ? null : reading.node,
       vars: reading.variables,
       sortPerVar: reading.sortPerVar,
       scaled: reading.scale !== undefined,
@@ -2447,8 +2453,14 @@ function instanceAssertRow(
   path: string,
   memo: DerivationMemo,
 ): Obligation {
-  const reading = readRelation(model, { ...el, ownerId: context.id }, (el.attrs.expression as string).trim(), memo, undefined, undefined, path);
-  const encodable = sharedSymbolAxiom(model, context, reading, unreadAxiom('axiom', reading.encodable, reading.unread));
+  const raw = (el.attrs.expression as string).trim();
+  const reading = readRelation(model, { ...el, ownerId: context.id }, raw, memo, undefined, undefined, path);
+  // A name the context declares anew without `:>>` (G8A, G8C): refused, with the variables kept (G-pair-b).
+  const hidden = el.ownerId != null ? hiddenReadSentence(model, raw, el.ownerId, context.id, relationNamesOf(raw)) : undefined;
+  const encodable: Encodable =
+    hidden !== undefined
+      ? { reason: 'unread-definition', detail: hidden }
+      : sharedSymbolAxiom(model, context, reading, unreadAxiom('axiom', reading.encodable, reading.unread));
   return {
     requirement: null,
     shortId: '',
@@ -2457,7 +2469,7 @@ function instanceAssertRow(
     source: 'assert',
     element: instanceElement(model, el, path),
     expression: reading.expression,
-    node: reading.node,
+    node: hidden !== undefined ? null : reading.node,
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
     scaled: reading.scale !== undefined,
@@ -2564,22 +2576,13 @@ function hiddenEndSentence(
   context: ElementId,
   ends: readonly (string | undefined)[],
 ): string | undefined {
-  if (writer === context) return undefined;
-  const entries = hiddenByName(model, context);
-  if (entries.size === 0) return undefined;
-  const definitions = sharedDefinitions(model);
-  for (const end of ends) {
-    const n = end?.split('.')[0];
-    const entry = n !== undefined ? entries.get(n) : undefined;
-    const meant = n !== undefined ? definitions.scope(writer, 'all').get(n) : undefined;
-    if (entry === undefined || meant === undefined || !entry.hidden.includes(meant)) continue;
-    return (
-      `\`bind ${ends[0] ?? '…'} = ${ends[1] ?? '…'}\` of ${effectiveQualifiedName(model, writer)} is not read in ${definitions.contextName(context)}: ` +
-      `there \`${n}\` names ${effectiveQualifiedName(model, entry.own)}, declared anew without \`:>>\` beside the ` +
-      `${effectiveQualifiedName(model, meant)} it inherits, which KerML does not allow, so this tool does not read which feature the binding joins`
-    );
-  }
-  return undefined;
+  const hit = hiddenReadOf(model, writer, context, ends);
+  if (hit === undefined) return undefined;
+  return (
+    `\`bind ${ends[0] ?? '…'} = ${ends[1] ?? '…'}\` of ${effectiveQualifiedName(model, writer)} is not read in ${sharedDefinitions(model).contextName(context)}: ` +
+    `there \`${hit.name}\` names ${effectiveQualifiedName(model, hit.own)}, declared anew without \`:>>\` beside the ` +
+    `${effectiveQualifiedName(model, hit.meant)} it inherits, which KerML does not allow, so this tool does not read which feature the binding joins`
+  );
 }
 
 /** The dotted path of feature `id` below `ownerId`, by effective names — `undefined` when it is not below it. */

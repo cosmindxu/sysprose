@@ -43,8 +43,8 @@ A fence has its own three states: `fenced` when a test pins each layer it is pro
 Where the printed classes stand now:
 
 - `experimental`: `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance`.
-- `tested`: `lra`, `lira`, `nra-div/pinned`.
-- `differential-tested`: `units`, `stated-value`, `defining-equation`, `requirement-clause`.
+- `tested`: `lira`, `nra-div/pinned`.
+- `differential-tested`: `lra`, `units`, `stated-value`, `defining-equation`, `requirement-clause`.
 - `fenced`: `fence/no-formal-clause`, `fence/unresolved-name`, `fence/dimension-clash`, `fence/offset-arithmetic`, `fence/refused-derivation`, `fence/non-numeric-operand`.
 - `fenced-defect`: `fence/unsupported-operator`.
 - `unpinned`: `fence/unparseable`, `fence/unit-unresolved`.
@@ -57,7 +57,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 483 | 72 | 2 | 6 | 620 (283) | 2 | none | `tested` |
+| `lra` | 483 | 72 | 2 | 6 | 620 (283) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
@@ -67,9 +67,9 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `stated-value` | 311 | 78 | 1 | 7 | 577 (253) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 226 (136) | 0 | none | `experimental` |
-| `asserted-fact` | 27 | 8 | 1 | 0 | 25 (13) | 2 | none | `experimental` |
+| `asserted-fact` | 27 | 8 | 1 | 0 | 25 (13) | 0 | none | `experimental` |
 | `requirement-clause` | 236 | 61 | 1 | 7 | 328 (213) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 311 (157) | 2 | none | `experimental` |
+| `per-instance` | 1 | 1 | 1 | 0 | 311 (157) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 5 | 4 | 2 | — | — | — | none | `fenced` |
@@ -106,7 +106,7 @@ What z3 is asked: the `set-logic` the relation’s own bytes need. A relation th
 
 - **Encodes.** Comparisons and `+ - *` with at most one symbol-carrying operand, and `/` by a literal.
 - **Logic.** `QF_LRA`.
-- **Level of `lra`.** `tested` (first unmet: no row against its hand-computed answer, have 2).
+- **Level of `lra`.** `differential-tested` (first unmet: a battery of 200 cells, have none).
 - **Limits.**
   - Division by the literal zero is `unsupported-operator`, `not-evaluable`, not forgivable.
   - A numeral is the written decimal (`0.1` is `(/ 1.0 10.0)`); beyond 15 significant digits, the double’s own rational.
@@ -204,7 +204,7 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 - **Limits.**
   - A bare `connection` is not an equality unless `--connections-as-equalities`.
 - **Open defects.**
-  - `D-inconsistent-axioms` (wrong-verdict): A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: the SMT binding rows fenced by G-mask; G8B/G8A: p.L read T from P2's K on the check, literal and numeric surfaces, KNOWN_FALSE; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.
+  - `D-inconsistent-axioms` (abstains): Re-read (g8-fence): a general's body re-read by name where a specialisation declares a name anew without `:>>` is fenced on every surface: the SMT binding rows by G-mask; the name, and what a binding joins to it, read nowhere in that context on the check and the numeric surface; the general's asserts there refused on the SMT engine with their variables kept; the `#equations` pair (G8C) filed `?` in its own sentence. g8 reads T/T/?/?, G8B/G8A tl and G8C t70 ?/?/?/?. Sound, only weaker (the context's own bodies over the name abstain too); the ill-formed shape is not yet reported (G-diag). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.
   - `D-default-machinery` (abstains): Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”
