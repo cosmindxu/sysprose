@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **5492 passed / 0 failed / 0 skipped** across **159 files** + **238 E2E** across **84 spec files** = **5730 green** (measured 2026-11-01) |
+| Full automated suite | **5503 passed / 0 failed / 0 skipped** across **159 files** + **238 E2E** across **84 spec files** = **5741 green** (measured 2026-11-01) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1532,8 +1532,8 @@ Every relation the `verify` lane sends to z3, and every one it refuses to send, 
 | Level | Cells | Which |
 |---|---:|---|
 | `experimental` | 8 | `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance` |
-| `tested` | 2 | `lira`, `nra-div/pinned` |
-| `differential-tested` | 5 | `lra`, `units`, `stated-value`, `defining-equation`, `requirement-clause` |
+| `tested` | 3 | `lra`, `lira`, `nra-div/pinned` |
+| `differential-tested` | 4 | `units`, `stated-value`, `defining-equation`, `requirement-clause` |
 | `fenced` | 6 | `fence/no-formal-clause`, `fence/unresolved-name`, `fence/dimension-clash`, `fence/offset-arithmetic`, `fence/refused-derivation`, `fence/non-numeric-operand` |
 | `fenced-defect` | 1 | `fence/unsupported-operator` |
 | `unpinned` | 2 | `fence/unparseable`, `fence/unit-unresolved` |
@@ -1578,7 +1578,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (5492 pass / 0 skip, 159 files)
+# Full unit + integration + conformance suite (5503 pass / 0 skip, 159 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

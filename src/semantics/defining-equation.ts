@@ -381,6 +381,19 @@ export interface ReadOtherwise {
  */
 export type WithheldCause = 'binding' | 'copy' | UnreadScope;
 
+/**
+ * What a model holds that a scope is left unread for ({@link WithheldCause}), as a clause: the SMT lane's detail on a
+ * model that holds one ({@link DefiningEquations.withheldCauses}), and the sentence of an instance such a scope holds
+ * ({@link heldSentence}).
+ */
+export const WITHHELD_CAUSE_PHRASE = {
+  binding: 'a binding whose end is a copy the saved file reads as another feature',
+  copy: 'a binding whose end is a copy standing on one of several features the order of the text chooses between',
+  twins: 'two features under one name, which the saved file may read the other way',
+  redefinition: 'a redefinition the saved file does not keep as it stands',
+  order: 'two inherited features for one name, which the saved file may read the other way round',
+} as const satisfies Record<WithheldCause, string>;
+
 /** The connector kinds beside a binding whose end copy the mapper may mark parted (`attrs.partedEnd`): the chain connectors of map-to-model. */
 const OTHER_CHAIN_CONNECTORS = ['ConnectionUsage', 'Connector', 'InterfaceUsage', 'Flow', 'FlowUsage'] as const;
 
@@ -2431,8 +2444,34 @@ export class DefiningEquations {
     const name = this.nameOf(f);
     if (name === undefined || f.ownerId == null) return false;
     const site = this.of(contextId, name).length > 0 ? contextId : this.of(f.ownerId, name).length > 0 ? f.ownerId : undefined;
-    if (site === undefined || (site !== contextId && !this.sameIn(contextId, f, site))) return false;
+    // Only an equation written in f's owner defines f alike in every
+    // instance: one written in the context itself (a usage, a specialising
+    // definition) defines it in that context's instances only (265 c6). A
+    // redefinition of f's owner, where a binding joins f to a feature that
+    // states a value (Q2's `part :>> p { … }` over the end copy of Q's `bind
+    // p.load = L`, L `default = 1.0`), is read as that owner, as before: its own
+    // symbol would not carry that value, which the binding's row reports
+    // against the equation.
+    const owner = site === f.ownerId || (site === contextId && this.redefinesBoundOwner(site, f));
+    if (site === undefined || !owner || (site !== contextId && !this.sameIn(contextId, f, site))) return false;
     return this.of(site, name).every((eq) => this.namesPinnedIn(site, refsIn(eq.definition, eq.literals)));
+  }
+
+  /**
+   * Does `site` redefine f's owner, where a binding of the user's joins f to a feature that states a value
+   * ({@link statesOwnValue})? ({@link pinnedUncached})
+   */
+  private redefinesBoundOwner(site: ElementId, f: ElementRecord): boolean {
+    const el = this.model.get(site);
+    if (!el || !redefinedClosure(this.model, el).some((g) => g.id === f.ownerId)) return false;
+    return bindingEnds(this.model).connectors.some((b) => {
+      const ends = [...(b.source ?? []), ...(b.target ?? [])];
+      if (!ends.includes(f.id)) return false;
+      return ends.some((e) => {
+        const g = e !== f.id ? this.model.get(e) : undefined;
+        return g !== undefined && statesOwnValue(this.model, g);
+      });
+    });
   }
 
   /** Is every one of `names`, read in `contextId`, a value the same in every instance ({@link pinnedIn})? */
@@ -13174,12 +13213,20 @@ interface InstanceSite {
  * truncated. A package's `denote` entry is a site only under the path the
  * walk takes to it: under an alias, or a nested bare name, it names the
  * instance but no path below it.
+ *
+ * `held`: the instances a frame spells where the walk stops at a scope the
+ * page leaves unread ({@link DefiningEquations.withheldOwner}) — the frame's
+ * root, then its path — each with the owner of that scope. No walk denotes
+ * them, so none is a site and no reader of `sites` sees one; only
+ * {@link groupsOf} lists them, as rows no surface decides (I-C: every instance
+ * is a row).
  */
 function instanceSitesOf(
   definitions: DefiningEquations,
   definition: ElementRecord,
-): { sites: Map<string, InstanceSite[]>; truncated: boolean } {
+): { sites: Map<string, InstanceSite[]>; held: Map<string, ElementRecord>; truncated: boolean } {
   const sites = new Map<string, InstanceSite[]>();
+  const held = new Map<string, ElementRecord>();
   const add = (s: string, site?: InstanceSite): void => {
     let list = sites.get(s);
     if (!list) {
@@ -13196,6 +13243,11 @@ function instanceSitesOf(
     }
     const d = definitions.denote(root.id).get(prefix);
     if (d) add(`${d.instance}::${definitions.nameOf(d.feature) ?? ''}`, { root: root.id, path: prefix });
+    else {
+      const owner = definitions.withheldOwner(root.id, prefix);
+      const name = `${definitions.instanceNameOf(root.id)}::${prefix.split('.').join('::')}`;
+      if (owner !== undefined && !held.has(name)) held.set(name, owner);
+    }
   }
   // The package entries that denote the definition or a specialiser, in the
   // order the walk over every user package meets them ({@link packageDenotations}).
@@ -13208,7 +13260,7 @@ function instanceSitesOf(
     const walked = path.slice(path.lastIndexOf('.') + 1) === name && (path.includes('.') || d.reader === pkg);
     add(`${d.instance}::${name}`, walked ? { root: pkg, path } : undefined);
   }
-  return { sites, truncated };
+  return { sites, held, truncated };
 }
 
 /**
@@ -13998,6 +14050,16 @@ export function instanceGroups(model: Model): readonly InstanceGroup[] {
   return groups;
 }
 
+/**
+ * The sentence of an instance `instance` of relation `el` that the scope of `owner` holds ({@link instanceSitesOf}'s
+ * `held`): the walk stops there, so the instance is listed and no surface decides it.
+ */
+function heldSentence(definitions: DefiningEquations, el: ElementRecord, instance: string, owner: ElementRecord): string {
+  const model = definitions.model;
+  return `${effectiveQualifiedName(model, el.id)} is not read in ${instance}: ${effectiveQualifiedName(model, owner.id)} owns, ` +
+    `or joins a feature of, ${WITHHELD_CAUSE_PHRASE[definitions.withheldWhy(owner.id)]}, so this instance is listed and not decided`;
+}
+
 /** {@link instanceGroups}, worked out. */
 function groupsOf(model: Model): InstanceGroup[] {
   const definitions = sharedDefinitions(model);
@@ -14068,8 +14130,10 @@ function groupsOf(model: Model): InstanceGroup[] {
       }
       const spent = budget;
       try {
-        const { sites, truncated } = instanceIndexSeam.instanceSitesOf(definitions, usage);
-        const instances = [...sites.keys()];
+        const { sites, held, truncated } = instanceIndexSeam.instanceSitesOf(definitions, usage);
+        // An instance a withheld scope holds is a row, after the live ones, that no surface decides; a live site wins.
+        const unread = [...held].filter(([name]) => !sites.has(name));
+        const instances = [...sites.keys(), ...unread.map(([name]) => name)];
         const group: InstanceGroup = { relationId: el.id, usageId: usage.id, definitionId: definition.id, instances, expanded: false };
         if (truncated) {
           group.refusal = {
@@ -14078,6 +14142,9 @@ function groupsOf(model: Model): InstanceGroup[] {
             // The sites found before the frame cap tripped: a lower bound of the group's instances.
             unread: { count: instances.length, cap: `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`, atLeast: true },
           };
+        } else if (sites.size === 0 && unread.length > 0) {
+          // No live site is the group's own (row 0) reading: a held instance is never taken for it.
+          group.refusal = { kind: 'not-enumerated', sentence: heldSentence(definitions, el, unread[0][0], unread[0][1]) };
         } else if (instances.length > MAX_INSTANCE_READS) {
           group.refusal = {
             kind: 'past-cap',
@@ -14111,7 +14178,11 @@ function groupsOf(model: Model): InstanceGroup[] {
             const readIn = new Map<string, ElementId>();
             const standsFor = new Map<string, ElementId>();
             const crossed = new Set<string>();
+            for (const [instance, owner] of unread) {
+              otherwise.set(instance, { kind: 'not-enumerated', sentence: heldSentence(definitions, el, instance, owner) });
+            }
             for (const instance of instances.slice(1)) {
+              if (otherwise.has(instance)) continue;
               const own = sites.get(instance) ?? [];
               if (diamondOnPath(definitions, own, caches) !== undefined) crossed.add(instance);
               // The element whose own instance this is: the group's row reads the

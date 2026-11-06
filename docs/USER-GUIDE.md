@@ -1263,7 +1263,11 @@ opening the file does not lift it: the file is read the same way.
 of this tool, and prints the scope's own sentence (`u1.N is not read: G::u1 owns, or joins a feature of, a binding whose
 end is a copy standing on one of several features ...`), as the check does, not a name that resolves to nothing. The rows of such a scope are inconclusive on every
 surface, as the same diamond or clash without the `bind` already is (not the chain case, where D3 has no `bind` of its
-own: it reads D2's 15 and decides). One such binding also makes every SMT proof or refutation of the whole model
+own: it reads D2's 15 and decides). An instance such a scope holds of a relation written elsewhere (P's `c` read in
+S's `p` and in `s`'s `p`, where `part def S :> Q2, Q3 { bind p.load = L; }`) is a row of its own all the same, never left
+out: `verification/not-evaluable` in the sentence `G::P::c is not read in G::S::p: G::S owns, or joins a feature of, a
+binding whose end is a copy standing on one of several features the order of the text chooses between, so this instance
+is listed and not decided`, so `verify` exits 2 on it, whatever `--allow-inconclusive` says. One such binding also makes every SMT proof or refutation of the whole model
 inconclusive, rows that name nothing of it included, because the solver's axioms are those of every scope. The text order that
 put the copy on D2's `N` hides nothing and reads 15, and a usage that inherits two unrelated lines (`part q : Q2, Q3
 { bind ... }`) is read by the rule of the inherited pair, as before. The mark is made when a file is read and kept as the
@@ -2336,13 +2340,15 @@ or an alias does, or a usage redefines p with a value (`part :>> p = p2`) — ev
 P's L stays undecided: a price of reading it so. `K == L`, a bare name on
 each side beside such an L, ties K to it like `K == L + 0.0` or `bind K = L`, so K's
 FMI `start`, its measure of effectiveness and a check over it read neither value,
-in either order of the equations. Limits of this tool: the SMT engine holds one symbol for a feature across the usages of
-one definition, so two usages that each assert one end of a binding the
-definition writes (`bind L = K` in P, `part a : P { assert constraint ea { L ==
-50.0 } }`, `part b : P { assert constraint eb { K == 60.0 } }`) read *inconsistent
-axioms* on its rows though neither instance contradicts itself — the literal
-engine decides those rows, and the numeric surface does not judge them (*the
-solve did not converge*).
+in either order of the equations. An equation a usage or a specialisation asserts
+(`part a : P { assert constraint ea { L == 50.0 } }`) holds in that usage's instances
+only, so P's own rows do not read it. Limits of this tool: where a specialisation declares
+a name anew without `:>>` (`part def P2 :> P { attribute K; … }`, which KerML does not
+allow), P's body is re-read there by name, so P's `assert constraint { K == 50.0 }`
+and P2's `K == 70.0` are reported as a contradiction (a violated row), and a binding or an
+assert of P's read so may decide a value P2's K gives P's other features (`p.L` from P's
+`bind K = L`). The SMT engine does not read such a binding of P's in P2 (it says so, and the
+proofs over its two ends are not claimed): write `attribute :>> K` or rename it.
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -

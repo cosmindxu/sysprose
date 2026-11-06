@@ -3464,6 +3464,268 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
         if (SEQUENCES >= 100) expect(sameName + copyLost).toBeLessThan(SEQUENCES / 2);
         if (FIRST === 0 && SEQUENCES === 300 && STEPS === 4) expect(handChecks).toBeGreaterThan(0);
       }, 600_000);
+
+      /*
+       * The soak seeds the TODO listed (rollup 310(12): this property's generator; 295(15): fence-save-name's, with the
+       * raw edits of RV_RAW), replayed from their logged model and edits, each with what it shows now. On every one the
+       * page decides no cell its saved file does not decide alike, on the four surfaces.
+       */
+      const feature = (m: Model, owner: string, i: number): ElementRecord =>
+        m.children(m.all().find((e) => m.qualifiedName(e.id) === `G::${owner}`)!.id).filter((c) => !isRelationship(c.eClass))[i]!;
+      const general = (m: Model, owner: string, to: string): ElementRecord =>
+        m.relationshipsFrom(m.all().find((e) => m.qualifiedName(e.id) === `G::${owner}`)!.id).find((r) => ['FeatureTyping', 'Subclassification'].includes(r.eClass) && m.get(r.target![0]!)?.declaredName === to)!;
+      const named = (m: Model, n: string): ElementRecord => m.all().find((e) => e.declaredName === n && e.attrs.implicit !== true)!;
+      /** The full settle a load or an edit leaves nothing for. */
+      const settleLeft = (m: Model): number =>
+        settleRedefinitions(m, m.all().filter((e) => e.attrs.isLibrary !== true && !isRelationship(e.eClass)).map((e) => e.id));
+      async function noPageOnlyVerdict(note: string): Promise<Record<string, [string, string]>> {
+        const page = await surfaces(st().model);
+        const file = await surfaces(reopened(st().model));
+        const rows: Record<string, [string, string]> = {};
+        for (const [k, row] of Object.entries(page)) {
+          rows[k] = [row, file[k] ?? 'absent'];
+          row.split('/').forEach((c, i) => {
+            if (c === 'T' || c === 'F') expect(file[k]?.split('/')[i], `${note}: ${k} lane ${i}, page ${row}`).toBe(c);
+          });
+        }
+        return rows;
+      }
+      const SOAK = `package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def T0 { attribute K default = 13.0; }
+`;
+
+      it('seeds 1120 and 4992 (310(12)): a :>> the text writes by a name two generals answer to is not a fixed point of the load', async () => {
+        // u0's `:>> X` lands on D2's line, where the first general finds X; Save cannot write `X` (the order of the generals
+        // decides it), so it writes the base `M`, which lands on Q0's M, and the settle moves the page there. Page = file
+        // after the move, and u0 is read nowhere (`order`) on page and file alike: the shape is 268's, built in S6/S7.
+        load(`${SOAK}  part def D1 :> Q0 { attribute X redefines M default = 14.0; attribute :>> N default = 15.0; }
+  part def D2 :> D1 { attribute :>> X default = 16.0; attribute Zd2; bind Zd2 = M; }
+  part def D3 :> Q0 { attribute X :>> M, N default = 17.0; }
+  part def D4 :> Q0 { attribute M2 :>> N, M default = 18.0; }
+  part def D5 :> D4 { attribute K2 default = 19.0; attribute :>> M default = 20.0; }
+  part u0 : D2, D3 { attribute :>> X = 21.0; }
+  constraint cu0M { u0.M == 11.0 }
+  constraint cu0N { u0.N == 11.0 }
+  constraint cu0X { u0.X == 11.0 }
+}`);
+        const saved = await noPageOnlyVerdict('1120 loaded');
+        expect(Object.values(saved).map(([p, f]) => `${p} ${f}`)).toEqual(Array(3).fill('?/?/?/? ?/?/?/?'));
+        expect(settleLeft(st().model)).toBe(1);
+        expect(targets(st().model)).toEqual(targets(reopened(st().model)));
+        expect(targets(st().model)).toContain('G::u0#0 -> G::Q0#0:M');
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute M2 redefines M default = 13.0; attribute X redefines N default = 14.0; }
+  part def D2 :> Q0 { attribute M2 redefines N default = 15.0; attribute K2 redefines M default = 16.0; }
+  part def D3 :> D2, D1 { attribute :>> M2 default = 17.0; }
+  part u1 : D3 { attribute :>> M2 = 20.0; }
+  constraint c { u1.M2 == 20.0 }
+}`);
+        expect(settleLeft(st().model)).toBe(1);
+        expect(targets(st().model)).toEqual(targets(reopened(st().model)));
+        expect(await noPageOnlyVerdict('4992 settled')).toEqual({ 'G::c': ['?/?/?/?', '?/?/?/?'] });
+      });
+
+      it('seeds 1618 and 4318 (310(12)): a copy a member of its owner claimed stays parted when the member goes or is renamed away', async () => {
+        // The edit's settle asks only the lines its names are in, and the copy parted from its feature (the owner's own
+        // `:>> M` bore its name) is on none of them: it stays stale, its binding marked, where the file makes the copy on
+        // the feature again. The page withholds the owner (and 4318's reads ? where the file reads F: weaker; 293(c),
+        // S9); a full settle finds the copy's feature and the page is the file.
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute N2 default = 13.0; attribute :>> N default = 14.0; attribute Zd1; bind Zd1 = M; }
+  part def D2 :> D1 { attribute K2 redefines M default = 15.0; }
+  part def D3 :> Q0, D2 { attribute X default = 16.0; attribute :>> N default = 17.0; }
+  part def D4 :> Q0 { attribute :>> N default = 18.0; attribute :>> M default = 19.0; }
+  part def D5 :> D3, Q0 { attribute :>> M default = 20.0; attribute Zd5; bind Zd5 = N; }
+  part u0 : D5, D4 { attribute :>> K2 = 21.0; attribute :>> M = 22.0; attribute Zb = 1.0; bind Zb = N2; }
+  part u1 : D3 { attribute :>> M; attribute :>> K2; attribute :>> N2; }
+  part u2 : D5 { attribute Z1 = 23.0; }
+  constraint c1 { u2.M == 17.0 }
+  constraint c2 { u2.Zd5 == 17.0 }
+}`);
+        st().updateElement(feature(st().model, 'D3', 1).id, { declaredName: 'M' });
+        st().deleteElement(feature(st().model, 'D5', 0).id);
+        const row = '?/?/?/? ?/?/?/?';
+        expect(Object.values(await noPageOnlyVerdict('1618')).map(([p, f]) => `${p} ${f}`)).toEqual([row, row]);
+        expect(held(st().model)).not.toContain('(implicit) G::D5::M -> G::D3#1:M');
+        expect(settleLeft(st().model)).toBe(1);
+        expect(held(st().model)).toEqual(held(reopened(st().model)));
+        expect(held(st().model)).toContain('(implicit) G::D5::M -> G::D3#1:M');
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute :>> M default = 13.0; attribute :>> N default = 14.0; }
+  part def D2 :> Q0 { attribute K2 redefines M default = 15.0; attribute :>> N default = 16.0; }
+  part u0 : Q0 { attribute :>> N; attribute Z2 = 17.0; }
+  part u1 : D2 { attribute :>> M; attribute Z1 = 18.0; attribute Zb = 1.0; bind Zb = N; }
+  part u2 : D2 { attribute :>> N = 19.0; attribute Z1 = 20.0; }
+  constraint c1 { u1.Zb == 14.0 }
+  constraint c2 { u1.M == 14.0 }
+}`);
+        st().bindType(named(st().model, 'u1').id, 'D1');
+        st().updateElement(general(st().model, 'u0', 'Q0').id, { target: [named(st().model, 'D1').id] });
+        st().updateElement(general(st().model, 'u2', 'D2').id, { target: [named(st().model, 'D2').id] });
+        st().updateElement(feature(st().model, 'D1', 1).id, { declaredName: 'M' });
+        st().updateElement(named(st().model, 'M').id, { declaredName: 'K2' });
+        expect(await noPageOnlyVerdict('4318')).toEqual({ 'G::c1': ['?/?/?/?', 'F/F/F/F'], 'G::c2': ['?/?/?/?', 'F/F/F/F'] });
+        expect(settleLeft(st().model)).toBe(1);
+        expect(held(st().model)).toEqual(held(reopened(st().model)));
+        expect(held(st().model)).toContain('(implicit) G::u1::M -> G::D1#1:M');
+      });
+
+      it('seed 5045 (310(12)): a pasted :>> the file reads alike, at another place among the owner\'s features', async () => {
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute M2 :>> N, M default = 13.0; }
+  part def D2 :> Q0 { attribute :>> N default = 14.0; }
+  part def D3 :> Q0, D1 { attribute :>> M2 default = 15.0; attribute Zd3; bind Zd3 = M; }
+  part u0 : Q0 { attribute Z3 = 16.0; attribute :>> M = 17.0; }
+  part u1 : D3, D2 { attribute :>> M2; attribute :>> N; }
+  constraint c1 { u1.M2 == 13.0 }
+}`);
+        st().reparent(feature(st().model, 'D3', 0).id, named(st().model, 'D1').id);
+        st().setSelection([feature(st().model, 'D1', 1).id]);
+        st().copySelection();
+        st().pasteClipboard(named(st().model, 'D3').id);
+        // The property's oracle placed the pasted `:>> M2` by its index among D3's features, which counts the page's
+        // implicit end copy (the file makes it where the binding is, and Save leaves the binding out with a note: 295(10),
+        // S2): the redefinitions are the file's by name, and the page reads what the file reads.
+        expect(await noPageOnlyVerdict('5045')).toEqual({ 'G::c1': ['?/?/?/?', '?/?/?/?'] });
+        expect(settleLeft(st().model)).toBe(0);
+        const byName = (m: Model): string[] => targets(m).map((t) => t.replace(/G::D3#\d+ /, 'G::D3#_ '));
+        expect(byName(st().model)).toEqual(byName(reopened(st().model)));
+        expect(serializeModel(st().model)).toMatch(/\/\/ Not saved: a binding whose end no name reaches/);
+      });
+
+      it('seed 6751 (310(12)): settles at the load and at every step now', async () => {
+        load(`package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute :>> N default = 13.0; }
+  part def D2 :> Q0, D1 { attribute N2 :>> N, M default = 14.0; }
+  part def D3 :> D2 { attribute Zd3; bind Zd3 = N2; }
+  part def D4 :> D3, D2 { attribute Zd4; bind Zd4 = M; }
+  part def D5 :> Q0 { attribute :>> N default = 15.0; attribute :>> M default = 16.0; }
+  part u0 : D3, Q0 { attribute :>> M; attribute :>> N = 17.0; attribute Zb = 1.0; bind Zb = N2; }
+  constraint c1 { u0.N2 == 14.0 }
+}`);
+        const steps: Array<() => void> = [
+          () => st().updateElement(st().model.children(feature(st().model, 'D1', 0).id).find((r) => r.eClass === 'Redefinition')!.id, { target: [feature(st().model, 'Q0', 0).id] }),
+          () => st().reparent(feature(st().model, 'u0', 1).id, named(st().model, 'D2').id),
+          () => st().updateElement(feature(st().model, 'D5', 1).id, { declaredName: 'Zb' }),
+          () => st().updateElement(feature(st().model, 'u0', 0).id, { declaredName: 'Zd3' }),
+        ];
+        expect(settleLeft(st().model)).toBe(0);
+        for (const [i, step] of steps.entries()) {
+          step();
+          expect(settleLeft(st().model), `step ${i}`).toBe(0);
+          expect(targets(st().model), `step ${i}`).toEqual(targets(reopened(st().model)));
+          expect(copiesApart(st().model, reopened(st().model)), `step ${i}`).toEqual([]);
+        }
+        // The fifth (Zd3 into u0) gives u0 two features named Zd3, outside what a name can say (the property sets it
+        // aside): read nowhere on page and file.
+        st().reparent(feature(st().model, 'D3', 0).id, named(st().model, 'u0').id);
+        expect(await noPageOnlyVerdict('6751 twins')).toEqual({ 'G::c1': ['?/?/?/?', '?/?/?/?'] });
+      });
+
+      /** fence-save-name's soak (295(15)): a step, and the four surfaces the page reads after it against its file's. */
+      async function soak(text: string, steps: Array<[string, () => void]>): Promise<Record<string, Record<string, [string, string]>>> {
+        load(text);
+        const out: Record<string, Record<string, [string, string]>> = {};
+        for (const [note, step] of steps) {
+          step();
+          const rows = await noPageOnlyVerdict(note);
+          out[note] = Object.fromEntries(Object.entries(rows).filter(([, [p, f]]) => p !== f));
+        }
+        return out;
+      }
+      const SEED32180 = `${SOAK}  part def D1 :> Q0 { attribute Zd1; bind Zd1 = M; }
+  part def D2 :> T0, Q0 { attribute Zd2; bind Zd2 = M; }
+  part def D3 :> Q0, T0 { attribute :>> M default = 14.0; attribute N2 default = 15.0; }
+  part u0 : T0 { attribute :>> K; }
+  part u1 : D2, D3 { attribute :>> M; attribute :>> N = 16.0; attribute :>> K = 17.0; attribute Zb = 1.0; bind Zb = N2; }
+  constraint c0 { u0.N == 13.0 } constraint c1 { u0.N2 == 19.0 } constraint c2 { u0.Zb == 13.0 } constraint c3 { u0.Z1 == 20.0 }
+  constraint c4 { u1.M == 21.0 } constraint c5 { u1.N == 21.0 } constraint c6 { u1.K == 21.0 } constraint c7 { u1.X == 13.0 }
+  constraint c8 { u1.Z1 == 18.0 } constraint c9 { u1.Z2 == 14.0 }
+}`;
+
+      it('seed 32180 with raw edits (295(15)): a stale copy in one general beside a value in another is read nowhere, as the file reads it', async () => {
+        const out = await soak(SEED32180, [
+          ['raw rename', () => st().model.update(feature(st().model, 'Q0', 1).id, { declaredName: 'K2' })],
+          ['duplicate', () => void st().duplicateElement(feature(st().model, 'D3', 0).id)],
+          ['retarget', () => st().updateElement(general(st().model, 'D1', 'Q0').id, { target: [named(st().model, 'T0').id] })],
+          ['delete', () => st().deleteElement(general(st().model, 'D2', 'Q0').id)],
+        ]);
+        // c4 (u1.M == 21.0): D2's stale copy M (its `bind Zd2 = M` lost its line with the Q0 general) beside D3's two
+        // `:>> M default = 14.0`. The page read 14 and refuted it where the file, which has no copy, reads neither; now u1
+        // is an `order` scope on the page and c4 is ? on all four, as in the file. c6 (u1.K) is weaker only.
+        expect(out).toEqual({ 'raw rename': {}, duplicate: {}, retarget: {}, delete: { 'G::c6': ['?/?/?/?', 'F/F/F/F'] } });
+      });
+
+      it('seeds 32180, 42267, 44248 and 40746 (295(15)): the page decides nothing its file does not', async () => {
+        const out: unknown[] = [];
+        out.push(await soak(SEED32180, [['rename', () => st().updateElement(feature(st().model, 'Q0', 1).id, { declaredName: 'N2' })], ['rename D3', () => st().updateElement(feature(st().model, 'D3', 0).id, { declaredName: 'N2' })]]));
+        out.push(await soak(`${SOAK}  part def D1 :> Q0 { attribute X :>> M default = 14.0; attribute K2 :>> N default = 15.0; }
+  part def D2 :> D1, T0 { attribute M2 :>> K default = 16.0; attribute N2 :>> K2 default = 17.0; }
+  part def D3 :> Q0 { attribute Zd3; bind Zd3 = M; }
+  part def D4 :> Q0, D2 { attribute :>> N default = 18.0; attribute Zd4; bind Zd4 = M; }
+  part u0 : D2 { attribute :>> K; attribute :>> M = 19.0; attribute Zb = 1.0; bind Zb = N2; }
+  part u1 : D1, D2 { attribute :>> M; attribute Zb = 1.0; bind Zb = K2; }
+  constraint c0 { u0.M == 17.0 } constraint c1 { u0.K == 21.0 } constraint c2 { u0.N2 == 13.0 } constraint c3 { u0.K2 == 24.0 }
+  constraint c4 { u1.M == 18.0 } constraint c5 { u1.M2 == 20.0 } constraint c6 { u1.N2 == 14.0 } constraint c7 { u1.X == 16.0 }
+  constraint c8 { u1.Z1 == 20.0 }
+}`, [
+          ['delete', () => st().deleteElement(general(st().model, 'D1', 'Q0').id)],
+          ['rename', () => st().updateElement(feature(st().model, 'Q0', 0).id, { declaredName: 'N2' })],
+          ['raw remove', () => st().model.remove(general(st().model, 'D3', 'Q0').id)],
+          ['rename N', () => st().updateElement(feature(st().model, 'Q0', 1).id, { declaredName: 'K' })],
+        ]));
+        out.push(await soak(`package G {
+  part def Q0 { attribute M default = 11.0; attribute N default = 12.0; }
+  part def D1 :> Q0 { attribute :>> N default = 13.0; attribute M2 default = 14.0; attribute Zd1; bind Zd1 = M; }
+  part def D2 :> D1 { attribute N2 :>> M default = 15.0; attribute :>> M2 default = 16.0; }
+  part def D3 :> D2;
+  part def D4 :> D2, Q0 { attribute :>> M2 default = 17.0; attribute K2 :>> N2, N default = 18.0; }
+  part def D5 :> D3 { attribute :>> M default = 19.0; }
+  part u0 : D3 { attribute :>> N; }
+  part u1 : D3, D2 { attribute Z2 = 20.0; attribute Z1 = 21.0; attribute Zb = 1.0; bind Zb = M; }
+  constraint c0 { u0.M == 18.0 } constraint c1 { u0.N == 23.0 } constraint c2 { u0.N2 == 14.0 } constraint c3 { u0.X == 17.0 }
+  constraint c4 { u1.M == 19.0 } constraint c5 { u1.N == 18.0 } constraint c6 { u1.N2 == 24.0 } constraint c7 { u1.Zb == 15.0 }
+  constraint c8 { u1.Z1 == 23.0 } constraint c9 { u1.Z2 == 15.0 }
+}`, [
+          ['retarget', () => st().updateElement(general(st().model, 'D4', 'Q0').id, { target: [named(st().model, 'D3').id] })],
+          ['delete', () => st().deleteElement(named(st().model, 'Zd1').id)],
+          ['raw rename', () => st().model.update(feature(st().model, 'D1', 0).id, { declaredName: 'N2' })],
+          ['retarget D2', () => st().updateElement(general(st().model, 'D2', 'D1').id, { target: [named(st().model, 'Q0').id] })],
+        ]));
+        out.push(await soak(`${SOAK}  part def D1 :> Q0 { attribute :>> N default = 14.0; attribute M2 :>> M default = 15.0; }
+  part def D2 :> T0 { attribute Zd2; bind Zd2 = K; }
+  part def D3 :> D1 { attribute X :>> N default = 16.0; attribute K2 :>> M2 default = 17.0; }
+  part def D4 :> D3 { attribute N2 :>> M2, X default = 18.0; attribute :>> M default = 19.0; }
+  part def D5 :> D3;
+  part u0 : Q0, D4 { attribute Z2 = 20.0; attribute Z1 = 21.0; attribute Zb = 1.0; bind Zb = M; }
+  part u1 : Q0 { attribute Z1 = 22.0; }
+  part u2 : D4 { attribute :>> M; attribute :>> N = 23.0; attribute Zb = 1.0; bind Zb = X; }
+  constraint c0 { u0.M == 24.0 } constraint c1 { u0.K == 14.0 } constraint c2 { u0.Zb == 16.0 } constraint c3 { u0.Z2 == 13.0 }
+  constraint c4 { u1.N == 20.0 } constraint c5 { u1.M2 == 24.0 } constraint c6 { u1.N2 == 19.0 } constraint c7 { u1.X == 18.0 }
+  constraint c8 { u2.K == 14.0 } constraint c9 { u2.M2 == 14.0 } constraint c10 { u2.N2 == 23.0 } constraint c11 { u2.X == 15.0 }
+  constraint c12 { u2.Z1 == 20.0 } constraint c13 { u2.Z2 == 16.0 }
+}`, [
+          ['rename', () => st().updateElement(feature(st().model, 'D1', 0).id, { declaredName: 'Zd2' })],
+          ['delete', () => st().deleteElement(feature(st().model, 'u0', 2).id)],
+          ['rename Zd2', () => st().updateElement(feature(st().model, 'D2', 0).id, { declaredName: 'K2' })],
+        ]));
+        // Weaker only: the page abstains where the file decides, never the other way (`X`: the file's SMT axioms are
+        // inconsistent). 32180 c6 and 42267 c6 are the cells the TODO named.
+        const F = 'F/F/F/X';
+        const weaker42267 = { 'G::c1': ['?/?/?/?', F], 'G::c2': ['?/?/?/?', '?/?/?/X'], 'G::c3': ['?/?/?/?', F], 'G::c5': ['?/?/?/?', F], 'G::c6': ['?/?/?/?', '?/?/F/X'], 'G::c7': ['?/?/?/?', F] };
+        expect(out).toEqual([
+          { rename: { 'G::c4': ['?/?/?/?', '?/?/?/X'], 'G::c6': ['?/?/?/?', F] }, 'rename D3': {} },
+          { delete: {}, rename: weaker42267, 'raw remove': weaker42267, 'rename N': weaker42267 },
+          { retarget: {}, delete: {}, 'raw rename': {}, 'retarget D2': {} },
+          { rename: {}, delete: {}, 'rename Zd2': {} },
+        ]);
+      });
     });
   });
 

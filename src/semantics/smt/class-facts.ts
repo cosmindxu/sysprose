@@ -12,9 +12,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 8,
       "rows": 27,
-      "tableAgree": 24,
-      "tableDisagree": 0,
-      "tableProbes": 12
+      "tableAgree": 26,
+      "tableDisagree": 2,
+      "tableProbes": 14
     },
     "bind-equality": {
       "battery": null,
@@ -23,9 +23,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 5,
       "rows": 9,
-      "tableAgree": 222,
+      "tableAgree": 224,
       "tableDisagree": 0,
-      "tableProbes": 132
+      "tableProbes": 134
     },
     "bool": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 485,
-      "tableAgree": 608,
-      "tableDisagree": 0,
-      "tableProbes": 263
+      "tableAgree": 636,
+      "tableDisagree": 2,
+      "tableProbes": 285
     },
     "nira/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 281,
-      "tableDisagree": 0,
-      "tableProbes": 133
+      "tableAgree": 309,
+      "tableDisagree": 2,
+      "tableProbes": 155
     },
     "requirement-clause": {
       "battery": null,
@@ -428,11 +428,11 @@ export const CLASS_FACTS: ClassFacts = {
     {
       "classes": [
         "bind-equality",
-        "per-instance"
+        "inherited-context"
       ],
       "id": "D-inconsistent-axioms",
-      "kind": "wrong-statement",
-      "note": "One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim.",
+      "kind": "wrong-verdict",
+      "note": "A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: the SMT binding rows fenced by G-mask; G8B/G8A: p.L read T from P2's K on the check, literal and numeric surfaces, KNOWN_FALSE; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.",
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself."
     },
     {
@@ -529,9 +529,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "fd6d6e9e6fdfd85db238b40f3f8911d191cb6f3464259845d52508d2c1bff007",
+    "defects": "ec9d022c892954a6f83bbfba1b7aaca302df34a046ce94be57e31f539363c50b",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "1a5058b39a72d42c1b2bc101d168db6844233f88e911f51936def8b2671876c0"
+    "probes": "ea433c7a296ca47746e796a773857fea3227f2681971f037df3181a5b5ed51b7"
   },
   "fences": {
     "fence/collection-valued": {
@@ -621,7 +621,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   },
   "knownFalse": {
-    "entries": 0,
+    "entries": 8,
     "parsed": true,
     "unattributed": 0
   },

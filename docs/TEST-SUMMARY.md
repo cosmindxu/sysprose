@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5492 total — 5492 passed, 0 failed, 0 skipped
+- **Tests:** 5503 total — 5503 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -58,7 +58,7 @@
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
 | test/unit/api.rest2.test.ts | 11 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 12 | 0 | 0 |
-| test/unit/api.verification.test.ts | 86 | 0 | 0 |
+| test/unit/api.verification.test.ts | 87 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
@@ -108,7 +108,7 @@
 | test/unit/reparent-target.test.ts | 14 | 0 | 0 |
 | test/unit/requirements-table.test.ts | 20 | 0 | 0 |
 | test/unit/scenarios.test.ts | 3 | 0 | 0 |
-| test/unit/semantics.bind.test.ts | 32 | 0 | 0 |
+| test/unit/semantics.bind.test.ts | 34 | 0 | 0 |
 | test/unit/semantics.conformance.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraint-class.test.ts | 82 | 0 | 0 |
@@ -120,7 +120,7 @@
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.expr.test.ts | 18 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
-| test/unit/semantics.inheritance.test.ts | 13 | 0 | 0 |
+| test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
@@ -146,7 +146,7 @@
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 348 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 354 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 53 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 14 | 0 | 0 |
@@ -159,7 +159,7 @@
 | test/unit/text.recovery-honesty.test.ts | 35 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 227 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 228 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |

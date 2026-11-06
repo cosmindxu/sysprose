@@ -10,7 +10,7 @@ import {
   ownFeatures,
   redefinedBy,
 } from '../../src/semantics/index';
-import { mostSpecificOwned } from '../../src/semantics/inheritance';
+import { hiddenByName, mostSpecificOwned } from '../../src/semantics/inheritance';
 import { parseModel } from '../../src/text/index';
 
 describe('semantics — inheritance', () => {
@@ -177,6 +177,31 @@ describe('semantics — inheritance', () => {
     const own = model.all().find((e) => e.attrs.value === 9)!;
     expect(maskedByName(model, own).map((f) => model.qualifiedName(f.id))).toEqual(['O3::P::load']);
     expect(inheritedNameClashes(model, byName('D').id).size).toBe(0);
+  });
+  // G-mask: a name declared anew without `:>>` hides the general's feature in the type, in its specialisations and in
+  // its usages; a redefinition, a parameter (a step's parameters redefine the general's) and a library general's
+  // feature hide nothing.
+  it('hiddenByName names a feature declared anew under an inherited name, and leaves out redefinitions and parameters', () => {
+    const { model } = parseModel(`package G8 {
+      part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; }
+      part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; }
+      part def P3 :> P2;
+      part def R :> P { attribute :>> K; }
+      part p : P2;
+      part u : P { attribute L : ScalarValues::Real; }
+      constraint def Rule { in cap : ScalarValues::Real; cap >= 0.0 }
+      part def V { attribute c : ScalarValues::Real = 1.0; assert constraint holds : Rule { in cap = c; } }
+    }`);
+    const named = (qn: string) => model.all().find((e) => model.qualifiedName(e.id) === qn)!;
+    const read = (qn: string) =>
+      [...hiddenByName(model, named(qn).id)].map(([n, e]) => `${n}: ${model.qualifiedName(e.own)} hides ${e.hidden.map((h) => model.qualifiedName(h)).join(', ')}`);
+    expect(read('G8::P2')).toEqual(['K: G8::P2::K hides G8::P::K']);
+    expect(read('G8::P3')).toEqual(['K: G8::P2::K hides G8::P::K']);
+    expect(read('G8::p')).toEqual(['K: G8::P2::K hides G8::P::K']);
+    expect(read('G8::u')).toEqual(['L: G8::u::L hides G8::P::L']);
+    expect(read('G8::R')).toEqual([]);
+    expect(read('G8::P')).toEqual([]);
+    expect(read('G8::V::holds')).toEqual([]);
   });
   // The one of several features whose owner specialises the owner of every other. The answer is the all-pairs
   // definition (the first feature, in order, whose owner has every other owner among its generals, and no other
