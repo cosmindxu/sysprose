@@ -80,7 +80,13 @@ import {
   STEP_EDGE_KINDS,
   SUCCESSION_KINDS,
   hashConfig,
+  hierarchyPath,
   initialConfig,
+  initialSubstate,
+  isRegionNode,
+  machineRegion,
+  regionDescendants,
+  regionTransitions,
   resumesHistory,
   stepCandidates,
 } from '../../src/semantics/mc/config';
@@ -3998,5 +4004,46 @@ describe('what a line says about itself', () => {
       expect(runs, file).toEqual(M === 0 ? [0] : [0, ...report.machines.map((_, i) => i + 1), 0]);
       expect(lines[0].kind).toBe('head');
     }
+  });
+});
+
+/* ═══════════ the region view, on the nested `state def` the walk and the interpreter stop at ═══════════ */
+
+describe('`machineRegion` draws the nested-definition boundary where the old readers did', () => {
+  const load = async (text: string): Promise<Model> =>
+    (await loadModelText(text, { fileName: 'region.sysml', library: 'none' })).model!;
+  const at = (m: Model, qn: string): ElementId => m.all().find((e) => m.qualifiedName(e.id) === qn)!.id;
+  const names = (m: Model, list: readonly { id: ElementId }[]) => list.map((e) => m.get(e.id)!.declaredName);
+
+  it('keeps the nested definition in the list, stops below it, and starts the walk at the outer machine\'s own first state', async () => {
+    // `Inner` is declared BEFORE `a`: the start of `Outer` is `a`, not `Inner::x`.
+    const m = await load(NEST3_FIRST);
+    const outer = at(m, 'Nest3::Outer');
+    const region = machineRegion(m, outer);
+    expect(names(m, region.descendants)).toEqual(['Inner', 'a', 'b', 'ab']);
+    expect(names(m, regionDescendants(m, outer))).toEqual(['Inner', 'a', 'b', 'ab']);
+    expect(names(m, region.transitions)).toEqual(['ab']);
+    expect(names(m, regionTransitions(m, outer))).toEqual(['ab']);
+    expect([...region.nodes].map((id) => m.get(id)!.declaredName).sort()).toEqual(['Outer', 'a', 'ab', 'b']);
+    expect(m.get(initialSubstate(m, outer)!)!.declaredName).toBe('a');
+    // The nested definition is no node of Outer's region and its states are held by no one in it.
+    expect(isRegionNode(m, outer, at(m, 'Nest3::Outer::Inner'))).toBe(false);
+    expect(isRegionNode(m, outer, at(m, 'Nest3::Outer::Inner::x'))).toBe(false);
+    expect(hierarchyPath(m, outer, at(m, 'Nest3::Outer::Inner::x'))).toBeNull();
+    expect(hierarchyPath(m, outer, at(m, 'Nest3::Outer::b'))).toEqual([at(m, 'Nest3::Outer::b')]);
+    // And it is a region of its own.
+    const inner = machineRegion(m, at(m, 'Nest3::Outer::Inner'));
+    expect(names(m, inner.descendants)).toEqual(['x', 'y', 'xy']);
+    expect(m.get(initialSubstate(m, inner.root)!)!.declaredName).toBe('x');
+    expect(isRegionNode(m, inner.root, at(m, 'Nest3::Outer::a'))).toBe(false);
+  });
+
+  it('reads a step into the nested definition as a step across the boundary, in the same lists', async () => {
+    const m = await load(NEST2_INTO);
+    const outer = at(m, 'Nest2::Outer');
+    const edge = m.all().find((e) => e.declaredName === 'ax')!;
+    expect(names(m, machineRegion(m, outer).transitions)).toEqual(['ax']);
+    expect(isRegionNode(m, outer, edge.source![0])).toBe(true);
+    expect(isRegionNode(m, outer, edge.target![0])).toBe(false);
   });
 });

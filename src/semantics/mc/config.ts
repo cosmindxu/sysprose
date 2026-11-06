@@ -329,7 +329,8 @@ export function combinedScope(model: Model, el: ElementRecord): Scope {
 }
 
 /**
- * The region's scope and transition list, memoised on the model REVISION.
+ * The region's scope and its {@link MachineRegion}, memoised on the model
+ * REVISION.
  *
  * `combinedScope` builds a name→feature map by walking every effective feature
  * in scope, and the interpreter pays for it once per region. The explorer asks
@@ -342,14 +343,14 @@ export function combinedScope(model: Model, el: ElementRecord): Scope {
 interface RegionCache {
   rev: number;
   scopes: Map<ElementId, Scope>;
-  transitions: Map<ElementId, ElementRecord[]>;
+  regions: Map<ElementId, MachineRegion>;
 }
 const REGION_CACHE = new WeakMap<Model, RegionCache>();
 
 function cacheFor(model: Model): RegionCache {
   const hit = REGION_CACHE.get(model);
   if (hit && hit.rev === model.rev) return hit;
-  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), transitions: new Map() };
+  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), regions: new Map() };
   REGION_CACHE.set(model, fresh);
   return fresh;
 }
@@ -366,66 +367,136 @@ export function regionScope(model: Model, regionId: ElementId): Scope {
 }
 
 /**
- * The elements a region is made of: its descendants, but STOPPING at a nested
- * `state def`.
+ * THE REGION OF A MACHINE, read once: the elements it is made of, the step edges
+ * between them, and who is whose parent there.
  *
- * A `state def` written inside another state machine is a machine of its own
- * (`stateMachinesIn`, `./explore.ts`), not a composite region of its parent: its
- * states and its transitions are the nested definition's, and the outer walk
- * neither reaches nor reports them. Descending into it here was how the outer
- * machine came to publish the nested definition's states `unreachable` and its
- * transitions `dead` — absences about a machine nobody walked — so the boundary
- * is drawn once, here, and every machine-scoped traversal reads it.
+ * ONE VIEW, so the walk and the interpreter cannot read two regions. Until it
+ * existed every reader of "what is in this machine" asked `model.descendants`
+ * or `model.children` for itself, each with its own idea of where the machine
+ * stops; the boundary at a nested `state def` is drawn once, in
+ * {@link machineRegion}, and `regionDescendants`, `regionTransitions`,
+ * `hierarchyPath`, `isRegionNode` and `initialSubstate` all read it through here. It is
+ * memoised on the model revision (`cacheFor`), so a walk that asks ten thousand
+ * times is answered from one build.
  *
- * The interpreter's flat path (`runRegion`, `../execute.ts`) reads it too, for
- * its start state as well as its transitions. It used to take its states and
- * its `initial` node from every descendant, so a nested definition declared
- * before the outer machine's own gave the simulator a start the walk never had.
- *
- * A composite state USAGE that owns transitions is unaffected: it is a region of
- * its parent and stays inside it, which is the distinction the metaclass draws
- * (`StateDefinition` vs `StateUsage`).
+ * `root` is the machine, or a composite state read as a region of its own
+ * (`initialSubstate`). A machine specialising another one is not yet read
+ * through its general: `bases` is empty, `inheritedFrom` answers nothing and
+ * `refused` is never set — they are the seams a later step fills, and with them
+ * empty the view is, by construction, the lists the readers computed before it.
  */
-export function regionDescendants(model: Model, regionId: ElementId): ElementRecord[] {
-  return model.descendants(regionId).filter((el) => {
+export interface MachineRegion {
+  readonly root: ElementId;
+  /** The general machines whose region this one extends, nearest first. Empty until a machine is read through its general. */
+  readonly bases: readonly ElementId[];
+  /** The ids of the elements a step may stand in or leave: `root` and every descendant that is not a nested `state def`. */
+  readonly nodes: ReadonlySet<ElementId>;
+  /** `model.descendants(root)` in declaration order, stopping BELOW a nested `state def` (which is itself in it). */
+  readonly descendants: readonly ElementRecord[];
+  /** Every step edge of the region that has both endpoints and no payload, in declaration order. */
+  readonly transitions: readonly ElementRecord[];
+  /** The `StateUsage`s written directly in `containerId`. */
+  directStates(containerId: ElementId): readonly ElementRecord[];
+  /** The owner of `id` within the region, or `null` for the root and for anything the region does not hold. */
+  parentOf(id: ElementId): ElementId | null;
+  /** The general machine that `id` was read from, if the region took it from one. */
+  inheritedFrom(id: ElementId): ElementId | undefined;
+  /** Set when the region is one this walk does not read, with the sentence that says so. Never set yet. */
+  readonly refused?: {
+    why: 'redefined' | 'two-generals' | 'two-starts' | 'cycle';
+    at: ElementId;
+    sentence: string;
+  };
+}
+
+/** The region rooted at `regionId`, memoised on the model revision. */
+export function machineRegion(model: Model, regionId: ElementId): MachineRegion {
+  const cache = cacheFor(model);
+  const hit = cache.regions.get(regionId);
+  if (hit) return hit;
+  // The elements a region is made of: its descendants, but STOPPING at a nested
+  // `state def`.
+  //
+  // A `state def` written inside another state machine is a machine of its own
+  // (`stateMachinesIn`, `./explore.ts`), not a composite region of its parent: its
+  // states and its transitions are the nested definition's, and the outer walk
+  // neither reaches nor reports them. Descending into it here was how the outer
+  // machine came to publish the nested definition's states `unreachable` and its
+  // transitions `dead` — absences about a machine nobody walked — so the boundary
+  // is drawn once, here, and every machine-scoped traversal reads it.
+  //
+  // The interpreter's flat path (`runRegion`, `../execute.ts`) reads it too, for
+  // its start state as well as its transitions. It used to take its states and
+  // its `initial` node from every descendant, so a nested definition declared
+  // before the outer machine's own gave the simulator a start the walk never had.
+  //
+  // A composite state USAGE that owns transitions is unaffected: it is a region of
+  // its parent and stays inside it, which is the distinction the metaclass draws
+  // (`StateDefinition` vs `StateUsage`).
+  const descendants = model.descendants(regionId).filter((el) => {
     for (let p: ElementId | null = el.ownerId; p != null && p !== regionId; p = model.get(p)?.ownerId ?? null) {
       if (model.get(p)?.eClass === 'StateDefinition') return false;
     }
     return true;
   });
-}
-
-/**
- * Every step edge inside a region that has both endpoints, in declaration
- * order — which is the order the first-enabled tie-break is taken in.
- *
- * {@link STEP_EDGE_KINDS}, not `TransitionUsage` alone: a succession between
- * two states is the same edge written the other way round, and a relation that
- * held only one of the two spellings made the walk publish absences about the
- * other. Edges whose source is not a state on the active stack — an
- * `InitialNode`'s opening edge, a `do` action's own control flow — are still in
- * this list and inert in it: {@link stepCandidates} offers only what leaves the
- * stack, and `walkableTransitions` (`./explore.ts`) censuses only the same.
- *
- * A PAYLOAD DISQUALIFIES AN EDGE whatever it is spelled as. `payloadOf` is the
- * same reader `itemFlowsOf` uses, so an edge this relation drops for carrying an
- * item is exactly an edge the flow machinery already calls an item flow; the
- * census then accounts for it as one the walk does not follow and the machine is
- * refused rather than walked over a token whose payload nothing here models.
- */
-export function regionTransitions(model: Model, regionId: ElementId): readonly ElementRecord[] {
-  const cache = cacheFor(model);
-  const hit = cache.transitions.get(regionId);
-  if (hit) return hit;
-  const list = regionDescendants(model, regionId).filter(
+  // The nested definition itself is IN `descendants` (the boundary stops below
+  // it) and is not a node: it is a machine of its own, or a definition no walk
+  // enters. The machine is a node of its own region.
+  const held = new Set<ElementId>(descendants.map((e) => e.id));
+  const nodes = new Set<ElementId>([regionId]);
+  for (const el of descendants) if (el.eClass !== 'StateDefinition') nodes.add(el.id);
+  // Every step edge inside a region that has both endpoints, in declaration
+  // order — which is the order the first-enabled tie-break is taken in.
+  //
+  // {@link STEP_EDGE_KINDS}, not `TransitionUsage` alone: a succession between
+  // two states is the same edge written the other way round, and a relation that
+  // held only one of the two spellings made the walk publish absences about the
+  // other. Edges whose source is not a state on the active stack — an
+  // `InitialNode`'s opening edge, a `do` action's own control flow — are still in
+  // this list and inert in it: {@link stepCandidates} offers only what leaves the
+  // stack, and `walkableTransitions` (`./explore.ts`) censuses only the same.
+  //
+  // A PAYLOAD DISQUALIFIES AN EDGE whatever it is spelled as. `payloadOf` is the
+  // same reader `itemFlowsOf` uses, so an edge this relation drops for carrying an
+  // item is exactly an edge the flow machinery already calls an item flow; the
+  // census then accounts for it as one the walk does not follow and the machine is
+  // refused rather than walked over a token whose payload nothing here models.
+  const transitions = descendants.filter(
     (e) =>
       STEP_EDGE_KINDS.has(e.eClass) &&
       e.source?.[0] !== undefined &&
       e.target?.[0] !== undefined &&
       payloadOf(e) === undefined,
   );
-  cache.transitions.set(regionId, list);
-  return list;
+  const region: MachineRegion = {
+    root: regionId,
+    bases: [],
+    nodes,
+    descendants,
+    transitions,
+    directStates: (containerId) => directStates(model, containerId),
+    parentOf: (id) => (held.has(id) ? (model.get(id)?.ownerId ?? null) : null),
+    inheritedFrom: () => undefined,
+  };
+  cache.regions.set(regionId, region);
+  return region;
+}
+
+/**
+ * The elements a region is made of: its descendants, stopping at a nested
+ * `state def` ({@link machineRegion}). A fresh array, as it always was.
+ */
+export function regionDescendants(model: Model, regionId: ElementId): ElementRecord[] {
+  return machineRegion(model, regionId).descendants.slice();
+}
+
+/**
+ * Every step edge inside a region that has both endpoints, in declaration
+ * order — which is the order the first-enabled tie-break is taken in
+ * ({@link machineRegion}, which says what makes an edge a step).
+ */
+export function regionTransitions(model: Model, regionId: ElementId): readonly ElementRecord[] {
+  return machineRegion(model, regionId).transitions;
 }
 
 /**
@@ -561,8 +632,8 @@ export function isFinalState(model: Model, stateId: ElementId): boolean {
 export function initialState(
   model: Model,
   stateId: ElementId,
-  states: ElementRecord[],
-  desc: ElementRecord[],
+  states: readonly ElementRecord[],
+  desc: readonly ElementRecord[],
   declIndex: Map<ElementId, number>,
 ): ElementId | null {
   const initialNode = desc.find((e) => e.eClass === 'InitialNode');
@@ -583,8 +654,9 @@ export function initialState(
 
 /** The initial substate of a container (InitialNode target, else first state). */
 export function initialSubstate(model: Model, containerId: ElementId): ElementId | null {
-  const states = directStates(model, containerId);
-  const desc = regionDescendants(model, containerId);
+  const region = machineRegion(model, containerId);
+  const states = region.directStates(containerId);
+  const desc = region.descendants;
   const declIndex = new Map<ElementId, number>();
   desc.forEach((e, i) => declIndex.set(e.id, i));
   return initialState(model, containerId, states, desc, declIndex);
@@ -986,8 +1058,9 @@ function labelFor(tr: ElementRecord, input: StepInput): string {
  */
 export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId): ElementId[] | null {
   if (id === regionId) return null;
+  const region = machineRegion(model, regionId);
   const path: ElementId[] = [id];
-  for (let p = model.get(id)?.ownerId ?? null; p !== regionId; p = model.get(p)?.ownerId ?? null) {
+  for (let p = region.parentOf(id); p !== regionId; p = region.parentOf(p)) {
     if (p == null || model.get(p)?.eClass !== 'StateUsage') return null;
     path.push(p);
   }
@@ -1002,14 +1075,7 @@ export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId):
  * (`boundaryCrossings`, `./explore.ts`).
  */
 export function isRegionNode(model: Model, machineId: ElementId, id: ElementId): boolean {
-  if (id === machineId) return true;
-  if (model.get(id)?.eClass === 'StateDefinition') return false;
-  const seen = new Set<ElementId>([id]);
-  for (let p = model.get(id)?.ownerId ?? null; p !== machineId; p = model.get(p)?.ownerId ?? null) {
-    if (p == null || seen.has(p) || model.get(p)?.eClass === 'StateDefinition') return false;
-    seen.add(p);
-  }
-  return true;
+  return machineRegion(model, machineId).nodes.has(id);
 }
 
 /**
