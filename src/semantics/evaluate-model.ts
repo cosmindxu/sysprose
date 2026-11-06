@@ -2676,7 +2676,7 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
         result = contradicted ? 'violated' : judgeConstraint(model, reading, expr, judging).result;
         // Read in a context that declares an end's name anew without `:>>` beside the one the holder names (g8): the
         // pair is no pair of the model's there, in its own sentence.
-        if (result === 'violated' && x.id !== owner.id) unread = hiddenReadSentence(model, `bind ${left} = ${right}`, owner.id, x.id, [left, right]);
+        if (result !== 'unknown' && x.id !== owner.id) unread = hiddenReadSentence(model, `bind ${left} = ${right}`, owner.id, x.id, [left, right]);
         // An end a value this tool does not read may reach (equatedPartsRefusal):
         // the conflict read there is no conflict of the model's. PA's `bind p2.M
         // = K` beside P's `L == M`: p2's M is K's 9, which the equation makes
