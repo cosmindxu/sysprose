@@ -369,8 +369,13 @@ function orderDependentOwners(model: Model, out: Map<ElementId, UnreadScope>): v
     if (generals.filter((g) => holders.has(g.id)).length < 2) continue;
     // Only an owner with a diamond above it can be asked in two orders: one chain of single generals is read in the one order.
     if (![o, ...generals].some((g) => model.typesOf(g.id).filter((t) => t.attrs.isLibrary !== true).length >= 2)) continue;
-    // As effectiveFeatures meets them: what the owner and its generals own, less what any of them redefines.
-    const candidates = [...ownFeatures(model, o.id), ...generals.flatMap((g) => ownFeatures(model, g.id))].filter(user);
+    // As effectiveFeatures meets them: what the owner and its generals own, less what any of them redefines. A stale end
+    // copy (implicit, redefining nothing: the serializer's isStaleCopy) counts too: the saved file has no such copy, so
+    // the name finds the other general's features there, and the page, whose clash rule takes the valueless copy first
+    // and compares nothing, read a value the file does not (soak seed 32180 with raw edits: page F where the file abstains).
+    const staleCopy = (f: ElementRecord): boolean =>
+      f.attrs.implicit === true && f.attrs.isLibrary !== true && !model.children(f.id).some((r) => r.eClass === 'Redefinition' && (r.source ?? [])[0] === f.id);
+    const candidates = [...ownFeatures(model, o.id), ...generals.flatMap((g) => ownFeatures(model, g.id))].filter((f) => user(f) || staleCopy(f));
     const redefined = new Set<ElementId>();
     for (const f of candidates) for (const g of closureOf(f)) redefined.add(g.id);
     const byName = new Map<string, ElementRecord[]>();
