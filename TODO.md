@@ -305,7 +305,10 @@ headings.
       constraint usage the assert specialises (TP2's `assert constraint ea :> e0;`). Q's own rows
       abstain for an assert written in `part q : Q`, and every P's for one naming `p.load`. Every
       valueless feature it names, with what the model states from it, is no design freedom to the
-      numeric surface. Read the definition's body with the parameters' values, per instance.
+      numeric surface. Since names-pass its own row abstains (?/-/?/- naming the definition), and
+      the literal and SMT surfaces abstain on every row of that model. Left: read the definition's
+      body with the parameters' values, per instance (design 5(e)2 recommends ruling this
+      permanent; the maintainer's ruling is pending).
       (5) A name reached through an import or an alias, a qualified `Lex::K` and a non-attribute
       lexical feature are still left unread.
       (6) Wording only (every row abstains):
@@ -756,12 +759,13 @@ true values. What follows is what that branch and the review of it left open; en
       method; both spellings, including `about` naming the owner itself). When it lands, lift that
       blanket refusal. A keyword annotation's `about` targets are raw qualified names no consumer
       resolves. [small-defaults S2, review]
-- [ ] **Resolve a dotted path to a package-level usage from inside a usage body.** `q2.p.x` in q1's
-      `assert` or `constraint` is `unresolved-name` today. Since instance2-pass S4 the literal
-      engine abstains for the whole file beside such an assert (the `unread-assert` fence); the
-      check and the numeric surface still read the values beside it (T/?/T/?), as they do beside any
-      contradiction. Done when the path resolves to the package-level usage on all four surfaces and
-      the fence no longer fires on it. Weaker, not wrong: no false verdict. [instance2-pass S4]
+- [ ] **Resolve a dotted path to a package-level usage from inside a usage body.** A dotted path
+      to a package's usage (`q2.p.x` in q1's `assert` or `constraint`) now resolves on all four
+      surfaces [names-pass S1]. Still unread (abstains, `unresolved-name`): (1) a path through an
+      enclosing USAGE rather than a package; (2) a package path whose value an instance on it
+      changes (the solver's instanceReadings does not key lexical paths; reading it gave a false
+      numeric F in R17 c2, so it is fenced and pinned 'lexical-instance'). [instance2-pass S4;
+      names-pass S1]
 - [ ] **Ask FailureMode by its qualified name when it ships.** `machineFailureModes`
       (src/semantics/fault-tree.ts) counts a model's own FailureMode through `hasKeyword(..., {
       anyPackage: true })` because the definition is not in SysproseVerification yet. When the
@@ -1012,6 +1016,11 @@ true values. What follows is what that branch and the review of it left open; en
       row (not a verdict cell; a documented heuristic, to be replaced by an explicit marker).
       Probes: scratchpad genericity/{rename,reorder,wrap-and-instance}/ (harness batch.sh,
       harness.sh, compare.py; repros in the reports). [genericity audit]
+      (5) Names (names-pass): a dotted path through an enclosing usage is unread; check's
+      quantityScope is not routed via lexicalPackageOf, so a unit-bearing lexical path abstains on
+      check; an assert typed by a constraint definition with no body makes the literal and SMT
+      surfaces abstain file-wide; a non-asserted constraint typed by a constraint definition files
+      no row. [names-pass]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,

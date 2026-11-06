@@ -57,7 +57,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 483 | 72 | 2 | 6 | 588 (259) | 0 | none | `differential-tested` |
+| `lra` | 485 | 72 | 2 | 6 | 588 (259) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
@@ -72,7 +72,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `per-instance` | 1 | 1 | 1 | 0 | 281 (133) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
-| `fence/unresolved-name` | 5 | 4 | 2 | — | — | — | none | `fenced` |
+| `fence/unresolved-name` | 3 | 3 | 2 | — | — | — | none | `fenced` |
 | `fence/unit-unresolved` | 1 | 1 | 0 | — | — | — | none | `unpinned` |
 | `fence/dimension-clash` | 2 | 2 | 1 | — | — | — | none | `fenced` |
 | `fence/offset-arithmetic` | 3 | 3 | 1 | — | — | — | none | `fenced` |
