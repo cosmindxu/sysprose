@@ -638,6 +638,33 @@ const UNREAD_ABOUT_CARRIERS: ReadonlySet<string> = new Set([
   PROPERTY_PATTERN_QUALIFIED_NAME,
 ]);
 
+
+/**
+ * The offset of the first `;` at or after `from` that is not inside a string or a comment (same skipping rules as
+ * {@link bracePairs}), or -1. A plain `indexOf` cut `abstract def "a;b" ;` inside its string.
+ */
+function semicolonOutsideText(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    const c = text[i];
+    if (c === ';') return i;
+    if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+    } else if (c === '/' && text[i + 1] === '*') {
+      const close = text.indexOf('*/', i + 2);
+      if (close === -1) return -1;
+      i = close + 1;
+    } else if (c === '"' || c === "'") {
+      let k = i + 1;
+      while (k < text.length && text[k] !== '\n' && text[k] !== c) {
+        if (text[k] === '\\') k++;
+        k++;
+      }
+      i = k;
+    }
+  }
+  return -1;
+}
+
 /**
  * The standard carriers a reader takes from the element they are written in,
  * matched on the LAST `::` segment as verify.ts `metadataTypeNames` does (a file
@@ -1030,7 +1057,7 @@ class Mapper {
       if (r === undefined || el === undefined || this.model.children(id).length > 0) continue;
       const own = text.slice(r.start.offset, r.end.offset);
       // Only tags and modifier words: nothing a save could not write again from the next element's text.
-      if (!/^(?:#[\w:.']+\s+)*[a-z]+(?:\s+[a-z]+)*$/i.test(own)) continue;
+      if (!/^(?:#(?:'[^']*'|[^\s#;{}]+)\s+)*[a-z]+(?:\s+[a-z]+)*$/i.test(own)) continue;
       for (const e of this.faultErrors) {
         const prev = e.previousToken;
         if (prev === undefined || prev.endOffset === undefined || r.end.offset !== prev.endOffset + 1) continue;
@@ -1066,7 +1093,7 @@ class Mapper {
         // A prefix with nothing after it to carry the statement (`abstract def;`) carries it itself, up to the
         // `;` that ends it, when no `{` or `}` comes first.
         const prefix = dropped.get(residue.start);
-        const semi = prefix === undefined ? -1 : text.indexOf(';', residue.tokenOffset);
+        const semi = prefix === undefined ? -1 : semicolonOutsideText(text, residue.tokenOffset);
         if (prefix === undefined || prefix !== residue.weldedTo || semi < 0) continue;
         const verbatim = text.slice(residue.start, semi + 1);
         if (/[{}]/.test(verbatim) || scopeOf(semi) !== scope) continue;
@@ -1075,12 +1102,15 @@ class Mapper {
       }
       const el = this.model.get(target.id);
       if (el === undefined || typeof el.attrs.unparsedText === 'string') continue;
+      // The prefix is dropped only when it carries nothing else: an earlier residue (`blok abstract def X;`) may
+      // already hang its text on it, and removing it would lose that word for good. Then it stays, as before.
+      const prefix = dropped.get(residue.start);
+      if (prefix !== undefined && prefix === residue.weldedTo && typeof this.model.get(prefix)?.attrs.unparsedText === 'string') continue;
       const verbatim = text.slice(residue.start, target.end);
       if (bracePairs(verbatim) === undefined) continue; // would re-parse differently
       this.model.setAttrs(target.id, { unparsedText: verbatim });
       // The other half of the mark: the text now lives on the residue element,
       // so it must not ALSO stay welded onto the body that swallowed it.
-      const prefix = dropped.get(residue.start);
       if (prefix !== undefined && prefix === residue.weldedTo) {
         this.model.remove(prefix);
         this.ranges.delete(prefix);

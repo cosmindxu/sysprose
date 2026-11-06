@@ -2867,7 +2867,7 @@ serializer writes as a statement. One more shape is marked: a prefix of metadata
 tags and modifier words that ends at the fault (`abstract def X;`, `#k abstract
 def X;`, whose `def` the grammar does not take after a modifier) hands its text to
 the element after it, or carries it itself when nothing follows (`#k abstract
-def;`). Everything else keeps the pre-existing behaviour — the swallowed
+def;`); only the FIRST fault of a body is marked, never one at file level. Everything else keeps the pre-existing behaviour — the swallowed
 word stays welded onto the enclosing body as a trailing expression — because
 losing the text BOTH ways is the one outcome worse than laundering. The known
 shapes:

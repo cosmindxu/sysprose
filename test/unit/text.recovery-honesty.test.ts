@@ -272,6 +272,27 @@ describe('recovery honesty — the mark never costs more than it saves', () => {
     }
   });
 
+  it('a prefix-only usage never takes an earlier residue\'s text with it (`blok abstract def X;`)', async () => {
+    // The unknown word is already kept on the prefix element; dropping that element would lose the word for good.
+    const tail = '    part def S {\n        METHOD\n    }\n}\n';
+    for (const stmt of ['blok abstract def X;', 'a::b ref def X;', '#k [2] abstract def X;', '#\'my tag\' abstract def X;']) {
+      const src = `package P {\n    metadata def k;\n${tail.replace('METHOD', stmt)}`;
+      const saved = serializeModel(parseModel(src).model);
+      const lead = stmt.split(/\s+(?:abstract|ref)\b/)[0]!;
+      expect(saved, `the leading text survives the save: ${stmt}`).toContain(lead);
+      const after = await checkText(saved, { library: 'none' });
+      expect(after.summary.errors, `a save laundered its error away: ${stmt}\n${saved}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps a prefix statement whole when a string holds a `;`', async () => {
+    const src = 'package P {\n    abstract def "a;b" ;\n}\n';
+    const saved = serializeModel(parseModel(src).model);
+    expect(serializeModel(parseModel(saved).model), 'a second save is the same text').toBe(saved);
+    expect(saved.split('"a;b"').length - 1, `the string is written once: ${saved}`).toBe(1);
+    expect((await checkText(saved, { library: 'none' })).summary.errors, 'the error is kept').toBeGreaterThan(0);
+  });
+
   it('writes a prefixed declaration that DOES parse unchanged (no residue mark)', () => {
     for (const src of [
       'package M {\n    metadata def k;\n    #k abstract part def X;\n}\n',
