@@ -3661,7 +3661,7 @@ export const useAppStore = create<AppState>((set, get) => {
                   : `Constraint satisfied: ${c.expression}`
                 : c.result === 'violated'
                   ? c.message
-                  : `Constraint could not be evaluated ("${c.expression}"): ${c.message}.`,
+                  : `Constraint could not be evaluated${c.expression ? ` ("${c.expression}")` : ''}: ${c.message}.`,
             elementId: c.id,
           } satisfies Diagnostic,
         ];

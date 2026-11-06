@@ -1595,7 +1595,7 @@ function partialAntecedent(
   return {
     outcome: 'not-evaluable',
     detail:
-      `proof not claimed: A ∧ P ∧ ¬G is unsat, but ${without}, and \`${unread.e.row.expression}\` cannot be ` +
+      `proof not claimed: A ∧ P ∧ ¬G is unsat, but ${without}, and ${unread.e.row.expression !== '' ? `\`${unread.e.row.expression}\`` : unread.e.row.element.qualifiedName} cannot be ` +
       "re-read at the model's values — so whether the assumptions can hold, and so whether this pass is vacuous, " +
       'is undecided. `--allow-inconclusive` does not forgive it',
     boundKind: 'none',

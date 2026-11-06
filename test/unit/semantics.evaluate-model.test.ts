@@ -4165,10 +4165,11 @@ describe('checkConstraints — a default stands against an asserted equation (de
   });
 
   it('judges no relation on the literal engine beside an assert the worklist cannot read (literal-reach fence)', async () => {
+    // `q2.p.w` names nothing (P has no w): the path stays unresolved through the package too.
     const { model: m } = await loadModelText(`package UA {
       part def P { attribute x : ScalarValues::Real default = 2.0; }
       part def Q { part p : P; }
-      part q1 : Q { assert constraint tie { q2.p.x == 50.0 } }
+      part q1 : Q { assert constraint tie { q2.p.w == 50.0 } }
       part q2 : Q;
       constraint k1 { q1.p.x <= 10.0 }
       constraint k2 { q2.p.x <= 10.0 }
@@ -4177,13 +4178,71 @@ describe('checkConstraints — a default stands against an asserted equation (de
     for (const q of ['UA::k1', 'UA::k2']) {
       const r = report.results.find((x) => x.clause.qualifiedName === q)!;
       expect([r.claim, r.code], q).toEqual(['inconclusive', 'verification/not-evaluable']);
-      expect(r.detail, q).toContain('the model asserts `q2.p.x == 50.0` (UA::q1::tie), which this tool cannot read (unresolved-name:');
+      expect(r.detail, q).toContain('the model asserts `q2.p.w == 50.0` (UA::q1::tie), which this tool cannot read (unresolved-name:');
     }
     // The check still reads the values; it could not read the assert.
     expect(checkConstraints(m!).map((c) => [m!.qualifiedName(c.id), c.result])).toEqual([
       ['UA::q1::tie', 'unknown'],
       ['UA::k1', 'satisfied'],
       ['UA::k2', 'satisfied'],
+    ]);
+  });
+
+  it('reads a dotted path to a package-level usage from inside a usage body, a local name shadowing it', async () => {
+    // q2 is q1's sibling in the package: `q2.p.x` in q1's body is q2's p's x (4), in either text order.
+    for (const text of [
+      `package UT {
+        part def P { attribute x : ScalarValues::Real default = 2.0; }
+        part def Q { part p : P; }
+        part q2 : Q { part :>> p { attribute :>> x = 4.0; } }
+        part q1 : Q { assert constraint tie { q2.p.x == 4.0 } constraint c { q2.p.x <= 3.0 } }
+      }`,
+      `package UT {
+        part q1 : Q { assert constraint tie { q2.p.x == 4.0 } constraint c { q2.p.x <= 3.0 } }
+        part q2 : Q { part :>> p { attribute :>> x = 4.0; } }
+        part def Q { part p : P; }
+        part def P { attribute x : ScalarValues::Real default = 2.0; }
+      }`,
+    ]) {
+      const { model: m } = await loadModelText(text);
+      const by = (q: string) => checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === q)!.result;
+      expect([by('UT::q1::tie'), by('UT::q1::c')]).toEqual(['satisfied', 'violated']);
+      const numeric = (q: string) => checkConstraintsNumeric(m!).find((c) => m!.qualifiedName(c.id) === q)!.result;
+      expect([numeric('UT::q1::tie'), numeric('UT::q1::c')]).toEqual(['satisfied', 'violated']);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      expect(report.results.find((x) => x.clause.qualifiedName === 'UT::q1::c')!.claim).toBe('refuted');
+    }
+    // A false assert is read too: the check files it F, where it was `unknown` (unresolved-name).
+    const { model: f } = await loadModelText(`package UA {
+      part def P { attribute x : ScalarValues::Real default = 2.0; }
+      part def Q { part p : P; }
+      part q1 : Q { assert constraint tie { q2.p.x == 50.0 } }
+      part q2 : Q;
+    }`);
+    expect(checkConstraints(f!).map((c) => [f!.qualifiedName(c.id), c.result])).toEqual([['UA::q1::tie', 'violated']]);
+    // q1's own `q2` answers the name first: its p's x is 2, not the package's q2's 4.
+    const { model: s } = await loadModelText(`package US {
+      part def P { attribute x : ScalarValues::Real default = 2.0; }
+      part def Q { part p : P; }
+      part q1 : Q { part q2 : Q; constraint c { q2.p.x <= 3.0 } }
+      part q2 : Q { part :>> p { attribute :>> x = 4.0; } }
+    }`);
+    expect(checkConstraints(s!).map((c) => [s!.qualifiedName(c.id), c.result])).toEqual([['US::q1::c', 'satisfied']]);
+    // A path whose value an instance on it changes (p's `:>> load = 50.0` under P's `m2 = 10.0 - load`) stays unresolved
+    // from inside the requirement: read by the feature's own id, the numeric surface judged P's 9 and filed c2 violated.
+    const { model: d } = await loadModelText(`package R17 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part p : P { attribute :>> load = 50.0; }
+      requirement r1 { require constraint c1 { p.load >= 10.0 } }
+      requirement r2 { require constraint c2 { p.m2 <= 0.0 } }
+    }`);
+    expect(checkConstraints(d!).map((c) => [d!.qualifiedName(c.id), c.result])).toEqual([
+      ['R17::r1::c1', 'satisfied'],
+      ['R17::r2::c2', 'unknown'],
+    ]);
+    expect(checkConstraintsNumeric(d!).map((c) => [d!.qualifiedName(c.id), c.result])).toEqual([
+      ['R17::r1::c1', 'satisfied'],
+      ['R17::r2::c2', 'unknown'],
     ]);
   });
 

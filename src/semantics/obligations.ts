@@ -117,7 +117,7 @@ import {
 import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import { ambiguousKeyword, foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
-import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
+import { NO_MARKERS, idScopeFor, parseRelationBody, typedAssertRefusal } from './relations';
 import { getRequirementAttr } from './requirements';
 import { isNonNormativeStatement } from './statement-kind';
 import { type DerivationMemo } from './units-eval';
@@ -647,7 +647,34 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
     // requirement.
     if (isNonNormativeStatement(model, el.id) || underNonNormativeStatement(model, el)) continue;
     const raw = el.attrs.expression;
-    if (typeof raw !== 'string' || raw.trim() === '') continue;
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      // An assert typed by a constraint definition and no body of its own: an axiom this tool does not read (A4).
+      const typed = typedAssertRefusal(model, el);
+      if (typed === undefined) continue;
+      const contract = owningContract(model, el, byId);
+      const encodable = { reason: 'unread-definition' as const, detail: typed };
+      out.push({
+        requirement: contract ? contractRef(contract) : null,
+        shortId: contract?.shortId ?? '',
+        subject: contract?.subject ?? null,
+        role: 'axiom',
+        source: 'assert',
+        element: ref(model, el),
+        expression: '',
+        node: null,
+        vars: [],
+        sortPerVar: {},
+        scaled: false,
+        encodable,
+        nonlinear: false,
+        verifiedBy: contract?.verifiedBy ?? [],
+        method: contract ? methodOf(model, contract.id) : null,
+        evidence: [],
+        status: statusOf(encodable),
+        ...claimed(model, contract),
+      });
+      continue;
+    }
     const asWritten = roleOf(el, topIsComparison(raw));
     if (!asWritten) continue;
     const filed = opts.fromKeywords ? keywordRole(model, el, asWritten) : asWritten;

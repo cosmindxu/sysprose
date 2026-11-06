@@ -1837,7 +1837,11 @@ instance may stand for another (a reference, a subject, a part a binding, a subs
 inconclusive. An `assert` this tool cannot read, in whole or in part (a path it does not resolve, a body
 it does not parse) that the check cannot hold true leaves every relation of the file
 undecided on the literal engine (`verification/not-evaluable`, naming the assert), as the
-SMT engine claims no proof beside it. The contexts a relation is filed at do not
+SMT engine claims no proof beside it. A dotted path to a package's usage written in a usage's
+body (`q2.p.x` in q1's `assert`, q2 q1's sibling in the package) is resolved, as KerML
+resolves it, and read in the package on every surface, unless a feature of the body's own
+context answers its first segment (q1's own `part q2`); a path nothing answers there
+(`q2.p.w`) stays unresolved. The contexts a relation is filed at do not
 turn on the order the text is written in: a renamed redefinition (`part p2 :>> p` in
 `q2 : Q`) written before `part def Q` leaves Q's p, and every other instance, filed as
 they are when Q comes first. A binding that gives the instance
@@ -2093,7 +2097,7 @@ through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lowe
 an asserted relation links), is not carried, and the row says which; a bound it cannot compare (a unit, an integer
 sort, a conjunction) is not carried either, under the sentence that no assertion gives a default a value. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
-def Eq { in a; a == 50.0 }`) is read by no surface, and files no row of its own.
+def Eq { in a; a == 50.0 }`) is read by no surface. Its own row abstains on the check and the numeric surface (`unread-definition`: *`e` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*), and the literal and SMT engines read it as an assertion they cannot read, so every row they judge in that model abstains (*the model asserts …, which this tool cannot read*; *proof not claimed …*): the assertion may contradict a value the model writes with `=`.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
 == 50.0 and a >= 0.0`) — what it may define is read nowhere: every feature a
 name in it reads — each value it gives a parameter, bare or dotted (`in a =

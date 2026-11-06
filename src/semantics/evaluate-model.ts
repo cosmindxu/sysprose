@@ -117,6 +117,8 @@ import {
   parseRelationBody,
   relationVarsOf,
   unitsOfDimension,
+  lexicalPackageOf,
+  typedAssertRefusal,
   valueFaultOf,
   type MarkerDimensions,
 } from './relations';
@@ -487,6 +489,10 @@ function answerFor(
     // instance (`two-values`), not an instance left unread.
     const lexical = answer === undefined ? pass.definitions.lexicalRefusal(contextId, name) : undefined;
     if (lexical !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: lexical } };
+    // A dotted path to a package's usage (`q2.p.x` in q1's body) is read in the package, as every surface reads it
+    // (`lexicalPackageOf` of ./relations): one feature, not one per instance of the context.
+    const pkg = answer === undefined ? lexicalPackageOf(model, contextId, name) : undefined;
+    if (pkg !== undefined) return answerFor(model, pkg, name, pass);
   }
   // A decided answer is never replaced. Only a valueless one is read through
   // the binding the name meets in the instance (A.2.1) — never one two values
@@ -1570,7 +1576,12 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
   }
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     const expr = el.attrs.expression;
-    if (typeof expr !== 'string' || expr.trim() === '') continue;
+    if (typeof expr !== 'string' || expr.trim() === '') {
+      // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
+      const typed = typedAssertRefusal(model, el);
+      if (typed !== undefined) out.push({ id: el.id, ownerId: el.ownerId, expression: '', result: 'unknown', message: `Could not evaluate: ${typed}` });
+      continue;
+    }
 
     const groups = groupsByRelation.get(el.id) ?? [];
     // A relation OWNED by a usage U (R17c/R17, R1-M2): its own row is U's
