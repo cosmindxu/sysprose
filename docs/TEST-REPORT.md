@@ -271,7 +271,7 @@ wired relationship.
 | Interaction | Covered by | Result | Screenshot |
 |---|---|---|---|
 | Validate flags duplicate name → navigable row | `E validation`; `E panels-problems-text` | PASS | `06b-problem-selected` |
-| Validation engine — all 28 rules (pos/neg) | `U validation.rules` (87 cases); `I pipeline.validate` | PASS | — |
+| Validation engine — all 28 rules (pos/neg) | `U validation.rules` (88 cases); `I pipeline.validate` | PASS | — |
 | Check → constraint-check rows (satisfied/violated) | `E simulate-check`, `E toolbar-lifecycle`; `U semantics.constraints` | PASS | `simcheck-check` |
 | Simulate action flow → ordered trace in Problems | `E simulate`, `E simulate-check` (`ignite`→`accelerate`) | PASS | `simcheck-action` |
 | Simulate state machine → state trace in Problems | `E simulate-check` (`idle`→`running`) | PASS | `simcheck-state` |

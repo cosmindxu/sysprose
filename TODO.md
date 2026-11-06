@@ -797,24 +797,38 @@ true values. What follows is what that branch and the review of it left open; en
       the single number-literal member the instance's own elements state of what the value reads,
       only where no other number it reads is a redefinition outside the instance's own elements (a
       shared default is fine). With two such members (M7b), or a redefined one stated in a
-      specialised definition (m7j), the finding stays at the part; that is fenced, not open. Still
-      open: (a) a derived value read with no via, as the unit-aware read of PB's `m2 = 10.0 - load`
-      (`breakingRead` abstains on si reads, so the finding stays anchored at the part); (b) folding
-      the instances of a definition that share a derived line (equal inputs) into one finding at
-      that line; (c) a default, a unit or `sides`, and a sixth distinct set, as before. Probes: PB
-      and M7 in test/unit/semantics.evaluate-model.test.ts. [reporting-residuals S1, review,
-      naming-pass S1]
-- [ ] **Name the breaking value in a unit-bearing violated instance.** `breakingRead` leaves
-      `breaks` unset (the finding names the first bound read, as before) when any read carries a
-      unit, an SI figure or sides, or when no single read, put back to the relation's own context
-      value, makes the relation hold (both needed, or the relation is already violated there). It is
-      decided on the scalar scope only, and for the first 5 violated rows of a group or 20 contexts.
+      specialised definition (m7j), the finding stays at the part; that is fenced, not open. Since
+      findings-pass S4 a no-via derived read (PB's `m2 = 10.0 - load`) is anchored at r1's/r2's
+      `:>> K`, only where every name the derived line reads is bound and the line is a declaration
+      outside the instance's own elements (PBu and PBr stay at the part). Since S5, instances that
+      share a derived line fold into one finding at that line, when the one input left is a
+      redefinition on a shared definition frame. Still open: the 'beside another read' part, and a
+      default, a unit or `sides`, and a sixth distinct set, as before. Probes: PB and M7 in
+      test/unit/semantics.evaluate-model.test.ts. [reporting-residuals S1, review, naming-pass S1;
+      findings-pass S4, S5]
+- [ ] **Name the breaking value in a unit-bearing violated instance.** `breakingRead` now puts a
+      unit-bearing read back in the unit-aware reading that judged it (findings-pass S1,
+      `quantityBreak`). It still leaves `breaks` unset, so the first bound read is named, when (a)
+      no single read mends the relation (both needed, or already violated in its own context;
+      permanent), (b) the 5-per-group or 20-per-context cap is passed (permanent), (c) the verdict
+      came from the scalar path with a unit on a read, so there is no re-quote (open), or (d) the
+      row's reading was shared by `readAlike`, whose rebuilt judgement carries no re-quote (open).
+      [findings-pass S1]
 - [ ] **Name and anchor a value the instance redefines, which no read carries.** Done for a group
       row whose instance's own element (`readIn`) redefines a plain number literal that breaks the
-      relation (redef-breaks2 / G5: `extra = 20.0` is named and anchored). Still open: a context row
-      that is no group (no `readIn`); a redefined value that is derived or carries a unit (G5c
-      shape); and a row with no read at all, which a target-by-specialisation finding reports with
-      no instance anchor (probe scratch/naming-pass-scratch/nb12.sysml). [PI-2 S1, naming-pass S1]
+      relation (redef-breaks2 / G5: `extra = 20.0` is named and anchored). Since findings-pass:
+      context rows are covered (S2, B1); a derived redefinition (G5c, quoted as `(= 5.0 * K)`) and
+      a unit-bearing literal one (GUR) are named and anchored (S3); a no-read target row is
+      anchored at its redefinition (nb12), or at its context element where the shown feature is a
+      line a definition shares (the P2 shape; S6). Left, sound (the finding names less, never
+      wrong): a derived redefinition that carries a unit, such as `= 5.0 * K [kg]`, is not named,
+      because its written quantity is not compared; a derived value whose text reads a name that a
+      read lists is left to the read (G5d); a no-read target row whose shared-definition feature is
+      not what breaks it is anchored at its context element, not at the own redefinition that
+      breaks it (nb5 points at `part :>> p : P2`, not at `:>> extra = 12.0`; its message still lists
+      the shared value first); the context sentence of a context row prefixes the name with the
+      redefining part's name, not the instance's (G5d prints `p::p.extra = 20 misses Q::c2`).
+      [PI-2 S1, naming-pass S1; findings-pass S2, S3, S6]
 - [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small`
       S4 an edit's recompute yields to the page between its steps (`recomputeSteps`), but three
       tasks stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root
@@ -1222,9 +1236,16 @@ true values. What follows is what that branch and the review of it left open; en
       probes instance-pass-scratch/gen221). (5) The 193 anchor abstains and the finding stays at the
       instance's own usage: when a derived value reads a redefinition outside the instance's own
       elements beside the instance's own input (m7j), or when the instance states two numbers a
-      derived value reads (M7b); also a derived value read with no via (PB), a redefined value that
-      is derived or carries a unit (G5c), a context row that is no group, and a row with no read at
-      all (probes scratch/naming-pass-scratch/pb.sysml, nb12.sysml). (6) A reference valued with
+      derived value reads (M7b); also a no-via derived read whose expression reads an unbound name
+      (PBu), whose bound source abstains, or whose derived line is a redefinition outside the
+      instance's own elements (PBr); and, since findings-pass, these sound-but-weaker shapes: scalar-path
+      rows with unit-bearing reads and `readAlike`-shared rows fall back to the first read, never a
+      wrong name; a derived redefinition in a unit is not named; no fold when a derived value reads
+      more than one input that nothing redefines, or when the shared line is a plain declaration
+      rather than a redefinition; a context row (no group) gets the shared anchor id but is never
+      folded; the 5-per-group and 20-per-context caps still apply; a no-read target row whose
+      shared feature is not what breaks it is anchored at its context element (nb5; probes
+      scratch/naming-pass-scratch/pb.sysml, nb12.sysml). (6) A reference valued with
       another reference inside a nested usage with a binding into the last one (`ref r = q`, `ref q
       = x`, bind sub.x.load = K) still abstains (reads-pass-scratch/g179b shape twoRefs; already the
       'two steps of standing-for' entry); a reference valued with a feature AROUND the instance that
