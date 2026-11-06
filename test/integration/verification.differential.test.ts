@@ -9777,8 +9777,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           assert constraint holds : Rule { in cap = c; in need = d; } }
         constraint def Rule { in cap : ScalarValues::Real; in need : ScalarValues::Real; cap >= need }
       }`, {
-      'MP::tc': ['T/T/T/T', 'T'],
-      'MP::tx': ['T/T/T/T', 'T'],
+      // Since names-pass S2 an assert typed by a constraint definition (`holds : Rule`) is read by no surface: its own
+      // row abstains naming the definition, and the literal engine and SMT abstain on every row of the file (sound,
+      // weaker; the merge of pin-265's probe with names-pass). The check and the numeric surface keep T.
+      'MP::tc': ['T/?/T/?', 'T'],
+      'MP::tx': ['T/?/T/?', 'T'],
+      'MP::V::holds': ['?/-/?/-', null],
     }),
     // A name the walk places nowhere (contradicted-pair-meet's review): in a package that holds two features under one
     // name (Q5W2's `w`), whose names the walk withholds, and through a usage a renamed redefinition hides (Q5H's `r.a`,

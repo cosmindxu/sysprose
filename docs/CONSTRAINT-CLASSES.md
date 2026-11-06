@@ -43,8 +43,8 @@ A fence has its own three states: `fenced` when a test pins each layer it is pro
 Where the printed classes stand now:
 
 - `experimental`: `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance`.
-- `tested`: `lira`, `nra-div/pinned`.
-- `differential-tested`: `lra`, `units`, `stated-value`, `defining-equation`, `requirement-clause`.
+- `tested`: `lra`, `lira`, `nra-div/pinned`.
+- `differential-tested`: `units`, `stated-value`, `defining-equation`, `requirement-clause`.
 - `fenced`: `fence/no-formal-clause`, `fence/unresolved-name`, `fence/dimension-clash`, `fence/offset-arithmetic`, `fence/refused-derivation`, `fence/non-numeric-operand`.
 - `fenced-defect`: `fence/unsupported-operator`.
 - `unpinned`: `fence/unparseable`, `fence/unit-unresolved`.
@@ -57,7 +57,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 485 | 72 | 2 | 6 | 608 (263) | 0 | none | `differential-tested` |
+| `lra` | 485 | 72 | 2 | 6 | 636 (285) | 2 | none | `tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
@@ -66,10 +66,10 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `stated-value` | 311 | 78 | 1 | 7 | 592 (254) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
-| `bind-equality` | 9 | 5 | 1 | 0 | 222 (132) | 0 | none | `experimental` |
-| `asserted-fact` | 27 | 8 | 1 | 0 | 24 (12) | 0 | none | `experimental` |
+| `bind-equality` | 9 | 5 | 1 | 0 | 224 (134) | 0 | none | `experimental` |
+| `asserted-fact` | 27 | 8 | 1 | 0 | 26 (14) | 2 | none | `experimental` |
 | `requirement-clause` | 236 | 61 | 1 | 7 | 339 (215) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 281 (133) | 0 | none | `experimental` |
+| `per-instance` | 1 | 1 | 1 | 0 | 309 (155) | 2 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 3 | 3 | 2 | — | — | — | none | `fenced` |
@@ -106,7 +106,7 @@ What z3 is asked: the `set-logic` the relation’s own bytes need. A relation th
 
 - **Encodes.** Comparisons and `+ - *` with at most one symbol-carrying operand, and `/` by a literal.
 - **Logic.** `QF_LRA`.
-- **Level of `lra`.** `differential-tested` (first unmet: a battery of 200 cells, have none).
+- **Level of `lra`.** `tested` (first unmet: no row against its hand-computed answer, have 2).
 - **Limits.**
   - Division by the literal zero is `unsupported-operator`, `not-evaluable`, not forgivable.
   - A numeral is the written decimal (`0.1` is `(/ 1.0 10.0)`); beyond 15 significant digits, the double’s own rational.
@@ -204,7 +204,7 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 - **Limits.**
   - A bare `connection` is not an equality unless `--connections-as-equalities`.
 - **Open defects.**
-  - `D-inconsistent-axioms` (wrong-statement): One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim.
+  - `D-inconsistent-axioms` (wrong-verdict): A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: the SMT binding rows fenced by G-mask; G8B/G8A: p.L read T from P2's K on the check, literal and numeric surfaces, KNOWN_FALSE; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.
   - `D-default-machinery` (abstains): Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”
@@ -228,7 +228,6 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 - **Encodes.** One symbol per instance.
 - **Level of `per-instance`.** `experimental` (first unmet: a decided golden row, have 0).
 - **Open defects.**
-  - `D-inconsistent-axioms` (wrong-statement): One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim.
   - `D-subsetting-contradiction` (abstains): Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (p1 `[2]`, p2 `[0..1]`, a quoted name in an asserted equation or a declaration), where an equation naming the usage, or a multiplicity beyond one value, leaves it unrerooted and abstaining.
   - `D-readings-rollup` (abstains): The subsetting component fence is per usage, not per instance, and the other abstentions of the rollup. None gives a wrong answer.
 - **Tests.**

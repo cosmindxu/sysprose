@@ -444,7 +444,11 @@ headings.
       a plain quotient over an asserted zero divisor (`A z == 0.0` beside `r / z == q`) reads `?` in
       one order and T in the other (s3/Q2x156f.sysml, Q2x156r.sysml); (q) an affine core past 32
       features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) the
-      286(a) digits cases (s5/A6x086f, A5x092f, A5x240f). [numeric2-pass; solver2-pass]
+      286(a) digits cases (s5/A6x086f, A5x092f, A5x240f); (s) a definition's own row reads `t` where an
+      instance's facts refute it (adv/genpin: `P::ck` ?/?/F/? before P-pin, ?/?/t/? after; definition
+      rows only): the F side is liftable by reading an instance's refuting F onto its
+      definition's row.
+      [numeric2-pass; solver2-pass; closing-readings P-pin]
 - [ ] **Give the specialisers of a usage-owned group one canonical order (optional).** The
       group-order fence of fence-readings S1 is a stable sort by usage-ancestor count in
       `contextsUncached`; `specialisersOf` itself and the context-key dedup have no canonical order,
@@ -561,20 +565,32 @@ headings.
       its own, a `rep language` member, and annotations are refused (probe
       solver2-pass-scratch/s4/gen Z187-Z199). [fence-assert-not; numeric2-pass; solver2-pass]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
-      itself.** One symbol per feature across the usages of one definition: `part def P { attribute
-      L; attribute K; bind L = K; } part a : P { assert constraint ea { L == 50.0 } } part b : P {
-      assert constraint eb { K == 60.0 } }` reads `verification/inconsistent-axioms` though neither
-      instance contradicts itself (the literal engine discharges, the numeric surface does not
-      converge; review-2026-10-14/wave3-probes/contradictory-models/c6a.sysml). And a chain a
-      specialisation masks: `part def P { L; K; bind K = L; assert constraint cl { L == 50.0 } }
-      part def P2 :> P { attribute K; attribute N; bind N = K; assert constraint cn { N == 70.0 } }
-      part p : P2;` (P2's K masks P's without `:>>`, so N is joined to P2's K and not to L): the
-      check and the literal engine decide p.L == 50.0 and p.N == 70.0 T, correctly, and SMT reads
-      the axioms inconsistent (T/T/T/X;
-      review-2026-10-14/wave3-probes/contradictory-models/g8.sysml). No false T or F, only a false
-      inconsistent-axioms claim; unchanged from the base and in the USER-GUIDE limits. Done when SMT
-      keys a symbol by instance, or the shapes are pinned in I7_ALLOWED with this reason.
-      [contradictory-models S3, review]
+      itself.** A general's body re-read by name where a specialisation declares a name anew
+      without `:>>`, which KerML forbids (§7.3.2.1: an owned member's name must differ from every
+      inherited member's; redefining resolves it) and which this tool does not report. g8 (`part
+      def P { L; K; bind K = L; assert constraint cl { L == 50.0 } } part def P2 :> P { attribute
+      K; attribute N; bind N = K; assert constraint cn { N == 70.0 } } part p : P2;`): the check
+      and the literal engine read P's binding by identity and decide p.L == 50.0 and p.N == 70.0 T;
+      SMT re-read it in P2 by name and read the axioms inconsistent (kl/kn T/T/T/X). Since
+      pin-265 S2 (G-mask) g8 reads T/T/T/?: the SMT engine refuses the rows it would re-read by
+      name. Still wrong, and pinned in KNOWN_FALSE until the g8-fence branch (the fence for
+      evaluate-model.ts, the literal engine, solver.ts, defining-equation.ts and the obligations
+      instance rows) lands: G8A (P's `assert K == L` in place of the binding) and G8B (`P { L; K;
+      bind K = L } P2 :> P { attribute K; assert K == 50 }`) give a false T on the check, literal
+      and numeric surfaces (p.L T; P::pe T on numeric), and G8C (`part def P { attribute K; assert
+      constraint ck { K == 50.0 } } part def P2 :> P { attribute K; assert constraint cn { K ==
+      70.0 } } part p : P2;`) files `P2::K in P2#equations` F/-/F/- (a blocking warning) and t70
+      ?/?/?/X, a false F. Since pin-265 S1 (P-pin) an equation written in a usage or a specialising
+      definition no longer pins a definition feature's shared symbol (measured): C6A ea/eb T/-/T/-;
+      C6B ta/tb and `P::ck in b` T/T/T/T, `P::ck` ?/?/?/?; C6D tb T/T/T/T and ta ?/?/T/T (the check
+      and the literal engine do not read K from P2's asserted L == 50.0 through P's binding: weaker,
+      not wrong); C6E ta/ta2/tb T/T/T/T; C6F u T/T/T/T, v F/F/F/F (a redefinition of the owner of a
+      binding's end bound to a value, `part :>> p { … }` over Q's `bind p.load = L` with L stated,
+      is still read as that owner: RBL4 and stand-redef unchanged); LK/LD/LN `P::ck`, a false T
+      (?/?/T/T) before, read ?/?/t/?. Done when no row read through a name declared anew without
+      `:>>` reads inconsistent-axioms or a value its general's body gives by name (G-mask,
+      G-pair-a, G-pair-b). [contradictory-models S3, review, closing-readings P-pin; pin-265 S1,
+      S2]
 - [ ] **Keep a redefinition on the more specific feature when an edit dissolves the join that kept
       it off it.** A redefinition kept off a more specific feature by a join an edit dissolves stays
       on the base feature, written by its path; the same names written by hand land on the more
@@ -1035,6 +1051,19 @@ true values. What follows is what that branch and the review of it left open; en
       numeric sentence names only `differs` sets, an `undecided` set keeps 'did not converge'. The
       differential test's 1 h beforeAll hook timeout is fragile under heavy load (3095 to 7151 s
       seen). [instance3-pass]
+      (7) Name-declared-anew rows (pin-265): the numeric surface does not carry a general's binding
+      onto a redefinition's own symbol (the reason for the `redefinesBoundOwner` fence), so
+      self-contradictory models of the RBL4/SRS shape keep their base numeric reading;
+      asserted-constraint rows of a specialisation are filed under an order-dependent instance name
+      (gen-ppin: 65 rows, also on base); C6D ta stays ?/?/T/T on the check and the literal engine;
+      the key of G8R's `#equations` row depends on text order (`P::L in P2#equations` vs `P2::N in
+      P2#equations`; the twins are pinned separately). `redefinesBoundOwner` scans every binding per
+      uncached call (time big-bind-600 and perf9b; memoise per (site, f.id) if slow), and
+      `hiddenEndSentence` matches only an end's first dotted segment, so a hidden name deeper in a
+      path (`a.K` where `a`'s type re-declares K without `:>>`) is not fenced (same shape as
+      G8A/G8B; with the g8-fence branch). The USER-GUIDE sentence on G8 names only the binding: an
+      assert of P's re-read in P2 can still be decided on every surface, the SMT engine included.
+      [pin-265 S1, S2, review]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,

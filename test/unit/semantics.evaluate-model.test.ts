@@ -2084,13 +2084,13 @@ describe('checkConstraints — two asserted equations that give one feature two 
     ];
     expect(await rows(f1('50.0', '60.0'))).toEqual([...p, ['F1::u50', 'satisfied']]);
     expect(await rows(f1('60.0', '50.0'))).toEqual([...p, ['F1::u50', 'violated']]);
-    // The numeric surface solves the whole model, p's pair in it, and does not converge: u50's sentence names the pair.
-    const { model: fm } = await loadModelText(f1('50.0', '60.0'));
-    expect(checkConstraintsNumeric(fm!).find((r) => fm!.qualifiedName(r.id) === 'F1::u50')!.reason).toBe(
-      'the solve did not converge: the asserted `L == 50.0` (F1::P::ca) and `L == 60.0` (F1::p::cb) each define `L` in ' +
-        'F1::p and give it two values, which the solve meets; L is where it stopped, at a point that misses an equation ' +
-        'of the model it solved, so that point is no solution and this relation is not judged at it',
-    );
+    // Since pin-265 P-pin an equation written in a usage does not pin the definition feature's shared symbol, so the
+    // numeric surface no longer meets p's pair through P's L: u50 reads as the check reads it.
+    for (const [x, y, want] of [['50.0', '60.0', 'satisfied'], ['60.0', '50.0', 'violated']] as const) {
+      const { model: fm } = await loadModelText(f1(x, y));
+      const u50 = checkConstraintsNumeric(fm!).find((r) => fm!.qualifiedName(r.id) === 'F1::u50')!;
+      expect(u50.result).toBe(want);
+    }
     expect(
       await exchanged((x, y) => `package DIA {
         part def T0 { attribute L : ScalarValues::Real; }
