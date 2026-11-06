@@ -13669,6 +13669,9 @@ function groupsOf(model: Model): InstanceGroup[] {
             // The sites found before the frame cap tripped: a lower bound of the group's instances.
             unread: { count: instances.length, cap: `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`, atLeast: true },
           };
+        } else if (sites.size === 0 && unread.length > 0) {
+          // No live site is the group's own (row 0) reading: a held instance is never taken for it.
+          group.refusal = { kind: 'not-enumerated', sentence: heldSentence(definitions, el, unread[0][0], unread[0][1]) };
         } else if (instances.length > MAX_INSTANCE_READS) {
           group.refusal = {
             kind: 'past-cap',
