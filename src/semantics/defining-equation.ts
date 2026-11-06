@@ -47,7 +47,7 @@ import { exprEqual, writtenChains, type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
 import { NO_MARKERS, parseRelationBody, substituteLiterals, type MarkerDimensions } from './unit-literals';
-import { DIMENSIONLESS, dimEqual, divideDim, multiplyDim, resolveUnit, type Dimension } from './units';
+import { DIMENSIONLESS, dimEqual, divideDim, multiplyDim, quantityKindDimension, resolveUnit, type Dimension } from './units';
 
 /** An asserted equation that may define a name: `name == <expr>`, or `<expr> == name`. */
 export interface DefiningEquation {
@@ -7532,13 +7532,25 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     if (r === 'opaque') return { kind: 'other', why: refsIn(eq.definition, eq.literals).length > 0 ? 'names' : 'form' };
     return 'k' in r ? { kind: 'constant', k: r.k } : { kind: 'bool', value: r.bool };
   };
+  /** A side that is a number with no unit and reads no name (`50.0`, `25.0 * 2.0`): read in the feature's kind. */
+  const bare = (x: { eq: DefiningEquation; side: Side }): Constant | undefined =>
+    x.side.kind === 'constant' && x.side.k.dimension === undefined && refsIn(x.eq.definition, x.eq.literals).length === 0
+      ? x.side.k
+      : undefined;
   const compare = (
     a: { eq: DefiningEquation; side: Side },
     b: { eq: DefiningEquation; side: Side },
+    kind: Dimension | undefined,
   ): { v: WrittenComparison; why?: ContradictedDefinition['why'] } => {
     if (a.side.kind === 'constant' && b.side.kind === 'constant') {
       const v = compareConstants(a.side.k, b.side.k);
-      return v === 'undecided' ? { v, why: 'unit' } : { v };
+      if (v !== 'undecided') return { v };
+      // A bare number beside a quantity of the feature's kind is that quantity in the kind's coherent SI unit, as
+      // every surface reads the bare side's definition (the bare-literal contract): `L == 50.0` beside `L == 50.0
+      // [kg]` on a MassValue is one value. Read apart, they stay undecided: the check reads them apart and says so.
+      const [x, y] = bare(a) ? [bare(a)!, b.side.k] : [bare(b), a.side.k];
+      if (kind && x && y.dimension && dimEqual(y.dimension, kind) && equalRationals(x.si, y.si)) return { v: 'same' };
+      return { v, why: 'unit' };
     }
     if (a.side.kind === 'bool' && b.side.kind === 'bool') return { v: a.side.value === b.side.value ? 'same' : 'differs' };
     if (sameBody(a.eq.definition, a.eq.literals, b.eq.definition, b.eq.literals)) return { v: 'same' };
@@ -7629,6 +7641,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       ): { verdict: ContradictedDefinition['verdict']; why?: ContradictedDefinition['why'] } | undefined => {
         // The feature, and every one it overrides, is in flight: a side that reads it back gives it no value.
         const flight = new Set(competing.flatMap((c) => [...slotOf(c.named)]));
+        const kind = sameKind(model, [feature, ...competing.flatMap((c) => [c.named, c.readAs])]);
         const sides = competing.flatMap((c) => {
           const side = sideOf(c.eq, c.at, flight);
           return side ? [{ eq: c.eq, side }] : [];
@@ -7637,7 +7650,7 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
         let why: ContradictedDefinition['why'];
         for (let i = 0; i < sides.length && verdict !== 'differs'; i++) {
           for (let j = i + 1; j < sides.length; j++) {
-            const c = compare(sides[i]!, sides[j]!);
+            const c = compare(sides[i]!, sides[j]!, kind);
             if (c.v === 'differs') {
               verdict = 'differs';
               why = undefined;
@@ -14513,6 +14526,27 @@ export function compareWrittenValues(a: ElementRecord, b: ElementRecord): Writte
 interface Constant {
   si: Rational;
   dimension: Dimension | undefined;
+}
+
+/**
+ * The dimension a number with no unit is read in beside every one of `features` ({@link contradictedDefinitions}): the
+ * ISQ kind each one's first typing names (or, with none, its type's name), read in its coherent SI unit, where they
+ * all name one and none declares a unit or a multiplicity of its own — the kind `quantityKindOf` of ./units-eval
+ * reads first. `undefined` otherwise, and for a kind of dimension one (an amount of information is not a number of
+ * its coherent unit).
+ */
+function sameKind(model: Model, features: readonly ElementRecord[]): Dimension | undefined {
+  let out: Dimension | undefined;
+  for (const f of features) {
+    if (f.attrs.unit !== undefined || f.attrs.multiplicity !== undefined) return undefined;
+    const typed = model.relationshipsFrom(f.id).find((r) => r.eClass === 'FeatureTyping');
+    const name = typeof f.attrs.type === 'string' ? f.attrs.type : f.attrs.typeRef;
+    const t = typed ? typed.target?.[0] : typeof name === 'string' ? name.trim() : undefined;
+    const d = t ? quantityKindDimension(model, t) : undefined;
+    if (!d || dimEqual(d, DIMENSIONLESS) || (out && !dimEqual(out, d))) return undefined;
+    out = d;
+  }
+  return out;
 }
 
 /** Two constants compared exactly: a bare number against a quantity is not decided by reading them. */

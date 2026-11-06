@@ -927,7 +927,11 @@ class QParser {
  *    inside the tool (A.2.9, `boundInInstanceQ`); `detail` is the A.9
  *    sentence naming the error. The scalar twin reads the same binding on its
  *    own path, and where only this one failed it read a value nobody checked
- *    in units: the failure is the answer, reported, never filled.
+ *    in units: the failure is the answer, reported, never filled;
+ *  - `declared-unit` — a REFUSAL: a defining equation gives a number with no
+ *    unit to a feature that declares a unit other than its kind's coherent SI
+ *    one (`L : MassValue [g]` beside `L == 50.0`), which no two surfaces read
+ *    alike; `detail` is the unit.
  */
 export type QReason =
   | 'unresolved'
@@ -947,7 +951,8 @@ export type QReason =
   | 'contradiction'
   | 'shadowed'
   | 'tie'
-  | 'internal';
+  | 'internal'
+  | 'declared-unit';
 
 /** Is this {@link describeReason} sentence the `unresolved` one: a name the evaluator reads no value for? */
 export function isUnresolvedSentence(sentence: string): boolean {
@@ -997,6 +1002,11 @@ export function describeReason(reason: QReason, detail?: string): string {
     }
     case 'internal':
       return detail ?? 'a per-instance reading failed inside the tool; reported, not dropped';
+    case 'declared-unit':
+      return (
+        `its asserted equation gives it a number with no unit beside the unit it declares, [${detail ?? '?'}], and ` +
+        'the surfaces of this tool do not read that number alike; write the unit in the equation'
+      );
   }
 }
 
@@ -1026,7 +1036,8 @@ export function isRefusalReason(reason: QReason | undefined): boolean {
     reason === 'contradiction' ||
     reason === 'shadowed' ||
     reason === 'tie' ||
-    reason === 'internal'
+    reason === 'internal' ||
+    reason === 'declared-unit'
   );
 }
 
@@ -2319,6 +2330,19 @@ function deriveByEquation(
   // surface. A VALUE that is such a reference is an identity, and keeps the
   // point ({@link deriveFeatureUncached}).
   if (r.q.absolute) return { ...claimOnly('unknown', 'offset', r.q.unit), depth, ...met };
+  // A number with no unit, for a feature that declares one (`L : MassValue [g]` beside `L == 50.0`): this reading
+  // took it in the kind's coherent SI (50 [kg]), the solver lane in the declared unit (50 [g]), and a bare literal
+  // compared with a stated value reads the unit that value is written in. No surface reads it alike, so none reads
+  // it: only a declared unit that is the kind's coherent SI unit (`[kg]` on a MassValue) gives the same value.
+  const feat = model.get(featureId);
+  const declared = feat ? unitOfFeature(feat) : undefined;
+  if (declared !== undefined && dimEqual(r.q.dimension, DIMENSIONLESS)) {
+    const u = resolveUnit(declared);
+    const kind = quantityKindOf(model, featureId).dimension;
+    if (!u || u.offsetSI || u.factorToSI !== 1 || !kind || !dimEqual(kind, u.dimension)) {
+      return { ...claimOnly('unknown', 'declared-unit', declared), depth, ...met };
+    }
+  }
   return { ...judgeDerivation(model, featureId, r.q), depth, ...met };
 }
 

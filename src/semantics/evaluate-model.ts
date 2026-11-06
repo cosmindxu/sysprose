@@ -1769,6 +1769,9 @@ function contradictedApart(model: Model, pass: ScalarPass): ReadonlyMap<Contradi
           const el = equationRecord(site.equation);
           const expr = equationText(site.equation);
           if (contradictedSideReadsAnother(model, set, site)) continue;
+          // Nor one no surface reads (`L == 50.0` for `L : MassValue [g]`): judged, its number was 50 against 50 [g].
+          const dotted = site.name.includes('.') ? site.name : undefined;
+          if (equationDerivation(model, site.feature.id, expr, pass.memo, site.at, dotted).reason === 'declared-unit') continue;
           const reading: ElementRecord = site.at === el.ownerId ? el : { ...el, ownerId: site.at };
           const judged = judgeConstraint(model, reading, expr, pass, new Map([[site.name, boundOfReading(site.feature, a)]]));
           if (judged.result !== 'violated') continue;

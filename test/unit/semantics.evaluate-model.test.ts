@@ -2084,6 +2084,13 @@ describe('checkConstraints — two asserted equations that give one feature two 
     ];
     expect(await rows(f1('50.0', '60.0'))).toEqual([...p, ['F1::u50', 'satisfied']]);
     expect(await rows(f1('60.0', '50.0'))).toEqual([...p, ['F1::u50', 'violated']]);
+    // The numeric surface solves the whole model, p's pair in it, and does not converge: u50's sentence names the pair.
+    const { model: fm } = await loadModelText(f1('50.0', '60.0'));
+    expect(checkConstraintsNumeric(fm!).find((r) => fm!.qualifiedName(r.id) === 'F1::u50')!.reason).toBe(
+      'the solve did not converge: the asserted `L == 50.0` (F1::P::ca) and `L == 60.0` (F1::p::cb) each define `L` in ' +
+        'F1::p and give it two values, which the solve meets; L is where it stopped, at a point that misses an equation ' +
+        'of the model it solved, so that point is no solution and this relation is not judged at it',
+    );
     expect(
       await exchanged((x, y) => `package DIA {
         part def T0 { attribute L : ScalarValues::Real; }
@@ -2717,15 +2724,44 @@ describe('checkConstraints — two asserted equations that give one feature two 
           'contradicts itself, whichever is written first; no relation that may read L is decided',
       ],
     ]);
-    // 50 beside 50 kg may be one value: the pair is info, in either order.
+    // 50 beside 50 kg is one value (unit-agreement): the bare number is read in L's kind, 50 kg, as every surface reads
+    // its definition, so the two are no pair and t60 reads L at 50 kg in either order — no `#equations` row, no
+    // report. Written second, the bare equation is itself refused (L is a derived 50 kg by then, gate (e)).
     const alike = text.replace('60.0 [kg] }', '50.0 [kg] }');
-    expect((await bothOrders(alike))[0]).toEqual(['UND::P#equations', 'unknown']);
+    expect(await rows(alike)).toEqual([
+      ['UND::P::c50', 'satisfied'],
+      ['UND::P::ck', 'satisfied'],
+      ['UND::t60', 'violated'],
+    ]);
+    expect(await rows(twin(alike))).toEqual([
+      ['UND::P::c50', 'unknown'],
+      ['UND::P::ck', 'satisfied'],
+      ['UND::t60', 'violated'],
+    ]);
     const { model: a } = await loadModelText(alike);
-    expect(
-      validate(a!)
-        .filter((d) => d.ruleId === 'constraint-violation' && a!.qualifiedName(d.elementId!) === 'UND::P')
-        .map((d) => d.severity),
-    ).toEqual(['info']);
+    expect(validate(a!).filter((d) => d.ruleId === 'constraint-violation' && a!.qualifiedName(d.elementId!) === 'UND::P')).toEqual([]);
+    // A feature that declares a unit other than its kind's coherent SI one reads such a number alike on no two
+    // surfaces: `L == 50.0` was 50 [kg] to the check and 50 [g] to the solver lane, and beside `L == 50.0 [g]` the
+    // check read the two apart (`#equations` violated). No surface reads L from it, alone or in a pair.
+    const declared = (eqs: string) => `package UDG {
+      part def P { attribute L : ISQ::MassValue [g]; ${eqs} }
+      part p : P;
+      constraint t50 { p.L == 50.0 [g] }
+    }`;
+    const { model: one } = await loadModelText(declared('assert constraint c1 { L == 50.0 }'));
+    expect(checkOf(one!, 'UDG::t50').message).toBe(
+      'Could not evaluate: "p.L" cannot be derived: its asserted equation gives it a number with no unit beside the unit it ' +
+        'declares, [g], and the surfaces of this tool do not read that number alike; write the unit in the equation',
+    );
+    expect(checkConstraintsNumeric(one!).map((r) => r.result)).toEqual(['unknown', 'unknown']);
+    for (const eqs of ['assert constraint c1 { L == 50.0 } assert constraint c2 { L == 50.0 [g] }', 'assert constraint c2 { L == 50.0 [g] } assert constraint c1 { L == 50.0 }']) {
+      expect(await rows(declared(eqs))).toEqual([
+        ['UDG::P#equations', 'unknown'],
+        ['UDG::P::c1', 'unknown'],
+        ['UDG::P::c2', 'unknown'],
+        ['UDG::t50', 'unknown'],
+      ]);
+    }
   });
 });
 
@@ -4207,16 +4243,18 @@ describe('checkConstraints — a default stands against an asserted equation (de
       expect(checkOf(m!, 'RA::ta').result).toBe('satisfied');
     }
     // A value written with `=` that an asserted relation reads beside L is read whatever L's pair: `cm` over M alone
-    // is the warning at M's 20 (it read 'L is not read', and `--strict` passed), and `s`, which reads L, abstains.
+    // is the warning at M's 20 (it read 'L is not read', and `--strict` passed), and `s`, which reads L, abstains. (A bare
+    // 50 beside 50 kg is one value since unit-agreement: the pair is 50 beside 60 kg, the warning at P.)
     const { model: m } = await loadModelText(`package RF {
       part def P { attribute L : ISQ::MassValue; attribute M : ScalarValues::Real = 20.0;
-        assert constraint e1 { L == 50.0 } assert constraint e2 { L == 50.0 [kg] }
+        assert constraint e1 { L == 50.0 } assert constraint e2 { L == 60.0 [kg] }
         assert constraint s { L >= 0.0 [kg] or M >= 0.0 }
         assert constraint cm { M <= 10.0 } }
       part p : P;
     }`);
     expect([checkOf(m!, 'RF::P::cm').result, checkOf(m!, 'RF::P::s').result]).toEqual(['violated', 'unknown']);
     expect(validate(m!).filter((d) => d.ruleId === 'constraint-violation' && d.severity === 'warning').map((d) => m!.qualifiedName(d.elementId!))).toEqual([
+      'RF::P',
       'RF::P::cm',
     ]);
   });

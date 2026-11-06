@@ -9143,28 +9143,53 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Q5O::c1': ['?/-/?/-', null],
       'Q5O::t50': ['?/?/?/X', null],
     }),
-    // A bare 50 beside 50 kg may be one value (the bare-literal contract), and this tool does not compare them: the
-    // readings the check, the literal engine and the numeric surface made of L (T at f1f5ca5) are lost, in both
-    // orders. The SMT engine's own gate reads t50 T in one order and refuses the bare literal in the other.
+    // A bare 50 beside 50 kg on a MassValue is one value (instance3-pass S3, unit-agreement): the bare number is read
+    // in the kind's coherent SI unit, as every surface reads the bare equation's definition, so the two are no pair
+    // and L is 50 kg — T on all four, as at f1f5ca5. Written second, the bare equation is itself refused on the
+    // literal and SMT engines (L is a derived 50 kg by then: derived-bare-literal), which then decide nothing; the
+    // check and the numeric surface read t50 T.
     'q5-unitagree-ab': probe(`package Q5UA {
         part def P { attribute L : ISQ::MassValue; assert constraint c1 { L == 50.0 } assert constraint c2 { L == 50.0 [kg] } }
         part p : P;
         constraint t50 { p.L == 50.0 [kg] }
       }`, {
-      'Q5UA::P::L in Q5UA::P#equations': ['?/-/?/-', null],
-      'Q5UA::P::c1': ['?/-/?/-', null],
-      'Q5UA::P::c2': ['?/-/?/-', null],
-      'Q5UA::t50': ['?/?/?/T', null],
+      'Q5UA::P::c1': ['T/-/T/-', 'T'],
+      'Q5UA::P::c2': ['T/-/T/-', 'T'],
+      'Q5UA::t50': ['T/T/T/T', 'T'],
     }),
     'q5-unitagree-ba': probe(`package Q5UA {
         part def P { attribute L : ISQ::MassValue; assert constraint c2 { L == 50.0 [kg] } assert constraint c1 { L == 50.0 } }
         part p : P;
         constraint t50 { p.L == 50.0 [kg] }
       }`, {
-      'Q5UA::P::L in Q5UA::P#equations': ['?/-/?/-', null],
-      'Q5UA::P::c1': ['?/-/?/-', null],
-      'Q5UA::P::c2': ['?/-/?/-', null],
-      'Q5UA::t50': ['?/?/?/?', null],
+      'Q5UA::P::c1': ['?/-/?/-', 'T'],
+      'Q5UA::P::c2': ['T/-/T/-', 'T'],
+      'Q5UA::t50': ['T/?/T/?', 'T'],
+    }),
+    // A feature that declares a unit other than its kind's coherent SI one (`L : MassValue [g]`, a unit the tool reads
+    // in the multiplicity) read a bare equation alike on no two surfaces: `L == 50.0` was 50 [kg] to the check and the
+    // literal engine (t50g F, t50k T) and 50 [g] to the numeric surface (t50k F), the SMT engine refusing both — and
+    // beside `L == 50.0 [g]` the check read the pair apart (50 [kg] beside 50 [g], `#equations` F). No surface reads L
+    // from such an equation now (`declared-unit`); the SMT engine's axioms read both 50 [g], and hold t50 there.
+    'q5-unitdecl-one': probe(`package Q5UD {
+        part def P { attribute L : ISQ::MassValue [g]; assert constraint c1 { L == 50.0 } }
+        part p : P;
+        constraint t50g { p.L == 50.0 [g] }
+        constraint t50k { p.L == 50.0 [kg] }
+      }`, {
+      'Q5UD::P::c1': ['?/-/?/-', null],
+      'Q5UD::t50g': ['?/?/?/?', null],
+      'Q5UD::t50k': ['?/?/?/?', null],
+    }),
+    ...ordered('q5-unitdecl', 'assert constraint c1 { L == 50.0 }', 'assert constraint c2 { L == 50.0 [g] }', (eqs) => `package Q5UG {
+        part def P { attribute L : ISQ::MassValue [g]; ${eqs} }
+        part p : P;
+        constraint t50 { p.L == 50.0 [g] }
+      }`, {
+      'Q5UG::P::L in Q5UG::P#equations': ['?/-/?/-', null],
+      'Q5UG::P::c1': ['?/-/?/-', null],
+      'Q5UG::P::c2': ['?/-/?/-', null],
+      'Q5UG::t50': ['?/?/?/T', null],
     }),
     // Q4 for two asserted equations (the S2 branch review): the pair's own rows are no longer read violated, so the
     // literal engine seeds from the pair `check` reports, and the names a defining side reads join its component: a
@@ -9345,9 +9370,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Q5H::u50': ['?/?/?/X', null],
     }),
     // A value written with `=` is read whatever its asserts (the branch review): M, which `s` reads beside L, is not
-    // left undecided by L's pair, so `cm { M <= 10.0 }` is the warning at M's stated 20 — beside a pair this tool
-    // reads alike (CV-RF: 50 beside 50 kg, info) and beside one that differs (CV-RG) — and a relation over M is read
-    // there by the check and the numeric surface, and inconclusive on the literal engine, naming cm (Q4).
+    // left undecided by L's pair, so `cm { M <= 10.0 }` is the warning at M's stated 20 — beside two equations that
+    // agree (CV-RF: 50 beside 50 kg, one value since unit-agreement, which `s` reads at 50 kg) and beside a pair that
+    // differs (CV-RG) — and a relation over M is read there by the check and the numeric surface, and inconclusive on
+    // the literal engine, naming cm (Q4).
     'cv-rf': probe(`package CVRF {
         part def P { attribute L : ISQ::MassValue; attribute M : ScalarValues::Real = 20.0;
           assert constraint e1 { L == 50.0 } assert constraint e2 { L == 50.0 [kg] }
@@ -9356,11 +9382,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint tM { p.M == 20.0 }
       }`, {
-      'CVRF::P::L in CVRF::P#equations': ['?/-/?/-', null],
       'CVRF::P::cm': ['F/-/F/-', 'F'],
-      'CVRF::P::e1': ['?/-/?/-', null],
-      'CVRF::P::e2': ['?/-/?/-', null],
-      'CVRF::P::s': ['?/-/?/-', null],
+      'CVRF::P::e1': ['T/-/T/-', 'T'],
+      'CVRF::P::e2': ['T/-/T/-', 'T'],
+      'CVRF::P::s': ['T/-/T/-', 'T'],
       'CVRF::tM': ['T/X/T/X', null],
     }),
     'cv-rg': probe(`package CVRG {
@@ -18308,7 +18333,7 @@ package PS {
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
-    ...['q5-m8', 'q5-f1', 'q5-def-rows', 'q5-def-rows-bound', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc', 'cv-bnd2', 'cv-bnd2x', 'cv-bnd3', 'cv-bnd3u', 'cv-bnd-use', 'q5-twins', 'q5-hidden'].map(
+    ...['q5-m8', 'q5-f1', 'q5-def-rows', 'q5-def-rows-bound', 'q5-types', 'q5-around', 'q5-pkg', 'q5-reach', 'q5-names', 'q5-bool', 'q5-pow', 'q5-mask', 'q5-dia', 'q5-lex', 'q5-nest', 'cv-ra', 'cv-rb', 'cv-rc', 'cv-bnd2', 'cv-bnd2x', 'cv-bnd3', 'cv-bnd3u', 'cv-bnd-use', 'q5-twins', 'q5-hidden', 'q5-unitdecl'].map(
       (k) => [`${k}-ab`, `${k}-ba`] as const,
     ),
     // text-order S1: a model and its members in the reverse order ({@link reversed}).

@@ -2225,7 +2225,7 @@ and every P's where they meet in a definition or a package; where they meet in a
 usage (one in P and one in `part p : P { … }`), p's L, and that of a usage that
 subsets or redefines p, while another `part p2 : P` reads P's equation on the
 check and on the literal engine (the numeric surface's solve meets the pair and
-does not converge there); the rows of a definition that holds p (Q's `p.L == 50.0`),
+does not converge there, its sentence naming the pair); the rows of a definition that holds p (Q's `p.L == 50.0`),
 which stand for every Q, and a value over a dotted name (`Z = p.L` in Q) stay
 undecided in every instance; and a name the tool places nowhere (in a
 scope that holds two features under one name, or through a usage a renamed
@@ -2292,10 +2292,18 @@ are the warning, its sentence giving each reading: `L == 50.0` beside `L ==
 model's values (`50.0` is 50 [kg], `60.0 [kg]` is 60 [kg]) …*); `L == a * 2.0`
 over `bind a = K` with `K = 30.0`, beside `L == 50.0`; `W == m * g` over the
 package's `g = 9.81`, beside `W == 20.0`. Two it reads alike or within the tie
-rule (`L == 50.0` beside `L == 50.0 [kg]`, which may be one value; `L == 2.0 ^
-3` beside `L == 8.0`), a side it reads no value of, and a side over a value
-another such pair leaves undecided leave the pair's own row an info that says
-why. A side that gives no value — it
+rule (`L == 2.0 ^ 3` beside `L == 8.0`), a side it reads no value of, and a side
+over a value another such pair leaves undecided leave the pair's own row an info
+that says why. A number with no unit beside a quantity of the feature's kind is
+that quantity in the kind's coherent SI unit, as every surface reads such an
+equation: `L == 50.0` beside `L == 50.0 [kg]` (or `50000.0 [g]`) on a `MassValue`
+is one value, and defines L as 50 kg — written second, the bare one is itself
+*could not be evaluated* (a bare number against a derived quantity), and the
+literal and SMT engines then decide nothing over L. A feature that declares a
+unit other than its kind's coherent SI one (`L : ISQ::MassValue [g]`) is defined
+by no equation that gives it a bare number, alone or beside another: *its
+asserted equation gives it a number with no unit beside the unit it declares,
+[g], …* — write the unit in the equation. A side that gives no value — it
 reads a name nothing gives one, as a design equation `L == m * g` over a free
 `m` does, or reads the feature back, as an alias's `b == a` read as a's
 definition beside `a == 2.0` does — is left aside: every evaluator tries the
