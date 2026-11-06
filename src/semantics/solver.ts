@@ -94,7 +94,9 @@ import {
   enclosedBindingFrame,
   equatedPartsRefusal,
   givenWayThroughHead,
+  contradictedDefinitionNaming,
   contradictedDefinitionRefusal,
+  contradictedDefinitions,
   hasEnclosedBindings,
   hasPastCapBindings,
   hasStatedValue,
@@ -7017,8 +7019,14 @@ const UNSETTLED_HEAD = 'the solve did not converge:';
  */
 function unsettledSentence(model: Model, ids: readonly ElementId[]): string {
   const one = ids.length === 1;
+  // Where one of them is a feature two asserted equations give two values where they meet (contradictedDefinitions),
+  // the solve meets them, in another instance too (Q5F1's p2.L beside p's pair): the sentence names them.
+  const index = contradictedDefinitions(model);
+  const bases = new Set(ids.map(baseIdOf));
+  const set = index.failed === undefined ? index.sets.find((c) => c.verdict === 'differs' && c.features.some((f) => bases.has(f.id))) : undefined;
+  const pair = set !== undefined ? ` ${contradictedDefinitionNaming(model, set)} and give it two values, which the solve meets;` : '';
   return (
-    `${UNSETTLED_HEAD} ${nameList(model, ids)} ${one ? 'is' : 'are'} where it stopped, at a point ` +
+    `${UNSETTLED_HEAD}${pair} ${nameList(model, ids)} ${one ? 'is' : 'are'} where it stopped, at a point ` +
     'that misses an equation of the model it solved, so that point is no solution and this relation is not ' +
     'judged at it'
   );

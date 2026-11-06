@@ -1670,7 +1670,22 @@ one of w's, so each row read through p2 — W's own `constraint c { p2.load <=
 binding, an asserted equation (`x == p2.load`) or a further subsetting reads
 through it — is *could not be evaluated*, in a sentence that names p2, the
 element whose own p1 it is read through and w, and `bounds` claims no bound of
-a measure read so — a limit of this tool. So is a relation of p2's type read
+a measure read so — a limit of this tool. Except where p2 subsets p1 alone and is
+p1 again under another name: of p1's kind, typed by nothing p1 is not (`part p2 : T0
+:> p1;` over `part p1 : T0;`, not a `part p2 : T1 :> p1;` whose T1 holds features of
+its own), saying nothing of its own, neither a `ref` nor an attribute, with nothing
+else redefining or subsetting either, no binding end or asserted equation of the
+model naming p2 (quoted or not), p2 stated `[1]` or with no multiplicity and p1, and
+whatever redefines it, `[1]`, `[0..1]` or none (where p1 may hold two values, or p2 may
+be empty, an axiom on p2 binds one p1 at most) — and every context that reads p1 otherwise redefines it (w's `part
+:>> p1 { … }`, or a specialisation's). There each name read below p2 is read, in each
+such context, as one of that context's p1s, on every surface and in `bounds`:
+`w.p2.load` is w's p1's 50, `w0.p2.load` (a `w0 : W` that changes nothing) W's own 1,
+`w.p1.load` w's 50, and W's own `c` reads W's own values (*satisfied*) beside a row
+of its own in w (*violated*). A reading of p2 itself is *could not be evaluated*:
+a package's `satisfy R by w.p2`, a reference or a subject's value `= p2` as above,
+and a `satisfy R by p2` or `subject s = p2` W writes in the sentence of a satisfier
+w reads otherwise. So is a relation of p2's type read
 in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
 W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
 nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
@@ -1718,6 +1733,29 @@ whether or not `p2` is a `ref`, never forgiven by `--allow-inconclusive`. The
 usages and rows that read through a `::>` are withdrawn with those that read through
 a `:>`. One that declares a type (`ref part p2 : T0 ::> p1;`) is read as its type has
 it, or abstains under the subsetting sentence above where an instance reads `p1` otherwise.
+An `assert` read below a p2 that is p1 again (above) is read as any relation is: W's
+`assert constraint a { p2.load <= 5.0 }` beside w's `part :>> p1 { attribute :>> load =
+50.0; }` is *satisfied* at W's own values and *violated* in its row in w, and `verify
+--engine smt` reports `verification/inconsistent-axioms` on every row of the file.
+Any other `assert` read through such a usage is read again in each instance that reads the
+subsetted feature otherwise, the usage read as one of what that feature is there: the same
+`a` over `part p2 : T1 :> p1;`, whose T1 holds a feature of its own, files the row `W::a
+in w`, read as `p1.load <= 5.0` in w, *violated* on the
+check and the numeric surface (`sysml-check --strict` fails, in a sentence that says p2
+subsets p1), and `verify --engine smt` reports `verification/inconsistent-axioms` on every
+row of the file: the model contradicts itself in w. W's own row of `a` is *could not be
+evaluated*, as above. Only where that is p2's value in each such instance: the assert
+written in the element p1 and p2 are features of, naming p2 at the head of a dotted name,
+and p2 subsetting p1 alone and saying nothing of its own, with nothing else redefining or
+subsetting either. Any other assert read through such a usage — through a value or an
+asserted equation that reads it (`x == p2.load`), through a `::>`, beside a binding the
+instance writes, or an assert of p2's type (T1's `assert constraint tc { load <= 5.0 }`
+under `part p2 : T1 :> p1;`) — and a subsetting usage that says something of its own
+where an instance reads what it subsets otherwise (`part p2 :> p1 { attribute :>> load =
+2.0; }`: every w's p2 has two loads) leave the model's axioms unread there, and the SMT
+engine decides no row of the file (`verification/not-evaluable`, in a sentence that names
+the assert or the usage; never forgiven): a proof from axioms that may contradict each
+other is void. The other three surfaces read each row as before.
 An end of a connection the model connects to features (`connection cn : C connect
 w.p1 to t;`) is the feature it connects, which may state what the end's type does not
 (w's `part :>> p1 { attribute :>> load = 50.0; }`): `cn.a.load` is *could not be
@@ -2196,7 +2234,7 @@ and every P's where they meet in a definition or a package; where they meet in a
 usage (one in P and one in `part p : P { … }`), p's L, and that of a usage that
 subsets or redefines p, while another `part p2 : P` reads P's equation on the
 check and on the literal engine (the numeric surface's solve meets the pair and
-does not converge there); the rows of a definition that holds p (Q's `p.L == 50.0`),
+does not converge there, its sentence naming the pair); the rows of a definition that holds p (Q's `p.L == 50.0`),
 which stand for every Q, and a value over a dotted name (`Z = p.L` in Q) stay
 undecided in every instance; and a name the tool places nowhere (in a
 scope that holds two features under one name, or through a usage a renamed
@@ -2263,10 +2301,18 @@ are the warning, its sentence giving each reading: `L == 50.0` beside `L ==
 model's values (`50.0` is 50 [kg], `60.0 [kg]` is 60 [kg]) …*); `L == a * 2.0`
 over `bind a = K` with `K = 30.0`, beside `L == 50.0`; `W == m * g` over the
 package's `g = 9.81`, beside `W == 20.0`. Two it reads alike or within the tie
-rule (`L == 50.0` beside `L == 50.0 [kg]`, which may be one value; `L == 2.0 ^
-3` beside `L == 8.0`), a side it reads no value of, and a side over a value
-another such pair leaves undecided leave the pair's own row an info that says
-why. A side that gives no value — it
+rule (`L == 2.0 ^ 3` beside `L == 8.0`), a side it reads no value of, and a side
+over a value another such pair leaves undecided leave the pair's own row an info
+that says why. A number with no unit beside a quantity of the feature's kind is
+that quantity in the kind's coherent SI unit, as every surface reads such an
+equation: `L == 50.0` beside `L == 50.0 [kg]` (or `50000.0 [g]`) on a `MassValue`
+is one value, and defines L as 50 kg — written second, the bare one is itself
+*could not be evaluated* (a bare number against a derived quantity), and the
+literal and SMT engines then decide nothing over L. A feature that declares a
+unit other than its kind's coherent SI one (`L : ISQ::MassValue [g]`) is defined
+by no equation that gives it a bare number, alone or beside another: *its
+asserted equation gives it a number with no unit beside the unit it declares,
+[g], …* — write the unit in the equation. A side that gives no value — it
 reads a name nothing gives one, as a design equation `L == m * g` over a free
 `m` does, or reads the feature back, as an alias's `b == a` read as a's
 definition beside `a == 2.0` does — is left aside: every evaluator tries the

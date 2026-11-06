@@ -63,6 +63,8 @@ import {
   headBindingSentence,
   readsPerInstance,
   readingContextsOf,
+  subsettingRereadsOf,
+  type SubsettingReread,
   heldPastCapSentence,
   instanceGroups,
   lookupsHold,
@@ -1778,6 +1780,9 @@ function contradictedApart(model: Model, pass: ScalarPass): ReadonlyMap<Contradi
           const el = equationRecord(site.equation);
           const expr = equationText(site.equation);
           if (contradictedSideReadsAnother(model, set, site)) continue;
+          // Nor one no surface reads (`L == 50.0` for `L : MassValue [g]`): judged, its number was 50 against 50 [g].
+          const dotted = site.name.includes('.') ? site.name : undefined;
+          if (equationDerivation(model, site.feature.id, expr, pass.memo, site.at, dotted).reason === 'declared-unit') continue;
           const reading: ElementRecord = site.at === el.ownerId ? el : { ...el, ownerId: site.at };
           const judged = judgeConstraint(model, reading, expr, pass, new Map([[site.name, boundOfReading(site.feature, a)]]));
           if (judged.result !== 'violated') continue;
@@ -2764,6 +2769,21 @@ function renamedIn(
 }
 
 /**
+ * The clause a row an asserted relation is read again in, through a usage that subsets a feature the instance reads
+ * otherwise, says so with ({@link subsettingRereadsOf}).
+ */
+function rereadClause(model: Model, reread: SubsettingReread): string {
+  const who = effectiveQualifiedName(model, reread.context.id);
+  return reread.via
+    .map(({ usage, subsetted }) => {
+      const u = effectiveNameOf(model, usage) ?? usage.id;
+      const g = effectiveNameOf(model, subsetted) ?? subsetted.id;
+      return `\`${u}\` subsets \`${g}\`, so every \`${u}\` of ${who} is one of its \`${g}\`s, and is read as one`;
+    })
+    .join('; ');
+}
+
+/**
  * Read a definition's constraint in every context that specialises the
  * definition and reads it differently ({@link DefiningEquations.changingContexts}):
  * one {@link SpecialisationInstance} per context, judged by the one pipeline
@@ -2784,8 +2804,8 @@ function readInContexts(
   groups?: readonly InstanceGroup[],
 ): void {
   if (el.ownerId == null) return;
-  const names = namesIn(expr);
-  const walked = readingContextsOf(model, pass.definitions, el, names);
+  const allNames = namesIn(expr);
+  const walked = readingContextsOf(model, pass.definitions, el, allNames);
   // A throw in the relation's own context walk (A.2.9): which other contexts read it is unknown, so one row says
   // so, `internal`, and the relation's own row stands. (The obligations lane files the same refusal.)
   if ('failed' in walked) {
@@ -2805,14 +2825,16 @@ function readInContexts(
     });
     return;
   }
-  const contexts = walked.contexts;
+  // An asserted relation read through a usage that subsets a feature an instance reads otherwise is read again in
+  // each such instance, the usage read as one of what that feature is there ({@link subsettingRereadsOf}).
+  const rereads = subsettingRereadsOf(model, el.id);
+  const contexts = [...walked.contexts, ...[...rereads.values()].map((r) => r.context).filter((c) => !walked.contexts.some((x) => x.id === c.id))];
   if (contexts.length === 0) return;
   const owner = el.ownerId;
   const ownIds = pass.definitions.scope(owner, 'all');
   const ownValues = idsIn(pass, owner);
   const target = targetName(model, el);
   const instances = check.instances ?? [];
-  const bodyNames = relationNamesOf(expr);
   const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
   let broken = 0;
   // The elements an expanded group's row reads as their own instance (q2's
@@ -2844,7 +2866,11 @@ function readInContexts(
       }
       continue;
     }
-    const reading: ElementRecord = { ...el, ownerId: x.id };
+    const reread = rereads.get(x.id);
+    const text = reread?.expression ?? expr;
+    const reading: ElementRecord = reread ? { ...el, ownerId: x.id, attrs: { ...el.attrs, expression: text } } : { ...el, ownerId: x.id };
+    const names = reread ? namesIn(text) : allNames;
+    const bodyNames = relationNamesOf(text);
     // A context whose reading met a binding above it (F5), or one listed only
     // because a member reads its own value there (M7's `Q::c in q2`, E7), is
     // read per instance — at the context's own instance — instead of being
@@ -2880,7 +2906,7 @@ function readInContexts(
           : undefined;
     let judged: Judgement = why !== undefined
       ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false, ...(cap ? { abstention: 'past-cap' as const } : {}) }
-      : judgeConstraint(model, reading, expr, pass);
+      : judgeConstraint(model, reading, text, pass);
     // Unread where the context renames a bound feature the relation reads: said so.
     if (judged.result === 'unknown' && why === undefined && judged.abstention === undefined && renamed !== undefined) {
       judged = { ...judged, message: `Could not evaluate: ${renamed.sentence}` };
@@ -2906,7 +2932,8 @@ function readInContexts(
       return {
         name: n,
         featureId,
-        ...(through ? { instance: instancePathOf(model, satisfied?.satisfier ?? x) } : {}),
+        // A reread names the context too: the feature it reads is not the context's own `p1` (`w::p1.load`).
+        ...(through || reread !== undefined ? { instance: instancePathOf(model, satisfied?.satisfier ?? x) } : {}),
         // A value read in the context is the context's own: named by it.
         qualifiedName: own(n)
           ? `${pass.definitions.contextName(x.id)}::${n}`
@@ -2922,7 +2949,7 @@ function readInContexts(
     // The read whose value breaks the relation, where it read several (PI-2).
     const broke =
       readAs !== undefined && judged.result === 'violated' && broken++ < TARGET_CONTEXT_FOLD
-        ? breakingRead(model, el, reading, expr, pass, undefined, judged)
+        ? breakingRead(model, el, reading, text, pass, undefined, judged)
         : undefined;
     const several = broke !== undefined && (judged.reads?.length ?? 0) > 1;
     // The renamed end, for a row it leaves unread: the line an author edits.
@@ -2935,7 +2962,8 @@ function readInContexts(
     // A violated `assert` says why a `default` stood at this instance, read as the instance reads its names (the
     // context is the owner): q's `:>> L = 50.0` is no default, and P's `load default = 1.0` is the one that stood.
     const kept = judged.result === 'violated' ? standingFor(model, reading) : undefined;
-    const said = instanceMessage(model, judged, shown, contextName, target, expr, scope);
+    const plainSaid = instanceMessage(model, judged, shown, contextName, target, expr, scope);
+    const said = reread ? `${plainSaid} — ${rereadClause(model, reread)}` : plainSaid;
     instances.push({
       contextId: x.id,
       context: contextName,

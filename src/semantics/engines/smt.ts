@@ -60,7 +60,7 @@
  */
 
 import { type ElementId, type Model } from '@core/index';
-import { hasStatedValue, readsContradictedDefinition, sharedDefinitions } from '../defining-equation';
+import { hasStatedValue, readsContradictedDefinition, sharedDefinitions, subsettingUnread } from '../defining-equation';
 import {
   checkConstraints,
   checksByRow,
@@ -541,6 +541,14 @@ export async function judgeBySmt(
   const axiomAssertions = assertionsOf(axioms, 'axiom');
   const axiomVars = variablesOf(axioms);
   const axiomsRefused = axioms.filter((e) => e.encoded === undefined);
+  // An asserted relation this tool does not read in every instance it holds in, through a usage that subsets a
+  // feature an instance reads otherwise, or a subsetting usage that states a value of its own there ({@link
+  // subsettingUnread}): whether the axioms hold together is unknown.
+  const unreadSubsetting = subsettingUnread(model);
+  const unreadRow = axioms.find((e) => e.row.instance === undefined && unreadSubsetting.relations.has(e.row.element.id))?.row;
+  const unreadAxiom =
+    unreadSubsetting.values ??
+    (unreadRow ? { name: unreadRow.element.qualifiedName, sentence: unreadSubsetting.relations.get(unreadRow.element.id)! } : undefined);
 
   // STEP 0, once per run. Every obligation below stands on this answer — its
   // status, reason and core: its model is read and never printed.
@@ -565,6 +573,7 @@ export async function judgeBySmt(
         axiomsRefused,
         premises,
         consistency,
+        ...(unreadAxiom ? { unreadAxiom } : {}),
         scopes,
         backend,
         free,
@@ -709,6 +718,8 @@ interface JudgeInput {
   axiomsRefused: readonly EncodedRow[];
   premises: readonly EncodedRow[];
   consistency: CheckOutcome;
+  /** An axiom this tool does not read in every instance it holds in ({@link subsettingUnread}), if any. */
+  unreadAxiom?: { name: string; sentence: string };
   /** The numeric surface's name → feature map of each context it was asked about, for the run. */
   scopes: Map<ElementId, Map<string, ElementId>>;
   backend: Z3Backend;
@@ -959,6 +970,23 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
           ? `core: ${coreSentence(input.consistency.core)}`
           : 'the solver named no core'),
       ...bound('none', 'no obligation was decided — the context contradicts itself'),
+    };
+  }
+  // An axiom read in some instances only (an asserted relation read through a usage that subsets a feature an
+  // instance reads otherwise, in a shape this tool does not read again there): the axiom set the solver found
+  // satisfiable is not the model's, which may contradict itself in that instance. Nothing is claimed over it.
+  if (input.consistency.status === 'sat' && input.unreadAxiom !== undefined) {
+    return {
+      ...base,
+      ...point,
+      outcome: 'not-evaluable',
+      axiomCensus: census(),
+      checks: 1,
+      detail:
+        `${input.unreadAxiom.sentence}; so whether the model's axioms hold together is unknown, and a proof over an axiom set ` +
+        'this tool could not read whole is not a proof. ' +
+        '`--allow-inconclusive` does not forgive it',
+      ...bound('none', 'no obligation was decided — the axiom set was not read whole'),
     };
   }
   if (input.consistency.status !== 'sat') {
