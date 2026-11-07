@@ -1125,6 +1125,8 @@ error: the reporting commands exit 1 with the degraded banner, `verify`, `consis
 and `fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no
 surface files a row for the clause, and the save writes it back as it was read. State the negation in the
 body instead, `assert constraint c { not (…) }`, which this tool reads.
+`assert not satisfy R by s0;`, a negated satisfaction, is refused whole with the same finding: no satisfaction
+of R by s0 is mapped from it, so no surface judges R for s0, and the save writes the statement back as written.
 
 **A redefinition is the feature in its context, and `=` binds.** In `part p : P
 { attribute :>> m = 20.0 [kg]; }` every surface reads `p.m` as p's own feature —
@@ -2640,6 +2642,9 @@ Nothing is written back: `property-check` tells you where the clause goes and yo
 apply. `examples/contract-authoring-prompts.sysml` is a shipped model that writes
 the four authoring rules as `#prompt` statements at package level, so
 `property-draft` hands them to whoever works on any requirement in it.
+
+A constraint that chains `implies` without parentheses, or puts a bare `or` on the left of an `xor`, is refused with a sentence
+saying so rather than read one way and risk the wrong grouping; parenthesise the chain and it is checked.
 
 **Source of truth:** `src/api/property.ts`, `examples/contract-authoring-prompts.sysml`,
 `test/unit/property.test.ts`, and §3.3 of

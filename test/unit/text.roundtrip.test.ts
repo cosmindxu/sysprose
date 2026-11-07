@@ -1661,6 +1661,28 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(spelled.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     expect(spelled.model.all().find((e) => e.declaredName === 'c')!.attrs.expression).toBe('not (load > 10.0)');
     expect(spelled.model.all().find((e) => e.declaredName === 'c')!.attrs.negated).toBeUndefined();
+    // a5 F2: `assert not satisfy R by s0;` parses as a bare `assert not` and a `satisfy` beside it. The `satisfy` is not
+    // mapped (read apart it is the plain satisfaction), and the refused clause keeps the whole statement as written.
+    const nb = (stmt: string) =>
+      `package NB7 {\n  part def S { attribute m : ScalarValues::Real; }\n  requirement def R { subject s : S; require constraint { s.m <= 5.0 } }\n  part s0 : S { attribute :>> m = 7.0; }\n  ${stmt}\n}\n`;
+    for (const stmt of ['assert not satisfy R by s0;', 'assert not /* why */ satisfy R by s0;', 'require not satisfy R by s0 { }', 'private assert not satisfy requirement R by s0;']) {
+      const { model, diagnostics } = parseModel(nb(stmt));
+      expect(diagnostics.filter((d) => d.severity === 'error').map((d) => d.code), stmt).toEqual(['mapper/negated-assert-unread']);
+      expect(model.all().filter((e) => e.eClass === 'Satisfy' || e.eClass === 'TextualRepresentation'), stmt).toEqual([]);
+      const kept = model.all().filter((e) => e.attrs.negated === true);
+      expect(kept.map((e) => e.attrs.unparsedText), stmt).toEqual([stmt]);
+      const saved = serializeModel(model);
+      expect(saved, stmt).toContain(stmt);
+      expect(serializeModel(parseModel(saved).model), stmt).toBe(saved);
+    }
+    // nb7 as the writer lays it out is saved byte for byte, the `satisfy R by s0;` with it.
+    const nb7 =
+      'package NB7 {\n    part def S {\n        attribute m : ScalarValues::Real;\n    }\n    requirement def R {\n        subject s : S;\n' +
+      '        require constraint {\n            s.m <= 5.0\n        }\n    }\n    part s0 : S {\n        attribute :>> m = 7.0;\n    }\n' +
+      '    assert not satisfy R by s0;\n}';
+    expect(serializeModel(parseModel(nb7).model)).toBe(nb7);
+    // With the `;` the clause ends there, and the `satisfy` after it is its own statement, as before.
+    expect(parseModel(nb('assert not; satisfy R by s0;')).model.all().filter((e) => e.eClass === 'Satisfy').length).toBe(1);
   });
 
   it('resolves a forward disjoint / subset target and leaves genuine typos unresolved (F4)', () => {

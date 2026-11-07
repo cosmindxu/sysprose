@@ -317,6 +317,27 @@ describe('what the encoder refuses, and with which reason', () => {
     }
   });
 
+  it('refuses a connective chain KerML groups otherwise as unsupported-operator, with its sentence (FP1)', async () => {
+    const model = await load(`package G {
+  attribute x : ScalarValues::Real = 0.0;
+  attribute y : ScalarValues::Real = 2.0;
+  attribute z : ScalarValues::Real = 0.0;
+  constraint kImp { x > 1.0 implies y > 1.0 implies z > 1.0 }
+  constraint kXor { x > 1.0 or y > 1.0 xor z > 1.0 }
+  constraint kXorL { x > 1.0 xor y > 1.0 or z > 1.0 }
+}`);
+    const imp = relationWith(model, 'implies');
+    expect(imp.encodable).not.toBe(true);
+    if (imp.encodable !== true) {
+      expect(imp.encodable.reason).toBe('unsupported-operator');
+      expect(imp.encodable.detail).toContain('KerML groups it to the left');
+    }
+    const xor = relationWith(model, 'x > 1.0 or');
+    expect(xor.encodable).not.toBe(true);
+    if (xor.encodable !== true) expect(xor.encodable.reason).toBe('unsupported-operator');
+    expect(relationWith(model, 'x > 1.0 xor').encodable).toBe(true);
+  });
+
   it('refuses a qualified name no SMT symbol can carry, rather than mangling it', () => {
     const r = encode('x >= 1.0', [v('x', { qualifiedName: 'P::a|b' })]);
     expect(r.ok).toBe(false);

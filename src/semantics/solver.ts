@@ -97,6 +97,7 @@ import {
   contradictedDefinitionNaming,
   contradictedDefinitionRefusal,
   contradictedDefinitions,
+  headStandsAgainstAt,
   hasEnclosedBindings,
   hasPastCapBindings,
   hasStatedValue,
@@ -6963,6 +6964,23 @@ function numericRows(
     r.slack = null;
     r.amount = 0;
     r.reason = contradicted;
+    delete r.cause;
+    delete r.imposed;
+  }
+  // A name a package head joins to an instance's standing value that an asserted relation over it contradicts
+  // (headStandsAgainstAt, F0: E2C's `bind P::m = M` over p4's `m default = 7.0`, beside `M == 5.0`): the model
+  // states two values for it, so no decided row that reads it is judged, as the validation surface judges none —
+  // the solve read M from the assert alone.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown' || r.context !== undefined) continue;
+    const contextId = model.get(r.id)?.ownerId;
+    if (contextId == null) continue;
+    const against = relationNamesOf(r.raw).map((n) => headStandsAgainstAt(model, contextId, n)).find((x) => x !== undefined);
+    if (against === undefined) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason = against;
     delete r.cause;
     delete r.imposed;
   }

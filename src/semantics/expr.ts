@@ -298,8 +298,48 @@ const PRECEDENCE: Record<string, number> = {
 };
 const RIGHT_ASSOC = new Set(['^', 'implies']);
 
+/**
+ * A connective chain whose grouping in this reader differs from KerML's
+ * (KerML 8.2.5.8.1, Table 6: every binary operator but exponentiation groups
+ * to the left, and `xor` binds tighter than `or`). Thrown, not read, until the
+ * tables follow Table 6: an `implies` with an unparenthesised `implies`
+ * operand, and an `xor` whose left operand is an unparenthesised `or`. Chains
+ * that group alike under both (`a xor b or c`, `a implies b or c`) are read.
+ */
+export class GroupingError extends SyntaxError {}
+
+/** The refusal sentence of {@link GroupingError} for the connective `op`. */
+export function groupingRefusal(op: 'implies' | 'xor'): string {
+  return op === 'implies'
+    ? 'a chain of `implies` written without parentheses is not read: KerML groups it to the left, `(a implies b) implies c` ' +
+        "(KerML 8.2.5.8.1), and this tool's reader grouped it to the right; write the parentheses you mean"
+    : 'an `or` followed by `xor` written without parentheses is not read: KerML binds `xor` tighter than `or`, ' +
+        "`a or (b xor c)` (KerML Table 6), and this tool's reader grouped it as `(a or b) xor c`; write the parentheses you mean";
+}
+
+/**
+ * Throws {@link GroupingError} when `op` over `left`/`right` is a chain whose
+ * grouping differs from KerML's; `bare` holds the binary nodes this parse built
+ * that no parenthesis wraps.
+ */
+export function checkGrouping(
+  op: string,
+  left: unknown,
+  right: unknown,
+  bare: WeakSet<object>,
+): void {
+  const isBare = (n: unknown, inner: string): boolean =>
+    typeof n === 'object' && n !== null && bare.has(n) && (n as { op?: string }).op === inner;
+  if (op === 'implies' && (isBare(left, 'implies') || isBare(right, 'implies'))) {
+    throw new GroupingError(groupingRefusal('implies'));
+  }
+  if (op === 'xor' && isBare(left, 'or')) throw new GroupingError(groupingRefusal('xor'));
+}
+
 class Parser {
   private pos = 0;
+  /** Binary nodes built by this parse that no parenthesis wraps ({@link checkGrouping}). */
+  private readonly bare = new WeakSet<object>();
   constructor(private readonly toks: Tok[]) {}
 
   private peek(): Tok {
@@ -337,7 +377,9 @@ class Parser {
       this.next(); // consume operator
       const nextMin = RIGHT_ASSOC.has(op) ? prec : prec + 1;
       const right = this.parseBinary(nextMin);
+      checkGrouping(op, left, right, this.bare);
       left = { kind: 'binary', op: op as BinaryOp, left, right };
+      this.bare.add(left);
     }
     return left;
   }
@@ -365,6 +407,7 @@ class Parser {
       case 'lparen': {
         const inner = this.parseBinary(0);
         if (this.next().t !== 'rparen') throw new SyntaxError('Expected closing parenthesis');
+        this.bare.delete(inner);
         return inner;
       }
       case 'name': {

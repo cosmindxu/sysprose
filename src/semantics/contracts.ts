@@ -61,9 +61,10 @@ import {
   shadowedNamesOf,
   shadowedSentence,
 } from './defining-equation';
-import { evaluate, type ExprNode } from './expr';
+import { GroupingError, evaluate, parseExpr, type ExprNode } from './expr';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import {
+  lowerUnitLiterals,
   parseRelationBody,
   relationRefused,
   relationScope,
@@ -876,6 +877,8 @@ function readRelationAsWritten(
   const parsed = parseRelationBody(raw);
   const body = parsed && valueUnit !== undefined ? withValueUnit(parsed, valueUnit) : parsed;
   if (!body) {
+    const grouping = groupingRefusalOf(raw);
+    if (grouping !== undefined) return refused(shown, { reason: 'unsupported-operator', detail: grouping });
     return refused(shown, {
       reason: 'unparseable',
       detail: `the body \`${raw}\` is not an expression this tool can read`,
@@ -1952,4 +1955,14 @@ export function claimedVerdictOf(model: Model, id: ElementId): string | undefine
   const el = model.get(id);
   if (!el || !REQUIREMENT_SET.has(el.eClass)) return undefined;
   return getRequirementAttr(model, id, 'verdict');
+}
+
+/** The sentence of a {@link GroupingError} the body raises (FP1), if that is why it does not parse. */
+function groupingRefusalOf(raw: string): string | undefined {
+  try {
+    parseExpr(lowerUnitLiterals(raw).text);
+  } catch (e) {
+    if (e instanceof GroupingError) return e.message;
+  }
+  return undefined;
 }

@@ -1199,6 +1199,32 @@ describe('proofScopeOf — what a proof stood on, from the model alone', () => {
     expect(second.axiomSet, 'the pass kept the old axiom set').not.toBe(first.axiomSet);
   }, 60_000);
 
+  /**
+   * A RETYPE INTO A RESTRICTED DOMAIN MOVES THE SCOPE (A5 F1). `Integer`,
+   * `Natural`, `Positive` and `UnlimitedNatural` all encode at sort `Int`, so a
+   * scope that digested the sort alone read `mass : Integer` and
+   * `mass : Natural` as the same proof — while the encoder refuses the second
+   * outright. The restricted type enters the digest, and ONLY where a variable
+   * carries one: every other scope digest stays byte-identical, which the two
+   * captured literals pin.
+   */
+  it('moves when a feature is retyped Integer ↔ Natural/Positive/UnlimitedNatural, and nowhere else', async () => {
+    const typed = (t: string) => SUBJECT.replace('mass : Real = 1500.0', `mass : ${t} = 1500`).replace('2000.0', '2000');
+    const digests: Record<string, string> = {};
+    for (const t of ['Real', 'Integer', 'Natural', 'Positive', 'UnlimitedNatural']) {
+      const model = await parse(t === 'Real' ? SUBJECT : typed(t));
+      const { rows, row } = worklist(model);
+      digests[t] = proofScopeOf(model, row, { rows }).footprint[0].digest;
+    }
+    // Captured on 21439bc, before F1: a scope with no restricted variable is unchanged.
+    expect(digests.Real).toBe('sha256:81b376112a57b0db4e7fcd98cbf94c87f69d9e82c6880d77d058d413bcc53775');
+    expect(digests.Integer).toBe('sha256:80b5f2d36215361048842731b60393c49323f58ed7f3c7bc11a643d292f48c84');
+    for (const t of ['Natural', 'Positive', 'UnlimitedNatural']) {
+      expect(digests[t], `Integer → ${t} left the scope current`).not.toBe(digests.Integer);
+    }
+    expect(new Set(Object.values(digests)).size, 'two restricted types share a digest').toBe(5);
+  }, 60_000);
+
   it('does not read an axiom the clause cannot reach', async () => {
     // The scope is a READ-CLOSURE, not a list of the model's axioms: a second
     // valued feature nothing in the clause reads stays out of the footprint and

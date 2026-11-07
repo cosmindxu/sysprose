@@ -55,6 +55,18 @@ describe('semantics — evaluateQuantity', () => {
   });
 });
 
+describe('semantics — the unit-aware parser groups connectives as expr.ts does (FP1)', () => {
+  it('refuses the chains KerML groups otherwise, and reads the rest', () => {
+    for (const text of ['x > 1 [m] implies y > 1 [m] implies z > 1 [m]', 'x > 1 [m] or y > 1 [m] xor z > 1 [m]']) {
+      expect(quantityRefsIn(text), text).toBeUndefined();
+    }
+    for (const text of ['(x > 1 [m] implies y > 1 [m]) implies z > 1 [m]', 'x > 1 [m] xor y > 1 [m] or z > 1 [m]',
+      'x > 1 [m] or (y > 1 [m] xor z > 1 [m])']) {
+      expect(quantityRefsIn(text), text).toEqual(['x', 'y', 'z']);
+    }
+  });
+});
+
 describe('semantics — dimensionalFacets', () => {
   it('returns unit and kind dimensions for a typed feature with a value unit', () => {
     const m = libModel();

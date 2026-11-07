@@ -4533,6 +4533,55 @@ describe('checkConstraints — a default stands against an asserted equation (de
     );
   });
 
+  it('reads no package head whose slot an instance states a value at that an asserted relation contradicts (F0, E2C)', async () => {
+    // `bind P::m = M` holds in every instance of P, so p4's standing `default = 7.0` is M's value as well, and the
+    // asserted `M == 5.0` makes the model contradict itself: M is not read, nor p5.m, which carries it; p4.m keeps
+    // its own 7. Read as before, M was the assert's 5 on every surface, and `cM` F.
+    const text = (fix: string) => `package E2C {
+      part def P { attribute m : ScalarValues::Real; }
+      bind P::m = M;
+      attribute M : ScalarValues::Real;
+      part p4 : P { attribute :>> m default = 7.0; }
+      part p5 : P;
+      assert constraint fix { ${fix} }
+      constraint cM { M >= 6.0 }
+      constraint c5 { p5.m >= 6.0 }
+      constraint c4 { p4.m >= 6.0 }
+    }`;
+    const { model: m } = await loadModelText(text('M == 5.0'));
+    const checks = checkConstraints(m!);
+    const row = (q: string) => checks.find((c) => m!.qualifiedName(c.id) === q)!;
+    expect(row('E2C::cM').message).toBe(
+      "Could not evaluate: M is not read in E2C: E2C's asserted `M == 5.0` defines it, and `bind P.m = M` of E2C " +
+        "joins it, in E2C::p4, to p4::m's `default = 7.0`, a value no assertion replaces (as one written with `=`) " +
+        'that differs from the one the equation gives it there: a binding holds in every instance, so the model ' +
+        'states two values for it, and it is not read (see the binding\u2019s own finding)',
+    );
+    expect(['cM', 'c5', 'c4', 'fix'].map((n) => row(`E2C::${n}`).result)).toEqual(['unknown', 'unknown', 'satisfied', 'unknown']);
+    expect(checks.filter((c) => c.conflict === 'bind').map((c) => c.result)).toEqual(['violated']);
+    // A non-bare assert (E2CU) is no definition, and M was valueless here before as well: the sentence names p4's
+    // standing value, never "none of them states one".
+    const { model: u } = await loadModelText(text('2.0 * M == 10.0'));
+    const cu = checkConstraints(u!).find((c) => u!.qualifiedName(c.id) === 'E2C::cM')!;
+    expect([cu.result, cu.message]).toEqual([
+      'unknown',
+      "Could not evaluate: M is not read in E2C: `bind P.m = M` of E2C joins it, in E2C::p4, to p4::m's `default = " +
+        "7.0`, a value no assertion replaces (as one written with `=`), and E2C's asserted `2.0 * M == 10.0` does not " +
+        'hold exactly at that value: a binding holds in every instance, so the model states two values for it, and ' +
+        'it is not read',
+    ]);
+    // An assert that holds exactly at the standing value is no contradiction: every row is read.
+    const { model: s } = await loadModelText(text('M == 7.0'));
+    const cs = checkConstraints(s!);
+    expect(['cM', 'c5', 'c4', 'fix'].map((n) => cs.find((c) => s!.qualifiedName(c.id) === `E2C::${n}`)!.result)).toEqual([
+      'satisfied',
+      'satisfied',
+      'satisfied',
+      'satisfied',
+    ]);
+    expect(cs.filter((c) => c.conflict === 'bind')).toEqual([]);
+  });
+
   it('checks an inherited assert against a redefinition’s default, in a usage and in a specialisation (f, HR)', async () => {
     const { model: m } = await loadModelText(`package HR {
       part def Q { attribute L : ScalarValues::Real default = 2.0; assert constraint qa { L == 5.0 } }
