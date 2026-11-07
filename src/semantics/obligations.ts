@@ -1281,7 +1281,7 @@ function instanceRows(
     const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
     const shared = filed.role === 'axiom' && own === true ? sharedSymbolsOf(model, context, reading) : [];
     if (shared.length > 0) sharedOut.push({ context, vars: shared });
-    const read: Encodable = group?.refusal
+    const readable: Encodable = group?.refusal
       ? { reason: 'unread-definition', detail: group.refusal.sentence }
       : here !== undefined
         ? reading.encodable === true
@@ -1296,7 +1296,7 @@ function instanceRows(
     // A name the context declares anew without `:>>` beside the one the relation's writer names (G8A, G8C): refused,
     // with the variables kept, so the goals that read them abstain (G-pair-b).
     const hidden = el.ownerId != null ? hiddenReadSentence(model, raw, el.ownerId, context.id, names) : undefined;
-    const encodable: Encodable = hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : read;
+    const encodable: Encodable = hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : readable;
     out.push({
       // A requirement's clauses read in one context are a requirement of their
       // own there: its assumptions are the premises of its goals, never of

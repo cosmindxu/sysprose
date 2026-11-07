@@ -13,7 +13,7 @@ export const CLASS_FACTS: ClassFacts = {
       "models": 8,
       "rows": 27,
       "tableAgree": 26,
-      "tableDisagree": 2,
+      "tableDisagree": 0,
       "tableProbes": 14
     },
     "bind-equality": {
@@ -266,7 +266,7 @@ export const CLASS_FACTS: ClassFacts = {
       "models": 72,
       "rows": 485,
       "tableAgree": 636,
-      "tableDisagree": 2,
+      "tableDisagree": 0,
       "tableProbes": 285
     },
     "nira/free": {
@@ -376,7 +376,7 @@ export const CLASS_FACTS: ClassFacts = {
       "models": 1,
       "rows": 1,
       "tableAgree": 309,
-      "tableDisagree": 2,
+      "tableDisagree": 0,
       "tableProbes": 155
     },
     "requirement-clause": {
@@ -431,8 +431,8 @@ export const CLASS_FACTS: ClassFacts = {
         "inherited-context"
       ],
       "id": "D-inconsistent-axioms",
-      "kind": "wrong-verdict",
-      "note": "A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: the SMT binding rows fenced by G-mask; G8B/G8A: p.L read T from P2's K on the check, literal and numeric surfaces, KNOWN_FALSE; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.",
+      "kind": "abstains",
+      "note": "Re-read (g8-fence): a general's body re-read by name where a specialisation declares a name anew without `:>>` is fenced on every surface: the SMT binding rows by G-mask; the name, and what a binding joins to it, read nowhere in that context on the check and the numeric surface; the general's asserts there refused on the SMT engine with their variables kept; the `#equations` pair (G8C) filed `?` in its own sentence. g8 reads T/T/?/?, G8B/G8A tl and G8C t70 ?/?/?/?. Sound, only weaker (the context's own bodies over the name abstain too); the ill-formed shape is not yet reported (G-diag). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.",
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself."
     },
     {
@@ -529,9 +529,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "ec9d022c892954a6f83bbfba1b7aaca302df34a046ce94be57e31f539363c50b",
+    "defects": "9f9bdb18a09557b589dec61fcf0a865587a670a6e84ef183de74060e69d4b901",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "ea433c7a296ca47746e796a773857fea3227f2681971f037df3181a5b5ed51b7"
+    "probes": "4742705306efeb7f249fc45c9bdd0225ce75dabfd709fc70b9d0412413127e11"
   },
   "fences": {
     "fence/collection-valued": {
@@ -621,7 +621,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   },
   "knownFalse": {
-    "entries": 8,
+    "entries": 0,
     "parsed": true,
     "unattributed": 0
   },

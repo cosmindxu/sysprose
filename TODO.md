@@ -566,31 +566,15 @@ headings.
       solver2-pass-scratch/s4/gen Z187-Z199). [fence-assert-not; numeric2-pass; solver2-pass]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** A general's body re-read by name where a specialisation declares a name anew
-      without `:>>`, which KerML forbids (§7.3.2.1: an owned member's name must differ from every
-      inherited member's; redefining resolves it) and which this tool does not report. g8 (`part
-      def P { L; K; bind K = L; assert constraint cl { L == 50.0 } } part def P2 :> P { attribute
-      K; attribute N; bind N = K; assert constraint cn { N == 70.0 } } part p : P2;`): the check
-      and the literal engine read P's binding by identity and decide p.L == 50.0 and p.N == 70.0 T;
-      SMT re-read it in P2 by name and read the axioms inconsistent (kl/kn T/T/T/X). Since
-      pin-265 S2 (G-mask) g8 reads T/T/T/?: the SMT engine refuses the rows it would re-read by
-      name. Still wrong, and pinned in KNOWN_FALSE until the g8-fence branch (the fence for
-      evaluate-model.ts, the literal engine, solver.ts, defining-equation.ts and the obligations
-      instance rows) lands: G8A (P's `assert K == L` in place of the binding) and G8B (`P { L; K;
-      bind K = L } P2 :> P { attribute K; assert K == 50 }`) give a false T on the check, literal
-      and numeric surfaces (p.L T; P::pe T on numeric), and G8C (`part def P { attribute K; assert
-      constraint ck { K == 50.0 } } part def P2 :> P { attribute K; assert constraint cn { K ==
-      70.0 } } part p : P2;`) files `P2::K in P2#equations` F/-/F/- (a blocking warning) and t70
-      ?/?/?/X, a false F. Since pin-265 S1 (P-pin) an equation written in a usage or a specialising
-      definition no longer pins a definition feature's shared symbol (measured): C6A ea/eb T/-/T/-;
-      C6B ta/tb and `P::ck in b` T/T/T/T, `P::ck` ?/?/?/?; C6D tb T/T/T/T and ta ?/?/T/T (the check
-      and the literal engine do not read K from P2's asserted L == 50.0 through P's binding: weaker,
-      not wrong); C6E ta/ta2/tb T/T/T/T; C6F u T/T/T/T, v F/F/F/F (a redefinition of the owner of a
-      binding's end bound to a value, `part :>> p { … }` over Q's `bind p.load = L` with L stated,
-      is still read as that owner: RBL4 and stand-redef unchanged); LK/LD/LN `P::ck`, a false T
-      (?/?/T/T) before, read ?/?/t/?. Done when no row read through a name declared anew without
-      `:>>` reads inconsistent-axioms or a value its general's body gives by name (G-mask,
-      G-pair-a, G-pair-b). [contradictory-models S3, review, closing-readings P-pin; pin-265 S1,
-      S2]
+      without `:>>` (KerML 7.3.2.1 forbids it) is fenced on every surface since g8-fence: no surface
+      reads the name in that context, nor a value a binding joins to it, each in a sentence naming
+      both features. The SMT engine refuses the general's rows there with their variables kept
+      (G-mask, G-pair-b), and a pair of asserted equations met only by name (G8C) is filed `?`, not
+      violated (G-pair-a). g8 reads T/T/?/?, G8B/G8A tl ?/?/?/?, G8C `#equations` ?/-/?/- and t70
+      ?/?/?/?. Since P-pin an equation written in a usage or a specialising definition no longer
+      pins a definition feature's shared symbol (C6A-C6F as measured; LK/LD/LN `P::ck` ?/?/t/?).
+      Left: report the shape (G-diag, H1 = (d1)); C6D `ta` ?/?/T/T. [contradictory-models S3,
+      closing-readings P-pin, g8-fence]
 - [ ] **Keep a redefinition on the more specific feature when an edit dissolves the join that kept
       it off it.** A redefinition kept off a more specific feature by a join an edit dissolves stays
       on the base feature, written by its path; the same names written by hand land on the more
@@ -1078,6 +1062,16 @@ true values. What follows is what that branch and the review of it left open; en
       G8A/G8B; with the g8-fence branch). The USER-GUIDE sentence on G8 names only the binding: an
       assert of P's re-read in P2 can still be decided on every surface, the SMT engine included.
       [pin-265 S1, S2, review]
+      (8) g8-fence: the check and numeric fence covers the whole context, so the context's own
+      relations over the hidden name abstain too (measured on gen-mask: 56 cells on the check and
+      150 on the numeric surface where both readings agree, g8 numeric kl/kn among them); the SMT
+      lane covers only the general's rows. `hiddenReadOf` matches only an end's first dotted segment
+      (`a.K` deeper in a path is not fenced). The check still decides p.K where only the by-name
+      reading contradicts, which the refined oracle allows. A numeric T on an assert's own row over
+      free names (G8A `P::pe`) has no hand oracle (its reference is null). One pinned row is
+      missing: a specialising requirement that redeclares its subject (`subject s = p` is no longer
+      fenced since the fence leaves out requirementRole; both text orders, to show no verdict
+      widens). `redefinesBoundOwner` is not memoised (no cost shown). [g8-fence]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,
