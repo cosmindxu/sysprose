@@ -18141,6 +18141,7 @@ package PS {
   attribute t : ISQ::TimeValue = 3.0 [SI::s];
   attribute u : ScalarValues::Real;
   attribute b : ScalarValues::Boolean = true;
+  attribute w : ScalarValues::Boolean;
   constraint ci { d > t implies a <= 5.0 }
   constraint ci2 { d > t implies a >= 5.0 }
   constraint cior { d > t or a <= 5.0 }
@@ -18152,6 +18153,7 @@ package PS {
   constraint cuf { u >= 1.0 and a >= 5.0 }
   constraint cill { (b + 1.0 > 2.0) or true }
   constraint cillf { (b + 1.0 > 2.0) and false }
+  constraint cwf { (w == true) and false }
 }`;
         return [k, probe(k === 'a5-conn' ? text : reversedMembers(text), {
           'K2::ci': ['?/?/?/?', null],
@@ -18165,6 +18167,7 @@ package PS {
           'K2::cuf': ['F/F/F/F', 'F'],
           'K2::cill': ['?/?/?/?', null],
           'K2::cillf': ['?/?/?/?', null],
+          'K2::cwf': ['F/F/F/F', 'F'],
         })];
       }),
     ),

@@ -1107,6 +1107,8 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
     // vacuous. The labels are read by position, not by name: a premise may
     // carry its requirement's name.
     if (antecedent.status === 'unsat' && goalSides.length > 0) {
+      // One label per assumed assertion, in order: the positional reading below stands on it.
+      if (antecedentScript.labels.length !== assumed.length) throw new Error('scriptOf: labels no longer one per assertion');
       const sideLabels = antecedentScript.labels.slice(assumed.length - goalSides.length);
       const axiomLabels = new Set(antecedentScript.labels.slice(0, axiomAssertions.length).filter((l) => l.startsWith('axiom:')));
       const inCore = goal.sideConditions.filter((_, i) => antecedent.core.includes(sideLabels[i]!));
