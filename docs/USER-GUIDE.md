@@ -1125,6 +1125,8 @@ error: the reporting commands exit 1 with the degraded banner, `verify`, `consis
 and `fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no
 surface files a row for the clause, and the save writes it back as it was read. State the negation in the
 body instead, `assert constraint c { not (…) }`, which this tool reads.
+`assert not satisfy R by s0;`, a negated satisfaction, is refused whole with the same finding: no satisfaction
+of R by s0 is mapped from it, so no surface judges R for s0, and the save writes the statement back as written.
 
 **A redefinition is the feature in its context, and `=` binds.** In `part p : P
 { attribute :>> m = 20.0 [kg]; }` every surface reads `p.m` as p's own feature —

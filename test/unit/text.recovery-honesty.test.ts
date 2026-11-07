@@ -166,6 +166,17 @@ describe('recovery honesty — a faulted save reproduces its fault', () => {
     ).toEqual([]);
   });
 
+  it('keeps a refused `assert not satisfy` whole beside a fault — the file round-trips byte for byte (a5 F2)', () => {
+    const src =
+      'package P {\n    part def S {\n        attribute m : ScalarValues::Real;\n    }\n    requirement def R {\n        subject s : S;\n    }\n' +
+      '    part s0 : S;\n    blok bad;\n    assert not satisfy R by s0;\n}\n';
+    const { model } = parseModel(src);
+    expect(named(model, 'bad')?.attrs.unparsedText).toBe('blok bad;');
+    expect(model.all().filter((e) => e.eClass === 'Satisfy'), 'the negated satisfy is no satisfy edge').toEqual([]);
+    expect(model.all().filter((e) => e.attrs.negated === true).map((e) => e.attrs.unparsedText)).toEqual(['assert not satisfy R by s0;']);
+    expect(`${serializeModel(model)}\n`).toBe(src);
+  });
+
   it('leaves a REAL trailing expression beside a fault alone', () => {
     const { model } = parseModel('package P {\n    blok bad;\n    constraint c { a > 2 }\n}\n');
     expect(named(model, 'c')?.attrs.expression, 'a constraint body is not residue').toBe('a > 2');

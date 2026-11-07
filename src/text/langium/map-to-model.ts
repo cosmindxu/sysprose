@@ -760,6 +760,8 @@ class Mapper {
    * "the problem is in THIS declaration, at these lines".
    */
   private readonly nodeStack: AstNode[] = [];
+  /** The members a refused `assert not satisfy …` keeps in its own verbatim text ({@link negatedSatisfyOf}). */
+  private readonly negatedSatisfyKept = new Set<AstNode>();
 
   /**
    * The parser errors of THIS parse, as the two offsets the residue hunt needs.
@@ -1682,6 +1684,8 @@ class Mapper {
   /* ────────────────────────────── members ──────────────────────────────── */
 
   private mapMember(node: Member, ownerId: ElementId | null): void {
+    // The `satisfy` of `assert not satisfy R by s;`, and a block comment before it, are kept whole by the clause.
+    if (this.negatedSatisfyKept.has(node)) return;
     this.nodeStack.push(node);
     try {
       this.mapMemberInner(node, ownerId);
@@ -2362,6 +2366,37 @@ class Mapper {
     if (node.negated && !this.readsNegatedClause(node)) {
       const code = 'mapper/negated-assert-unread';
       const name = unquoteName(node.name);
+      const kept = this.negatedSatisfyOf(node);
+      const satisfy = kept?.at(-1) as Satisfy | undefined;
+      if (kept && satisfy) {
+        for (const m of kept) this.negatedSatisfyKept.add(m);
+        // `assert not satisfy R by s0;` parses as a bare `assert not` and the `satisfy` beside it. Read apart, the
+        // `satisfy` would be judged as a plain satisfaction, the opposite of what is written: it is not mapped, and
+        // the clause keeps the whole statement, from `assert` to the end of the `satisfy`, so the save writes it back.
+        const req = satisfy.requirement ?? '';
+        const by = satisfy.satisfier;
+        const written = `${node.kind} not satisfy ${req}${by ? ` by ${by}` : ''}`;
+        this.diagnostics.push({
+          message: `\`${written}\` is not read: a negated satisfaction is neither checked nor asserted, so no surface judges ${req} for ${by ?? 'its owner'}; state what must fail as \`assert not constraint { … }\` over ${by ?? 'its owner'}'s values.`,
+          ...posOf(node),
+          severity: 'error',
+          source: 'mapper',
+          code,
+          found: written,
+          hint: renderHint(code, { found: written }),
+          ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+        });
+        this.create('ConstraintUsage', {
+          ownerId: ownerId ?? undefined,
+          attrs: {
+            requirementRole: node.kind,
+            negated: true,
+            ...visibility,
+            unparsedText: this.source.slice(node.$cstNode!.offset, satisfy.$cstNode!.end),
+          },
+        });
+        return;
+      }
       this.diagnostics.push({
         message: `\`${node.kind} not\` is not read: the negation of ${name ? `\`${name}\`` : 'the clause'} is neither checked nor asserted.`,
         ...posOf(node),
@@ -2417,6 +2452,37 @@ class Mapper {
     // The negated clause's expression is the negation of its body, as the plain clause `{ not (B) }` states it.
     const body = this.model.get(el.id)?.attrs.expression;
     if (node.negated && typeof body === 'string') this.model.setAttrs(el.id, { expression: negatedClauseExpression(body) });
+  }
+
+  /**
+   * The `satisfy` a bare negated clause negates, with the block comments written between them, in text order:
+   * `assert not satisfy R by s;` parses as the clause `assert not` (no `constraint`, name, body or `;`) and, next in
+   * the same owner, the `Satisfy` statement.
+   */
+  private negatedSatisfyOf(node: RequirementClause): AstNode[] | undefined {
+    const cst = node.$cstNode;
+    if (
+      !node.negated ||
+      node.declares !== undefined ||
+      node.name !== undefined ||
+      node.specializations.length > 0 ||
+      node.members.length > 0 ||
+      node.expr !== undefined ||
+      cst === undefined ||
+      /[;{]/.test(cst.text)
+    ) {
+      return undefined;
+    }
+    const siblings = node.$containerProperty ? (node.$container as unknown as Record<string, unknown>)[node.$containerProperty] : undefined;
+    if (!Array.isArray(siblings) || node.$containerIndex === undefined) return undefined;
+    const kept: AstNode[] = [];
+    for (const next of siblings.slice(node.$containerIndex + 1) as AstNode[]) {
+      if (next.$cstNode === undefined) return undefined;
+      kept.push(next);
+      if (next.$type === 'Satisfy') return kept;
+      if (next.$type !== 'TextualRep' || (next as TextualRepNode).language !== undefined) return undefined;
+    }
+    return undefined;
   }
 
   /** Is this negated clause one this tool reads as the negation of its body ({@link negatedClauseExpression})? */

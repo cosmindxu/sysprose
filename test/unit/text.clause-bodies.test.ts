@@ -358,3 +358,28 @@ describe('the bare `verify` reference binds only to a requirement', () => {
     expect(verifies[0].attrs.targetRef).toBe('Nope');
   });
 });
+
+describe('a negated satisfaction is refused whole (a5 F2)', () => {
+  const nb = (stmt: string) =>
+    `package NB7 { part def S { attribute m : ScalarValues::Real; } requirement def R { subject s : S; require constraint { s.m <= 5.0 } } part s0 : S { attribute :>> m = 7.0; } ${stmt} }`;
+
+  it('`assert not satisfy R by s0;` maps no satisfy edge and says what is not read', () => {
+    // Read apart, the `satisfy` after the bare `assert not` was the plain satisfaction, judged R for s0 on every surface.
+    const { diagnostics, model } = parseModel(nb('assert not satisfy R by s0;'));
+    expect(model.all().filter((e) => e.eClass === 'Satisfy')).toEqual([]);
+    const refused = diagnostics.filter((d) => d.code === 'mapper/negated-assert-unread');
+    expect(refused.map((d) => [d.severity, d.message])).toEqual([
+      [
+        'error',
+        '`assert not satisfy R by s0` is not read: a negated satisfaction is neither checked nor asserted, so no surface judges R for s0; state what must fail as `assert not constraint { … }` over s0\'s values.',
+      ],
+    ]);
+    expect(refused[0]!.hint).toContain('assert not satisfy R by s0');
+  });
+
+  it('`satisfy`, `assert satisfy` and `assert not; satisfy` keep their satisfy edge', () => {
+    for (const stmt of ['satisfy R by s0;', 'assert satisfy R by s0;', 'assert not; satisfy R by s0;']) {
+      expect(parseModel(nb(stmt)).model.all().filter((e) => e.eClass === 'Satisfy').length, stmt).toBe(1);
+    }
+  });
+});

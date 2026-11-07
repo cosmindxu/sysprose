@@ -17321,6 +17321,42 @@ package PS {
       'IMP3::H::ax': ['?/-/?/-', null],
       'IMP3::RQ::«ConstraintUsage»': ['?/U/?/U', null],
     }),
+    // a5 (2026-11-06) F2: `assert not satisfy R by s0;` parsed as a bare `assert not` and a `satisfy` beside it, and the
+    // `satisfy` was read as the plain satisfaction: R for s0 F (nb7) and T (nb3) on every surface, under a hint that said
+    // the checks abstain. The mapper refuses the statement whole (`mapper/negated-assert-unread`): no satisfy edge, no
+    // row for R in s0. `assert satisfy R by s0;` reads as `satisfy R by s0;` (STAND_ALIKE).
+    'a5-neg-satisfy': probe(`package NB7 {
+  part def S { attribute m : ScalarValues::Real; }
+  requirement def R { subject s : S; require constraint { s.m <= 5.0 } }
+  part s0 : S { attribute :>> m = 7.0; }
+  assert not satisfy R by s0;
+}`, { 'NB7::R::«ConstraintUsage»': ['?/?/?/?', null] }),
+    'a5-neg-satisfy-ok': probe(`package NB3 {
+  part def S { attribute m : ScalarValues::Real; }
+  requirement def R { subject s : S; require constraint { s.m <= 5.0 } }
+  part s0 : S { attribute :>> m = 3.0; }
+  assert not satisfy R by s0;
+}`, { 'NB3::R::«ConstraintUsage»': ['?/?/?/?', null] }),
+    'a5-assert-satisfy': probe(`package NB8 {
+  part def S { attribute m : ScalarValues::Real; }
+  requirement def R { subject s : S; require constraint { s.m <= 5.0 } }
+  part s0 : S { attribute :>> m = 7.0; }
+  assert satisfy R by s0;
+}`, {
+      'NB8::R::«ConstraintUsage»': ['?/?/?/?', null],
+      'NB8::R::«ConstraintUsage» in NB8::«Satisfy»': ['F/-/F/-', 'F'],
+      'NB8::R::«ConstraintUsage» in NB8::s0': ['-/F/-/F', 'F'],
+    }),
+    'a5-assert-satisfy-plain': probe(`package NB8 {
+  part def S { attribute m : ScalarValues::Real; }
+  requirement def R { subject s : S; require constraint { s.m <= 5.0 } }
+  part s0 : S { attribute :>> m = 7.0; }
+  satisfy R by s0;
+}`, {
+      'NB8::R::«ConstraintUsage»': ['?/?/?/?', null],
+      'NB8::R::«ConstraintUsage» in NB8::«Satisfy»': ['F/-/F/-', 'F'],
+      'NB8::R::«ConstraintUsage» in NB8::s0': ['-/F/-/F', 'F'],
+    }),
     ...quotedFamilyProbes(),
   };
 
@@ -18413,6 +18449,8 @@ package PS {
     // a5 F0: the package-head default family in either text order.
     ['a5-e2c', 'a5-e2cr'],
     ['a5-e1qp', 'a5-e1qpr'],
+    // a5 F2: `assert satisfy` is `satisfy`.
+    ['a5-assert-satisfy', 'a5-assert-satisfy-plain'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
