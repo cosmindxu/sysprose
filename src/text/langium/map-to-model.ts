@@ -2476,8 +2476,14 @@ class Mapper {
     const siblings = node.$containerProperty ? (node.$container as unknown as Record<string, unknown>)[node.$containerProperty] : undefined;
     if (!Array.isArray(siblings) || node.$containerIndex === undefined) return undefined;
     const kept: AstNode[] = [];
+    const fullText = cst.root.fullText;
+    let prevEnd = cst.end;
     for (const next of siblings.slice(node.$containerIndex + 1) as AstNode[]) {
       if (next.$cstNode === undefined) return undefined;
+      // Only whitespace and comments may lie between the pieces: an unrelated `satisfy` further on is not negated.
+      const gap = fullText.slice(prevEnd, next.$cstNode.offset).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      if (gap.trim() !== '') return undefined;
+      prevEnd = next.$cstNode.end;
       kept.push(next);
       if (next.$type === 'Satisfy') return kept;
       if (next.$type !== 'TextualRep' || (next as TextualRepNode).language !== undefined) return undefined;

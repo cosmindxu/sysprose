@@ -2588,6 +2588,9 @@ apply. `examples/contract-authoring-prompts.sysml` is a shipped model that write
 the four authoring rules as `#prompt` statements at package level, so
 `property-draft` hands them to whoever works on any requirement in it.
 
+A constraint that chains `implies` without parentheses, or puts a bare `or` on the left of an `xor`, is refused with a sentence
+saying so rather than read one way and risk the wrong grouping; parenthesise the chain and it is checked.
+
 **Source of truth:** `src/api/property.ts`, `examples/contract-authoring-prompts.sysml`,
 `test/unit/property.test.ts`, and §3.3 of
 [`04-formal-verification-plan.md`](04-formal-verification-plan.md).
