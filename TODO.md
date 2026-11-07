@@ -370,14 +370,9 @@ headings.
       the point alone (`x / y == 3.0` beside `y == 2.0` and
       `x == 6.0`). (10) Cost: `fixedByOthers` is rebuilt per curved equation, quadratic per
       component (about 1.2x b635385 on a chain of 400 with a curved leaf per member), and
-      `optimize()` re-solves without a cache. (11) A fenced head carry (fence-numeric): numeric
-      reads an assert's slot at the assert's own value where the check and the literal engine
-      abstain on the slot (E1Q `c2T`, `fix`: pinned `stand-gw-e1-slot` with null refs; probe
-      fence-numeric-scratch/p/path0.sysml); for a valued L through a package head (V2/V4/V5) numeric
-      and SMT read p3.load and M at the written 5 where the check and the literal engine abstain, a
-      surface disagreement that may be a model solution (probes fence-numeric-scratch/rev/v2.sysml,
-      v4, v5; a sound fence needs `contracts.ts`); the numeric abstention uses the generic left-free
-      sentence, not one naming the head binding as the SMT lane does. (12) An FMI parameter or input
+      `optimize()` re-solves without a cache. (11) V2/V4/V5 (a valued L through a package head, fixedHead): entailed; the check and literal
+      half to design-readings SLOT1 (probes fence-numeric-scratch/rev/v2.sysml, v4, v5). E1Q is
+      fenced by a5 F3 (pin stand-gw-e1-slot ?/?/?/?). (12) An FMI parameter or input
       whose stated value the tool cannot evaluate (`Bb = A + 1.0` over a valueless A, `1.0 / 0.0`)
       is held free (NaN) with the note 'the model states none this tool reads' (probe
       fence-numeric-scratch/review/fmi2.mts, cases `expr` and `big`). Probes:
@@ -540,7 +535,8 @@ headings.
       sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). (17) solver2-pass S2: the check
       refuses a whole conjunction when one conjunct hits a gate refusal (probe
       solver2-pass-scratch/s2/x25c.sysml, split twin x25s.sysml); `refused and false` stays a
-      refusal while `false and refused` is false, and `x or true` stays unknown; a conjunct
+      refusal while `false and refused` is false (KerML control order; a5 F6: an unknown is
+      absorbed only where it is a value the model does not give); a conjunct
       inequality is not gathered for solveFeasible/optimize; a conjunction typed by a constraint
       definition is not split, by design; the SMT engine refuses a whole asserted conjunction when
       one conjunct cannot be encoded (a String equality) where the split asserts are proved
@@ -569,24 +565,15 @@ headings.
       text: a broken `assert not` followed by a comment and an unrelated `satisfy` lines later
       swallows that satisfy into the refused clause, and the message names the wrong statement
       (an abstention, not a false verdict). [fence-assert-not; numeric2-pass; solver2-pass; a5-fences F2]
-- [ ] **Package-head default family (HDF): a `bind P::f = M` whose M has no value, while one
-      instance's redefinition carries a standing `default`.** a5-fences F0 fences the head that
-      stands against the instance (`headStandsAgainstAt`): e2c, e2cr, e2cp and e1qpm no longer read
-      F/F/F/X, and e1qp, e1qpr and e2cu no longer read numeric F/T. Open as ONE entry: gen-head
-      still has 36 WRONG cells (GH19, GH30, GH115, GH137, both text orders), the defaults-differ
-      family: M valueless, P's default differs from an instance's default, and the assert is
-      non-bare; numeric and SMT decide them and the check abstains. Left for plan step F3
-      (`unfixedDefaultsDifferAt`, E1Q); F3 should rerun genhead.py and cmp.py from
-      a5-fences-scratch/gen. [a5-fences F0]
-- [ ] **GRP: logical grouping differs from KerML Table 6 (fenced by FP1, a5-fences).** An
-      unparenthesised chain of `implies` (KerML groups it to the left) and an `xor` whose left
-      operand is an unparenthesised `or` (KerML binds `xor` tighter) are refused on every surface
-      (`GroupingError`, SMT `unsupported-operator`; pins a5-kimp, a5-kxor, a5-imp3 at ?/U). The
-      refusal sentences are generic and do not quote the chain (the parser keeps no source text).
-      Open until FP2 (H8) applies Table 6 to both precedence tables (expr.ts PRECEDENCE,
-      units-eval.ts Q_PRECEDENCE), removes the fence (checkGrouping/GroupingError), re-pins
-      a5-kimp to F/F/F/F, a5-kxor to T/T/T/T and imp3, and adds the STAND_ALIKE pairs. [a5-fences
-      FP1]
+- [ ] **Package-head default family (HDF): one remaining shape (GH2, a FALSE answer).**
+      a5-fences F0 and F3 fence the family (`headStandsAgainstAt`/`headStandsAgainstAbove`,
+      `unfixedDefaultsDifferAt`, `headTwoValuesAt`): gen-head reaches 0 WRONG in both orders,
+      per-instance rows included. Open, and a false answer: a head fixed by an instance `=` and by a
+      binding fixer that differ (gen-f3 GH2: p1 and p2 `:>> m = 7.0` beside a fixer `bind q.m = L`
+      with `L = 5.0`). The numeric surface reads M at the fixer's 5 (cM F) while the binding also
+      gives it p1's 7. A sound fence needs every fixer of a head recorded (`headsOfReadings`); the
+      branch a5-fences3 fixes it. Probes a5-fences2-scratch/gen/genf3.py, cases3/GH2f.sysml.
+      [a5-fences F0; a5-fences2 F3]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** A general's body re-read by name where a specialisation declares a name anew
       without `:>>` (KerML 7.3.2.1 forbids it) is fenced on every surface since g8-fence: no surface
@@ -959,11 +946,8 @@ true values. What follows is what that branch and the review of it left open; en
       (`contracts.ts` tests the unary minus as a non-number); (2) `sum(...)`, `->forall(...)` and
       `Mode::x` print "a defect in the relation" (`expr.ts` has no call, quantifier or `::` node),
       and an enum comparison is `unparseable` (`verification/not-evaluable`, not forgivable) where
-      docs/04 and the USER-GUIDE call it `unsupported-construct`; (3) a String-typed feature gets
-      sort Real (`contracts.ts:485-502`), so a comparison of two strings is one of two reals nothing
-      pins; (4) `bound.detail` says "decided by z3 5.3.1" on rows the numeric surface decided (`s.a
-      == s.b`, "bus" vs "car"); (5) the `vacuous` detail names the premises where the unsat core
-      names the goal's `side:` guard (division in the goal); (6) to probe, not a defect: the
+      docs/04 and the USER-GUIDE call it `unsupported-construct`; (3) `bound.detail` says "decided by z3 5.3.1" on rows the numeric surface decided (`s.a
+      == s.b`, "bus" vs "car"); (4) to probe, not a defect: the
       engine's `pinnedSymbols` pins a self-referencing equation (`x == x * y` pins x) and pins the
       right-hand defined feature of `assert constraint qa { L == M }` (8 probes h5-pin*), and
       whether either changes a `partialAntecedent` answer is unverified. [classes-2 S4]
@@ -1104,6 +1088,31 @@ true values. What follows is what that branch and the review of it left open; en
       anything on these clauses (an abstention, not a wrong answer). Test-strength gap:
       nobody checked that canonicalJson keeps undefined-valued keys (the `restricted` key is added
       only when present, so every existing scope digest is unchanged). [a5-fences F0, FP1, F1]
+      (10) a5-fences2: HDF per-instance rows (F3): the per-instance F0 fence also leaves instance rows
+      unknown where M is written with `=` and the assert is a violated check (GH110 `cP in p1`, F to
+      ?); the `defaults-differ` sentence for GH129 lists the members and not the redefinitions'
+      defaults; the USER-GUIDE policy for a non-bare assert over a definition's own default (GH45)
+      differs from F0's contradiction reading for instance defaults, and the check abstains there.
+      F6 (and/or/implies/xor control order): an ill-typed operand's check sentence is still the
+      generic 'a referenced value is unknown' (`(b + 1.0 > 2.0) or true`), not a type sentence; in
+      expr.ts and exact.ts a scope miss concatenated with a string (`(x + "s" > 1) and false`) is
+      still absorbed to F (units-eval does not read strings, F5 refuses String features at the
+      gate); an `unresolved` next to a Boolean under ==, = or != stays absorbable (pinned `(w ==
+      true) and false` F/F/F/F). F4a: the SMT gate refuses every written negative exponent, so `y ^
+      -1` reads 'the exponent is not a literal' and the conditional negative-power guard in
+      `power` is unreachable from text; the guard's '<left>' prints the operand's SMT text (no
+      source printer). F4: `vacuous` still says 'the premises are unsatisfiable' in two cases
+      where the axioms and premises are satisfiable: (a) an `assume` fixes the divisor at 0 and the
+      goal's guard contradicts it (gen pf0, 140 rows); (b) z3 returns a non-minimal core holding an
+      unrelated premise label (gen a0p, 28 of 140 rows); a remedy is one more check of the axioms
+      plus the goal's guards alone, which would change the plan's decision 9 / F.1 rule. F5:
+      relations over String now abstain (U) on SMT where the check reads satisfied, including mixes
+      where z3 previously proved the non-String disjunct (48 generator rows); recovering them needs
+      String encoding; the `bound.detail` example `s.a == s.b` is refused at the gate, so clause (4)
+      of the wording rollup needs another example for W1; CC-42b's String refutation has basis
+      point-evaluation. FP2: a5-imp3's row 'IMP3::RQ::<<ConstraintUsage>> in IMP3::h' reads -/X/-/X
+      (inconsistent-axioms: the asserted ax is false at h under Table 6) and the RQ root row
+      ?/?/?/X, undecided not wrong. [a5-fences2 F3, F6, F4a, F4, F5, FP2]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,
