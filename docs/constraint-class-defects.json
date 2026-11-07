@@ -59,15 +59,6 @@
       "note": "Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer."
     },
     {
-      "id": "D-m8-detail",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "nra-div"
-      ],
-      "kind": "wrong-statement",
-      "note": "Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard."
-    },
-    {
       "id": "D-bound-detail",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
       "classes": [
@@ -75,15 +66,6 @@
       ],
       "kind": "wrong-statement",
       "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface)."
-    },
-    {
-      "id": "D-string-as-real",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "text-as-real"
-      ],
-      "kind": "wrong-statement",
-      "note": "A String-typed feature gets sort Real (contracts.ts), so a comparison of two strings is a comparison of two reals nothing pins."
     },
     {
       "id": "D-x-pow-neg",

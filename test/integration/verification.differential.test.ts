@@ -71,7 +71,7 @@ import {
   type ConstraintCheck,
   type SpecialisationInstance,
 } from '@semantics/evaluate-model';
-import { contradictedDefinitions, headStandsAgainstAt, readsContradictedDefinition, relationNamesOf } from '@semantics/defining-equation';
+import { contradictedDefinitions, headStandsAgainstAt, headTwoValuesAt, readsContradictedDefinition, relationNamesOf, unfixedDefaultsDifferAt } from '@semantics/defining-equation';
 import { effectiveQualifiedName } from '@semantics/inheritance';
 import { obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, evaluateMoEs, solveFeasible } from '@semantics/solver';
@@ -10457,8 +10457,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // The asserted value on the head's slot itself (fence-numeric, found beside E1E): `p2.load == 5.0` with no binding at
     // the slot, and M's default beside p4's that differ. The assert's 5 was carried into M and every P's load on the
     // numeric and SMT surfaces (c3T and c2T T on both, c3F F), where the check and the literal engine read no value.
-    // Both now abstain on p3's load and M; the numeric surface still reads w's own p2.load at the 5 the assert defines
-    // (c2T), where the check abstains, as it reads W4X5's.
+    // Both now abstain on p3's load and M. The numeric surface read p2.load itself at the 5 the assert defines (c2T and
+    // `fix` T): a policy fence (a5 F3, H1, USER-GUIDE §6: a slot two differing defaults leave valueless has no value,
+    // and no asserted equation gives it one, on any surface) leaves it unknown in the check's sentence.
     'stand-gw-e1-slot': probe(`package E1Q {
         part def P { attribute load : ScalarValues::Real; }
         attribute M : ScalarValues::Real default = 9.0;
@@ -10472,11 +10473,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c2T { p2.load <= 6.0 }
         constraint cM { M >= 6.0 }
       }`, {
-      'E1Q::c2T': ['?/?/T/?', null],
+      'E1Q::c2T': ['?/?/?/?', '?'],
       'E1Q::c3F': ['?/?/?/?', '?'],
       'E1Q::c3T': ['?/?/?/?', '?'],
       'E1Q::cM': ['?/?/?/?', '?'],
-      'E1Q::fix': ['?/-/T/-', null],
+      'E1Q::fix': ['?/-/?/-', '?'],
     }),
     // fence-numeric's whole-branch review: an asserted equation that reaches the solve only as a per-instance copy is
     // fenced as E1E's is. The assert in an ENCLOSING definition over a dotted path (C6: V's `w.L == 5.0`, beside W's
@@ -17892,36 +17893,140 @@ package PS {
       'E2CS::cM': ['T/T/T/T', 'T'],
       'E2CS::fix': ['T/-/T/-', 'T'],
     }),
-    // a5 (2026-11-06) FP1: the grouping fence. KerML groups a chain of `implies` to the left and binds `xor` tighter
-    // than `or` (KerML 8.2.5.8.1, Table 6); both readers grouped them otherwise, and every surface decided kImp T and
-    // kXor F, the letters of the other grouping (KerML: F and T). FP1 reads neither chain (`GroupingError`, the
-    // SMT gate's `unsupported-operator`); the parenthesised twins and `a xor b or c` stay decided. FP2 (H8) reads them.
+    // a5 (2026-11-07) F3: a package head joined to two defaults that differ, with no instance fixing the slot (E1Q,
+    // E1QM), is a policy fence (H1): no asserted equation gives the slot or M a value, on any surface. Before F3 the
+    // numeric surface read E1Q's p2.load at the 5 of `p2.load == 5.0` (`stand-gw-e1-slot`), and the numeric and SMT
+    // surfaces read E1QM's M at the 7 of `2.0 * M == 14.0` (cM ?/?/T/T, c2 ?/?/T/T, c1 ?/?/?/T, fix ?/-/T/-), where p2's m
+    // is P's 5 by default-stands. V4 and W4X3 fix the slot outside the component (`fixedHead`): the model entails M, and
+    // their letters are unchanged.
+    'a5-e1qm': probe(`package E1QM {
+  part def P { attribute m : ScalarValues::Real default = 5.0; }
+  bind P::m = M;
+  attribute M : ScalarValues::Real;
+  part p1 : P { attribute :>> m default = 7.0; }
+  part p2 : P;
+  assert constraint fix { 2.0 * M == 14.0 }
+  constraint cM { M >= 6.0 }
+  constraint c1 { p1.m >= 6.0 }
+  constraint c2 { p2.m >= 6.0 }
+}`, {
+      'E1QM::c1': ['?/?/?/?', '?'],
+      'E1QM::c2': ['?/?/?/?', '?'],
+      'E1QM::cM': ['?/?/?/?', '?'],
+      'E1QM::fix': ['?/-/?/-', '?'],
+    }),
+    'a5-e1qmr': probe(reversedMembers(`package E1QM {
+  part def P { attribute m : ScalarValues::Real default = 5.0; }
+  bind P::m = M;
+  attribute M : ScalarValues::Real;
+  part p1 : P { attribute :>> m default = 7.0; }
+  part p2 : P;
+  assert constraint fix { 2.0 * M == 14.0 }
+  constraint cM { M >= 6.0 }
+  constraint c1 { p1.m >= 6.0 }
+  constraint c2 { p2.m >= 6.0 }
+}`), {
+      'E1QM::c1': ['?/?/?/?', '?'],
+      'E1QM::c2': ['?/?/?/?', '?'],
+      'E1QM::cM': ['?/?/?/?', '?'],
+      'E1QM::fix': ['?/-/?/-', '?'],
+    }),
+    // F3's gen-head (GH129): defaults that differ on two instances' redefinitions, none on P's own m, in a third
+    // package. The binding holds them, but they are no member of the package's component, and the head read "none of
+    // them states one" (`free`), so no fence keyed on the defaults applied: numeric read M at the assert's 5 (cM, c2
+    // F, fix T).
+    'a5-e1qn': probe(`package E1QN {
+  package L { part def P { attribute m : ScalarValues::Real; } }
+  bind L::P::m = M;
+  attribute M : ScalarValues::Real;
+  part p1 : L::P { attribute :>> m default = 7.0; }
+  part p2 : L::P;
+  part p3 : L::P { attribute :>> m default = 5.0; }
+  assert constraint fix { 2.0 * M == 10.0 }
+  constraint cM { M >= 6.0 }
+  constraint c2 { p2.m >= 6.0 }
+}`, {
+      'E1QN::c2': ['?/?/?/?', '?'],
+      'E1QN::cM': ['?/?/?/?', '?'],
+      'E1QN::fix': ['?/-/?/-', '?'],
+    }),
+    // GH91: P's own standing `default = 7.0` is every P's m, so M's, beside `M == 5.0` (headTwoValuesAt): numeric
+    // read M at 7 (cM T, fix F) where the check reads no value.
+    'a5-gh91': probe(`package GH91 {
+  part def P { attribute m : ScalarValues::Real default = 7.0; }
+  bind P::m = M;
+  attribute M : ScalarValues::Real;
+  part p1 : P;
+  assert constraint fix { M == 5.0 }
+  constraint cM { M >= 6.0 }
+}`, {
+      'GH91::cM': ['?/?/?/X', '?'],
+      'GH91::fix': ['?/-/?/-', '?'],
+      'GH91::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-v4': probe(`package V4 {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real default = 9.0;
+  bind P::load = M;
+  part p4 : P { attribute :>> load default = 7.0; }
+  part def W { attribute L : ScalarValues::Real; part p2 : P; bind p2.load = L; }
+  part v : W { attribute :>> L = 5.0; }
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint c3F { p3.load >= 6.0 }
+  constraint c2 { v.p2.load <= 6.0 }
+  constraint cM { M >= 6.0 }
+}`, {
+      'V4::c2': ['T/T/T/T', 'T'],
+      'V4::c3F': ['?/?/F/?', 'F'],
+      'V4::c3T': ['?/?/T/T', 'T'],
+      'V4::cM': ['?/?/F/?', 'F'],
+    }),
+    'a5-w4x3-twin': probe(reversedMembers(`package W4X3 {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute L : ScalarValues::Real = 5.0;
+  attribute M : ScalarValues::Real default = 9.0;
+  bind P::load = M;
+  part p2 : P;
+  bind p2.load = L;
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint cMT { M <= 6.0 }
+}`), {
+      'W4X3::c3T': ['?/?/?/T', 'T'],
+      'W4X3::cMT': ['?/?/?/T', 'T'],
+    }),
+    // a5 (2026-11-06) FP1, (2026-11-07) FP2 under H8: KerML groups a chain of `implies` to the left and binds `xor`
+    // tighter than `or` (KerML 8.2.5.8.1, Table 6). Both readers grouped them otherwise, and every surface decided kImp
+    // T and kXor F, the letters of the other grouping; FP1 read neither chain. FP2 groups by Table 6: kImp F and kXor T
+    // on every surface, each the same row as its parenthesised twin (STAND_ALIKE).
     'a5-kimp': probe(`package PREC {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
   attribute z : ScalarValues::Real = 0.0;
   constraint kImp { x > 1.0 implies y > 1.0 implies z > 1.0 }
-}`, { 'PREC::kImp': ['?/U/?/U', 'F'] }),
+}`, { 'PREC::kImp': ['F/F/F/F', 'F'] }),
     'a5-kimpl': probe(`package PREC {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
   attribute z : ScalarValues::Real = 0.0;
-  constraint kImpL { (x > 1.0 implies y > 1.0) implies z > 1.0 }
-}`, { 'PREC::kImpL': ['F/F/F/F', 'F'] }),
+  constraint kImp { (x > 1.0 implies y > 1.0) implies z > 1.0 }
+}`, { 'PREC::kImp': ['F/F/F/F', 'F'] }),
     'a5-kxor': probe(`package PREC {
   attribute u : ScalarValues::Real = 2.0;
   attribute v : ScalarValues::Real = 2.0;
   attribute w : ScalarValues::Real = 2.0;
   constraint kXor { u > 1.0 or v > 1.0 xor w > 1.0 }
   constraint kXorL { u > 1.0 xor v > 1.0 or w > 1.0 }
-}`, { 'PREC::kXor': ['?/U/?/U', 'T'], 'PREC::kXorL': ['T/T/T/T', 'T'] }),
+}`, { 'PREC::kXor': ['T/T/T/T', 'T'], 'PREC::kXorL': ['T/T/T/T', 'T'] }),
     'a5-kxorp': probe(`package PREC {
   attribute u : ScalarValues::Real = 2.0;
   attribute v : ScalarValues::Real = 2.0;
   attribute w : ScalarValues::Real = 2.0;
-  constraint kXorP { u > 1.0 or (v > 1.0 xor w > 1.0) }
-}`, { 'PREC::kXorP': ['T/T/T/T', 'T'] }),
-    // The chain in an assert and in a requirement a part satisfies: no surface reads it in any instance either.
+  constraint kXor { u > 1.0 or (v > 1.0 xor w > 1.0) }
+}`, { 'PREC::kXor': ['T/T/T/T', 'T'] }),
+    // The chain in an assert and in a requirement a part satisfies, read by Table 6 in every instance: the assert is
+    // false at h, so the requirement's rows over h are the inconsistent axioms (X), not a verdict.
     'a5-imp3': probe(`package IMP3 {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
@@ -17933,8 +18038,61 @@ package PS {
   satisfy RQ by h;
 }`, {
       'IMP3::H::ax': ['?/-/?/-', null],
-      'IMP3::RQ::«ConstraintUsage»': ['?/U/?/U', null],
+      'IMP3::H::ax in IMP3::h': ['F/-/F/-', 'F'],
+      'IMP3::RQ::«ConstraintUsage»': ['?/?/?/X', null],
+      'IMP3::RQ::«ConstraintUsage» in IMP3::h': ['-/X/-/X', null],
+      'IMP3::RQ::«ConstraintUsage» in IMP3::«Satisfy»': ['F/-/F/-', 'F'],
     }),
+    // a5 (2026-11-07) F4a: KerML does not evaluate the right operand of `or` where the left is true, nor of `implies`
+    // where it is false (kerml.txt:3957–3972), so the `y ≠ 0` guard of `x / y` there holds only on that path. It was
+    // unconditional, contradicted y = 0, and g and h read V; now they are proved, as the check reads them. The bare
+    // division k is undefined at y = 0 on every surface (F4, a5-vac).
+    'a5-vacor': probe(`package VACOR {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
+  assert constraint a { y == 0.0 }
+  constraint g { y == 0.0 or x / y >= 1.0 }
+  constraint h { y != 0.0 implies x / y >= 1.0 }
+}`, { 'VACOR::a': ['T/-/T/-', 'T'], 'VACOR::g': ['T/T/T/T', 'T'], 'VACOR::h': ['T/T/T/T', 'T'] }),
+    'a5-vacorv': probe(`package VACORV {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real = 0.0;
+  constraint g { y == 0.0 or x / y >= 1.0 }
+  constraint h { y != 0.0 implies x / y >= 1.0 }
+  constraint k { x / y >= 1.0 }
+}`, { 'VACORV::g': ['T/T/T/T', 'T'], 'VACORV::h': ['T/T/T/T', 'T'], 'VACORV::k': ['?/?/?/?', null] }),
+    // a5 F4: a goal that divides by a value the axioms fix at 0 is undefined wherever they hold. Its core is the axioms
+    // and the goal's own guard, and the axioms and premises hold without that guard, so it reads `not-evaluable`, as
+    // the check reads it; it read V, a vacuous pass. The premise twin assumes y = 0 where the model gives 1: its core
+    // holds the premise, its antecedent is empty, and it stays vacuous.
+    'a5-vac': probe(`package VAC {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
+  assert constraint a { y == 0.0 }
+  constraint g { x / y >= 1.0 }
+}`, { 'VAC::a': ['T/-/T/-', 'T'], 'VAC::g': ['?/?/?/?', null] }),
+    'a5-vac-premise': probe(`package VACP {
+  part def P { attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real = 1.0; }
+  part p : P;
+  requirement def R { subject s : P; assume constraint { s.y == 0.0 } require constraint g { s.x / s.y >= 1.0 } }
+  satisfy R by p;
+}`, { 'VACP::R::g': ['T/V/T/V', null], 'VACP::R::«ConstraintUsage»': ['F/-/F/-', 'F'] }),
+    // a5 F5: a String is a text value, refused at the gate as a string literal is. `s != t` violated at the model's
+    // values stays F through the point evaluation; `s == t`, satisfied there, read `?` "witness not confirmed" over an
+    // unpinned Real and now reads U with the gate's sentence.
+    'a5-string': probe(`package STR {
+  attribute s : ScalarValues::String = "abc"; attribute t : ScalarValues::String = "abc";
+  constraint k { s != t }
+}`, { 'STR::k': ['F/F/?/F', 'F'] }),
+    'a5-string-eq': probe(`package STREQ {
+  attribute s : ScalarValues::String = "abc"; attribute t : ScalarValues::String = "abc";
+  constraint k { s == t }
+}`, { 'STREQ::k': ['T/T/?/U', null] }),
+    // a5 F4a (fix-or-fence): a negative power of zero is a division by zero, but the quantity reader computed
+    // `0.0 ^ -1` as Infinity and read `x * y ^ -1 >= 1.0` at y = 0 T on check, literal and numeric. It now refuses with
+    // `division-by-zero`; SMT refuses the negative exponent at the gate.
+    'a5-negpow0': probe(`package NEGPOW {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real = 0.0;
+  constraint k { x * y ^ -1 >= 1.0 }
+  constraint n { not (y == 0.0 and y ^ -2 >= 1.0) }
+}`, { 'NEGPOW::k': ['?/U/?/U', null], 'NEGPOW::n': ['?/U/?/U', null] }),
     // a5 (2026-11-06) F2: `assert not satisfy R by s0;` parsed as a bare `assert not` and a `satisfy` beside it, and the
     // `satisfy` was read as the plain satisfaction: R for s0 F (nb7) and T (nb3) on every surface, under a hint that said
     // the checks abstain. The mapper refuses the statement whole (`mapper/negated-assert-unread`): no satisfy edge, no
@@ -17971,6 +18129,48 @@ package PS {
       'NB8::R::«ConstraintUsage» in NB8::«Satisfy»': ['F/-/F/-', 'F'],
       'NB8::R::«ConstraintUsage» in NB8::s0': ['-/F/-/F', 'F'],
     }),
+    // a5 (2026-11-07) F6: one connective table on every evaluator (KerML 7.4.9.2). An unknown operand is absorbed
+    // (`x and false`, `x or true`, `x implies true`) only where it is a value the model does not give (u), never where it
+    // is ill-typed (a length against a time, a Boolean plus a number), which no completion makes a Boolean. Before F6
+    // `ci` read T/T/T/? (`x implies true` took any x) and `cor` ?/?/?/T beside `cor2` T/T/T/T (no `x or true`).
+    ...Object.fromEntries(
+      (['a5-conn', 'a5-conn-rev'] as const).map((k) => {
+        const text = `package K2 {
+  attribute a : ScalarValues::Real = 2.0;
+  attribute d : ISQ::LengthValue = 5.0 [SI::m];
+  attribute t : ISQ::TimeValue = 3.0 [SI::s];
+  attribute u : ScalarValues::Real;
+  attribute b : ScalarValues::Boolean = true;
+  attribute w : ScalarValues::Boolean;
+  constraint ci { d > t implies a <= 5.0 }
+  constraint ci2 { d > t implies a >= 5.0 }
+  constraint cior { d > t or a <= 5.0 }
+  constraint cand { d > t and a >= 5.0 }
+  constraint cand2 { a >= 5.0 and d > t }
+  constraint cor { u >= 1.0 or a <= 5.0 }
+  constraint cor2 { a <= 5.0 or u >= 1.0 }
+  constraint cimp { u >= 1.0 implies a <= 5.0 }
+  constraint cuf { u >= 1.0 and a >= 5.0 }
+  constraint cill { (b + 1.0 > 2.0) or true }
+  constraint cillf { (b + 1.0 > 2.0) and false }
+  constraint cwf { (w == true) and false }
+}`;
+        return [k, probe(k === 'a5-conn' ? text : reversedMembers(text), {
+          'K2::ci': ['?/?/?/?', null],
+          'K2::ci2': ['?/?/?/?', null],
+          'K2::cior': ['?/?/?/?', null],
+          'K2::cand': ['?/?/?/?', null],
+          'K2::cand2': ['F/F/F/F', 'F'],
+          'K2::cor': ['T/T/T/T', 'T'],
+          'K2::cor2': ['T/T/T/T', 'T'],
+          'K2::cimp': ['T/T/T/T', 'T'],
+          'K2::cuf': ['F/F/F/F', 'F'],
+          'K2::cill': ['?/?/?/?', null],
+          'K2::cillf': ['?/?/?/?', null],
+          'K2::cwf': ['F/F/F/F', 'F'],
+        })];
+      }),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19139,8 +19339,16 @@ package PS {
     // a5 F0: the package-head default family in either text order.
     ['a5-e2c', 'a5-e2cr'],
     ['a5-e1qp', 'a5-e1qpr'],
+    // a5 F3: the two-defaults head fence, and a head an instance fixes, in either text order.
+    ['a5-e1qm', 'a5-e1qmr'],
+    ['w4-coupled-pkg', 'a5-w4x3-twin'],
     // a5 F2: `assert satisfy` is `satisfy`.
     ['a5-assert-satisfy', 'a5-assert-satisfy-plain'],
+    // a5 FP2: a connective chain reads as its Table 6 parenthesised twin.
+    ['a5-kimp', 'a5-kimpl'],
+    ['a5-kxor', 'a5-kxorp'],
+    // a5 F6: the connective table in either text order.
+    ['a5-conn', 'a5-conn-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
@@ -19245,8 +19453,11 @@ package PS {
    * I17 (a5 F0, INV-E): no numeric or SMT row of a package's relation that reads a name {@link headStandsAgainstAt}
    * refuses — a package head joined to an instance's standing value an asserted relation contradicts — is T or F; X
    * is allowed (the axioms are inconsistent). Read over every probe with a package binding on a definition's feature.
+   * Nor one that reads a name {@link unfixedDefaultsDifferAt} refuses (a5 F3): a slot a package head joins to defaults
+   * that differ, which no instance fixes, or a name an assert defines that a head joins to a member with two values
+   * ({@link headTwoValuesAt}).
    */
-  withZ3('I17: no numeric or SMT row decides a name a package head joins to a contradicted standing value', async () => {
+  withZ3('I17: no numeric or SMT row decides a name a package head joins to a contradicted standing value or to defaults that differ', async () => {
     const wrong: string[] = [];
     let fenced = 0;
     for (const [name, p] of Object.entries(PROBES)) {
@@ -19256,7 +19467,9 @@ package PS {
       for (const el of model.all()) {
         if (el.eClass !== 'ConstraintUsage' || el.ownerId == null || typeof el.attrs.expression !== 'string') continue;
         const ownerId = el.ownerId;
-        if (!relationNamesOf(el.attrs.expression).some((n) => headStandsAgainstAt(model, ownerId, n) !== undefined)) continue;
+        const fence = (n: string) =>
+          headStandsAgainstAt(model, ownerId, n) ?? unfixedDefaultsDifferAt(model, ownerId, n) ?? headTwoValuesAt(model, ownerId, n);
+        if (!relationNamesOf(el.attrs.expression).some((n) => fence(n) !== undefined)) continue;
         const got = seen.get(name)?.get(model.qualifiedName(el.id));
         if (!got) continue;
         fenced++;

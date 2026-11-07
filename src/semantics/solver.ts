@@ -97,7 +97,10 @@ import {
   contradictedDefinitionNaming,
   contradictedDefinitionRefusal,
   contradictedDefinitions,
-  headStandsAgainstAt,
+  headStandsAgainstAbove,
+  headTwoValuesAt,
+  nameAtInstance,
+  unfixedDefaultsDifferAt,
   hasEnclosedBindings,
   hasPastCapBindings,
   hasStatedValue,
@@ -6971,16 +6974,41 @@ function numericRows(
   // (headStandsAgainstAt, F0: E2C's `bind P::m = M` over p4's `m default = 7.0`, beside `M == 5.0`): the model
   // states two values for it, so no decided row that reads it is judged, as the validation surface judges none —
   // the solve read M from the assert alone.
+  // Per instance and on a definition's own row too, at the path the package reads it by (headStandsAgainstAbove).
   for (const r of out) {
-    if (r.conflict !== undefined || r.result === 'unknown' || r.context !== undefined) continue;
-    const contextId = model.get(r.id)?.ownerId;
+    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const contextId = r.context?.contextId ?? model.get(r.id)?.ownerId;
     if (contextId == null) continue;
-    const against = relationNamesOf(r.raw).map((n) => headStandsAgainstAt(model, contextId, n)).find((x) => x !== undefined);
+    const against = relationNamesOf(r.raw)
+      .map((n) => headStandsAgainstAbove(model, contextId, nameAtInstance(model, contextId, r.context?.path, n)))
+      .find((x) => x !== undefined);
     if (against === undefined) continue;
     r.result = 'unknown';
     r.slack = null;
     r.amount = 0;
     r.reason = against;
+    delete r.cause;
+    delete r.imposed;
+  }
+  // A name a binding joins to defaults that differ, with no instance fixing the slot (unfixedDefaultsDifferAt, F3:
+  // E1Q's `bind P::load = M` over M's `default = 9.0` and p4's `default = 7.0`): it has no value, and no asserted
+  // equation gives it one, on any surface (USER-GUIDE §6) — the solve read p2.load at the 5 of `p2.load == 5.0`.
+  // So for a name an asserted equation defines that a package head joins to a member it gives two values
+  // (headTwoValuesAt: GH91's `M == 5.0` over P's `default = 7.0`). Per instance too: the name is read at the
+  // instance's path in its context.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const contextId = r.context?.contextId ?? model.get(r.id)?.ownerId;
+    if (contextId == null) continue;
+    const differ = relationNamesOf(r.raw)
+      .map((n) => nameAtInstance(model, contextId, r.context?.path, n))
+      .map((n) => unfixedDefaultsDifferAt(model, contextId, n) ?? headTwoValuesAt(model, contextId, n))
+      .find((x) => x !== undefined);
+    if (differ === undefined) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason = differ;
     delete r.cause;
     delete r.imposed;
   }

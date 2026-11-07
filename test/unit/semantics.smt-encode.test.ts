@@ -317,7 +317,7 @@ describe('what the encoder refuses, and with which reason', () => {
     }
   });
 
-  it('refuses a connective chain KerML groups otherwise as unsupported-operator, with its sentence (FP1)', async () => {
+  it('encodes a connective chain grouped by KerML Table 6 (FP2)', async () => {
     const model = await load(`package G {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
@@ -326,16 +326,22 @@ describe('what the encoder refuses, and with which reason', () => {
   constraint kXor { x > 1.0 or y > 1.0 xor z > 1.0 }
   constraint kXorL { x > 1.0 xor y > 1.0 or z > 1.0 }
 }`);
-    const imp = relationWith(model, 'implies');
-    expect(imp.encodable).not.toBe(true);
-    if (imp.encodable !== true) {
-      expect(imp.encodable.reason).toBe('unsupported-operator');
-      expect(imp.encodable.detail).toContain('KerML groups it to the left');
-    }
-    const xor = relationWith(model, 'x > 1.0 or');
-    expect(xor.encodable).not.toBe(true);
-    if (xor.encodable !== true) expect(xor.encodable.reason).toBe('unsupported-operator');
+    expect(relationWith(model, 'implies').encodable).toBe(true);
+    expect(relationWith(model, 'x > 1.0 or').encodable).toBe(true);
     expect(relationWith(model, 'x > 1.0 xor').encodable).toBe(true);
+  });
+
+  it('refuses a relation over a String feature at the gate, as it refuses a string literal (F5)', async () => {
+    const model = await load(`package T {
+  attribute s : ScalarValues::String = "abc";
+  attribute x : ScalarValues::Real = 2.0;
+  constraint k { x > 1.0 and s == s }
+}`);
+    const k = relationWith(model, 's == s');
+    expect(k.encodable).toEqual({
+      reason: 'non-numeric-operand',
+      detail: '`s` is typed `String`, a text value this lane does not encode as a number, so no bound, witness or proof is read over it',
+    });
   });
 
   it('refuses a qualified name no SMT symbol can carry, rather than mangling it', () => {
@@ -360,6 +366,40 @@ describe('a variable divisor is guarded, and the guard is reported', () => {
     expect(r.sideConditions[0].detail).toContain('non-zero');
     expect(r.sideConditions[0].detail).toContain('P::d');
   });
+
+  // a5 F4a: KerML does not evaluate the right operand of `and`/`implies` where the left is false, of `or` where it is
+  // true, nor the `if` branch not taken (kerml.txt:3957–3972), so the guard there holds only on that path.
+  it.each([
+    ['d == 0.0 or x / d >= 1.0', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    ['d != 0.0 and x / d >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['d != 0.0 implies x / d >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['not (d == 0.0 or x / d >= 1.0)', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    ['(if d != 0.0 then x / d else 0.0) >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['(if d == 0.0 then 0.0 else x / d) >= 1.0', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    [
+      'x > 0.0 and (d == 0.0 or x / d >= 1.0)',
+      '(=> (and (> |P::x| 0.0) (not (= |P::d| 0.0))) (distinct |P::d| 0.0))',
+      'is true and',
+    ],
+  ])('conditions the guard on the KerML path condition: %s', (body, guard, says) => {
+    const r = encode(body, [v('x'), v('d', { free: true })]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.sideConditions.map((s) => s.term)).toEqual([guard]);
+    expect(r.sideConditions[0]!.detail).toContain(`, where `);
+    expect(r.sideConditions[0]!.detail).toContain(says);
+  });
+
+  it.each(['d == 0.0 xor x / d >= 1.0', 'x / d >= 1.0 or d == 0.0', 'x / d >= 1.0 and d != 0.0', '(d == 0.0) == (x / d >= 1.0)'])(
+    'keeps the guard unconditional where KerML evaluates the operand: %s',
+    (body) => {
+      const r = encode(body, [v('x'), v('d', { free: true })]);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.sideConditions.map((s) => s.term)).toEqual(['(distinct |P::d| 0.0)']);
+      expect(r.sideConditions[0]!.detail).not.toContain(', where ');
+    },
+  );
 
   it('adds nothing when the divisor is a literal', () => {
     const r = encode('x / 2.0 >= 1.0', [v('x')]);

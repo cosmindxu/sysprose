@@ -1091,11 +1091,53 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
 
   if (negation.status === 'unsat') {
     // STEP 2: was the antecedent satisfiable at all?
-    const antecedent = await input.backend.check(scriptOf(variables, assumed, context).text, {
+    const antecedentScript = scriptOf(variables, assumed, context);
+    const antecedent = await input.backend.check(antecedentScript.text, {
       timeoutMs: input.timeoutMs,
       variables: variables.map((v) => v.qualifiedName),
     });
     checks += 1;
+    // A VACUITY DUE ONLY TO THE GOAL'S OWN DEFINEDNESS is not a vacuity. Each
+    // goal guard holds only on the path KerML evaluates its operand on (a5
+    // F4a), so a core of axioms and goal guards alone, with the axioms and
+    // premises satisfiable without those guards, says every model of the
+    // axioms evaluates the goal at a zero divisor: the goal is undefined
+    // wherever they hold, which is not-evaluable, never a vacuous pass. A
+    // core holding any premise, or the guard of an axiom or a premise, stays
+    // vacuous. The labels are read by position, not by name: a premise may
+    // carry its requirement's name.
+    if (antecedent.status === 'unsat' && goalSides.length > 0) {
+      // One label per assumed assertion, in order: the positional reading below stands on it.
+      if (antecedentScript.labels.length !== assumed.length) throw new Error('scriptOf: labels no longer one per assertion');
+      const sideLabels = antecedentScript.labels.slice(assumed.length - goalSides.length);
+      const axiomLabels = new Set(antecedentScript.labels.slice(0, axiomAssertions.length).filter((l) => l.startsWith('axiom:')));
+      const inCore = goal.sideConditions.filter((_, i) => antecedent.core.includes(sideLabels[i]!));
+      if (
+        inCore.length > 0 &&
+        antecedent.core.every((l) => axiomLabels.has(l) || sideLabels.includes(l))
+      ) {
+        const without = await input.backend.check(
+          scriptOf(variables, [...axiomAssertions, ...premiseAssertions], context).text,
+          { timeoutMs: input.timeoutMs, witness: false },
+        );
+        checks += 1;
+        if (without.status === 'sat') {
+          const divisors = [...new Set(inCore.flatMap((s) => s.variables))];
+          return {
+            ...base,
+            ...point,
+            outcome: 'not-evaluable',
+            axiomCensus: census(),
+            checks,
+            logic,
+            detail:
+              `not evaluable at the model's values: the relation divides by \`${divisors.join('`, `')}\`, which ` +
+              `the axioms fix at 0 wherever they hold (core: ${coreSentence(antecedent.core)})`,
+            ...bound('none', 'the goal is undefined wherever the axioms hold, so nothing is claimed'),
+          };
+        }
+      }
+    }
     if (antecedent.status === 'unsat') {
       return {
         ...base,

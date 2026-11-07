@@ -11474,7 +11474,14 @@ export type BoundSource =
       component: string;
       via: { bindingIds: readonly ElementId[]; source: string };
     }
-  | { abstain: InstanceAbstention; sentence: string };
+  | {
+      abstain: InstanceAbstention;
+      sentence: string;
+      /** Set where an instance fixes the slot of a package's binding on a definition's feature outside the
+       *  component ({@link DefinitionHead.fixed}): V4's `bind p2.load = L` beside `:>> L = 5.0`, which the model
+       *  entails, where E1Q's two differing defaults state no value ({@link unfixedDefaultsDifferAt}). */
+      fixedHead?: true;
+    };
 
 /** One group a relation is read per instance in ({@link instanceGroups}): (relation, shared usage). */
 export interface InstanceGroup {
@@ -12528,20 +12535,52 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // fixes outside the component ({@link DefinitionHead.fixed}) says so, not
   // that no member states a value.
   const fixed = bindingEnds(model).heads.get(best.root)?.find((h) => h.component === best.component && fixesSlot(h));
-  if (cls.heldDefaults.length > 0) {
-    return {
-      abstain: 'defaults-differ',
-      sentence: fixed
-        ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
-        : abstentionSentence(model, symbol, best.root, best.component, 'defaults-differ'),
-    };
+  // So do defaults on instances' redefinitions of a head's feature that the binding holds (GH129's p1 `:>> m default =
+  // 7.0` and p3's `default = 5.0` under `bind L::P::m = M`, P's own m with none): they are no member of the package's
+  // component, and the row read "none of them states one".
+  const { heads, held } = bindingEnds(model);
+  const heldRedefinition =
+    held.size > 0 &&
+    (heads.get(best.root) ?? []).some(
+      (h) =>
+        h.component === best.component &&
+        h.redefined &&
+        [...held].some((id) => {
+          const r = model.get(id);
+          return r !== undefined && r.attrs.defaultValue === true && redefinedClosure(model, r).some((g) => g.id === h.feature);
+        }),
+    );
+  if (cls.heldDefaults.length > 0 || heldRedefinition) {
+    return fixed
+      ? { abstain: 'defaults-differ', sentence: fixedHeadSentence(model, symbol, best.root, best.component, fixed), fixedHead: true }
+      : { abstain: 'defaults-differ', sentence: abstentionSentence(model, symbol, best.root, best.component, 'defaults-differ') };
   }
-  return {
-    abstain: 'free',
-    sentence: fixed
-      ? fixedHeadSentence(model, symbol, best.root, best.component, fixed)
-      : abstentionSentence(model, symbol, best.root, best.component, 'free'),
-  };
+  return fixed
+    ? { abstain: 'free', sentence: fixedHeadSentence(model, symbol, best.root, best.component, fixed), fixedHead: true }
+    : { abstain: 'free', sentence: abstentionSentence(model, symbol, best.root, best.component, 'free') };
+}
+
+/**
+ * Why `name`, read in `contextId`, has no value on any surface (F3, USER-GUIDE §6): a binding joins it to defaults
+ * that differ or are not constants, and no instance fixes the slot outside the component ({@link boundSourceIn}'s
+ * `defaults-differ` without {@link BoundSource} `fixedHead`) — E1Q's `bind P::load = M` over M's `default = 9.0`
+ * and p4's `:>> load default = 7.0`. No asserted equation gives such a name a value (decision 14 amended
+ * 2026-10-22): the numeric solve read E1Q's p2.load at the 5 of `p2.load == 5.0`, and the SMT engine M at the 7 of
+ * `2.0 * M == 14.0`, where the check reads neither. Only through a package's binding on a definition's feature
+ * ({@link DefinitionHead}). The source's sentence, or `undefined`.
+ */
+export function unfixedDefaultsDifferAt(model: Model, contextId: ElementId, name: string): string | undefined {
+  if (!hasUserBindings(model)) return undefined;
+  const d = sharedDefinitions(model).denote(contextId).get(name);
+  if (!d) return undefined;
+  const symbol = `${d.instance}::${name.slice(name.lastIndexOf('.') + 1)}`;
+  const source = boundSourceIn(model, symbol);
+  if (source === undefined || !('abstain' in source) || source.abstain !== 'defaults-differ' || source.fixedHead === true) return undefined;
+  // A package's binding on a definition's feature only: a definition's own binding over two defaults (GWI's `bind
+  // p.load = L`) keeps its readings, the SMT engine's carried bare bounds among them.
+  const best = outermostReading(model, symbol);
+  if (!best || (best.head === undefined && !bindingEnds(model).heads.get(best.root)?.some((h) => h.component === best.component))) return undefined;
+  return source.sentence;
 }
 
 /**
@@ -13039,6 +13078,71 @@ export function headStandsAgainstAt(model: Model, contextId: ElementId, name: st
   if (last && stands.some((s) => s.written.id === last.id || valueSourceOf(model, last) === s.written)) return undefined;
   const sentence = headStandsIn(model, contextId, component);
   return sentence === undefined ? undefined : `${name.slice(name.lastIndexOf('.') + 1)} is not read in ${effectiveQualifiedName(model, contextId)}: ${sentence}`;
+}
+
+/**
+ * Why `name`, read in `contextId`, is not read: a package's binding on a definition's feature joins it to a member
+ * the binding gives two values the model states ({@link boundSourceIn}'s `two-values`), and no binding reads a value
+ * into `name` itself (its own value, as an asserted equation defines it) — GH91's `M == 5.0` beside `bind P::m = M`
+ * over P's `default = 7.0`: every P's m is 7, so M is too, and the equation's 5 makes two values (the binding's own
+ * finding). The numeric solve read M at the default's 7, and judged `M >= 6.0` and the assert, where the check
+ * reads no value for M. The member's sentence, or `undefined`.
+ */
+export function headTwoValuesAt(model: Model, contextId: ElementId, name: string): string | undefined {
+  if (!hasUserBindings(model)) return undefined;
+  const ends = bindingEnds(model);
+  const component = ends.readings.get(contextId)?.get(name)?.component;
+  if (component === undefined || !ends.heads.get(contextId)?.some((h) => h.component === component)) return undefined;
+  const definitions = sharedDefinitions(model);
+  const at = (path: string): BoundSource | undefined => {
+    // A definition's feature (`P.m`) is no instance the walk denotes: its symbol is its qualified path.
+    const d = definitions.denote(contextId).get(path);
+    return boundSourceIn(
+      model,
+      d ? `${d.instance}::${path.slice(path.lastIndexOf('.') + 1)}` : `${model.qualifiedName(contextId)}::${path.split('.').join('::')}`,
+    );
+  };
+  if (at(name) !== undefined) return undefined;
+  for (const path of componentPaths(model, contextId, component)) {
+    const source = path === name ? undefined : at(path);
+    if (source !== undefined && 'abstain' in source && source.abstain === 'two-values') return source.sentence;
+  }
+  return undefined;
+}
+
+/**
+ * `name` as `contextId` reads it at a row's instance: `instance` is the qualified name of a usage below `contextId`
+ * (a per-instance row's `GH2::w::q` in GH2), so `w.q.m`; `name` itself where the row has none.
+ */
+export function nameAtInstance(model: Model, contextId: ElementId, instance: string | undefined, name: string): string {
+  if (instance === undefined) return name;
+  const root = model.qualifiedName(contextId);
+  if (instance === root) return name;
+  const rel = root && instance.startsWith(`${root}::`) ? instance.slice(root.length + 2) : instance;
+  return `${rel.split('::').join('.')}.${name}`;
+}
+
+/**
+ * {@link headStandsAgainstAt} for `name` read in `contextId` or, climbing its owners, at the path from one of them:
+ * a per-instance row reads p1's `m` in p1, and a definition's own row P's `m` in P, where the package's reading
+ * holds them as `p1.m` and `P.m` (GH35's `bind P::m = M` beside p3's `:>> m = 5.0` and `M == 7.0`: the check and
+ * the numeric surface read `cP in p1` at the assert's 7). The first reason found, or `undefined`. `above` starts the
+ * climb at `contextId`'s owner: the check's package rows are fenced where they are read ({@link definedAgainstHead}).
+ */
+export function headStandsAgainstAbove(model: Model, contextId: ElementId, name: string, above = false): string | undefined {
+  if (!hasUserBindings(model) || bindingEnds(model).heads.size === 0) return undefined;
+  let id: ElementId | null | undefined = contextId;
+  let path = name;
+  for (let depth = 0; id != null && depth < 64; depth++) {
+    const said = above && depth === 0 ? undefined : headStandsAgainstAt(model, id, path);
+    if (said !== undefined) return said;
+    const el = model.get(id);
+    const own = el ? effectiveNameOf(model, el) : undefined;
+    if (!el || !own) return undefined;
+    path = `${own}.${path}`;
+    id = el.ownerId;
+  }
+  return undefined;
 }
 
 /** {@link headStandsAgainstAt}'s reason for the component `component` of the package `root`'s reading, or `undefined`. */

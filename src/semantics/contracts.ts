@@ -56,15 +56,15 @@ import {
   defaultGivesWay,
   givenWayThroughHead,
   givenWayUnvalued,
+  unfixedDefaultsDifferAt,
   isAsserted,
   sharedDefinitions,
   shadowedNamesOf,
   shadowedSentence,
 } from './defining-equation';
-import { GroupingError, evaluate, parseExpr, type ExprNode } from './expr';
+import { evaluate, type ExprNode } from './expr';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import {
-  lowerUnitLiterals,
   parseRelationBody,
   relationRefused,
   relationScope,
@@ -877,8 +877,6 @@ function readRelationAsWritten(
   const parsed = parseRelationBody(raw);
   const body = parsed && valueUnit !== undefined ? withValueUnit(parsed, valueUnit) : parsed;
   if (!body) {
-    const grouping = groupingRefusalOf(raw);
-    if (grouping !== undefined) return refused(shown, { reason: 'unsupported-operator', detail: grouping });
     return refused(shown, {
       reason: 'unparseable',
       detail: `the body \`${raw}\` is not an expression this tool can read`,
@@ -1011,6 +1009,23 @@ export function gateRelation(
     );
   }
 
+  // A String is a text value. A string literal in a body is refused at the encoder, so a String feature is refused
+  // alike, here: read as an unpinned Real, a satisfied `s == t` reached "witness not confirmed" over a value no
+  // solver could choose. A violation at the model's values is still `refuted` through the point evaluation.
+  const text = variables.find((v) => typeNamesOf(model, v.featureId).has('String'));
+  if (text) {
+    return refused(
+      expression,
+      {
+        reason: 'non-numeric-operand',
+        detail: `\`${text.path}\` is typed \`String\`, a text value this lane does not encode as a number, so no bound, witness or proof is read over it`,
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
+  }
+
   // The dimensional half of the gate, asked on its own so the reason is exact.
   if (relationRefused(model, node, varIds, nameToId, markers, memo, true)) {
     return refused(
@@ -1109,6 +1124,29 @@ export function gateRelation(
         detail:
           `the axiom reads \`${throughHead.p}\`, which ${throughHead.why}; carried, the axiom would give those defaults its ` +
           'value, and no assertion gives a default a value, so the axiom is not carried',
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
+  }
+  // Nor one over a feature with no value that a binding joins to defaults that differ, with no instance fixing the
+  // slot (unfixedDefaultsDifferAt, F3: GH115's `2.0 * M == 14.0` beside `bind P::m = M` over P's `default = 5.0` and
+  // p1's `:>> m default = 7.0`): carried, it gave M, and every P's m, the 7, and `p2.m >= 6.0` was PROVED on this lane
+  // alone, where the other surfaces read no value for it.
+  const differ =
+    readBy && readBy.binding !== true && isAsserted(readBy.el) && readBy.el.ownerId != null
+      ? pathsOf(node)
+          .filter((p) => !markers.has(p))
+          .map((p) => ({ p, why: unfixedDefaultsDifferAt(model, readBy.el.ownerId!, p) }))
+          .find((x) => x.why !== undefined)
+      : undefined;
+  if (differ) {
+    return refused(
+      expression,
+      {
+        reason: 'unread-definition',
+        detail: `the axiom reads \`${differ.p}\`: ${differ.why}; no assertion gives it a value, so the axiom is not carried`,
       },
       null,
       variables,
@@ -1957,12 +1995,3 @@ export function claimedVerdictOf(model: Model, id: ElementId): string | undefine
   return getRequirementAttr(model, id, 'verdict');
 }
 
-/** The sentence of a {@link GroupingError} the body raises (FP1), if that is why it does not parse. */
-function groupingRefusalOf(raw: string): string | undefined {
-  try {
-    parseExpr(lowerUnitLiterals(raw).text);
-  } catch (e) {
-    if (e instanceof GroupingError) return e.message;
-  }
-  return undefined;
-}

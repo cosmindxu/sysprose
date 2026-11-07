@@ -850,11 +850,11 @@ describe('a judgement carries the constraint class of what it stood on', () => {
     // Rok: the same refused premise, held at the model's values, and the proof stands on z3's entailment.
     const ok = m4.get('M4::Rok::g1')!.judgement;
     expect([ok.outcome, ok.classes.basis, ok.classes.modifiers.map((m) => m.id)]).toEqual(['proved', 'solver+numeric', ['partial-context']]);
-    // m6: a String read as a Real is a refutation confirmed on the numeric surface at a point z3 did not choose.
+    // m6: a relation over a String is refused at the gate (F5); its violation at the model's values is the point evaluation's.
     const m6 = (await classed(z3, M6)).by;
     const text = m6.get('M6::R::g1')!.judgement;
-    expect([text.outcome, text.classes.basis, text.classes.modifiers.map((m) => m.id)]).toEqual(['refuted', 'numeric-surface', ['text-as-real']]);
-    expect(classLines(text.classes).join('\n')).toContain('basis: numeric-surface');
+    expect([text.outcome, text.classes.basis, text.classes.modifiers.map((m) => m.id)]).toEqual(['refuted', 'point-evaluation', ['text-as-real']]);
+    expect(classLines(text.classes).join('\n')).toContain('basis: point-evaluation');
     // …and the numeric row beside it is an ordinary proof.
     expect(m6.get('M6::R::g2')!.judgement.classes.basis).toBe('solver');
   });
@@ -921,15 +921,32 @@ describe('a judgement carries the constraint class of what it stood on', () => {
       const j = m7.get(`M7::R::${g}`)!.judgement;
       expect([j.outcome, j.classes.scope, j.classes.script?.shape], g).toEqual(['axioms-inconsistent', 'run', 'nra-div']);
     }
-    // M8: the division is in the GOAL, its `d != 0` guard contradicts `k = 0`, and the antecedent is empty: vacuous.
+    // M8: the division is in the GOAL and its `d != 0` guard contradicts `k = 0`. The core is the axioms and that
+    // guard alone, and the axioms hold without it, so the goal is undefined wherever they hold: not-evaluable (a5 F4).
     const m8 = (await classed(z3, M8)).by;
     const g1 = m8.get('M8::R::g1')!.judgement;
-    expect([g1.outcome, g1.classes.goal.shape, g1.classes.script?.shape, g1.classes.basis]).toEqual(['vacuous', 'nra-div', 'nra-div', 'solver']);
+    expect([g1.outcome, g1.classes.goal.shape, g1.classes.script?.shape, g1.classes.basis]).toEqual(['not-evaluable', 'nra-div', 'nra-div', 'none']);
+    expect(g1.detail).toMatch(/^not evaluable at the model's values: the relation divides by `.*k`, which the axioms fix at 0 wherever they hold \(core: axiom:.*side:M8::R::g1\)$/);
     expect(m8.get('M8::R::g2')!.judgement.outcome).toBe('proved');
     // …but a division by a pinned NONZERO value is a proof, in QF_NRA: the card says "when the divisor is pinned to zero".
     const nonzero = (await classed(z3, M8.replace('package M8', 'package M8b').replace('k : ScalarValues::Real = 0.0', 'k : ScalarValues::Real = 2.0'))).by;
     const ok = nonzero.get('M8b::R::g1')!.judgement;
     expect([ok.outcome, ok.classes.goal.shape, ok.classes.script?.shape, ok.classes.logic]).toEqual(['proved', 'nra-div', 'nra-div', 'QF_NRA']);
+  });
+
+  withZ3('proves a division KerML never evaluates: the guard holds only on its path (a5 F4a)', async (z3) => {
+    // `y == 0.0 or x / y >= 1.0` with y = 0: the right operand is not evaluated, so its guard is not assumed. It was
+    // unconditional, contradicted the axiom, and the proofs were vacuous.
+    const by = (await classed(z3, `package VACOR {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
+  assert constraint a { y == 0.0 }
+  requirement def R {
+    require constraint g { y == 0.0 or x / y >= 1.0 }
+    require constraint h { y != 0.0 implies x / y >= 1.0 }
+    require constraint k { x / y >= 1.0 }
+  }
+}`)).by;
+    expect(['g', 'h', 'k'].map((c) => by.get(`VACOR::R::${c}`)!.judgement.outcome)).toEqual(['proved', 'proved', 'not-evaluable']);
   });
 
   withZ3('moves no verdict when every level is replaced, or when the classifier throws (CC-20)', async (z3) => {

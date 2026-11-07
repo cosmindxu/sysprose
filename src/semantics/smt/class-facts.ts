@@ -12,9 +12,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 8,
       "rows": 27,
-      "tableAgree": 27,
+      "tableAgree": 29,
       "tableDisagree": 0,
-      "tableProbes": 15
+      "tableProbes": 16
     },
     "bind-equality": {
       "battery": null,
@@ -23,9 +23,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 5,
       "rows": 9,
-      "tableAgree": 225,
+      "tableAgree": 227,
       "tableDisagree": 0,
-      "tableProbes": 135
+      "tableProbes": 136
     },
     "bool": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 485,
-      "tableAgree": 642,
+      "tableAgree": 650,
       "tableDisagree": 0,
-      "tableProbes": 291
+      "tableProbes": 295
     },
     "nira/free": {
       "battery": null,
@@ -309,9 +309,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 1,
       "models": 9,
       "rows": 17,
-      "tableAgree": 2,
+      "tableAgree": 6,
       "tableDisagree": 0,
-      "tableProbes": 2
+      "tableProbes": 4
     },
     "nra-poly/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 310,
+      "tableAgree": 312,
       "tableDisagree": 0,
-      "tableProbes": 156
+      "tableProbes": 157
     },
     "requirement-clause": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 343,
+      "tableAgree": 349,
       "tableDisagree": 0,
-      "tableProbes": 219
+      "tableProbes": 222
     },
     "stated-value": {
       "battery": null,
@@ -397,17 +397,17 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 598,
+      "tableAgree": 606,
       "tableDisagree": 0,
-      "tableProbes": 260
+      "tableProbes": 264
     },
     "text-as-real": {
       "battery": null,
       "encoderTests": 1,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 0,
-      "rows": 0,
+      "models": 2,
+      "rows": 2,
       "tableAgree": 0,
       "tableDisagree": 0,
       "tableProbes": 0
@@ -484,29 +484,11 @@ export const CLASS_FACTS: ClassFacts = {
     },
     {
       "classes": [
-        "nra-div"
-      ],
-      "id": "D-m8-detail",
-      "kind": "wrong-statement",
-      "note": "Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard.",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
         "text-as-real"
       ],
       "id": "D-bound-detail",
       "kind": "wrong-statement",
       "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface).",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
-        "text-as-real"
-      ],
-      "id": "D-string-as-real",
-      "kind": "wrong-statement",
-      "note": "A String-typed feature gets sort Real (contracts.ts), so a comparison of two strings is a comparison of two reals nothing pins.",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
     },
     {
@@ -529,9 +511,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "9f9bdb18a09557b589dec61fcf0a865587a670a6e84ef183de74060e69d4b901",
+    "defects": "96cac07e50aca0b917f75bf10924610fc78a41f10828a117b7303306aebb5c60",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "efe25ddaf0ed98b865574cfcfbd75c73b5dd8c6fb04c7bf6b260ee4710cb37a0"
+    "probes": "39f82337b2c8ca248a0b83a75e186e750c77fe20cbdbbf7dc0387c165d98858c"
   },
   "fences": {
     "fence/collection-valued": {

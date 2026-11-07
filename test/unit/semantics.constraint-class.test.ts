@@ -24,7 +24,7 @@ import { loadModelText } from '@text/load';
 import { axiomsOf, obligationsOf, type Obligation, type ObligationSource } from '@semantics/obligations';
 import { parseExpr } from '@semantics/expr';
 import type { RefusalReason } from '@semantics/contracts';
-import type { SmtOutcome } from '@semantics/engines/smt';
+import { judgeBySmt, type SmtOutcome } from '@semantics/engines/smt';
 import { encodeRelation, encodeVariables } from '@semantics/smt/encode';
 import {
   BASES,
@@ -373,7 +373,7 @@ describe('a worklist row is sorted into exactly one shape or fence', () => {
       [rowsB, 'u.dur >= 1.0 [min]', 'lra', 'requirement-clause', ['units']],
       [rowsB, '(if u.v > 1.0 then u.v else u.w) >= 1.0', 'lra', 'requirement-clause', ['ite']],
       [rowsB, 'u.k / u.v < 5.0', 'nira/pinned', 'requirement-clause', ['div-guard']],
-      [rowsB, 'u.label == u.label2', 'lra', 'requirement-clause', ['text-as-real']],
+      [rowsB, 'u.label == u.label2', 'fence/non-numeric-operand', 'requirement-clause', ['text-as-real'], 'gate'],
       [rowsB, 'u.v / 0.0 > 1.0', 'fence/unsupported-operator', 'requirement-clause', [], 'encoder'],
       [rowsB, 'u.v ^ 40 > 1.0', 'fence/unsupported-operator', 'requirement-clause', [], 'encoder'],
     ];
@@ -1295,6 +1295,32 @@ describe('refine and fault-tree state what they sent, and nothing in them is pin
     expect(group).toMatchObject({ query: 'fault-tree', scope: 'group', basis: 'solver', script: { shape: 'lra' } });
     expect(ids(group.reading)).toEqual(['bind-equality', 'requirement-clause']);
     expect(need(classesOf(result))).toMatchObject({ scope: 'run', query: 'fault-tree' });
+  });
+
+  it('reads a vacuity whose core is the axioms and the goal\'s own guard as not-evaluable, any other core as vacuous (a5 F4)', async () => {
+    // A scripted backend: the negation is unsat; a script holding the goal's guard is unsat with every label as its
+    // core, less the premise's where `premiseInCore` is false; any other script is sat. The core decides the word.
+    const scripted = (premiseInCore: boolean): Z3Backend => ({
+      ...fakeBackend('sat'),
+      async check(script) {
+        const labels = [...script.matchAll(/:named \|([^|]*)\|/g)].map((m) => m[1]!);
+        const unsat = labels.some((l) => l.startsWith('goal:')) || labels.includes('side:VF::R::g');
+        const core = unsat ? labels.filter((l) => premiseInCore || !l.startsWith('premise:')) : [];
+        return { status: unsat ? 'unsat' : 'sat', reason: '', timedOut: false, timeoutMs: 1, elapsedMs: 0, witness: [], completion: [], core };
+      },
+    });
+    const m = await load(`package VF {
+  part def P { attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real; assert constraint a { y == 0.0 } }
+  part p : P;
+  requirement def R { subject s : P; assume constraint { s.x > 1.0 } require constraint g { s.x / s.y >= 1.0 } }
+  satisfy R by p;
+}`, 'vf.sysml');
+    const word = async (premiseInCore: boolean) => {
+      const r = (await judgeBySmt(m, obligationsOf(m), { backend: scripted(premiseInCore) })).find((x) => x.row.element.qualifiedName === 'VF::R::g')!;
+      return [r.judgement.outcome, r.judgement.detail.split(' (core')[0]];
+    };
+    expect(await word(false)).toEqual(['not-evaluable', "not evaluable at the model's values: the relation divides by `VF::P::y`, which the axioms fix at 0 wherever they hold"]);
+    expect((await word(true))[0]).toBe('vacuous');
   });
 
   it('is a label: the fault tree serialises the same under any levels', async () => {

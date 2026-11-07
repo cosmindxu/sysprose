@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseExpr, evaluate } from '../../src/semantics/index';
-import { GroupingError, exprEqual, exprRef, writtenChains } from '../../src/semantics/expr';
+import { exprEqual, exprRef, writtenChains } from '../../src/semantics/expr';
+import { evaluateDecided } from '../../src/semantics/exact';
 
 /** Evaluate a source string against an optional variable map. */
 function evalStr(src: string, vars: Record<string, unknown> = {}): unknown {
@@ -33,20 +34,23 @@ describe('semantics — expression parser + evaluator', () => {
     expect(evalStr('true implies false')).toBe(false);
   });
 
-  it('refuses the two connective chains KerML groups otherwise (FP1)', () => {
-    // KerML 8.2.5.8.1, Table 6: `implies` groups to the left and `xor` binds
-    // tighter than `or`; this reader groups both otherwise, so it does not read them.
-    for (const text of ['a implies b implies c', 'a or b implies c implies d', 'a or b xor c', 'a xor b or c xor d']) {
-      expect(() => parseExpr(text), text).toThrow(GroupingError);
-    }
-    expect(() => parseExpr('a implies b implies c')).toThrow('KerML groups it to the left');
-    expect(() => parseExpr('a or b xor c')).toThrow('KerML binds `xor` tighter than `or`');
-    // Grouped alike under both, or parenthesised: read.
-    for (const text of ['a xor b or c', 'a and b xor c', 'a implies b or c', 'a xor b xor c', '(a implies b) implies c',
-      'a implies (b implies c)', '(a or b) xor c', 'a or (b xor c)']) {
-      expect(() => parseExpr(text), text).not.toThrow();
-    }
+  it('groups connectives by KerML Table 6: `implies` to the left, `xor` above `or` (FP2)', () => {
+    // KerML 8.2.5.8.1, Table 6: every binary operator but `^` groups to the
+    // left, and `and` > `xor` > `or` > `implies`.
+    expect(evalStr('false implies false implies false')).toBe(false); // (F → F) → F; to the right it was T
+    expect(evalStr('true or true xor true')).toBe(true); // T or (T xor T); `(T or T) xor T` was F
     expect(evalStr('false xor true or false')).toBe(true);
+    for (const [text, twin] of [
+      ['a implies b implies c', '(a implies b) implies c'],
+      ['a or b implies c implies d', '((a or b) implies c) implies d'],
+      ['a or b xor c', 'a or (b xor c)'],
+      ['a xor b or c xor d', '(a xor b) or (c xor d)'],
+      ['a xor b or c', '(a xor b) or c'],
+      ['a and b xor c', '(a and b) xor c'],
+      ['a xor b xor c', '(a xor b) xor c'],
+    ]) {
+      expect(exprEqual(parseExpr(text), parseExpr(twin)), text).toBe(true);
+    }
   });
 
   it('evaluates comparisons', () => {
@@ -134,6 +138,34 @@ describe('semantics — expression parser + evaluator', () => {
     expect(evalStr('x and false')).toBe(false);
     expect(evalStr('x and (1 > 2)')).toBe(false);
     expect(evalStr('x and true')).toBe(UNKNOWN);
+  });
+
+  it('a5 F6: one connective table absorbs only a scope miss, never an ill-typed operand', () => {
+    // A name with no value is absorbed on either side (KerML 7.4.9.2), `x or true` included.
+    expect(evalStr('x or true')).toBe(true);
+    expect(evalStr('x implies true')).toBe(true);
+    expect(evalStr('(x > 1 and true) or true')).toBe(true);
+    // An ill-typed operand (a number, `not` of a number, a division by zero) has no Boolean: never absorbed,
+    // nor where a scope miss beside it is wrapped in a further connective.
+    for (const x of ['(a + 1)', 'not a', '(a / 0 > 1)', '(x and a)', '(x + true > 1)']) {
+      expect(evalStr(`${x} and false`, { a: 2 })).toBe(UNKNOWN);
+      expect(evalStr(`${x} or true`, { a: 2 })).toBe(UNKNOWN);
+      expect(evalStr(`${x} implies true`, { a: 2 })).toBe(UNKNOWN);
+    }
+    // The left operand alone still decides, without the right one; xor never absorbs.
+    expect(evalStr('false and (a + 1)', { a: 2 })).toBe(false);
+    expect(evalStr('true or (a + 1)', { a: 2 })).toBe(true);
+    expect(evalStr('false implies (a + 1)', { a: 2 })).toBe(true);
+    expect(evalStr('x xor true')).toBe(UNKNOWN);
+    // The exact fold reads the same table (it had no `x and false`).
+    const decided = (src: string) => {
+      const r = evaluateDecided(parseExpr(src), (n) => (n === 'a' ? 2 : undefined));
+      return 'value' in r ? r.value : UNKNOWN;
+    };
+    expect(decided('x and false')).toBe(false);
+    expect(decided('x or true')).toBe(true);
+    expect(decided('(a + 1) implies true')).toBe(UNKNOWN);
+    expect(decided('(x + true > 1) and false')).toBe(UNKNOWN);
   });
 
   it('produces a well-formed AST for a compound expression', () => {

@@ -49,6 +49,8 @@ import {
   statesStandingValue,
   equatedPartsFailed,
   equatedPartsRefusal,
+  headStandsAgainstAbove,
+  nameAtInstance,
   contradictedDefinitionConflict,
   contradictedDefinitionRefusal,
   contradictedDefinitionRefusalOf,
@@ -107,7 +109,7 @@ import {
 } from './defining-equation';
 import { anyHiddenByName, effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
-import { GroupingError, evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
   NO_MARKERS,
   bareLiteralRefusal,
@@ -1726,6 +1728,41 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
         delete i.abstention;
         delete i.cause;
       }
+      delete i.reads;
+      delete i.sides;
+    }
+  }
+  // A name a package head joins to an instance's standing value that an asserted relation contradicts, read per
+  // instance or on a definition's own row (headStandsAgainstAbove, F0): the package's rows abstain on it already
+  // (definedAgainstHead), and these read it as the package does — GH35's `cP in p1` at the 7 of `M == 7.0`, beside
+  // p3's `:>> m = 5.0`. A row that abstains already keeps its sentence; a slot's own standing value is still read.
+  // The predicate also holds where M is written with `=` and the assert is a violated check (GH110): such a row is
+  // left unknown too, an abstention.
+  for (const c of out) {
+    const names = relationNamesOf(c.expression);
+    const el = model.get(c.id);
+    const own =
+      c.result === 'unknown' || el?.ownerId == null
+        ? undefined
+        : names.map((n) => headStandsAgainstAbove(model, el.ownerId!, n, true)).find((x) => x !== undefined);
+    if (own !== undefined) {
+      c.result = 'unknown';
+      c.message = `Could not evaluate: ${own}`;
+      delete c.tie;
+      delete c.reads;
+      delete c.sides;
+    }
+    for (const i of c.instances ?? []) {
+      if (i.result === 'unknown') continue;
+      const each = names
+        .map((n) => headStandsAgainstAbove(model, i.contextId, nameAtInstance(model, i.contextId, i.instance, n)))
+        .find((x) => x !== undefined);
+      if (each === undefined) continue;
+      i.result = 'unknown';
+      i.message = `Could not evaluate: ${each}`;
+      i.detail = i.message;
+      i.abstention = 'two-values';
+      i.cause = 'two-values';
       delete i.reads;
       delete i.sides;
     }
@@ -3580,8 +3617,6 @@ function judgeBound(
   try {
     node = parseExpr(expr);
   } catch (e) {
-    // A connective chain KerML groups otherwise is not read, by any surface (FP1).
-    if (e instanceof GroupingError) return { result: 'unknown', message: e.message, gap: false };
     // The scalar grammar rejects unit literals (`2000 [kg]`); retry with the
     // unit-aware evaluator before giving up. When the text does carry a
     // bracket, the unit-aware reason is the real one — "Unexpected character

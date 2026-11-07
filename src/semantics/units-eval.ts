@@ -90,7 +90,7 @@ import {
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
-import { DOUBLE_DIGITS, checkGrouping, readQuotedName, significantDigitsOf } from './expr';
+import { connective, DOUBLE_DIGITS, readQuotedName, significantDigitsOf, type Tri } from './expr';
 import {
   addRationals,
   compareRationals,
@@ -751,23 +751,28 @@ export function quantityRefsIn(text: string): string[] | undefined {
 const Q_PRECEDENCE: Record<string, number> = {
   implies: 1,
   or: 2,
-  xor: 2,
-  and: 3,
-  '==': 4,
-  '=': 4,
-  '!=': 4,
-  '<': 5,
-  '<=': 5,
-  '>': 5,
-  '>=': 5,
-  '+': 6,
-  '-': 6,
-  '*': 7,
-  '/': 7,
-  '%': 7,
-  '^': 8,
+  xor: 3,
+  and: 4,
+  '==': 5,
+  '=': 5,
+  '!=': 5,
+  '<': 6,
+  '<=': 6,
+  '>': 6,
+  '>=': 6,
+  '+': 7,
+  '-': 7,
+  '*': 8,
+  '/': 8,
+  '%': 8,
+  '^': 9,
 };
-const Q_RIGHT_ASSOC = new Set(['^', 'implies']);
+/**
+ * KerML 8.2.5.8.1, Table 6: `and` > `xor` > `or` > `implies`, and every binary
+ * operator but exponentiation groups to the left (`a implies b implies c` is
+ * `(a implies b) implies c`; `a or b xor c` is `a or (b xor c)`).
+ */
+const Q_RIGHT_ASSOC = new Set(['^']);
 
 /**
  * Every operator this grammar reads: the binary ones, which are the precedence
@@ -783,8 +788,6 @@ export const UNIT_AWARE_OPERATORS: { readonly binary: readonly string[]; readonl
 
 class QParser {
   private pos = 0;
-  /** Binary nodes built by this parse that no parenthesis wraps (expr.ts `checkGrouping`). */
-  private readonly bare = new WeakSet<object>();
   constructor(private readonly toks: QTok[]) {}
 
   private peek(): QTok {
@@ -817,9 +820,7 @@ class QParser {
       this.next();
       const nextMin = Q_RIGHT_ASSOC.has(op) ? prec : prec + 1;
       const right = this.parseBinary(nextMin);
-      checkGrouping(op, left, right, this.bare);
       left = { kind: 'binary', op: op as QBinOp, left, right };
-      this.bare.add(left);
     }
     return left;
   }
@@ -868,7 +869,6 @@ class QParser {
       case 'lparen': {
         const inner = this.parseBinary(0);
         if (this.next().t !== 'rparen') throw new SyntaxError('Expected )');
-        this.bare.delete(inner);
         return inner;
       }
       case 'str':
@@ -994,7 +994,7 @@ export function describeReason(reason: QReason, detail?: string): string {
     case 'not-quantity':
       return 'a boolean was used where a quantity was needed';
     case 'division-by-zero':
-      return 'division by zero';
+      return 'division by zero: the divisor evaluates to zero';
     case 'empty':
       return 'the expression is empty';
     case 'contradiction':
@@ -1053,7 +1053,11 @@ type QScope = (name: string) => QEval | undefined;
  * already been composed on the way up (a derived feature naming the operand
  * that failed inside it) — the finished `message`.
  */
-type QUnknown = { unknown: true; reason: QReason; detail?: string; message?: string };
+/**
+ * `opaque`: an `unresolved` read beside an operand the connective table may not absorb (an ill-typed or refused one),
+ * which keeps its sentence but is never absorbed either ({@link qTri}).
+ */
+type QUnknown = { unknown: true; reason: QReason; detail?: string; message?: string; opaque?: true };
 type QEval = { q: Quantity } | { b: boolean } | QUnknown;
 const isQUnknown = (r: QEval): r is QUnknown => 'unknown' in r;
 const unknownQ = (reason: QReason, detail?: string, message?: string): QEval => ({
@@ -1236,35 +1240,39 @@ function evalQBinary(
   const op = node.op;
 
   if (op === 'and' || op === 'or' || op === 'xor' || op === 'implies') {
-    // The scalar evaluator's short-circuits ({@link ./expr}): `false and x`,
-    // `true or x`, `false implies x` and `x implies true` decide without x.
+    // The scalar evaluator's connective table ({@link connective}): an unknown is absorbed only when it is
+    // `unresolved`, a value this scope does not read; a refusal, an ill-typed operand or any other unknown never is.
     const l = evalQ(node.left, scope, tol, every);
-    if (!isQUnknown(l) && 'b' in l) {
-      if (op === 'and' && l.b === false) return { b: false };
-      if (op === 'or' && l.b === true) return { b: true };
-      if (op === 'implies' && l.b === false) return { b: true };
-    }
-    const r = evalQ(node.right, scope, tol, every);
-    if (op === 'implies' && !isQUnknown(r) && 'b' in r && r.b === true) return { b: true };
-    // And `x and false`, x a value this scope does not read: never a refusal, which the caller must hear of.
-    if (op === 'and' && isQUnknown(l) && !isRefusalReason(l.reason) && !isQUnknown(r) && 'b' in r && r.b === false) return { b: false };
-    if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
-    if (!('b' in l) || !('b' in r)) return unknownQ('not-boolean');
-    switch (op) {
-      case 'and':
-        return { b: l.b && r.b };
-      case 'or':
-        return { b: l.b || r.b };
-      case 'xor':
-        return { b: l.b !== r.b };
-      case 'implies':
-        return { b: !l.b || r.b };
-    }
+    let r: QEval | undefined;
+    const t = connective(op, qTri(l), () => qTri((r = evalQ(node.right, scope, tol, every))));
+    if (typeof t === 'boolean') return { b: t };
+    return connectiveUnknown(l, r, t.absorbable);
   }
 
   const l = evalQ(node.left, scope, tol, every);
   const r = evalQ(node.right, scope, tol, every);
   return combineQ(op, l, r, tol);
+}
+
+/** Is this an unknown {@link connective} may absorb: an `unresolved` no ill-typed operand stands behind? */
+const absorbableQ = (e: QEval): boolean => isQUnknown(e) && e.reason === 'unresolved' && e.opaque !== true;
+const opaqueQ = (u: QUnknown): QUnknown => ({ ...u, opaque: true });
+
+/** An operand of a connective as {@link connective} reads it: only an absorbable `unresolved` is absorbable. */
+function qTri(e: QEval): Tri {
+  if (isQUnknown(e)) return { unknown: true, absorbable: absorbableQ(e) };
+  return 'b' in e ? e.b : { unknown: true, absorbable: false };
+}
+
+/**
+ * The unknown a connective that decided nothing answers: the operand's ({@link worseUnknown}), or `not-boolean` where
+ * both are known and one is not a Boolean; an `unresolved` the table did not keep absorbable is `opaque`, so an
+ * enclosing connective never absorbs what an ill-typed operand made unknown.
+ */
+function connectiveUnknown(l: QEval, r: QEval | undefined, absorbable: boolean): QEval {
+  const u = r === undefined ? l : worseUnknown(l, r);
+  if (!isQUnknown(u)) return unknownQ('not-boolean');
+  return !absorbable && absorbableQ(u) ? opaqueQ(u) : u;
 }
 
 /**
@@ -1285,7 +1293,8 @@ function worseUnknown(l: QEval, r: QEval): QEval {
   const ru = isQUnknown(r) ? r : undefined;
   if (!lu) return ru ?? l;
   if (!ru) return lu;
-  return isRefusalReason(ru.reason) && !isRefusalReason(lu.reason) ? ru : lu;
+  const u = isRefusalReason(ru.reason) && !isRefusalReason(lu.reason) ? ru : lu;
+  return absorbableQ(u) && !absorbableQ(u === lu ? ru : lu) ? opaqueQ(u) : u;
 }
 
 /** Apply an arithmetic/comparison operator to two evaluated operands. */
@@ -1293,7 +1302,12 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
   // A refusal on either side wins, for the same reason it does in `and`/`or`:
   // which operand happened to be written first must not decide whether the
   // caller may fall back to raw magnitudes.
-  if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
+  if (isQUnknown(l) || isQUnknown(r)) {
+    const u = worseUnknown(l, r);
+    // Beside a Boolean where a quantity is needed, no value of the unread name gives a quantity: never absorbed.
+    const besideBoolean = (!isQUnknown(l) && 'b' in l) || (!isQUnknown(r) && 'b' in r);
+    return besideBoolean && op !== '==' && op !== '=' && op !== '!=' && absorbableQ(u) ? opaqueQ(u as QUnknown) : u;
+  }
   if (!('q' in l) || !('q' in r)) return unknownQ('not-quantity');
   const a = l.q;
   const b = r.q;
@@ -1332,6 +1346,9 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
         // `d ^ t <= 10.0` VIOLATED on both surfaces.
         return unknownQ('dimension-fault', `an exponent must be dimensionless, not ${dimToString(b.dimension)}`);
       }
+      // A negative power of zero divides by zero, as `/` does: `0.0 ^ -1` is Infinity in binary64, and
+      // `x * y ^ -1 >= 1.0` at y = 0 read T on the check, literal and numeric surfaces (a5 F4a).
+      if (sa === 0 && exp < 0) return unknownQ('division-by-zero');
       // A power of the base's conversion, by the exponent's NUMBER — which has
       // to be a number: `2.0 ^ cap` is 2^(2^34) in bits and 2^(2^31) in bytes.
       const power = (pa: number, pb: number): number => (pb !== 0 ? Number.NaN : pa * exp);
