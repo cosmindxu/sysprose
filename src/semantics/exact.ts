@@ -42,7 +42,7 @@
  * factors are logarithms) is that double's own rational.
  */
 
-import { type ExprNode } from './expr';
+import { connective, type ExprNode, type Tri } from './expr';
 import { decimalRational, numeralRational, scaleRational, type Rational } from './smt/encode';
 import { resolveUnit, type FactorTerm } from './units';
 
@@ -399,12 +399,32 @@ export type ExactScope = (name: string) => Rational | undefined;
  * a number, when it has one — or unknown, carrying the tie it could not
  * decide when that was why.
  */
-export type DecidedResult = { value: unknown; exact?: Rational } | { unknown: true; tie?: Tie };
+export type DecidedResult = { value: unknown; exact?: Rational } | { unknown: true; tie?: Tie; absorbable?: true };
 
 type Folded = DecidedResult;
 
 const UNKNOWN: Folded = { unknown: true };
+/** A scope miss: the one unknown the connective table ({@link connective}) may absorb. */
+const MISSING: Folded = { unknown: true, absorbable: true };
 const known = (r: Folded): r is { value: unknown; exact?: Rational } => !('unknown' in r);
+const absorbable = (r: Folded): boolean => !known(r) && r.absorbable === true;
+
+/**
+ * Of two operand results at least one unknown, the unknown to pass on: a non-absorbable one (a tie) wins, and a scope
+ * miss beside a Boolean where a number is needed (`op` not an equality) is no longer absorbable, as `evaluate` reads it.
+ */
+function unknownOf(l: Folded, r: Folded, op?: string): Folded {
+  if (!known(l) && !absorbable(l)) return l;
+  if (!known(r) && !absorbable(r)) return r;
+  const other = known(l) ? l : r;
+  if (op !== undefined && known(other) && typeof other.value === 'boolean' && op !== '==' && op !== '=' && op !== '!=') return UNKNOWN;
+  return known(l) ? r : l;
+}
+
+function triOf(r: Folded): Tri {
+  if (!known(r)) return { unknown: true, absorbable: absorbable(r) };
+  return typeof r.value === 'boolean' ? r.value : { unknown: true, absorbable: false };
+}
 
 /**
  * `evaluate` of ./expr with every comparison of two numbers DECIDED
@@ -444,7 +464,7 @@ function fold(node: ExprNode, scope: (name: string) => unknown, exact: ExactScop
     case 'ref': {
       const name = node.path.join('.');
       const v = scope(name);
-      if (v === undefined) return UNKNOWN;
+      if (v === undefined) return MISSING;
       const e = typeof v === 'number' ? exact(name) : undefined;
       return e ? { value: v, exact: e } : { value: v };
     }
@@ -474,38 +494,20 @@ function foldBinary(
   opts: DecideOptions,
 ): Folded {
   const op = node.op;
-  // The short-circuits of `evaluate`, exactly: `false and x`, `true or x`,
-  // `false implies x` and `x implies true` decide without x.
+  // The connective table of `evaluate`, exactly ({@link connective}).
   if (op === 'and' || op === 'or' || op === 'implies' || op === 'xor') {
     const l = fold(node.left, scope, exact, opts);
-    if (op === 'and' && known(l) && l.value === false) return { value: false };
-    if (op === 'or' && known(l) && l.value === true) return { value: true };
-    const r = fold(node.right, scope, exact, opts);
-    if (op === 'implies') {
-      if (known(l) && l.value === false) return { value: true };
-      if (known(r) && r.value === true) return { value: true };
-    }
-    if (!known(l)) return l;
-    if (!known(r)) return r;
-    const a = l.value;
-    const b = r.value;
-    if (typeof a !== 'boolean' || typeof b !== 'boolean') return UNKNOWN;
-    switch (op) {
-      case 'and':
-        return { value: a && b };
-      case 'or':
-        return { value: a || b };
-      case 'xor':
-        return { value: a !== b };
-      case 'implies':
-        return { value: !a || b };
-    }
+    let r: Folded | undefined;
+    const t = connective(op, triOf(l), () => triOf((r = fold(node.right, scope, exact, opts))));
+    if (typeof t === 'boolean') return { value: t };
+    const u = r === undefined ? l : unknownOf(l, r);
+    if (known(u)) return UNKNOWN;
+    return t.absorbable || !absorbable(u) ? u : UNKNOWN;
   }
 
   const l = fold(node.left, scope, exact, opts);
   const r = fold(node.right, scope, exact, opts);
-  if (!known(l)) return l;
-  if (!known(r)) return r;
+  if (!known(l) || !known(r)) return unknownOf(l, r, op);
   const a = l.value;
   const b = r.value;
   switch (op) {

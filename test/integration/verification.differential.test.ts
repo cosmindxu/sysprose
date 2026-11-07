@@ -18079,6 +18079,45 @@ package PS {
       'NB8::R::«ConstraintUsage» in NB8::«Satisfy»': ['F/-/F/-', 'F'],
       'NB8::R::«ConstraintUsage» in NB8::s0': ['-/F/-/F', 'F'],
     }),
+    // a5 (2026-11-07) F6: one connective table on every evaluator (KerML 7.4.9.2). An unknown operand is absorbed
+    // (`x and false`, `x or true`, `x implies true`) only where it is a value the model does not give (u), never where it
+    // is ill-typed (a length against a time, a Boolean plus a number), which no completion makes a Boolean. Before F6
+    // `ci` read T/T/T/? (`x implies true` took any x) and `cor` ?/?/?/T beside `cor2` T/T/T/T (no `x or true`).
+    ...Object.fromEntries(
+      (['a5-conn', 'a5-conn-rev'] as const).map((k) => {
+        const text = `package K2 {
+  attribute a : ScalarValues::Real = 2.0;
+  attribute d : ISQ::LengthValue = 5.0 [SI::m];
+  attribute t : ISQ::TimeValue = 3.0 [SI::s];
+  attribute u : ScalarValues::Real;
+  attribute b : ScalarValues::Boolean = true;
+  constraint ci { d > t implies a <= 5.0 }
+  constraint ci2 { d > t implies a >= 5.0 }
+  constraint cior { d > t or a <= 5.0 }
+  constraint cand { d > t and a >= 5.0 }
+  constraint cand2 { a >= 5.0 and d > t }
+  constraint cor { u >= 1.0 or a <= 5.0 }
+  constraint cor2 { a <= 5.0 or u >= 1.0 }
+  constraint cimp { u >= 1.0 implies a <= 5.0 }
+  constraint cuf { u >= 1.0 and a >= 5.0 }
+  constraint cill { (b + 1.0 > 2.0) or true }
+  constraint cillf { (b + 1.0 > 2.0) and false }
+}`;
+        return [k, probe(k === 'a5-conn' ? text : reversedMembers(text), {
+          'K2::ci': ['?/?/?/?', null],
+          'K2::ci2': ['?/?/?/?', null],
+          'K2::cior': ['?/?/?/?', null],
+          'K2::cand': ['?/?/?/?', null],
+          'K2::cand2': ['F/F/F/F', 'F'],
+          'K2::cor': ['T/T/T/T', 'T'],
+          'K2::cor2': ['T/T/T/T', 'T'],
+          'K2::cimp': ['T/T/T/T', 'T'],
+          'K2::cuf': ['F/F/F/F', 'F'],
+          'K2::cill': ['?/?/?/?', null],
+          'K2::cillf': ['?/?/?/?', null],
+        })];
+      }),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19255,6 +19294,8 @@ package PS {
     // a5 FP2: a connective chain reads as its Table 6 parenthesised twin.
     ['a5-kimp', 'a5-kimpl'],
     ['a5-kxor', 'a5-kxorp'],
+    // a5 F6: the connective table in either text order.
+    ['a5-conn', 'a5-conn-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

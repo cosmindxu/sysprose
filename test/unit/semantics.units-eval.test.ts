@@ -76,6 +76,33 @@ describe('semantics — the unit-aware parser groups connectives as expr.ts does
   });
 });
 
+describe('semantics — the unit-aware evaluator reads the one connective table (F6)', () => {
+  it('absorbs an `unresolved` operand only, never an ill-typed or refused one', () => {
+    const verdict = (expression: string) => {
+      const m = new Model();
+      const p = m.create('Package', { declaredName: 'P' });
+      return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+    };
+    const no = '1 [m] > 2 [m]';
+    const yes = '1 [m] < 2 [m]';
+    // A name with no value: `x or true` too.
+    expect(verdict(`u > 1 [m] or ${yes}`)).toBe('satisfied');
+    expect(verdict(`u > 1 [m] implies ${yes}`)).toBe('satisfied');
+    expect(verdict(`u > 1 [m] and ${no}`)).toBe('violated');
+    // A Boolean plus a number (`not-quantity`), a number as an operand (`not-boolean`), a length against a time (a
+    // refusal): no completion gives them a Boolean.
+    for (const x of ['(true + 1 [m] > 2 [m])', '(1 [m] + 1 [m])', '(1 [m] > 2 [s])', '(u > 1 [m] and 1 [m])', '(u + true > 1 [m])']) {
+      expect(verdict(`${x} and ${no}`), x).toBe('unknown');
+      expect(verdict(`${x} or ${yes}`), x).toBe('unknown');
+      expect(verdict(`${x} implies ${yes}`), x).toBe('unknown');
+    }
+    // The left operand alone still decides; xor never absorbs.
+    expect(verdict(`${no} and (1 [m] > 2 [s])`)).toBe('violated');
+    expect(verdict(`${yes} or (true + 1 [m] > 2 [m])`)).toBe('satisfied');
+    expect(verdict(`u > 1 [m] xor ${yes}`)).toBe('unknown');
+  });
+});
+
 describe('semantics — dimensionalFacets', () => {
   it('returns unit and kind dimensions for a typed feature with a value unit', () => {
     const m = libModel();
