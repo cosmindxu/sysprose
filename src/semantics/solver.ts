@@ -2767,6 +2767,20 @@ function affineForm(
   }
 }
 
+/** The root in `u` of `eq` where it is affine in `u` alone with a coefficient written ({@link affineForm}), every other feature at its value. */
+function affineRoot(eq: Equation, u: ElementId, values: Map<ElementId, number>): number | undefined {
+  const only = (id: ElementId | undefined): boolean => id === u;
+  const scope = idScope(eq, values);
+  const l = affineForm(eq.lhs, eq, only, scope);
+  const r = l && affineForm(eq.rhs, eq, only, scope);
+  if (!l || !r) return undefined;
+  const zero: Rational = { num: 0n, den: 1n };
+  const a = addRationals(l.a.get(u) ?? zero, negateRational(r.a.get(u) ?? zero));
+  if (!a || a.num === 0n) return undefined;
+  const t = (r.b - l.b) / (Number(a.num) / Number(a.den));
+  return Number.isFinite(t) ? t : undefined;
+}
+
 /** The exact value of `node` where it is numerals under `+ − × ÷` alone ({@link writtenRational}); `undefined` otherwise. */
 function numeralsValue(node: ExprNode): Rational | undefined {
   switch (node.kind) {
@@ -3272,13 +3286,43 @@ function designReadings(
     const model = roots.some((eq) => !isCheck(eq));
     if (model ? plain.length >= 1 : plain.length >= 2) rivalRoots.set(root, model ? 'model' : 'plain');
   }
+  // Agreement judged both ways, so it is the same whichever of two equations the text gave first: an unused one over a
+  // single produced feature agrees only where the equations the solve took also hold at the value the unused one fixes it
+  // to, each one that then has one produced feature left re-solved for it in turn. Of `x == 0.000003000000001` and
+  // `2.0 / (7.0 * x) - 95238.0952 == 0.0` the quotient held at the pin's x, the pin missed by 6e-6 at the quotient's: one
+  // agreed, the other missed, by text order. Now both miss.
+  const agreesBack = (eq: Equation): boolean => {
+    const own = eq.vars.filter(produced);
+    if (own.length !== 1) return true;
+    const at = new Map(values);
+    const moved = new Set<ElementId>();
+    const take = (o: Equation, v: ElementId): boolean => {
+      const x = solveScalar(o, v, at, tol);
+      if (x === undefined) return false;
+      at.set(v, x);
+      moved.add(v);
+      return true;
+    };
+    if (!take(eq, own[0]!)) return false;
+    const reading = [...used].filter((o) => o.vars.every((w) => at.has(w)));
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const o of reading) {
+        const left = o.vars.filter((w) => produced(w) && !moved.has(w));
+        if (left.length !== 1 || !o.vars.some((w) => moved.has(w))) continue;
+        if (!take(o, left[0]!)) return false;
+        grew = true;
+      }
+    }
+    return reading.every((o) => !o.vars.some((w) => moved.has(w)) || holdsAt(o, at, tol));
+  };
   const missed = new Set<Equation>();
   const roots = new Set<ElementId>();
   for (const eq of unused) {
     const root = rootOf(eq);
     if (!design.has(root) || rivalRoots.has(root)) continue;
     const r = residualOf(eq, values);
-    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol) && nearRoot(eq, values, r)) {
+    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol) && nearRoot(eq, values, r) && agreesBack(eq)) {
       agreeing.add(eq);
     } else {
       missed.add(eq);
@@ -4472,6 +4516,15 @@ function solveScalar(
       else values.set(u, prev);
     }
   };
+
+  // Affine in `u` with a coefficient written ({@link affineForm}): the root is read off, −b / a, not stepped to by a
+  // finite-difference slope. That slope carries binary64 noise (`y == 2.0 * x + 1.0` from y = 1.0014000000014 left x 1e-10
+  // off), and a curved equation judged at x then held or missed by which of the two the text gave first.
+  const link = affineRoot(eq, u, values);
+  if (link !== undefined) {
+    const fv = f(link);
+    if (fv !== undefined && settled(link, fv)) return link;
+  }
 
   // Newton with finite-difference derivative.
   let t = seed;

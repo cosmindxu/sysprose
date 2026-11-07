@@ -13805,6 +13805,46 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         'DUP::k': ['?/?/T/?', null],
       },
     ),
+    // The digits a value is given to (TODO 286 (a)). A pin to ten digits beside a steep quotient (D) read both imposed
+    // with the quotient first and `?` with the pin first: the quotient's residual at the pin is over its gate, the pin's
+    // at the quotient's root is not. Agreement is judged both ways now: `?` in both orders. A value taken through an
+    // affine link by a finite-difference slope (G) was 1e-10 off, and the quotient after it missed its gate with the pin
+    // written first: the link is read off exactly, and all three are imposed in both orders. A5x092's t0 read F with e0
+    // first and `?` after it (z = 0.5: F in both), and A6x086 read `?` in both orders for different reasons.
+    ...reversed(
+      'order-digits-pin',
+      `package DGP { attribute x : ScalarValues::Real;
+        constraint e0 { 2.0 / (7.0 * x) - 95238.0952 == 0.0 }
+        constraint q1 { x == 0.000003000000001 } }`,
+      `package DGP { constraint q1 { x == 0.000003000000001 } constraint e0 { 2.0 / (7.0 * x) - 95238.0952 == 0.0 }
+        attribute x : ScalarValues::Real; }`,
+      { 'DGP::e0': ['?/?/?/?', '?'], 'DGP::q1': ['?/?/?/?', '?'] },
+    ),
+    ...reversed(
+      'order-digits-link',
+      `package DGL { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real;
+        constraint q1 { y == 1.0014000000014 }
+        constraint l1 { y == 2.0 * x + 1.0 }
+        constraint e0 { -3333.33333 == 7.0 / (-3.0 * x) } }`,
+      `package DGL { constraint e0 { -3333.33333 == 7.0 / (-3.0 * x) } constraint l1 { y == 2.0 * x + 1.0 }
+        constraint q1 { y == 1.0014000000014 } attribute y : ScalarValues::Real; attribute x : ScalarValues::Real; }`,
+      { 'DGL::e0': ['?/?/t/?', '?'], 'DGL::l1': ['?/?/t/?', '?'], 'DGL::q1': ['?/?/t/?', '?'] },
+    ),
+    ...reversed(
+      'order-digits-a5x092',
+      `package A5x092 { part def P { attribute z : ScalarValues::Real; attribute m : ScalarValues::Real; attribute s : ScalarValues::Real = -2.0; }
+        part p : P { constraint e0 { -z * 2.0 + s == (-3.0) + m * 0.5 } assert constraint e1 { 2.5 * m == 0.0 }
+          constraint k0 { z * m == 0.0 } constraint t0 { z <= 0.0 } } }`,
+      `package A5x092 { part p : P { constraint t0 { z <= 0.0 } constraint k0 { z * m == 0.0 } assert constraint e1 { 2.5 * m == 0.0 }
+          constraint e0 { -z * 2.0 + s == (-3.0) + m * 0.5 } }
+        part def P { attribute s : ScalarValues::Real = -2.0; attribute m : ScalarValues::Real; attribute z : ScalarValues::Real; } }`,
+      {
+        'A5x092::p::e0': ['?/?/t/?', '?'],
+        'A5x092::p::e1': ['?/-/T/-', null],
+        'A5x092::p::k0': ['?/?/t/T', '?'],
+        'A5x092::p::t0': ['?/?/F/?', null],
+      },
+    ),
     // An equation whose two sides are the same expression, or the same polynomial, fixes nothing (TODO 286 (d)).
     // TAUT's `c0 { y == y }` was a design equation for y that oriented nothing: beside `c1 { y == 0.5 }` the two
     // read as plain constraints that disagree with c0 written first (every row `?`), and c1 imposed with it written
