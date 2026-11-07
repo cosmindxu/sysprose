@@ -932,6 +932,21 @@ describe('a judgement carries the constraint class of what it stood on', () => {
     expect([ok.outcome, ok.classes.goal.shape, ok.classes.script?.shape, ok.classes.logic]).toEqual(['proved', 'nra-div', 'nra-div', 'QF_NRA']);
   });
 
+  withZ3('proves a division KerML never evaluates: the guard holds only on its path (a5 F4a)', async (z3) => {
+    // `y == 0.0 or x / y >= 1.0` with y = 0: the right operand is not evaluated, so its guard is not assumed. It was
+    // unconditional, contradicted the axiom, and the proofs were vacuous.
+    const by = (await classed(z3, `package VACOR {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
+  assert constraint a { y == 0.0 }
+  requirement def R {
+    require constraint g { y == 0.0 or x / y >= 1.0 }
+    require constraint h { y != 0.0 implies x / y >= 1.0 }
+    require constraint k { x / y >= 1.0 }
+  }
+}`)).by;
+    expect(['g', 'h', 'k'].map((c) => by.get(`VACOR::R::${c}`)!.judgement.outcome)).toEqual(['proved', 'proved', 'vacuous']);
+  });
+
   withZ3('moves no verdict when every level is replaced, or when the classifier throws (CC-20)', async (z3) => {
     const strip = (rs: Array<{ judgement: SmtJudgement }>) => rs.map((r) => ({ ...r.judgement, classes: undefined }));
     const { model } = await loadModelText(M4, { library: 'full' });

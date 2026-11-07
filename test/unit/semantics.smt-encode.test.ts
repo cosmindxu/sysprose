@@ -354,6 +354,40 @@ describe('a variable divisor is guarded, and the guard is reported', () => {
     expect(r.sideConditions[0].detail).toContain('P::d');
   });
 
+  // a5 F4a: KerML does not evaluate the right operand of `and`/`implies` where the left is false, of `or` where it is
+  // true, nor the `if` branch not taken (kerml.txt:3957–3972), so the guard there holds only on that path.
+  it.each([
+    ['d == 0.0 or x / d >= 1.0', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    ['d != 0.0 and x / d >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['d != 0.0 implies x / d >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['not (d == 0.0 or x / d >= 1.0)', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    ['(if d != 0.0 then x / d else 0.0) >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['(if d == 0.0 then 0.0 else x / d) >= 1.0', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    [
+      'x > 0.0 and (d == 0.0 or x / d >= 1.0)',
+      '(=> (and (> |P::x| 0.0) (not (= |P::d| 0.0))) (distinct |P::d| 0.0))',
+      'is true and',
+    ],
+  ])('conditions the guard on the KerML path condition: %s', (body, guard, says) => {
+    const r = encode(body, [v('x'), v('d', { free: true })]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.sideConditions.map((s) => s.term)).toEqual([guard]);
+    expect(r.sideConditions[0]!.detail).toContain(`, where `);
+    expect(r.sideConditions[0]!.detail).toContain(says);
+  });
+
+  it.each(['d == 0.0 xor x / d >= 1.0', 'x / d >= 1.0 or d == 0.0', 'x / d >= 1.0 and d != 0.0', '(d == 0.0) == (x / d >= 1.0)'])(
+    'keeps the guard unconditional where KerML evaluates the operand: %s',
+    (body) => {
+      const r = encode(body, [v('x'), v('d', { free: true })]);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.sideConditions.map((s) => s.term)).toEqual(['(distinct |P::d| 0.0)']);
+      expect(r.sideConditions[0]!.detail).not.toContain(', where ');
+    },
+  );
+
   it('adds nothing when the divisor is a literal', () => {
     const r = encode('x / 2.0 >= 1.0', [v('x')]);
     expect(r.ok).toBe(true);

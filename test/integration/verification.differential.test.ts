@@ -18043,6 +18043,30 @@ package PS {
       'IMP3::RQ::«ConstraintUsage» in IMP3::h': ['-/X/-/X', null],
       'IMP3::RQ::«ConstraintUsage» in IMP3::«Satisfy»': ['F/-/F/-', 'F'],
     }),
+    // a5 (2026-11-07) F4a: KerML does not evaluate the right operand of `or` where the left is true, nor of `implies`
+    // where it is false (kerml.txt:3957–3972), so the `y ≠ 0` guard of `x / y` there holds only on that path. It was
+    // unconditional, contradicted y = 0, and g and h read V; now they are proved, as the check reads them. The bare
+    // division k still rests on its guard and stays vacuous.
+    'a5-vacor': probe(`package VACOR {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
+  assert constraint a { y == 0.0 }
+  constraint g { y == 0.0 or x / y >= 1.0 }
+  constraint h { y != 0.0 implies x / y >= 1.0 }
+}`, { 'VACOR::a': ['T/-/T/-', 'T'], 'VACOR::g': ['T/T/T/T', 'T'], 'VACOR::h': ['T/T/T/T', 'T'] }),
+    'a5-vacorv': probe(`package VACORV {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real = 0.0;
+  constraint g { y == 0.0 or x / y >= 1.0 }
+  constraint h { y != 0.0 implies x / y >= 1.0 }
+  constraint k { x / y >= 1.0 }
+}`, { 'VACORV::g': ['T/T/T/T', 'T'], 'VACORV::h': ['T/T/T/T', 'T'], 'VACORV::k': ['?/?/?/V', null] }),
+    // a5 F4a (fix-or-fence): a negative power of zero is a division by zero, but the quantity reader computed
+    // `0.0 ^ -1` as Infinity and read `x * y ^ -1 >= 1.0` at y = 0 T on check, literal and numeric. It now refuses with
+    // `division-by-zero`; SMT refuses the negative exponent at the gate.
+    'a5-negpow0': probe(`package NEGPOW {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real = 0.0;
+  constraint k { x * y ^ -1 >= 1.0 }
+  constraint n { not (y == 0.0 and y ^ -2 >= 1.0) }
+}`, { 'NEGPOW::k': ['?/U/?/U', null], 'NEGPOW::n': ['?/U/?/U', null] }),
     // a5 (2026-11-06) F2: `assert not satisfy R by s0;` parsed as a bare `assert not` and a `satisfy` beside it, and the
     // `satisfy` was read as the plain satisfaction: R for s0 F (nb7) and T (nb3) on every surface, under a hint that said
     // the checks abstain. The mapper refuses the statement whole (`mapper/negated-assert-unread`): no satisfy edge, no

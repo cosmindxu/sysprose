@@ -2868,7 +2868,9 @@ The `side` member is worth knowing about. Where a relation divides by something
 your model can vary, the encoding asserts the divisor is non-zero — an
 assumption *it* added, not a fact you wrote — and labels it with the name of the
 row it guards. So the same qualified name can appear twice in one core, once as
-an axiom and once as a side condition, and both are real.
+an axiom and once as a side condition, and both are real. A division KerML
+evaluates only on one path — the right of `and`, `or` or `implies`, a branch of `if` — is assumed non-zero only
+on that path, and the side condition's sentence ends with it ("where `…` is false").
 
 `--why` decides nothing: the claim, the code and the exit status are identical
 with the flag and without it, and nothing it prints reaches the evidence record.

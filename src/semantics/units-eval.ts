@@ -994,7 +994,7 @@ export function describeReason(reason: QReason, detail?: string): string {
     case 'not-quantity':
       return 'a boolean was used where a quantity was needed';
     case 'division-by-zero':
-      return 'division by zero';
+      return 'division by zero: the divisor evaluates to zero';
     case 'empty':
       return 'the expression is empty';
     case 'contradiction':
@@ -1346,6 +1346,9 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
         // `d ^ t <= 10.0` VIOLATED on both surfaces.
         return unknownQ('dimension-fault', `an exponent must be dimensionless, not ${dimToString(b.dimension)}`);
       }
+      // A negative power of zero divides by zero, as `/` does: `0.0 ^ -1` is Infinity in binary64, and
+      // `x * y ^ -1 >= 1.0` at y = 0 read T on the check, literal and numeric surfaces (a5 F4a).
+      if (sa === 0 && exp < 0) return unknownQ('division-by-zero');
       // A power of the base's conversion, by the exponent's NUMBER — which has
       // to be a number: `2.0 ^ cap` is 2^(2^34) in bits and 2^(2^31) in bytes.
       const power = (pa: number, pb: number): number => (pb !== 0 ? Number.NaN : pa * exp);
