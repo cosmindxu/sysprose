@@ -68,15 +68,6 @@
       "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface)."
     },
     {
-      "id": "D-string-as-real",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "text-as-real"
-      ],
-      "kind": "wrong-statement",
-      "note": "A String-typed feature gets sort Real (contracts.ts), so a comparison of two strings is a comparison of two reals nothing pins."
-    },
-    {
       "id": "D-x-pow-neg",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
       "classes": [

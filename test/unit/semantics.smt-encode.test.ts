@@ -331,6 +331,19 @@ describe('what the encoder refuses, and with which reason', () => {
     expect(relationWith(model, 'x > 1.0 xor').encodable).toBe(true);
   });
 
+  it('refuses a relation over a String feature at the gate, as it refuses a string literal (F5)', async () => {
+    const model = await load(`package T {
+  attribute s : ScalarValues::String = "abc";
+  attribute x : ScalarValues::Real = 2.0;
+  constraint k { x > 1.0 and s == s }
+}`);
+    const k = relationWith(model, 's == s');
+    expect(k.encodable).toEqual({
+      reason: 'non-numeric-operand',
+      detail: '`s` is typed `String`, a text value this lane does not encode as a number, so no bound, witness or proof is read over it',
+    });
+  });
+
   it('refuses a qualified name no SMT symbol can carry, rather than mangling it', () => {
     const r = encode('x >= 1.0', [v('x', { qualifiedName: 'P::a|b' })]);
     expect(r.ok).toBe(false);

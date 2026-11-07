@@ -7,7 +7,7 @@ Everything Sysprose hands to z3, or refuses to hand over, is sorted into a **con
 
 **Label only; no verdict changes.** A class is a label: it moves no verdict, no code, no exit code, no `detail`, no digest and no script byte. A level states the evidence this build holds for each class (docs/CONSTRAINT-CLASSES.md). It is not a verdict on any model and moves no verdict.
 
-The register is version 1; its facts were measured under z3 5.3.1. This page prints the **23 constraint classes** that have a row in the corpus (6 shapes, 2 modifiers, 6 readings, 9 fences). A class with no row is kept in the register and is not printed until a row stands in it.
+The register is version 1; its facts were measured under z3 5.3.1. This page prints the **24 constraint classes** that have a row in the corpus (6 shapes, 3 modifiers, 6 readings, 9 fences). A class with no row is kept in the register and is not printed until a row stands in it.
 
 ## What exists today
 
@@ -42,7 +42,7 @@ A fence has its own three states: `fenced` when a test pins each layer it is pro
 
 Where the printed classes stand now:
 
-- `experimental`: `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance`.
+- `experimental`: `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `text-as-real`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance`.
 - `tested`: `lira`, `nra-div/pinned`.
 - `differential-tested`: `lra`, `units`, `stated-value`, `defining-equation`, `requirement-clause`.
 - `fenced`: `fence/no-formal-clause`, `fence/unresolved-name`, `fence/dimension-clash`, `fence/offset-arithmetic`, `fence/refused-derivation`, `fence/non-numeric-operand`.
@@ -63,6 +63,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 6 (4) | 0 | none | `tested` |
 | `units` | 98 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
+| `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `stated-value` | 311 | 78 | 1 | 7 | 606 (264) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
@@ -162,6 +163,19 @@ An extra reading that rides on a shape. A modifier only ever lowers the weakest 
 - **Tests.**
   - `test/unit/semantics.smt-encode.test.ts`: “declares the stored magnitude and reads `factor·x`, with the literal in SI”
   - `test/unit/semantics.smt-encode.test.ts`: “reads both through the same factor, as the decimal the registry writes”
+
+### `text-as-real`
+
+- **Encodes.** A relation over a String feature, refused at the gate; a violation at the model's values is still `refuted` on the check's point evaluation.
+- **Verdict words it can produce.** `refuted`, `unsupported`.
+- **Level of `text-as-real`.** `experimental` (first unmet: a decided golden row, have 0).
+- **Limits.**
+  - `refuted` only through the point evaluation; `s.a == s.b` ("bus", "car") is `refuted`, basis `point-evaluation`. Pinned by `test/integration/smt-z3.integration.test.ts`: “reads the basis off the trace and not off the verdict word (CC-42b)”.
+  - Equal strings and `!=` are `unsupported-construct`.
+- **Open defects.**
+  - `D-bound-detail` (wrong-statement): bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface).
+- **Tests.**
+  - `test/unit/semantics.constraint-class.test.ts`: “marks a row over a String feature `text-as-real`, and no other”
 
 ### `partial-context`
 

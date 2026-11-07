@@ -1009,6 +1009,23 @@ export function gateRelation(
     );
   }
 
+  // A String is a text value. A string literal in a body is refused at the encoder, so a String feature is refused
+  // alike, here: read as an unpinned Real, a satisfied `s == t` reached "witness not confirmed" over a value no
+  // solver could choose. A violation at the model's values is still `refuted` through the point evaluation.
+  const text = variables.find((v) => typeNamesOf(model, v.featureId).has('String'));
+  if (text) {
+    return refused(
+      expression,
+      {
+        reason: 'non-numeric-operand',
+        detail: `\`${text.path}\` is typed \`String\`, a text value this lane does not encode as a number, so no bound, witness or proof is read over it`,
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
+  }
+
   // The dimensional half of the gate, asked on its own so the reason is exact.
   if (relationRefused(model, node, varIds, nameToId, markers, memo, true)) {
     return refused(

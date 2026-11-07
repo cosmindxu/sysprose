@@ -406,8 +406,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 1,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 0,
-      "rows": 0,
+      "models": 2,
+      "rows": 2,
       "tableAgree": 0,
       "tableDisagree": 0,
       "tableProbes": 0
@@ -493,15 +493,6 @@ export const CLASS_FACTS: ClassFacts = {
     },
     {
       "classes": [
-        "text-as-real"
-      ],
-      "id": "D-string-as-real",
-      "kind": "wrong-statement",
-      "note": "A String-typed feature gets sort Real (contracts.ts), so a comparison of two strings is a comparison of two reals nothing pins.",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
         "fence/unsupported-operator"
       ],
       "id": "D-x-pow-neg",
@@ -520,9 +511,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "439b6c6883de065960b7b1cdd6bad359eb88060acf3d1608815fe235460dd182",
+    "defects": "96cac07e50aca0b917f75bf10924610fc78a41f10828a117b7303306aebb5c60",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "298cc329787dad9f0bbdb2e779a0ce672be9360f88171aed2926a09fd9a724ce"
+    "probes": "39f82337b2c8ca248a0b83a75e186e750c77fe20cbdbbf7dc0387c165d98858c"
   },
   "fences": {
     "fence/collection-valued": {

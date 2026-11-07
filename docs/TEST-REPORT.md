@@ -624,6 +624,7 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 6 (4) | 0 | none | `tested` |
 | `units` | 98 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
+| `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `stated-value` | 311 | 78 | 1 | 7 | 606 (264) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |

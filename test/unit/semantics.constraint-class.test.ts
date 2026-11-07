@@ -373,7 +373,7 @@ describe('a worklist row is sorted into exactly one shape or fence', () => {
       [rowsB, 'u.dur >= 1.0 [min]', 'lra', 'requirement-clause', ['units']],
       [rowsB, '(if u.v > 1.0 then u.v else u.w) >= 1.0', 'lra', 'requirement-clause', ['ite']],
       [rowsB, 'u.k / u.v < 5.0', 'nira/pinned', 'requirement-clause', ['div-guard']],
-      [rowsB, 'u.label == u.label2', 'lra', 'requirement-clause', ['text-as-real']],
+      [rowsB, 'u.label == u.label2', 'fence/non-numeric-operand', 'requirement-clause', ['text-as-real'], 'gate'],
       [rowsB, 'u.v / 0.0 > 1.0', 'fence/unsupported-operator', 'requirement-clause', [], 'encoder'],
       [rowsB, 'u.v ^ 40 > 1.0', 'fence/unsupported-operator', 'requirement-clause', [], 'encoder'],
     ];

@@ -850,11 +850,11 @@ describe('a judgement carries the constraint class of what it stood on', () => {
     // Rok: the same refused premise, held at the model's values, and the proof stands on z3's entailment.
     const ok = m4.get('M4::Rok::g1')!.judgement;
     expect([ok.outcome, ok.classes.basis, ok.classes.modifiers.map((m) => m.id)]).toEqual(['proved', 'solver+numeric', ['partial-context']]);
-    // m6: a String read as a Real is a refutation confirmed on the numeric surface at a point z3 did not choose.
+    // m6: a relation over a String is refused at the gate (F5); its violation at the model's values is the point evaluation's.
     const m6 = (await classed(z3, M6)).by;
     const text = m6.get('M6::R::g1')!.judgement;
-    expect([text.outcome, text.classes.basis, text.classes.modifiers.map((m) => m.id)]).toEqual(['refuted', 'numeric-surface', ['text-as-real']]);
-    expect(classLines(text.classes).join('\n')).toContain('basis: numeric-surface');
+    expect([text.outcome, text.classes.basis, text.classes.modifiers.map((m) => m.id)]).toEqual(['refuted', 'point-evaluation', ['text-as-real']]);
+    expect(classLines(text.classes).join('\n')).toContain('basis: point-evaluation');
     // …and the numeric row beside it is an ordinary proof.
     expect(m6.get('M6::R::g2')!.judgement.classes.basis).toBe('solver');
   });

@@ -18074,6 +18074,17 @@ package PS {
   requirement def R { subject s : P; assume constraint { s.y == 0.0 } require constraint g { s.x / s.y >= 1.0 } }
   satisfy R by p;
 }`, { 'VACP::R::g': ['T/V/T/V', null], 'VACP::R::«ConstraintUsage»': ['F/-/F/-', 'F'] }),
+    // a5 F5: a String is a text value, refused at the gate as a string literal is. `s != t` violated at the model's
+    // values stays F through the point evaluation; `s == t`, satisfied there, read `?` "witness not confirmed" over an
+    // unpinned Real and now reads U with the gate's sentence.
+    'a5-string': probe(`package STR {
+  attribute s : ScalarValues::String = "abc"; attribute t : ScalarValues::String = "abc";
+  constraint k { s != t }
+}`, { 'STR::k': ['F/F/?/F', 'F'] }),
+    'a5-string-eq': probe(`package STREQ {
+  attribute s : ScalarValues::String = "abc"; attribute t : ScalarValues::String = "abc";
+  constraint k { s == t }
+}`, { 'STREQ::k': ['T/T/?/U', null] }),
     // a5 F4a (fix-or-fence): a negative power of zero is a division by zero, but the quantity reader computed
     // `0.0 ^ -1` as Infinity and read `x * y ^ -1 >= 1.0` at y = 0 T on check, literal and numeric. It now refuses with
     // `division-by-zero`; SMT refuses the negative exponent at the gate.
