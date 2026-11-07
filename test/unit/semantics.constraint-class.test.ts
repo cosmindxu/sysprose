@@ -1003,8 +1003,8 @@ describe('the defect sidecar names real entries and the register reads it', () =
     expect(sidecar.defects.some((d) => d.id === 'D-assert-not')).toBe(false);
     // gate 4 asserts the divisor guard since the review of classes-2: the defect that capped nra-div there is closed
     expect(sidecar.defects.some((d) => d.id === 'D-gate4-guard')).toBe(false);
-    // G8C's false `#equations` F (KNOWN_FALSE) is a wrong verdict until G-pair-a fences it (closing-readings P-pin)
-    expect(by('D-inconsistent-axioms')).toMatchObject({ classes: ['bind-equality', 'inherited-context'], kind: 'wrong-verdict' });
+    // G8A/G8B/G8C, a general's body re-read by name, are fenced on every surface since g8-fence: it abstains, none is false
+    expect(by('D-inconsistent-axioms')).toMatchObject({ classes: ['bind-equality', 'inherited-context'], kind: 'abstains' });
     // Read again in the instance, or fenced on the SMT engine, since instance3-pass S1: no longer a wrong statement.
     expect(by('D-subsetting-contradiction')).toMatchObject({ classes: ['inherited-context', 'per-instance'], kind: 'abstains' });
     expect(by('D-bound-detail')).toMatchObject({ classes: ['text-as-real'], kind: 'wrong-statement' });

@@ -66,6 +66,7 @@ import {
   subsettingRereadsOf,
   type SubsettingReread,
   heldPastCapSentence,
+  hiddenReadSentence,
   instanceGroups,
   lookupsHold,
   lookupsOf,
@@ -104,7 +105,7 @@ import {
   type InstanceAbstention,
   type NameClash,
 } from './defining-equation';
-import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
+import { anyHiddenByName, effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
 import { evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
@@ -415,6 +416,20 @@ function answerFor(
   pass: ScalarPass,
   inst?: string,
 ): ScalarAnswer | undefined {
+  // A name the context declares anew without `:>>` beside the feature a general's body names by it (g8, G8A, G8C:
+  // `hidden`) reads neither, wherever the value would come from: a general's body re-read there by name meets the
+  // context's feature, and by identity the general's. Nor does a name a binding joins to one, whichever member of
+  // the binding's component the reading reaches first.
+  const along = pass.definitions.clashAlong(contextId, name);
+  const hidden =
+    along?.clash.hidden !== undefined
+      ? along
+      : anyHiddenByName(model)
+        ? boundClashOf(model, contextId, name, (c) => c.hidden !== undefined)
+        : undefined;
+  if (hidden !== undefined) {
+    return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: `${name} has no value: ${clashSentence(model, hidden.contextId, hidden.clash)}` } };
+  }
   // An asserted equation of an element enclosing the instance defines the
   // value there (H5's enclosing rule): read it. Any other enclosing assert
   // constrains the value (A.2.4): abstain, never read it — one of an instance
@@ -616,8 +631,24 @@ function valueThroughChain(model: Model, contextId: ElementId, name: string, pas
   if (!end || writesStandingDefault(model, end.feature)) return undefined;
   const own = pass.definitions.nameOf(end.feature)!;
   // Read in the usage that changes what the definition reads: its own value there.
-  if (end.at !== end.site) return defineIn(model, end.at, end.feature, own, pass.definitions.of(end.site, own), pass, true);
+  if (end.at !== end.site) {
+    return hiddenDefinition(model, end.site, end.at, own, pass) ?? defineIn(model, end.at, end.feature, own, pass.definitions.of(end.site, own), pass, true);
+  }
   return valueDefinedByEquation(model, end.site, own, pass);
+}
+
+/**
+ * The abstention of `name`'s asserted definition, written in `site`, re-read in `at` where `at` declares a name it
+ * reads anew without `:>>` (G8A's `K == L`, read in P2: {@link hiddenReadSentence}), or `undefined`: by name the
+ * equation reads `at`'s feature, by identity `site`'s, and this tool does not read which.
+ */
+function hiddenDefinition(model: Model, site: ElementId, at: ElementId, name: string, pass: ScalarPass): ScalarAnswer | undefined {
+  for (const eq of pass.definitions.of(site, name)) {
+    const text = equationText(eq).trim();
+    const hidden = hiddenReadSentence(model, text, site, at, relationNamesOf(text));
+    if (hidden !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: `${name} has no value: ${hidden}` } };
+  }
+  return undefined;
 }
 
 /**
@@ -707,7 +738,10 @@ function valueDefinedByEquation(
     // Where the context changes what the definition reads, it is read here,
     // over the context's own names: the definition holds of every instance.
     if (read.at !== read.site) {
-      return defineIn(model, read.at, feature, name, pass.definitions.of(read.site, name), pass, true);
+      return (
+        hiddenDefinition(model, read.site, read.at, name, pass) ??
+        defineIn(model, read.at, feature, name, pass.definitions.of(read.site, name), pass, true)
+      );
     }
     return valueDefinedByEquation(model, read.site, name, pass);
   }
@@ -1718,7 +1752,8 @@ function definitionConflicts(model: Model, apart: ReadonlyMap<ContradictedDefini
   return sets.map((set) => {
     const read = apart.get(set);
     const sentence = contradictedDefinitionConflict(model, set, read);
-    const differs = set.verdict === 'differs' || read !== undefined;
+    // A pair met by name only, over a name the context declares anew without `:>>` (G8C), is no contradiction this tool reads.
+    const differs = set.hidden !== true && (set.verdict === 'differs' || read !== undefined);
     return {
       id: `${set.feature.id}@${set.context.id}`,
       ownerId: set.context.id,
@@ -2807,11 +2842,14 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
           ? statedPass(model, new Set(ends.flatMap((e) => (e.den !== undefined ? [`${e.den.instance}::${e.name}`] : []))))
           : pass;
         result = contradicted ? 'violated' : judgeConstraint(model, reading, expr, judging).result;
+        // Read in a context that declares an end's name anew without `:>>` beside the one the holder names (g8): the
+        // pair is no pair of the model's there, in its own sentence.
+        if (result !== 'unknown' && x.id !== owner.id) unread = hiddenReadSentence(model, `bind ${left} = ${right}`, owner.id, x.id, [left, right]);
         // An end a value this tool does not read may reach (equatedPartsRefusal):
         // the conflict read there is no conflict of the model's. PA's `bind p2.M
         // = K` beside P's `L == M`: p2's M is K's 9, which the equation makes
         // p2's L too, where M was read from L's default 2 and the pair reported.
-        if (!against && result === 'violated') unread = equatedPartsRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
+        if (!against && result === 'violated') unread ??= equatedPartsRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
         // So is a pair read at an end two asserted equations give two values (contradictedDefinitionRefusal), decided
         // or not: the first equation written gave the end its value, so the pair was reported in one order only.
         if (!against) unread ??= contradictedDefinitionRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
@@ -3050,12 +3088,17 @@ function readInContexts(
       !cap && !via && pass.definitions.readsBoundOnly(el, names, x.id)
         ? pass.definitions.boundStatedTwiceIn(el, names, x.id)
         : undefined;
+    // A name x declares anew without `:>>` beside the one the relation's owner names (G8A's `K == L`, P's plain
+    // `K == 70.0` read in P2): not read there, in its own sentence (G-pair-b).
+    const hidden = hiddenReadSentence(model, expr.trim(), owner, x.id, bodyNames);
     const why =
-      cap
-        ? boundAboveSentence(pass.definitions, x.id, above!)
-        : here !== undefined
-          ? boundHereSentence(pass.definitions, x.id, here)
-          : undefined;
+      hidden !== undefined
+        ? hidden
+        : cap
+          ? boundAboveSentence(pass.definitions, x.id, above!)
+          : here !== undefined
+            ? boundHereSentence(pass.definitions, x.id, here)
+            : undefined;
     let judged: Judgement = why !== undefined
       ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false, ...(cap ? { abstention: 'past-cap' as const } : {}) }
       : judgeConstraint(model, reading, text, pass);
@@ -4289,17 +4332,24 @@ function chainCauses(
  * relation on its own: a verdict that does not depend on it stands
  * (`flag > 0.0 or c.load <= 1.0`), and one that does is undecided — on every
  * surface, in this surface's sentence.
+ *
+ * With `hidden` false, a name the context declares anew without `:>>` (the clash's `hidden`, g8) is not listed: the
+ * verification lane reads it as a symbol of its own, and refuses there only the rows a general's body writes over
+ * it (./obligations), each keeping its variables, so the goals that read them abstain and a contradiction the
+ * context's own bodies state stays one.
  */
 export function unreadValuesOf(
   model: Model,
   el: ElementRecord,
   names: readonly string[],
   memo?: DerivationMemo,
+  hidden = true,
 ): string[] {
   const out: string[] = [];
   const pass = passFor(model, memo);
   for (const name of new Set(names)) {
-    if (clashOf(el, name, pass)) {
+    const clash = clashOf(el, name, pass);
+    if (clash !== undefined && (hidden || clash.clash.hidden === undefined)) {
       out.push(name);
       continue;
     }

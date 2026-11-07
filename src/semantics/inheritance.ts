@@ -202,8 +202,9 @@ export function maskedByName(model: Model, f: ElementRecord): ElementRecord[] {
  * without `:>>` ({@link maskedByName}), with the features it hides (`hidden`, each with what it redefines) and the
  * general that declares it anew (`general`). KerML does not allow the shape (§7.3.2.1: an owned member's name must
  * differ from every inherited member's), so a general's body re-spelled there by name is not the model's reading.
- * A library general's feature and a directed feature on either side are left out: a step's parameters redefine the
- * general's (KerML checkFeatureParameterRedefinition), so `in cap = …` hides nothing. The nearest declaration of a
+ * A library general's feature and a parameter on either side (a directed feature, a requirement's subject, actor or
+ * stakeholder) are left out: a step's parameters redefine the general's (KerML checkFeatureParameterRedefinition), so
+ * `in cap = …` and `subject s = p` hide nothing. The nearest declaration of a
  * name wins. Memoised per model revision.
  */
 export function hiddenByName(
@@ -221,11 +222,11 @@ export function hiddenByName(
     const types = [typeId, ...generalizationsOf(model, typeId).filter((g) => g.attrs.isLibrary !== true).map((g) => g.id)];
     for (const t of types) {
       for (const cf of ownFeatures(model, t)) {
-        if (cf.attrs.direction !== undefined) continue;
+        if (isParameter(cf)) continue;
         const name = effectiveNameOf(model, cf);
         if (name === undefined || out.has(name)) continue;
         const hidden = maskedByName(model, cf).filter(
-          (g) => g.attrs.direction === undefined && g.ownerId != null && model.get(g.ownerId)?.attrs.isLibrary !== true,
+          (g) => !isParameter(g) && g.ownerId != null && model.get(g.ownerId)?.attrs.isLibrary !== true,
         );
         if (hidden.length > 0) out.set(name, { own: cf.id, hidden: hidden.map((g) => g.id), general: t });
       }
@@ -235,10 +236,32 @@ export function hiddenByName(
   }
   return found;
 }
+/** A directed feature, or a requirement's subject, actor or stakeholder (a ParameterMembership): it redefines the general's. */
+function isParameter(f: ElementRecord): boolean {
+  return f.attrs.direction !== undefined || f.attrs.requirementRole !== undefined;
+}
 const hiddenCaches = new WeakMap<
   Model,
-  { rev: number; byType: Map<ElementId, ReadonlyMap<string, { own: ElementId; hidden: readonly ElementId[]; general: ElementId }>> }
+  { rev: number; any?: boolean; byType: Map<ElementId, ReadonlyMap<string, { own: ElementId; hidden: readonly ElementId[]; general: ElementId }>> }
 >();
+
+/**
+ * Does any element of the model own a feature {@link hiddenByName} lists — one declared under an inherited name without
+ * `:>>`? Most models own none, and a reader then asks no more. Memoised per model revision.
+ */
+export function anyHiddenByName(model: Model): boolean {
+  let cache = hiddenCaches.get(model);
+  if (cache === undefined || cache.rev !== model.rev) {
+    cache = { rev: model.rev, byType: new Map() };
+    hiddenCaches.set(model, cache);
+  }
+  if (cache.any === undefined) {
+    const owners = new Set<ElementId>();
+    for (const f of model.all()) if (f.ownerId != null && isUsage(f.eClass) && f.attrs.isLibrary !== true) owners.add(f.ownerId);
+    cache.any = [...owners].some((id) => model.get(id)?.attrs.isLibrary !== true && hiddenByName(model, id).size > 0);
+  }
+  return cache.any;
+}
 
 /**
  * The name a feature is known by — KerML's `effectiveName`: its declared

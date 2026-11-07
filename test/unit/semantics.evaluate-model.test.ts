@@ -2478,7 +2478,9 @@ describe('checkConstraints — two asserted equations that give one feature two 
   });
 
   it('meets a feature a usage masks by name, two redefinitions a definition inherits together, and a name read from inside', async () => {
-    // p declares L anew, with no `:>>`: the check read P's equation in p over p's L.
+    // p declares L anew, with no `:>>` (which KerML does not allow): the check read P's equation in p over p's L and
+    // reported a contradiction the reading of the two Ls as two features does not state. Since g8-fence the pair is
+    // met, and every reading of L abstains, but it is filed `unknown` in its own sentence.
     expect(
       await exchanged((x, y) => `package MSK {
         part def P { attribute L : ScalarValues::Real; assert constraint c50 { L == ${x} } }
@@ -2487,7 +2489,7 @@ describe('checkConstraints — two asserted equations that give one feature two 
       }`),
     ).toEqual([
       ['MSK::P::c50', 'unknown'],
-      ['MSK::p#equations', 'violated'],
+      ['MSK::p#equations', 'unknown'],
       ['MSK::p::c60', 'unknown'],
       ['MSK::t50', 'unknown'],
     ]);

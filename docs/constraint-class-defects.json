@@ -8,8 +8,8 @@
         "bind-equality",
         "inherited-context"
       ],
-      "kind": "wrong-verdict",
-      "note": "A general's body re-read by name where a specialisation declares a name anew without `:>>` (g8: the SMT binding rows fenced by G-mask; G8B/G8A: p.L read T from P2's K on the check, literal and numeric surfaces, KNOWN_FALSE; G8C: a false `#equations` F on the check and the numeric surface, KNOWN_FALSE). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin."
+      "kind": "abstains",
+      "note": "Re-read (g8-fence): a general's body re-read by name where a specialisation declares a name anew without `:>>` is fenced on every surface: the SMT binding rows by G-mask; the name, and what a binding joins to it, read nowhere in that context on the check and the numeric surface; the general's asserts there refused on the SMT engine with their variables kept; the `#equations` pair (G8C) filed `?` in its own sentence. g8 reads T/T/?/?, G8B/G8A tl and G8C t70 ?/?/?/?. Sound, only weaker (the context's own bodies over the name abstain too); the ill-formed shape is not yet reported (G-diag). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin."
     },
     {
       "id": "D-subsetting-contradiction",

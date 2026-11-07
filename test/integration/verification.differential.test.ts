@@ -9128,9 +9128,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'Q5K::P::c50': ['?/-/?/-', null],
       'Q5K::P::c50 in Q5K::p': ['?/-/?/-', null],
-      'Q5K::p::L in Q5K::p#equations': ['F/-/F/-', 'F'],
+      // g8-fence: p's L is declared anew without `:>>`, so the pair is met by name only (KerML does not allow the shape):
+      // filed `?` in its own sentence, and t50's axioms are no longer read inconsistent.
+      'Q5K::p::L in Q5K::p#equations': ['?/-/?/-', '?'],
       'Q5K::p::c60': ['?/-/?/-', null],
-      'Q5K::t50': ['?/?/?/X', null],
+      'Q5K::t50': ['?/?/?/?', null],
     }),
     ...exchanged('q5-dia', (x, y) => `package Q5D {
         part def T0 { attribute L : ScalarValues::Real; }
@@ -9595,8 +9597,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'X8::t': ['?/?/t/?', '?'],
     }),
     // P's asserted `K == 50.0` re-read by name in P2, which declares K anew without `:>>` (G8C; KerML calls the
-    // shape ill-formed, §7.3.2.1): the check and the numeric surface pair it with P2's `K == 70.0` and report a
-    // contradiction the two-feature reading does not state (KNOWN_FALSE until G-pair-a).
+    // shape ill-formed, §7.3.2.1): the check and the numeric surface paired it with P2's `K == 70.0` and reported a
+    // contradiction the two-feature reading does not state (F/-/F/-), and the SMT engine read t70's axioms
+    // inconsistent. Since g8-fence the pair is filed `?` in its own sentence (a `hidden` set: still no reading of K
+    // is decided), and P's assert re-read in p is refused on the SMT engine with its variables kept (t70 `?`).
     ...reversed('mask-assert', `package G8C {
         part def P { attribute K : ScalarValues::Real; assert constraint ck { K == 50.0 } }
         part def P2 :> P { attribute K : ScalarValues::Real; assert constraint cn { K == 70.0 } }
@@ -9608,11 +9612,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def P2 :> P { attribute K : ScalarValues::Real; assert constraint cn { K == 70.0 } }
         part def P { attribute K : ScalarValues::Real; assert constraint ck { K == 50.0 } }
       }`, {
-      'G8C::P2::K in G8C::P2#equations': ['F/-/F/-', '?'],
+      'G8C::P2::K in G8C::P2#equations': ['?/-/?/-', '?'],
       'G8C::P2::cn': ['?/-/?/-', null],
       'G8C::P::ck': ['?/-/?/-', null],
       'G8C::P::ck in G8C::P2': ['?/-/?/-', null],
-      'G8C::t70': ['?/?/?/X', null],
+      'G8C::t70': ['?/?/?/?', null],
     }),
     // P's `bind K = L` re-spelled by name in P2, which declares K anew without `:>>` (g8; KerML calls the shape
     // ill-formed, §7.3.2.1): the SMT engine joined P2's K to L and read the axioms inconsistent, where the check and the
@@ -9633,11 +9637,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
         part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
       }`, {
-      'G8::P2::cn': ['T/-/T/-', null],
+      'G8::P2::cn': ['T/-/?/-', null],
       'G8::P::cl': ['T/-/T/-', null],
       'G8::P::cl in G8::P2': ['T/-/T/-', null],
-      'G8::kl': ['T/T/T/?', null],
-      'G8::kn': ['T/T/T/?', null],
+      'G8::kl': ['T/T/?/?', null],
+      'G8::kn': ['T/T/?/?', null],
     }),
     ...reversed('mask-far', `package G8 {
         part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
@@ -9664,11 +9668,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'Far::Q::ca': ['T/-/T/-', 'T'],
       'Far::tf': ['T/T/T/T', 'T'],
-      'G8::P2::cn': ['T/-/T/-', null],
+      'G8::P2::cn': ['T/-/?/-', null],
       'G8::P::cl': ['T/-/T/-', null],
       'G8::P::cl in G8::P2': ['T/-/T/-', null],
-      'G8::kl': ['T/T/T/?', null],
-      'G8::kn': ['T/T/T/?', null],
+      'G8::kl': ['T/T/?/?', null],
+      'G8::kn': ['T/T/?/?', null],
     }),
     ...reversed('mask-use', `package G8U {
         part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
@@ -9683,9 +9687,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'G8U::P::cl': ['T/-/T/-', null],
       'G8U::P::cl in G8U::p': ['T/-/T/-', null],
-      'G8U::kl': ['T/T/T/?', null],
-      'G8U::kn': ['T/T/T/?', null],
-      'G8U::p::cn': ['T/-/T/-', null],
+      'G8U::kl': ['T/T/?/?', null],
+      'G8U::kn': ['T/T/?/?', null],
+      'G8U::p::cn': ['T/-/?/-', null],
     }),
     // The #equations row of G8R's pair is keyed by the first of the two names the text order meets.
     'mask-redef': probe(`package G8R {
@@ -9723,9 +9727,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'G8R::kn': ['?/?/?/X', null],
     }),
     // The same shape read by name on the other surfaces (gen-mask, found by G-mask): P's `bind K = L` (G8B) or P's
-    // asserted `K == L` (G8A), re-read in P2 where K is declared anew, gives p.L P2's 50 on the check, the literal and
+    // asserted `K == L` (G8A), re-read in P2 where K is declared anew, gave p.L P2's 50 on the check, the literal and
     // the numeric surface (and on SMT through G8A's assert), where the reading of the two Ks as two features leaves
-    // p.L free. KNOWN_FALSE: the binding rows of the SMT engine are fenced (G8B's `?`); the others are G-pair-b's.
+    // p.L free. Since g8-fence no surface reads K in P2 or p, nor a name a binding joins to it (the check's and the
+    // numeric surface's `hidden` clash), and the SMT engine refuses P's assert re-read there with its variables kept:
+    // tl is `?` on all four. P's own `K == L` is T on the numeric surface as any assert's own row over free names is
+    // (LK::P::d, CV3::P::a; measured the same with P2 left out): no hand reference.
     ...reversed('mask-bind-name', `package G8B {
         part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; }
         part def P2 :> P { attribute K : ScalarValues::Real; assert constraint qe { K == 50.0 } }
@@ -9737,8 +9744,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def P2 :> P { attribute K : ScalarValues::Real; assert constraint qe { K == 50.0 } }
         part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; }
       }`, {
-      'G8B::P2::qe': ['T/-/T/-', 'T'],
-      'G8B::tl': ['T/T/T/?', '?'],
+      'G8B::P2::qe': ['T/-/?/-', 'T'],
+      'G8B::tl': ['?/?/?/?', '?'],
     }),
     ...reversed('mask-assert-name', `package G8A {
         part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; assert constraint pe { K == L } }
@@ -9751,10 +9758,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def P2 :> P { attribute K : ScalarValues::Real; assert constraint qe { K == 50.0 } }
         part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; assert constraint pe { K == L } }
       }`, {
-      'G8A::P2::qe': ['T/-/T/-', 'T'],
-      'G8A::P::pe': ['?/-/T/-', '?'],
-      'G8A::P::pe in G8A::P2': ['T/-/T/-', null],
-      'G8A::tl': ['T/T/T/T', '?'],
+      'G8A::P2::qe': ['T/-/?/-', 'T'],
+      'G8A::P::pe': ['?/-/T/-', null],
+      'G8A::P::pe in G8A::P2': ['?/-/?/-', null],
+      'G8A::tl': ['?/?/?/?', '?'],
     }),
     ...reversed('mask-param', `package MP {
         constraint def Rule { in cap : ScalarValues::Real; in need : ScalarValues::Real; cap >= need }
@@ -17854,24 +17861,16 @@ package PS {
    * 84fb971, where every surface read the two as two features although the one feature has two values.
    * fence-readings S2 withdrew all six: a usage that redefines a feature of such a line reads none of its names (a
    * clash with its own sentence), so each row is `?` on all four surfaces.
+   *
+   * closing-readings P-pin and G-mask listed eight rows of a general's body re-read by name where a specialisation
+   * declares the name anew without `:>>` (G8B and G8A `tl`: p.L read as P2's 50 on the check, the literal and the
+   * numeric surface; G8C's `#equations` F, a contradiction the two-feature reading does not state; G8A `P::pe`).
+   * g8-fence withdrew them: no surface reads such a name in that context, nor what a binding joins to it, the SMT
+   * engine refuses the general's rows there with their variables kept, and the pair is filed `?` in its own
+   * sentence (`?` in both text orders). `P::pe` was never one: an assert's own row over free names is T on the
+   * numeric surface with P2 left out too (LK::P::d), and has no hand reference.
    */
-  /** G8C's false F (closing-readings P-pin): the `#equations` row of a general's assert re-read by name. */
-  const MASK_ASSERT_FALSE =
-    'H1 pending: P’s `K == 50.0` re-read by name in P2, which declares K anew without `:>>` (ill-formed under KerML §7.3.2.1), and paired with P2’s `K == 70.0`, a contradiction the reading of the two Ks as two features does not state; G-pair-a fences';
-  const MASK_NAME_FALSE =
-    'H1 pending: P’s binding or assert re-read by name in P2, which declares K anew without `:>>` (ill-formed under KerML §7.3.2.1), so p.L reads P2’s 50, where the reading of the two Ks as two features leaves it free; the SMT binding rows are fenced (G-mask), the check, literal and numeric readers and the SMT assert rows are G-pair-b’s';
-  const MASK_DEF_FALSE =
-    'NO STEP yet: P’s own row `K == L` read T on the numeric surface from P2’s `K == 50.0` over the K P2 declares anew (gen-mask, found by G-mask); a definition’s own row is never T from a specialisation’s facts';
-  const KNOWN_FALSE = new Map<string, string>([
-    ['mask-bind-name | G8B::tl', MASK_NAME_FALSE],
-    ['mask-bind-name-rev | G8B::tl', MASK_NAME_FALSE],
-    ['mask-assert-name | G8A::tl', MASK_NAME_FALSE],
-    ['mask-assert-name-rev | G8A::tl', MASK_NAME_FALSE],
-    ['mask-assert-name | G8A::P::pe', MASK_DEF_FALSE],
-    ['mask-assert-name-rev | G8A::P::pe', MASK_DEF_FALSE],
-    ['mask-assert | G8C::P2::K in G8C::P2#equations', MASK_ASSERT_FALSE],
-    ['mask-assert-rev | G8C::P2::K in G8C::P2#equations', MASK_ASSERT_FALSE],
-  ]);
+  const KNOWN_FALSE = new Map<string, string>();
 
   /**
    * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,
@@ -19005,6 +19004,10 @@ package PS {
     ['withheld-instance-defs', 'WID::P::c in WID::s::p', /WID::P::c is not read in WID::s::p: WID::s owns, or joins a feature of, a binding whose end is a copy standing on one of several features/],
     ['withheld-instance-own', 'WIO::P::c in WIO::s::p', /WIO::P::c is not read in WIO::s::p: WIO::s owns, or joins a feature of, two features under one name, which the saved file may read the other way, so this instance is listed and not decided/],
     ['withheld-instance-twins-default', 'WIT::P::c in WIT::S::p', /WIT::P::c is not read in WIT::S::p: WIT::S owns, or joins a feature of, two features under one name/],
+    // g8-fence: a general's body re-read by name where a specialisation declares the name anew without `:>>`.
+    ['mask-bind-name', 'G8B::tl', /p\.L has no value: G8B::P2 reads `K` as G8B::P2::K, declared anew without `:>>` beside the G8B::P::K the body of G8B::P names, which KerML does not allow; this tool does not read which of the two it means there/],
+    ['mask-assert-name', 'G8A::tl', /L has no value: `K == L` of G8A::P is not read in G8A::p: there `K` names G8A::P2::K, declared anew without `:>>` beside the G8A::P::K G8A::P's body names, which KerML does not allow/],
+    ['mask-assert', 'G8C::P2::K in G8C::P2#equations', /each define `K` in G8C::P2, which declares `K` anew without `:>>` beside G8C::P::K the general's body names, which KerML does not allow; this tool does not read which of the two each equation means there: it reports no contradiction/],
   ];
   withZ3('I16: the sentences of the round-3 fences are the ones pinned, whichever way the text is ordered', () => {
     const wrong: string[] = [];

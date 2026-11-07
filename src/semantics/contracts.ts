@@ -970,7 +970,7 @@ export function gateRelation(
   readBy?: { el: ElementRecord; operands: boolean; binding?: boolean },
 ): RelationReading {
   const varIds = relationVarsOf(node, nameToId);
-  const unread = readBy ? unreadValuesOf(model, readBy.el, pathsOf(node).filter((p) => !markers.has(p)), memo) : [];
+  const unread = readBy ? unreadValuesOf(model, readBy.el, pathsOf(node).filter((p) => !markers.has(p)), memo, false) : [];
   const variables = variablesOf(model, node, nameToId, markers, memo);
   const unreadDeps = readBy && unread.length > 0 ? unreadDependenciesOf(model, readBy.el, unread, memo) : [];
   if (unread.length > 0) {
