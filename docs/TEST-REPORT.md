@@ -40,11 +40,11 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **Date** | 2026-10-15 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
 | **Vitest checks** | **5516 passed / 0 failed / 0 skipped** across **159 files** |
 | &nbsp;&nbsp;— unit | 4403 passed across 120 files |
-| &nbsp;&nbsp;— integration | 473 passed across 22 files |
+| &nbsp;&nbsp;— integration | 474 passed across 22 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 10 passed across 1 file |
-| &nbsp;&nbsp;— campaign (L6–L8) | 506 passed across 5 files |
+| &nbsp;&nbsp;— campaign (L6–L8) | 507 passed across 5 files |
 | **E2E scenarios** | **238 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
 | **Grand total** | **5754 automated checks passed / 0 failed** |
 
