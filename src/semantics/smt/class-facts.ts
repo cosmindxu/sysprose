@@ -12,9 +12,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 8,
       "rows": 27,
-      "tableAgree": 26,
+      "tableAgree": 27,
       "tableDisagree": 0,
-      "tableProbes": 14
+      "tableProbes": 15
     },
     "bind-equality": {
       "battery": null,
@@ -23,9 +23,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 5,
       "rows": 9,
-      "tableAgree": 224,
+      "tableAgree": 225,
       "tableDisagree": 0,
-      "tableProbes": 134
+      "tableProbes": 135
     },
     "bool": {
       "battery": null,
@@ -232,9 +232,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 0,
       "rows": 0,
-      "tableAgree": 67,
+      "tableAgree": 69,
       "tableDisagree": 0,
-      "tableProbes": 61
+      "tableProbes": 63
     },
     "ite": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 485,
-      "tableAgree": 636,
+      "tableAgree": 642,
       "tableDisagree": 0,
-      "tableProbes": 285
+      "tableProbes": 291
     },
     "nira/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 309,
+      "tableAgree": 310,
       "tableDisagree": 0,
-      "tableProbes": 155
+      "tableProbes": 156
     },
     "requirement-clause": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 339,
+      "tableAgree": 343,
       "tableDisagree": 0,
-      "tableProbes": 215
+      "tableProbes": 219
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 592,
+      "tableAgree": 598,
       "tableDisagree": 0,
-      "tableProbes": 254
+      "tableProbes": 260
     },
     "text-as-real": {
       "battery": null,
@@ -531,7 +531,7 @@ export const CLASS_FACTS: ClassFacts = {
   "digests": {
     "defects": "9f9bdb18a09557b589dec61fcf0a865587a670a6e84ef183de74060e69d4b901",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "4742705306efeb7f249fc45c9bdd0225ce75dabfd709fc70b9d0412413127e11"
+    "probes": "efe25ddaf0ed98b865574cfcfbd75c73b5dd8c6fb04c7bf6b260ee4710cb37a0"
   },
   "fences": {
     "fence/collection-valued": {

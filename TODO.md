@@ -551,10 +551,7 @@ headings.
       specialises a constraint, or one whose body holds members and no expression or a member
       other than a comment, a `doc` or an attribute with a `=` value or none degrades as a whole,
       not only the dependent rows (a one-expression body is read since numeric2 S1, beside
-      comment, `doc` and attribute members since solver2 S4); (b) `assert not
-      satisfy R by s;` parses as the bare clause `assert not` plus a plain `satisfy R by s;`: the
-      error is raised but the satisfy edge is read plain and the sentence names the clause (`not
-      satisfy` and `satisfy not` stay generic parse errors); (c) members declared inside a refused
+      comment, `doc` and attribute members since solver2 S4); (c) members declared inside a refused
       body (the shapes of (a)) are not mapped (kept verbatim in the save); and `assert not x >
       1.0;` swallows `x` as the
       clause's name, giving a `validation/duplicate-name` finding beside the new error; (d) a caller
@@ -563,7 +560,33 @@ headings.
       clause was refused as having no formal clause. (f) in a negated clause, an attribute member
       with `:=`, a prefix (e.g. `in`), a subsetting or redefinition, a multiplicity or a body of
       its own, a `rep language` member, and annotations are refused (probe
-      solver2-pass-scratch/s4/gen Z187-Z199). [fence-assert-not; numeric2-pass; solver2-pass]
+      solver2-pass-scratch/s4/gen Z187-Z199). (g) The parse-error forms `not satisfy R by s0;` and
+      `satisfy not R by s0;` behave as on base: the load is degraded and verify exits 2, but the
+      save is not faithful (`not satisfy R by s0;` saves as `satisfy R by s0;` followed by a stray
+      `not`; `assert satisfy R by s0;` saves as `assert constraint; satisfy R by s0;`, which re-reads
+      the same); no verdict changes. (h) `negatedSatisfyOf` pairs a bare `assert not` with the next
+      `Satisfy` sibling, comments allowed between, without checking that the two are adjacent in the
+      text: a broken `assert not` followed by a comment and an unrelated `satisfy` lines later
+      swallows that satisfy into the refused clause, and the message names the wrong statement
+      (an abstention, not a false verdict). [fence-assert-not; numeric2-pass; solver2-pass; a5-fences F2]
+- [ ] **Package-head default family (HDF): a `bind P::f = M` whose M has no value, while one
+      instance's redefinition carries a standing `default`.** a5-fences F0 fences the head that
+      stands against the instance (`headStandsAgainstAt`): e2c, e2cr, e2cp and e1qpm no longer read
+      F/F/F/X, and e1qp, e1qpr and e2cu no longer read numeric F/T. Open as ONE entry: gen-head
+      still has 36 WRONG cells (GH19, GH30, GH115, GH137, both text orders), the defaults-differ
+      family: M valueless, P's default differs from an instance's default, and the assert is
+      non-bare; numeric and SMT decide them and the check abstains. Left for plan step F3
+      (`unfixedDefaultsDifferAt`, E1Q); F3 should rerun genhead.py and cmp.py from
+      a5-fences-scratch/gen. [a5-fences F0]
+- [ ] **GRP: logical grouping differs from KerML Table 6 (fenced by FP1, a5-fences).** An
+      unparenthesised chain of `implies` (KerML groups it to the left) and an `xor` whose left
+      operand is an unparenthesised `or` (KerML binds `xor` tighter) are refused on every surface
+      (`GroupingError`, SMT `unsupported-operator`; pins a5-kimp, a5-kxor, a5-imp3 at ?/U). The
+      refusal sentences are generic and do not quote the chain (the parser keeps no source text).
+      Open until FP2 (H8) applies Table 6 to both precedence tables (expr.ts PRECEDENCE,
+      units-eval.ts Q_PRECEDENCE), removes the fence (checkGrouping/GroupingError), re-pins
+      a5-kimp to F/F/F/F, a5-kxor to T/T/T/T and imp3, and adds the STAND_ALIKE pairs. [a5-fences
+      FP1]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** A general's body re-read by name where a specialisation declares a name anew
       without `:>>` (KerML 7.3.2.1 forbids it) is fenced on every surface since g8-fence: no surface
@@ -914,9 +937,7 @@ true values. What follows is what that branch and the review of it left open; en
       carries n >= 0 / n >= 1 as an axiom in encodeScript, without disturbing consistency's
       owners/core mapping and the `axiom` census. (3) `verify` on a freed Natural says 'relation
       cannot be read (non-numeric-operand)' where it said verification/free-variable-unbounded
-      (abstention to abstention). (4) Retyping an Integer to Natural leaves a recorded refutation
-      'current' although the tool now abstains on it: `restricted` is not in scopeRowDigest
-      (src/api/evidence.ts). (5) The `bounds` exit-code sentence (scripts/lib/sysprose-spec.ts
+      (abstention to abstention). (4) The `bounds` exit-code sentence (scripts/lib/sysprose-spec.ts
       BOUNDS_EXIT_CODES) does not list the two new not-decided kinds. [sweep 2026-10-31;
       fence-bounds]
 - [ ] **Abstentions left in the collaboration room (rollup; sound, only weaker).** (a) A library
@@ -1072,6 +1093,17 @@ true values. What follows is what that branch and the review of it left open; en
       missing: a specialising requirement that redeclares its subject (`subject s = p` is no longer
       fenced since the fence leaves out requirementRole; both text orders, to show no verdict
       widens). `redefinesBoundOwner` is not memoised (no cost shown). [g8-fence]
+      (9) a5-fences: `headStandsAgainstAt` reads only asserted relations the package owns directly:
+      an assert inside P, or inside an instance, that contradicts a standing slot value is not
+      walked and is read as before; a non-constant standing value (`default = 2.0 * K`) is treated
+      as undecided, so the row abstains; an assert or standing value with a unit is never 'holds
+      exactly', so it abstains; the plan's `decide` fallback for head stands is not wired (no
+      BoundPair path exists for a redefinition outside the reading). In imp3 the per-instance rows
+      `H::ax in h`, `RQ in h` and `RQ in <<Satisfy>>` are no longer listed at all (the plan
+      predicted -/U/-/U and ?/-/?/-); the bare rows abstain and are pinned, so no surface decides
+      anything on these clauses (an abstention, not a wrong answer). Test-strength gap:
+      nobody checked that canonicalJson keeps undefined-valued keys (the `restricted` key is added
+      only when present, so every existing scope digest is unchanged). [a5-fences F0, FP1, F1]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,
