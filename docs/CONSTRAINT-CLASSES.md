@@ -7,7 +7,7 @@ Everything Sysprose hands to z3, or refuses to hand over, is sorted into a **con
 
 **Label only; no verdict changes.** A class is a label: it moves no verdict, no code, no exit code, no `detail`, no digest and no script byte. A level states the evidence this build holds for each class (docs/CONSTRAINT-CLASSES.md). It is not a verdict on any model and moves no verdict.
 
-The register is version 1; its facts were measured under z3 5.3.1. This page prints the **23 constraint classes** that have a row in the corpus (6 shapes, 2 modifiers, 6 readings, 9 fences). A class with no row is kept in the register and is not printed until a row stands in it.
+The register is version 1; its facts were measured under z3 5.3.3. This page prints the **23 constraint classes** that have a row in the corpus (6 shapes, 2 modifiers, 6 readings, 9 fences). A class with no row is kept in the register and is not printed until a row stands in it.
 
 ## What exists today
 

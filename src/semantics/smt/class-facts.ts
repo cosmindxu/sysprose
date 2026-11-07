@@ -626,5 +626,5 @@ export const CLASS_FACTS: ClassFacts = {
     "unattributed": 0
   },
   "register": 1,
-  "z3": "5.3.1"
+  "z3": "5.3.3"
 };

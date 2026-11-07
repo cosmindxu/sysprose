@@ -959,13 +959,16 @@ from the failure side rather than a finding against the design.
 
 ### 8.4 The SMT seam: the solver backend and the encoder the engine stands on
 
-`z3-solver` ^5.3.1 is an **optional** dependency. `src/semantics/smt/z3-bridge.ts`
+`z3-solver` 5.3.3 (pinned exactly) is an **optional** dependency. `src/semantics/smt/z3-bridge.ts`
 loads it through a dynamic import behind a variable specifier and answers either
 a backend or `{ absent, reason }` — it never throws because a package is
 missing, and `SYSPROSE_NO_Z3=1` forces the absent path so that a machine which
 HAS z3 can still exercise it. Every check is bounded (5000 ms by default, no
 spelling for "unbounded"), the `random_seed` is fixed at 0, and z3's version is
-captured rather than assumed. A script z3 REFUSES — a malformed term, or a
+captured rather than assumed. The bridge's guards (the call queue, the overlap assertion
+and the explicit release) stay ON by default for one more release on 5.3.3, though 5.3.1 and later
+need none of them for the upstream finalizer fix; `SYSPROSE_Z3_GUARDS=off` is an experiment
+switch that disables them, not a supported setting. A script z3 REFUSES — a malformed term, or a
 `set-logic` its assertions do not fit — is reported as `error`, never folded
 into the `unknown` that `--allow-inconclusive` may forgive.
 
