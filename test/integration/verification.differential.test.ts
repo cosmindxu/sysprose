@@ -17996,36 +17996,37 @@ package PS {
       'W4X3::c3T': ['?/?/?/T', 'T'],
       'W4X3::cMT': ['?/?/?/T', 'T'],
     }),
-    // a5 (2026-11-06) FP1: the grouping fence. KerML groups a chain of `implies` to the left and binds `xor` tighter
-    // than `or` (KerML 8.2.5.8.1, Table 6); both readers grouped them otherwise, and every surface decided kImp T and
-    // kXor F, the letters of the other grouping (KerML: F and T). FP1 reads neither chain (`GroupingError`, the
-    // SMT gate's `unsupported-operator`); the parenthesised twins and `a xor b or c` stay decided. FP2 (H8) reads them.
+    // a5 (2026-11-06) FP1, (2026-11-07) FP2 under H8: KerML groups a chain of `implies` to the left and binds `xor`
+    // tighter than `or` (KerML 8.2.5.8.1, Table 6). Both readers grouped them otherwise, and every surface decided kImp
+    // T and kXor F, the letters of the other grouping; FP1 read neither chain. FP2 groups by Table 6: kImp F and kXor T
+    // on every surface, each the same row as its parenthesised twin (STAND_ALIKE).
     'a5-kimp': probe(`package PREC {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
   attribute z : ScalarValues::Real = 0.0;
   constraint kImp { x > 1.0 implies y > 1.0 implies z > 1.0 }
-}`, { 'PREC::kImp': ['?/U/?/U', 'F'] }),
+}`, { 'PREC::kImp': ['F/F/F/F', 'F'] }),
     'a5-kimpl': probe(`package PREC {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
   attribute z : ScalarValues::Real = 0.0;
-  constraint kImpL { (x > 1.0 implies y > 1.0) implies z > 1.0 }
-}`, { 'PREC::kImpL': ['F/F/F/F', 'F'] }),
+  constraint kImp { (x > 1.0 implies y > 1.0) implies z > 1.0 }
+}`, { 'PREC::kImp': ['F/F/F/F', 'F'] }),
     'a5-kxor': probe(`package PREC {
   attribute u : ScalarValues::Real = 2.0;
   attribute v : ScalarValues::Real = 2.0;
   attribute w : ScalarValues::Real = 2.0;
   constraint kXor { u > 1.0 or v > 1.0 xor w > 1.0 }
   constraint kXorL { u > 1.0 xor v > 1.0 or w > 1.0 }
-}`, { 'PREC::kXor': ['?/U/?/U', 'T'], 'PREC::kXorL': ['T/T/T/T', 'T'] }),
+}`, { 'PREC::kXor': ['T/T/T/T', 'T'], 'PREC::kXorL': ['T/T/T/T', 'T'] }),
     'a5-kxorp': probe(`package PREC {
   attribute u : ScalarValues::Real = 2.0;
   attribute v : ScalarValues::Real = 2.0;
   attribute w : ScalarValues::Real = 2.0;
-  constraint kXorP { u > 1.0 or (v > 1.0 xor w > 1.0) }
-}`, { 'PREC::kXorP': ['T/T/T/T', 'T'] }),
-    // The chain in an assert and in a requirement a part satisfies: no surface reads it in any instance either.
+  constraint kXor { u > 1.0 or (v > 1.0 xor w > 1.0) }
+}`, { 'PREC::kXor': ['T/T/T/T', 'T'] }),
+    // The chain in an assert and in a requirement a part satisfies, read by Table 6 in every instance: the assert is
+    // false at h, so the requirement's rows over h are the inconsistent axioms (X), not a verdict.
     'a5-imp3': probe(`package IMP3 {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
@@ -18037,7 +18038,10 @@ package PS {
   satisfy RQ by h;
 }`, {
       'IMP3::H::ax': ['?/-/?/-', null],
-      'IMP3::RQ::«ConstraintUsage»': ['?/U/?/U', null],
+      'IMP3::H::ax in IMP3::h': ['F/-/F/-', 'F'],
+      'IMP3::RQ::«ConstraintUsage»': ['?/?/?/X', null],
+      'IMP3::RQ::«ConstraintUsage» in IMP3::h': ['-/X/-/X', null],
+      'IMP3::RQ::«ConstraintUsage» in IMP3::«Satisfy»': ['F/-/F/-', 'F'],
     }),
     // a5 (2026-11-06) F2: `assert not satisfy R by s0;` parsed as a bare `assert not` and a `satisfy` beside it, and the
     // `satisfy` was read as the plain satisfaction: R for s0 F (nb7) and T (nb3) on every surface, under a hint that said
@@ -19248,6 +19252,9 @@ package PS {
     ['w4-coupled-pkg', 'a5-w4x3-twin'],
     // a5 F2: `assert satisfy` is `satisfy`.
     ['a5-assert-satisfy', 'a5-assert-satisfy-plain'],
+    // a5 FP2: a connective chain reads as its Table 6 parenthesised twin.
+    ['a5-kimp', 'a5-kimpl'],
+    ['a5-kxor', 'a5-kxorp'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

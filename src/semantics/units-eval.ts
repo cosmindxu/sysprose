@@ -90,7 +90,7 @@ import {
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
-import { DOUBLE_DIGITS, checkGrouping, readQuotedName, significantDigitsOf } from './expr';
+import { DOUBLE_DIGITS, readQuotedName, significantDigitsOf } from './expr';
 import {
   addRationals,
   compareRationals,
@@ -751,23 +751,28 @@ export function quantityRefsIn(text: string): string[] | undefined {
 const Q_PRECEDENCE: Record<string, number> = {
   implies: 1,
   or: 2,
-  xor: 2,
-  and: 3,
-  '==': 4,
-  '=': 4,
-  '!=': 4,
-  '<': 5,
-  '<=': 5,
-  '>': 5,
-  '>=': 5,
-  '+': 6,
-  '-': 6,
-  '*': 7,
-  '/': 7,
-  '%': 7,
-  '^': 8,
+  xor: 3,
+  and: 4,
+  '==': 5,
+  '=': 5,
+  '!=': 5,
+  '<': 6,
+  '<=': 6,
+  '>': 6,
+  '>=': 6,
+  '+': 7,
+  '-': 7,
+  '*': 8,
+  '/': 8,
+  '%': 8,
+  '^': 9,
 };
-const Q_RIGHT_ASSOC = new Set(['^', 'implies']);
+/**
+ * KerML 8.2.5.8.1, Table 6: `and` > `xor` > `or` > `implies`, and every binary
+ * operator but exponentiation groups to the left (`a implies b implies c` is
+ * `(a implies b) implies c`; `a or b xor c` is `a or (b xor c)`).
+ */
+const Q_RIGHT_ASSOC = new Set(['^']);
 
 /**
  * Every operator this grammar reads: the binary ones, which are the precedence
@@ -783,8 +788,6 @@ export const UNIT_AWARE_OPERATORS: { readonly binary: readonly string[]; readonl
 
 class QParser {
   private pos = 0;
-  /** Binary nodes built by this parse that no parenthesis wraps (expr.ts `checkGrouping`). */
-  private readonly bare = new WeakSet<object>();
   constructor(private readonly toks: QTok[]) {}
 
   private peek(): QTok {
@@ -817,9 +820,7 @@ class QParser {
       this.next();
       const nextMin = Q_RIGHT_ASSOC.has(op) ? prec : prec + 1;
       const right = this.parseBinary(nextMin);
-      checkGrouping(op, left, right, this.bare);
       left = { kind: 'binary', op: op as QBinOp, left, right };
-      this.bare.add(left);
     }
     return left;
   }
@@ -868,7 +869,6 @@ class QParser {
       case 'lparen': {
         const inner = this.parseBinary(0);
         if (this.next().t !== 'rparen') throw new SyntaxError('Expected )');
-        this.bare.delete(inner);
         return inner;
       }
       case 'str':

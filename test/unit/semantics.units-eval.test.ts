@@ -55,13 +55,22 @@ describe('semantics — evaluateQuantity', () => {
   });
 });
 
-describe('semantics — the unit-aware parser groups connectives as expr.ts does (FP1)', () => {
-  it('refuses the chains KerML groups otherwise, and reads the rest', () => {
+describe('semantics — the unit-aware parser groups connectives as expr.ts does (FP2)', () => {
+  it('groups by KerML Table 6: `implies` to the left, `xor` above `or`', () => {
+    const verdict = (expression: string) => {
+      const m = new Model();
+      const p = m.create('Package', { declaredName: 'P' });
+      return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+    };
+    const no = '1 [m] > 2 [m]';
+    const yes = '1 [m] < 2 [m]';
+    // (F → F) → F is F; to the right it was T.
+    expect(verdict(`${no} implies ${no} implies ${no}`)).toBe('violated');
+    expect(verdict(`(${no} implies ${no}) implies ${no}`)).toBe('violated');
+    // T or (T xor T) is T; `(T or T) xor T` was F.
+    expect(verdict(`${yes} or ${yes} xor ${yes}`)).toBe('satisfied');
+    expect(verdict(`(${yes} or ${yes}) xor ${yes}`)).toBe('violated');
     for (const text of ['x > 1 [m] implies y > 1 [m] implies z > 1 [m]', 'x > 1 [m] or y > 1 [m] xor z > 1 [m]']) {
-      expect(quantityRefsIn(text), text).toBeUndefined();
-    }
-    for (const text of ['(x > 1 [m] implies y > 1 [m]) implies z > 1 [m]', 'x > 1 [m] xor y > 1 [m] or z > 1 [m]',
-      'x > 1 [m] or (y > 1 [m] xor z > 1 [m])']) {
       expect(quantityRefsIn(text), text).toEqual(['x', 'y', 'z']);
     }
   });

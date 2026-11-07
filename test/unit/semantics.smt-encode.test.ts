@@ -317,7 +317,7 @@ describe('what the encoder refuses, and with which reason', () => {
     }
   });
 
-  it('refuses a connective chain KerML groups otherwise as unsupported-operator, with its sentence (FP1)', async () => {
+  it('encodes a connective chain grouped by KerML Table 6 (FP2)', async () => {
     const model = await load(`package G {
   attribute x : ScalarValues::Real = 0.0;
   attribute y : ScalarValues::Real = 2.0;
@@ -326,15 +326,8 @@ describe('what the encoder refuses, and with which reason', () => {
   constraint kXor { x > 1.0 or y > 1.0 xor z > 1.0 }
   constraint kXorL { x > 1.0 xor y > 1.0 or z > 1.0 }
 }`);
-    const imp = relationWith(model, 'implies');
-    expect(imp.encodable).not.toBe(true);
-    if (imp.encodable !== true) {
-      expect(imp.encodable.reason).toBe('unsupported-operator');
-      expect(imp.encodable.detail).toContain('KerML groups it to the left');
-    }
-    const xor = relationWith(model, 'x > 1.0 or');
-    expect(xor.encodable).not.toBe(true);
-    if (xor.encodable !== true) expect(xor.encodable.reason).toBe('unsupported-operator');
+    expect(relationWith(model, 'implies').encodable).toBe(true);
+    expect(relationWith(model, 'x > 1.0 or').encodable).toBe(true);
     expect(relationWith(model, 'x > 1.0 xor').encodable).toBe(true);
   });
 
