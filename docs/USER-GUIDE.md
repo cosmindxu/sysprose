@@ -2131,8 +2131,8 @@ the check, and p3's, which only M would carry it to, is read on no surface — t
 where the equation and the binding are written in a definition W and the slot is w's
 p2 (the equation may sit in a definition that encloses W and name the feature by a dotted
 path, or in a supertype or a subtype of W), and where the assert fixes the slot itself with no binding at it (`p2.load == 5.0`,
-under the same two defaults that differ): p3's load and M are read on no surface, the
-numeric surface included; that surface alone still reads the slot itself at the assert's 5). An
+under the same two defaults that differ, or fixes M itself, `2.0 * M == 14.0`): the slot, p3's load and M
+are read on no surface, the numeric surface included). An
 asserted bound over such a default (`assert constraint { load >= 0.0 }`, a plain number on a unitless Real)
 fixes no value, so the SMT engine carries it and can prove a goal every value the bounds allow satisfies
 (`load <= 11.0` beside `load <= 10.0`) where the other surfaces read none; a pair of bounds on the binding's

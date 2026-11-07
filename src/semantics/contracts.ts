@@ -56,6 +56,7 @@ import {
   defaultGivesWay,
   givenWayThroughHead,
   givenWayUnvalued,
+  unfixedDefaultsDifferAt,
   isAsserted,
   sharedDefinitions,
   shadowedNamesOf,
@@ -1109,6 +1110,29 @@ export function gateRelation(
         detail:
           `the axiom reads \`${throughHead.p}\`, which ${throughHead.why}; carried, the axiom would give those defaults its ` +
           'value, and no assertion gives a default a value, so the axiom is not carried',
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
+  }
+  // Nor one over a feature with no value that a binding joins to defaults that differ, with no instance fixing the
+  // slot (unfixedDefaultsDifferAt, F3: GH115's `2.0 * M == 14.0` beside `bind P::m = M` over P's `default = 5.0` and
+  // p1's `:>> m default = 7.0`): carried, it gave M, and every P's m, the 7, and `p2.m >= 6.0` was PROVED on this lane
+  // alone, where the other surfaces read no value for it.
+  const differ =
+    readBy && readBy.binding !== true && isAsserted(readBy.el) && readBy.el.ownerId != null
+      ? pathsOf(node)
+          .filter((p) => !markers.has(p))
+          .map((p) => ({ p, why: unfixedDefaultsDifferAt(model, readBy.el.ownerId!, p) }))
+          .find((x) => x.why !== undefined)
+      : undefined;
+  if (differ) {
+    return refused(
+      expression,
+      {
+        reason: 'unread-definition',
+        detail: `the axiom reads \`${differ.p}\`: ${differ.why}; no assertion gives it a value, so the axiom is not carried`,
       },
       null,
       variables,

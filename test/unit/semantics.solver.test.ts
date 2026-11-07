@@ -12,7 +12,7 @@ import {
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
-import { defaultStandsIn, headStandsAgainstAt, instanceIndexSeam } from '../../src/semantics/defining-equation';
+import { boundSourceIn, defaultStandsIn, headStandsAgainstAt, headTwoValuesAt, instanceIndexSeam, unfixedDefaultsDifferAt } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -684,6 +684,72 @@ describe('checkConstraintsNumeric — a package head joined to an instance’s s
     expect(headStandsAgainstAt(m!, pkg, 'M')).toBeUndefined();
     const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `E2C::${n}`)!;
     expect(['cM', 'c5', 'fix', 'c4'].map((n) => numeric(n).result)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied']);
+  });
+});
+
+describe('checkConstraintsNumeric — a slot a package head joins to two defaults that differ (F3)', () => {
+  const text = (fix: string, fixer = '') => `package E1Q {
+    part def P { attribute load : ScalarValues::Real; }
+    attribute M : ScalarValues::Real default = 9.0;
+    bind P::load = M;
+    part p4 : P { attribute :>> load default = 7.0; }
+    part p2 : P;
+    assert constraint fix { ${fix} }
+    part p3 : P;${fixer}
+    constraint c2T { p2.load <= 6.0 }
+    constraint cM { M >= 6.0 }
+  }`;
+
+  it('decides no row that reads the slot or M, whatever the assert fixes', async () => {
+    for (const fix of ['p2.load == 5.0', 'M == 5.0', '2.0 * M == 10.0']) {
+      const { model: m } = await loadModelText(text(fix));
+      const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'E1Q')!.id;
+      expect(unfixedDefaultsDifferAt(m!, pkg, 'p2.load'), fix).toBeDefined();
+      const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `E1Q::${n}`)!;
+      // Solved from the assert, the slot was 5: `c2T` and `fix` T where the check reads no value.
+      expect(['c2T', 'cM', 'fix'].map((n) => numeric(n).result), fix).toEqual(['unknown', 'unknown', 'unknown']);
+      expect(numeric('c2T').reason, fix).toBe(unfixedDefaultsDifferAt(m!, pkg, 'p2.load'));
+      expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'E1Q::fix')?.encodable, fix).toMatchObject({ reason: 'unread-definition' });
+    }
+  });
+
+  it('decides no row over a name an assert defines that the head joins to a member with two values (GH91)', async () => {
+    // P's standing `default = 7.0` is every P's m, so M's as well, and `M == 5.0` makes two values: the solve read M at
+    // the default's 7 (`cM` T, `fix` F) where the check reads no value for M.
+    const { model: m } = await loadModelText(`package GH91 {
+      part def P { attribute m : ScalarValues::Real default = 7.0; }
+      bind P::m = M;
+      attribute M : ScalarValues::Real;
+      part p1 : P;
+      assert constraint fix { M == 5.0 }
+      constraint cM { M >= 6.0 }
+    }`);
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'GH91')!.id;
+    expect(headTwoValuesAt(m!, pkg, 'M')).toMatch(/joins two values the model states/);
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `GH91::${n}`)!;
+    expect([numeric('cM').result, numeric('fix').result]).toEqual(['unknown', 'unknown']);
+  });
+
+  it('is no fence where an instance fixes the slot outside the component (fixedHead, V4)', async () => {
+    const { model: m } = await loadModelText(`package V4 {
+      part def P { attribute load : ScalarValues::Real; }
+      attribute M : ScalarValues::Real default = 9.0;
+      bind P::load = M;
+      part p4 : P { attribute :>> load default = 7.0; }
+      part def W { attribute L : ScalarValues::Real; part p2 : P; bind p2.load = L; }
+      part v : W { attribute :>> L = 5.0; }
+      part p3 : P;
+      constraint c3T { p3.load <= 6.0 }
+      constraint c3F { p3.load >= 6.0 }
+      constraint c2 { v.p2.load <= 6.0 }
+      constraint cM { M >= 6.0 }
+    }`);
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'V4')!.id;
+    // Same abstention, but v's `:>> L = 5.0` fixes the slot: the model entails M = 5 (decision 10).
+    const src = boundSourceIn(m!, 'V4::p3::load');
+    expect(src !== undefined && 'abstain' in src && [src.abstain, src.fixedHead]).toEqual(['defaults-differ', true]);
+    expect(unfixedDefaultsDifferAt(m!, pkg, 'p3.load')).toBeUndefined();
+    expect(checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === 'V4::c3T')!.result).toBe('satisfied');
   });
 });
 

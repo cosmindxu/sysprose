@@ -4582,6 +4582,28 @@ describe('checkConstraints — a default stands against an asserted equation (de
     expect(cs.filter((c) => c.conflict === 'bind')).toEqual([]);
   });
 
+  it('reads no such head per instance, nor on the definition’s own row (F0 per instance, found by a5 F3’s gen-head)', async () => {
+    // GH35: p3's `:>> m = 5.0` stands, and the asserted `M == 7.0` defines M, so the model states two values for every
+    // P's m. The package's rows abstain; read per instance, `cP in p1` was the assert's 7 (satisfied) on the check
+    // and the numeric surface, and P's own row as well. p3's own 5 is still read.
+    const { model: m } = await loadModelText(`package GH35 {
+      part def P { attribute m : ScalarValues::Real; constraint cP { m >= 6.0 } }
+      bind P::m = M;
+      attribute M : ScalarValues::Real;
+      part p1 : P;
+      part p3 : P { attribute :>> m = 5.0; }
+      assert constraint fix { M == 7.0 }
+      constraint c1 { p1.m >= 6.0 }
+    }`);
+    const cp = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'GH35::P::cP')!;
+    const at = (q: string) => cp.instances!.find((i) => m!.qualifiedName(i.contextId) === q)!;
+    expect([cp.result, at('GH35::p1').result, at('GH35::p3').result]).toEqual(['unknown', 'unknown', 'violated']);
+    expect(at('GH35::p1').message).toMatch(/^Could not evaluate: m is not read in GH35: `bind P\.m = M` of GH35 joins it, in GH35::p3, to p3::m = 5\.0/);
+    const numeric = checkConstraintsNumeric(m!).filter((r) => m!.qualifiedName(r.context?.baseId ?? r.id) === 'GH35::P::cP');
+    const own = (q: string | undefined) => numeric.find((r) => (r.context && m!.qualifiedName(r.context.contextId)) === q)!.result;
+    expect([own(undefined), own('GH35::p1'), own('GH35::p3')]).toEqual(['unknown', 'unknown', 'violated']);
+  });
+
   it('checks an inherited assert against a redefinition’s default, in a usage and in a specialisation (f, HR)', async () => {
     const { model: m } = await loadModelText(`package HR {
       part def Q { attribute L : ScalarValues::Real default = 2.0; assert constraint qa { L == 5.0 } }
