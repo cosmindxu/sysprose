@@ -395,7 +395,7 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
       logic: 'QF_NRA',
       limits: [
         { text: 'The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0 when the divisor is pinned to zero.', pin: PIN_M7_M8 },
-        { text: 'Division in the goal surfaces as `vacuous`, never as `proved`, when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`.', pin: PIN_M7_M8 },
+        { text: 'Division in the goal surfaces as `not-evaluable` (the goal is undefined wherever the axioms hold) when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`.', pin: PIN_M7_M8 },
         { text: nlNote },
       ],
     }),

@@ -18046,7 +18046,7 @@ package PS {
     // a5 (2026-11-07) F4a: KerML does not evaluate the right operand of `or` where the left is true, nor of `implies`
     // where it is false (kerml.txt:3957–3972), so the `y ≠ 0` guard of `x / y` there holds only on that path. It was
     // unconditional, contradicted y = 0, and g and h read V; now they are proved, as the check reads them. The bare
-    // division k still rests on its guard and stays vacuous.
+    // division k is undefined at y = 0 on every surface (F4, a5-vac).
     'a5-vacor': probe(`package VACOR {
   attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
   assert constraint a { y == 0.0 }
@@ -18058,7 +18058,22 @@ package PS {
   constraint g { y == 0.0 or x / y >= 1.0 }
   constraint h { y != 0.0 implies x / y >= 1.0 }
   constraint k { x / y >= 1.0 }
-}`, { 'VACORV::g': ['T/T/T/T', 'T'], 'VACORV::h': ['T/T/T/T', 'T'], 'VACORV::k': ['?/?/?/V', null] }),
+}`, { 'VACORV::g': ['T/T/T/T', 'T'], 'VACORV::h': ['T/T/T/T', 'T'], 'VACORV::k': ['?/?/?/?', null] }),
+    // a5 F4: a goal that divides by a value the axioms fix at 0 is undefined wherever they hold. Its core is the axioms
+    // and the goal's own guard, and the axioms and premises hold without that guard, so it reads `not-evaluable`, as
+    // the check reads it; it read V, a vacuous pass. The premise twin assumes y = 0 where the model gives 1: its core
+    // holds the premise, its antecedent is empty, and it stays vacuous.
+    'a5-vac': probe(`package VAC {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
+  assert constraint a { y == 0.0 }
+  constraint g { x / y >= 1.0 }
+}`, { 'VAC::a': ['T/-/T/-', 'T'], 'VAC::g': ['?/?/?/?', null] }),
+    'a5-vac-premise': probe(`package VACP {
+  part def P { attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real = 1.0; }
+  part p : P;
+  requirement def R { subject s : P; assume constraint { s.y == 0.0 } require constraint g { s.x / s.y >= 1.0 } }
+  satisfy R by p;
+}`, { 'VACP::R::g': ['T/V/T/V', null], 'VACP::R::«ConstraintUsage»': ['F/-/F/-', 'F'] }),
     // a5 F4a (fix-or-fence): a negative power of zero is a division by zero, but the quantity reader computed
     // `0.0 ^ -1` as Infinity and read `x * y ^ -1 >= 1.0` at y = 0 T on check, literal and numeric. It now refuses with
     // `division-by-zero`; SMT refuses the negative exponent at the gate.

@@ -618,19 +618,19 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 485 | 72 | 2 | 6 | 642 (291) | 0 | none | `differential-tested` |
+| `lra` | 485 | 72 | 2 | 6 | 650 (295) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `nra-div/pinned` | 17 | 9 | 1 | 1 | 2 (2) | 0 | none | `tested` |
+| `nra-div/pinned` | 17 | 9 | 1 | 1 | 6 (4) | 0 | none | `tested` |
 | `units` | 98 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `stated-value` | 311 | 78 | 1 | 7 | 598 (260) | 0 | none | `differential-tested` |
+| `stated-value` | 311 | 78 | 1 | 7 | 606 (264) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 58 (33) | 0 | none | `differential-tested` |
-| `bind-equality` | 9 | 5 | 1 | 0 | 225 (135) | 0 | none | `experimental` |
-| `asserted-fact` | 27 | 8 | 1 | 0 | 27 (15) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 343 (219) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 310 (156) | 0 | none | `experimental` |
+| `bind-equality` | 9 | 5 | 1 | 0 | 227 (136) | 0 | none | `experimental` |
+| `asserted-fact` | 27 | 8 | 1 | 0 | 29 (16) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 349 (222) | 0 | none | `differential-tested` |
+| `per-instance` | 1 | 1 | 1 | 0 | 312 (157) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 3 | 3 | 2 | — | — | — | none | `fenced` |
