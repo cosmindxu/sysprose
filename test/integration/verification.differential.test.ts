@@ -12320,6 +12320,81 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RNFX::Q::tie': ['?/-/?/-', '?'],
       'RNFX::q::t2': ['?/-/?/-', '?'],
     }),
+    // An enclosing assert read through a renamed redefinition (closing-readings RN-1): over `part q : Q { part pp :>>
+    // p; }`, Q's `p.x == 50.0` is q's pp's x, so `q.pp.x` reads 50 on the check and the literal engine (top/topF
+    // ?/?/?/? before; the numeric surface and SMT still abstain, RN-2), and `Q::tie in q` holds (it read ?). The old
+    // name from outside, `q.p.x`, names nothing (H3: p is no member of q) and stays ?, in its own sentence. At depth
+    // two (RNV2: Q1's `p1 :>> p0`, q's `p2 :>> p1`) the check reads q.p2.x; q.p0.x and q.p1.x stay ?.
+    ...reversed('rn1-rnv', `package RNV {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part pp :>> p; }
+        constraint top { q.pp.x == 50.0 }
+        constraint topF { q.pp.x == 60.0 }
+        constraint top2 { q.p.x == 50.0 }
+      }`, `package RNV {
+        constraint top2 { q.p.x == 50.0 }
+        constraint topF { q.pp.x == 60.0 }
+        constraint top { q.pp.x == 50.0 }
+        part q : Q { part pp :>> p; }
+        part def Q { assert constraint tie { p.x == 50.0 } part p : P; }
+        part def P { attribute x : ScalarValues::Real; }
+      }`, {
+      'RNV::Q::tie': ['T/-/T/-', 'T'],
+      'RNV::Q::tie in RNV::q': ['T/-/T/-', 'T'],
+      'RNV::top': ['T/T/?/?', 'T'],
+      'RNV::top2': ['?/?/?/?', '?'],
+      'RNV::topF': ['F/F/?/?', 'F'],
+    }),
+    ...reversed('rn1-rnv-depth2', `package RNV2 {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q0 { part p0 : P; assert constraint tie { p0.x == 50.0 } }
+        part def Q1 :> Q0 { part p1 :>> p0; }
+        part q : Q1 { part p2 :>> p1; }
+        constraint top { q.p2.x == 50.0 }
+        constraint topF { q.p2.x == 60.0 }
+        constraint top1 { q.p1.x == 50.0 }
+        constraint top0 { q.p0.x == 50.0 }
+      }`, `package RNV2 {
+        constraint top0 { q.p0.x == 50.0 }
+        constraint top1 { q.p1.x == 50.0 }
+        constraint topF { q.p2.x == 60.0 }
+        constraint top { q.p2.x == 50.0 }
+        part q : Q1 { part p2 :>> p1; }
+        part def Q1 :> Q0 { part p1 :>> p0; }
+        part def Q0 { assert constraint tie { p0.x == 50.0 } part p0 : P; }
+        part def P { attribute x : ScalarValues::Real; }
+      }`, {
+      'RNV2::Q0::tie': ['T/-/T/-', 'T'],
+      'RNV2::Q0::tie in RNV2::Q1': ['T/-/T/-', 'T'],
+      'RNV2::top': ['T/?/?/?', 'T'],
+      'RNV2::top0': ['?/?/?/?', '?'],
+      'RNV2::top1': ['?/?/?/?', '?'],
+      'RNV2::topF': ['F/?/?/?', 'F'],
+    }),
+    // A name two renamed redefinitions both redefine (`part e :>> p; part pp :>> p;`) answers neither from outside
+    // (H3): `q.p.x` read e's 60 where pp's x is 50 (old50 F/F/?/F, old60 T/T/?/?, closing-readings RN-1, gen-rn).
+    ...reversed('rn1-shared', `package RNS {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; }
+        constraint old60 { q.p.x == 60.0 }
+        constraint old50 { q.p.x == 50.0 }
+        constraint top { q.pp.x == 50.0 }
+        part q : Q { assert constraint ue { e.x == 60.0 } assert constraint u { pp.x == 50.0 } part e :>> p; part pp :>> p; }
+      }`, `package RNS {
+        part q : Q { part pp :>> p; part e :>> p; assert constraint u { pp.x == 50.0 } assert constraint ue { e.x == 60.0 } }
+        constraint top { q.pp.x == 50.0 }
+        constraint old50 { q.p.x == 50.0 }
+        constraint old60 { q.p.x == 60.0 }
+        part def Q { part p : P; }
+        part def P { attribute x : ScalarValues::Real; }
+      }`, {
+      'RNS::old50': ['?/?/?/?', '?'],
+      'RNS::old60': ['?/?/?/?', '?'],
+      'RNS::q::u': ['T/-/T/-', 'T'],
+      'RNS::q::ue': ['T/-/T/-', 'T'],
+      'RNS::top': ['T/T/T/T', 'T'],
+    }),
     // A part-valued binding into an instance under its type's assert (SF: `bind pp = q.p`, Q's `p.x == 50.0`):
     // pp stands for q's p, which is q's own instance, so Q's assert gives it 50 there and pp reads it (k and k2
     // F on all four, O9 S2; they read the default 2 beside SMT's inconsistent axioms). SFH: the same with the

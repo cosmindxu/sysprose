@@ -420,6 +420,7 @@ export class DefiningEquations {
   private readonly effective = new Map<ElementId, ElementRecord[]>();
   private readonly names = new Map<ElementId, string | undefined>();
   private readonly aliases = new Map<ElementId, string[]>();
+  private readonly shared = new Map<ElementId, ReadonlySet<string>>();
   private readonly scopes = new Map<string, Map<string, ElementId>>();
   private readonly readers = new Map<ElementId, Map<string, ElementId>>();
   private readonly qualified = new Map<ElementId, string>();
@@ -780,6 +781,26 @@ export class DefiningEquations {
     return hit;
   }
 
+  /**
+   * The names two of `ownerId`'s effective features both answer to only as
+   * an alias ({@link aliasesOf}): `p` in `part q : Q { part pp :>> p; part e
+   * :>> p; }`. Neither is p (H3), and the first was read as it — `q.p.x` read
+   * e's value where pp's differs. Such a name answers nothing.
+   */
+  sharedAliases(ownerId: ElementId): ReadonlySet<string> {
+    let hit = this.shared.get(ownerId);
+    if (!hit) {
+      const seen = new Set<string>();
+      const twice = new Set<string>();
+      for (const f of this.features(ownerId)) {
+        for (const n of this.aliasesOf(f)) (seen.has(n) ? twice : seen).add(n);
+      }
+      hit = twice;
+      this.shared.set(ownerId, hit);
+    }
+    return hit;
+  }
+
   /** The first of `contextId`'s effective features named `name` that states no value. */
   feature(contextId: ElementId, name: string): ElementRecord | undefined {
     let byName = this.valueless.get(contextId);
@@ -808,8 +829,9 @@ export class DefiningEquations {
         const n = this.nameOf(f);
         if (n && !byName.has(n)) byName.set(n, f);
       }
+      const shared = this.sharedAliases(contextId);
       for (const f of features) {
-        for (const n of this.aliasesOf(f)) if (!byName.has(n)) byName.set(n, f);
+        for (const n of this.aliasesOf(f)) if (!byName.has(n) && !shared.has(n)) byName.set(n, f);
       }
       this.named.set(contextId, byName);
     }
@@ -1043,9 +1065,11 @@ export class DefiningEquations {
         const denoted: Denotation = { feature: feat, reader: ownerId, inCall, instance, enclosing };
         // A directed feature is its owner's parameter: never a nested bare name.
         const own = inBody || isDirected(feat);
+        const shared = this.sharedAliases(ownerId);
         for (const n of [name, ...this.aliasesOf(feat)]) {
           const full = prefix ? `${prefix}.${n}` : n;
-          if (!ids.has(full)) ids.set(full, denoted);
+          // An alias two features share stays claimed, and answers neither ({@link sharedAliases}).
+          if (!ids.has(full) && (n === name || !shared.has(n))) ids.set(full, denoted);
           if (prefix === '') direct.add(n);
           else if (!own) {
             const seen = nested.get(n);
@@ -1148,9 +1172,11 @@ export class DefiningEquations {
     const context = this.model.get(contextId);
     if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
     const own = this.byName(contextId);
+    // A name two renamed redefinitions share answers nothing here, and no owner's attribute answers it either.
+    const shared = this.sharedAliases(contextId);
     const writers = [context, ...generalizationsOf(this.model, contextId).filter((t) => t.attrs.isLibrary !== true)];
     for (const w of writers) {
-      for (const [n, at] of this.namesWritten(w.id)) if (!own.has(n)) written.set(n, [...(written.get(n) ?? []), ...at]);
+      for (const [n, at] of this.namesWritten(w.id)) if (!own.has(n) && !shared.has(n)) written.set(n, [...(written.get(n) ?? []), ...at]);
     }
     for (const [n, at] of written) {
       // Each element that writes it: the nearest of its owners that declares
@@ -1220,7 +1246,7 @@ export class DefiningEquations {
    * where it reads none so: a feature of the context, or a name left unread.
    */
   lexicalFeature(contextId: ElementId, name: string): ElementRecord | undefined {
-    return this.byName(contextId).has(name) ? undefined : this.lexicalNames(contextId).admitted.get(name)?.feature;
+    return this.byName(contextId).has(name) || this.sharedAliases(contextId).has(name) ? undefined : this.lexicalNames(contextId).admitted.get(name)?.feature;
   }
 
   /**
@@ -1237,7 +1263,7 @@ export class DefiningEquations {
       const cut = this.nameWalkCut(contextId);
       if (cut !== undefined) return cut;
     }
-    return this.byName(contextId).has(name) ? undefined : this.lexicalNames(contextId).refused.get(name);
+    return this.byName(contextId).has(name) || this.sharedAliases(contextId).has(name) ? undefined : this.lexicalNames(contextId).refused.get(name);
   }
 
   /** The feature the nearest owner of `fromId` that declares `name` declares under it, with that owner. */
@@ -2537,16 +2563,18 @@ export class DefiningEquations {
   reachingAssert(
     contextId: ElementId,
     name: string,
+    spelled = true,
   ): { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined {
     if (name.includes('.') || !this.anyAsserted()) return undefined;
-    const key = `${contextId} ${name}`;
-    if (!this.reaching.has(key)) this.reaching.set(key, this.reachingUncached(contextId, name) ?? null);
+    const key = `${spelled ? '' : 'renamed '}${contextId} ${name}`;
+    if (!this.reaching.has(key)) this.reaching.set(key, this.reachingUncached(contextId, name, spelled) ?? null);
     return this.reaching.get(key) ?? undefined;
   }
 
   private reachingUncached(
     contextId: ElementId,
     name: string,
+    spelled: boolean,
   ): { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined {
     const f = this.feature(contextId, name);
     if (!f) return undefined;
@@ -2576,7 +2604,22 @@ export class DefiningEquations {
       }
       cur = owner;
     }
-    return undefined;
+    // RN-1: nothing on the owner chain — re-ask through the features the
+    // context redefines, nearest first (`part pp :>> p` reads Q's `p.x == 50`
+    // asserted over p). Two that answer differently leave it undecided. Not
+    // for a context a path reached by a name it redefines (`q.p` for q's
+    // `pp :>> p`, `spelled` false): p is no member of q (H3).
+    const start = this.model.get(contextId);
+    if (!spelled || !start || !isUsage(start.eClass)) return undefined;
+    let hit: { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined;
+    for (const g of redefinedClosure(this.model, start)) {
+      const r = this.reachingAssert(g.id, name);
+      if (!r) continue;
+      if (!hit) hit = r;
+      else if (JSON.stringify([r.equations.map((e) => [e.definition, [...e.literals]])]) !==
+        JSON.stringify([hit.equations.map((e) => [e.definition, [...e.literals]])])) return undefined;
+    }
+    return hit;
   }
 
   /** Where `f`'s asserted definitions are written: its owner, else the owner of the nearest feature it redefines that has one. */
@@ -2627,7 +2670,7 @@ export class DefiningEquations {
   chain(
     contexts: readonly ElementId[],
     path: string,
-  ): { feature: ElementRecord; usage?: ElementRecord; via?: ElementId; clean: boolean } | undefined {
+  ): { feature: ElementRecord; usage?: ElementRecord; via?: ElementId; clean: boolean; spelled: boolean } | undefined {
     const [head, ...rest] = path.split('.');
     let feature: ElementRecord | undefined;
     let owner: ElementId | undefined;
@@ -2636,6 +2679,8 @@ export class DefiningEquations {
       owner = c;
       if (feature) break;
     }
+    // `spelled`: every link names its feature by its own name, not one it redefines (`byName`'s aliases).
+    let spelled = feature === undefined || this.nameOf(feature) === head;
     let usage: ElementRecord | undefined;
     let via: ElementId | undefined;
     for (const segment of rest) {
@@ -2644,12 +2689,15 @@ export class DefiningEquations {
       const into = this.subjectOf(owner, feature) ?? feature;
       const next = this.byName(into.id).get(segment);
       if (!next) return undefined;
+      if (this.nameOf(next) !== segment) spelled = false;
       via = into.id;
       usage = into;
       owner = into.id;
       feature = next;
     }
-    return feature ? { feature, ...(usage ? { usage } : {}), ...(via !== undefined ? { via } : {}), clean: true } : undefined;
+    return feature
+      ? { feature, ...(usage ? { usage } : {}), ...(via !== undefined ? { via } : {}), clean: true, spelled }
+      : undefined;
   }
 
   /**

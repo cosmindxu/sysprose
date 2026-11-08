@@ -4198,7 +4198,15 @@ function equationBindings(
       // bound from that equation, read at the usage the chain ends in.
       const link = pass.definitions.chain(contexts, name);
       const leaf = link?.via !== undefined ? pass.definitions.nameOf(link.feature) : undefined;
-      if (!link || link.via === undefined || leaf === undefined || !pass.definitions.reachingAssert(link.via, leaf)) continue;
+      // Through a renamed redefinition only where the path names each link by
+      // its own name, here or where the text is written (Q's `p.x` read in q
+      // over q's `pp :>> p`); a name written outside for one q redefines is
+      // no member of q (H3: `q.p.x` stays unread).
+      const written = model.get(el.id)?.ownerId;
+      const spelled =
+        link?.spelled === true ||
+        (written != null && written !== el.ownerId && pass.definitions.chain([written, el.id], name)?.spelled === true);
+      if (!link || link.via === undefined || leaf === undefined || !pass.definitions.reachingAssert(link.via, leaf, spelled)) continue;
       const read = readSpecialiser(model, link.feature, name, pass, { contextId: link.via, feature: link.feature });
       if ('bound' in read) bindings.set(name, read.bound);
       else if (!read.valueless) return { reason: read.reason };
@@ -4339,11 +4347,49 @@ function chainCauses(
       partedCause(el, n, pass) ??
       clashCause(model, el, n, pass) ??
       contradictionCause(model, el, n, pass) ??
-      (n.includes('.') ? chainCause(model, el, n, pass) : undefined) ??
+      (n.includes('.') ? (renamedCause(model, el, n, pass) ?? chainCause(model, el, n, pass)) : undefined) ??
       calculationCause(model, el, n, pass) ??
       referenceSubsettingCause(model, el, n, pass),
   );
   return causes.length > 0 && causes.every((c) => c !== undefined) ? causes.join('; ') : undefined;
+}
+
+/**
+ * Why a chain written outside a usage reads nothing through a feature that
+ * usage redefines under a new name (H3): `q.p.x`, over `part q : Q { part pp
+ * :>> p; }`, is no path of q's — p is not a member of q, pp is — so it is not
+ * read through pp. A relation written in a general and read in the
+ * specialiser names its own feature, and is read (`undefined` there).
+ */
+function renamedCause(model: Model, el: ElementRecord, chain: string, pass: ScalarPass): string | undefined {
+  if (el.ownerId == null || model.get(el.id)?.ownerId !== el.ownerId) return undefined;
+  const { definitions } = pass;
+  const [head, ...rest] = chain.split('.');
+  let feature = definitions.chain([el.ownerId, el.id], head!)?.feature;
+  let path = head!;
+  for (const segment of rest) {
+    if (!feature) return undefined;
+    const next = definitions.byName(feature.id).get(segment);
+    if (!next && definitions.sharedAliases(feature.id).has(segment)) {
+      // Two features redefine it under new names ({@link DefiningEquations.sharedAliases}).
+      const renamers = definitions.features(feature.id).filter((f) => definitions.aliasesOf(f).includes(segment));
+      const names = renamers.map((f) => `\`${definitions.nameOf(f)}\``).join(' and ');
+      return `${path}.${segment} names nothing in ${definitions.qualifiedNameOf(feature.id)}: its ${names} each redefine \`${segment}\`, so \`${segment}\` is not a member of ${definitions.nameOf(feature) ?? path}`;
+    }
+    const own = next ? definitions.nameOf(next) : undefined;
+    if (!next || own === undefined) return undefined;
+    if (own !== segment) {
+      const redefined = redefinedClosure(model, next).find((g) => definitions.nameOf(g) === segment);
+      if (!redefined) return undefined;
+      return (
+        `${path}.${segment} names nothing in ${definitions.qualifiedNameOf(feature.id)}: its \`${own}\` redefines ` +
+        `${definitions.qualifiedNameOf(redefined.id)}, so \`${segment}\` is not a member of ${definitions.nameOf(feature) ?? path}`
+      );
+    }
+    path = `${path}.${segment}`;
+    feature = next;
+  }
+  return undefined;
 }
 
 /**
