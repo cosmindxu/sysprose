@@ -11,7 +11,7 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenCases": 0,
       "goldenDecided": 0,
       "models": 8,
-      "rows": 27,
+      "rows": 28,
       "tableAgree": 29,
       "tableDisagree": 0,
       "tableProbes": 16
@@ -264,7 +264,7 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenCases": 5,
       "goldenDecided": 6,
       "models": 72,
-      "rows": 485,
+      "rows": 486,
       "tableAgree": 654,
       "tableDisagree": 0,
       "tableProbes": 296
@@ -418,7 +418,7 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenCases": 4,
       "goldenDecided": 5,
       "models": 40,
-      "rows": 98,
+      "rows": 99,
       "tableAgree": 28,
       "tableDisagree": 0,
       "tableProbes": 15
@@ -513,7 +513,7 @@ export const CLASS_FACTS: ClassFacts = {
   "digests": {
     "defects": "96cac07e50aca0b917f75bf10924610fc78a41f10828a117b7303306aebb5c60",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "0f142793f22de52959582286f66bc0a029a79c2abeaca1bf180bc02d55f44f9a"
+    "probes": "f55a42fb102cad56389c424a513061e3b316c4094f1de932141328f43d7ec2de"
   },
   "fences": {
     "fence/collection-valued": {
