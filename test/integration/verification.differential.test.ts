@@ -18195,6 +18195,32 @@ package PS {
         })];
       }),
     ),
+    // a5 S3: a chain of bindings each written one instance below the last (definitions that each hold a usage typed by the next).
+    // The check and the literal engine read it to the segment cap (48 usages in a path), and the proof read it to 32 bindings below the first;
+    // it is 48 now, so the proof decides where the check does (40 deep) and one past it (49 usages: the path is past the check's cap, the proof
+    // still reads the bindings, and only the proved row says so). At 50 a binding lies more than 48 below the first and the proof is not claimed.
+    ...Object.fromEntries(
+      [
+        { k: 'a5-chain40', n: 40, rev: false, le: 'T/T/T/T', ge: 'F/F/F/F' },
+        { k: 'a5-chain40-rev', n: 40, rev: true, le: 'T/T/T/T', ge: 'F/F/F/F' },
+        { k: 'a5-chain49', n: 49, rev: false, le: '?/?/T/T', ge: '?/?/F/?' },
+        { k: 'a5-chain50', n: 50, rev: false, le: '?/?/T/?', ge: '?/?/F/?' },
+      ].map(({ k, n, rev, le, ge }) => {
+        const path = `root.${Array.from({ length: n }, (_, i) => `u${i + 1}`).join('.')}.a${n}`;
+        const text = [
+          'package BCH {',
+          ...Array.from({ length: n + 1 }, (_, j) => n - j).map(
+            (i) =>
+              `  part def H${i} { attribute a${i} : ScalarValues::Real; attribute b${i} : ScalarValues::Real = a${i}; ${i < n ? `part u${i + 1} : H${i + 1} { bind a${i + 1} = b${i}; }` : ''} }`,
+          ),
+          '  part root : H0 { attribute :>> a0 = 5.0; }',
+          `  constraint tLe { ${path} <= 10.0 }`,
+          `  constraint tGe { ${path} >= 10.0 }`,
+          '}',
+        ].join('\n');
+        return [k, probe(rev ? reversedMembers(text) : text, { 'BCH::tLe': [le, 'T'], 'BCH::tGe': [ge, 'F'] })];
+      }),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19375,6 +19401,8 @@ package PS {
     ['a5-conn', 'a5-conn-rev'],
     // a5 S1: two Booleans compared, in either text order.
     ['a5-bool', 'a5-bool-rev'],
+    // a5 S3: a chain of bindings 40 deep, in either text order.
+    ['a5-chain40', 'a5-chain40-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

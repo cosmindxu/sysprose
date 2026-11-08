@@ -2206,9 +2206,11 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
  * instance of the usage that writes it inside the last ({@link instanceRelationRows}): definitions that hold each
  * other go on without end. One left unfiled past it that no later row of the worklist files is not carried, and the
  * rows that read what it joins are refused. It guards definitions that hold each other, not a path of usages: it is
- * independent of `MAX_BINDING_SEGMENTS` of the defining equations (48), and deliberately left at 32.
+ * independent of `MAX_BINDING_SEGMENTS` of the defining equations, and set to the same 48 so that the check, the
+ * literal engine and the proof read a chain of usage bodies as deep as the check reads a path of usages (a chain of
+ * 33 to 48 bodies was read by the check and the literal engine while the proof refused it).
  */
-const MAX_NESTED_BINDING_DEPTH = 32;
+const MAX_NESTED_BINDING_DEPTH = 48;
 
 /**
  * The relations an INSTANCE with symbols of its own holds

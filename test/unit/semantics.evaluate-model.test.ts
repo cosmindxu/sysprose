@@ -9827,6 +9827,21 @@ describe('a contradiction the check reports is an axiom of the instance it holds
     expect((await smt(await load(CHAIN(10, '5.0')), 'Deep::t')).map((r) => r[1])).toEqual(['proved']);
   });
 
+  it('reads a chain of bindings each written one instance below the last, to the cap of 48 (a5 S3), and refuses what lies past it', async () => {
+    // 33 to 48 deep (40 and 48 here): the check and the literal engine read these, and the proof now does too (it refused past 32). The root's 50 reaches the
+    // assert of the nth instance below it, which the definitions never meet.
+    for (const n of [40, 48]) {
+      expect((await smt(await load(CHAIN(n, '50.0')), 'Deep::t')).map((r) => [r[1], r[2]]), String(n)).toEqual([['inconclusive', 'verification/inconsistent-axioms']]);
+      expect((await smt(await load(CHAIN(n, '5.0')), 'Deep::t')).map((r) => r[1]), String(n)).toEqual(['proved']);
+    }
+    // Past 48 the binding is left unfiled, the proof is not claimed, and the sentence names the cap.
+    const past = obligationsOf(await load(CHAIN(50, '5.0'))).filter((o) => o.role === 'axiom' && o.source === 'bind' && o.encodable !== true);
+    expect(past.length).toBeGreaterThan(0);
+    expect((past[0]!.encodable as { detail: string }).detail).toContain('more than 48 bindings below the first');
+    const [row] = await smt(await load(CHAIN(50, '5.0')), 'Deep::t');
+    expect(row![1]).not.toBe('proved');
+  }, 90_000);
+
   it('files the bindings of definitions that hold each other no deeper than the cap, and reads nothing it left unfiled', async () => {
     // A’s b holds B, B’s a holds A: each binding is read for the instance below the last, without end.
     const m = await load(`package Rec {
@@ -9838,11 +9853,11 @@ describe('a contradiction the check reports is an axiom of the instance it holds
     const rows = obligationsOf(m);
     const binds = rows.filter((o) => o.role === 'axiom' && o.source === 'bind');
     // Bounded by the depth, not by the 16384 relations of the instance walk (which took minutes here).
-    expect(binds.length).toBeGreaterThan(20);
-    expect(binds.length).toBeLessThan(200);
+    expect(binds.length).toBeGreaterThan(40);
+    expect(binds.length).toBeLessThan(300);
     const refused = binds.filter((o) => o.encodable !== true).map((o) => (o.encodable as { detail: string }).detail);
     expect(refused.length).toBeGreaterThan(0);
-    expect(refused[0]).toContain('more than 32 bindings below the first');
+    expect(refused[0]).toContain('more than 48 bindings below the first');
     // A proof beside a binding left out is not claimed.
     const [row] = await smt(m, 'Rec::t');
     expect(row![1]).not.toBe('proved');
