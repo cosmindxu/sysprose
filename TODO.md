@@ -565,15 +565,6 @@ headings.
       text: a broken `assert not` followed by a comment and an unrelated `satisfy` lines later
       swallows that satisfy into the refused clause, and the message names the wrong statement
       (an abstention, not a false verdict). [fence-assert-not; numeric2-pass; solver2-pass; a5-fences F2]
-- [ ] **Package-head default family (HDF): one remaining shape (GH2, a FALSE answer).**
-      a5-fences F0 and F3 fence the family (`headStandsAgainstAt`/`headStandsAgainstAbove`,
-      `unfixedDefaultsDifferAt`, `headTwoValuesAt`): gen-head reaches 0 WRONG in both orders,
-      per-instance rows included. Open, and a false answer: a head fixed by an instance `=` and by a
-      binding fixer that differ (gen-f3 GH2: p1 and p2 `:>> m = 7.0` beside a fixer `bind q.m = L`
-      with `L = 5.0`). The numeric surface reads M at the fixer's 5 (cM F) while the binding also
-      gives it p1's 7. A sound fence needs every fixer of a head recorded (`headsOfReadings`); the
-      branch a5-fences3 fixes it. Probes a5-fences2-scratch/gen/genf3.py, cases3/GH2f.sysml.
-      [a5-fences F0; a5-fences2 F3]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
       itself.** A general's body re-read by name where a specialisation declares a name anew
       without `:>>` (KerML 7.3.2.1 forbids it) is fenced on every surface since g8-fence: no surface
@@ -1113,6 +1104,16 @@ true values. What follows is what that branch and the review of it left open; en
       point-evaluation. FP2: a5-imp3's row 'IMP3::RQ::<<ConstraintUsage>> in IMP3::h' reads -/X/-/X
       (inconsistent-axioms: the asserted ax is false at h under Table 6) and the RQ root row
       ?/?/?/X, undecided not wrong. [a5-fences2 F3, F6, F4a, F4, F5, FP2]
+      (11) Head fixers compared only as `=` constants (a5-fences3 GH2). A package head whose slot two
+      things fix outside the component (an instance's `:>> m = 7.0`, another definition's binding at
+      an instance slot, an asserted equation on a slot) is read only where every fixer is one exact
+      constant. A binding fixer counts as one only where its component, read in that root, agrees on
+      one value written with `=`. An asserted equation, a `default`, or values that differ per
+      instance count as differing, so numeric abstains where the model may still entail M. The check
+      abstains on every fixed head (the fixedHead sentence) even where the fixers agree, while
+      numeric and SMT read the entailed value (`a5-gh2-same` cM ?/?/T/T). A disagreement in the sound
+      direction, not a false verdict. The HDF family is closed: gen-head, gen-f3 and gen-f3b read 0
+      WRONG in both text orders (rows a5-gh2, a5-gh2r, a5-gh2-same). [a5-fences3 GH2]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,
