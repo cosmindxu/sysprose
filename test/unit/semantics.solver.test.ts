@@ -553,6 +553,46 @@ describe('checkConstraintsNumeric — a feature an assert typed by an inequality
   });
 });
 
+/*
+ * a5 S4: a plain `constraint nl : Newton { in f = force; … }` filed no row on the numeric surface (tp1 read 2500 against
+ * 1000 * 2 in silence). It files its own `unknown` row now, in the sentence the typed assert's row has, and the plain
+ * constraints beside it are judged as before: it is no axiom and nothing is solved from it.
+ */
+describe('checkConstraintsNumeric — a plain constraint typed by a constraint definition', () => {
+  const rows = async (usage: string) => {
+    const { model: m } = await loadModelText(`package TQ {
+      constraint def Newton { in f : Real; in m : Real; in a : Real; f == m * a }
+      part car { attribute mass : Real = 1000.0; attribute accel : Real = 2.0; attribute force : Real = 2500.0; ${usage} }
+      constraint k { car.force == 2500.0 }
+      constraint kf { car.force == 2000.0 }
+    }`);
+    const byName = new Map(checkConstraintsNumeric(m!).map((r) => [m!.qualifiedName(r.id), r]));
+    return byName;
+  };
+
+  it('files an unknown row beside rows that read as before, whether the parameters are valued or bound', async () => {
+    for (const usage of [
+      'constraint nl : Newton { in f = force; in m = mass; in a = accel; }',
+      'constraint nl : Newton; bind nl.f = force; bind nl.m = mass; bind nl.a = accel;',
+    ]) {
+      const byName = await rows(usage);
+      const nl = byName.get('TQ::car::nl')!;
+      expect([nl.result, nl.imposed ?? false, nl.reason]).toEqual([
+        'unknown',
+        false,
+        "`nl` is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
+      ]);
+      expect([byName.get('TQ::k')!.result, byName.get('TQ::kf')!.result]).toEqual(['satisfied', 'violated']);
+    }
+  });
+
+  it('files none where there is no constraint definition to read: a subsetting of a usage with a body, a body of its own', async () => {
+    const byName = await rows('constraint own : Newton { force > 0.0 } constraint c1 { force > 0.0 } constraint c2 :> c1;');
+    expect(byName.has('TQ::car::c2')).toBe(false);
+    expect(byName.get('TQ::car::own')!.result).toBe('satisfied');
+  });
+});
+
 /* ───────────────────────────── optimization ──────────────────────────── */
 
 describe('optimize', () => {

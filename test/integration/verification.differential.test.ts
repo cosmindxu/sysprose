@@ -10169,6 +10169,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t1 { p.L == 200.0 }
       }`, {
+      // a5 S4: the plain typed `e0` files its own row (it filed none), in the sentence the assert's row has.
+      'U1::P::e0': ['?/?/?/?', null],
       'U1::P::ea': ['?/-/?/-', null],
       'U1::t1': ['?/?/?/?', null],
     }),
@@ -13645,6 +13647,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.load <= 10.0 }
       }`, {
       'TP2::Q::c': ['?/?/?/?', 'F'],
+      // a5 S4: the plain typed `e0` files its own row too.
+      'TP2::Q::e0': ['?/?/?/?', 'T'],
       'TP2::Q::ea': ['?/-/?/-', 'T'],
       'TP2::top': ['?/?/?/?', 'F'],
     }),
@@ -18266,6 +18270,32 @@ package PS {
       'CONDBAD::nE': ['?/?/?/?', null],
       'CONDBAD::nT': ['?/?/?/?', null],
     }),
+    // a5 S4: a plain `constraint nl : Newton { in f = force; … }` files its own row, ?/?/?/? in the one sentence the typed assert's row has
+    // (tp1, tp3, g5d); it filed none on any surface, so a violated `nl` (2500 against 1000 * 2) was silent. It is no axiom: the plain constraints
+    // beside it read T/F as before on all four, in either text order. The reading itself (ref F for `nl`) is the typed-usage step's (TY1/TY2).
+    ...Object.fromEntries(
+      (['a5-typed-row', 'a5-typed-row-rev'] as const).map((k) => {
+        const text = `package TYR {
+  constraint def Newton { in f : ScalarValues::Real; in m : ScalarValues::Real; in a : ScalarValues::Real; f == m * a }
+  constraint def K { x >= 1.0 }
+  attribute x : ScalarValues::Real = 3.0;
+  part car { attribute mass : ScalarValues::Real = 1000.0; attribute accel : ScalarValues::Real = 2.0; attribute force : ScalarValues::Real = 2500.0; constraint nl : Newton { in f = force; in m = mass; in a = accel; } }
+  part car2 { attribute mass : ScalarValues::Real = 1000.0; attribute accel : ScalarValues::Real = 2.0; attribute force : ScalarValues::Real = 2000.0; constraint nl2 : Newton; bind nl2.f = force; bind nl2.m = mass; bind nl2.a = accel; }
+  constraint c : K;
+  constraint kForce { car.force == 2500.0 }
+  constraint kForce2 { car2.force == 2500.0 }
+  constraint kX { x == 3.0 }
+}`;
+        return [k, probe(k === 'a5-typed-row' ? text : reversedMembers(text), {
+          'TYR::car::nl': ['?/?/?/?', 'F'],
+          'TYR::car2::nl2': ['?/?/?/?', 'T'],
+          'TYR::c': ['?/?/?/?', 'T'],
+          'TYR::kForce': ['T/T/T/T', 'T'],
+          'TYR::kForce2': ['F/F/F/F', 'F'],
+          'TYR::kX': ['T/T/T/T', 'T'],
+        })];
+      }),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19449,6 +19479,8 @@ package PS {
     // a5 S2: `if c ? a else b` and `if c then a else b`.
     ['a5-cond-q', 'a5-cond-then'],
     ['a5-cond-q', 'a5-cond-q-rev'],
+    // a5 S4: a plain typed constraint usage, in either text order.
+    ['a5-typed-row', 'a5-typed-row-rev'],
     // a5 S3: a chain of bindings 40 deep, in either text order.
     ['a5-chain40', 'a5-chain40-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.

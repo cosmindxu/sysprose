@@ -652,17 +652,20 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
     if (isNonNormativeStatement(model, el.id) || underNonNormativeStatement(model, el)) continue;
     const raw = el.attrs.expression;
     if (typeof raw !== 'string' || raw.trim() === '') {
-      // An assert typed by a constraint definition and no body of its own: an axiom this tool does not read (A4).
+      // An assert typed by a constraint definition and no body of its own: an axiom this tool does not read (A4). A
+      // plain one is a check this tool does not make (a5 S4): an obligation, not an axiom, so it holds nothing back.
       const typed = typedAssertRefusal(model, el);
       if (typed === undefined) continue;
       const contract = owningContract(model, el, byId);
       const encodable = { reason: 'unread-definition' as const, detail: typed };
+      const asWritten = roleOf(el, false) ?? { role: 'axiom' as const, source: 'assert' as const };
+      const filed = opts.fromKeywords ? keywordRole(model, el, asWritten) : asWritten;
       out.push({
         requirement: contract ? contractRef(contract) : null,
         shortId: contract?.shortId ?? '',
         subject: contract?.subject ?? null,
-        role: 'axiom',
-        source: 'assert',
+        role: filed.role,
+        source: filed.source,
         element: ref(model, el),
         expression: '',
         node: null,
@@ -676,6 +679,7 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
         evidence: [],
         status: statusOf(encodable),
         ...claimed(model, contract),
+        ...(filed.provenance ? { provenance: filed.provenance } : {}),
       });
       continue;
     }

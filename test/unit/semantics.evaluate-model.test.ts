@@ -5317,6 +5317,56 @@ describe('checkConstraints — an enclosing assert is checked against a default 
         'this tool does not read',
     );
   });
+
+  // a5 S4: a PLAIN `constraint nl : Newton { in f = force; … }` states the body with the parameters' values, as the assert
+  // does, and filed no row on any surface: 2500 against 1000 * 2 was silent (tp1, g5d). It files its own row now, a check
+  // this tool does not make, and holds nothing back (it is no axiom).
+  it('files a row for a plain constraint typed by a constraint definition, and holds no other row back (S4)', async () => {
+    const newton = 'constraint def Newton { in f : Real; in m : Real; in a : Real; f == m * a }';
+    const attrs = 'attribute mass : Real = 1000.0; attribute accel : Real = 2.0; attribute force : Real = 2500.0;';
+    const sentence = (name: string) =>
+      `\`${name}\` is typed by the constraint definition \`Newton\`, whose body this tool does not read with the parameters' values`;
+    const load = async (text: string) => (await loadModelText(text)).model!;
+    for (const [tag, usage, qn] of [
+      ['SA', 'part car { ' + attrs + ' constraint nl : Newton { in f = force; in m = mass; in a = accel; } }', 'SA::car::nl'],
+      ['SB', 'part car { ' + attrs + ' constraint nl : Newton; bind nl.f = force; bind nl.m = mass; bind nl.a = accel; }', 'SB::car::nl'],
+      ['SC', 'part def Car { ' + attrs + ' constraint nl : Newton { in f = force; in m = mass; in a = accel; } } part car : Car;', 'SC::Car::nl'],
+    ] as const) {
+      const m = await load(`package ${tag} { ${newton} ${usage} constraint k { car.force == 2500.0 } }`);
+      const check = checkConstraints(m).find((c) => m.qualifiedName(c.id) === qn)!;
+      expect([tag, check.result, check.message], tag).toEqual([tag, 'unknown', `Could not evaluate: ${sentence('nl')}`]);
+      const num = checkConstraintsNumeric(m).find((r) => m.qualifiedName(r.id) === qn)!;
+      expect([tag, num.result, num.reason], tag).toEqual([tag, 'unknown', sentence('nl')]);
+      // On the proof surfaces it is an obligation that cannot be encoded, not an axiom: no other row waits on it.
+      const rows = obligationsOf(m).filter((o) => o.element.qualifiedName === qn);
+      expect(rows.map((o) => [o.role, o.source, o.encodable]), tag).toEqual([
+        ['obligation', 'constraint', { reason: 'unread-definition', detail: sentence('nl') }],
+      ]);
+      expect(obligationsOf(m).find((o) => o.element.qualifiedName === `${tag}::k`)!.encodable, tag).toBe(true);
+      expect(checkConstraints(m).find((c) => m.qualifiedName(c.id) === `${tag}::k`)!.result, tag).toBe('satisfied');
+    }
+    // A parameter-free body is as unread (g5d); an asserted one keeps its axiom.
+    const g5d = await load('package G5D { attribute x : Real = 3.0; constraint def K { x >= 1.0 } constraint c : K; assert constraint e : K; constraint t { x == 3.0 } }');
+    const row = (q: string) => checkConstraints(g5d).find((c) => g5d.qualifiedName(c.id) === q)!;
+    expect(row('G5D::c').result).toBe('unknown');
+    expect(obligationsOf(g5d).find((o) => o.element.qualifiedName === 'G5D::c')).toMatchObject({ role: 'obligation', status: 'not-encodable' });
+    expect(obligationsOf(g5d).find((o) => o.element.qualifiedName === 'G5D::e')).toMatchObject({ role: 'axiom', source: 'assert' });
+    // Nothing else files: a body of its own is read as written, a usage that subsets a usage with a body is the row that
+    // usage already has, and a typed `require` clause is not read yet (no row, as before).
+    const quiet = await load(`package QT {
+      attribute x : Real = 3.0;
+      constraint def K { x >= 1.0 }
+      constraint own : K { x >= 5.0 }
+      constraint c1 { x >= 1.0 }
+      constraint c2 :> c1;
+      requirement def R { require constraint rq : K; }
+    }`);
+    const filed = checkConstraints(quiet).map((c) => quiet.qualifiedName(c.id));
+    expect(filed).toContain('QT::own');
+    expect(checkConstraints(quiet).find((c) => quiet.qualifiedName(c.id) === 'QT::own')!.result).toBe('violated');
+    expect(filed).not.toContain('QT::c2');
+    expect(filed).not.toContain('QT::R::rq');
+  });
 });
 
 describe('a binding reads through a renamed redefinition and a package’s definition-feature bind (H5 S4)', () => {

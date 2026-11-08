@@ -2142,6 +2142,7 @@ an asserted relation links), is not carried, and the row says which; a bound it 
 sort, a conjunction) is not carried either, under the sentence that no assertion gives a default a value. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
 def Eq { in a; a == 50.0 }`) is read by no surface. Its own row abstains on the check and the numeric surface (`unread-definition`: *`e` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*), and the literal and SMT engines read it as an assertion they cannot read, so every row they judge in that model abstains (*the model asserts …, which this tool cannot read*; *proof not claimed …*): the assertion may contradict a value the model writes with `=`.
+A plain `constraint nl : Eq { in a = L; }`, with no `assert`, is a check this tool does not make: it files the same row (*`nl` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*) on the check, the numeric surface, `verify` (`verification/not-evaluable`, which `--allow-inconclusive` does not forgive) and `obligations`, and it holds no other row back, since nothing is asserted. Before, it filed no row, and `nl` read as holding where `a == 50.0` was violated by `L`.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
 == 50.0 and a >= 0.0`) — what it may define is read nowhere: every feature a
 name in it reads — each value it gives a parameter, bare or dotted (`in a =
