@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5537 total — 5537 passed, 0 failed, 0 skipped
+- **Tests:** 5548 total — 5548 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -36,7 +36,7 @@
 | test/integration/pipeline.validate.test.ts | 6 | 0 | 0 |
 | test/integration/semantics-exec.integration.test.ts | 9 | 0 | 0 |
 | test/integration/semantics.pipeline.test.ts | 9 | 0 | 0 |
-| test/integration/smt-z3.integration.test.ts | 44 | 0 | 0 |
+| test/integration/smt-z3.integration.test.ts | 47 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
 | test/integration/verification.differential.test.ts | 231 | 0 | 0 |
@@ -58,7 +58,7 @@
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
 | test/unit/api.rest2.test.ts | 11 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 12 | 0 | 0 |
-| test/unit/api.verification.test.ts | 87 | 0 | 0 |
+| test/unit/api.verification.test.ts | 90 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
@@ -137,11 +137,11 @@
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.smt-encode.test.ts | 119 | 0 | 0 |
-| test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
+| test/unit/semantics.solver-ineq.test.ts | 25 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 134 | 0 | 0 |
 | test/unit/semantics.solver.test.ts | 96 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
-| test/unit/semantics.units-eval.test.ts | 46 | 0 | 0 |
+| test/unit/semantics.units-eval.test.ts | 48 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
