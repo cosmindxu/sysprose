@@ -12,7 +12,7 @@ import {
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
-import { boundSourceIn, defaultStandsIn, headStandsAgainstAt, headTwoValuesAt, instanceIndexSeam, unfixedDefaultsDifferAt } from '../../src/semantics/defining-equation';
+import { boundSourceIn, defaultStandsIn, headFixersDifferAt, headStandsAgainstAt, headTwoValuesAt, instanceIndexSeam, unfixedDefaultsDifferAt } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -728,6 +728,38 @@ describe('checkConstraintsNumeric — a slot a package head joins to two default
     expect(headTwoValuesAt(m!, pkg, 'M')).toMatch(/joins two values the model states/);
     const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `GH91::${n}`)!;
     expect([numeric('cM').result, numeric('fix').result]).toEqual(['unknown', 'unknown']);
+  });
+
+  it('decides no row over a name the head joins to a slot two fixers give different values (GH2)', async () => {
+    // p1's `:>> m = 7.0` and w's `L = 5.0` through W's `bind q.m = L` both fix P's m outside the component: the
+    // binding gives M both 7 and 5. The solve read M at the 5 alone (`cM` F) where the check reads no value for M;
+    // p1.m keeps its own 7, and w.q.m its 5.
+    const src = (L: string) => `package GH2 {
+      package L { part def P { attribute m : ScalarValues::Real; } }
+      bind L::P::m = M;
+      attribute M : ScalarValues::Real;
+      part p1 : L::P { attribute :>> m = 7.0; }
+      part def W { attribute L : ScalarValues::Real; part q : L::P; bind q.m = L; }
+      part w : W { attribute :>> L = ${L}; }
+      constraint cM { M >= 6.0 }
+      constraint c1 { p1.m >= 6.0 }
+      constraint cW { w.q.m >= 6.0 }
+    }`;
+    const { model: m } = await loadModelText(src('5.0'));
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'GH2')!.id;
+    const why = headFixersDifferAt(m!, pkg, 'M');
+    expect(why).toMatch(/both the value GH2::p1::m states and a binding read in GH2 at w\.q\.m give L\.P\.m a value/);
+    expect(headFixersDifferAt(m!, pkg, 'p1.m')).toBeUndefined();
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `GH2::${n}`)!;
+    expect([numeric('cM').result, numeric('cM').reason]).toEqual(['unknown', why]);
+    expect([numeric('c1').result, numeric('cW').result]).toEqual(['satisfied', 'violated']);
+    const check = checkConstraints(m!).find((r) => m!.qualifiedName(r.id) === 'GH2::cM')!;
+    expect([check.result, check.message]).toEqual(['unknown', `Could not evaluate: ${why}`]);
+    // Two fixers that state one exact value (w's `L = 7.0`) give M that value: no fence.
+    const { model: same } = await loadModelText(src('7.0'));
+    const samePkg = same!.all().find((e) => same!.qualifiedName(e.id) === 'GH2')!.id;
+    expect(headFixersDifferAt(same!, samePkg, 'M')).toBeUndefined();
+    expect(checkConstraintsNumeric(same!).find((r) => same!.qualifiedName(r.id) === 'GH2::cM')!.result).toBe('satisfied');
   });
 
   it('is no fence where an instance fixes the slot outside the component (fixedHead, V4)', async () => {
