@@ -1678,6 +1678,11 @@ export function conjunctAxiomOf(model: Model, id: string): { part: ClausePart; c
   return part ? { part, clauseRowId: `${at![1]}${at![3] ?? ''}` } : undefined;
 }
 
+/** The id of the row whose check holds the axiom `id`: its clause's for a conjunct ({@link conjunctAxiomOf}), else its own. */
+export function clauseRowIdOf(model: Model, id: string): string {
+  return conjunctAxiomOf(model, id)?.clauseRowId ?? id;
+}
+
 /**
  * The check's row of the axiom `id`; for a conjunct ({@link conjunctAxiomOf}), its clause's where it is held — a
  * conjunction held holds every conjunct — and none otherwise: violated or undecided, it may turn on another conjunct.

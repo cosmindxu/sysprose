@@ -1010,6 +1010,25 @@ describe('an asserted conjunction a gate refuses whole is read as its conjuncts 
       expect(set.groups.map((g) => g.outcome), String(split)).not.toContain('consistent');
     }
   });
+
+  withZ3('does not blame a true refused conjunct for a false sibling that reads a released feature', async () => {
+    const t = (split: boolean) => `package B {
+      part def P {
+        attribute mode : String = "auto";
+        attribute y : ScalarValues::Real = 1.0;
+        ${split ? 'assert constraint c1 { mode == "auto" } assert constraint c2 { y == 5.0 }' : 'assert constraint c { mode == "auto" and y == 5.0 }'}
+      }
+      part p : P;
+      constraint k { p.y <= 6.0 }
+    }`;
+    const claims = [];
+    for (const split of [false, true]) {
+      const k = (await verifyModel(await load(t(split)), { engine: 'smt', free: ['B::P::y'] })).results.find((r) => r.clause.qualifiedName === 'B::k');
+      expect(k?.detail ?? '', String(split)).not.toContain('`mode == "auto"`');
+      claims.push(k?.claim);
+    }
+    expect(claims[0]).toBe(claims[1]);
+  });
 });
 
 describe('the absent path is a first-class answer', () => {

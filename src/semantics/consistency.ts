@@ -102,7 +102,7 @@ import { isOutsideTheFragment } from './engines/literal';
 import { checkConstraints, checksByRow, type ConstraintCheck } from './evaluate-model';
 import { rereadRelation, tieSentence, type PointValues } from './exact';
 import {
-  conjunctAxiomOf,
+  clauseRowIdOf,
   obligationsOf,
   reachOfRow,
   reachedBy,
@@ -730,7 +730,7 @@ interface Prepared {
    * symbol ({@link refusalReaches}), never only by the symbol a refused row was
    * given — for {@link refusedReach}.
    */
-  axiomsRefusedReach: Array<{ relation: RefusedRelation; reach: RefusalReach; row: EncodedRow }>;
+  axiomsRefusedReach: Array<{ relation: RefusedRelation; reach: RefusalReach; row: EncodedRow; clauseVars: string[] }>;
   /** Each requirement's own relations, by requirement id. */
   clausesOf: Map<ElementId, EncodedRow[]>;
   contracts: Contract[];
@@ -776,7 +776,12 @@ function prepare(model: Model, withValues: boolean): Prepared {
     if (!e.encoded) {
       const relation = refusalOf(e, null);
       axiomsRefused.push(relation);
-      axiomsRefusedReach.push({ relation, reach: reachOfRow(e.row, e.vars.map((v) => v.qualifiedName)), row: e });
+      // What the check reads of the clause, whole: every conjunct's features, not only this one's.
+      const key = clauseRowIdOf(model, row.element.id);
+      const clauseVars = rows
+        .filter((r) => r.role === 'axiom' && clauseRowIdOf(model, r.element.id) === key)
+        .flatMap((r) => r.vars.map((v) => v.qualifiedName));
+      axiomsRefusedReach.push({ relation, reach: reachOfRow(e.row, e.vars.map((v) => v.qualifiedName)), row: e, clauseVars });
       continue;
     }
     axiomUnits.push(unitOf(e, 'axiom', null));
@@ -1694,8 +1699,8 @@ function refusedReach(
     (a) =>
       refusalReaches(a.reach, reached) ||
       (a.row.row.source === 'assert' &&
-        !a.row.row.vars.some((v) => input.released.has(v.qualifiedName)) &&
-        input.checksAtValues().get(conjunctAxiomOf(input.model, a.row.row.element.id)?.clauseRowId ?? a.row.row.element.id)?.result ===
+        !a.clauseVars.some((v) => input.released.has(v)) &&
+        input.checksAtValues().get(clauseRowIdOf(input.model, a.row.row.element.id))?.result ===
           'violated'),
   );
   return { own, context: inReach.map((a) => a.relation), contextRows: inReach.map((a) => a.row) };

@@ -73,7 +73,7 @@ import { affineRational, rereadRelation, tieSentence, type PointValues } from '.
 import {
   axiomCheckOf,
   axiomsOf,
-  conjunctAxiomOf,
+  clauseRowIdOf,
   reachOfRow,
   rowElement,
   reachedBy,
@@ -982,8 +982,14 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
   const contradicted = input.axiomsRefused.find(
     (e) =>
       e.row.source === 'assert' &&
-      !e.row.vars.some((v) => input.free.has(v.qualifiedName)) &&
-      input.checks.get(conjunctAxiomOf(model, e.row.element.id)?.clauseRowId ?? e.row.element.id)?.result === 'violated',
+      // The check reads the CLAUSE whole: none of its conjuncts may read a feature released, or another one's
+      // falsehood would be blamed on this one.
+      ![...input.axioms, ...input.axiomsRefused].some(
+        (a) =>
+          clauseRowIdOf(model, a.row.element.id) === clauseRowIdOf(model, e.row.element.id) &&
+          a.row.vars.some((v) => input.free.has(v.qualifiedName)),
+      ) &&
+      input.checks.get(clauseRowIdOf(model, e.row.element.id))?.result === 'violated',
   );
   if (contradicted !== undefined) {
     return {
