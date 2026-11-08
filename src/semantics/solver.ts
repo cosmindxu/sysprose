@@ -99,6 +99,7 @@ import {
   contradictedDefinitions,
   headStandsAgainstAbove,
   headTwoValuesAt,
+  headFixersDifferAt,
   nameAtInstance,
   unfixedDefaultsDifferAt,
   hasEnclosedBindings,
@@ -6994,7 +6995,9 @@ function numericRows(
   // E1Q's `bind P::load = M` over M's `default = 9.0` and p4's `default = 7.0`): it has no value, and no asserted
   // equation gives it one, on any surface (USER-GUIDE §6) — the solve read p2.load at the 5 of `p2.load == 5.0`.
   // So for a name an asserted equation defines that a package head joins to a member it gives two values
-  // (headTwoValuesAt: GH91's `M == 5.0` over P's `default = 7.0`). Per instance too: the name is read at the
+  // (headTwoValuesAt: GH91's `M == 5.0` over P's `default = 7.0`), and for one the head joins to a slot two fixers
+  // give values that are not one exact constant (headFixersDifferAt: GH2's p1 `:>> m = 7.0` beside W's `bind q.m =
+  // L` for w's `L = 5.0`, where the solve read M at the 5 alone). Per instance too: the name is read at the
   // instance's path in its context.
   for (const r of out) {
     if (r.conflict !== undefined || r.result === 'unknown') continue;
@@ -7002,7 +7005,7 @@ function numericRows(
     if (contextId == null) continue;
     const differ = relationNamesOf(r.raw)
       .map((n) => nameAtInstance(model, contextId, r.context?.path, n))
-      .map((n) => unfixedDefaultsDifferAt(model, contextId, n) ?? headTwoValuesAt(model, contextId, n))
+      .map((n) => unfixedDefaultsDifferAt(model, contextId, n) ?? headTwoValuesAt(model, contextId, n) ?? headFixersDifferAt(model, contextId, n))
       .find((x) => x !== undefined);
     if (differ === undefined) continue;
     r.result = 'unknown';

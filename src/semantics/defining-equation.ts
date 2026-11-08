@@ -11852,6 +11852,13 @@ interface DefinitionHead {
    * {@link heldDefaults}, after every hold.
    */
   stands?: Array<{ root: ElementId; written: ElementRecord }>;
+  /**
+   * Every thing that fixes the slot outside the component, not the first alone ({@link DefinitionHead.fixed} names
+   * the first): each redefinition's `=` (`written`), each member of another binding at an instance's path, each
+   * asserted equation that defines an instance's slot — GH2's p1 `:>> m = 7.0` beside W's `bind q.m = L` for `w`'s
+   * `L = 5.0`. Two that are not one exact constant give the component two values ({@link headFixersDifferAt}).
+   */
+  fixers?: Array<{ text: string; written?: ElementRecord; binding?: { root: ElementId; component: string } }>;
 }
 
 /** Does `h`'s slot take, outside its component, a value a `default` in it gives way to ({@link DefinitionHead.states})? */
@@ -11906,7 +11913,9 @@ function headsOfReadings(
   for (const { head } of all) {
     const redefiners = byRedefined.get(head.feature) ?? [];
     head.redefined = redefiners.length > 0;
-    const plain = redefiners.find((r) => r.attrs.defaultValue !== true);
+    const plains = redefiners.filter((r) => r.attrs.defaultValue !== true);
+    for (const r of plains) (head.fixers ??= []).push({ text: `the value ${effectiveQualifiedName(model, r.id)} states`, written: r });
+    const plain = plains[0];
     if (plain) {
       head.fixed = `the value ${effectiveQualifiedName(model, plain.id)} states`;
       head.fixedBy = 'value';
@@ -11933,8 +11942,10 @@ function headsOfReadings(
   for (const [rootId, ctx] of contexts) {
     for (const path of ctx.at.keys()) {
       for (const { rootId: headRoot, head } of all) {
-        if (head.fixedBy === 'value' || (rootId === headRoot && componentOf(rootId, path) === head.component)) continue;
+        if (rootId === headRoot && componentOf(rootId, path) === head.component) continue;
         if (!slotOf(rootId, path, head)) continue;
+        (head.fixers ??= []).push({ text: `a binding read in ${effectiveQualifiedName(model, rootId)} at ${path}`, binding: { root: rootId, component: componentOf(rootId, path) } });
+        if (head.fixedBy === 'value') continue;
         (head.slots ??= []).push({ root: rootId, component: componentOf(rootId, path), path });
         if (head.fixed === undefined) {
           head.fixed = `a binding read in ${effectiveQualifiedName(model, rootId)} at ${path}`;
@@ -11948,11 +11959,11 @@ function headsOfReadings(
     const paths = equationsOf(model, el).flatMap((eq) => [definedName(eq.node.left, eq.literals), definedName(eq.node.right, eq.literals)]);
     if (paths.length === 0) continue;
     for (const { head } of all) {
+      if (!paths.some((p) => p !== undefined && slotOf(el.ownerId!, p, head))) continue;
+      (head.fixers ??= []).push({ text: `the asserted equation ${effectiveQualifiedName(model, el.id)}` });
       if (head.fixed !== undefined) continue;
-      if (paths.some((p) => p !== undefined && slotOf(el.ownerId!, p, head))) {
-        head.fixed = `the asserted equation ${effectiveQualifiedName(model, el.id)}`;
-        head.fixedBy = 'assert';
-      }
+      head.fixed = `the asserted equation ${effectiveQualifiedName(model, el.id)}`;
+      head.fixedBy = 'assert';
     }
   }
   return { heads, byRedefined };
@@ -13510,11 +13521,79 @@ function fixedHeadSentence(model: Model, symbol: string, root: ElementId, compon
   const name = sep >= 0 ? symbol.slice(sep + 2) : symbol;
   const instance = sep >= 0 ? symbol.slice(0, sep) : '';
   const members = componentPaths(model, root, component);
+  const two = fixersDiffer(model, head);
+  if (two !== undefined) {
+    return (
+      `${name} has no value in ${instance}: a binding of ${effectiveQualifiedName(model, root)} joins ${members.join(', ')} ` +
+      `in every instance of ${effectiveQualifiedName(model, head.definition.id)}, and both ${two[0]} and ${two[1]} give ` +
+      `${head.path} a value in one of them: a binding holds in every instance, and the two are not one value this tool ` +
+      'reads exactly, so the model may state two values for it, and it is not read'
+    );
+  }
   return (
     `${name} has no value in ${instance}: a binding of ${effectiveQualifiedName(model, root)} joins ${members.join(', ')} ` +
     `in every instance of ${effectiveQualifiedName(model, head.definition.id)}, and ${head.fixed} gives ${head.path} a value ` +
     'in one of them, which this tool does not read into the others'
   );
+}
+
+/**
+ * Two of `head`'s fixers ({@link DefinitionHead.fixers}) that are not one value this tool reads exactly, as their
+ * texts, or `undefined`. A redefinition's `=` is its exact constant; a member of another binding is the one value
+ * written with `=` that its component states where it is read (the package's reading of w's `L = 5.0` at w.q.m), and
+ * one binding read in two roots (W's `bind q.m = L` in W at q.m, and in the package at w.q.m) is one fixer, read
+ * where it has that value; an asserted equation, or a component with no such value, is no constant, and differs
+ * from any other fixer.
+ */
+function fixersDiffer(model: Model, head: DefinitionHead): [string, string] | undefined {
+  const valueOf = (f: NonNullable<DefinitionHead['fixers']>[number]): Constant | undefined => {
+    if (f.written) return constantOf(f.written);
+    if (!f.binding) return undefined;
+    const cls = classified(model, f.binding.root, f.binding.component);
+    if (cls.valued.length === 0) return undefined;
+    const agreed = agreedValued(model, f.binding.root, cls.valued);
+    const r = agreed === undefined ? undefined : bindingEnds(model).readings.get(f.binding.root)?.get(agreed);
+    const g = r ? model.get(r.feature) : undefined;
+    const written = g ? valueSourceOf(model, g) : undefined;
+    return written && written.attrs.defaultValue !== true ? constantOf(written) : undefined;
+  };
+  const fixers: Array<{ text: string; c: Constant | undefined; ids?: readonly ElementId[] }> = [];
+  for (const f of head.fixers ?? []) {
+    const c = valueOf(f);
+    const ids = f.binding ? componentBindingIds(model, f.binding.root, f.binding.component) : undefined;
+    const same = ids ? fixers.find((x) => x.ids?.some((id) => ids.includes(id))) : undefined;
+    if (same) {
+      if (same.c === undefined && c !== undefined) Object.assign(same, { text: f.text, c });
+      continue;
+    }
+    fixers.push({ text: f.text, c, ids });
+  }
+  const first = fixers[0];
+  if (!first || fixers.length < 2) return undefined;
+  const other = fixers.find((f) => f !== first && (first.c === undefined || f.c === undefined || compareConstants(first.c, f.c) !== 'same'));
+  return other === undefined ? undefined : [first.text, other.text];
+}
+
+/**
+ * Why `name`, read in `contextId`, has no value on any surface (GH2): a package's binding on a definition's feature
+ * joins it, in every instance, to a slot two fixers give values this tool does not read as one
+ * ({@link fixersDiffer}) — GH2's `bind L::P::m = M` beside p1's `:>> m = 7.0` and W's `bind q.m = L` for w's `L =
+ * 5.0`: the binding gives M both 7 and 5. Read as before, the numeric surface solved M at the 5 alone, where the
+ * check reads no value ({@link BoundSource} `fixedHead`). The check's sentence, or `undefined`.
+ */
+export function headFixersDifferAt(model: Model, contextId: ElementId, name: string): string | undefined {
+  if (!hasUserBindings(model)) return undefined;
+  const d = sharedDefinitions(model).denote(contextId).get(name);
+  if (!d) return undefined;
+  // A slot a redefinition states its own value at with `=` (p1.m) reads that value, on every surface.
+  const own = valueSourceOf(model, d.feature);
+  if (own !== undefined && own.attrs.defaultValue !== true) return undefined;
+  const source = boundSourceIn(model, `${d.instance}::${name.slice(name.lastIndexOf('.') + 1)}`);
+  if (source === undefined || !('abstain' in source) || source.fixedHead !== true) return undefined;
+  const best = outermostReading(model, `${d.instance}::${name.slice(name.lastIndexOf('.') + 1)}`);
+  if (!best) return undefined;
+  const fixed = bindingEnds(model).heads.get(best.root)?.find((h) => h.component === best.component && fixesSlot(h));
+  return fixed !== undefined && fixersDiffer(model, fixed) !== undefined ? source.sentence : undefined;
 }
 
 /** The user packages of a model — `package` elements, nested ones included. */

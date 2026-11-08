@@ -1992,7 +1992,13 @@ instance that redefines it directly: an expression, a `default`, a deeper end
 or a value that takes an evaluation to compare is read as before, with no
 finding. The solver lane holds that instance to the binding as well, units or
 none, so its axioms are inconsistent, and the SMT engine says so beside the
-other surfaces' *could not be evaluated*.
+other surfaces' *could not be evaluated*. Where M has no value and two things fix
+the slot outside the binding — an instance's own `:>> m = 7.0` and another
+definition's binding at an instance's slot (W's `bind q.m = L`, with w's `L =
+5.0`) — that are not one exact value, M has no value on any surface, the numeric
+surface included (*… and both the value …::p1::m states and a binding read in …
+at w.q.m give P.m a value in one of them …*); where they are one (both 7), the
+numeric surface reads M at it.
 
 **A `default` stands against every assertion.** `attribute L default = 2.0;`
 beside `assert constraint qa { L == 5.0 }` is L = 2 on every surface, as `attribute

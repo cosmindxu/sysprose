@@ -71,7 +71,7 @@ import {
   type ConstraintCheck,
   type SpecialisationInstance,
 } from '@semantics/evaluate-model';
-import { contradictedDefinitions, headStandsAgainstAt, headTwoValuesAt, readsContradictedDefinition, relationNamesOf, unfixedDefaultsDifferAt } from '@semantics/defining-equation';
+import { contradictedDefinitions, headFixersDifferAt, headStandsAgainstAt, headTwoValuesAt, readsContradictedDefinition, relationNamesOf, unfixedDefaultsDifferAt } from '@semantics/defining-equation';
 import { effectiveQualifiedName } from '@semantics/inheritance';
 import { obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, evaluateMoEs, solveFeasible } from '@semantics/solver';
@@ -17996,6 +17996,68 @@ package PS {
       'W4X3::c3T': ['?/?/?/T', 'T'],
       'W4X3::cMT': ['?/?/?/T', 'T'],
     }),
+    // a5-fences3 GH2 (2026-11-07): a package head whose slot two fixers give values that differ — p1's `:>> m = 7.0`
+    // and w's `L = 5.0` through W's `bind q.m = L` (headFixersDifferAt). The binding holds in every instance, so M is
+    // both 7 and 5 (decision 1): no surface reads M (cM, cK ?, the check's sentence on the numeric surface, SMT X),
+    // where the numeric surface read M at the 5 alone (cM, cK F, gen-f3 GH2). p1.m keeps its own 7 and w.q.m its 5.
+    // Two fixers that state one exact value (`a5-gh2-same`, L = 7.0) give M that value, and numeric reads it.
+    'a5-gh2': probe(`package GH2 {
+  package L { part def P { attribute m : ScalarValues::Real; } }
+  bind L::P::m = M;
+  attribute M : ScalarValues::Real;
+  part p1 : L::P { attribute :>> m = 7.0; }
+  part p2 : L::P { attribute :>> m = 7.0; }
+  attribute K : ScalarValues::Real = 0.0;
+  part def W { attribute L : ScalarValues::Real; part q : L::P; bind q.m = L; }
+  part w : W { attribute :>> L = 5.0; }
+  constraint cK { M + K >= 6.0 }
+  constraint cM { M >= 6.0 }
+  constraint c1 { p1.m >= 6.0 }
+  constraint cW { w.q.m >= 6.0 }
+}`, {
+      'GH2::c1': ['T/T/T/X', 'T'],
+      'GH2::cK': ['?/?/?/X', '?'],
+      'GH2::cM': ['?/?/?/X', '?'],
+      'GH2::cW': ['F/F/F/X', 'F'],
+    }),
+    'a5-gh2r': probe(reversedMembers(`package GH2 {
+  package L { part def P { attribute m : ScalarValues::Real; } }
+  bind L::P::m = M;
+  attribute M : ScalarValues::Real;
+  part p1 : L::P { attribute :>> m = 7.0; }
+  part p2 : L::P { attribute :>> m = 7.0; }
+  attribute K : ScalarValues::Real = 0.0;
+  part def W { attribute L : ScalarValues::Real; part q : L::P; bind q.m = L; }
+  part w : W { attribute :>> L = 5.0; }
+  constraint cK { M + K >= 6.0 }
+  constraint cM { M >= 6.0 }
+  constraint c1 { p1.m >= 6.0 }
+  constraint cW { w.q.m >= 6.0 }
+}`), {
+      'GH2::c1': ['T/T/T/X', 'T'],
+      'GH2::cK': ['?/?/?/X', '?'],
+      'GH2::cM': ['?/?/?/X', '?'],
+      'GH2::cW': ['F/F/F/X', 'F'],
+    }),
+    'a5-gh2-same': probe(`package GH2 {
+  package L { part def P { attribute m : ScalarValues::Real; } }
+  bind L::P::m = M;
+  attribute M : ScalarValues::Real;
+  part p1 : L::P { attribute :>> m = 7.0; }
+  part p2 : L::P { attribute :>> m = 7.0; }
+  attribute K : ScalarValues::Real = 0.0;
+  part def W { attribute L : ScalarValues::Real; part q : L::P; bind q.m = L; }
+  part w : W { attribute :>> L = 7.0; }
+  constraint cK { M + K >= 6.0 }
+  constraint cM { M >= 6.0 }
+  constraint c1 { p1.m >= 6.0 }
+  constraint cW { w.q.m >= 6.0 }
+}`, {
+      'GH2::c1': ['T/T/T/T', 'T'],
+      'GH2::cK': ['?/?/T/T', 'T'],
+      'GH2::cM': ['?/?/T/T', 'T'],
+      'GH2::cW': ['T/T/T/T', 'T'],
+    }),
     // a5 (2026-11-06) FP1, (2026-11-07) FP2 under H8: KerML groups a chain of `implies` to the left and binds `xor`
     // tighter than `or` (KerML 8.2.5.8.1, Table 6). Both readers grouped them otherwise, and every surface decided kImp
     // T and kXor F, the letters of the other grouping; FP1 read neither chain. FP2 groups by Table 6: kImp F and kXor T
@@ -18333,6 +18395,16 @@ package PS {
       'a5-e2cp | E2CP::c4',
       'p4’s own standing `default = 7.0` under the package’s `bind P::m = M` beside the asserted `M == 5.0`: the contradiction of decision 1, which the check reports on the binding’s row (F0), so the literal engine abstains; p4.m keeps its own 7 on the check and the numeric surface, as E2A::cp does',
     ],
+    ...['a5-gh2', 'a5-gh2r'].flatMap((p): Array<[string, string]> => [
+      [
+        `${p} | GH2::c1`,
+        'p1’s own `:>> m = 7.0` under the package’s `bind L::P::m = M`, beside w’s `L = 5.0` that W’s `bind q.m = L` gives another P: the binding gives M both values (decision 1, a5-fences3 GH2), so the solver lane’s axioms are inconsistent; p1.m keeps its own 7 on every other surface',
+      ],
+      [
+        `${p} | GH2::cW`,
+        'w.q.m is w’s `L = 5.0` through W’s `bind q.m = L`, beside p1’s `:>> m = 7.0` under the package’s `bind L::P::m = M`: the binding gives M both values (decision 1, a5-fences3 GH2), so the solver lane’s axioms are inconsistent; w.q.m keeps its own 5 on every other surface',
+      ],
+    ]),
     ['n4 | N4::zl', 'an asserted `x * x == -1.0` admits no model; the numeric surface reads z apart from it (out of scope)'],
     // TODO 249: AND-CLASH, as one conjunction or as two asserts.
     ...['order-and-clash', 'order-and-clash-rev', 'order-and-clash-split', 'order-and-clash-split-rev'].flatMap((name) =>
@@ -19342,6 +19414,8 @@ package PS {
     // a5 F3: the two-defaults head fence, and a head an instance fixes, in either text order.
     ['a5-e1qm', 'a5-e1qmr'],
     ['w4-coupled-pkg', 'a5-w4x3-twin'],
+    // a5-fences3 GH2: a head two fixers give values that differ, in either text order.
+    ['a5-gh2', 'a5-gh2r'],
     // a5 F2: `assert satisfy` is `satisfy`.
     ['a5-assert-satisfy', 'a5-assert-satisfy-plain'],
     // a5 FP2: a connective chain reads as its Table 6 parenthesised twin.
@@ -19455,7 +19529,8 @@ package PS {
    * is allowed (the axioms are inconsistent). Read over every probe with a package binding on a definition's feature.
    * Nor one that reads a name {@link unfixedDefaultsDifferAt} refuses (a5 F3): a slot a package head joins to defaults
    * that differ, which no instance fixes, or a name an assert defines that a head joins to a member with two values
-   * ({@link headTwoValuesAt}).
+   * ({@link headTwoValuesAt}), or one a head joins to a slot two fixers give values that differ (a5-fences3 GH2,
+   * {@link headFixersDifferAt}).
    */
   withZ3('I17: no numeric or SMT row decides a name a package head joins to a contradicted standing value or to defaults that differ', async () => {
     const wrong: string[] = [];
@@ -19468,7 +19543,10 @@ package PS {
         if (el.eClass !== 'ConstraintUsage' || el.ownerId == null || typeof el.attrs.expression !== 'string') continue;
         const ownerId = el.ownerId;
         const fence = (n: string) =>
-          headStandsAgainstAt(model, ownerId, n) ?? unfixedDefaultsDifferAt(model, ownerId, n) ?? headTwoValuesAt(model, ownerId, n);
+          headStandsAgainstAt(model, ownerId, n) ??
+          unfixedDefaultsDifferAt(model, ownerId, n) ??
+          headTwoValuesAt(model, ownerId, n) ??
+          headFixersDifferAt(model, ownerId, n);
         if (!relationNamesOf(el.attrs.expression).some((n) => fence(n) !== undefined)) continue;
         const got = seen.get(name)?.get(model.qualifiedName(el.id));
         if (!got) continue;
