@@ -1060,7 +1060,7 @@ export function typedAssertRefusal(model: Model, el: ElementRecord): string | un
   const name = el.declaredName ?? el.declaredShortName;
   const typeName = def.declaredName ?? def.declaredShortName ?? 'an unnamed definition';
   const kind = def.eClass === 'ConstraintDefinition' ? 'typed by the constraint definition' : 'typed through';
-  return `${name !== undefined ? `\`${name}\`` : 'This assert'} is ${kind} \`${typeName}\`, whose body this tool does not read with the parameters' values`;
+  return `${name !== undefined ? `\`${name}\`` : role === undefined ? 'This constraint' : 'This assert'} is ${kind} \`${typeName}\`, whose body this tool does not read with the parameters' values`;
 }
 
 /** Name→id scope for a relation: its owner (subject) merged with itself. */

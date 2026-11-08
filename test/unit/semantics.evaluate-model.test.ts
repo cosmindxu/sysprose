@@ -5345,6 +5345,12 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       expect(obligationsOf(m).find((o) => o.element.qualifiedName === `${tag}::k`)!.encodable, tag).toBe(true);
       expect(checkConstraints(m).find((c) => m.qualifiedName(c.id) === `${tag}::k`)!.result, tag).toBe('satisfied');
     }
+    // One with no name of its own says what it is, a constraint and not an assert.
+    const unnamed = await load(`package SU { ${newton} part car { ${attrs} constraint : Newton { in f = force; in m = mass; in a = accel; } } }`);
+    const unnamedRow = obligationsOf(unnamed).find((o) => o.role === 'obligation' && o.encodable !== true && /^This /.test((o.encodable as { detail: string }).detail));
+    expect((unnamedRow!.encodable as { detail: string }).detail).toBe(
+      "This constraint is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
+    );
     // A parameter-free body is as unread (g5d); an asserted one keeps its axiom.
     const g5d = await load('package G5D { attribute x : Real = 3.0; constraint def K { x >= 1.0 } constraint c : K; assert constraint e : K; constraint t { x == 3.0 } }');
     const row = (q: string) => checkConstraints(g5d).find((c) => g5d.qualifiedName(c.id) === q)!;
@@ -9913,6 +9919,23 @@ describe('a contradiction the check reports is an axiom of the instance it holds
     expect(row![1]).not.toBe('proved');
     expect(row![2]).toBe('verification/not-evaluable');
   });
+
+  it('bounds the instances it files bindings for when definitions that hold several usages of each other branch', async () => {
+    // A holds two usages of B, B one of C, C one of A: the instances grow as 2 to the power of the depth.
+    const m = await load(`package Rec7 {
+      part def A { attribute La : ScalarValues::Real; part b : B { bind xb = La; } part b2 : B { bind xb = La; } }
+      part def B { attribute xb : ScalarValues::Real; part c : C { bind xc = xb; } }
+      part def C { attribute xc : ScalarValues::Real; part a : A { bind La = xc; } assert constraint k { xc <= 100.0 } }
+      part ra : A { attribute :>> La = 50.0; }
+      constraint t { ra.La >= 0.0 }
+    }`);
+    const binds = obligationsOf(m).filter((o) => o.role === 'axiom' && o.source === 'bind');
+    // Bounded by the instances, not by the 16384 relations of the instance walk (which took minutes here).
+    expect(binds.length).toBeLessThan(4000);
+    const refused = binds.filter((o) => o.encodable !== true).map((o) => (o.encodable as { detail: string }).detail);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused[0]).toContain('not carried');
+  }, 60_000);
 
   it('carries no asserted value through a package head’s slot into a default that gave way, whichever text comes first (E1)', async () => {
     const text = (first: boolean) => {

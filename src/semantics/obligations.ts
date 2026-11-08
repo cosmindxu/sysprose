@@ -2217,6 +2217,14 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
 const MAX_NESTED_BINDING_DEPTH = 48;
 
 /**
+ * How many distinct instances the bindings of {@link MAX_NESTED_BINDING_DEPTH}-deep chains are filed for in all:
+ * definitions that hold several usages of each other branch, and the instances grow as the branching to the power of
+ * the depth, where the depth cap alone bounds a chain, not the work. One left unfiled past it is not carried, as
+ * one past the depth cap is.
+ */
+const MAX_NESTED_BINDING_PATHS = 2048;
+
+/**
  * The relations an INSTANCE with symbols of its own holds
  * ({@link ContractVariable.instance}): for each feature a row reads through an
  * instance, the value it has there (`R::p::m2 == 10.0 - R::p::load`), and
@@ -2340,8 +2348,9 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
         return frame ? [{ key: `${b.id} ${here}`, path: here, frame: frame.instance, usage: u.id }] : [];
       });
       if (written.length > 0) {
-        if (depth >= MAX_NESTED_BINDING_DEPTH) beyond.push(...written);
-        else {
+        if (depth >= MAX_NESTED_BINDING_DEPTH || (filedAt.size >= MAX_NESTED_BINDING_PATHS && !filedAt.has(here))) {
+          beyond.push(...written);
+        } else {
           filedAt.set(here, Math.min(filedAt.get(here) ?? Infinity, depth + 1));
           hold(here, u.id, true);
         }
@@ -2653,7 +2662,7 @@ function pathBelow(model: Model, id: ElementId | undefined, ownerId: ElementId):
 /**
  * Refuse `row` when it reads an instance whose relations were not read
  * ({@link MAX_INSTANCE_RELATIONS}), or one a binding was not filed for
- * ({@link MAX_NESTED_BINDING_DEPTH} bindings down, `beyond`): over a symbol nothing
+ * ({@link MAX_NESTED_BINDING_DEPTH} bindings down, or past {@link MAX_NESTED_BINDING_PATHS} instances, `beyond`): over a symbol nothing
  * constrains, a proof would rest on less than the model states.
  */
 function refuseUnreadInstances(
@@ -2689,7 +2698,7 @@ function refuseUnreadInstances(
     reason: 'unread-definition',
     detail:
       `the relation reads ${lost.map((v) => `\`${v.path}\``).join(', ')} in an instance a binding joins that lies more than ` +
-      `${MAX_NESTED_BINDING_DEPTH} bindings below the first, deeper than this tool reads the bindings of, so what the model states of it is not carried`,
+      `${MAX_NESTED_BINDING_DEPTH} bindings below the first, deeper than this tool reads the bindings of (or among more than ${MAX_NESTED_BINDING_PATHS} such instances), so what the model states of it is not carried`,
   };
   row.status = statusOf(row.encodable);
 }
