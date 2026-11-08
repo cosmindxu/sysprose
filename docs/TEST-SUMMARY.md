@@ -139,7 +139,7 @@
 | test/unit/semantics.smt-encode.test.ts | 119 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 134 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 95 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 96 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 46 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
