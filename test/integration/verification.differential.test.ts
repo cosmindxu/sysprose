@@ -12169,6 +12169,68 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RND::Q::tie in RND::Q2': ['?/-/?/-', 'F'],
       'RND::top': ['T/X/T/X', null],
     }),
+    // A general's equation meets its renamed redefiner's by the feature each path denotes, not by spelling
+    // (closing-readings RN-0): Q's `p.x == 50.0` read in `part q : Q { part pp :>> p; }` is q's `pp.x`, which q's own
+    // (RN2) or the package's (RN5) `pp.x == 60.0` gives a second value. The model contradicts itself there, as the
+    // un-renamed twin RN2U does (`part :>> p`): the `#equations` row is filed and no row over q's pp's x is decided
+    // (top60/top50 read T/X/T/? and F/X/F/?, `Q::tie in q` F, keyed by spelling).
+    ...reversed('rn0-rn2', `package RN2 {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part pp :>> p; assert constraint t2 { pp.x == 60.0 } }
+        constraint top60 { q.pp.x == 60.0 }
+        constraint top50 { q.pp.x == 50.0 }
+      }`, `package RN2 {
+        constraint top50 { q.pp.x == 50.0 }
+        constraint top60 { q.pp.x == 60.0 }
+        part q : Q { assert constraint t2 { pp.x == 60.0 } part pp :>> p; }
+        part def Q { assert constraint tie { p.x == 50.0 } part p : P; }
+        part def P { attribute x : ScalarValues::Real; }
+      }`, {
+      'RN2::P::x in RN2::q#equations': ['F/-/F/-', 'F'],
+      'RN2::Q::tie': ['?/-/?/-', '?'],
+      'RN2::Q::tie in RN2::q': ['?/-/?/-', '?'],
+      'RN2::q::t2': ['?/-/?/-', '?'],
+      'RN2::top50': ['?/?/?/?', '?'],
+      'RN2::top60': ['?/?/?/?', '?'],
+    }),
+    ...reversed('rn0-rn5', `package RN5 {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part pp :>> p; }
+        assert constraint pk { q.pp.x == 60.0 }
+        constraint top60 { q.pp.x == 60.0 }
+        constraint top50 { q.pp.x == 50.0 }
+      }`, `package RN5 {
+        constraint top50 { q.pp.x == 50.0 }
+        constraint top60 { q.pp.x == 60.0 }
+        assert constraint pk { q.pp.x == 60.0 }
+        part q : Q { part pp :>> p; }
+        part def Q { assert constraint tie { p.x == 50.0 } part p : P; }
+        part def P { attribute x : ScalarValues::Real; }
+      }`, {
+      'RN5::P::x in RN5#equations': ['F/-/F/-', 'F'],
+      'RN5::Q::tie': ['?/-/?/-', '?'],
+      'RN5::Q::tie in RN5::q': ['?/-/?/-', '?'],
+      'RN5::pk': ['?/-/?/-', '?'],
+      'RN5::top50': ['?/?/?/?', '?'],
+      'RN5::top60': ['?/?/?/?', '?'],
+    }),
+    // The un-renamed twin: the same readings (SMT finds the axioms inconsistent, where it does not read Q's `p.x` in q
+    // through the rename above).
+    'rn0-rn2u': probe(`package RN2U {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part :>> p; assert constraint t2 { p.x == 60.0 } }
+        constraint top60 { q.p.x == 60.0 }
+        constraint top50 { q.p.x == 50.0 }
+      }`, {
+      'RN2U::P::x in RN2U::q#equations': ['F/-/F/-', 'F'],
+      'RN2U::Q::tie': ['?/-/?/-', '?'],
+      'RN2U::q::t2': ['?/-/?/-', '?'],
+      'RN2U::top50': ['?/?/?/X', '?'],
+      'RN2U::top60': ['?/?/?/X', '?'],
+    }),
     // A part-valued binding into an instance under its type's assert (SF: `bind pp = q.p`, Q's `p.x == 50.0`):
     // pp stands for q's p, which is q's own instance, so Q's assert gives it 50 there and pp reads it (k and k2
     // F on all four, O9 S2; they read the default 2 beside SMT's inconsistent axioms). SFH: the same with the

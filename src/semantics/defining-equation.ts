@@ -7477,6 +7477,38 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     return [...pairSlotOf(g)].some((id) => mine.has(id));
   };
   /**
+   * The features `path` denotes read in `u`, a segment at a time (`undefined` where one resolves to nothing), and
+   * whether `other`, written in `y` (one `u` specialises), denotes the same there: each of its segments resolved where
+   * it is written stands for the feature at that segment in `u` — is it, or is one it redefines, under any name (`pp`
+   * for Q's `p` read in `part q : Q { part pp :>> p; }`). Two redefiners of one feature each stand for it.
+   */
+  const chainMemo = new Map<string, readonly ElementId[] | undefined>();
+  const chainIn = (u: ElementRecord, path: string): readonly ElementId[] | undefined => {
+    const memo = `${u.id} ${path}`;
+    if (chainMemo.has(memo)) return chainMemo.get(memo);
+    const ids: ElementId[] = [];
+    for (let k = 1, segments = path.split('.'); k <= segments.length; k++) {
+      const f = named(u.id, segments.slice(0, k).join('.'));
+      if (!f) break;
+      ids.push(f.id);
+    }
+    const chain = ids.length === path.split('.').length ? ids : undefined;
+    chainMemo.set(memo, chain);
+    return chain;
+  };
+  const standsFor = (chain: readonly ElementId[], y: ElementRecord, other: string): boolean => {
+    const segments = other.split('.');
+    if (segments.length !== chain.length) return false;
+    let written = y.id;
+    for (let i = 0; i < segments.length; i++) {
+      const f = named(written, segments[i]!);
+      const here = model.get(chain[i]!);
+      if (!f || !here || (here.id !== f.id && !redefinedClosure(model, here).some((g) => g.id === f.id))) return false;
+      written = f.id;
+    }
+    return true;
+  };
+  /**
    * The asserted equations that define `path` read in X (`feature`, there), each with the element the names its
    * defining side reads are read in: X's own and those of what it specialises, read in X; for a dotted path, those
    * of the usage each prefix names and of what that usage specialises, read in that usage; and one written in an
@@ -7494,13 +7526,25 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       for (const eq of byOwner.get(owner.id)?.get(name) ?? []) push(eq, named(owner.id, name), at, name);
       for (const l of lexical.get(owner.id)?.get(name) ?? []) push(l.eq, l.named, l.eq.constraint.ownerId!, name);
     };
-    for (const y of [x, ...generalOf(x.id)]) take(y, path, x.id);
+    // A general's equation is taken by the feature its path denotes where it is read, not by its spelling: Q's `p.x`
+    // read in `part q : Q { part pp :>> p; }` is q's `pp.x` (closing-readings RN-0), so it meets q's `pp.x == 60.0`.
+    const takeAll = (u: ElementRecord, rest: string, at: ElementId): void => {
+      take(u, rest, at);
+      const mine = chainIn(u, rest);
+      for (const y of generalOf(u.id)) {
+        take(y, rest, at);
+        if (mine === undefined) continue;
+        for (const other of [...(byOwner.get(y.id)?.keys() ?? []), ...(lexical.get(y.id)?.keys() ?? [])]) {
+          if (other !== rest && standsFor(mine, y, other)) take(y, other, at);
+        }
+      }
+    };
+    takeAll(x, path, x.id);
     const segments = path.split('.');
     for (let k = 1; k < segments.length; k++) {
       const u = named(x.id, segments.slice(0, k).join('.'));
       if (!u) break;
-      const rest = segments.slice(k).join('.');
-      for (const y of [u, ...generalOf(u.id)]) take(y, rest, u.id);
+      takeAll(u, segments.slice(k).join('.'), u.id);
     }
     return out;
   };
