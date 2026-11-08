@@ -18,6 +18,7 @@ import {
   DefiningEquations,
   GUARD_CONTACT,
   assertConjuncts,
+  conjunctsOf,
   equationRecord,
   equationText,
   MAX_DERIVATION_DEPTH,
@@ -3624,7 +3625,7 @@ function judgeBound(
     const ua = unitAwareVerdict(model, el, expr, uaOpts);
     if ('gap' in ua) {
       const lowered = parseRelationBody(expr);
-      const unread = lowered?.resolved && unreadRefusal(model, el, lowered.node, pass, bindings, lowered.literals);
+      const unread = lowered?.resolved && decidedRefusal(model, el, ua, expr, lowered.node, pass, uaOpts, bindings, lowered.literals);
       if (unread) return { result: 'unknown', message: unread, gap: false };
       return abstainedRead(model, el, pass, bindings, namesIn(expr), at) ?? ua;
     }
@@ -3692,7 +3693,7 @@ function judgeBound(
   // remains the fallback for exactly those, not a hard switch.
   const ua = unitAwareVerdict(model, el, expr, uaOpts);
   if ('gap' in ua) {
-    const unread = unreadRefusal(model, el, node, pass, bindings);
+    const unread = decidedRefusal(model, el, ua, expr, node, pass, uaOpts, bindings);
     if (unread) return { result: 'unknown', message: unread, gap: false };
     return abstainedRead(model, el, pass, bindings, referencedNames(node), at) ?? ua;
   }
@@ -5816,6 +5817,52 @@ function unreadRefusal(
   });
   if (point !== undefined) return `Could not evaluate: ${describeReason('offset', units.get(point))}`;
   return derivedBareLiteralRefusal(model, el, node, pass, bindings, markers);
+}
+
+/**
+ * {@link unreadRefusal} of a body the unit-aware evaluator DECIDED, `judged`,
+ * read conjunct by conjunct in KerML order (K1).
+ *
+ * KerML evaluates `and` left to right and does not evaluate the second operand
+ * of a false first one (KerML 7.4.9.2): `p.L == 50.0 [kg] and p.L <= 5.0 [kg]
+ * and p.M >= p.L` at L = 50 kg is false at its second conjunct, and the third,
+ * which gate (e) refuses, is never read. So a violated conjunction stands
+ * where a conjunct ({@link conjunctsOf}) reads violated, every conjunct before
+ * it reads satisfied or reads a name with no value (absorbed, as F6 absorbs
+ * `u and false`), and none up to it is refused — each read on its own, as
+ * the body it would be written alone. Any other case, a refused or undecided
+ * conjunct first included (`refused and false` stays a refusal), keeps the
+ * whole body's refusal, as does a satisfied body: every operand of a true
+ * conjunction is read.
+ */
+function decidedRefusal(
+  model: Model,
+  el: ElementRecord,
+  judged: Judgement,
+  expr: string,
+  node: ExprNode,
+  pass: ScalarPass,
+  opts: ConstraintQuantityOptions,
+  bindings?: ReadonlyMap<string, Bound>,
+  markers: MarkerDimensions = NO_MARKERS,
+): string | undefined {
+  const whole = unreadRefusal(model, el, node, pass, bindings, markers);
+  // `judged` read the element's own body: a conjunct of any other text is no part of that verdict.
+  if (whole === undefined || judged.result !== 'violated' || expr !== el.attrs.expression) return whole;
+  const parts = conjunctsOf(expr);
+  if (parts.length < 2) return whole;
+  for (const part of parts) {
+    if (unreadRefusal(model, el, part.node, pass, bindings, part.literals)) return whole;
+    const read = unitAwareVerdict(model, { ...el, attrs: { ...el.attrs, expression: part.text } }, part.text, opts);
+    // A name with no value is absorbed by a false conjunct after it (`u and false`, F6); any other unknown is not.
+    if (!('result' in read)) {
+      if (read.reason === 'unresolved') continue;
+      return whole;
+    }
+    if (read.result === 'violated') return undefined;
+    if (read.result !== 'satisfied') return whole;
+  }
+  return whole;
 }
 
 /** Every dotted reference in an expression tree, in source order. */

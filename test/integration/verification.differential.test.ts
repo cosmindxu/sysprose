@@ -842,7 +842,9 @@ describe('derived values — one verdict, or one refusal, on all four surfaces',
    * the fragment (`verification/unsupported-construct`); the rest are a
    * defect in the relation (`verification/not-evaluable`).
    */
-  type Refused = { refused: string; sentence: RegExp; forgivable?: boolean };
+  // `decidedBy`: a conjunct before the refused one reads false (K1, KerML 7.4.9.2), so the check, the literal and the
+  // SMT engine decide it, the latter two by the refused relation's point path; the numeric surface keeps the refusal.
+  type Refused = { refused: string; sentence: RegExp; forgivable?: boolean; decidedBy?: 'violated' };
   type Expected = 'satisfied' | 'violated' | 'offset' | Refused;
   const untyped: Refused = {
     refused: 'derived-bare-literal',
@@ -915,7 +917,8 @@ describe('derived values — one verdict, or one refusal, on all four surfaces',
     valueWithBare: { le: inside, ne: inside, geS: inside },
     realTyped: { le: mismatch, ne: mismatch, ge: mismatch },
     realTypedEquation: { le: mismatch, ne: mismatch },
-    shortCircuit: { orBare: untyped, andBare: untyped },
+    // a5 K1: andBare's first conjunct is false (59.1 min > 45), so the bare second is never read; orBare's first is true.
+    shortCircuit: { orBare: untyped, andBare: { ...untyped, decidedBy: 'violated' } },
     grams: { eqKg: 'satisfied', neKg: 'violated', leG: 'satisfied', eqG: 'satisfied', neG: 'violated' },
     // p's own e, 2 × 5.
     chainNotRead: { orChain: 'satisfied', andChain: 'violated', onChain: 'violated' },
@@ -997,6 +1000,11 @@ describe('derived values — one verdict, or one refusal, on all four surfaces',
           expect([check!.message, num!.reason ?? ''].join(' '), where).not.toMatch(/derived from dimensioned/);
           expect([lit!.claim, proof!.claim], where).toEqual(['inconclusive', 'inconclusive']);
           expect([lit!.detail, proof!.detail].join(' '), where).toContain('offset-arithmetic');
+        } else if (expected.decidedBy) {
+          expect([check!.result, num!.result], where).toEqual([expected.decidedBy, 'unknown']);
+          expect(num!.reason, where).toMatch(expected.sentence);
+          expect([lit!.claim, proof!.claim], where).toEqual(['refuted', 'refuted']);
+          for (const v of [lit!, proof!]) expect(v.detail, where).toContain(`(${expected.refused}: ${num!.reason})`);
         } else {
           // One refusal, in one sentence, wherever it is read.
           expect([check!.result, num!.result], where).toEqual(['unknown', 'unknown']);
@@ -18171,6 +18179,68 @@ package PS {
         })];
       }),
     ),
+    // a5 (2026-11-07) K1: the check reads a conjunction a gate refuses conjunct by conjunct, in KerML order (7.4.9.2):
+    // `and` leaves the second operand of a false first one unread, so a conjunct that reads false before the refused one
+    // (`p.M >= p.L`, gate (e): a valueless M against the derived L; `p.L >= 1.0`, a bare number against it) decides the
+    // conjunction false, as its split twin does (solver2-pass x25c/x25s). A refused conjunct first (`refused and false`)
+    // or one reached (c3, c5) keeps the refusal. Before K1 every `?/?/F/?` row here read `?` on the check, and
+    // C13x025::W::ca `?/-/F/-` (its literal rows T/F, not X, beside a model that contradicts itself).
+    ...Object.fromEntries(
+      (['a5-k1', 'a5-k1-rev'] as const).map((k) => {
+        const text = `package K1C {
+  part def P { attribute L : ISQ::MassValue; attribute M : ISQ::MassValue; }
+  part def W { part p : P; assert constraint cd { p.L == 50.0 [kg] } constraint c1 { p.L <= 5.0 [kg] and p.M >= p.L } constraint c2 { p.M >= p.L and p.L <= 5.0 [kg] } constraint c3 { p.L >= 5.0 [kg] and p.M >= p.L } constraint c4 { (p.L <= 500.0 [kg] and p.L > 60.0 [kg]) and p.M >= p.L } constraint c5 { p.L >= 5.0 [kg] and p.L >= 1.0 and p.L <= 5.0 [kg] } constraint c6 { p.M <= 10.0 [kg] and p.L <= 5.0 [kg] and p.M >= p.L } }
+  part w : W;
+}`;
+        return [k, probe(k === 'a5-k1' ? text : reversedMembers(text), {
+          'K1C::W::cd': ['T/-/T/-', 'T'],
+          'K1C::W::c1': ['F/F/F/F', 'F'],
+          'K1C::W::c2': ['?/?/F/?', 'F'],
+          'K1C::W::c3': ['?/?/?/?', null],
+          'K1C::W::c4': ['F/F/F/F', 'F'],
+          'K1C::W::c5': ['?/?/?/?', null],
+          'K1C::W::c6': ['F/F/F/F', 'F'],
+        })];
+      }),
+    ),
+    // K1 over a derived feature: c2's false first conjunct decides on the check, the literal and the SMT engine; the
+    // numeric surface still refuses the whole relation by gate (e) on `p.E >= 1.0` (an abstention). c1, read only by
+    // the bare-literal fallback, keeps the whole body's refusal.
+    ...Object.fromEntries(
+      (['a5-k1-derived', 'a5-k1-derived-rev'] as const).map((k) => {
+        const text = `package S1 {
+  part def P { attribute L : ISQ::MassValue = 50.0 [kg]; attribute E : ISQ::MassValue = L * 2.0; }
+  part def W { part p : P; constraint c1 { p.L <= 5.0 and p.E >= 1.0 } constraint c2 { p.L <= 5.0 [kg] and p.E >= 1.0 } }
+  part w : W;
+}`;
+        return [k, probe(k === 'a5-k1-derived' ? text : reversedMembers(text), {
+          'S1::W::c1': ['?/?/?/?', 'F'],
+          'S1::W::c2': ['F/F/?/F', 'F'],
+        })];
+      }),
+    ),
+    ...Object.fromEntries(
+      (['a5-x25c', 'a5-x25c-rev'] as const).map((k) => {
+        const text = `package C13x025 {
+  part def P { attribute L : ISQ::MassValue; attribute M : ISQ::MassValue; }
+  part def W { part p : P; assert constraint ca { p.L == 50.0 [kg] and p.L <= 5.0 [kg] and p.M >= p.L } }
+  part w : W;
+  constraint t50 { w.p.L == 50.0 [kg] }
+  constraint t10 { w.p.L == 10.0 [kg] }
+  constraint kL { w.p.L <= 10.0 [kg] }
+  constraint m { w.p.M <= 10.0 [kg] }
+  constraint m2 { w.p.M == 70.0 [kg] }
+}`;
+        return [k, probe(k === 'a5-x25c' ? text : reversedMembers(text), {
+          'C13x025::W::ca': ['F/-/F/-', 'F'],
+          'C13x025::t50': ['T/X/T/X', 'T'],
+          'C13x025::t10': ['F/X/F/X', 'F'],
+          'C13x025::kL': ['F/X/F/X', 'F'],
+          'C13x025::m': ['?/?/?/X', null],
+          'C13x025::m2': ['?/?/?/X', null],
+        })];
+      }),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -18341,6 +18411,16 @@ package PS {
           [
             `${name} | AndClash::${row}`,
             'the asserted `L == 50.0` gives the valueless L its 50, and the asserted `L >= 60.0` beside it misses that 50, as one conjunction or as two asserts: the model contradicts itself, which the SMT engine and the literal engine report; the check and the numeric surface read L’s 50',
+          ] as const,
+      ),
+    ),
+    // a5 K1: x25c, an asserted conjunction false at its second conjunct, as AND-CLASH's split twin.
+    ...['a5-x25c', 'a5-x25c-rev'].flatMap((name) =>
+      ['t50', 't10', 'kL'].map(
+        (row) =>
+          [
+            `${name} | C13x025::${row}`,
+            'the asserted `p.L == 50.0 [kg] and p.L <= 5.0 [kg] and …` gives the valueless L its 50 and misses it at its second conjunct (K1, KerML order: the third is never read): the model contradicts itself, which the SMT engine and the literal engine report; the check and the numeric surface read L’s 50',
           ] as const,
       ),
     ),
@@ -19349,6 +19429,10 @@ package PS {
     ['a5-kxor', 'a5-kxorp'],
     // a5 F6: the connective table in either text order.
     ['a5-conn', 'a5-conn-rev'],
+    // a5 K1: the per-conjunct gate in either text order.
+    ['a5-k1', 'a5-k1-rev'],
+    ['a5-x25c', 'a5-x25c-rev'],
+    ['a5-k1-derived', 'a5-k1-derived-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

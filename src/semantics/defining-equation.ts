@@ -4777,7 +4777,7 @@ export function assertConjuncts(model: Model, el: ElementRecord): readonly Claus
   return split.map((s, index) => ({ clause: el, index, ...s }));
 }
 
-type Conjunct = { text: string; node: ExprNode; literals: MarkerDimensions };
+export type Conjunct = { text: string; node: ExprNode; literals: MarkerDimensions };
 
 /** {@link conjunctsOf} by body text, which alone decides it. */
 const CONJUNCTS = new Map<string, readonly Conjunct[]>();
@@ -4791,7 +4791,7 @@ const MAX_CONJUNCTS = 4096;
  * body that is no conjunction, or does not cut back into the one it parses
  * to; none for one that does not parse, or carries a `[unit]` nothing lowers.
  */
-function conjunctsOf(raw: string): readonly Conjunct[] {
+export function conjunctsOf(raw: string): readonly Conjunct[] {
   let hit = CONJUNCTS.get(raw);
   if (hit === undefined) {
     hit = readConjuncts(raw);

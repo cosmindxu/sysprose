@@ -993,3 +993,40 @@ describe('review findings on the I1 semantics (strings, messages, strict toleran
     expect(performance.now() - t0).toBeLessThan(5000);
   }, 10_000);
 });
+
+describe('the check reads a conjunction a gate refuses conjunct by conjunct, in KerML order (K1)', () => {
+  // KerML evaluates `and` left to right and leaves the second operand of a false first one unread (7.4.9.2). `p.M >=
+  // p.L` is refused by gate (e) (a valueless M against the derived L), and `p.L >= 1.0` (a bare number against it).
+  it('a false conjunct before the refused one decides; a refused one first, or a true conjunction, stays refused', async () => {
+    const m = await bound(`package K {
+      part def P { attribute L : ISQ::MassValue; attribute M : ISQ::MassValue; }
+      part def W {
+        part p : P;
+        assert constraint cd { p.L == 50.0 [kg] }
+        constraint c1 { p.L <= 5.0 [kg] and p.M >= p.L }
+        constraint c2 { p.M >= p.L and p.L <= 5.0 [kg] }
+        constraint c3 { p.L >= 5.0 [kg] and p.M >= p.L }
+        constraint c4 { (p.L <= 500.0 [kg] and p.L > 60.0 [kg]) and p.M >= p.L }
+        constraint c5 { p.L >= 5.0 [kg] and p.L >= 1.0 and p.L <= 5.0 [kg] }
+        constraint c6 { p.L <= 5.0 [kg] or p.M >= p.L }
+        constraint c7 { p.M <= 10.0 [kg] and p.L <= 5.0 [kg] and p.M >= p.L }
+      }
+      part w : W;
+    }`);
+    const result = (name: string) => checkConstraints(m).find((c) => c.id === byName(m, name).id)?.result;
+    expect(result('c1')).toBe('violated');
+    expect(result('c4')).toBe('violated');
+    // A name with no value before the false conjunct is absorbed (`u and false`, F6): the refused one is never reached.
+    expect(result('c7')).toBe('violated');
+    for (const name of ['c2', 'c3', 'c5', 'c6']) expect(result(name), name).toBe('unknown');
+  });
+
+  it('an asserted conjunction false before its refused conjunct is violated, as its split twin is', async () => {
+    const m = await bound(`package K {
+      part def P { attribute L : ISQ::MassValue; attribute M : ISQ::MassValue; }
+      part def W { part p : P; assert constraint ca { p.L == 50.0 [kg] and p.L <= 5.0 [kg] and p.M >= p.L } }
+      part w : W;
+    }`);
+    expect(checkConstraints(m).find((c) => c.id === byName(m, 'ca').id)?.result).toBe('violated');
+  });
+});
