@@ -7325,6 +7325,8 @@ interface ContradictedDefinitions {
   taint?: ScopedTaint;
   /** {@link contradictedTaint} of each set alone, built on first ask ({@link contradictedSideReadsAnother}). */
   taintOf?: Map<ContradictedDefinition, ScopedTaint>;
+  /** {@link fallbackSets}' packages within reach, by the outermost package of a row, built on first ask. */
+  reachOf?: Map<ElementId | null, ReadonlySet<ElementId> | null>;
   /** Set where listing them threw (A.2.9): the sentence every row that reads a name abstains in. */
   failed?: string;
 }
@@ -8194,18 +8196,32 @@ export function contradictedDefinitionRefusalOf(
     const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
     let b = names.map((n) => readsTainted(model, taint, roots, n, at)).find((x) => x !== undefined);
     b ??= taintedAt(model, taint, context, at) ?? taintedAt(model, taint, rel, at);
+    // A row read where no instance chain spells `at.path`, or through a name the walk places nowhere (below), may
+    // read a set the walk does not see: the sets within its reach (fallbackSets, INV-12), never one it cannot reach.
+    let fallback = false;
     if (!b && at?.path !== undefined) {
       const frames = sharedDefinitions(model).framesAbove(at.path);
-      b =
-        frames === undefined
-          ? index.sets[0]!.equations[0]
-          : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader), at)).find((x) => x !== undefined);
+      if (frames === undefined) fallback = true;
+      else b = frames.map((fr) => taintedAt(model, taint, model.get(fr.reader), at)).find((x) => x !== undefined);
     }
     // A name the walk places nowhere — in a scope it withholds (two features under one name: `unreadScopes`), or
     // through a usage a renamed redefinition hides (`part a2 :>> a`, then `r.a.L`) — is seen to reach no set, while
     // the check's evaluator may still read it through the first equation written (`p.L == 50.0` T, and F with the two
     // exchanged): it may read one, so it is read as reaching one.
-    if (!b && names.some((n) => !placedName(model, roots, n))) b = index.sets[0]!.equations[0];
+    if (!b && !fallback && names.some((n) => !placedName(model, roots, n))) fallback = true;
+    if (!b && fallback) {
+      const within = fallbackSets(model, index, roots, names);
+      if (within.length === 1) b = within[0]!.equations[0];
+      else if (within.length > 1) {
+        const row = effectiveQualifiedName(model, relationId);
+        return {
+          sentence:
+            `${row} reads a name this walk places nowhere, and the model has asserted equations that give one feature ` +
+            'two values within its reach, so it is not read',
+          verdict: within.every((x) => x.verdict === 'differs') ? 'differs' : 'undecided',
+        };
+      }
+    }
     const set = b ? index.bySource.get(b.id) : undefined;
     return set ? { sentence: contradictedDefinitionSentence(model, set), verdict: set.verdict, set } : undefined;
   } catch (e) {
@@ -8219,6 +8235,74 @@ export function contradictedDefinitionRefusalOf(
         }
       : undefined;
   }
+}
+
+/**
+ * The sets of `index` a row read at `roots` may reach where the walk places one of its names nowhere ({@link
+ * contradictedDefinitionRefusalOf}): those with an equation, or the feature they define, owned under the outermost
+ * non-library package that owns the row, or under a package it imports (transitively). Every set where the row is
+ * owned by no package, where an import names nothing, or where a name is written with `::` (it may name any
+ * package). A set the row cannot reach is no reason to leave it unread (INV-12: twins read in one file and apart
+ * give the same rows).
+ */
+function fallbackSets(
+  model: Model,
+  index: ContradictedDefinitions,
+  roots: readonly ElementId[],
+  names: readonly string[],
+): readonly ContradictedDefinition[] {
+  if (names.some((n) => n.includes('::'))) return index.sets;
+  const outermost = (id: ElementId | null | undefined): ElementId | null => {
+    let top: ElementId | null = null;
+    const seen = new Set<ElementId>();
+    for (let cur = id != null ? model.get(id) : undefined; cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+      seen.add(cur.id);
+      if (cur.eClass === 'Package' && cur.attrs.isLibrary !== true) top = cur.id;
+    }
+    return top;
+  };
+  const tops = new Set(roots.map(outermost));
+  if (tops.has(null)) return index.sets;
+  index.reachOf ??= new Map();
+  const reach = new Set<ElementId>();
+  for (const top of tops) {
+    let r = index.reachOf.get(top);
+    if (r === undefined) {
+      // The packages `top` reaches by its imports, and theirs: null where one names nothing (it may name any).
+      const out = new Set<ElementId>([top!]);
+      const queue = [top!];
+      let open = false;
+      while (queue.length > 0 && !open) {
+        const pkg = model.get(queue.pop()!);
+        if (!pkg) continue;
+        for (const el of [pkg, ...model.descendants(pkg.id)]) {
+          if (el.eClass !== 'NamespaceImport' && el.eClass !== 'MembershipImport') continue;
+          const target = el.target?.[0];
+          const t = target !== undefined ? model.get(target) : undefined;
+          if (!t) {
+            open = true;
+            break;
+          }
+          if (t.attrs.isLibrary === true) continue;
+          const o = outermost(t.id);
+          if (o === null) {
+            open = true;
+            break;
+          }
+          if (!out.has(o)) {
+            out.add(o);
+            queue.push(o);
+          }
+        }
+      }
+      r = open ? null : out;
+      index.reachOf.set(top, r);
+    }
+    if (r === null) return index.sets;
+    for (const x of r) reach.add(x);
+  }
+  const within = (id: ElementId | undefined): boolean => id !== undefined && reach.has(outermost(id) as ElementId);
+  return index.sets.filter((set) => within(set.context.id) || within(set.feature.id) || set.equations.some((e) => within(e.id)));
 }
 
 /** The clause every sentence about `set` opens with: its equations, where they meet, and what they give. */

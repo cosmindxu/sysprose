@@ -9309,6 +9309,54 @@ describe('a per-instance reading that throws is reported, never thrown (A.2.9)',
       expect(readsContradictedDefinition(m!, m!.all().find((e) => m!.qualifiedName(e.id) === 'CT0::K')!.id)).toBe(true);
     });
 
+    it('a row whose name the walk places nowhere falls back only to the sets within its reach (fallbackSets, INV-12)', async () => {
+      // RNFW holds two features under one name, so the walk places no name of its rows; RNFX, which it does not import,
+      // contradicts itself. RNFW's rows read as they read alone, not refused in RNFX's sentence (the old `sets[0]`).
+      const own = `package RNFW {
+        part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == 50.0 } }
+        part p : P;
+        attribute w : ScalarValues::Real = 1.0;
+        attribute w : ScalarValues::Real = 2.0;
+        constraint t50 { p.L == 50.0 }
+      }`;
+      const far = `package RNFX {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part :>> p; assert constraint t2 { p.x == 60.0 } }
+      }`;
+      const read = async (text: string) => {
+        const { model: m } = await loadModelText(text);
+        const id = (q: string): string => m!.all().find((e) => m!.qualifiedName(e.id) === q)!.id;
+        return [
+          contradictedDefinitionRefusal(m!, id('RNFW::t50'), 'p.L == 50.0'),
+          // Read for an instance no element spells.
+          contradictedDefinitionRefusal(m!, id('RNFW::P::c1'), 'L == 50.0', { contextId: id('RNFW::p'), path: 'RNFW::nowhere' }),
+          checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'RNFW::t50')?.result,
+        ];
+      };
+      expect(await read(own)).toEqual([undefined, undefined, 'satisfied']);
+      expect(await read(`${own}\n${far}`)).toEqual([undefined, undefined, 'satisfied']);
+      expect(await read(`${far}\n${own}`)).toEqual([undefined, undefined, 'satisfied']);
+      // An import brings RNFX within reach: refused, naming RNFX's pair.
+      const [t50, c1, result] = await read(`${own.replace('package RNFW {', 'package RNFW { import RNFX::*;')}\n${far}`);
+      expect([t50, c1, result]).toEqual([expect.stringContaining('RNFX::q'), expect.stringContaining('RNFX::q'), 'unknown']);
+      // Two sets within reach: a sentence that names neither (`sets[0]` named S's pair, which `p.L` never reads).
+      const { model: two } = await loadModelText(`package RNFS {
+        part def S { attribute M : ScalarValues::Real; assert constraint c3 { M == 1.0 } assert constraint c4 { M == 2.0 } }
+        part s : S;
+        part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == 50.0 } assert constraint c2 { L == 60.0 } }
+        part p : P;
+        attribute w : ScalarValues::Real = 1.0;
+        attribute w : ScalarValues::Real = 2.0;
+        constraint t50 { p.L == 50.0 }
+      }`);
+      const t = two!.all().find((e) => two!.qualifiedName(e.id) === 'RNFS::t50')!.id;
+      expect(contradictedDefinitionRefusal(two!, t, 'p.L == 50.0')).toBe(
+        'RNFS::t50 reads a name this walk places nowhere, and the model has asserted equations that give one feature two ' +
+          'values within its reach, so it is not read',
+      );
+    });
+
     it('a taint said to hold in one instance reaches every generic row, and an instance reading only where its walk meets that instance (taintReaches)', async () => {
       // No taint is built with an instance yet (every surface reads as before): the seam plants one on every entry of
       // the pair's, to show where a scoped taint reaches.

@@ -12231,6 +12231,95 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RN2U::top50': ['?/?/?/X', '?'],
       'RN2U::top60': ['?/?/?/X', '?'],
     }),
+    // A row reads the same beside a package it cannot reach (closing-readings RN-F, INV-12): RN2 beside RN2U, and
+    // beside RN2U renamed ZZZ, reads as RN2 alone, but for SMT's X: the file contradicts itself, and the SMT engine
+    // reads the axioms of the whole file. RNFW, whose names the walk places nowhere (two features `w`), reads `p.L` at
+    // c1's 50 beside RNFX, which contradicts itself and which it does not import (before, t50/t60 read ?/?/?/? in
+    // RNFX's sentence: the first set listed, `sets[0]`).
+    'rnf-rnv2': probe(`package RN2 {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part pp :>> p; assert constraint t2 { pp.x == 60.0 } }
+        constraint top60 { q.pp.x == 60.0 }
+        constraint top50 { q.pp.x == 50.0 }
+      }
+      package RN2U {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part :>> p; assert constraint t2 { p.x == 60.0 } }
+        constraint top60 { q.p.x == 60.0 }
+        constraint top50 { q.p.x == 50.0 }
+      }`, {
+      'RN2::P::x in RN2::q#equations': ['F/-/F/-', 'F'],
+      'RN2::Q::tie': ['?/-/?/-', '?'],
+      'RN2::Q::tie in RN2::q': ['?/-/?/-', '?'],
+      'RN2::q::t2': ['?/-/?/-', '?'],
+      'RN2::top50': ['?/?/?/X', '?'],
+      'RN2::top60': ['?/?/?/X', '?'],
+      'RN2U::P::x in RN2U::q#equations': ['F/-/F/-', 'F'],
+      'RN2U::Q::tie': ['?/-/?/-', '?'],
+      'RN2U::q::t2': ['?/-/?/-', '?'],
+      'RN2U::top50': ['?/?/?/X', '?'],
+      'RN2U::top60': ['?/?/?/X', '?'],
+    }),
+    'rnf-rnv2z': probe(`package RN2 {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part pp :>> p; assert constraint t2 { pp.x == 60.0 } }
+        constraint top60 { q.pp.x == 60.0 }
+        constraint top50 { q.pp.x == 50.0 }
+      }
+      package ZZZ {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part :>> p; assert constraint t2 { p.x == 60.0 } }
+        constraint top60 { q.p.x == 60.0 }
+        constraint top50 { q.p.x == 50.0 }
+      }`, {
+      'RN2::P::x in RN2::q#equations': ['F/-/F/-', 'F'],
+      'RN2::Q::tie': ['?/-/?/-', '?'],
+      'RN2::Q::tie in RN2::q': ['?/-/?/-', '?'],
+      'RN2::q::t2': ['?/-/?/-', '?'],
+      'RN2::top50': ['?/?/?/X', '?'],
+      'RN2::top60': ['?/?/?/X', '?'],
+      'ZZZ::P::x in ZZZ::q#equations': ['F/-/F/-', 'F'],
+      'ZZZ::Q::tie': ['?/-/?/-', '?'],
+      'ZZZ::q::t2': ['?/-/?/-', '?'],
+      'ZZZ::top50': ['?/?/?/X', '?'],
+      'ZZZ::top60': ['?/?/?/X', '?'],
+    }),
+    ...reversed('rnf-far', `package RNFW {
+        part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == 50.0 } }
+        part p : P;
+        attribute w : ScalarValues::Real = 1.0;
+        attribute w : ScalarValues::Real = 2.0;
+        constraint t50 { p.L == 50.0 }
+        constraint t60 { p.L == 60.0 }
+      }
+      package RNFX {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        part q : Q { part :>> p; assert constraint t2 { p.x == 60.0 } }
+      }`, `package RNFX {
+        part q : Q { assert constraint t2 { p.x == 60.0 } part :>> p; }
+        part def Q { assert constraint tie { p.x == 50.0 } part p : P; }
+        part def P { attribute x : ScalarValues::Real; }
+      }
+      package RNFW {
+        constraint t60 { p.L == 60.0 }
+        constraint t50 { p.L == 50.0 }
+        attribute w : ScalarValues::Real = 2.0;
+        attribute w : ScalarValues::Real = 1.0;
+        part p : P;
+        part def P { attribute L : ScalarValues::Real; assert constraint c1 { L == 50.0 } }
+      }`, {
+      'RNFW::P::c1': ['T/-/T/-', 'T'],
+      'RNFW::t50': ['T/T/?/?', 'T'],
+      'RNFW::t60': ['F/F/?/?', 'F'],
+      'RNFX::P::x in RNFX::q#equations': ['F/-/F/-', 'F'],
+      'RNFX::Q::tie': ['?/-/?/-', '?'],
+      'RNFX::q::t2': ['?/-/?/-', '?'],
+    }),
     // A part-valued binding into an instance under its type's assert (SF: `bind pp = q.p`, Q's `p.x == 50.0`):
     // pp stands for q's p, which is q's own instance, so Q's assert gives it 50 there and pp reads it (k and k2
     // F on all four, O9 S2; they read the default 2 beside SMT's inconsistent axioms). SFH: the same with the
