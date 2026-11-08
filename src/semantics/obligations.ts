@@ -656,17 +656,20 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
     if (isNonNormativeStatement(model, el.id) || underNonNormativeStatement(model, el)) continue;
     const raw = el.attrs.expression;
     if (typeof raw !== 'string' || raw.trim() === '') {
-      // An assert typed by a constraint definition and no body of its own: an axiom this tool does not read (A4).
+      // An assert typed by a constraint definition and no body of its own: an axiom this tool does not read (A4). A
+      // plain one is a check this tool does not make (a5 S4): an obligation, not an axiom, so it holds nothing back.
       const typed = typedAssertRefusal(model, el);
       if (typed === undefined) continue;
       const contract = owningContract(model, el, byId);
       const encodable = { reason: 'unread-definition' as const, detail: typed };
+      const asWritten = roleOf(el, false) ?? { role: 'axiom' as const, source: 'assert' as const };
+      const filed = opts.fromKeywords ? keywordRole(model, el, asWritten) : asWritten;
       out.push({
         requirement: contract ? contractRef(contract) : null,
         shortId: contract?.shortId ?? '',
         subject: contract?.subject ?? null,
-        role: 'axiom',
-        source: 'assert',
+        role: filed.role,
+        source: filed.source,
         element: ref(model, el),
         expression: '',
         node: null,
@@ -680,6 +683,7 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
         evidence: [],
         status: statusOf(encodable),
         ...claimed(model, contract),
+        ...(filed.provenance ? { provenance: filed.provenance } : {}),
       });
       continue;
     }
@@ -2373,9 +2377,19 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
  * instance of the usage that writes it inside the last ({@link instanceRelationRows}): definitions that hold each
  * other go on without end. One left unfiled past it that no later row of the worklist files is not carried, and the
  * rows that read what it joins are refused. It guards definitions that hold each other, not a path of usages: it is
- * independent of `MAX_BINDING_SEGMENTS` of the defining equations (48), and deliberately left at 32.
+ * independent of `MAX_BINDING_SEGMENTS` of the defining equations, and set to the same 48 so that the check, the
+ * literal engine and the proof read a chain of usage bodies as deep as the check reads a path of usages (a chain of
+ * 33 to 48 bodies was read by the check and the literal engine while the proof refused it).
  */
-const MAX_NESTED_BINDING_DEPTH = 32;
+const MAX_NESTED_BINDING_DEPTH = 48;
+
+/**
+ * How many distinct instances the bindings of {@link MAX_NESTED_BINDING_DEPTH}-deep chains are filed for in all:
+ * definitions that hold several usages of each other branch, and the instances grow as the branching to the power of
+ * the depth, where the depth cap alone bounds a chain, not the work. One left unfiled past it is not carried, as
+ * one past the depth cap is.
+ */
+const MAX_NESTED_BINDING_PATHS = 2048;
 
 /**
  * The relations an INSTANCE with symbols of its own holds
@@ -2504,8 +2518,9 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
         return frame ? [{ key: `${b.id} ${here}`, path: here, frame: frame.instance, usage: u.id }] : [];
       });
       if (written.length > 0) {
-        if (depth >= MAX_NESTED_BINDING_DEPTH) beyond.push(...written);
-        else {
+        if (depth >= MAX_NESTED_BINDING_DEPTH || (filedAt.size >= MAX_NESTED_BINDING_PATHS && !filedAt.has(here))) {
+          beyond.push(...written);
+        } else {
           filedAt.set(here, Math.min(filedAt.get(here) ?? Infinity, depth + 1));
           hold(here, u.id, true);
         }
@@ -2841,7 +2856,7 @@ function pathBelow(model: Model, id: ElementId | undefined, ownerId: ElementId):
 /**
  * Refuse `row` when it reads an instance whose relations were not read
  * ({@link MAX_INSTANCE_RELATIONS}), or one a binding was not filed for
- * ({@link MAX_NESTED_BINDING_DEPTH} bindings down, `beyond`): over a symbol nothing
+ * ({@link MAX_NESTED_BINDING_DEPTH} bindings down, or past {@link MAX_NESTED_BINDING_PATHS} instances, `beyond`): over a symbol nothing
  * constrains, a proof would rest on less than the model states.
  */
 function refuseUnreadInstances(
@@ -2877,7 +2892,7 @@ function refuseUnreadInstances(
     reason: 'unread-definition',
     detail:
       `the relation reads ${lost.map((v) => `\`${v.path}\``).join(', ')} in an instance a binding joins that lies more than ` +
-      `${MAX_NESTED_BINDING_DEPTH} bindings below the first, deeper than this tool reads the bindings of, so what the model states of it is not carried`,
+      `${MAX_NESTED_BINDING_DEPTH} bindings below the first, deeper than this tool reads the bindings of (or among more than ${MAX_NESTED_BINDING_PATHS} such instances), so what the model states of it is not carried`,
   };
   row.status = statusOf(row.encodable);
 }

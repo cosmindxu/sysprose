@@ -298,6 +298,15 @@ function tokenize(src: string): Tok[] {
       i++;
       continue;
     }
+    // The conditional's other spelling, `if c ? a else b` (`if` Expression
+    // (`?` | `then`) Expression `else` Expression, as the KerML grammar has it). Only the lone `?` is read: `??` (null
+    // coalescing) and a `?` after a `.` stay errors, and a `?` anywhere but
+    // after an `if` condition is refused by the parser.
+    if (c === '?' && src[i + 1] !== '?' && src[i - 1] !== '.') {
+      toks.push({ t: 'op', v: '?' });
+      i++;
+      continue;
+    }
     throw new SyntaxError(`Unexpected character '${c}' at ${i}`);
   }
   toks.push({ t: 'eof' });
@@ -424,7 +433,7 @@ class Parser {
         if (tk.v === 'null') return { kind: 'null' };
         if (tk.v === 'if') {
           const cond = this.parseBinary(0);
-          this.expectKw('then');
+          this.expectThen();
           const thenN = this.parseBinary(0);
           this.expectKw('else');
           const elseN = this.parseBinary(0);
@@ -436,9 +445,17 @@ class Parser {
     }
   }
 
+  /** The separator after an `if` condition: `then` or the lone `?` (one `if` node either way). */
+  private expectThen(): void {
+    const tk = this.next();
+    if (!((tk.t === 'kw' && tk.v === 'then') || (tk.t === 'op' && tk.v === '?'))) {
+      throw new SyntaxError("Expected 'then' or '?' after the condition of an if");
+    }
+  }
+
   private expectKw(kw: string): void {
     const tk = this.next();
-    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}'`);
+    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}' in the conditional`);
   }
 }
 

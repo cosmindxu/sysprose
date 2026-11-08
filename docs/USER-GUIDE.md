@@ -2218,6 +2218,7 @@ read in q1: every reading of the pair — J, K, q1's p's x, the assert's own row
 assertion replaces: the assert holds in that instance too, and this tool does
 not read it there, so the model may contradict itself unreported …*), and
 `verify` exits 2.
+A plain `constraint nl : Eq { in a = L; }`, with no `assert`, is a check this tool does not make: it files the same row (*`nl` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*) on the check, the numeric surface, `verify` (`verification/not-evaluable`, which `--allow-inconclusive` does not forgive) and `obligations`, and it holds no other row back, since nothing is asserted. A requirement set that holds one reads *inconclusive* on `consistency` (exit 2), where it read *consistent* over a relation this tool did not read.
 
 **Two asserted equations that disagree.** A feature declared without a value
 that two asserted equations define with two different values — `assert

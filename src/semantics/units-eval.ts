@@ -686,6 +686,13 @@ function lexQ(src: string): QTok[] {
       i++;
       continue;
     }
+    // `if c ? a else b`, the conditional's other spelling ({@link ./expr}): the
+    // lone `?` only, never `??` or a `?` after a `.`.
+    if (c === '?' && src[i + 1] !== '?' && src[i - 1] !== '.') {
+      toks.push({ t: 'op', v: '?' });
+      i++;
+      continue;
+    }
     throw new SyntaxError(`Unexpected character '${c}'`);
   }
   toks.push({ t: 'eof' });
@@ -860,7 +867,7 @@ class QParser {
         if (tk.v === 'false') return { kind: 'bool', value: false };
         if (tk.v === 'if') {
           const cond = this.parseBinary(0);
-          this.expectKw('then');
+          this.expectThen();
           const then = this.parseBinary(0);
           this.expectKw('else');
           return { kind: 'if', cond, then, else: this.parseBinary(0) };
@@ -868,7 +875,7 @@ class QParser {
         throw new SyntaxError(`Unexpected keyword '${tk.v}'`);
       case 'lparen': {
         const inner = this.parseBinary(0);
-        if (this.next().t !== 'rparen') throw new SyntaxError('Expected )');
+        if (this.next().t !== 'rparen') throw new SyntaxError('Expected ) to close the parenthesis');
         return inner;
       }
       case 'str':
@@ -878,9 +885,15 @@ class QParser {
     }
   }
 
+  /** The separator after an `if` condition: `then` or the lone `?` (one `if` node either way). */
+  private expectThen(): void {
+    const tk = this.next();
+    if (!((tk.t === 'kw' && tk.v === 'then') || (tk.t === 'op' && tk.v === '?'))) throw new SyntaxError("Expected 'then' or '?' after the condition of an if");
+  }
+
   private expectKw(kw: string): void {
     const tk = this.next();
-    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}'`);
+    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}' in the conditional`);
   }
 }
 
@@ -1307,6 +1320,12 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
     // Beside a Boolean where a quantity is needed, no value of the unread name gives a quantity: never absorbed.
     const besideBoolean = (!isQUnknown(l) && 'b' in l) || (!isQUnknown(r) && 'b' in r);
     return besideBoolean && op !== '==' && op !== '=' && op !== '!=' && absorbableQ(u) ? opaqueQ(u as QUnknown) : u;
+  }
+  // Two Booleans compare by value (`s.ok == true`, `s.fast != true`): the scalar evaluator reads them so, and the
+  // quantity reader refused them as "a boolean where a quantity was needed". A Boolean against a number, and an
+  // ordering (`<`) of Booleans, stay refused.
+  if ((op === '==' || op === '=' || op === '!=') && 'b' in l && 'b' in r) {
+    return { b: (l.b === r.b) === (op !== '!=') };
   }
   if (!('q' in l) || !('q' in r)) return unknownQ('not-quantity');
   const a = l.q;

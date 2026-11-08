@@ -103,6 +103,76 @@ describe('semantics — the unit-aware evaluator reads the one connective table 
   });
 });
 
+describe('semantics — the unit-aware evaluator compares two Booleans (S1)', () => {
+  const verdict = (expression: string) => {
+    const m = new Model();
+    const p = m.create('Package', { declaredName: 'P' });
+    return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+  };
+  const yes = '1 [m] < 2 [m]';
+  const no = '1 [m] > 2 [m]';
+
+  it('reads `==`, `=` and `!=` between Booleans by value', () => {
+    expect(verdict('true == true')).toBe('satisfied');
+    expect(verdict('false == false')).toBe('satisfied');
+    expect(verdict('true == false')).toBe('violated');
+    expect(verdict('true != false')).toBe('satisfied');
+    expect(verdict('true != true')).toBe('violated');
+    expect(verdict('false != false')).toBe('violated');
+    expect(verdict('true = true')).toBe('satisfied');
+    // A comparison is a Boolean too, on either side and under `not`.
+    expect(verdict(`(${yes}) == true`)).toBe('satisfied');
+    expect(verdict(`false != (${no})`)).toBe('violated');
+    expect(verdict(`(${yes}) == (${no})`)).toBe('violated');
+    expect(verdict(`not ((${yes}) == (${no}))`)).toBe('satisfied');
+    expect(verdict(`(true == true) and (${yes})`)).toBe('satisfied');
+  });
+
+  it('keeps a Boolean beside a number, and an ordering of Booleans, refused', () => {
+    for (const text of ['true == 1 [m]', '1 [m] != false', `(${yes}) == 1 [m]`, 'true < false', 'true >= false']) {
+      expect(verdict(text), text).toBe('unknown');
+    }
+  });
+});
+
+describe('semantics — the unit-aware parser reads `if c ? a else b` as `then` does (S2)', () => {
+  const verdict = (expression: string) => {
+    const m = new Model();
+    const p = m.create('Package', { declaredName: 'P' });
+    return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+  };
+
+  it('reads the `?` spelling as its `then` twin, with units, nested and with a Boolean result', () => {
+    const twins: Array<[string, string, string]> = [
+      ['(if 1 [m] < 2 [m] ? 5 [kg] else 1 [kg]) == 5 [kg]', '(if 1 [m] < 2 [m] then 5 [kg] else 1 [kg]) == 5 [kg]', 'satisfied'],
+      ['(if 1 [m] > 2 [m] ? 5 [kg] else 1 [kg]) == 5 [kg]', '(if 1 [m] > 2 [m] then 5 [kg] else 1 [kg]) == 5 [kg]', 'violated'],
+      ['(if 1 [m] > 2 [m] ? 1 [kg] else if 3 [m] > 2 [m] ? 5000 [g] else 9 [kg]) == 5 [kg]',
+        '(if 1 [m] > 2 [m] then 1 [kg] else if 3 [m] > 2 [m] then 5000 [g] else 9 [kg]) == 5 [kg]', 'satisfied'],
+      ['if 1 [m] < 2 [m] ? true else false', 'if 1 [m] < 2 [m] then true else false', 'satisfied'],
+      ['if 1 [m] > 2 [m] ? true else false', 'if 1 [m] > 2 [m] then true else false', 'violated'],
+    ];
+    for (const [q, t, want] of twins) {
+      expect(verdict(t), t).toBe(want);
+      expect(verdict(q), q).toBe(want);
+      expect(quantityRefsIn(q), q).toEqual(quantityRefsIn(t));
+    }
+    expect(quantityRefsIn('if a > 1 [m] ? x else y')).toEqual(['a', 'x', 'y']);
+  });
+
+  it('refuses what the scalar parser refuses: `??`, a `?` after a `.`, a second `?` with no `if`', () => {
+    for (const text of [
+      'x ?? 1 [m]',
+      'a.? 1 [m]',
+      'if a ? b',
+      'if a > 1 [m] ? 1 [kg] else 2 [kg] ? 3 [kg] else 4 [kg]',
+      'a ? b',
+      'if a ? b then c else d',
+    ]) {
+      expect(quantityRefsIn(text), text).toBeUndefined();
+    }
+  });
+});
+
 describe('semantics — dimensionalFacets', () => {
   it('returns unit and kind dimensions for a typed feature with a value unit', () => {
     const m = libModel();

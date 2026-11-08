@@ -246,6 +246,19 @@ describe('an expression becomes a term', () => {
     });
   });
 
+  it('encodes `if c ? a else b` as the `ite` the `then` spelling gives (S2)', () => {
+    const vars = [v('x'), v('y'), v('p', { sort: 'Bool' })];
+    for (const [q, t] of [
+      ['(if p ? x else y) >= 1.0', '(if p then x else y) >= 1.0'],
+      ['(if x > 0.0 ? x else if y > 0.0 ? y else 0.0) >= 1.0', '(if x > 0.0 then x else if y > 0.0 then y else 0.0) >= 1.0'],
+    ] as const) {
+      expect(encode(q, vars), q).toEqual(encode(t, vars));
+    }
+    expect(encode('(if p ? x else y) >= 1.0', vars)).toMatchObject({ term: '(>= (ite |P::p| |P::x| |P::y|) 1.0)' });
+    // the first branch is the one the condition picks: a swapped pair would put `y` first
+    expect(encode('(if x > y ? x else y) >= 1.0', vars)).toMatchObject({ term: '(>= (ite (> |P::x| |P::y|) |P::x| |P::y|) 1.0)' });
+  });
+
   it('reads a NEGATIVE literal exponent, which the parser writes as a unary minus', () => {
     // `parseExpr('x ^ -2')` is `binary(^, ref x, unary(-, num 2))`: the sign is
     // its own node. A `node.right.kind === 'num'` test would call a written

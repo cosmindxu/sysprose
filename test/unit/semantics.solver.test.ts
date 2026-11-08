@@ -553,6 +553,46 @@ describe('checkConstraintsNumeric — a feature an assert typed by an inequality
   });
 });
 
+/*
+ * a5 S4: a plain `constraint nl : Newton { in f = force; … }` filed no row on the numeric surface (tp1 read 2500 against
+ * 1000 * 2 in silence). It files its own `unknown` row now, in the sentence the typed assert's row has, and the plain
+ * constraints beside it are judged as before: it is no axiom and nothing is solved from it.
+ */
+describe('checkConstraintsNumeric — a plain constraint typed by a constraint definition', () => {
+  const rows = async (usage: string) => {
+    const { model: m } = await loadModelText(`package TQ {
+      constraint def Newton { in f : Real; in m : Real; in a : Real; f == m * a }
+      part car { attribute mass : Real = 1000.0; attribute accel : Real = 2.0; attribute force : Real = 2500.0; ${usage} }
+      constraint k { car.force == 2500.0 }
+      constraint kf { car.force == 2000.0 }
+    }`);
+    const byName = new Map(checkConstraintsNumeric(m!).map((r) => [m!.qualifiedName(r.id), r]));
+    return byName;
+  };
+
+  it('files an unknown row beside rows that read as before, whether the parameters are valued or bound', async () => {
+    for (const usage of [
+      'constraint nl : Newton { in f = force; in m = mass; in a = accel; }',
+      'constraint nl : Newton; bind nl.f = force; bind nl.m = mass; bind nl.a = accel;',
+    ]) {
+      const byName = await rows(usage);
+      const nl = byName.get('TQ::car::nl')!;
+      expect([nl.result, nl.imposed ?? false, nl.reason]).toEqual([
+        'unknown',
+        false,
+        "`nl` is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
+      ]);
+      expect([byName.get('TQ::k')!.result, byName.get('TQ::kf')!.result]).toEqual(['satisfied', 'violated']);
+    }
+  });
+
+  it('files none where there is no constraint definition to read: a subsetting of a usage with a body, a body of its own', async () => {
+    const byName = await rows('constraint own : Newton { force > 0.0 } constraint c1 { force > 0.0 } constraint c2 :> c1;');
+    expect(byName.has('TQ::car::c2')).toBe(false);
+    expect(byName.get('TQ::car::own')!.result).toBe('satisfied');
+  });
+});
+
 /* ───────────────────────────── optimization ──────────────────────────── */
 
 describe('optimize', () => {
@@ -2052,5 +2092,34 @@ describe('solve — an asserted String equality', () => {
       const { model } = await loadModelText(tank(asserts), { fileName: 'p.sysml', strict: true });
       expect(solve(model!).converged).toBe(true);
     }
+  });
+});
+
+describe('checkConstraintsNumeric — two Booleans compared by value (S1)', () => {
+  // `s.ok == true` and `s.fast != true` between Booleans are decided on the numeric surface as they are on the check
+  // (the quantity reader refused them as "a boolean was used where a quantity was needed"); a Boolean against a number,
+  // and a valueless Boolean, stay unknown. Both orders of the members.
+  it('decides == and != between Booleans, and keeps a number beside one refused', async () => {
+    const members = [
+      'part def S { attribute ok : ScalarValues::Boolean = true; attribute fast : ScalarValues::Boolean = false; attribute r : ScalarValues::Real = 3.0; attribute w : ScalarValues::Boolean; }',
+      'part s : S;',
+      'constraint bT { s.ok == true and s.r <= 5.0 }',
+      'constraint bF { s.ok == true and s.fast == true }',
+      'constraint bN { s.fast != true }',
+      'constraint bQ { (s.r > 1.0) == s.ok }',
+      'constraint bW { s.w == true }',
+      'constraint bX { s.ok == 1.0 }',
+    ];
+    const read = async (order: string[]) => {
+      const { model } = await loadModelText(`package U3 { ${order.join(' ')} }`, { fileName: 'p.sysml', strict: true });
+      return Object.fromEntries(
+        checkConstraintsNumeric(model!)
+          .map((r): [string, string] => [model!.qualifiedName(r.id)!.replace('U3::', ''), r.result])
+          .sort(),
+      );
+    };
+    const expected = { bT: 'satisfied', bF: 'violated', bN: 'satisfied', bQ: 'satisfied', bW: 'unknown', bX: 'unknown' };
+    expect(await read(members)).toEqual(expected);
+    expect(await read([...members].reverse())).toEqual(expected);
   });
 });

@@ -1041,19 +1041,26 @@ function collectVarIds(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>,
  * the numeric surface; as a refused axiom it makes the literal and SMT engines abstain as for any assert they cannot
  * read. What it names gives way as before ({@link typedAssertHolding}). `undefined` for any other element:
  * one with a body of its own is read as written, and one whose types state no body asserts nothing this tool sees.
+ *
+ * A PLAIN `constraint nl : Newton { in f = force; … }` (no clause role) states the same body with the same parameter
+ * values, and filed no row either, so a violated `nl` was silent (a5 S4). It files its own row now, a check this tool
+ * does not make: only where a constraint DEFINITION supplies the body, since one that subsets a constraint usage with a
+ * body of its own (`constraint c2 :> c1`) is the relation c1's own row already judges. A `require` or `assume` clause
+ * typed so files nothing yet.
  */
 export function typedAssertRefusal(model: Model, el: ElementRecord): string | undefined {
-  if (el.eClass !== 'ConstraintUsage' || el.attrs.requirementRole !== 'assert' || el.attrs.isLibrary === true) return undefined;
+  const role = el.attrs.requirementRole;
+  if (el.eClass !== 'ConstraintUsage' || (role !== 'assert' && role !== undefined) || el.attrs.isLibrary === true) return undefined;
   if (typeof el.attrs.expression === 'string' && el.attrs.expression.trim() !== '') return undefined;
   const bodied = (t: ElementRecord): boolean =>
     t.attrs.isLibrary !== true && typeof t.attrs.expression === 'string' && t.attrs.expression.trim() !== '';
   const types = generalizationsOf(model, el.id).filter(bodied);
-  const def = types.find((t) => t.eClass === 'ConstraintDefinition') ?? types[0];
+  const def = types.find((t) => t.eClass === 'ConstraintDefinition') ?? (role === undefined ? undefined : types[0]);
   if (def === undefined) return undefined;
   const name = el.declaredName ?? el.declaredShortName;
   const typeName = def.declaredName ?? def.declaredShortName ?? 'an unnamed definition';
   const kind = def.eClass === 'ConstraintDefinition' ? 'typed by the constraint definition' : 'typed through';
-  return `${name !== undefined ? `\`${name}\`` : 'This assert'} is ${kind} \`${typeName}\`, whose body this tool does not read with the parameters' values`;
+  return `${name !== undefined ? `\`${name}\`` : role === undefined ? 'This constraint' : 'This assert'} is ${kind} \`${typeName}\`, whose body this tool does not read with the parameters' values`;
 }
 
 /** Name→id scope for a relation: its owner (subject) merged with itself. */

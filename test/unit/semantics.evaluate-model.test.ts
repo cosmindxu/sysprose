@@ -5317,6 +5317,62 @@ describe('checkConstraints — an enclosing assert is checked against a default 
         'this tool does not read',
     );
   });
+
+  // a5 S4: a PLAIN `constraint nl : Newton { in f = force; … }` states the body with the parameters' values, as the assert
+  // does, and filed no row on any surface: 2500 against 1000 * 2 was silent (tp1, g5d). It files its own row now, a check
+  // this tool does not make, and holds nothing back (it is no axiom).
+  it('files a row for a plain constraint typed by a constraint definition, and holds no other row back (S4)', async () => {
+    const newton = 'constraint def Newton { in f : Real; in m : Real; in a : Real; f == m * a }';
+    const attrs = 'attribute mass : Real = 1000.0; attribute accel : Real = 2.0; attribute force : Real = 2500.0;';
+    const sentence = (name: string) =>
+      `\`${name}\` is typed by the constraint definition \`Newton\`, whose body this tool does not read with the parameters' values`;
+    const load = async (text: string) => (await loadModelText(text)).model!;
+    for (const [tag, usage, qn] of [
+      ['SA', 'part car { ' + attrs + ' constraint nl : Newton { in f = force; in m = mass; in a = accel; } }', 'SA::car::nl'],
+      ['SB', 'part car { ' + attrs + ' constraint nl : Newton; bind nl.f = force; bind nl.m = mass; bind nl.a = accel; }', 'SB::car::nl'],
+      ['SC', 'part def Car { ' + attrs + ' constraint nl : Newton { in f = force; in m = mass; in a = accel; } } part car : Car;', 'SC::Car::nl'],
+    ] as const) {
+      const m = await load(`package ${tag} { ${newton} ${usage} constraint k { car.force == 2500.0 } }`);
+      const check = checkConstraints(m).find((c) => m.qualifiedName(c.id) === qn)!;
+      expect([tag, check.result, check.message], tag).toEqual([tag, 'unknown', `Could not evaluate: ${sentence('nl')}`]);
+      const num = checkConstraintsNumeric(m).find((r) => m.qualifiedName(r.id) === qn)!;
+      expect([tag, num.result, num.reason], tag).toEqual([tag, 'unknown', sentence('nl')]);
+      // On the proof surfaces it is an obligation that cannot be encoded, not an axiom: no other row waits on it.
+      const rows = obligationsOf(m).filter((o) => o.element.qualifiedName === qn);
+      expect(rows.map((o) => [o.role, o.source, o.encodable]), tag).toEqual([
+        ['obligation', 'constraint', { reason: 'unread-definition', detail: sentence('nl') }],
+      ]);
+      expect(obligationsOf(m).find((o) => o.element.qualifiedName === `${tag}::k`)!.encodable, tag).toBe(true);
+      expect(checkConstraints(m).find((c) => m.qualifiedName(c.id) === `${tag}::k`)!.result, tag).toBe('satisfied');
+    }
+    // One with no name of its own says what it is, a constraint and not an assert.
+    const unnamed = await load(`package SU { ${newton} part car { ${attrs} constraint : Newton { in f = force; in m = mass; in a = accel; } } }`);
+    const unnamedRow = obligationsOf(unnamed).find((o) => o.role === 'obligation' && o.encodable !== true && /^This /.test((o.encodable as { detail: string }).detail));
+    expect((unnamedRow!.encodable as { detail: string }).detail).toBe(
+      "This constraint is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
+    );
+    // A parameter-free body is as unread (g5d); an asserted one keeps its axiom.
+    const g5d = await load('package G5D { attribute x : Real = 3.0; constraint def K { x >= 1.0 } constraint c : K; assert constraint e : K; constraint t { x == 3.0 } }');
+    const row = (q: string) => checkConstraints(g5d).find((c) => g5d.qualifiedName(c.id) === q)!;
+    expect(row('G5D::c').result).toBe('unknown');
+    expect(obligationsOf(g5d).find((o) => o.element.qualifiedName === 'G5D::c')).toMatchObject({ role: 'obligation', status: 'not-encodable' });
+    expect(obligationsOf(g5d).find((o) => o.element.qualifiedName === 'G5D::e')).toMatchObject({ role: 'axiom', source: 'assert' });
+    // Nothing else files: a body of its own is read as written, a usage that subsets a usage with a body is the row that
+    // usage already has, and a typed `require` clause is not read yet (no row, as before).
+    const quiet = await load(`package QT {
+      attribute x : Real = 3.0;
+      constraint def K { x >= 1.0 }
+      constraint own : K { x >= 5.0 }
+      constraint c1 { x >= 1.0 }
+      constraint c2 :> c1;
+      requirement def R { require constraint rq : K; }
+    }`);
+    const filed = checkConstraints(quiet).map((c) => quiet.qualifiedName(c.id));
+    expect(filed).toContain('QT::own');
+    expect(checkConstraints(quiet).find((c) => quiet.qualifiedName(c.id) === 'QT::own')!.result).toBe('violated');
+    expect(filed).not.toContain('QT::c2');
+    expect(filed).not.toContain('QT::R::rq');
+  });
 });
 
 describe('a binding reads through a renamed redefinition and a package’s definition-feature bind (H5 S4)', () => {
@@ -9827,6 +9883,21 @@ describe('a contradiction the check reports is an axiom of the instance it holds
     expect((await smt(await load(CHAIN(10, '5.0')), 'Deep::t')).map((r) => r[1])).toEqual(['proved']);
   });
 
+  it('reads a chain of bindings each written one instance below the last, to the cap of 48 (a5 S3), and refuses what lies past it', async () => {
+    // 33 to 48 deep (40 and 48 here): the check and the literal engine read these, and the proof now does too (it refused past 32). The root's 50 reaches the
+    // assert of the nth instance below it, which the definitions never meet.
+    for (const n of [40, 48]) {
+      expect((await smt(await load(CHAIN(n, '50.0')), 'Deep::t')).map((r) => [r[1], r[2]]), String(n)).toEqual([['inconclusive', 'verification/inconsistent-axioms']]);
+      expect((await smt(await load(CHAIN(n, '5.0')), 'Deep::t')).map((r) => r[1]), String(n)).toEqual(['proved']);
+    }
+    // Past 48 the binding is left unfiled, the proof is not claimed, and the sentence names the cap.
+    const past = obligationsOf(await load(CHAIN(50, '5.0'))).filter((o) => o.role === 'axiom' && o.source === 'bind' && o.encodable !== true);
+    expect(past.length).toBeGreaterThan(0);
+    expect((past[0]!.encodable as { detail: string }).detail).toContain('more than 48 bindings below the first');
+    const [row] = await smt(await load(CHAIN(50, '5.0')), 'Deep::t');
+    expect(row![1]).not.toBe('proved');
+  }, 90_000);
+
   it('files the bindings of definitions that hold each other no deeper than the cap, and reads nothing it left unfiled', async () => {
     // A’s b holds B, B’s a holds A: each binding is read for the instance below the last, without end.
     const m = await load(`package Rec {
@@ -9838,16 +9909,33 @@ describe('a contradiction the check reports is an axiom of the instance it holds
     const rows = obligationsOf(m);
     const binds = rows.filter((o) => o.role === 'axiom' && o.source === 'bind');
     // Bounded by the depth, not by the 16384 relations of the instance walk (which took minutes here).
-    expect(binds.length).toBeGreaterThan(20);
-    expect(binds.length).toBeLessThan(200);
+    expect(binds.length).toBeGreaterThan(40);
+    expect(binds.length).toBeLessThan(300);
     const refused = binds.filter((o) => o.encodable !== true).map((o) => (o.encodable as { detail: string }).detail);
     expect(refused.length).toBeGreaterThan(0);
-    expect(refused[0]).toContain('more than 32 bindings below the first');
+    expect(refused[0]).toContain('more than 48 bindings below the first');
     // A proof beside a binding left out is not claimed.
     const [row] = await smt(m, 'Rec::t');
     expect(row![1]).not.toBe('proved');
     expect(row![2]).toBe('verification/not-evaluable');
   });
+
+  it('bounds the instances it files bindings for when definitions that hold several usages of each other branch', async () => {
+    // A holds two usages of B, B one of C, C one of A: the instances grow as 2 to the power of the depth.
+    const m = await load(`package Rec7 {
+      part def A { attribute La : ScalarValues::Real; part b : B { bind xb = La; } part b2 : B { bind xb = La; } }
+      part def B { attribute xb : ScalarValues::Real; part c : C { bind xc = xb; } }
+      part def C { attribute xc : ScalarValues::Real; part a : A { bind La = xc; } assert constraint k { xc <= 100.0 } }
+      part ra : A { attribute :>> La = 50.0; }
+      constraint t { ra.La >= 0.0 }
+    }`);
+    const binds = obligationsOf(m).filter((o) => o.role === 'axiom' && o.source === 'bind');
+    // Bounded by the instances, not by the 16384 relations of the instance walk (which took minutes here).
+    expect(binds.length).toBeLessThan(4000);
+    const refused = binds.filter((o) => o.encodable !== true).map((o) => (o.encodable as { detail: string }).detail);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused[0]).toContain('not carried');
+  }, 60_000);
 
   it('carries no asserted value through a package head’s slot into a default that gave way, whichever text comes first (E1)', async () => {
     const text = (first: boolean) => {

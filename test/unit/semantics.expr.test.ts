@@ -76,6 +76,44 @@ describe('semantics — expression parser + evaluator', () => {
     expect(evalStr('if 1 > 2 then 10 else 0')).toBe(0);
   });
 
+  it('conditional (S2): `if c ? a else b` is the `then` spelling, one node for either', () => {
+    for (const [q, t] of [
+      ['if 1 < 2 ? 10 else 0', 'if 1 < 2 then 10 else 0'],
+      ['if a > 1 ? p.q else -r', 'if a > 1 then p.q else -r'],
+      ['(if a ? b else c) + 1', '(if a then b else c) + 1'],
+      // the nested form: an `if` in the else branch, bare or parenthesised, and one in the then branch
+      ['if a ? 1 else if b ? 2 else 3', 'if a then 1 else if b then 2 else 3'],
+      ['if a ? (if b ? 1 else 2) else 3', 'if a then (if b then 1 else 2) else 3'],
+      // the two spellings may be mixed in one expression
+      ['if a ? 1 else if b then 2 else 3', 'if a then 1 else if b then 2 else 3'],
+    ] as const) {
+      expect(exprEqual(parseExpr(q), parseExpr(t)), q).toBe(true);
+    }
+    expect(evalStr('if 1 < 2 ? 10 else 0')).toBe(10);
+    expect(evalStr('if 1 > 2 ? 10 else 0')).toBe(0);
+    expect(evalStr('if a ? 1 else if b ? 2 else 3', { a: false, b: true })).toBe(2);
+    // the branches are not swapped: the condition's truth picks the first
+    expect(parseExpr('if a ? 1 else 2')).toMatchObject({ kind: 'if', then: { value: 1 }, else: { value: 2 } });
+  });
+
+  it('conditional (S2): a `?` anywhere but after an `if` condition is not read', () => {
+    for (const text of [
+      'a ? b',                         // no `if`
+      'x ?? 1',                        // null coalescing is not added
+      'a.? b',                         // a `?` after a `.`
+      'if a ? b',                      // no else
+      'if ? b else c',                 // no condition
+      'if a ? ? b else c',
+      'if a ? b then c else d',        // one separator only
+      'if a ? b else c ? d else e',    // a conditional starts with `if`
+      'if a then b else c ? d else e',
+      'if a ? b else c ?',
+      '? == 1',
+    ]) {
+      expect(() => parseExpr(text), text).toThrow(SyntaxError);
+    }
+  });
+
   it('unary minus and mixed expressions', () => {
     expect(evalStr('-5 + 3')).toBe(-2);
     expect(evalStr('10 % 3')).toBe(1);

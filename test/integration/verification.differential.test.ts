@@ -10192,6 +10192,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t1 { p.L == 200.0 }
       }`, {
+      // a5 S4: the plain typed `e0` files its own row (it filed none), in the sentence the assert's row has.
+      'U1::P::e0': ['?/?/?/?', null],
       'U1::P::ea': ['?/-/?/-', null],
       'U1::t1': ['?/?/?/?', null],
     }),
@@ -13668,6 +13670,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.load <= 10.0 }
       }`, {
       'TP2::Q::c': ['?/?/?/?', 'F'],
+      // a5 S4: the plain typed `e0` files its own row too.
+      'TP2::Q::e0': ['?/?/?/?', 'T'],
       'TP2::Q::ea': ['?/-/?/-', 'T'],
       'TP2::top': ['?/?/?/?', 'F'],
     }),
@@ -18422,6 +18426,127 @@ package PS {
         [`${k}-rev`, probe(reversedMembers(text), rows)],
       ]),
     ),
+    // a5 S1: two Booleans compare by value on the numeric surface too, as on the check (`s.ok == true`, `s.fast != true`).
+    // Before S1 bT and bN read ?/?/?/? beside T/T/T/T ("a boolean was used where a quantity was needed"), bF F/F/?/F.
+    ...Object.fromEntries(
+      (['a5-bool', 'a5-bool-rev'] as const).map((k) => {
+        const text = `package BOOLEQ {
+  part def S { attribute ok : ScalarValues::Boolean = true; attribute fast : ScalarValues::Boolean = false; attribute r : ScalarValues::Real = 3.0; attribute w : ScalarValues::Boolean; }
+  part s : S;
+  constraint bT { s.ok == true and s.r <= 5.0 }
+  constraint bF { s.ok == true and s.fast == true }
+  constraint bN { s.fast != true }
+  constraint bI { s.ok implies s.r <= 2.0 }
+  constraint bQ { (s.r > 1.0) == s.ok }
+  constraint bW { s.w == true }
+}`;
+        return [k, probe(k === 'a5-bool' ? text : reversedMembers(text), {
+          'BOOLEQ::bT': ['T/T/T/T', 'T'],
+          'BOOLEQ::bF': ['F/F/F/F', 'F'],
+          'BOOLEQ::bN': ['T/T/T/T', 'T'],
+          'BOOLEQ::bI': ['F/F/F/F', 'F'],
+          'BOOLEQ::bQ': ['T/T/T/T', 'T'],
+          'BOOLEQ::bW': ['?/?/?/?', null],
+        })];
+      }),
+    ),
+    // a5 S3: a chain of bindings each written one instance below the last (definitions that each hold a usage typed by the next).
+    // The check and the literal engine read it to the segment cap (48 usages in a path), and the proof read it to 32 bindings below the first;
+    // it is 48 now, so the proof decides where the check does (40 deep) and one past it (49 usages: the path is past the check's cap, the proof
+    // still reads the bindings, and only the proved row says so). At 50 a binding lies more than 48 below the first and the proof is not claimed.
+    ...Object.fromEntries(
+      [
+        { k: 'a5-chain40', n: 40, rev: false, le: 'T/T/T/T', ge: 'F/F/F/F' },
+        { k: 'a5-chain40-rev', n: 40, rev: true, le: 'T/T/T/T', ge: 'F/F/F/F' },
+        { k: 'a5-chain49', n: 49, rev: false, le: '?/?/T/T', ge: '?/?/F/?' },
+        { k: 'a5-chain50', n: 50, rev: false, le: '?/?/T/?', ge: '?/?/F/?' },
+      ].map(({ k, n, rev, le, ge }) => {
+        const path = `root.${Array.from({ length: n }, (_, i) => `u${i + 1}`).join('.')}.a${n}`;
+        const text = [
+          'package BCH {',
+          ...Array.from({ length: n + 1 }, (_, j) => n - j).map(
+            (i) =>
+              `  part def H${i} { attribute a${i} : ScalarValues::Real; attribute b${i} : ScalarValues::Real = a${i}; ${i < n ? `part u${i + 1} : H${i + 1} { bind a${i + 1} = b${i}; }` : ''} }`,
+          ),
+          '  part root : H0 { attribute :>> a0 = 5.0; }',
+          `  constraint tLe { ${path} <= 10.0 }`,
+          `  constraint tGe { ${path} >= 10.0 }`,
+          '}',
+        ].join('\n');
+        return [k, probe(rev ? reversedMembers(text) : text, { 'BCH::tLe': [le, 'T'], 'BCH::tGe': [ge, 'F'] })];
+      }),
+    ),
+    // a5 S2: `if c ? a else b` is `if c then a else b` (the KerML grammar has both), on all four surfaces. Before S2 every
+    // `?` row read ?/?/?/? ("Unexpected character '?'") beside the `then` twin's letters. The two texts differ in the separator
+    // only, and share their package name so STAND_ALIKE compares the rows; a nested conditional is an `else if`, and
+    // `if c ? a else b ? d else e` is a parse error as it is with `then`.
+    ...Object.fromEntries(
+      (['a5-cond-q', 'a5-cond-then', 'a5-cond-q-rev'] as const).map((k) => {
+        const sep = k === 'a5-cond-then' ? 'then' : '?';
+        const text = `package COND {
+  attribute x : ScalarValues::Real = 3.0;
+  attribute y : ScalarValues::Real = 7.0;
+  attribute m : ISQ::MassValue = 5.0 [kg];
+  attribute p : ScalarValues::Boolean = true;
+  attribute q : ScalarValues::Boolean = false;
+  constraint cT { (if x > 2.0 ${sep} y else 0.0) == 7.0 }
+  constraint cF { (if x > 2.0 ${sep} y else 0.0) == 0.0 }
+  constraint cE { (if x > 5.0 ${sep} 1.0 else if x > 2.0 ${sep} 2.0 else 3.0) == 2.0 }
+  constraint cN { (if x > 2.0 ${sep} (if y > 9.0 ${sep} 1.0 else 4.0) else 5.0) == 1.0 }
+  constraint cU { (if x > 2.0 ${sep} m else 1.0 [kg]) == 5000.0 [g] }
+  constraint cB { if x > 2.0 ${sep} p else q }
+  constraint cBF { if x > 5.0 ${sep} p else q }
+}`;
+        return [k, probe(k === 'a5-cond-q-rev' ? reversedMembers(text) : text, {
+          'COND::cT': ['T/T/T/T', 'T'],
+          'COND::cF': ['F/F/F/F', 'F'],
+          'COND::cE': ['T/T/T/T', 'T'],
+          'COND::cN': ['F/F/F/F', 'F'],
+          'COND::cU': ['T/T/T/T', 'T'],
+          'COND::cB': ['T/T/T/T', 'T'],
+          'COND::cBF': ['F/F/F/F', 'F'],
+        })];
+      }),
+    ),
+    // a5 S2: what stays unread: a conditional that starts with `if` and has one `?` (or `then`), and `??`.
+    'a5-cond-bad': probe(`package CONDBAD {
+  attribute x : ScalarValues::Real = 3.0;
+  constraint nN { (if x > 2.0 ? 1.0 else 2.0 ? 3.0 else 4.0) == 1.0 }
+  constraint nC { (x ?? 1.0) == 3.0 }
+  constraint nE { (if x > 2.0 ? 1.0) == 1.0 }
+  constraint nT { (if x > 2.0 ? 1.0 then 2.0 else 3.0) == 1.0 }
+}`, {
+      'CONDBAD::nN': ['?/?/?/?', null],
+      'CONDBAD::nC': ['?/?/?/?', null],
+      'CONDBAD::nE': ['?/?/?/?', null],
+      'CONDBAD::nT': ['?/?/?/?', null],
+    }),
+    // a5 S4: a plain `constraint nl : Newton { in f = force; … }` files its own row, ?/?/?/? in the one sentence the typed assert's row has
+    // (tp1, tp3, g5d); it filed none on any surface, so a violated `nl` (2500 against 1000 * 2) was silent. It is no axiom: the plain constraints
+    // beside it read T/F as before on all four, in either text order. The reading itself (ref F for `nl`) is the typed-usage step's (TY1/TY2).
+    ...Object.fromEntries(
+      (['a5-typed-row', 'a5-typed-row-rev'] as const).map((k) => {
+        const text = `package TYR {
+  constraint def Newton { in f : ScalarValues::Real; in m : ScalarValues::Real; in a : ScalarValues::Real; f == m * a }
+  constraint def K { x >= 1.0 }
+  attribute x : ScalarValues::Real = 3.0;
+  part car { attribute mass : ScalarValues::Real = 1000.0; attribute accel : ScalarValues::Real = 2.0; attribute force : ScalarValues::Real = 2500.0; constraint nl : Newton { in f = force; in m = mass; in a = accel; } }
+  part car2 { attribute mass : ScalarValues::Real = 1000.0; attribute accel : ScalarValues::Real = 2.0; attribute force : ScalarValues::Real = 2000.0; constraint nl2 : Newton; bind nl2.f = force; bind nl2.m = mass; bind nl2.a = accel; }
+  constraint c : K;
+  constraint kForce { car.force == 2500.0 }
+  constraint kForce2 { car2.force == 2500.0 }
+  constraint kX { x == 3.0 }
+}`;
+        return [k, probe(k === 'a5-typed-row' ? text : reversedMembers(text), {
+          'TYR::car::nl': ['?/?/?/?', 'F'],
+          'TYR::car2::nl2': ['?/?/?/?', 'T'],
+          'TYR::c': ['?/?/?/?', 'T'],
+          'TYR::kForce': ['T/T/T/T', 'T'],
+          'TYR::kForce2': ['F/F/F/F', 'F'],
+          'TYR::kX': ['T/T/T/T', 'T'],
+        })];
+      }),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19654,6 +19779,15 @@ package PS {
     // a5 K3: bounds over a give-way default on an Integer, in a conjunction and in a unit, in either text order.
     ...['a5-k3-int', 'a5-k3-intmeet', 'a5-k3-conj', 'a5-k3-conjs', 'a5-k3-unit'].map((k) => [k, `${k}-rev`] as const),
     ['a5-k3-conj', 'a5-k3-conjs'],
+    // a5 S1: two Booleans compared, in either text order.
+    ['a5-bool', 'a5-bool-rev'],
+    // a5 S2: `if c ? a else b` and `if c then a else b`.
+    ['a5-cond-q', 'a5-cond-then'],
+    ['a5-cond-q', 'a5-cond-q-rev'],
+    // a5 S4: a plain typed constraint usage, in either text order.
+    ['a5-typed-row', 'a5-typed-row-rev'],
+    // a5 S3: a chain of bindings 40 deep, in either text order.
+    ['a5-chain40', 'a5-chain40-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
