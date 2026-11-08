@@ -2144,8 +2144,9 @@ fixes no value, so the SMT engine carries it and can prove a goal every value th
 (`load <= 11.0` beside `load <= 10.0`) where the other surfaces read none; a pair of bounds on the binding's
 features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equation does), or that meets
 through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lower and an upper bound on features
-an asserted relation links), is not carried, and the row says which; a bound it cannot compare (a unit, an integer
-sort, a conjunction) is not carried either, under the sentence that no assertion gives a default a value. An
+an asserted relation links), is not carried, and the row says which. A bound on an Integer is carried alike, and a pair
+on one meets where it leaves a single whole number (`load >= 4.5` with `L <= 5.5`); a conjunction of bounds is read as
+its conjuncts. A bound in a unit, or on a `Natural`, `Positive` or `UnlimitedNatural`, is not carried, and the row says so. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
 def Eq { in a; a == 50.0 }`) is read by no surface. Its own row abstains on the check and the numeric surface (`unread-definition`: *`e` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*), and the literal and SMT engines read it as an assertion they cannot read, so every row they judge in that model abstains (*the model asserts …, which this tool cannot read*; *proof not claimed …*): the assertion may contradict a value the model writes with `=`.
 Where the definition's body holds an equation — alone, or in a conjunction (`a

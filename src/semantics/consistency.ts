@@ -102,6 +102,7 @@ import { isOutsideTheFragment } from './engines/literal';
 import { checkConstraints, checksByRow, type ConstraintCheck } from './evaluate-model';
 import { rereadRelation, tieSentence, type PointValues } from './exact';
 import {
+  clauseRowIdOf,
   obligationsOf,
   reachOfRow,
   reachedBy,
@@ -729,7 +730,7 @@ interface Prepared {
    * symbol ({@link refusalReaches}), never only by the symbol a refused row was
    * given — for {@link refusedReach}.
    */
-  axiomsRefusedReach: Array<{ relation: RefusedRelation; reach: RefusalReach; row: EncodedRow }>;
+  axiomsRefusedReach: Array<{ relation: RefusedRelation; reach: RefusalReach; row: EncodedRow; clauseVars: string[] }>;
   /** Each requirement's own relations, by requirement id. */
   clausesOf: Map<ElementId, EncodedRow[]>;
   contracts: Contract[];
@@ -775,7 +776,12 @@ function prepare(model: Model, withValues: boolean): Prepared {
     if (!e.encoded) {
       const relation = refusalOf(e, null);
       axiomsRefused.push(relation);
-      axiomsRefusedReach.push({ relation, reach: reachOfRow(e.row, e.vars.map((v) => v.qualifiedName)), row: e });
+      // What the check reads of the clause, whole: every conjunct's features, not only this one's.
+      const key = clauseRowIdOf(model, row.element.id);
+      const clauseVars = rows
+        .filter((r) => r.role === 'axiom' && clauseRowIdOf(model, r.element.id) === key)
+        .flatMap((r) => r.vars.map((v) => v.qualifiedName));
+      axiomsRefusedReach.push({ relation, reach: reachOfRow(e.row, e.vars.map((v) => v.qualifiedName)), row: e, clauseVars });
       continue;
     }
     axiomUnits.push(unitOf(e, 'axiom', null));
@@ -1072,6 +1078,7 @@ export async function checkConsistency(
       withValues,
       violatedAtValues,
       checksAtValues,
+      released: new Set(released),
       minimize,
       maxCore,
       rollup: run,
@@ -1235,6 +1242,8 @@ interface JudgeInput {
   violatedAtValues: () => ReadonlySet<ElementId>;
   /** The numeric surface's reading of every relation at the model's own values, by worklist row id. */
   checksAtValues: () => ReadonlyMap<ElementId, ConstraintCheck>;
+  /** The features whose literal value the run released (`Prepared.released`), by qualified name. */
+  released: ReadonlySet<string>;
   minimize: boolean;
   maxCore: number;
   /** The run's roll-up of what was sent: a group's own rolls into it ({@link judgeGroup}). */
@@ -1682,7 +1691,18 @@ function refusedReach(
       })),
     ),
   );
-  const inReach = input.axiomsRefusedReach.filter((a) => refusalReaches(a.reach, reached));
+  // And an asserted relation a gate refused that the check reads violated at the model's own values, none of them
+  // released, wherever it reaches: the model contradicts itself there, and no point satisfies the set with it (`mode ==
+  // "manual"` over `mode = "auto"`, a conjunct of `x == 2.0 and …` beside `s.x <= 3.0`, was called consistent under
+  // `--with-values`). A conjunct of an asserted conjunction is its clause's row ({@link conjunctAxiomOf}).
+  const inReach = input.axiomsRefusedReach.filter(
+    (a) =>
+      refusalReaches(a.reach, reached) ||
+      (a.row.row.source === 'assert' &&
+        !a.clauseVars.some((v) => input.released.has(v)) &&
+        input.checksAtValues().get(clauseRowIdOf(input.model, a.row.row.element.id))?.result ===
+          'violated'),
+  );
   return { own, context: inReach.map((a) => a.relation), contextRows: inReach.map((a) => a.row) };
 }
 

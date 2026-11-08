@@ -513,15 +513,7 @@ headings.
       (MAX_NAME_WALK_OWNERS) the names below it read unknown with the sentence 'the names below
       <ctx> are not all read'. v9 enters at most 542 owners, the examples 59. [fence-loader]
       reads2-pass (an asserted bare bound on a unitless Real over a give-way default is carried on
-      the SMT lane; `bounds`, `consistency` and `refine` carry it too): (12) an asserted inequality
-      over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L
-      + N >= K`), a bound with a `[unit]` or on a unit-bearing feature, an Integer or restricted-
-      domain sort, a conjunction (`load >= 0.0 and load <= 10.0`: the bounds, consistency and
-      refine lanes read an asserted bound alone and were left as they were, while the check,
-      literal, numeric and SMT surfaces read a conjunction's conjuncts apart since solver2-pass
-      S2); the unit, Integer and conjunction
-      shapes keep the generic sentence 'no assertion gives a default a value' rather than one naming
-      the move (reads2-pass-scratch/h217/h2.sysml, gen217/models shapes 'int' and 'unit'); (13) a
+      the SMT lane; `bounds`, `consistency` and `refine` carry it too): (12) an asserted inequality over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L + N >= K`) under the generic sentence, and a bound with a `[unit]` or on a unit-bearing feature or a restricted-domain sort under a sentence of its own (a5 K3 carries Integer bounds, refusing a pair that leaves one whole number, and files a conjunction read in a context as its conjuncts; probes a5-k3-unit, gen_k3 shape unit); (13) a
       usage that redefines the default itself (`part q : Q { attribute :>> L default = 9.0; }`)
       beside bounds abstains where the hand oracle could prove (20 cells: reads2-pass-
       scratch/gen217b/models/m45f.sysml, m46f.sysml, m52f.sysml); (14) bounds linked through a
@@ -532,15 +524,10 @@ headings.
       sound, the partner is no axiom there); (16) a usage that subsets a feature an instance reads
       otherwise, narrowed by instance3-pass S2 to the shapes still fenced (TC8, AE3, SA3, O2, RQ4, SA3S, RE3, RFN, and the `::>`, nested, chained, attribute and sibling subsetters) plus a name an asserted equation spells with a quote and a multiplicity beyond one value (sub-sa7 and sub-def-sa7d now read) (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
       `satisfierTaint` feeds about eight readers; probes sub-sa7, sub-sa3, sub-sa5, sub-def-sa7d,
-      sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). (17) solver2-pass S2: the check
-      refuses a whole conjunction when one conjunct hits a gate refusal (probe
-      solver2-pass-scratch/s2/x25c.sysml, split twin x25s.sysml); `refused and false` stays a
+      sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). (17) solver2-pass S2: since a5 K1 the check reads a conjunction as false where a conjunct is false before a gate-refused one (probe solver2-pass-scratch/s2/x25c.sysml, split twin x25s.sysml; the K1 line (18) below lists what stays weaker); `refused and false` stays a
       refusal while `false and refused` is false (KerML control order; a5 F6: an unknown is
-      absorbed only where it is a value the model does not give); a conjunct
-      inequality is not gathered for solveFeasible/optimize; a conjunction typed by a constraint
-      definition is not split, by design; the SMT engine refuses a whole asserted conjunction when
-      one conjunct cannot be encoded (a String equality) where the split asserts are proved
-      (solver2-pass-scratch/review/p/bra2.sysml vs bra2s.sysml). [reads2-pass; numeric2-pass;
+      absorbed only where it is a value the model does not give); a conjunction typed by a constraint definition is not split, by design; since a5 K2 an asserted conjunction a gate refuses whole is filed as its conjuncts and gathers its conjunct inequalities (bra2 = bra2s), but a clause instanceRows reads per context, one that mixes a [unit] literal and a bare number, a conjunct inequality over stated or fixed values whose clause the check does not hold, and the literal engine's read of a refused conjunct stay as weak as the whole conjunction (a5-conj K2 probes k153, k287). (18) a5 K1 (sound but weaker): a conjunction a gate refuses still abstains where (a) a refused or ill-typed conjunct comes before the first false one (`refused and false`, P under F6), (b) the body is right-nested (`a and (b and c)`: conjunctsOf does not cut it), or (c) the surface is numeric (S1 `p.L <= 5.0 [kg] and p.E >= 1.0`, shortCircuit andBare F/F/?/F: the solver refuses the whole relation by gate (e)); K2/K3 or solver-order may lift (c). Exit move: a file whose conjunction is false before a gate-refused conjunct now exits 1 (refuted) instead of 2, because literal and SMT follow the check's violated (pinned: shortCircuit::andBare; bounds-refused-axiom.sysml capB). (19) a5 K2 (sound but weaker): K2 reads as its split twin only an asserted conjunction filed at the model level or through instanceRelationRows, and is never stronger than the twin. It stays weaker where (a) a clause whose relation instanceRows reads per context, or that has shared rows, is filed whole; (b) a body writes a [unit] literal beside a bare number (mixesUnitRegimes, by design); (c) feasibility leaves a conjunct inequality over stated or caller-fixed values to its clause's whole row unless the check reads that clause held (`x <= 3.0 and y >= 1.0 and mode != "manual"` with x valueless, k153); (d) the literal engine reads a refused conjunct as held only where the check holds its whole clause (k287 pkg g3: T/?/T/T against the twin's T/T/T/T); (e) instance conjunctions are not counted as covered in solveFeasible; (f) v2-refused-axiom-inst-ok reads inconclusive/inconsistent-axioms because the def-level row of `a` is violated at P's default while the instance row holds under p's override (narrowing the sentence to the instance reading, the row `a in p`, would let `g` be proved). (20) a5 K3 (sound but weaker): an asserted bound written in a `[unit]`, or on a feature with a unit or a scale, over a give-way default is still not carried; it gives its own sentence ('it is a bound in a unit, which is not compared here with the bounds on the features the binding joins it to'); a bound on Natural, Positive or UnlimitedNatural names the type's floor; carrying these would mean comparing SI magnitudes across a binding's component (generator 'unit' shape: 30 cells the oracle could decide abstain).
+      [reads2-pass; numeric2-pass;
       solver2-pass]
 - [ ] **Abstentions left in the negated assert (rollup; sound, only weaker).** (a) A model with
       `assert not requirement`, a negated clause that names a constraint with no body, one that
