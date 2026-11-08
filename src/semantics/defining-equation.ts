@@ -4777,6 +4777,17 @@ export function assertConjuncts(model: Model, el: ElementRecord): readonly Claus
   return split.map((s, index) => ({ clause: el, index, ...s }));
 }
 
+/**
+ * Does a conjunction write a `[unit]` literal in one conjunct and a bare number in another (`p.M <= 10.0 [kg] and
+ * p.L >= 1.0`)? Read whole, the gates refuse such a body (a bare number against a quantity); a conjunct read alone
+ * reads its bare number in the feature's own unit, a reading the body as written does not give it — so the
+ * conjunction is read whole wherever it refuses, never as its conjuncts (K2).
+ */
+export function mixesUnitRegimes(parts: readonly Pick<Conjunct, 'text' | 'literals'>[]): boolean {
+  const bareNumber = (text: string): boolean => /(?<![\w.'"$])\d/.test(text.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""'));
+  return parts.some((p) => p.literals.size > 0) && parts.some((p) => p.literals.size === 0 && bareNumber(p.text));
+}
+
 export type Conjunct = { text: string; node: ExprNode; literals: MarkerDimensions };
 
 /** {@link conjunctsOf} by body text, which alone decides it. */

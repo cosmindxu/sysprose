@@ -102,6 +102,7 @@ import { isOutsideTheFragment } from './engines/literal';
 import { checkConstraints, checksByRow, type ConstraintCheck } from './evaluate-model';
 import { rereadRelation, tieSentence, type PointValues } from './exact';
 import {
+  conjunctAxiomOf,
   obligationsOf,
   reachOfRow,
   reachedBy,
@@ -1072,6 +1073,7 @@ export async function checkConsistency(
       withValues,
       violatedAtValues,
       checksAtValues,
+      released: new Set(released),
       minimize,
       maxCore,
       rollup: run,
@@ -1235,6 +1237,8 @@ interface JudgeInput {
   violatedAtValues: () => ReadonlySet<ElementId>;
   /** The numeric surface's reading of every relation at the model's own values, by worklist row id. */
   checksAtValues: () => ReadonlyMap<ElementId, ConstraintCheck>;
+  /** The features whose literal value the run released (`Prepared.released`), by qualified name. */
+  released: ReadonlySet<string>;
   minimize: boolean;
   maxCore: number;
   /** The run's roll-up of what was sent: a group's own rolls into it ({@link judgeGroup}). */
@@ -1682,7 +1686,18 @@ function refusedReach(
       })),
     ),
   );
-  const inReach = input.axiomsRefusedReach.filter((a) => refusalReaches(a.reach, reached));
+  // And an asserted relation a gate refused that the check reads violated at the model's own values, none of them
+  // released, wherever it reaches: the model contradicts itself there, and no point satisfies the set with it (`mode ==
+  // "manual"` over `mode = "auto"`, a conjunct of `x == 2.0 and …` beside `s.x <= 3.0`, was called consistent under
+  // `--with-values`). A conjunct of an asserted conjunction is its clause's row ({@link conjunctAxiomOf}).
+  const inReach = input.axiomsRefusedReach.filter(
+    (a) =>
+      refusalReaches(a.reach, reached) ||
+      (a.row.row.source === 'assert' &&
+        !a.row.row.vars.some((v) => input.released.has(v.qualifiedName)) &&
+        input.checksAtValues().get(conjunctAxiomOf(input.model, a.row.row.element.id)?.clauseRowId ?? a.row.row.element.id)?.result ===
+          'violated'),
+  );
   return { own, context: inReach.map((a) => a.relation), contextRows: inReach.map((a) => a.row) };
 }
 

@@ -65,7 +65,7 @@ import {
 } from '../defining-equation';
 import { effectiveQualifiedName, redefinedClosure } from '../inheritance';
 import { evaluateFeatureValue, featuresWithoutValue, valueAtPath } from '../evaluate-model';
-import { rowElement, type Obligation } from '../obligations';
+import { axiomCheckOf, rowElement, type Obligation } from '../obligations';
 import {
   type ContractRef,
   type ContractVariable,
@@ -455,8 +455,8 @@ function contradictionsOf(
     // tool does not read through) is no fact of the model that a value contradicts, as the SMT engine reads it. One left out
     // because a name or a body cannot be read (`q2.p.x + p.x == 52.0`, p.x read and q2.p.x not) may be, as one read in no part is.
     if (row.vars.length > 0 && (row.encodable.reason === 'unread-definition' || row.encodable.reason === 'unread-binding')) continue;
-    if (checks.get(row.element.id)?.result === 'satisfied') continue;
-    const qualifiedName = model.qualifiedName(row.instance?.baseId ?? row.element.id);
+    if (axiomCheckOf(model, checks, row.element.id)?.result === 'satisfied') continue;
+    const qualifiedName = model.qualifiedName(row.instance?.baseId ?? row.element.id) || row.element.qualifiedName;
     if (unread.some((u) => u.qualifiedName === qualifiedName)) continue;
     unread.push({ expression: row.expression, qualifiedName, why: `${row.encodable.reason}: ${row.encodable.detail}` });
   }

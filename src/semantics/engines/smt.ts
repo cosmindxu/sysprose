@@ -71,7 +71,9 @@ import {
 } from '../evaluate-model';
 import { affineRational, rereadRelation, tieSentence, type PointValues } from '../exact';
 import {
+  axiomCheckOf,
   axiomsOf,
+  conjunctAxiomOf,
   reachOfRow,
   rowElement,
   reachedBy,
@@ -972,6 +974,31 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
       ...bound('none', 'no obligation was decided — the context contradicts itself'),
     };
   }
+  // AN ASSERTED RELATION A GATE REFUSED THAT THE CHECK READS VIOLATED: the model contradicts itself at its own values,
+  // and step 0, which never saw the relation, cannot say so. `assert constraint c2 { mode == "manual" }` over `mode =
+  // "auto"` reached no goal, and `p.x <= 3.0` was proved, "assumptions satisfiable"; a conjunct of an asserted
+  // conjunction is its clause's row ({@link axiomCheckOf}). Not where it reads a feature released: the model's own
+  // values are then no binding.
+  const contradicted = input.axiomsRefused.find(
+    (e) =>
+      e.row.source === 'assert' &&
+      !e.row.vars.some((v) => input.free.has(v.qualifiedName)) &&
+      input.checks.get(conjunctAxiomOf(model, e.row.element.id)?.clauseRowId ?? e.row.element.id)?.result === 'violated',
+  );
+  if (contradicted !== undefined) {
+    return {
+      ...base,
+      ...point,
+      outcome: 'axioms-inconsistent',
+      axiomCensus: census(),
+      checks: 1,
+      detail:
+        `the axiom set is unsatisfiable at the model's own values: the asserted \`${contradicted.row.expression}\` ` +
+        `(${contradicted.row.element.qualifiedName}) is false there, as the check reads it, and a gate refused it ` +
+        `(${contradicted.refusal?.reason ?? 'refused'}), so step 0 never saw it. A proof from a contradiction is void`,
+      ...bound('none', 'no obligation was decided — the context contradicts itself at the model’s values'),
+    };
+  }
   // An axiom read in some instances only (an asserted relation read through a usage that subsets a feature an
   // instance reads otherwise, in a shape this tool does not read again there): the axiom set the solver found
   // satisfiable is not the model's, which may contradict itself in that instance. Nothing is claimed over it.
@@ -1631,7 +1658,7 @@ function partialAntecedent(
       return el && hasStatedValue(model, el) && hasValue(el.id) ? 'holds' : 'unknown';
     }
     if (e.row.source === 'assert') {
-      const c = input.checks.get(e.row.element.id)?.result;
+      const c = axiomCheckOf(model, input.checks, e.row.element.id)?.result;
       return c === 'satisfied' ? 'holds' : c === 'violated' ? 'fails' : 'unknown';
     }
     return 'unknown';

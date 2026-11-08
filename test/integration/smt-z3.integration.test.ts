@@ -36,6 +36,7 @@ import { judgeBySmt, type SmtJudgement } from '@semantics/engines/smt';
 import { ALLOW_INCONCLUSIVE_CODES, verifyModel } from '@api/index';
 import { classLines, levelOf, withLevelSource } from '@semantics/smt/classes';
 import { obligationsOf } from '@semantics/obligations';
+import { checkConsistency } from '@semantics/consistency';
 import {
   DEAD_MODULE_MARGIN_MS,
   DEFAULT_TIMEOUT_MS,
@@ -966,6 +967,48 @@ describe('a judgement carries the constraint class of what it stood on', () => {
     expect(strip(thrown)).toEqual(strip(plain));
     expect(thrown.filter((r) => r.row.role === 'obligation').every((r) => r.judgement.classes.status === 'unclassified')).toBe(true);
     expect(levelOf('lra')).not.toBe('battery-backed');
+  });
+});
+
+describe('an asserted conjunction a gate refuses whole is read as its conjuncts (a5 K2)', () => {
+  const text = (mode: string, split = false) => `package B {
+    part def P {
+      attribute mode : String = "auto";
+      attribute x : ScalarValues::Real;
+      ${split ? `assert constraint c1 { x == 2.0 } assert constraint c2 { mode == "${mode}" }` : `assert constraint c { x == 2.0 and mode == "${mode}" }`}
+    }
+    part p : P;
+    constraint k { p.x <= 3.0 }
+    requirement def R { subject s : P; require constraint { s.x <= 3.0 } }
+    requirement r : R { subject s = p; }
+  }`;
+  const load = async (t: string) => (await loadModelText(t, { library: 'full' })).model!;
+
+  withZ3('files each conjunct as the axiom it would be written alone, and proves what the split twin proves', async (z3) => {
+    const model = await load(text('auto'));
+    const axioms = obligationsOf(model).filter((r) => r.role === 'axiom' && r.source === 'assert');
+    expect(axioms.map((r) => [r.element.qualifiedName, r.expression, r.encodable === true])).toEqual([
+      ['B::P::c#0', 'x == 2.0', true],
+      ['B::P::c#1', 'mode == "auto"', false],
+    ]);
+    for (const m of [model, await load(text('auto', true))]) {
+      const k = (await verifyModel(m, { engine: 'smt' })).results.find((r) => r.clause.qualifiedName === 'B::k');
+      expect(k?.claim).toBe('proved');
+    }
+    const held = await checkConsistency(model, { backend: z3, withValues: true });
+    expect(held.groups.map((g) => g.outcome)).toContain('consistent');
+  });
+
+  withZ3('reports a refused conjunct the check reads violated as the contradiction it is, on verify and consistency', async (z3) => {
+    for (const split of [false, true]) {
+      const model = await load(text('manual', split));
+      const k = (await verifyModel(model, { engine: 'smt' })).results.find((r) => r.clause.qualifiedName === 'B::k');
+      // Before K2 the split twin read `proved`, "assumptions satisfiable", beside the check's violated `mode == "manual"`.
+      expect([k?.claim, k?.code], String(split)).toEqual(['inconclusive', 'verification/inconsistent-axioms']);
+      expect(k?.detail).toContain('`mode == "manual"`');
+      const set = await checkConsistency(model, { backend: z3, withValues: true });
+      expect(set.groups.map((g) => g.outcome), String(split)).not.toContain('consistent');
+    }
   });
 });
 

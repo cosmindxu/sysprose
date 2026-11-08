@@ -73,7 +73,7 @@ import {
 } from '@semantics/evaluate-model';
 import { contradictedDefinitions, headStandsAgainstAt, headTwoValuesAt, readsContradictedDefinition, relationNamesOf, unfixedDefaultsDifferAt } from '@semantics/defining-equation';
 import { effectiveQualifiedName } from '@semantics/inheritance';
-import { obligationsOf, type Obligation } from '@semantics/obligations';
+import { conjunctAxiomOf, obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, evaluateMoEs, solveFeasible } from '@semantics/solver';
 import { resolveFreeFeatures } from '@semantics/engines/smt';
 import {
@@ -164,6 +164,20 @@ export function reconcile(
   for (const id of census) {
     const row = worklist.get(id);
     out.set(id, row === undefined ? 'missing' : row.encodable === true ? 'encoded' : 'refused');
+  }
+  return out;
+}
+
+/**
+ * The worklist by element id: an asserted conjunction filed as its conjuncts (`<id>#<i>`, a5 K2) is its clause's,
+ * by a refused conjunct where it has one — the clause is not asserted whole.
+ */
+function byClause(model: Model, rows: readonly Obligation[]): Map<ElementId, Obligation> {
+  const out = new Map<ElementId, Obligation>();
+  for (const r of rows) {
+    const clause = conjunctAxiomOf(model, r.element.id)?.clauseRowId;
+    if (clause === undefined) out.set(r.element.id, r);
+    else if (out.get(clause)?.encodable === undefined || r.encodable !== true) out.set(clause, r);
   }
   return out;
 }
@@ -284,7 +298,7 @@ beforeAll(async () => {
       // By the id a worklist row carries: a definition's constraint read in a
       // context that specialises it is compared with that context's reading.
       checks: checksByRow(checkConstraints(model)),
-      worklist: new Map(obligationsOf(model).map((r) => [r.element.id, r])),
+      worklist: byClause(model, obligationsOf(model)),
       smt: (await verifyModel(model, { engine: 'smt', sourceText: text })).results,
       literal: (await verifyModel(model, { engine: 'literal', sourceText: text })).results,
     };
@@ -4846,7 +4860,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // An operator the worklist does not encode (`x % 4.0 >= 2.5`) leaves the assert unread too: P's own default (5) violates
     // it and the usage's value (7) holds it. The check does not hold it true everywhere, so the literal engine judges no
-    // relation beside it (the SMT engine decides g at p's 7): sound, and weaker than the engine read here.
+    // relation beside it. The SMT engine decided g at p's 7 until a5 K2, beside the check's violated generic row: it now
+    // reports the contradiction it never encoded, as it does for the encodable twin `x >= 5.5` (step 0).
     'unread-assert-op': probe(`package V2 {
         part def P {
           attribute x : ScalarValues::Real default = 5.0;
@@ -4855,7 +4870,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P { attribute :>> x = 7.0; }
         constraint g { p.x >= 5.0 }
       }`, {
-      'V2::g': ['T/?/T/T', 'T'],
+      'V2::g': ['T/?/T/X', 'T'],
       'V2::P::a': ['F/-/F/-', 'F'],
       'V2::P::a in V2::p': ['T/-/T/-', 'T'],
     }),
@@ -11390,7 +11405,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // The definition that specialises Q gives L the 5 (`Q2 :> Q { :>> L = 5.0 }`), as a usage that redefines it does: q2’s p
     // and Q2’s own p read 5 and meet the assert, Q’s p reads Q’s default 50 and misses it. k reads only q2’s p and holds;
     // the literal engine reads the contradiction in Q’s p as inconclusive for it (the open narrowing entry), and the SMT
-    // engine decides nothing of it (no witness it confirms).
+    // engine, which never encoded Q’s p’s refused row, reports the contradiction the check reads there (a5 K2).
     'bound-vc-spec': probe(`package VCS {
         part def P { attribute load : ScalarValues::Real; assert constraint a2 { load <= 10.0 } }
         part def Q { part p : P; attribute L : ScalarValues::Real default = 50.0; bind p.load = L; }
@@ -11402,7 +11417,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'VCS::P::a2 in VCS::Q::p': ['F/-/F/-', 'F'],
       'VCS::P::a2 in VCS::Q2::p': ['T/-/T/-', 'T'],
       'VCS::P::a2 in VCS::q2::p': ['T/-/T/-', 'T'],
-      'VCS::k': ['T/X/T/?', 'T'],
+      'VCS::k': ['T/X/T/X', 'T'],
     }),
     // A plain constraint of P is read in the instance the same way, and refuted on every surface; with a quantity.
     'bound-vc-c': probe(`package VCC {
@@ -18241,6 +18256,61 @@ package PS {
         })];
       }),
     ),
+    // a5 (2026-11-08) K2: an asserted conjunction a gate refuses whole is filed as its conjuncts, each the axiom it would
+    // be written alone, and a conjunct inequality bounds the feasibility search; a refused conjunct is a refused axiom.
+    // BRA2's `x == 2.0 and mode == "auto"` (a String conjunct) pinned no x, and `p.x <= 3.0` read `T/T/T/?` beside its
+    // split twin's `T/T/T/T` (solver2-pass bra2/bra2s). The read of an instance (K2I, `c in p`) is split alike. A body that
+    // writes a `[unit]` literal and a bare number (K2M) stays whole: a bare number read alone is read in the feature's
+    // own unit, which the body as written does not say. BRC asserts `mode == "manual"` over `mode = "auto"`: the model
+    // contradicts itself, which the check reads, and the SMT engine, which never saw the refused relation, proved `k`
+    // ("assumptions satisfiable") in the split twin before K2; it now reports the contradiction in both.
+    ...Object.fromEntries(
+      (
+        [
+          ['a5-bra2', `package BRA2 {
+  part def P { attribute mode : String = "auto"; attribute x : ScalarValues::Real; assert constraint c { x == 2.0 and mode == "auto" } }
+  part p : P;
+  constraint k { p.x <= 3.0 }
+}`, { 'BRA2::P::c': ['T/-/?/-', 'T'], 'BRA2::k': ['T/T/T/T', 'T'] }],
+          ['a5-bra2s', `package BRA2 {
+  part def P { attribute mode : String = "auto"; attribute x : ScalarValues::Real; assert constraint c1 { x == 2.0 } assert constraint c2 { mode == "auto" } }
+  part p : P;
+  constraint k { p.x <= 3.0 }
+}`, { 'BRA2::P::c1': ['T/-/T/-', 'T'], 'BRA2::P::c2': ['T/-/?/-', 'T'], 'BRA2::k': ['T/T/T/T', 'T'] }],
+          ['a5-bra2c', `package BRC {
+  part def P { attribute mode : String = "auto"; attribute x : ScalarValues::Real; assert constraint c { x == 2.0 and mode == "manual" } }
+  part p : P;
+  constraint k { p.x <= 3.0 }
+}`, { 'BRC::P::c': ['F/-/?/-', 'F'], 'BRC::k': ['T/X/T/X', 'T'] }],
+          ['a5-bra2cs', `package BRC {
+  part def P { attribute mode : String = "auto"; attribute x : ScalarValues::Real; assert constraint c1 { x == 2.0 } assert constraint c2 { mode == "manual" } }
+  part p : P;
+  constraint k { p.x <= 3.0 }
+}`, { 'BRC::P::c1': ['T/-/T/-', 'T'], 'BRC::P::c2': ['F/-/?/-', 'F'], 'BRC::k': ['T/?/T/X', 'T'] }],
+          ['a5-k2-inst', `package K2I {
+  part def P { attribute mode : String = "auto"; attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = 4.0; assert constraint c { x <= 3.0 and y >= 1.0 and mode != "manual" } }
+  part p : P;
+  constraint g1 { p.x <= 3.0 }
+  constraint g2 { p.x >= 2.5 }
+}`, { 'K2I::P::c': ['?/-/?/-', null], 'K2I::g1': ['?/?/?/T', 'T'], 'K2I::g2': ['?/?/?/?', null] }],
+          ['a5-k2-insts', `package K2I {
+  part def P { attribute mode : String = "auto"; attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = 4.0; assert constraint c0 { x <= 3.0 } assert constraint c1 { y >= 1.0 } assert constraint c2 { mode != "manual" } }
+  part p : P;
+  constraint g1 { p.x <= 3.0 }
+  constraint g2 { p.x >= 2.5 }
+}`, { 'K2I::P::c0': ['?/-/?/-', null], 'K2I::P::c1': ['T/-/T/-', 'T'], 'K2I::P::c2': ['T/-/?/-', 'T'], 'K2I::g1': ['?/?/?/T', 'T'], 'K2I::g2': ['?/?/?/?', null] }],
+          ['a5-k2-mixed', `package K2M {
+  part def P { attribute L : ISQ::MassValue; attribute mode : String = "auto"; }
+  part p : P;
+  assert constraint c { p.L <= 5.0 [kg] and p.L >= 1.0 and p.mode == "auto" }
+  constraint g { p.L <= 6.0 [kg] }
+}`, { 'K2M::c': ['?/-/?/-', null], 'K2M::g': ['?/?/?/?', null] }],
+        ] satisfies Array<[string, string, Record<string, [string, Ref]>]>
+      ).flatMap(([k, text, rows]) => [
+        [k, probe(text, rows)],
+        [`${k}-rev`, probe(reversedMembers(text), rows)],
+      ]),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -18399,6 +18469,21 @@ package PS {
   const AXIOMS =
     'a value that stands — a `default`, which no assertion replaces (decision 14 amended 2026-10-22), or one written with `=` (HP, and each `-eq` twin) — so the model contradicts itself, and the SMT engine reports its axioms inconsistent beside the check’s and the numeric surface’s reading of the value (and the literal engine’s, where the row reads no value that contradiction reaches; it reports them inconsistent too where it does, Q4 for an assert and D1 for a binding the check reports violated)';
   const I7_ALLOWED = new Map<string, string>([
+    [
+      'unread-assert-op | V2::g',
+      'P’s own `default = 5.0` violates the refused `x % 4.0 >= 2.5` on the check: the contradiction of the default-stands decision, which the SMT engine reports for the refused row as for its encodable twin (a5 K2); the check and the numeric surface read p’s 7',
+    ],
+    [
+      'bound-vc-spec | VCS::k',
+      'Q’s p reads Q’s default 50 against the asserted `load <= 10.0`, which the check reads violated there: the contradiction the literal engine reports, and since a5 K2 the SMT engine too; q2’s p reads 5',
+    ],
+    ...['a5-bra2c', 'a5-bra2c-rev', 'a5-bra2cs', 'a5-bra2cs-rev'].map(
+      (name) =>
+        [
+          `${name} | BRC::k`,
+          'the asserted `mode == "manual"` (or the conjunction it is the second conjunct of) is false at `mode = "auto"`: the model contradicts itself, which the check reads on that row; a gate refuses the String relation, and the SMT engine reports the contradiction it never encoded (K2); the check and the numeric surface read x’s 2',
+        ] as const,
+    ),
     [
       'a5-e2cp | E2CP::c4',
       'p4’s own standing `default = 7.0` under the package’s `bind P::m = M` beside the asserted `M == 5.0`: the contradiction of decision 1, which the check reports on the binding’s row (F0), so the literal engine abstains; p4.m keeps its own 7 on the check and the numeric surface, as E2A::cp does',
@@ -19433,6 +19518,16 @@ package PS {
     ['a5-k1', 'a5-k1-rev'],
     ['a5-x25c', 'a5-x25c-rev'],
     ['a5-k1-derived', 'a5-k1-derived-rev'],
+    // a5 K2: an asserted conjunction a gate refuses read as its split twin, in either text order.
+    ['a5-bra2', 'a5-bra2s'],
+    ['a5-bra2-rev', 'a5-bra2s-rev'],
+    ['a5-bra2', 'a5-bra2-rev'],
+    ['a5-bra2c', 'a5-bra2c-rev'],
+    ['a5-bra2cs', 'a5-bra2cs-rev'],
+    ['a5-k2-inst', 'a5-k2-insts'],
+    ['a5-k2-inst', 'a5-k2-inst-rev'],
+    ['a5-k2-insts', 'a5-k2-insts-rev'],
+    ['a5-k2-mixed', 'a5-k2-mixed-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

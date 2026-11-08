@@ -87,6 +87,10 @@ import {
   type VarSort,
 } from './contracts';
 import {
+  assertConjuncts,
+  conjunctRecord,
+  mixesUnitRegimes,
+  type ClausePart,
   boundAboveSentence,
   boundHereSentence,
   contradictedBindingOf,
@@ -731,6 +735,16 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
       : undefined;
     if (filed.source !== 'calculation') read.set(el.id, { el, raw, filed, ...(contract ? { contract } : {}) });
     const sharedWith = instances?.shared[0];
+    // A refused asserted conjunction is filed as its conjuncts, `<id>#<i>`, each the axiom it would be written alone
+    // ({@link conjunctAxioms}).
+    const split =
+      filed.role === 'axiom' && encodable !== true && sharedWith === undefined && (instances?.rows.length ?? 0) === 0
+        ? conjunctAxioms(model, el, filed, memo, contract)
+        : undefined;
+    if (split !== undefined) {
+      out.push(...split);
+      continue;
+    }
     out.push({
       requirement: contract ? contractRef(contract) : null,
       shortId: contract?.shortId ?? '',
@@ -1131,9 +1145,11 @@ function underMetadata(model: Model, el: ElementRecord): boolean {
  * that context as its owner — the scope every evaluator then reads it in.
  */
 export function rowElement(model: Model, row: Pick<Obligation, 'element' | 'instance'>): ElementRecord | undefined {
-  if (!row.instance) return model.get(row.element.id);
+  const conjunct = conjunctAxiomOf(model, row.element.id);
+  if (!row.instance) return conjunct ? conjunctRecord(conjunct.part) : model.get(row.element.id);
   const base = model.get(row.instance.baseId);
-  return base ? { ...base, ownerId: row.instance.contextId } : undefined;
+  if (!base) return undefined;
+  return conjunct ? conjunctRecord(conjunct.part, { ...base, ownerId: row.instance.contextId }) : { ...base, ownerId: row.instance.contextId };
 }
 
 /** The fields a row takes from what its reading met: unread names, their inputs, shadowed names. */
@@ -1526,6 +1542,77 @@ function usageOwnedGoal(
   if (encodable !== true || role === 'axiom') return encodable;
   const detail = usageOwnedRefusal(model, el, names);
   return detail ? { reason: 'unread-definition', detail } : encodable;
+}
+
+/**
+ * An asserted conjunction a gate refuses whole, filed as its conjuncts ({@link assertConjuncts}): `assert constraint c
+ * { x == 2.0 and mode == "auto" }` states what `assert constraint c1 { x == 2.0 } assert constraint c2 { mode ==
+ * "auto" }` does, and refused whole over its String conjunct, it pinned no x, and `p.x <= 3.0` was proved over the
+ * split twin and not over it (K2). Each conjunct is the axiom row `<id>#<i>` it would be written alone, read and
+ * refused as that one is: a refused conjunct is a refused axiom, which {@link ./engines/smt}'s re-read of a partial
+ * antecedent reads as the twin's. `undefined` — the clause filed whole — where it is no conjunction, one that mixes a
+ * `[unit]` literal and a bare number ({@link mixesUnitRegimes}), or no conjunct reads where the whole does not.
+ */
+function conjunctAxioms(
+  model: Model,
+  el: ElementRecord,
+  filed: FiledRole,
+  memo: DerivationMemo,
+  contract: Contract | undefined,
+): Obligation[] | undefined {
+  const parts = assertConjuncts(model, el);
+  if (parts.length < 2 || mixesUnitRegimes(parts)) return undefined;
+  const name = effectiveQualifiedName(model, el.id);
+  const rows = parts.map((part): Obligation => {
+    const reading = readRelation(model, conjunctRecord(part), part.text, memo);
+    const encodable = unreadAxiom('axiom', reading.encodable, reading.unread);
+    return {
+      requirement: contract ? contractRef(contract) : null,
+      shortId: contract?.shortId ?? '',
+      subject: contract?.subject ?? null,
+      role: filed.role,
+      source: filed.source,
+      element: { ...ref(model, el), id: `${el.id}#${part.index}`, qualifiedName: `${name}#${part.index}` },
+      expression: reading.expression,
+      node: reading.node,
+      vars: reading.variables,
+      sortPerVar: reading.sortPerVar,
+      scaled: reading.scale !== undefined,
+      encodable,
+      nonlinear: reading.nonlinear,
+      verifiedBy: contract?.verifiedBy ?? [],
+      method: contract ? methodOf(model, contract.id) : null,
+      evidence: [],
+      status: statusOf(encodable),
+      ...claimed(model, contract),
+      ...(filed.provenance ? { provenance: filed.provenance } : {}),
+      ...readFields(reading),
+    };
+  });
+  return rows.some((r) => r.encodable === true) ? rows : undefined;
+}
+
+/**
+ * The conjunct a row {@link conjunctAxioms} or {@link instanceConjunctRows} filed reads, by its id `<id>#<i>` or
+ * `<id>#<i>@<path>`, with the id of its clause's row there (`<id>`, `<id>@<path>`); `undefined` for any other id.
+ */
+export function conjunctAxiomOf(model: Model, id: string): { part: ClausePart; clauseRowId: string } | undefined {
+  const at = /^([^#@]+)#(\d+)(@.*)?$/.exec(id);
+  const el = at ? model.get(at[1]!) : undefined;
+  const part = el ? assertConjuncts(model, el)[Number(at![2])] : undefined;
+  return part ? { part, clauseRowId: `${at![1]}${at![3] ?? ''}` } : undefined;
+}
+
+/**
+ * The check's row of the axiom `id`; for a conjunct ({@link conjunctAxiomOf}), its clause's where it is held — a
+ * conjunction held holds every conjunct — and none otherwise: violated or undecided, it may turn on another conjunct.
+ */
+export function axiomCheckOf<C extends { result: string }>(model: Model, checks: ReadonlyMap<string, C>, id: string): C | undefined {
+  const own = checks.get(id);
+  if (own !== undefined) return own;
+  const conjunct = conjunctAxiomOf(model, id);
+  const clause = conjunct ? checks.get(conjunct.clauseRowId) : undefined;
+  return clause?.result === 'satisfied' ? clause : undefined;
 }
 
 /** A relation as {@link obligationsOf} filed it: what {@link satisfierRows} reads again. */
@@ -2298,7 +2385,10 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
         if (done.has(key)) continue;
         if (!bindings && isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
           done.add(key);
-          file(instanceAssertRow(model, c, context, path, memo));
+          const row = instanceAssertRow(model, c, context, path, memo);
+          // Refused whole, a conjunction is filed as its conjuncts, as the model-level row is ({@link conjunctAxioms}).
+          const split = row.encodable !== true ? instanceConjunctRows(model, c, context, path, memo) : undefined;
+          for (const r of split ?? [row]) file(r);
         } else if (isBindingEdge(c)) {
           done.add(key);
           file(instanceBindRow(model, c, holder, context, path, memo));
@@ -2526,6 +2616,30 @@ function instanceAssertRow(
     ...readFields(reading),
     instance: { baseId: el.id, contextId: context.id, path },
   };
+}
+
+/**
+ * {@link instanceAssertRow} of each conjunct of the asserted conjunction `el` ({@link assertConjuncts}), read for the
+ * instance `path`: `<id>#<i>@<path>`, as {@link conjunctAxioms} files the model-level row. `undefined` where it is no
+ * conjunction, or no conjunct reads.
+ */
+function instanceConjunctRows(
+  model: Model,
+  el: ElementRecord,
+  context: ElementRecord,
+  path: string,
+  memo: DerivationMemo,
+): Obligation[] | undefined {
+  const parts = assertConjuncts(model, el);
+  if (parts.length < 2 || mixesUnitRegimes(parts)) return undefined;
+  const rows = parts.map((part) => {
+    const row = instanceAssertRow(model, conjunctRecord(part), context, path, memo);
+    return {
+      ...row,
+      element: { ...row.element, id: `${el.id}#${part.index}@${path}`, qualifiedName: `${effectiveQualifiedName(model, el.id)}#${part.index} in ${path}` },
+    };
+  });
+  return rows.some((r) => r.encodable === true) ? rows : undefined;
 }
 
 /**
