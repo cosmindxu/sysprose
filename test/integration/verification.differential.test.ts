@@ -18221,6 +18221,51 @@ package PS {
         return [k, probe(rev ? reversedMembers(text) : text, { 'BCH::tLe': [le, 'T'], 'BCH::tGe': [ge, 'F'] })];
       }),
     ),
+    // a5 S2: `if c ? a else b` is `if c then a else b` (the KerML grammar has both), on all four surfaces. Before S2 every
+    // `?` row read ?/?/?/? ("Unexpected character '?'") beside the `then` twin's letters. The two texts differ in the separator
+    // only, and share their package name so STAND_ALIKE compares the rows; a nested conditional is an `else if`, and
+    // `if c ? a else b ? d else e` is a parse error as it is with `then`.
+    ...Object.fromEntries(
+      (['a5-cond-q', 'a5-cond-then', 'a5-cond-q-rev'] as const).map((k) => {
+        const sep = k === 'a5-cond-then' ? 'then' : '?';
+        const text = `package COND {
+  attribute x : ScalarValues::Real = 3.0;
+  attribute y : ScalarValues::Real = 7.0;
+  attribute m : ISQ::MassValue = 5.0 [kg];
+  attribute p : ScalarValues::Boolean = true;
+  attribute q : ScalarValues::Boolean = false;
+  constraint cT { (if x > 2.0 ${sep} y else 0.0) == 7.0 }
+  constraint cF { (if x > 2.0 ${sep} y else 0.0) == 0.0 }
+  constraint cE { (if x > 5.0 ${sep} 1.0 else if x > 2.0 ${sep} 2.0 else 3.0) == 2.0 }
+  constraint cN { (if x > 2.0 ${sep} (if y > 9.0 ${sep} 1.0 else 4.0) else 5.0) == 1.0 }
+  constraint cU { (if x > 2.0 ${sep} m else 1.0 [kg]) == 5000.0 [g] }
+  constraint cB { if x > 2.0 ${sep} p else q }
+  constraint cBF { if x > 5.0 ${sep} p else q }
+}`;
+        return [k, probe(k === 'a5-cond-q-rev' ? reversedMembers(text) : text, {
+          'COND::cT': ['T/T/T/T', 'T'],
+          'COND::cF': ['F/F/F/F', 'F'],
+          'COND::cE': ['T/T/T/T', 'T'],
+          'COND::cN': ['F/F/F/F', 'F'],
+          'COND::cU': ['T/T/T/T', 'T'],
+          'COND::cB': ['T/T/T/T', 'T'],
+          'COND::cBF': ['F/F/F/F', 'F'],
+        })];
+      }),
+    ),
+    // a5 S2: what stays unread: a conditional that starts with `if` and has one `?` (or `then`), and `??`.
+    'a5-cond-bad': probe(`package CONDBAD {
+  attribute x : ScalarValues::Real = 3.0;
+  constraint nN { (if x > 2.0 ? 1.0 else 2.0 ? 3.0 else 4.0) == 1.0 }
+  constraint nC { (x ?? 1.0) == 3.0 }
+  constraint nE { (if x > 2.0 ? 1.0) == 1.0 }
+  constraint nT { (if x > 2.0 ? 1.0 then 2.0 else 3.0) == 1.0 }
+}`, {
+      'CONDBAD::nN': ['?/?/?/?', null],
+      'CONDBAD::nC': ['?/?/?/?', null],
+      'CONDBAD::nE': ['?/?/?/?', null],
+      'CONDBAD::nT': ['?/?/?/?', null],
+    }),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19401,6 +19446,9 @@ package PS {
     ['a5-conn', 'a5-conn-rev'],
     // a5 S1: two Booleans compared, in either text order.
     ['a5-bool', 'a5-bool-rev'],
+    // a5 S2: `if c ? a else b` and `if c then a else b`.
+    ['a5-cond-q', 'a5-cond-then'],
+    ['a5-cond-q', 'a5-cond-q-rev'],
     // a5 S3: a chain of bindings 40 deep, in either text order.
     ['a5-chain40', 'a5-chain40-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
