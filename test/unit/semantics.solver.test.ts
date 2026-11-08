@@ -2022,3 +2022,32 @@ describe('solve — an asserted String equality', () => {
     }
   });
 });
+
+describe('checkConstraintsNumeric — two Booleans compared by value (S1)', () => {
+  // `s.ok == true` and `s.fast != true` between Booleans are decided on the numeric surface as they are on the check
+  // (the quantity reader refused them as "a boolean was used where a quantity was needed"); a Boolean against a number,
+  // and a valueless Boolean, stay unknown. Both orders of the members.
+  it('decides == and != between Booleans, and keeps a number beside one refused', async () => {
+    const members = [
+      'part def S { attribute ok : ScalarValues::Boolean = true; attribute fast : ScalarValues::Boolean = false; attribute r : ScalarValues::Real = 3.0; attribute w : ScalarValues::Boolean; }',
+      'part s : S;',
+      'constraint bT { s.ok == true and s.r <= 5.0 }',
+      'constraint bF { s.ok == true and s.fast == true }',
+      'constraint bN { s.fast != true }',
+      'constraint bQ { (s.r > 1.0) == s.ok }',
+      'constraint bW { s.w == true }',
+      'constraint bX { s.ok == 1.0 }',
+    ];
+    const read = async (order: string[]) => {
+      const { model } = await loadModelText(`package U3 { ${order.join(' ')} }`, { fileName: 'p.sysml', strict: true });
+      return Object.fromEntries(
+        checkConstraintsNumeric(model!)
+          .map((r): [string, string] => [model!.qualifiedName(r.id)!.replace('U3::', ''), r.result])
+          .sort(),
+      );
+    };
+    const expected = { bT: 'satisfied', bF: 'violated', bN: 'satisfied', bQ: 'satisfied', bW: 'unknown', bX: 'unknown' };
+    expect(await read(members)).toEqual(expected);
+    expect(await read([...members].reverse())).toEqual(expected);
+  });
+});

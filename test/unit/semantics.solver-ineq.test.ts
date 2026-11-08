@@ -352,9 +352,12 @@ describe('solveFeasible', () => {
     const c1 = solveFeasible(free.m);
     expect([c1.feasible, c1.decided, c1.violations]).toEqual([false, false, []]);
     expect(c1.unresolved.map((v) => v.id)).toEqual([free.rel]);
-    // A Boolean the numeric surface cannot read: every relation judged holds,
+    // Two Booleans compared (a5 S1): the numeric surface reads them, so the relation is judged and the answer decided.
+    const u0 = solveFeasible(model(3, 'flag == true and x <= 5.0').m);
+    expect([u0.feasible, u0.decided, u0.violations, u0.unresolved]).toEqual([true, true, [], []]);
+    // A Boolean the numeric surface cannot read (beside a number): every relation judged holds,
     // but the model's answer is open.
-    const u1 = solveFeasible(model(3, 'flag == true and x <= 5.0').m);
+    const u1 = solveFeasible(model(3, 'flag == 1.0 and x <= 5.0').m);
     expect([u1.feasible, u1.decided, u1.violations, u1.unresolved]).toEqual([true, false, [], []]);
   });
 });

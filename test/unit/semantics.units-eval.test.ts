@@ -103,6 +103,38 @@ describe('semantics — the unit-aware evaluator reads the one connective table 
   });
 });
 
+describe('semantics — the unit-aware evaluator compares two Booleans (S1)', () => {
+  const verdict = (expression: string) => {
+    const m = new Model();
+    const p = m.create('Package', { declaredName: 'P' });
+    return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+  };
+  const yes = '1 [m] < 2 [m]';
+  const no = '1 [m] > 2 [m]';
+
+  it('reads `==`, `=` and `!=` between Booleans by value', () => {
+    expect(verdict('true == true')).toBe('satisfied');
+    expect(verdict('false == false')).toBe('satisfied');
+    expect(verdict('true == false')).toBe('violated');
+    expect(verdict('true != false')).toBe('satisfied');
+    expect(verdict('true != true')).toBe('violated');
+    expect(verdict('false != false')).toBe('violated');
+    expect(verdict('true = true')).toBe('satisfied');
+    // A comparison is a Boolean too, on either side and under `not`.
+    expect(verdict(`(${yes}) == true`)).toBe('satisfied');
+    expect(verdict(`false != (${no})`)).toBe('violated');
+    expect(verdict(`(${yes}) == (${no})`)).toBe('violated');
+    expect(verdict(`not ((${yes}) == (${no}))`)).toBe('satisfied');
+    expect(verdict(`(true == true) and (${yes})`)).toBe('satisfied');
+  });
+
+  it('keeps a Boolean beside a number, and an ordering of Booleans, refused', () => {
+    for (const text of ['true == 1 [m]', '1 [m] != false', `(${yes}) == 1 [m]`, 'true < false', 'true >= false']) {
+      expect(verdict(text), text).toBe('unknown');
+    }
+  });
+});
+
 describe('semantics — dimensionalFacets', () => {
   it('returns unit and kind dimensions for a typed feature with a value unit', () => {
     const m = libModel();

@@ -18171,6 +18171,30 @@ package PS {
         })];
       }),
     ),
+    // a5 S1: two Booleans compare by value on the numeric surface too, as on the check (`s.ok == true`, `s.fast != true`).
+    // Before S1 bT and bN read ?/?/?/? beside T/T/T/T ("a boolean was used where a quantity was needed"), bF F/F/?/F.
+    ...Object.fromEntries(
+      (['a5-bool', 'a5-bool-rev'] as const).map((k) => {
+        const text = `package BOOLEQ {
+  part def S { attribute ok : ScalarValues::Boolean = true; attribute fast : ScalarValues::Boolean = false; attribute r : ScalarValues::Real = 3.0; attribute w : ScalarValues::Boolean; }
+  part s : S;
+  constraint bT { s.ok == true and s.r <= 5.0 }
+  constraint bF { s.ok == true and s.fast == true }
+  constraint bN { s.fast != true }
+  constraint bI { s.ok implies s.r <= 2.0 }
+  constraint bQ { (s.r > 1.0) == s.ok }
+  constraint bW { s.w == true }
+}`;
+        return [k, probe(k === 'a5-bool' ? text : reversedMembers(text), {
+          'BOOLEQ::bT': ['T/T/T/T', 'T'],
+          'BOOLEQ::bF': ['F/F/F/F', 'F'],
+          'BOOLEQ::bN': ['T/T/T/T', 'T'],
+          'BOOLEQ::bI': ['F/F/F/F', 'F'],
+          'BOOLEQ::bQ': ['T/T/T/T', 'T'],
+          'BOOLEQ::bW': ['?/?/?/?', null],
+        })];
+      }),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19349,6 +19373,8 @@ package PS {
     ['a5-kxor', 'a5-kxorp'],
     // a5 F6: the connective table in either text order.
     ['a5-conn', 'a5-conn-rev'],
+    // a5 S1: two Booleans compared, in either text order.
+    ['a5-bool', 'a5-bool-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

@@ -1308,6 +1308,12 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
     const besideBoolean = (!isQUnknown(l) && 'b' in l) || (!isQUnknown(r) && 'b' in r);
     return besideBoolean && op !== '==' && op !== '=' && op !== '!=' && absorbableQ(u) ? opaqueQ(u as QUnknown) : u;
   }
+  // Two Booleans compare by value (`s.ok == true`, `s.fast != true`): the scalar evaluator reads them so, and the
+  // quantity reader refused them as "a boolean where a quantity was needed". A Boolean against a number, and an
+  // ordering (`<`) of Booleans, stay refused.
+  if ((op === '==' || op === '=' || op === '!=') && 'b' in l && 'b' in r) {
+    return { b: (l.b === r.b) === (op !== '!=') };
+  }
   if (!('q' in l) || !('q' in r)) return unknownQ('not-quantity');
   const a = l.q;
   const b = r.q;
