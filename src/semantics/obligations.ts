@@ -867,8 +867,10 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
  * and fix nothing, but a pair that meets (`L >= 5.0` with `L <= 5.0`) fixes it as `L == 5.0` does, and no assertion
  * gives a default a value (decision 14), so those are refused, as every asserted relation over such a default was.
  * The symbols an identity axiom joins (a binding, `a == b`) are one component, and the bounds of a component are
- * every bare bound and every `== number` of an axiom row over one of its symbols. A component whose members cannot
- * be compared in raw magnitudes (a unit, an integer sort, a restricted domain on any of them) is refused whole.
+ * every bare bound and every `== number` of an axiom row over one of its symbols. A component holding an integer
+ * sort takes integer values only, so its bounds meet where they leave one whole number or none (`N >= 4.5` with
+ * `N <= 5.5` fixes N at 5, K3). A component whose members cannot be compared in raw magnitudes (a unit, a Boolean
+ * sort, a restricted domain on any of them) is refused whole.
  * Drops the {@link Obligation.givenWay} field, which only this pass reads.
  */
 function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): void {
@@ -886,13 +888,17 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     return v ? (v.symbol ?? v.qualifiedName) : undefined;
   };
   const axioms = facts.filter((o) => o.role === 'axiom' && o.encodable === true && o.node !== null);
-  // What a member can be compared as: false for a unit, an integer or Boolean sort, a restricted domain.
+  // What a member can be compared as: false for a unit, a Boolean sort, a restricted domain; an integer sort is
+  // compared, and makes its component integral.
   const plain = new Map<string, boolean>();
+  const integral = new Set<string>();
   const note = (row: Obligation, v: Obligation['vars'][number]): string => {
     const sym = v.symbol ?? v.qualifiedName;
+    const sort = row.sortPerVar[v.path];
     const ok =
-      row.sortPerVar[v.path] === 'Real' && v.unit === null && v.siFactor === 1 && v.siOffset === 0 && v.restricted === undefined && !row.scaled;
+      (sort === 'Real' || sort === 'Int') && v.unit === null && v.siFactor === 1 && v.siOffset === 0 && v.restricted === undefined && !row.scaled;
     plain.set(sym, (plain.get(sym) ?? true) && ok);
+    if (sort === 'Int') integral.add(sym);
     return sym;
   };
   for (const row of axioms) {
@@ -908,6 +914,8 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     lower?: { value: number; strict: boolean; at: string };
     upper?: { value: number; strict: boolean; at: string };
     comparable: boolean;
+    /** A member takes integer values only, and so does every member equal to it. */
+    integral?: boolean;
     pinned?: string;
     /** A bare bound (not a `== number`) sits on this side of the component. */
     bareLower?: boolean;
@@ -921,6 +929,7 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     return c;
   };
   for (const [sym, ok] of plain) if (!ok) componentOf(sym).comparable = false;
+  for (const sym of integral) componentOf(sym).integral = true;
   const take = (c: Component, side: 'lower' | 'upper', value: number, strict: boolean, at: string): void => {
     const cur = c[side];
     const tighter = !cur || (side === 'lower' ? value > cur.value : value < cur.value) || (value === cur.value && strict);
@@ -979,10 +988,15 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     const e = linkedRoots.has(root) ? linked.get(lfind(root)) : undefined;
     return e !== undefined && e.lower && e.upper;
   };
-  const meets = (c: Component): boolean =>
-    c.lower !== undefined &&
-    c.upper !== undefined &&
-    c.lower.value >= c.upper.value;
+  // Over the integers, the bounds meet where the whole numbers they allow are one or none: `> 4` is `>= 5`, `< 6` is
+  // `<= 5`.
+  const meets = (c: Component): boolean => {
+    if (c.lower === undefined || c.upper === undefined) return false;
+    if (!c.integral) return c.lower.value >= c.upper.value;
+    const lo = c.lower.strict ? Math.floor(c.lower.value) + 1 : Math.ceil(c.lower.value);
+    const hi = c.upper.strict ? Math.ceil(c.upper.value) - 1 : Math.floor(c.upper.value);
+    return hi <= lo;
+  };
   for (const row of flagged) {
     const { path, why } = row.givenWay!;
     delete row.givenWay;
@@ -991,9 +1005,11 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     const c = sym !== undefined ? components.get(find(sym)) : undefined;
     const reason =
       c === undefined || !c.comparable
-        ? 'bounds on the features it is joined to cannot be compared (a unit, an integer sort or a restricted domain)'
+        ? 'bounds on the features it is joined to cannot be compared (a unit, a Boolean sort or a restricted domain)'
         : meets(c)
-          ? `its asserted bounds meet (\`${c.lower!.at}\` and \`${c.upper!.at}\`), which would give it a value`
+          ? c.integral && c.lower!.value < c.upper!.value
+            ? `its asserted bounds (\`${c.lower!.at}\` and \`${c.upper!.at}\`) leave an integer one whole number or none, which would give it a value`
+            : `its asserted bounds meet (\`${c.lower!.at}\` and \`${c.upper!.at}\`), which would give it a value`
           : sym !== undefined && meetsThroughDerived(sym)
             ? 'its bounds meet through a derived value (a lower bound on one feature and an upper bound on another, linked by an asserted relation), which could give it a value'
             : undefined;
@@ -1313,6 +1329,16 @@ function instanceRows(
     // with the variables kept, so the goals that read them abstain (G-pair-b).
     const hidden = el.ownerId != null ? hiddenReadSentence(model, raw, el.ownerId, context.id, names) : undefined;
     const encodable: Encodable = hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : readable;
+    // Refused whole in this context by its own reading, an asserted conjunction is filed as its conjuncts there,
+    // `<id>#<i>@<context>`, as the model-level row is ({@link conjunctAxioms}, K3).
+    const split =
+      filed.role === 'axiom' && own !== true && hidden === undefined && !reread && !group && here === undefined
+        ? contextConjunctRows(model, el, context, instance, contract, filed, memo)
+        : undefined;
+    if (split !== undefined) {
+      out.push(...split);
+      continue;
+    }
     out.push({
       // A requirement's clauses read in one context are a requirement of their
       // own there: its assumptions are the premises of its goals, never of
@@ -1339,6 +1365,55 @@ function instanceRows(
     });
   }
   return { rows: out, shared: sharedOut };
+}
+
+/**
+ * The conjuncts of the asserted conjunction `el` ({@link assertConjuncts}), each read in `context` as {@link instanceRows}
+ * reads the whole there: the axiom rows `<id>#<i>@<context>`. `undefined` — the clause filed whole — where it is no
+ * conjunction, one that mixes a `[unit]` literal and a bare number ({@link mixesUnitRegimes}), a conjunct reads a symbol
+ * other instances share, a binding above the context states a name it reads, or no conjunct reads.
+ */
+function contextConjunctRows(
+  model: Model,
+  el: ElementRecord,
+  context: ElementRecord,
+  instance: string | undefined,
+  contract: Contract | undefined,
+  filed: FiledRole,
+  memo: DerivationMemo,
+): Obligation[] | undefined {
+  const parts = assertConjuncts(model, el);
+  if (parts.length < 2 || mixesUnitRegimes(parts)) return undefined;
+  const base = instanceRef(model, el, context);
+  const rows: Obligation[] = [];
+  for (const part of parts) {
+    const reading = readRelation(model, conjunctRecord(part, { ...el, ownerId: context.id }), part.text, memo, undefined, undefined, instance);
+    const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
+    if (own === true && sharedSymbolsOf(model, context, reading).length > 0) return undefined;
+    const encodable = boundAbove(model, context, relationNamesOf(part.text), sharedSymbolAxiom(model, context, reading, own));
+    rows.push({
+      requirement: contract ? instanceRef(model, contractRef(contract), context) : null,
+      shortId: contract?.shortId ?? '',
+      subject: contract?.subject ?? null,
+      role: filed.role,
+      source: filed.source,
+      element: { ...base, id: `${el.id}#${part.index}@${context.id}`, qualifiedName: `${effectiveQualifiedName(model, el.id)}#${part.index} in ${sharedDefinitions(model).contextName(context.id)}` },
+      expression: reading.expression,
+      node: reading.node,
+      vars: reading.variables,
+      sortPerVar: reading.sortPerVar,
+      scaled: reading.scale !== undefined,
+      encodable,
+      nonlinear: reading.nonlinear,
+      verifiedBy: [],
+      method: null,
+      evidence: [],
+      status: statusOf(encodable),
+      ...readFields(reading),
+      instance: { baseId: el.id, contextId: context.id, ...(contract ? { requirementId: contract.id } : {}) },
+    });
+  }
+  return rows.some((r) => r.encodable === true) ? rows : undefined;
 }
 
 /**

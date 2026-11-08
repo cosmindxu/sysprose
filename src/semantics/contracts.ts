@@ -1090,14 +1090,17 @@ export function gateRelation(
     boundVar.siFactor === 1 &&
     boundVar.siOffset === 0 &&
     boundVar.restricted === undefined &&
-    sortPerVar[boundVar.path] === 'Real';
+    (sortPerVar[boundVar.path] === 'Real' || sortPerVar[boundVar.path] === 'Int');
   if (givenWay && !carried) {
+    // A bound in a unit or on a restricted domain is one, read on no lane here: its own sentence (K3).
+    const why = boundNotCompared(node, givenWay.p, markers, boundVar ?? variables.find((v) => v.path === givenWay.p), hadUnit);
     return refused(
       expression,
       {
         reason: 'unread-definition',
         detail:
-          `the axiom reads \`${givenWay.p}\`, a \`default\` a binding makes give way and gives no value (${givenWay.why}); no ` +
+          `the axiom reads \`${givenWay.p}\`, a \`default\` a binding makes give way and gives no value (${givenWay.why}); ` +
+          (why ? `${why}, and no ` : 'no ') +
           'assertion gives a default a value, so the axiom is not carried',
       },
       null,
@@ -1238,6 +1241,33 @@ export function bareBoundOf(node: ExprNode | null): BareBound | undefined {
   if (node.right.kind === 'ref') {
     const value = number(node.left);
     return value === undefined ? undefined : { path: node.right.path.join('.'), side: up ? 'lower' : 'upper', strict, value };
+  }
+  return undefined;
+}
+
+/**
+ * Why a bound on `path` against one number is not compared with the other bounds a binding joins it to (K3): written
+ * with a `[unit]` or on a feature with a unit or a scale, its magnitude is not read against theirs here; on a restricted
+ * domain (`Natural`, `Positive`), the type's own floor could meet it. `undefined` for any other relation, which keeps
+ * the generic sentence.
+ */
+function boundNotCompared(
+  node: ExprNode,
+  path: string,
+  markers: MarkerDimensions,
+  v: ContractVariable | undefined,
+  hadUnit: boolean,
+): string | undefined {
+  if (node.kind !== 'binary' || !['<', '<=', '>', '>='].includes(node.op) || v === undefined) return undefined;
+  const number = (n: ExprNode): boolean =>
+    n.kind === 'num' || (n.kind === 'ref' && markers.has(n.path.join('.'))) || (n.kind === 'unary' && (n.op === '-' || n.op === '+') && number(n.operand));
+  const own = (n: ExprNode): boolean => n.kind === 'ref' && n.path.join('.') === path;
+  if (!((own(node.left) && number(node.right)) || (own(node.right) && number(node.left)))) return undefined;
+  if (hadUnit || markers.size > 0 || v.unit !== null || v.siFactor !== 1 || v.siOffset !== 0) {
+    return 'it is a bound in a unit, which is not compared here with the bounds on the features the binding joins it to';
+  }
+  if (v.restricted !== undefined) {
+    return `it is a bound on a \`${v.restricted}\`, whose own floor could meet it`;
   }
   return undefined;
 }

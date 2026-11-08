@@ -18311,6 +18311,55 @@ package PS {
         [`${k}-rev`, probe(reversedMembers(text), rows)],
       ]),
     ),
+    // a5 (2026-11-08) K3: an asserted bound over a `default` a binding makes give way, on an Integer or in a conjunction
+    // (reads2 (12)), is carried as the Real bare bound is (stand-gw-ineq): K3I's `load >= 0.0` and `L <= 5.0` on Integers
+    // leave 0..5 open, and the SMT engine proves `q.p.load <= 6.0` where the other three read no value. Over the integers
+    // a pair meets where it leaves one whole number (K3M's `load >= 4.5` with `L <= 5.5`, reads2's h2): not carried, under
+    // a sentence that names it. A conjunction read in Q's p is filed as its conjuncts there (K3C reads as its split twin
+    // K3C-s). A bound in a unit (K3U) keeps its refusal, under its own sentence.
+    ...Object.fromEntries(
+      (
+        [
+          ['a5-k3-int', `package K3I {
+  part def P { attribute load : ScalarValues::Integer default = 1; assert constraint a { load >= 0.0 } }
+  part def Q { attribute L : ScalarValues::Integer default = 7; part p : P; bind p.load = L; assert constraint b { L <= 5.0 } }
+  part q : Q;
+  constraint gT { q.p.load <= 6.0 }
+  constraint gO { q.p.load >= 1.0 }
+}`, { 'K3I::P::a': ['T/-/T/-', 'T'], 'K3I::P::a in K3I::Q::p': ['?/-/?/-', '?'], 'K3I::Q::b': ['?/-/?/-', '?'], 'K3I::gT': ['?/?/?/T', 'T'], 'K3I::gO': ['?/?/?/?', '?'] }],
+          ['a5-k3-intmeet', `package K3M {
+  part def P { attribute load : ScalarValues::Integer default = 5; assert constraint a { load >= 4.5 } }
+  part def Q { attribute L : ScalarValues::Integer default = 7; part p : P; bind p.load = L; assert constraint b { L <= 5.5 } }
+  part q : Q;
+  constraint g0 { q.p.load <= 5.5 }
+  constraint g1 { q.p.load == 5.0 }
+}`, { 'K3M::P::a': ['T/-/T/-', 'T'], 'K3M::P::a in K3M::Q::p': ['?/-/?/-', '?'], 'K3M::Q::b': ['?/-/?/-', '?'], 'K3M::g0': ['?/?/?/?', '?'], 'K3M::g1': ['?/?/?/?', '?'] }],
+          ['a5-k3-conj', `package K3C {
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a { load >= 0.0 and load <= 10.0 } }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; }
+  part q : Q;
+  constraint gT { q.p.load <= 11.0 }
+  constraint gO { q.p.load <= 5.0 }
+}`, { 'K3C::P::a': ['T/-/?/-', 'T'], 'K3C::P::a in K3C::Q::p': ['?/-/?/-', '?'], 'K3C::gT': ['?/?/?/T', 'T'], 'K3C::gO': ['?/?/?/?', '?'] }],
+          ['a5-k3-conjs', `package K3C {
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a0 { load >= 0.0 } assert constraint a1 { load <= 10.0 } }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; }
+  part q : Q;
+  constraint gT { q.p.load <= 11.0 }
+  constraint gO { q.p.load <= 5.0 }
+}`, { 'K3C::P::a0': ['T/-/T/-', 'T'], 'K3C::P::a1': ['T/-/T/-', 'T'], 'K3C::P::a0 in K3C::Q::p': ['?/-/?/-', '?'], 'K3C::P::a1 in K3C::Q::p': ['?/-/?/-', '?'], 'K3C::gT': ['?/?/?/T', 'T'], 'K3C::gO': ['?/?/?/?', '?'] }],
+          ['a5-k3-unit', `package K3U {
+  part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; assert constraint a { load >= 0.0 [kg] } }
+  part def Q { attribute L : ISQ::MassValue default = 7.0 [kg]; part p : P; bind p.load = L; }
+  part q : Q;
+  constraint g { q.p.load >= -1.0 [kg] }
+}`, { 'K3U::P::a': ['T/-/T/-', 'T'], 'K3U::P::a in K3U::Q::p': ['?/-/?/-', '?'], 'K3U::g': ['?/?/?/?', '?'] }],
+        ] satisfies Array<[string, string, Record<string, [string, Ref]>]>
+      ).flatMap(([k, text, rows]) => [
+        [k, probe(text, rows)],
+        [`${k}-rev`, probe(reversedMembers(text), rows)],
+      ]),
+    ),
     ...quotedFamilyProbes(),
     // S0 (design-editor-ends): an instance a withheld scope holds is a row, listed and not decided on every surface in
     // the scope's sentence, never dropped: the walk stops at the scope, and a run that lists no row for the instance
@@ -19528,6 +19577,9 @@ package PS {
     ['a5-k2-inst', 'a5-k2-inst-rev'],
     ['a5-k2-insts', 'a5-k2-insts-rev'],
     ['a5-k2-mixed', 'a5-k2-mixed-rev'],
+    // a5 K3: bounds over a give-way default on an Integer, in a conjunction and in a unit, in either text order.
+    ...['a5-k3-int', 'a5-k3-intmeet', 'a5-k3-conj', 'a5-k3-conjs', 'a5-k3-unit'].map((k) => [k, `${k}-rev`] as const),
+    ['a5-k3-conj', 'a5-k3-conjs'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
