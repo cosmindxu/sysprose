@@ -33,7 +33,7 @@ import { parseExpr, writtenChains } from '../expr';
 import {
   evalStr,
   leafOf,
-  regionDescendants,
+  machineRegion,
   regionScope,
   storeScope,
   triggerLabelOf,
@@ -134,7 +134,7 @@ const RESERVED = new Set([
  * `verification/unknown-atom`, as a state of another top-level machine is.
  */
 function statesOf(model: Model, machineId: ElementId): ElementRecord[] {
-  return regionDescendants(model, machineId).filter((e) => e.eClass === 'StateUsage');
+  return machineRegion(model, machineId).descendants.filter((e) => e.eClass === 'StateUsage');
 }
 
 /**
@@ -148,7 +148,7 @@ function statesOf(model: Model, machineId: ElementId): ElementRecord[] {
  * `state X` cannot do it because a `DoneNode` is not a `StateUsage`.
  */
 function nodesOf(model: Model, machineId: ElementId): ElementRecord[] {
-  return regionDescendants(model, machineId).filter(
+  return machineRegion(model, machineId).descendants.filter(
     (e) =>
       e.declaredName !== undefined &&
       // ONLY WHAT A LEAF CAN BE. A machine holds attributes, actions and
@@ -163,7 +163,7 @@ function nodesOf(model: Model, machineId: ElementId): ElementRecord[] {
 
 /** Named transitions, for `fires T` — the anonymous ones cannot be named at all. */
 function namedTransitions(model: Model, machineId: ElementId): ElementRecord[] {
-  return regionDescendants(model, machineId).filter(
+  return machineRegion(model, machineId).descendants.filter(
     (e) => e.eClass === 'TransitionUsage' && (e.declaredName ?? '') !== '',
   );
 }
@@ -171,7 +171,7 @@ function namedTransitions(model: Model, machineId: ElementId): ElementRecord[] {
 /** The distinct triggers the machine names, in declaration order. */
 function triggersOf(model: Model, machineId: ElementId): string[] {
   const out: string[] = [];
-  for (const tr of regionDescendants(model, machineId)) {
+  for (const tr of machineRegion(model, machineId).descendants) {
     if (tr.eClass !== 'TransitionUsage') continue;
     const label = triggerLabelOf(tr);
     if (label === '' || out.includes(label)) continue;

@@ -39,6 +39,8 @@ import { loadModelText } from '@text/load';
 import {
   exploreMachine,
   machineAlphabet,
+  machineHolding,
+  machinesHolding,
   reachReport,
   stateMachinesIn,
   type ExploreResult,
@@ -1810,5 +1812,48 @@ describe('`machineRegion` is the lists the readers computed before it', () => {
     expect(machineRegion(model, outer)).toBe(region);
     model.rename(idOf('RegionShapes::Outer::a'), 'a2');
     expect(machineRegion(model, outer)).not.toBe(region);
+  });
+});
+
+describe('a finding is keyed (machine, element): which machines hold an element', () => {
+  /** `machineHolding` as it was written before the view: the first machine that is, or whose region holds, `id`. */
+  const oldMachineHolding = (model: Model, id: ElementId): ElementId | null => {
+    for (const m of stateMachinesIn(model)) {
+      if (m.id === id) return m.id;
+      if (regionDescendants(model, m.id).some((d) => d.id === id && d.eClass !== 'StateDefinition')) return m.id;
+    }
+    return null;
+  };
+
+  it('answers what it always did on every element, and names exactly one machine while no region inherits', async () => {
+    const model = (await loadModelText(REGION_SHAPES, { fileName: 'region-shapes.sysml', library: 'none' })).model!;
+    for (const e of model.all()) {
+      expect(machineHolding(model, e.id), model.qualifiedName(e.id)).toBe(oldMachineHolding(model, e.id));
+      expect(machinesHolding(model, e.id), model.qualifiedName(e.id)).toEqual(
+        oldMachineHolding(model, e.id) === null ? [] : [oldMachineHolding(model, e.id)],
+      );
+    }
+  });
+
+  it('lists the machine that declares an element before one whose region took it from a general, whatever the model order', async () => {
+    const model = (await loadModelText(REGION_SHAPES, { fileName: 'region-shapes.sysml', library: 'none' })).model!;
+    const idOf = (qn: string): ElementId => model.all().find((e) => model.qualifiedName(e.id) === qn)!.id;
+    const outer = idOf('RegionShapes::Outer');
+    const inner = idOf('RegionShapes::Outer::Inner');
+    const x = idOf('RegionShapes::Outer::Inner::x');
+    // Outer comes first in the model; hand it a region that holds Inner's `x` as an inherited node.
+    const regionOf = (id: ElementId) => {
+      const own = machineRegion(model, id);
+      return id === outer
+        ? { nodes: new Set([...own.nodes, x]), inheritedFrom: (e: ElementId) => (e === x ? inner : undefined) }
+        : own;
+    };
+    expect(stateMachinesIn(model).map((m) => m.id).indexOf(outer)).toBeLessThan(
+      stateMachinesIn(model).map((m) => m.id).indexOf(inner),
+    );
+    expect(machinesHolding(model, x)).toEqual([inner]);
+    expect(machinesHolding(model, x, regionOf)).toEqual([inner, outer]);
+    // The one a reader asks for is the declaring machine, not the first listed.
+    expect(machinesHolding(model, x, regionOf)[0]).toBe(inner);
   });
 });

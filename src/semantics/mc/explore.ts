@@ -105,9 +105,8 @@ import {
   isHistoryPseudostate,
   isTruthy,
   leafOf,
+  machineRegion,
   outsideStatesSentence,
-  regionDescendants,
-  regionTransitions,
   resumesHistory,
   seedStore,
   stepCandidates,
@@ -116,6 +115,7 @@ import {
   triggerLabelOf,
   type EnabledTransition,
   type MachineConfig,
+  type MachineRegion,
   type StepCandidates,
   type StepInput,
   type UndeterminedGuard,
@@ -854,7 +854,7 @@ export function transitionLabel(t: TransitionRef): string {
 export function machineAlphabet(model: Model, machineId: ElementId): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const tr of regionTransitions(model, machineId)) {
+  for (const tr of machineRegion(model, machineId).transitions) {
     const t = triggerLabelOf(tr);
     if (t === '' || seen.has(t)) continue;
     seen.add(t);
@@ -865,7 +865,7 @@ export function machineAlphabet(model: Model, machineId: ElementId): string[] {
 
 /** Every StateUsage inside the machine — the census the reachable set is read against. */
 export function machineStates(model: Model, machineId: ElementId): ElementRecord[] {
-  return regionDescendants(model, machineId).filter((e) => e.eClass === 'StateUsage');
+  return machineRegion(model, machineId).descendants.filter((e) => e.eClass === 'StateUsage');
 }
 
 /**
@@ -898,7 +898,7 @@ export function machineStates(model: Model, machineId: ElementId): ElementRecord
  */
 function stackNodes(model: Model, machineId: ElementId): ReadonlySet<ElementId> {
   const on = new Set<ElementId>(machineStates(model, machineId).map((s) => s.id));
-  const edges = regionTransitions(model, machineId);
+  const edges = machineRegion(model, machineId).transitions;
   for (let grew = true; grew; ) {
     grew = false;
     for (const e of edges) {
@@ -933,7 +933,7 @@ function stackNodes(model: Model, machineId: ElementId): ReadonlySet<ElementId> 
  */
 export function walkableTransitions(model: Model, machineId: ElementId): readonly ElementRecord[] {
   const on = stackNodes(model, machineId);
-  return regionTransitions(model, machineId).filter((t) => on.has(t.source![0]));
+  return machineRegion(model, machineId).transitions.filter((t) => on.has(t.source![0]));
 }
 
 /* ───────────────────────────── the producer census ───────────────────────── */
@@ -1030,7 +1030,7 @@ export interface EdgeCensus {
  *    was built to make impossible.
  */
 export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
-  const relation = new Set(regionTransitions(model, machineId).map((t) => t.id));
+  const relation = new Set(machineRegion(model, machineId).transitions.map((t) => t.id));
   const refusedIds = new Set(danglingTransitions(model, machineId).map((t) => t.id));
   const crossing = new Map(boundaryCrossings(model, machineId).map((c) => [c.edge.id, c] as const));
   const outside = new Set(stepsOutsideStates(model, machineId).map((t) => t.id));
@@ -1039,7 +1039,7 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
   const nameOf = (id: ElementId | undefined): string =>
     id === undefined ? 'nothing' : `\`${model.qualifiedName(id) || id}\``;
 
-  for (const el of regionDescendants(model, machineId)) {
+  for (const el of machineRegion(model, machineId).descendants) {
     const from = el.source?.[0];
     const to = el.target?.[0];
     if (from === undefined && to === undefined) continue; // not an edge at all
@@ -1178,7 +1178,7 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
  * are.
  */
 function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[] {
-  return regionDescendants(model, machineId).filter(
+  return machineRegion(model, machineId).descendants.filter(
     (e) =>
       CONTROL_EDGE_KINDS.has(e.eClass) &&
       (e.source?.[0] === undefined || e.target?.[0] === undefined),
@@ -1266,16 +1266,15 @@ interface BoundaryCrossing {
  * `refused` bucket, and by {@link unsupportedConstructs}.
  */
 function boundaryCrossings(model: Model, machineId: ElementId): BoundaryCrossing[] {
-  const region = regionDescendants(model, machineId);
-  const regionIds = new Set<ElementId>(region.map((d) => d.id));
+  const region = machineRegion(model, machineId);
+  const regionIds = new Set<ElementId>(region.descendants.map((d) => d.id));
   // The nodes this machine's region is made of. A nested `state def` is in
-  // `regionDescendants` — the boundary stops BELOW it — but it is a machine of
+  // `region.descendants` — the boundary stops BELOW it — but it is a machine of
   // its own, or a definition no walk enters, and not a node of this one.
-  const own = new Set<ElementId>([machineId]);
-  for (const d of region) if (d.eClass !== 'StateDefinition') own.add(d.id);
+  const own = region.nodes;
   let inside: ReadonlySet<ElementId> | undefined;
   const out: BoundaryCrossing[] = [];
-  for (const edge of regionTransitions(model, machineId)) {
+  for (const edge of region.transitions) {
     for (const end of [edge.source![0], edge.target![0]]) {
       if (own.has(end)) continue;
       inside ??= new Set(model.descendants(machineId).map((d) => d.id));
@@ -1321,12 +1320,32 @@ function outermostDefinitionAt(model: Model, machineId: ElementId, id: ElementId
  * which (`refusedStepSentence`, `../execute`).
  */
 export function machineHolding(model: Model, id: ElementId): ElementId | null {
+  return machinesHolding(model, id)[0] ?? null;
+}
+
+/**
+ * Every machine whose region holds `id` as one of its nodes, in
+ * `stateMachinesIn` order, the machine that declares it before any that took it
+ * from a general one (`MachineRegion.inheritedFrom`). A finding about an element
+ * is a finding in a machine, so a reader that can meet an element in two regions
+ * keys by the pair and asks here which machines they are; {@link machineHolding}
+ * is the first. Until a region reads through its general an element is in one
+ * machine's region only, and this is that machine. `regionOf` is the region
+ * reader, so a test can hand it a region that does.
+ */
+export function machinesHolding(
+  model: Model,
+  id: ElementId,
+  regionOf: (machineId: ElementId) => Pick<MachineRegion, 'nodes' | 'inheritedFrom'> = (m) => machineRegion(model, m),
+): ElementId[] {
+  const own: ElementId[] = [];
+  const lent: ElementId[] = [];
   for (const m of stateMachinesIn(model)) {
-    if (m.id === id) return m.id;
-    const holds = regionDescendants(model, m.id).some((d) => d.id === id && d.eClass !== 'StateDefinition');
-    if (holds) return m.id;
+    const region = regionOf(m.id);
+    if (!region.nodes.has(id)) continue;
+    (region.inheritedFrom(id) === undefined ? own : lent).push(m.id);
   }
-  return null;
+  return [...own, ...lent];
 }
 
 /**
@@ -1431,7 +1450,7 @@ function unsupportedConstructs(
       elementId: machineId,
     });
   }
-  for (const el of [machine, ...regionDescendants(model, machineId)]) {
+  for (const el of [machine, ...machineRegion(model, machineId).descendants]) {
     if (!el) continue;
     if (isHistoryPseudostate(el) || (el.eClass === 'StateUsage' && isHistoryComposite(model, el.id))) {
       out.push({
@@ -1701,7 +1720,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
   const walkable = new Set(walkableTransitions(model, machineId).map((t) => t.id));
   const timedTransitions = new Set<ElementId>();
   const timedLabels = new Set<string>();
-  for (const tr of regionTransitions(model, machineId)) {
+  for (const tr of machineRegion(model, machineId).transitions) {
     if (afterDuration(tr) === undefined) continue;
     if (walkable.has(tr.id)) timedTransitions.add(tr.id);
     const label = triggerLabelOf(tr);
