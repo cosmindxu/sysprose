@@ -2323,6 +2323,8 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // equation with one unknown left, and a one-to-one equation that finds no root searches the line for one (203 samples and the
   // poles among them): in a chain that takes a pass to fix each link, that was once per link per equation.
   const missedAt = new Map<Equation, string>();
+  // Of those, the ones whose search found no root at all (not one that holds about every value, {@link flatAbout}).
+  const rootless = new Set<Equation>();
   // Whether `eq` is curved in `u` ({@link isCurved}), once per pair: every sweep asks it of every equation with one unknown left.
   const curvedPairs = new Map<Equation, Map<ElementId, boolean>>();
   const curvedIn = (eq: Equation, u: ElementId): boolean => {
@@ -2351,8 +2353,11 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     // model's own value for y, it was the root the search stopped at, and `c1 { y == 0.5 }` read violated there.
     if (val === undefined || !Number.isFinite(val) || (!curved && flatAbout(eq, u, val, values))) {
       missedAt.set(eq, reads);
+      if (val === undefined || !Number.isFinite(val)) rootless.add(eq);
+      else rootless.delete(eq);
       return false;
     }
+    rootless.delete(eq);
     values.set(u, val);
     used.add(eq);
     // A root of an equation with more than one is one of several: no value the model fixes ({@link designReadings}); that of an
@@ -2536,10 +2541,18 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   const stated = (v: ElementId): boolean => known.has(v) || unreadable.has(v);
   const unsettled = converged
     ? new Set<ElementId>()
-    : unsettledFeatures(eqs, values, tol, stated, (eq) => {
-        const el = relationOf.get(eq);
-        return el === undefined || el.eClass !== 'ConstraintUsage' || isAsserted(el) || imposed.has(el.id);
-      });
+    : unsettledFeatures(
+        eqs,
+        values,
+        tol,
+        stated,
+        (eq) => {
+          const el = relationOf.get(eq);
+          return el === undefined || el.eClass !== 'ConstraintUsage' || isAsserted(el) || imposed.has(el.id);
+        },
+        // An equation left with one unknown it found no root for, at the values it reads now.
+        (eq) => rootless.has(eq) && missedAt.get(eq) === eq.vars.map((v) => values.get(v)).join(','),
+      );
   // The rows in an order of their own, not the text's, where it could show: of two rows with the same entry in a column the
   // elimination takes the earlier, and a row that reads a free feature frees the one it pivots. `x * y == z` above `x ==
   // 1.0` and `x == 3.0` freed x; below them it did not. The model's own equations first, as they are oriented first, then
@@ -3427,6 +3440,7 @@ function unsettledFeatures(
   tol: number,
   stated: (v: ElementId) => boolean,
   own: (eq: Equation) => boolean,
+  rootless: (eq: Equation) => boolean = () => false,
 ): Set<ElementId> {
   const parent = new Map<ElementId, ElementId>();
   const find = (a: ElementId): ElementId => {
@@ -3441,6 +3455,21 @@ function unsettledFeatures(
   };
   const missed: ElementId[] = [];
   for (const eq of eqs) {
+    // One the solve tried to orient for the one unknown it leaves and found no root for, at the values the solve produced for the
+    // rest: no point of them meets it, so none is a solution. `y == 2.0 ^ x` beside `z == y * 2.0` and `z == 0.0` (y = 0 exactly,
+    // where 2^x has no root) read the two imposed, and the component has no solution; its produced features are unsettled.
+    if (rootless(eq)) {
+      const vs = eq.vars.filter((v) => values.has(v) && !stated(v));
+      if (vs.length > 0) {
+        for (const v of vs) if (!parent.has(v)) parent.set(v, v);
+        for (let i = 1; i < vs.length; i++) {
+          const a = find(vs[0]!);
+          const b = find(vs[i]!);
+          if (a !== b) parent.set(a, b);
+        }
+        missed.push(vs[0]!);
+      }
+    }
     if (!own(eq)) continue;
     const vs = eq.vars.filter((v) => values.has(v) && !stated(v));
     for (const v of vs) if (!parent.has(v)) parent.set(v, v);
