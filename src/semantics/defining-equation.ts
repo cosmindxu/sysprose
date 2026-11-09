@@ -3755,10 +3755,13 @@ export class DefiningEquations {
       for (const n of names) {
         const idT = ownAll.get(n);
         if (idT === undefined) continue;
+        // The name as the context spells it (Q's `p.x` is q's `pp.x` over `part pp :>> p`, {@link respelledIn}):
+        // read by its spelling alone, every context that renames it read alike, and the first stood for the rest.
+        const nx = all.has(n) ? n : respelledIn(this.model, this, x.id, owner, n);
         if (taint !== undefined) {
           let own = ownTainted.get(n);
           if (own === undefined) ownTainted.set(n, (own = readsTainted(this.model, taint, [owner], n) !== undefined));
-          const there = own ? undefined : readsTainted(this.model, taint, [x.id], n);
+          const there = own ? undefined : readsTainted(this.model, taint, [x.id], nx);
           // Each such context its own row: read alike with another the
           // source taints too, it read the owner's value (RF's p1, which Q's `r =
           // p1` reaches, beside Q's own r: P's `c` held there unread).
@@ -3767,12 +3770,12 @@ export class DefiningEquations {
             reading.push(`${n}~${there.id}~${x.id}`);
           }
         }
-        const idX = all.get(n);
-        const valued = value.has(n);
+        const idX = all.get(nx);
+        const valued = value.has(nx);
         // A value read IN the context, over its own names (`readAt`), is the
         // context's own: one its inputs make other than where it is written.
-        const at = valued ? this.readAt(x.id, n) : undefined;
-        const site = valued ? undefined : this.definitionSite(x.id, n);
+        const at = valued ? this.readAt(x.id, nx) : undefined;
+        const site = valued ? undefined : this.definitionSite(x.id, nx);
         reading.push(`${n}=${idX ?? ''}:${valued}:${site ?? ''}:${at ?? ''}`);
         // A name the context reads in an instance other than the owner's own,
         // re-rooted there ({@link landsElsewhere}): a reference on its path the
@@ -11796,6 +11799,34 @@ export function spelledIn(definitions: DefiningEquations, contextId: ElementId, 
     spelled = spelled === '' ? name : `${spelled}.${name}`;
   }
   return spelled;
+}
+
+/**
+ * `raw`, an assert's body written in `writtenId` (a general type of
+ * `contextId`), with each dotted path the context does not name respelled as
+ * the context spells it ({@link spelledIn}): Q's `p.x == 50.0` read in `part q
+ * : Q { part pp :>> p; }` is q's `pp.x == 50.0`, the symbol every relation
+ * over q's pp reads (closing-readings RN-2). Only where each respelled segment
+ * is the general's own feature or redefines it; any other path, and a body
+ * holding a quoted name, stays as written (and reads nothing there). A name
+ * written outside q is never respelled here (H3).
+ */
+export function respelledIn(model: Model, definitions: DefiningEquations, contextId: ElementId, writtenId: ElementId, raw: string): string {
+  if (/['"]/.test(raw)) return raw;
+  const denoted = definitions.denote(contextId);
+  return raw.replace(/(?<![\w.:$])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?![\w(:])/g, (path) => {
+    if (denoted.has(path)) return path;
+    const spelled = spelledIn(definitions, contextId, path);
+    if (spelled === path) return path;
+    const own = path.split('.');
+    const read = spelled.split('.');
+    for (let i = 1; i <= own.length; i++) {
+      const g = definitions.chain([writtenId], own.slice(0, i).join('.'))?.feature;
+      const f = denoted.get(read.slice(0, i).join('.'))?.feature;
+      if (!g || !f || (f.id !== g.id && !redefinedClosure(model, f).some((r) => r.id === g.id))) return path;
+    }
+    return spelled;
+  });
 }
 
 /**

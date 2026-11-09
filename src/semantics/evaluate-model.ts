@@ -97,6 +97,7 @@ import {
   shadowedEquation,
   shadowedNamesOf,
   shadowedSentence,
+  respelledIn,
   sharedDefinitions,
   statedValueOf,
   usageOwnedRefusal,
@@ -3094,8 +3095,10 @@ function readInContexts(
       continue;
     }
     const reread = rereads.get(x.id);
-    const text = reread?.expression ?? expr;
-    const reading: ElementRecord = reread ? { ...el, ownerId: x.id, attrs: { ...el.attrs, expression: text } } : { ...el, ownerId: x.id };
+    // A general's body as the context spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+    const text = reread?.expression ?? respelledIn(model, pass.definitions, x.id, owner, expr);
+    const reading: ElementRecord =
+      reread || text !== expr ? { ...el, ownerId: x.id, attrs: { ...el.attrs, expression: text } } : { ...el, ownerId: x.id };
     const names = reread ? namesIn(text) : allNames;
     const bodyNames = relationNamesOf(text);
     // A context whose reading met a binding above it (F5), or one listed only
