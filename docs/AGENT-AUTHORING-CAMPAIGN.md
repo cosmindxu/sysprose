@@ -3099,7 +3099,7 @@ holds along the freedom and stays `satisfied`; a PLAIN constraint (no `assert`)
 the solve took as a design equation to fix a value is `satisfied` with
 `imposed: true` and the reason *imposed by the solve* — it holds because the
 solve made it hold, not as a check passed. No design equation turns on the order of the
-text, bar two cases of the digits a value is given to (below): the model's own equations are solved first and a check fixes only
+text, the digits a value is given to included (below): the model's own equations are solved first and a check fixes only
 what they leave; plain equalities that agree over a value only they fix are all
 imposed; ones that disagree, or an equation that may have more than one root beside a plain
 constraint (a curved one, plain or the model's own — a stated `s = x * x`, an
@@ -3140,13 +3140,11 @@ such a body constrains are those it writes outside its strings and `[unit]`
 literals (the `m` of `4.0 [m]` is a metre). A solve that stops off its equations where one divides by a
 feature it solves for is run again from a fixed list of starts for what the divisor reads (`c0 { x / y
 == 3.0 }` and `c2 { w / y == x }` beside `c1 { x >= 0.0 }` over a `y` nothing fixes impose c0 and c2
-in every order). What still turns on the order is the digits a value is given to, and the cases known read
-an abstention in one order where the other reads a value, never a different verdict: a steep one-to-one equation (a quotient whose root is close to its
-pole) judged at a value that another equation gives to fewer digits than its slope needs: a pin written to ten digits
-(`x == 0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, root 3.0000000012e-06, reads both imposed with the equation first
-and unknown with the pin first, the equation's residual at the pin being over its gate), and a value taken through an affine link, which
-the solve gets to about 1e-10 (`y == 1.0014000000014`, then `y == 2.0 * x + 1.0`, then `-3333.33333 == 7.0 / (-3.0 * x)`, reads unknown in
-that order and imposed in the other five).
+in every order). The digits a value is given to do not turn on the order either: a value taken through an affine link is
+read off it exactly (`y == 1.0014000000014`, `y == 2.0 * x + 1.0` and `-3333.33333 == 7.0 / (-3.0 * x)` are
+imposed in all six orders), and two plain equations agree only where each holds at the value the other gives (a
+pin written to ten digits, `x == 0.000003000000001`, beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, whose
+residual at the pin is over its gate, reads unknown in both orders).
 
 **`solveFeasible` claims a witness only where it has one.** The roots of an equation
 of more than one root are apart, and its descent is local: begun at the root the solve

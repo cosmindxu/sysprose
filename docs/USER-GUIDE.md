@@ -768,8 +768,8 @@ Two names worth separating:
   `s.L == 50.0`) from being taken as `p`'s design equation, exactly as it is with
   no requirement there. An `assert` is the way to state a fact. The test is local: each
   of two separate roots (`x * x == 4.0`) reads as determined, not free.
-  **No design equation turns on the order of the text, bar two cases of the digits a value
-  is given to (the end of this passage).** Two plain
+  **No design equation turns on the order of the text, the digits a value is given to
+  included (the end of this passage).** Two plain
   equalities that agree (`a { x == 3.0 }`, `b { x == 3.0 }` over a valueless
   `x`) are both *imposed by the solve*. An equation whose two sides are the same expression or the
   same polynomial (`c0 { y == y }`, `y * 2.0 == 2.0 * y`, `y - y == 0.0`), plain or asserted, fixes
@@ -881,18 +881,14 @@ Two names worth separating:
   one divides by a feature it solves for is run again from a fixed list of starts for
   what the divisor reads (its step may land on the divisor's zero): `c0 { x / y == 3.0 }`
   and `c2 { w / y == x }` beside `c1 { x >= 0.0 }`, over a `y` nothing fixes, impose
-  `c0` and `c2` in every order (`c1` is unjudged: x is free). What still turns on the order of the text is the
-  digits a value is given to, and the cases known read an abstention in one order where the other reads
-  a value, never a different verdict: a steep one-to-one equation (a quotient whose root is close to
-  its pole) judged at a value that another equation gives to fewer digits than its
-  slope needs, in two ways: a pin written to ten digits (`x == 0.000003000000001`
-  beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`, whose root is 3.0000000012e-06)
-  reads both *imposed* with the equation written first, and *unknown* with the pin
-  first, where the equation's residual at the pin is over its gate; and a value
-  taken through an affine link, which the solve gets to about 1e-10 (`q1 { y ==
-  1.0014000000014 }`, then `l1 { y == 2.0 * x + 1.0 }`, then `e0 { -3333.33333 ==
-  7.0 / (-3.0 * x) }`) reads *unknown* in that order, and *imposed* in the other five
-  orders of the three. A feature with no value that an `assert`
+  `c0` and `c2` in every order (`c1` is unjudged: x is free). The digits a value is given to do not turn on the order
+  of the text either. A value taken through an affine link is read off it exactly, not
+  stepped to (`q1 { y == 1.0014000000014 }`, `l1 { y == 2.0 * x + 1.0 }` and `e0 {
+  -3333.33333 == 7.0 / (-3.0 * x) }` are *imposed* in all six orders of the three), and
+  two plain equations agree only where each holds at the value the other gives: a pin
+  written to ten digits (`x == 0.000003000000001`) beside a steep quotient (`2.0 / (7.0 *
+  x) - 95238.0952 == 0.0`, whose root is 3.0000000012e-06, and whose residual at the pin
+  is over its gate) reads *unknown* in both orders. A feature with no value that an `assert`
   constrains in a form the solve does not read — an inequality, a conjunct that
   is none (`M >= L` in `L == 50.0 and M >= L`), a disjunction, or a body that does not parse
   (`M == max(L, 20.0)`, which the model reports; it constrains the names it
