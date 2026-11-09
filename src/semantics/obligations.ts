@@ -116,6 +116,7 @@ import {
   hiddenReadSentence,
   relationNamesOf,
   outsideBindingsOf,
+  respelledIn,
   sharedDefinitions,
   spelledIn,
   statedValueOf,
@@ -1296,7 +1297,10 @@ function instanceRows(
     // (E7) — refused in the check's sentence over a member stated twice there —
     // and an assert adds no axiom there.
     const reread = rereads.get(context.id);
-    const text = reread?.expression ?? raw;
+    // A general's body as the context spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+    const text =
+      reread?.expression ??
+      (el.ownerId != null && el.ownerId !== context.id ? respelledIn(model, definitions, context.id, el.ownerId, raw) : raw);
     const read = reread ? relationNamesOf(text) : names;
     const boundOnly = !only && definitions.readsBoundOnly(el, read, context.id);
     if (boundOnly && filed.role === 'axiom') continue;
@@ -2683,7 +2687,9 @@ function instanceAssertRow(
   memo: DerivationMemo,
 ): Obligation {
   const raw = (el.attrs.expression as string).trim();
-  const reading = readRelation(model, { ...el, ownerId: context.id }, raw, memo, undefined, undefined, path);
+  // A general's body as the context spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+  const read = el.ownerId != null && el.ownerId !== context.id ? respelledIn(model, sharedDefinitions(model), context.id, el.ownerId, raw) : raw;
+  const reading = readRelation(model, { ...el, ownerId: context.id }, read, memo, undefined, undefined, path);
   // A name the context declares anew without `:>>` (G8A, G8C): refused, with the variables kept (G-pair-b).
   const hidden = el.ownerId != null ? hiddenReadSentence(model, raw, el.ownerId, context.id, relationNamesOf(raw)) : undefined;
   const encodable: Encodable =

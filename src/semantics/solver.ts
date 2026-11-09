@@ -117,6 +117,7 @@ import {
   shadowedNamesOf,
   shadowedSentence,
   sharedDefinitions,
+  respelledIn,
   spelledIn,
   statedValueOf,
   typedAssertHeldOnly,
@@ -1725,7 +1726,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       for (const c of model.children(holder.id)) {
         if (c.attrs.isLibrary === true) continue;
         if (isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
-          const whole: ElementRecord = { ...c, ownerId: reader.id };
+          // A general's body as the reader spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+          const raw = holder.id === reader.id ? c.attrs.expression : respelledIn(model, definitions, reader.id, holder.id, c.attrs.expression);
+          const whole: ElementRecord = { ...c, ownerId: reader.id, attrs: { ...c.attrs, expression: raw } };
           // An asserted conjunction's conjuncts, each as the assert it would be written alone ({@link assertConjuncts}).
           const parts = assertConjuncts(model, c);
           const split = parts.length > 1;
