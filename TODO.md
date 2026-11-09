@@ -332,15 +332,6 @@ headings.
       Since default-stands S2: item (4)'s '(which keeps its reading)' is obsolete: an untyped
       asserted equation over a default is checked against it, and the lexical reading also reads a
       default an assert names as its value (LP1, SLD, SLO, SLP).
-- [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The
-      guide says 'bar two cases'. Each abstains in one text order and reads a value in the other,
-      never a different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
-      0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`) reads t/t equation-first and
-      ?/? pin-first (review-2026-10-14/wave3-probes/numeric-curved/fix3-pm/D1, D2), a value taken
-      through an affine link by finite differences, accurate to about 3e-11 (fix3-pg/G4 reads ?, G3
-      and G5..G8 read t), and `y / 2.0 == 0.0` is solved to 2.9e-11 beside `z * y == 0.0`
-      (solver2-pass-scratch/s5/A6x086, A5x092, A5x240). Fix: polish the affine Newton step or judge
-      agreement both ways. [numeric-curved; solver2-pass S1, S3, S5]
 - [ ] **Abstentions left in the numeric solver (rollup; sound, only weaker).** Each reads unknown
       where an answer exists; none gives a wrong answer. (1) designReadings withholds the whole
       component a curved equation links, where only what its root reaches need be withheld (`z` of
@@ -430,8 +421,7 @@ headings.
       (p)
       a plain quotient over an asserted zero divisor (`A z == 0.0` beside `r / z == q`) reads `?` in
       one order and T in the other (s3/Q2x156f.sysml, Q2x156r.sysml); (q) an affine core past 32
-      features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) the
-      286(a) digits cases (s5/A6x086f, A5x092f, A5x240f); (s) a definition's own row reads `t` where an
+      features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) a definition's own row reads `t` where an
       instance's facts refute it (adv/genpin: `P::ck` ?/?/F/? before P-pin, ?/?/t/? after; definition
       rows only): the F side is liftable by reading an instance's refuting F onto its
       definition's row.

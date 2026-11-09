@@ -778,7 +778,7 @@ Two names worth separating:
   at the values the others have (`y * z == 0.0` at a stated `z` of 0, where every y is a root): it gives y
   no value, and c1 is *imposed* beside it. One whose side divides by a feature, takes a
   remainder or raises to what is not a small whole number (`y / z == y / z`, no value where z is 0)
-  is read as any other equation. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
+  is read as any other equation. An equation left with one unknown whose search finds no root at all (for example `y == 2.0 ^ x` with `y = 0`) is read as having no real solution; its component abstains rather than deciding a value. Two that disagree (`t50 { p.L == 50.0 }` and `t60 { p.L == 60.0 }`)
   fix no value: the one taken would be the one written first, so neither is
   taken, and every relation over that value is *unjudged* (*… only plain
   constraints that disagree (t50 and t60): which of them holds would turn on the
