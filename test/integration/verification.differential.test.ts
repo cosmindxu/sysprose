@@ -12391,6 +12391,28 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'RNS::q::ue': ['T/-/T/-', 'T'],
       'RNS::top': ['T/T/T/T', 'T'],
     }),
+    // A general's assert over a feature two renamers share (`part e :>> p; part pp :>> p;`, Q's `p.x == 50.0`) is
+    // not respelled to either (sharedAliases), and the re-ask over each renamer's closure gives neither a value from
+    // it: with pp's x stated 60, e's x is not read 50 from Q's assert either (`q.e.x == 50` read T on the check before
+    // the fence in reachingUncached), and Q's own row reads T, its instance q ? (review).
+    ...reversed('rn1-shared-general', `package RNG {
+        part def P { attribute x : ScalarValues::Real; }
+        part def Q { part p : P; assert constraint tie { p.x == 50.0 } }
+        constraint g { q.pp.x == 50.0 }
+        constraint ge { q.e.x == 50.0 }
+        part q : Q { part e :>> p; part pp :>> p { attribute :>> x = 60.0; } }
+      }`, `package RNG {
+        part q : Q { part pp :>> p { attribute :>> x = 60.0; } part e :>> p; }
+        constraint ge { q.e.x == 50.0 }
+        constraint g { q.pp.x == 50.0 }
+        part def Q { assert constraint tie { p.x == 50.0 } part p : P; }
+        part def P { attribute x : ScalarValues::Real; }
+      }`, {
+      'RNG::g': ['?/?/?/?', '?'],
+      'RNG::ge': ['?/?/?/?', '?'],
+      'RNG::Q::tie': ['T/-/T/-', 'T'],
+      'RNG::Q::tie in RNG::q': ['?/-/?/-', '?'],
+    }),
     // A general's body read in a context that renames what it names is read as the context spells it, on every
     // surface (closing-readings RN-2, `respelledIn`): Q's `p.x` in q over `part pp :>> p` is q's `pp.x`. RNW: q's pp
     // states x = 50 where Q asserts 60, so the model contradicts itself as its un-renamed twin does — `Q::tie in q` F

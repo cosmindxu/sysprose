@@ -2612,7 +2612,12 @@ export class DefiningEquations {
     const start = this.model.get(contextId);
     if (!spelled || !start || !isUsage(start.eClass)) return undefined;
     let hit: { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined;
-    for (const g of redefinedClosure(this.model, start)) {
+    // Nor for a renamer of a feature another usage of its owner also redefines (`part e :>> p; part pp :>> p;`):
+    // the two are one p, whose x the other may state otherwise, and neither reads the general's assert (review).
+    const closure = redefinedClosure(this.model, start);
+    if (start.ownerId != null && closure.some((g) => this.features(start.ownerId!).some(
+      (x) => x.id !== start.id && !closure.some((c) => c.id === x.id) && redefinedClosure(this.model, x).some((y) => y.id === g.id)))) return undefined;
+    for (const g of closure) {
       const r = this.reachingAssert(g.id, name);
       if (!r) continue;
       if (!hit) hit = r;
