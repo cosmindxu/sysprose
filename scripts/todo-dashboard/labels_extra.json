@@ -1,0 +1,212 @@
+{
+ "283": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "manual"
+ },
+ "282": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "285": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "manual"
+ },
+ "286": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "287": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "288": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "manual"
+ },
+ "289": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "290": {
+  "cls_first": "POLISH",
+  "cls_last": "POLISH",
+  "source": "manual"
+ },
+ "291": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "292": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "293": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "294": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "manual"
+ },
+ "295": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "297": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "manual"
+ },
+ "296": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "281": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "284": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "298": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "llm"
+ },
+ "299": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "llm"
+ },
+ "301": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "302": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "303": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "305": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "306": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "307": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "llm"
+ },
+ "308": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "llm"
+ },
+ "310": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "311": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "312": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "313": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "316": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "manual"
+ },
+ "304": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "317": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "318": {
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "source": "llm"
+ },
+ "319": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "320": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "321": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "322": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "323": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "324": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "llm"
+ },
+ "325": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ },
+ "326": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "source": "manual"
+ }
+}

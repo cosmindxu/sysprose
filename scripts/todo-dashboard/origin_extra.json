@@ -1,0 +1,236 @@
+{
+ "283": {
+  "origin": "PRE_EXISTING",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Measured at 227d10c before collab-ui: 42 of 500 random sequences diverge; the entry says pre-existing."
+ },
+ "282": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "What is left of the relay-cap entry once the cap is 64 MiB: a model several times v9 still cannot be shared."
+ },
+ "285": {
+  "origin": "PRE_EXISTING",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "The entry says pre-existing: an equation with no root, or a flat one, read as solved; found by the numeric-curved re-review."
+ },
+ "286": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "What is left of the numeric order dependences after the root-find fix: each abstains in one text order and reads a value in the other."
+ },
+ "287": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Rollup of the sound abstentions the numeric-curved fixes leave."
+ },
+ "288": {
+  "origin": "PRE_EXISTING",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Identical at 5d9e806: the loader runs out of memory on a usage that subsets a library feature beside an instance and a constraint; found by the fence-readings branch review."
+ },
+ "289": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "What is left of the 32-usage-cap order entry: the fence withdraws the false verdict, the loader still resolves a package chain end by text order."
+ },
+ "291": {
+  "origin": "PRE_EXISTING",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Identical at 5d9e806: the subsetting walk is super-linear on dense layered diamonds; found by the fence-readings final review."
+ },
+ "292": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Rollup of the sound abstentions the fence-readings fences leave."
+ },
+ "293": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "What is left of the implicit-end-copy life entry after the editor fences: a rename onto a taken name, the mapper text order, a peer edit; the page abstains where the file decides."
+ },
+ "294": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Found by the fence-editor soak: after a retype or rename that parts a copy, the page reads a row the reopened file calls contradictory (page FF, file ??)."
+ },
+ "295": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Rollup of the sound abstentions the fence-editor fences leave."
+ },
+ "297": {
+  "origin": "PRE_EXISTING",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "narrowing of 278 (Save an end no name reaches) filed by fence-editor2's review and soak"
+ },
+ "281": {
+  "origin": "RESIDUAL",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Two metadata spellings still fail to parse after S1 fixed others."
+ },
+ "284": {
+  "origin": "INTRODUCED",
+  "found_by": "REVIEW",
+  "how": "llm",
+  "why": "Unit symbol read as feature turns t into ?; sound, only weaker."
+ },
+ "298": {
+  "origin": "PRE_EXISTING",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Rename onto sibling name: page and file differ; same on base."
+ },
+ "299": {
+  "origin": "UNCLEAR",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Unit named in is read as keyword; Save drops rest of text."
+ },
+ "301": {
+  "origin": "RESIDUAL",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Mixed Integer/Real bounds wrong answer fenced; full reading left undone."
+ },
+ "302": {
+  "origin": "INTRODUCED",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Fence makes bounds abstain where base decided; sound, only weaker."
+ },
+ "303": {
+  "origin": "INTRODUCED",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Room abstentions after fence; late library join reads typings unresolved, conservative."
+ },
+ "305": {
+  "origin": "RESIDUAL",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Class register leaves unpinned shapes; sound, mostly census and test gaps."
+ },
+ "306": {
+  "origin": "RESIDUAL",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Order-dependent copy only fenced; verified fix not landed."
+ },
+ "307": {
+  "origin": "UNCLEAR",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Stale copy after delete/rename: page decides, file differs."
+ },
+ "308": {
+  "origin": "RESIDUAL",
+  "found_by": "REVIEW",
+  "how": "llm",
+  "why": "Numeric lane still reads bind end through order scope; other lanes abstain."
+ },
+ "310": {
+  "origin": "INTRODUCED",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Fence turns formerly decided copy shapes into unknown; sound, only weaker."
+ },
+ "311": {
+  "origin": "INTRODUCED",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Whole-owner-scope fence withholds unrelated names; sound, plus a cost note."
+ },
+ "312": {
+  "origin": "INTRODUCED",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Save writes some ends as Not-saved notes instead of statements."
+ },
+ "313": {
+  "origin": "INTRODUCED",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Rollup of sound abstentions (validate() order); not a wrong answer."
+ },
+ "316": {
+  "origin": "PRE_EXISTING",
+  "found_by": "REVIEW",
+  "how": "manual",
+  "why": "Confirmed by read-only check 2026-11-01: seed kept against a bound end unresolved through a retyped redefinition; same on base."
+ },
+ "304": {
+  "origin": "PRE_EXISTING",
+  "found_by": "IMPLEMENTER",
+  "how": "llm",
+  "why": "Wrong sentences, x^-1 refused, string sort Real; recorded in class register."
+ },
+ "317": {
+  "origin": "RESIDUAL",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Sound abstentions left by the seed fence; one loud internal error."
+ },
+ "318": {
+  "origin": "PRE_EXISTING",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Quoted names lexed as strings give wrong check-lane verdicts; found by rename audit."
+ },
+ "319": {
+  "origin": "PRE_EXISTING",
+  "found_by": "PROBE",
+  "how": "llm",
+  "why": "Metamorphic audit rollup: sound abstentions, order and instance-dependent, no decided verdict moved."
+ },
+ "320": {
+  "origin": "RESIDUAL",
+  "found_by": "OTHER",
+  "how": "llm",
+  "why": "fix-quoted rollup: sound abstentions left, only weaker"
+ },
+ "321": {
+  "origin": "RESIDUAL",
+  "found_by": "OTHER",
+  "how": "llm",
+  "why": "wording-pass rollup: sound abstentions left, only weaker"
+ },
+ "322": {
+  "origin": "RESIDUAL",
+  "found_by": "OTHER",
+  "how": "llm",
+  "why": "defaults-pass rollup: sound abstentions left, only weaker"
+ },
+ "323": {
+  "origin": "RESIDUAL",
+  "found_by": "OTHER",
+  "how": "llm",
+  "why": "instance-pass rollup: sound abstentions left, only weaker"
+ },
+ "324": {
+  "origin": "RESIDUAL",
+  "found_by": "OTHER",
+  "how": "llm",
+  "why": "subsetting-pass rollup: sound abstentions left, only weaker"
+ },
+ "325": {
+  "origin": "RESIDUAL",
+  "found_by": "OTHER",
+  "how": "manual",
+  "why": "parser-pass rollup: parallel-machine and Simulate abstentions, sound, only weaker"
+ }
+}

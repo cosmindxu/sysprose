@@ -1,0 +1,51 @@
+{
+ "132": {
+  "cls_last": "WEAKER",
+  "note": "fence-triage 2026-10-29: independently verified as a missing reading, wording or loud refusal, not a wrong answer | recheck 2026-11-02 on a683620: no wrong decided cell reproduces"
+ },
+ "183": {
+  "cls_last": "POLISH",
+  "note": "fence-triage 2026-10-29: independently verified as a missing reading, wording or loud refusal, not a wrong answer | recheck 2026-11-02 on a683620: no wrong decided cell reproduces"
+ },
+ "242": {
+  "cls_last": "WEAKER",
+  "note": "fence-triage 2026-10-29: independently verified as a missing reading, wording or loud refusal, not a wrong answer | recheck 2026-11-02 on a683620: no wrong decided cell reproduces"
+ },
+ "262": {
+  "cls_last": "WEAKER",
+  "note": "fence-triage 2026-10-29: independently verified as a missing reading, wording or loud refusal, not a wrong answer | recheck 2026-11-02 on a683620: no wrong decided cell reproduces"
+ },
+ "263": {
+  "cls_last": "WEAKER",
+  "note": "fence-triage 2026-10-29: independently verified as a missing reading, wording or loud refusal, not a wrong answer | recheck 2026-11-02 on a683620: no wrong decided cell reproduces"
+ },
+ "268": {
+  "cls_last": "POLISH",
+  "note": "fence-triage 2026-10-29: independently verified as a missing reading, wording or loud refusal, not a wrong answer | recheck 2026-11-02 on a683620: no wrong decided cell reproduces"
+ },
+ "146": {
+  "cls_last": "POLISH",
+  "note": "recheck 2026-11-02 on a683620: robustness/performance/test gaps; a torn read lands as stale, never a current verdict"
+ },
+ "209": {
+  "cls_last": "WEAKER",
+  "note": "recheck 2026-11-02 on a683620: both lanes abstain with the tool's own sentences; contradiction unreported"
+ },
+ "167": {
+  "cls_last": "WEAKER",
+  "note": "recheck 2026-11-02 on a683620: display order only; permuting the walk order moved no verdict (sampled, not proven for every consumer)"
+ },
+ "231": {
+  "cls_last": "WEAKER",
+  "note": "recheck 2026-11-02 on a683620: both readings abstain on every surface with a two-values sentence; precision only"
+ },
+ "297": {
+  "cls_last": "WEAKER",
+  "note": "recheck 2026-11-02 on a683620: 240 neighbour cases, 0 lost/moved; unsaved ends get the loud '// Not saved:' note"
+ },
+ "328": {
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "note": "2026-11-09: a rollup of abstentions (sound, weaker); the keyword rule mislabelled it FALSE"
+ }
+}
