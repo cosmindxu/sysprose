@@ -18,6 +18,7 @@ import {
   DefiningEquations,
   GUARD_CONTACT,
   assertConjuncts,
+  conjunctsOf,
   equationRecord,
   equationText,
   MAX_DERIVATION_DEPTH,
@@ -49,6 +50,8 @@ import {
   statesStandingValue,
   equatedPartsFailed,
   equatedPartsRefusal,
+  headStandsAgainstAbove,
+  nameAtInstance,
   contradictedDefinitionConflict,
   contradictedDefinitionRefusal,
   contradictedDefinitionRefusalOf,
@@ -63,7 +66,10 @@ import {
   headBindingSentence,
   readsPerInstance,
   readingContextsOf,
+  subsettingRereadsOf,
+  type SubsettingReread,
   heldPastCapSentence,
+  hiddenReadSentence,
   instanceGroups,
   lookupsHold,
   lookupsOf,
@@ -102,7 +108,7 @@ import {
   type InstanceAbstention,
   type NameClash,
 } from './defining-equation';
-import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
+import { anyHiddenByName, effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
 import { evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
@@ -117,6 +123,8 @@ import {
   parseRelationBody,
   relationVarsOf,
   unitsOfDimension,
+  lexicalPackageOf,
+  typedAssertRefusal,
   valueFaultOf,
   type MarkerDimensions,
 } from './relations';
@@ -135,6 +143,7 @@ import {
   dimensionClaimDetail,
   dimensionalFacets,
   evaluateConstraintQuantityDetailed,
+  quantityOf,
   evaluateQuantity,
   isRefusalReason,
   quantityAtInstance,
@@ -410,6 +419,20 @@ function answerFor(
   pass: ScalarPass,
   inst?: string,
 ): ScalarAnswer | undefined {
+  // A name the context declares anew without `:>>` beside the feature a general's body names by it (g8, G8A, G8C:
+  // `hidden`) reads neither, wherever the value would come from: a general's body re-read there by name meets the
+  // context's feature, and by identity the general's. Nor does a name a binding joins to one, whichever member of
+  // the binding's component the reading reaches first.
+  const along = pass.definitions.clashAlong(contextId, name);
+  const hidden =
+    along?.clash.hidden !== undefined
+      ? along
+      : anyHiddenByName(model)
+        ? boundClashOf(model, contextId, name, (c) => c.hidden !== undefined)
+        : undefined;
+  if (hidden !== undefined) {
+    return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: `${name} has no value: ${clashSentence(model, hidden.contextId, hidden.clash)}` } };
+  }
   // An asserted equation of an element enclosing the instance defines the
   // value there (H5's enclosing rule): read it. Any other enclosing assert
   // constrains the value (A.2.4): abstain, never read it — one of an instance
@@ -487,6 +510,10 @@ function answerFor(
     // instance (`two-values`), not an instance left unread.
     const lexical = answer === undefined ? pass.definitions.lexicalRefusal(contextId, name) : undefined;
     if (lexical !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: lexical } };
+    // A dotted path to a package's usage (`q2.p.x` in q1's body) is read in the package, as every surface reads it
+    // (`lexicalPackageOf` of ./relations): one feature, not one per instance of the context.
+    const pkg = answer === undefined ? lexicalPackageOf(model, contextId, name) : undefined;
+    if (pkg !== undefined) return answerFor(model, pkg, name, pass);
   }
   // A decided answer is never replaced. Only a valueless one is read through
   // the binding the name meets in the instance (A.2.1) — never one two values
@@ -607,8 +634,24 @@ function valueThroughChain(model: Model, contextId: ElementId, name: string, pas
   if (!end || writesStandingDefault(model, end.feature)) return undefined;
   const own = pass.definitions.nameOf(end.feature)!;
   // Read in the usage that changes what the definition reads: its own value there.
-  if (end.at !== end.site) return defineIn(model, end.at, end.feature, own, pass.definitions.of(end.site, own), pass, true);
+  if (end.at !== end.site) {
+    return hiddenDefinition(model, end.site, end.at, own, pass) ?? defineIn(model, end.at, end.feature, own, pass.definitions.of(end.site, own), pass, true);
+  }
   return valueDefinedByEquation(model, end.site, own, pass);
+}
+
+/**
+ * The abstention of `name`'s asserted definition, written in `site`, re-read in `at` where `at` declares a name it
+ * reads anew without `:>>` (G8A's `K == L`, read in P2: {@link hiddenReadSentence}), or `undefined`: by name the
+ * equation reads `at`'s feature, by identity `site`'s, and this tool does not read which.
+ */
+function hiddenDefinition(model: Model, site: ElementId, at: ElementId, name: string, pass: ScalarPass): ScalarAnswer | undefined {
+  for (const eq of pass.definitions.of(site, name)) {
+    const text = equationText(eq).trim();
+    const hidden = hiddenReadSentence(model, text, site, at, relationNamesOf(text));
+    if (hidden !== undefined) return { value: undefined, depth: 0, abstention: { kind: 'two-values', sentence: `${name} has no value: ${hidden}` } };
+  }
+  return undefined;
 }
 
 /**
@@ -698,7 +741,10 @@ function valueDefinedByEquation(
     // Where the context changes what the definition reads, it is read here,
     // over the context's own names: the definition holds of every instance.
     if (read.at !== read.site) {
-      return defineIn(model, read.at, feature, name, pass.definitions.of(read.site, name), pass, true);
+      return (
+        hiddenDefinition(model, read.site, read.at, name, pass) ??
+        defineIn(model, read.at, feature, name, pass.definitions.of(read.site, name), pass, true)
+      );
     }
     return valueDefinedByEquation(model, read.site, name, pass);
   }
@@ -1524,6 +1570,8 @@ export interface InstanceRead {
   unit?: string;
   /** Set on the one value {@link SpecialisationInstance.redefined} names: the feature is the redefinition that states it. */
   redefined?: true;
+  /** On a {@link redefined} value that is no plain number: the text that states it (`5.0 * K`), which the finding quotes. */
+  text?: string;
   /** `exact` is SI, read the way the encoder reads the feature — set on the unit-aware reads alone; every other read's `exact` is in the stored magnitude or the declared `unit`. */
   si?: true;
   via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string; sourceValue?: number | boolean | string; sourceUnit?: string };
@@ -1570,7 +1618,12 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
   }
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     const expr = el.attrs.expression;
-    if (typeof expr !== 'string' || expr.trim() === '') continue;
+    if (typeof expr !== 'string' || expr.trim() === '') {
+      // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
+      const typed = typedAssertRefusal(model, el);
+      if (typed !== undefined) out.push({ id: el.id, ownerId: el.ownerId, expression: '', result: 'unknown', message: `Could not evaluate: ${typed}` });
+      continue;
+    }
 
     const groups = groupsByRelation.get(el.id) ?? [];
     // A relation OWNED by a usage U (R17c/R17, R1-M2): its own row is U's
@@ -1680,6 +1733,41 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       delete i.sides;
     }
   }
+  // A name a package head joins to an instance's standing value that an asserted relation contradicts, read per
+  // instance or on a definition's own row (headStandsAgainstAbove, F0): the package's rows abstain on it already
+  // (definedAgainstHead), and these read it as the package does — GH35's `cP in p1` at the 7 of `M == 7.0`, beside
+  // p3's `:>> m = 5.0`. A row that abstains already keeps its sentence; a slot's own standing value is still read.
+  // The predicate also holds where M is written with `=` and the assert is a violated check (GH110): such a row is
+  // left unknown too, an abstention.
+  for (const c of out) {
+    const names = relationNamesOf(c.expression);
+    const el = model.get(c.id);
+    const own =
+      c.result === 'unknown' || el?.ownerId == null
+        ? undefined
+        : names.map((n) => headStandsAgainstAbove(model, el.ownerId!, n, true)).find((x) => x !== undefined);
+    if (own !== undefined) {
+      c.result = 'unknown';
+      c.message = `Could not evaluate: ${own}`;
+      delete c.tie;
+      delete c.reads;
+      delete c.sides;
+    }
+    for (const i of c.instances ?? []) {
+      if (i.result === 'unknown') continue;
+      const each = names
+        .map((n) => headStandsAgainstAbove(model, i.contextId, nameAtInstance(model, i.contextId, i.instance, n)))
+        .find((x) => x !== undefined);
+      if (each === undefined) continue;
+      i.result = 'unknown';
+      i.message = `Could not evaluate: ${each}`;
+      i.detail = i.message;
+      i.abstention = 'two-values';
+      i.cause = 'two-values';
+      delete i.reads;
+      delete i.sides;
+    }
+  }
   out.push(...contradictions(model, pass));
   out.push(...bindingConflicts(model, pass));
   out.push(...definitionConflicts(model, apart));
@@ -1702,7 +1790,8 @@ function definitionConflicts(model: Model, apart: ReadonlyMap<ContradictedDefini
   return sets.map((set) => {
     const read = apart.get(set);
     const sentence = contradictedDefinitionConflict(model, set, read);
-    const differs = set.verdict === 'differs' || read !== undefined;
+    // A pair met by name only, over a name the context declares anew without `:>>` (G8C), is no contradiction this tool reads.
+    const differs = set.hidden !== true && (set.verdict === 'differs' || read !== undefined);
     return {
       id: `${set.feature.id}@${set.context.id}`,
       ownerId: set.context.id,
@@ -1767,6 +1856,9 @@ function contradictedApart(model: Model, pass: ScalarPass): ReadonlyMap<Contradi
           const el = equationRecord(site.equation);
           const expr = equationText(site.equation);
           if (contradictedSideReadsAnother(model, set, site)) continue;
+          // Nor one no surface reads (`L == 50.0` for `L : MassValue [g]`): judged, its number was 50 against 50 [g].
+          const dotted = site.name.includes('.') ? site.name : undefined;
+          if (equationDerivation(model, site.feature.id, expr, pass.memo, site.at, dotted).reason === 'declared-unit') continue;
           const reading: ElementRecord = site.at === el.ownerId ? el : { ...el, ownerId: site.at };
           const judged = judgeConstraint(model, reading, expr, pass, new Map([[site.name, boundOfReading(site.feature, a)]]));
           if (judged.result !== 'violated') continue;
@@ -1908,16 +2000,21 @@ function isNumberLiteral(text: unknown): boolean {
   return typeof text === 'string' && /^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(text.trim());
 }
 
+/** {@link isNumberLiteral}, or one number written in a unit (`20.0 [kg]`). */
+function isQuantityLiteral(text: unknown): boolean {
+  return typeof text === 'string' && isNumberLiteral(text.replace(/\s*\[[^\]]*\]\s*$/, ''));
+}
+
 /**
  * The read whose value breaks a violated relation at an instance (PI-2): one
  * that makes the relation hold when it alone is put back to the value the
  * relation's own context gives it — the
  * difference, where `load + extra <= 10.0` reads `load = 2` from one binding
  * and `extra = 20` from another (`load` put back to 1 still misses). Read in
- * the scalar scope the judgement itself used, so only where that reproduces
- * the verdict and no value is a quantity in a unit: `undefined` otherwise (and
- * where it throws), when the finding keeps naming the first read a binding
- * carried. With `ownElement`, a value the instance's own element redefines as a number
+ * the scalar scope the judgement itself used, where that reproduces the
+ * verdict; where a value is a quantity in a unit, in the unit-aware reading
+ * that decided it ({@link quantityBreak}); `undefined` otherwise (and where it
+ * throws), when the finding keeps naming the first read a binding carried. With `ownElement`, a value the instance's own element redefines as a number
  * may be named although no read lists it: the result is then a read the row does not
  * list (`redefined`), so a caller finds it by its `featureId`, not among `reads`.
  */
@@ -1925,7 +2022,23 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
   const reads = judged.reads;
   if (judged.result !== 'violated' || reads === undefined || reads.length === 0) return undefined;
   try {
-    if (judged.sides !== undefined || reads.some((r) => typeof r.value !== 'number' || r.si === true || r.unit !== undefined)) return undefined;
+    if (judged.sides !== undefined || reads.some((r) => typeof r.value !== 'number' || r.si === true || r.unit !== undefined)) {
+      if (judged.requote === undefined) return undefined;
+      const read = quantityBreak(model, own, judged.requote, reads);
+      if (read !== undefined || !ownElement || reading.ownerId == null || judged.quote === undefined) return read;
+      // A redefined quantity no read lists (`:>> extra = 20.0 [kg]`), as for numbers below: named where the
+      // reading read the very quantity the line states (one written as a number in a unit; a derived one is
+      // not compared, so not named) and putting it back to the relation's own quantity holds the reading.
+      const { requote, quote } = judged;
+      const opts: ConstraintQuantityOptions = readsPerInstance(model) ? { instances: true } : {};
+      return redefinedBreak(model, reading.ownerId, expr, pass, reads, (name, stated, text) => {
+        const read = quote(name);
+        const written = isQuantityLiteral(text) ? evaluateQuantity(model, stated.id) : undefined;
+        if (read === undefined || written === undefined || read.unit === undefined || read.magnitude !== written.magnitude || read.unit !== written.unit) return undefined;
+        const there = quantityOf(model, own, name, opts);
+        return there !== undefined && requote((n) => (n === name ? there : undefined)) === 'satisfied' ? { value: read.magnitude, unit: read.unit } : undefined;
+      });
+    }
     const node = parseExpr(expr);
     const here = combinedScope(model, reading, pass, inst);
     const base = evaluate(node, here);
@@ -1940,27 +2053,78 @@ function breakingRead(model: Model, own: ElementRecord, reading: ElementRecord, 
     // No read mends it: a value the instance's own element redefines (`part :>> p { attribute :>> extra =
     // 20.0; }`), which no binding carries and no read lists, may. It is named by the redefinition that
     // states it, which is the instance's own line (194); the row's `reads` stay as the engines read them.
-    const definitions = pass.definitions;
-    const root = reading.ownerId;
-    const inside = (el: ElementRecord): boolean => {
-      for (let cur: ElementRecord | undefined = el; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
-        if (cur.id === root) return true;
-      }
-      return false;
-    };
-    for (const name of namesIn(expr)) {
-      if (reads.some((r) => r.path === name)) continue;
-      const d = definitions.denote(root).get(name);
-      const stated = d !== undefined ? definitions.carrier(d.reader, d.feature) : undefined;
+    // A derived value (`5.0 * K`) is the stated one where its text, read where it is stated, gives the value read.
+    return redefinedBreak(model, reading.ownerId, expr, pass, reads, (name, stated, text) => {
       const value = here(name);
-      if (stated === undefined || stated.attrs.isLibrary === true || stated.attrs.implicit === true || !inside(stated)) continue;
-      if (typeof value !== 'number' || !hasStatedValue(model, stated) || !isNumberLiteral(stated.attrs.valueText) || value !== stated.attrs.value || !mends(name)) continue;
-      return { path: name, featureId: stated.id, symbol: definitions.qualifiedNameOf(stated.id), value, redefined: true };
-    }
-    return undefined;
+      if (typeof value !== 'number' || !mends(name)) return undefined;
+      if (isNumberLiteral(text)) return value === stated.attrs.value ? { value } : undefined;
+      const at = stated.ownerId != null ? model.get(stated.ownerId) : undefined;
+      const own = at !== undefined ? evaluate(parseExpr(text), combinedScope(model, at, pass)) : undefined;
+      return own !== undefined && 'value' in own && own.value === value ? { value } : undefined;
+    });
   } catch {
     return undefined;
   }
+}
+
+/**
+ * {@link breakingRead} of a violated relation the unit-aware reading decided
+ * (a read in a unit, an SI figure, sides): the first read that, put back to the
+ * quantity the relation's own context gives it, makes the same reading hold.
+ * Only where the reading, read again, is still violated; an `unknown` (an
+ * offset unit put back, a name with no quantity there) never mends.
+ */
+function quantityBreak(model: Model, own: ElementRecord, requote: NonNullable<Judgement['requote']>, reads: readonly InstanceRead[]): InstanceRead | undefined {
+  if (requote(() => undefined) !== 'violated') return undefined;
+  const opts: ConstraintQuantityOptions = readsPerInstance(model) ? { instances: true } : {};
+  return reads.find((r) => {
+    const there = quantityOf(model, own, r.path, opts);
+    return there !== undefined && requote((n) => (n === r.path ? there : undefined)) === 'satisfied';
+  });
+}
+
+/**
+ * The redefined value {@link breakingRead} names where no read mends the relation (194): a name the relation
+ * reads that no read lists, stated by a user member inside the instance's own element (`root`), whose stated
+ * text reads no name a read lists (else the read, not the line, is the change). `holds` gives the value the
+ * relation read, where it is the stated one and putting it back mends the relation; a derived value keeps its
+ * stated text (`5.0 * K`) for the message.
+ */
+function redefinedBreak(
+  model: Model,
+  root: ElementId,
+  expr: string,
+  pass: ScalarPass,
+  reads: readonly InstanceRead[],
+  holds: (name: string, stated: ElementRecord, text: string) => { value: number; unit?: string } | undefined,
+): InstanceRead | undefined {
+  const definitions = pass.definitions;
+  const inside = (el: ElementRecord): boolean => {
+    for (let cur: ElementRecord | undefined = el; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+      if (cur.id === root) return true;
+    }
+    return false;
+  };
+  for (const name of namesIn(expr)) {
+    if (reads.some((r) => r.path === name)) continue;
+    const d = definitions.denote(root).get(name);
+    const stated = d !== undefined ? definitions.carrier(d.reader, d.feature) : undefined;
+    if (stated === undefined || stated.attrs.isLibrary === true || stated.attrs.implicit === true || !inside(stated) || !hasStatedValue(model, stated)) continue;
+    const text = typeof stated.attrs.valueText === 'string' ? stated.attrs.valueText : stated.attrs.value;
+    if (typeof text !== 'string' || namesIn(text).some((n) => reads.some((r) => r.path === n))) continue;
+    const held = holds(name, stated, text);
+    if (held === undefined) continue;
+    return {
+      path: name,
+      featureId: stated.id,
+      symbol: definitions.qualifiedNameOf(stated.id),
+      value: held.value,
+      ...(held.unit !== undefined ? { unit: held.unit } : {}),
+      ...(isQuantityLiteral(text) ? {} : { text: text.trim() }),
+      redefined: true,
+    };
+  }
+  return undefined;
 }
 
 /** What {@link breakingRead} depends on in a violated row: its reads' names, values and units, and where the relation is read. */
@@ -2047,32 +2211,89 @@ function instanceAnchor(
     // The value that breaks it is derived (`L = 2.0 * K`, which no member of the instance states, M7's and PB's): the one
     // member the instance's own elements state of what that value reads (q2's `:>> K = 25.0`), the instance's own
     // changing line — where it is the only one (193). Only where putting the read back mends the relation.
-    const derived = mends && reads?.length === 1 ? reads[0]!.via : undefined;
-    if (derived !== undefined) {
+    const one = mends && reads?.length === 1 ? reads[0]! : undefined;
+    const owned = new Set(mine.map((m) => m.reader));
+    const inOwn = (f: ElementRecord): boolean => {
+      for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+        if (owned.has(cur.id)) return true;
+      }
+      return false;
+    };
+    // The stated numbers a source's value reads, from the innermost own element spelling it; `undefined` where none does.
+    // A number the parser kept no lexeme for (`5.5`, which prints as it reads) is a literal too.
+    const inputsOf = (sourceSymbol: string): ElementRecord[] | undefined => {
       for (let k = mine.length - 1; k >= 0; k--) {
         const { instance, reader } = mine[k]!;
-        if (derived.sourceSymbol === instance || !spellsInstance(derived.sourceSymbol, instance)) continue;
-        const d = definitions.denote(reader).get(derived.sourceSymbol.slice(instance.length + 2).split('::').join('.'));
+        if (sourceSymbol === instance || !spellsInstance(sourceSymbol, instance)) continue;
+        const d = definitions.denote(reader).get(sourceSymbol.slice(instance.length + 2).split('::').join('.'));
         if (!d) continue;
-        const own = new Set(mine.map((m) => m.reader));
-        const inOwn = (f: ElementRecord): boolean => {
-          for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
-            if (own.has(cur.id)) return true;
-          }
-          return false;
-        };
-        const states = definitions
+        return definitions
           .dependencies(d.reader, d.feature)
           .map((id) => model.get(id))
-          .filter((f): f is ElementRecord => user(f) && hasStatedValue(model, f) && isNumberLiteral(f.attrs.valueText));
-        // Another stated input that is a redefinition outside the instance's own elements (Q2's `:>> K = 25.0`
-        // beside the instance's own `J`) may be what breaks it: the own line is not shown to be the cause (m7j).
-        // A declaration nothing redefines (Q's `J default = 0.0`) is what the relation's own context reads too.
-        if (states.some((f) => !inOwn(f) && redefinedClosure(model, f).length > 0)) break;
+          .filter((f): f is ElementRecord => user(f) && hasStatedValue(model, f) && (isNumberLiteral(f.attrs.valueText) || (f.attrs.valueText === undefined && typeof f.attrs.value === 'number')));
+      }
+      return undefined;
+    };
+    // A breaking read no binding carries, whose value its definition derives from names a binding does carry
+    // (PB's `m2 = 10.0 - load`, its `load` bound to R's `L = 2.0 * K`): those bindings' sources, read as a
+    // carried read's source is. Only where the derived line is a declaration outside the instance's own
+    // elements (what the relation's own context reads too), every name it reads is bound, and no source is a
+    // redefinition outside them; else none (193).
+    const derivedSources = (read: InstanceRead): string[] | undefined => {
+      const at = read.symbol.lastIndexOf('::');
+      if (at < 0) return undefined;
+      for (let k = mine.length - 1; k >= 0; k--) {
+        const { instance, reader } = mine[k]!;
+        if (read.symbol === instance || !spellsInstance(read.symbol, instance)) continue;
+        const d = definitions.denote(reader).get(read.symbol.slice(instance.length + 2).split('::').join('.'));
+        if (!d) continue;
+        const carrier = definitions.carrier(d.reader, d.feature);
+        const text = typeof carrier.attrs.valueText === 'string' ? carrier.attrs.valueText : carrier.attrs.value;
+        if (!user(carrier) || inOwn(carrier) || !hasStatedValue(model, carrier) || typeof text !== 'string' || isNumberLiteral(text)) return undefined;
+        if (redefinedClosure(model, carrier).length > 0) return undefined;
+        const names = namesIn(text);
+        const out: string[] = [];
+        for (const n of names) {
+          if (!definitions.denote(d.reader).has(n)) return undefined;
+          const src = boundSourceIn(model, `${read.symbol.slice(0, at)}::${n.split('.').join('::')}`);
+          if (src === undefined || 'abstain' in src) return undefined;
+          const sd = definitions.denote(src.root).get(src.via.source);
+          if (!sd) return undefined;
+          const stated = definitions.carrier(sd.reader, sd.feature);
+          if (!inOwn(stated) && redefinedClosure(model, stated).length > 0) return undefined;
+          out.push(definitions.symbolOf(sd));
+        }
+        return out.length > 0 ? out : undefined;
+      }
+      return undefined;
+    };
+    const sourcesRead = one === undefined ? undefined : one.via !== undefined ? [one.via.sourceSymbol] : derivedSources(one);
+    const inputs = sourcesRead?.map(inputsOf);
+    if (inputs !== undefined && inputs.length > 0 && inputs.every((s) => s !== undefined)) {
+      const states = inputs.flat();
+      // Another stated input that is a redefinition outside the instance's own elements (Q2's `:>> K = 25.0`
+      // beside the instance's own `J`) may be what breaks it: the own line is not shown to be the cause (m7j).
+      // A declaration nothing redefines (Q's `J default = 0.0`) is what the relation's own context reads too.
+      if (!states.some((f) => !inOwn(f) && redefinedClosure(model, f).length > 0)) {
         const ids = [...new Set(states.filter(inOwn).map((f) => f.id))];
         if (ids.length === 1) return { id: ids[0]! };
-        break;
       }
+      // No own element states an input, and the one input in force (Q's `K default = 0.5` being redefined) is a
+      // redefinition a definition's usage states, on a frame every instance typed by it shares (R's q `:>> K =
+      // 5.5` under Q's `L = 2.0 * K`, for r1's q and r2's): that line, the one cause of each of their findings,
+      // which {@link instanceRollup} folds as it does the shared literal above (193).
+      const hidden = new Set(states.flatMap((f) => redefinedClosure(model, f).map((g) => g.id)));
+      const live = [...new Set(states.filter((f) => !hidden.has(f.id)))];
+      const onShared = (f: ElementRecord): boolean => {
+        for (let cur: ElementRecord | undefined = f; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+          const id = cur.id;
+          const el = cur;
+          const frame = isUsage(el.eClass) || (isDefinition(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage');
+          if (frame && user(el) && !owned.has(id) && frames.some((fr) => fr.reader === id)) return true;
+        }
+        return false;
+      };
+      if (live.length === 1 && !states.some(inOwn) && redefinedClosure(model, live[0]!).length > 0 && onShared(live[0]!)) return { id: live[0]!.id, shared: true };
     }
     // No read names a source of its own: the stated member, from the innermost own element, the names
     // spelled from it and only its own paths read.
@@ -2089,6 +2310,26 @@ function instanceAnchor(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The anchor of a violated context row no binding carries (a target's, `target-by-specialisation`), where the
+ * feature it would point at is a line a definition states for every usage it types (P2's `:>> load = 5.0`
+ * under q2's `part :>> p : P2 { attribute :>> extra = 12.0; }`): the context itself, its innermost own element,
+ * naming nothing. `undefined` (the feature, as before) where that feature lies inside the context or inside a
+ * usage (the satisfier's own redefinition, read through a subject), or where the context is no user usage or
+ * definition of its own.
+ */
+function sharedFeatureAnchor(model: Model, x: ElementRecord, featureId: ElementId | undefined): ElementId | undefined {
+  const frame = (el: ElementRecord): boolean =>
+    isUsage(el.eClass) || (isDefinition(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage');
+  if (featureId === undefined || x.attrs.isLibrary === true || x.attrs.implicit === true || !frame(x)) return undefined;
+  const f = model.get(featureId);
+  for (let cur = f?.ownerId != null ? model.get(f.ownerId) : undefined; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    if (cur.id === x.id || isUsage(cur.eClass)) return undefined;
+    if (frame(cur)) return x.id;
+  }
+  return undefined;
 }
 
 /** One row of {@link instanceRollup}: a finding the rule and the app's Check format identically. */
@@ -2468,7 +2709,7 @@ function violatedInstanceMessage(model: Model, relation: string, expr: string, i
   const read = inst.breaks !== undefined ? (inst.reads?.find((r) => r.path === inst.breaks) ?? inst.redefined) : inst.reads?.find((r) => r.via !== undefined);
   let detail = '';
   if (read && !read.via && inst.breaks !== undefined) {
-    detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)}`;
+    detail = `: ${read.path} = ${String(read.value)}${unitSuffix(read)}${read.text !== undefined ? ` (= ${read.text})` : ''}`;
   } else if (read?.via) {
     const v = read.via;
     const source = v.sourceValue !== undefined ? ` = ${String(v.sourceValue)}${v.sourceUnit !== undefined ? ` [${v.sourceUnit}]` : ''}` : '';
@@ -2639,11 +2880,14 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
           ? statedPass(model, new Set(ends.flatMap((e) => (e.den !== undefined ? [`${e.den.instance}::${e.name}`] : []))))
           : pass;
         result = contradicted ? 'violated' : judgeConstraint(model, reading, expr, judging).result;
+        // Read in a context that declares an end's name anew without `:>>` beside the one the holder names (g8): the
+        // pair is no pair of the model's there, in its own sentence.
+        if (result !== 'unknown' && x.id !== owner.id) unread = hiddenReadSentence(model, `bind ${left} = ${right}`, owner.id, x.id, [left, right]);
         // An end a value this tool does not read may reach (equatedPartsRefusal):
         // the conflict read there is no conflict of the model's. PA's `bind p2.M
         // = K` beside P's `L == M`: p2's M is K's 9, which the equation makes
         // p2's L too, where M was read from L's default 2 and the pair reported.
-        if (!against && result === 'violated') unread = equatedPartsRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
+        if (!against && result === 'violated') unread ??= equatedPartsRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
         // So is a pair read at an end two asserted equations give two values (contradictedDefinitionRefusal), decided
         // or not: the first equation written gave the end its value, so the pair was reported in one order only.
         if (!against) unread ??= contradictedDefinitionRefusal(model, b.id, expr, x.id === b.ownerId ? undefined : { contextId: x.id });
@@ -2753,6 +2997,21 @@ function renamedIn(
 }
 
 /**
+ * The clause a row an asserted relation is read again in, through a usage that subsets a feature the instance reads
+ * otherwise, says so with ({@link subsettingRereadsOf}).
+ */
+function rereadClause(model: Model, reread: SubsettingReread): string {
+  const who = effectiveQualifiedName(model, reread.context.id);
+  return reread.via
+    .map(({ usage, subsetted }) => {
+      const u = effectiveNameOf(model, usage) ?? usage.id;
+      const g = effectiveNameOf(model, subsetted) ?? subsetted.id;
+      return `\`${u}\` subsets \`${g}\`, so every \`${u}\` of ${who} is one of its \`${g}\`s, and is read as one`;
+    })
+    .join('; ');
+}
+
+/**
  * Read a definition's constraint in every context that specialises the
  * definition and reads it differently ({@link DefiningEquations.changingContexts}):
  * one {@link SpecialisationInstance} per context, judged by the one pipeline
@@ -2773,8 +3032,8 @@ function readInContexts(
   groups?: readonly InstanceGroup[],
 ): void {
   if (el.ownerId == null) return;
-  const names = namesIn(expr);
-  const walked = readingContextsOf(model, pass.definitions, el, names);
+  const allNames = namesIn(expr);
+  const walked = readingContextsOf(model, pass.definitions, el, allNames);
   // A throw in the relation's own context walk (A.2.9): which other contexts read it is unknown, so one row says
   // so, `internal`, and the relation's own row stands. (The obligations lane files the same refusal.)
   if ('failed' in walked) {
@@ -2794,14 +3053,16 @@ function readInContexts(
     });
     return;
   }
-  const contexts = walked.contexts;
+  // An asserted relation read through a usage that subsets a feature an instance reads otherwise is read again in
+  // each such instance, the usage read as one of what that feature is there ({@link subsettingRereadsOf}).
+  const rereads = subsettingRereadsOf(model, el.id);
+  const contexts = [...walked.contexts, ...[...rereads.values()].map((r) => r.context).filter((c) => !walked.contexts.some((x) => x.id === c.id))];
   if (contexts.length === 0) return;
   const owner = el.ownerId;
   const ownIds = pass.definitions.scope(owner, 'all');
   const ownValues = idsIn(pass, owner);
   const target = targetName(model, el);
   const instances = check.instances ?? [];
-  const bodyNames = relationNamesOf(expr);
   const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
   let broken = 0;
   // The elements an expanded group's row reads as their own instance (q2's
@@ -2833,7 +3094,11 @@ function readInContexts(
       }
       continue;
     }
-    const reading: ElementRecord = { ...el, ownerId: x.id };
+    const reread = rereads.get(x.id);
+    const text = reread?.expression ?? expr;
+    const reading: ElementRecord = reread ? { ...el, ownerId: x.id, attrs: { ...el.attrs, expression: text } } : { ...el, ownerId: x.id };
+    const names = reread ? namesIn(text) : allNames;
+    const bodyNames = relationNamesOf(text);
     // A context whose reading met a binding above it (F5), or one listed only
     // because a member reads its own value there (M7's `Q::c in q2`, E7), is
     // read per instance — at the context's own instance — instead of being
@@ -2861,15 +3126,20 @@ function readInContexts(
       !cap && !via && pass.definitions.readsBoundOnly(el, names, x.id)
         ? pass.definitions.boundStatedTwiceIn(el, names, x.id)
         : undefined;
+    // A name x declares anew without `:>>` beside the one the relation's owner names (G8A's `K == L`, P's plain
+    // `K == 70.0` read in P2): not read there, in its own sentence (G-pair-b).
+    const hidden = hiddenReadSentence(model, expr.trim(), owner, x.id, bodyNames);
     const why =
-      cap
-        ? boundAboveSentence(pass.definitions, x.id, above!)
-        : here !== undefined
-          ? boundHereSentence(pass.definitions, x.id, here)
-          : undefined;
+      hidden !== undefined
+        ? hidden
+        : cap
+          ? boundAboveSentence(pass.definitions, x.id, above!)
+          : here !== undefined
+            ? boundHereSentence(pass.definitions, x.id, here)
+            : undefined;
     let judged: Judgement = why !== undefined
       ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false, ...(cap ? { abstention: 'past-cap' as const } : {}) }
-      : judgeConstraint(model, reading, expr, pass);
+      : judgeConstraint(model, reading, text, pass);
     // Unread where the context renames a bound feature the relation reads: said so.
     if (judged.result === 'unknown' && why === undefined && judged.abstention === undefined && renamed !== undefined) {
       judged = { ...judged, message: `Could not evaluate: ${renamed.sentence}` };
@@ -2895,7 +3165,8 @@ function readInContexts(
       return {
         name: n,
         featureId,
-        ...(through ? { instance: instancePathOf(model, satisfied?.satisfier ?? x) } : {}),
+        // A reread names the context too: the feature it reads is not the context's own `p1` (`w::p1.load`).
+        ...(through || reread !== undefined ? { instance: instancePathOf(model, satisfied?.satisfier ?? x) } : {}),
         // A value read in the context is the context's own: named by it.
         qualifiedName: own(n)
           ? `${pass.definitions.contextName(x.id)}::${n}`
@@ -2908,23 +3179,31 @@ function readInContexts(
       };
     });
     const contextName = effectiveNameOf(model, satisfied?.satisfier ?? x) ?? nameOf(satisfied?.satisfier ?? x);
-    // The read whose value breaks the relation, where it read several (PI-2).
+    // The read whose value breaks the relation, where it read several (PI-2); or, where the context is an
+    // element of its own instance (`instanceAnchor`'s `mine`), a value it redefines that no read lists (194).
+    const ownsFrame =
+      readAs !== undefined &&
+      x.attrs.isLibrary !== true &&
+      x.attrs.implicit !== true &&
+      (isUsage(x.eClass) || (isDefinition(x.eClass) && x.eClass !== 'Package' && x.eClass !== 'LibraryPackage')) &&
+      pass.definitions.instanceNameOf(x.id) === readAs;
     const broke =
       readAs !== undefined && judged.result === 'violated' && broken++ < TARGET_CONTEXT_FOLD
-        ? breakingRead(model, el, reading, expr, pass, undefined, judged)
+        ? breakingRead(model, el, reading, text, pass, undefined, judged, ownsFrame)
         : undefined;
-    const several = broke !== undefined && (judged.reads?.length ?? 0) > 1;
+    const several = broke !== undefined && (broke.redefined === true || (judged.reads?.length ?? 0) > 1);
     // The renamed end, for a row it leaves unread: the line an author edits.
     const anchor =
       readAs === undefined
-        ? undefined
+        ? judged.result === 'violated' ? sharedFeatureAnchor(model, x, shown[0]?.featureId) : undefined
         : renamed !== undefined && judged.result === 'unknown'
           ? renamed.member.id
           : instanceAnchor(model, pass.definitions, readAs, several ? [broke.path] : names, several ? [broke] : judged.reads, undefined, x.id, broke !== undefined)?.id;
     // A violated `assert` says why a `default` stood at this instance, read as the instance reads its names (the
     // context is the owner): q's `:>> L = 50.0` is no default, and P's `load default = 1.0` is the one that stood.
     const kept = judged.result === 'violated' ? standingFor(model, reading) : undefined;
-    const said = instanceMessage(model, judged, shown, contextName, target, expr, scope);
+    const plainSaid = instanceMessage(model, judged, shown, contextName, target, expr, scope);
+    const said = reread ? `${plainSaid} — ${rereadClause(model, reread)}` : plainSaid;
     instances.push({
       contextId: x.id,
       context: contextName,
@@ -2942,6 +3221,7 @@ function readInContexts(
       ...(causeOf(judged) !== undefined ? { cause: causeOf(judged) } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
       ...(broke !== undefined ? { breaks: broke.path } : {}),
+      ...(broke?.redefined === true ? { redefined: broke } : {}),
       ...(judged.sides ? { sides: judged.sides } : {}),
     });
   }
@@ -3244,6 +3524,15 @@ interface Judgement {
    * {@link SpecialisationInstance.cause}.
    */
   cause?: InstanceAbstention;
+  /**
+   * A `violated` the unit-aware reading decided, read again with some names
+   * put to other quantities (`put`, before the judgement's own bindings):
+   * how {@link breakingRead} names a read that carries a unit. Never
+   * serialised, never a verdict.
+   */
+  requote?: (put: (name: string) => Quantity | undefined) => 'satisfied' | 'violated' | 'unknown';
+  /** Beside {@link requote}: the quantity that reading reads a name as. Never serialised. */
+  quote?: (name: string) => Quantity | undefined;
 }
 
 /**
@@ -3336,7 +3625,7 @@ function judgeBound(
     const ua = unitAwareVerdict(model, el, expr, uaOpts);
     if ('gap' in ua) {
       const lowered = parseRelationBody(expr);
-      const unread = lowered?.resolved && unreadRefusal(model, el, lowered.node, pass, bindings, lowered.literals);
+      const unread = lowered?.resolved && decidedRefusal(model, el, ua, expr, lowered.node, pass, uaOpts, bindings, lowered.literals);
       if (unread) return { result: 'unknown', message: unread, gap: false };
       return abstainedRead(model, el, pass, bindings, namesIn(expr), at) ?? ua;
     }
@@ -3404,7 +3693,7 @@ function judgeBound(
   // remains the fallback for exactly those, not a hard switch.
   const ua = unitAwareVerdict(model, el, expr, uaOpts);
   if ('gap' in ua) {
-    const unread = unreadRefusal(model, el, node, pass, bindings);
+    const unread = decidedRefusal(model, el, ua, expr, node, pass, uaOpts, bindings);
     if (unread) return { result: 'unknown', message: unread, gap: false };
     return abstainedRead(model, el, pass, bindings, referencedNames(node), at) ?? ua;
   }
@@ -3588,7 +3877,7 @@ function carriedVerdict(
     if (refused) return { result: 'unknown', message: refused, gap: false };
     const reads = collectReads(model, el, pass, names, own, at);
     const message = ua.result === 'satisfied' ? `Constraint satisfied${readsClause(model, reads)}` : `Constraint violated: ${expr}${readsClause(model, reads)}`;
-    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}) };
+    return { result: ua.result, message, gap: false, ...(reads ? { reads } : {}), ...(ua.sides ? { sides: ua.sides } : {}), ...(ua.requote ? { requote: ua.requote } : {}), ...(ua.quote ? { quote: ua.quote } : {}) };
   }
   if (isRefusalReason(ua.reason)) {
     return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: false, ...(ua.reason === 'tie' ? { tie: true as const } : {}) };
@@ -4081,17 +4370,24 @@ function chainCauses(
  * relation on its own: a verdict that does not depend on it stands
  * (`flag > 0.0 or c.load <= 1.0`), and one that does is undecided — on every
  * surface, in this surface's sentence.
+ *
+ * With `hidden` false, a name the context declares anew without `:>>` (the clash's `hidden`, g8) is not listed: the
+ * verification lane reads it as a symbol of its own, and refuses there only the rows a general's body writes over
+ * it (./obligations), each keeping its variables, so the goals that read them abstain and a contradiction the
+ * context's own bodies state stays one.
  */
 export function unreadValuesOf(
   model: Model,
   el: ElementRecord,
   names: readonly string[],
   memo?: DerivationMemo,
+  hidden = true,
 ): string[] {
   const out: string[] = [];
   const pass = passFor(model, memo);
   for (const name of new Set(names)) {
-    if (clashOf(el, name, pass)) {
+    const clash = clashOf(el, name, pass);
+    if (clash !== undefined && (hidden || clash.clash.hidden === undefined)) {
       out.push(name);
       continue;
     }
@@ -4788,7 +5084,12 @@ function unitAwareVerdict(
       ? { sides: { lhsSI: ua.lhsSI, rhsSI: ua.rhsSI, dimension: dimToString(ua.dimension) } }
       : {};
   if (ua.verdict === 'satisfied') return { result: 'satisfied', message: 'Constraint satisfied', gap: false, ...sides };
-  if (ua.verdict === 'violated') return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false, ...sides };
+  if (ua.verdict === 'violated') {
+    const requote = (put: (name: string) => Quantity | undefined): 'satisfied' | 'violated' | 'unknown' =>
+      evaluateConstraintQuantityDetailed(model, el, { ...opts, bind: (name) => put(name) ?? opts.bind?.(name) }).verdict;
+    const quote = (name: string): Quantity | undefined => quantityOf(model, el, name, opts);
+    return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false, ...sides, requote, quote };
+  }
   return ua;
 }
 
@@ -5516,6 +5817,52 @@ function unreadRefusal(
   });
   if (point !== undefined) return `Could not evaluate: ${describeReason('offset', units.get(point))}`;
   return derivedBareLiteralRefusal(model, el, node, pass, bindings, markers);
+}
+
+/**
+ * {@link unreadRefusal} of a body the unit-aware evaluator DECIDED, `judged`,
+ * read conjunct by conjunct in KerML order (K1).
+ *
+ * KerML evaluates `and` left to right and does not evaluate the second operand
+ * of a false first one (KerML 7.4.9.2): `p.L == 50.0 [kg] and p.L <= 5.0 [kg]
+ * and p.M >= p.L` at L = 50 kg is false at its second conjunct, and the third,
+ * which gate (e) refuses, is never read. So a violated conjunction stands
+ * where a conjunct ({@link conjunctsOf}) reads violated, every conjunct before
+ * it reads satisfied or reads a name with no value (absorbed, as F6 absorbs
+ * `u and false`), and none up to it is refused — each read on its own, as
+ * the body it would be written alone. Any other case, a refused or undecided
+ * conjunct first included (`refused and false` stays a refusal), keeps the
+ * whole body's refusal, as does a satisfied body: every operand of a true
+ * conjunction is read.
+ */
+function decidedRefusal(
+  model: Model,
+  el: ElementRecord,
+  judged: Judgement,
+  expr: string,
+  node: ExprNode,
+  pass: ScalarPass,
+  opts: ConstraintQuantityOptions,
+  bindings?: ReadonlyMap<string, Bound>,
+  markers: MarkerDimensions = NO_MARKERS,
+): string | undefined {
+  const whole = unreadRefusal(model, el, node, pass, bindings, markers);
+  // `judged` read the element's own body: a conjunct of any other text is no part of that verdict.
+  if (whole === undefined || judged.result !== 'violated' || expr !== el.attrs.expression) return whole;
+  const parts = conjunctsOf(expr);
+  if (parts.length < 2) return whole;
+  for (const part of parts) {
+    if (unreadRefusal(model, el, part.node, pass, bindings, part.literals)) return whole;
+    const read = unitAwareVerdict(model, { ...el, attrs: { ...el.attrs, expression: part.text } }, part.text, opts);
+    // A name with no value is absorbed by a false conjunct after it (`u and false`, F6); any other unknown is not.
+    if (!('result' in read)) {
+      if (read.reason === 'unresolved') continue;
+      return whole;
+    }
+    if (read.result === 'violated') return undefined;
+    if (read.result !== 'satisfied') return whole;
+  }
+  return whole;
 }
 
 /** Every dotted reference in an expression tree, in source order. */

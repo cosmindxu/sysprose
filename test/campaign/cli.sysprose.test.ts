@@ -2358,6 +2358,24 @@ package P {
     }
   }, 120_000);
 
+  it('verify refuses a negated satisfaction: its own finding, exit 2, and no row for the requirement in its satisfier (a5 F2)', () => {
+    // `assert not satisfy R by s0;` read as a bare `assert not` and the plain `satisfy R by s0;`: R was judged for s0.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-negated-satisfy-'));
+    try {
+      const file = join(dir, 'nb7.sysml');
+      writeFileSync(
+        file,
+        'package NB7 {\n  part def S { attribute m : ScalarValues::Real; }\n  requirement def R { subject s : S; require constraint { s.m <= 5.0 } }\n  part s0 : S { attribute :>> m = 7.0; }\n  assert not satisfy R by s0;\n}\n',
+      );
+      const r = spawnCli(['verify', file, '--engine', 'literal', '--json']);
+      expect(r.stdout + r.stderr).toContain('mapper/negated-assert-unread');
+      expect(r.code, 'a model with a negated satisfaction it cannot read was judged').toBe(2);
+      expect(r.stdout).not.toMatch(/NB7::R[^"]* in NB7::s0/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('verify reads a negated assert as the negation of its body: the model that contradicts itself is reported, not refused', () => {
     // The same clause with a body that is one expression is the plain clause over `not (load > 10.0)`: it is violated at
     // load = 50, the load stays clean, and the relation beside it abstains in a sentence that names the clause.

@@ -673,6 +673,10 @@ function scopeRowDigest(row: Obligation): string {
       factor: v.siFactor,
       offset: v.siOffset,
       sort: row.sortPerVar[v.path] ?? 'Real',
+      // `Natural`, `Positive` and `UnlimitedNatural` share sort `Int` with
+      // `Integer`, and the encoder refuses them: the type is an input too.
+      // Only where present, so no scope without one moves.
+      ...(v.restricted !== undefined ? { restricted: v.restricted } : {}),
     }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return `sha256:${sha256Hex(canonicalJson({ relation, scale, scaled: row.scaled }))}`;

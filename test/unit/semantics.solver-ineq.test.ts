@@ -352,9 +352,12 @@ describe('solveFeasible', () => {
     const c1 = solveFeasible(free.m);
     expect([c1.feasible, c1.decided, c1.violations]).toEqual([false, false, []]);
     expect(c1.unresolved.map((v) => v.id)).toEqual([free.rel]);
-    // A Boolean the numeric surface cannot read: every relation judged holds,
+    // Two Booleans compared (a5 S1): the numeric surface reads them, so the relation is judged and the answer decided.
+    const u0 = solveFeasible(model(3, 'flag == true and x <= 5.0').m);
+    expect([u0.feasible, u0.decided, u0.violations, u0.unresolved]).toEqual([true, true, [], []]);
+    // A Boolean the numeric surface cannot read (beside a number): every relation judged holds,
     // but the model's answer is open.
-    const u1 = solveFeasible(model(3, 'flag == true and x <= 5.0').m);
+    const u1 = solveFeasible(model(3, 'flag == 1.0 and x <= 5.0').m);
     expect([u1.feasible, u1.decided, u1.violations, u1.unresolved]).toEqual([true, false, [], []]);
   });
 });
@@ -500,5 +503,35 @@ describe('ModelApi.solveFeasible + analysisReport feasibility', () => {
     const report = analysisReport(m);
     expect(report.feasible).toBe(true);
     expect(report.violations.length).toBe(0);
+  });
+});
+
+/* ──────────── a5 K2: an asserted conjunction read as its conjuncts ────── */
+
+describe('an asserted conjunction a gate refuses whole: its conjuncts bound and decide feasibility (a5 K2)', () => {
+  const model = (body: string) =>
+    parseModel(`package B { part def P { attribute mode : String = "auto"; attribute x : Real;
+      assert constraint c { ${body} } } part p : P; constraint k { p.x <= 3.0 } }`).model;
+
+  it('gathers a conjunct inequality, as the split twin gathers its assert, and decides as that twin does', () => {
+    // BRA2 (solver2-pass): the String conjunct refuses the body whole; read as `x == 2.0` beside `mode == "auto"`.
+    const eq = solveFeasible(model('x == 2.0 and mode == "auto"'));
+    expect([eq.feasible, eq.decided]).toEqual([true, true]);
+    const ineq = model('x <= 2.0 and mode == "auto"');
+    expect(gatherInequalities(ineq).map((i) => i.raw).sort()).toEqual(['p.x <= 3.0', 'x <= 2.0', 'x <= 2.0']);
+    expect(solveFeasible(ineq).decided).toBe(true);
+  });
+
+  it('leaves a model whose refused conjunct the check reads violated undecided, never feasible', () => {
+    // `mode == "manual"` over `mode = "auto"`: the model contradicts itself; no search meets a String relation.
+    for (const body of ['x == 2.0 and mode == "manual"', 'x <= 2.0 and mode == "manual"']) {
+      expect(solveFeasible(model(body)).decided, body).toBe(false);
+    }
+  });
+
+  it('reads a body that writes a [unit] literal beside a bare number whole, as before', () => {
+    const m = model('x <= 2.0 [m] and x >= 1.0 and mode == "auto"');
+    expect(gatherInequalities(m).map((i) => i.raw)).toEqual(['p.x <= 3.0']);
+    expect(solveFeasible(m).decided).toBe(false);
   });
 });

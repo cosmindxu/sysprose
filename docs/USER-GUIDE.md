@@ -1125,6 +1125,8 @@ error: the reporting commands exit 1 with the degraded banner, `verify`, `consis
 and `fault-tree` exit 2, `npm run check` exits 1, the app's checks stand down (`checks/degraded`), no
 surface files a row for the clause, and the save writes it back as it was read. State the negation in the
 body instead, `assert constraint c { not (…) }`, which this tool reads.
+`assert not satisfy R by s0;`, a negated satisfaction, is refused whole with the same finding: no satisfaction
+of R by s0 is mapped from it, so no surface judges R for s0, and the save writes the statement back as written.
 
 **A redefinition is the feature in its context, and `=` binds.** In `part p : P
 { attribute :>> m = 20.0 [kg]; }` every surface reads `p.m` as p's own feature —
@@ -1263,7 +1265,11 @@ opening the file does not lift it: the file is read the same way.
 of this tool, and prints the scope's own sentence (`u1.N is not read: G::u1 owns, or joins a feature of, a binding whose
 end is a copy standing on one of several features ...`), as the check does, not a name that resolves to nothing. The rows of such a scope are inconclusive on every
 surface, as the same diamond or clash without the `bind` already is (not the chain case, where D3 has no `bind` of its
-own: it reads D2's 15 and decides). One such binding also makes every SMT proof or refutation of the whole model
+own: it reads D2's 15 and decides). An instance such a scope holds of a relation written elsewhere (P's `c` read in
+S's `p` and in `s`'s `p`, where `part def S :> Q2, Q3 { bind p.load = L; }`) is a row of its own all the same, never left
+out: `verification/not-evaluable` in the sentence `G::P::c is not read in G::S::p: G::S owns, or joins a feature of, a
+binding whose end is a copy standing on one of several features the order of the text chooses between, so this instance
+is listed and not decided`, so `verify` exits 2 on it, whatever `--allow-inconclusive` says. One such binding also makes every SMT proof or refutation of the whole model
 inconclusive, rows that name nothing of it included, because the solver's axioms are those of every scope. The text order that
 put the copy on D2's `N` hides nothing and reads 15, and a usage that inherits two unrelated lines (`part q : Q2, Q3
 { bind ... }`) is read by the rule of the inherited pair, as before. The mark is made when a file is read and kept as the
@@ -1478,7 +1484,7 @@ that breaks the relation is reported against that instance — at the line that
 makes it differ: the member of its own stating the value the binding carries in
 (q's `attribute :>> L = 50.0`; where two values reach the instance, the one that
 breaks the relation — the one that makes it hold when it alone is put back to the value
-the relation's own context gives it; where none does, or a value carries a unit, the first value a binding carried; a value the instance's own element redefines and no binding carries is named too, and points at the redefinition that states it — `attribute :>> extra = 20.0` in q2's `part :>> p` — and a derived value that breaks it points at the one member of the instance that states a number it reads, where no other number it reads is a redefinition outside the instance's own elements, q2's `:>> K = 25.0` under `L = 2.0 * K`), else the element the instance is read in, else
+the relation's own context gives it; where none does, or a value carries a unit, the first value a binding carried; a value the instance's own element redefines and no binding carries is named too, and points at the redefinition that states it — `attribute :>> extra = 20.0` in q2's `part :>> p` — and a derived value that breaks it — one a binding carries, or one whose own definition reads values bindings carry (P's `m2 = 10.0 - load`) — points at the one member of the instance that states a number it reads, where no other number it reads is a redefinition outside the instance's own elements, q2's `:>> K = 25.0` under `L = 2.0 * K`), else the element the instance is read in, else
 its innermost own usage (`part q : Q`) or definition (`part def Q2 :> Q`), never the usage the instances share — and the check rolls
 two or more of them up into one finding for each usage (past twenty usages of one
 relation, into one finding for the relation, counting every instance and naming
@@ -1500,7 +1506,7 @@ violation that one value from one line they share breaks (put back to the relati
 value, it holds) are one finding: `part def R { part q : Q {
 attribute :>> L = 50.0; } }` read by R's own q and by each `part r1 : R` points at that
 line once, named for what it redefines (`elementName` is `L`), and lists the others
-(*; the same line breaks it in r1::q::p, r2::q::p*); one the line does not mend (the
+(*; the same line breaks it in r1::q::p, r2::q::p*), and so does R's q `:>> K = 5.5` read through Q's `L = 2.0 * K`; one the line does not mend (the
 relation fails on a default too), or a sixth distinct set of values read in a group,
 keeps its own finding. A path with a
 segment holding ` in ` or `@` is quoted (`R::'q in 1'::p`; in a context row's sentence too, `'X in Y'::'est@1' = 0.78 misses Common::t …`; the `instance` and
@@ -1670,7 +1676,22 @@ one of w's, so each row read through p2 — W's own `constraint c { p2.load <=
 binding, an asserted equation (`x == p2.load`) or a further subsetting reads
 through it — is *could not be evaluated*, in a sentence that names p2, the
 element whose own p1 it is read through and w, and `bounds` claims no bound of
-a measure read so — a limit of this tool. So is a relation of p2's type read
+a measure read so — a limit of this tool. Except where p2 subsets p1 alone and is
+p1 again under another name: of p1's kind, typed by nothing p1 is not (`part p2 : T0
+:> p1;` over `part p1 : T0;`, not a `part p2 : T1 :> p1;` whose T1 holds features of
+its own), saying nothing of its own, neither a `ref` nor an attribute, with nothing
+else redefining or subsetting either, no binding end or asserted equation of the
+model naming p2 (quoted or not), p2 stated `[1]` or with no multiplicity and p1, and
+whatever redefines it, `[1]`, `[0..1]` or none (where p1 may hold two values, or p2 may
+be empty, an axiom on p2 binds one p1 at most) — and every context that reads p1 otherwise redefines it (w's `part
+:>> p1 { … }`, or a specialisation's). There each name read below p2 is read, in each
+such context, as one of that context's p1s, on every surface and in `bounds`:
+`w.p2.load` is w's p1's 50, `w0.p2.load` (a `w0 : W` that changes nothing) W's own 1,
+`w.p1.load` w's 50, and W's own `c` reads W's own values (*satisfied*) beside a row
+of its own in w (*violated*). A reading of p2 itself is *could not be evaluated*:
+a package's `satisfy R by w.p2`, a reference or a subject's value `= p2` as above,
+and a `satisfy R by p2` or `subject s = p2` W writes in the sentence of a satisfier
+w reads otherwise. So is a relation of p2's type read
 in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
 W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
 nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
@@ -1718,6 +1739,29 @@ whether or not `p2` is a `ref`, never forgiven by `--allow-inconclusive`. The
 usages and rows that read through a `::>` are withdrawn with those that read through
 a `:>`. One that declares a type (`ref part p2 : T0 ::> p1;`) is read as its type has
 it, or abstains under the subsetting sentence above where an instance reads `p1` otherwise.
+An `assert` read below a p2 that is p1 again (above) is read as any relation is: W's
+`assert constraint a { p2.load <= 5.0 }` beside w's `part :>> p1 { attribute :>> load =
+50.0; }` is *satisfied* at W's own values and *violated* in its row in w, and `verify
+--engine smt` reports `verification/inconsistent-axioms` on every row of the file.
+Any other `assert` read through such a usage is read again in each instance that reads the
+subsetted feature otherwise, the usage read as one of what that feature is there: the same
+`a` over `part p2 : T1 :> p1;`, whose T1 holds a feature of its own, files the row `W::a
+in w`, read as `p1.load <= 5.0` in w, *violated* on the
+check and the numeric surface (`sysml-check --strict` fails, in a sentence that says p2
+subsets p1), and `verify --engine smt` reports `verification/inconsistent-axioms` on every
+row of the file: the model contradicts itself in w. W's own row of `a` is *could not be
+evaluated*, as above. Only where that is p2's value in each such instance: the assert
+written in the element p1 and p2 are features of, naming p2 at the head of a dotted name,
+and p2 subsetting p1 alone and saying nothing of its own, with nothing else redefining or
+subsetting either. Any other assert read through such a usage — through a value or an
+asserted equation that reads it (`x == p2.load`), through a `::>`, beside a binding the
+instance writes, or an assert of p2's type (T1's `assert constraint tc { load <= 5.0 }`
+under `part p2 : T1 :> p1;`) — and a subsetting usage that says something of its own
+where an instance reads what it subsets otherwise (`part p2 :> p1 { attribute :>> load =
+2.0; }`: every w's p2 has two loads) leave the model's axioms unread there, and the SMT
+engine decides no row of the file (`verification/not-evaluable`, in a sentence that names
+the assert or the usage; never forgiven): a proof from axioms that may contradict each
+other is void. The other three surfaces read each row as before.
 An end of a connection the model connects to features (`connection cn : C connect
 w.p1 to t;`) is the feature it connects, which may state what the end's type does not
 (w's `part :>> p1 { attribute :>> load = 50.0; }`): `cn.a.load` is *could not be
@@ -1837,7 +1881,11 @@ instance may stand for another (a reference, a subject, a part a binding, a subs
 inconclusive. An `assert` this tool cannot read, in whole or in part (a path it does not resolve, a body
 it does not parse) that the check cannot hold true leaves every relation of the file
 undecided on the literal engine (`verification/not-evaluable`, naming the assert), as the
-SMT engine claims no proof beside it. The contexts a relation is filed at do not
+SMT engine claims no proof beside it. A dotted path to a package's usage written in a usage's
+body (`q2.p.x` in q1's `assert`, q2 q1's sibling in the package) is resolved, as KerML
+resolves it, and read in the package on every surface, unless a feature of the body's own
+context answers its first segment (q1's own `part q2`); a path nothing answers there
+(`q2.p.w`) stays unresolved. The contexts a relation is filed at do not
 turn on the order the text is written in: a renamed redefinition (`part p2 :>> p` in
 `q2 : Q`) written before `part def Q` leaves Q's p, and every other instance, filed as
 they are when Q comes first. A binding that gives the instance
@@ -1944,7 +1992,13 @@ instance that redefines it directly: an expression, a `default`, a deeper end
 or a value that takes an evaluation to compare is read as before, with no
 finding. The solver lane holds that instance to the binding as well, units or
 none, so its axioms are inconsistent, and the SMT engine says so beside the
-other surfaces' *could not be evaluated*.
+other surfaces' *could not be evaluated*. Where M has no value and two things fix
+the slot outside the binding — an instance's own `:>> m = 7.0` and another
+definition's binding at an instance's slot (W's `bind q.m = L`, with w's `L =
+5.0`) — that are not one exact value, M has no value on any surface, the numeric
+surface included (*… and both the value …::p1::m states and a binding read in …
+at w.q.m give P.m a value in one of them …*); where they are one (both 7), the
+numeric surface reads M at it.
 
 **A `default` stands against every assertion.** `attribute L default = 2.0;`
 beside `assert constraint qa { L == 5.0 }` is L = 2 on every surface, as `attribute
@@ -2083,17 +2137,18 @@ the check, and p3's, which only M would carry it to, is read on no surface — t
 where the equation and the binding are written in a definition W and the slot is w's
 p2 (the equation may sit in a definition that encloses W and name the feature by a dotted
 path, or in a supertype or a subtype of W), and where the assert fixes the slot itself with no binding at it (`p2.load == 5.0`,
-under the same two defaults that differ): p3's load and M are read on no surface, the
-numeric surface included; that surface alone still reads the slot itself at the assert's 5). An
+under the same two defaults that differ, or fixes M itself, `2.0 * M == 14.0`): the slot, p3's load and M
+are read on no surface, the numeric surface included). An
 asserted bound over such a default (`assert constraint { load >= 0.0 }`, a plain number on a unitless Real)
 fixes no value, so the SMT engine carries it and can prove a goal every value the bounds allow satisfies
 (`load <= 11.0` beside `load <= 10.0`) where the other surfaces read none; a pair of bounds on the binding's
 features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equation does), or that meets
 through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lower and an upper bound on features
-an asserted relation links), is not carried, and the row says which; a bound it cannot compare (a unit, an integer
-sort, a conjunction) is not carried either, under the sentence that no assertion gives a default a value. An
+an asserted relation links), is not carried, and the row says which. A bound on an Integer is carried alike, and a pair
+on one meets where it leaves a single whole number (`load >= 4.5` with `L <= 5.5`); a conjunction of bounds is read as
+its conjuncts. A bound in a unit, or on a `Natural`, `Positive` or `UnlimitedNatural`, is not carried, and the row says so. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
-def Eq { in a; a == 50.0 }`) is read by no surface, and files no row of its own.
+def Eq { in a; a == 50.0 }`) is read by no surface. Its own row abstains on the check and the numeric surface (`unread-definition`: *`e` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*), and the literal and SMT engines read it as an assertion they cannot read, so every row they judge in that model abstains (*the model asserts …, which this tool cannot read*; *proof not claimed …*): the assertion may contradict a value the model writes with `=`.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
 == 50.0 and a >= 0.0`) — what it may define is read nowhere: every feature a
 name in it reads — each value it gives a parameter, bare or dotted (`in a =
@@ -2163,6 +2218,7 @@ read in q1: every reading of the pair — J, K, q1's p's x, the assert's own row
 assertion replaces: the assert holds in that instance too, and this tool does
 not read it there, so the model may contradict itself unreported …*), and
 `verify` exits 2.
+A plain `constraint nl : Eq { in a = L; }`, with no `assert`, is a check this tool does not make: it files the same row (*`nl` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*) on the check, the numeric surface, `verify` (`verification/not-evaluable`, which `--allow-inconclusive` does not forgive) and `obligations`, and it holds no other row back, since nothing is asserted. A requirement set that holds one reads *inconclusive* on `consistency` (exit 2), where it read *consistent* over a relation this tool did not read.
 
 **Two asserted equations that disagree.** A feature declared without a value
 that two asserted equations define with two different values — `assert
@@ -2192,7 +2248,7 @@ and every P's where they meet in a definition or a package; where they meet in a
 usage (one in P and one in `part p : P { … }`), p's L, and that of a usage that
 subsets or redefines p, while another `part p2 : P` reads P's equation on the
 check and on the literal engine (the numeric surface's solve meets the pair and
-does not converge there); the rows of a definition that holds p (Q's `p.L == 50.0`),
+does not converge there, its sentence naming the pair); the rows of a definition that holds p (Q's `p.L == 50.0`),
 which stand for every Q, and a value over a dotted name (`Z = p.L` in Q) stay
 undecided in every instance; and a name the tool places nowhere (in a
 scope that holds two features under one name, or through a usage a renamed
@@ -2259,10 +2315,18 @@ are the warning, its sentence giving each reading: `L == 50.0` beside `L ==
 model's values (`50.0` is 50 [kg], `60.0 [kg]` is 60 [kg]) …*); `L == a * 2.0`
 over `bind a = K` with `K = 30.0`, beside `L == 50.0`; `W == m * g` over the
 package's `g = 9.81`, beside `W == 20.0`. Two it reads alike or within the tie
-rule (`L == 50.0` beside `L == 50.0 [kg]`, which may be one value; `L == 2.0 ^
-3` beside `L == 8.0`), a side it reads no value of, and a side over a value
-another such pair leaves undecided leave the pair's own row an info that says
-why. A side that gives no value — it
+rule (`L == 2.0 ^ 3` beside `L == 8.0`), a side it reads no value of, and a side
+over a value another such pair leaves undecided leave the pair's own row an info
+that says why. A number with no unit beside a quantity of the feature's kind is
+that quantity in the kind's coherent SI unit, as every surface reads such an
+equation: `L == 50.0` beside `L == 50.0 [kg]` (or `50000.0 [g]`) on a `MassValue`
+is one value, and defines L as 50 kg — written second, the bare one is itself
+*could not be evaluated* (a bare number against a derived quantity), and the
+literal and SMT engines then decide nothing over L. A feature that declares a
+unit other than its kind's coherent SI one (`L : ISQ::MassValue [g]`) is defined
+by no equation that gives it a bare number, alone or beside another: *its
+asserted equation gives it a number with no unit beside the unit it declares,
+[g], …* — write the unit in the equation. A side that gives no value — it
 reads a name nothing gives one, as a design equation `L == m * g` over a free
 `m` does, or reads the feature back, as an alias's `b == a` read as a's
 definition beside `a == 2.0` does — is left aside: every evaluator tries the
@@ -2286,13 +2350,18 @@ or an alias does, or a usage redefines p with a value (`part :>> p = p2`) — ev
 P's L stays undecided: a price of reading it so. `K == L`, a bare name on
 each side beside such an L, ties K to it like `K == L + 0.0` or `bind K = L`, so K's
 FMI `start`, its measure of effectiveness and a check over it read neither value,
-in either order of the equations. Limits of this tool: the SMT engine holds one symbol for a feature across the usages of
-one definition, so two usages that each assert one end of a binding the
-definition writes (`bind L = K` in P, `part a : P { assert constraint ea { L ==
-50.0 } }`, `part b : P { assert constraint eb { K == 60.0 } }`) read *inconsistent
-axioms* on its rows though neither instance contradicts itself — the literal
-engine decides those rows, and the numeric surface does not judge them (*the
-solve did not converge*).
+in either order of the equations. An equation a usage or a specialisation asserts
+(`part a : P { assert constraint ea { L == 50.0 } }`) holds in that usage's instances
+only, so P's own rows do not read it. Where a specialisation declares a name anew
+without `:>>` (`part def P2 :> P { attribute K; … }`, which KerML does not allow), P's
+body names P's K and P2's own names P2's: this tool does not read which one P's body means
+in a P2, so no surface reads K there, nor a value a binding joins to it (`p.L`, over P's
+`bind K = L` or `assert constraint { K == L }`), each in a sentence that names both Ks. P's
+`assert constraint { K == 50.0 }` beside P2's `K == 70.0` is no contradiction it reports
+(the `#equations` row is undecided, not violated), and the SMT engine refuses P's
+relations re-read in P2, so a proof over K is not claimed. Limit of this tool: P2's own
+relations over K abstain too, and the shape is not yet reported: write `attribute :>> K`
+or rename it.
 
 
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
@@ -2582,6 +2651,9 @@ apply. `examples/contract-authoring-prompts.sysml` is a shipped model that write
 the four authoring rules as `#prompt` statements at package level, so
 `property-draft` hands them to whoever works on any requirement in it.
 
+A constraint that chains `implies` without parentheses, or puts a bare `or` on the left of an `xor`, is refused with a sentence
+saying so rather than read one way and risk the wrong grouping; parenthesise the chain and it is checked.
+
 **Source of truth:** `src/api/property.ts`, `examples/contract-authoring-prompts.sysml`,
 `test/unit/property.test.ts`, and §3.3 of
 [`04-formal-verification-plan.md`](04-formal-verification-plan.md).
@@ -2804,7 +2876,9 @@ The `side` member is worth knowing about. Where a relation divides by something
 your model can vary, the encoding asserts the divisor is non-zero — an
 assumption *it* added, not a fact you wrote — and labels it with the name of the
 row it guards. So the same qualified name can appear twice in one core, once as
-an axiom and once as a side condition, and both are real.
+an axiom and once as a side condition, and both are real. A division KerML
+evaluates only on one path — the right of `and`, `or` or `implies`, a branch of `if` — is assumed non-zero only
+on that path, and the side condition's sentence ends with it ("where `…` is false").
 
 `--why` decides nothing: the claim, the code and the exit status are identical
 with the flag and without it, and nothing it prints reaches the evidence record.
@@ -5545,7 +5619,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A cross-check is planned, not built** | There is no `export` command and no `--cross-check` flag: the plan for them is in [`04-formal-verification-plan.md`](04-formal-verification-plan.md). Measured on this machine: `z3` 5.0.0 is on `PATH` and `cvc5` is not, so the cross-check as planned would run the z3 binary against the z3 WASM build (`z3-solver` 5.3.1, engine 5.3.1.0). That would catch an export defect; it would not be two engines agreeing. `--cross-check cvc5` is planned to report `inconclusive: cvc5 not installed` with the command to run, and a disagreement to be always inconclusive with both verdicts named — the tool never picks a winner. |
 | **No liveness, and no reactive-synthesis question either** | `existence` and `response` come back inconclusive until a lasso search lands and a fairness assumption is named. `consistency` decides whether static contracts can hold at once, which is a different question from whether a reactive component could be built to meet them — a question this tool does not ask and whose word it never prints. Two words are reserved outright, and a guard in the test suite keeps both out of the source and the documents. |
 | **No domain axioms from a quantity kind** | Typing a feature `ISQ::PowerValue` tells this tool nothing about its sign. A freed feature bounded on one side only is `verification/free-variable-unbounded`, never a refutation — otherwise `cruisePower = -1 W` reads as a counterexample and the arithmetic check confirms it. |
-| **A narrow encodable fragment** | Only single-valued scalar features with ScalarValues typing are encoded. Multiplicity > 1, strings, `null`, `%` and variable exponents are `verification/unsupported-construct` — inconclusive, with the construct named. A name that resolves to nothing and an enum comparison (`c == Color::red`, which the expression reader does not take) are `verification/not-evaluable`, a defect in the relation that `--allow-inconclusive` does not forgive. Ordering on °C is encoded in kelvin; arithmetic on °C is refused, exactly as the numeric surface refuses it. <!-- BEGIN GENERATED constraint-classes:user-guide (scripts/gen-constraint-classes.ts; npm run classes) --> The rows this tool sorts, encoded or refused, fall into **23 constraint classes** with a computed maturity level each (shape, modifier, reading, fence): a label only, which moves no verdict and which no command prints yet — see [`CONSTRAINT-CLASSES.md`](CONSTRAINT-CLASSES.md).<!-- END GENERATED constraint-classes:user-guide --> |
+| **A narrow encodable fragment** | Only single-valued scalar features with ScalarValues typing are encoded. Multiplicity > 1, strings, `null`, `%` and variable exponents are `verification/unsupported-construct` — inconclusive, with the construct named. A name that resolves to nothing and an enum comparison (`c == Color::red`, which the expression reader does not take) are `verification/not-evaluable`, a defect in the relation that `--allow-inconclusive` does not forgive. Ordering on °C is encoded in kelvin; arithmetic on °C is refused, exactly as the numeric surface refuses it. <!-- BEGIN GENERATED constraint-classes:user-guide (scripts/gen-constraint-classes.ts; npm run classes) --> The rows this tool sorts, encoded or refused, fall into **24 constraint classes** with a computed maturity level each (shape, modifier, reading, fence): a label only, which moves no verdict and which no command prints yet — see [`CONSTRAINT-CLASSES.md`](CONSTRAINT-CLASSES.md).<!-- END GENERATED constraint-classes:user-guide --> |
 | **A bounded behaviour walk** | The in-process engine decides the finite abstraction it exhaustively explored, and says so: a `pass` needs the whole configuration graph, a `fail` does not. There is no event pool and no deferred events, completion chasing stops at 64, and `after(n)` is a discrete clock, not dense time. |
 | **A guard nothing values is not a guard that is false** | `transition idle if mode == 3 then hazard;` over an `attribute mode : Integer;` with no value is a question this tool does not decide. `reach` withholds that machine's unreachable and dead lists — and, per configuration, the no-way-out row of any configuration that guard is an edge out of, printing a `withheld` line in its place — prints `undetermined under {…}` instead of `exhaustive`, and raises `verification/guard-undetermined` naming the guard and the names nothing valued — give the feature a value (`= 3`) and the walk decides it. `check-behaviour` shares the gate and reports `inconclusive` (exit 2) rather than `pass` or `vacuous`. A hidden-choice row stays where the withheld guard is beside it — two transitions enabled at once is an existential claim, and removing a candidate next to them can only shrink it — and is withheld where the withheld guard is strictly inside it, because that moves which level the choice is read at. |
 | **An edge kind the walk does not follow refuses the machine** | Between two states, `transition a then b;` and `first a then b;` are one edge and both are walked; an edge carrying a PAYLOAD (a `SuccessionFlow`, or a succession with an item) is one this relation models nothing of, and is not. Every edge-bearing element under a machine is accounted for by a census (`--json`, under `census`) as walked, read by the opening, refused, with neither end a node the walk can stand on, or as no step at all (a typing, a subsetting, a `connect` — facts about the states rather than steps between them) — and anything left over refuses the machine (`edge-not-walked`) rather than shrinking its unreachable, dead and no-way-out lists. A state definition owning no `TransitionUsage` at all is still not one of this tool's machines, and `reach` says so instead of walking it. |

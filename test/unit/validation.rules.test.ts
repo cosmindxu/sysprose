@@ -1430,6 +1430,26 @@ describe('validation — target-by-specialisation', () => {
     expect(diags[0].severity).toBe('info');
   });
 
+  it('anchors a miss no binding carries at its own element, not at a line a definition shares (nb12)', () => {
+    // The first value the row shows is P2's `load = 5.0`, which every P2 states: the finding points at q2's p
+    // (the element of its own), naming nothing; where that value is q2's own redefinition, it stays there.
+    const head = `package GG {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+      part def P2 :> P { attribute :>> load = 5.0; }
+      part def Q { part p : P { constraint c2 { load + extra <= 10.0 } } }
+      part q1 : Q;`;
+    const shared = parsed(`${head} part q2 : Q { part :>> p : P2 { attribute :>> extra = 12.0; } } }`);
+    const p = shared.all().find((e) => e.ownerId === named(shared, 'GG::q2').id && e.eClass === 'PartUsage')!;
+    expect(runRule(shared, 'target-by-specialisation').map((d) => [d.elementId, d.message])).toEqual([
+      [p.id, 'P2::load = 5, p::extra = 12 misses p::c2 (load + extra <= 10.0)'],
+    ]);
+    const own = parsed(`${head} part q2 : Q { part :>> p { attribute :>> extra = 12.0; } } }`);
+    const diags = runRule(own, 'target-by-specialisation');
+    expect(diags).toHaveLength(1);
+    expect(own.get(diags[0].elementId!)?.eClass).toBe('AttributeUsage');
+    expect(diags[0].message).toBe('p::extra = 12 misses p::c2 (load + extra <= 10.0)');
+  });
+
   it('is silent for a #prose target, as constraint-violation is', () => {
     const m = parsed(`package Common { attribute m : Real; #prose constraint t { m >= 0.9 } }
       package LA { attribute m :> Common::m = 0.5; }`);

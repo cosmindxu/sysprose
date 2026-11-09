@@ -246,6 +246,19 @@ describe('an expression becomes a term', () => {
     });
   });
 
+  it('encodes `if c ? a else b` as the `ite` the `then` spelling gives (S2)', () => {
+    const vars = [v('x'), v('y'), v('p', { sort: 'Bool' })];
+    for (const [q, t] of [
+      ['(if p ? x else y) >= 1.0', '(if p then x else y) >= 1.0'],
+      ['(if x > 0.0 ? x else if y > 0.0 ? y else 0.0) >= 1.0', '(if x > 0.0 then x else if y > 0.0 then y else 0.0) >= 1.0'],
+    ] as const) {
+      expect(encode(q, vars), q).toEqual(encode(t, vars));
+    }
+    expect(encode('(if p ? x else y) >= 1.0', vars)).toMatchObject({ term: '(>= (ite |P::p| |P::x| |P::y|) 1.0)' });
+    // the first branch is the one the condition picks: a swapped pair would put `y` first
+    expect(encode('(if x > y ? x else y) >= 1.0', vars)).toMatchObject({ term: '(>= (ite (> |P::x| |P::y|) |P::x| |P::y|) 1.0)' });
+  });
+
   it('reads a NEGATIVE literal exponent, which the parser writes as a unary minus', () => {
     // `parseExpr('x ^ -2')` is `binary(^, ref x, unary(-, num 2))`: the sign is
     // its own node. A `node.right.kind === 'num'` test would call a written
@@ -317,6 +330,33 @@ describe('what the encoder refuses, and with which reason', () => {
     }
   });
 
+  it('encodes a connective chain grouped by KerML Table 6 (FP2)', async () => {
+    const model = await load(`package G {
+  attribute x : ScalarValues::Real = 0.0;
+  attribute y : ScalarValues::Real = 2.0;
+  attribute z : ScalarValues::Real = 0.0;
+  constraint kImp { x > 1.0 implies y > 1.0 implies z > 1.0 }
+  constraint kXor { x > 1.0 or y > 1.0 xor z > 1.0 }
+  constraint kXorL { x > 1.0 xor y > 1.0 or z > 1.0 }
+}`);
+    expect(relationWith(model, 'implies').encodable).toBe(true);
+    expect(relationWith(model, 'x > 1.0 or').encodable).toBe(true);
+    expect(relationWith(model, 'x > 1.0 xor').encodable).toBe(true);
+  });
+
+  it('refuses a relation over a String feature at the gate, as it refuses a string literal (F5)', async () => {
+    const model = await load(`package T {
+  attribute s : ScalarValues::String = "abc";
+  attribute x : ScalarValues::Real = 2.0;
+  constraint k { x > 1.0 and s == s }
+}`);
+    const k = relationWith(model, 's == s');
+    expect(k.encodable).toEqual({
+      reason: 'non-numeric-operand',
+      detail: '`s` is typed `String`, a text value this lane does not encode as a number, so no bound, witness or proof is read over it',
+    });
+  });
+
   it('refuses a qualified name no SMT symbol can carry, rather than mangling it', () => {
     const r = encode('x >= 1.0', [v('x', { qualifiedName: 'P::a|b' })]);
     expect(r.ok).toBe(false);
@@ -339,6 +379,40 @@ describe('a variable divisor is guarded, and the guard is reported', () => {
     expect(r.sideConditions[0].detail).toContain('non-zero');
     expect(r.sideConditions[0].detail).toContain('P::d');
   });
+
+  // a5 F4a: KerML does not evaluate the right operand of `and`/`implies` where the left is false, of `or` where it is
+  // true, nor the `if` branch not taken (kerml.txt:3957–3972), so the guard there holds only on that path.
+  it.each([
+    ['d == 0.0 or x / d >= 1.0', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    ['d != 0.0 and x / d >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['d != 0.0 implies x / d >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['not (d == 0.0 or x / d >= 1.0)', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    ['(if d != 0.0 then x / d else 0.0) >= 1.0', '(=> (distinct |P::d| 0.0) (distinct |P::d| 0.0))', 'is true'],
+    ['(if d == 0.0 then 0.0 else x / d) >= 1.0', '(=> (not (= |P::d| 0.0)) (distinct |P::d| 0.0))', 'is false'],
+    [
+      'x > 0.0 and (d == 0.0 or x / d >= 1.0)',
+      '(=> (and (> |P::x| 0.0) (not (= |P::d| 0.0))) (distinct |P::d| 0.0))',
+      'is true and',
+    ],
+  ])('conditions the guard on the KerML path condition: %s', (body, guard, says) => {
+    const r = encode(body, [v('x'), v('d', { free: true })]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.sideConditions.map((s) => s.term)).toEqual([guard]);
+    expect(r.sideConditions[0]!.detail).toContain(`, where `);
+    expect(r.sideConditions[0]!.detail).toContain(says);
+  });
+
+  it.each(['d == 0.0 xor x / d >= 1.0', 'x / d >= 1.0 or d == 0.0', 'x / d >= 1.0 and d != 0.0', '(d == 0.0) == (x / d >= 1.0)'])(
+    'keeps the guard unconditional where KerML evaluates the operand: %s',
+    (body) => {
+      const r = encode(body, [v('x'), v('d', { free: true })]);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.sideConditions.map((s) => s.term)).toEqual(['(distinct |P::d| 0.0)']);
+      expect(r.sideConditions[0]!.detail).not.toContain(', where ');
+    },
+  );
 
   it('adds nothing when the divisor is a literal', () => {
     const r = encode('x / 2.0 >= 1.0', [v('x')]);

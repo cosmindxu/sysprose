@@ -56,6 +56,7 @@ import {
   defaultGivesWay,
   givenWayThroughHead,
   givenWayUnvalued,
+  unfixedDefaultsDifferAt,
   isAsserted,
   sharedDefinitions,
   shadowedNamesOf,
@@ -970,7 +971,7 @@ export function gateRelation(
   readBy?: { el: ElementRecord; operands: boolean; binding?: boolean },
 ): RelationReading {
   const varIds = relationVarsOf(node, nameToId);
-  const unread = readBy ? unreadValuesOf(model, readBy.el, pathsOf(node).filter((p) => !markers.has(p)), memo) : [];
+  const unread = readBy ? unreadValuesOf(model, readBy.el, pathsOf(node).filter((p) => !markers.has(p)), memo, false) : [];
   const variables = variablesOf(model, node, nameToId, markers, memo);
   const unreadDeps = readBy && unread.length > 0 ? unreadDependenciesOf(model, readBy.el, unread, memo) : [];
   if (unread.length > 0) {
@@ -1001,6 +1002,23 @@ export function gateRelation(
       {
         reason: 'unresolved-name',
         detail: `\`${unresolved.join('`, `')}\` names nothing this tool can resolve in the scope of the relation, so there is no variable to encode`,
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
+  }
+
+  // A String is a text value. A string literal in a body is refused at the encoder, so a String feature is refused
+  // alike, here: read as an unpinned Real, a satisfied `s == t` reached "witness not confirmed" over a value no
+  // solver could choose. A violation at the model's values is still `refuted` through the point evaluation.
+  const text = variables.find((v) => typeNamesOf(model, v.featureId).has('String'));
+  if (text) {
+    return refused(
+      expression,
+      {
+        reason: 'non-numeric-operand',
+        detail: `\`${text.path}\` is typed \`String\`, a text value this lane does not encode as a number, so no bound, witness or proof is read over it`,
       },
       null,
       variables,
@@ -1072,14 +1090,17 @@ export function gateRelation(
     boundVar.siFactor === 1 &&
     boundVar.siOffset === 0 &&
     boundVar.restricted === undefined &&
-    sortPerVar[boundVar.path] === 'Real';
+    (sortPerVar[boundVar.path] === 'Real' || sortPerVar[boundVar.path] === 'Int');
   if (givenWay && !carried) {
+    // A bound in a unit or on a restricted domain is one, read on no lane here: its own sentence (K3).
+    const why = boundNotCompared(node, givenWay.p, markers, boundVar ?? variables.find((v) => v.path === givenWay.p), hadUnit);
     return refused(
       expression,
       {
         reason: 'unread-definition',
         detail:
-          `the axiom reads \`${givenWay.p}\`, a \`default\` a binding makes give way and gives no value (${givenWay.why}); no ` +
+          `the axiom reads \`${givenWay.p}\`, a \`default\` a binding makes give way and gives no value (${givenWay.why}); ` +
+          (why ? `${why}, and no ` : 'no ') +
           'assertion gives a default a value, so the axiom is not carried',
       },
       null,
@@ -1106,6 +1127,29 @@ export function gateRelation(
         detail:
           `the axiom reads \`${throughHead.p}\`, which ${throughHead.why}; carried, the axiom would give those defaults its ` +
           'value, and no assertion gives a default a value, so the axiom is not carried',
+      },
+      null,
+      variables,
+      sortPerVar,
+    );
+  }
+  // Nor one over a feature with no value that a binding joins to defaults that differ, with no instance fixing the
+  // slot (unfixedDefaultsDifferAt, F3: GH115's `2.0 * M == 14.0` beside `bind P::m = M` over P's `default = 5.0` and
+  // p1's `:>> m default = 7.0`): carried, it gave M, and every P's m, the 7, and `p2.m >= 6.0` was PROVED on this lane
+  // alone, where the other surfaces read no value for it.
+  const differ =
+    readBy && readBy.binding !== true && isAsserted(readBy.el) && readBy.el.ownerId != null
+      ? pathsOf(node)
+          .filter((p) => !markers.has(p))
+          .map((p) => ({ p, why: unfixedDefaultsDifferAt(model, readBy.el.ownerId!, p) }))
+          .find((x) => x.why !== undefined)
+      : undefined;
+  if (differ) {
+    return refused(
+      expression,
+      {
+        reason: 'unread-definition',
+        detail: `the axiom reads \`${differ.p}\`: ${differ.why}; no assertion gives it a value, so the axiom is not carried`,
       },
       null,
       variables,
@@ -1197,6 +1241,33 @@ export function bareBoundOf(node: ExprNode | null): BareBound | undefined {
   if (node.right.kind === 'ref') {
     const value = number(node.left);
     return value === undefined ? undefined : { path: node.right.path.join('.'), side: up ? 'lower' : 'upper', strict, value };
+  }
+  return undefined;
+}
+
+/**
+ * Why a bound on `path` against one number is not compared with the other bounds a binding joins it to (K3): written
+ * with a `[unit]` or on a feature with a unit or a scale, its magnitude is not read against theirs here; on a restricted
+ * domain (`Natural`, `Positive`), the type's own floor could meet it. `undefined` for any other relation, which keeps
+ * the generic sentence.
+ */
+function boundNotCompared(
+  node: ExprNode,
+  path: string,
+  markers: MarkerDimensions,
+  v: ContractVariable | undefined,
+  hadUnit: boolean,
+): string | undefined {
+  if (node.kind !== 'binary' || !['<', '<=', '>', '>='].includes(node.op) || v === undefined) return undefined;
+  const number = (n: ExprNode): boolean =>
+    n.kind === 'num' || (n.kind === 'ref' && markers.has(n.path.join('.'))) || (n.kind === 'unary' && (n.op === '-' || n.op === '+') && number(n.operand));
+  const own = (n: ExprNode): boolean => n.kind === 'ref' && n.path.join('.') === path;
+  if (!((own(node.left) && number(node.right)) || (own(node.right) && number(node.left)))) return undefined;
+  if (hadUnit || markers.size > 0 || v.unit !== null || v.siFactor !== 1 || v.siOffset !== 0) {
+    return 'it is a bound in a unit, which is not compared here with the bounds on the features the binding joins it to';
+  }
+  if (v.restricted !== undefined) {
+    return `it is a bound on a \`${v.restricted}\`, whose own floor could meet it`;
   }
   return undefined;
 }
@@ -1953,3 +2024,4 @@ export function claimedVerdictOf(model: Model, id: ElementId): string | undefine
   if (!el || !REQUIREMENT_SET.has(el.eClass)) return undefined;
   return getRequirementAttr(model, id, 'verdict');
 }
+
