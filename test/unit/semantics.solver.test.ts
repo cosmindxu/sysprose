@@ -12,7 +12,7 @@ import {
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
-import { defaultStandsIn, instanceIndexSeam } from '../../src/semantics/defining-equation';
+import { boundSourceIn, defaultStandsIn, headFixersDifferAt, headStandsAgainstAt, headTwoValuesAt, instanceIndexSeam, unfixedDefaultsDifferAt } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -553,6 +553,46 @@ describe('checkConstraintsNumeric — a feature an assert typed by an inequality
   });
 });
 
+/*
+ * a5 S4: a plain `constraint nl : Newton { in f = force; … }` filed no row on the numeric surface (tp1 read 2500 against
+ * 1000 * 2 in silence). It files its own `unknown` row now, in the sentence the typed assert's row has, and the plain
+ * constraints beside it are judged as before: it is no axiom and nothing is solved from it.
+ */
+describe('checkConstraintsNumeric — a plain constraint typed by a constraint definition', () => {
+  const rows = async (usage: string) => {
+    const { model: m } = await loadModelText(`package TQ {
+      constraint def Newton { in f : Real; in m : Real; in a : Real; f == m * a }
+      part car { attribute mass : Real = 1000.0; attribute accel : Real = 2.0; attribute force : Real = 2500.0; ${usage} }
+      constraint k { car.force == 2500.0 }
+      constraint kf { car.force == 2000.0 }
+    }`);
+    const byName = new Map(checkConstraintsNumeric(m!).map((r) => [m!.qualifiedName(r.id), r]));
+    return byName;
+  };
+
+  it('files an unknown row beside rows that read as before, whether the parameters are valued or bound', async () => {
+    for (const usage of [
+      'constraint nl : Newton { in f = force; in m = mass; in a = accel; }',
+      'constraint nl : Newton; bind nl.f = force; bind nl.m = mass; bind nl.a = accel;',
+    ]) {
+      const byName = await rows(usage);
+      const nl = byName.get('TQ::car::nl')!;
+      expect([nl.result, nl.imposed ?? false, nl.reason]).toEqual([
+        'unknown',
+        false,
+        "`nl` is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
+      ]);
+      expect([byName.get('TQ::k')!.result, byName.get('TQ::kf')!.result]).toEqual(['satisfied', 'violated']);
+    }
+  });
+
+  it('files none where there is no constraint definition to read: a subsetting of a usage with a body, a body of its own', async () => {
+    const byName = await rows('constraint own : Newton { force > 0.0 } constraint c1 { force > 0.0 } constraint c2 :> c1;');
+    expect(byName.has('TQ::car::c2')).toBe(false);
+    expect(byName.get('TQ::car::own')!.result).toBe('satisfied');
+  });
+});
+
 /* ───────────────────────────── optimization ──────────────────────────── */
 
 describe('optimize', () => {
@@ -648,6 +688,140 @@ describe('solve — a default a binding holds per feature stands in the instance
     expect(load?.role).toBe('axiom');
     // q1's L is 50: no standing-default row, the binding carries the value.
     expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'W2::Q::p::load in W2::q1::p')).toBeUndefined();
+  });
+});
+
+describe('checkConstraintsNumeric — a package head joined to an instance’s standing value an assert contradicts (F0)', () => {
+  const text = (fix: string) => `package E2C {
+    part def P { attribute m : ScalarValues::Real; }
+    bind P::m = M;
+    attribute M : ScalarValues::Real;
+    part p4 : P { attribute :>> m default = 7.0; }
+    part p5 : P;
+    assert constraint fix { ${fix} }
+    constraint cM { M >= 6.0 }
+    constraint c5 { p5.m >= 6.0 }
+    constraint c4 { p4.m >= 6.0 }
+  }`;
+
+  it('decides no row that reads M or a slot that carries it, bare or not; p4.m keeps its own 7', async () => {
+    for (const fix of ['M == 5.0', '2.0 * M == 10.0', 'p5.m == 5.0']) {
+      const { model: m } = await loadModelText(text(fix));
+      const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'E2C')!.id;
+      expect(headStandsAgainstAt(m!, pkg, 'M'), fix).toBeDefined();
+      expect(headStandsAgainstAt(m!, pkg, 'p5.m'), fix).toBeDefined();
+      expect(headStandsAgainstAt(m!, pkg, 'p4.m'), fix).toBeUndefined();
+      const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `E2C::${n}`)!;
+      // Solved from the assert alone, M was 5: `cM` and `c5` F where the model contradicts itself.
+      expect(['cM', 'c5', 'fix', 'c4'].map((n) => numeric(n).result), fix).toEqual(['unknown', 'unknown', 'unknown', 'satisfied']);
+      expect(numeric('cM').reason, fix).toBe(headStandsAgainstAt(m!, pkg, 'M'));
+    }
+  });
+
+  it('reads M where the assert holds exactly at the standing value', async () => {
+    const { model: m } = await loadModelText(text('M == 7.0'));
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'E2C')!.id;
+    expect(headStandsAgainstAt(m!, pkg, 'M')).toBeUndefined();
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `E2C::${n}`)!;
+    expect(['cM', 'c5', 'fix', 'c4'].map((n) => numeric(n).result)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied']);
+  });
+});
+
+describe('checkConstraintsNumeric — a slot a package head joins to two defaults that differ (F3)', () => {
+  const text = (fix: string, fixer = '') => `package E1Q {
+    part def P { attribute load : ScalarValues::Real; }
+    attribute M : ScalarValues::Real default = 9.0;
+    bind P::load = M;
+    part p4 : P { attribute :>> load default = 7.0; }
+    part p2 : P;
+    assert constraint fix { ${fix} }
+    part p3 : P;${fixer}
+    constraint c2T { p2.load <= 6.0 }
+    constraint cM { M >= 6.0 }
+  }`;
+
+  it('decides no row that reads the slot or M, whatever the assert fixes', async () => {
+    for (const fix of ['p2.load == 5.0', 'M == 5.0', '2.0 * M == 10.0']) {
+      const { model: m } = await loadModelText(text(fix));
+      const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'E1Q')!.id;
+      expect(unfixedDefaultsDifferAt(m!, pkg, 'p2.load'), fix).toBeDefined();
+      const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `E1Q::${n}`)!;
+      // Solved from the assert, the slot was 5: `c2T` and `fix` T where the check reads no value.
+      expect(['c2T', 'cM', 'fix'].map((n) => numeric(n).result), fix).toEqual(['unknown', 'unknown', 'unknown']);
+      expect(numeric('c2T').reason, fix).toBe(unfixedDefaultsDifferAt(m!, pkg, 'p2.load'));
+      expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'E1Q::fix')?.encodable, fix).toMatchObject({ reason: 'unread-definition' });
+    }
+  });
+
+  it('decides no row over a name an assert defines that the head joins to a member with two values (GH91)', async () => {
+    // P's standing `default = 7.0` is every P's m, so M's as well, and `M == 5.0` makes two values: the solve read M at
+    // the default's 7 (`cM` T, `fix` F) where the check reads no value for M.
+    const { model: m } = await loadModelText(`package GH91 {
+      part def P { attribute m : ScalarValues::Real default = 7.0; }
+      bind P::m = M;
+      attribute M : ScalarValues::Real;
+      part p1 : P;
+      assert constraint fix { M == 5.0 }
+      constraint cM { M >= 6.0 }
+    }`);
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'GH91')!.id;
+    expect(headTwoValuesAt(m!, pkg, 'M')).toMatch(/joins two values the model states/);
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `GH91::${n}`)!;
+    expect([numeric('cM').result, numeric('fix').result]).toEqual(['unknown', 'unknown']);
+  });
+
+  it('decides no row over a name the head joins to a slot two fixers give different values (GH2)', async () => {
+    // p1's `:>> m = 7.0` and w's `L = 5.0` through W's `bind q.m = L` both fix P's m outside the component: the
+    // binding gives M both 7 and 5. The solve read M at the 5 alone (`cM` F) where the check reads no value for M;
+    // p1.m keeps its own 7, and w.q.m its 5.
+    const src = (L: string) => `package GH2 {
+      package L { part def P { attribute m : ScalarValues::Real; } }
+      bind L::P::m = M;
+      attribute M : ScalarValues::Real;
+      part p1 : L::P { attribute :>> m = 7.0; }
+      part def W { attribute L : ScalarValues::Real; part q : L::P; bind q.m = L; }
+      part w : W { attribute :>> L = ${L}; }
+      constraint cM { M >= 6.0 }
+      constraint c1 { p1.m >= 6.0 }
+      constraint cW { w.q.m >= 6.0 }
+    }`;
+    const { model: m } = await loadModelText(src('5.0'));
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'GH2')!.id;
+    const why = headFixersDifferAt(m!, pkg, 'M');
+    expect(why).toMatch(/both the value GH2::p1::m states and a binding read in GH2 at w\.q\.m give L\.P\.m a value/);
+    expect(headFixersDifferAt(m!, pkg, 'p1.m')).toBeUndefined();
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `GH2::${n}`)!;
+    expect([numeric('cM').result, numeric('cM').reason]).toEqual(['unknown', why]);
+    expect([numeric('c1').result, numeric('cW').result]).toEqual(['satisfied', 'violated']);
+    const check = checkConstraints(m!).find((r) => m!.qualifiedName(r.id) === 'GH2::cM')!;
+    expect([check.result, check.message]).toEqual(['unknown', `Could not evaluate: ${why}`]);
+    // Two fixers that state one exact value (w's `L = 7.0`) give M that value: no fence.
+    const { model: same } = await loadModelText(src('7.0'));
+    const samePkg = same!.all().find((e) => same!.qualifiedName(e.id) === 'GH2')!.id;
+    expect(headFixersDifferAt(same!, samePkg, 'M')).toBeUndefined();
+    expect(checkConstraintsNumeric(same!).find((r) => same!.qualifiedName(r.id) === 'GH2::cM')!.result).toBe('satisfied');
+  });
+
+  it('is no fence where an instance fixes the slot outside the component (fixedHead, V4)', async () => {
+    const { model: m } = await loadModelText(`package V4 {
+      part def P { attribute load : ScalarValues::Real; }
+      attribute M : ScalarValues::Real default = 9.0;
+      bind P::load = M;
+      part p4 : P { attribute :>> load default = 7.0; }
+      part def W { attribute L : ScalarValues::Real; part p2 : P; bind p2.load = L; }
+      part v : W { attribute :>> L = 5.0; }
+      part p3 : P;
+      constraint c3T { p3.load <= 6.0 }
+      constraint c3F { p3.load >= 6.0 }
+      constraint c2 { v.p2.load <= 6.0 }
+      constraint cM { M >= 6.0 }
+    }`);
+    const pkg = m!.all().find((e) => m!.qualifiedName(e.id) === 'V4')!.id;
+    // Same abstention, but v's `:>> L = 5.0` fixes the slot: the model entails M = 5 (decision 10).
+    const src = boundSourceIn(m!, 'V4::p3::load');
+    expect(src !== undefined && 'abstain' in src && [src.abstain, src.fixedHead]).toEqual(['defaults-differ', true]);
+    expect(unfixedDefaultsDifferAt(m!, pkg, 'p3.load')).toBeUndefined();
+    expect(checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === 'V4::c3T')!.result).toBe('satisfied');
   });
 });
 
@@ -1918,5 +2092,34 @@ describe('solve — an asserted String equality', () => {
       const { model } = await loadModelText(tank(asserts), { fileName: 'p.sysml', strict: true });
       expect(solve(model!).converged).toBe(true);
     }
+  });
+});
+
+describe('checkConstraintsNumeric — two Booleans compared by value (S1)', () => {
+  // `s.ok == true` and `s.fast != true` between Booleans are decided on the numeric surface as they are on the check
+  // (the quantity reader refused them as "a boolean was used where a quantity was needed"); a Boolean against a number,
+  // and a valueless Boolean, stay unknown. Both orders of the members.
+  it('decides == and != between Booleans, and keeps a number beside one refused', async () => {
+    const members = [
+      'part def S { attribute ok : ScalarValues::Boolean = true; attribute fast : ScalarValues::Boolean = false; attribute r : ScalarValues::Real = 3.0; attribute w : ScalarValues::Boolean; }',
+      'part s : S;',
+      'constraint bT { s.ok == true and s.r <= 5.0 }',
+      'constraint bF { s.ok == true and s.fast == true }',
+      'constraint bN { s.fast != true }',
+      'constraint bQ { (s.r > 1.0) == s.ok }',
+      'constraint bW { s.w == true }',
+      'constraint bX { s.ok == 1.0 }',
+    ];
+    const read = async (order: string[]) => {
+      const { model } = await loadModelText(`package U3 { ${order.join(' ')} }`, { fileName: 'p.sysml', strict: true });
+      return Object.fromEntries(
+        checkConstraintsNumeric(model!)
+          .map((r): [string, string] => [model!.qualifiedName(r.id)!.replace('U3::', ''), r.result])
+          .sort(),
+      );
+    };
+    const expected = { bT: 'satisfied', bF: 'violated', bN: 'satisfied', bQ: 'satisfied', bW: 'unknown', bX: 'unknown' };
+    expect(await read(members)).toEqual(expected);
+    expect(await read([...members].reverse())).toEqual(expected);
   });
 });

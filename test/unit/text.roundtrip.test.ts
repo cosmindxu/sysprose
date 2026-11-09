@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildSampleModel, isRelationship, Model, ModelFactory, type ChangeEvent, type ElementRecord } from '@core/index';
 import {
   measureTextHealth,
@@ -907,6 +909,32 @@ describe('serializer — the reference form the resolver agrees with', () => {
     expect(serializeModel(parseModel(serializeModel(loaded)).model)).toBe(serializeModel(loaded));
   });
 
+  // I-A, load is a fixed point: the page starts from the file's redefinitions, end copies and binding marks, so the
+  // first edit's settle moves only what the edit asks it to. Over every example and fixture model.
+  it('a full settle of every loaded corpus, example and fixture model changes nothing', () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true })
+        .flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : d.name.endsWith('.sysml') ? [join(dir, d.name)] : []))
+        .sort();
+    const files = [...walk('examples'), ...walk('test/fixtures')];
+    expect(files.length).toBeGreaterThan(200);
+    const changed: string[] = [];
+    for (const file of files) {
+      const m = parseModel(readFileSync(file, 'utf8')).model;
+      const user = m.all().filter((e) => e.attrs.isLibrary !== true);
+      const before = user.map((e) => JSON.stringify(e)).join('\n');
+      const moved = settleRedefinitions(m, user.filter((e) => !isRelationship(e.eClass)).map((e) => e.id));
+      // Marks too: a binding the settle would mark (stale or parted) changes its attrs, and the record with it.
+      if (moved > 0 || m.all().filter((e) => e.attrs.isLibrary !== true).map((e) => JSON.stringify(e)).join('\n') !== before) changed.push(`${file}: moved ${moved}`);
+      // And no orphan (the serializer's dropOrphanCopies rule): something outside each implicit copy's subtree refers into it.
+      for (const c of user.filter((e) => e.attrs.implicit === true && !isRelationship(e.eClass))) {
+        const own = new Set([c.id, ...m.descendants(c.id).map((d) => d.id)]);
+        if (![...own].some((id) => m.edgesOf(id).some((e) => !own.has(e.id)))) changed.push(`${file}: orphan copy ${m.qualifiedName(c.id)}`);
+      }
+    }
+    expect(changed).toEqual([]);
+  });
+
   // The edits `settleRedefinitions` is asked about, as the store's listener names them.
   it('names the types an edit left redefinitions in, and passes over an edit of attrs alone', () => {
     const { model: m } = parseModel(`package P {
@@ -1633,6 +1661,28 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(spelled.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     expect(spelled.model.all().find((e) => e.declaredName === 'c')!.attrs.expression).toBe('not (load > 10.0)');
     expect(spelled.model.all().find((e) => e.declaredName === 'c')!.attrs.negated).toBeUndefined();
+    // a5 F2: `assert not satisfy R by s0;` parses as a bare `assert not` and a `satisfy` beside it. The `satisfy` is not
+    // mapped (read apart it is the plain satisfaction), and the refused clause keeps the whole statement as written.
+    const nb = (stmt: string) =>
+      `package NB7 {\n  part def S { attribute m : ScalarValues::Real; }\n  requirement def R { subject s : S; require constraint { s.m <= 5.0 } }\n  part s0 : S { attribute :>> m = 7.0; }\n  ${stmt}\n}\n`;
+    for (const stmt of ['assert not satisfy R by s0;', 'assert not /* why */ satisfy R by s0;', 'require not satisfy R by s0 { }', 'private assert not satisfy requirement R by s0;']) {
+      const { model, diagnostics } = parseModel(nb(stmt));
+      expect(diagnostics.filter((d) => d.severity === 'error').map((d) => d.code), stmt).toEqual(['mapper/negated-assert-unread']);
+      expect(model.all().filter((e) => e.eClass === 'Satisfy' || e.eClass === 'TextualRepresentation'), stmt).toEqual([]);
+      const kept = model.all().filter((e) => e.attrs.negated === true);
+      expect(kept.map((e) => e.attrs.unparsedText), stmt).toEqual([stmt]);
+      const saved = serializeModel(model);
+      expect(saved, stmt).toContain(stmt);
+      expect(serializeModel(parseModel(saved).model), stmt).toBe(saved);
+    }
+    // nb7 as the writer lays it out is saved byte for byte, the `satisfy R by s0;` with it.
+    const nb7 =
+      'package NB7 {\n    part def S {\n        attribute m : ScalarValues::Real;\n    }\n    requirement def R {\n        subject s : S;\n' +
+      '        require constraint {\n            s.m <= 5.0\n        }\n    }\n    part s0 : S {\n        attribute :>> m = 7.0;\n    }\n' +
+      '    assert not satisfy R by s0;\n}';
+    expect(serializeModel(parseModel(nb7).model)).toBe(nb7);
+    // With the `;` the clause ends there, and the `satisfy` after it is its own statement, as before.
+    expect(parseModel(nb('assert not; satisfy R by s0;')).model.all().filter((e) => e.eClass === 'Satisfy').length).toBe(1);
   });
 
   it('resolves a forward disjoint / subset target and leaves genuine typos unresolved (F4)', () => {

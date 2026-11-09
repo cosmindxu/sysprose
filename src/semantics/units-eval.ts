@@ -90,7 +90,7 @@ import {
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
-import { DOUBLE_DIGITS, readQuotedName, significantDigitsOf } from './expr';
+import { connective, DOUBLE_DIGITS, readQuotedName, significantDigitsOf, type Tri } from './expr';
 import {
   addRationals,
   compareRationals,
@@ -686,6 +686,13 @@ function lexQ(src: string): QTok[] {
       i++;
       continue;
     }
+    // `if c ? a else b`, the conditional's other spelling ({@link ./expr}): the
+    // lone `?` only, never `??` or a `?` after a `.`.
+    if (c === '?' && src[i + 1] !== '?' && src[i - 1] !== '.') {
+      toks.push({ t: 'op', v: '?' });
+      i++;
+      continue;
+    }
     throw new SyntaxError(`Unexpected character '${c}'`);
   }
   toks.push({ t: 'eof' });
@@ -751,23 +758,28 @@ export function quantityRefsIn(text: string): string[] | undefined {
 const Q_PRECEDENCE: Record<string, number> = {
   implies: 1,
   or: 2,
-  xor: 2,
-  and: 3,
-  '==': 4,
-  '=': 4,
-  '!=': 4,
-  '<': 5,
-  '<=': 5,
-  '>': 5,
-  '>=': 5,
-  '+': 6,
-  '-': 6,
-  '*': 7,
-  '/': 7,
-  '%': 7,
-  '^': 8,
+  xor: 3,
+  and: 4,
+  '==': 5,
+  '=': 5,
+  '!=': 5,
+  '<': 6,
+  '<=': 6,
+  '>': 6,
+  '>=': 6,
+  '+': 7,
+  '-': 7,
+  '*': 8,
+  '/': 8,
+  '%': 8,
+  '^': 9,
 };
-const Q_RIGHT_ASSOC = new Set(['^', 'implies']);
+/**
+ * KerML 8.2.5.8.1, Table 6: `and` > `xor` > `or` > `implies`, and every binary
+ * operator but exponentiation groups to the left (`a implies b implies c` is
+ * `(a implies b) implies c`; `a or b xor c` is `a or (b xor c)`).
+ */
+const Q_RIGHT_ASSOC = new Set(['^']);
 
 /**
  * Every operator this grammar reads: the binary ones, which are the precedence
@@ -855,7 +867,7 @@ class QParser {
         if (tk.v === 'false') return { kind: 'bool', value: false };
         if (tk.v === 'if') {
           const cond = this.parseBinary(0);
-          this.expectKw('then');
+          this.expectThen();
           const then = this.parseBinary(0);
           this.expectKw('else');
           return { kind: 'if', cond, then, else: this.parseBinary(0) };
@@ -863,7 +875,7 @@ class QParser {
         throw new SyntaxError(`Unexpected keyword '${tk.v}'`);
       case 'lparen': {
         const inner = this.parseBinary(0);
-        if (this.next().t !== 'rparen') throw new SyntaxError('Expected )');
+        if (this.next().t !== 'rparen') throw new SyntaxError('Expected ) to close the parenthesis');
         return inner;
       }
       case 'str':
@@ -873,9 +885,15 @@ class QParser {
     }
   }
 
+  /** The separator after an `if` condition: `then` or the lone `?` (one `if` node either way). */
+  private expectThen(): void {
+    const tk = this.next();
+    if (!((tk.t === 'kw' && tk.v === 'then') || (tk.t === 'op' && tk.v === '?'))) throw new SyntaxError("Expected 'then' or '?' after the condition of an if");
+  }
+
   private expectKw(kw: string): void {
     const tk = this.next();
-    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}'`);
+    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}' in the conditional`);
   }
 }
 
@@ -927,7 +945,11 @@ class QParser {
  *    inside the tool (A.2.9, `boundInInstanceQ`); `detail` is the A.9
  *    sentence naming the error. The scalar twin reads the same binding on its
  *    own path, and where only this one failed it read a value nobody checked
- *    in units: the failure is the answer, reported, never filled.
+ *    in units: the failure is the answer, reported, never filled;
+ *  - `declared-unit` — a REFUSAL: a defining equation gives a number with no
+ *    unit to a feature that declares a unit other than its kind's coherent SI
+ *    one (`L : MassValue [g]` beside `L == 50.0`), which no two surfaces read
+ *    alike; `detail` is the unit.
  */
 export type QReason =
   | 'unresolved'
@@ -947,7 +969,8 @@ export type QReason =
   | 'contradiction'
   | 'shadowed'
   | 'tie'
-  | 'internal';
+  | 'internal'
+  | 'declared-unit';
 
 /** Is this {@link describeReason} sentence the `unresolved` one: a name the evaluator reads no value for? */
 export function isUnresolvedSentence(sentence: string): boolean {
@@ -984,7 +1007,7 @@ export function describeReason(reason: QReason, detail?: string): string {
     case 'not-quantity':
       return 'a boolean was used where a quantity was needed';
     case 'division-by-zero':
-      return 'division by zero';
+      return 'division by zero: the divisor evaluates to zero';
     case 'empty':
       return 'the expression is empty';
     case 'contradiction':
@@ -997,6 +1020,11 @@ export function describeReason(reason: QReason, detail?: string): string {
     }
     case 'internal':
       return detail ?? 'a per-instance reading failed inside the tool; reported, not dropped';
+    case 'declared-unit':
+      return (
+        `its asserted equation gives it a number with no unit beside the unit it declares, [${detail ?? '?'}], and ` +
+        'the surfaces of this tool do not read that number alike; write the unit in the equation'
+      );
   }
 }
 
@@ -1026,7 +1054,8 @@ export function isRefusalReason(reason: QReason | undefined): boolean {
     reason === 'contradiction' ||
     reason === 'shadowed' ||
     reason === 'tie' ||
-    reason === 'internal'
+    reason === 'internal' ||
+    reason === 'declared-unit'
   );
 }
 
@@ -1037,7 +1066,11 @@ type QScope = (name: string) => QEval | undefined;
  * already been composed on the way up (a derived feature naming the operand
  * that failed inside it) — the finished `message`.
  */
-type QUnknown = { unknown: true; reason: QReason; detail?: string; message?: string };
+/**
+ * `opaque`: an `unresolved` read beside an operand the connective table may not absorb (an ill-typed or refused one),
+ * which keeps its sentence but is never absorbed either ({@link qTri}).
+ */
+type QUnknown = { unknown: true; reason: QReason; detail?: string; message?: string; opaque?: true };
 type QEval = { q: Quantity } | { b: boolean } | QUnknown;
 const isQUnknown = (r: QEval): r is QUnknown => 'unknown' in r;
 const unknownQ = (reason: QReason, detail?: string, message?: string): QEval => ({
@@ -1220,35 +1253,39 @@ function evalQBinary(
   const op = node.op;
 
   if (op === 'and' || op === 'or' || op === 'xor' || op === 'implies') {
-    // The scalar evaluator's short-circuits ({@link ./expr}): `false and x`,
-    // `true or x`, `false implies x` and `x implies true` decide without x.
+    // The scalar evaluator's connective table ({@link connective}): an unknown is absorbed only when it is
+    // `unresolved`, a value this scope does not read; a refusal, an ill-typed operand or any other unknown never is.
     const l = evalQ(node.left, scope, tol, every);
-    if (!isQUnknown(l) && 'b' in l) {
-      if (op === 'and' && l.b === false) return { b: false };
-      if (op === 'or' && l.b === true) return { b: true };
-      if (op === 'implies' && l.b === false) return { b: true };
-    }
-    const r = evalQ(node.right, scope, tol, every);
-    if (op === 'implies' && !isQUnknown(r) && 'b' in r && r.b === true) return { b: true };
-    // And `x and false`, x a value this scope does not read: never a refusal, which the caller must hear of.
-    if (op === 'and' && isQUnknown(l) && !isRefusalReason(l.reason) && !isQUnknown(r) && 'b' in r && r.b === false) return { b: false };
-    if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
-    if (!('b' in l) || !('b' in r)) return unknownQ('not-boolean');
-    switch (op) {
-      case 'and':
-        return { b: l.b && r.b };
-      case 'or':
-        return { b: l.b || r.b };
-      case 'xor':
-        return { b: l.b !== r.b };
-      case 'implies':
-        return { b: !l.b || r.b };
-    }
+    let r: QEval | undefined;
+    const t = connective(op, qTri(l), () => qTri((r = evalQ(node.right, scope, tol, every))));
+    if (typeof t === 'boolean') return { b: t };
+    return connectiveUnknown(l, r, t.absorbable);
   }
 
   const l = evalQ(node.left, scope, tol, every);
   const r = evalQ(node.right, scope, tol, every);
   return combineQ(op, l, r, tol);
+}
+
+/** Is this an unknown {@link connective} may absorb: an `unresolved` no ill-typed operand stands behind? */
+const absorbableQ = (e: QEval): boolean => isQUnknown(e) && e.reason === 'unresolved' && e.opaque !== true;
+const opaqueQ = (u: QUnknown): QUnknown => ({ ...u, opaque: true });
+
+/** An operand of a connective as {@link connective} reads it: only an absorbable `unresolved` is absorbable. */
+function qTri(e: QEval): Tri {
+  if (isQUnknown(e)) return { unknown: true, absorbable: absorbableQ(e) };
+  return 'b' in e ? e.b : { unknown: true, absorbable: false };
+}
+
+/**
+ * The unknown a connective that decided nothing answers: the operand's ({@link worseUnknown}), or `not-boolean` where
+ * both are known and one is not a Boolean; an `unresolved` the table did not keep absorbable is `opaque`, so an
+ * enclosing connective never absorbs what an ill-typed operand made unknown.
+ */
+function connectiveUnknown(l: QEval, r: QEval | undefined, absorbable: boolean): QEval {
+  const u = r === undefined ? l : worseUnknown(l, r);
+  if (!isQUnknown(u)) return unknownQ('not-boolean');
+  return !absorbable && absorbableQ(u) ? opaqueQ(u) : u;
 }
 
 /**
@@ -1269,7 +1306,8 @@ function worseUnknown(l: QEval, r: QEval): QEval {
   const ru = isQUnknown(r) ? r : undefined;
   if (!lu) return ru ?? l;
   if (!ru) return lu;
-  return isRefusalReason(ru.reason) && !isRefusalReason(lu.reason) ? ru : lu;
+  const u = isRefusalReason(ru.reason) && !isRefusalReason(lu.reason) ? ru : lu;
+  return absorbableQ(u) && !absorbableQ(u === lu ? ru : lu) ? opaqueQ(u) : u;
 }
 
 /** Apply an arithmetic/comparison operator to two evaluated operands. */
@@ -1277,7 +1315,18 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
   // A refusal on either side wins, for the same reason it does in `and`/`or`:
   // which operand happened to be written first must not decide whether the
   // caller may fall back to raw magnitudes.
-  if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
+  if (isQUnknown(l) || isQUnknown(r)) {
+    const u = worseUnknown(l, r);
+    // Beside a Boolean where a quantity is needed, no value of the unread name gives a quantity: never absorbed.
+    const besideBoolean = (!isQUnknown(l) && 'b' in l) || (!isQUnknown(r) && 'b' in r);
+    return besideBoolean && op !== '==' && op !== '=' && op !== '!=' && absorbableQ(u) ? opaqueQ(u as QUnknown) : u;
+  }
+  // Two Booleans compare by value (`s.ok == true`, `s.fast != true`): the scalar evaluator reads them so, and the
+  // quantity reader refused them as "a boolean where a quantity was needed". A Boolean against a number, and an
+  // ordering (`<`) of Booleans, stay refused.
+  if ((op === '==' || op === '=' || op === '!=') && 'b' in l && 'b' in r) {
+    return { b: (l.b === r.b) === (op !== '!=') };
+  }
   if (!('q' in l) || !('q' in r)) return unknownQ('not-quantity');
   const a = l.q;
   const b = r.q;
@@ -1316,6 +1365,9 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
         // `d ^ t <= 10.0` VIOLATED on both surfaces.
         return unknownQ('dimension-fault', `an exponent must be dimensionless, not ${dimToString(b.dimension)}`);
       }
+      // A negative power of zero divides by zero, as `/` does: `0.0 ^ -1` is Infinity in binary64, and
+      // `x * y ^ -1 >= 1.0` at y = 0 read T on the check, literal and numeric surfaces (a5 F4a).
+      if (sa === 0 && exp < 0) return unknownQ('division-by-zero');
       // A power of the base's conversion, by the exponent's NUMBER — which has
       // to be a number: `2.0 ^ cap` is 2^(2^34) in bits and 2^(2^31) in bytes.
       const power = (pa: number, pb: number): number => (pb !== 0 ? Number.NaN : pa * exp);
@@ -2319,6 +2371,19 @@ function deriveByEquation(
   // surface. A VALUE that is such a reference is an identity, and keeps the
   // point ({@link deriveFeatureUncached}).
   if (r.q.absolute) return { ...claimOnly('unknown', 'offset', r.q.unit), depth, ...met };
+  // A number with no unit, for a feature that declares one (`L : MassValue [g]` beside `L == 50.0`): this reading
+  // took it in the kind's coherent SI (50 [kg]), the solver lane in the declared unit (50 [g]), and a bare literal
+  // compared with a stated value reads the unit that value is written in. No surface reads it alike, so none reads
+  // it: only a declared unit that is the kind's coherent SI unit (`[kg]` on a MassValue) gives the same value.
+  const feat = model.get(featureId);
+  const declared = feat ? unitOfFeature(feat) : undefined;
+  if (declared !== undefined && dimEqual(r.q.dimension, DIMENSIONLESS)) {
+    const u = resolveUnit(declared);
+    const kind = quantityKindOf(model, featureId).dimension;
+    if (!u || u.offsetSI || u.factorToSI !== 1 || !kind || !dimEqual(kind, u.dimension)) {
+      return { ...claimOnly('unknown', 'declared-unit', declared), depth, ...met };
+    }
+  }
   return { ...judgeDerivation(model, featureId, r.q), depth, ...met };
 }
 
@@ -2982,6 +3047,35 @@ export interface ConstraintQuantityResult {
 
 const COMPARISONS = new Set<QBinOp>(['<', '<=', '>', '>=', '==', '!=', '=']);
 
+/** The name resolver {@link evaluateConstraintQuantityDetailed} reads a body by: `bind`, the owner, the element itself, then `fallback`. */
+function constraintScope(model: Model, el: ElementRecord, opts: ConstraintQuantityOptions): QScope {
+  const inFlight: InFlight = new Map();
+  const memo = opts.memo ?? new Map();
+  const inst = opts.instances === true ? (opts.instance ?? (el.ownerId != null ? sharedDefinitions(model).instanceNameOf(el.ownerId) : undefined)) : undefined;
+  const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo, undefined, inst) : undefined;
+  const selfScope = quantityScopeFor(model, el.id, inFlight, memo, undefined, inst);
+  return (name) => {
+    const bound = opts.bind?.(name);
+    if (bound !== undefined) return { q: bound };
+    const fromOwner = ownerScope?.(name);
+    if (fromOwner !== undefined) return fromOwner;
+    const fromSelf = selfScope(name);
+    if (fromSelf !== undefined) return fromSelf;
+    const fb = opts.fallback?.(name);
+    return fb === undefined ? undefined : { q: fb };
+  };
+}
+
+/**
+ * The quantity a constraint `el`'s body reads for `name`, by the resolver its
+ * verdict reads it by ({@link evaluateConstraintQuantityDetailed}), or
+ * `undefined` where that reads no quantity (an unknown, a boolean, no value).
+ */
+export function quantityOf(model: Model, el: ElementRecord, name: string, opts: ConstraintQuantityOptions = {}): Quantity | undefined {
+  const r = constraintScope(model, el, opts)(name);
+  return r !== undefined && !isQUnknown(r) && 'q' in r ? r.q : undefined;
+}
+
 /**
  * Evaluate a constraint/requirement boolean expression with the unit-aware
  * evaluator, classifying it as `satisfied` / `violated` / `unknown` and, for
@@ -3005,21 +3099,7 @@ export function evaluateConstraintQuantityDetailed(
     return { verdict: 'unknown', reason: 'parse', detail: (e as Error).message };
   }
 
-  const inFlight: InFlight = new Map();
-  const memo = opts.memo ?? new Map();
-  const inst = opts.instances === true ? (opts.instance ?? (el.ownerId != null ? sharedDefinitions(model).instanceNameOf(el.ownerId) : undefined)) : undefined;
-  const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo, undefined, inst) : undefined;
-  const selfScope = quantityScopeFor(model, el.id, inFlight, memo, undefined, inst);
-  const scope: QScope = (name) => {
-    const bound = opts.bind?.(name);
-    if (bound !== undefined) return { q: bound };
-    const fromOwner = ownerScope?.(name);
-    if (fromOwner !== undefined) return fromOwner;
-    const fromSelf = selfScope(name);
-    if (fromSelf !== undefined) return fromSelf;
-    const fb = opts.fallback?.(name);
-    return fb === undefined ? undefined : { q: fb };
-  };
+  const scope = constraintScope(model, el, opts);
   const tol: DecideOptions = { absTol: opts.absTol ?? 0, searched: opts.searched === true };
 
   let r: QEval;

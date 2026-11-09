@@ -64,7 +64,42 @@ export type BinaryOp =
   | 'and' | 'or' | 'xor' | 'implies';
 
 /** Result of evaluating a node: either a concrete value or "not known". */
-export type EvalResult = { value: unknown } | { unknown: true };
+export type EvalResult = { value: unknown } | { unknown: true; absorbable?: true };
+
+/**
+ * One operand of a connective ({@link connective}): a Boolean, or unknown. An unknown is `absorbable` only when it is
+ * a value the scope does not read (a name with no value), which every completion of the model gives a Boolean where
+ * the body is well typed. A refusal, an ill-typed operand (a known non-Boolean, `not` of a number) or any other
+ * unknown is never absorbable.
+ */
+export type Tri = boolean | { unknown: true; absorbable: boolean };
+
+/**
+ * The connective table every evaluator reads (KerML 7.4.9.2): `false and _`, `true or _` and `false implies _` decide
+ * without the right operand, which is read only when needed; an absorbable unknown left operand is absorbed by
+ * `x and false`, `x or true` and `x implies true`; a non-absorbable one never is, and `xor` never absorbs. An unknown
+ * result is absorbable only when every unknown operand it was read from is.
+ */
+export function connective(op: 'and' | 'or' | 'xor' | 'implies', left: Tri, right: () => Tri): Tri {
+  if (op === 'and' && left === false) return false;
+  if (op === 'or' && left === true) return true;
+  if (op === 'implies' && left === false) return true;
+  const r = right();
+  if (typeof left === 'boolean' && typeof r === 'boolean') {
+    if (op === 'and') return left && r;
+    if (op === 'or') return left || r;
+    if (op === 'xor') return left !== r;
+    return !left || r;
+  }
+  // `true and x`, `false or x` and `true implies x` are x.
+  if (typeof left === 'boolean' && op !== 'xor') return r;
+  if (typeof left !== 'boolean' && left.absorbable && op !== 'xor') {
+    const absorbing = op === 'and' ? false : true;
+    if (r === absorbing) return absorbing;
+  }
+  const absorbable = (typeof left === 'boolean' || left.absorbable) && (typeof r === 'boolean' || r.absorbable);
+  return { unknown: true, absorbable };
+}
 
 /* ─────────────────────────────── numerals ────────────────────────────── */
 
@@ -263,6 +298,15 @@ function tokenize(src: string): Tok[] {
       i++;
       continue;
     }
+    // The conditional's other spelling, `if c ? a else b` (`if` Expression
+    // (`?` | `then`) Expression `else` Expression, as the KerML grammar has it). Only the lone `?` is read: `??` (null
+    // coalescing) and a `?` after a `.` stay errors, and a `?` anywhere but
+    // after an `if` condition is refused by the parser.
+    if (c === '?' && src[i + 1] !== '?' && src[i - 1] !== '.') {
+      toks.push({ t: 'op', v: '?' });
+      i++;
+      continue;
+    }
     throw new SyntaxError(`Unexpected character '${c}' at ${i}`);
   }
   toks.push({ t: 'eof' });
@@ -280,23 +324,28 @@ const isIdentPart = (c: string): boolean => isIdentStart(c) || isDigit(c);
 const PRECEDENCE: Record<string, number> = {
   implies: 1,
   or: 2,
-  xor: 2,
-  and: 3,
-  '==': 4,
-  '=': 4,
-  '!=': 4,
-  '<': 5,
-  '<=': 5,
-  '>': 5,
-  '>=': 5,
-  '+': 6,
-  '-': 6,
-  '*': 7,
-  '/': 7,
-  '%': 7,
-  '^': 8,
+  xor: 3,
+  and: 4,
+  '==': 5,
+  '=': 5,
+  '!=': 5,
+  '<': 6,
+  '<=': 6,
+  '>': 6,
+  '>=': 6,
+  '+': 7,
+  '-': 7,
+  '*': 8,
+  '/': 8,
+  '%': 8,
+  '^': 9,
 };
-const RIGHT_ASSOC = new Set(['^', 'implies']);
+/**
+ * KerML 8.2.5.8.1, Table 6: `and` > `xor` > `or` > `implies`, and every binary
+ * operator but exponentiation groups to the left (`a implies b implies c` is
+ * `(a implies b) implies c`; `a or b xor c` is `a or (b xor c)`).
+ */
+const RIGHT_ASSOC = new Set(['^']);
 
 class Parser {
   private pos = 0;
@@ -384,7 +433,7 @@ class Parser {
         if (tk.v === 'null') return { kind: 'null' };
         if (tk.v === 'if') {
           const cond = this.parseBinary(0);
-          this.expectKw('then');
+          this.expectThen();
           const thenN = this.parseBinary(0);
           this.expectKw('else');
           const elseN = this.parseBinary(0);
@@ -396,9 +445,17 @@ class Parser {
     }
   }
 
+  /** The separator after an `if` condition: `then` or the lone `?` (one `if` node either way). */
+  private expectThen(): void {
+    const tk = this.next();
+    if (!((tk.t === 'kw' && tk.v === 'then') || (tk.t === 'op' && tk.v === '?'))) {
+      throw new SyntaxError("Expected 'then' or '?' after the condition of an if");
+    }
+  }
+
   private expectKw(kw: string): void {
     const tk = this.next();
-    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}'`);
+    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}' in the conditional`);
   }
 }
 
@@ -446,7 +503,27 @@ export function exprEqual(a: ExprNode, b: ExprNode): boolean {
 /* ────────────────────────────── evaluator ────────────────────────────── */
 
 const UNKNOWN: EvalResult = { unknown: true };
-const isUnknown = (r: EvalResult): r is { unknown: true } => 'unknown' in r;
+/** A scope miss: the one unknown {@link connective} may absorb. */
+const MISSING: EvalResult = { unknown: true, absorbable: true };
+const isUnknown = (r: EvalResult): r is { unknown: true; absorbable?: true } => 'unknown' in r;
+
+/**
+ * Of two operand results of `op` (not a connective) at least one unknown, the unknown to pass on: a non-absorbable one
+ * wins, and a scope miss beside a Boolean where a number is needed is no longer absorbable (no value makes it one).
+ */
+function unknownOf(op: BinaryOp, l: EvalResult, r: EvalResult): EvalResult {
+  if (isUnknown(l) && l.absorbable !== true) return l;
+  if (isUnknown(r) && r.absorbable !== true) return r;
+  const known = isUnknown(l) ? r : l;
+  if (!isUnknown(known) && typeof known.value === 'boolean' && op !== '==' && op !== '=' && op !== '!=') return UNKNOWN;
+  return isUnknown(l) ? l : r;
+}
+
+/** An operand of a connective as {@link connective} reads it. */
+function triOf(r: EvalResult): Tri {
+  if (isUnknown(r)) return { unknown: true, absorbable: r.absorbable === true };
+  return typeof r.value === 'boolean' ? r.value : { unknown: true, absorbable: false };
+}
 
 /**
  * Evaluate an expression tree against a `scope` resolver.
@@ -470,7 +547,7 @@ export function evaluate(node: ExprNode, scope: (name: string) => unknown): Eval
       return { value: null };
     case 'ref': {
       const v = scope(node.path.join('.'));
-      return v === undefined ? UNKNOWN : { value: v };
+      return v === undefined ? MISSING : { value: v };
     }
     case 'unary':
       return evalUnary(node, scope);
@@ -478,7 +555,7 @@ export function evaluate(node: ExprNode, scope: (name: string) => unknown): Eval
       return evalBinary(node, scope);
     case 'if': {
       const c = evaluate(node.cond, scope);
-      if (isUnknown(c)) return UNKNOWN;
+      if (isUnknown(c)) return c;
       if (typeof c.value !== 'boolean') return UNKNOWN;
       return c.value ? evaluate(node.then, scope) : evaluate(node.else, scope);
     }
@@ -490,7 +567,7 @@ function evalUnary(
   scope: (name: string) => unknown,
 ): EvalResult {
   const r = evaluate(node.operand, scope);
-  if (isUnknown(r)) return UNKNOWN;
+  if (isUnknown(r)) return r;
   const v = r.value;
   if (node.op === 'not') return typeof v === 'boolean' ? { value: !v } : UNKNOWN;
   if (typeof v !== 'number') return UNKNOWN;
@@ -503,41 +580,17 @@ function evalBinary(
 ): EvalResult {
   const op = node.op;
 
-  // Logical operators with short-circuit semantics.
+  // Logical operators: the one connective table, which reads the right operand only when it needs it.
   if (op === 'and' || op === 'or' || op === 'implies' || op === 'xor') {
     const l = evaluate(node.left, scope);
-    if (op === 'and') {
-      if (!isUnknown(l) && l.value === false) return { value: false };
-    } else if (op === 'or') {
-      if (!isUnknown(l) && l.value === true) return { value: true };
-    }
-    const r = evaluate(node.right, scope);
-    // `x and false` is false as `false and x` is, whichever conjunct is written first: an asserted conjunction's
-    // row is the AND of its conjuncts read apart (TODO 249), and an unknown beside a false one decides nothing.
-    if (op === 'and' && isUnknown(l) && !isUnknown(r) && r.value === false) return { value: false };
-    if (op === 'implies') {
-      if (!isUnknown(l) && l.value === false) return { value: true };
-      if (!isUnknown(r) && r.value === true) return { value: true };
-    }
-    if (isUnknown(l) || isUnknown(r)) return UNKNOWN;
-    const a = l.value;
-    const b = r.value;
-    if (typeof a !== 'boolean' || typeof b !== 'boolean') return UNKNOWN;
-    switch (op) {
-      case 'and':
-        return { value: a && b };
-      case 'or':
-        return { value: a || b };
-      case 'xor':
-        return { value: a !== b };
-      case 'implies':
-        return { value: !a || b };
-    }
+    const t = connective(op, triOf(l), () => triOf(evaluate(node.right, scope)));
+    if (typeof t === 'boolean') return { value: t };
+    return t.absorbable ? MISSING : UNKNOWN;
   }
 
   const l = evaluate(node.left, scope);
   const r = evaluate(node.right, scope);
-  if (isUnknown(l) || isUnknown(r)) return UNKNOWN;
+  if (isUnknown(l) || isUnknown(r)) return unknownOf(op, l, r);
   const a = l.value;
   const b = r.value;
 

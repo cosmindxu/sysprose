@@ -638,6 +638,33 @@ const UNREAD_ABOUT_CARRIERS: ReadonlySet<string> = new Set([
   PROPERTY_PATTERN_QUALIFIED_NAME,
 ]);
 
+
+/**
+ * The offset of the first `;` at or after `from` that is not inside a string or a comment (same skipping rules as
+ * {@link bracePairs}), or -1. A plain `indexOf` cut `abstract def "a;b" ;` inside its string.
+ */
+function semicolonOutsideText(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    const c = text[i];
+    if (c === ';') return i;
+    if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+    } else if (c === '/' && text[i + 1] === '*') {
+      const close = text.indexOf('*/', i + 2);
+      if (close === -1) return -1;
+      i = close + 1;
+    } else if (c === '"' || c === "'") {
+      let k = i + 1;
+      while (k < text.length && text[k] !== '\n' && text[k] !== c) {
+        if (text[k] === '\\') k++;
+        k++;
+      }
+      i = k;
+    }
+  }
+  return -1;
+}
+
 /**
  * The standard carriers a reader takes from the element they are written in,
  * matched on the LAST `::` segment as verify.ts `metadataTypeNames` does (a file
@@ -733,6 +760,8 @@ class Mapper {
    * "the problem is in THIS declaration, at these lines".
    */
   private readonly nodeStack: AstNode[] = [];
+  /** The members a refused `assert not satisfy …` keeps in its own verbatim text ({@link negatedSatisfyOf}). */
+  private readonly negatedSatisfyKept = new Set<AstNode>();
 
   /**
    * The parser errors of THIS parse, as the two offsets the residue hunt needs.
@@ -759,6 +788,14 @@ class Mapper {
     tokenOffset: number;
     weldedTo: ElementId;
   }> = [];
+
+  /**
+   * Keyword-less usages that hold nothing but a prefix (`abstract`, `#k abstract`) and end exactly at the token
+   * before a fault: the declaration that prefix led (`abstract def X;`, whose `def` the grammar does not take
+   * after a modifier) is the next element. Filled where the usage is built, turned into residues by
+   * {@link markUnparsedResidue}, which drops the prefix element once its text lives on the next one.
+   */
+  private readonly faultPrefixes: ElementId[] = [];
 
   /**
    * The `Verify` elements built from a BARE `verify R;` requirement clause, and
@@ -949,7 +986,10 @@ class Mapper {
    */
   private noteResidueOfFault(expr: Expression | undefined, weldedTo: ElementId): void {
     const cst = expr?.$cstNode;
-    if (expr === undefined || cst === undefined || expr.$type !== 'RefExpr') return;
+    // A `#`-led expression is a metadata prefix the declaration after it never took
+    // (`#k [2] :> y;` parses `#k [2]` as the body's expression and faults at `:>`).
+    if (expr === undefined || cst === undefined) return;
+    if (expr.$type !== 'RefExpr' && !cst.text.startsWith('#')) return;
     for (const e of this.faultErrors) {
       const prev = e.previousToken;
       if (prev === undefined) continue;
@@ -1007,9 +1047,27 @@ class Mapper {
    *    first `;`, which would re-parse to a DIFFERENT fault.
    */
   private markUnparsedResidue(text: string): void {
-    if (this.faultResidues.length === 0) return;
+    if (this.faultResidues.length === 0 && this.faultPrefixes.length === 0) return;
     const pairs = bracePairs(text);
     if (pairs === undefined) return;
+    // A prefix-only usage that ends at the token before a fault is the residue's FIRST half: its text starts the
+    // residue, and the element goes once the next element carries the whole statement.
+    const dropped = new Map<number, ElementId>();
+    for (const id of this.faultPrefixes) {
+      const r = this.ranges.get(id);
+      const el = this.model.get(id);
+      if (r === undefined || el === undefined || this.model.children(id).length > 0) continue;
+      const own = text.slice(r.start.offset, r.end.offset);
+      // Only tags and modifier words: nothing a save could not write again from the next element's text.
+      if (!/^(?:#(?:'[^']*'|[^\s#;{}]+)\s+)*[a-z]+(?:\s+[a-z]+)*$/i.test(own)) continue;
+      for (const e of this.faultErrors) {
+        const prev = e.previousToken;
+        if (prev === undefined || prev.endOffset === undefined || r.end.offset !== prev.endOffset + 1) continue;
+        this.faultResidues.push({ start: r.start.offset, tokenOffset: e.tokenOffset, weldedTo: id });
+        dropped.set(r.start.offset, id);
+        break;
+      }
+    }
     /** The `{` of the innermost body containing `offset`; -1 at file level. */
     const scopeOf = (offset: number): number => {
       let best = -1;
@@ -1033,15 +1091,32 @@ class Mapper {
           !/[;}]/.test(text.slice(residue.tokenOffset, x.start)) &&
           this.canCarryResidue(x.id),
       );
-      if (target === undefined) continue;
+      if (target === undefined) {
+        // A prefix with nothing after it to carry the statement (`abstract def;`) carries it itself, up to the
+        // `;` that ends it, when no `{` or `}` comes first.
+        const prefix = dropped.get(residue.start);
+        const semi = prefix === undefined ? -1 : semicolonOutsideText(text, residue.tokenOffset);
+        if (prefix === undefined || prefix !== residue.weldedTo || semi < 0) continue;
+        const verbatim = text.slice(residue.start, semi + 1);
+        if (/[{}]/.test(verbatim) || scopeOf(semi) !== scope) continue;
+        if (typeof this.model.get(prefix)?.attrs.unparsedText !== 'string') this.model.setAttrs(prefix, { unparsedText: verbatim });
+        continue;
+      }
       const el = this.model.get(target.id);
       if (el === undefined || typeof el.attrs.unparsedText === 'string') continue;
+      // The prefix is dropped only when it carries nothing else: an earlier residue (`blok abstract def X;`) may
+      // already hang its text on it, and removing it would lose that word for good. Then it stays, as before.
+      const prefix = dropped.get(residue.start);
+      if (prefix !== undefined && prefix === residue.weldedTo && typeof this.model.get(prefix)?.attrs.unparsedText === 'string') continue;
       const verbatim = text.slice(residue.start, target.end);
       if (bracePairs(verbatim) === undefined) continue; // would re-parse differently
       this.model.setAttrs(target.id, { unparsedText: verbatim });
       // The other half of the mark: the text now lives on the residue element,
       // so it must not ALSO stay welded onto the body that swallowed it.
-      this.model.setAttrs(residue.weldedTo, { expression: undefined });
+      if (prefix !== undefined && prefix === residue.weldedTo) {
+        this.model.remove(prefix);
+        this.ranges.delete(prefix);
+      } else this.model.setAttrs(residue.weldedTo, { expression: undefined });
     }
   }
 
@@ -1609,6 +1684,8 @@ class Mapper {
   /* ────────────────────────────── members ──────────────────────────────── */
 
   private mapMember(node: Member, ownerId: ElementId | null): void {
+    // The `satisfy` of `assert not satisfy R by s;`, and a block comment before it, are kept whole by the clause.
+    if (this.negatedSatisfyKept.has(node)) return;
     this.nodeStack.push(node);
     try {
       this.mapMemberInner(node, ownerId);
@@ -2289,6 +2366,37 @@ class Mapper {
     if (node.negated && !this.readsNegatedClause(node)) {
       const code = 'mapper/negated-assert-unread';
       const name = unquoteName(node.name);
+      const kept = this.negatedSatisfyOf(node);
+      const satisfy = kept?.at(-1) as Satisfy | undefined;
+      if (kept && satisfy) {
+        for (const m of kept) this.negatedSatisfyKept.add(m);
+        // `assert not satisfy R by s0;` parses as a bare `assert not` and the `satisfy` beside it. Read apart, the
+        // `satisfy` would be judged as a plain satisfaction, the opposite of what is written: it is not mapped, and
+        // the clause keeps the whole statement, from `assert` to the end of the `satisfy`, so the save writes it back.
+        const req = satisfy.requirement ?? '';
+        const by = satisfy.satisfier;
+        const written = `${node.kind} not satisfy ${req}${by ? ` by ${by}` : ''}`;
+        this.diagnostics.push({
+          message: `\`${written}\` is not read: a negated satisfaction is neither checked nor asserted, so no surface judges ${req} for ${by ?? 'its owner'}; state what must fail as \`assert not constraint { … }\` over ${by ?? 'its owner'}'s values.`,
+          ...posOf(node),
+          severity: 'error',
+          source: 'mapper',
+          code,
+          found: written,
+          hint: renderHint(code, { found: written }),
+          ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+        });
+        this.create('ConstraintUsage', {
+          ownerId: ownerId ?? undefined,
+          attrs: {
+            requirementRole: node.kind,
+            negated: true,
+            ...visibility,
+            unparsedText: this.source.slice(node.$cstNode!.offset, satisfy.$cstNode!.end),
+          },
+        });
+        return;
+      }
       this.diagnostics.push({
         message: `\`${node.kind} not\` is not read: the negation of ${name ? `\`${name}\`` : 'the clause'} is neither checked nor asserted.`,
         ...posOf(node),
@@ -2344,6 +2452,43 @@ class Mapper {
     // The negated clause's expression is the negation of its body, as the plain clause `{ not (B) }` states it.
     const body = this.model.get(el.id)?.attrs.expression;
     if (node.negated && typeof body === 'string') this.model.setAttrs(el.id, { expression: negatedClauseExpression(body) });
+  }
+
+  /**
+   * The `satisfy` a bare negated clause negates, with the block comments written between them, in text order:
+   * `assert not satisfy R by s;` parses as the clause `assert not` (no `constraint`, name, body or `;`) and, next in
+   * the same owner, the `Satisfy` statement.
+   */
+  private negatedSatisfyOf(node: RequirementClause): AstNode[] | undefined {
+    const cst = node.$cstNode;
+    if (
+      !node.negated ||
+      node.declares !== undefined ||
+      node.name !== undefined ||
+      node.specializations.length > 0 ||
+      node.members.length > 0 ||
+      node.expr !== undefined ||
+      cst === undefined ||
+      /[;{]/.test(cst.text)
+    ) {
+      return undefined;
+    }
+    const siblings = node.$containerProperty ? (node.$container as unknown as Record<string, unknown>)[node.$containerProperty] : undefined;
+    if (!Array.isArray(siblings) || node.$containerIndex === undefined) return undefined;
+    const kept: AstNode[] = [];
+    const fullText = cst.root.fullText;
+    let prevEnd = cst.end;
+    for (const next of siblings.slice(node.$containerIndex + 1) as AstNode[]) {
+      if (next.$cstNode === undefined) return undefined;
+      // Only whitespace and comments may lie between the pieces: an unrelated `satisfy` further on is not negated.
+      const gap = fullText.slice(prevEnd, next.$cstNode.offset).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      if (gap.trim() !== '') return undefined;
+      prevEnd = next.$cstNode.end;
+      kept.push(next);
+      if (next.$type === 'Satisfy') return kept;
+      if (next.$type !== 'TextualRep' || (next as TextualRepNode).language !== undefined) return undefined;
+    }
+    return undefined;
   }
 
   /** Is this negated clause one this tool reads as the negation of its body ({@link negatedClauseExpression})? */
@@ -2551,6 +2696,13 @@ class Mapper {
       declaredShortName,
       attrs,
     });
+
+    if (
+      eClass === 'ReferenceUsage' && !node.keyword && !node.isDef && declaredName === undefined && !node.body &&
+      node.specializations.length === 0 && !node.multiplicity?.length && !node.valueOp && this.faultErrors.length > 0
+    ) {
+      this.faultPrefixes.push(el.id);
+    }
 
     // Specializations (resolved against the model built so far).
     for (const spec of node.specializations) this.applySpecialization(el, spec);

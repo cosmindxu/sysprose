@@ -87,6 +87,10 @@ import {
   type VarSort,
 } from './contracts';
 import {
+  assertConjuncts,
+  conjunctRecord,
+  mixesUnitRegimes,
+  type ClausePart,
   boundAboveSentence,
   boundHereSentence,
   contradictedBindingOf,
@@ -99,6 +103,8 @@ import {
   equatedPartsRefusal,
   failedReadingSentence,
   readingContextsOf,
+  subsettingRereadsOf,
+  type SubsettingReread,
   hasUserBindings,
   hasStatedValue,
   isAsserted,
@@ -106,8 +112,11 @@ import {
   isParameterisedCalculation,
   MAX_INSTANCE_GOALS,
   MAX_INSTANCE_RELATIONS,
+  hiddenReadOf,
+  hiddenReadSentence,
   relationNamesOf,
   outsideBindingsOf,
+  respelledIn,
   sharedDefinitions,
   spelledIn,
   statedValueOf,
@@ -117,7 +126,7 @@ import {
 import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import { ambiguousKeyword, foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
-import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
+import { NO_MARKERS, idScopeFor, parseRelationBody, typedAssertRefusal } from './relations';
 import { getRequirementAttr } from './requirements';
 import { isNonNormativeStatement } from './statement-kind';
 import { type DerivationMemo } from './units-eval';
@@ -647,7 +656,38 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
     // requirement.
     if (isNonNormativeStatement(model, el.id) || underNonNormativeStatement(model, el)) continue;
     const raw = el.attrs.expression;
-    if (typeof raw !== 'string' || raw.trim() === '') continue;
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      // An assert typed by a constraint definition and no body of its own: an axiom this tool does not read (A4). A
+      // plain one is a check this tool does not make (a5 S4): an obligation, not an axiom, so it holds nothing back.
+      const typed = typedAssertRefusal(model, el);
+      if (typed === undefined) continue;
+      const contract = owningContract(model, el, byId);
+      const encodable = { reason: 'unread-definition' as const, detail: typed };
+      const asWritten = roleOf(el, false) ?? { role: 'axiom' as const, source: 'assert' as const };
+      const filed = opts.fromKeywords ? keywordRole(model, el, asWritten) : asWritten;
+      out.push({
+        requirement: contract ? contractRef(contract) : null,
+        shortId: contract?.shortId ?? '',
+        subject: contract?.subject ?? null,
+        role: filed.role,
+        source: filed.source,
+        element: ref(model, el),
+        expression: '',
+        node: null,
+        vars: [],
+        sortPerVar: {},
+        scaled: false,
+        encodable,
+        nonlinear: false,
+        verifiedBy: contract?.verifiedBy ?? [],
+        method: contract ? methodOf(model, contract.id) : null,
+        evidence: [],
+        status: statusOf(encodable),
+        ...claimed(model, contract),
+        ...(filed.provenance ? { provenance: filed.provenance } : {}),
+      });
+      continue;
+    }
     const asWritten = roleOf(el, topIsComparison(raw));
     if (!asWritten) continue;
     const filed = opts.fromKeywords ? keywordRole(model, el, asWritten) : asWritten;
@@ -700,6 +740,16 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
       : undefined;
     if (filed.source !== 'calculation') read.set(el.id, { el, raw, filed, ...(contract ? { contract } : {}) });
     const sharedWith = instances?.shared[0];
+    // A refused asserted conjunction is filed as its conjuncts, `<id>#<i>`, each the axiom it would be written alone
+    // ({@link conjunctAxioms}).
+    const split =
+      filed.role === 'axiom' && encodable !== true && sharedWith === undefined && (instances?.rows.length ?? 0) === 0
+        ? conjunctAxioms(model, el, filed, memo, contract)
+        : undefined;
+    if (split !== undefined) {
+      out.push(...split);
+      continue;
+    }
     out.push({
       requirement: contract ? contractRef(contract) : null,
       shortId: contract?.shortId ?? '',
@@ -822,8 +872,10 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
  * and fix nothing, but a pair that meets (`L >= 5.0` with `L <= 5.0`) fixes it as `L == 5.0` does, and no assertion
  * gives a default a value (decision 14), so those are refused, as every asserted relation over such a default was.
  * The symbols an identity axiom joins (a binding, `a == b`) are one component, and the bounds of a component are
- * every bare bound and every `== number` of an axiom row over one of its symbols. A component whose members cannot
- * be compared in raw magnitudes (a unit, an integer sort, a restricted domain on any of them) is refused whole.
+ * every bare bound and every `== number` of an axiom row over one of its symbols. A component holding an integer
+ * sort takes integer values only, so its bounds meet where they leave one whole number or none (`N >= 4.5` with
+ * `N <= 5.5` fixes N at 5, K3). A component whose members cannot be compared in raw magnitudes (a unit, a Boolean
+ * sort, a restricted domain on any of them) is refused whole.
  * Drops the {@link Obligation.givenWay} field, which only this pass reads.
  */
 function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): void {
@@ -841,13 +893,17 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     return v ? (v.symbol ?? v.qualifiedName) : undefined;
   };
   const axioms = facts.filter((o) => o.role === 'axiom' && o.encodable === true && o.node !== null);
-  // What a member can be compared as: false for a unit, an integer or Boolean sort, a restricted domain.
+  // What a member can be compared as: false for a unit, a Boolean sort, a restricted domain; an integer sort is
+  // compared, and makes its component integral.
   const plain = new Map<string, boolean>();
+  const integral = new Set<string>();
   const note = (row: Obligation, v: Obligation['vars'][number]): string => {
     const sym = v.symbol ?? v.qualifiedName;
+    const sort = row.sortPerVar[v.path];
     const ok =
-      row.sortPerVar[v.path] === 'Real' && v.unit === null && v.siFactor === 1 && v.siOffset === 0 && v.restricted === undefined && !row.scaled;
+      (sort === 'Real' || sort === 'Int') && v.unit === null && v.siFactor === 1 && v.siOffset === 0 && v.restricted === undefined && !row.scaled;
     plain.set(sym, (plain.get(sym) ?? true) && ok);
+    if (sort === 'Int') integral.add(sym);
     return sym;
   };
   for (const row of axioms) {
@@ -863,6 +919,8 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     lower?: { value: number; strict: boolean; at: string };
     upper?: { value: number; strict: boolean; at: string };
     comparable: boolean;
+    /** A member takes integer values only, and so does every member equal to it. */
+    integral?: boolean;
     pinned?: string;
     /** A bare bound (not a `== number`) sits on this side of the component. */
     bareLower?: boolean;
@@ -876,6 +934,7 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     return c;
   };
   for (const [sym, ok] of plain) if (!ok) componentOf(sym).comparable = false;
+  for (const sym of integral) componentOf(sym).integral = true;
   const take = (c: Component, side: 'lower' | 'upper', value: number, strict: boolean, at: string): void => {
     const cur = c[side];
     const tighter = !cur || (side === 'lower' ? value > cur.value : value < cur.value) || (value === cur.value && strict);
@@ -934,10 +993,15 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     const e = linkedRoots.has(root) ? linked.get(lfind(root)) : undefined;
     return e !== undefined && e.lower && e.upper;
   };
-  const meets = (c: Component): boolean =>
-    c.lower !== undefined &&
-    c.upper !== undefined &&
-    c.lower.value >= c.upper.value;
+  // Over the integers, the bounds meet where the whole numbers they allow are one or none: `> 4` is `>= 5`, `< 6` is
+  // `<= 5`.
+  const meets = (c: Component): boolean => {
+    if (c.lower === undefined || c.upper === undefined) return false;
+    if (!c.integral) return c.lower.value >= c.upper.value;
+    const lo = c.lower.strict ? Math.floor(c.lower.value) + 1 : Math.ceil(c.lower.value);
+    const hi = c.upper.strict ? Math.ceil(c.upper.value) - 1 : Math.floor(c.upper.value);
+    return hi <= lo;
+  };
   for (const row of flagged) {
     const { path, why } = row.givenWay!;
     delete row.givenWay;
@@ -946,9 +1010,11 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     const c = sym !== undefined ? components.get(find(sym)) : undefined;
     const reason =
       c === undefined || !c.comparable
-        ? 'bounds on the features it is joined to cannot be compared (a unit, an integer sort or a restricted domain)'
+        ? 'bounds on the features it is joined to cannot be compared (a unit, a Boolean sort or a restricted domain)'
         : meets(c)
-          ? `its asserted bounds meet (\`${c.lower!.at}\` and \`${c.upper!.at}\`), which would give it a value`
+          ? c.integral && c.lower!.value < c.upper!.value
+            ? `its asserted bounds (\`${c.lower!.at}\` and \`${c.upper!.at}\`) leave an integer one whole number or none, which would give it a value`
+            : `its asserted bounds meet (\`${c.lower!.at}\` and \`${c.upper!.at}\`), which would give it a value`
           : sym !== undefined && meetsThroughDerived(sym)
             ? 'its bounds meet through a derived value (a lower bound on one feature and an upper bound on another, linked by an asserted relation), which could give it a value'
             : undefined;
@@ -1100,9 +1166,11 @@ function underMetadata(model: Model, el: ElementRecord): boolean {
  * that context as its owner — the scope every evaluator then reads it in.
  */
 export function rowElement(model: Model, row: Pick<Obligation, 'element' | 'instance'>): ElementRecord | undefined {
-  if (!row.instance) return model.get(row.element.id);
+  const conjunct = conjunctAxiomOf(model, row.element.id);
+  if (!row.instance) return conjunct ? conjunctRecord(conjunct.part) : model.get(row.element.id);
   const base = model.get(row.instance.baseId);
-  return base ? { ...base, ownerId: row.instance.contextId } : undefined;
+  if (!base) return undefined;
+  return conjunct ? conjunctRecord(conjunct.part, { ...base, ownerId: row.instance.contextId }) : { ...base, ownerId: row.instance.contextId };
 }
 
 /** The fields a row takes from what its reading met: unread names, their inputs, shadowed names. */
@@ -1183,7 +1251,11 @@ function instanceRows(
       shared: [],
     };
   }
-  const contexts = walked.contexts;
+  // An asserted relation read through a usage that subsets a feature an instance reads otherwise is read again in
+  // each such instance, the usage read as one of what that feature is there ({@link subsettingRereadsOf}): an axiom
+  // of its own. Unread, the axiom read W's own p2 alone, and a model w makes contradict itself was consistent.
+  const rereads = only || filed.role !== 'axiom' ? new Map<ElementId, SubsettingReread>() : subsettingRereadsOf(model, el.id);
+  const contexts = [...walked.contexts, ...[...rereads.values()].map((r) => r.context).filter((c) => !walked.contexts.some((x) => x.id === c.id))];
   // Each expanded group's share of the run's goal budget, taken in the order
   // its context comes (as the loop below files it): only a group whose rows
   // are filed reads, in its row for an element's own instance, the relation
@@ -1224,18 +1296,32 @@ function instanceRows(
     // (M7's q2) has its goal read at its own instance, as the check reads it
     // (E7) — refused in the check's sentence over a member stated twice there —
     // and an assert adds no axiom there.
-    const boundOnly = !only && definitions.readsBoundOnly(el, names, context.id);
+    const reread = rereads.get(context.id);
+    // A general's body as the context spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+    const text =
+      reread?.expression ??
+      (el.ownerId != null && el.ownerId !== context.id ? respelledIn(model, definitions, context.id, el.ownerId, raw) : raw);
+    const read = reread ? relationNamesOf(text) : names;
+    const boundOnly = !only && definitions.readsBoundOnly(el, read, context.id);
     if (boundOnly && filed.role === 'axiom') continue;
-    const here = boundOnly ? definitions.boundStatedTwiceIn(el, names, context.id) : undefined;
+    const here = boundOnly ? definitions.boundStatedTwiceIn(el, read, context.id) : undefined;
     // Read for the context's own instance: a feature the relation owns (a
     // constraint's `attribute k`) is the context's, one per context, and not
     // the symbol the relation's own reading and every other context share.
     const instance = definitions.instanceNameOf(context.id);
-    const reading = readRelation(model, { ...el, ownerId: context.id }, raw, memo, undefined, undefined, instance);
+    const reading = readRelation(
+      model,
+      reread ? { ...el, ownerId: context.id, attrs: { ...el.attrs, expression: text } } : { ...el, ownerId: context.id },
+      text,
+      memo,
+      undefined,
+      undefined,
+      instance,
+    );
     const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
     const shared = filed.role === 'axiom' && own === true ? sharedSymbolsOf(model, context, reading) : [];
     if (shared.length > 0) sharedOut.push({ context, vars: shared });
-    const encodable: Encodable = group?.refusal
+    const readable: Encodable = group?.refusal
       ? { reason: 'unread-definition', detail: group.refusal.sentence }
       : here !== undefined
         ? reading.encodable === true
@@ -1244,9 +1330,23 @@ function instanceRows(
         : boundAbove(
             model,
             context,
-            names,
+            read,
             filed.role === 'axiom' ? sharedSymbolAxiom(model, context, reading, own) : reading.encodable,
           );
+    // A name the context declares anew without `:>>` beside the one the relation's writer names (G8A, G8C): refused,
+    // with the variables kept, so the goals that read them abstain (G-pair-b).
+    const hidden = el.ownerId != null ? hiddenReadSentence(model, raw, el.ownerId, context.id, names) : undefined;
+    const encodable: Encodable = hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : readable;
+    // Refused whole in this context by its own reading, an asserted conjunction is filed as its conjuncts there,
+    // `<id>#<i>@<context>`, as the model-level row is ({@link conjunctAxioms}, K3).
+    const split =
+      filed.role === 'axiom' && own !== true && hidden === undefined && !reread && !group && here === undefined
+        ? contextConjunctRows(model, el, context, instance, contract, filed, memo)
+        : undefined;
+    if (split !== undefined) {
+      out.push(...split);
+      continue;
+    }
     out.push({
       // A requirement's clauses read in one context are a requirement of their
       // own there: its assumptions are the premises of its goals, never of
@@ -1257,6 +1357,55 @@ function instanceRows(
       role: filed.role,
       source: filed.source,
       element: instanceRef(model, el, context),
+      expression: reading.expression,
+      node: hidden !== undefined ? null : reading.node,
+      vars: reading.variables,
+      sortPerVar: reading.sortPerVar,
+      scaled: reading.scale !== undefined,
+      encodable,
+      nonlinear: reading.nonlinear,
+      verifiedBy: [],
+      method: null,
+      evidence: [],
+      status: statusOf(encodable),
+      ...readFields(reading),
+      instance: { baseId: el.id, contextId: context.id, ...(contract ? { requirementId: contract.id } : {}) },
+    });
+  }
+  return { rows: out, shared: sharedOut };
+}
+
+/**
+ * The conjuncts of the asserted conjunction `el` ({@link assertConjuncts}), each read in `context` as {@link instanceRows}
+ * reads the whole there: the axiom rows `<id>#<i>@<context>`. `undefined` — the clause filed whole — where it is no
+ * conjunction, one that mixes a `[unit]` literal and a bare number ({@link mixesUnitRegimes}), a conjunct reads a symbol
+ * other instances share, a binding above the context states a name it reads, or no conjunct reads.
+ */
+function contextConjunctRows(
+  model: Model,
+  el: ElementRecord,
+  context: ElementRecord,
+  instance: string | undefined,
+  contract: Contract | undefined,
+  filed: FiledRole,
+  memo: DerivationMemo,
+): Obligation[] | undefined {
+  const parts = assertConjuncts(model, el);
+  if (parts.length < 2 || mixesUnitRegimes(parts)) return undefined;
+  const base = instanceRef(model, el, context);
+  const rows: Obligation[] = [];
+  for (const part of parts) {
+    const reading = readRelation(model, conjunctRecord(part, { ...el, ownerId: context.id }), part.text, memo, undefined, undefined, instance);
+    const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
+    if (own === true && sharedSymbolsOf(model, context, reading).length > 0) return undefined;
+    const encodable = boundAbove(model, context, relationNamesOf(part.text), sharedSymbolAxiom(model, context, reading, own));
+    rows.push({
+      requirement: contract ? instanceRef(model, contractRef(contract), context) : null,
+      shortId: contract?.shortId ?? '',
+      subject: contract?.subject ?? null,
+      role: filed.role,
+      source: filed.source,
+      element: { ...base, id: `${el.id}#${part.index}@${context.id}`, qualifiedName: `${effectiveQualifiedName(model, el.id)}#${part.index} in ${sharedDefinitions(model).contextName(context.id)}` },
       expression: reading.expression,
       node: reading.node,
       vars: reading.variables,
@@ -1272,7 +1421,7 @@ function instanceRows(
       instance: { baseId: el.id, contextId: context.id, ...(contract ? { requirementId: contract.id } : {}) },
     });
   }
-  return { rows: out, shared: sharedOut };
+  return rows.some((r) => r.encodable === true) ? rows : undefined;
 }
 
 /**
@@ -1476,6 +1625,82 @@ function usageOwnedGoal(
   if (encodable !== true || role === 'axiom') return encodable;
   const detail = usageOwnedRefusal(model, el, names);
   return detail ? { reason: 'unread-definition', detail } : encodable;
+}
+
+/**
+ * An asserted conjunction a gate refuses whole, filed as its conjuncts ({@link assertConjuncts}): `assert constraint c
+ * { x == 2.0 and mode == "auto" }` states what `assert constraint c1 { x == 2.0 } assert constraint c2 { mode ==
+ * "auto" }` does, and refused whole over its String conjunct, it pinned no x, and `p.x <= 3.0` was proved over the
+ * split twin and not over it (K2). Each conjunct is the axiom row `<id>#<i>` it would be written alone, read and
+ * refused as that one is: a refused conjunct is a refused axiom, which {@link ./engines/smt}'s re-read of a partial
+ * antecedent reads as the twin's. `undefined` — the clause filed whole — where it is no conjunction, one that mixes a
+ * `[unit]` literal and a bare number ({@link mixesUnitRegimes}), or no conjunct reads where the whole does not.
+ */
+function conjunctAxioms(
+  model: Model,
+  el: ElementRecord,
+  filed: FiledRole,
+  memo: DerivationMemo,
+  contract: Contract | undefined,
+): Obligation[] | undefined {
+  const parts = assertConjuncts(model, el);
+  if (parts.length < 2 || mixesUnitRegimes(parts)) return undefined;
+  const name = effectiveQualifiedName(model, el.id);
+  const rows = parts.map((part): Obligation => {
+    const reading = readRelation(model, conjunctRecord(part), part.text, memo);
+    const encodable = unreadAxiom('axiom', reading.encodable, reading.unread);
+    return {
+      requirement: contract ? contractRef(contract) : null,
+      shortId: contract?.shortId ?? '',
+      subject: contract?.subject ?? null,
+      role: filed.role,
+      source: filed.source,
+      element: { ...ref(model, el), id: `${el.id}#${part.index}`, qualifiedName: `${name}#${part.index}` },
+      expression: reading.expression,
+      node: reading.node,
+      vars: reading.variables,
+      sortPerVar: reading.sortPerVar,
+      scaled: reading.scale !== undefined,
+      encodable,
+      nonlinear: reading.nonlinear,
+      verifiedBy: contract?.verifiedBy ?? [],
+      method: contract ? methodOf(model, contract.id) : null,
+      evidence: [],
+      status: statusOf(encodable),
+      ...claimed(model, contract),
+      ...(filed.provenance ? { provenance: filed.provenance } : {}),
+      ...readFields(reading),
+    };
+  });
+  return rows.some((r) => r.encodable === true) ? rows : undefined;
+}
+
+/**
+ * The conjunct a row {@link conjunctAxioms} or {@link instanceConjunctRows} filed reads, by its id `<id>#<i>` or
+ * `<id>#<i>@<path>`, with the id of its clause's row there (`<id>`, `<id>@<path>`); `undefined` for any other id.
+ */
+export function conjunctAxiomOf(model: Model, id: string): { part: ClausePart; clauseRowId: string } | undefined {
+  const at = /^([^#@]+)#(\d+)(@.*)?$/.exec(id);
+  const el = at ? model.get(at[1]!) : undefined;
+  const part = el ? assertConjuncts(model, el)[Number(at![2])] : undefined;
+  return part ? { part, clauseRowId: `${at![1]}${at![3] ?? ''}` } : undefined;
+}
+
+/** The id of the row whose check holds the axiom `id`: its clause's for a conjunct ({@link conjunctAxiomOf}), else its own. */
+export function clauseRowIdOf(model: Model, id: string): string {
+  return conjunctAxiomOf(model, id)?.clauseRowId ?? id;
+}
+
+/**
+ * The check's row of the axiom `id`; for a conjunct ({@link conjunctAxiomOf}), its clause's where it is held — a
+ * conjunction held holds every conjunct — and none otherwise: violated or undecided, it may turn on another conjunct.
+ */
+export function axiomCheckOf<C extends { result: string }>(model: Model, checks: ReadonlyMap<string, C>, id: string): C | undefined {
+  const own = checks.get(id);
+  if (own !== undefined) return own;
+  const conjunct = conjunctAxiomOf(model, id);
+  const clause = conjunct ? checks.get(conjunct.clauseRowId) : undefined;
+  return clause?.result === 'satisfied' ? clause : undefined;
 }
 
 /** A relation as {@link obligationsOf} filed it: what {@link satisfierRows} reads again. */
@@ -2075,7 +2300,10 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
       undefined,
       definitions.instanceNameOf(context.id),
     );
-    const encodable = sharedSymbolAxiom(model, context, reading, reading.encodable);
+    // A name the context declares anew without `:>>` (g8): refused, with the two ends' variables kept (G-mask).
+    const hidden = hiddenEndSentence(model, el.ownerId, context.id, [left, right]);
+    const encodable: Encodable =
+      hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : sharedSymbolAxiom(model, context, reading, reading.encodable);
     out.push({
       requirement: null,
       shortId: '',
@@ -2084,7 +2312,7 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
       source: 'bind',
       element: instanceRef(model, el, context),
       expression: reading.expression,
-      node: reading.node,
+      node: hidden !== undefined ? null : reading.node,
       vars: reading.variables,
       sortPerVar: reading.sortPerVar,
       scaled: reading.scale !== undefined,
@@ -2153,9 +2381,19 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
  * instance of the usage that writes it inside the last ({@link instanceRelationRows}): definitions that hold each
  * other go on without end. One left unfiled past it that no later row of the worklist files is not carried, and the
  * rows that read what it joins are refused. It guards definitions that hold each other, not a path of usages: it is
- * independent of `MAX_BINDING_SEGMENTS` of the defining equations (48), and deliberately left at 32.
+ * independent of `MAX_BINDING_SEGMENTS` of the defining equations, and set to the same 48 so that the check, the
+ * literal engine and the proof read a chain of usage bodies as deep as the check reads a path of usages (a chain of
+ * 33 to 48 bodies was read by the check and the literal engine while the proof refused it).
  */
-const MAX_NESTED_BINDING_DEPTH = 32;
+const MAX_NESTED_BINDING_DEPTH = 48;
+
+/**
+ * How many distinct instances the bindings of {@link MAX_NESTED_BINDING_DEPTH}-deep chains are filed for in all:
+ * definitions that hold several usages of each other branch, and the instances grow as the branching to the power of
+ * the depth, where the depth cap alone bounds a chain, not the work. One left unfiled past it is not carried, as
+ * one past the depth cap is.
+ */
+const MAX_NESTED_BINDING_PATHS = 2048;
 
 /**
  * The relations an INSTANCE with symbols of its own holds
@@ -2245,7 +2483,10 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
         if (done.has(key)) continue;
         if (!bindings && isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
           done.add(key);
-          file(instanceAssertRow(model, c, context, path, memo));
+          const row = instanceAssertRow(model, c, context, path, memo);
+          // Refused whole, a conjunction is filed as its conjuncts, as the model-level row is ({@link conjunctAxioms}).
+          const split = row.encodable !== true ? instanceConjunctRows(model, c, context, path, memo) : undefined;
+          for (const r of split ?? [row]) file(r);
         } else if (isBindingEdge(c)) {
           done.add(key);
           file(instanceBindRow(model, c, holder, context, path, memo));
@@ -2281,8 +2522,9 @@ function instanceRelationRows(model: Model, rows: readonly Obligation[], memo: D
         return frame ? [{ key: `${b.id} ${here}`, path: here, frame: frame.instance, usage: u.id }] : [];
       });
       if (written.length > 0) {
-        if (depth >= MAX_NESTED_BINDING_DEPTH) beyond.push(...written);
-        else {
+        if (depth >= MAX_NESTED_BINDING_DEPTH || (filedAt.size >= MAX_NESTED_BINDING_PATHS && !filedAt.has(here))) {
+          beyond.push(...written);
+        } else {
           filedAt.set(here, Math.min(filedAt.get(here) ?? Infinity, depth + 1));
           hold(here, u.id, true);
         }
@@ -2444,8 +2686,16 @@ function instanceAssertRow(
   path: string,
   memo: DerivationMemo,
 ): Obligation {
-  const reading = readRelation(model, { ...el, ownerId: context.id }, (el.attrs.expression as string).trim(), memo, undefined, undefined, path);
-  const encodable = sharedSymbolAxiom(model, context, reading, unreadAxiom('axiom', reading.encodable, reading.unread));
+  const raw = (el.attrs.expression as string).trim();
+  // A general's body as the context spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+  const read = el.ownerId != null && el.ownerId !== context.id ? respelledIn(model, sharedDefinitions(model), context.id, el.ownerId, raw) : raw;
+  const reading = readRelation(model, { ...el, ownerId: context.id }, read, memo, undefined, undefined, path);
+  // A name the context declares anew without `:>>` (G8A, G8C): refused, with the variables kept (G-pair-b).
+  const hidden = el.ownerId != null ? hiddenReadSentence(model, raw, el.ownerId, context.id, relationNamesOf(raw)) : undefined;
+  const encodable: Encodable =
+    hidden !== undefined
+      ? { reason: 'unread-definition', detail: hidden }
+      : sharedSymbolAxiom(model, context, reading, unreadAxiom('axiom', reading.encodable, reading.unread));
   return {
     requirement: null,
     shortId: '',
@@ -2454,7 +2704,7 @@ function instanceAssertRow(
     source: 'assert',
     element: instanceElement(model, el, path),
     expression: reading.expression,
-    node: reading.node,
+    node: hidden !== undefined ? null : reading.node,
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
     scaled: reading.scale !== undefined,
@@ -2467,6 +2717,30 @@ function instanceAssertRow(
     ...readFields(reading),
     instance: { baseId: el.id, contextId: context.id, path },
   };
+}
+
+/**
+ * {@link instanceAssertRow} of each conjunct of the asserted conjunction `el` ({@link assertConjuncts}), read for the
+ * instance `path`: `<id>#<i>@<path>`, as {@link conjunctAxioms} files the model-level row. `undefined` where it is no
+ * conjunction, or no conjunct reads.
+ */
+function instanceConjunctRows(
+  model: Model,
+  el: ElementRecord,
+  context: ElementRecord,
+  path: string,
+  memo: DerivationMemo,
+): Obligation[] | undefined {
+  const parts = assertConjuncts(model, el);
+  if (parts.length < 2 || mixesUnitRegimes(parts)) return undefined;
+  const rows = parts.map((part) => {
+    const row = instanceAssertRow(model, conjunctRecord(part), context, path, memo);
+    return {
+      ...row,
+      element: { ...row.element, id: `${el.id}#${part.index}@${path}`, qualifiedName: `${effectiveQualifiedName(model, el.id)}#${part.index} in ${path}` },
+    };
+  });
+  return rows.some((r) => r.encodable === true) ? rows : undefined;
 }
 
 /**
@@ -2523,6 +2797,9 @@ function instanceBindRow(
     const read = { ...el, ownerId: context.id };
     reading = withInstances(model, read, gateRelation(model, node, nameToId, NO_MARKERS, false, memo, true, expression), path);
   }
+  // A name the context declares anew without `:>>` (g8): refused, with the two ends' variables kept (G-mask).
+  const hidden = up === undefined ? hiddenEndSentence(model, holder.id, context.id, [left, right]) : undefined;
+  const encodable: Encodable = hidden !== undefined ? { reason: 'unread-definition', detail: hidden } : reading.encodable;
   return {
     requirement: null,
     shortId: '',
@@ -2531,19 +2808,40 @@ function instanceBindRow(
     source: 'bind',
     element: instanceElement(model, el, path),
     expression: reading.expression,
-    node: reading.node,
+    node: hidden !== undefined ? null : reading.node,
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
     scaled: reading.scale !== undefined,
-    encodable: reading.encodable,
+    encodable,
     nonlinear: reading.nonlinear,
     verifiedBy: [],
     method: null,
     evidence: [],
-    status: statusOf(reading.encodable),
+    status: statusOf(encodable),
     ...readFields(reading),
     instance: { baseId: el.id, contextId: context.id, path },
   };
+}
+
+/**
+ * Why a binding `writer` wrote is not read in `context`, where an end's first name names a feature the context declares
+ * anew without `:>>` beside the one `writer` meant ({@link hiddenByName}, g8): re-spelled there by name, the binding
+ * would join the context's feature, not the general's. `undefined` where neither end is hidden. The caller keeps the
+ * row's variables, so the refusal reaches only the proofs that read them.
+ */
+function hiddenEndSentence(
+  model: Model,
+  writer: ElementId,
+  context: ElementId,
+  ends: readonly (string | undefined)[],
+): string | undefined {
+  const hit = hiddenReadOf(model, writer, context, ends);
+  if (hit === undefined) return undefined;
+  return (
+    `\`bind ${ends[0] ?? '…'} = ${ends[1] ?? '…'}\` of ${effectiveQualifiedName(model, writer)} is not read in ${sharedDefinitions(model).contextName(context)}: ` +
+    `there \`${hit.name}\` names ${effectiveQualifiedName(model, hit.own)}, declared anew without \`:>>\` beside the ` +
+    `${effectiveQualifiedName(model, hit.meant)} it inherits, which KerML does not allow, so this tool does not read which feature the binding joins`
+  );
 }
 
 /** The dotted path of feature `id` below `ownerId`, by effective names — `undefined` when it is not below it. */
@@ -2564,7 +2862,7 @@ function pathBelow(model: Model, id: ElementId | undefined, ownerId: ElementId):
 /**
  * Refuse `row` when it reads an instance whose relations were not read
  * ({@link MAX_INSTANCE_RELATIONS}), or one a binding was not filed for
- * ({@link MAX_NESTED_BINDING_DEPTH} bindings down, `beyond`): over a symbol nothing
+ * ({@link MAX_NESTED_BINDING_DEPTH} bindings down, or past {@link MAX_NESTED_BINDING_PATHS} instances, `beyond`): over a symbol nothing
  * constrains, a proof would rest on less than the model states.
  */
 function refuseUnreadInstances(
@@ -2600,7 +2898,7 @@ function refuseUnreadInstances(
     reason: 'unread-definition',
     detail:
       `the relation reads ${lost.map((v) => `\`${v.path}\``).join(', ')} in an instance a binding joins that lies more than ` +
-      `${MAX_NESTED_BINDING_DEPTH} bindings below the first, deeper than this tool reads the bindings of, so what the model states of it is not carried`,
+      `${MAX_NESTED_BINDING_DEPTH} bindings below the first, deeper than this tool reads the bindings of (or among more than ${MAX_NESTED_BINDING_PATHS} such instances), so what the model states of it is not carried`,
   };
   row.status = statusOf(row.encodable);
 }

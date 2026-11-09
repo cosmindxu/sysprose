@@ -55,6 +55,124 @@ describe('semantics — evaluateQuantity', () => {
   });
 });
 
+describe('semantics — the unit-aware parser groups connectives as expr.ts does (FP2)', () => {
+  it('groups by KerML Table 6: `implies` to the left, `xor` above `or`', () => {
+    const verdict = (expression: string) => {
+      const m = new Model();
+      const p = m.create('Package', { declaredName: 'P' });
+      return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+    };
+    const no = '1 [m] > 2 [m]';
+    const yes = '1 [m] < 2 [m]';
+    // (F → F) → F is F; to the right it was T.
+    expect(verdict(`${no} implies ${no} implies ${no}`)).toBe('violated');
+    expect(verdict(`(${no} implies ${no}) implies ${no}`)).toBe('violated');
+    // T or (T xor T) is T; `(T or T) xor T` was F.
+    expect(verdict(`${yes} or ${yes} xor ${yes}`)).toBe('satisfied');
+    expect(verdict(`(${yes} or ${yes}) xor ${yes}`)).toBe('violated');
+    for (const text of ['x > 1 [m] implies y > 1 [m] implies z > 1 [m]', 'x > 1 [m] or y > 1 [m] xor z > 1 [m]']) {
+      expect(quantityRefsIn(text), text).toEqual(['x', 'y', 'z']);
+    }
+  });
+});
+
+describe('semantics — the unit-aware evaluator reads the one connective table (F6)', () => {
+  it('absorbs an `unresolved` operand only, never an ill-typed or refused one', () => {
+    const verdict = (expression: string) => {
+      const m = new Model();
+      const p = m.create('Package', { declaredName: 'P' });
+      return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+    };
+    const no = '1 [m] > 2 [m]';
+    const yes = '1 [m] < 2 [m]';
+    // A name with no value: `x or true` too.
+    expect(verdict(`u > 1 [m] or ${yes}`)).toBe('satisfied');
+    expect(verdict(`u > 1 [m] implies ${yes}`)).toBe('satisfied');
+    expect(verdict(`u > 1 [m] and ${no}`)).toBe('violated');
+    // A Boolean plus a number (`not-quantity`), a number as an operand (`not-boolean`), a length against a time (a
+    // refusal): no completion gives them a Boolean.
+    for (const x of ['(true + 1 [m] > 2 [m])', '(1 [m] + 1 [m])', '(1 [m] > 2 [s])', '(u > 1 [m] and 1 [m])', '(u + true > 1 [m])']) {
+      expect(verdict(`${x} and ${no}`), x).toBe('unknown');
+      expect(verdict(`${x} or ${yes}`), x).toBe('unknown');
+      expect(verdict(`${x} implies ${yes}`), x).toBe('unknown');
+    }
+    // The left operand alone still decides; xor never absorbs.
+    expect(verdict(`${no} and (1 [m] > 2 [s])`)).toBe('violated');
+    expect(verdict(`${yes} or (true + 1 [m] > 2 [m])`)).toBe('satisfied');
+    expect(verdict(`u > 1 [m] xor ${yes}`)).toBe('unknown');
+  });
+});
+
+describe('semantics — the unit-aware evaluator compares two Booleans (S1)', () => {
+  const verdict = (expression: string) => {
+    const m = new Model();
+    const p = m.create('Package', { declaredName: 'P' });
+    return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+  };
+  const yes = '1 [m] < 2 [m]';
+  const no = '1 [m] > 2 [m]';
+
+  it('reads `==`, `=` and `!=` between Booleans by value', () => {
+    expect(verdict('true == true')).toBe('satisfied');
+    expect(verdict('false == false')).toBe('satisfied');
+    expect(verdict('true == false')).toBe('violated');
+    expect(verdict('true != false')).toBe('satisfied');
+    expect(verdict('true != true')).toBe('violated');
+    expect(verdict('false != false')).toBe('violated');
+    expect(verdict('true = true')).toBe('satisfied');
+    // A comparison is a Boolean too, on either side and under `not`.
+    expect(verdict(`(${yes}) == true`)).toBe('satisfied');
+    expect(verdict(`false != (${no})`)).toBe('violated');
+    expect(verdict(`(${yes}) == (${no})`)).toBe('violated');
+    expect(verdict(`not ((${yes}) == (${no}))`)).toBe('satisfied');
+    expect(verdict(`(true == true) and (${yes})`)).toBe('satisfied');
+  });
+
+  it('keeps a Boolean beside a number, and an ordering of Booleans, refused', () => {
+    for (const text of ['true == 1 [m]', '1 [m] != false', `(${yes}) == 1 [m]`, 'true < false', 'true >= false']) {
+      expect(verdict(text), text).toBe('unknown');
+    }
+  });
+});
+
+describe('semantics — the unit-aware parser reads `if c ? a else b` as `then` does (S2)', () => {
+  const verdict = (expression: string) => {
+    const m = new Model();
+    const p = m.create('Package', { declaredName: 'P' });
+    return evaluateConstraintQuantity(m, m.create('ConstraintUsage', { declaredName: 'c', ownerId: p.id, attrs: { expression } }));
+  };
+
+  it('reads the `?` spelling as its `then` twin, with units, nested and with a Boolean result', () => {
+    const twins: Array<[string, string, string]> = [
+      ['(if 1 [m] < 2 [m] ? 5 [kg] else 1 [kg]) == 5 [kg]', '(if 1 [m] < 2 [m] then 5 [kg] else 1 [kg]) == 5 [kg]', 'satisfied'],
+      ['(if 1 [m] > 2 [m] ? 5 [kg] else 1 [kg]) == 5 [kg]', '(if 1 [m] > 2 [m] then 5 [kg] else 1 [kg]) == 5 [kg]', 'violated'],
+      ['(if 1 [m] > 2 [m] ? 1 [kg] else if 3 [m] > 2 [m] ? 5000 [g] else 9 [kg]) == 5 [kg]',
+        '(if 1 [m] > 2 [m] then 1 [kg] else if 3 [m] > 2 [m] then 5000 [g] else 9 [kg]) == 5 [kg]', 'satisfied'],
+      ['if 1 [m] < 2 [m] ? true else false', 'if 1 [m] < 2 [m] then true else false', 'satisfied'],
+      ['if 1 [m] > 2 [m] ? true else false', 'if 1 [m] > 2 [m] then true else false', 'violated'],
+    ];
+    for (const [q, t, want] of twins) {
+      expect(verdict(t), t).toBe(want);
+      expect(verdict(q), q).toBe(want);
+      expect(quantityRefsIn(q), q).toEqual(quantityRefsIn(t));
+    }
+    expect(quantityRefsIn('if a > 1 [m] ? x else y')).toEqual(['a', 'x', 'y']);
+  });
+
+  it('refuses what the scalar parser refuses: `??`, a `?` after a `.`, a second `?` with no `if`', () => {
+    for (const text of [
+      'x ?? 1 [m]',
+      'a.? 1 [m]',
+      'if a ? b',
+      'if a > 1 [m] ? 1 [kg] else 2 [kg] ? 3 [kg] else 4 [kg]',
+      'a ? b',
+      'if a ? b then c else d',
+    ]) {
+      expect(quantityRefsIn(text), text).toBeUndefined();
+    }
+  });
+});
+
 describe('semantics — dimensionalFacets', () => {
   it('returns unit and kind dimensions for a typed feature with a value unit', () => {
     const m = libModel();
@@ -944,4 +1062,41 @@ describe('review findings on the I1 semantics (strings, messages, strict toleran
     expect(dimensionClaimDetail(m, byName(m, `f${N}`).id).q?.magnitude).toBe(102334155);
     expect(performance.now() - t0).toBeLessThan(5000);
   }, 10_000);
+});
+
+describe('the check reads a conjunction a gate refuses conjunct by conjunct, in KerML order (K1)', () => {
+  // KerML evaluates `and` left to right and leaves the second operand of a false first one unread (7.4.9.2). `p.M >=
+  // p.L` is refused by gate (e) (a valueless M against the derived L), and `p.L >= 1.0` (a bare number against it).
+  it('a false conjunct before the refused one decides; a refused one first, or a true conjunction, stays refused', async () => {
+    const m = await bound(`package K {
+      part def P { attribute L : ISQ::MassValue; attribute M : ISQ::MassValue; }
+      part def W {
+        part p : P;
+        assert constraint cd { p.L == 50.0 [kg] }
+        constraint c1 { p.L <= 5.0 [kg] and p.M >= p.L }
+        constraint c2 { p.M >= p.L and p.L <= 5.0 [kg] }
+        constraint c3 { p.L >= 5.0 [kg] and p.M >= p.L }
+        constraint c4 { (p.L <= 500.0 [kg] and p.L > 60.0 [kg]) and p.M >= p.L }
+        constraint c5 { p.L >= 5.0 [kg] and p.L >= 1.0 and p.L <= 5.0 [kg] }
+        constraint c6 { p.L <= 5.0 [kg] or p.M >= p.L }
+        constraint c7 { p.M <= 10.0 [kg] and p.L <= 5.0 [kg] and p.M >= p.L }
+      }
+      part w : W;
+    }`);
+    const result = (name: string) => checkConstraints(m).find((c) => c.id === byName(m, name).id)?.result;
+    expect(result('c1')).toBe('violated');
+    expect(result('c4')).toBe('violated');
+    // A name with no value before the false conjunct is absorbed (`u and false`, F6): the refused one is never reached.
+    expect(result('c7')).toBe('violated');
+    for (const name of ['c2', 'c3', 'c5', 'c6']) expect(result(name), name).toBe('unknown');
+  });
+
+  it('an asserted conjunction false before its refused conjunct is violated, as its split twin is', async () => {
+    const m = await bound(`package K {
+      part def P { attribute L : ISQ::MassValue; attribute M : ISQ::MassValue; }
+      part def W { part p : P; assert constraint ca { p.L == 50.0 [kg] and p.L <= 5.0 [kg] and p.M >= p.L } }
+      part w : W;
+    }`);
+    expect(checkConstraints(m).find((c) => c.id === byName(m, 'ca').id)?.result).toBe('violated');
+  });
 });

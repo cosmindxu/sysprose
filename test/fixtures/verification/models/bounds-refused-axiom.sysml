@@ -10,11 +10,11 @@ package BoundsRefusedAxiom {
          *    A's own closure — so it cannot move the bound, and the row is
          *    decided with the refusal merely listed.
          *
-         *  - `TankB::depth` is bounded by `capB`, which is the refused one. The
-         *    bound over what is left is LOOSER than the model's, and publishing
-         *    it as "the tightest value" — or, once the value axiom is released,
-         *    as "unbounded above" over a file that plainly states a 9 m ceiling
-         *    — is the sentence §3.7 forbids. That row is stood down. */
+         *  - `TankB::depth` is bounded by `capB`, whose second conjunct is the
+         *    refused one, and it reads `depth`. The bound over what is left is
+         *    LOOSER than the model's (the 3 m ceiling of the manual mode is
+         *    gone), and publishing it as "the tightest value" is the sentence
+         *    §3.7 forbids. That row is stood down. */
 
     part def TankA {
         attribute level : ISQ::LengthValue = 1.0 [m];
@@ -24,9 +24,9 @@ package BoundsRefusedAxiom {
     part def TankB {
         attribute mode : String = "auto";
         attribute depth : ISQ::LengthValue = 1.0 [m];
-        // Refused: one operand is a string, so the whole conjunction — the 9 m
-        // ceiling included — is not asserted.
-        assert constraint capB { depth <= 9.0 [m] and mode == "auto" }
+        // Read as its two conjuncts (a5 K2): the 9 m ceiling is asserted, and the
+        // second is refused — one operand is a string — though it reads `depth`.
+        assert constraint capB { depth <= 9.0 [m] and (mode == "auto" or depth <= 3.0 [m]) }
     }
 
     part a : TankA;

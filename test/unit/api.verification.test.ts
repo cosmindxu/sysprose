@@ -447,6 +447,27 @@ describe('the role map — every relation lands in exactly one bucket', () => {
     expect(binds[0].role).toBe('axiom');
   }, 60_000);
 
+  // G-mask (g8): P's `bind K = L` re-spelled in P2, which declares K anew without `:>>`, would join P2's K, not P's.
+  // The row is refused with its sentence and keeps the two ends' variables, so the refusal reaches only the proofs
+  // that read them (an empty list would reach every proof of the file).
+  it('a binding re-read through a name declared anew without `:>>` is refused and keeps its variables', async () => {
+    const m = await load(`package G8 {
+  part def P { attribute L : ScalarValues::Real; attribute K : ScalarValues::Real; bind K = L; assert constraint cl { L == 50.0 } }
+  part def P2 :> P { attribute K : ScalarValues::Real; attribute N : ScalarValues::Real; bind N = K; assert constraint cn { N == 70.0 } }
+  part p : P2;
+}`);
+    const binds = obligationsOf(m).filter((o) => o.source === 'bind');
+    const masked = binds.filter((o) => o.encodable !== true && o.encodable.reason === 'unread-definition');
+    expect(masked.map((o) => o.element.qualifiedName)).toEqual(['G8::P::«BindingConnectorAsUsage» in G8::P2']);
+    expect(masked[0]!.node).toBeNull();
+    expect(masked[0]!.vars.length).toBe(2);
+    expect(masked[0]!.encodable !== true && masked[0]!.encodable.detail).toBe(
+      '`bind K = L` of G8::P is not read in G8::P2: there `K` names G8::P2::K, declared anew without `:>>` beside the G8::P::K it inherits, which KerML does not allow, so this tool does not read which feature the binding joins',
+    );
+    // P2's own `bind N = K` names P2's K wherever it is read: not refused.
+    expect(binds.filter((o) => o.expression.startsWith('N ') || o.expression.includes('.N ')).every((o) => o.encodable === true)).toBe(true);
+  }, 60_000);
+
   /**
    * Set EQUALITY, not membership. A `for (const s of sources) expect([…])`
    * passes vacuously on an empty axiom set — a role map that files nothing at
@@ -1980,10 +2001,9 @@ describe('a bare bound over a default a binding makes give way', () => {
     expect(lone['D3::Q::ql']).toEqual([true]);
   });
 
-  it('refuses an equation, an integer sort and a sum, which are no bare bound on a Real', async () => {
+  it('refuses an equation and a sum, which are no bare bound', async () => {
     for (const [name, text] of [
       ['equation', `package E { ${P('assert constraint a { load == 2.0 }')} ${Q('')} }`],
-      ['integer', `package I { ${P('assert constraint a { load >= 0.0 }', 'ScalarValues::Integer')} ${Q('', 'ScalarValues::Integer')} }`],
       ['sum', `package S { ${P('assert constraint a { load + 1.0 >= 0.0 }')} ${Q('')} }`],
     ] as const) {
       const rows = await axioms(text);
@@ -1991,5 +2011,44 @@ describe('a bare bound over a default a binding makes give way', () => {
       expect(inQ.length, name).toBeGreaterThan(0);
       for (const [, v] of inQ) expect(v, name).toEqual(['unread-definition']);
     }
+  });
+
+  // K3: an Integer bound is compared as a whole number, a conjunction of bounds read in a context is filed as its
+  // conjuncts there, and a bound in a unit keeps its refusal under a sentence that names it.
+  it('carries an integer bound that leaves more than one whole number, and refuses a pair that leaves one', async () => {
+    const I = 'ScalarValues::Integer';
+    const open = await axioms(`package I { ${P('assert constraint a { load >= 0.0 }', I)} ${Q('assert constraint b { L <= 5.0 }', I)} }`);
+    expect(open['I::P::a in I::Q::p']).toEqual([true]);
+    expect(open['I::Q::b']).toEqual([true]);
+    for (const [name, a, b] of [
+      ['fractional', 'load >= 4.5', 'L <= 5.5'],
+      ['strict', 'load > 4.0', 'L < 6.0'],
+    ] as const) {
+      const model = await load(`package J { ${P(`assert constraint a { ${a} }`, I)} ${Q(`assert constraint b { ${b} }`, I)} }`);
+      const rows = obligationsOf(model).filter((o) => o.source === 'assert' && ['J::Q::b', 'J::P::a in J::Q::p'].includes(o.element.qualifiedName));
+      expect(rows.length, name).toBe(2);
+      for (const o of rows) {
+        expect(o.encodable !== true && o.encodable.detail, name).toMatch(/leave an integer one whole number or none, which would give it a value/);
+      }
+    }
+    // Over a Real the same pair leaves an interval, and is carried.
+    const real = await axioms(`package R { ${P('assert constraint a { load >= 4.5 }')} ${Q('assert constraint b { L <= 5.5 }')} }`);
+    expect(real['R::Q::b']).toEqual([true]);
+  });
+
+  it('files a conjunction of bounds read in a context as its conjuncts there', async () => {
+    const rows = await axioms(`package C { ${P('assert constraint a { load >= 0.0 and load <= 10.0 }')} ${Q('')} }`);
+    expect(rows['C::P::a#0 in C::Q::p']).toEqual([true]);
+    expect(rows['C::P::a#1 in C::Q::p']).toEqual([true]);
+    expect(rows['C::P::a in C::Q::p']).toBeUndefined();
+  });
+
+  it('names a bound in a unit as one it does not compare', async () => {
+    const model = await load(
+      `package U { part def P { attribute load : ISQ::MassValue default = 1.0 [kg]; assert constraint a { load >= 4.0 [kg] } } ` +
+        `part def Q { attribute L : ISQ::MassValue default = 7.0 [kg]; part p : P; bind p.load = L; } part q : Q; }`,
+    );
+    const row = obligationsOf(model).find((o) => o.element.qualifiedName === 'U::P::a in U::Q::p');
+    expect(row?.encodable !== true && row?.encodable.detail).toMatch(/it is a bound in a unit, which is not compared here/);
   });
 });

@@ -10,6 +10,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { parseModel } from '@text/index';
 import { redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling, unreadScopes } from '../../src/semantics/bind';
 import { Model, ModelFactory } from '@core/index';
+import { verifyModel } from '@api/index';
+import { checkConstraints } from '@semantics/evaluate-model';
+import { checkConstraintsNumeric } from '@semantics/solver';
+import { instanceIndexSeam, instancesOfDefinition, sharedDefinitions } from '@semantics/defining-equation';
+import { effectiveQualifiedName } from '@semantics/inheritance';
 
 /** Parse, then hand back the model plus a name→element lookup. */
 function parsed(src: string): { model: Model; id: (name: string) => string } {
@@ -686,5 +691,145 @@ describe('unreadScopes — the owners whose features the saved file may read oth
     const want = ['W::P::f:redefinition', 'W::P::g:redefinition', 'W::P:redefinition'];
     expect(read(true)).toEqual(want);
     expect(read(false)).toEqual(want);
+  });
+});
+
+describe('every instance a withheld scope holds is a row', () => {
+  // The scopes left unread (defining-equation.ts withheldCauses): a copy over a diamond of overrides, alike or not
+  // (copy), two features under one name over a value or a `default` (twins), a binding whose end is a feature of a
+  // general written by path (binding), two fresh parts of one name from two unrelated generals (order). Each holds
+  // p's binding, in a definition, a usage or a nested usage, at a value that violates c (load 50) or satisfies it (2),
+  // in both orders of the package and of the holder's body and generals: 6 × 3 × 2 × 4 = 144 models.
+  const CAUSES = ['diamond', 'diamond-equal', 'twins', 'twins-default', 'structural', 'order'] as const;
+  const PHRASE: Record<(typeof CAUSES)[number], string> = {
+    diamond: 'a binding whose end is a copy standing on one of several features the order of the text chooses between',
+    'diamond-equal': 'a binding whose end is a copy standing on one of several features the order of the text chooses between',
+    twins: 'two features under one name, which the saved file may read the other way',
+    'twins-default': 'two features under one name, which the saved file may read the other way',
+    structural: 'a binding whose end is a copy the saved file reads as another feature',
+    order: 'two inherited features for one name, which the saved file may read the other way round',
+  };
+  const HOLDERS = ['def', 'usage', 'nested'] as const;
+  /** One model; `held` the instances of `Q::p` the holder's scope holds (by construction), `owners` each one's scope. */
+  const generated = (cause: (typeof CAUSES)[number], holder: (typeof HOLDERS)[number], violating: boolean, order: number) => {
+    const v = violating ? 50 : 2;
+    const decls = ['part def P { attribute load default = 1.0; attribute m2 = 10.0 - load; constraint c { m2 >= 0.0 } }'];
+    let generals: string[];
+    let body: string[];
+    if (cause === 'diamond' || cause === 'diamond-equal') {
+      decls.push('part def Q { attribute L; part p : P; }', `part def Q2 :> Q { attribute :>> L = ${v}.0; }`,
+        `part def Q3 :> Q { attribute :>> L = ${cause === 'diamond' ? v + 1 : v}.0; }`);
+      [generals, body] = [['Q2', 'Q3'], ['bind p.load = L;']];
+    } else if (cause === 'order') {
+      decls.push('part def Q { attribute L default = 1.0; part p : P; bind p.load = L; }',
+        'part def A { part s2 { attribute k default = 1.0; } }', 'part def B { part s2 { attribute k default = 2.0; } }');
+      [generals, body] = [['Q', 'A', 'B'], [`attribute :>> L = ${v}.0;`]];
+    } else if (cause === 'structural') {
+      decls.push('part def Q { attribute L default = 1.0; part p : P; bind p.load = L; }');
+      [generals, body] = [['Q'], [`attribute y = ${v}.0;`, 'bind Q::L = y;']];
+    } else {
+      decls.push(`part def Q { attribute L ${cause === 'twins' ? '=' : 'default ='} 1.0; part p : P; bind p.load = L; }`);
+      [generals, body] = [['Q'], ['attribute z = 1.0;', 'attribute z = 2.0;', `attribute :>> L = ${v}.0;`]];
+    }
+    if (order & 2) [generals, body] = [[...generals].reverse(), [...body].reverse()];
+    const inner = `${generals.join(', ')} { ${body.join(' ')} }`;
+    const [held, owners] =
+      holder === 'def'
+        ? (decls.push(`part def S :> ${inner}`, 'part s : S;'), [['G::S::p', 'G::s::p'], ['G::S', 'G::s']])
+        : holder === 'usage'
+          ? (decls.push(`part s : ${inner}`), [['G::s::p'], ['G::s']])
+          : (decls.push(`part top { part s : ${inner} }`), [['G::top::s::p'], ['G::top::s']]);
+    return { text: `package G {\n  ${(order & 1 ? [...decls].reverse() : decls).join('\n  ')}\n}`, held, owners, tag: `${cause}/${holder}/${violating ? 'F' : 'T'}/${order}` };
+  };
+  const ALL = CAUSES.flatMap((cause) =>
+    HOLDERS.flatMap((holder) => [true, false].flatMap((violating) => [0, 1, 2, 3].map((order) => generated(cause, holder, violating, order)))),
+  );
+
+  it('lists each withheld instance as unknown with its scope sentence', async () => {
+    expect(ALL).toHaveLength(144);
+    const wrong: string[] = [];
+    const sentenced = new Set<string>();
+    for (const g of ALL) {
+      const { model } = parseModel(g.text);
+      const c = checkConstraints(model).find((x) => model.qualifiedName(x.id) === 'G::P::c')!;
+      const rows = c.instances ?? [];
+      const names = rows.map((i) => (i as { instance?: string }).instance ?? model.qualifiedName(i.contextId));
+      if (new Set(names).size !== names.length) wrong.push(`${g.tag}: an instance listed twice (${names.join(', ')})`);
+      const numeric = checkConstraintsNumeric(model);
+      const literal = await verifyModel(model, { engine: 'literal' });
+      // I-C: a run that lists an instance it does not decide never passes.
+      if (literal.exitCode === 0) wrong.push(`${g.tag}: literal exit 0`);
+      for (const [k, name] of g.held.entries()) {
+        const row = rows[names.indexOf(name)];
+        if (row === undefined) {
+          wrong.push(`${g.tag}: no row for ${name} (rows ${names.join(', ')})`);
+          continue;
+        }
+        if (row.result !== 'unknown') wrong.push(`${g.tag}: ${name} reads ${row.result} on the check`);
+        // A live site wins (a usage over the diamond is denoted, and reads unknown for its own reason); a held one says
+        // its scope, the clause the SMT lane gives for the cause, byte for byte.
+        if (row.abstention === 'not-enumerated') {
+          const want = `G::P::c is not read in ${name}: ${g.owners[k]} owns, or joins a feature of, ${PHRASE[g.tag.split('/')[0] as (typeof CAUSES)[number]]}, so this instance is listed and not decided`;
+          if (!row.message.includes(want)) wrong.push(`${g.tag}: ${name} says ${row.message}`);
+          else sentenced.add(g.tag.split('/')[0]!);
+        }
+        const n = numeric.find((r) => r.id === `${c.id}@${name}`);
+        if (n?.result !== 'unknown') wrong.push(`${g.tag}: ${name} reads ${n?.result ?? 'no row'} on the numeric lane`);
+        const l = literal.results.find((r) => r.clause.qualifiedName === `G::P::c in ${name}`);
+        if (l?.claim !== 'inconclusive' || l.code !== 'verification/not-evaluable') wrong.push(`${g.tag}: ${name} reads ${l?.claim ?? 'no row'} on the literal engine`);
+      }
+    }
+    expect(wrong).toEqual([]);
+    // Not vacuous: every cause gives the scope sentence somewhere.
+    expect([...sentenced].sort()).toEqual([...CAUSES].sort());
+  });
+
+  it('a held site reaches no reader but the instance rows', () => {
+    const rowsOf = (model: Model): string[] => {
+      const qn = (id: string) => (model.has(id) ? effectiveQualifiedName(model, id) : id);
+      const key = (id: string) => id.split('@').map(qn).join(' in ');
+      return [
+        ...checkConstraints(model).flatMap((c) => [
+          `check ${key(c.id)}: ${c.result} | ${c.message}`,
+          ...(c.instances ?? []).map(
+            (i) => `check ${key(c.id)} in ${(i as { instance?: string }).instance ?? qn(i.contextId)}: ${i.result} ${i.abstention ?? ''} | ${i.message}`,
+          ),
+        ]),
+        ...checkConstraintsNumeric(model).map((r) => `numeric ${key(r.id)}: ${r.result} | ${r.reason ?? ''}`),
+      ];
+    };
+    const wrong: string[] = [];
+    let held = 0;
+    for (const g of ALL) {
+      const listed = (model: Model): string[] => {
+        const defs = sharedDefinitions(model);
+        const p = model.all().find((e) => e.declaredName === 'p' && model.qualifiedName(e.id) === 'G::Q::p')!;
+        return instancesOfDefinition(defs, p);
+      };
+      const now = parseModel(g.text).model;
+      // The same model with every held site ignored: what each reader gave before held sites were read.
+      const real = instanceIndexSeam.instanceSitesOf;
+      const spy = vi.spyOn(instanceIndexSeam, 'instanceSitesOf').mockImplementation((d, u) => ({ ...real(d, u), held: new Map() }));
+      let before: Model;
+      let rowsBefore: string[];
+      try {
+        before = parseModel(g.text).model;
+        rowsBefore = rowsOf(before);
+      } finally {
+        spy.mockRestore();
+      }
+      const extra = g.held.filter((name) => !listed(now).includes(name));
+      held += extra.length;
+      if (JSON.stringify(listed(now)) !== JSON.stringify(listed(before))) wrong.push(`${g.tag}: instancesOfDefinition ${listed(now)} ≠ ${listed(before)}`);
+      // Every row but the held instances' own is byte-identical.
+      const own = (row: string) => extra.some((name) => row.startsWith('check G::P::c in ' + name + ':') || row.startsWith('numeric G::P::c in ' + name + ':'));
+      const rowsNow = rowsOf(now).filter((r) => !own(r));
+      if (JSON.stringify(rowsNow) !== JSON.stringify(rowsBefore)) {
+        wrong.push(`${g.tag}: ${rowsNow.filter((r) => !rowsBefore.includes(r)).join(' ; ')} ≠ ${rowsBefore.filter((r) => !rowsNow.includes(r)).join(' ; ')}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+    // Not vacuous: the held instances are no instance of the definition, yet rows.
+    expect(held).toBeGreaterThan(100);
   });
 });

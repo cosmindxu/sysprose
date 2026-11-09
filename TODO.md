@@ -36,7 +36,7 @@ maintainer says `awaits user decision U<n>` and names the question.
       engine although SMT decides (the `unread-assert` fence; probe v2-refused-axiom-inst-ok); `x ==
       L` with L an unplaceable outer name (lex-lr1 Q::c, topT, topF read `?`). Done when those read
       their ref or are ruled permanent. Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)' item (6)): SMT reporting `inconsistent-axioms` file-wide (g5, g4, a1, k2 on SMT) in a model that contradicts itself (decision 1). The
-      numeric surface's 'did not converge' wording for paired equations: plan step 6.
+      numeric surface's whole-model solve still meets the pair and does not converge; since instance3-pass S3 its sentence names the pair.
       [contradictory-models S1, S3, review; instance2-pass S4]
 - [ ] **File a row, and say so in contracts, for a requirement whose only body is an assert.**
       Ruling made 2026-11-05 (maintainer): file a requirement row whose verdict is the assert's own,
@@ -55,18 +55,16 @@ maintainer says `awaits user decision U<n>` and names the question.
       alone, and a usage that subsets or redefines it: one equation in P and one in `part p : P { …
       }` leave p2 : P's L read at P's equation on the check (`q5-f1`'s `u50`, c6-use's `p2.L`: T,
       and F with the two values exchanged). The literal engine now decides these too (Q5F1::u50
-      T/T/?/X; BU::u50 and BU::v50 the same). The numeric surface still reads 'did not converge'
-      there (the whole-model solve meets the pair; step 6), and also on the through-part siblings
+      T/T/?/X; BU::u50 and BU::v50 the same). The numeric surface's whole-model solve still meets the pair and does not converge there; since instance3-pass S3 its sentence names the pair, and also on the through-part siblings
       (BQ::u50, B2::u50 and v50, BS::u50: T/X/?/X, where the literal engine reads X). Still
       abstaining, sound but readings lost: a pair that meets in the feature's owner (P, or a
       specialisation: G2's P2), read in a usage whose `:>> a = 25.0` makes the two agree; two usages
       that each contradict P (every P's L abstains again); a value the pair reaches through a dotted
       name or a relation outside the instance (P's `bind s.M = L`, `attribute M = p.L`, a package's
       `bind w2 = p2.L`), which taints every instance; a P nested in the contradicted instance
-      (`p.inner.L`); a bare `L == 50.0` beside `L == 50.0 [kg]` (`q5-unitagree`, T on all four
-      surfaces at f1f5ca5); a side over a name a binding joins; a definition's own rows over a usage
+      (`p.inner.L`); a side over a name a binding joins; a definition's own rows over a usage
       it holds, and a value over a dotted name (`Z = p.L` in Q), which stay undecided in every
-      instance of a pair that meets in a usage. Read a bare literal in the feature's declared unit.
+      instance of a pair that meets in a usage.
       [contradicted-value S2]
       The FMI `start` and the Solve measure value inherit this breadth (text-order S2): `part def P { attribute load; assert constraint c1 { load == 1.0 } }` with `part def Q { part p : P { attribute :>> load; assert constraint c50 { load == 50.0 } } }` takes P::load's start from 1 to the type default 0 (marked in the variable's description) while only an instance elsewhere contradicts it (also r8-redef-novalue-assert-dflt, S4_N_PP, S4_N_PU). A literal written beside a contradicted pair keeps its start in both orders (`attribute L : Real = 5.0;` beside `L == 50.0` and `L == 60.0`); decision 14's removal in wave 3b settles whether an asserted equation overrides a written value for an export. [text-order S2]
       A pair on the two ends of a binding met in a usage (c6-use) now reads p2.L; one filed at P
@@ -75,44 +73,52 @@ maintainer says `awaits user decision U<n>` and names the question.
       Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
       item (6)): a pair made to agree by a usage's `:>>` (the pair that meets in the owner), and the
       breadth of FMI `start` (readsContradictedDefinition stays feature-wide). Left: the
-      unit-agreement part and the shapes above.
+      shapes above. Since instance3-pass S3 a bare number beside a quantity of the feature's kind
+      is one value in the kind's coherent SI unit (q5-unitagree-ab T/T/T/T; -ba T/?/T/?: written
+      second, the bare equation is refused on the literal and SMT engines, derived-bare-literal). A
+      feature that declares a unit other than its kind's coherent SI one (`L : MassValue [g]`) is
+      defined by no bare equation on the check, literal or numeric surfaces (`declared-unit`); the
+      SMT engine reads it in the declared unit.
 - [ ] **Read a usage that subsets a feature an instance reads otherwise in that instance.** Since
-      subsetting-pass, every row read through W's `part p2 :> p1;` abstains wherever any context of
-      W reads p1 otherwise (`subsettingOtherwise`, `subsettingTaint` in
-      src/semantics/defining-equation.ts). So does every row read in such a usage (`T1::tc in W::p2`
-      for `part p2 : T1 :> p1;`), and the own row of a relation nested in its type
-      (`subsettingAround`: TC8's `T1::sub::tc`, for every T1's sub). The taint is on the usage, not
-      on the instance, so true rows abstain too: W's own rows (sa7's `W::c`, T at W's values); a
-      sibling `w0 : W` that changes nothing (`w0.p2.load <= 5.0` ?/?/?/? on all four surfaces, its
-      sentence naming w); an instance that changes only a feature of p1 that nothing reads through
-      p2 (V7: `part :>> p1 { attribute :>> tag = 9.0; }`); TC8R's `T1::sub::tc` (`v >= 5.0`, F at
-      T1's own values at 84fb971) for T1's own sub; a package's `satisfy RF by v.p2` for a `v : W`
-      that changes nothing (O2); a requirement's own row where only a `satisfy` context that
-      abstains for its own reason lists the subsetted feature (RQ4); R's own row standing for
-      package `satisfy R by p50` / `by p1` over R's `part q :> s;`, which file no row of their own
-      (SA3S, RE3); `refine` and `fault-tree`, which go from decided to inconclusive (RFN: `satisfy
-      Top by w` reads `s.p2.load` beside W's `satisfy RF by p2`; 84fb971 gave `refined` with exit 0,
-      and `{RF}` as a single point of failure with a confirmed witness and exit 1, both true; both
-      now exit 2, because the unread-binding refusal reaches those lanes); and, since the asserted
-      step, the first link of every other name of an asserted relation that reads through any
-      satisfierTaint element (AE3: a package's `w.x == w.p2.load` taints w, so `w.p1.load`, true F,
-      abstains; AE4: W's `p1.load == p2.load` taints W's p1). Reading them needs the walk to read a
-      subsetting usage in an instance as one of that instance's subsetted feature (as it re-roots a
-      bound subject), keeping its own features, with a value both state read as two values; and the
-      asserted step to taint the defined feature rather than its first link where that feature is
-      not a shared definition feature. Done when sa7's `W::c` reads T, `W::c in w` F, `k` F and
-      `w0.p2.load` T, and TC8's `T1::sub::tc` reads T for T1's own sub and F for w's p2's. Sound,
-      only weaker. [subsetting-pass S1, branch review]
-- [ ] **Report a model that contradicts itself through a subsetting usage.** Take W's `assert
-      constraint a { p2.load <= 5.0 }` over `part p2 :> p1;` beside w's `part :>> p1 { attribute :>>
-      load = 50.0; }`. Every w's p2 is one of w's p1s, so the model contradicts itself. Since
-      subsetting-pass, `a`'s row abstains (it read T), but the SMT axiom still reads W's own p2 (1).
-      So other rows are decided (v11: `w.x <= 5.0` T, `w.x >= 5.0` F) where decision 1 says the
-      axioms are inconsistent, and nothing reports the contradiction. The model with `assert
-      constraint a { p2.load >= 40.0 }` holds for its only instance w (50) (AI, in
-      subsetting-pass-scratch/wbr/ai.sysml). There the check abstains on `a` (?/-/?/-) and strict is
-      OK, while SMT reads W's own p2 (1) and reports inconsistent-axioms on every row (`k`, `k2`
-      T/T/T/X): an X the check no longer explains. [subsetting-pass S1, branch review]
+      instance3-pass S2, a usage that is the subsetted feature again is read below in each context
+      that redefines it, as one of that context's p1s (rerootedSubsettings and subsettedIn in
+      src/semantics/defining-equation.ts). Such a usage has p1's kind and type, says nothing of its
+      own, is neither a ref nor an attribute, has nothing else redefining or subsetting either, and
+      no binding end or asserted equation names it. Results: sa7 `W::c` T, `W::c in w` F, k and k1
+      F, w0.p2.load T; V7, SA7D, SA7B and NQ3 decided; bounds of w.p2.load is 50. Still abstaining
+      (sound, readings lost): a reading of p2 itself (sa3's `satisfy RF by p2`, a package's
+      `satisfy RF by w.p2` / `v.p2` (O2), a subject's or reference's value `= p2`); TC8's
+      T1::sub::tc (a T1 that adds features is not p1 again, and no lane files a row for w's p2's
+      sub); RFN refine and fault-tree still inconclusive (they need the per-instance satisfy read,
+      176's satisfy half); `::>`, nested (SA7N), chained (SA7C), attribute (SA7A) and sibling
+      subsetters; a binding end or asserted equation naming p2 (VB, AX, PX, AE3, AE4; the design's
+      asserted-step change was not done); a context that reads p1 otherwise without redefining it
+      (RQ4's satisfy context, SA3S and RE3's `q :> s`, a binding from above). Brief done-when items
+      not met: TC8 T1::sub::tc (T for T1's own sub, F for w's p2's), RFN refine `refined` with exit 0
+      and fault-tree `{RF}` with exit 1. [subsetting-pass S1, branch review; instance3-pass S2]
+- [ ] **Report a model that contradicts itself through a subsetting usage.** Since instance3-pass S1
+      an `assert` read through a usage that subsets a feature an instance reads otherwise is read
+      again in each such instance, the usage re-rooted onto that feature: W's `assert constraint a {
+      p2.load <= 5.0 }` over `part p2 :> p1;` beside w's `part :>> p1 { attribute :>> load = 50.0;
+      }` files `W::a in w` (F on the check and the numeric surface, `sysml-check --strict` fails)
+      and an axiom of its own, so the SMT engine reports inconsistent-axioms on every row (v11:
+      `w.x <= 5.0` T/T/T/X); where it holds in w every row is decided (V11H). Only where that is
+      the usage's value: the assert written in the element both are features of, naming the usage at
+      the head of a dotted name, the usage subsetting that one feature and saying nothing of its
+      own, nothing else redefining or subsetting either. Since S2, beside a usage read below as p1
+      again, W's own row of the assert reads W's values (V11 `W::a` T/-/T/-; AI's `W::a` F/-/F/-,
+      which strict reports), `W::a in w` stays F (AI: T/-/T/-) and SMT stays X (AI's k, k2
+      T/T/T/X). S1's reread applies now only to the shapes the walk does not re-root (`part p2 : T1
+      :> p1;`, an equation over p2). Left, sound: every other shape makes the SMT engine decide no
+      row of the file (`not-evaluable`), the check abstaining as before: an assert reading the usage
+      through a value or an asserted equation (`y == p2.load`, AX), a package assert through
+      `w.p2.load` (PX), a `::>`, an instance that binds the subsetted feature (`bind p1.load = K`),
+      an assert of the usage's type (T1's `tc` under `part p2 : T1 :> p1;`, STC), a chain or a usage
+      with two supers, a quoted name an asserted equation spells, a multiplicity beyond one value
+      (p1 or its redefinition `[2]`, p2 `[0..1]`, p2 with a multiplicity other than `[1]`), and a
+      subsetting usage that says something of its own where an instance reads what it subsets
+      otherwise (SV2's two loads; also where the other value is a `default` that gives way: SE's RF
+      row, T/T/T/?). [instance3-pass S1, S2]
 - [ ] **Spell a chained subsetting target as written in the subsetting sentence.** The Subsetting
       now keeps the path as written (`attrs.chain`), the sentence says "subsets `q.p1`" and Save
       writes `q.p1`. Left: the instance test still runs in Q for `part p2 :> q.p1;`, not in W with
@@ -226,17 +232,10 @@ headings.
       table rows. Low. The RB5 duplicate (two check rows `P::c in q1::p`) is fixed in naming-pass S1
       (h5-rb5p). [O9 S2, naming-pass S1]
 - [ ] **Close the F section 2.8 rows still open, and the other end of an asserted equation's
-      binding.** (1) GA6 `qa` reads T/-/?/- (target T/-/T/-; the numeric surface does not converge
-      on that self-contradictory model). GA6 `pa` and GA12 `pa`/`qa` moved from a numeric T to `?`
-      and gained or lost rows; that needs the maintainer's ruling under invariant (h). (2) A
-      package-level definition-feature bind files no per-instance `#bind` row on the check and the
-      numeric surface, so `sysml-check` abstains where SMT decides (`W4o::c4` ?/?/?/X). (3) Under a
+      binding.** (3) Under a
       fixed slot the check and the literal engine abstain where the true answer is decided: X3
       `c3T`/`cMT`, X6 `c2T` and X10 `c3T`/`cq2T` read ?/?/?/T (the SMT engine decides them; pinned
-      as W4X3 and W4X6), W4d `c2F` ?/?/F/?, `c2T` ?/?/T/T. (4) The numeric surface still imposes the
-      first equation over a free partner (Q4L `eq` ?/-/T/-, decision 7: the label stays); its
-      abstention on `c`/`d` says 'L is left free … no relation fixes it', not a sentence of its own.
-      (5) SMT abstains on renamed paths (`q.pp.x`). (6) Where a binding joins an element's asserted
+      as W4X3 and W4X6), W4d `c2F` ?/?/F/?, `c2T` ?/?/T/T. (5) The numeric surface and SMT abstain on an enclosing assert read through a renamed redefinition (RNV `q.pp.x`: top and topF now read T/T/T/T and F/F/F/F since closing-readings RN-1/RN-2, so this clause is closed but for `q.p.x`, the old name from outside, which stays ? under H3; RNV2 at depth 2 reads T/?/?/?). Two renamers of one name (`part e :>> p; part pp :>> p;`) no longer answer it (rn1-shared: it read e's 60 where pp's x is 50). [closing-readings RN-1, RN-2] (6) Where a binding joins an element's asserted
       equation to a value written with `=` that it does not give, the equation's end is not read on
       the check and the literal engine since per-instance-rest S2, but the other end still is, at
       its own value: RBL2L's `topL { q.L <= 3.5 }` and `q::lq` F/F/F/X, GV1's `pl` T/T/T/X, GW's `pl
@@ -250,9 +249,8 @@ headings.
       instance's own redefinition of p); rh and rh2 (pinned, own sentences); X11's value-source
       clause; the Q4 and RH2 'no value anywhere' sentences; BW4/BW5 (a chain to a default a binding
       holds names the binding). [O5, review, per-instance-rest S2]
-      Since default-stands S2: item (1) closes (GA6 `qa` and `pa in Q::p` and GA12 `qa in q` read
-      ?/-/?/- with ref '?'; GA6/GA12 `pa` and GA12 `qa` read T/-/T/- with ref T); item (6)'s GW
-      example is obsolete: `pl in q2` reads T/T/T/X, ref null.
+      Since default-stands S2: item (6)'s GW example is obsolete: `pl in q2` reads T/T/T/X, ref null.
+      Rollup (sound but weaker, closing-readings): (RN-0) the old name of a renamed feature is read from outside on check, literal and SMT: after `part q : Q { part pp :>> p; }`, `q.p.x == 60.0` is decided at pp's value where q's pp has a single value, though p is not a member of q (H3: keep `?`; the 284 single-renamer gen-rn cells that read decided and correct are pinned in 16 differential rows, an open coordinator decision against the RN-1 oracle 'old name from outside gives ?'); with two un-renamed redefiners the numeric surface reads the q-level comparison as `?` in one text order and decided (correct) in the other, the renamed twin in both. (RN-F) a row's literal and SMT readings still depend on unrelated packages in the same file (literal abstains beside an unreadable assert elsewhere; SMT gives file-wide X beside a self-contradicting package or two same-named attributes): abstentions and X only; check and numeric rows have been file-independent since RN-F. (RN-2) 40 of 480 gen-rn g cells abstain where a conjunct of a respelled assert could read (buildInstanceSystem respells `whole`, not the assertConjuncts parts; a sound abstention; e.g. F/?/F/? against F/F/F/F). A general's assert over a feature two renamers share is read by neither renamer (fence in reachingUncached, row rn1-shared-general). [closing-readings RN-0, RN-F, RN-1, RN-2]
 
 - [ ] **Finish what `table-rows` left of E3 and E9, and the numeric surface's reading of an
       evaluated pair.** (1) E3 `h2p0` (`P::c in Q::p`) and `h2c0` (`Q::c`) read ?/?/?/? beside ref
@@ -305,7 +303,10 @@ headings.
       constraint usage the assert specialises (TP2's `assert constraint ea :> e0;`). Q's own rows
       abstain for an assert written in `part q : Q`, and every P's for one naming `p.load`. Every
       valueless feature it names, with what the model states from it, is no design freedom to the
-      numeric surface. Read the definition's body with the parameters' values, per instance.
+      numeric surface. Since names-pass its own row abstains (?/-/?/- naming the definition), and
+      the literal and SMT surfaces abstain on every row of that model. Left: read the definition's
+      body with the parameters' values, per instance (design 5(e)2 recommends ruling this
+      permanent; the maintainer's ruling is pending).
       (5) A name reached through an import or an alias, a qualified `Lex::K` and a non-attribute
       lexical feature are still left unread.
       (6) Wording only (every row abstains):
@@ -361,14 +362,9 @@ headings.
       the point alone (`x / y == 3.0` beside `y == 2.0` and
       `x == 6.0`). (10) Cost: `fixedByOthers` is rebuilt per curved equation, quadratic per
       component (about 1.2x b635385 on a chain of 400 with a curved leaf per member), and
-      `optimize()` re-solves without a cache. (11) A fenced head carry (fence-numeric): numeric
-      reads an assert's slot at the assert's own value where the check and the literal engine
-      abstain on the slot (E1Q `c2T`, `fix`: pinned `stand-gw-e1-slot` with null refs; probe
-      fence-numeric-scratch/p/path0.sysml); for a valued L through a package head (V2/V4/V5) numeric
-      and SMT read p3.load and M at the written 5 where the check and the literal engine abstain, a
-      surface disagreement that may be a model solution (probes fence-numeric-scratch/rev/v2.sysml,
-      v4, v5; a sound fence needs `contracts.ts`); the numeric abstention uses the generic left-free
-      sentence, not one naming the head binding as the SMT lane does. (12) An FMI parameter or input
+      `optimize()` re-solves without a cache. (11) V2/V4/V5 (a valued L through a package head, fixedHead): entailed; the check and literal
+      half to design-readings SLOT1 (probes fence-numeric-scratch/rev/v2.sysml, v4, v5). E1Q is
+      fenced by a5 F3 (pin stand-gw-e1-slot ?/?/?/?). (12) An FMI parameter or input
       whose stated value the tool cannot evaluate (`Bb = A + 1.0` over a valueless A, `1.0 / 0.0`)
       is held free (NaN) with the note 'the model states none this tool reads' (probe
       fence-numeric-scratch/review/fmi2.mts, cases `expr` and `big`). Probes:
@@ -379,7 +375,7 @@ headings.
       `x ^ 0.0 == 1.0`) and solveFeasible goes d1f1 to d0f0; (c) two stated values further apart
       than 1e-8 of their size but closer than the 1e-6 gate read ? on both rows (`x == 1.0000001`
       beside `x == 1.0`); (d) a guarded divisor refuses the witness even when the branch is not
-      taken; (e) dividesByNearZero is absolute in SI, so a free divisor below 1e-6 loses its witness
+      taken (the `if ... ? ... else ...` spelling now parses on all four surfaces (a5-std S2), so the fd probe can be written in either form; N3 reads it); (e) dividesByNearZero is absolute in SI, so a free divisor below 1e-6 loses its witness
       (`x / y == 3.0`, y in [1e-7, 2e-7]); (f) a lone no-root equation reads ? and solveFeasible
       undecided (was decided-infeasible through a false premise; 168 generator models). Probes:
       fence-numeric2-scratch/review/. [fence-numeric2] fence-numeric3: (g) a legitimate root reached
@@ -435,7 +431,11 @@ headings.
       a plain quotient over an asserted zero divisor (`A z == 0.0` beside `r / z == q`) reads `?` in
       one order and T in the other (s3/Q2x156f.sysml, Q2x156r.sysml); (q) an affine core past 32
       features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) the
-      286(a) digits cases (s5/A6x086f, A5x092f, A5x240f). [numeric2-pass; solver2-pass]
+      286(a) digits cases (s5/A6x086f, A5x092f, A5x240f); (s) a definition's own row reads `t` where an
+      instance's facts refute it (adv/genpin: `P::ck` ?/?/F/? before P-pin, ?/?/t/? after; definition
+      rows only): the F side is liftable by reading an instance's refuting F onto its
+      definition's row.
+      [numeric2-pass; solver2-pass; closing-readings P-pin]
 - [ ] **Give the specialisers of a usage-owned group one canonical order (optional).** The
       group-order fence of fence-readings S1 is a stable sort by usage-ancestor count in
       `contextsUncached`; `specialisersOf` itself and the context-key dedup have no canonical order,
@@ -456,8 +456,7 @@ headings.
       answer exists; none gives a wrong answer. (1) The subsetting component fence is per usage, not
       per instance: the usage an instance redefines itself (w.p1 beside `p2 :> p1`), every instance
       of what the component's usages are features of, and a package subsetter's subsetted usage
-      abstain even where the reading would be right (pins sub-rv1-diamond k2, sub-sa7 k1, the two
-      satisfy rows of sat-nested-nq3; corpus model e1-subset); a sound per-instance skip needs
+      abstain even where the reading would be right (pin sub-rv1-diamond k2; corpus model e1-subset; since instance3-pass S2 sub-sa7 k1 reads F/F/F/F and nq3's rows F/-/F/- and -/F/-/F); a sound per-instance skip needs
       per-context answers. (2) A bridge, chain-target or package fence fires on any member that
       states a value, at any depth, or whose type states one, even where the values agree. (3) A
       line of parts, a merged line and a twice-stated feature fence every name they reach (dependent
@@ -506,15 +505,7 @@ headings.
       (MAX_NAME_WALK_OWNERS) the names below it read unknown with the sentence 'the names below
       <ctx> are not all read'. v9 enters at most 542 owners, the examples 59. [fence-loader]
       reads2-pass (an asserted bare bound on a unitless Real over a give-way default is carried on
-      the SMT lane; `bounds`, `consistency` and `refine` carry it too): (12) an asserted inequality
-      over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L
-      + N >= K`), a bound with a `[unit]` or on a unit-bearing feature, an Integer or restricted-
-      domain sort, a conjunction (`load >= 0.0 and load <= 10.0`: the bounds, consistency and
-      refine lanes read an asserted bound alone and were left as they were, while the check,
-      literal, numeric and SMT surfaces read a conjunction's conjuncts apart since solver2-pass
-      S2); the unit, Integer and conjunction
-      shapes keep the generic sentence 'no assertion gives a default a value' rather than one naming
-      the move (reads2-pass-scratch/h217/h2.sysml, gen217/models shapes 'int' and 'unit'); (13) a
+      the SMT lane; `bounds`, `consistency` and `refine` carry it too): (12) an asserted inequality over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L + N >= K`) under the generic sentence, and a bound with a `[unit]` or on a unit-bearing feature or a restricted-domain sort under a sentence of its own (a5 K3 carries Integer bounds, refusing a pair that leaves one whole number, and files a conjunction read in a context as its conjuncts; probes a5-k3-unit, gen_k3 shape unit); (13) a
       usage that redefines the default itself (`part q : Q { attribute :>> L default = 9.0; }`)
       beside bounds abstains where the hand oracle could prove (20 cells: reads2-pass-
       scratch/gen217b/models/m45f.sysml, m46f.sysml, m52f.sysml); (14) bounds linked through a
@@ -523,26 +514,19 @@ headings.
       -derived2); (15) a scoped worklist (`obligationsOf` with scopeId, the Checks 'Obligations'
       listing) may carry a bound the whole model refuses as meeting (review-scratch/scope.mts;
       sound, the partner is no axiom there); (16) a usage that subsets a feature an instance reads
-      otherwise (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
+      otherwise, narrowed by instance3-pass S2 to the shapes still fenced (TC8, AE3, SA3, O2, RQ4, SA3S, RE3, RFN, and the `::>`, nested, chained, attribute and sibling subsetters) plus a name an asserted equation spells with a quote and a multiplicity beyond one value (sub-sa7 and sub-def-sa7d now read) (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
       `satisfierTaint` feeds about eight readers; probes sub-sa7, sub-sa3, sub-sa5, sub-def-sa7d,
-      sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). (17) solver2-pass S2: the check
-      refuses a whole conjunction when one conjunct hits a gate refusal (probe
-      solver2-pass-scratch/s2/x25c.sysml, split twin x25s.sysml); `refused and false` stays a
-      refusal while `false and refused` is false, and `x or true` stays unknown; a conjunct
-      inequality is not gathered for solveFeasible/optimize; a conjunction typed by a constraint
-      definition is not split, by design; the SMT engine refuses a whole asserted conjunction when
-      one conjunct cannot be encoded (a String equality) where the split asserts are proved
-      (solver2-pass-scratch/review/p/bra2.sysml vs bra2s.sysml). [reads2-pass; numeric2-pass;
+      sub-tc8 and the AE3 shape `w.x == w.p2.load` in a package). (17) solver2-pass S2: since a5 K1 the check reads a conjunction as false where a conjunct is false before a gate-refused one (probe solver2-pass-scratch/s2/x25c.sysml, split twin x25s.sysml; the K1 line (18) below lists what stays weaker); `refused and false` stays a
+      refusal while `false and refused` is false (KerML control order; a5 F6: an unknown is
+      absorbed only where it is a value the model does not give); a conjunction typed by a constraint definition is not split, by design; since a5 K2 an asserted conjunction a gate refuses whole is filed as its conjuncts and gathers its conjunct inequalities (bra2 = bra2s), but a clause instanceRows reads per context, one that mixes a [unit] literal and a bare number, a conjunct inequality over stated or fixed values whose clause the check does not hold, and the literal engine's read of a refused conjunct stay as weak as the whole conjunction (a5-conj K2 probes k153, k287). (18) a5 K1 (sound but weaker): a conjunction a gate refuses still abstains where (a) a refused or ill-typed conjunct comes before the first false one (`refused and false`, P under F6), (b) the body is right-nested (`a and (b and c)`: conjunctsOf does not cut it), or (c) the surface is numeric (S1 `p.L <= 5.0 [kg] and p.E >= 1.0`, shortCircuit andBare F/F/?/F: the solver refuses the whole relation by gate (e)); K2/K3 or solver-order may lift (c). Exit move: a file whose conjunction is false before a gate-refused conjunct now exits 1 (refuted) instead of 2, because literal and SMT follow the check's violated (pinned: shortCircuit::andBare; bounds-refused-axiom.sysml capB). (19) a5 K2 (sound but weaker): K2 reads as its split twin only an asserted conjunction filed at the model level or through instanceRelationRows, and is never stronger than the twin. It stays weaker where (a) a clause whose relation instanceRows reads per context, or that has shared rows, is filed whole; (b) a body writes a [unit] literal beside a bare number (mixesUnitRegimes, by design); (c) feasibility leaves a conjunct inequality over stated or caller-fixed values to its clause's whole row unless the check reads that clause held (`x <= 3.0 and y >= 1.0 and mode != "manual"` with x valueless, k153); (d) the literal engine reads a refused conjunct as held only where the check holds its whole clause (k287 pkg g3: T/?/T/T against the twin's T/T/T/T); (e) instance conjunctions are not counted as covered in solveFeasible; (f) v2-refused-axiom-inst-ok reads inconclusive/inconsistent-axioms because the def-level row of `a` is violated at P's default while the instance row holds under p's override (narrowing the sentence to the instance reading, the row `a in p`, would let `g` be proved). (20) a5 K3 (sound but weaker): an asserted bound written in a `[unit]`, or on a feature with a unit or a scale, over a give-way default is still not carried; it gives its own sentence ('it is a bound in a unit, which is not compared here with the bounds on the features the binding joins it to'); a bound on Natural, Positive or UnlimitedNatural names the type's floor; carrying these would mean comparing SI magnitudes across a binding's component (generator 'unit' shape: 30 cells the oracle could decide abstain). (21) a5 S1 (sound but weaker): `true == 1.0` is F on the check, literal and SMT surfaces (a Boolean is never a number) but stays not-quantity unknown on the numeric surface; v9 Solve reads 19 numeric rows over 12 usages (12 withinOperatingEnvelope == true rows, 7 conjunction rows) as satisfied instead of unknown. (22) a5 S2 (sound but weaker): Langium cuts a constraint body at the first syntax-error token, so `x > 2.0 ? 1.0 else 2.0` (no `if`) is read as `x > 2.0` and decided, with the load degraded and reported as 'none is a verdict' (existing recovery-honesty behaviour; fencing it would mark the truncated row's body unparseable). (23) a5 S4 (sound but weaker): a `require` or `assume` clause typed by a constraint definition (`requirement def R { require constraint rq : K; }`) files no row yet and the requirement still reads 'carries prose and no constraint body' (TY2); a plain typed usage inside a part def files only its generic row and per-instance rows (`part car : Car`) are not enumerated; a plain constraint typed by a constraint definition exits 2 on `verify` (literal and SMT) where it exited 0, `--allow-inconclusive` does not forgive it, and `consistency` on a requirement set holding one moves from consistent to inconclusive (exit 2); `consistency` prints that refusal with an empty expression ("`` was not asserted: `nl` is typed by ...", cosmetic, as the A4 typed-assert refusal already does).
+      [reads2-pass; numeric2-pass;
       solver2-pass]
 - [ ] **Abstentions left in the negated assert (rollup; sound, only weaker).** (a) A model with
       `assert not requirement`, a negated clause that names a constraint with no body, one that
       specialises a constraint, or one whose body holds members and no expression or a member
       other than a comment, a `doc` or an attribute with a `=` value or none degrades as a whole,
       not only the dependent rows (a one-expression body is read since numeric2 S1, beside
-      comment, `doc` and attribute members since solver2 S4); (b) `assert not
-      satisfy R by s;` parses as the bare clause `assert not` plus a plain `satisfy R by s;`: the
-      error is raised but the satisfy edge is read plain and the sentence names the clause (`not
-      satisfy` and `satisfy not` stay generic parse errors); (c) members declared inside a refused
+      comment, `doc` and attribute members since solver2 S4); (c) members declared inside a refused
       body (the shapes of (a)) are not mapped (kept verbatim in the save); and `assert not x >
       1.0;` swallows `x` as the
       clause's name, giving a `validation/duplicate-name` finding beside the new error; (d) a caller
@@ -551,22 +535,26 @@ headings.
       clause was refused as having no formal clause. (f) in a negated clause, an attribute member
       with `:=`, a prefix (e.g. `in`), a subsetting or redefinition, a multiplicity or a body of
       its own, a `rep language` member, and annotations are refused (probe
-      solver2-pass-scratch/s4/gen Z187-Z199). [fence-assert-not; numeric2-pass; solver2-pass]
+      solver2-pass-scratch/s4/gen Z187-Z199). (g) The parse-error forms `not satisfy R by s0;` and
+      `satisfy not R by s0;` behave as on base: the load is degraded and verify exits 2, but the
+      save is not faithful (`not satisfy R by s0;` saves as `satisfy R by s0;` followed by a stray
+      `not`; `assert satisfy R by s0;` saves as `assert constraint; satisfy R by s0;`, which re-reads
+      the same); no verdict changes. (h) `negatedSatisfyOf` pairs a bare `assert not` with the next
+      `Satisfy` sibling, comments allowed between, without checking that the two are adjacent in the
+      text: a broken `assert not` followed by a comment and an unrelated `satisfy` lines later
+      swallows that satisfy into the refused clause, and the message names the wrong statement
+      (an abstention, not a false verdict). [fence-assert-not; numeric2-pass; solver2-pass; a5-fences F2]
 - [ ] **Stop the SMT engine reading inconsistent axioms on a model that does not contradict
-      itself.** One symbol per feature across the usages of one definition: `part def P { attribute
-      L; attribute K; bind L = K; } part a : P { assert constraint ea { L == 50.0 } } part b : P {
-      assert constraint eb { K == 60.0 } }` reads `verification/inconsistent-axioms` though neither
-      instance contradicts itself (the literal engine discharges, the numeric surface does not
-      converge; review-2026-10-14/wave3-probes/contradictory-models/c6a.sysml). And a chain a
-      specialisation masks: `part def P { L; K; bind K = L; assert constraint cl { L == 50.0 } }
-      part def P2 :> P { attribute K; attribute N; bind N = K; assert constraint cn { N == 70.0 } }
-      part p : P2;` (P2's K masks P's without `:>>`, so N is joined to P2's K and not to L): the
-      check and the literal engine decide p.L == 50.0 and p.N == 70.0 T, correctly, and SMT reads
-      the axioms inconsistent (T/T/T/X;
-      review-2026-10-14/wave3-probes/contradictory-models/g8.sysml). No false T or F, only a false
-      inconsistent-axioms claim; unchanged from the base and in the USER-GUIDE limits. Done when SMT
-      keys a symbol by instance, or the shapes are pinned in I7_ALLOWED with this reason.
-      [contradictory-models S3, review]
+      itself.** A general's body re-read by name where a specialisation declares a name anew
+      without `:>>` (KerML 7.3.2.1 forbids it) is fenced on every surface since g8-fence: no surface
+      reads the name in that context, nor a value a binding joins to it, each in a sentence naming
+      both features. The SMT engine refuses the general's rows there with their variables kept
+      (G-mask, G-pair-b), and a pair of asserted equations met only by name (G8C) is filed `?`, not
+      violated (G-pair-a). g8 reads T/T/?/?, G8B/G8A tl ?/?/?/?, G8C `#equations` ?/-/?/- and t70
+      ?/?/?/?. Since P-pin an equation written in a usage or a specialising definition no longer
+      pins a definition feature's shared symbol (C6A-C6F as measured; LK/LD/LN `P::ck` ?/?/t/?).
+      Left: report the shape (G-diag, H1 = (d1)); C6D `ta` ?/?/T/T. [contradictory-models S3,
+      closing-readings P-pin, g8-fence]
 - [ ] **Keep a redefinition on the more specific feature when an edit dissolves the join that kept
       it off it.** A redefinition kept off a more specific feature by a join an edit dissolves stays
       on the base feature, written by its path; the same names written by hand land on the more
@@ -648,12 +636,7 @@ headings.
       (`effectiveNameOf`, `effectiveQualifiedName`): re-run the edge property
       (scratchpad/rev-redefs/zzedge.test.ts) when the serializer changes; 51 of 5222 steps differ
       page against file in the edge, 5 with the owner not flagged, no row difference in 820
-      constraint replays. fence-save-name: (15) page `FF`/file `??` rows seqs 44248 and 40746
-      (identical on base, no note in the saved text) and about 390 per window 'page ?? / file
-      decides' rows; probe fence-save-name-scratch/soak/mine-4*.log, generator
-      fence-save-name-scratch/zzb.test.ts; a stale-copy probe: seed 32180 (RV_RAW=1 RV_FIRST=32180
-      RV_SEQ=1 RV_STEPS=5) and soak seq 42267 (page TT, file ?F on c6). [fence-redefs;
-      fence-save-name]
+      constraint replays. [fence-redefs]
 - [ ] **Widen the random edit generator of the store property test (optional).**
       store.reducers.test.ts now draws bind in definitions and usages and a user retarget of a
       redefinition (its own random stream, onto another feature of a general of its owner, never
@@ -756,58 +739,71 @@ true values. What follows is what that branch and the review of it left open; en
       method; both spellings, including `about` naming the owner itself). When it lands, lift that
       blanket refusal. A keyword annotation's `about` targets are raw qualified names no consumer
       resolves. [small-defaults S2, review]
-- [ ] **Resolve a dotted path to a package-level usage from inside a usage body.** `q2.p.x` in q1's
-      `assert` or `constraint` is `unresolved-name` today. Since instance2-pass S4 the literal
-      engine abstains for the whole file beside such an assert (the `unread-assert` fence); the
-      check and the numeric surface still read the values beside it (T/?/T/?), as they do beside any
-      contradiction. Done when the path resolves to the package-level usage on all four surfaces and
-      the fence no longer fires on it. Weaker, not wrong: no false verdict. [instance2-pass S4]
+- [ ] **Resolve a dotted path to a package-level usage from inside a usage body.** A dotted path
+      to a package's usage (`q2.p.x` in q1's `assert` or `constraint`) now resolves on all four
+      surfaces [names-pass S1]. Still unread (abstains, `unresolved-name`): (1) a path through an
+      enclosing USAGE rather than a package; (2) a package path whose value an instance on it
+      changes (the solver's instanceReadings does not key lexical paths; reading it gave a false
+      numeric F in R17 c2, so it is fenced and pinned 'lexical-instance'). [instance2-pass S4;
+      names-pass S1]
 - [ ] **Ask FailureMode by its qualified name when it ships.** `machineFailureModes`
       (src/semantics/fault-tree.ts) counts a model's own FailureMode through `hasKeyword(..., {
       anyPackage: true })` because the definition is not in SysproseVerification yet. When the
       vocabulary commit ships it, add FAILURE_MODE_QUALIFIED_NAME, ask for it and drop the option;
       the campaign test then declares the definition in SysproseVerification and its "model's own
       definition is counted" sentence changes. [small-defaults S3] Kept held 2026-11-05 until the SysproseVerification vocabulary commit ships (blocked on that commit, not on a decision).
-- [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) `obligations
-      --element` (and the app's scoped checks) filters by the relation's own element only
-      (`scopeFilter` in obligations.ts), so a relation read per instance in the scoped element
-      lists none of its rows (`--element E5::q2` on the e5-renamed probe shows 0 rows although
-      `P::c in E5::q2::p2` is violated). DECIDED by the conservative reading (ui-pass S1,
-      reversible): the scope lists the relations the scoped element owns or contains, and the
-      USER-GUIDE Checks row says so; the empty scoped report now says 'this scope holds no
-      relation' / 'this scope holds no requirement and no case objective'. Still open: big-
-      bind-600's cold check is 17% slower than before the routing change (577 to 675 ms; the cold-
-      check branch measures it). (2) The evidence record does not record the instance path of a
-      shared-usage reading (`satisfy LoadReq by Sys::p` records only the own row), and `verify`
-      prints a moved reading as `H::LoadReq in H::p1` where the record says `H::massR in H::p1`.
-      [reporting-residuals S2; ui-pass S1]
-      The quoting,
-      footer-name, double-count, requirement-def specialisation, earlier-build sentence, frame-cap
-      and raw-count items are done or were fixed by earlier reviewers
+- [ ] **Finish the evidence and scope residuals of `reporting-small`.** (1) DECIDED by the
+      conservative reading (ui-pass S1, reversible): `obligations --element` lists the relations
+      the scoped element owns or contains, the USER-GUIDE Checks row says so, and the empty scoped
+      report says "this scope holds no relation" / "this scope holds no requirement and no case
+      objective". Still open there: big-bind-600 cold check is 17% slower than before the routing
+      change (577 to 675 ms); measurement only, to be taken on an idle machine. (2) `satisfy
+      LoadReq by Sys::p` (a path through a shared usage, naming a feature of Sys from outside it)
+      reads as a `not-evaluable` row, and its v2 record names `S::LoadReq in S::Sys::p`, not the
+      instances `q1::p` and `q2::p` (probe small2-pass-scratch/shared.sysml); recording instance
+      paths needs the per-instance read in src/semantics/evaluate-model.ts. `verify` prints a moved
+      reading as `H::LoadReq in H::p1` where the record says `H::massR in H::p1`: DECIDED by the
+      conservative reading as intended and documented in the USER-GUIDE (the report names the
+      clause owner, the record the requirement the `satisfy` names), reversible.
+      [reporting-residuals S2; ui-pass S1; small2-pass S1]
 - [ ] **Fold the per-instance findings of a cause a definition states by a derived value, or beside
       another read.** naming-pass S1 anchors a violated instance whose one breaking read is a
       derived value reached through a binding (M7: q2's `:>> K = 25.0` under Q's `L = 2.0 * K`) at
       the single number-literal member the instance's own elements state of what the value reads,
       only where no other number it reads is a redefinition outside the instance's own elements (a
       shared default is fine). With two such members (M7b), or a redefined one stated in a
-      specialised definition (m7j), the finding stays at the part; that is fenced, not open. Still
-      open: (a) a derived value read with no via, as the unit-aware read of PB's `m2 = 10.0 - load`
-      (`breakingRead` abstains on si reads, so the finding stays anchored at the part); (b) folding
-      the instances of a definition that share a derived line (equal inputs) into one finding at
-      that line; (c) a default, a unit or `sides`, and a sixth distinct set, as before. Probes: PB
-      and M7 in test/unit/semantics.evaluate-model.test.ts. [reporting-residuals S1, review,
-      naming-pass S1]
-- [ ] **Name the breaking value in a unit-bearing violated instance.** `breakingRead` leaves
-      `breaks` unset (the finding names the first bound read, as before) when any read carries a
-      unit, an SI figure or sides, or when no single read, put back to the relation's own context
-      value, makes the relation hold (both needed, or the relation is already violated there). It is
-      decided on the scalar scope only, and for the first 5 violated rows of a group or 20 contexts.
+      specialised definition (m7j), the finding stays at the part; that is fenced, not open. Since
+      findings-pass S4 a no-via derived read (PB's `m2 = 10.0 - load`) is anchored at r1's/r2's
+      `:>> K`, only where every name the derived line reads is bound and the line is a declaration
+      outside the instance's own elements (PBu and PBr stay at the part). Since S5, instances that
+      share a derived line fold into one finding at that line, when the one input left is a
+      redefinition on a shared definition frame. Still open: the 'beside another read' part, and a
+      default, a unit or `sides`, and a sixth distinct set, as before. Probes: PB and M7 in
+      test/unit/semantics.evaluate-model.test.ts. [reporting-residuals S1, review, naming-pass S1;
+      findings-pass S4, S5]
+- [ ] **Name the breaking value in a unit-bearing violated instance.** `breakingRead` now puts a
+      unit-bearing read back in the unit-aware reading that judged it (findings-pass S1,
+      `quantityBreak`). It still leaves `breaks` unset, so the first bound read is named, when (a)
+      no single read mends the relation (both needed, or already violated in its own context;
+      permanent), (b) the 5-per-group or 20-per-context cap is passed (permanent), (c) the verdict
+      came from the scalar path with a unit on a read, so there is no re-quote (open), or (d) the
+      row's reading was shared by `readAlike`, whose rebuilt judgement carries no re-quote (open).
+      [findings-pass S1]
 - [ ] **Name and anchor a value the instance redefines, which no read carries.** Done for a group
       row whose instance's own element (`readIn`) redefines a plain number literal that breaks the
-      relation (redef-breaks2 / G5: `extra = 20.0` is named and anchored). Still open: a context row
-      that is no group (no `readIn`); a redefined value that is derived or carries a unit (G5c
-      shape); and a row with no read at all, which a target-by-specialisation finding reports with
-      no instance anchor (probe scratch/naming-pass-scratch/nb12.sysml). [PI-2 S1, naming-pass S1]
+      relation (redef-breaks2 / G5: `extra = 20.0` is named and anchored). Since findings-pass:
+      context rows are covered (S2, B1); a derived redefinition (G5c, quoted as `(= 5.0 * K)`) and
+      a unit-bearing literal one (GUR) are named and anchored (S3); a no-read target row is
+      anchored at its redefinition (nb12), or at its context element where the shown feature is a
+      line a definition shares (the P2 shape; S6). Left, sound (the finding names less, never
+      wrong): a derived redefinition that carries a unit, such as `= 5.0 * K [kg]`, is not named,
+      because its written quantity is not compared; a derived value whose text reads a name that a
+      read lists is left to the read (G5d); a no-read target row whose shared-definition feature is
+      not what breaks it is anchored at its context element, not at the own redefinition that
+      breaks it (nb5 points at `part :>> p : P2`, not at `:>> extra = 12.0`; its message still lists
+      the shared value first); the context sentence of a context row prefixes the name with the
+      redefining part's name, not the instance's (G5d prints `p::p.extra = 20 misses Q::c2`).
+      [PI-2 S1, naming-pass S1; findings-pass S2, S3, S6]
 - [ ] **Divide the text step and the edit's own task on the drone-swarm v9 model.** Since `ui-small`
       S4 an edit's recompute yields to the page between its steps (`recomputeSteps`), but three
       tasks stay whole. The serializer (`serializeUserModelSignals`, `src/text`) writes the one root
@@ -898,9 +894,7 @@ true values. What follows is what that branch and the review of it left open; en
       carries n >= 0 / n >= 1 as an axiom in encodeScript, without disturbing consistency's
       owners/core mapping and the `axiom` census. (3) `verify` on a freed Natural says 'relation
       cannot be read (non-numeric-operand)' where it said verification/free-variable-unbounded
-      (abstention to abstention). (4) Retyping an Integer to Natural leaves a recorded refutation
-      'current' although the tool now abstains on it: `restricted` is not in scopeRowDigest
-      (src/api/evidence.ts). (5) The `bounds` exit-code sentence (scripts/lib/sysprose-spec.ts
+      (abstention to abstention). (4) The `bounds` exit-code sentence (scripts/lib/sysprose-spec.ts
       BOUNDS_EXIT_CODES) does not list the two new not-decided kinds. [sweep 2026-10-31;
       fence-bounds]
 - [ ] **Abstentions left in the collaboration room (rollup; sound, only weaker).** (a) A library
@@ -922,11 +916,8 @@ true values. What follows is what that branch and the review of it left open; en
       (`contracts.ts` tests the unary minus as a non-number); (2) `sum(...)`, `->forall(...)` and
       `Mode::x` print "a defect in the relation" (`expr.ts` has no call, quantifier or `::` node),
       and an enum comparison is `unparseable` (`verification/not-evaluable`, not forgivable) where
-      docs/04 and the USER-GUIDE call it `unsupported-construct`; (3) a String-typed feature gets
-      sort Real (`contracts.ts:485-502`), so a comparison of two strings is one of two reals nothing
-      pins; (4) `bound.detail` says "decided by z3 5.3.1" on rows the numeric surface decided (`s.a
-      == s.b`, "bus" vs "car"); (5) the `vacuous` detail names the premises where the unsat core
-      names the goal's `side:` guard (division in the goal); (6) to probe, not a defect: the
+      docs/04 and the USER-GUIDE call it `unsupported-construct`; (3) `bound.detail` says "decided by z3 5.3.1" on rows the numeric surface decided (`s.a
+      == s.b`, "bus" vs "car"); (4) to probe, not a defect: the
       engine's `pinnedSymbols` pins a self-referencing equation (`x == x * y` pins x) and pins the
       right-hand defined feature of `assert constraint qa { L == M }` (8 probes h5-pin*), and
       whether either changes a `partialAntecedent` answer is unverified. [classes-2 S4]
@@ -1012,6 +1003,95 @@ true values. What follows is what that branch and the review of it left open; en
       row (not a verdict cell; a documented heuristic, to be replaced by an explicit marker).
       Probes: scratchpad genericity/{rename,reorder,wrap-and-instance}/ (harness batch.sh,
       harness.sh, compare.py; repros in the reports). [genericity audit]
+      (5) Names (names-pass): a dotted path through an enclosing usage is unread; check's
+      quantityScope is not routed via lexicalPackageOf, so a unit-bearing lexical path abstains on
+      check; an assert typed by a constraint definition with no body makes the literal and SMT
+      surfaces abstain file-wide; a plain constraint typed by a constraint definition files a ?/?/?/? row since a5 S4 (reading it with the parameters' values is TY1/TY2, by position). [names-pass]
+      (6) Subsetting (instance3-pass): p2 `[0..1]` or `[0..*]` reads as present in S1's reread rows of
+      an assert: `W::a in w` F and SMT X where p2 may be empty; this is the engine's existing stance
+      for optional parts, a limit of multiplicity reading. A usage with a multiplicity other than
+      `[1]`, or a subsetted feature that may hold more than one value, stays unre-rooted, so its
+      rows keep abstaining. The SMT fence is file-wide, not per component, and its two-values test
+      also fences a value whose partner is a `default` that gives way (SE's RF own row, T/T/T/T to
+      T/T/T/?). The `consistency` and `bounds` commands read the worklist but not
+      `subsettingUnread`; not probed for a contradiction through structural axioms only. The
+      catalogue entry for `verification/not-evaluable` does not yet mention the new SMT sentence
+      (USER-GUIDE does). Numeric: `declared-unit` shapes abstain on three surfaces instead of being
+      read in the declared unit (needs a decision on a bare equation over a multiplicity-unit
+      feature); `sameKind` is conservative (a redefinition with no typing of its own, a declared
+      coherent unit `[kg]`, a kind reached only through a specialisation stay undecided); the
+      numeric sentence names only `differs` sets, an `undecided` set keeps 'did not converge'. The
+      differential test's 1 h beforeAll hook timeout is fragile under heavy load (3095 to 7151 s
+      seen). [instance3-pass]
+      (7) Name-declared-anew rows (pin-265): the numeric surface does not carry a general's binding
+      onto a redefinition's own symbol (the reason for the `redefinesBoundOwner` fence), so
+      self-contradictory models of the RBL4/SRS shape keep their base numeric reading;
+      asserted-constraint rows of a specialisation are filed under an order-dependent instance name
+      (gen-ppin: 65 rows, also on base); C6D ta stays ?/?/T/T on the check and the literal engine;
+      the key of G8R's `#equations` row depends on text order (`P::L in P2#equations` vs `P2::N in
+      P2#equations`; the twins are pinned separately). `redefinesBoundOwner` scans every binding per
+      uncached call (time big-bind-600 and perf9b; memoise per (site, f.id) if slow), and
+      `hiddenEndSentence` matches only an end's first dotted segment, so a hidden name deeper in a
+      path (`a.K` where `a`'s type re-declares K without `:>>`) is not fenced (same shape as
+      G8A/G8B; with the g8-fence branch). The USER-GUIDE sentence on G8 names only the binding: an
+      assert of P's re-read in P2 can still be decided on every surface, the SMT engine included.
+      [pin-265 S1, S2, review]
+      (8) g8-fence: the check and numeric fence covers the whole context, so the context's own
+      relations over the hidden name abstain too (measured on gen-mask: 56 cells on the check and
+      150 on the numeric surface where both readings agree, g8 numeric kl/kn among them); the SMT
+      lane covers only the general's rows. `hiddenReadOf` matches only an end's first dotted segment
+      (`a.K` deeper in a path is not fenced). The check still decides p.K where only the by-name
+      reading contradicts, which the refined oracle allows. A numeric T on an assert's own row over
+      free names (G8A `P::pe`) has no hand oracle (its reference is null). One pinned row is
+      missing: a specialising requirement that redeclares its subject (`subject s = p` is no longer
+      fenced since the fence leaves out requirementRole; both text orders, to show no verdict
+      widens). `redefinesBoundOwner` is not memoised (no cost shown). [g8-fence]
+      (9) a5-fences: `headStandsAgainstAt` reads only asserted relations the package owns directly:
+      an assert inside P, or inside an instance, that contradicts a standing slot value is not
+      walked and is read as before; a non-constant standing value (`default = 2.0 * K`) is treated
+      as undecided, so the row abstains; an assert or standing value with a unit is never 'holds
+      exactly', so it abstains; the plan's `decide` fallback for head stands is not wired (no
+      BoundPair path exists for a redefinition outside the reading). In imp3 the per-instance rows
+      `H::ax in h`, `RQ in h` and `RQ in <<Satisfy>>` are no longer listed at all (the plan
+      predicted -/U/-/U and ?/-/?/-); the bare rows abstain and are pinned, so no surface decides
+      anything on these clauses (an abstention, not a wrong answer). Test-strength gap:
+      nobody checked that canonicalJson keeps undefined-valued keys (the `restricted` key is added
+      only when present, so every existing scope digest is unchanged). [a5-fences F0, FP1, F1]
+      (10) a5-fences2: HDF per-instance rows (F3): the per-instance F0 fence also leaves instance rows
+      unknown where M is written with `=` and the assert is a violated check (GH110 `cP in p1`, F to
+      ?); the `defaults-differ` sentence for GH129 lists the members and not the redefinitions'
+      defaults; the USER-GUIDE policy for a non-bare assert over a definition's own default (GH45)
+      differs from F0's contradiction reading for instance defaults, and the check abstains there.
+      F6 (and/or/implies/xor control order): an ill-typed operand's check sentence is still the
+      generic 'a referenced value is unknown' (`(b + 1.0 > 2.0) or true`), not a type sentence; in
+      expr.ts and exact.ts a scope miss concatenated with a string (`(x + "s" > 1) and false`) is
+      still absorbed to F (units-eval does not read strings, F5 refuses String features at the
+      gate); an `unresolved` next to a Boolean under ==, = or != stays absorbable (pinned `(w ==
+      true) and false` F/F/F/F). F4a: the SMT gate refuses every written negative exponent, so `y ^
+      -1` reads 'the exponent is not a literal' and the conditional negative-power guard in
+      `power` is unreachable from text; the guard's '<left>' prints the operand's SMT text (no
+      source printer). F4: `vacuous` still says 'the premises are unsatisfiable' in two cases
+      where the axioms and premises are satisfiable: (a) an `assume` fixes the divisor at 0 and the
+      goal's guard contradicts it (gen pf0, 140 rows); (b) z3 returns a non-minimal core holding an
+      unrelated premise label (gen a0p, 28 of 140 rows); a remedy is one more check of the axioms
+      plus the goal's guards alone, which would change the plan's decision 9 / F.1 rule. F5:
+      relations over String now abstain (U) on SMT where the check reads satisfied, including mixes
+      where z3 previously proved the non-String disjunct (48 generator rows); recovering them needs
+      String encoding; the `bound.detail` example `s.a == s.b` is refused at the gate, so clause (4)
+      of the wording rollup needs another example for W1; CC-42b's String refutation has basis
+      point-evaluation. FP2: a5-imp3's row 'IMP3::RQ::<<ConstraintUsage>> in IMP3::h' reads -/X/-/X
+      (inconsistent-axioms: the asserted ax is false at h under Table 6) and the RQ root row
+      ?/?/?/X, undecided not wrong. [a5-fences2 F3, F6, F4a, F4, F5, FP2]
+      (11) Head fixers compared only as `=` constants (a5-fences3 GH2). A package head whose slot two
+      things fix outside the component (an instance's `:>> m = 7.0`, another definition's binding at
+      an instance slot, an asserted equation on a slot) is read only where every fixer is one exact
+      constant. A binding fixer counts as one only where its component, read in that root, agrees on
+      one value written with `=`. An asserted equation, a `default`, or values that differ per
+      instance count as differing, so numeric abstains where the model may still entail M. The check
+      abstains on every fixed head (the fixedHead sentence) even where the fixers agree, while
+      numeric and SMT read the entailed value (`a5-gh2-same` cM ?/?/T/T). A disagreement in the sound
+      direction, not a false verdict. The HDF family is closed: gen-head, gen-f3 and gen-f3b read 0
+      WRONG in both text orders (rows a5-gh2, a5-gh2r, a5-gh2-same). [a5-fences3 GH2]
 
 - [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,
@@ -1072,7 +1152,7 @@ true values. What follows is what that branch and the review of it left open; en
       value; the rest stays open. (d) 233 'Narrow the abstention over two disagreeing asserted
       equations (optional).': a pair made to agree by a usage's `:>>` (the pair that meets in the
       owner), and the breadth of FMI `start` (readsContradictedDefinition stays feature-wide); the
-      unit-agreement part stays open. (e) 255 'Solve the plain equations of a design component
+      the declared-unit shapes stay open (instance3-pass S3). (e) 255 'Solve the plain equations of a design component
       jointly over all roots (optional).': the general all-roots solve; entry closed. (f) 262 'Read
       `assert not constraint c { ... }` as the negation.': the refused shapes (a bodiless clause, a
       specialising one, `assert not requirement`, and a members body holding a nested clause, part,
@@ -1117,8 +1197,9 @@ true values. What follows is what that branch and the review of it left open; en
       decided correctly (fence-copy-review/p/k11-usage-override.sysml: c15 F and c20 T at base); the
       fence cannot tell it from the diamond without reading usage-level overrides separately. (3)
       mapper-me9 `part def S :> Q2, Q3 { bind p.load = L; }` where both lines write the same 50.0
-      with `=` is a fenced scope, and its two instance rows (P::c in S::p, P::c in s::p) are no
-      longer listed; the agreeing-values case could be read. (4) The whole-model SMT lane abstains
+      with `=` is a fenced scope; its two instance rows (P::c in S::p, P::c in s::p) are listed and
+      read ?/?/?/? in the scope's sentence (ends-fence S0); the agreeing-values case could be read
+      (names-pass S3, design-name-reads.md:108). (4) The whole-model SMT lane abstains
       on a model that holds a withheld scope, so one fenced bind loses every SMT proof, not only the
       rows that name the scope; a per-scope SMT withholding would be a separate change in
       src/semantics/smt. fence-copy2: (5) a stale copy beside a live feature of the same name in a
@@ -1141,10 +1222,19 @@ true values. What follows is what that branch and the review of it left open; en
       under an end copy stay fenced on every surface (pins copy-nearest-diamond,
       copy-nearest-clash). (11) 'A stale copy two types up hides the feature the file binds': the
       page now decides F on three lanes and abstains on the SMT lane where the file decides F/F/F/F
-      (test/unit/store.reducers.test.ts). (12) Six editor-soak seeds fail pre-existing, identically
-      on add25f6: `SYSPROSE_RT_FIRST=<n> SYSPROSE_RT_SEQUENCES=1 SYSPROSE_RT_STEPS=6` at n = 1120,
-      1618, 4318, 4992, 5045 and 6751 ('a full settle of the freshly loaded model moved 1
-      redefinition(s)'). [fence-copy; fence-copy2]
+      (test/unit/store.reducers.test.ts). ends-fence: (12) S4's pins leave page-? / file-decides cells
+      in seed 4318 (c1, c2), 32180 (c4, c6), 42267 (c1-c3, c5-c7) and 1618's parted copy, owned by
+      S9/S8; the stale-copy order fence also withholds a stale copy's specialisers where the file
+      decides, until S8 makes stale copies invisible to readers. (13) Held (unread) instances:
+      `evaluate-model.ts` tags a boundAbove abstention 'past-cap', so a multi-instance roll-up
+      names 'more instances than the tool reads' for such a generic row (t7); in the diamond cause,
+      usage and nested holders keep their live-site row ('a referenced value is unknown') rather
+      than the scope sentence; the SMT surface on held instances is pinned only by the three
+      differential probes, not by the 144-model generator. When one group lists an instance as held
+      and a later group lists the same instance as live, the cross-group dedupe keeps the held row
+      and drops the live one (sound, weaker). A group with held instances and no live site is
+      refused as not-enumerated with the held sentence (review fix). [fence-copy; fence-copy2;
+      ends-fence S0, S4]
 - [ ] **Abstentions left (wording and refusals) (rollup; sound, only weaker).** (1) `bounds
       --measure` lists an instance-qualified `::` path (A7::q2::p::extra, N::Q0::p::load) under
       'Readable here' but accepts only the dotted instance spelling (q2.p.extra): a
@@ -1181,11 +1271,7 @@ true values. What follows is what that branch and the review of it left open; en
       weaker).** (1) A binding chain deeper than 48 usages (chain49/chainPkg49 and the cap rows at
       depth 49): the check and literal engines abstain; on chainPkg49 posF the SMT surface also
       abstains ('?/?/F/?'), and numeric reads it (probe instance-pass-scratch/gen221/g66-new.jsonl).
-      (2) A usage-body binding chain at depth n=33..~46 (the CHAIN shape of
-      semantics.evaluate-model.test.ts ~8777, review/enc66.mts): the check and literal engines
-      decide, with values correct against a hand oracle, while SMT abstains from about n=34..40
-      because obligations.ts MAX_NESTED_BINDING_DEPTH stays 32 (independent of MAX_BINDING_SEGMENTS,
-      48); before the cap raise all three abstained from n=32. (3) A failed asserts listing stays
+      (2) (closed by a5-std S3: MAX_NESTED_BINDING_DEPTH is 48; a usage-body chain is decided up to 49 usages and refused at 50 with the 'more than 48 bindings below the first' sentence; the nested walk is bounded at 2,048 instances (MAX_NESTED_BINDING_PATHS) as well as depth 48, and a definition cycle that branches past that is not carried, its rows abstaining with the 'not carried' sentence, though a deeper reading would be sound; a chain of 50 or more usages is still refused by the proof, and the check and literal stay `?` for a path past 48 segments, rows at n=48 and 49 reading `?/?/T/T`, pinned as a5-chain49.) (3) A failed asserts listing stays
       failed for the revision; ruled permanent in misc-pass (it abstains; a retry inside a revision
       would mix caches built while the listing failed with a later complete one; reopen only if a
       throw is seen to be transient). (4) A
@@ -1194,9 +1280,16 @@ true values. What follows is what that branch and the review of it left open; en
       probes instance-pass-scratch/gen221). (5) The 193 anchor abstains and the finding stays at the
       instance's own usage: when a derived value reads a redefinition outside the instance's own
       elements beside the instance's own input (m7j), or when the instance states two numbers a
-      derived value reads (M7b); also a derived value read with no via (PB), a redefined value that
-      is derived or carries a unit (G5c), a context row that is no group, and a row with no read at
-      all (probes scratch/naming-pass-scratch/pb.sysml, nb12.sysml). (6) A reference valued with
+      derived value reads (M7b); also a no-via derived read whose expression reads an unbound name
+      (PBu), whose bound source abstains, or whose derived line is a redefinition outside the
+      instance's own elements (PBr); and, since findings-pass, these sound-but-weaker shapes: scalar-path
+      rows with unit-bearing reads and `readAlike`-shared rows fall back to the first read, never a
+      wrong name; a derived redefinition in a unit is not named; no fold when a derived value reads
+      more than one input that nothing redefines, or when the shared line is a plain declaration
+      rather than a redefinition; a context row (no group) gets the shared anchor id but is never
+      folded; the 5-per-group and 20-per-context caps still apply; a no-read target row whose
+      shared feature is not what breaks it is anchored at its context element (nb5; probes
+      scratch/naming-pass-scratch/pb.sysml, nb12.sysml). (6) A reference valued with
       another reference inside a nested usage with a binding into the last one (`ref r = q`, `ref q
       = x`, bind sub.x.load = K) still abstains (reads-pass-scratch/g179b shape twoRefs; already the
       'two steps of standing-for' entry); a reference valued with a feature AROUND the instance that
@@ -1240,12 +1333,24 @@ true values. What follows is what that branch and the review of it left open; en
       only. Decided in text-pass, reversible: a bare `metadata T {…}` is read as typed by T (named
       reading), and statement kinds are read by spelling even against a model's own `metadata def
       <prose>`; both documented in USER-GUIDE as intended. [text-pass]
-- [ ] **Save launders two `#`-led shapes that still fail to parse (weaker; soundness-adjacent).**
-      `#k [2] :> y;` saves as `:> y; … #k [2] }`; `#k abstract def X;` saves as `#k abstract ref;
-      X;`: serializeModel(parseModel(text)) reparses with 0 errors and a different meaning; the app
-      keeps back a text with a syntax error, so only the API/SDK path (L6) reaches it. Done when both
-      shapes keep their error through a save or are added to L6 SAVE_KEEPS_THE_ERROR. Probe
-      text-pass-scratch/review/rt.mts cases 10 and 13. [text-pass]
+- [ ] **Abstentions left in laundering shapes (rollup; weaker, soundness-adjacent).** A save still
+      launders these recovery shapes into text that checks clean (130 of the 410 faulted neighbours
+      in the generator probe; also listed as Known limitations in docs/AGENT-AUTHORING-CAMPAIGN.md):
+      bare `def X;`, `public def X;`, `in def X;`, `#k [2] = 3;`, bare `[2] :> y;`, `#k [2] :> y;`,
+      `#k abstract def X;`, `abstract def }` and `#k abstract def }` (the `;` is missing and a brace
+      closes the statement, so it saves `abstract ref;`), `abstract def X }` (also moves `X` to the
+      end of the package), `#k abstract [2] :> y;` (a modifier between the tag and the
+      multiplicity), `end def;` and `individual def;`. `in def X;` could reuse the prefix mark if
+      the recorded-usage test also accepted a PortUsage that carries only a direction; not widened.
+      In a body with several faulted statements only the FIRST is marked (`abstract def X; abstract
+      def Y; abstract def Z;` saves the first kept and the others as `abstract ref; Y;`), and a
+      fault at file level is not marked. A prefix-only usage that follows an earlier residue keeps
+      the earlier word but drops its own `def` (as on base): sound but weaker. A `;` inside a
+      multi-line string or an unterminated string still stops the scan at the line end, as in
+      bracePairs. The ordering shape `abstract #k def X` and `ref #k x` stays as stated above. The
+      app keeps back a text with a syntax error, so only the API/SDK path (L6) reaches these.
+      Probes small2-pass-scratch/gen1.mts, gen1-mine2.json (rows with e1>0 and e2==0);
+      text-pass-scratch/review/rt.mts. [text-pass; small2-pass S1]
 - [ ] **Abstentions left in renames and name clashes (rollup; sound, only weaker).** fence-rename:
       (1) names unrelated to the clash inside a flagged scope are withheld along with it (e.g.
       `w.p.x`, or an unrelated `a = 15.0` beside a clash on `b`), because the fence is the whole

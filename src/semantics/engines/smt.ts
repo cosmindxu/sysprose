@@ -60,7 +60,7 @@
  */
 
 import { type ElementId, type Model } from '@core/index';
-import { hasStatedValue, readsContradictedDefinition, sharedDefinitions } from '../defining-equation';
+import { hasStatedValue, readsContradictedDefinition, sharedDefinitions, subsettingUnread } from '../defining-equation';
 import {
   checkConstraints,
   checksByRow,
@@ -71,7 +71,9 @@ import {
 } from '../evaluate-model';
 import { affineRational, rereadRelation, tieSentence, type PointValues } from '../exact';
 import {
+  axiomCheckOf,
   axiomsOf,
+  clauseRowIdOf,
   reachOfRow,
   rowElement,
   reachedBy,
@@ -541,6 +543,14 @@ export async function judgeBySmt(
   const axiomAssertions = assertionsOf(axioms, 'axiom');
   const axiomVars = variablesOf(axioms);
   const axiomsRefused = axioms.filter((e) => e.encoded === undefined);
+  // An asserted relation this tool does not read in every instance it holds in, through a usage that subsets a
+  // feature an instance reads otherwise, or a subsetting usage that states a value of its own there ({@link
+  // subsettingUnread}): whether the axioms hold together is unknown.
+  const unreadSubsetting = subsettingUnread(model);
+  const unreadRow = axioms.find((e) => e.row.instance === undefined && unreadSubsetting.relations.has(e.row.element.id))?.row;
+  const unreadAxiom =
+    unreadSubsetting.values ??
+    (unreadRow ? { name: unreadRow.element.qualifiedName, sentence: unreadSubsetting.relations.get(unreadRow.element.id)! } : undefined);
 
   // STEP 0, once per run. Every obligation below stands on this answer — its
   // status, reason and core: its model is read and never printed.
@@ -565,6 +575,7 @@ export async function judgeBySmt(
         axiomsRefused,
         premises,
         consistency,
+        ...(unreadAxiom ? { unreadAxiom } : {}),
         scopes,
         backend,
         free,
@@ -709,6 +720,8 @@ interface JudgeInput {
   axiomsRefused: readonly EncodedRow[];
   premises: readonly EncodedRow[];
   consistency: CheckOutcome;
+  /** An axiom this tool does not read in every instance it holds in ({@link subsettingUnread}), if any. */
+  unreadAxiom?: { name: string; sentence: string };
   /** The numeric surface's name → feature map of each context it was asked about, for the run. */
   scopes: Map<ElementId, Map<string, ElementId>>;
   backend: Z3Backend;
@@ -961,6 +974,54 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
       ...bound('none', 'no obligation was decided — the context contradicts itself'),
     };
   }
+  // AN ASSERTED RELATION A GATE REFUSED THAT THE CHECK READS VIOLATED: the model contradicts itself at its own values,
+  // and step 0, which never saw the relation, cannot say so. `assert constraint c2 { mode == "manual" }` over `mode =
+  // "auto"` reached no goal, and `p.x <= 3.0` was proved, "assumptions satisfiable"; a conjunct of an asserted
+  // conjunction is its clause's row ({@link axiomCheckOf}). Not where it reads a feature released: the model's own
+  // values are then no binding.
+  const contradicted = input.axiomsRefused.find(
+    (e) =>
+      e.row.source === 'assert' &&
+      // The check reads the CLAUSE whole: none of its conjuncts may read a feature released, or another one's
+      // falsehood would be blamed on this one.
+      ![...input.axioms, ...input.axiomsRefused].some(
+        (a) =>
+          clauseRowIdOf(model, a.row.element.id) === clauseRowIdOf(model, e.row.element.id) &&
+          a.row.vars.some((v) => input.free.has(v.qualifiedName)),
+      ) &&
+      input.checks.get(clauseRowIdOf(model, e.row.element.id))?.result === 'violated',
+  );
+  if (contradicted !== undefined) {
+    return {
+      ...base,
+      ...point,
+      outcome: 'axioms-inconsistent',
+      axiomCensus: census(),
+      checks: 1,
+      detail:
+        `the axiom set is unsatisfiable at the model's own values: the asserted \`${contradicted.row.expression}\` ` +
+        `(${contradicted.row.element.qualifiedName}) is false there, as the check reads it, and a gate refused it ` +
+        `(${contradicted.refusal?.reason ?? 'refused'}), so step 0 never saw it. A proof from a contradiction is void`,
+      ...bound('none', 'no obligation was decided — the context contradicts itself at the model’s values'),
+    };
+  }
+  // An axiom read in some instances only (an asserted relation read through a usage that subsets a feature an
+  // instance reads otherwise, in a shape this tool does not read again there): the axiom set the solver found
+  // satisfiable is not the model's, which may contradict itself in that instance. Nothing is claimed over it.
+  if (input.consistency.status === 'sat' && input.unreadAxiom !== undefined) {
+    return {
+      ...base,
+      ...point,
+      outcome: 'not-evaluable',
+      axiomCensus: census(),
+      checks: 1,
+      detail:
+        `${input.unreadAxiom.sentence}; so whether the model's axioms hold together is unknown, and a proof over an axiom set ` +
+        'this tool could not read whole is not a proof. ' +
+        '`--allow-inconclusive` does not forgive it',
+      ...bound('none', 'no obligation was decided — the axiom set was not read whole'),
+    };
+  }
   if (input.consistency.status !== 'sat') {
     return {
       ...base,
@@ -1063,11 +1124,53 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
 
   if (negation.status === 'unsat') {
     // STEP 2: was the antecedent satisfiable at all?
-    const antecedent = await input.backend.check(scriptOf(variables, assumed, context).text, {
+    const antecedentScript = scriptOf(variables, assumed, context);
+    const antecedent = await input.backend.check(antecedentScript.text, {
       timeoutMs: input.timeoutMs,
       variables: variables.map((v) => v.qualifiedName),
     });
     checks += 1;
+    // A VACUITY DUE ONLY TO THE GOAL'S OWN DEFINEDNESS is not a vacuity. Each
+    // goal guard holds only on the path KerML evaluates its operand on (a5
+    // F4a), so a core of axioms and goal guards alone, with the axioms and
+    // premises satisfiable without those guards, says every model of the
+    // axioms evaluates the goal at a zero divisor: the goal is undefined
+    // wherever they hold, which is not-evaluable, never a vacuous pass. A
+    // core holding any premise, or the guard of an axiom or a premise, stays
+    // vacuous. The labels are read by position, not by name: a premise may
+    // carry its requirement's name.
+    if (antecedent.status === 'unsat' && goalSides.length > 0) {
+      // One label per assumed assertion, in order: the positional reading below stands on it.
+      if (antecedentScript.labels.length !== assumed.length) throw new Error('scriptOf: labels no longer one per assertion');
+      const sideLabels = antecedentScript.labels.slice(assumed.length - goalSides.length);
+      const axiomLabels = new Set(antecedentScript.labels.slice(0, axiomAssertions.length).filter((l) => l.startsWith('axiom:')));
+      const inCore = goal.sideConditions.filter((_, i) => antecedent.core.includes(sideLabels[i]!));
+      if (
+        inCore.length > 0 &&
+        antecedent.core.every((l) => axiomLabels.has(l) || sideLabels.includes(l))
+      ) {
+        const without = await input.backend.check(
+          scriptOf(variables, [...axiomAssertions, ...premiseAssertions], context).text,
+          { timeoutMs: input.timeoutMs, witness: false },
+        );
+        checks += 1;
+        if (without.status === 'sat') {
+          const divisors = [...new Set(inCore.flatMap((s) => s.variables))];
+          return {
+            ...base,
+            ...point,
+            outcome: 'not-evaluable',
+            axiomCensus: census(),
+            checks,
+            logic,
+            detail:
+              `not evaluable at the model's values: the relation divides by \`${divisors.join('`, `')}\`, which ` +
+              `the axioms fix at 0 wherever they hold (core: ${coreSentence(antecedent.core)})`,
+            ...bound('none', 'the goal is undefined wherever the axioms hold, so nothing is claimed'),
+          };
+        }
+      }
+    }
     if (antecedent.status === 'unsat') {
       return {
         ...base,
@@ -1561,7 +1664,7 @@ function partialAntecedent(
       return el && hasStatedValue(model, el) && hasValue(el.id) ? 'holds' : 'unknown';
     }
     if (e.row.source === 'assert') {
-      const c = input.checks.get(e.row.element.id)?.result;
+      const c = axiomCheckOf(model, input.checks, e.row.element.id)?.result;
       return c === 'satisfied' ? 'holds' : c === 'violated' ? 'fails' : 'unknown';
     }
     return 'unknown';
@@ -1595,7 +1698,7 @@ function partialAntecedent(
   return {
     outcome: 'not-evaluable',
     detail:
-      `proof not claimed: A ∧ P ∧ ¬G is unsat, but ${without}, and \`${unread.e.row.expression}\` cannot be ` +
+      `proof not claimed: A ∧ P ∧ ¬G is unsat, but ${without}, and ${unread.e.row.expression !== '' ? `\`${unread.e.row.expression}\`` : unread.e.row.element.qualifiedName} cannot be ` +
       "re-read at the model's values — so whether the assumptions can hold, and so whether this pass is vacuous, " +
       'is undecided. `--allow-inconclusive` does not forgive it',
     boundKind: 'none',

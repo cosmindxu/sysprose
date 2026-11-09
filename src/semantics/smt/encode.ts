@@ -282,6 +282,14 @@ interface Walk {
   /** Set wherever the emitted BYTES are nonlinear — see `EncodedRelation`. */
   syntacticNonlinear: boolean;
   sideConditions: SideCondition[];
+  /**
+   * The KerML path condition of the operand being walked: one entry per short-circuit operand or `if` branch it
+   * sits under, outermost first. KerML does not evaluate the right operand of `and`/`implies` where the left is
+   * false, nor of `or` where it is true, nor the `if` branch not taken (kerml.txt:3957–3972), so a guard there is
+   * an assumption only where the path holds ({@link guarded}). `xor`, `==` and the comparisons evaluate both
+   * operands and push nothing.
+   */
+  pathCondition: { term: string; says: string }[];
 }
 
 /**
@@ -304,6 +312,7 @@ export function encodeRelation(
     nonlinear: false,
     syntacticNonlinear: false,
     sideConditions: [],
+    pathCondition: [],
   };
   const encoded = term(node, walk);
   if (!encoded.ok) return encoded;
@@ -573,7 +582,10 @@ function binary(node: Extract<ExprNode, { kind: 'binary' }>, walk: Walk): Encode
 
   const left = term(node.left, walk);
   if (!left.ok) return left;
+  const path = shortCircuitPath(op, left);
+  if (path !== undefined) walk.pathCondition.push(path);
   const right = term(node.right, walk);
+  if (path !== undefined) walk.pathCondition.pop();
   if (!right.ok) return right;
 
   if (op === '+' || op === '-' || op === '*') {
@@ -628,6 +640,32 @@ function binary(node: Extract<ExprNode, { kind: 'binary' }>, walk: Walk): Encode
 }
 
 /**
+ * The path condition under which KerML evaluates the right operand of `op`, or `undefined` when it always does.
+ * Pushed only for a Boolean left operand: any other sort is a sort clash the caller refuses anyway.
+ */
+function shortCircuitPath(op: string, left: Encoded): { term: string; says: string } | undefined {
+  if (!left.ok || left.sort !== 'Bool') return undefined;
+  if (op === 'and' || op === 'implies') return { term: left.text, says: `\`${left.text}\` is true` };
+  if (op === 'or') return { term: `(not ${left.text})`, says: `\`${left.text}\` is false` };
+  return undefined;
+}
+
+/**
+ * A guard and its sentence, conditioned on the walk's path condition: `(=> (and …pc) guard)`. Under a false path
+ * condition KerML never evaluates the guarded operand, so its value cannot change the relation's value there and no
+ * assumption about it is needed. With an empty path the guard is unconditional, as before.
+ */
+function guarded(guard: string, detail: string, walk: Walk): { term: string; detail: string } {
+  const pc = walk.pathCondition;
+  if (pc.length === 0) return { term: guard, detail };
+  const cond = pc.length === 1 ? pc[0]!.term : `(and ${pc.map((p) => p.term).join(' ')})`;
+  return {
+    term: `(=> ${cond} ${guard})`,
+    detail: `${detail}, where ${pc.map((p) => p.says).join(' and ')}`,
+  };
+}
+
+/**
  * `a / b`, and the `≠ 0` guard a variable divisor obliges.
  *
  * SMT-LIB's `/` is TOTAL: `x / 0` is an unspecified value, not an error, so a
@@ -662,11 +700,13 @@ function division(
     walk.syntacticNonlinear = true;
     if (readsFree(node.right, walk)) markNonlinear(node, walk);
     walk.sideConditions.push({
-      term: `(distinct ${right} 0.0)`,
-      detail:
+      ...guarded(
+        `(distinct ${right} 0.0)`,
         `the divisor \`${divisorVars.join('`, `')}\` is a variable, so the encoding asserts it is ` +
-        'non-zero: SMT-LIB division is total and would otherwise satisfy the relation through a ' +
-        'value this tool’s own evaluator calls undefined',
+          'non-zero: SMT-LIB division is total and would otherwise satisfy the relation through a ' +
+          'value this tool’s own evaluator calls undefined',
+        walk,
+      ),
       variables: divisorVars,
     });
   }
@@ -745,11 +785,13 @@ function power(node: Extract<ExprNode, { kind: 'binary' }>, walk: Walk): Encoded
   const baseVars = varsOf(node.left, walk);
   if (baseVars.length > 0) {
     walk.sideConditions.push({
-      term: `(distinct ${base.text} 0.0)`,
-      detail:
+      ...guarded(
+        `(distinct ${base.text} 0.0)`,
         `the base \`${baseVars.join('`, `')}\` of a negative power is a variable, so the encoding ` +
-        'asserts it is non-zero: SMT-LIB division is total and would otherwise satisfy the ' +
-        'relation through a value this tool’s own evaluator calls undefined',
+          'asserts it is non-zero: SMT-LIB division is total and would otherwise satisfy the ' +
+          'relation through a value this tool’s own evaluator calls undefined',
+        walk,
+      ),
       variables: baseVars,
     });
   }
@@ -761,9 +803,13 @@ function ite(node: Extract<ExprNode, { kind: 'if' }>, walk: Walk): Encoded {
   const cond = term(node.cond, walk);
   if (!cond.ok) return cond;
   if (cond.sort !== 'Bool') return sortClash('if', 'a boolean condition', cond.sort);
+  walk.pathCondition.push({ term: cond.text, says: `\`${cond.text}\` is true` });
   const then = term(node.then, walk);
+  walk.pathCondition.pop();
   if (!then.ok) return then;
+  walk.pathCondition.push({ term: `(not ${cond.text})`, says: `\`${cond.text}\` is false` });
   const other = term(node.else, walk);
+  walk.pathCondition.pop();
   if (!other.ok) return other;
   if (then.sort !== other.sort) {
     return refuse(

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseExpr, evaluate } from '../../src/semantics/index';
 import { exprEqual, exprRef, writtenChains } from '../../src/semantics/expr';
+import { evaluateDecided } from '../../src/semantics/exact';
 
 /** Evaluate a source string against an optional variable map. */
 function evalStr(src: string, vars: Record<string, unknown> = {}): unknown {
@@ -33,6 +34,25 @@ describe('semantics — expression parser + evaluator', () => {
     expect(evalStr('true implies false')).toBe(false);
   });
 
+  it('groups connectives by KerML Table 6: `implies` to the left, `xor` above `or` (FP2)', () => {
+    // KerML 8.2.5.8.1, Table 6: every binary operator but `^` groups to the
+    // left, and `and` > `xor` > `or` > `implies`.
+    expect(evalStr('false implies false implies false')).toBe(false); // (F → F) → F; to the right it was T
+    expect(evalStr('true or true xor true')).toBe(true); // T or (T xor T); `(T or T) xor T` was F
+    expect(evalStr('false xor true or false')).toBe(true);
+    for (const [text, twin] of [
+      ['a implies b implies c', '(a implies b) implies c'],
+      ['a or b implies c implies d', '((a or b) implies c) implies d'],
+      ['a or b xor c', 'a or (b xor c)'],
+      ['a xor b or c xor d', '(a xor b) or (c xor d)'],
+      ['a xor b or c', '(a xor b) or c'],
+      ['a and b xor c', '(a and b) xor c'],
+      ['a xor b xor c', '(a xor b) xor c'],
+    ]) {
+      expect(exprEqual(parseExpr(text), parseExpr(twin)), text).toBe(true);
+    }
+  });
+
   it('evaluates comparisons', () => {
     expect(evalStr('3 <= 3')).toBe(true);
     expect(evalStr('3 < 3')).toBe(false);
@@ -54,6 +74,44 @@ describe('semantics — expression parser + evaluator', () => {
   it('conditional: if 1 < 2 then 10 else 0 === 10', () => {
     expect(evalStr('if 1 < 2 then 10 else 0')).toBe(10);
     expect(evalStr('if 1 > 2 then 10 else 0')).toBe(0);
+  });
+
+  it('conditional (S2): `if c ? a else b` is the `then` spelling, one node for either', () => {
+    for (const [q, t] of [
+      ['if 1 < 2 ? 10 else 0', 'if 1 < 2 then 10 else 0'],
+      ['if a > 1 ? p.q else -r', 'if a > 1 then p.q else -r'],
+      ['(if a ? b else c) + 1', '(if a then b else c) + 1'],
+      // the nested form: an `if` in the else branch, bare or parenthesised, and one in the then branch
+      ['if a ? 1 else if b ? 2 else 3', 'if a then 1 else if b then 2 else 3'],
+      ['if a ? (if b ? 1 else 2) else 3', 'if a then (if b then 1 else 2) else 3'],
+      // the two spellings may be mixed in one expression
+      ['if a ? 1 else if b then 2 else 3', 'if a then 1 else if b then 2 else 3'],
+    ] as const) {
+      expect(exprEqual(parseExpr(q), parseExpr(t)), q).toBe(true);
+    }
+    expect(evalStr('if 1 < 2 ? 10 else 0')).toBe(10);
+    expect(evalStr('if 1 > 2 ? 10 else 0')).toBe(0);
+    expect(evalStr('if a ? 1 else if b ? 2 else 3', { a: false, b: true })).toBe(2);
+    // the branches are not swapped: the condition's truth picks the first
+    expect(parseExpr('if a ? 1 else 2')).toMatchObject({ kind: 'if', then: { value: 1 }, else: { value: 2 } });
+  });
+
+  it('conditional (S2): a `?` anywhere but after an `if` condition is not read', () => {
+    for (const text of [
+      'a ? b',                         // no `if`
+      'x ?? 1',                        // null coalescing is not added
+      'a.? b',                         // a `?` after a `.`
+      'if a ? b',                      // no else
+      'if ? b else c',                 // no condition
+      'if a ? ? b else c',
+      'if a ? b then c else d',        // one separator only
+      'if a ? b else c ? d else e',    // a conditional starts with `if`
+      'if a then b else c ? d else e',
+      'if a ? b else c ?',
+      '? == 1',
+    ]) {
+      expect(() => parseExpr(text), text).toThrow(SyntaxError);
+    }
   });
 
   it('unary minus and mixed expressions', () => {
@@ -118,6 +176,34 @@ describe('semantics — expression parser + evaluator', () => {
     expect(evalStr('x and false')).toBe(false);
     expect(evalStr('x and (1 > 2)')).toBe(false);
     expect(evalStr('x and true')).toBe(UNKNOWN);
+  });
+
+  it('a5 F6: one connective table absorbs only a scope miss, never an ill-typed operand', () => {
+    // A name with no value is absorbed on either side (KerML 7.4.9.2), `x or true` included.
+    expect(evalStr('x or true')).toBe(true);
+    expect(evalStr('x implies true')).toBe(true);
+    expect(evalStr('(x > 1 and true) or true')).toBe(true);
+    // An ill-typed operand (a number, `not` of a number, a division by zero) has no Boolean: never absorbed,
+    // nor where a scope miss beside it is wrapped in a further connective.
+    for (const x of ['(a + 1)', 'not a', '(a / 0 > 1)', '(x and a)', '(x + true > 1)']) {
+      expect(evalStr(`${x} and false`, { a: 2 })).toBe(UNKNOWN);
+      expect(evalStr(`${x} or true`, { a: 2 })).toBe(UNKNOWN);
+      expect(evalStr(`${x} implies true`, { a: 2 })).toBe(UNKNOWN);
+    }
+    // The left operand alone still decides, without the right one; xor never absorbs.
+    expect(evalStr('false and (a + 1)', { a: 2 })).toBe(false);
+    expect(evalStr('true or (a + 1)', { a: 2 })).toBe(true);
+    expect(evalStr('false implies (a + 1)', { a: 2 })).toBe(true);
+    expect(evalStr('x xor true')).toBe(UNKNOWN);
+    // The exact fold reads the same table (it had no `x and false`).
+    const decided = (src: string) => {
+      const r = evaluateDecided(parseExpr(src), (n) => (n === 'a' ? 2 : undefined));
+      return 'value' in r ? r.value : UNKNOWN;
+    };
+    expect(decided('x and false')).toBe(false);
+    expect(decided('x or true')).toBe(true);
+    expect(decided('(a + 1) implies true')).toBe(UNKNOWN);
+    expect(decided('(x + true > 1) and false')).toBe(UNKNOWN);
   });
 
   it('produces a well-formed AST for a compound expression', () => {

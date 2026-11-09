@@ -395,7 +395,7 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
       logic: 'QF_NRA',
       limits: [
         { text: 'The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0 when the divisor is pinned to zero.', pin: PIN_M7_M8 },
-        { text: 'Division in the goal surfaces as `vacuous`, never as `proved`, when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`.', pin: PIN_M7_M8 },
+        { text: 'Division in the goal surfaces as `not-evaluable` (the goal is undefined wherever the axioms hold) when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`.', pin: PIN_M7_M8 },
         { text: nlNote },
       ],
     }),
@@ -424,11 +424,11 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
       limits: [{ text: 'see `nra-div`' }],
     }),
     'text-as-real': def('text-as-real', 'modifier', {
-      encodes: 'a feature whose declared type names String, read as a Real; its value axiom is refused, so nothing pins it',
-      verdicts: ['refuted', 'witness-unconfirmed', 'not-evaluable'],
+      encodes: "a relation over a String feature, refused at the gate; a violation at the model's values is still `refuted` on the check's point evaluation",
+      verdicts: ['refuted', 'unsupported'],
       limits: [
-        { text: '`refuted` only through the numeric surface; `s.a == s.b` ("bus", "car") is `refuted`, basis `numeric-surface`', pin: PIN_M4_M6 },
-        { text: 'equal strings and `!=` are `not-evaluable`, "witness not confirmed"' },
+        { text: '`refuted` only through the point evaluation; `s.a == s.b` ("bus", "car") is `refuted`, basis `point-evaluation`', pin: PIN_M4_M6 },
+        { text: 'equal strings and `!=` are `unsupported-construct`' },
       ],
     }),
     'partial-context': def('partial-context', 'modifier', {
@@ -851,7 +851,10 @@ function compute(row: ClassifiableRow, ctx: ClassifyContext): RowClass {
   if (row.node === null || row.encodable !== true) {
     const refusal: Refusal =
       row.encodable === true ? { reason: 'unparseable', detail: 'the relation has no readable body' } : row.encodable;
-    return fenceOf(refusal, 'gate', reading);
+    const fenced = fenceOf(refusal, 'gate', reading);
+    // A String feature is refused at the gate (F5); the row still names the modifier its limits describe.
+    if (row.vars.some((v) => textAsReal(ctx.model, v.featureId))) fenced.modifiers.push('text-as-real');
+    return fenced;
   }
   const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled });
   const enc = ctx.encoded ?? encodeRelation(row.node, vars);

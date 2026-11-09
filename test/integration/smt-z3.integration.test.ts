@@ -36,6 +36,7 @@ import { judgeBySmt, type SmtJudgement } from '@semantics/engines/smt';
 import { ALLOW_INCONCLUSIVE_CODES, verifyModel } from '@api/index';
 import { classLines, levelOf, withLevelSource } from '@semantics/smt/classes';
 import { obligationsOf } from '@semantics/obligations';
+import { checkConsistency } from '@semantics/consistency';
 import {
   DEAD_MODULE_MARGIN_MS,
   DEFAULT_TIMEOUT_MS,
@@ -850,11 +851,11 @@ describe('a judgement carries the constraint class of what it stood on', () => {
     // Rok: the same refused premise, held at the model's values, and the proof stands on z3's entailment.
     const ok = m4.get('M4::Rok::g1')!.judgement;
     expect([ok.outcome, ok.classes.basis, ok.classes.modifiers.map((m) => m.id)]).toEqual(['proved', 'solver+numeric', ['partial-context']]);
-    // m6: a String read as a Real is a refutation confirmed on the numeric surface at a point z3 did not choose.
+    // m6: a relation over a String is refused at the gate (F5); its violation at the model's values is the point evaluation's.
     const m6 = (await classed(z3, M6)).by;
     const text = m6.get('M6::R::g1')!.judgement;
-    expect([text.outcome, text.classes.basis, text.classes.modifiers.map((m) => m.id)]).toEqual(['refuted', 'numeric-surface', ['text-as-real']]);
-    expect(classLines(text.classes).join('\n')).toContain('basis: numeric-surface');
+    expect([text.outcome, text.classes.basis, text.classes.modifiers.map((m) => m.id)]).toEqual(['refuted', 'point-evaluation', ['text-as-real']]);
+    expect(classLines(text.classes).join('\n')).toContain('basis: point-evaluation');
     // …and the numeric row beside it is an ordinary proof.
     expect(m6.get('M6::R::g2')!.judgement.classes.basis).toBe('solver');
   });
@@ -921,15 +922,32 @@ describe('a judgement carries the constraint class of what it stood on', () => {
       const j = m7.get(`M7::R::${g}`)!.judgement;
       expect([j.outcome, j.classes.scope, j.classes.script?.shape], g).toEqual(['axioms-inconsistent', 'run', 'nra-div']);
     }
-    // M8: the division is in the GOAL, its `d != 0` guard contradicts `k = 0`, and the antecedent is empty: vacuous.
+    // M8: the division is in the GOAL and its `d != 0` guard contradicts `k = 0`. The core is the axioms and that
+    // guard alone, and the axioms hold without it, so the goal is undefined wherever they hold: not-evaluable (a5 F4).
     const m8 = (await classed(z3, M8)).by;
     const g1 = m8.get('M8::R::g1')!.judgement;
-    expect([g1.outcome, g1.classes.goal.shape, g1.classes.script?.shape, g1.classes.basis]).toEqual(['vacuous', 'nra-div', 'nra-div', 'solver']);
+    expect([g1.outcome, g1.classes.goal.shape, g1.classes.script?.shape, g1.classes.basis]).toEqual(['not-evaluable', 'nra-div', 'nra-div', 'none']);
+    expect(g1.detail).toMatch(/^not evaluable at the model's values: the relation divides by `.*k`, which the axioms fix at 0 wherever they hold \(core: axiom:.*side:M8::R::g1\)$/);
     expect(m8.get('M8::R::g2')!.judgement.outcome).toBe('proved');
     // …but a division by a pinned NONZERO value is a proof, in QF_NRA: the card says "when the divisor is pinned to zero".
     const nonzero = (await classed(z3, M8.replace('package M8', 'package M8b').replace('k : ScalarValues::Real = 0.0', 'k : ScalarValues::Real = 2.0'))).by;
     const ok = nonzero.get('M8b::R::g1')!.judgement;
     expect([ok.outcome, ok.classes.goal.shape, ok.classes.script?.shape, ok.classes.logic]).toEqual(['proved', 'nra-div', 'nra-div', 'QF_NRA']);
+  });
+
+  withZ3('proves a division KerML never evaluates: the guard holds only on its path (a5 F4a)', async (z3) => {
+    // `y == 0.0 or x / y >= 1.0` with y = 0: the right operand is not evaluated, so its guard is not assumed. It was
+    // unconditional, contradicted the axiom, and the proofs were vacuous.
+    const by = (await classed(z3, `package VACOR {
+  attribute x : ScalarValues::Real = 3.0; attribute y : ScalarValues::Real;
+  assert constraint a { y == 0.0 }
+  requirement def R {
+    require constraint g { y == 0.0 or x / y >= 1.0 }
+    require constraint h { y != 0.0 implies x / y >= 1.0 }
+    require constraint k { x / y >= 1.0 }
+  }
+}`)).by;
+    expect(['g', 'h', 'k'].map((c) => by.get(`VACOR::R::${c}`)!.judgement.outcome)).toEqual(['proved', 'proved', 'not-evaluable']);
   });
 
   withZ3('moves no verdict when every level is replaced, or when the classifier throws (CC-20)', async (z3) => {
@@ -949,6 +967,67 @@ describe('a judgement carries the constraint class of what it stood on', () => {
     expect(strip(thrown)).toEqual(strip(plain));
     expect(thrown.filter((r) => r.row.role === 'obligation').every((r) => r.judgement.classes.status === 'unclassified')).toBe(true);
     expect(levelOf('lra')).not.toBe('battery-backed');
+  });
+});
+
+describe('an asserted conjunction a gate refuses whole is read as its conjuncts (a5 K2)', () => {
+  const text = (mode: string, split = false) => `package B {
+    part def P {
+      attribute mode : String = "auto";
+      attribute x : ScalarValues::Real;
+      ${split ? `assert constraint c1 { x == 2.0 } assert constraint c2 { mode == "${mode}" }` : `assert constraint c { x == 2.0 and mode == "${mode}" }`}
+    }
+    part p : P;
+    constraint k { p.x <= 3.0 }
+    requirement def R { subject s : P; require constraint { s.x <= 3.0 } }
+    requirement r : R { subject s = p; }
+  }`;
+  const load = async (t: string) => (await loadModelText(t, { library: 'full' })).model!;
+
+  withZ3('files each conjunct as the axiom it would be written alone, and proves what the split twin proves', async (z3) => {
+    const model = await load(text('auto'));
+    const axioms = obligationsOf(model).filter((r) => r.role === 'axiom' && r.source === 'assert');
+    expect(axioms.map((r) => [r.element.qualifiedName, r.expression, r.encodable === true])).toEqual([
+      ['B::P::c#0', 'x == 2.0', true],
+      ['B::P::c#1', 'mode == "auto"', false],
+    ]);
+    for (const m of [model, await load(text('auto', true))]) {
+      const k = (await verifyModel(m, { engine: 'smt' })).results.find((r) => r.clause.qualifiedName === 'B::k');
+      expect(k?.claim).toBe('proved');
+    }
+    const held = await checkConsistency(model, { backend: z3, withValues: true });
+    expect(held.groups.map((g) => g.outcome)).toContain('consistent');
+  });
+
+  withZ3('reports a refused conjunct the check reads violated as the contradiction it is, on verify and consistency', async (z3) => {
+    for (const split of [false, true]) {
+      const model = await load(text('manual', split));
+      const k = (await verifyModel(model, { engine: 'smt' })).results.find((r) => r.clause.qualifiedName === 'B::k');
+      // Before K2 the split twin read `proved`, "assumptions satisfiable", beside the check's violated `mode == "manual"`.
+      expect([k?.claim, k?.code], String(split)).toEqual(['inconclusive', 'verification/inconsistent-axioms']);
+      expect(k?.detail).toContain('`mode == "manual"`');
+      const set = await checkConsistency(model, { backend: z3, withValues: true });
+      expect(set.groups.map((g) => g.outcome), String(split)).not.toContain('consistent');
+    }
+  });
+
+  withZ3('does not blame a true refused conjunct for a false sibling that reads a released feature', async () => {
+    const t = (split: boolean) => `package B {
+      part def P {
+        attribute mode : String = "auto";
+        attribute y : ScalarValues::Real = 1.0;
+        ${split ? 'assert constraint c1 { mode == "auto" } assert constraint c2 { y == 5.0 }' : 'assert constraint c { mode == "auto" and y == 5.0 }'}
+      }
+      part p : P;
+      constraint k { p.y <= 6.0 }
+    }`;
+    const claims = [];
+    for (const split of [false, true]) {
+      const k = (await verifyModel(await load(t(split)), { engine: 'smt', free: ['B::P::y'] })).results.find((r) => r.clause.qualifiedName === 'B::k');
+      expect(k?.detail ?? '', String(split)).not.toContain('`mode == "auto"`');
+      claims.push(k?.claim);
+    }
+    expect(claims[0]).toBe(claims[1]);
   });
 });
 

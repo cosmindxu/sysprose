@@ -86,6 +86,7 @@ import {
   baseIdOf,
   conjunctOf,
   conjunctRecord,
+  mixesUnitRegimes,
   defaultGivesWay,
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
@@ -94,7 +95,14 @@ import {
   enclosedBindingFrame,
   equatedPartsRefusal,
   givenWayThroughHead,
+  contradictedDefinitionNaming,
   contradictedDefinitionRefusal,
+  contradictedDefinitions,
+  headStandsAgainstAbove,
+  headTwoValuesAt,
+  headFixersDifferAt,
+  nameAtInstance,
+  unfixedDefaultsDifferAt,
   hasEnclosedBindings,
   hasPastCapBindings,
   hasStatedValue,
@@ -109,6 +117,7 @@ import {
   shadowedNamesOf,
   shadowedSentence,
   sharedDefinitions,
+  respelledIn,
   spelledIn,
   statedValueOf,
   typedAssertHeldOnly,
@@ -134,6 +143,7 @@ import {
   relationVarsOf,
   scaleOfRelation,
   substituteLiterals,
+  typedAssertRefusal,
   withValueUnit,
   type LoweredBody,
   type MarkerDimensions,
@@ -1256,7 +1266,7 @@ function assignmentEquation(
     return undefined;
   }
 
-  const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id);
+  const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id, raw);
   nameToId.set(name, el.id); // the assignment target resolves to this feature
   const lhs: ExprNode = { kind: 'ref', path: [name] };
   const identity = node.kind === 'ref' && !body.hadUnit;
@@ -1578,7 +1588,7 @@ function valueEquation(
     onRefused?.();
     return undefined;
   }
-  const nameToId = mergedScope(model, context.id, feature.id);
+  const nameToId = mergedScope(model, context.id, feature.id, s);
   nameToId.set(name, feature.id);
   const identity = body.node.kind === 'ref' && !body.hadUnit;
   const lhs: ExprNode = { kind: 'ref', path: [name] };
@@ -1716,7 +1726,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       for (const c of model.children(holder.id)) {
         if (c.attrs.isLibrary === true) continue;
         if (isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
-          const whole: ElementRecord = { ...c, ownerId: reader.id };
+          // A general's body as the reader spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+          const raw = holder.id === reader.id ? c.attrs.expression : respelledIn(model, definitions, reader.id, holder.id, c.attrs.expression);
+          const whole: ElementRecord = { ...c, ownerId: reader.id, attrs: { ...c.attrs, expression: raw } };
           // An asserted conjunction's conjuncts, each as the assert it would be written alone ({@link assertConjuncts}).
           const parts = assertConjuncts(model, c);
           const split = parts.length > 1;
@@ -1735,10 +1747,13 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
               system.eqs.push(eq);
               enqueue(eq);
             }
-            // A conjunct's inequality is no row of its own: the clause's row is the conjunction, judged whole.
-            const iq = eq || split ? undefined : relationInequality(model, read, memo, instance);
+            // A conjunct's inequality is no row of its own — the clause's row is the conjunction, judged whole — but
+            // bounds the search as the split twin's does ({@link conjunctInequality}).
+            const iq = eq || (split && mixesUnitRegimes(parts)) ? undefined : relationInequality(model, read, memo, instance);
             if (iq) {
               iq.id = `${c.id}@${instance}`;
+              const part = conjunctOf(read);
+              if (part !== undefined) conjunctInequality(iq, part.index);
               system.ineqs.push(iq);
               enqueue(iq);
             }
@@ -1971,12 +1986,37 @@ export function gatherInequalities(model: Model, scopeId?: ElementId): Inequalit
     // Same exemption as {@link gatherConstraints}: a tagged relation
     // constrains nothing, so it cannot make the model infeasible.
     if (isNonNormativeStatement(model, el.id)) continue;
+    // An asserted conjunction's conjuncts, each the assert it would be written alone ({@link assertConjuncts}): an
+    // inequality among them bounds the search as the split twin's does (BRA2's `x == 2.0 and x <= 3.0`).
+    const parts = assertConjuncts(model, el);
+    if (parts.length > 1) {
+      // Not where a bare number would be read apart from the `[unit]` literals beside it ({@link mixesUnitRegimes}).
+      if (mixesUnitRegimes(parts)) continue;
+      for (const part of parts) {
+        const ineq = relationInequality(model, conjunctRecord(part), memo);
+        if (ineq) out.push(conjunctInequality(ineq, part.index));
+      }
+      continue;
+    }
     const ineq = relationInequality(model, el, memo);
     if (ineq) out.push(ineq);
   }
   // What every instance read through a variable of its own holds.
   out.push(...instanceSystem(model, scopeId).ineqs);
   return out;
+}
+
+/**
+ * The conjunct of an asserted conjunction each inequality {@link conjunctInequality} marked is, by its index. Its
+ * {@link Inequality.id} is the clause's, whose row is the conjunction, judged whole: so a check's verdict of that row
+ * is this conjunct's only where it is `satisfied` ({@link conjunctReadings}).
+ */
+const CONJUNCT_INEQUALITY = new WeakMap<Inequality, number>();
+
+/** `ineq`, marked the conjunct `index` of its clause ({@link CONJUNCT_INEQUALITY}). */
+function conjunctInequality(ineq: Inequality, index: number): Inequality {
+  CONJUNCT_INEQUALITY.set(ineq, index);
+  return ineq;
 }
 
 /** Build an {@link Inequality} from a ConstraintUsage / CalculationUsage body. */
@@ -6000,7 +6040,13 @@ function feasibleFrom(
   // With values `fixed`, the point is not the model's own: that is the plain
   // solve's. (Without, a value the search does not move is the plain solve's.)
   const own = fixedIds.size > 0 ? plainPoint(model, opts) : undefined;
-  const statedIneqs = statedVerdicts(model, ineqs, (v) => moved.has(v) || fixedIds.has(v), values, own, sweep);
+  // A conjunct of an asserted conjunction ({@link conjunctInequality}) carries its clause's id, whose row is the conjunction
+  // judged whole: no reading of that row is one of the conjunct, but where the check reads it held, which holds every
+  // conjunct. Over values the model states or the caller fixes, where an inequality of its own is read exactly, the
+  // conjunct is otherwise left to its clause's row ({@link unreadRelations}), never read off its residual's band.
+  const searchedOrFixed = (v: ElementId): boolean => moved.has(v) || fixedIds.has(v);
+  const { judged: ownIneqs, held: heldByClause } = conjunctReadings(model, ineqs, searchedOrFixed, fixedIds, overFreedom, values, own, sweep);
+  const statedIneqs = statedVerdicts(model, ownIneqs.filter((iq) => !CONJUNCT_INEQUALITY.has(iq)), searchedOrFixed, values, own, sweep);
   // The point as a solve of its own, for the numeric surface to read there.
   const atPoint = (): SolveCore => ({
     point: values,
@@ -6024,9 +6070,10 @@ function feasibleFrom(
   // tolerance, and read by it, `x <= 0.99999999999` held at x fixed to 1.
   const verdicts = new Map(statedIneqs);
   const atFixed = new Set(
-    ineqs
+    ownIneqs
       .filter(
         (iq) =>
+          !CONJUNCT_INEQUALITY.has(iq) &&
           !statedIneqs.has(iq.id) &&
           !overFreedom(iq.vars) &&
           iq.vars.some((v) => fixedIds.has(v)) &&
@@ -6037,8 +6084,9 @@ function feasibleFrom(
   if (atFixed.size > 0) {
     for (const row of numericRows(model, atPoint(), feasTol, atFixed, own, fixedIds)) verdicts.set(row.id, row.result);
   }
-  const collected = collectViolations(ineqs, values, feasTol, verdicts, (iq) => overFreedom(iq.vars));
-  const varsOf = (v: ConstraintViolation): ElementId[] => ineqs.find((iq) => iq.id === v.id)?.vars ?? [];
+  const collected = collectViolations(ownIneqs, values, feasTol, verdicts, (iq) => overFreedom(iq.vars));
+  // Every conjunct's of the clause, where it is one: what the violation turns on is one of them.
+  const varsOf = (v: ConstraintViolation): ElementId[] => ownIneqs.filter((iq) => iq.id === v.id).flatMap((iq) => iq.vars);
   const violations = collected.violations.filter((v) => !overFreedom(varsOf(v)));
   const unresolved = collected.violations.filter((v) => overFreedom(varsOf(v)));
   // An inequality with no residual at the point is not judged there, nor is a
@@ -6049,11 +6097,14 @@ function feasibleFrom(
   // validation surface's `violated`. Either left unjudged leaves the answer
   // open.
   let unjudged =
-    collected.unjudged || ineqs.some((iq) => !verdicts.has(iq.id) && inequalityResidual(iq, values) === undefined);
+    collected.unjudged || ownIneqs.some((iq) => !verdicts.has(iq.id) && inequalityResidual(iq, values) === undefined);
   const others = unreadRelations(model, opts.scopeId, ineqs, relationOf);
+  const covered = coveredConjunctions(model, others, [...ownIneqs, ...heldByClause], relationOf);
   if (others.size > 0) {
     for (const row of numericRows(model, atPoint(), feasTol, others, own, fixedIds)) {
-      if (row.result === 'unknown') unjudged = true;
+      // A conjunction every conjunct of which is read above — an equation the point meets, an inequality judged — is
+      // judged there, as its split twin is, whatever the numeric surface reads of it whole (BRA2's `mode == "auto"`).
+      if (row.result === 'unknown' && !covered.has(row.id)) unjudged = true;
       if (row.result !== 'violated') continue;
       const el = model.get(row.id)!;
       const body = parseRelationBody(String(el.attrs.expression));
@@ -6061,6 +6112,15 @@ function feasibleFrom(
       // A connective or a `!=` has no residual: violated, by no amount.
       const amount = row.amount > 0 ? row.amount : Number.NaN;
       (overFreedom(vars) ? unresolved : violations).push({ id: row.id, name: row.name, amount });
+    }
+  }
+  // An asserted equation the point has no residual of (a String operand: `mode == "manual"` over `mode = "auto"`), alone
+  // or a conjunct, is met by no search: where the check reads its clause violated at the model's values, the model
+  // contradicts itself there, and it was decided feasible beside that `violated`. Left open.
+  if (!unjudged) {
+    const checks = checksByRow(sweep());
+    for (const [eq, el] of relationOf) {
+      if (isAsserted(el) && !eq.vars.every((v) => values.has(v)) && checks.get(el.id)?.result === 'violated') unjudged = true;
     }
   }
   // A definition's constraint read in a context that breaks it, and a value
@@ -6131,6 +6191,79 @@ function flatRoots(
 }
 
 /**
+ * The inequalities {@link solveFeasible} judges at its point (`judged`), and the conjuncts of an asserted conjunction
+ * ({@link conjunctInequality}) it does not: one over values the model states (none `held` — moved or fixed — each the
+ * model's own at the point) where the check reads its clause's row held, which holds every conjunct (`held`); and one
+ * the check reads exactly as an inequality of its own (all its values stated) or the point reading does (one fixed,
+ * none moved), whose clause's row is no reading of it — left to that row, never read off its residual's band.
+ */
+function conjunctReadings(
+  model: Model,
+  ineqs: readonly Inequality[],
+  held: (id: ElementId) => boolean,
+  fixedIds: ReadonlySet<ElementId>,
+  overFreedom: (vars: readonly ElementId[]) => boolean,
+  point: ReadonlyMap<ElementId, number>,
+  modelPoint: ReadonlyMap<ElementId, number> | undefined,
+  sweep: () => readonly ConstraintCheck[],
+): { judged: Inequality[]; held: Inequality[] } {
+  const judged: Inequality[] = [];
+  const holds: Inequality[] = [];
+  const memo: DerivationMemo = new Map();
+  const atModel = (v: ElementId): boolean => modelPoint === undefined || sharedValue(v, point, modelPoint);
+  let checks: Map<string, ConstraintCheck> | undefined;
+  for (const iq of ineqs) {
+    if (!CONJUNCT_INEQUALITY.has(iq)) {
+      judged.push(iq);
+      continue;
+    }
+    if (iq.vars.every((v) => !held(v) && atModel(v) && statedByModel(model, v, memo))) {
+      checks ??= checksByRow(sweep());
+      if (checks.get(iq.id)?.result === 'satisfied') holds.push(iq);
+      continue;
+    }
+    if (!overFreedom(iq.vars) && iq.vars.some((v) => fixedIds.has(v))) continue;
+    judged.push(iq);
+  }
+  return { judged, held: holds };
+}
+
+/**
+ * The asserted conjunctions among `others` every conjunct of which is read apart from the row of the whole ({@link
+ * assertConjuncts}): an equation of the solve (`relationOf`), or an inequality `read` judges or holds.
+ */
+function coveredConjunctions(
+  model: Model,
+  others: ReadonlySet<ElementId>,
+  read: readonly Inequality[],
+  relationOf: ReadonlyMap<Equation, ElementRecord>,
+): Set<ElementId> {
+  const out = new Set<ElementId>();
+  if (others.size === 0) return out;
+  const parts = new Map<ElementId, Set<number>>();
+  const add = (id: ElementId, index: number): void => {
+    if (!others.has(id)) return;
+    const set = parts.get(id) ?? new Set<number>();
+    set.add(index);
+    parts.set(id, set);
+  };
+  for (const el of relationOf.values()) {
+    const part = conjunctOf(el);
+    if (part !== undefined && el.id === part.clause.id) add(el.id, part.index);
+  }
+  for (const iq of read) {
+    const index = CONJUNCT_INEQUALITY.get(iq);
+    if (index !== undefined) add(iq.id, index);
+  }
+  for (const [id, seen] of parts) {
+    const el = model.get(id);
+    const n = el ? assertConjuncts(model, el).length : 0;
+    if (n > 1 && seen.size === n) out.add(id);
+  }
+  return out;
+}
+
+/**
  * The constraints in scope neither {@link gatherSystem} nor {@link
  * gatherInequalities} reads — a connective, a `!=`, an asserted equation or a
  * bound refused for what it reads — for {@link solveFeasible} to judge at its
@@ -6144,7 +6277,8 @@ function unreadRelations(
   ineqs: readonly Inequality[],
   relationOf: ReadonlyMap<Equation, ElementRecord>,
 ): Set<ElementId> {
-  const read = new Set<ElementId>(ineqs.map((iq) => iq.id));
+  // Nor is a conjunct's inequality the read of its clause ({@link conjunctInequality}): the clause's row is the conjunction.
+  const read = new Set<ElementId>(ineqs.filter((iq) => !CONJUNCT_INEQUALITY.has(iq)).map((iq) => iq.id));
   // Not a conjunction one of whose conjuncts is an equation: its row is the conjunction, judged at the point.
   for (const el of relationOf.values()) if (conjunctOf(el) === undefined) read.add(el.id);
   const inScope = scopeFilter(model, scopeId);
@@ -6500,7 +6634,14 @@ function numericRows(
     // `violated` row here as a warning in the same Problems panel.
     if (isNonNormativeStatement(model, el.id)) continue;
     const raw = el.attrs.expression;
-    if (typeof raw !== 'string' || raw.trim() === '') continue;
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
+      const typed = typedAssertRefusal(model, el);
+      if (typed !== undefined) {
+        out.push({ id: el.id, name: el.declaredName ?? '', raw: '', kind: 'boolean', result: 'unknown', slack: null, amount: 0, reason: typed });
+      }
+      continue;
+    }
 
     // Parse for SHAPE only — a `[unit]` literal is lowered so a body like
     // `mass <= 2000 [kg]` is recognised as the inequality it is instead of
@@ -7009,6 +7150,50 @@ function numericRows(
     delete r.cause;
     delete r.imposed;
   }
+  // A name a package head joins to an instance's standing value that an asserted relation over it contradicts
+  // (headStandsAgainstAt, F0: E2C's `bind P::m = M` over p4's `m default = 7.0`, beside `M == 5.0`): the model
+  // states two values for it, so no decided row that reads it is judged, as the validation surface judges none —
+  // the solve read M from the assert alone.
+  // Per instance and on a definition's own row too, at the path the package reads it by (headStandsAgainstAbove).
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const contextId = r.context?.contextId ?? model.get(r.id)?.ownerId;
+    if (contextId == null) continue;
+    const against = relationNamesOf(r.raw)
+      .map((n) => headStandsAgainstAbove(model, contextId, nameAtInstance(model, contextId, r.context?.path, n)))
+      .find((x) => x !== undefined);
+    if (against === undefined) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason = against;
+    delete r.cause;
+    delete r.imposed;
+  }
+  // A name a binding joins to defaults that differ, with no instance fixing the slot (unfixedDefaultsDifferAt, F3:
+  // E1Q's `bind P::load = M` over M's `default = 9.0` and p4's `default = 7.0`): it has no value, and no asserted
+  // equation gives it one, on any surface (USER-GUIDE §6) — the solve read p2.load at the 5 of `p2.load == 5.0`.
+  // So for a name an asserted equation defines that a package head joins to a member it gives two values
+  // (headTwoValuesAt: GH91's `M == 5.0` over P's `default = 7.0`), and for one the head joins to a slot two fixers
+  // give values that are not one exact constant (headFixersDifferAt: GH2's p1 `:>> m = 7.0` beside W's `bind q.m =
+  // L` for w's `L = 5.0`, where the solve read M at the 5 alone). Per instance too: the name is read at the
+  // instance's path in its context.
+  for (const r of out) {
+    if (r.conflict !== undefined || r.result === 'unknown') continue;
+    const contextId = r.context?.contextId ?? model.get(r.id)?.ownerId;
+    if (contextId == null) continue;
+    const differ = relationNamesOf(r.raw)
+      .map((n) => nameAtInstance(model, contextId, r.context?.path, n))
+      .map((n) => unfixedDefaultsDifferAt(model, contextId, n) ?? headTwoValuesAt(model, contextId, n) ?? headFixersDifferAt(model, contextId, n))
+      .find((x) => x !== undefined);
+    if (differ === undefined) continue;
+    r.result = 'unknown';
+    r.slack = null;
+    r.amount = 0;
+    r.reason = differ;
+    delete r.cause;
+    delete r.imposed;
+  }
   // A relation over a `default` an asserted equation sets equal to another
   // (undecidedPartnersRead, U7): neither has a value, so the point the solve
   // chose for it judges nothing, as the validation surface judges nothing.
@@ -7062,8 +7247,14 @@ const UNSETTLED_HEAD = 'the solve did not converge:';
  */
 function unsettledSentence(model: Model, ids: readonly ElementId[]): string {
   const one = ids.length === 1;
+  // Where one of them is a feature two asserted equations give two values where they meet (contradictedDefinitions),
+  // the solve meets them, in another instance too (Q5F1's p2.L beside p's pair): the sentence names them.
+  const index = contradictedDefinitions(model);
+  const bases = new Set(ids.map(baseIdOf));
+  const set = index.failed === undefined ? index.sets.find((c) => c.verdict === 'differs' && c.features.some((f) => bases.has(f.id))) : undefined;
+  const pair = set !== undefined ? ` ${contradictedDefinitionNaming(model, set)} and give it two values, which the solve meets;` : '';
   return (
-    `${UNSETTLED_HEAD} ${nameList(model, ids)} ${one ? 'is' : 'are'} where it stopped, at a point ` +
+    `${UNSETTLED_HEAD}${pair} ${nameList(model, ids)} ${one ? 'is' : 'are'} where it stopped, at a point ` +
     'that misses an equation of the model it solved, so that point is no solution and this relation is not ' +
     'judged at it'
   );

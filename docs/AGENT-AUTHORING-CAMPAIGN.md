@@ -139,7 +139,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below; thirteen `it(` and one `it.each`, so the figure is the run's own row for `invariants.test.ts`, held by `docs-counts.test.ts` against `TEST-SUMMARY.md`) | 32 assertions (run-measured) |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 139 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 140 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -2861,9 +2861,13 @@ different fault.
 **What "a faulted save stays honest" does NOT cover.** The guarantee is
 deliberately narrow, and everything outside it saves to a file that checks
 clean. Precisely: only a bare REFERENCE swallowed as a body's trailing
-expression is recognised as residue, and only when the tail of the same
-statement parsed into an element of its own that the serializer writes as a
-statement. Everything else keeps the pre-existing behaviour — the swallowed
+expression (or a `#`-led one, `#k [2] :> y;`) is recognised as residue, and only
+when the tail of the same statement parsed into an element of its own that the
+serializer writes as a statement. One more shape is marked: a prefix of metadata
+tags and modifier words that ends at the fault (`abstract def X;`, `#k abstract
+def X;`, whose `def` the grammar does not take after a modifier) hands its text to
+the element after it, or carries it itself when nothing follows (`#k abstract
+def;`); only the FIRST fault of a body is marked, never one at file level. Everything else keeps the pre-existing behaviour — the swallowed
 word stays welded onto the enclosing body as a trailing expression — because
 losing the text BOTH ways is the one outcome worse than laundering. The known
 shapes:

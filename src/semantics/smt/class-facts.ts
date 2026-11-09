@@ -11,10 +11,10 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenCases": 0,
       "goldenDecided": 0,
       "models": 8,
-      "rows": 27,
-      "tableAgree": 23,
+      "rows": 28,
+      "tableAgree": 29,
       "tableDisagree": 0,
-      "tableProbes": 11
+      "tableProbes": 16
     },
     "bind-equality": {
       "battery": null,
@@ -23,9 +23,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 5,
       "rows": 9,
-      "tableAgree": 222,
+      "tableAgree": 231,
       "tableDisagree": 0,
-      "tableProbes": 132
+      "tableProbes": 137
     },
     "bool": {
       "battery": null,
@@ -186,8 +186,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 2,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 4,
-      "rows": 5,
+      "models": 3,
+      "rows": 3,
       "tableAgree": 0,
       "tableDisagree": 0,
       "tableProbes": 0
@@ -232,9 +232,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 0,
       "rows": 0,
-      "tableAgree": 60,
+      "tableAgree": 73,
       "tableDisagree": 0,
-      "tableProbes": 54
+      "tableProbes": 65
     },
     "ite": {
       "battery": null,
@@ -264,10 +264,10 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenCases": 5,
       "goldenDecided": 6,
       "models": 72,
-      "rows": 483,
-      "tableAgree": 588,
+      "rows": 486,
+      "tableAgree": 658,
       "tableDisagree": 0,
-      "tableProbes": 259
+      "tableProbes": 298
     },
     "nira/free": {
       "battery": null,
@@ -309,9 +309,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 1,
       "models": 9,
       "rows": 17,
-      "tableAgree": 2,
+      "tableAgree": 6,
       "tableDisagree": 0,
-      "tableProbes": 2
+      "tableProbes": 4
     },
     "nra-poly/free": {
       "battery": null,
@@ -375,9 +375,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 281,
+      "tableAgree": 316,
       "tableDisagree": 0,
-      "tableProbes": 133
+      "tableProbes": 158
     },
     "requirement-clause": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 326,
+      "tableAgree": 352,
       "tableDisagree": 0,
-      "tableProbes": 211
+      "tableProbes": 223
     },
     "stated-value": {
       "battery": null,
@@ -397,17 +397,17 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 573,
+      "tableAgree": 614,
       "tableDisagree": 0,
-      "tableProbes": 251
+      "tableProbes": 267
     },
     "text-as-real": {
       "battery": null,
       "encoderTests": 1,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 0,
-      "rows": 0,
+      "models": 2,
+      "rows": 2,
       "tableAgree": 0,
       "tableDisagree": 0,
       "tableProbes": 0
@@ -418,21 +418,21 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenCases": 4,
       "goldenDecided": 5,
       "models": 40,
-      "rows": 98,
-      "tableAgree": 27,
+      "rows": 99,
+      "tableAgree": 28,
       "tableDisagree": 0,
-      "tableProbes": 14
+      "tableProbes": 15
     }
   },
   "defects": [
     {
       "classes": [
         "bind-equality",
-        "per-instance"
+        "inherited-context"
       ],
       "id": "D-inconsistent-axioms",
-      "kind": "wrong-statement",
-      "note": "One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim.",
+      "kind": "abstains",
+      "note": "Re-read (g8-fence): a general's body re-read by name where a specialisation declares a name anew without `:>>` is fenced on every surface: the SMT binding rows by G-mask; the name, and what a binding joins to it, read nowhere in that context on the check and the numeric surface; the general's asserts there refused on the SMT engine with their variables kept; the `#equations` pair (G8C) filed `?` in its own sentence. g8 reads T/T/?/?, G8B/G8A tl and G8C t70 ?/?/?/?. Sound, only weaker (the context's own bodies over the name abstain too); the ill-formed shape is not yet reported (G-diag). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.",
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself."
     },
     {
@@ -441,8 +441,8 @@ export const CLASS_FACTS: ClassFacts = {
         "per-instance"
       ],
       "id": "D-subsetting-contradiction",
-      "kind": "wrong-statement",
-      "note": "A model that contradicts itself through a subsetting usage decides other rows (w.x <= 5.0 T, w.x >= 5.0 F) where decision 1 says the axioms are inconsistent, and nothing reports it. The entry may be a wrong decided cell; read as a wrong-statement until probed.",
+      "kind": "abstains",
+      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (p1 `[2]`, p2 `[0..1]`, a quoted name in an asserted equation or a declaration), where an equation naming the usage, or a multiplicity beyond one value, leaves it unrerooted and abstaining.",
       "todo": "Report a model that contradicts itself through a subsetting usage."
     },
     {
@@ -460,7 +460,7 @@ export const CLASS_FACTS: ClassFacts = {
       ],
       "id": "D-subsets-otherwise",
       "kind": "abstains",
-      "note": "Re-read: every row read through the subsetting usage abstains wherever any context reads the subsetted feature otherwise. Sound, only weaker.",
+      "note": "Since instance3-pass S2 a subsetting usage that is the subsetted feature again (its kind and type, saying nothing of its own, named by no binding end or asserted equation, and its only value) is read below, in each context that redefines that feature, as one of that context's (sa7: W::c T, W::c in w F, k F, w0.p2.load T; V7 T); a hand-oracle generator of 1,200 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (a name an asserted equation spells with a quote, a usage declared `part 'p 2' :> p1;`, p1 or its redefinition `[2]`, p2 `[0..1]`): the usage is p1 again only where it is p1's one value. Every other shape, and a reading of the usage itself (a satisfy, a subject, a reference), still abstains wherever any context reads the subsetted feature otherwise (TC8, O2, RQ4, SA3S, RE3, AE3, AE4, RFN). Sound, only weaker.",
       "todo": "Read a usage that subsets a feature an instance reads otherwise in that instance."
     },
     {
@@ -484,29 +484,11 @@ export const CLASS_FACTS: ClassFacts = {
     },
     {
       "classes": [
-        "nra-div"
-      ],
-      "id": "D-m8-detail",
-      "kind": "wrong-statement",
-      "note": "Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard.",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
         "text-as-real"
       ],
       "id": "D-bound-detail",
       "kind": "wrong-statement",
       "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface).",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
-        "text-as-real"
-      ],
-      "id": "D-string-as-real",
-      "kind": "wrong-statement",
-      "note": "A String-typed feature gets sort Real (contracts.ts), so a comparison of two strings is a comparison of two reals nothing pins.",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
     },
     {
@@ -529,9 +511,9 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "8e6d30cc5af5f7182c9852f271db34af6b1134a0b22432f4dad56c8477d9c373",
+    "defects": "96cac07e50aca0b917f75bf10924610fc78a41f10828a117b7303306aebb5c60",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "1bcd105006400cfc75bc2012a20e2d4a25f1ba3151e339a7f8baf8bd9d4a9a86"
+    "probes": "e081e101fd0bfafc79e7e80a119407b634e75b0166c9fcee1b3a8f13909bb139"
   },
   "fences": {
     "fence/collection-valued": {
@@ -626,5 +608,5 @@ export const CLASS_FACTS: ClassFacts = {
     "unattributed": 0
   },
   "register": 1,
-  "z3": "5.3.1"
+  "z3": "5.3.3"
 };

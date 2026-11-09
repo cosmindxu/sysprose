@@ -6,10 +6,10 @@
       "todo": "Stop the SMT engine reading inconsistent axioms on a model that does not contradict itself.",
       "classes": [
         "bind-equality",
-        "per-instance"
+        "inherited-context"
       ],
-      "kind": "wrong-statement",
-      "note": "One symbol per feature across the usages of one definition: SMT reports inconsistent-axioms on a model whose instances do not contradict each other. No false T or F, a false inconsistent-axioms claim."
+      "kind": "abstains",
+      "note": "Re-read (g8-fence): a general's body re-read by name where a specialisation declares a name anew without `:>>` is fenced on every surface: the SMT binding rows by G-mask; the name, and what a binding joins to it, read nowhere in that context on the check and the numeric surface; the general's asserts there refused on the SMT engine with their variables kept; the `#equations` pair (G8C) filed `?` in its own sentence. g8 reads T/T/?/?, G8B/G8A tl and G8C t70 ?/?/?/?. Sound, only weaker (the context's own bodies over the name abstain too); the ill-formed shape is not yet reported (G-diag). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin."
     },
     {
       "id": "D-subsetting-contradiction",
@@ -18,8 +18,8 @@
         "inherited-context",
         "per-instance"
       ],
-      "kind": "wrong-statement",
-      "note": "A model that contradicts itself through a subsetting usage decides other rows (w.x <= 5.0 T, w.x >= 5.0 F) where decision 1 says the axioms are inconsistent, and nothing reports it. The entry may be a wrong decided cell; read as a wrong-statement until probed."
+      "kind": "abstains",
+      "note": "Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (p1 `[2]`, p2 `[0..1]`, a quoted name in an asserted equation or a declaration), where an equation naming the usage, or a multiplicity beyond one value, leaves it unrerooted and abstaining."
     },
     {
       "id": "D-literal-reach",
@@ -37,7 +37,7 @@
         "inherited-context"
       ],
       "kind": "abstains",
-      "note": "Re-read: every row read through the subsetting usage abstains wherever any context reads the subsetted feature otherwise. Sound, only weaker."
+      "note": "Since instance3-pass S2 a subsetting usage that is the subsetted feature again (its kind and type, saying nothing of its own, named by no binding end or asserted equation, and its only value) is read below, in each context that redefines that feature, as one of that context's (sa7: W::c T, W::c in w F, k F, w0.p2.load T; V7 T); a hand-oracle generator of 1,200 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (a name an asserted equation spells with a quote, a usage declared `part 'p 2' :> p1;`, p1 or its redefinition `[2]`, p2 `[0..1]`): the usage is p1 again only where it is p1's one value. Every other shape, and a reading of the usage itself (a satisfy, a subject, a reference), still abstains wherever any context reads the subsetted feature otherwise (TC8, O2, RQ4, SA3S, RE3, AE3, AE4, RFN). Sound, only weaker."
     },
     {
       "id": "D-readings-rollup",
@@ -59,15 +59,6 @@
       "note": "Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer."
     },
     {
-      "id": "D-m8-detail",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "nra-div"
-      ],
-      "kind": "wrong-statement",
-      "note": "Division in the goal surfaces as vacuous when the divisor is pinned to zero, and the detail names the premises where the unsat core names the goal’s own side guard."
-    },
-    {
       "id": "D-bound-detail",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
       "classes": [
@@ -75,15 +66,6 @@
       ],
       "kind": "wrong-statement",
       "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface)."
-    },
-    {
-      "id": "D-string-as-real",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "text-as-real"
-      ],
-      "kind": "wrong-statement",
-      "note": "A String-typed feature gets sort Real (contracts.ts), so a comparison of two strings is a comparison of two reals nothing pins."
     },
     {
       "id": "D-x-pow-neg",
