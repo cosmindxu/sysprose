@@ -12772,6 +12772,24 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // So do defaults on instances' redefinitions of a head's feature that the binding holds (GH129's p1 `:>> m default =
   // 7.0` and p3's `default = 5.0` under `bind L::P::m = M`, P's own m with none): they are no member of the package's
   // component, and the row read "none of them states one".
+  // Every fixer states the same exact literal, and the component holds a one-instance member beside the head (the
+  // package's `M`): that literal is the member's value, and every instance's (SLOT1, decision 10). Two that differ,
+  // or an asserted equation among them (W4X5, decision 14), keep the abstention below.
+  const agreedAt = fixed ? agreedFixerSource(model, fixed, best.root) : undefined;
+  if (
+    agreedAt &&
+    componentPaths(model, best.root, best.component).some((p) => p !== fixed!.path) &&
+    memberInstance(definitions, agreedAt.root, agreedAt.path) !== symbol
+  ) {
+    const bindingIds = [...componentBindingIds(model, best.root, best.component)];
+    if (agreedAt.component !== best.component) bindingIds.push(...componentBindingIds(model, agreedAt.root, agreedAt.component));
+    return {
+      root: agreedAt.root,
+      paths: componentPaths(model, agreedAt.root, agreedAt.component),
+      component: agreedAt.component,
+      via: { bindingIds: Object.freeze(bindingIds), source: agreedAt.path },
+    };
+  }
   const { heads, held } = bindingEnds(model);
   const heldRedefinition =
     held.size > 0 &&
@@ -13761,6 +13779,47 @@ function fixedHeadSentence(model: Model, symbol: string, root: ElementId, compon
 }
 
 /**
+ * Where the one value every fixer of `head` agrees on is read ({@link DefinitionHead.fixers}, SLOT1), or `undefined`:
+ * every fixer — each redefinition's `=`, each member of another binding — states an exact literal and all are the
+ * same constant (decision 10: no `default` in the component stands against it). An asserted equation is no literal
+ * (decision 14, W4X5), so one among the fixers leaves the head unread, as does a fixer whose value is not read at a
+ * path below the package `rootId` (a redefinition in a definition, a binding read in no package). A binding read in two
+ * roots is one fixer, as {@link fixersDiffer} counts it. The package's path to a valued member, and the component it
+ * is read in.
+ */
+function agreedFixerSource(
+  model: Model,
+  head: DefinitionHead,
+  rootId: ElementId,
+): { root: ElementId; component: string; path: string } | undefined {
+  const groups: Array<{ c: Constant; ids?: readonly ElementId[]; at?: { root: ElementId; component: string; path: string } }> = [];
+  for (const f of head.fixers ?? []) {
+    const k = fixerConstantOf(model, f);
+    if (!k) return undefined;
+    const ids = f.binding ? componentBindingIds(model, f.binding.root, f.binding.component) : undefined;
+    const at =
+      f.written !== undefined
+        ? instancePathBelow(model, f.written.id, rootId) !== undefined
+          ? { root: rootId, component: head.component, path: instancePathBelow(model, f.written.id, rootId)! }
+          : undefined
+        : f.binding && k.path !== undefined && isPackage(model.get(f.binding.root)!)
+          ? { root: f.binding.root, component: f.binding.component, path: k.path }
+          : undefined;
+    const same = ids ? groups.find((g) => g.ids?.some((id) => ids.includes(id))) : undefined;
+    if (same) {
+      if (compareConstants(same.c, k.c) !== 'same') return undefined;
+      same.at ??= at;
+      continue;
+    }
+    groups.push({ c: k.c, ids, at });
+  }
+  const first = groups[0];
+  if (!first || groups.some((g) => compareConstants(first.c, g.c) !== 'same')) return undefined;
+  const at = groups.find((g) => g.at)?.at;
+  return at;
+}
+
+/**
  * Two of `head`'s fixers ({@link DefinitionHead.fixers}) that are not one value this tool reads exactly, as their
  * texts, or `undefined`. A redefinition's `=` is its exact constant; a member of another binding is the one value
  * written with `=` that its component states where it is read (the package's reading of w's `L = 5.0` at w.q.m), and
@@ -13768,18 +13827,24 @@ function fixedHeadSentence(model: Model, symbol: string, root: ElementId, compon
  * where it has that value; an asserted equation, or a component with no such value, is no constant, and differs
  * from any other fixer.
  */
+function fixerConstantOf(model: Model, f: NonNullable<DefinitionHead['fixers']>[number]): { c: Constant; path?: string } | undefined {
+  if (f.written) {
+    const c = constantOf(f.written);
+    return c ? { c } : undefined;
+  }
+  if (!f.binding) return undefined;
+  const cls = classified(model, f.binding.root, f.binding.component);
+  if (cls.valued.length === 0) return undefined;
+  const agreed = agreedValued(model, f.binding.root, cls.valued);
+  const r = agreed === undefined ? undefined : bindingEnds(model).readings.get(f.binding.root)?.get(agreed);
+  const g = r ? model.get(r.feature) : undefined;
+  const written = g ? valueSourceOf(model, g) : undefined;
+  const c = written && written.attrs.defaultValue !== true ? constantOf(written) : undefined;
+  return c ? { c, path: agreed } : undefined;
+}
+
 function fixersDiffer(model: Model, head: DefinitionHead): [string, string] | undefined {
-  const valueOf = (f: NonNullable<DefinitionHead['fixers']>[number]): Constant | undefined => {
-    if (f.written) return constantOf(f.written);
-    if (!f.binding) return undefined;
-    const cls = classified(model, f.binding.root, f.binding.component);
-    if (cls.valued.length === 0) return undefined;
-    const agreed = agreedValued(model, f.binding.root, cls.valued);
-    const r = agreed === undefined ? undefined : bindingEnds(model).readings.get(f.binding.root)?.get(agreed);
-    const g = r ? model.get(r.feature) : undefined;
-    const written = g ? valueSourceOf(model, g) : undefined;
-    return written && written.attrs.defaultValue !== true ? constantOf(written) : undefined;
-  };
+  const valueOf = (f: NonNullable<DefinitionHead['fixers']>[number]): Constant | undefined => fixerConstantOf(model, f)?.c;
   const fixers: Array<{ text: string; c: Constant | undefined; ids?: readonly ElementId[] }> = [];
   for (const f of head.fixers ?? []) {
     const c = valueOf(f);

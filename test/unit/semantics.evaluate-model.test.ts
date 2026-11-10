@@ -5452,12 +5452,13 @@ describe('a binding reads through a renamed redefinition and a package’s defin
       constraint c2 { p2.m2 <= 5.0 }
     }`);
     // p4's 7 is L's, and p2's: P's default 1 stood for p2 and for L on the check, the literal and numeric surfaces.
+    // The one fixer states the one literal (SLOT1), so p2's load reads p4's 7 and c2 is decided.
     expect([source(m!, 'W4v::p2::load'), defaultStandsIn(m!, 'W4v::p2::load'), defaultStandsIn(m!, 'W4v::L')]).toEqual([
-      'defaults-differ',
+      'p4.load',
       undefined,
       undefined,
     ]);
-    expect([result(m!, 'W4v::c2'), numeric(m!, 'W4v::c2')]).toEqual(['unknown', 'unknown']);
+    expect([result(m!, 'W4v::c2'), numeric(m!, 'W4v::c2')]).toEqual(['satisfied', 'satisfied']);
   });
 
   it('stands no default where another binding fixes an instance’s slot, and checks an assert on the slot against the default (W4X, W4A)', async () => {
@@ -5474,10 +5475,9 @@ describe('a binding reads through a renamed redefinition and a package’s defin
     // Q's binding makes q's p's load 7, so L and p2's load are 7: P's default 50 stood for p2 on all four
     // surfaces, and the SMT lane kept its axiom beside q's 7 (inconsistent-axioms on a consistent model).
     expect([defaultGivesWay(m!, named(m!, 'W4X::P::load')), defaultStandsIn(m!, 'W4X::p2::load')]).toEqual([true, undefined]);
-    expect(checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'W4X::c2T')!.message).toContain(
-      'a binding read in W4X at q.p.load gives P.load a value in one of them',
-    );
-    expect([result(m!, 'W4X::c2T'), numeric(m!, 'W4X::c2T'), result(m!, 'W4X::cqT')]).toEqual(['unknown', 'satisfied', 'satisfied']);
+    // The one fixer states the one literal (SLOT1): p2's load reads q's 7 and c2T is decided.
+    expect(checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'W4X::c2T')!.message).toContain('p2.load = 7');
+    expect([result(m!, 'W4X::c2T'), numeric(m!, 'W4X::c2T'), result(m!, 'W4X::cqT')]).toEqual(['satisfied', 'satisfied', 'satisfied']);
     const { model: a } = await loadModelText(`package W4A {
       part def P { attribute load : ScalarValues::Real; }
       attribute M : ScalarValues::Real default = 9.0;

@@ -7743,8 +7743,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c2 { p2.m2 <= 5.0 }
         constraint cL { L >= 5.0 }
       }`, {
-      'W4v::c2': ['?/?/?/T', 'T'],
-      'W4v::cL': ['?/?/?/T', 'T'],
+      'W4v::c2': ['T/T/T/T', 'T'],
+      'W4v::cL': ['T/T/?/T', 'T'],
     }),
     'w4-redef-defaults': probe(`package W4w {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -7874,7 +7874,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // `p2.load == 5.0` leaves M's `default = 9.0` standing, as `M = 9.0` does, so every P's load is 9 and the assert
     // is violated (fix F, c3T F beside SMT's inconsistent axioms) — read before as 5, T on the numeric and SMT
     // surfaces from the assert's value carried into M. W4X1, W4X3 and W4X6 fix the slot with a value written with
-    // `=` (decision 10), and keep their readings.
+    // `=` (decision 10): since SLOT1 (2026-11-10) the check and the literal engine read that literal for L and every
+    // instance (W4v, W4X1, W4X3, W4X6) where every fixer states one, and still abstain where two differ or an assert fixes.
     'w4-coupled-def': probe(`package W4X1 {
         part def P { attribute load : ScalarValues::Real default = 50.0; }
         attribute L : ScalarValues::Real;
@@ -7886,8 +7887,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c2T { p2.load <= 10.0 }
         constraint cLT { L <= 10.0 }
       }`, {
-      'W4X1::c2T': ['?/?/T/T', 'T'],
-      'W4X1::cLT': ['?/?/T/T', 'T'],
+      'W4X1::c2T': ['T/T/T/T', 'T'],
+      'W4X1::cLT': ['T/T/T/T', 'T'],
       'W4X1::cqT': ['T/T/T/T', 'T'],
     }),
     'w4-coupled-pkg': probe(`package W4X3 {
@@ -7901,8 +7902,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c3T { p3.load <= 6.0 }
         constraint cMT { M <= 6.0 }
       }`, {
-      'W4X3::c3T': ['?/?/?/T', 'T'],
-      'W4X3::cMT': ['?/?/?/T', 'T'],
+      'W4X3::c3T': ['T/T/?/T', 'T'],
+      'W4X3::cMT': ['T/T/?/T', 'T'],
     }),
     'w4-coupled-assert': probe(`package W4X5 {
         part def P { attribute load : ScalarValues::Real; }
@@ -7925,7 +7926,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p2 : P;
         constraint c2T { p2.load <= 10.0 }
       }`, {
-      'W4X6::c2T': ['?/?/?/T', 'T'],
+      'W4X6::c2T': ['T/T/?/T', 'T'],
     }),
     // Lexical scope (O6 S1, E3): a name the element it is written in does not declare is read through its
     // OWNING namespaces — Q's `pl` for Q's p's `:>> load = pl`, Q's `L` for its `:>> load = L`. An enclosing
@@ -18346,8 +18347,98 @@ package PS {
   constraint c3T { p3.load <= 6.0 }
   constraint cMT { M <= 6.0 }
 }`), {
-      'W4X3::c3T': ['?/?/?/T', 'T'],
-      'W4X3::cMT': ['?/?/?/T', 'T'],
+      'W4X3::c3T': ['T/T/?/T', 'T'],
+      'W4X3::cMT': ['T/T/?/T', 'T'],
+    }),
+    // SLOT1 (2026-11-10): a package's `bind P::load = M` over a slot instances fix. Every fixer states one exact
+    // literal (W4X3's, above) and the literal is M's and every instance's. Two fixers that differ (S2V: p2's 5 and
+    // p4's 7, SVB, SBB, in both text orders) leave M two values: no surface but SMT (X, the model contradicts
+    // itself) reads it.
+    'slot-s2v': probe(`package S2V {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real default = 9.0;
+  bind P::load = M;
+  part p2 : P { attribute :>> load = 5.0; }
+  part p4 : P { attribute :>> load = 7.0; }
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint cMT { M <= 6.0 }
+}`, {
+      'S2V::c3T': ['?/?/?/X', '?'],
+      'S2V::cMT': ['?/?/?/X', '?'],
+    }),
+    'slot-s2v-r': probe(reversedMembers(`package S2V {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real default = 9.0;
+  bind P::load = M;
+  part p2 : P { attribute :>> load = 5.0; }
+  part p4 : P { attribute :>> load = 7.0; }
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint cMT { M <= 6.0 }
+}`), {
+      'S2V::c3T': ['?/?/?/X', '?'],
+      'S2V::cMT': ['?/?/?/X', '?'],
+    }),
+    'slot-sbb': probe(`package SBB {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real default = 9.0;
+  attribute L : ScalarValues::Real = 5.0;
+  attribute N : ScalarValues::Real = 7.0;
+  bind P::load = M;
+  part p2 : P; bind p2.load = L;
+  part p4 : P; bind p4.load = N;
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint cMT { M <= 6.0 }
+}`, {
+      'SBB::c3T': ['?/?/?/X', '?'],
+      'SBB::cMT': ['?/?/?/X', '?'],
+    }),
+    'slot-sbb-r': probe(reversedMembers(`package SBB {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real default = 9.0;
+  attribute L : ScalarValues::Real = 5.0;
+  attribute N : ScalarValues::Real = 7.0;
+  bind P::load = M;
+  part p2 : P; bind p2.load = L;
+  part p4 : P; bind p4.load = N;
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint cMT { M <= 6.0 }
+}`), {
+      'SBB::c3T': ['?/?/?/X', '?'],
+      'SBB::cMT': ['?/?/?/X', '?'],
+    }),
+    'slot-svb': probe(`package SVB {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real default = 9.0;
+  attribute N : ScalarValues::Real = 7.0;
+  bind P::load = M;
+  part p2 : P { attribute :>> load = 5.0; }
+  part p4 : P;
+  bind p4.load = N;
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint cMT { M <= 6.0 }
+}`, {
+      'SVB::c3T': ['?/?/?/X', '?'],
+      'SVB::cMT': ['?/?/?/X', '?'],
+    }),
+    'slot-svb-r': probe(reversedMembers(`package SVB {
+  part def P { attribute load : ScalarValues::Real; }
+  attribute M : ScalarValues::Real default = 9.0;
+  attribute N : ScalarValues::Real = 7.0;
+  bind P::load = M;
+  part p2 : P { attribute :>> load = 5.0; }
+  part p4 : P;
+  bind p4.load = N;
+  part p3 : P;
+  constraint c3T { p3.load <= 6.0 }
+  constraint cMT { M <= 6.0 }
+}`), {
+      'SVB::c3T': ['?/?/?/X', '?'],
+      'SVB::cMT': ['?/?/?/X', '?'],
     }),
     // a5-fences3 GH2 (2026-11-07): a package head whose slot two fixers give values that differ — p1's `:>> m = 7.0`
     // and w's `L = 5.0` through W's `bind q.m = L` (headFixersDifferAt). The binding holds in every instance, so M is
