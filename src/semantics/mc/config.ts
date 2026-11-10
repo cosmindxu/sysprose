@@ -344,13 +344,15 @@ interface RegionCache {
   rev: number;
   scopes: Map<ElementId, Scope>;
   regions: Map<ElementId, MachineRegion>;
+  /** The regions read through their generals ({@link machineRegion} with `inherit`). */
+  inherited: Map<ElementId, MachineRegion>;
 }
 const REGION_CACHE = new WeakMap<Model, RegionCache>();
 
 function cacheFor(model: Model): RegionCache {
   const hit = REGION_CACHE.get(model);
   if (hit && hit.rev === model.rev) return hit;
-  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), regions: new Map() };
+  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), regions: new Map(), inherited: new Map() };
   REGION_CACHE.set(model, fresh);
   return fresh;
 }
@@ -409,8 +411,15 @@ export interface MachineRegion {
   };
 }
 
-/** The region rooted at `regionId`, memoised on the model revision. */
-export function machineRegion(model: Model, regionId: ElementId): MachineRegion {
+/**
+ * The region rooted at `regionId`, memoised on the model revision.
+ *
+ * `inherit` reads a machine through its general ({@link inheritedRegion}); no
+ * reader asks for it yet, so every consumer still reads the machine's own
+ * region and a machine that inherits is still refused where it was.
+ */
+export function machineRegion(model: Model, regionId: ElementId, inherit = false): MachineRegion {
+  if (inherit) return inheritedRegion(model, regionId, []);
   const cache = cacheFor(model);
   const hit = cache.regions.get(regionId);
   if (hit) return hit;
@@ -479,6 +488,87 @@ export function machineRegion(model: Model, regionId: ElementId): MachineRegion 
     inheritedFrom: () => undefined,
   };
   cache.regions.set(regionId, region);
+  return region;
+}
+
+/** The longest chain of general machines read through; a longer one is refused as a `cycle`. */
+const MAX_GENERAL_CHAIN = 8;
+
+/**
+ * A machine read through its general machine: the general's region (ids kept)
+ * followed by the machine's own nodes and steps.
+ *
+ * The general is the ONE non-library `state def` the machine specialises, or
+ * that types a usage which owns a step of its own (a usage with no step is
+ * reported through its definition and reads no general). `parentOf` the
+ * general's root is the machine, `inheritedFrom` names the general for every
+ * node it declares, `descendants` and `transitions` list the general's first
+ * (the first-enabled tie-break takes the inherited step before an own one),
+ * `directStates` of the machine lists the inherited states before its own,
+ * and the one start is the one `InitialNode` of the merged list. Where the
+ * shape is not one this view reads, `refused` says which and the region is the
+ * machine's own: two general machines, two starts, a cycle or a chain over
+ * {@link MAX_GENERAL_CHAIN}, a redefined member (until a later step reads it)
+ * or an own usage that takes a name the general already holds.
+ */
+function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[]): MachineRegion {
+  const cache = cacheFor(model);
+  const hit = cache.inherited.get(id);
+  if (hit) return hit;
+  const own = machineRegion(model, id);
+  const m = model.get(id);
+  const name = (e: ElementId): string => model.qualifiedName(e);
+  const refuse = (why: NonNullable<MachineRegion['refused']>['why'], at: ElementId, sentence: string): MachineRegion => {
+    const r: MachineRegion = { ...own, refused: { why, at, sentence } };
+    if (chain.length === 0) cache.inherited.set(id, r);
+    return r;
+  };
+  const generals =
+    m === undefined || (m.eClass !== 'StateDefinition' && m.eClass !== 'StateUsage' && m.eClass !== 'ExhibitStateUsage')
+      ? []
+      : model.typesOf(id).filter((g) => g.eClass === 'StateDefinition' && g.attrs.isLibrary !== true);
+  const reads = generals.length > 0 && (m!.eClass === 'StateDefinition' || own.transitions.length > 0);
+  if (!reads) {
+    cache.inherited.set(id, own);
+    return own;
+  }
+  if (generals.length > 1) {
+    return refuse('two-generals', id, `${name(id)} has two general machines (${generals.map((g) => name(g.id)).join(' and ')})`);
+  }
+  const g = generals[0].id;
+  if (g === id || chain.includes(g)) {
+    return refuse('cycle', id, `${name(id)} specialises a chain of general machines this walk does not read (a cycle, or longer than ${MAX_GENERAL_CHAIN})`);
+  }
+  const base = inheritedRegion(model, g, [...chain, id]);
+  if (base.refused) return refuse(base.refused.why, base.refused.at, base.refused.sentence);
+  // The chain is measured on the general's own view, which a cached answer carries, not on the path this call came down.
+  if (base.bases.length >= MAX_GENERAL_CHAIN) {
+    return refuse('cycle', id, `${name(id)} specialises a chain of general machines this walk does not read (a cycle, or longer than ${MAX_GENERAL_CHAIN})`);
+  }
+  const redefined = own.descendants.find((e) => model.relationshipsFrom(e.id).some((r) => r.eClass === 'Redefinition'));
+  if (redefined) return refuse('redefined', redefined.id, `${name(redefined.id)} redefines a member of a general machine`);
+  const taken = new Set<string>();
+  for (const e of base.descendants) if (isUsage(e.eClass) && e.declaredName) taken.add(e.declaredName);
+  const clash = own.descendants.find((e) => isUsage(e.eClass) && e.declaredName !== undefined && taken.has(e.declaredName));
+  if (clash) return refuse('redefined', clash.id, `${name(clash.id)} takes a name its general machine already holds`);
+  const descendants = [...base.descendants, ...own.descendants];
+  if (descendants.filter((e) => e.eClass === 'InitialNode').length > 1) {
+    return refuse('two-starts', id, `${name(id)} and its general machine each open at a start node of their own`);
+  }
+  const bases = [g, ...base.bases];
+  const ownHeld = new Set<ElementId>(own.descendants.map((e) => e.id));
+  const region: MachineRegion = {
+    root: id,
+    bases,
+    nodes: new Set<ElementId>([...base.nodes, ...own.nodes]),
+    descendants,
+    transitions: [...base.transitions, ...own.transitions],
+    directStates: (containerId) =>
+      containerId === id ? [...base.directStates(g), ...own.directStates(id)] : directStates(model, containerId),
+    parentOf: (x) => (x === g ? id : ownHeld.has(x) ? own.parentOf(x) : base.parentOf(x)),
+    inheritedFrom: (x) => (ownHeld.has(x) || x === id ? undefined : (base.inheritedFrom(x) ?? g)),
+  };
+  if (chain.length === 0) cache.inherited.set(id, region);
   return region;
 }
 
@@ -1083,12 +1173,15 @@ function labelFor(tr: ElementRecord, input: StepInput): string {
  * machine that holds either (`./explore.ts`, `unsupportedConstructs`) and the
  * interpreter stops before the step (`docs/06` §8.14).
  */
-export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId): ElementId[] | null {
+export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId, inherit = false): ElementId[] | null {
   if (id === regionId) return null;
-  const region = machineRegion(model, regionId);
+  const region = machineRegion(model, regionId, inherit);
   const path: ElementId[] = [id];
   for (let p = region.parentOf(id); p !== regionId; p = region.parentOf(p)) {
-    if (p == null || model.get(p)?.eClass !== 'StateUsage') return null;
+    if (p == null) return null;
+    // A general machine's root is this machine read through its general: no state of the path.
+    if (region.bases.includes(p)) continue;
+    if (model.get(p)?.eClass !== 'StateUsage') return null;
     path.push(p);
   }
   return path.reverse();
