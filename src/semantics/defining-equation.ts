@@ -12726,6 +12726,9 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // P::cap`) joins them in every instance, each at its own value there: read
   // in the package, the component holds P's own — no value for any instance.
   if (best.head && pairedHeads(model, best.root, best.component)) {
+    // Read per instance (SLOT2): this instance's own `=` on the other end gives this one its value, here only.
+    const own = pairedInstanceSource(model, symbol, best.root, best.component, best.head);
+    if (own !== undefined) return own;
     return { abstain: 'free', sentence: pairedHeadsSentence(model, symbol, best.root, best.component) };
   }
   // A binding whose end is a feature of an instance ENCLOSING where it is
@@ -12772,6 +12775,24 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   // So do defaults on instances' redefinitions of a head's feature that the binding holds (GH129's p1 `:>> m default =
   // 7.0` and p3's `default = 5.0` under `bind L::P::m = M`, P's own m with none): they are no member of the package's
   // component, and the row read "none of them states one".
+  // Every fixer states the same exact literal, and the component holds a one-instance member beside the head (the
+  // package's `M`): that literal is the member's value, and every instance's (SLOT1, decision 10). Two that differ,
+  // or an asserted equation among them (W4X5, decision 14), keep the abstention below.
+  const agreedAt = fixed ? agreedFixerSource(model, fixed, best.root) : undefined;
+  if (
+    agreedAt &&
+    componentPaths(model, best.root, best.component).some((p) => p !== fixed!.path) &&
+    memberInstance(definitions, agreedAt.root, agreedAt.path) !== symbol
+  ) {
+    const bindingIds = [...componentBindingIds(model, best.root, best.component)];
+    if (agreedAt.component !== best.component) bindingIds.push(...componentBindingIds(model, agreedAt.root, agreedAt.component));
+    return {
+      root: agreedAt.root,
+      paths: componentPaths(model, agreedAt.root, agreedAt.component),
+      component: agreedAt.component,
+      via: { bindingIds: Object.freeze(bindingIds), source: agreedAt.path },
+    };
+  }
   const { heads, held } = bindingEnds(model);
   const heldRedefinition =
     held.size > 0 &&
@@ -12935,6 +12956,19 @@ export function statedAgainstBoundIn(model: Model, f: ElementRecord, inst: strin
   const name = sharedDefinitions(model).nameOf(f);
   if (name === undefined) return undefined;
   const symbol = `${inst}::${name}`;
+  // Both ends of a package's pair (`bind P::load = P::cap`) written with `=` in this one instance (SLOT2): two values for
+  // the one that the binding joins, unless they are the same as written.
+  const early = outermostReading(model, symbol);
+  const pair = early?.head && f.ownerId != null && redefinedClosure(model, f).some((g) => g.id === early.head!.feature) ? pairedWrittenAt(model, early.root, early.component, early.head, inst) : undefined;
+  if (pair !== undefined && f !== pair && compareWrittenValues(f, pair) !== 'same') {
+    const sep = symbol.lastIndexOf('::');
+    const { bind, of } = componentBindingWords(model, early!.root, early!.component);
+    return (
+      `${symbol.slice(sep + 2)} is not read in ${symbol.slice(0, sep)}: ${bind}${of} joins ${writtenName(model, f)} = ` +
+      `${writtenValue(f)} to ${writtenName(model, pair)} = ${writtenValue(pair)}, two values written with \`=\` that are not ` +
+      'the same as written, and a binding holds in every instance; the model states two values for it, so neither is read'
+    );
+  }
   const src = boundSourceIn(model, symbol);
   if (src === undefined || ('abstain' in src && src.abstain !== 'two-values')) return undefined;
   const best = outermostReading(model, symbol);
@@ -13488,6 +13522,19 @@ export function statedAgainstBoundSomewhere(model: Model, f: ElementRecord): boo
         if (head.fixed === undefined || !head.redefined) continue;
         fixed.push({ head, written: written.get(head.component) ?? [] });
       }
+      // The two ends of a package's pair of one definition's features, each written in one instance (SLOT2).
+      const pairs = new Map<string, ElementRecord[]>();
+      for (const head of ends.heads.get(root) ?? []) {
+        for (const x of head.fixers ?? []) {
+          if (x.written?.ownerId == null) continue;
+          const key = `${head.component} ${x.written.ownerId}`;
+          pairs.set(key, [...(pairs.get(key) ?? []), x.written]);
+        }
+      }
+      for (const [key, list] of pairs) {
+        const component = key.slice(0, key.indexOf(' '));
+        if ((ends.heads.get(root) ?? []).filter((h) => h.component === component).length === 2) against(list);
+      }
     }
     if (fixed.length > 0) {
       for (const g of model.all()) {
@@ -13721,6 +13768,64 @@ function pairedHeads(model: Model, root: ElementId, component: string, orRedefin
   return heads.length > 1 || (orRedefined && heads.some((h) => h.redefined || fixesSlot(h)));
 }
 
+/**
+ * The `=` the instance `inst` writes on the other end of a package's pair of features of one definition ({@link
+ * pairedInstanceSource}) beside `head`'s own — `part p4 : P { :>> cap = 50.0; :>> load = 7.0; }` — or `undefined`.
+ */
+function pairedWrittenAt(model: Model, root: ElementId, component: string, head: DefinitionHead, inst: string): ElementRecord | undefined {
+  const heads = (bindingEnds(model).heads.get(root) ?? []).filter((h) => h.component === component);
+  const other = heads.length === 2 && heads.includes(head) ? heads.find((h) => h !== head) : undefined;
+  if (!other || other.definition.id !== head.definition.id) return undefined;
+  const definitions = sharedDefinitions(model);
+  return (other.fixers ?? []).find((x) => x.written?.ownerId != null && definitions.instanceNameOf(x.written.ownerId) === inst)?.written;
+}
+
+/**
+ * The value of `head`'s feature at the instance `symbol` names, where a package's binding joins exactly two features of
+ * one definition (`bind P::load = P::cap`) and this instance's own `=` on the OTHER end states a literal (SLOT2,
+ * W4d's `part p2 : P { :>> cap = 50.0; }`): the binding holds in every instance at its own values, so p2's load is
+ * p2's cap and no other instance's. Nothing else may state either end there or in the definition (a value, an
+ * asserted equation or a binding at any instance, any redefinition of this end in the instance), or `undefined`.
+ */
+function pairedInstanceSource(
+  model: Model,
+  symbol: string,
+  root: ElementId,
+  component: string,
+  head: DefinitionHead,
+): BoundSource | undefined {
+  const heads = (bindingEnds(model).heads.get(root) ?? []).filter((h) => h.component === component);
+  if (heads.length !== 2 || !heads.includes(head)) return undefined;
+  const other = heads.find((h) => h !== head)!;
+  if (other.definition.id !== head.definition.id) return undefined;
+  for (const h of heads) {
+    const g = model.get(h.feature);
+    const v = g ? valueSourceOf(model, g) : undefined;
+    if (v !== undefined && v.attrs.defaultValue !== true) return undefined;
+    if ((h.fixers ?? []).some((f) => f.written === undefined)) return undefined;
+  }
+  const definitions = sharedDefinitions(model);
+  const sep = symbol.lastIndexOf('::');
+  const instance = sep >= 0 ? symbol.slice(0, sep) : '';
+  const at = (f: NonNullable<DefinitionHead['fixers']>[number]): boolean =>
+    f.written?.ownerId != null && definitions.instanceNameOf(f.written.ownerId) === instance;
+  const mine = (head.fixers ?? []).filter(at);
+  const theirs = (other.fixers ?? []).filter(at);
+  if (mine.length > 0 || theirs.length !== 1) return undefined;
+  const written = theirs[0]!.written!;
+  // Any redefinition of this end in the instance (a `default` too) is left to the abstention.
+  if (model.children(written.ownerId!).some((c) => redefinedClosure(model, c).some((g) => g.id === head.feature))) return undefined;
+  const k = constantOf(written);
+  const path = instancePathBelow(model, written.id, root);
+  if (!k || path === undefined) return undefined;
+  return {
+    root,
+    paths: componentPaths(model, root, component),
+    component,
+    via: { bindingIds: componentBindingIds(model, root, component), source: path },
+  };
+}
+
 /** Why a package's binding between features of definitions gives an instance no value ({@link pairedHeads}). */
 function pairedHeadsSentence(model: Model, symbol: string, root: ElementId, component: string): string {
   const sep = symbol.lastIndexOf('::');
@@ -13761,6 +13866,47 @@ function fixedHeadSentence(model: Model, symbol: string, root: ElementId, compon
 }
 
 /**
+ * Where the one value every fixer of `head` agrees on is read ({@link DefinitionHead.fixers}, SLOT1), or `undefined`:
+ * every fixer — each redefinition's `=`, each member of another binding — states an exact literal and all are the
+ * same constant (decision 10: no `default` in the component stands against it). An asserted equation is no literal
+ * (decision 14, W4X5), so one among the fixers leaves the head unread, as does a fixer whose value is not read at a
+ * path below the package `rootId` (a redefinition in a definition, a binding read in no package). A binding read in two
+ * roots is one fixer, as {@link fixersDiffer} counts it. The package's path to a valued member, and the component it
+ * is read in.
+ */
+function agreedFixerSource(
+  model: Model,
+  head: DefinitionHead,
+  rootId: ElementId,
+): { root: ElementId; component: string; path: string } | undefined {
+  const groups: Array<{ c: Constant; ids?: readonly ElementId[]; at?: { root: ElementId; component: string; path: string } }> = [];
+  for (const f of head.fixers ?? []) {
+    const k = fixerConstantOf(model, f);
+    if (!k) return undefined;
+    const ids = f.binding ? componentBindingIds(model, f.binding.root, f.binding.component) : undefined;
+    const at =
+      f.written !== undefined
+        ? instancePathBelow(model, f.written.id, rootId) !== undefined
+          ? { root: rootId, component: head.component, path: instancePathBelow(model, f.written.id, rootId)! }
+          : undefined
+        : f.binding && k.path !== undefined && isPackage(model.get(f.binding.root)!)
+          ? { root: f.binding.root, component: f.binding.component, path: k.path }
+          : undefined;
+    const same = ids ? groups.find((g) => g.ids?.some((id) => ids.includes(id))) : undefined;
+    if (same) {
+      if (compareConstants(same.c, k.c) !== 'same') return undefined;
+      same.at ??= at;
+      continue;
+    }
+    groups.push({ c: k.c, ids, at });
+  }
+  const first = groups[0];
+  if (!first || groups.some((g) => compareConstants(first.c, g.c) !== 'same')) return undefined;
+  const at = groups.find((g) => g.at)?.at;
+  return at;
+}
+
+/**
  * Two of `head`'s fixers ({@link DefinitionHead.fixers}) that are not one value this tool reads exactly, as their
  * texts, or `undefined`. A redefinition's `=` is its exact constant; a member of another binding is the one value
  * written with `=` that its component states where it is read (the package's reading of w's `L = 5.0` at w.q.m), and
@@ -13768,18 +13914,24 @@ function fixedHeadSentence(model: Model, symbol: string, root: ElementId, compon
  * where it has that value; an asserted equation, or a component with no such value, is no constant, and differs
  * from any other fixer.
  */
+function fixerConstantOf(model: Model, f: NonNullable<DefinitionHead['fixers']>[number]): { c: Constant; path?: string } | undefined {
+  if (f.written) {
+    const c = constantOf(f.written);
+    return c ? { c } : undefined;
+  }
+  if (!f.binding) return undefined;
+  const cls = classified(model, f.binding.root, f.binding.component);
+  if (cls.valued.length === 0) return undefined;
+  const agreed = agreedValued(model, f.binding.root, cls.valued);
+  const r = agreed === undefined ? undefined : bindingEnds(model).readings.get(f.binding.root)?.get(agreed);
+  const g = r ? model.get(r.feature) : undefined;
+  const written = g ? valueSourceOf(model, g) : undefined;
+  const c = written && written.attrs.defaultValue !== true ? constantOf(written) : undefined;
+  return c ? { c, path: agreed } : undefined;
+}
+
 function fixersDiffer(model: Model, head: DefinitionHead): [string, string] | undefined {
-  const valueOf = (f: NonNullable<DefinitionHead['fixers']>[number]): Constant | undefined => {
-    if (f.written) return constantOf(f.written);
-    if (!f.binding) return undefined;
-    const cls = classified(model, f.binding.root, f.binding.component);
-    if (cls.valued.length === 0) return undefined;
-    const agreed = agreedValued(model, f.binding.root, cls.valued);
-    const r = agreed === undefined ? undefined : bindingEnds(model).readings.get(f.binding.root)?.get(agreed);
-    const g = r ? model.get(r.feature) : undefined;
-    const written = g ? valueSourceOf(model, g) : undefined;
-    return written && written.attrs.defaultValue !== true ? constantOf(written) : undefined;
-  };
+  const valueOf = (f: NonNullable<DefinitionHead['fixers']>[number]): Constant | undefined => fixerConstantOf(model, f)?.c;
   const fixers: Array<{ text: string; c: Constant | undefined; ids?: readonly ElementId[] }> = [];
   for (const f of head.fixers ?? []) {
     const c = valueOf(f);
