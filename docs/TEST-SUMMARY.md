@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5562 total — 5562 passed, 0 failed, 0 skipped
+- **Tests:** 5571 total — 5571 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -62,7 +62,7 @@
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 139 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 140 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 36 | 0 | 0 |
@@ -116,20 +116,20 @@
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
 | test/unit/semantics.evaluate-model.test.ts | 305 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
-| test/unit/semantics.execute.test.ts | 35 | 0 | 0 |
+| test/unit/semantics.execute.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.expr.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
-| test/unit/semantics.keywords.test.ts | 47 | 0 | 0 |
+| test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 91 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 124 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 126 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
-| test/unit/semantics.mc.successors.test.ts | 33 | 0 | 0 |
+| test/unit/semantics.mc.successors.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
