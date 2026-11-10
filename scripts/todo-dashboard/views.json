@@ -1,0 +1,317 @@
+{
+ "107": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "constraint-by-instance over instance groups"
+ },
+ "109": {
+  "v": "ED",
+  "v2": "",
+  "why": "Drive storage on the site"
+ },
+ "110": {
+  "v": "PERF",
+  "v2": "",
+  "why": "text step vs edit task timing"
+ },
+ "115": {
+  "v": "A4a",
+  "v2": "",
+  "why": "step over inherited states"
+ },
+ "132": {
+  "v": "A5",
+  "v2": "",
+  "why": "asserted equation binding rows"
+ },
+ "135": {
+  "v": "A5",
+  "v2": "A10",
+  "why": "unit-bearing violated instance value"
+ },
+ "136": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "per-instance obligation scope reporting"
+ },
+ "146": {
+  "v": "PERF",
+  "v2": "ED",
+  "why": "in-page solver check stalls"
+ },
+ "147": {
+  "v": "PERF",
+  "v2": "",
+  "why": "move parse off the page"
+ },
+ "148": {
+  "v": "ED",
+  "v2": "",
+  "why": "frozen header strip display"
+ },
+ "159": {
+  "v": "A1",
+  "v2": "A5",
+  "why": "subject standing-for readings"
+ },
+ "161": {
+  "v": "INT",
+  "v2": "A2",
+  "why": "cross-surface context row naming"
+ },
+ "167": {
+  "v": "ED",
+  "v2": "A3",
+  "why": "binding order on page, room"
+ },
+ "176": {
+  "v": "A1",
+  "v2": "A2",
+  "why": "per-instance satisfaction, subject readings"
+ },
+ "180": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "per-instance table rows, numeric pair"
+ },
+ "181": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "name-scope per-instance readings"
+ },
+ "182": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "binding into instance by path"
+ },
+ "193": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "per-instance derived-value findings"
+ },
+ "194": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "name redefined instance value"
+ },
+ "198": {
+  "v": "A5",
+  "v2": "ED",
+  "why": "initial value and unit display"
+ },
+ "201": {
+  "v": "A10",
+  "v2": "",
+  "why": "annotation about targets"
+ },
+ "204": {
+  "v": "SAF",
+  "v2": "A10",
+  "why": "FailureMode qualified name"
+ },
+ "207": {
+  "v": "A5",
+  "v2": "",
+  "why": "local equation with bound side"
+ },
+ "211": {
+  "v": "A5",
+  "v2": "",
+  "why": "default named by enclosing assert"
+ },
+ "212": {
+  "v": "A5",
+  "v2": "INT",
+  "why": "default machinery removal or tag"
+ },
+ "214": {
+  "v": "A5",
+  "v2": "A3",
+  "why": "bind over valueless feature"
+ },
+ "221": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "context row naming by order"
+ },
+ "228": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "contradiction reach per instance"
+ },
+ "229": {
+  "v": "A1",
+  "v2": "A5",
+  "why": "requirement with only assert"
+ },
+ "233": {
+  "v": "A5",
+  "v2": "",
+  "why": "disagreeing asserted equations abstention"
+ },
+ "241": {
+  "v": "A2",
+  "v2": "A5",
+  "why": "subsetting usage per instance"
+ },
+ "242": {
+  "v": "A2",
+  "v2": "A5",
+  "why": "contradiction via subsetting usage"
+ },
+ "244": {
+  "v": "A2",
+  "v2": "INT",
+  "why": "chained subsetting target wording"
+ },
+ "265": {
+  "v": "A5",
+  "v2": "INT",
+  "why": "SMT inconsistent axioms"
+ },
+ "268": {
+  "v": "ED",
+  "v2": "A2",
+  "why": "redefinition kept after edit"
+ },
+ "276": {
+  "v": "INT",
+  "v2": "ED",
+  "why": "store property test generator"
+ },
+ "286": {
+  "v": "A5",
+  "v2": "INT",
+  "why": "numeric solve order dependences"
+ },
+ "287": {
+  "v": "A5",
+  "v2": "INT",
+  "why": "numeric solver abstentions rollup"
+ },
+ "290": {
+  "v": "INT",
+  "v2": "A2",
+  "why": "canonical specialiser order"
+ },
+ "292": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "readings abstentions rollup"
+ },
+ "293": {
+  "v": "ED",
+  "v2": "A3",
+  "why": "implicit end copy lifecycle"
+ },
+ "295": {
+  "v": "ED",
+  "v2": "",
+  "why": "editor abstentions rollup"
+ },
+ "296": {
+  "v": "A1",
+  "v2": "A5",
+  "why": "negated assert abstentions"
+ },
+ "297": {
+  "v": "TXT",
+  "v2": "A3",
+  "why": "save unnamed end"
+ },
+ "300": {
+  "v": "A5",
+  "v2": "",
+  "why": "Z3 constraint classes rollup"
+ },
+ "302": {
+  "v": "A5",
+  "v2": "",
+  "why": "bounds and consistency rollup"
+ },
+ "303": {
+  "v": "ED",
+  "v2": "",
+  "why": "collaboration room rollup"
+ },
+ "304": {
+  "v": "A5",
+  "v2": "INT",
+  "why": "constraint class wording defects"
+ },
+ "305": {
+  "v": "A5",
+  "v2": "",
+  "why": "constraint classes abstentions"
+ },
+ "310": {
+  "v": "ED",
+  "v2": "",
+  "why": "editor copies rollup"
+ },
+ "311": {
+  "v": "ED",
+  "v2": "",
+  "why": "renames and clashes rollup"
+ },
+ "312": {
+  "v": "TXT",
+  "v2": "A3",
+  "why": "save of an end"
+ },
+ "313": {
+  "v": "INT",
+  "v2": "",
+  "why": "listing order rollup"
+ },
+ "317": {
+  "v": "A5",
+  "v2": "A3",
+  "why": "seeds against bound end"
+ },
+ "319": {
+  "v": "INT",
+  "v2": "A5",
+  "why": "genericity metamorphic audit rollup"
+ },
+ "320": {
+  "v": "TXT",
+  "v2": "A5",
+  "why": "quoted names in expressions"
+ },
+ "321": {
+  "v": "INT",
+  "v2": "",
+  "why": "wording and refusals rollup"
+ },
+ "322": {
+  "v": "A5",
+  "v2": "",
+  "why": "defaults rollup"
+ },
+ "323": {
+  "v": "A5",
+  "v2": "A2",
+  "why": "binding chains, context walks"
+ },
+ "324": {
+  "v": "A10",
+  "v2": "",
+  "why": "keywords and metadata annotations"
+ },
+ "325": {
+  "v": "A4a",
+  "v2": "",
+  "why": "parallel machines, Simulate"
+ },
+ "326": {
+  "v": "A2",
+  "v2": "INT",
+  "why": "dotted path resolution"
+ },
+ "327": {
+  "v": "TXT",
+  "v2": "",
+  "why": "Save launders unparsable shapes"
+ }
+}

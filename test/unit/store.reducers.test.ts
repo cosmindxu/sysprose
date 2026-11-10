@@ -3719,9 +3719,12 @@ package UE { part x : TE::B; constraint c1 { x.v == 2.0 } constraint c2 { x.v ==
         // inconsistent). 32180 c6 and 42267 c6 are the cells the TODO named.
         const F = 'F/F/F/X';
         const weaker42267 = { 'G::c1': ['?/?/?/?', F], 'G::c2': ['?/?/?/?', '?/?/?/X'], 'G::c3': ['?/?/?/?', F], 'G::c5': ['?/?/?/?', F], 'G::c6': ['?/?/?/?', '?/?/F/X'], 'G::c7': ['?/?/?/?', F] };
+        // After K takes N's name, `u0.K` (c1) is read through D2's renamed redefinition `M2 :>> K` on the page as the
+        // file reads it (closing-readings RN-1): the page no longer abstains there.
+        const { 'G::c1': _c1, ...renamedN42267 } = weaker42267;
         expect(out).toEqual([
           { rename: { 'G::c4': ['?/?/?/?', '?/?/?/X'], 'G::c6': ['?/?/?/?', F] }, 'rename D3': {} },
-          { delete: {}, rename: weaker42267, 'raw remove': weaker42267, 'rename N': weaker42267 },
+          { delete: {}, rename: weaker42267, 'raw remove': weaker42267, 'rename N': renamedN42267 },
           { retarget: {}, delete: {}, 'raw rename': {}, 'retarget D2': {} },
           { rename: {}, delete: {}, 'rename Zd2': {} },
         ]);

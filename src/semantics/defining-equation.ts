@@ -420,6 +420,7 @@ export class DefiningEquations {
   private readonly effective = new Map<ElementId, ElementRecord[]>();
   private readonly names = new Map<ElementId, string | undefined>();
   private readonly aliases = new Map<ElementId, string[]>();
+  private readonly shared = new Map<ElementId, ReadonlySet<string>>();
   private readonly scopes = new Map<string, Map<string, ElementId>>();
   private readonly readers = new Map<ElementId, Map<string, ElementId>>();
   private readonly qualified = new Map<ElementId, string>();
@@ -780,6 +781,26 @@ export class DefiningEquations {
     return hit;
   }
 
+  /**
+   * The names two of `ownerId`'s effective features both answer to only as
+   * an alias ({@link aliasesOf}): `p` in `part q : Q { part pp :>> p; part e
+   * :>> p; }`. Neither is p (H3), and the first was read as it — `q.p.x` read
+   * e's value where pp's differs. Such a name answers nothing.
+   */
+  sharedAliases(ownerId: ElementId): ReadonlySet<string> {
+    let hit = this.shared.get(ownerId);
+    if (!hit) {
+      const seen = new Set<string>();
+      const twice = new Set<string>();
+      for (const f of this.features(ownerId)) {
+        for (const n of this.aliasesOf(f)) (seen.has(n) ? twice : seen).add(n);
+      }
+      hit = twice;
+      this.shared.set(ownerId, hit);
+    }
+    return hit;
+  }
+
   /** The first of `contextId`'s effective features named `name` that states no value. */
   feature(contextId: ElementId, name: string): ElementRecord | undefined {
     let byName = this.valueless.get(contextId);
@@ -808,8 +829,9 @@ export class DefiningEquations {
         const n = this.nameOf(f);
         if (n && !byName.has(n)) byName.set(n, f);
       }
+      const shared = this.sharedAliases(contextId);
       for (const f of features) {
-        for (const n of this.aliasesOf(f)) if (!byName.has(n)) byName.set(n, f);
+        for (const n of this.aliasesOf(f)) if (!byName.has(n) && !shared.has(n)) byName.set(n, f);
       }
       this.named.set(contextId, byName);
     }
@@ -1043,9 +1065,11 @@ export class DefiningEquations {
         const denoted: Denotation = { feature: feat, reader: ownerId, inCall, instance, enclosing };
         // A directed feature is its owner's parameter: never a nested bare name.
         const own = inBody || isDirected(feat);
+        const shared = this.sharedAliases(ownerId);
         for (const n of [name, ...this.aliasesOf(feat)]) {
           const full = prefix ? `${prefix}.${n}` : n;
-          if (!ids.has(full)) ids.set(full, denoted);
+          // An alias two features share stays claimed, and answers neither ({@link sharedAliases}).
+          if (!ids.has(full) && (n === name || !shared.has(n))) ids.set(full, denoted);
           if (prefix === '') direct.add(n);
           else if (!own) {
             const seen = nested.get(n);
@@ -1148,9 +1172,11 @@ export class DefiningEquations {
     const context = this.model.get(contextId);
     if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
     const own = this.byName(contextId);
+    // A name two renamed redefinitions share answers nothing here, and no owner's attribute answers it either.
+    const shared = this.sharedAliases(contextId);
     const writers = [context, ...generalizationsOf(this.model, contextId).filter((t) => t.attrs.isLibrary !== true)];
     for (const w of writers) {
-      for (const [n, at] of this.namesWritten(w.id)) if (!own.has(n)) written.set(n, [...(written.get(n) ?? []), ...at]);
+      for (const [n, at] of this.namesWritten(w.id)) if (!own.has(n) && !shared.has(n)) written.set(n, [...(written.get(n) ?? []), ...at]);
     }
     for (const [n, at] of written) {
       // Each element that writes it: the nearest of its owners that declares
@@ -1220,7 +1246,7 @@ export class DefiningEquations {
    * where it reads none so: a feature of the context, or a name left unread.
    */
   lexicalFeature(contextId: ElementId, name: string): ElementRecord | undefined {
-    return this.byName(contextId).has(name) ? undefined : this.lexicalNames(contextId).admitted.get(name)?.feature;
+    return this.byName(contextId).has(name) || this.sharedAliases(contextId).has(name) ? undefined : this.lexicalNames(contextId).admitted.get(name)?.feature;
   }
 
   /**
@@ -1237,7 +1263,7 @@ export class DefiningEquations {
       const cut = this.nameWalkCut(contextId);
       if (cut !== undefined) return cut;
     }
-    return this.byName(contextId).has(name) ? undefined : this.lexicalNames(contextId).refused.get(name);
+    return this.byName(contextId).has(name) || this.sharedAliases(contextId).has(name) ? undefined : this.lexicalNames(contextId).refused.get(name);
   }
 
   /** The feature the nearest owner of `fromId` that declares `name` declares under it, with that owner. */
@@ -2537,16 +2563,18 @@ export class DefiningEquations {
   reachingAssert(
     contextId: ElementId,
     name: string,
+    spelled = true,
   ): { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined {
     if (name.includes('.') || !this.anyAsserted()) return undefined;
-    const key = `${contextId} ${name}`;
-    if (!this.reaching.has(key)) this.reaching.set(key, this.reachingUncached(contextId, name) ?? null);
+    const key = `${spelled ? '' : 'renamed '}${contextId} ${name}`;
+    if (!this.reaching.has(key)) this.reaching.set(key, this.reachingUncached(contextId, name, spelled) ?? null);
     return this.reaching.get(key) ?? undefined;
   }
 
   private reachingUncached(
     contextId: ElementId,
     name: string,
+    spelled: boolean,
   ): { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined {
     const f = this.feature(contextId, name);
     if (!f) return undefined;
@@ -2576,7 +2604,27 @@ export class DefiningEquations {
       }
       cur = owner;
     }
-    return undefined;
+    // RN-1: nothing on the owner chain — re-ask through the features the
+    // context redefines, nearest first (`part pp :>> p` reads Q's `p.x == 50`
+    // asserted over p). Two that answer differently leave it undecided. Not
+    // for a context a path reached by a name it redefines (`q.p` for q's
+    // `pp :>> p`, `spelled` false): p is no member of q (H3).
+    const start = this.model.get(contextId);
+    if (!spelled || !start || !isUsage(start.eClass)) return undefined;
+    let hit: { site: ElementId; path: string; equations: readonly DefiningEquation[] } | undefined;
+    // Nor for a renamer of a feature another usage of its owner also redefines (`part e :>> p; part pp :>> p;`):
+    // the two are one p, whose x the other may state otherwise, and neither reads the general's assert (review).
+    const closure = redefinedClosure(this.model, start);
+    if (start.ownerId != null && closure.some((g) => this.features(start.ownerId!).some(
+      (x) => x.id !== start.id && !closure.some((c) => c.id === x.id) && redefinedClosure(this.model, x).some((y) => y.id === g.id)))) return undefined;
+    for (const g of closure) {
+      const r = this.reachingAssert(g.id, name);
+      if (!r) continue;
+      if (!hit) hit = r;
+      else if (JSON.stringify([r.equations.map((e) => [e.definition, [...e.literals]])]) !==
+        JSON.stringify([hit.equations.map((e) => [e.definition, [...e.literals]])])) return undefined;
+    }
+    return hit;
   }
 
   /** Where `f`'s asserted definitions are written: its owner, else the owner of the nearest feature it redefines that has one. */
@@ -2627,7 +2675,7 @@ export class DefiningEquations {
   chain(
     contexts: readonly ElementId[],
     path: string,
-  ): { feature: ElementRecord; usage?: ElementRecord; via?: ElementId; clean: boolean } | undefined {
+  ): { feature: ElementRecord; usage?: ElementRecord; via?: ElementId; clean: boolean; spelled: boolean } | undefined {
     const [head, ...rest] = path.split('.');
     let feature: ElementRecord | undefined;
     let owner: ElementId | undefined;
@@ -2636,6 +2684,8 @@ export class DefiningEquations {
       owner = c;
       if (feature) break;
     }
+    // `spelled`: every link names its feature by its own name, not one it redefines (`byName`'s aliases).
+    let spelled = feature === undefined || this.nameOf(feature) === head;
     let usage: ElementRecord | undefined;
     let via: ElementId | undefined;
     for (const segment of rest) {
@@ -2644,12 +2694,15 @@ export class DefiningEquations {
       const into = this.subjectOf(owner, feature) ?? feature;
       const next = this.byName(into.id).get(segment);
       if (!next) return undefined;
+      if (this.nameOf(next) !== segment) spelled = false;
       via = into.id;
       usage = into;
       owner = into.id;
       feature = next;
     }
-    return feature ? { feature, ...(usage ? { usage } : {}), ...(via !== undefined ? { via } : {}), clean: true } : undefined;
+    return feature
+      ? { feature, ...(usage ? { usage } : {}), ...(via !== undefined ? { via } : {}), clean: true, spelled }
+      : undefined;
   }
 
   /**
@@ -3707,10 +3760,13 @@ export class DefiningEquations {
       for (const n of names) {
         const idT = ownAll.get(n);
         if (idT === undefined) continue;
+        // The name as the context spells it (Q's `p.x` is q's `pp.x` over `part pp :>> p`, {@link respelledIn}):
+        // read by its spelling alone, every context that renames it read alike, and the first stood for the rest.
+        const nx = all.has(n) ? n : respelledIn(this.model, this, x.id, owner, n);
         if (taint !== undefined) {
           let own = ownTainted.get(n);
           if (own === undefined) ownTainted.set(n, (own = readsTainted(this.model, taint, [owner], n) !== undefined));
-          const there = own ? undefined : readsTainted(this.model, taint, [x.id], n);
+          const there = own ? undefined : readsTainted(this.model, taint, [x.id], nx);
           // Each such context its own row: read alike with another the
           // source taints too, it read the owner's value (RF's p1, which Q's `r =
           // p1` reaches, beside Q's own r: P's `c` held there unread).
@@ -3719,12 +3775,12 @@ export class DefiningEquations {
             reading.push(`${n}~${there.id}~${x.id}`);
           }
         }
-        const idX = all.get(n);
-        const valued = value.has(n);
+        const idX = all.get(nx);
+        const valued = value.has(nx);
         // A value read IN the context, over its own names (`readAt`), is the
         // context's own: one its inputs make other than where it is written.
-        const at = valued ? this.readAt(x.id, n) : undefined;
-        const site = valued ? undefined : this.definitionSite(x.id, n);
+        const at = valued ? this.readAt(x.id, nx) : undefined;
+        const site = valued ? undefined : this.definitionSite(x.id, nx);
         reading.push(`${n}=${idX ?? ''}:${valued}:${site ?? ''}:${at ?? ''}`);
         // A name the context reads in an instance other than the owner's own,
         // re-rooted there ({@link landsElsewhere}): a reference on its path the
@@ -7336,6 +7392,8 @@ interface ContradictedDefinitions {
   taint?: ScopedTaint;
   /** {@link contradictedTaint} of each set alone, built on first ask ({@link contradictedSideReadsAnother}). */
   taintOf?: Map<ContradictedDefinition, ScopedTaint>;
+  /** {@link fallbackSets}' packages within reach, by the outermost package of a row, built on first ask. */
+  reachOf?: Map<ElementId | null, ReadonlySet<ElementId> | null>;
   /** Set where listing them threw (A.2.9): the sentence every row that reads a name abstains in. */
   failed?: string;
 }
@@ -7488,6 +7546,38 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     return [...pairSlotOf(g)].some((id) => mine.has(id));
   };
   /**
+   * The features `path` denotes read in `u`, a segment at a time (`undefined` where one resolves to nothing), and
+   * whether `other`, written in `y` (one `u` specialises), denotes the same there: each of its segments resolved where
+   * it is written stands for the feature at that segment in `u` — is it, or is one it redefines, under any name (`pp`
+   * for Q's `p` read in `part q : Q { part pp :>> p; }`). Two redefiners of one feature each stand for it.
+   */
+  const chainMemo = new Map<string, readonly ElementId[] | undefined>();
+  const chainIn = (u: ElementRecord, path: string): readonly ElementId[] | undefined => {
+    const memo = `${u.id} ${path}`;
+    if (chainMemo.has(memo)) return chainMemo.get(memo);
+    const ids: ElementId[] = [];
+    for (let k = 1, segments = path.split('.'); k <= segments.length; k++) {
+      const f = named(u.id, segments.slice(0, k).join('.'));
+      if (!f) break;
+      ids.push(f.id);
+    }
+    const chain = ids.length === path.split('.').length ? ids : undefined;
+    chainMemo.set(memo, chain);
+    return chain;
+  };
+  const standsFor = (chain: readonly ElementId[], y: ElementRecord, other: string): boolean => {
+    const segments = other.split('.');
+    if (segments.length !== chain.length) return false;
+    let written = y.id;
+    for (let i = 0; i < segments.length; i++) {
+      const f = named(written, segments[i]!);
+      const here = model.get(chain[i]!);
+      if (!f || !here || (here.id !== f.id && !redefinedClosure(model, here).some((g) => g.id === f.id))) return false;
+      written = f.id;
+    }
+    return true;
+  };
+  /**
    * The asserted equations that define `path` read in X (`feature`, there), each with the element the names its
    * defining side reads are read in: X's own and those of what it specialises, read in X; for a dotted path, those
    * of the usage each prefix names and of what that usage specialises, read in that usage; and one written in an
@@ -7505,13 +7595,25 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
       for (const eq of byOwner.get(owner.id)?.get(name) ?? []) push(eq, named(owner.id, name), at, name);
       for (const l of lexical.get(owner.id)?.get(name) ?? []) push(l.eq, l.named, l.eq.constraint.ownerId!, name);
     };
-    for (const y of [x, ...generalOf(x.id)]) take(y, path, x.id);
+    // A general's equation is taken by the feature its path denotes where it is read, not by its spelling: Q's `p.x`
+    // read in `part q : Q { part pp :>> p; }` is q's `pp.x` (closing-readings RN-0), so it meets q's `pp.x == 60.0`.
+    const takeAll = (u: ElementRecord, rest: string, at: ElementId): void => {
+      take(u, rest, at);
+      const mine = chainIn(u, rest);
+      for (const y of generalOf(u.id)) {
+        take(y, rest, at);
+        if (mine === undefined) continue;
+        for (const other of [...(byOwner.get(y.id)?.keys() ?? []), ...(lexical.get(y.id)?.keys() ?? [])]) {
+          if (other !== rest && standsFor(mine, y, other)) take(y, other, at);
+        }
+      }
+    };
+    takeAll(x, path, x.id);
     const segments = path.split('.');
     for (let k = 1; k < segments.length; k++) {
       const u = named(x.id, segments.slice(0, k).join('.'));
       if (!u) break;
-      const rest = segments.slice(k).join('.');
-      for (const y of [u, ...generalOf(u.id)]) take(y, rest, u.id);
+      takeAll(u, segments.slice(k).join('.'), u.id);
     }
     return out;
   };
@@ -8161,18 +8263,32 @@ export function contradictedDefinitionRefusalOf(
     const roots = [at ? at.contextId : rel?.ownerId, relationId].filter((x): x is ElementId => x != null);
     let b = names.map((n) => readsTainted(model, taint, roots, n, at)).find((x) => x !== undefined);
     b ??= taintedAt(model, taint, context, at) ?? taintedAt(model, taint, rel, at);
+    // A row read where no instance chain spells `at.path`, or through a name the walk places nowhere (below), may
+    // read a set the walk does not see: the sets within its reach (fallbackSets, INV-12), never one it cannot reach.
+    let fallback = false;
     if (!b && at?.path !== undefined) {
       const frames = sharedDefinitions(model).framesAbove(at.path);
-      b =
-        frames === undefined
-          ? index.sets[0]!.equations[0]
-          : frames.map((fr) => taintedAt(model, taint, model.get(fr.reader), at)).find((x) => x !== undefined);
+      if (frames === undefined) fallback = true;
+      else b = frames.map((fr) => taintedAt(model, taint, model.get(fr.reader), at)).find((x) => x !== undefined);
     }
     // A name the walk places nowhere — in a scope it withholds (two features under one name: `unreadScopes`), or
     // through a usage a renamed redefinition hides (`part a2 :>> a`, then `r.a.L`) — is seen to reach no set, while
     // the check's evaluator may still read it through the first equation written (`p.L == 50.0` T, and F with the two
     // exchanged): it may read one, so it is read as reaching one.
-    if (!b && names.some((n) => !placedName(model, roots, n))) b = index.sets[0]!.equations[0];
+    if (!b && !fallback && names.some((n) => !placedName(model, roots, n))) fallback = true;
+    if (!b && fallback) {
+      const within = fallbackSets(model, index, roots, names);
+      if (within.length === 1) b = within[0]!.equations[0];
+      else if (within.length > 1) {
+        const row = effectiveQualifiedName(model, relationId);
+        return {
+          sentence:
+            `${row} reads a name this walk places nowhere, and the model has asserted equations that give one feature ` +
+            'two values within its reach, so it is not read',
+          verdict: within.every((x) => x.verdict === 'differs') ? 'differs' : 'undecided',
+        };
+      }
+    }
     const set = b ? index.bySource.get(b.id) : undefined;
     return set ? { sentence: contradictedDefinitionSentence(model, set), verdict: set.verdict, set } : undefined;
   } catch (e) {
@@ -8186,6 +8302,74 @@ export function contradictedDefinitionRefusalOf(
         }
       : undefined;
   }
+}
+
+/**
+ * The sets of `index` a row read at `roots` may reach where the walk places one of its names nowhere ({@link
+ * contradictedDefinitionRefusalOf}): those with an equation, or the feature they define, owned under the outermost
+ * non-library package that owns the row, or under a package it imports (transitively). Every set where the row is
+ * owned by no package, where an import names nothing, or where a name is written with `::` (it may name any
+ * package). A set the row cannot reach is no reason to leave it unread (INV-12: twins read in one file and apart
+ * give the same rows).
+ */
+function fallbackSets(
+  model: Model,
+  index: ContradictedDefinitions,
+  roots: readonly ElementId[],
+  names: readonly string[],
+): readonly ContradictedDefinition[] {
+  if (names.some((n) => n.includes('::'))) return index.sets;
+  const outermost = (id: ElementId | null | undefined): ElementId | null => {
+    let top: ElementId | null = null;
+    const seen = new Set<ElementId>();
+    for (let cur = id != null ? model.get(id) : undefined; cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+      seen.add(cur.id);
+      if (cur.eClass === 'Package' && cur.attrs.isLibrary !== true) top = cur.id;
+    }
+    return top;
+  };
+  const tops = new Set(roots.map(outermost));
+  if (tops.has(null)) return index.sets;
+  index.reachOf ??= new Map();
+  const reach = new Set<ElementId>();
+  for (const top of tops) {
+    let r = index.reachOf.get(top);
+    if (r === undefined) {
+      // The packages `top` reaches by its imports, and theirs: null where one names nothing (it may name any).
+      const out = new Set<ElementId>([top!]);
+      const queue = [top!];
+      let open = false;
+      while (queue.length > 0 && !open) {
+        const pkg = model.get(queue.pop()!);
+        if (!pkg) continue;
+        for (const el of [pkg, ...model.descendants(pkg.id)]) {
+          if (el.eClass !== 'NamespaceImport' && el.eClass !== 'MembershipImport') continue;
+          const target = el.target?.[0];
+          const t = target !== undefined ? model.get(target) : undefined;
+          if (!t) {
+            open = true;
+            break;
+          }
+          if (t.attrs.isLibrary === true) continue;
+          const o = outermost(t.id);
+          if (o === null) {
+            open = true;
+            break;
+          }
+          if (!out.has(o)) {
+            out.add(o);
+            queue.push(o);
+          }
+        }
+      }
+      r = open ? null : out;
+      index.reachOf.set(top, r);
+    }
+    if (r === null) return index.sets;
+    for (const x of r) reach.add(x);
+  }
+  const within = (id: ElementId | undefined): boolean => id !== undefined && reach.has(outermost(id) as ElementId);
+  return index.sets.filter((set) => within(set.context.id) || within(set.feature.id) || set.equations.some((e) => within(e.id)));
 }
 
 /** The clause every sentence about `set` opens with: its equations, where they meet, and what they give. */
@@ -11631,6 +11815,34 @@ export function spelledIn(definitions: DefiningEquations, contextId: ElementId, 
     spelled = spelled === '' ? name : `${spelled}.${name}`;
   }
   return spelled;
+}
+
+/**
+ * `raw`, an assert's body written in `writtenId` (a general type of
+ * `contextId`), with each dotted path the context does not name respelled as
+ * the context spells it ({@link spelledIn}): Q's `p.x == 50.0` read in `part q
+ * : Q { part pp :>> p; }` is q's `pp.x == 50.0`, the symbol every relation
+ * over q's pp reads (closing-readings RN-2). Only where each respelled segment
+ * is the general's own feature or redefines it; any other path, and a body
+ * holding a quoted name, stays as written (and reads nothing there). A name
+ * written outside q is never respelled here (H3).
+ */
+export function respelledIn(model: Model, definitions: DefiningEquations, contextId: ElementId, writtenId: ElementId, raw: string): string {
+  if (/['"]/.test(raw)) return raw;
+  const denoted = definitions.denote(contextId);
+  return raw.replace(/(?<![\w.:$])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?![\w(:])/g, (path) => {
+    if (denoted.has(path)) return path;
+    const spelled = spelledIn(definitions, contextId, path);
+    if (spelled === path) return path;
+    const own = path.split('.');
+    const read = spelled.split('.');
+    for (let i = 1; i <= own.length; i++) {
+      const g = definitions.chain([writtenId], own.slice(0, i).join('.'))?.feature;
+      const f = denoted.get(read.slice(0, i).join('.'))?.feature;
+      if (!g || !f || (f.id !== g.id && !redefinedClosure(model, f).some((r) => r.id === g.id))) return path;
+    }
+    return spelled;
+  });
 }
 
 /**

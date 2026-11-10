@@ -232,17 +232,10 @@ headings.
       table rows. Low. The RB5 duplicate (two check rows `P::c in q1::p`) is fixed in naming-pass S1
       (h5-rb5p). [O9 S2, naming-pass S1]
 - [ ] **Close the F section 2.8 rows still open, and the other end of an asserted equation's
-      binding.** (1) GA6 `qa` reads T/-/?/- (target T/-/T/-; the numeric surface does not converge
-      on that self-contradictory model). GA6 `pa` and GA12 `pa`/`qa` moved from a numeric T to `?`
-      and gained or lost rows; that needs the maintainer's ruling under invariant (h). (2) A
-      package-level definition-feature bind files no per-instance `#bind` row on the check and the
-      numeric surface, so `sysml-check` abstains where SMT decides (`W4o::c4` ?/?/?/X). (3) Under a
+      binding.** (3) Under a
       fixed slot the check and the literal engine abstain where the true answer is decided: X3
       `c3T`/`cMT`, X6 `c2T` and X10 `c3T`/`cq2T` read ?/?/?/T (the SMT engine decides them; pinned
-      as W4X3 and W4X6), W4d `c2F` ?/?/F/?, `c2T` ?/?/T/T. (4) The numeric surface still imposes the
-      first equation over a free partner (Q4L `eq` ?/-/T/-, decision 7: the label stays); its
-      abstention on `c`/`d` says 'L is left free … no relation fixes it', not a sentence of its own.
-      (5) SMT abstains on renamed paths (`q.pp.x`). (6) Where a binding joins an element's asserted
+      as W4X3 and W4X6), W4d `c2F` ?/?/F/?, `c2T` ?/?/T/T. (5) The numeric surface and SMT abstain on an enclosing assert read through a renamed redefinition (RNV `q.pp.x`: top and topF now read T/T/T/T and F/F/F/F since closing-readings RN-1/RN-2, so this clause is closed but for `q.p.x`, the old name from outside, which stays ? under H3; RNV2 at depth 2 reads T/?/?/?). Two renamers of one name (`part e :>> p; part pp :>> p;`) no longer answer it (rn1-shared: it read e's 60 where pp's x is 50). [closing-readings RN-1, RN-2] (6) Where a binding joins an element's asserted
       equation to a value written with `=` that it does not give, the equation's end is not read on
       the check and the literal engine since per-instance-rest S2, but the other end still is, at
       its own value: RBL2L's `topL { q.L <= 3.5 }` and `q::lq` F/F/F/X, GV1's `pl` T/T/T/X, GW's `pl
@@ -256,9 +249,8 @@ headings.
       instance's own redefinition of p); rh and rh2 (pinned, own sentences); X11's value-source
       clause; the Q4 and RH2 'no value anywhere' sentences; BW4/BW5 (a chain to a default a binding
       holds names the binding). [O5, review, per-instance-rest S2]
-      Since default-stands S2: item (1) closes (GA6 `qa` and `pa in Q::p` and GA12 `qa in q` read
-      ?/-/?/- with ref '?'; GA6/GA12 `pa` and GA12 `qa` read T/-/T/- with ref T); item (6)'s GW
-      example is obsolete: `pl in q2` reads T/T/T/X, ref null.
+      Since default-stands S2: item (6)'s GW example is obsolete: `pl in q2` reads T/T/T/X, ref null.
+      Rollup (sound but weaker, closing-readings): (RN-0) the old name of a renamed feature is read from outside on check, literal and SMT: after `part q : Q { part pp :>> p; }`, `q.p.x == 60.0` is decided at pp's value where q's pp has a single value, though p is not a member of q (H3: keep `?`; the 284 single-renamer gen-rn cells that read decided and correct are pinned in 16 differential rows, an open coordinator decision against the RN-1 oracle 'old name from outside gives ?'); with two un-renamed redefiners the numeric surface reads the q-level comparison as `?` in one text order and decided (correct) in the other, the renamed twin in both. (RN-F) a row's literal and SMT readings still depend on unrelated packages in the same file (literal abstains beside an unreadable assert elsewhere; SMT gives file-wide X beside a self-contradicting package or two same-named attributes): abstentions and X only; check and numeric rows have been file-independent since RN-F. (RN-2) 40 of 480 gen-rn g cells abstain where a conjunct of a respelled assert could read (buildInstanceSystem respells `whole`, not the assertConjuncts parts; a sound abstention; e.g. F/?/F/? against F/F/F/F). A general's assert over a feature two renamers share is read by neither renamer (fence in reachingUncached, row rn1-shared-general). [closing-readings RN-0, RN-F, RN-1, RN-2]
 
 - [ ] **Finish what `table-rows` left of E3 and E9, and the numeric surface's reading of an
       evaluated pair.** (1) E3 `h2p0` (`P::c in Q::p`) and `h2c0` (`Q::c`) read ?/?/?/? beside ref
@@ -340,15 +332,6 @@ headings.
       Since default-stands S2: item (4)'s '(which keeps its reading)' is obsolete: an untyped
       asserted equation over a default is checked against it, and the lexical reading also reads a
       default an assert names as its value (LP1, SLD, SLO, SLP).
-- [ ] **Remove the last order dependences of the numeric solve (after numeric-curved).** The
-      guide says 'bar two cases'. Each abstains in one text order and reads a value in the other,
-      never a different verdict: (a) the digits of a value: a pin written to ten digits (`x ==
-      0.000003000000001` beside `2.0 / (7.0 * x) - 95238.0952 == 0.0`) reads t/t equation-first and
-      ?/? pin-first (review-2026-10-14/wave3-probes/numeric-curved/fix3-pm/D1, D2), a value taken
-      through an affine link by finite differences, accurate to about 3e-11 (fix3-pg/G4 reads ?, G3
-      and G5..G8 read t), and `y / 2.0 == 0.0` is solved to 2.9e-11 beside `z * y == 0.0`
-      (solver2-pass-scratch/s5/A6x086, A5x092, A5x240). Fix: polish the affine Newton step or judge
-      agreement both ways. [numeric-curved; solver2-pass S1, S3, S5]
 - [ ] **Abstentions left in the numeric solver (rollup; sound, only weaker).** Each reads unknown
       where an answer exists; none gives a wrong answer. (1) designReadings withholds the whole
       component a curved equation links, where only what its root reaches need be withheld (`z` of
@@ -438,8 +421,7 @@ headings.
       (p)
       a plain quotient over an asserted zero divisor (`A z == 0.0` beside `r / z == q`) reads `?` in
       one order and T in the other (s3/Q2x156f.sysml, Q2x156r.sysml); (q) an affine core past 32
-      features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) the
-      286(a) digits cases (s5/A6x086f, A5x092f, A5x240f); (s) a definition's own row reads `t` where an
+      features or with a coefficient that is a feature's value (`k * x`) is read as before; (r) a definition's own row reads `t` where an
       instance's facts refute it (adv/genpin: `P::ck` ?/?/F/? before P-pin, ?/?/t/? after; definition
       rows only): the F side is liftable by reading an instance's refuting F onto its
       definition's row.

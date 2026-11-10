@@ -1,0 +1,413 @@
+<meta name="dash-one-writer">
+<style>
+  .oi { max-width: 74rem; margin-inline: auto; display: flex; flex-direction: column; gap: var(--cds-gap-lg); font-family: var(--font-anthropic-sans); }
+  .oi h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; }
+  .oi h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0; }
+  .oi p { margin: 0; }
+  .oi .lead { font-size: var(--cds-font-size-body); max-width: 62ch; color: var(--color-fg); }
+  .oi .note { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); max-width: 70ch; }
+  .oi .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--cds-gap-md); }
+  .oi .tile { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-md) var(--cds-pad-lg); display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+  .oi .tile .k { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .oi .tile .v { font-family: var(--font-anthropic-serif); font-size: 2rem; font-weight: 400; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .oi .tile .d { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); font-variant-numeric: tabular-nums; }
+  .oi .bad { color: var(--cds-chart-status-critical); }
+  .oi .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: var(--cds-gap-md); }
+  .oi .card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-sm); min-width: 0; position: relative; }
+  .oi .chart { min-height: 17rem; position: relative; }
+  .oi .chart.short { min-height: 13rem; }
+  .oi svg { display: block; overflow: visible; }
+  .oi .tick text { fill: var(--color-fg-muted); font-size: 11px; font-family: var(--font-anthropic-sans); }
+  .oi .lab { font-size: 11px; font-family: var(--font-anthropic-sans); }
+  .oi .tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); line-height: 1.45; white-space: nowrap; z-index: 5; font-variant-numeric: tabular-nums; }
+  .oi .tip .h { color: var(--cds-text-secondary); }
+  .oi .sw { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 2px; margin-right: 0.35rem; vertical-align: baseline; }
+  .oi .legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .oi .tbl-wrap { overflow: auto; max-height: 26rem; border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); }
+  .oi .tbl-wrap.flat { max-height: none; }
+  .oi table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
+  .oi th, .oi td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--color-border-line); vertical-align: top; }
+  .oi th { position: sticky; top: 0; background: var(--color-panel); font-weight: var(--cds-font-weight-medium); white-space: nowrap; }
+  .oi th button { all: unset; cursor: pointer; }
+  .oi th button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+  .oi td.n, .oi th.n { text-align: right; }
+  .oi .pill { display: inline-block; border-radius: 999px; padding: 0 0.5rem; font-size: 11px; border: 1px solid var(--color-border-line); white-space: nowrap; }
+  .oi .pill.FALSE { border-color: var(--cds-chart-status-critical); color: var(--cds-chart-status-critical); }
+  .oi input.find { font: inherit; font-size: var(--cds-font-size-caption); padding: 0.35rem 0.6rem; border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); background: var(--color-bg); color: var(--color-fg); width: min(100%, 22rem); }
+  .oi .skel-row { display: flex; gap: var(--cds-gap-sm); align-items: baseline; flex-wrap: wrap; }
+  [data-dash-source-state=empty] { color: transparent; }
+  [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+</style>
+<div class="oi">
+  <header>
+    <h1>Open items in the Sysprose list</h1>
+    <p class="lead" id="oi-lead">The list holds <b data-draw="lead-open" data-source="timeline">—</b> open items. <b data-draw="lead-false" data-source="timeline">—</b> of them can give a wrong answer or lose work. In waves 2 and 3 the team found <b data-draw="lead-found" data-source="windows">—</b> items and closed <b data-draw="lead-closed" data-source="windows">—</b>. Since 3 November the list has shrunk at each round, slowly; <b data-draw="lead-cls" data-source="open">—</b> of the open items are being built now.</p>
+  </header>
+
+  <section class="tiles" aria-label="Headline figures">
+    <div class="tile"><span class="k">Open now</span><span class="v" data-draw="t-open" data-source="timeline">—</span><span class="d" data-draw="t-open-d" data-source="timeline">—</span></div>
+    <div class="tile"><span class="k">Can give a wrong answer</span><span class="v bad" data-draw="t-false" data-source="timeline">—</span><span class="d" data-draw="t-false-d" data-source="timeline">—</span></div>
+    <div class="tile"><span class="k">Found per item closed, wave 3</span><span class="v" data-draw="t-ratio" data-source="windows">—</span><span class="d" data-draw="t-ratio-d" data-source="windows">—</span></div>
+    <div class="tile"><span class="k">Closed since the review</span><span class="v" data-draw="t-closed" data-source="since_review">—</span><span class="d" data-draw="t-closed-d" data-source="since_review">—</span></div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Open items by severity</h2>
+      <p class="note">After each merge that changed the list. Wrong answer: a false verdict, a lost edit or a page that differs from its saved file. Weaker: sound, but gives up a reading it could make. Other: wording, speed, tests, UI polish, items waiting on a decision.</p>
+      <div class="chart" data-draw="c-open" data-source="timeline"></div>
+      <div class="legend" data-draw="legend-open"></div>
+    </div>
+    <div class="card">
+      <h2>Found and closed, cumulative since the review</h2>
+      <p class="note">Counting starts at the merge that brought in the 14 October review, which itself filed most of its items. The gap between the lines is the growth of the list. Narrowing an item to its residual counts as neither.</p>
+      <div class="chart" data-draw="c-cum" data-source="since_review"></div>
+      <div class="legend" data-draw="legend-cum"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Found and closed at each merge</h2>
+    <p class="note">One pair of bars per merge. Above the line: items the merge's reviews and gates filed. Below: items it closed. The darker part is the wrong-answer class.</p>
+    <div class="chart short" data-draw="c-flow" data-source="timeline"></div>
+    <div class="legend" data-draw="legend-flow"></div>
+  </section>
+
+  <section class="card">
+    <h2>By wave</h2>
+    <p class="note">A wave is a set of branches run and merged together. Found per closed above 1 means the list grew. The last row is incomplete: several of its branches have not merged yet.</p>
+    <div class="tbl-wrap flat"><table data-draw="t-waves" data-source="windows" data-row-key="window"></table></div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Where the wrong-answer and weaker-reading findings come from</h2>
+      <p class="note">Items filed since the review that were not a narrowing of an earlier item, by what the entry says about its origin.</p>
+      <div class="chart short" data-draw="c-origin" data-source="origin"></div>
+      <div class="legend" data-draw="legend-origin"></div>
+    </div>
+    <div class="card">
+      <h2>How the counts were made</h2>
+      <p class="note">Each point is the state of the list in the repository's history after a merge that changed it. An item is a checkbox entry. One that disappears counts as closed and one that appears as found. A pair that is the same problem narrowed to its residual counts as neither; two auditors checked those pairs against the diffs, and two stale re-adds made by branch merges on 12 October are removed. Severity and origin were assigned from each entry's text by two independent passes, and a third pass settled their disagreements.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Open items by how they close</h2>
+    <p class="note">Each open item sits in one class, set by the coordinator from the item's text and the work in flight. A class says what the item still needs before it can close, not how severe it is. Rollups group many small weaker readings, and close only when every reading in them is built or ruled.</p>
+    <div class="chart short" data-draw="c-cls" data-source="open"></div>
+  </section>
+
+  <section class="card">
+    <h2>Open items by SysML v2 view</h2>
+    <p class="note">Rows are the SysML v2 language areas, then the tool's own areas. The grade says how much of the view the tool decides formally today (assessment of 5 November on main 5ddc1e2, checked by a skeptic): <b>Decided</b>, <b>Partly</b>, <b>Traced only</b> (listed or linked, never judged), <b>Not covered</b>. The bar counts the open items whose main view is that row, coloured by how they close. A view with a weak grade and no bar is a gap that no open item addresses yet.</p>
+    <div class="chart" data-draw="c-view" data-source="open"></div>
+    <div class="legend" data-draw="legend-view"></div>
+  </section>
+
+  <section class="card">
+    <h2>Items open now</h2>
+    <p class="note" data-draw="note-provisional" data-source="open"></p>
+    <input class="find" id="oi-find" type="search" placeholder="Filter the list" aria-label="Filter the list of open items">
+    <div class="tbl-wrap"><table data-draw="t-open-list" data-source="open" data-row-key="id"></table></div>
+  </section>
+</div>
+<script>
+// cumulative counts from the merge that brought in the review (index 12) on
+  dash.calc('since_review', {
+    title: 'Found and closed since the review', description: 'Cumulative found and closed per merge from the 14 October review on, from the timeline.',
+    inputs: ['timeline'],
+    fn: (timeline) => {
+      const base = timeline.find((r) => Number(r.idx) === 11) || timeline[0];
+      return timeline.filter((r) => Number(r.idx) >= 12).map((r) => ({
+        idx: Number(r.idx), day: r.day, sha: r.sha,
+        found: Number(r.cum_found) - Number(base.cum_found), closed: Number(r.cum_closed) - Number(base.cum_closed),
+        open: Number(r.open),
+      }));
+    },
+  });
+</script>
+<script>
+(() => {
+  const fmt = d3.format(',');
+  const parse = d3.utcParse('%Y-%m-%d');
+  const dayFmt = d3.utcFormat('%-d %b');
+  const COL = () => ({ FALSE: 'var(--cds-chart-status-critical)', WEAKER: dash.colors[1], OTHER: dash.colors[0], FOUND: dash.colors[3], CLOSED: dash.colors[0] });
+  const NAMES = { FALSE: 'Wrong answer', WEAKER: 'Weaker reading', OTHER: 'Other' };
+  const ok = (id) => { const g = dash.data(id); return g.status === 'ok' && g.data && g.data.length ? g.data : null; };
+  const put = (el, text) => { el.textContent = text; };
+
+  const last = (rows) => rows[rows.length - 1];
+  const tip = (host) => {
+    let t = host.querySelector('.tip');
+    if (!t) { t = document.createElement('div'); t.className = 'tip'; t.hidden = true; host.appendChild(t); }
+    return t;
+  };
+  const showTip = (host, ev, lines) => {
+    const t = tip(host); t.hidden = false; t.replaceChildren();
+    lines.forEach((l, i) => { const d = document.createElement('div'); if (i === 0) d.className = 'h'; if (l.sw) { const s = document.createElement('span'); s.className = 'sw'; s.style.background = l.sw; d.appendChild(s); } d.appendChild(document.createTextNode(l.t)); t.appendChild(d); });
+    const hb = host.getBoundingClientRect();
+    let x = ev.clientX - hb.left + 12, y = ev.clientY - hb.top + 12;
+    const w = t.offsetWidth, h = t.offsetHeight;
+    if (x + w > hb.width) x = Math.max(0, ev.clientX - hb.left - w - 12);
+    if (y + h > hb.height) y = Math.max(0, ev.clientY - hb.top - h - 12);
+    t.style.left = x + 'px'; t.style.top = y + 'px';
+  };
+  const hideTip = (host) => { const t = host.querySelector('.tip'); if (t) t.hidden = true; };
+  const svgIn = (host, h) => {
+    host.querySelectorAll('svg').forEach((s) => s.remove());
+    const w = Math.max(host.clientWidth, 260);
+    const svg = d3.select(host).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${w} ${h}`).attr('height', h);
+    return { svg, w };
+  };
+  const legend = (el, items) => {
+    el.replaceChildren();
+    items.forEach((i) => { const s = document.createElement('span'); const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = i.color; s.appendChild(sw); s.appendChild(document.createTextNode(i.label)); el.appendChild(s); });
+  };
+  const axes = (g, x, y, w, h, m, ticksY) => {
+    g.append('g').attr('class', 'tick').selectAll('line').data(y.ticks(ticksY || 4)).join('line').attr('x1', m.l).attr('x2', w - m.r).attr('y1', (d) => y(d)).attr('y2', (d) => y(d)).style('stroke', 'var(--cds-chart-grid)').attr('stroke-width', 1);
+    g.append('g').attr('class', 'tick').selectAll('text').data(y.ticks(ticksY || 4)).join('text').attr('x', m.l - 6).attr('y', (d) => y(d) + 4).attr('text-anchor', 'end').text((d) => fmt(d));
+  };
+  const timeAxis = (g, x, h, m, n) => {
+    g.append('g').attr('class', 'tick').selectAll('text').data(x.ticks(n || 6)).join('text').attr('x', (d) => x(d)).attr('y', h - m.b + 16).attr('text-anchor', 'middle').text((d) => dayFmt(d));
+  };
+
+  // headline words ---------------------------------------------------------------------------
+  const rowsOr = (id, fn, el) => { const r = ok(id); if (!r) return false; fn(r); return true; };
+  dash.draw('lead-open', (el) => { const r = ok('timeline'); if (r) put(el, fmt(last(r).open)); });
+  dash.draw('lead-false', (el) => { const r = ok('timeline'); if (r) put(el, fmt(last(r).open_false)); });
+  const since21 = (w) => w.filter((x) => ['w3', 'w4'].includes(x.window));
+  dash.draw('lead-found', (el) => { const r = ok('windows'); if (r) put(el, fmt(d3.sum(since21(r), (x) => x.found))); });
+  dash.draw('lead-closed', (el) => { const r = ok('windows'); if (r) put(el, fmt(d3.sum(since21(r), (x) => x.closed))); });
+  dash.draw('t-open', (el) => { const r = ok('timeline'); if (r) put(el, fmt(last(r).open)); });
+  dash.draw('t-open-d', (el) => { const r = ok('timeline'); if (!r) return; const p = r.find((x) => Number(x.idx) === 26); put(el, `${fmt(p.open)} on ${dayFmt(parse(p.day))} (after the backlog sweep)`); });
+  dash.draw('t-false', (el) => { const r = ok('timeline'); if (r) put(el, fmt(last(r).open_false)); });
+  dash.draw('t-false-d', (el) => { const r = ok('timeline'); if (!r) return; const p = r.find((x) => Number(x.idx) === 28); put(el, `${fmt(p.open_false)} on ${dayFmt(parse(p.day))}, ${fmt(d3.max(r.filter((x) => Number(x.idx) <= 28), (x) => x.open_false))} at most before then`); });
+  dash.draw('t-ratio', (el) => { const r = ok('windows'); if (r) put(el, d3.format('.1f')(r.find((x) => x.window === 'w4').per_closed)); });
+  dash.draw('t-ratio-d', (el) => { const r = ok('windows'); if (!r) return; const w = r.find((x) => x.window === 'w4'); put(el, `${fmt(w.found)} found, ${fmt(w.closed)} closed, ${dayFmt(parse(w.from_day))} to ${dayFmt(parse(w.to_day))}`); });
+  dash.draw('t-closed', (el) => { const r = ok('since_review'); if (r) put(el, fmt(last(r).closed)); });
+  dash.draw('t-closed-d', (el) => { const r = ok('since_review'); if (r) put(el, `against ${fmt(last(r).found)} found`); });
+
+  // open items by severity (stacked area) ----------------------------------------------------
+  dash.draw('c-open', (host) => {
+    const r = ok('timeline'); if (!r) return;
+    const rows = r.map((d) => ({ t: parse(d.day), idx: Number(d.idx), FALSE: d.open_false, WEAKER: d.open_weaker, OTHER: d.open_polish + d.open_held, total: d.open, what: d.what }));
+    const { svg, w } = svgIn(host, 260), h = 260, m = { l: 34, r: 14, t: 10, b: 24 };
+    const x = d3.scaleUtc([rows[0].t, last(rows).t], [m.l, w - m.r]);
+    const y = d3.scaleLinear([0, d3.max(rows, (d) => d.total) * 1.08], [h - m.b, m.t]);
+    const keys = ['FALSE', 'WEAKER', 'OTHER'], col = COL();
+    const stack = d3.stack().keys(keys)(rows);
+    axes(svg, x, y, w, h, m); timeAxis(svg, x, h, m, w < 420 ? 4 : 7);
+    const area = d3.area().x((d) => x(d.data.t)).y0((d) => y(d[0])).y1((d) => y(d[1])).curve(d3.curveStepAfter);
+    svg.append('g').selectAll('path').data(stack).join('path').attr('d', area).style('fill', (s) => col[s.key]).attr('fill-opacity', 0.85);
+    const hover = svg.append('line').attr('y1', m.t).attr('y2', h - m.b).style('stroke', 'var(--cds-chart-reference)').attr('opacity', 0);
+    const bis = d3.bisector((d) => d.t).center;
+    svg.append('rect').attr('x', m.l).attr('y', m.t).attr('width', w - m.l - m.r).attr('height', h - m.t - m.b).attr('fill', 'transparent')
+      .on('pointermove', (ev) => {
+        const px = ev.clientX - svg.node().getBoundingClientRect().left;
+        const d = rows[bis(rows, x.invert(px * (w / svg.node().getBoundingClientRect().width)))];
+        hover.attr('x1', x(d.t)).attr('x2', x(d.t)).attr('opacity', 1);
+        showTip(host, ev, [{ t: `${dayFmt(d.t)}, ${d.what}` }, ...keys.map((k) => ({ sw: col[k], t: `${NAMES[k]}: ${fmt(d[k])}` })), { t: `Open: ${fmt(d.total)}` }]);
+      }).on('pointerleave', () => { hover.attr('opacity', 0); hideTip(host); });
+  });
+  dash.draw('legend-open', (el) => { const col = COL(); legend(el, ['FALSE', 'WEAKER', 'OTHER'].map((k) => ({ color: col[k], label: NAMES[k] }))); });
+
+  // cumulative found and closed since the review ------------------------------------------------
+  dash.draw('c-cum', (host) => {
+    const r = ok('since_review'); if (!r) return;
+    const rows = r.map((d) => ({ t: parse(d.day), found: d.found, closed: d.closed }));
+    const { svg, w } = svgIn(host, 260), h = 260, m = { l: 34, r: 56, t: 10, b: 24 };
+    const x = d3.scaleUtc([rows[0].t, last(rows).t], [m.l, w - m.r]);
+    const y = d3.scaleLinear([0, d3.max(rows, (d) => Math.max(d.found, d.closed)) * 1.08], [h - m.b, m.t]);
+    const col = COL();
+    axes(svg, x, y, w, h, m); timeAxis(svg, x, h, m, w < 420 ? 4 : 7);
+    svg.append('path').datum(rows).attr('d', d3.area().x((d) => x(d.t)).y0((d) => y(d.closed)).y1((d) => y(d.found)).curve(d3.curveStepAfter)).style('fill', col.FALSE).attr('fill-opacity', 0.12);
+    const ln = (k) => d3.line().x((d) => x(d.t)).y((d) => y(d[k])).curve(d3.curveStepAfter);
+    svg.append('path').datum(rows).attr('d', ln('found')).attr('fill', 'none').style('stroke', col.FALSE).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+    svg.append('path').datum(rows).attr('d', ln('closed')).attr('fill', 'none').style('stroke', col.CLOSED).attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+    const e = last(rows);
+    svg.append('text').attr('class', 'lab').attr('x', x(e.t) + 6).attr('y', y(e.found) + 4).style('fill', col.FALSE).text(`found ${fmt(e.found)}`);
+    svg.append('text').attr('class', 'lab').attr('x', x(e.t) + 6).attr('y', y(e.closed) + 4).style('fill', 'var(--color-fg)').text(`closed ${fmt(e.closed)}`);
+    const hover = svg.append('line').attr('y1', m.t).attr('y2', h - m.b).style('stroke', 'var(--cds-chart-reference)').attr('opacity', 0);
+    const bis = d3.bisector((d) => d.t).center;
+    svg.append('rect').attr('x', m.l).attr('y', m.t).attr('width', w - m.l - m.r).attr('height', h - m.t - m.b).attr('fill', 'transparent')
+      .on('pointermove', (ev) => {
+        const bb = svg.node().getBoundingClientRect();
+        const d = rows[bis(rows, x.invert((ev.clientX - bb.left) * (w / bb.width)))];
+        hover.attr('x1', x(d.t)).attr('x2', x(d.t)).attr('opacity', 1);
+        showTip(host, ev, [{ t: dayFmt(d.t) }, { sw: col.FALSE, t: `Found: ${fmt(d.found)}` }, { sw: col.CLOSED, t: `Closed: ${fmt(d.closed)}` }, { t: `Gap: ${fmt(d.found - d.closed)}` }]);
+      }).on('pointerleave', () => { hover.attr('opacity', 0); hideTip(host); });
+  });
+  dash.draw('legend-cum', (el) => { const col = COL(); legend(el, [{ color: col.FALSE, label: 'Found (filed in the list)' }, { color: col.CLOSED, label: 'Closed (removed as done)' }]); });
+
+  // found / closed per merge --------------------------------------------------------------------
+  dash.draw('c-flow', (host) => {
+    const r = ok('timeline'); if (!r) return;
+    const rows = r.filter((d) => Number(d.idx) >= 12).map((d) => ({ idx: Number(d.idx), t: parse(d.day), found: d.found, closed: d.closed, ff: d.found_false, cf: d.closed_false, what: d.what }));
+    const { svg, w } = svgIn(host, 210), h = 210, m = { l: 34, r: 14, t: 10, b: 24 };
+    const x = d3.scaleBand(rows.map((d) => d.idx), [m.l, w - m.r]).paddingInner(0.25);
+    const top = d3.max(rows, (d) => d.found), bot = d3.max(rows, (d) => d.closed);
+    const y = d3.scaleLinear([-bot * 1.1, top * 1.1], [h - m.b, m.t]);
+    const col = COL();
+    axes(svg, x, y, w, h, m, 4);
+    svg.append('line').attr('x1', m.l).attr('x2', w - m.r).attr('y1', y(0)).attr('y2', y(0)).style('stroke', 'var(--cds-chart-axis)');
+    const g = svg.append('g');
+    g.selectAll('.f').data(rows).join('rect').attr('x', (d) => x(d.idx)).attr('width', x.bandwidth()).attr('y', (d) => y(d.found)).attr('height', (d) => y(0) - y(d.found)).style('fill', col.FALSE).attr('fill-opacity', 0.35).attr('rx', 1.5);
+    g.selectAll('.ff').data(rows).join('rect').attr('x', (d) => x(d.idx)).attr('width', x.bandwidth()).attr('y', (d) => y(d.ff)).attr('height', (d) => y(0) - y(d.ff)).style('fill', col.FALSE).attr('rx', 1.5);
+    g.selectAll('.c').data(rows).join('rect').attr('x', (d) => x(d.idx)).attr('width', x.bandwidth()).attr('y', y(0)).attr('height', (d) => y(-d.closed) - y(0)).style('fill', col.CLOSED).attr('fill-opacity', 0.4).attr('rx', 1.5);
+    g.selectAll('.cf').data(rows).join('rect').attr('x', (d) => x(d.idx)).attr('width', x.bandwidth()).attr('y', y(0)).attr('height', (d) => y(-d.cf) - y(0)).style('fill', col.CLOSED).attr('rx', 1.5);
+    const every = Math.ceil(rows.length / (w < 420 ? 4 : 9));
+    svg.append('g').attr('class', 'tick').selectAll('text').data(rows.filter((_, i) => i % every === 0)).join('text').attr('x', (d) => x(d.idx) + x.bandwidth() / 2).attr('y', h - m.b + 16).attr('text-anchor', 'middle').text((d) => dayFmt(d.t));
+    svg.append('rect').attr('x', m.l).attr('y', m.t).attr('width', w - m.l - m.r).attr('height', h - m.t - m.b).attr('fill', 'transparent')
+      .on('pointermove', (ev) => {
+        const bb = svg.node().getBoundingClientRect(); const px = (ev.clientX - bb.left) * (w / bb.width);
+        const i = Math.max(0, Math.min(rows.length - 1, Math.floor((px - m.l) / (x.step()))));
+        const d = rows[i];
+        showTip(host, ev, [{ t: `${dayFmt(d.t)}, ${d.what}` }, { sw: col.FALSE, t: `Found: ${fmt(d.found)} (${fmt(d.ff)} wrong-answer)` }, { sw: col.CLOSED, t: `Closed: ${fmt(d.closed)} (${fmt(d.cf)} wrong-answer)` }]);
+      }).on('pointerleave', () => hideTip(host));
+  });
+  dash.draw('legend-flow', (el) => { const col = COL(); legend(el, [{ color: col.FALSE, label: 'Found (dark: wrong-answer class)' }, { color: col.CLOSED, label: 'Closed (dark: wrong-answer class)' }]); });
+
+  // by wave -----------------------------------------------------------------------------------------
+  dash.draw('t-waves', (tb) => {
+    const r = ok('windows'); if (!r) return;
+    const cols = [['name', 'Wave', false], ['open_start', 'Open at start', true], ['open_end', 'Open at end', true], ['found', 'Found', true], ['closed', 'Closed', true], ['per_closed', 'Found per closed', true],
+      ['found_false', 'Wrong-answer found', true], ['closed_false', 'Wrong-answer closed', true], ['false_open_start', 'Wrong-answer open at start', true], ['false_open_end', 'Wrong-answer open at end', true]];
+    const head = document.createElement('thead'); const hr = document.createElement('tr');
+    cols.forEach(([k, label, num]) => { const th = document.createElement('th'); if (num) th.className = 'n'; th.setAttribute('data-field', k); th.textContent = label; hr.appendChild(th); });
+    head.appendChild(hr);
+    const body = document.createElement('tbody');
+    r.filter((x) => x.window !== 'w0').forEach((x) => {
+      const tr = document.createElement('tr'); tr.dataset.key = x.window;
+      cols.forEach(([k, , num]) => {
+        const td = document.createElement('td'); if (num) td.className = 'n';
+        const v = x[k]; td.textContent = k === 'per_closed' ? (v == null ? '' : d3.format('.1f')(v)) : (typeof v === 'number' ? fmt(v) : String(v));
+        if (k === 'per_closed' && v > 1) td.className += ' bad';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    tb.replaceChildren(head, body);
+  });
+
+  // origin of the findings (stacked bars per wave) ---------------------------------------------------
+  const ORG = { INTRODUCED: 'Introduced by a change in this programme', PRE_EXISTING: 'Already in the code, found by deeper probing', RESIDUAL: 'Remainder of a known problem', UNCLEAR: 'Unclear', PENDING: 'Not yet classified' };
+  const ORGCOL = () => ({ INTRODUCED: 'var(--cds-chart-status-critical)', PRE_EXISTING: dash.colors[0], RESIDUAL: dash.colors[1], UNCLEAR: 'var(--cds-chart-muted)', PENDING: dash.colors[2] });
+  dash.draw('c-origin', (host) => {
+    const r = ok('origin'); if (!r) return;
+    const waves = [...new Set(r.map((d) => d.window))], names = Object.fromEntries(r.map((d) => [d.window, d.name]));
+    const keys = ['INTRODUCED', 'PRE_EXISTING', 'RESIDUAL', 'UNCLEAR', 'PENDING'];
+    const data = waves.map((wv) => { const o = { window: wv }; keys.forEach((k) => { o[k] = d3.sum(r.filter((d) => d.window === wv && d.origin === k), (d) => d.n); }); return o; });
+    const { svg, w } = svgIn(host, 210), h = 210, m = { l: 34, r: 14, t: 10, b: 40 };
+    const x = d3.scaleBand(waves, [m.l, w - m.r]).paddingInner(0.35);
+    const y = d3.scaleLinear([0, d3.max(data, (d) => d3.sum(keys, (k) => d[k])) * 1.1], [h - m.b, m.t]);
+    const col = ORGCOL();
+    axes(svg, x, y, w, h, m, 4);
+    svg.append('g').selectAll('g').data(d3.stack().keys(keys)(data)).join('g').style('fill', (s) => col[s.key])
+      .selectAll('rect').data((s) => s.map((v) => ({ v, key: s.key }))).join('rect').attr('x', (d) => x(d.v.data.window)).attr('width', x.bandwidth()).attr('y', (d) => y(d.v[1])).attr('height', (d) => Math.max(0, y(d.v[0]) - y(d.v[1]))).attr('rx', 1.5)
+      .on('pointermove', (ev, d) => showTip(host, ev, [{ t: names[d.v.data.window] }, { sw: col[d.key], t: `${ORG[d.key]}: ${fmt(d.v.data[d.key])}` }]))
+      .on('pointerleave', () => hideTip(host));
+    svg.append('g').attr('class', 'tick').selectAll('text').data(waves).join('text').attr('x', (d) => x(d) + x.bandwidth() / 2).attr('y', h - m.b + 14).attr('text-anchor', 'middle').text((d) => names[d].replace(/ \(.*/, ''));
+  });
+  dash.draw('legend-origin', (el) => { const col = ORGCOL(); legend(el, ['INTRODUCED', 'PRE_EXISTING', 'RESIDUAL', 'UNCLEAR', 'PENDING'].map((k) => ({ color: col[k], label: ORG[k] }))); });
+
+  // open items by how they close -----------------------------------------------------------------------
+  const CLS = ['A', 'B', 'C', 'D', 'E', 'F', 'N'];
+  const CLSNAME = { A: 'Being built now', B: 'Plan ready, build next', C: 'Needs a design first', D: 'Small build', E: 'Rollup of weaker readings', F: 'Held or outside action', N: 'Not yet classed' };
+  const CLSCOL = () => ({ A: dash.colors[0], B: dash.colors[1], C: dash.colors[2], D: dash.colors[3], E: 'var(--cds-chart-muted)', F: 'var(--cds-chart-muted)', N: 'var(--cds-chart-muted)' });
+  const clsOf = (d) => (CLS.includes(d.cls) ? d.cls : 'N');
+  dash.draw('lead-cls', (el) => { const r = ok('open'); if (r) put(el, fmt(r.filter((d) => clsOf(d) === 'A').length)); });
+  dash.draw('c-cls', (host) => {
+    const r = ok('open'); if (!r) return;
+    const data = CLS.map((k) => ({ k, items: r.filter((d) => clsOf(d) === k) })).filter((d) => d.items.length);
+    const rowH = 30, m = { l: 190, r: 40, t: 4, b: 4 }, h = m.t + m.b + rowH * data.length;
+    const { svg, w } = svgIn(host, h);
+    const x = d3.scaleLinear([0, d3.max(data, (d) => d.items.length)], [m.l, w - m.r]);
+    const col = CLSCOL();
+    const g = svg.append('g').selectAll('g').data(data).join('g').attr('transform', (_, i) => `translate(0,${m.t + i * rowH})`);
+    g.append('text').attr('class', 'lab').attr('x', m.l - 8).attr('y', rowH / 2 + 4).attr('text-anchor', 'end').style('fill', 'var(--color-fg)').text((d) => CLSNAME[d.k]);
+    g.append('rect').attr('x', m.l).attr('y', 6).attr('height', rowH - 12).attr('width', (d) => Math.max(2, x(d.items.length) - m.l)).style('fill', (d) => col[d.k]).attr('rx', 1.5)
+      .on('pointermove', (ev, d) => showTip(host, ev, [{ t: CLSNAME[d.k] }, { sw: col[d.k], t: `${fmt(d.items.length)} items: ${d.items.map((i) => i.id).sort((a, b) => a - b).join(', ')}` }]))
+      .on('pointerleave', () => hideTip(host));
+    g.append('text').attr('class', 'lab').attr('x', (d) => x(d.items.length) + 6).attr('y', rowH / 2 + 4).style('fill', 'var(--color-fg-muted)').text((d) => fmt(d.items.length));
+  });
+
+  // open items by SysML v2 view ------------------------------------------------------------------------
+  const VIEWS = [
+    ['A1', 'Requirements', 'Partly'], ['A2', 'Structure', 'Partly'], ['A3', 'Interconnection', 'Partly'], ['A4a', 'States', 'Partly'],
+    ['A4b', 'Actions', 'Traced only'], ['A4c', 'Sequences', 'Not covered'], ['A5', 'Constraints and parametrics', 'Decided'], ["A5'", 'Analysis cases', 'Traced only'],
+    ['A5"', 'Trade studies', 'Not covered'], ['A6', 'Verification cases', 'Partly'], ['A7', 'Use cases', 'Traced only'], ['A8', 'Allocation', 'Traced only'],
+    ['A9', 'Variability', 'Not covered'], ['A10', 'Metadata and units', 'Partly'], ['A11', 'Views and viewpoints', 'Not covered'], ['A12', 'Dependencies', 'Partly'],
+    ['SAF', 'Safety (FTA, FMEA)', 'Partly'],
+    ['TXT', 'Text and parser', ''], ['ED', 'Editor and page', ''], ['PERF', 'Performance', ''], ['INT', 'Engine internals', ''], ['NP', 'Not yet placed', ''],
+  ];
+  const VNAME = Object.fromEntries(VIEWS.map(([k, n]) => [k, n]));
+  const viewOf = (d) => (VNAME[d.view] ? d.view : 'NP');
+  dash.draw('c-view', (host) => {
+    const r = ok('open'); if (!r) return;
+    const rows = VIEWS.filter(([k]) => k !== 'NP' || r.some((d) => viewOf(d) === 'NP')).map(([k, n, g]) => ({ k, n, g, items: r.filter((d) => viewOf(d) === k) }));
+    const rowH = 24, m = { l: 260, r: 40, t: 4, b: 4 }, h = m.t + m.b + rowH * rows.length;
+    const { svg, w } = svgIn(host, h);
+    const x = d3.scaleLinear([0, Math.max(1, d3.max(rows, (d) => d.items.length))], [m.l, w - m.r]);
+    const col = CLSCOL();
+    const g = svg.append('g').selectAll('g').data(rows).join('g').attr('transform', (_, i) => `translate(0,${m.t + i * rowH})`);
+    g.append('text').attr('class', 'lab').attr('x', m.l - 96).attr('y', rowH / 2 + 4).attr('text-anchor', 'end').style('fill', 'var(--color-fg)').text((d) => d.n);
+    g.append('text').attr('class', 'lab').attr('x', m.l - 8).attr('y', rowH / 2 + 4).attr('text-anchor', 'end')
+      .style('fill', (d) => (d.g === 'Not covered' ? 'var(--cds-chart-status-critical)' : 'var(--color-fg-muted)')).text((d) => d.g);
+    g.each(function (d) {
+      let x0 = m.l;
+      CLS.forEach((c) => {
+        const its = d.items.filter((i) => clsOf(i) === c); if (!its.length) return;
+        const x1 = x0 + (x(its.length) - m.l);
+        d3.select(this).append('rect').attr('x', x0).attr('y', 4).attr('height', rowH - 8).attr('width', Math.max(2, x1 - x0 - 1)).style('fill', col[c]).attr('rx', 1.5)
+          .on('pointermove', (ev) => showTip(host, ev, [{ t: `${d.n} (${d.g || 'tool area'})` }, { sw: col[c], t: `${CLSNAME[c]}: ${its.map((i) => i.id).sort((a, b) => a - b).join(', ')}` }]))
+          .on('pointerleave', () => hideTip(host));
+        x0 = x1;
+      });
+      d3.select(this).append('text').attr('class', 'lab').attr('x', x0 + 6).attr('y', rowH / 2 + 4).style('fill', 'var(--color-fg-muted)').text(d.items.length ? fmt(d.items.length) : '');
+    });
+  });
+  dash.draw('legend-view', (el) => { const col = CLSCOL(); legend(el, CLS.filter((c) => c !== 'N').map((c) => ({ color: col[c], label: CLSNAME[c] }))); });
+
+  // the open items --------------------------------------------------------------------------------------
+  let sortKey = 'cls', sortDir = 1, q = '';
+  const SEV = { FALSE: 0, WEAKER: 1, POLISH: 2, HELD: 3 };
+  const SEVNAME = { FALSE: 'Wrong answer', WEAKER: 'Weaker', POLISH: 'Other', HELD: 'Waiting' };
+  dash.draw('t-open-list', (tb) => {
+    const r = ok('open'); if (!r) return;
+    const cols = [['id', 'No.', true], ['title', 'Item', false], ['severity', 'Severity', false], ['cls', 'How it closes', false], ['view', 'View', false], ['filed', 'Filed', false], ['origin', 'Origin', false]];
+    const vlab = (d) => VNAME[viewOf(d)] + (VNAME[d.view2] ? ' + ' + VNAME[d.view2] : '');
+    const key = (d) => (sortKey === 'severity' ? SEV[d.severity] : sortKey === 'cls' ? CLS.indexOf(clsOf(d)) : sortKey === 'view' ? VIEWS.findIndex(([k]) => k === viewOf(d)) : d[sortKey]);
+    const rows = r.filter((d) => !q || (d.title + ' ' + d.tag + ' ' + CLSNAME[clsOf(d)] + ' ' + vlab(d)).toLowerCase().includes(q))
+      .sort((a, b) => { const va = key(a), vb = key(b); return (va < vb ? -1 : va > vb ? 1 : a.id - b.id) * sortDir; });
+    const head = document.createElement('thead'); const hr = document.createElement('tr');
+    cols.forEach(([k, label, num]) => {
+      const th = document.createElement('th'); if (num) th.className = 'n'; th.setAttribute('data-field', k);
+      th.setAttribute('aria-sort', k === sortKey ? (sortDir > 0 ? 'ascending' : 'descending') : 'none');
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = label + (k === sortKey ? (sortDir > 0 ? ' ↑' : ' ↓') : '');
+      b.addEventListener('click', () => { if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = 1; } dash.draw('t-open-list'); });
+      th.appendChild(b); hr.appendChild(th);
+    });
+    head.appendChild(hr);
+    const body = document.createElement('tbody');
+    rows.forEach((d) => {
+      const tr = document.createElement('tr'); tr.dataset.key = String(d.id);
+      const cells = [String(d.id), d.title, null, CLSNAME[clsOf(d)], vlab(d), d.filed.slice(5).replace('-', '/'), ({ INTRODUCED: 'introduced', PRE_EXISTING: 'pre-existing', RESIDUAL: 'residual', UNCLEAR: '' })[d.origin] || ''];
+      cells.forEach((t, i) => {
+        const td = document.createElement('td'); if (i === 0) td.className = 'n';
+        if (i === 2) { const p = document.createElement('span'); p.className = 'pill ' + d.severity; p.textContent = SEVNAME[d.severity]; td.appendChild(p); } else td.textContent = t;
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    tb.replaceChildren(head, body);
+  });
+  dash.draw('note-provisional', (el) => {
+    const r = ok('open'); if (!r) return;
+    const n = r.filter((d) => d.provisional === true || d.provisional === 'true').length;
+    el.textContent = n ? `${fmt(n)} of these items have a severity set by a keyword rule until the next classification pass.` : '';
+  });
+  const find = document.getElementById('oi-find');
+  if (find) find.addEventListener('input', () => { q = find.value.trim().toLowerCase(); dash.draw('t-open-list'); });
+})();
+</script>

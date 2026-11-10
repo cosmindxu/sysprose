@@ -1659,7 +1659,8 @@ describe('solve — the order of the text decides no design equation', () => {
     // 2e11. A quotient with a plateau of its own (`z == x / y` beside `z == 0.0` and `x == 1.0`: y = −4e38) the same. The point is judged by
     // the minimum-norm correction of the whole component: no row reads imposed or satisfied, no witness stands, in the text's order and the reverse.
     // An unrelated equation over features with no value (`w * v == y`) beside the chain does not switch the judgement off, and a power that
-    // binary64 has rounded to 0 (`2.0 ^ x` at x = −1e19: every residual 0) is a plateau and no root.
+    // binary64 has rounded to 0 (`2.0 ^ x` at x = −1e19: every residual 0) is a plateau and no root. Nor does a link the solve reads
+    // exactly (y = 0 from `z == y * 2.0`) leave the pins imposed where `y == 2.0 ^ x` then has no root for x.
     const WV = 'attribute w : ScalarValues::Real; attribute v : ScalarValues::Real;';
     for (const members of [
       ['assert constraint c0 { y == 1.0 / x }', 'constraint c1 { z == y * 2.0 }', 'constraint c2 { z == 0.0 }', 'constraint c3 { x >= 1.0 }', 'assert constraint c4 { w * v == y }'],
@@ -1684,6 +1685,9 @@ describe('solve — the order of the text decides no design equation', () => {
       ['constraint c0 { z == x / y }', 'constraint c1 { z == 0.0 }', 'constraint c2 { x == 1.0 }', 'constraint c3 { y >= 1.0 }'],
       ['constraint c0 { x == 1.0 / y }', 'constraint c1 { x == 0.0 }'],
       ['constraint c0 { x * (1.0 / y) == 0.0 }', 'constraint c1 { x == 1.0 }'],
+      // An equation left with one unknown it has no root for (2^x = 0) at a value the solve fixed exactly: the pin read imposed.
+      ['constraint c0 { y == 2.0 ^ x }', 'constraint c1 { y == 0.0 }'],
+      ['constraint c0 { y == 2.0 ^ x }', 'constraint c1 { z == y + 2.0 }', 'constraint c2 { z == 2.0 }'],
     ]) {
       for (const text of [members, [...members].reverse()].map((list) => `package K { ${X} ${list.join(' ')} }`)) {
         const r = await rows(text);

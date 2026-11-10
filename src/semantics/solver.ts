@@ -117,6 +117,7 @@ import {
   shadowedNamesOf,
   shadowedSentence,
   sharedDefinitions,
+  respelledIn,
   spelledIn,
   statedValueOf,
   typedAssertHeldOnly,
@@ -1725,7 +1726,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       for (const c of model.children(holder.id)) {
         if (c.attrs.isLibrary === true) continue;
         if (isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
-          const whole: ElementRecord = { ...c, ownerId: reader.id };
+          // A general's body as the reader spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
+          const raw = holder.id === reader.id ? c.attrs.expression : respelledIn(model, definitions, reader.id, holder.id, c.attrs.expression);
+          const whole: ElementRecord = { ...c, ownerId: reader.id, attrs: { ...c.attrs, expression: raw } };
           // An asserted conjunction's conjuncts, each as the assert it would be written alone ({@link assertConjuncts}).
           const parts = assertConjuncts(model, c);
           const split = parts.length > 1;
@@ -2320,6 +2323,8 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // equation with one unknown left, and a one-to-one equation that finds no root searches the line for one (203 samples and the
   // poles among them): in a chain that takes a pass to fix each link, that was once per link per equation.
   const missedAt = new Map<Equation, string>();
+  // Of those, the ones whose search found no root at all (not one that holds about every value, {@link flatAbout}).
+  const rootless = new Set<Equation>();
   // Whether `eq` is curved in `u` ({@link isCurved}), once per pair: every sweep asks it of every equation with one unknown left.
   const curvedPairs = new Map<Equation, Map<ElementId, boolean>>();
   const curvedIn = (eq: Equation, u: ElementId): boolean => {
@@ -2348,8 +2353,11 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     // model's own value for y, it was the root the search stopped at, and `c1 { y == 0.5 }` read violated there.
     if (val === undefined || !Number.isFinite(val) || (!curved && flatAbout(eq, u, val, values))) {
       missedAt.set(eq, reads);
+      if (val === undefined || !Number.isFinite(val)) rootless.add(eq);
+      else rootless.delete(eq);
       return false;
     }
+    rootless.delete(eq);
     values.set(u, val);
     used.add(eq);
     // A root of an equation with more than one is one of several: no value the model fixes ({@link designReadings}); that of an
@@ -2533,10 +2541,18 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   const stated = (v: ElementId): boolean => known.has(v) || unreadable.has(v);
   const unsettled = converged
     ? new Set<ElementId>()
-    : unsettledFeatures(eqs, values, tol, stated, (eq) => {
-        const el = relationOf.get(eq);
-        return el === undefined || el.eClass !== 'ConstraintUsage' || isAsserted(el) || imposed.has(el.id);
-      });
+    : unsettledFeatures(
+        eqs,
+        values,
+        tol,
+        stated,
+        (eq) => {
+          const el = relationOf.get(eq);
+          return el === undefined || el.eClass !== 'ConstraintUsage' || isAsserted(el) || imposed.has(el.id);
+        },
+        // An equation left with one unknown it found no root for, at the values it reads now.
+        (eq) => rootless.has(eq) && missedAt.get(eq) === eq.vars.map((v) => values.get(v)).join(','),
+      );
   // The rows in an order of their own, not the text's, where it could show: of two rows with the same entry in a column the
   // elimination takes the earlier, and a row that reads a free feature frees the one it pivots. `x * y == z` above `x ==
   // 1.0` and `x == 3.0` freed x; below them it did not. The model's own equations first, as they are oriented first, then
@@ -2802,6 +2818,20 @@ function affineForm(
     default:
       return undefined;
   }
+}
+
+/** The root in `u` of `eq` where it is affine in `u` alone with a coefficient written ({@link affineForm}), every other feature at its value. */
+function affineRoot(eq: Equation, u: ElementId, values: Map<ElementId, number>): number | undefined {
+  const only = (id: ElementId | undefined): boolean => id === u;
+  const scope = idScope(eq, values);
+  const l = affineForm(eq.lhs, eq, only, scope);
+  const r = l && affineForm(eq.rhs, eq, only, scope);
+  if (!l || !r) return undefined;
+  const zero: Rational = { num: 0n, den: 1n };
+  const a = addRationals(l.a.get(u) ?? zero, negateRational(r.a.get(u) ?? zero));
+  if (!a || a.num === 0n) return undefined;
+  const t = (r.b - l.b) / (Number(a.num) / Number(a.den));
+  return Number.isFinite(t) ? t : undefined;
 }
 
 /** The exact value of `node` where it is numerals under `+ − × ÷` alone ({@link writtenRational}); `undefined` otherwise. */
@@ -3309,13 +3339,43 @@ function designReadings(
     const model = roots.some((eq) => !isCheck(eq));
     if (model ? plain.length >= 1 : plain.length >= 2) rivalRoots.set(root, model ? 'model' : 'plain');
   }
+  // Agreement judged both ways, so it is the same whichever of two equations the text gave first: an unused one over a
+  // single produced feature agrees only where the equations the solve took also hold at the value the unused one fixes it
+  // to, each one that then has one produced feature left re-solved for it in turn. Of `x == 0.000003000000001` and
+  // `2.0 / (7.0 * x) - 95238.0952 == 0.0` the quotient held at the pin's x, the pin missed by 6e-6 at the quotient's: one
+  // agreed, the other missed, by text order. Now both miss.
+  const agreesBack = (eq: Equation): boolean => {
+    const own = eq.vars.filter(produced);
+    if (own.length !== 1) return true;
+    const at = new Map(values);
+    const moved = new Set<ElementId>();
+    const take = (o: Equation, v: ElementId): boolean => {
+      const x = solveScalar(o, v, at, tol);
+      if (x === undefined) return false;
+      at.set(v, x);
+      moved.add(v);
+      return true;
+    };
+    if (!take(eq, own[0]!)) return false;
+    const reading = [...used].filter((o) => o.vars.every((w) => at.has(w)));
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const o of reading) {
+        const left = o.vars.filter((w) => produced(w) && !moved.has(w));
+        if (left.length !== 1 || !o.vars.some((w) => moved.has(w))) continue;
+        if (!take(o, left[0]!)) return false;
+        grew = true;
+      }
+    }
+    return reading.every((o) => !o.vars.some((w) => moved.has(w)) || holdsAt(o, at, tol));
+  };
   const missed = new Set<Equation>();
   const roots = new Set<ElementId>();
   for (const eq of unused) {
     const root = rootOf(eq);
     if (!design.has(root) || rivalRoots.has(root)) continue;
     const r = residualOf(eq, values);
-    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol) && nearRoot(eq, values, r)) {
+    if (r !== undefined && Math.abs(r) <= convergenceGate(eq, values, tol) && nearRoot(eq, values, r) && agreesBack(eq)) {
       agreeing.add(eq);
     } else {
       missed.add(eq);
@@ -3380,6 +3440,7 @@ function unsettledFeatures(
   tol: number,
   stated: (v: ElementId) => boolean,
   own: (eq: Equation) => boolean,
+  rootless: (eq: Equation) => boolean = () => false,
 ): Set<ElementId> {
   const parent = new Map<ElementId, ElementId>();
   const find = (a: ElementId): ElementId => {
@@ -3394,6 +3455,21 @@ function unsettledFeatures(
   };
   const missed: ElementId[] = [];
   for (const eq of eqs) {
+    // One the solve tried to orient for the one unknown it leaves and found no root for, at the values the solve produced for the
+    // rest: no point of them meets it, so none is a solution. `y == 2.0 ^ x` beside `z == y * 2.0` and `z == 0.0` (y = 0 exactly,
+    // where 2^x has no root) read the two imposed, and the component has no solution; its produced features are unsettled.
+    if (rootless(eq)) {
+      const vs = eq.vars.filter((v) => values.has(v) && !stated(v));
+      if (vs.length > 0) {
+        for (const v of vs) if (!parent.has(v)) parent.set(v, v);
+        for (let i = 1; i < vs.length; i++) {
+          const a = find(vs[0]!);
+          const b = find(vs[i]!);
+          if (a !== b) parent.set(a, b);
+        }
+        missed.push(vs[0]!);
+      }
+    }
     if (!own(eq)) continue;
     const vs = eq.vars.filter((v) => values.has(v) && !stated(v));
     for (const v of vs) if (!parent.has(v)) parent.set(v, v);
@@ -4509,6 +4585,15 @@ function solveScalar(
       else values.set(u, prev);
     }
   };
+
+  // Affine in `u` with a coefficient written ({@link affineForm}): the root is read off, −b / a, not stepped to by a
+  // finite-difference slope. That slope carries binary64 noise (`y == 2.0 * x + 1.0` from y = 1.0014000000014 left x 1e-10
+  // off), and a curved equation judged at x then held or missed by which of the two the text gave first.
+  const link = affineRoot(eq, u, values);
+  if (link !== undefined) {
+    const fv = f(link);
+    if (fv !== undefined && settled(link, fv)) return link;
+  }
 
   // Newton with finite-difference derivative.
   let t = seed;
