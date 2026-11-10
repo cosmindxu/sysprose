@@ -4298,15 +4298,24 @@ the construct `machine-boundary`, naming the transition — no absence list, no
 `exhaustive`, and every property about either machine `inconclusive`. Keep each
 transition inside the machine whose states it joins, or write the nested
 definition as a composite state (`state Inner { … }`) to make its states part of
-the outer machine. A specialisation or a typed usage that adds a transition over
-the states it inherits (`state def Derived :> Base { transition … }`, `exhibit
-state m : Modes { transition … }`) crosses the same way, and both machines are
-refused with the inheritance named: no walk here puts the two together, so write
-the machine you mean out whole, its states and every transition it steps by, in
-one definition. The simulator reads neither machine as the pair either: it steps
-only by the transitions written in a machine's own region and reads no inherited
-state, so a run of the base never takes the added step and a run of the
-specialisation has no state at all. A step across the boundary is stopped there
+the outer machine. A specialisation or a typed usage is read through its general machine
+instead (`state def Derived :> Base { transition … }`, `exhibit state m : Modes {
+transition … }` with a step of its own): the walk and the simulator both read
+the general's states and steps first, in the general's order, then its own, from
+the general's start, so a state with two enabled steps is a
+`nondeterministic-choice` either way and the simulator takes the inherited one.
+The general is walked alone and never takes the added step, and a finding about an
+inherited state names the machine it is a finding in (`W2::Base::c (inherited) in
+W2::Derived`). A typed usage with no step of its own is no machine: it is
+reported through its definition, once. A property the general carries is checked
+on the general, and the specialisation's report says how many it does not check.
+Still refused, with `machine-boundary` and the reason in its own words: a
+specialisation that redefines a state or transition of its general (`state :>>
+b`), one that specialises two machines, one that opens at a start of its own
+beside its general's, and a chain of generals longer than eight or one that
+cycles; the general is refused with it, since the step the specialisation adds is
+then taken by no view. Write the machine you mean out whole in one definition.
+A step across the boundary is stopped there
 too: a run that comes to one stops where it stands without taking it, takes no
 step after it, and is not complete, and the **Stopped** line (`sim-refused`) says
 the step's far end lies outside the machine's region, as for a step into the

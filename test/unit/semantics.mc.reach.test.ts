@@ -773,12 +773,12 @@ describe('a nested state def: the machine that holds it, and a transition across
 
   /*
    * A SPECIALISATION OR A TYPED USAGE that adds a step over the states it
-   * inherits crosses the same boundary, from both sides, and both machines are
-   * refused (the branch review's w2). The refusal says so in its own words: the
-   * nested-definition remedy — keep the transition in the machine whose states
-   * it joins — would move `Derived`'s step into `Base` and change `Base`.
+   * inherits is read through its general machine (`machineRegion`, one view for
+   * the walk and the interpreter): the general's states and steps first, then its
+   * own. The general is walked alone and never takes the added step, so `c` is
+   * unreachable there and reached in the specialisation, where it is a deadlock.
    */
-  it('names the inheritance when a specialisation or a typed usage adds a step over inherited states', async () => {
+  it('walks a specialisation or a typed usage with a step of its own over its general machine, and the general alone', async () => {
     const cases: Array<[string, string, string]> = [
       [
         `package W2 {
@@ -801,26 +801,65 @@ describe('a nested state def: the machine that holds it, and a transition across
       const model = await modelOf(text);
       const r = reachReport(model);
       expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.map((u) => u.construct), m.exhaustive])).toEqual([
-        [base, ['machine-boundary'], false],
-        [sub, ['machine-boundary'], false],
+        [base, [], true],
+        [sub, [], true],
       ]);
-      const [onBase, onSub] = r.machines.map((m) => m.unsupported[0].detail);
-      expect(onBase).toContain(`is written outside this machine, in \`${sub}\`, which inherits its states`);
-      expect(onSub).toContain(`out of this machine, into \`${base}\`, a machine of its own whose states this one inherits`);
-      for (const detail of [onBase, onSub]) {
-        expect(detail).toContain('A transition added over inherited states is not walked as part of either machine');
-        expect(detail).not.toContain('Keep each transition inside the machine whose states it joins');
-      }
-      // WHY NO WALK PUTS THE TWO TOGETHER (docs/06 §8.6): the interpreter does not
-      // either. It reads a machine's own region only, so a run of `Base` never
-      // takes the added step and a run of the specialisation has no state at all;
-      // a walk of the pair would claim runs no simulator takes.
+      const [onBase, onSub] = r.machines;
+      expect(onBase.states.unreachable.map((s) => s.qualifiedName)).toEqual([`${base}::c`]);
+      expect(onSub.states.unreachable).toEqual([]);
+      expect(onSub.deadlocks.map((d) => [d.leaf.qualifiedName, d.steps])).toEqual([[`${base}::c`, 2]]);
+      const dead = r.diagnostics.filter((d) => d.code === DEADLOCK_CODE);
+      expect(dead.map((d) => d.message)).toEqual([
+        expect.stringContaining(`state \`${base}::b\` has no enabled`),
+        expect.stringContaining(`state \`${base}::c\` (inherited) in \`${sub}\` has no enabled`),
+      ]);
+      // The interpreter reads the same view: the general never takes the added step, the specialisation does.
       const onBaseRun = runStateMachine(model, idOf(model, base), ['go', 'more']);
       expect(onBaseRun.fired.map((q) => model.qualifiedName(q.transitionId))).toEqual([`${base}::ab`]);
       expect(model.qualifiedName(onBaseRun.finalState!)).toBe(`${base}::b`);
       const onSubRun = runStateMachine(model, idOf(model, sub), ['go', 'more']);
-      expect([onSubRun.visited, onSubRun.fired, onSubRun.finalState]).toEqual([[], [], null]);
+      expect(onSubRun.fired.map((q) => model.qualifiedName(q.transitionId))).toEqual([`${base}::ab`, `${sub}::bc`]);
+      expect(model.qualifiedName(onSubRun.finalState!)).toBe(`${base}::c`);
     }
+  });
+
+  /*
+   * A TYPED USAGE WITH NO BODY is no machine of its own (decision 22): it is
+   * reported through its definition, which keeps its findings once.
+   */
+  it('counts one machine for a typed usage with no step of its own', async () => {
+    const model = await modelOf(`package Ty {
+      state def Modes { state a; state y; state z; transition ay first a accept go then y; }
+      part def Drone { exhibit state m : Modes; }
+    }`);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => m.machine.qualifiedName)).toEqual(['Ty::Modes']);
+    expect(r.machines[0].states.unreachable.map((s) => s.qualifiedName)).toEqual(['Ty::Modes::z']);
+    expect(r.machines[0].deadlocks.map((d) => d.leaf.qualifiedName)).toEqual(['Ty::Modes::y']);
+  });
+
+  /*
+   * WHAT IS STILL REFUSED, each in its own sentence: two general machines, two
+   * starts, a redefined member, a cycle. The machine is not walked and its
+   * general still is, since the step it adds is covered by no view.
+   */
+  it('refuses a specialisation this walk does not read, with the reason, and keeps what it cannot read unexplored', async () => {
+    const model = await modelOf(`package Rf {
+      state def Base { state a; state b; transition ab first a accept go then b; }
+      state def Other { state o; transition oo first o accept x then o; }
+      state def Two :> Base, Other { state t; transition bt first b accept y then t; }
+      state def Redef :> Base { state :>> b; transition ba first b accept back then a; }
+    }`);
+    const r = reachReport(model);
+    const row = (qn: string) => r.machines.find((m) => m.machine.qualifiedName === qn)!;
+    for (const qn of ['Rf::Two', 'Rf::Redef']) {
+      expect(row(qn).unsupported.map((u) => u.construct), qn).toContain('machine-boundary');
+      expect(row(qn).exhaustive, qn).toBe(false);
+    }
+    expect(row('Rf::Two').unsupported[0].detail).toContain('has two general machines');
+    expect(row('Rf::Redef').unsupported[0].detail).toContain('redefines a member of a general machine');
+    // The general of a refused specialisation is refused too: its step `bt` is written where no view takes it.
+    expect(row('Rf::Base').unsupported.map((u) => u.construct)).toContain('machine-boundary');
   });
 
   /*

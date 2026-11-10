@@ -1294,10 +1294,28 @@ function boundaryCrossings(model: Model, machineId: ElementId): BoundaryCrossing
       if (!CONTROL_EDGE_KINDS.has(edge.eClass) || edge.attrs.isLibrary === true) continue;
       if (edge.source?.[0] === undefined || edge.target?.[0] === undefined) continue;
       foreign.add(edge.id);
+      if (coveredBySpecialiser(model, machineId, edge)) continue;
       out.push({ edge, way: 'foreign', other: edge.ownerId ?? null });
     }
   }
   return out;
+}
+
+/**
+ * Is a step edge written outside this machine one that a machine read through
+ * its general takes, with both its ends in that machine's view? Then it is a step
+ * of THAT machine (`state def Derived :> Base { transition bc first b …; }`),
+ * and this one, walked alone, never takes it: it is no crossing of this machine's
+ * boundary, since no run of this machine leaves its own states by it.
+ */
+function coveredBySpecialiser(model: Model, machineId: ElementId, edge: ElementRecord): boolean {
+  for (let p: ElementId | null = edge.ownerId ?? null; p != null; p = model.get(p)?.ownerId ?? null) {
+    if (p === machineId) return false;
+    const view = machineRegion(model, p);
+    if (view.refused !== undefined || view.bases.length === 0) continue;
+    if (view.transitions.includes(edge) && view.nodes.has(edge.source![0]) && view.nodes.has(edge.target![0])) return true;
+  }
+  return false;
 }
 
 /**
@@ -1474,6 +1492,19 @@ function unsupportedConstructs(
     });
   }
   const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  // A machine that specialises something this walk does not read (two general
+  // machines, two starts, a cycle, a redefined member): its own region is not
+  // the machine, and a walk of it would claim runs the simulator does not take.
+  const refusedView = machineRegion(model, machineId).refused;
+  if (refusedView) {
+    out.push({
+      construct: 'machine-boundary',
+      detail:
+        `${refusedView.sentence}; this walk does not read such a machine together with its general, so ` +
+        'no walk of it is a claim about it as written. Write the machine you mean out whole in one definition.',
+      elementId: refusedView.at,
+    });
+  }
   for (const c of boundaryCrossings(model, machineId)) {
     const inherited = inheritedAcross(model, machineId, c);
     out.push({
@@ -3601,6 +3632,11 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
   const findings: Array<Omit<Diagnostic, 'id' | 'ruleId' | 'source'>> = [];
 
   for (const m of machines) {
+    // A state or step a machine read through its general is the general's own
+    // element, so a finding about it names the machine it is a finding in.
+    const region = machineRegion(model, m.machine.id);
+    const inh = (id: ElementId): string =>
+      region.inheritedFrom(id) === undefined ? '' : ` (inherited) in \`${m.machine.qualifiedName}\``;
     for (const u of m.unsupported) {
       findings.push({
         severity: 'info',
@@ -3668,7 +3704,7 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
     for (const s of m.states.unreachable) {
       findings.push({
         severity: 'warning',
-        message: `state \`${s.qualifiedName}\` is not entered on any explored run (${m.qualification}).`,
+        message: `state \`${s.qualifiedName}\`${inh(s.id)} is not entered on any explored run (${m.qualification}).`,
         elementId: s.id,
         elementName: s.qualifiedName,
         code: UNREACHABLE_STATE_CODE,
@@ -3678,7 +3714,7 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
     for (const t of m.transitions.dead) {
       findings.push({
         severity: 'warning',
-        message: `transition \`${transitionLabel(t)}\` is never enabled on any explored run (${m.qualification}).`,
+        message: `transition \`${transitionLabel(t)}\`${inh(t.id)} is never enabled on any explored run (${m.qualification}).`,
         elementId: t.id,
         elementName: t.qualifiedName,
         code: DEAD_TRANSITION_CODE,
@@ -3688,7 +3724,7 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
     for (const d of m.deadlocks) {
       findings.push({
         severity: 'warning',
-        message: `state \`${d.leaf.qualifiedName}\` has no enabled outgoing transition and is not marked final — reached in ${d.steps} step(s).`,
+        message: `state \`${d.leaf.qualifiedName}\`${inh(d.leaf.id)} has no enabled outgoing transition and is not marked final — reached in ${d.steps} step(s).`,
         elementId: d.leaf.id,
         elementName: d.leaf.qualifiedName,
         code: DEADLOCK_CODE,
@@ -3725,7 +3761,7 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
       findings.push({
         severity: 'warning',
         message:
-          `\`${n.state.qualifiedName}\`: ${n.enabled.length} transitions are enabled at once ${on} — ` +
+          `\`${n.state.qualifiedName}\`${inh(n.state.id)}: ${n.enabled.length} transitions are enabled at once ${on} — ` +
           `the simulator takes \`${transitionLabel(n.taken)}\` (declaration order) and never ` +
           `${n.notTaken.map((t) => `\`${transitionLabel(t)}\``).join(', ')}.`,
         elementId: n.state.id,

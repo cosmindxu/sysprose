@@ -383,13 +383,14 @@ export function regionScope(model: Model, regionId: ElementId): Scope {
  *
  * `root` is the machine, or a composite state read as a region of its own
  * (`initialSubstate`). A machine specialising another one is not yet read
- * through its general: `bases` is empty, `inheritedFrom` answers nothing and
- * `refused` is never set — they are the seams a later step fills, and with them
- * empty the view is, by construction, the lists the readers computed before it.
+ * through its general: `bases` is empty and `inheritedFrom` answers nothing,
+ * and with them empty the view is the lists the readers computed before it.
+ * `refused` is set where the machine specialises something this walk does not
+ * read, and the view is then the machine's own.
  */
 export interface MachineRegion {
   readonly root: ElementId;
-  /** The general machines whose region this one extends, nearest first. Empty until a machine is read through its general. */
+  /** The general machines whose region this one extends, nearest first. Empty unless a machine is read through its general. */
   readonly bases: readonly ElementId[];
   /** The ids of the elements a step may stand in or leave: `root` and every descendant that is not a nested `state def`. */
   readonly nodes: ReadonlySet<ElementId>;
@@ -403,7 +404,7 @@ export interface MachineRegion {
   parentOf(id: ElementId): ElementId | null;
   /** The general machine that `id` was read from, if the region took it from one. */
   inheritedFrom(id: ElementId): ElementId | undefined;
-  /** Set when the region is one this walk does not read, with the sentence that says so. Never set yet. */
+  /** Set when the region is one this walk does not read, with the sentence that says so. */
   readonly refused?: {
     why: 'redefined' | 'two-generals' | 'two-starts' | 'cycle';
     at: ElementId;
@@ -414,12 +415,16 @@ export interface MachineRegion {
 /**
  * The region rooted at `regionId`, memoised on the model revision.
  *
- * `inherit` reads a machine through its general ({@link inheritedRegion}); no
- * reader asks for it yet, so every consumer still reads the machine's own
- * region and a machine that inherits is still refused where it was.
+ * A machine is read through its general machine ({@link inheritedRegion}), so
+ * the walk and the interpreter see the one view; `inherit = false` reads only
+ * what the machine itself holds, which is what a machine that is not read
+ * through its general (a refused one, a nested state) falls back to.
  */
-export function machineRegion(model: Model, regionId: ElementId, inherit = false): MachineRegion {
-  if (inherit) return inheritedRegion(model, regionId, []);
+export function machineRegion(model: Model, regionId: ElementId, inherit = true): MachineRegion {
+  return inherit ? inheritedRegion(model, regionId, []) : ownRegion(model, regionId);
+}
+
+function ownRegion(model: Model, regionId: ElementId): MachineRegion {
   const cache = cacheFor(model);
   const hit = cache.regions.get(regionId);
   if (hit) return hit;
@@ -491,6 +496,15 @@ export function machineRegion(model: Model, regionId: ElementId, inherit = false
   return region;
 }
 
+/** A usage that is a machine of its own, not a composite state inside another machine. */
+function isMachineRoot(model: Model, m: ElementRecord): boolean {
+  for (let p: ElementId | null | undefined = m.ownerId; p != null; p = model.get(p)?.ownerId) {
+    const o = model.get(p);
+    if (o && o.attrs.isLibrary !== true && model.children(p).some((c) => c.eClass === 'TransitionUsage')) return false;
+  }
+  return true;
+}
+
 /** The longest chain of general machines read through; a longer one is refused as a `cycle`. */
 const MAX_GENERAL_CHAIN = 8;
 
@@ -515,7 +529,7 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
   const cache = cacheFor(model);
   const hit = cache.inherited.get(id);
   if (hit) return hit;
-  const own = machineRegion(model, id);
+  const own = ownRegion(model, id);
   const m = model.get(id);
   const name = (e: ElementId): string => model.qualifiedName(e);
   const refuse = (why: NonNullable<MachineRegion['refused']>['why'], at: ElementId, sentence: string): MachineRegion => {
@@ -527,7 +541,7 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
     m === undefined || (m.eClass !== 'StateDefinition' && m.eClass !== 'StateUsage' && m.eClass !== 'ExhibitStateUsage')
       ? []
       : model.typesOf(id).filter((g) => g.eClass === 'StateDefinition' && g.attrs.isLibrary !== true);
-  const reads = generals.length > 0 && (m!.eClass === 'StateDefinition' || own.transitions.length > 0);
+  const reads = generals.length > 0 && (m!.eClass === 'StateDefinition' || (own.transitions.length > 0 && isMachineRoot(model, m!)));
   if (!reads) {
     cache.inherited.set(id, own);
     return own;
@@ -633,8 +647,14 @@ export function seedStore(
   initial?: Map<string, unknown> | Record<string, unknown>,
   region?: Pick<MachineRegion, 'descendants'>,
 ): void {
+  // A typed `exhibit state` is seeded from its region only where the region reads a general's states too.
+  const viewed =
+    behavior.eClass === 'ExhibitStateUsage' && machineRegion(model, behavior.id).bases.length > 0
+      ? machineRegion(model, behavior.id).descendants
+      : undefined;
   const seeded =
     region?.descendants ??
+    viewed ??
     (behavior.eClass === 'StateDefinition' || behavior.eClass === 'StateUsage'
       ? machineRegion(model, behavior.id).descendants
       : model.descendants(behavior.id));
@@ -1173,7 +1193,7 @@ function labelFor(tr: ElementRecord, input: StepInput): string {
  * machine that holds either (`./explore.ts`, `unsupportedConstructs`) and the
  * interpreter stops before the step (`docs/06` §8.14).
  */
-export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId, inherit = false): ElementId[] | null {
+export function hierarchyPath(model: Model, regionId: ElementId, id: ElementId, inherit = true): ElementId[] | null {
   if (id === regionId) return null;
   const region = machineRegion(model, regionId, inherit);
   const path: ElementId[] = [id];

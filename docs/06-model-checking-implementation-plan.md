@@ -2973,6 +2973,22 @@ refuses it too, unless this plan and UML make a reading clear.
   which is a feature and is left as the residual TODO entry. Nothing changes in
   the refusal's text; `semantics.mc.reach.test.ts` ('names the inheritance …')
   now pins the interpreter's side of the argument beside the walk's.
+  **Since B-walk (2026-11-10) this is built.** `machineRegion` reads a machine
+  through its general: a `state def Derived :> Base`, or a typed `exhibit state m
+  : Modes { … }` that owns a step, has Base's region (ids kept, Base's nodes
+  first, `inheritedFrom` naming Base, `parentOf` Base's root the machine) plus its
+  own, and the walk, the atoms, the edge census and the interpreter all read that
+  one view, so a run of `Derived` on `[go, more]` fires `ab` then `bc` and the
+  walk publishes `c` reachable and a deadlock there, about a run the simulator
+  takes. Base is walked alone and never takes `bc` (a step covered by a
+  specialiser's view is no crossing of Base's boundary). Inherited steps come
+  first in a state's declaration order (a state with two enabled steps is a
+  `nondeterministic-choice` either way). A typed usage with no step of its own is
+  no machine and is reported through its definition. The properties a base
+  carries are checked on the base, and the specialisation's report says how many
+  it does not check. Still `machine-boundary`: a redefined state or transition,
+  two general machines, two starts, a cycle or a chain over eight
+  (`MachineRegion.refused`); the general is refused with it.
 - **The simulator refuses a step across the machine's boundary.** The walk's
   `machine-boundary` (§8.6) is a step edge with an end outside the nodes of the
   machine's region: into a nested `state def` (a machine of its own or a

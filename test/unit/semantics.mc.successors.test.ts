@@ -1855,7 +1855,7 @@ describe('`machineRegion` read through a general machine (B-inherit)', () => {
     expect(r.nodes.has(idOf('Base::b'))).toBe(true);
     // A state of Base's is on a path from Derived through the general's root, which is not a state of it.
     expect(hierarchyPath(model, d, idOf('Base::a'), true)).toEqual([idOf('Base::a')]);
-    expect(hierarchyPath(model, d, idOf('Base::a'))).toBeNull();
+    expect(hierarchyPath(model, d, idOf('Base::a'), false)).toBeNull();
     // The one start is Base's `s0`; Derived reads it, and Base read alone is as it was.
     expect(model.get(initialStateOf(model, r, r.directStates(d))!)!.declaredName).toBe('a');
     const store = new Map<string, unknown>();
@@ -1864,8 +1864,9 @@ describe('`machineRegion` read through a general machine (B-inherit)', () => {
     const alone = machineRegion(model, idOf('Base'), true);
     expect(nm(alone.descendants)).toEqual(['Base::n', 'Base::s0', 'Base::a', 'Base::b', 'Base::s0a', 'Base::ab']);
     expect(alone.bases).toEqual([]);
-    // The default view is still the machine's own, and both are memoised on the revision.
-    expect(nm(machineRegion(model, d).descendants)).toEqual(['Derived::c', 'Derived::bc']);
+    // The default view is the one through the general, `false` the machine's own, and both are memoised on the revision.
+    expect(nm(machineRegion(model, d, false).descendants)).toEqual(['Derived::c', 'Derived::bc']);
+    expect(machineRegion(model, d)).toBe(r);
     expect(machineRegion(model, d, true)).toBe(r);
   });
 

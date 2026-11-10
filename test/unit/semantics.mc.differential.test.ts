@@ -932,6 +932,15 @@ describe('the interpreter never does what the checker calls impossible, and ever
       transition settle first S then Idle;
       transition ez first S::work accept e then Z;
     } }`,
+    // B-walk: a machine read through its general (one view for the walk and the interpreter), inherited and typed.
+    'inh-derived.sysml': `package InhD {
+      state def Base { attribute n : Integer = 0; state s0; state s1; state s2; transition t0 first s0 accept a if n < 3 then s1; transition t1 first s1 accept b then s0; }
+      state def Derived :> Base { state d0; transition t2 first s1 accept a then s2; transition t3 first s2 accept b if n < 1 then d0; }
+    }`,
+    'inh-typed.sysml': `package InhT {
+      state def Modes { state a; state b; state c; transition ab first a accept go then b; }
+      part def Drone { exhibit state m : Modes { transition bc first b accept more then c; transition ca first c accept go then a; } exhibit state e : Modes; }
+    }`,
   };
 
   interface Loaded {
@@ -1251,4 +1260,167 @@ describe('the interpreter never does what the checker calls impossible, and ever
     // Not vacuous: the corpus publishes witnesses, the long chase ones included.
     expect(witnesses).toBeGreaterThan(100);
   }, 300_000);
+});
+
+/**
+ * B-WALK'S TWIN (gen-115): a machine read through its general machine is the
+ * machine written out whole, general's body first.
+ *
+ * 150 seeded models, each in both text orders and both shapes (`state def
+ * Derived :> Base`, and a typed `exhibit state m : Base { … }` beside a body-less
+ * one): Base has 2-5 states, 1-4 steps with triggers a/b, one or two attributes,
+ * guards over them and effects on them; the specialiser adds 0-3 own steps (own
+ * guards over Base's attributes) and own states. Reach (exhaustive, configs,
+ * unreachable, dead, deadlocks, choices), the cover and absence of every state
+ * (verdict and witness) and `runStateMachine` on 20 random trigger lists of
+ * length at most four must equal the flattened twin's, up to names; Base walked
+ * with a specialiser beside it equals Base written alone; and a typed usage with
+ * no step of its own adds no machine.
+ */
+describe('a machine read through its general equals the machine written out whole (gen-115)', () => {
+  let seed = 115;
+  const rnd = (n: number): number => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return (seed >> 8) % n;
+  };
+  const pick = <T,>(xs: readonly T[]): T => xs[rnd(xs.length)];
+
+  interface Shape {
+    attrs: string[];
+    baseStates: string[];
+    baseSteps: Array<{ name: string; from: string; to: string; trig: string; guard: string | null; effect: string | null }>;
+    ownStates: string[];
+    ownSteps: Shape['baseSteps'];
+  }
+
+  function shape(): Shape {
+    const attrNames = rnd(2) === 0 ? ['n'] : ['n', 'k'];
+    const attrs = attrNames.map((a) => `attribute ${a} : Integer = ${rnd(3)};`);
+    const baseStates = Array.from({ length: 2 + rnd(4) }, (_, i) => `s${i}`);
+    const ownStates = Array.from({ length: rnd(3) }, (_, i) => `d${i}`);
+    let t = 0;
+    const step = (froms: string[], tos: string[]): Shape['baseSteps'][number] => ({
+      name: `t${t++}`,
+      from: pick(froms),
+      to: pick(tos),
+      trig: pick(['a', 'b']),
+      guard: rnd(2) === 0 ? null : `${pick(attrNames)} ${pick(['<', '>', '=='])} ${rnd(4)}`,
+      effect: rnd(3) === 0 ? `${pick(attrNames)} = ${pick(attrNames)} + 1` : null,
+    });
+    const baseSteps = Array.from({ length: 1 + rnd(4) }, () => step(baseStates, baseStates));
+    const ownSteps = Array.from({ length: rnd(4) }, () => step([...baseStates, ...ownStates], [...baseStates, ...ownStates]));
+    return { attrs, baseStates, baseSteps, ownStates, ownSteps };
+  }
+
+  const stepText = (t: Shape['baseSteps'][number]): string =>
+    `transition ${t.name} first ${t.from} accept ${t.trig}${t.guard ? ` if ${t.guard}` : ''} then ${t.to};`;
+  const baseBody = (x: Shape): string =>
+    [...x.attrs, ...x.baseStates.map((s) => `state ${s};`), ...x.baseSteps.map(stepText)].join('\n');
+  const ownBody = (x: Shape): string => [...x.ownStates.map((s) => `state ${s};`), ...x.ownSteps.map(stepText)].join('\n');
+
+  const load = async (text: string, effects: Shape['baseSteps']): Promise<Model> => {
+    const model = (await loadModelText(text, { fileName: 'gen115.sysml', library: 'none' })).model;
+    expect(model, text).toBeDefined();
+    for (const e of effects) {
+      if (e.effect === null) continue;
+      const el = model!.all().find((r) => r.eClass === 'TransitionUsage' && r.declaredName === e.name);
+      expect(el, `${e.name} in ${text}`).toBeDefined();
+      model!.setAttrs(el!.id, { effect: e.effect });
+    }
+    return model!;
+  };
+
+  const nameOf = (model: Model, id: ElementId | undefined | null): string | null => (id == null ? null : (model.get(id)?.declaredName ?? null));
+  /** Everything a reader is told about one machine, by declared name only. */
+  function digest(model: Model, machineId: ElementId): unknown {
+    const m = reachReport(model).machines.find((r) => r.machine.id === machineId)!;
+    const claims: Record<string, unknown> = {};
+    for (const s of machineStates(model, machineId)) {
+      for (const pattern of ['absence', 'cover'] as const) {
+        const v = behaviourReport(model, {
+          machineId,
+          pattern: `pattern=${pattern}, scope=globally, p=state ${s.declaredName}`,
+        }).properties.at(-1)!;
+        claims[`${pattern} ${s.declaredName}`] = [
+          v.claim,
+          v.code,
+          v.witness.map((w) => [w.event, nameOf(model, w.transition?.id), w.leaf?.name ?? null]),
+        ];
+      }
+    }
+    return {
+      unsupported: m.unsupported.map((u) => u.construct),
+      exhaustive: m.exhaustive,
+      configs: m.configs,
+      unreachable: m.states.unreachable.map((s) => s.name).sort(),
+      dead: m.transitions.dead.map((t) => t.name).sort(),
+      deadlocks: m.deadlocks.map((d) => [d.leaf.name, d.steps]).sort(),
+      choices: m.nondeterminism.map((n) => [n.state.name, n.event, n.taken.name, n.notTaken.map((t) => t.name).sort()]).sort(),
+      claims,
+    };
+  }
+  function runs(model: Model, machineId: ElementId, lists: string[][]): unknown {
+    return lists.map((events) => {
+      const r = runStateMachine(model, machineId, events);
+      return [
+        r.visited.map((v) => nameOf(model, v)),
+        r.fired.map((f) => nameOf(model, f.transitionId)),
+        nameOf(model, r.finalState),
+        [...r.valueStore].sort(),
+      ];
+    });
+  }
+
+  it('equals its flattened twin, and Base walked beside a specialiser equals Base alone, in both text orders', async () => {
+    let compared = 0;
+    for (let i = 0; i < 150; i++) {
+      const x = shape();
+      const typed = i % 2 === 1;
+      const baseFirst = i % 4 < 2;
+      const lists = Array.from({ length: 20 }, () => Array.from({ length: rnd(5) }, () => pick(['a', 'b'])));
+      const all = [...x.baseSteps, ...x.ownSteps];
+      const baseText = `state def Base {\n${baseBody(x)}\n}`;
+      const specText = typed
+        ? `part def H { exhibit state m : Base {\n${ownBody(x)}\n} exhibit state e : Base; }`
+        : `state def Derived :> Base {\n${ownBody(x)}\n}`;
+      const text = `package G {\n${baseFirst ? `${baseText}\n${specText}` : `${specText}\n${baseText}`}\n}`;
+      const where = `#${i} ${typed ? 'typed' : 'def'} ${baseFirst ? 'base first' : 'derived first'}\n${text}`;
+      const model = await load(text, all);
+      const spec = model.all().find((e) => model.qualifiedName(e.id) === (typed ? 'G::H::m' : 'G::Derived'))!;
+      const baseId = model.all().find((e) => model.qualifiedName(e.id) === 'G::Base')!.id;
+      // Machines: Base always; the specialiser only with a step of its own; a body-less typed usage never.
+      const machines = stateMachinesIn(model).map((m) => model.qualifiedName(m.id));
+      expect(machines.sort(), where).toEqual(
+        ['G::Base', ...(x.ownSteps.length > 0 ? [typed ? 'G::H::m' : 'G::Derived'] : [])].sort(),
+      );
+      // Base beside the specialiser is Base alone.
+      const alone = await load(`package G {\n${baseText}\n}`, x.baseSteps);
+      const aloneId = alone.all().find((e) => alone.qualifiedName(e.id) === 'G::Base')!.id;
+      expect(digest(model, baseId), `${where}\nBase alone`).toEqual(digest(alone, aloneId));
+      expect(runs(model, baseId, lists), `${where}\nBase runs`).toEqual(runs(alone, aloneId, lists));
+      if (x.ownSteps.length === 0) continue;
+      // The specialiser is the machine written out whole.
+      const twin = await load(`package G {\nstate def Flat {\n${baseBody(x)}\n${ownBody(x)}\n}\n}`, all);
+      const twinId = twin.all().find((e) => twin.qualifiedName(e.id) === 'G::Flat')!.id;
+      expect(digest(model, spec.id), where).toEqual(digest(twin, twinId));
+      expect(runs(model, spec.id, lists), `${where}\nruns`).toEqual(runs(twin, twinId, lists));
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(60);
+  }, 600_000);
+
+  it('reads a general machine with a composite state: steps into and out of its substates equal the twin', async () => {
+    const base = `state def Base {
+      state s0; state C { state c1; state c2; transition x first c1 accept a then c2; }
+      transition go first s0 accept b then C;
+    }`;
+    const own = `state z; transition in first s0 accept a then C::c2; transition out first C::c2 accept b then s0; transition zz first C accept b then z;`;
+    const model = await load(`package G { ${base} state def Derived :> Base { ${own} } }`, []);
+    const twin = await load(`package G { state def Flat { ${base.replace(/^state def Base \{|\}$/g, '')} ${own} } }`, []);
+    const idOf = (m: Model, qn: string) => m.all().find((e) => m.qualifiedName(e.id) === qn)!.id;
+    const lists = [[], ['b'], ['a'], ['b', 'a'], ['b', 'a', 'b'], ['a', 'b'], ['a', 'a', 'b', 'b']];
+    expect(digest(model, idOf(model, 'G::Derived'))).toEqual(digest(twin, idOf(twin, 'G::Flat')));
+    expect(runs(model, idOf(model, 'G::Derived'), lists)).toEqual(runs(twin, idOf(twin, 'G::Flat'), lists));
+    expect(digest(model, idOf(model, 'G::Base'))).toMatchObject({ unsupported: [], exhaustive: true });
+  });
 });
