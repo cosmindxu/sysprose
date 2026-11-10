@@ -39,23 +39,35 @@ import { loadModelText } from '@text/load';
 import {
   exploreMachine,
   machineAlphabet,
+  machineHolding,
+  machinesHolding,
   reachReport,
   stateMachinesIn,
   type ExploreResult,
 } from '../../src/semantics/mc/explore';
 import {
   afterDuration,
+  directStates,
   hashConfig,
+  hierarchyPath,
   initialConfig,
+  initialState,
+  initialSubstate,
   isCompletion,
+  isRegionNode,
   leafOf,
+  machineRegion,
+  regionDescendants,
+  regionTransitions,
   resumesHistory,
   seedStore,
   stepCandidates,
   stepConfig,
+  STEP_EDGE_KINDS,
   type MachineConfig,
   type StepInput,
 } from '../../src/semantics/mc/config';
+import { payloadOf } from '../../src/semantics/connectors';
 import { walkIsExact } from '../../src/semantics/mc/publishable';
 import { atomHolds, readAtom } from '../../src/semantics/mc/atoms';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
@@ -1625,5 +1637,223 @@ describe("the differential: `reach`'s published output moved only in the ways `M
     expect(row.transitions.dead).toHaveLength(1);
     expect(row.transitions.dead[0].from!.name).toBe('orphan');
     expect(row.qualification).toContain('exhaustive under {maxConfigs 10000');
+  });
+});
+
+/* ═══════════ the one region view reads what the readers read before it ═══════════ */
+
+/**
+ * `machineRegion` replaced six readers' own idea of where a machine stops
+ * (`regionDescendants`, `regionTransitions`, `directStates`, `initialSubstate`,
+ * `hierarchyPath`, `isRegionNode`). THE ORACLE HERE IS THEIR OLD TEXT, written out
+ * again against `model.descendants` / `model.children` / `ownerId`, so a view
+ * that drifts from them by one element — a nested `state def` kept in the nodes,
+ * an `InitialNode` dropped, a declaration order changed — fails here before it
+ * reaches a walk.
+ */
+const oldRegionDescendants = (model: Model, regionId: ElementId) =>
+  model.descendants(regionId).filter((el) => {
+    for (let p: ElementId | null = el.ownerId; p != null && p !== regionId; p = model.get(p)?.ownerId ?? null) {
+      if (model.get(p)?.eClass === 'StateDefinition') return false;
+    }
+    return true;
+  });
+const oldRegionTransitions = (model: Model, regionId: ElementId) =>
+  oldRegionDescendants(model, regionId).filter(
+    (e) =>
+      STEP_EDGE_KINDS.has(e.eClass) &&
+      e.source?.[0] !== undefined &&
+      e.target?.[0] !== undefined &&
+      payloadOf(e) === undefined,
+  );
+const oldDirectStates = (model: Model, containerId: ElementId) =>
+  model.children(containerId).filter((c) => c.eClass === 'StateUsage');
+const oldInitialSubstate = (model: Model, containerId: ElementId) => {
+  const desc = oldRegionDescendants(model, containerId);
+  const declIndex = new Map<ElementId, number>();
+  desc.forEach((e, i) => declIndex.set(e.id, i));
+  return initialState(model, containerId, oldDirectStates(model, containerId), desc, declIndex);
+};
+const oldHierarchyPath = (model: Model, regionId: ElementId, id: ElementId): ElementId[] | null => {
+  if (id === regionId) return null;
+  const path: ElementId[] = [id];
+  for (let p = model.get(id)?.ownerId ?? null; p !== regionId; p = model.get(p)?.ownerId ?? null) {
+    if (p == null || model.get(p)?.eClass !== 'StateUsage') return null;
+    path.push(p);
+  }
+  return path.reverse();
+};
+const oldIsRegionNode = (model: Model, machineId: ElementId, id: ElementId): boolean => {
+  if (id === machineId) return true;
+  if (model.get(id)?.eClass === 'StateDefinition') return false;
+  const seen = new Set<ElementId>([id]);
+  for (let p = model.get(id)?.ownerId ?? null; p !== machineId; p = model.get(p)?.ownerId ?? null) {
+    if (p == null || seen.has(p) || model.get(p)?.eClass === 'StateDefinition') return false;
+    seen.add(p);
+  }
+  return true;
+};
+
+/** A nested `state def` declared first, an `initial` node in the machine and another in a composite, an action holding a state, and a succession edge. */
+const REGION_SHAPES = `package RegionShapes {
+    state def Outer {
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+        initial start;
+        state a;
+        transition sa start -> a;
+        state c {
+            entry action enter;
+            initial cs;
+            state c0;
+            transition cs0 cs -> c0;
+            state c1 {
+                state c10;
+            }
+            transition c01 first c0 accept step then c1;
+        }
+        action act { state hidden; }
+        state done;
+        transition ac first a accept e then c;
+        first c then done;
+    }
+}
+`;
+
+/** Every comparison the view is held to, on one root of one model. */
+function viewEqualsOld(model: Model, rootId: ElementId, label: string): void {
+  const names = (list: readonly { id: ElementId }[]) => list.map((e) => e.id);
+  const region = machineRegion(model, rootId);
+  expect(names(region.descendants), `${label} descendants`).toEqual(names(oldRegionDescendants(model, rootId)));
+  expect(names(regionDescendants(model, rootId)), `${label} regionDescendants`).toEqual(
+    names(oldRegionDescendants(model, rootId)),
+  );
+  expect(names(region.transitions), `${label} transitions`).toEqual(names(oldRegionTransitions(model, rootId)));
+  expect(names(regionTransitions(model, rootId)), `${label} regionTransitions`).toEqual(
+    names(oldRegionTransitions(model, rootId)),
+  );
+  expect(initialSubstate(model, rootId), `${label} initialSubstate`).toBe(oldInitialSubstate(model, rootId));
+  // Every container the region holds, and the ones it does not.
+  const pool = new Map<ElementId, true>();
+  for (const e of model.descendants(rootId)) pool.set(e.id, true);
+  for (const e of model.ancestors(rootId)) pool.set(e.id, true);
+  for (const e of model.all().slice(0, 30)) pool.set(e.id, true);
+  pool.set(rootId, true);
+  const held = new Set(region.descendants.map((d) => d.id));
+  for (const id of pool.keys()) {
+    const at = `${label} @ ${model.qualifiedName(id) || id}`;
+    expect(names(directStates(model, id)), `${at} directStates`).toEqual(names(oldDirectStates(model, id)));
+    expect(names(region.directStates(id)), `${at} region.directStates`).toEqual(names(oldDirectStates(model, id)));
+    expect(isRegionNode(model, rootId, id), `${at} isRegionNode`).toBe(oldIsRegionNode(model, rootId, id));
+    expect(region.nodes.has(id), `${at} nodes`).toBe(oldIsRegionNode(model, rootId, id));
+    expect(hierarchyPath(model, rootId, id), `${at} hierarchyPath`).toEqual(oldHierarchyPath(model, rootId, id));
+    if (id !== rootId && !held.has(id)) {
+      expect(region.parentOf(id), `${at} parentOf outside`).toBeNull();
+    }
+  }
+  expect(region.parentOf(rootId), `${label} parentOf root`).toBeNull();
+  // Nothing is inherited yet: the seams a later step fills are empty.
+  expect(region.bases, `${label} bases`).toEqual([]);
+  expect(region.refused, `${label} refused`).toBeUndefined();
+  expect(region.inheritedFrom(rootId), `${label} inheritedFrom`).toBeUndefined();
+}
+
+describe('`machineRegion` is the lists the readers computed before it', () => {
+  it('on every state element of every file in the tree, read as a region of its own', async () => {
+    let roots = 0;
+    for (const file of sysmlFiles('.').sort()) {
+      const loaded = await loadModelText(read(file), { fileName: file });
+      const model = loaded.model;
+      if (!model) continue;
+      const regionRoots = new Map<ElementId, true>();
+      for (const e of model.all()) if (e.eClass === 'StateDefinition' || e.eClass === 'StateUsage') regionRoots.set(e.id, true);
+      for (const m of stateMachinesIn(model)) regionRoots.set(m.id, true);
+      for (const id of regionRoots.keys()) {
+        viewEqualsOld(model, id, `${file} :: ${model.qualifiedName(id)}`);
+        roots++;
+      }
+    }
+    expect(roots, 'the tree names no state element: the comparison is vacuous').toBeGreaterThan(40);
+  }, 300_000);
+
+  it('on a nested `state def` declared first, a composite with its own start, an action holding a state and a succession', async () => {
+    const model = (await loadModelText(REGION_SHAPES, { fileName: 'region-shapes.sysml', library: 'none' })).model!;
+    const idOf = (qn: string): ElementId => model.all().find((e) => model.qualifiedName(e.id) === qn)!.id;
+    const outer = idOf('RegionShapes::Outer');
+    for (const e of model.all()) {
+      if (e.eClass === 'StateDefinition' || e.eClass === 'StateUsage' || e.eClass === 'ActionUsage') {
+        viewEqualsOld(model, e.id, model.qualifiedName(e.id));
+      }
+    }
+    const region = machineRegion(model, outer);
+    const named = (list: readonly { id: ElementId }[]) => list.map((e) => model.qualifiedName(e.id).replace('RegionShapes::Outer::', ''));
+    // The boundary (no file in the tree has a state below a nested `state def`, so only this fixture draws it):
+    // `Inner` is kept, what is below it is not; `hidden` sits under an action.
+    expect(model.descendants(outer).length).toBeGreaterThan(region.descendants.length);
+    expect(region.descendants.filter((e) => e.eClass === 'InitialNode')).toHaveLength(2);
+    expect(model.get(initialSubstate(model, outer)!)!.declaredName).toBe('a');
+    expect(model.get(initialSubstate(model, idOf('RegionShapes::Outer::c'))!)!.declaredName).toBe('c0');
+    expect(named(region.descendants)).toContain('Inner');
+    expect(named(region.descendants)).not.toContain('Inner::x');
+    expect(region.nodes.has(idOf('RegionShapes::Outer::Inner'))).toBe(false);
+    expect(region.nodes.has(idOf('RegionShapes::Outer::act::hidden'))).toBe(true);
+    expect(hierarchyPath(model, outer, idOf('RegionShapes::Outer::act::hidden'))).toBeNull();
+    expect(hierarchyPath(model, outer, idOf('RegionShapes::Outer::c::c1::c10'))).toEqual([
+      idOf('RegionShapes::Outer::c'),
+      idOf('RegionShapes::Outer::c::c1'),
+      idOf('RegionShapes::Outer::c::c1::c10'),
+    ]);
+    expect(region.parentOf(idOf('RegionShapes::Outer::c::c1'))).toBe(idOf('RegionShapes::Outer::c'));
+    expect(region.parentOf(idOf('RegionShapes::Outer::Inner::x'))).toBeNull();
+    // Memoised on the revision, rebuilt when the model moves.
+    expect(machineRegion(model, outer)).toBe(region);
+    model.rename(idOf('RegionShapes::Outer::a'), 'a2');
+    expect(machineRegion(model, outer)).not.toBe(region);
+  });
+});
+
+describe('a finding is keyed (machine, element): which machines hold an element', () => {
+  /** `machineHolding` as it was written before the view: the first machine that is, or whose region holds, `id`. */
+  const oldMachineHolding = (model: Model, id: ElementId): ElementId | null => {
+    for (const m of stateMachinesIn(model)) {
+      if (m.id === id) return m.id;
+      if (regionDescendants(model, m.id).some((d) => d.id === id && d.eClass !== 'StateDefinition')) return m.id;
+    }
+    return null;
+  };
+
+  it('answers what it always did on every element, and names exactly one machine while no region inherits', async () => {
+    const model = (await loadModelText(REGION_SHAPES, { fileName: 'region-shapes.sysml', library: 'none' })).model!;
+    for (const e of model.all()) {
+      expect(machineHolding(model, e.id), model.qualifiedName(e.id)).toBe(oldMachineHolding(model, e.id));
+      expect(machinesHolding(model, e.id), model.qualifiedName(e.id)).toEqual(
+        oldMachineHolding(model, e.id) === null ? [] : [oldMachineHolding(model, e.id)],
+      );
+    }
+  });
+
+  it('lists the machine that declares an element before one whose region took it from a general, whatever the model order', async () => {
+    const model = (await loadModelText(REGION_SHAPES, { fileName: 'region-shapes.sysml', library: 'none' })).model!;
+    const idOf = (qn: string): ElementId => model.all().find((e) => model.qualifiedName(e.id) === qn)!.id;
+    const outer = idOf('RegionShapes::Outer');
+    const inner = idOf('RegionShapes::Outer::Inner');
+    const x = idOf('RegionShapes::Outer::Inner::x');
+    // Outer comes first in the model; hand it a region that holds Inner's `x` as an inherited node.
+    const regionOf = (id: ElementId) => {
+      const own = machineRegion(model, id);
+      return id === outer
+        ? { nodes: new Set([...own.nodes, x]), inheritedFrom: (e: ElementId) => (e === x ? inner : undefined) }
+        : own;
+    };
+    expect(stateMachinesIn(model).map((m) => m.id).indexOf(outer)).toBeLessThan(
+      stateMachinesIn(model).map((m) => m.id).indexOf(inner),
+    );
+    expect(machinesHolding(model, x)).toEqual([inner]);
+    expect(machinesHolding(model, x, regionOf)).toEqual([inner, outer]);
+    // The one a reader asks for is the declaring machine, not the first listed.
+    expect(machinesHolding(model, x, regionOf)[0]).toBe(inner);
   });
 });

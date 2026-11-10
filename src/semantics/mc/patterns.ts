@@ -91,9 +91,8 @@ import {
   afterDuration,
   hashConfig,
   initialConfig,
-  directStates,
   leafOf,
-  regionDescendants,
+  machineRegion,
   resumesHistory,
   seedStore,
   stepCandidates,
@@ -140,6 +139,7 @@ import {
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
+import { carriersOn } from '../keywords';
 // The interpreter, for ONE reader: every witness this file publishes is replayed
 // through it first (`replayWitness`). A copy of its driving rules would be a
 // second reading of when a chase runs and when it stops — the gap a witness
@@ -788,7 +788,7 @@ export function machinesInsideSentence(model: Model, definitionId: ElementId, ve
  * on the nested definition's states — so `absence of state y` carried by
  * `Inner` printed PASS under `Outer` and FAIL under `Inner`, and the outer
  * machine's pick row counted a property that was not its own.
- * `regionDescendants` stops below the nested definition but keeps the
+ * `machineRegion` stops below the nested definition but keeps the
  * definition itself, whose own carriers are its, so it is skipped as a holder.
  *
  * UNLESS THE DEFINITION IS NO MACHINE. A nested `state def` that owns no
@@ -834,7 +834,7 @@ export function propertiesOf(model: Model, machineId: ElementId): PropertyText[]
     return false;
   };
   const region = (regionId: ElementId, stranded: string | undefined): void => {
-    for (const el of regionDescendants(model, regionId)) {
+    for (const el of machineRegion(model, regionId).descendants) {
       if (lone !== undefined && inMachineBelow(el, regionId)) continue;
       if (el.eClass !== 'StateDefinition') {
         holders.push({ holder: el, ...(stranded !== undefined ? { stranded } : {}) });
@@ -848,8 +848,7 @@ export function propertiesOf(model: Model, machineId: ElementId): PropertyText[]
   };
   region(machineId, lone);
   for (const { holder, stranded } of holders) {
-    for (const carrier of model.children(holder.id)) {
-      if (!isPropertyCarrier(carrier)) continue;
+    for (const carrier of carriersOn(model, holder.id, isPropertyCarrier)) {
       const cells = new Map<string, string>();
       const unknown: string[] = [];
       for (const cell of model.children(carrier.id)) {
@@ -1589,7 +1588,7 @@ export function replayWitness(
     steps.filter((s) => s.event !== '').map((s) => s.event),
     { maxCompletion, follow: steps.map((s) => s.transition?.id ?? '') },
   );
-  const rests = restingLeaves(model, run.visited, run.fired);
+  const rests = restingLeaves(model, machineId, run.visited, run.fired);
   const qn = (id: ElementId | null | undefined): string =>
     id == null ? 'no state' : model.qualifiedName(id) || id;
   for (let i = 0; i < steps.length; i++) {
@@ -1667,12 +1666,15 @@ const sameIds = (a: readonly ElementId[], b: readonly ElementId[]): boolean =>
  */
 function restingLeaves(
   model: Model,
+  machineId: ElementId,
   visited: readonly ElementId[],
   fired: readonly { readonly to: ElementId }[],
 ): (ElementId | null)[] {
+  // The states a container holds IN THIS MACHINE, as its region reads them.
+  const region = machineRegion(model, machineId);
   const cascadeEnd = (i: number): number => {
     let j = i;
-    while (j + 1 < visited.length && directStates(model, visited[j]).some((s) => s.id === visited[j + 1])) j++;
+    while (j + 1 < visited.length && region.directStates(visited[j]).some((s) => s.id === visited[j + 1])) j++;
     return j;
   };
   /**

@@ -21,6 +21,7 @@ import { resolveTypeReferences } from '@library/resolve';
 import { loadFullStandardLibrary } from '@library/full-library';
 import { loadCuratedLibrary } from '@library/standard-library';
 import { reachReport, stateMachinesIn } from '@semantics/mc/explore';
+import { machineRegion } from '@semantics/mc/config';
 import { behaviourReport, exitCodeOf, traceLine } from '@semantics/mc/patterns';
 import {
   ELEMENT_REQUIRED_LEAD,
@@ -3153,6 +3154,59 @@ describe('the state-view marks and the status panel (D.5 step 5)', () => {
       'package N { state def M { state a; state b; transition a then b; state def Empty { state z; } } }',
     );
     expect(mark(marksOf(empty).marks, empty, 'N::M::Empty::z')).toBe('not-walked');
+  });
+
+  it('keys a finding (machine, element): a mark on an element a machine inherits is that machine\'s, painted only where no declaring machine marked it', () => {
+    // Two machines; the report is then edited so that B's region takes `a1`
+    // from A (the reader says so; no region inherits yet) and both walks have
+    // a finding on it. A's `a1` is a dead end, B finds it unreachable.
+    const model = inline(
+      'package K { state def A { state a1; state a2; transition t1 first a1 then a2; } state def B { state b1; state b2; transition t2 first b1 then b2; } }',
+    );
+    const A = idOf(model, 'K::A');
+    const B = idOf(model, 'K::B');
+    const a1 = idOf(model, 'K::A::a1');
+    const b1 = idOf(model, 'K::B::b1');
+    const real = reachReport(model);
+    const machineOf = (id: ElementId) => real.machines.find((m) => m.machine.id === id)!;
+    const rec = (id: ElementId) => model.get(id)!;
+    const edited = (reportB: 'first' | 'last') => {
+      const ma = { ...machineOf(A), deadlocks: [{ leaf: rec(a1) }] } as unknown as (typeof real.machines)[number];
+      const mb = {
+        ...machineOf(B),
+        states: { ...machineOf(B).states, unreachable: [rec(a1)] },
+      } as unknown as (typeof real.machines)[number];
+      return { ...real, machines: reportB === 'first' ? [mb, ma] : [ma, mb] };
+    };
+    const regionOf = (id: ElementId) => {
+      const own = machineRegion(model, id);
+      return {
+        descendants: own.descendants,
+        inheritedFrom: (e: ElementId) => (id === B && e === a1 ? A : own.inheritedFrom(e)),
+      };
+    };
+    for (const order of ['first', 'last'] as const) {
+      const r = edited(order);
+      const keyed = reachMarks(model, r, undefined, regionOf);
+      // Each machine keeps its own finding on the one element.
+      expect(keyed.byMachine[A].marks[a1], order).toBe('no-way-out');
+      expect(keyed.byMachine[B].marks[a1], order).toBe('unreachable');
+      // The canvas paints it from the machine that declares it, whichever the report lists first.
+      expect(keyed.marks[a1], order).toBe('no-way-out');
+      expect(keyed.summary.marked.unreachable, order).toBeUndefined();
+      // a1 (A's dead end) and b2 (B's own): the unreachable mark on a1 is not a third.
+      expect(keyed.summary.marked['no-way-out'], order).toBe(2);
+    }
+    // Where no declaring machine marked it, the inheriting machine's mark fills in.
+    const onlyB = { ...edited('first'), machines: [edited('first').machines[0]] };
+    expect(reachMarks(model, onlyB, undefined, regionOf).marks[a1]).toBe('unreachable');
+    // With no region inheriting, the flat maps are the first mark per element across the report (what they always were).
+    const flat = reachMarks(model, edited('first'));
+    expect(flat.marks[a1]).toBe('unreachable');
+    expect(flat.byMachine[A].marks[a1]).toBe('no-way-out');
+    // And an element no finding names stays unmarked in both views.
+    expect(flat.marks[b1]).toBeUndefined();
+    expect(flat.byMachine[B].marks[b1]).toBeUndefined();
   });
 
   it('marks a dead transition and an undecided guard on the edge itself (S7)', () => {

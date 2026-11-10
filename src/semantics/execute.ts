@@ -46,13 +46,12 @@ import {
   applyAssignment,
   applyTransitionEffect,
   combinedScope,
-  directStates,
   enabledTransitions,
   evalStr,
   guardHoldsStore,
   hierarchyPath,
   initialConfig,
-  initialState,
+  initialStateOf,
   inlineAssign,
   isCompletion,
   isFinalState,
@@ -62,9 +61,9 @@ import {
   isTruthy,
   leafOf,
   literalValueOf,
+  machineRegion,
   outsideStatesSentence,
-  regionDescendants,
-  regionTransitions,
+  regionScope,
   runStatePhase,
   seedStore,
   stepAcrossBoundary,
@@ -1168,9 +1167,9 @@ export function refusedStepSentence(
  */
 function flatRegions(model: Model, container: ElementRecord, parallel: boolean): ElementRecord[] {
   if (!parallel) return [container];
-  const regions = model
-    .children(container.id)
-    .filter((c) => c.eClass === 'StateUsage' && model.descendants(c.id).some((d) => d.eClass === 'StateUsage'));
+  const regions = machineRegion(model, container.id)
+    .directStates(container.id)
+    .filter((c) => machineRegion(model, c.id).descendants.some((d) => d.eClass === 'StateUsage'));
   return regions.length === 0 ? [container] : regions;
 }
 
@@ -1218,7 +1217,6 @@ function runRegion(
   completionBudgetHit: boolean;
   refused?: StateFire;
 } {
-  const region = model.get(regionId)!;
   // THE SAME CONTAINMENT THE WALK READS: the region's descendants, stopping at a
   // nested `state def` (`regionDescendants`, `./mc/config.ts`). That definition
   // is a machine of its own, and taking the start from every descendant handed
@@ -1226,10 +1224,8 @@ function runRegion(
   // declared before the outer machine's own took the start, so the simulator
   // began in `Inner::x` and never entered the `a` the walk opens at — every run
   // it showed parted from the walk's witnesses at their first step.
-  const desc = regionDescendants(model, regionId);
-  const states = desc.filter((e) => e.eClass === 'StateUsage');
-  const declIndex = new Map<ElementId, number>();
-  desc.forEach((e, i) => declIndex.set(e.id, i));
+  const view = machineRegion(model, regionId);
+  const states = view.descendants.filter((e) => e.eClass === 'StateUsage');
 
   // THE SAME LIST THE CHECKER READS, and not a second filter that agrees with
   // it today. This path used to build its own — `TransitionUsage` with both
@@ -1238,17 +1234,18 @@ function runRegion(
   // relation is how the simulator and the explorer came to walk different
   // graphs while the differential between them stayed green: a differential
   // cannot see an edge BOTH readers ignore. The declaration-order sort is gone
-  // with the duplicate because `regionDescendants` keeps `model.descendants`'
-  // order, which is the order `declIndex` was built from.
-  const transitions = regionTransitions(model, regionId);
+  // with the duplicate because the view keeps `model.descendants`' order, which
+  // is the order the start is read in (`initialStateOf`).
+  const transitions = view.transitions;
 
-  const scope = combinedScope(model, region);
+  // The region's own scope, memoised on the revision: the one the walk reads.
+  const scope = regionScope(model, regionId);
   const visited: ElementId[] = [];
   const fired: StateFire[] = [];
 
   let completionBudgetHit = false;
 
-  let current = initialState(model, regionId, states, desc, declIndex);
+  let current = initialStateOf(model, view, states);
   if (!current) return { visited, fired, finalState: null, completionBudgetHit };
   visited.push(current);
   enterState(model, current, store, scope, performed);
@@ -1379,9 +1376,8 @@ function _triggerMatches(tr: ElementRecord, trigger: string): boolean {
 
 /** Container-level transitions (source is the container itself). */
 function containerTransitions(model: Model, containerId: ElementId): ElementRecord[] {
-  return model
-    .descendants(containerId)
-    .filter(
+  return machineRegion(model, containerId)
+    .descendants.filter(
       (e) =>
         e.eClass === 'TransitionUsage' && e.source?.[0] === containerId && e.target?.[0] !== undefined,
     );
@@ -1413,20 +1409,23 @@ function isJoinTransition(tr: ElementRecord): boolean {
  * ({@link StateRunResult.refused}).
  */
 function needsHierarchical(model: Model, container: ElementRecord, parallel: boolean): boolean {
+  const view = machineRegion(model, container.id);
   const regionIds = new Set<ElementId>();
   if (parallel) {
-    for (const c of model.children(container.id)) {
-      if (c.eClass === 'StateUsage' && directStates(model, c.id).length > 0) regionIds.add(c.id);
+    for (const c of view.directStates(container.id)) {
+      if (view.directStates(c.id).length > 0) regionIds.add(c.id);
     }
   }
-  for (const s of model.descendants(container.id)) {
+  for (const s of view.descendants) {
     if (s.eClass !== 'StateUsage' || regionIds.has(s.id)) continue;
-    if (directStates(model, s.id).length > 0) return true; // nested composite state
+    if (view.directStates(s.id).length > 0) return true; // nested composite state
     if (isHistoryPseudostate(s) || isHistoryComposite(model, s.id)) return true;
   }
-  if (model.descendants(container.id).some(isHistoryPseudostate)) return true;
+  if (view.descendants.some(isHistoryPseudostate)) return true;
   const nestedTarget = (regionId: ElementId): boolean =>
-    regionTransitions(model, regionId).some((t) => (hierarchyPath(model, regionId, t.target![0])?.length ?? 1) > 1);
+    machineRegion(model, regionId).transitions.some(
+      (t) => (hierarchyPath(model, regionId, t.target![0])?.length ?? 1) > 1,
+    );
   if (flatRegions(model, container, parallel).some((r) => nestedTarget(r.id))) return true;
   return containerTransitions(model, container.id).some(isJoinTransition);
 }
@@ -1456,9 +1455,8 @@ function runHierMachine(
 
   let regionContainers: ElementRecord[];
   if (parallel) {
-    regionContainers = model
-      .children(container.id)
-      .filter((c) => c.eClass === 'StateUsage' && directStates(model, c.id).length > 0);
+    const view = machineRegion(model, container.id);
+    regionContainers = view.directStates(container.id).filter((c) => view.directStates(c.id).length > 0);
     if (regionContainers.length === 0) regionContainers = [container];
   } else {
     regionContainers = [container];
@@ -1487,7 +1485,7 @@ function runHierMachine(
     const join = containerTransitions(model, container.id).find(isJoinTransition);
     if (join) {
       if (complete) {
-        const scope = combinedScope(model, container);
+        const scope = regionScope(model, container.id);
         const to = join.target![0];
         applyTransitionEffect(join, store, scope);
         fired.push({ transitionId: join.id, from: container.id, to, trigger: triggerLabelOf(join) });
@@ -1994,13 +1992,13 @@ export function executeBehavior(
 
 /**
  * Distinct, non-empty transition triggers of a machine, in declaration order —
- * its own region's (`regionDescendants`), the transitions `runRegion` steps
+ * its own region's (`machineRegion`), the transitions `runRegion` steps
  * by: a nested `state def`'s triggers are no event of the outer machine's run.
  */
 function discoverMachineTriggers(model: Model, stateId: ElementId): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const e of regionDescendants(model, stateId)) {
+  for (const e of machineRegion(model, stateId).descendants) {
     if (e.eClass !== 'TransitionUsage') continue;
     const t = e.attrs.trigger;
     if (typeof t !== 'string' || t === '' || seen.has(t)) continue;
@@ -2042,7 +2040,7 @@ function hasStateMachine(model: Model, el: ElementRecord): boolean {
  * Simulation tab name the same machines.
  */
 function ownsStateMachine(model: Model, el: ElementRecord): boolean {
-  return regionDescendants(model, el.id).some((d) => d.eClass === 'TransitionUsage');
+  return machineRegion(model, el.id).descendants.some((d) => d.eClass === 'TransitionUsage');
 }
 
 /**

@@ -55,7 +55,7 @@
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { type ContractRef, type ContractSubject, type Fragment } from './contracts';
-import { ambiguousKeyword, hasKeyword, keywordsOf } from './keywords';
+import { ambiguousKeyword, carriersOn, hasKeyword, keywordsOf } from './keywords';
 import { machineStates, stateMachinesIn } from './mc/explore';
 import {
   faultInjectionTargets,
@@ -638,8 +638,7 @@ function pinnedMaxOrder(
 ): { value: number | undefined; carrierSeen: boolean } {
   let carrierSeen = false;
   for (const holderId of [target.system.id, target.part.id]) {
-    for (const carrier of model.children(holderId)) {
-      if (!isFaultHypothesisCarrier(carrier)) continue;
+    for (const carrier of carriersOn(model, holderId, isFaultHypothesisCarrier)) {
       carrierSeen = true;
       for (const cell of model.children(carrier.id)) {
         if (!isMaxOrderCell(cell)) continue;

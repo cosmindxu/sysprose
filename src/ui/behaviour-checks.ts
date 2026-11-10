@@ -33,7 +33,7 @@ import {
   type BehaviourReport,
 } from '@semantics/mc/patterns';
 import type { MachineReach, ReachReport } from '@semantics/mc/explore';
-import { regionDescendants } from '@semantics/mc/config';
+import { machineRegion, type MachineRegion } from '@semantics/mc/config';
 import type { LoadHealth, TextLoad } from './store';
 import type { StoredResult } from './panels/checks-store';
 
@@ -69,7 +69,7 @@ export function unwalkedStates(model: Model, r: ReachReport, scopeId?: ElementId
   const walked = new Set<ElementId>();
   for (const m of r.machines) {
     walked.add(m.machine.id);
-    for (const d of regionDescendants(model, m.machine.id)) walked.add(d.id);
+    for (const d of machineRegion(model, m.machine.id).descendants) walked.add(d.id);
   }
   return model
     .all()
@@ -554,14 +554,31 @@ export interface MarkSummary {
  * The mark per state, by the A.4 precedence, plus the {@link MarkSummary} the
  * status panel reads. The walk obeys run-to-completion, so every deadlock and
  * choice row it published stands as a finding.
+ *
+ * KEYED (MACHINE, ELEMENT). A finding is a finding about an element IN A
+ * MACHINE: a machine whose region takes an element from a general machine
+ * (`MachineRegion.inheritedFrom`) walks it as its own node, and what that walk
+ * finds there is not what the general's walk finds. `byMachine` holds each
+ * machine's marks under its own id, first mark wins within the machine. The flat
+ * `marks` / `edgeMarks` the canvas paints by element id take a machine's mark
+ * only for an element the machine does not inherit, so an inherited element is
+ * painted from the machine that declares it (a mark on it from an inheriting
+ * machine fills in only where no declaring machine marked it) and never from
+ * whichever machine the report lists first. No region inherits yet, so the flat
+ * maps are, as they were, the first mark per element across the report.
+ * `regionOf` is the region reader, so a test can hand it a region that does.
  */
 export function reachMarks(
   model: Model,
   r: ReachReport,
   scopeId?: ElementId,
+  regionOf: (machineId: ElementId) => Pick<MachineRegion, 'descendants' | 'inheritedFrom'> = (id) =>
+    machineRegion(model, id),
 ): {
   marks: Record<ElementId, ReachMark>;
   edgeMarks: Record<ElementId, EdgeMark>;
+  /** Each machine's own marks, by machine id (see above). */
+  byMachine: Record<ElementId, { marks: Record<ElementId, ReachMark>; edgeMarks: Record<ElementId, EdgeMark> }>;
   summary: MarkSummary;
 } {
   const marks: Record<ElementId, ReachMark> = {};
@@ -571,22 +588,51 @@ export function reachMarks(
   let trapWithheld = 0;
   let notDecidedOn = 0;
 
-  // First mark wins: the A.4 precedence is the call order below.
-  const put = (id: ElementId, mark: ReachMark): void => {
+  const byMachine: Record<ElementId, { marks: Record<ElementId, ReachMark>; edgeMarks: Record<ElementId, EdgeMark> }> = {};
+  // The machine being read, and what its region took from a general one.
+  let at: ElementId | undefined;
+  let inherits: (id: ElementId) => boolean = () => false;
+  // What a machine found on an element it inherits: painted only where no
+  // machine that declares the element marked it (the loop's end).
+  const lent: { id: ElementId; mark: ReachMark }[] = [];
+  const lentEdges: { id: ElementId; mark: EdgeMark }[] = [];
+
+  const setMark = (id: ElementId, mark: ReachMark): void => {
     if (marks[id] !== undefined) return;
     marks[id] = mark;
     marked[mark] = (marked[mark] ?? 0) + 1;
+  };
+  const setEdgeMark = (id: ElementId, mark: EdgeMark): void => {
+    if (edgeMarks[id] !== undefined) return;
+    edgeMarks[id] = mark;
+    edgeMarked[mark] = (edgeMarked[mark] ?? 0) + 1;
+  };
+  // First mark wins: the A.4 precedence is the call order below.
+  const put = (id: ElementId, mark: ReachMark): void => {
+    if (at === undefined) return setMark(id, mark);
+    const own = byMachine[at].marks;
+    if (own[id] !== undefined) return;
+    own[id] = mark;
+    if (inherits(id)) lent.push({ id, mark });
+    else setMark(id, mark);
   };
   // The edge marks are disjoint: a dead transition is one the walk proved never
   // fires, and an undecided guard is one it could not decide — the second empties
   // the first's list (`m.transitions.dead` is published only on an exact walk).
   const putEdge = (id: ElementId, mark: EdgeMark): void => {
-    if (edgeMarks[id] !== undefined) return;
-    edgeMarks[id] = mark;
-    edgeMarked[mark] = (edgeMarked[mark] ?? 0) + 1;
+    if (at === undefined) return setEdgeMark(id, mark);
+    const own = byMachine[at].edgeMarks;
+    if (own[id] !== undefined) return;
+    own[id] = mark;
+    if (inherits(id)) lentEdges.push({ id, mark });
+    else setEdgeMark(id, mark);
   };
 
   for (const m of r.machines) {
+    at = m.machine.id;
+    byMachine[at] ??= { marks: {}, edgeMarks: {} };
+    const region = regionOf(at);
+    inherits = (id) => region.inheritedFrom(id) !== undefined;
     if (m.trapCensus.refusedByGate !== null) trapWithheld += 1;
     if (m.suppressed || m.unsupported.length > 0) notDecidedOn += 1;
 
@@ -596,7 +642,7 @@ export function reachMarks(
     // 2. `not decided` — unreached descendants of a suppressed or unsupported machine.
     if (m.suppressed || m.unsupported.length > 0) {
       const reached = new Set(m.states.reachable.map((s) => s.id));
-      for (const d of regionDescendants(model, m.machine.id)) {
+      for (const d of region.descendants) {
         if (d.eClass !== 'StateUsage' && d.eClass !== 'ExhibitStateUsage') continue;
         if (reached.has(d.id)) continue;
         put(d.id, 'not-decided');
@@ -621,13 +667,18 @@ export function reachMarks(
     for (const g of m.undeterminedGuards) putEdge(g.transition.id, 'undecided');
   }
 
+  for (const { id, mark } of lent) setMark(id, mark);
+  for (const { id, mark } of lentEdges) setEdgeMark(id, mark);
+
   // 3. `not walked` — the N states of A.1, under no walked machine at all.
+  at = undefined;
   const unwalked = unwalkedStates(model, r, scopeId);
   for (const id of unwalked) put(id, 'not-walked');
 
   return {
     marks,
     edgeMarks,
+    byMachine,
     summary: {
       machines: r.machines.length,
       marked,

@@ -61,6 +61,7 @@
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { isUserModelElement, type ContractRef } from './contracts';
 import { generalizationsOf } from './inheritance';
+import { carriersOn } from './keywords';
 import {
   VERIFICATION_METHOD_VALUES,
   getRequirementAttr,
@@ -481,8 +482,7 @@ export function methodOf(model: Model, caseEl: ElementRecord): MethodReading {
   const unrecognised: string[] = [];
   const carriers = caseChain(model, caseEl);
   for (const owner of carriers) {
-    for (const child of model.children(owner.id)) {
-      if (child.eClass !== 'MetadataUsage') continue;
+    for (const child of carriersOn(model, owner.id, (c) => c.eClass === 'MetadataUsage')) {
       const cells = kindCells(model, child);
       const named = metadataTypeNames(model, child).includes(VERIFICATION_METHOD_DEF);
       const speaksKinds = cells.some((cell) =>

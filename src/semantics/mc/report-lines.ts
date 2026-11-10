@@ -52,7 +52,7 @@ import {
   type BehaviourReport,
   type PropertyVerdict,
 } from './patterns';
-import { regionDescendants } from './config';
+import { machineRegion } from './config';
 import { profileLines } from './profile';
 import { DWELL_SENTENCE, environmentSentence, environmentTriggers } from './publishable';
 
@@ -500,9 +500,14 @@ function noMachine(model: Model, scopeId: ElementId): { message: string; holder:
   // does: a state of a nested `state def` is inside the outer machine's text
   // and in the nested machine's walk, and a pick row naming the outer one
   // would check a machine the state is not part of.
-  const holder = stateMachinesIn(model).find((m) =>
-    regionDescendants(model, m.id).some((d) => d.id === scopeId),
+  //
+  // A region that took the element from a general machine holds it too
+  // (`inheritedFrom`); the pick names the machine that declares it, as a finding
+  // about an element is keyed (machine, element).
+  const holders = stateMachinesIn(model).filter((m) =>
+    machineRegion(model, m.id).descendants.some((d) => d.id === scopeId),
   );
+  const holder = holders.find((m) => machineRegion(model, m.id).inheritedFrom(scopeId) === undefined) ?? holders[0];
   return {
     message:
       `\`${qname(model, scopeId)}\` holds no state machine` +
