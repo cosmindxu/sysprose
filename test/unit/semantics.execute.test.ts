@@ -11,7 +11,7 @@ import {
   discoverTriggers,
   SimulationSession,
 } from '../../src/semantics/index';
-import { initialSubstate } from '../../src/semantics/mc/config';
+import { initialSubstate, machineRegion, seedStore } from '../../src/semantics/mc/config';
 
 /* ───────────────────────────── action flow ───────────────────────────── */
 
@@ -385,6 +385,27 @@ describe('runStateMachine — a nested state def does not take the start (M3)', 
       // still name the outer one only, as before.
       expect(executeModel(model).traces.filter((t) => t.kind === 'state').map((t) => t.behaviorId), name).toEqual([outer.id]);
     }
+  });
+});
+
+describe('seedStore reads the machine region (B-keys-run)', () => {
+  it('seeds from the region, so a nested state def\'s attribute is not the outer machine\'s', async () => {
+    const text = `package Seed {
+      state def Outer {
+        attribute n : Integer = 1;
+        state def Inner { attribute n : Integer = 9; attribute m : Integer = 4; state x; }
+        state a;
+      }
+    }`;
+    const model = (await loadModelText(text, { fileName: 'seed.sysml', library: 'none' })).model!;
+    const outer = model.all().find((e) => e.declaredName === 'Outer')!;
+    // the view and the raw containment differ: that is what the seed must follow
+    expect(machineRegion(model, outer.id).descendants.map((d) => d.declaredName)).not.toContain('m');
+    expect(model.descendants(outer.id).map((d) => d.declaredName)).toContain('m');
+    const store = new Map<string, unknown>();
+    seedStore(model, outer, store);
+    expect([...store.keys()].sort()).toEqual(['n']);
+    expect(store.get('n')).toBe(1);
   });
 });
 

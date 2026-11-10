@@ -45,7 +45,7 @@ import {
 import { DIMENSIONLESS, resolveUnit } from './units';
 import { isNonNormativeStatement } from './statement-kind';
 import { solve } from './solver';
-import { regionDescendants } from './mc/config';
+import { machineRegion } from './mc/config';
 
 /** A primitive simulation value (what a value snapshot / plot can carry). */
 export type SimValue = number | boolean | string;
@@ -416,7 +416,7 @@ export function simulationAtRest(sample: SimSample): boolean {
  * whose own region holds at least one transition)?
  *
  * THE REGION, NOT EVERY DESCENDANT, the containment the interpreter runs over
- * (`runRegion`, `regionDescendants`): a `state def` written inside is a machine
+ * (`runRegion`, `machineRegion`): a `state def` written inside is a machine
  * of its own. Read over every descendant, a `state def Wrapper` holding only a
  * nested `state def Inner` was the Simulation tab's machine, `Inner` — the one
  * with the transitions — was never offered, and the run of `Wrapper` had no
@@ -425,7 +425,7 @@ export function simulationAtRest(sample: SimSample): boolean {
 export function isSimulatable(model: Model, id: ElementId): boolean {
   const el = model.get(id);
   if (!el || (el.eClass !== 'StateUsage' && el.eClass !== 'StateDefinition')) return false;
-  return regionDescendants(model, id).some((e) => e.eClass === 'TransitionUsage');
+  return machineRegion(model, id).descendants.some((e) => e.eClass === 'TransitionUsage');
 }
 
 /**
@@ -436,7 +436,7 @@ export function isSimulatable(model: Model, id: ElementId): boolean {
 export function discoverTriggers(model: Model, behaviorId: ElementId): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const e of regionDescendants(model, behaviorId)) {
+  for (const e of machineRegion(model, behaviorId).descendants) {
     if (e.eClass !== 'TransitionUsage') continue;
     const t = e.attrs.trigger;
     if (typeof t !== 'string' || t.trim() === '') continue;

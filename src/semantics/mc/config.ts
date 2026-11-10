@@ -528,14 +528,27 @@ export function literalValueOf(feat: ElementRecord | undefined): unknown {
  * CONDITION: a walk that started from an empty store would evaluate the first
  * guard against a different world than the interpreter does, and the two would
  * diverge on the first `guard: 'ready'` in the corpus.
+ *
+ * A STATE MACHINE IS SEEDED FROM ITS REGION ({@link machineRegion}), the same
+ * elements the walk and the interpreter step over, and not from every
+ * descendant: an attribute written in a nested `state def` is that machine's
+ * own, and seeded here it took the name (first name wins) from the outer
+ * machine's. `region` is the view to read, for a caller that holds one; an
+ * action has no region and reads its descendants.
  */
 export function seedStore(
   model: Model,
   behavior: ElementRecord,
   store: Map<string, unknown>,
   initial?: Map<string, unknown> | Record<string, unknown>,
+  region?: Pick<MachineRegion, 'descendants'>,
 ): void {
-  for (const f of model.descendants(behavior.id)) {
+  const seeded =
+    region?.descendants ??
+    (behavior.eClass === 'StateDefinition' || behavior.eClass === 'StateUsage'
+      ? machineRegion(model, behavior.id).descendants
+      : model.descendants(behavior.id));
+  for (const f of seeded) {
     if (!isUsage(f.eClass)) continue;
     const name = f.declaredName;
     if (!name || store.has(name)) continue;
@@ -652,14 +665,28 @@ export function initialState(
   return null;
 }
 
-/** The initial substate of a container (InitialNode target, else first state). */
-export function initialSubstate(model: Model, containerId: ElementId): ElementId | null {
-  const region = machineRegion(model, containerId);
-  const states = region.directStates(containerId);
+/**
+ * The state a region opens in, read from the region's view: an InitialNode's
+ * target, else the first of `states` in the region's declaration order. The
+ * one reader of a region's start — `initialSubstate` (the walk, over the
+ * region's direct states) and the interpreter's flat path (over its states)
+ * both ask it, so the two cannot read two starts.
+ */
+export function initialStateOf(
+  model: Model,
+  region: Pick<MachineRegion, 'root' | 'descendants'>,
+  states: readonly ElementRecord[],
+): ElementId | null {
   const desc = region.descendants;
   const declIndex = new Map<ElementId, number>();
   desc.forEach((e, i) => declIndex.set(e.id, i));
-  return initialState(model, containerId, states, desc, declIndex);
+  return initialState(model, region.root, states, desc, declIndex);
+}
+
+/** The initial substate of a container (InitialNode target, else first state). */
+export function initialSubstate(model: Model, containerId: ElementId): ElementId | null {
+  const region = machineRegion(model, containerId);
+  return initialStateOf(model, region, region.directStates(containerId));
 }
 
 /** Apply a behavior action's store effect (an assignment or `attrs.effect`). */
