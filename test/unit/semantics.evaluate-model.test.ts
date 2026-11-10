@@ -5429,16 +5429,16 @@ describe('a binding reads through a renamed redefinition and a package’s defin
     for (const rel of ['W4::c2', 'W4::c3', 'W4::cq']) expect([rel, result(m!, rel)]).toEqual([rel, 'satisfied']);
   });
 
-  it('reads no value per instance for a package’s binding between two features of a definition (W4d)', async () => {
+  it('reads each instance’s own cap for a package’s binding between two features of a definition (W4d)', async () => {
     const { model: m } = await loadModelText(`package W4d {
       part def P { attribute load : ScalarValues::Real default = 1.0; attribute cap : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; }
       bind P::load = P::cap;
       part p2 : P { attribute :>> cap = 50.0; }
       constraint c2F { p2.m2 >= 0.0 }
     }`);
-    // P's load default of 1 was read at p2 on every surface, where p2's cap makes it 50.
-    expect([source(m!, 'W4d::p2::load'), defaultGivesWay(m!, named(m!, 'W4d::P::load'))]).toEqual(['free', true]);
-    expect([result(m!, 'W4d::c2F'), numeric(m!, 'W4d::c2F')]).toEqual(['unknown', 'violated']);
+    // P's load default of 1 was read at p2 on every surface, where p2's cap makes it 50 (SLOT2: read at p2 only).
+    expect(defaultGivesWay(m!, named(m!, 'W4d::P::load'))).toBe(true);
+    expect([result(m!, 'W4d::c2F'), numeric(m!, 'W4d::c2F')]).toEqual(['violated', 'violated']);
     expect(axioms(m!, 'W4d::«BindingConnectorAsUsage» in W4d::p2')).toEqual(['load == cap [ok] W4d::p2::load W4d::p2::cap']);
   });
 

@@ -7757,8 +7757,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'W4w::c2': ['?/?/?/?', '?'],
     }),
     // Two features of one definition bound at package level (`bind P::load = P::cap`) are joined in each instance at
-    // its own values: the check and the literal engine read none (P's load default gives way; T/F before on all
-    // four surfaces), the numeric and SMT lanes solve p2's load from p2's cap.
+    // its own values: each instance's load is its own cap, where that instance's `=` states it (SLOT2; P's load
+    // default gives way); one that states neither end reads nothing (W4dn), nor one that states both (W4dm).
     'w4-defpair': probe(`package W4d {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute cap : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; }
         bind P::load = P::cap;
@@ -7766,8 +7766,46 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c2F { p2.m2 >= 0.0 }
         constraint c2T { p2.m2 <= 0.0 }
       }`, {
-      'W4d::c2F': ['?/?/F/?', 'F'],
-      'W4d::c2T': ['?/?/T/T', 'T'],
+      'W4d::c2F': ['F/F/F/F', 'F'],
+      'W4d::c2T': ['T/T/T/T', 'T'],
+    }),
+    // A third instance with a cap of its own reads its own: p3's load is 5, never p2's 50 (no `#bind` row F).
+    'w4d-three': probe(`package W4d3 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute cap : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        bind P::load = P::cap;
+        part p2 : P { attribute :>> cap = 50.0; }
+        part p3 : P { attribute :>> cap = 5.0; }
+        constraint c2F { p2.m2 >= 0.0 }
+        constraint c2T { p2.m2 <= 0.0 }
+        constraint c3T { p3.m2 >= 0.0 }
+        constraint c3F { p3.m2 <= 0.0 }
+      }`, {
+      'W4d3::c2F': ['F/F/F/F', 'F'],
+      'W4d3::c2T': ['T/T/T/T', 'T'],
+      'W4d3::c3F': ['F/F/F/F', 'F'],
+      'W4d3::c3T': ['T/T/T/T', 'T'],
+    }),
+    // An instance that states neither end reads nothing (p3, with p2's cap beside it), and one that states both ends
+    // with two values that differ states two for the one the binding joins: neither is read (W4db; SMT finds the
+    // axioms inconsistent, as W4o).
+    'w4d-states': probe(`package W4dn {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute cap : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        bind P::load = P::cap;
+        part p2 : P { attribute :>> cap = 50.0; }
+        part p3 : P;
+        constraint c2 { p2.m2 >= 0.0 }
+        constraint c3 { p3.m2 >= 0.0 }
+      }`, {
+      'W4dn::c2': ['F/F/F/F', 'F'],
+      'W4dn::c3': ['?/?/?/?', '?'],
+    }),
+    'w4d-both': probe(`package W4db {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute cap : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        bind P::load = P::cap;
+        part p4 : P { attribute :>> cap = 50.0; attribute :>> load = 7.0; }
+        constraint c4 { p4.m2 >= 0.0 }
+      }`, {
+      'W4db::c4': ['?/?/?/X', '?'],
     }),
     // A plain `=` on a redefinition the package's binding fills is the contradiction of decision 1: d1plain's
     // shape, which U11 decided (A.5, `two-values`: ref ?). Only p4's own 7 is read by no surface but SMT's
