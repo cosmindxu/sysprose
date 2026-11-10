@@ -139,6 +139,7 @@ import {
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
+import { carriersOn } from '../keywords';
 // The interpreter, for ONE reader: every witness this file publishes is replayed
 // through it first (`replayWitness`). A copy of its driving rules would be a
 // second reading of when a chase runs and when it stops — the gap a witness
@@ -847,8 +848,7 @@ export function propertiesOf(model: Model, machineId: ElementId): PropertyText[]
   };
   region(machineId, lone);
   for (const { holder, stranded } of holders) {
-    for (const carrier of model.children(holder.id)) {
-      if (!isPropertyCarrier(carrier)) continue;
+    for (const carrier of carriersOn(model, holder.id, isPropertyCarrier)) {
       const cells = new Map<string, string>();
       const unknown: string[] = [];
       for (const cell of model.children(carrier.id)) {

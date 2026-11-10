@@ -351,6 +351,32 @@ export function importedAnswers(
   return out;
 }
 
+/**
+ * Is a simple `name`, asked from `scopeId`, ambiguous through imports? The distinct elements it denotes when two or
+ * more imports of the nearest scope that answers expose different ones (≥2 elements = ambiguous), `undefined`
+ * otherwise. Asked at the nearest scope whose own members or imports answer to the name, as full name resolution is: a
+ * member the scope declares itself shadows every import. A qualified name is not asked. `accept` keeps only the
+ * elements the caller is looking for ({@link importedAnswers}).
+ */
+export function ambiguousImportedName(
+  model: Model,
+  name: string,
+  scopeId: ElementId | null,
+  accept: (el: ElementRecord) => boolean = () => true,
+): ElementRecord[] | undefined {
+  if (name === '' || name.includes('::')) return undefined;
+  const seen = new Set<ElementId>();
+  for (let cur = scopeId; !seen.has(cur as ElementId); cur = cur === null ? null : (model.get(cur)?.ownerId ?? null)) {
+    if (cur !== null) seen.add(cur);
+    const answers = importedAnswers(model, cur, name, accept);
+    if (answers === undefined) return undefined; // the scope's own member shadows the imports
+    if (answers.length > 1) return answers;
+    if (answers.length === 1) return undefined;
+    if (cur === null) break;
+  }
+  return undefined;
+}
+
 /* ─────────────────────────────── public API ─────────────────────────────── */
 
 /**

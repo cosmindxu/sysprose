@@ -52,7 +52,7 @@ import {
   type Model,
 } from '@core/index';
 import { resolveFullName } from './bind';
-import { importedAnswers } from './resolve-names';
+import { ambiguousImportedName } from './resolve-names';
 import {
   EXCEPTIONAL_QUALIFIED_KEYWORD,
   SYSPROSE_VERIFICATION_PACKAGE,
@@ -164,16 +164,106 @@ export function ambiguousKeyword(
   const kw = typeof keyword === 'string' ? parseKeyword(keyword) : keyword;
   if (kw.name === '' || kw.qualifier.length > 0) return undefined;
   const scope = scopeId !== undefined ? scopeId : (model.get(kw.elementId)?.ownerId ?? null);
-  const seen = new Set<ElementId>();
-  for (let cur = scope; !seen.has(cur as ElementId); cur = cur === null ? null : (model.get(cur)?.ownerId ?? null)) {
-    if (cur !== null) seen.add(cur);
-    const answers = importedAnswers(model, cur, kw.name, isMetadataDefinition);
-    if (answers === undefined) return undefined; // the scope's own member shadows the imports
-    if (answers.length > 1) return answers;
-    if (answers.length === 1) return undefined;
-    if (cur === null) break;
+  return ambiguousImportedName(model, kw.name, scope, isMetadataDefinition);
+}
+
+/* ───────────────────────── what a carrier is `about` ───────────────────── */
+
+/**
+ * What a metadata carrier's `about` names. `none`: no `about`, or one naming the owner. `refused`: the names resolve
+ * to nothing (`unresolved`), a head segment two imports answer to (`ambiguous`, with the `rivals`), or more than one
+ * target (`several`) — each a reading this tool does not guess.
+ */
+export type AboutReading =
+  | { kind: 'none' }
+  | { kind: 'one'; target: ElementId }
+  | { kind: 'refused'; why: 'unresolved' | 'ambiguous' | 'several'; names: readonly string[]; rivals?: readonly ElementId[] };
+
+/**
+ * The carrier types whose `about` is read. Empty: every `about` is still refused by {@link aboutAccepted}, so
+ * {@link carriersOn} equals `children(holder)` on every model. A later step names the types it reads.
+ */
+export const READ_ABOUT_TYPES: ReadonlySet<string> = new Set<string>();
+
+/** The `about` entries of a carrier, as written. */
+function aboutNames(carrier: ElementRecord): string[] {
+  const about = carrier.attrs.about;
+  return Array.isArray(about) ? about.map(String).filter((n) => n.trim() !== '') : [];
+}
+
+/** What `carrier`'s `about` names, each entry resolved from the carrier's OWN scope (its owner). */
+export function aboutTargets(model: Model, carrier: ElementRecord): AboutReading {
+  const names = aboutNames(carrier);
+  if (names.length === 0) return { kind: 'none' };
+  if (names.length > 1) return { kind: 'refused', why: 'several', names };
+  const name = names[0]!;
+  const scope = carrier.ownerId ?? null;
+  const head = unquoteName(splitQualified(name)[0] ?? '') ?? '';
+  const rivals = ambiguousImportedName(model, head, scope);
+  if (splitQualified(name).length === 1 && rivals !== undefined) {
+    return { kind: 'refused', why: 'ambiguous', names, rivals: rivals.map((r) => r.id) };
   }
-  return undefined;
+  const hit = resolveFullName(model, name, scope);
+  if (hit === undefined) return { kind: 'refused', why: 'unresolved', names };
+  if (hit.id === carrier.ownerId) return { kind: 'none' };
+  return { kind: 'one', target: hit.id };
+}
+
+/** The carrier's type: its last `::` segment. */
+function carrierType(carrier: ElementRecord): string {
+  const t = carrier.attrs.type;
+  return typeof t === 'string' ? (t.split('::').pop() ?? t) : '';
+}
+
+/**
+ * The one rule for what a carrier's `about` may do, mapper and readers alike: no `about` is the owner's own
+ * carrier (`target: null`); a type not in {@link READ_ABOUT_TYPES} is refused; an unresolved, ambiguous or several-target
+ * `about` is refused; `about` naming the owner is the owner's own.
+ */
+export function aboutAccepted(
+  model: Model,
+  carrier: ElementRecord,
+): { ok: true; target: ElementId | null } | { ok: false; sentence: string } {
+  if (aboutNames(carrier).length === 0) return { ok: true, target: null };
+  const type = carrierType(carrier);
+  if (!READ_ABOUT_TYPES.has(type)) {
+    return { ok: false, sentence: `\`about\` on a \`${type || 'metadata'}\` carrier is not read by this tool` };
+  }
+  const reading = aboutTargets(model, carrier);
+  if (reading.kind === 'refused') {
+    return { ok: false, sentence: `\`about ${reading.names.join(', ')}\` is ${reading.why}` };
+  }
+  return { ok: true, target: reading.kind === 'one' ? reading.target : null };
+}
+
+const ABOUT = new WeakMap<Model, { rev: number; byHolder: Map<ElementId, ElementRecord[]> }>();
+
+/**
+ * The carriers that annotate `holderId`: `children(holder)` as every reader read it, plus every carrier (in file order)
+ * whose accepted `about` target is the holder. With {@link READ_ABOUT_TYPES} empty it is `children(holder)` filtered.
+ */
+export function carriersOn(
+  model: Model,
+  holderId: ElementId,
+  is: (el: ElementRecord) => boolean,
+): ElementRecord[] {
+  const own = model.children(holderId).filter(is);
+  if (READ_ABOUT_TYPES.size === 0) return own;
+  let memo = ABOUT.get(model);
+  if (memo === undefined || memo.rev !== model.rev) {
+    const byHolder = new Map<ElementId, ElementRecord[]>();
+    for (const el of model.ofKind('MetadataUsage')) {
+      if (aboutNames(el).length === 0) continue;
+      const got = aboutAccepted(model, el);
+      if (!got.ok || got.target === null) continue;
+      const list = byHolder.get(got.target) ?? [];
+      list.push(el);
+      byHolder.set(got.target, list);
+    }
+    memo = { rev: model.rev, byHolder };
+    ABOUT.set(model, memo);
+  }
+  return [...own, ...(memo.byHolder.get(holderId) ?? []).filter(is)];
 }
 
 /** A keyword written as a bare string, with no element behind it. */

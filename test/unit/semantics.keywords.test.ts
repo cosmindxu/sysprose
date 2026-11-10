@@ -43,6 +43,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseModel, serializeModel } from '@text/index';
 import { checkText } from '@text/check';
+import { ambiguousImportedName } from '@semantics/resolve-names';
 import { loadModelText } from '@text/load';
 import type { Model } from '@core/index';
 import {
@@ -60,6 +61,9 @@ import {
   SYSPROSE_VERIFICATION_PACKAGE,
   faultTreeCensus,
   ambiguousKeyword,
+  aboutAccepted,
+  aboutTargets,
+  carriersOn,
   foreignKeyword,
   hasKeyword,
   keywordsOf,
@@ -961,5 +965,42 @@ describe('the packages this tool calls its own', () => {
     expect([...SYSPROSE_KEYWORD_PACKAGES].sort()).toEqual(
       [STATEMENT_KIND_PACKAGE, SYSPROSE_VERIFICATION_PACKAGE].sort(),
     );
+  });
+
+  /**
+   * `about` (C-index): hand-built carriers, bypassing the mapper. Resolved from the carrier's own scope, an ambiguous
+   * import is refused, two targets are refused, and with no carrier type read yet `carriersOn` is `children`.
+   */
+  it('reads a carrier\'s about from its own scope, refuses an ambiguous or double one, and adds no carrier yet', () => {
+    const model = parsed(
+      'package A { part def Foo; } package B { part def Foo; }\n' +
+        'package P { import A::*; import B::*; part holder; part sib; part sib2; part def Own; }\n' +
+        'package Q { part holder; part sib { part def Z; } }',
+    );
+    const holder = model.all().filter((e) => e.declaredName === 'holder')[0]!;
+    const carrier = (about: string[] | undefined) =>
+      model.create('MetadataUsage', {
+        ownerId: holder.id,
+        attrs: { annotation: true, type: 'VerificationCases::VerificationMethod', ...(about ? { about } : {}) },
+      });
+    const sib = model.all().find((e) => e.declaredName === 'sib' && model.owner(e.id)?.declaredName === 'P')!;
+    expect(aboutTargets(model, carrier(undefined))).toEqual({ kind: 'none' });
+    expect(aboutTargets(model, carrier(['sib']))).toEqual({ kind: 'one', target: sib.id }); // the carrier's scope, not the root
+    expect(aboutTargets(model, carrier(['holder']))).toEqual({ kind: 'none' }); // the owner
+    expect(aboutTargets(model, carrier(['nothing']))).toMatchObject({ kind: 'refused', why: 'unresolved' });
+    expect(aboutTargets(model, carrier(['sib', 'sib2']))).toMatchObject({ kind: 'refused', why: 'several' });
+    const amb = aboutTargets(model, carrier(['Foo']));
+    expect(amb).toMatchObject({ kind: 'refused', why: 'ambiguous' });
+    expect(amb.kind === 'refused' ? amb.rivals?.length : 0).toBe(2);
+    const pId = model.all().find((e) => e.declaredName === 'P')!.id;
+    expect(ambiguousImportedName(model, 'Foo', pId)?.length).toBe(2);
+    expect(ambiguousImportedName(model, 'Own', pId)).toBeUndefined();
+    expect(ambiguousImportedName(model, 'A::Foo', pId)).toBeUndefined();
+    // C-index: no type is read, so an `about` carrier is refused and no holder gains one.
+    expect(aboutAccepted(model, carrier(['sib'])).ok).toBe(false);
+    expect(aboutAccepted(model, carrier(undefined))).toEqual({ ok: true, target: null });
+    const isCarrier = (e: { eClass: string }) => e.eClass === 'MetadataUsage';
+    expect(carriersOn(model, sib.id, isCarrier)).toEqual(model.children(sib.id).filter(isCarrier));
+    expect(carriersOn(model, holder.id, isCarrier)).toEqual(model.children(holder.id).filter(isCarrier));
   });
 });
