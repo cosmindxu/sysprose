@@ -400,6 +400,9 @@ export const WITHHELD_CAUSE_PHRASE = {
 /** The connector kinds beside a binding whose end copy the mapper may mark parted (`attrs.partedEnd`): the chain connectors of map-to-model. */
 const OTHER_CHAIN_CONNECTORS = ['ConnectionUsage', 'Connector', 'InterfaceUsage', 'Flow', 'FlowUsage'] as const;
 
+/** {@link DefiningEquations.oneStatement} for a context that states nothing as one feature. */
+const NO_STATEMENTS: ReadonlyMap<ElementId, ElementRecord> = new Map();
+
 /**
  * The defining equations one evaluation pass reads, gathered once per context
  * — with the valueless feature of each name an equation there may define — so
@@ -434,6 +437,8 @@ export class DefiningEquations {
   private readonly clashes = new Map<ElementId, Map<string, NameClash>>();
   /** The clashes of a context that hold a family of features ({@link NameClash}'s `family`), per context. */
   private readonly familyClashes = new Map<ElementId, NameClash[]>();
+  /** {@link oneStatement}, per context: each feature read as the one statement that gives the value of the feature it states. */
+  private readonly oneStatements = new Map<ElementId, Map<ElementId, ElementRecord>>();
   /** The features that redefine two at once, by feature ({@link mergedLines}), built on first ask. */
   private redefiningTwo?: Map<ElementId, ElementRecord[]>;
   /** {@link inheritedClashes} per context. */
@@ -1038,6 +1043,7 @@ export class DefiningEquations {
         return;
       }
       onPath.add(ownerId);
+      const one = this.oneStatement(ownerId);
       for (const feat of this.features(ownerId)) {
         const name = this.nameOf(feat);
         // A name holding a dot ('a.b') is not offered: the path text `a.b` would read it, where the path `a` then `b` has no
@@ -1062,7 +1068,7 @@ export class DefiningEquations {
           }
           continue;
         }
-        const denoted: Denotation = { feature: feat, reader: ownerId, inCall, instance, enclosing };
+        const denoted: Denotation = { feature: one.get(feat.id) ?? feat, reader: ownerId, inCall, instance, enclosing };
         // A directed feature is its owner's parameter: never a nested bare name.
         const own = inBody || isDirected(feat);
         const shared = this.sharedAliases(ownerId);
@@ -3004,8 +3010,10 @@ export class DefiningEquations {
         }
       }
       for (const [name, shadow] of this.lexicalShadows(contextId)) if (!out.has(name)) out.set(name, shadow);
-      for (const [name, merged] of this.mergedLines(contextId)) if (!out.has(name)) out.set(name, merged);
-      for (const [name, twice] of this.redefinedTwice(contextId)) if (!out.has(name)) out.set(name, twice);
+      const one = new Map<ElementId, ElementRecord>();
+      for (const [name, merged] of this.mergedLines(contextId, one)) if (!out.has(name)) out.set(name, merged);
+      for (const [name, twice] of this.redefinedTwice(contextId, one)) if (!out.has(name)) out.set(name, twice);
+      this.oneStatements.set(contextId, one);
       for (const [name, hidden] of this.hiddenNames(contextId)) if (!out.has(name)) out.set(name, hidden);
       this.clashes.set(contextId, out);
     }
@@ -3150,6 +3158,84 @@ export class DefiningEquations {
   }
 
   /**
+   * The statement that gives the one feature its value, where a context states ONE feature several ways (a line `attribute
+   * X :>> M, N;` and the redefinitions of it or of its targets, `attribute :>> x;` beside `attribute :>> x default = 3.0;`),
+   * or `undefined`. KerML 7.3.4.5: features that redefine the same feature are that feature in the context, so its value is
+   * the one the most specific statement gives: a redefinition's value stands over the value it redefines, a firm value (`=`)
+   * over a `default`, and a `default` of a type that specialises the one another is written in over that one; the statement
+   * left must be one. Not read, and the caller keeps the clash: two firm statements, or two defaults that neither type
+   * specialises, whatever their values (agreeing ones are LN2); a firm value another statement redefines; a value that is
+   * not a number; content nested below any of them; an equation over a name of the feature. Only attributes are read.
+   */
+  private winningStatement(contextId: ElementId, family: readonly ElementRecord[]): ElementRecord | undefined {
+    // Every statement the context and its general types make of it: a usage one of them owns that redefines a feature already
+    // in the family or answers to its name (a redefinition in a general type is not on the closure of the context's own).
+    const members = new Map<ElementId, ElementRecord>(family.map((f) => [f.id, f]));
+    const names = new Set(family.flatMap((f) => this.nameOf(f) ?? []));
+    const holders = [this.model.get(contextId)!, ...generalizationsOf(this.model, contextId)].filter((h) => h.attrs.isLibrary !== true);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const h of holders) {
+        for (const c of this.model.children(h.id)) {
+          if (!isUsage(c.eClass) || c.attrs.implicit === true || members.has(c.id)) continue;
+          const own = this.nameOf(c);
+          const hit =
+            (own !== undefined && names.has(own)) ||
+            this.model.relationshipsFrom(c.id).some((r) => r.eClass === 'Redefinition' && (r.target ?? []).some((x) => members.has(x)));
+          if (!hit) continue;
+          members.set(c.id, c);
+          if (own !== undefined) names.add(own);
+          grew = true;
+        }
+      }
+    }
+    const all = new Map<ElementId, ElementRecord>();
+    for (const f of members.values()) for (const g of [f, ...redefinedClosure(this.model, f)]) all.set(g.id, g);
+    const stated: ElementRecord[] = [];
+    for (const g of all.values()) {
+      if (g.attrs.isLibrary === true) return undefined;
+      if (!isKindOf(g.eClass, 'AttributeUsage') || this.model.children(g.id).some((c) => c.attrs.implicit !== true && (isUsage(c.eClass) || isBindingConnector(c)))) return undefined;
+      const own = this.nameOf(g);
+      if (own !== undefined && this.of(contextId, own).length > 0) return undefined;
+      if (g.attrs.value === undefined || g.attrs.value === null) continue;
+      if (typeof g.attrs.value !== 'number') return undefined;
+      stated.push(g);
+    }
+    const firm = (g: ElementRecord): boolean => g.attrs.defaultValue !== true;
+    const reached = new Set<ElementId>();
+    for (const h of stated) {
+      for (const g of redefinedClosure(this.model, h)) {
+        if (g.id === h.id || !all.has(g.id)) continue;
+        // A value a redefinition states over a firm one is two statements of it, not one overriding the other.
+        if (stated.includes(g)) {
+          if (firm(g)) return undefined;
+          reached.add(g.id);
+        }
+      }
+    }
+    // A `default` a more specific type writes stands over one a type it specialises writes, whatever the features it redefines.
+    for (const g of stated) {
+      if (firm(g) || g.ownerId == null) continue;
+      if (stated.some((h) => h !== g && h.ownerId != null && h.ownerId !== g.ownerId && generalizationsOf(this.model, h.ownerId).some((o) => o.id === g.ownerId))) reached.add(g.id);
+    }
+    const frontier = stated.filter((g) => !reached.has(g.id));
+    const firmOnes = frontier.filter(firm);
+    const winners = firmOnes.length > 0 ? firmOnes : frontier;
+    return winners.length === 1 ? winners[0] : undefined;
+  }
+
+  /**
+   * Each feature of `contextId` that a context states as one feature with others ({@link winningStatement}), by id, with
+   * the statement that gives its value: the walk denotes the feature by it, so every name of the one feature reads one value.
+   */
+  oneStatement(contextId: ElementId): ReadonlyMap<ElementId, ElementRecord> {
+    // A context whose features redefine nothing states nothing twice: the clashes are not built for it.
+    if (!this.features(contextId).some((f) => this.model.relationshipsFrom(f.id).some((r) => r.eClass === 'Redefinition'))) return NO_STATEMENTS;
+    this.clashesIn(contextId);
+    return this.oneStatements.get(contextId) ?? NO_STATEMENTS;
+  }
+
+  /**
    * The names `contextId` reads through ONE feature of a general type that redefines two features at once
    * (`attribute X :>> M, N default = 3.0;` in Q2) while a feature of the context's own redefines one of them (`part s
    * : Q2 { attribute :>> M = 1.0; attribute :>> N = 2.0; }`): `M` and `N` are then the one feature `X`, and the usage
@@ -3160,7 +3246,7 @@ export class DefiningEquations {
    * A single redefinition of one of them (`:>> M = 4.0`) is the same line, and gives way the same; one of the line
    * itself (`:>> X = 5.0`) states one value for the one feature, and reads every name of it.
    */
-  private mergedLines(contextId: ElementId): Map<string, NameClash> {
+  private mergedLines(contextId: ElementId, one: Map<ElementId, ElementRecord>): Map<string, NameClash> {
     const out = new Map<string, NameClash>();
     const context = this.model.get(contextId);
     if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
@@ -3202,6 +3288,13 @@ export class DefiningEquations {
       // = 1.0` and N's `= 2.0`), has no one value to read: whichever came first was read, so the target order decided.
       const differing = line.attrs.value == null ? this.differingSources(targets) : [];
       if (!another && differing.length === 0) continue;
+      // One statement that gives the line its value: its names read that, as one feature (KerML 7.3.4.5).
+      const members = this.features(contextId).filter((f) => f.id === line.id || ids.has(f.id) || redefinedClosure(this.model, f).some((g) => g.id === line.id || ids.has(g.id)));
+      const statement = this.winningStatement(contextId, [line, ...targets, ...members]);
+      if (statement !== undefined && members.every((f) => (one.get(f.id) ?? statement) === statement)) {
+        for (const f of members) one.set(f.id, statement);
+        continue;
+      }
       for (const g of [line, ...targets]) {
         const name = effectiveNameOf(this.model, g);
         const kept = name !== undefined ? byName.get(name) : undefined;
@@ -3233,7 +3326,7 @@ export class DefiningEquations {
    * came first, and the SMT one found the axioms inconsistent. The context reads no such name, nor a name below one
    * ({@link NameClash}'s `twice`): weaker, never false.
    */
-  private redefinedTwice(contextId: ElementId): Map<string, NameClash> {
+  private redefinedTwice(contextId: ElementId, one: Map<ElementId, ElementRecord>): Map<string, NameClash> {
     const out = new Map<string, NameClash>();
     const context = this.model.get(contextId);
     if (!context || context.attrs.isLibrary === true || isKindOf(context.eClass, 'ConstraintUsage')) return out;
@@ -3287,6 +3380,11 @@ export class DefiningEquations {
         ts.sort(byQn);
         const pair = xs.flatMap((a, i) => xs.slice(i + 1).filter((b) => !this.statesSame(a, b)).map((b) => [a, b] as const))[0];
         if (!pair) continue;
+        const statement = this.winningStatement(contextId, [...xs, ...ts]);
+        if (statement !== undefined && xs.every((x) => (one.get(x.id) ?? statement) === statement)) {
+          for (const x of xs) one.set(x.id, statement);
+          continue;
+        }
         const clash: Omit<NameClash, 'kept'> = {
           other: pair[1],
           keptValue: pair[0],
