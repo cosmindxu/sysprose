@@ -806,6 +806,23 @@ export class DefiningEquations {
     return hit;
   }
 
+  /**
+   * {@link sharedAliases} less the names whose renamers are all ONE feature of the context ({@link oneStatement}: `attribute
+   * :>> M, N = 6.0` beside the inherited `attribute X :>> M, N`, whose statement gives the one feature its value): they
+   * share one feature, so the name denotes it. Not read where the renamers state it differently.
+   */
+  private sharedAfterOne(ownerId: ElementId, one: ReadonlyMap<ElementId, ElementRecord>): ReadonlySet<string> {
+    const shared = this.sharedAliases(ownerId);
+    if (shared.size === 0 || one.size === 0) return shared;
+    const hit = new Set(shared);
+    for (const n of shared) {
+      const renamers = this.features(ownerId).filter((f) => this.aliasesOf(f).includes(n));
+      const first = one.get(renamers[0]!.id);
+      if (first !== undefined && renamers.every((f) => one.get(f.id) === first)) hit.delete(n);
+    }
+    return hit;
+  }
+
   /** The first of `contextId`'s effective features named `name` that states no value. */
   feature(contextId: ElementId, name: string): ElementRecord | undefined {
     let byName = this.valueless.get(contextId);
@@ -1071,7 +1088,7 @@ export class DefiningEquations {
         const denoted: Denotation = { feature: one.get(feat.id) ?? feat, reader: ownerId, inCall, instance, enclosing };
         // A directed feature is its owner's parameter: never a nested bare name.
         const own = inBody || isDirected(feat);
-        const shared = this.sharedAliases(ownerId);
+        const shared = this.sharedAfterOne(ownerId, one);
         for (const n of [name, ...this.aliasesOf(feat)]) {
           const full = prefix ? `${prefix}.${n}` : n;
           // An alias two features share stays claimed, and answers neither ({@link sharedAliases}).
@@ -3164,7 +3181,7 @@ export class DefiningEquations {
    * the one the most specific statement gives: a redefinition's value stands over the value it redefines, a firm value (`=`)
    * over a `default`, and a `default` of a type that specialises the one another is written in over that one; the statement
    * left must be one. Not read, and the caller keeps the clash: two firm statements, or two defaults that neither type
-   * specialises, whatever their values (agreeing ones are LN2); a firm value another statement redefines; a value that is
+   * specialises and state different values; a firm value another statement redefines; a value that is
    * not a number; content nested below any of them; an equation over a name of the feature. Only attributes are read.
    */
   private winningStatement(contextId: ElementId, family: readonly ElementRecord[]): ElementRecord | undefined {
@@ -3202,13 +3219,21 @@ export class DefiningEquations {
       stated.push(g);
     }
     const firm = (g: ElementRecord): boolean => g.attrs.defaultValue !== true;
+    // The same number in the same unit as written: `5.0 [kg]` beside `5000.0 [g]` is the same quantity, but the SMT lane
+    // encodes the two as two values, so it stays two statements.
+    const agreeing = (a: ElementRecord, b: ElementRecord): boolean =>
+      a.attrs.value === b.attrs.value && (typeof a.attrs.unit === 'string' ? a.attrs.unit.trim() : '') === (typeof b.attrs.unit === 'string' ? b.attrs.unit.trim() : '') && compareWrittenValues(a, b) === 'same';
     const reached = new Set<ElementId>();
     for (const h of stated) {
       for (const g of redefinedClosure(this.model, h)) {
         if (g.id === h.id || !all.has(g.id)) continue;
         // A value a redefinition states over a firm one is two statements of it, not one overriding the other.
         if (stated.includes(g)) {
-          if (firm(g)) return undefined;
+          // (the same value written again is one statement, LN2)
+          if (firm(g)) {
+            if (firm(h) && agreeing(g, h)) continue;
+            return undefined;
+          }
           reached.add(g.id);
         }
       }
@@ -3221,7 +3246,10 @@ export class DefiningEquations {
     const frontier = stated.filter((g) => !reached.has(g.id));
     const firmOnes = frontier.filter(firm);
     const winners = firmOnes.length > 0 ? firmOnes : frontier;
-    return winners.length === 1 ? winners[0] : undefined;
+    // Statements that write the same value in the same unit are one statement: the first by id stands for them, whichever
+    // line of the family asks.
+    const first = [...winners].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+    return first !== undefined && winners.every((w) => w === first || agreeing(w, first)) ? first : undefined;
   }
 
   /**

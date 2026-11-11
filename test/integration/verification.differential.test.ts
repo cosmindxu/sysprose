@@ -6725,7 +6725,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // A usage that redefines the line X itself (`:>> X = 5.0`) states ONE value for the one feature M and N are, and
     // reads every name of it: s.M and s.N are 5 (`s.N == 1.0` is false), which stood at 5d9e806 and abstained under the
-    // first fence. A usage that redefines M and N in one feature (`u`) still abstains.
+    // first fence. A usage that redefines M and N in one feature (`u`) states 6.0 firm over the line's default 3.0: every
+    // name of the one feature reads 6 (LN2; the shared alias N is one feature, not two).
     'redef-target-merge-x': probe(`package MX {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
         part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
@@ -6741,7 +6742,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'MX::sN': ['F/F/F/F', 'F'],
       'MX::sX': ['T/T/T/T', 'T'],
       'MX::uM': ['T/T/T/T', 'T'],
-      'MX::uN': ['?/?/?/?', '?'],
+      'MX::uN': ['T/T/T/T', 'T'],
     }),
     // A feature that redefines the line (`attribute Y :>> X;`, in a type or in the usage) is the line's one feature under
     // another name, and the usage's `:>> M = 5.0` gives it its value: M, N, X and Y are one feature with the value 5, and
@@ -17263,10 +17264,10 @@ package AT {
   constraint cM3 { s.M == 3.0 }
   constraint cX3 { s.X == 3.0 }
 }`, {
-      'AB::cM3': ['?/?/?/?', 'T'],
-      'AB::cX3': ['?/?/?/?', 'T'],
-      'AB::cY2': ['?/?/?/?', 'F'],
-      'AB::cY3': ['?/?/?/?', 'T'],
+      'AB::cM3': ['T/T/T/T', 'T'],
+      'AB::cX3': ['T/T/T/T', 'T'],
+      'AB::cY2': ['F/F/F/F', 'F'],
+      'AB::cY3': ['T/T/T/T', 'T'],
     }),
     'line-alias-usage-redefines-both-rev': probe(`package AB {
   constraint cX3 { s.X == 3.0 }
@@ -17279,10 +17280,10 @@ package AT {
   part def Q1 { attribute N default = 2.0; }
   part def Q { attribute M; }
 }`, {
-      'AB::cM3': ['?/?/?/?', 'T'],
-      'AB::cX3': ['?/?/?/?', 'T'],
-      'AB::cY2': ['?/?/?/?', 'F'],
-      'AB::cY3': ['?/?/?/?', 'T'],
+      'AB::cM3': ['T/T/T/T', 'T'],
+      'AB::cX3': ['T/T/T/T', 'T'],
+      'AB::cY2': ['F/F/F/F', 'F'],
+      'AB::cY3': ['T/T/T/T', 'T'],
     }),
     'line-dependent-attribute': probe(`package DA {
   part def Q { attribute M default = 1.0; }

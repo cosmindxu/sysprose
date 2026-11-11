@@ -1169,13 +1169,17 @@ one would make two features of the usage one, or give two the same name:
   5.0`) stands over the defaults of the features it redefines, a firm value
   (`=`) over the defaults the other targets write, and a `default` of a type
   that specialises another over the one that type writes. A `:>> x;` beside a
-  `:>> x default = 3.0;` is one feature that reads 3.0. Where no one statement
-  gives it (`:>> M = 1.0` beside `:>> N = 2.0`, two firm values, two defaults of
-  types neither of which specialises the other, a firm value another statement
-  redefines, a value that is not a number), every row over `s.M`, `s.N`, `s.X`,
+  `:>> x default = 3.0;` is one feature that reads 3.0, and statements that write
+  the same value in the same unit are one statement (`attribute :>> M, N = 6.0;`
+  in a usage beside the type's `attribute X :>> M, N = 6.0;`, or `:>> x = 6.0;`
+  written twice): `s.M`, `s.N` and `s.X` read 6. Where no one statement
+  gives it (`:>> M = 1.0` beside `:>> N = 2.0`, two firm values that differ, two
+  defaults of types neither of which specialises the other that differ, a firm
+  value another statement redefines with a different value, a value that is not
+  a number), every row over `s.M`, `s.N`, `s.X`,
   or a feature that redefines the line under another name, is *could not be
-  evaluated*, in a sentence that names X, on every surface. Statements that agree
-  (`:>> M, N = 6.0` over a line, `5.0 [kg]` beside `5000.0 [g]`) are not read yet,
+  evaluated*, in a sentence that names X, on every surface. Values written in
+  different units (`5.0 [kg]` beside `5000.0 [g]`) are not read yet,
   and nor is a line of parts (`part X :>> M, N;` with `s.X.x`, `s.M.x`, `s.N.x`):
   those names, and what reads them, are *could not be evaluated* too. A usage
   that states one feature twice with values that differ (`:>> x = 5.0; :>> x =

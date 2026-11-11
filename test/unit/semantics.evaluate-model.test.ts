@@ -10254,6 +10254,43 @@ describe('a feature a context states several ways is one feature, and its one va
     }
   });
 
+  it('LN2: statements that agree are one statement, and a line written over a line reads its name (`:>> M, N = 6.0` over `X :>> M, N`)', async () => {
+    const cases: Array<[string[], Record<string, string>]> = [
+      // The usage's own line states 6.0 firm over the line's default 3.0: every name of the one feature reads 6.
+      [
+        ['part def Q { attribute M default = 1.0; attribute N default = 1.0; }', 'part def Q2 :> Q { attribute X :>> M, N default = 3.0; }', 'part u : Q2 { attribute :>> M, N = 6.0; }',
+          'constraint uM { u.M == 6.0 }', 'constraint uN { u.N == 6.0 }', 'constraint uX { u.X == 6.0 }', 'constraint uN3 { u.N == 3.0 }'],
+        { uM: 'satisfied', uN: 'satisfied', uX: 'satisfied', uN3: 'violated' },
+      ],
+      // Two firm lines that write the same value agree.
+      [
+        ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N = 6.0; }', 'part u : Q2 { attribute :>> M, N = 6.0; }',
+          'constraint uM { u.M == 6.0 }', 'constraint uN { u.N == 6.0 }', 'constraint uN7 { u.N == 7.0 }'],
+        { uM: 'satisfied', uN: 'satisfied', uN7: 'violated' },
+      ],
+      // The same firm value written twice, or by a redefinition of the line and of one target.
+      [
+        ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part t : Q2 { attribute :>> X = 6.0; attribute :>> M = 6.0; attribute :>> X = 6.0; }',
+          'constraint tX { t.X == 6.0 }', 'constraint tN { t.N == 6.0 }', 'constraint tN7 { t.N == 7.0 }'],
+        { tX: 'satisfied', tN: 'satisfied', tN7: 'violated' },
+      ],
+    ];
+    for (const [lines, expected] of cases) {
+      for (const text of [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`]) {
+        expect(await rows(text), text).toEqual(expected);
+      }
+    }
+    // Values that differ stay abstained: the model states two values for the one feature.
+    for (const lines of [
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N = 6.0; }', 'part u : Q2 { attribute :>> M, N = 7.0; }', 'constraint uN { u.N == 7.0 }'],
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part t : Q2 { attribute :>> X = 6.0; attribute :>> M = 7.0; }', 'constraint tN { t.N == 6.0 }'],
+    ]) {
+      for (const text of [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`]) {
+        expect(Object.values(await rows(text)), text).not.toContain('satisfied');
+      }
+    }
+  });
+
   /**
    * gen-line: 150 models of the one feature stated several ways (the line, redefinitions of it and of its targets in the
    * line's type, a type below it and the usage, twice-stated, each valueless, a `default` or firm) read in both text
