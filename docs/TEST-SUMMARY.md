@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5571 total — 5571 passed, 0 failed, 0 skipped
+- **Tests:** 5580 total — 5580 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -122,14 +122,14 @@
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
-| test/unit/semantics.mc.differential.test.ts | 47 | 0 | 0 |
+| test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
-| test/unit/semantics.mc.patterns.test.ts | 91 | 0 | 0 |
+| test/unit/semantics.mc.patterns.test.ts | 92 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 126 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 128 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
-| test/unit/semantics.mc.successors.test.ts | 37 | 0 | 0 |
+| test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
