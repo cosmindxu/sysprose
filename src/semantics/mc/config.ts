@@ -522,7 +522,7 @@ const MAX_GENERAL_CHAIN = 8;
  * and the one start is the one `InitialNode` of the merged list. Where the
  * shape is not one this view reads, `refused` says which and the region is the
  * machine's own: two general machines, two starts, a cycle or a chain over
- * {@link MAX_GENERAL_CHAIN}, a redefined member (until a later step reads it)
+ * {@link MAX_GENERAL_CHAIN}, a redefinition other than a plain `state :>> b;`
  * or an own usage that takes a name the general already holds.
  */
 function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[]): MachineRegion {
@@ -559,26 +559,45 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
   if (base.bases.length >= MAX_GENERAL_CHAIN) {
     return refuse('cycle', id, `${name(id)} specialises a chain of general machines this walk does not read (a cycle, or longer than ${MAX_GENERAL_CHAIN})`);
   }
-  const redefined = own.descendants.find((e) => model.relationshipsFrom(e.id).some((r) => r.eClass === 'Redefinition'));
-  if (redefined) return refuse('redefined', redefined.id, `${name(redefined.id)} redefines a member of a general machine`);
+  // A `state :>> b;` the machine writes directly, with no body of its own,
+  // redefining a direct state of its general, is the state it redefines: it adds
+  // nothing, so the view leaves it out and a step that names it is refused
+  // (`alias`). Any other redefinition is not read.
+  const alias = new Set<ElementId>();
+  const baseStates = new Set(base.directStates(g).map((s) => s.id));
+  for (const e of own.descendants) {
+    const rels = model.relationshipsFrom(e.id).filter((r) => r.eClass === 'Redefinition');
+    if (rels.length === 0) continue;
+    const to = rels[0].target?.[0];
+    const plain =
+      e.eClass === 'StateUsage' && e.ownerId === id && rels.length === 1 && to !== undefined && baseStates.has(to) &&
+      Object.keys(e.attrs).length === 0 && model.children(e.id).every((c) => c.eClass === 'Redefinition');
+    if (!plain) return refuse('redefined', e.id, `${name(e.id)} redefines a member of a general machine`);
+    alias.add(e.id);
+  }
+  const dropped = new Set<ElementId>(alias);
+  for (const e of own.descendants) if (e.ownerId !== null && alias.has(e.ownerId)) dropped.add(e.id);
+  const ownKept = own.descendants.filter((e) => !dropped.has(e.id));
+  const named = ownKept.find((e) => (e.source ?? []).some((x) => alias.has(x)) || (e.target ?? []).some((x) => alias.has(x)));
+  if (named) return refuse('redefined', named.id, `${name(named.id)} names a state that redefines a state of a general machine`);
   const taken = new Set<string>();
   for (const e of base.descendants) if (isUsage(e.eClass) && e.declaredName) taken.add(e.declaredName);
-  const clash = own.descendants.find((e) => isUsage(e.eClass) && e.declaredName !== undefined && taken.has(e.declaredName));
+  const clash = ownKept.find((e) => isUsage(e.eClass) && e.declaredName !== undefined && taken.has(e.declaredName));
   if (clash) return refuse('redefined', clash.id, `${name(clash.id)} takes a name its general machine already holds`);
-  const descendants = [...base.descendants, ...own.descendants];
+  const descendants = [...base.descendants, ...ownKept];
   if (descendants.filter((e) => e.eClass === 'InitialNode').length > 1) {
     return refuse('two-starts', id, `${name(id)} and its general machine each open at a start node of their own`);
   }
   const bases = [g, ...base.bases];
-  const ownHeld = new Set<ElementId>(own.descendants.map((e) => e.id));
+  const ownHeld = new Set<ElementId>(ownKept.map((e) => e.id));
   const region: MachineRegion = {
     root: id,
     bases,
-    nodes: new Set<ElementId>([...base.nodes, ...own.nodes]),
+    nodes: new Set<ElementId>([...base.nodes, ...[...own.nodes].filter((n) => !dropped.has(n))]),
     descendants,
-    transitions: [...base.transitions, ...own.transitions],
+    transitions: [...base.transitions, ...own.transitions.filter((t) => !dropped.has(t.id))],
     directStates: (containerId) =>
-      containerId === id ? [...base.directStates(g), ...own.directStates(id)] : directStates(model, containerId),
+      containerId === id ? [...base.directStates(g), ...own.directStates(id).filter((d) => !dropped.has(d.id))] : directStates(model, containerId),
     parentOf: (x) => (x === g ? id : ownHeld.has(x) ? own.parentOf(x) : base.parentOf(x)),
     inheritedFrom: (x) => (ownHeld.has(x) || x === id ? undefined : (base.inheritedFrom(x) ?? g)),
   };

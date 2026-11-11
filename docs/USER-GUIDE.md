@@ -4309,9 +4309,11 @@ inherited state names the machine it is a finding in (`W2::Base::c (inherited) i
 W2::Derived`). A typed usage with no step of its own is no machine: it is
 reported through its definition, once. A property the general carries is checked
 on the general, and the specialisation's report says how many it does not check.
-Still refused, with `machine-boundary` and the reason in its own words: a
-specialisation that redefines a state or transition of its general (`state :>>
-b`), one that specialises two machines, one that opens at a start of its own
+A bare `state :>> b;` (or `state r :>> b;`) that redefines a direct state of the
+general and adds nothing is read as that state. Still refused, with
+`machine-boundary` and the reason in its own words: a specialisation that
+redefines a state with a body, a transition, or anything else, or that names
+such a redefining state in a step (`state r :>> b; transition t first r …`), one that specialises two machines, one that opens at a start of its own
 beside its general's, and a chain of generals longer than eight or one that
 cycles; the general is refused with it, since the step the specialisation adds is
 then taken by no view. Write the machine you mean out whole in one definition.

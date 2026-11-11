@@ -2986,7 +2986,9 @@ refuses it too, unless this plan and UML make a reading clear.
   `nondeterministic-choice` either way). A typed usage with no step of its own is
   no machine and is reported through its definition. The properties a base
   carries are checked on the base, and the specialisation's report says how many
-  it does not check. Still `machine-boundary`: a redefined state or transition,
+  it does not check. A bare `state :>> b;` redefining a direct state of the
+  general is read as that state. Still `machine-boundary`: a redefined state
+  with a body, a redefined transition or any other redefinition,
   two general machines, two starts, a cycle or a chain over eight
   (`MachineRegion.refused`); the general is refused with it.
 - **The simulator refuses a step across the machine's boundary.** The walk's

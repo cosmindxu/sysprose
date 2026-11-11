@@ -1409,6 +1409,55 @@ describe('a machine read through its general equals the machine written out whol
     expect(compared).toBeGreaterThan(60);
   }, 600_000);
 
+  it('reads a plain `state :>> s` of a general machine as that state, and refuses every other redefinition (gen-115 with redefinitions)', async () => {
+    let compared = 0;
+    let refused = 0;
+    for (let i = 0; i < 120; i++) {
+      const x = shape();
+      const typed = i % 2 === 1;
+      const baseFirst = i % 4 < 2;
+      const lists = Array.from({ length: 20 }, () => Array.from({ length: rnd(5) }, () => pick(['a', 'b'])));
+      // 1-2 plain redefinitions of Base states, unnamed or named; every 6th is a body one, a named one a step reaches, or an attribute one.
+      const bad = i % 6 === 5 ? pick(['body', 'named', 'attr']) : null;
+      const redefs = Array.from({ length: 1 + rnd(2) }, (_, j) => {
+        const s = pick(x.baseStates);
+        return rnd(2) === 0 ? `state :>> ${s};` : `state r${j} :>> ${s};`;
+      });
+      if (bad === 'body') redefs.push(`state :>> ${x.baseStates[0]} { entry action e0; }`);
+      if (bad === 'attr') redefs.push('attribute :>> n = 7;');
+      if (bad === 'named') redefs.push(`state rr :>> ${x.baseStates[0]};`, `transition tr first rr then ${x.baseStates[1]};`);
+      const own = [...redefs, ownBody(x)].join('\n');
+      const baseText = `state def Base {\n${baseBody(x)}\n}`;
+      const specText = typed
+        ? `part def H { exhibit state m : Base {\n${own}\n} }`
+        : `state def Derived :> Base {\n${own}\n}`;
+      const text = `package G {\n${baseFirst ? `${baseText}\n${specText}` : `${specText}\n${baseText}`}\n}`;
+      const where = `#${i} ${typed ? 'typed' : 'def'} ${bad ?? 'plain'}\n${text}`;
+      const model = await load(text, [...x.baseSteps, ...x.ownSteps]);
+      const qn = typed ? 'G::H::m' : 'G::Derived';
+      const spec = model.all().find((e) => model.qualifiedName(e.id) === qn)!;
+      const hasOwn = x.ownSteps.length > 0 || bad === 'named';
+      if (!hasOwn) continue; // no step of its own: the specialiser is no machine (B-walk)
+      const m = reachReport(model).machines.find((r) => r.machine.id === spec.id);
+      expect(m, where).toBeDefined();
+      if (bad !== null) {
+        // Not read: refused as a machine-boundary, with no walk claimed about it.
+        expect(m!.unsupported.map((u) => u.construct), where).toContain('machine-boundary');
+        expect(m!.exhaustive, where).toBe(false);
+        refused++;
+        continue;
+      }
+      expect(m!.unsupported, where).toEqual([]);
+      const twin = await load(`package G {\nstate def Flat {\n${baseBody(x)}\n${ownBody(x)}\n}\n}`, [...x.baseSteps, ...x.ownSteps]);
+      const twinId = twin.all().find((e) => twin.qualifiedName(e.id) === 'G::Flat')!.id;
+      expect(digest(model, spec.id), where).toEqual(digest(twin, twinId));
+      expect(runs(model, spec.id, lists), `${where}\nruns`).toEqual(runs(twin, twinId, lists));
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(50);
+    expect(refused).toBeGreaterThan(5);
+  }, 600_000);
+
   it('reads a general machine with a composite state: steps into and out of its substates equal the twin', async () => {
     const base = `state def Base {
       state s0; state C { state c1; state c2; transition x first c1 accept a then c2; }

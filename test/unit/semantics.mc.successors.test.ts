@@ -1901,7 +1901,8 @@ describe('`machineRegion` read through a general machine (B-inherit)', () => {
     state def Other { state o; }
     state def Two :> Base, Other { state t; }
     state def Start :> Base { initial s1; state e; transition s1e first s1 then e; }
-    state def Redef :> Base { state :>> b; }
+    state def Redef :> Base { state :>> b { entry action e0; } }
+    state def PlainRedef :> Base { state :>> b; }
     state def Clash :> Base { state a; }
     state def Cyc1 :> Cyc2 { state y1; }
     state def Cyc2 :> Cyc1 { state y2; }
@@ -1913,6 +1914,10 @@ describe('`machineRegion` read through a general machine (B-inherit)', () => {
     expect(why('Two')?.why).toBe('two-generals');
     expect(why('Start')?.why).toBe('two-starts');
     expect(why('Redef')?.why).toBe('redefined');
+    // A plain `state :>> b;` is the state it redefines: read, and left out of the view as a node of its own.
+    expect(why('PlainRedef')).toBeUndefined();
+    expect(machineRegion(model, idOf('PlainRedef'), true).bases).toEqual([idOf('Base')]);
+    expect([...machineRegion(model, idOf('PlainRedef'), true).nodes].map((n) => model.get(n)!.eClass).filter((c) => c === 'StateUsage')).toHaveLength(2);
     expect(why('Clash')?.why).toBe('redefined');
     expect(why('Cyc1')?.why).toBe('cycle');
     expect(why('K8')?.why).toBeUndefined();

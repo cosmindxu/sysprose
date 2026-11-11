@@ -848,7 +848,7 @@ describe('a nested state def: the machine that holds it, and a transition across
       state def Base { state a; state b; transition ab first a accept go then b; }
       state def Other { state o; transition oo first o accept x then o; }
       state def Two :> Base, Other { state t; transition bt first b accept y then t; }
-      state def Redef :> Base { state :>> b; transition ba first b accept back then a; }
+      state def Redef :> Base { state :>> b { entry action e0; } transition ba first b accept back then a; }
     }`);
     const r = reachReport(model);
     const row = (qn: string) => r.machines.find((m) => m.machine.qualifiedName === qn)!;
