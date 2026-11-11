@@ -1162,6 +1162,7 @@ true values. What follows is what that branch and the review of it left open; en
       hosted site keeps `not here` with the copyable command and in-page z3 stays on the dev and
       preview servers; entry closed (reversible; a host that sends the isolation headers reopens it).
       [decision 2026-11-05]
+      Rulings 2026-11-11: B-redef read only a bare `state :>> b;` of a general machine; stopped at a redefiner with a body, a transition `:>>` and two general machines.
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
@@ -1393,17 +1394,7 @@ tagged `[O1 …]` are what its steps and reviews left open.
       binding) stays open. Probes: ep-review/v/s3.sysml, s7.sysml, s11.sysml, s12.sysml and
       fence-pkgbind-scratch/gen4/pkgbind-*.sysml. [editor-pass review; fence-pkgbind]
 
-- [ ] **Walk a step written over inherited states.** A control edge written outside a machine's
-      region that touches one of its states refuses both machines (`machine-boundary`, `docs/06`
-      §8.6, §8.14): `state def Derived :> Base { transition bc first b accept more then c; }` and
-      `exhibit state m : Modes { transition ... }` refuse `Base`/`Modes` and the specialisation.
-      Kept on purpose: the interpreter reads a machine's own region only, so a run of `Derived` has
-      no state and a run of `Base` never takes `bc`, and a joint walk would claim runs no simulator
-      takes. Done when `regionDescendants` and `regionTransitions` of a specialisation or typed
-      usage list the inherited states and transitions for the walk AND the interpreter together
-      (ids, `hierarchyPath`, atoms, the edge census, what a redefined state or transition means, the
-      properties a base carries, the names a report prints), with the witness replay green over
-      them. [behaviour-small S1]
+- [ ] **T-115: Walk a redefined state or transition of a general machine, or a machine with two generals.** Since B-walk a `state def Derived :> Base` with one general machine, and a typed `exhibit state m : Modes {…}` with steps of its own, are walked and run over the general's region plus their own steps: one view, `machineRegion`, read by the walk and the interpreter; inherited steps first; Base is walked alone; a typed usage with no steps is reported through its definition. A bare `state :>> b;` or `state r :>> b;` is read as the state it redefines. Still `machine-boundary`: a state redefinition with a body, a transition redefinition, an attribute `:>>`, a step that names a redefining state, two general machines, two start nodes, a cycle of generals. [behaviour-small S1; behaviour-walk B-inherit, B-walk, B-redef]
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
       groups.** The rule (`src/validation/rules.ts:1118`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
