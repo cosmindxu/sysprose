@@ -3184,7 +3184,7 @@ export class DefiningEquations {
    * specialises and state different values; a firm value another statement redefines; a value that is
    * not a number; content nested below any of them; an equation over a name of the feature. Only attributes are read.
    */
-  private winningStatement(contextId: ElementId, family: readonly ElementRecord[]): ElementRecord | undefined {
+  private winningStatement(contextId: ElementId, family: readonly ElementRecord[], against?: { pair?: [ElementRecord, ElementRecord] }): ElementRecord | undefined {
     // Every statement the context and its general types make of it: a usage one of them owns that redefines a feature already
     // in the family or answers to its name (a redefinition in a general type is not on the closure of the context's own).
     const members = new Map<ElementId, ElementRecord>(family.map((f) => [f.id, f]));
@@ -3246,6 +3246,16 @@ export class DefiningEquations {
     const frontier = stated.filter((g) => !reached.has(g.id));
     const firmOnes = frontier.filter(firm);
     const winners = firmOnes.length > 0 ? firmOnes : frontier;
+    // Two firm statements whose quantities are decided to differ: the model states two values for the one feature (LN3).
+    if (against) {
+      for (const [i, a] of firmOnes.entries()) {
+        const b = firmOnes.slice(i + 1).find((h) => compareWrittenValues(a, h) === 'differs');
+        if (b !== undefined) {
+          against.pair = [a, b];
+          break;
+        }
+      }
+    }
     // Statements that write the same value in the same unit are one statement: the first by id stands for them, whichever
     // line of the family asks.
     const first = [...winners].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
@@ -3318,16 +3328,32 @@ export class DefiningEquations {
       if (!another && differing.length === 0) continue;
       // One statement that gives the line its value: its names read that, as one feature (KerML 7.3.4.5).
       const members = this.features(contextId).filter((f) => f.id === line.id || ids.has(f.id) || redefinedClosure(this.model, f).some((g) => g.id === line.id || ids.has(g.id)));
-      const statement = this.winningStatement(contextId, [line, ...targets, ...members]);
+      const against: { pair?: [ElementRecord, ElementRecord] } = {};
+      const statement = this.winningStatement(contextId, [line, ...targets, ...members], against);
       if (statement !== undefined && members.every((f) => (one.get(f.id) ?? statement) === statement)) {
         for (const f of members) one.set(f.id, statement);
         continue;
       }
+      // Two firm values the context's own redefinitions state (neither the line nor a target) are two values of the one
+      // feature: a contradiction the row of ONE name files (LN3).
+      const stated = against.pair !== undefined && differing.length === 0 && against.pair.every((a) => a !== line && !ids.has(a.id)) ? against.pair : undefined;
+      let filed = false;
       for (const g of [line, ...targets]) {
         const name = effectiveNameOf(this.model, g);
         const kept = name !== undefined ? byName.get(name) : undefined;
         if (name === undefined || kept === undefined || out.has(name)) continue;
-        out.set(name, { kept, other: line, keptValue: kept, otherValue: line, contradiction: false, decided: false, merged: { line, name, differing }, family: new Set([line.id, ...ids]) });
+        const row = stated !== undefined && !filed;
+        if (row) filed = true;
+        out.set(name, {
+          kept,
+          other: line,
+          keptValue: row ? stated![0] : kept,
+          otherValue: row ? stated![1] : line,
+          contradiction: row,
+          decided: row,
+          merged: { line, name, differing, ...(stated !== undefined ? { stated } : {}) },
+          family: new Set([line.id, ...ids]),
+        });
       }
     }
     return out;
@@ -15402,7 +15428,7 @@ export interface NameClash {
    * beside a redefinition of one of them in the context ({@link DefiningEquations.mergedLines}): never a
    * contradiction, and `other` is that line.
    */
-  merged?: { line: ElementRecord; name: string; differing: ElementRecord[] };
+  merged?: { line: ElementRecord; name: string; differing: ElementRecord[]; stated?: [ElementRecord, ElementRecord] };
   /**
    * Set where the context states one feature twice, and not alike ({@link DefiningEquations.redefinedTwice}): `keptValue` and
    * `otherValue` are two of the statements, `target` the feature redefined (`redefines`; else the first of the features
@@ -15470,6 +15496,11 @@ export function clashSentence(model: Model, contextId: ElementId, clash: NameCla
     const row = clash.merged.name;
     const spelled = line.declaredName !== undefined ? effectiveQualifiedName(model, line.id) : `the unnamed \`:>> ${names.map((n) => n.slice(1, -1)).join(', ')}\` in ${line.ownerId != null ? effectiveQualifiedName(model, line.ownerId) : '…'}`;
     const read = row === (effectiveNameOf(model, line) ?? row) ? `\`${row}\`` : `\`${row}\` (a name of the line's one feature)`;
+    if (clash.merged.stated) {
+      const [a, b] = clash.merged.stated;
+      const stated = (f: ElementRecord): string => `${writtenValue(f)} (${writtenName(model, f).replace(/::[^:]*$/, '')}'s \`:>> ${effectiveNameOf(model, f) ?? ''} = ${writtenValue(f)}\`)`;
+      return `${spelled} redefines ${names.join(' and ')} together, so in ${context} they are one feature, which is stated ${stated(a)} and ${stated(b)}, so the model states two values for one feature`;
+    }
     if (differing.length > 0) {
       return (
         `${spelled} redefines ${names.join(' and ')} together, so in ${context} they are one feature, and what they state differs ` +

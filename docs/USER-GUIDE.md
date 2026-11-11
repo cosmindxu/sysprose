@@ -1178,7 +1178,11 @@ one would make two features of the usage one, or give two the same name:
   value another statement redefines with a different value, a value that is not
   a number), every row over `s.M`, `s.N`, `s.X`,
   or a feature that redefines the line under another name, is *could not be
-  evaluated*, in a sentence that names X, on every surface. Values written in
+  evaluated*, in a sentence that names X, on every surface. Where two firm
+  values of the line's own redefinitions differ (`:>> M = 1.0` beside `:>> N =
+  2.0`), the model states two values for the one feature, and the check reports
+  that as a *violated* constraint of its own (`X is stated … and …, so the model
+  states two values for one feature`), once for the usage. Values written in
   different units (`5.0 [kg]` beside `5000.0 [g]`) are not read yet,
   and nor is a line of parts (`part X :>> M, N;` with `s.X.x`, `s.M.x`, `s.N.x`):
   those names, and what reads them, are *could not be evaluated* too. A usage

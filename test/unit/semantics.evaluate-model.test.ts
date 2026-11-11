@@ -10291,6 +10291,27 @@ describe('a feature a context states several ways is one feature, and its one va
     }
   });
 
+  it('LN3: two firm values of the one feature a line merges are a `#clash` row (violated), once, and the names read none', async () => {
+    const shape = (lines: string[]) => [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`];
+    const differ = ['part def Q { attribute M default = 1.0; attribute N default = 1.0; }', 'part def Q2 :> Q { attribute X :>> M, N default = 3.0; }',
+      'part s : Q2 { attribute :>> M = 1.0; attribute :>> N = 2.0; }', 'constraint sN2 { s.N == 2.0 }', 'constraint sM1 { s.M == 1.0 }'];
+    for (const text of shape(differ)) {
+      const clash = checkConstraints(parseModel(text).model).filter((c) => c.conflict === 'clash');
+      expect(clash.map((c) => c.result), text).toEqual(['violated']);
+      expect(clash[0]!.message, text).toContain('so the model states two values for one feature');
+      expect(clash[0]!.message, text).toMatch(/1\.0.*2\.0|2\.0.*1\.0/);
+      expect(Object.values(await rows(text)), text).not.toContain('satisfied');
+    }
+    // Values that agree, or one a default, file no row; a quantity in another unit that is the same quantity neither.
+    for (const lines of [
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> M = 2.0; attribute :>> N = 2.0; }'],
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> M = 1.0; attribute :>> N default = 2.0; }'],
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> M = 5.0 [kg]; attribute :>> N = 5000.0 [g]; }'],
+    ]) {
+      for (const text of shape(lines)) expect(checkConstraints(parseModel(text).model).filter((c) => c.conflict === 'clash'), text).toEqual([]);
+    }
+  });
+
   /**
    * gen-line: 150 models of the one feature stated several ways (the line, redefinitions of it and of its targets in the
    * line's type, a type below it and the usage, twice-stated, each valueless, a `default` or firm) read in both text

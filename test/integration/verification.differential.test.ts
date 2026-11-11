@@ -6688,7 +6688,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // as at 84fb971. Q2's X redefines M and N together: s's `:>> M` and `:>> N` both took X (two axioms on one symbol,
     // SMT X beside a check that refuted `s.N == 2.0`); each redefines Q's again. The twin merges them in an unnamed
     // `:>> M, N`, with the two features and each relation written the other way round. Both `:>> M` and `:>> N` redefine
-    // X, ONE feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref `?`. Reading the two as
+    // X, ONE feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref `?`, and the model states two values for one feature: a `#clash` row, F on the check and the numeric surface (LN3; the SMT axioms are inconsistent, X). Reading the two as
     // two features decided every row (T, F, T on all four) and was false (fence-readings S2 fences it): a usage that
     // redefines a feature of such a line reads none of the line's names, on every surface, in its own sentence. The
     // single redefinition of one of them (`mu-one`: `:>> M = 4.0`, where `s.N == 4.0` was refuted) is the same line and
@@ -6702,9 +6702,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { s.N == 2.0 }
         constraint sN1 { s.N == 1.0 }
       }`, {
-      'MU::sM1': ['?/?/?/?', '?'],
-      'MU::sN1': ['?/?/?/?', '?'],
-      'MU::sN2': ['?/?/?/?', '?'],
+      'MU::Q2::X in MU::s#clash': ['F/-/F/-', 'F'],
+      'MU::sM1': ['?/?/?/X', '?'],
+      'MU::sN1': ['?/?/?/X', '?'],
+      'MU::sN2': ['?/?/?/X', '?'],
     }),
     'redef-target-merge-one': probe(`package MU1 {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
@@ -6948,9 +6949,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { 2.0 == s.N }
         constraint sN1 { 1.0 == s.N }
       }`, {
-      'MUR::sM1': ['?/?/?/?', '?'],
-      'MUR::sN1': ['?/?/?/?', '?'],
-      'MUR::sN2': ['?/?/?/?', '?'],
+      'MUR::Q2::«AttributeUsage» in MUR::s#clash': ['F/-/F/-', 'F'],
+      'MUR::sM1': ['?/?/?/X', '?'],
+      'MUR::sN1': ['?/?/?/X', '?'],
+      'MUR::sN2': ['?/?/?/X', '?'],
     }),
     // R's M2 redefines M, and v declares an M2 of its own beside `:>> M = 5.0`: taking R's M2 named v's M M2 too
     // (two axioms on v's M2; `v.M2 == 9.0` refuted). The twin writes the M2 first and each relation reversed. Each
