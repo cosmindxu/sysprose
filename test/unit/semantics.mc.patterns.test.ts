@@ -2859,6 +2859,31 @@ describe('`check-behaviour` prints the lines the composer returns, byte for byte
     expect(exitCodeOf(zero, 0, true)).toBe(2);
   }, 300_000);
 
+  it('checks a property a general machine carries on the general, and says how many the specialisation does not check', async () => {
+    const loaded = await loadModelText(
+      `package Pg {
+        state def Base {
+          @SysproseVerification::PropertyPattern { attribute pattern = "cover"; attribute scope = "globally"; attribute p = "state b"; }
+          state a; state b; state c;
+          transition ab first a accept go then b;
+        }
+        state def Derived :> Base { transition bc first b accept more then c; }
+      }`,
+      { fileName: 'pg.sysml', library: 'none' },
+    );
+    const model = loaded.model!;
+    const idOf = (qn: string) => model.all().find((e) => model.qualifiedName(e.id) === qn)!.id;
+    const onBase = behaviourReport(model, { machineId: idOf('Pg::Base') });
+    expect(onBase.properties.map((v) => [v.pattern, v.claim])).toEqual([['cover', 'covered']]);
+    expect(onBase.diagnostics.map((d) => d.message)).not.toContainEqual(expect.stringContaining('not checked in'));
+    const onDerived = behaviourReport(model, { machineId: idOf('Pg::Derived') });
+    expect(onDerived.properties).toEqual([]);
+    expect(onDerived.diagnostics.map((d) => [d.severity, d.message])).toContainEqual([
+      'info',
+      '`Pg::Derived`: 1 property of `Pg::Base` not checked in `Pg::Derived`.',
+    ]);
+  });
+
   describe('the inline carrier models and the refusals', () => {
     let dir: string;
     const file = (name: string) => join(dir, name);

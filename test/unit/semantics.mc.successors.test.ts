@@ -52,6 +52,7 @@ import {
   hierarchyPath,
   initialConfig,
   initialState,
+  initialStateOf,
   initialSubstate,
   isCompletion,
   isRegionNode,
@@ -1812,6 +1813,120 @@ describe('`machineRegion` is the lists the readers computed before it', () => {
     expect(machineRegion(model, outer)).toBe(region);
     model.rename(idOf('RegionShapes::Outer::a'), 'a2');
     expect(machineRegion(model, outer)).not.toBe(region);
+  });
+});
+
+describe('`machineRegion` read through a general machine (B-inherit)', () => {
+  const load = async (body: string) => {
+    const model = (await loadModelText(`package P {\n${body}\n}\n`, { fileName: 'inherit.sysml', library: 'none' })).model!;
+    const idOf = (qn: string): ElementId => model.all().find((e) => model.qualifiedName(e.id) === `P::${qn}`)!.id;
+    const nm = (list: readonly { id: ElementId; eClass: string }[]) =>
+      list.filter((e) => !/Subclassification|FeatureTyping/.test(e.eClass)).map((e) => model.qualifiedName(e.id).replace('P::', ''));
+    return { model, idOf, nm };
+  };
+  const BASE = `state def Base {
+        attribute n = 1;
+        initial s0;
+        state a;
+        state b;
+        transition s0a first s0 then a;
+        transition ab first a accept go then b;
+    }`;
+
+  it('reads the general first: descendants, steps, direct states, parent, source and the one start', async () => {
+    const { model, idOf, nm } = await load(`${BASE}
+    state def Derived :> Base {
+        state c;
+        transition bc first b accept more then c;
+    }`);
+    const d = idOf('Derived');
+    const r = machineRegion(model, d, true);
+    expect(r.refused).toBeUndefined();
+    expect(r.bases).toEqual([idOf('Base')]);
+    expect(nm(r.descendants)).toEqual(['Base::n', 'Base::s0', 'Base::a', 'Base::b', 'Base::s0a', 'Base::ab', 'Derived::c', 'Derived::bc']);
+    expect(nm(r.transitions)).toEqual(['Base::s0a', 'Base::ab', 'Derived::bc']);
+    expect(nm(r.directStates(d))).toEqual(['Base::a', 'Base::b', 'Derived::c']);
+    expect(r.parentOf(idOf('Base'))).toBe(d);
+    expect(r.parentOf(idOf('Base::a'))).toBe(idOf('Base'));
+    expect(r.parentOf(idOf('Derived::c'))).toBe(d);
+    expect(r.parentOf(d)).toBeNull();
+    expect(r.inheritedFrom(idOf('Base::a'))).toBe(idOf('Base'));
+    expect(r.inheritedFrom(idOf('Derived::c'))).toBeUndefined();
+    expect(r.nodes.has(idOf('Base::b'))).toBe(true);
+    // A state of Base's is on a path from Derived through the general's root, which is not a state of it.
+    expect(hierarchyPath(model, d, idOf('Base::a'), true)).toEqual([idOf('Base::a')]);
+    expect(hierarchyPath(model, d, idOf('Base::a'), false)).toBeNull();
+    // The one start is Base's `s0`; Derived reads it, and Base read alone is as it was.
+    expect(model.get(initialStateOf(model, r, r.directStates(d))!)!.declaredName).toBe('a');
+    const store = new Map<string, unknown>();
+    seedStore(model, model.get(d)!, store, undefined, r);
+    expect([...store]).toEqual([['n', 1]]);
+    const alone = machineRegion(model, idOf('Base'), true);
+    expect(nm(alone.descendants)).toEqual(['Base::n', 'Base::s0', 'Base::a', 'Base::b', 'Base::s0a', 'Base::ab']);
+    expect(alone.bases).toEqual([]);
+    // The default view is the one through the general, `false` the machine's own, and both are memoised on the revision.
+    expect(nm(machineRegion(model, d, false).descendants)).toEqual(['Derived::c', 'Derived::bc']);
+    expect(machineRegion(model, d)).toBe(r);
+    expect(machineRegion(model, d, true)).toBe(r);
+  });
+
+  it('chains generals nearest last, and reads a typed usage that owns a step but not one with none', async () => {
+    const { model, idOf, nm } = await load(`${BASE}
+    state def Mid :> Base { state c; }
+    state def Top :> Mid { state d; }
+    part def H {
+        exhibit state m : Base { state z; transition bz first b accept q then z; }
+        exhibit state e : Base;
+    }`);
+    const t = machineRegion(model, idOf('Top'), true);
+    expect(t.bases).toEqual([idOf('Mid'), idOf('Base')]);
+    expect(nm(t.directStates(idOf('Top')))).toEqual(['Base::a', 'Base::b', 'Mid::c', 'Top::d']);
+    expect(t.inheritedFrom(idOf('Base::a'))).toBe(idOf('Base'));
+    expect(t.inheritedFrom(idOf('Mid::c'))).toBe(idOf('Mid'));
+    expect(t.parentOf(idOf('Mid'))).toBe(idOf('Top'));
+    expect(t.parentOf(idOf('Base'))).toBe(idOf('Mid'));
+    expect(hierarchyPath(model, idOf('Top'), idOf('Base::a'), true)).toEqual([idOf('Base::a')]);
+    const m = machineRegion(model, idOf('H::m'), true);
+    expect(m.bases).toEqual([idOf('Base')]);
+    expect(nm(m.transitions)).toEqual(['Base::s0a', 'Base::ab', 'H::m::bz']);
+    expect(m.inheritedFrom(idOf('Base::b'))).toBe(idOf('Base'));
+    const e = machineRegion(model, idOf('H::e'), true);
+    expect(e.bases).toEqual([]);
+    expect(e.refused).toBeUndefined();
+  });
+
+  it('refuses two generals, two starts, a redefined member, a cycle and a chain over eight, each with its own sentence', async () => {
+    const chain = Array.from({ length: 10 }, (_, i) => `state def K${i + 1} :> K${i} { state k${i + 1}; }`).join('\n    ');
+    const { model, idOf } = await load(`${BASE}
+    state def Other { state o; }
+    state def Two :> Base, Other { state t; }
+    state def Start :> Base { initial s1; state e; transition s1e first s1 then e; }
+    state def Redef :> Base { state :>> b { entry action e0; } }
+    state def PlainRedef :> Base { state :>> b; }
+    state def Clash :> Base { state a; }
+    state def Cyc1 :> Cyc2 { state y1; }
+    state def Cyc2 :> Cyc1 { state y2; }
+    state def K0 { state k0; }
+    ${chain}`);
+    const why = (qn: string) => machineRegion(model, idOf(qn), true).refused;
+    // Asked in this order a cached K8 must not hide that K10 is longer than eight.
+    expect(machineRegion(model, idOf('K8'), true).bases).toHaveLength(8);
+    expect(why('Two')?.why).toBe('two-generals');
+    expect(why('Start')?.why).toBe('two-starts');
+    expect(why('Redef')?.why).toBe('redefined');
+    // A plain `state :>> b;` is the state it redefines: read, and left out of the view as a node of its own.
+    expect(why('PlainRedef')).toBeUndefined();
+    expect(machineRegion(model, idOf('PlainRedef'), true).bases).toEqual([idOf('Base')]);
+    expect([...machineRegion(model, idOf('PlainRedef'), true).nodes].map((n) => model.get(n)!.eClass).filter((c) => c === 'StateUsage')).toHaveLength(2);
+    expect(why('Clash')?.why).toBe('redefined');
+    expect(why('Cyc1')?.why).toBe('cycle');
+    expect(why('K8')?.why).toBeUndefined();
+    expect(why('K10')?.why).toBe('cycle');
+    const sentences = ['Two', 'Start', 'Redef', 'Clash', 'Cyc1'].map((q) => why(q)!.sentence);
+    expect(new Set(sentences).size).toBe(sentences.length);
+    // A refused region is the machine's own, so no reader is handed a half-merged view.
+    expect(machineRegion(model, idOf('Two'), true).bases).toEqual([]);
+    expect(why('Two')!.at).toBe(idOf('Two'));
   });
 });
 

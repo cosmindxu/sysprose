@@ -834,7 +834,10 @@ export function propertiesOf(model: Model, machineId: ElementId): PropertyText[]
     return false;
   };
   const region = (regionId: ElementId, stranded: string | undefined): void => {
-    for (const el of machineRegion(model, regionId).descendants) {
+    const view = machineRegion(model, regionId);
+    for (const el of view.descendants) {
+      // A property a general machine carries is checked on that machine, not again here.
+      if (view.inheritedFrom(el.id) !== undefined) continue;
       if (lone !== undefined && inMachineBelow(el, regionId)) continue;
       if (el.eClass !== 'StateDefinition') {
         holders.push({ holder: el, ...(stranded !== undefined ? { stranded } : {}) });
@@ -3280,6 +3283,20 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
   // published ones: `reach` prints it as a `withheld` line, which carries no
   // code, and a command that files findings has to say what it declined to
   // say. A lone definition is no machine, and has none to file.
+  // The properties a general machine carries are checked on it, and said so here.
+  for (const b of machineRegion(model, machineId).bases) {
+    const k = propertiesOf(model, b).length;
+    if (k === 0 || machine === null) continue;
+    findings.push({
+      severity: 'info',
+      message:
+        `\`${machine.qualifiedName}\`: ${k} propert${k === 1 ? 'y' : 'ies'} of \`${model.qualifiedName(b) || b}\` not checked in \`${machine.qualifiedName}\`.`,
+      elementId: machine.id,
+      elementName: machine.qualifiedName,
+      code: BEHAVIOUR_UNSUPPORTED_CODE,
+      hint: 'A property a general machine carries is checked on that machine, which this walk reads alone; check it there.',
+    });
+  }
   if (machine !== null && machineEl !== undefined && !isLoneDefinition(model, machineEl)) {
     const walk = exploreMachine(model, machineId, explore);
     const { livelocks, withheld } = livelocksOf(model, walk);
