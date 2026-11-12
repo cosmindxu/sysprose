@@ -57,7 +57,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 486 | 72 | 2 | 6 | 707 (311) | 0 | none | `differential-tested` |
+| `lra` | 486 | 72 | 2 | 6 | 709 (313) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
@@ -65,12 +65,12 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `units` | 99 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
 | `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `stated-value` | 311 | 78 | 1 | 7 | 663 (280) | 0 | none | `differential-tested` |
+| `stated-value` | 311 | 78 | 1 | 7 | 665 (282) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 63 (38) | 0 | none | `differential-tested` |
-| `bind-equality` | 9 | 5 | 1 | 0 | 231 (137) | 0 | none | `experimental` |
+| `bind-equality` | 9 | 5 | 1 | 0 | 233 (139) | 0 | none | `experimental` |
 | `asserted-fact` | 28 | 8 | 1 | 0 | 29 (16) | 0 | none | `experimental` |
 | `requirement-clause` | 236 | 61 | 1 | 7 | 401 (236) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 321 (163) | 0 | none | `experimental` |
+| `per-instance` | 1 | 1 | 1 | 0 | 323 (165) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 3 | 3 | 2 | — | — | — | none | `fenced` |
