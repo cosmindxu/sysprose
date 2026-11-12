@@ -3246,6 +3246,13 @@ export class DefiningEquations {
     const frontier = stated.filter((g) => !reached.has(g.id));
     const firmOnes = frontier.filter(firm);
     const winners = firmOnes.length > 0 ? firmOnes : frontier;
+    // A firm value beside a `default` of the line's other name that nothing redefines: the line gets a default and a firm value
+    // that do not agree, and no statement overrides the other (LN3 review: g1, e1, g8) - read none, never the firm one.
+    // Only where that default is written by the context or a type below the one that writes the firm value: a default a
+    // type beside or above writes gives way to the firm one (LN1).
+    const below = (g: ElementRecord, f: ElementRecord): boolean =>
+      g.ownerId != null && f.ownerId != null && g.ownerId !== f.ownerId && (g.ownerId === contextId || generalizationsOf(this.model, g.ownerId).some((o) => o.id === f.ownerId));
+    if (firmOnes.length > 0 && frontier.some((g) => !firm(g) && firmOnes.some((f) => !agreeing(f, g) && below(g, f)))) return undefined;
     // Two firm statements whose quantities are decided to differ: the model states two values for the one feature (LN3).
     if (against) {
       for (const [i, a] of firmOnes.entries()) {

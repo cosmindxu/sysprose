@@ -10312,6 +10312,16 @@ describe('a feature a context states several ways is one feature, and its one va
     }
   });
 
+  it('LN3 review: a firm value on one name of a merged line beside a default on the other reads none (g1, e1)', async () => {
+    const shape = (lines: string[]) => [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`];
+    const g1 = ['part def Q { attribute M = 1.0; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> N default = 2.0; }', 'constraint c1 { s.N == 1.0 }', 'constraint c2 { s.N == 2.0 }'];
+    const e1 = ['part def Q { attribute M = 1.0; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part def Q3 :> Q2 { attribute :>> N default = 2.0; }', 'part s : Q3;', 'constraint c1 { s.N == 1.0 }', 'constraint c2 { s.N == 2.0 }', 'constraint cM { s.M == 2.0 }'];
+    for (const text of [...shape(g1), ...shape(e1)]) {
+      const got = await rows(text);
+      for (const [name, r] of Object.entries(got)) if (/^c/.test(name)) expect(r, `${name}\n${text}`).toBe('unknown');
+    }
+  });
+
   /**
    * gen-line: 150 models of the one feature stated several ways (the line, redefinitions of it and of its targets in the
    * line's type, a type below it and the usage, twice-stated, each valueless, a `default` or firm) read in both text
@@ -10359,8 +10369,11 @@ describe('a feature a context states several ways is one feature, and its one va
         const body = [...defs, `part s : Q3 { ${(rev ? [...members].reverse() : members).join(' ')} }`, ...constraints.map(({ n, k }) => `constraint c${n}${k} { s.${n} == ${k}.0 }`)];
         const text = `package G${i} {\n  ${(rev ? [...body].reverse() : body).join('\n  ')}\n}`;
         const got = await rows(text);
+        // Invariant: where the context files a violated binding or clash row (the model contradicts itself), no row over its names is decided.
+        const filed = checkConstraints(parseModel(text).model).some((c) => (c.conflict === 'binding' || c.conflict === 'clash') && c.result === 'violated');
         for (const { n, k } of constraints) {
           const r = got[`c${n}${k}`];
+          if (filed) expect(r, `${n} == ${k} decided beside a violated binding or clash row\n${text}`).toBe('unknown');
           if (r === 'satisfied' || r === 'violated') {
             decided++;
             expect(one, `${n} == ${k} decided ${r} where the model has no one value\n${text}`).not.toBeNull();
@@ -10372,6 +10385,6 @@ describe('a feature a context states several ways is one feature, and its one va
         }
       }
     }
-    expect(decided).toBeGreaterThan(150);
+    expect(decided).toBeGreaterThan(100);
   }, 300_000);
 });
