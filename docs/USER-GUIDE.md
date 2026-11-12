@@ -1161,31 +1161,37 @@ one would make two features of the usage one, or give two the same name:
 
 - a general type's `attribute X :>> M, N` would take both the `:>> M` and the
   `:>> N` of `part s : Q2`, and the model then gives X, one feature, two values.
-  A usage that redefines either (`:>> M = 1.0` beside `:>> N = 2.0`, or `:>> M =
-  4.0` alone), or both in one feature (`:>> M, N = 6.0`), reads neither name:
-  every row over `s.M` or `s.N` is *could not be evaluated*, in a sentence that
-  names X, on every surface; so is a row over a feature that redefines the line
-  under another name (`attribute Y :>> X;` in a type below Q2, or in the usage),
-  `s.Y` as well as `s.N`. A usage that redefines X itself (`:>> X = 5.0`)
-  states one value for the one feature and reads every name of it, and one that
-  redefines neither (`part t : Q2;`) reads X's value as written. A line that
-  states no value over two features that state different ones (`attribute X :>>
-  M, N;` over M's `default = 1.0` and N's `= 2.0`, two different defaults, or
-  `= 1.0` and `= 2.0`) has no one value to read, whichever order the targets are
-  written in, whether or not a usage redefines anything of it: every row over
-  `s.M`, `s.N` or `s.X` is *could not be evaluated* too. Two that agree are read.
-  The fence holds every name on the way to what a row reads: the nested features
-  of a line of parts (`part X :>> M, N;` with `s.X.x`, `s.M.x`, `s.N.x`), and a
-  feature derived from the line's names (`attribute Z = X + 1.0;` in Q2, read as
-  `s.Z`, or in a type below Q2 that redefines one of them), are *could not be
-  evaluated* too. A usage that states one feature twice is read the same way
-  (`:>> x = 5.0; :>> x = 6.0;`, an `attribute x = 5.0;` beside an `attribute :>>
-  x = 6.0;`, a `:>> x;` beside a `:>> x default = 3.0;`, two redefinitions of
-  one part with different content nested below, or `5.0 [kg]` beside `5000.0
-  [g]`): the model states both, and no row over `x`, `s.y` for a `y :>> x`, or
-  what reads them is read there, written in either order. Two that say the same
-  thing in the same unit are read. For values that differ the SMT engine still
-  reports its inconsistent axioms;
+  KerML makes the features that redefine one feature that feature in the usage
+  (7.3.4.5), so for attributes the one feature has the one value its most
+  specific statement gives, read under every name of it (`s.X`, `s.M`, `s.N`, `s.Y`
+  for a `Y :>> X`), and what is derived from it (`attribute Z = X + 1.0;`):
+  a redefinition of the line (`:>> X default = 2.0`) or of one target (`:>> M =
+  5.0`) stands over the defaults of the features it redefines, a firm value
+  (`=`) over the defaults the other targets write, and a `default` of a type
+  that specialises another over the one that type writes. A `:>> x;` beside a
+  `:>> x default = 3.0;` is one feature that reads 3.0, and statements that write
+  the same value in the same unit are one statement (`attribute :>> M, N = 6.0;`
+  in a usage beside the type's `attribute X :>> M, N = 6.0;`, or `:>> x = 6.0;`
+  written twice): `s.M`, `s.N` and `s.X` read 6. Where no one statement
+  gives it (`:>> M = 1.0` beside `:>> N = 2.0`, two firm values that differ, two
+  defaults of types neither of which specialises the other that differ, a firm
+  value another statement redefines with a different value, a value that is not
+  a number), every row over `s.M`, `s.N`, `s.X`,
+  or a feature that redefines the line under another name, is *could not be
+  evaluated*, in a sentence that names X, on every surface. Where two firm
+  values of the line's own redefinitions differ (`:>> M = 1.0` beside `:>> N =
+  2.0`), the model states two values for the one feature, and the check reports
+  that as a *violated* constraint of its own (`X is stated … and …, so the model
+  states two values for one feature`), once for the usage. Values written in
+  different units (`5.0 [kg]` beside `5000.0 [g]`) are not read yet,
+  and nor is a line of parts (`part X :>> M, N;` with `s.X.x`, `s.M.x`, `s.N.x`):
+  those names, and what reads them, are *could not be evaluated* too. A usage
+  that states one feature twice with values that differ (`:>> x = 5.0; :>> x =
+  6.0;`, an `attribute x = 5.0;` beside an `attribute :>> x = 6.0;`) or with
+  different content nested below (two redefinitions of one part) states both,
+  and no row over `x`, `s.y` for a `y :>> x`, or what reads them is read there,
+  written in either order. For values that differ the SMT engine still reports
+  its inconsistent axioms;
 - in `part v : R { attribute :>> M = 5.0; attribute M2 = 9.0; }` the first would
   be named M2 beside the second;
 - in `part v : R, S`, where S writes `attribute M2 redefines K`, a `:>> M` and a

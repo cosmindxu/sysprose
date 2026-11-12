@@ -10176,3 +10176,215 @@ describe('no row is decided beside a violated binding or clash row (the literal 
     }
   });
 });
+
+describe('a feature a context states several ways is one feature, and its one value is read (LN1, KerML 7.3.4.5)', () => {
+  const rows = async (text: string): Promise<Record<string, string>> => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    const check = new Map(checkConstraints(m!).map((c) => [m!.get(c.id)?.declaredName ?? '', c.result]));
+    const numeric = new Map(checkConstraintsNumeric(m!).map((c) => [m!.get(c.id)?.declaredName ?? '', c.result]));
+    return Object.fromEntries([...check].map(([k, v]) => [k, numeric.get(k) === v ? v : `${v}/${numeric.get(k)}`]));
+  };
+
+  it('reads the value of `X :>> M, N` from the one statement that gives it, in either text order', async () => {
+    const cases: Array<[string[], Record<string, string>]> = [
+      // A redefinition of the line stands over the defaults of the features it redefines.
+      [
+        ['part def Q { attribute M default = 3.0; }', 'part def Q1 { attribute N default = 1.0; }', 'part def Q2 :> Q, Q1 { attribute X :>> N, M; }',
+          'part s : Q2 { attribute Y :>> X; attribute :>> X default = 2.0; }', 'constraint cY1 { s.Y == 1.0 }', 'constraint cY2 { s.Y == 2.0 }'],
+        { cY1: 'violated', cY2: 'satisfied' },
+      ],
+      // A firm value stands over defaults the other targets write, whichever target it is.
+      [
+        ['part def Q { attribute M default = 1.0; }', 'part def Q1 { attribute N default = 1.0; }', 'part def Q0 { attribute P = 2.0; }',
+          'part def Q2 :> Q, Q1, Q0 { attribute X :>> M, N, P; }', 'part s : Q2;', 'constraint cM { s.M == 2.0 }', 'constraint cX { s.X == 2.0 }', 'constraint cP { s.P == 2.0 }'],
+        { cM: 'satisfied', cX: 'satisfied', cP: 'satisfied' },
+      ],
+      // A redefinition of one target is the line too, and what is written over the line reads it.
+      [
+        ['part def Q { attribute M default = 1.0; }', 'part def Q1 { attribute N default = 1.0; }', 'part def Q2 :> Q, Q1 { attribute X :>> M, N; attribute Z = X + 1.0; }',
+          'part s : Q2 { attribute :>> M = 5.0; }', 'constraint cX5 { s.X == 5.0 }', 'constraint cZ6 { s.Z == 6.0 }', 'constraint cZ2 { s.Z == 2.0 }'],
+        { cX5: 'satisfied', cZ6: 'satisfied', cZ2: 'violated' },
+      ],
+      // A default a more specific type writes stands over one a type it specialises writes.
+      [
+        ['part def Q { attribute M; attribute N default = 3.0; }', 'part def Q2 :> Q { attribute X :>> N, M; }', 'part def Q3 :> Q2 { attribute :>> M default = 1.0; }',
+          'part t : Q3;', 'constraint cN1 { t.N == 1.0 }', 'constraint cN3 { t.N == 3.0 }'],
+        { cN1: 'satisfied', cN3: 'violated' },
+      ],
+      // `:>> x;` beside `:>> x default = 3.0;` is one feature that has the one value.
+      [
+        ['part def A { attribute x default = 1.0; }', 'part a : A { attribute :>> x; attribute :>> x default = 3.0; }', 'constraint cx3 { a.x == 3.0 }', 'constraint cx1 { a.x == 1.0 }'],
+        { cx3: 'satisfied', cx1: 'violated' },
+      ],
+    ];
+    for (const [lines, expected] of cases) {
+      for (const text of [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`]) {
+        expect(await rows(text), text).toEqual(expected);
+      }
+    }
+  });
+
+  it('keeps abstaining where the one feature has no one statement, or is not an attribute', async () => {
+    const cases: Array<[string[], string[]]> = [
+      // Two firm values for the one feature: the model states both (readings 7).
+      [
+        ['part def Q { attribute M default = 2.0; }', 'part def Q1 { attribute N default = 1.0; }', 'part def Q2 :> Q, Q1 { attribute X :>> M, N; }',
+          'part def Q3 :> Q2 { attribute :>> M = 3.0; attribute :>> N default = 2.0; }', 'part s : Q3 { attribute :>> M; attribute :>> N = 1.0; attribute :>> X; }',
+          'constraint cX1 { s.X == 1.0 }', 'constraint cX3 { s.X == 3.0 }'],
+        ['cX1', 'cX3'],
+      ],
+      // Two defaults of one type that differ.
+      [
+        ['part def Q { attribute M default = 1.0; }', 'part def Q1 { attribute N default = 2.0; }', 'part def Q2 :> Q, Q1 { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> M; }', 'constraint c { s.X == 1.0 }'],
+        ['c'],
+      ],
+      // A line of parts is read as two features until the one part is (LN1 reads attributes).
+      [
+        ['part def T0 { attribute x default = 1.0; }', 'part def Q { part M : T0[1]; }', 'part def Q1 { part N : T0[1]; }', 'part def Q2 :> Q, Q1 { part X :>> M, N; }',
+          'part s : Q2 { part :>> M { attribute :>> x = 5.0; } }', 'constraint cX5 { s.X.x == 5.0 }'],
+        ['cX5'],
+      ],
+    ];
+    for (const [lines, unread] of cases) {
+      for (const text of [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`]) {
+        const got = await rows(text);
+        for (const name of unread) expect(got[name], text).toBe('unknown');
+      }
+    }
+  });
+
+  it('LN2: statements that agree are one statement, and a line written over a line reads its name (`:>> M, N = 6.0` over `X :>> M, N`)', async () => {
+    const cases: Array<[string[], Record<string, string>]> = [
+      // The usage's own line states 6.0 firm over the line's default 3.0: every name of the one feature reads 6.
+      [
+        ['part def Q { attribute M default = 1.0; attribute N default = 1.0; }', 'part def Q2 :> Q { attribute X :>> M, N default = 3.0; }', 'part u : Q2 { attribute :>> M, N = 6.0; }',
+          'constraint uM { u.M == 6.0 }', 'constraint uN { u.N == 6.0 }', 'constraint uX { u.X == 6.0 }', 'constraint uN3 { u.N == 3.0 }'],
+        { uM: 'satisfied', uN: 'satisfied', uX: 'satisfied', uN3: 'violated' },
+      ],
+      // Two firm lines that write the same value agree.
+      [
+        ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N = 6.0; }', 'part u : Q2 { attribute :>> M, N = 6.0; }',
+          'constraint uM { u.M == 6.0 }', 'constraint uN { u.N == 6.0 }', 'constraint uN7 { u.N == 7.0 }'],
+        { uM: 'satisfied', uN: 'satisfied', uN7: 'violated' },
+      ],
+      // The same firm value written twice, or by a redefinition of the line and of one target.
+      [
+        ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part t : Q2 { attribute :>> X = 6.0; attribute :>> M = 6.0; attribute :>> X = 6.0; }',
+          'constraint tX { t.X == 6.0 }', 'constraint tN { t.N == 6.0 }', 'constraint tN7 { t.N == 7.0 }'],
+        { tX: 'satisfied', tN: 'satisfied', tN7: 'violated' },
+      ],
+    ];
+    for (const [lines, expected] of cases) {
+      for (const text of [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`]) {
+        expect(await rows(text), text).toEqual(expected);
+      }
+    }
+    // Values that differ stay abstained: the model states two values for the one feature.
+    for (const lines of [
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N = 6.0; }', 'part u : Q2 { attribute :>> M, N = 7.0; }', 'constraint uN { u.N == 7.0 }'],
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part t : Q2 { attribute :>> X = 6.0; attribute :>> M = 7.0; }', 'constraint tN { t.N == 6.0 }'],
+    ]) {
+      for (const text of [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`]) {
+        expect(Object.values(await rows(text)), text).not.toContain('satisfied');
+      }
+    }
+  });
+
+  it('LN3: two firm values of the one feature a line merges are a `#clash` row (violated), once, and the names read none', async () => {
+    const shape = (lines: string[]) => [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`];
+    const differ = ['part def Q { attribute M default = 1.0; attribute N default = 1.0; }', 'part def Q2 :> Q { attribute X :>> M, N default = 3.0; }',
+      'part s : Q2 { attribute :>> M = 1.0; attribute :>> N = 2.0; }', 'constraint sN2 { s.N == 2.0 }', 'constraint sM1 { s.M == 1.0 }'];
+    for (const text of shape(differ)) {
+      const clash = checkConstraints(parseModel(text).model).filter((c) => c.conflict === 'clash');
+      expect(clash.map((c) => c.result), text).toEqual(['violated']);
+      expect(clash[0]!.message, text).toContain('so the model states two values for one feature');
+      expect(clash[0]!.message, text).toMatch(/1\.0.*2\.0|2\.0.*1\.0/);
+      expect(Object.values(await rows(text)), text).not.toContain('satisfied');
+    }
+    // Values that agree, or one a default, file no row; a quantity in another unit that is the same quantity neither.
+    for (const lines of [
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> M = 2.0; attribute :>> N = 2.0; }'],
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> M = 1.0; attribute :>> N default = 2.0; }'],
+      ['part def Q { attribute M; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> M = 5.0 [kg]; attribute :>> N = 5000.0 [g]; }'],
+    ]) {
+      for (const text of shape(lines)) expect(checkConstraints(parseModel(text).model).filter((c) => c.conflict === 'clash'), text).toEqual([]);
+    }
+  });
+
+  it('LN3 review: a firm value on one name of a merged line beside a default on the other reads none (g1, e1)', async () => {
+    const shape = (lines: string[]) => [`package G {\n${lines.join('\n')}\n}`, `package G {\n${[...lines].reverse().join('\n')}\n}`];
+    const g1 = ['part def Q { attribute M = 1.0; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part s : Q2 { attribute :>> N default = 2.0; }', 'constraint c1 { s.N == 1.0 }', 'constraint c2 { s.N == 2.0 }'];
+    const e1 = ['part def Q { attribute M = 1.0; attribute N; }', 'part def Q2 :> Q { attribute X :>> M, N; }', 'part def Q3 :> Q2 { attribute :>> N default = 2.0; }', 'part s : Q3;', 'constraint c1 { s.N == 1.0 }', 'constraint c2 { s.N == 2.0 }', 'constraint cM { s.M == 2.0 }'];
+    for (const text of [...shape(g1), ...shape(e1)]) {
+      const got = await rows(text);
+      for (const [name, r] of Object.entries(got)) if (/^c/.test(name)) expect(r, `${name}\n${text}`).toBe('unknown');
+    }
+  });
+
+  /**
+   * gen-line: 150 models of the one feature stated several ways (the line, redefinitions of it and of its targets in the
+   * line's type, a type below it and the usage, twice-stated, each valueless, a `default` or firm) read in both text
+   * orders, against the hand oracle: the firm values, else the default of the most specific type, give the value; two that
+   * differ are a contradiction. A decided row is the oracle's, and none is decided where the model contradicts itself.
+   */
+  it('gen-line: no decided row is wrong in 150 models, in either text order', async () => {
+    let seed = 12345;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    type St = { kind: 'none' } | { kind: 'default' | 'firm'; v: number };
+    const pick = (): St => {
+      const k = rnd(3);
+      return k === 0 ? { kind: 'none' } : { kind: k === 1 ? 'default' : 'firm', v: 1 + rnd(3) };
+    };
+    const write = (s: St): string => (s.kind === 'none' ? '' : s.kind === 'default' ? ` default = ${s.v}.0` : ` = ${s.v}.0`);
+    let decided = 0;
+    for (let i = 0; i < 150; i++) {
+      const [M, N, X, tM, tN, sM, sN, sX] = [pick(), pick(), pick(), pick(), pick(), pick(), pick(), pick()];
+      const twiceX = rnd(3) === 0;
+      const withY = rnd(2) === 0;
+      const members: string[] = [];
+      if (sM.kind !== 'none') members.push(`attribute :>> M${write(sM)};`);
+      if (sN.kind !== 'none') members.push(`attribute :>> N${write(sN)};`);
+      if (sX.kind !== 'none') members.push(`attribute :>> X${write(sX)};`);
+      if (twiceX) members.push(`attribute :>> X${write(sX)};`);
+      if (withY) members.push('attribute Y :>> X;');
+      // The hand oracle: a firm value stands over defaults; defaults rank by the type that writes them (Q, Q1: 0; Q2: 1; Q3: 2; s: 3).
+      const given = [[0, M], [0, N], [1, X], [2, tM], [2, tN], [3, sM], [3, sN], [3, sX]].filter(([, st]) => (st as St).kind !== 'none') as Array<[number, { kind: 'default' | 'firm'; v: number }]>;
+      const firm = given.filter(([, st]) => st.kind === 'firm');
+      const top = Math.max(...given.map(([r]) => r));
+      const winners = firm.length > 0 ? firm : given.filter(([r]) => r === top);
+      const one = given.length === 0 ? undefined : new Set(winners.map(([, st]) => st.v)).size === 1 ? winners[0]![1].v : null;
+      const names = ['X', 'M', 'N', ...(withY ? ['Y'] : [])];
+      const constraints = names.flatMap((n) => [1, 2, 3, 4].map((k) => ({ n, k })));
+      const defs = [
+        `part def Q { attribute M${write(M)}; }`,
+        `part def Q1 { attribute N${write(N)}; }`,
+        `part def Q2 :> Q, Q1 { attribute X :>> M, N${write(X)}; }`,
+        `part def Q3 :> Q2 { ${[tM.kind !== 'none' ? `attribute :>> M${write(tM)};` : '', tN.kind !== 'none' ? `attribute :>> N${write(tN)};` : ''].join(' ')} }`,
+      ];
+      for (const rev of [false, true]) {
+        const body = [...defs, `part s : Q3 { ${(rev ? [...members].reverse() : members).join(' ')} }`, ...constraints.map(({ n, k }) => `constraint c${n}${k} { s.${n} == ${k}.0 }`)];
+        const text = `package G${i} {\n  ${(rev ? [...body].reverse() : body).join('\n  ')}\n}`;
+        const got = await rows(text);
+        // Invariant: where the context files a violated binding or clash row (the model contradicts itself), no row over its names is decided.
+        const filed = checkConstraints(parseModel(text).model).some((c) => (c.conflict === 'binding' || c.conflict === 'clash') && c.result === 'violated');
+        for (const { n, k } of constraints) {
+          const r = got[`c${n}${k}`];
+          if (filed) expect(r, `${n} == ${k} decided beside a violated binding or clash row\n${text}`).toBe('unknown');
+          if (r === 'satisfied' || r === 'violated') {
+            decided++;
+            expect(one, `${n} == ${k} decided ${r} where the model has no one value\n${text}`).not.toBeNull();
+            expect(one, `${n} == ${k} decided ${r} where the model states no value\n${text}`).not.toBeUndefined();
+            expect(r, `${n} == ${k}\n${text}`).toBe(one === k ? 'satisfied' : 'violated');
+          } else {
+            expect(r, `${n} == ${k}\n${text}`).toBe('unknown');
+          }
+        }
+      }
+    }
+    expect(decided).toBeGreaterThan(100);
+  }, 300_000);
+});

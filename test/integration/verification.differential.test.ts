@@ -6688,7 +6688,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // as at 84fb971. Q2's X redefines M and N together: s's `:>> M` and `:>> N` both took X (two axioms on one symbol,
     // SMT X beside a check that refuted `s.N == 2.0`); each redefines Q's again. The twin merges them in an unnamed
     // `:>> M, N`, with the two features and each relation written the other way round. Both `:>> M` and `:>> N` redefine
-    // X, ONE feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref `?`. Reading the two as
+    // X, ONE feature, and `:>> M = 1.0` beside `:>> N = 2.0` gives it two values — no value, ref `?`, and the model states two values for one feature: a `#clash` row, F on the check and the numeric surface (LN3; the SMT axioms are inconsistent, X). Reading the two as
     // two features decided every row (T, F, T on all four) and was false (fence-readings S2 fences it): a usage that
     // redefines a feature of such a line reads none of the line's names, on every surface, in its own sentence. The
     // single redefinition of one of them (`mu-one`: `:>> M = 4.0`, where `s.N == 4.0` was refuted) is the same line and
@@ -6702,9 +6702,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { s.N == 2.0 }
         constraint sN1 { s.N == 1.0 }
       }`, {
-      'MU::sM1': ['?/?/?/?', '?'],
-      'MU::sN1': ['?/?/?/?', '?'],
-      'MU::sN2': ['?/?/?/?', '?'],
+      'MU::Q2::X in MU::s#clash': ['F/-/F/-', 'F'],
+      'MU::sM1': ['?/?/?/X', '?'],
+      'MU::sN1': ['?/?/?/X', '?'],
+      'MU::sN2': ['?/?/?/X', '?'],
     }),
     'redef-target-merge-one': probe(`package MU1 {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
@@ -6717,15 +6718,16 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint tM3 { t.M == 3.0 }
         constraint tN3 { t.N == 3.0 }
       }`, {
-      'MU1::sM4': ['?/?/?/?', '?'],
-      'MU1::sN3': ['?/?/?/?', '?'],
-      'MU1::sN4': ['?/?/?/?', '?'],
+      'MU1::sM4': ['T/T/T/T', 'T'],
+      'MU1::sN3': ['F/F/F/F', 'F'],
+      'MU1::sN4': ['T/T/T/T', 'T'],
       'MU1::tM3': ['T/T/T/T', 'T'],
       'MU1::tN3': ['T/T/T/T', 'T'],
     }),
     // A usage that redefines the line X itself (`:>> X = 5.0`) states ONE value for the one feature M and N are, and
     // reads every name of it: s.M and s.N are 5 (`s.N == 1.0` is false), which stood at 5d9e806 and abstained under the
-    // first fence. A usage that redefines M and N in one feature (`u`) still abstains.
+    // first fence. A usage that redefines M and N in one feature (`u`) states 6.0 firm over the line's default 3.0: every
+    // name of the one feature reads 6 (LN2; the shared alias N is one feature, not two).
     'redef-target-merge-x': probe(`package MX {
         part def Q { attribute M default = 1.0; attribute N default = 1.0; }
         part def Q2 :> Q { attribute X :>> M, N default = 3.0; }
@@ -6740,8 +6742,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'MX::sM': ['T/T/T/T', 'T'],
       'MX::sN': ['F/F/F/F', 'F'],
       'MX::sX': ['T/T/T/T', 'T'],
-      'MX::uM': ['?/?/?/?', '?'],
-      'MX::uN': ['?/?/?/?', '?'],
+      'MX::uM': ['T/T/T/T', 'T'],
+      'MX::uN': ['T/T/T/T', 'T'],
     }),
     // A feature that redefines the line (`attribute Y :>> X;`, in a type or in the usage) is the line's one feature under
     // another name, and the usage's `:>> M = 5.0` gives it its value: M, N, X and Y are one feature with the value 5, and
@@ -6779,13 +6781,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def Q1 { attribute N default = 1.0; }
         part def Q { attribute M default = 1.0; }
       }`, {
-      'RN::sM5': ['?/?/?/?', 'T'],
-      'RN::sN1': ['?/?/?/?', 'F'],
-      'RN::sN5': ['?/?/?/?', 'T'],
-      'RN::sY5': ['?/?/?/?', 'T'],
+      'RN::sM5': ['T/T/T/T', 'T'],
+      'RN::sN1': ['F/F/F/F', 'F'],
+      'RN::sN5': ['T/T/T/T', 'T'],
+      'RN::sY5': ['T/T/T/T', 'T'],
       'RN::tN1': ['T/T/T/T', 'T'],
-      'RN::uN1': ['?/?/?/?', 'F'],
-      'RN::uY5': ['?/?/?/?', 'T'],
+      'RN::uN1': ['F/F/F/F', 'F'],
+      'RN::uY5': ['T/T/T/T', 'T'],
     }),
     // A line that states no value over two features that state different ones (`attribute X :>> M, N;`): the order of its
     // targets decided the verdict (M first read M's 1, N first N's 2), and a firm value beats a default (N's 2, not M's
@@ -6807,7 +6809,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`;
         return {
           ...acc,
-          [`redef-target-valueless-${order}`]: probe(mk('VL', 'default = 1.0', '= 2.0'), { 'VL::cM': ['?/?/?/?', 'F'], 'VL::cN': ['?/?/?/?', 'T'], 'VL::cX': ['?/?/?/?', 'T'] }),
+          [`redef-target-valueless-${order}`]: probe(mk('VL', 'default = 1.0', '= 2.0'), { 'VL::cM': ['F/F/F/F', 'F'], 'VL::cN': ['T/T/T/T', 'T'], 'VL::cX': ['T/T/T/T', 'T'] }),
           [`redef-target-valueless-defaults-${order}`]: probe(mk('VD', 'default = 1.0', 'default = 2.0'), { 'VD::cM': ['?/?/?/?', '?'], 'VD::cN': ['?/?/?/?', '?'], 'VD::cX': ['?/?/?/?', '?'] }),
           [`redef-target-valueless-firm-${order}`]: probe(mk('VF', '= 1.0', '= 2.0'), { 'VF::cM': ['?/?/?/?', '?'], 'VF::cN': ['?/?/?/?', '?'], 'VF::cX': ['?/?/?/?', '?'] }),
           [`redef-target-valueless-agree-${order}`]: probe(mk('VA', 'default = 2.0', '= 2.0'), { 'VA::cM': ['F/F/F/F', 'F'], 'VA::cN': ['T/T/T/T', 'T'], 'VA::cX': ['T/T/T/T', 'T'] }),
@@ -6947,9 +6949,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint sN2 { 2.0 == s.N }
         constraint sN1 { 1.0 == s.N }
       }`, {
-      'MUR::sM1': ['?/?/?/?', '?'],
-      'MUR::sN1': ['?/?/?/?', '?'],
-      'MUR::sN2': ['?/?/?/?', '?'],
+      'MUR::Q2::«AttributeUsage» in MUR::s#clash': ['F/-/F/-', 'F'],
+      'MUR::sM1': ['?/?/?/X', '?'],
+      'MUR::sN1': ['?/?/?/X', '?'],
+      'MUR::sN2': ['?/?/?/X', '?'],
     }),
     // R's M2 redefines M, and v declares an M2 of its own beside `:>> M = 5.0`: taking R's M2 named v's M M2 too
     // (two axioms on v's M2; `v.M2 == 9.0` refuted). The twin writes the M2 first and each relation reversed. Each
@@ -17158,8 +17161,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   constraint cx3 { a.x == 3.0 }
   constraint cx1 { a.x == 1.0 }
 }`, {
-      'TV::cx1': ['?/?/?/?', 'F'],
-      'TV::cx3': ['?/?/?/?', 'T'],
+      'TV::cx1': ['F/F/F/F', 'F'],
+      'TV::cx3': ['T/T/T/T', 'T'],
     }),
     'line-twice-valueless-first-rev': probe(`
 package TV {
@@ -17168,8 +17171,8 @@ package TV {
   part a : A { attribute :>> x default = 3.0; attribute :>> x; }
   part def A { attribute x default = 1.0; }
 }`, {
-      'TV::cx1': ['?/?/?/?', 'F'],
-      'TV::cx3': ['?/?/?/?', 'T'],
+      'TV::cx1': ['F/F/F/F', 'F'],
+      'TV::cx3': ['T/T/T/T', 'T'],
     }),
     'line-twice-nested': probe(`package TN {
   part def T0 { attribute x default = 1.0; attribute y default = 1.0; }
@@ -17237,8 +17240,8 @@ package TV {
   constraint cY1 { s.Y == 1.0 }
   constraint cY2 { s.Y == 2.0 }
 }`, {
-      'AT::cY1': ['?/?/?/?', 'F'],
-      'AT::cY2': ['?/?/?/?', 'T'],
+      'AT::cY1': ['F/F/F/F', 'F'],
+      'AT::cY2': ['T/T/T/T', 'T'],
     }),
     'line-alias-twice-rev': probe(`
 package AT {
@@ -17249,8 +17252,8 @@ package AT {
   part def Q1 { attribute N default = 1.0; }
   part def Q { attribute M default = 3.0; }
 }`, {
-      'AT::cY1': ['?/?/?/?', 'F'],
-      'AT::cY2': ['?/?/?/?', 'T'],
+      'AT::cY1': ['F/F/F/F', 'F'],
+      'AT::cY2': ['T/T/T/T', 'T'],
     }),
     'line-alias-usage-redefines-both': probe(`package AB {
   part def Q { attribute M; }
@@ -17263,10 +17266,10 @@ package AT {
   constraint cM3 { s.M == 3.0 }
   constraint cX3 { s.X == 3.0 }
 }`, {
-      'AB::cM3': ['?/?/?/?', 'T'],
-      'AB::cX3': ['?/?/?/?', 'T'],
-      'AB::cY2': ['?/?/?/?', 'F'],
-      'AB::cY3': ['?/?/?/?', 'T'],
+      'AB::cM3': ['T/T/T/T', 'T'],
+      'AB::cX3': ['T/T/T/T', 'T'],
+      'AB::cY2': ['F/F/F/F', 'F'],
+      'AB::cY3': ['T/T/T/T', 'T'],
     }),
     'line-alias-usage-redefines-both-rev': probe(`package AB {
   constraint cX3 { s.X == 3.0 }
@@ -17279,10 +17282,10 @@ package AT {
   part def Q1 { attribute N default = 2.0; }
   part def Q { attribute M; }
 }`, {
-      'AB::cM3': ['?/?/?/?', 'T'],
-      'AB::cX3': ['?/?/?/?', 'T'],
-      'AB::cY2': ['?/?/?/?', 'F'],
-      'AB::cY3': ['?/?/?/?', 'T'],
+      'AB::cM3': ['T/T/T/T', 'T'],
+      'AB::cX3': ['T/T/T/T', 'T'],
+      'AB::cY2': ['F/F/F/F', 'F'],
+      'AB::cY3': ['T/T/T/T', 'T'],
     }),
     'line-dependent-attribute': probe(`package DA {
   part def Q { attribute M default = 1.0; }
@@ -17295,10 +17298,10 @@ package AT {
   constraint cX5 { s.X == 5.0 }
   constraint ctZ2 { t.Z == 2.0 }
 }`, {
-      'DA::cX5': ['?/?/?/?', 'T'],
-      'DA::cZ2': ['?/?/?/?', 'F'],
-      'DA::cZ6': ['?/?/?/?', 'T'],
-      'DA::ctZ2': ['T/T/T/?', 'T'],
+      'DA::cX5': ['T/T/T/T', 'T'],
+      'DA::cZ2': ['F/F/F/F', 'F'],
+      'DA::cZ6': ['T/T/T/T', 'T'],
+      'DA::ctZ2': ['T/T/T/T', 'T'],
     }),
     'line-dependent-attribute-rev': probe(`package DA {
   constraint ctZ2 { t.Z == 2.0 }
@@ -17311,10 +17314,10 @@ package AT {
   part def Q1 { attribute N default = 1.0; }
   part def Q { attribute M default = 1.0; }
 }`, {
-      'DA::cX5': ['?/?/?/?', 'T'],
-      'DA::cZ2': ['?/?/?/?', 'F'],
-      'DA::cZ6': ['?/?/?/?', 'T'],
-      'DA::ctZ2': ['T/T/T/?', 'T'],
+      'DA::cX5': ['T/T/T/T', 'T'],
+      'DA::cZ2': ['F/F/F/F', 'F'],
+      'DA::cZ6': ['T/T/T/T', 'T'],
+      'DA::ctZ2': ['T/T/T/T', 'T'],
     }),
     'line-dependent-attribute-type': probe(`package DT {
   part def Q { attribute M; attribute N default = 3.0; }
@@ -17327,10 +17330,10 @@ package AT {
   constraint cN1 { t.N == 1.0 }
   constraint c2Z4 { t2.Z == 4.0 }
 }`, {
-      'DT::c2Z4': ['T/T/T/?', 'T'],
-      'DT::cN1': ['?/?/?/?', 'T'],
-      'DT::cZ2': ['?/?/?/?', 'T'],
-      'DT::cZ4': ['?/?/?/?', 'F'],
+      'DT::c2Z4': ['T/T/T/T', 'T'],
+      'DT::cN1': ['T/T/T/T', 'T'],
+      'DT::cZ2': ['T/T/T/T', 'T'],
+      'DT::cZ4': ['F/F/F/F', 'F'],
     }),
     'line-dependent-attribute-type-rev': probe(`package DT {
   constraint c2Z4 { t2.Z == 4.0 }
@@ -17343,10 +17346,10 @@ package AT {
   part def Q2 :> Q { attribute Z = N + 1.0; attribute X :>> N, M; }
   part def Q { attribute N default = 3.0; attribute M; }
 }`, {
-      'DT::c2Z4': ['T/T/T/?', 'T'],
-      'DT::cN1': ['?/?/?/?', 'T'],
-      'DT::cZ2': ['?/?/?/?', 'T'],
-      'DT::cZ4': ['?/?/?/?', 'F'],
+      'DT::c2Z4': ['T/T/T/T', 'T'],
+      'DT::cN1': ['T/T/T/T', 'T'],
+      'DT::cZ2': ['T/T/T/T', 'T'],
+      'DT::cZ4': ['F/F/F/F', 'F'],
     }),
     'line-of-parts': probe(`package LP {
   part def T0 { attribute x default = 1.0; }
@@ -17517,10 +17520,10 @@ package AT {
   constraint cZ2 { s.Z == 2.0 }
   constraint cZ6 { s.Z == 6.0 }
 }`, {
-      'DR::cX5': ['?/?/?/?', 'T'],
-      'DR::cZ2': ['?/?/?/?', 'F'],
-      'DR::cZ6': ['?/?/?/?', 'T'],
-      'DR::ctZ2': ['T/T/T/?', 'T'],
+      'DR::cX5': ['T/T/T/T', 'T'],
+      'DR::cZ2': ['F/F/F/F', 'F'],
+      'DR::cZ6': ['T/T/T/T', 'T'],
+      'DR::ctZ2': ['T/T/T/T', 'T'],
     }),
     'line-three-targets': probe(`package L3 {
   part def Q { attribute M default = 1.0; }
@@ -17532,9 +17535,9 @@ package AT {
   constraint cP { s.P == 2.0 }
   constraint cX { s.X == 2.0 }
 }`, {
-      'L3::cM': ['?/?/?/?', 'T'],
-      'L3::cP': ['?/?/?/?', 'T'],
-      'L3::cX': ['?/?/?/?', 'T'],
+      'L3::cM': ['T/T/T/T', 'T'],
+      'L3::cP': ['T/T/T/T', 'T'],
+      'L3::cX': ['T/T/T/T', 'T'],
     }),
     'line-three-targets-rev': probe(`
 package L3 {
@@ -17547,9 +17550,9 @@ package L3 {
   part def Q1 { attribute N default = 1.0; }
   part def Q { attribute M default = 1.0; }
 }`, {
-      'L3::cM': ['?/?/?/?', 'T'],
-      'L3::cP': ['?/?/?/?', 'T'],
-      'L3::cX': ['?/?/?/?', 'T'],
+      'L3::cM': ['T/T/T/T', 'T'],
+      'L3::cP': ['T/T/T/T', 'T'],
+      'L3::cX': ['T/T/T/T', 'T'],
     }),
     'line-shared-root': probe(`package LR {
   part def QA { attribute A0 default = 2.0; }
@@ -20318,7 +20321,6 @@ package PS {
     ['sub-rv3-bridge-definition', 'BD::k1', /`u1` in BD::W is one usage with `u3`, which says something of its own \(`u4` subsets more than one usage, which joins them\): this tool reads `u1` at BD::W's own values, never as the `u3` it is/],
     ['sub-rv3-bridge-definition', 'BD::k3', /`u3` in BD::W says something of its own, and `u4` subsets more than one usage, which joins it with the others/],
     ['conn-end-redefined', 'CE::kc', /`cn` connects features to the end `a` of CE::C: the end is the feature it is connected to, which may state what the end's type does not/],
-    ['line-twice-valueless-first', 'TV::cx3', /TV::a redefines `x` twice, and not alike \(a value beside none, or content nested below\), so the model states both for the one feature and neither is read/],
     ['line-twice-hiding', 'TH::c5', /TH::a states `x` twice \(declared beside a redefinition of it\), with 5\.0 and 6\.0, so the model states both/],
     ['line-twice-units', 'TU::c5', /TU::a redefines `x` twice, with 5\.0 \[kg\] and 5000\.0 \[g\], so the model states both/],
     ['line-sentence-twice-renamed', 'ST::c5y', /ST::a redefines `x` twice, with 6\.0 and 5\.0, so the model states both for the one feature and neither is read/],
