@@ -444,13 +444,7 @@ headings.
       per instance: the usage an instance redefines itself (w.p1 beside `p2 :> p1`), every instance
       of what the component's usages are features of, and a package subsetter's subsetted usage
       abstain even where the reading would be right (pin sub-rv1-diamond k2; corpus model e1-subset; since instance3-pass S2 sub-sa7 k1 reads F/F/F/F and nq3's rows F/-/F/- and -/F/-/F); a sound per-instance skip needs
-      per-context answers. (2) A bridge, chain-target or package fence fires on any member that
-      states a value, at any depth, or whose type states one, even where the values agree. (3) A
-      line of parts, a merged line and a twice-stated feature fence every name they reach (dependent
-      attributes included); `Y :>> X` beside any statement of X abstains in both orders; the nested
-      content of a twice-stated part abstains even where identical; `:>> M, N = 6.0` over a general
-      type's `X :>> M, N` abstains though the values agree
-      (review-2026-10-14/wave3-probes/fence-readings/p/m4.sysml, rows uM and uN). (4) The ends of
+      per-context answers. (2) A bridge, chain-target or package fence fires on any member that states a value, at any depth, or whose type states one, even where the values agree; since a5 LN2 agreeing statements of one feature (the same number in the same unit, or defaults of the same type) read as one statement, and values in different units still abstain. (3) Since a5 LN1 and LN2 an attribute that a context states several ways (`X :>> M, N`, a redefinition of the line or of one target, `Y :>> X`, a twice-stated `:>> x`) is read as one feature with the one value its most specific statement gives, under every name of it and in what is derived from it, and `:>> M, N = 6.0` over a general type's `X :>> M, N` reads (m4 rows uM and uN read T; review-2026-10-14/wave3-probes/fence-readings/p/m4.sysml). Still fenced on every name they reach (dependent attributes included): a line of parts (`part X :>> M, N;` with `s.X.x`, `s.M.x`, `s.N.x`), values written in different units (`5.0 [kg]` beside `5000.0 [g]`), a line where no one statement gives the value (`:>> M = 1.0` beside `:>> N = 2.0`, two firm values that differ, two defaults of types neither of which specialises the other, a value that is not a number), and the nested content of a twice-stated part, even where identical. (4) The ends of
       every type of a connection that connects features abstain, whatever the connected feature
       states (pin conn-end-redefined). (5) A satisfy written outside its definition is not resolved
       through the owning namespaces: NQ1, NQ2, NQ5, NQ7 abstain instead of filing w's F row as NQ3
@@ -460,9 +454,7 @@ headings.
       feature is read as the union of its own value and its subsetter's when p1's upper bound is 1,
       abstaining when it is unstated or above 1 (needs a multiplicity ruling; also settles
       e1-subset; review-2026-10-14/wave3-probes/fence-readings/s2/rv1.sysml, rev/rv-spec.sysml,
-      rev/rv-q.sysml). (7) A feature that redefines two features of one line is not modelled as ONE
-      feature (its two written values as a contradiction, or as one value: a decision on what the
-      tool reads; review-2026-10-14/wave3-probes/fence-readings/s2/mu.sysml, mur.sysml, mu1.sysml).
+      rev/rv-q.sysml). (7) mu sM1, sN1, sN2 stay ?/?/?/X by design; a #clash F row files the two-values contradiction; a firm value beside a more specific default on the line's other name reads none (LN3) (review-2026-10-14/wave3-probes/fence-readings/s2/mu.sysml, mur.sysml, mu1.sysml).
       (8) An own-sibling redefinition is not read as one hard validation error
       (review-2026-10-14/wave3-probes/fence-readings/s2/os-a.sysml); models that contain one still
       decide cells, the model being invalid and flagged. (9) Bindings: Q's own generic row (P::a2 in
