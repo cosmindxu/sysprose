@@ -17883,9 +17883,9 @@ package PS {
   part def T1 { attribute L : ScalarValues::Real default = 1.0; attribute load : ScalarValues::Real default = 1.0; bind load = L; }
 }`,
       {
-      'PHN::ldF': ['?/?/?/?', 'F'],
-      'PHN::ldM': ['?/?/?/?', 'F'],
-      'PHN::ldT': ['?/?/?/?', 'T'],
+      'PHN::ldF': ['?/?/F/?', 'F'],
+      'PHN::ldM': ['?/?/F/?', 'F'],
+      'PHN::ldT': ['?/?/T/T', 'T'],
       },
     ),
     ...reversed(
@@ -18161,6 +18161,85 @@ package PS {
       {
       'PUN::cQ': ['T/T/T/T', 'T'],
       'PUN::cQM': ['F/F/F/F', 'F'],
+      },
+    ),
+    // a5 HD3: a package's `bind P::load = L` on a definition's head reads P (and its other end) where the package READS
+    // them — from a package around it (hd3-outward: `Sub` inside the package that declares P and p4), through an import
+    // (hd3-imported: N3B imports N3), or both through imports (hd3-third: neither Defs nor Vals declares Bind's, nor
+    // Use's, members) — as it reads them where it declares them (hc3). p4's own `:>> load = 7.0` beside L's 50 is the
+    // contradiction of decision 1: the binding's row is violated and the SMT engine reports the axioms inconsistent;
+    // p4.load keeps its own 7 on the check, as E2CP::c4 does, where the package that holds p4 is the one the binding
+    // reaches. Before, the binding was ignored for any definition the package did not declare: every surface read p4
+    // at its 7 and decided (T/T/T/T).
+    ...reversed(
+      'hd3-outward',
+      `package HO {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  part p4 : P { attribute :>> load = 7.0; }
+  constraint c4 { p4.load <= 10.0 }
+  package Sub { attribute L : ScalarValues::Real = 50.0; bind P::load = L; }
+}`,
+      `package HO {
+  package Sub { attribute L : ScalarValues::Real = 50.0; bind P::load = L; }
+  constraint c4 { p4.load <= 10.0 }
+  part p4 : P { attribute :>> load = 7.0; }
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+}`,
+      {
+        'HO::c4': ['T/X/?/X', null],
+        'HO::Sub::«BindingConnectorAsUsage» in HO::p4#bind': ['F/-/F/-', 'F'],
+      },
+    ),
+    ...reversed(
+      'hd3-imported',
+      `package HI {
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+  part p4 : P { attribute :>> load = 7.0; }
+  part p5 : P;
+  constraint c4 { p4.load <= 10.0 }
+  constraint c5 { p5.load >= 40.0 }
+}
+package HIB { import HI::*; attribute L : ScalarValues::Real = 50.0; bind P::load = L; }`,
+      `package HIB { import HI::*; attribute L : ScalarValues::Real = 50.0; bind P::load = L; }
+package HI {
+  constraint c5 { p5.load >= 40.0 }
+  constraint c4 { p4.load <= 10.0 }
+  part p5 : P;
+  part p4 : P { attribute :>> load = 7.0; }
+  part def P { attribute load : ScalarValues::Real default = 1.0; }
+}`,
+      {
+        'HI::c4': ['T/X/?/X', null],
+        'HI::c5': ['?/?/?/X', '?'],
+        'HIB::«BindingConnectorAsUsage» in HI::p4#bind': ['F/-/F/-', 'F'],
+      },
+    ),
+    ...reversed(
+      'hd3-third',
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Bind { import Defs::*; import Vals::*; bind P::load = L; }
+package Use {
+  import Defs::*;
+  part p4 : P { attribute :>> load = 7.0; }
+  part p5 : P;
+  constraint c4 { p4.load <= 10.0 }
+  constraint c5 { p5.load >= 40.0 }
+}`,
+      `package Use {
+  constraint c5 { p5.load >= 40.0 }
+  constraint c4 { p4.load <= 10.0 }
+  part p5 : P;
+  part p4 : P { attribute :>> load = 7.0; }
+  import Defs::*;
+}
+package Bind { bind P::load = L; import Vals::*; import Defs::*; }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }`,
+      {
+        'Use::c4': ['T/X/?/X', null],
+        'Use::c5': ['?/?/?/X', '?'],
+        'Bind::«BindingConnectorAsUsage» in Use::p4#bind': ['F/-/F/-', 'F'],
       },
     ),
     // a5 (2026-11-06) F0: the package-head default family. A package's `bind P::m = M` holds in every instance of P, so
@@ -19176,6 +19255,27 @@ package PS {
         [
           `${name} | BRC::k`,
           'the asserted `mode == "manual"` (or the conjunction it is the second conjunct of) is false at `mode = "auto"`: the model contradicts itself, which the check reads on that row; a gate refuses the String relation, and the SMT engine reports the contradiction it never encoded (K2); the check and the numeric surface read x’s 2',
+        ] as const,
+    ),
+    ...['hd3-outward', 'hd3-outward-rev'].map(
+      (n) =>
+        [
+          `${n} | HO::c4`,
+          'p4’s own `:>> load = 7.0` under the package’s `bind P::load = L` beside L’s 50.0: the contradiction of decision 1, which the check reports on the binding’s row (a5 HD3), so the literal engine and the SMT engine abstain or report it; p4.load keeps its own 7 on the check, as E2CP::c4 does',
+        ] as const,
+    ),
+    ...['hd3-imported', 'hd3-imported-rev'].map(
+      (n) =>
+        [
+          `${n} | HI::c4`,
+          'p4’s own `:>> load = 7.0` under HIB’s `bind P::load = L` beside L’s 50.0: the contradiction of decision 1, which the check reports on the binding’s row (a5 HD3); p4.load keeps its own 7 on the check, as E2CP::c4 does',
+        ] as const,
+    ),
+    ...['hd3-third', 'hd3-third-rev'].map(
+      (n) =>
+        [
+          `${n} | Use::c4`,
+          'p4’s own `:>> load = 7.0` under Bind’s `bind P::load = L` (L of Vals, 50.0), both imported: the contradiction of decision 1, which the check reports on the binding’s row (a5 HD3); p4.load keeps its own 7 on the check, as E2CP::c4 does',
         ] as const,
     ),
     [

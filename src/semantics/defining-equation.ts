@@ -9078,6 +9078,43 @@ export function bindingEndPath(model: Model, id: ElementId | undefined, ownerId:
     if (name === undefined) return undefined;
     segments.unshift(name);
   }
+  return reachedHeadPath(model, id, ownerId);
+}
+
+/** Is `id` a feature a non-library package owns directly (`attribute L = 50.0;` in a package)? */
+function isPackageMember(model: Model, id: ElementId): boolean {
+  const f = model.get(id);
+  const owner = f && f.ownerId != null ? model.get(f.ownerId) : undefined;
+  return owner !== undefined && isPackage(owner) && owner.attrs.isLibrary !== true && f!.eClass === 'AttributeUsage';
+}
+
+/**
+ * The path of a feature of a DEFINITION that the package `ownerId` reaches without owning it — through an import, or
+ * from a package around it — spelled as `ownerId` reads it: `P.load` for `bind P::load = L` in a package that imports
+ * the one declaring P, or nested in it (HD3). `undefined` for anything else (an end of no definition, a feature of a
+ * usage, a name `ownerId` does not read as that end).
+ */
+function reachedHeadPath(model: Model, id: ElementId | undefined, ownerId: ElementId): string | undefined {
+  const holder = model.get(ownerId);
+  if (!holder || !isPackage(holder) || id === undefined) return undefined;
+  const segments: string[] = [];
+  let sawDefinition = false;
+  const seen = new Set<ElementId>();
+  for (let cur = model.get(id); cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    if (seen.has(cur.id)) return undefined;
+    seen.add(cur.id);
+    if (isPackage(cur)) {
+      if (!sawDefinition || cur.attrs.isLibrary === true) return undefined;
+      const path = segments.join('.');
+      const chain = featuresAtPath(model, sharedDefinitions(model), ownerId, path);
+      return chain && chain[chain.length - 1]?.id === id ? path : undefined;
+    }
+    if (isDefinition(cur.eClass)) sawDefinition = true;
+    else if (!isUsage(cur.eClass) || sawDefinition) return undefined;
+    const name = effectiveNameOf(model, cur);
+    if (name === undefined) return undefined;
+    segments.unshift(name);
+  }
   return undefined;
 }
 
@@ -12366,12 +12403,42 @@ function featuresAtPath(model: Model, definitions: DefiningEquations, root: Elem
     const f =
       childNamed(model, definitions, owner, seg) ??
       definitions.byName(owner).get(seg) ??
-      definitions.features(owner).find((c) => definitions.nameOf(c) === seg);
+      definitions.features(owner).find((c) => definitions.nameOf(c) === seg) ??
+      (out.length === 0 ? reachedDefinition(model, definitions, owner, seg) : undefined);
     if (!f) return undefined;
     out.push(f);
     owner = f.id;
   }
   return out;
+}
+
+/**
+ * The definition named `name` that a package `owner` reads without owning it (HD3): the nearest package around it
+ * that has a member of that name (a member that is no definition answers first and stops the walk), or what one of
+ * the plain imports (`import Defs::*;`) of `owner` or of a package around it exposes — exactly one of them: a name
+ * two imports expose is refused (design-readings decision 11), as is a recursive or untargeted import.
+ */
+function reachedDefinition(model: Model, definitions: DefiningEquations, owner: ElementId, name: string): ElementRecord | undefined {
+  const seen = new Set<ElementId>();
+  for (let cur = model.get(owner); cur && !seen.has(cur.id) && cur.attrs.isLibrary !== true; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    seen.add(cur.id);
+    if (!isPackage(cur)) return undefined;
+    if (cur.id !== owner) {
+      const own = childNamed(model, definitions, cur.id, name);
+      if (own) return isDefinition(own.eClass) && !isPackage(own) ? own : undefined;
+    }
+    const hits: ElementRecord[] = [];
+    for (const imp of model.children(cur.id)) {
+      if (imp.eClass !== 'NamespaceImport' && imp.eClass !== 'MembershipImport') continue;
+      const t = imp.target?.[0] !== undefined ? model.get(imp.target[0]) : undefined;
+      if (!t || imp.attrs.isRecursive === true || imp.eClass === 'MembershipImport') return undefined;
+      if (t.attrs.isLibrary === true || !isPackage(t)) continue;
+      const hit = childNamed(model, definitions, t.id, name);
+      if (hit) hits.push(hit);
+    }
+    if (hits.length > 0) return hits.length === 1 && isDefinition(hits[0]!.eClass) && !isPackage(hits[0]!) ? hits[0] : undefined;
+  }
+  return undefined;
 }
 
 /** Each owner's children by name, the first of each name, once per {@link DefiningEquations} (one revision). */
@@ -12460,8 +12527,11 @@ export function outsideBindingsOf(model: Model, definitionId: ElementId): readon
       if (!holder || !isPackage(holder)) continue;
       // Each end at its path in the package, as the package's reading spells it.
       const paths = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, holder.id) : undefined));
-      if (paths[0] === undefined || paths[1] === undefined) continue;
-      const heads = paths.map((p) => definitionHeadOf(model, definitions, holder.id, p!));
+      // An end that is a feature of another package (`bind P::load = L` beside `import Vals::*`) is one instance
+      // wherever it is read (HD3), as the package's own.
+      const global = [b.source?.[0], b.target?.[0]].map((id, k) => paths[k] === undefined && id !== undefined && isPackageMember(model, id));
+      if ((paths[0] === undefined && !global[0]) || (paths[1] === undefined && !global[1]) || (global[0] && global[1])) continue;
+      const heads = paths.map((p) => (p === undefined ? undefined : definitionHeadOf(model, definitions, holder.id, p)));
       const definition = (heads[0] ?? heads[1])?.definition;
       if (!definition || heads.some((h) => h !== undefined && h.definition.id !== definition.id)) continue;
       // An end of no definition is a feature of the package: one instance (`undefined`).
@@ -16312,7 +16382,11 @@ export function headBindingConflicts(model: Model): readonly HeadBindingConflict
         const other = otherId !== undefined ? model.get(otherId) : undefined;
         const holder = binding.ownerId != null ? model.get(binding.ownerId) : undefined;
         const read = holder ? bindingHolder(model, binding) : undefined;
-        if (!head || !other || !read || read.left === undefined || read.right === undefined || binding.attrs.isLibrary === true) continue;
+        if (!head || !other || !read || binding.attrs.isLibrary === true) continue;
+        // The other end is spelled where the package reads it, or — a feature of another package it imports — by its qualified name.
+        const spelled: [string | undefined, string | undefined] = [read.left, read.right];
+        if (spelled[1 - side] === undefined && isPackageMember(model, other.id)) spelled[1 - side] = effectiveQualifiedName(model, other.id);
+        if (spelled[0] === undefined || spelled[1] === undefined) continue;
         const written = valueSourceOf(model, other);
         if (!written || written.attrs.defaultValue === true) continue;
         const slot = new Set<ElementId>([head.id, ...redefinedClosure(model, head).map((g) => g.id)]);
@@ -16322,7 +16396,7 @@ export function headBindingConflicts(model: Model): readonly HeadBindingConflict
           if (!instance || !isUsage(instance.eClass) || instance.attrs.isLibrary === true) continue;
           if (!generalizationsOf(model, instance.id).some((g) => g.id === definition.id)) continue;
           if (compareWrittenValues(x, written) !== 'differs') continue;
-          list.push({ binding, definition, instance, stated: x, other: written, left: read.left, right: read.right });
+          list.push({ binding, definition, instance, stated: x, other: written, left: spelled[0], right: spelled[1] });
         }
       }
     }
