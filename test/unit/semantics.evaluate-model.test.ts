@@ -3405,6 +3405,50 @@ describe('checkConstraints — a bound partner is read only where every instance
     ]);
   });
 
+  it('reads a package\'s binding on a definition it reaches through an import or from around it, as where it declares it (a5 HD3)', async () => {
+    // The binding's ends are spelled where the package reads them: `P` and `L` a package around it or an import
+    // expose, never a path below the package. p4's `load = 7.0` beside L's 50 is the same pair wherever the binding sits.
+    const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; }';
+    const rows = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      return checkConstraints(m!)
+        .filter((c) => c.conflict === 'bind')
+        .map((c) => [m!.qualifiedName(c.ownerId!), c.expression, c.result] as const);
+    };
+    // From a package around it, in either order.
+    for (const text of [
+      `package A { ${P} part p4 : P { attribute :>> load = 7.0; } package Sub { attribute L : ScalarValues::Real = 50.0; bind P::load = L; } }`,
+      `package A { package Sub { attribute L : ScalarValues::Real = 50.0; bind P::load = L; } part p4 : P { attribute :>> load = 7.0; } ${P} }`,
+    ]) expect(await rows(text)).toEqual([['A::p4', 'P.load == L', 'violated']]);
+    // Through an import, the instance in the declaring package; and the instance in a third package, the other end in a fourth.
+    expect(await rows(`package A { ${P} part p4 : P { attribute :>> load = 7.0; } } package B { import A::*; attribute L : ScalarValues::Real = 50.0; bind P::load = L; }`)).toEqual([['A::p4', 'P.load == L', 'violated']]);
+    const third = `package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; }
+      package Bind { import Defs::*; import Vals::*; bind P::load = L; }
+      package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } part p5 : P { attribute :>> load = 50.0; } }`;
+    expect(await rows(third)).toEqual([['Use::p4', 'P.load == Vals::L', 'violated']]);
+    // The same pair through a membership import, a recursive-all import and a fully qualified end.
+    const spelled = (bind: string) => `package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; }
+      package Bind { ${bind} } package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } }`;
+    for (const bind of ['import Defs::P; import Vals::L; bind P::load = L;', 'import Defs::**; import Vals::*; bind P::load = L;', 'bind Defs::P::load = Vals::L;'])
+      expect((await rows(spelled(bind))).map((r) => r[2]), bind).toEqual(['violated']);
+    // A bind it cannot resolve (L exposed twice) reads none of p5's own value: no verdict beside it, on the check.
+    {
+      const { model: m } = await loadModelText(`package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; } package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+        package Bind { import Defs::*; import Vals::*; import Vals2::*; bind P::load = L; }
+        package Use { import Defs::*; part p5 : P { attribute :>> load = 7.0; } constraint c6 { p5.load >= 55.0 } }`);
+      expect(checkConstraints(m!).filter((c) => c.conflict !== 'bind').map((c) => c.result)).toEqual(['unknown']);
+    }
+    // The other end's name exposed by two imports is refused too, in either import order: no row, never the first import's value.
+    for (const order of ['import Vals::*; import Vals2::*;', 'import Vals2::*; import Vals::*;'])
+      expect(await rows(`package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; } package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+        package Bind { import Defs::*; ${order} bind P::load = L; } package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } }`)).toEqual([]);
+    // A name two imports expose is refused: the binding is read through neither definition, and no row is filed.
+    expect(await rows(`package Defs { ${P} } package Defs2 { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; }
+      package Bind { import Defs::*; import Defs2::*; import Vals::*; bind P::load = L; }
+      package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } }`)).toEqual([]);
+
+  });
+
   /** R's `L = 2.0 * K`, bound into its q's p by a binding written in q's body (or in a definition nested in R). */
   const enclosed = (pkg: string, nested: boolean, override: boolean) => `package ${pkg} {
     ${P}
