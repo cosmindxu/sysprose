@@ -9081,6 +9081,25 @@ export function bindingEndPath(model: Model, id: ElementId | undefined, ownerId:
   return reachedHeadPath(model, id, ownerId);
 }
 
+/**
+ * Does the package `holderId` reach the feature `id` by its name from exactly one place (HD3)? A name two imports (or an
+ * import and a member) expose is refused: the loader picked one, so reading it would depend on the order of the imports.
+ */
+function exposedOnce(model: Model, holderId: ElementId, id: ElementId): boolean {
+  const f = model.get(id);
+  const name = f ? effectiveNameOf(model, f) : undefined;
+  if (name === undefined) return false;
+  const hits = new Set<ElementId>();
+  for (const c of model.children(holderId)) {
+    if (c.eClass === 'NamespaceImport' || c.eClass === 'MembershipImport') {
+      const t = c.target?.[0] !== undefined ? model.get(c.target[0]) : undefined;
+      if (!t) return false;
+      for (const m of model.children(t.id)) if (effectiveNameOf(model, m) === name) hits.add(m.id);
+    } else if (effectiveNameOf(model, c) === name) hits.add(c.id);
+  }
+  return hits.size <= 1;
+}
+
 /** Is `id` a feature a non-library package owns directly (`attribute L = 50.0;` in a package)? */
 function isPackageMember(model: Model, id: ElementId): boolean {
   const f = model.get(id);
@@ -12529,7 +12548,7 @@ export function outsideBindingsOf(model: Model, definitionId: ElementId): readon
       const paths = [b.source?.[0], b.target?.[0]].map((id) => (id !== undefined ? bindingEndPath(model, id, holder.id) : undefined));
       // An end that is a feature of another package (`bind P::load = L` beside `import Vals::*`) is one instance
       // wherever it is read (HD3), as the package's own.
-      const global = [b.source?.[0], b.target?.[0]].map((id, k) => paths[k] === undefined && id !== undefined && isPackageMember(model, id));
+      const global = [b.source?.[0], b.target?.[0]].map((id, k) => paths[k] === undefined && id !== undefined && isPackageMember(model, id) && exposedOnce(model, holder.id, id));
       if ((paths[0] === undefined && !global[0]) || (paths[1] === undefined && !global[1]) || (global[0] && global[1])) continue;
       const heads = paths.map((p) => (p === undefined ? undefined : definitionHeadOf(model, definitions, holder.id, p)));
       const definition = (heads[0] ?? heads[1])?.definition;

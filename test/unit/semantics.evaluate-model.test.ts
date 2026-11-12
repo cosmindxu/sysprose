@@ -3426,6 +3426,10 @@ describe('checkConstraints — a bound partner is read only where every instance
       package Bind { import Defs::*; import Vals::*; bind P::load = L; }
       package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } part p5 : P { attribute :>> load = 50.0; } }`;
     expect(await rows(third)).toEqual([['Use::p4', 'P.load == Vals::L', 'violated']]);
+    // The other end's name exposed by two imports is refused too, in either import order: no row, never the first import's value.
+    for (const order of ['import Vals::*; import Vals2::*;', 'import Vals2::*; import Vals::*;'])
+      expect(await rows(`package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; } package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+        package Bind { import Defs::*; ${order} bind P::load = L; } package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } }`)).toEqual([]);
     // A name two imports expose is refused: the binding is read through neither definition, and no row is filed.
     expect(await rows(`package Defs { ${P} } package Defs2 { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; }
       package Bind { import Defs::*; import Defs2::*; import Vals::*; bind P::load = L; }

@@ -18214,6 +18214,24 @@ package HI {
         'HIB::«BindingConnectorAsUsage» in HI::p4#bind': ['F/-/F/-', 'F'],
       },
     ),
+    // The other end's name exposed by two imports (Vals and Vals2 both declare L): the binding is read through neither, in either import order.
+    ...reversed(
+      'hd3-two-imports',
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+package Bind { import Defs::*; import Vals::*; import Vals2::*; bind P::load = L; }
+package Use { import Defs::*; part p5 : P; constraint c6 { p5.load >= 55.0 } constraint c6b { p5.load <= 55.0 } }`,
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+package Bind { import Defs::*; import Vals2::*; import Vals::*; bind P::load = L; }
+package Use { import Defs::*; part p5 : P; constraint c6 { p5.load >= 55.0 } constraint c6b { p5.load <= 55.0 } }`,
+      {
+        'Use::c6': ['?/?/?/?', null],
+        'Use::c6b': ['?/?/?/?', null],
+      },
+    ),
     ...reversed(
       'hd3-third',
       `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
