@@ -393,12 +393,7 @@ headings.
       numeric2-pass: (h) a package head's pair whose side is an expression or a `default` (`L = 2.0
       * K`), whose end is deeper than one segment below the definition, or whose instance sits in a
       definition that redefines the head (not a usage), files no binding row and is read as before
-      (probes numeric2-pass-scratch/gen2 D56-D58, t5/hc3.sysml); (i) a package head whose binding
-      sits in a third package that spells neither end (Defs/Vals/Bind; `package Bind { import
-      Defs::*; import Vals::*; bind P::load = L; }`, probe numeric2-review-scratch/nb/h.sysml) files
-      no head-conflict row, so c4 reads the instance's own value (holds-at-values on the literal
-      engine, proved on SMT, sysml-check silent), identical to 514f547 and not widened, the proper
-      reading staying open with fence-pkgbind; (j) the literal engine answers X on any relation over
+      (probes numeric2-pass-scratch/gen2 D56-D58, t5/hc3.sysml); (i) a package head whose binding sits in a third package that spells neither end (Defs/Vals/Bind; `package Bind { import Defs::*; import Vals::*; bind P::load = L; }`, probe numeric2-review-scratch/nb/h.sysml) files its violated #bind row since a5 HD3: SMT reads the axioms inconsistent and c4 reads T/X/?/X (it read T/T/T/T before); c5 and cL stay ? because Vals::L is a qualified reference that none of the surfaces read (PA), the proper reading staying open with fence-pkgbind; (j) the literal engine answers X on any relation over
       a value a reported package-head conflict joins, as it does for every other violated binding
       (probe t5/hc1.sysml).
       solver2-pass: (k) a tautology's own row over a feature nothing fixes reads numeric `?`
@@ -1382,8 +1377,7 @@ tagged `[O1 …]` are what its steps and reviews left open.
       of the same definition (`top2 : T1`) abstains too; a direct feature bound across the
       package abstains where it read correctly before; rows right only because the default and the
       true reading agree now abstain; the SMT lane abstains on an F row where the witness gate
-      demotes. The proper reading (joining the instance's own context to the definition's
-      binding) stays open. Probes: ep-review/v/s3.sysml, s7.sysml, s11.sysml, s12.sysml and
+      demotes. Since a5 HD3 a package head bind written in a package that imports, or is nested in, the package that declares the instance's definition (a plain import, a membership import, a recursive `import Defs::**` or a qualified end) is read: pkgbind-head-nested decides on the numeric and SMT surfaces (ldF/ldM ?/?/F/?, ldT ?/?/T/T), and a head bind in a third package files its violated #bind row; a bind whose other end names a feature that two imports expose is unresolvable and withholds the head's own value (withheldJoins, reading ?/?/?/?); the usage-end `bind top.L = XX` cases still abstain. The proper reading (joining the instance's own context to the definition's binding) stays open for those. Probes: ep-review/v/s3.sysml, s7.sysml, s11.sysml, s12.sysml and
       fence-pkgbind-scratch/gen4/pkgbind-*.sysml. [editor-pass review; fence-pkgbind]
 
 - [ ] **T-115: Walk a redefined state or transition of a general machine, or a machine with two generals.** Since B-walk a `state def Derived :> Base` with one general machine, and a typed `exhibit state m : Modes {…}` with steps of its own, are walked and run over the general's region plus their own steps: one view, `machineRegion`, read by the walk and the interpreter; inherited steps first; Base is walked alone; a typed usage with no steps is reported through its definition. A bare `state :>> b;` or `state r :>> b;` is read as the state it redefines. Still `machine-boundary`: a state redefinition with a body, a transition redefinition, an attribute `:>>`, a step that names a redefining state, two general machines, two start nodes, a cycle of generals. [behaviour-small S1; behaviour-walk B-inherit, B-walk, B-redef]
