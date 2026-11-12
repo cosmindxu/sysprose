@@ -3426,6 +3426,18 @@ describe('checkConstraints — a bound partner is read only where every instance
       package Bind { import Defs::*; import Vals::*; bind P::load = L; }
       package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } part p5 : P { attribute :>> load = 50.0; } }`;
     expect(await rows(third)).toEqual([['Use::p4', 'P.load == Vals::L', 'violated']]);
+    // The same pair through a membership import, a recursive-all import and a fully qualified end.
+    const spelled = (bind: string) => `package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; }
+      package Bind { ${bind} } package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } }`;
+    for (const bind of ['import Defs::P; import Vals::L; bind P::load = L;', 'import Defs::**; import Vals::*; bind P::load = L;', 'bind Defs::P::load = Vals::L;'])
+      expect((await rows(spelled(bind))).map((r) => r[2]), bind).toEqual(['violated']);
+    // A bind it cannot resolve (L exposed twice) reads none of p5's own value: no verdict beside it, on the check.
+    {
+      const { model: m } = await loadModelText(`package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; } package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+        package Bind { import Defs::*; import Vals::*; import Vals2::*; bind P::load = L; }
+        package Use { import Defs::*; part p5 : P { attribute :>> load = 7.0; } constraint c6 { p5.load >= 55.0 } }`);
+      expect(checkConstraints(m!).filter((c) => c.conflict !== 'bind').map((c) => c.result)).toEqual(['unknown']);
+    }
     // The other end's name exposed by two imports is refused too, in either import order: no row, never the first import's value.
     for (const order of ['import Vals::*; import Vals2::*;', 'import Vals2::*; import Vals::*;'])
       expect(await rows(`package Defs { ${P} } package Vals { attribute L : ScalarValues::Real = 50.0; } package Vals2 { attribute L : ScalarValues::Real = 60.0; }

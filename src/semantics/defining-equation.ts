@@ -4727,6 +4727,22 @@ export class DefiningEquations {
       edges.add(b.id);
       for (const e of b.raw) if (!ends.has(e)) ends.set(e, owner);
     }
+    // A package's binding on a definition's feature that this tool does not resolve (`outsideBindingsOf` lists none: a name
+    // two imports expose, a path it cannot follow) joins an instance's value to one nothing follows: no surface reads a
+    // value through it, and a value written on the head says nothing the model can be held to (HD3).
+    if (hasUserBindings(this.model)) {
+      for (const el of this.model.all()) {
+        if (el.attrs.isLibrary === true || !isBindingConnector(el) || el.ownerId == null || edges.has(el.id)) continue;
+        const holder = this.model.get(el.ownerId);
+        if (!holder || !isPackage(holder)) continue;
+        const raw = [el.source?.[0], el.target?.[0]].filter((e): e is ElementId => e !== undefined);
+        const heads = raw.map((e) => definitionAt(this.model, e)).filter((d) => d !== undefined);
+        if (heads.length === 0) continue;
+        if (heads.every((d) => outsideBindingsOf(this.model, d!.definition.id).some((x) => x.binding.id === el.id))) continue;
+        edges.add(el.id);
+        for (const e of raw) if (!ends.has(e)) ends.set(e, holder.id);
+      }
+    }
     // An end joined through a feature that redefines one of the ends (the copy a usage makes of it) is joined too.
     const joinedTo = (e: ElementId): ElementId | undefined => {
       const f = this.model.get(e);
@@ -9094,7 +9110,7 @@ function exposedOnce(model: Model, holderId: ElementId, id: ElementId): boolean 
     if (c.eClass === 'NamespaceImport' || c.eClass === 'MembershipImport') {
       const t = c.target?.[0] !== undefined ? model.get(c.target[0]) : undefined;
       if (!t) return false;
-      for (const m of model.children(t.id)) if (effectiveNameOf(model, m) === name) hits.add(m.id);
+      for (const m of namesExposedBy(model, c, t, name)) hits.add(m.id);
     } else if (effectiveNameOf(model, c) === name) hits.add(c.id);
   }
   return hits.size <= 1;
@@ -9113,6 +9129,31 @@ function isPackageMember(model: Model, id: ElementId): boolean {
  * the one declaring P, or nested in it (HD3). `undefined` for anything else (an end of no definition, a feature of a
  * usage, a name `ownerId` does not read as that end).
  */
+/** Does any member or import of the package `owner`, or of one around it, expose something named `name`? (A name exposed at all is read as its plain spelling, or refused; never by qualified name.) */
+function nameExposedTo(model: Model, owner: ElementId, name: string): boolean {
+  const seen = new Set<ElementId>();
+  for (let cur = model.get(owner); cur && !seen.has(cur.id) && cur.attrs.isLibrary !== true; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    seen.add(cur.id);
+    for (const c of model.children(cur.id)) {
+      if (c.eClass === 'NamespaceImport' || c.eClass === 'MembershipImport') {
+        const t = c.target?.[0] !== undefined ? model.get(c.target[0]) : undefined;
+        if (!t || namesExposedBy(model, c, t, name).length > 0) return true;
+      } else if (effectiveNameOf(model, c) === name) return true;
+    }
+  }
+  return false;
+}
+
+/** The nearest definition above the feature `id` and how many features lie below it down to `id`, or `undefined`. */
+function definitionAt(model: Model, id: ElementId): { definition: ElementRecord; below: number } | undefined {
+  let below = 1;
+  for (let cur = model.get(id)?.ownerId != null ? model.get(model.get(id)!.ownerId!) : undefined; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined, below++) {
+    if (isPackage(cur)) return undefined;
+    if (isDefinition(cur.eClass)) return { definition: cur, below };
+  }
+  return undefined;
+}
+
 function reachedHeadPath(model: Model, id: ElementId | undefined, ownerId: ElementId): string | undefined {
   const holder = model.get(ownerId);
   if (!holder || !isPackage(holder) || id === undefined) return undefined;
@@ -9125,8 +9166,16 @@ function reachedHeadPath(model: Model, id: ElementId | undefined, ownerId: Eleme
     if (isPackage(cur)) {
       if (!sawDefinition || cur.attrs.isLibrary === true) return undefined;
       const path = segments.join('.');
-      const chain = featuresAtPath(model, sharedDefinitions(model), ownerId, path);
-      return chain && chain[chain.length - 1]?.id === id ? path : undefined;
+      const defs = sharedDefinitions(model);
+      const chain = featuresAtPath(model, defs, ownerId, path);
+      if (chain && chain[chain.length - 1]?.id === id) return path;
+      // Spelled in full (`bind Defs::P::load = …`): the definition by its qualified name, the rest below it.
+      const first = definitionAt(model, id);
+      if (!first || nameExposedTo(model, ownerId, effectiveNameOf(model, first.definition) ?? '')) return undefined;
+      const rest = segments.slice(segments.length - first.below).join('.');
+      const full = `${effectiveQualifiedName(model, first.definition.id)}.${rest}`;
+      const fullChain = featuresAtPath(model, defs, ownerId, full);
+      return fullChain && fullChain[fullChain.length - 1]?.id === id ? full : undefined;
     }
     if (isDefinition(cur.eClass)) sawDefinition = true;
     else if (!isUsage(cur.eClass) || sawDefinition) return undefined;
@@ -12423,7 +12472,7 @@ function featuresAtPath(model: Model, definitions: DefiningEquations, root: Elem
       childNamed(model, definitions, owner, seg) ??
       definitions.byName(owner).get(seg) ??
       definitions.features(owner).find((c) => definitions.nameOf(c) === seg) ??
-      (out.length === 0 ? reachedDefinition(model, definitions, owner, seg) : undefined);
+      (out.length === 0 ? (seg.includes('::') ? qualifiedDefinition(model, seg) : reachedDefinition(model, definitions, owner, seg)) : undefined);
     if (!f) return undefined;
     out.push(f);
     owner = f.id;
@@ -12437,6 +12486,20 @@ function featuresAtPath(model: Model, definitions: DefiningEquations, root: Elem
  * the plain imports (`import Defs::*;`) of `owner` or of a package around it exposes — exactly one of them: a name
  * two imports expose is refused (design-readings decision 11), as is a recursive or untargeted import.
  */
+/** The elements named `name` that the import `imp` (its target `t`) exposes: the target itself for a membership import, its members for a namespace import, all its descendants for a recursive one. */
+function namesExposedBy(model: Model, imp: ElementRecord, t: ElementRecord, name: string): ElementRecord[] {
+  if (imp.eClass === 'MembershipImport') return effectiveNameOf(model, t) === name ? [t] : [];
+  if (!isPackage(t)) return [];
+  const pool = imp.attrs.isRecursive === true ? model.descendants(t.id) : model.children(t.id);
+  return pool.filter((m) => effectiveNameOf(model, m) === name);
+}
+
+/** The definition a fully qualified name (`Defs::P`) names, or `undefined`. */
+function qualifiedDefinition(model: Model, qualified: string): ElementRecord | undefined {
+  const hit = model.resolveQualifiedName(qualified);
+  return hit && isDefinition(hit.eClass) && !isPackage(hit) && hit.attrs.isLibrary !== true ? hit : undefined;
+}
+
 function reachedDefinition(model: Model, definitions: DefiningEquations, owner: ElementId, name: string): ElementRecord | undefined {
   const seen = new Set<ElementId>();
   for (let cur = model.get(owner); cur && !seen.has(cur.id) && cur.attrs.isLibrary !== true; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
@@ -12450,10 +12513,9 @@ function reachedDefinition(model: Model, definitions: DefiningEquations, owner: 
     for (const imp of model.children(cur.id)) {
       if (imp.eClass !== 'NamespaceImport' && imp.eClass !== 'MembershipImport') continue;
       const t = imp.target?.[0] !== undefined ? model.get(imp.target[0]) : undefined;
-      if (!t || imp.attrs.isRecursive === true || imp.eClass === 'MembershipImport') return undefined;
-      if (t.attrs.isLibrary === true || !isPackage(t)) continue;
-      const hit = childNamed(model, definitions, t.id, name);
-      if (hit) hits.push(hit);
+      if (!t) return undefined;
+      if (t.attrs.isLibrary === true) continue;
+      for (const hit of namesExposedBy(model, imp, t, name)) hits.push(hit);
     }
     if (hits.length > 0) return hits.length === 1 && isDefinition(hits[0]!.eClass) && !isPackage(hits[0]!) ? hits[0] : undefined;
   }

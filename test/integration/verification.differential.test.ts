@@ -18214,6 +18214,70 @@ package HI {
         'HIB::«BindingConnectorAsUsage» in HI::p4#bind': ['F/-/F/-', 'F'],
       },
     ),
+    // a5 HD3 (membership, recursive-all and qualified spellings of the same head bind): read as hd3-third reads it, never ignored
+    ...reversed(
+      'hd3-membership',
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Bind { import Defs::P; import Vals::L; bind P::load = L; }
+package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } constraint c4 { p4.load <= 10.0 } }`,
+      `package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } constraint c4 { p4.load <= 10.0 } }
+package Bind { import Defs::P; import Vals::L; bind P::load = L; }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }`,
+      {
+        'Use::c4': ['T/X/?/X', null],
+        'Bind::«BindingConnectorAsUsage» in Use::p4#bind': ['F/-/F/-', 'F'],
+      },
+    ),
+    ...reversed(
+      'hd3-recursive',
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Bind { import Defs::**; import Vals::*; bind P::load = L; }
+package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } constraint c4 { p4.load <= 10.0 } }`,
+      `package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } constraint c4 { p4.load <= 10.0 } }
+package Bind { import Defs::**; import Vals::*; bind P::load = L; }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }`,
+      {
+        'Use::c4': ['T/X/?/X', null],
+        'Bind::«BindingConnectorAsUsage» in Use::p4#bind': ['F/-/F/-', 'F'],
+      },
+    ),
+    ...reversed(
+      'hd3-qualified',
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Bind { bind Defs::P::load = Vals::L; }
+package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } constraint c4 { p4.load <= 10.0 } }`,
+      `package Use { import Defs::*; part p4 : P { attribute :>> load = 7.0; } constraint c4 { p4.load <= 10.0 } }
+package Bind { bind Defs::P::load = Vals::L; }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }`,
+      {
+        'Use::c4': ['T/X/?/X', null],
+        'Bind::«BindingConnectorAsUsage» in Use::p4#bind': ['F/-/F/-', 'F'],
+      },
+    ),
+    // a5 HD3: the same two-imports model with p5 stating its own `= 7.0`: the binding is unresolved, so the value the file states says nothing it can be held to, on every surface
+    ...reversed(
+      'hd3-two-imports-own',
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+package Bind { import Defs::*; import Vals::*; import Vals2::*; bind P::load = L; }
+package Use { import Defs::*; part p5 : P { attribute :>> load = 7.0; } constraint c6 { p5.load >= 55.0 } constraint c6b { p5.load <= 55.0 } }`,
+      `package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; } }
+package Vals { attribute L : ScalarValues::Real = 50.0; }
+package Vals2 { attribute L : ScalarValues::Real = 60.0; }
+package Bind { import Defs::*; import Vals2::*; import Vals::*; bind P::load = L; }
+package Use { import Defs::*; part p5 : P { attribute :>> load = 7.0; } constraint c6 { p5.load >= 55.0 } constraint c6b { p5.load <= 55.0 } }`,
+      {
+        'Use::c6': ['?/?/?/?', null],
+        'Use::c6b': ['?/?/?/?', null],
+      },
+    ),
     // The other end's name exposed by two imports (Vals and Vals2 both declare L): the binding is read through neither, in either import order.
     ...reversed(
       'hd3-two-imports',
@@ -19295,6 +19359,15 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
           `${n} | Use::c4`,
           'p4’s own `:>> load = 7.0` under Bind’s `bind P::load = L` (L of Vals, 50.0), both imported: the contradiction of decision 1, which the check reports on the binding’s row (a5 HD3); p4.load keeps its own 7 on the check, as E2CP::c4 does',
         ] as const,
+    ),
+    ...['hd3-membership', 'hd3-recursive', 'hd3-qualified'].flatMap((n) =>
+      [n, `${n}-rev`].map(
+        (name) =>
+          [
+            `${name} | Use::c4`,
+            'p4’s own `:>> load = 7.0` under Bind’s `bind P::load = L` beside L’s 50.0 (imported by membership, by `::**`, or written in full): the contradiction of decision 1, which the check reports on the binding’s row (a5 HD3); p4.load keeps its own 7 on the check, as E2CP::c4 does',
+          ] as const,
+      ),
     ),
     [
       'a5-e2cp | E2CP::c4',
