@@ -1526,7 +1526,9 @@ export class DefiningEquations {
       satisfied && written?.ownerId != null && f.attrs.requirementRole === 'subject'
         ? this.bareSatisfierPath(written.ownerId, satisfied.satisfier)
         : undefined;
-    const spelled = satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
+    // A satisfier whose path resolves in a package around the `satisfy` (or is spelled through one) is read from there.
+    const outward = satisfied && written ? satisfierOutward(this.model, written) : undefined;
+    const spelled = outward ? outward.path : satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
     const ref = equated ? equated.path : satisfied ? (spelled ?? bare) : f.attrs.value;
     // As written (quoted segments unquoted), except a path the model itself names: a part's partner, a bare satisfier.
     const refPath = typeof ref !== 'string' ? undefined : equated || (satisfied && spelled === undefined) ? ref.trim() : valuePathOf(ref);
@@ -1552,7 +1554,7 @@ export class DefiningEquations {
     }
     const seen = new Set<ElementId>();
     for (
-      let cur = equated ? equated.from : satisfied ? (written?.ownerId ?? null) : (inContext ?? f.ownerId);
+      let cur = equated ? equated.from : satisfied ? (outward?.scope ?? written?.ownerId ?? null) : (inContext ?? f.ownerId);
       cur != null && !seen.has(cur);
       cur = satisfied || equated || inContext !== undefined ? null : (this.model.get(cur)?.ownerId ?? null)
     ) {
@@ -1802,12 +1804,13 @@ export class DefiningEquations {
       // The satisfier's path is resolved where the `satisfy` is written, and
       // there alone ({@link instanceStep}).
       const chain = written.attrs.sourceChain ?? written.attrs.sourceRef;
-      const spelled = typeof chain === 'string' ? valuePathOf(chain) : undefined;
-      // A chain that is no plain path (`NQ1::w.p1`) is read as written, and by no path walk below.
+      const outward = satisfierOutward(this.model, written);
+      const spelled = outward ? outward.path : typeof chain === 'string' ? valuePathOf(chain) : undefined;
+      // A chain that is no plain path is read as written, and by no path walk below.
       if (typeof chain === 'string' && spelled === undefined) pathIsPlain = false;
       path = typeof chain === 'string' ? (spelled ?? chain.trim()) : this.nameOf(satisfied.satisfier);
-      scope = written.ownerId != null ? this.model.get(written.ownerId) : undefined;
-      const outside = this.satisfierFromOutside(written, satisfied.satisfier, typeof chain === 'string' ? (spelled ?? chain.trim()) : undefined, pathIsPlain);
+      scope = outward ? this.model.get(outward.scope) : written.ownerId != null ? this.model.get(written.ownerId) : undefined;
+      const outside = outward ? undefined : this.satisfierFromOutside(written, satisfied.satisfier, typeof chain === 'string' ? (spelled ?? chain.trim()) : undefined, pathIsPlain);
       if (outside) return outside;
     } else {
       // A subject's value, from where it is written outward ({@link standsIn}).
@@ -5644,10 +5647,53 @@ function writtenSatisfier(model: Model, rel: ElementRecord, recorded: ElementRec
   if (rel.ownerId == null) return undefined;
   const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
   const path = typeof chain === 'string' ? valuePathOf(chain) : effectiveNameOf(model, recorded);
-  if (path === undefined) return undefined;
-  const found = featuresAlongValue(model, rel.ownerId, path);
-  const last = found?.scope === rel.ownerId ? found.links[found.links.length - 1] : undefined;
+  const outer = satisfierOutward(model, rel);
+  if (path === undefined && outer === undefined) return undefined;
+  const found = outer ?? featuresAlongValue(model, rel.ownerId, path!);
+  const last = found && (outer !== undefined || found.scope === rel.ownerId) ? found.links[found.links.length - 1] : undefined;
   return last !== undefined && last.id !== recorded.id && redefinedClosure(model, last).some((g) => g.id === recorded.id) ? last : undefined;
+}
+
+/** A satisfier written `Pkg::w.p1`: the package qualifier, the first feature, and the links below it. */
+const QUALIFIED_CHAIN = /^((?:[A-Za-z_]\w*::)+)([A-Za-z_]\w*)((?:\.[A-Za-z_]\w*)+)$/;
+
+/**
+ * Where a `satisfy`'s path resolves when it does NOT resolve below the `satisfy`'s own owner but in a PACKAGE around it
+ * (`satisfy RF by w.p1;` in a package or a part body inside the one that declares `w`), or is spelled through the
+ * package that owns its first feature (`NQ1::w.p1`): the package (`scope`), the path from it (`path`), and the feature
+ * each link names. Resolution is lexical (KerML 8.2.3): the first link must be what the name resolves to where the
+ * `satisfy` is written, owned member, import or outer scope alike ({@link resolveFullName}), so a nearer `w` (a member,
+ * an import) that has no such link leaves it unresolved. `undefined` for a path that resolves at the owner itself (read
+ * as before), nowhere, or in a namespace that is no package (an instance, a definition: the walk there reads each instance).
+ */
+function satisfierOutward(model: Model, rel: ElementRecord): { scope: ElementId; path: string; links: ElementRecord[] } | undefined {
+  if (rel.ownerId == null) return undefined;
+  const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
+  if (typeof chain !== 'string') return undefined;
+  const text = chain.trim();
+  const q = QUALIFIED_CHAIN.exec(text);
+  let head: ElementRecord | undefined;
+  let path: string;
+  if (q) {
+    head = resolveFullName(model, `${q[1]}${q[2]}`, rel.ownerId);
+    path = `${q[2]}${q[3]}`;
+  } else {
+    const plain = valuePathOf(text);
+    if (plain === undefined || !plain.includes('.')) return undefined;
+    path = plain;
+    head = resolveFullName(model, plain.split('.')[0]!, rel.ownerId);
+  }
+  const scopeEl = head?.ownerId != null ? model.get(head.ownerId) : undefined;
+  if (!head || !scopeEl || !isUsage(head.eClass) || !isPackage(scopeEl) || (!q && scopeEl.id === rel.ownerId)) return undefined;
+  const links: ElementRecord[] = [];
+  let owner: ElementId = scopeEl.id;
+  for (const segment of path.split('.')) {
+    const f = effectiveFeatures(model, owner).find((x) => effectiveNameOf(model, x) === segment);
+    if (!f || (links.length === 0 && f.id !== head.id)) return undefined;
+    links.push(f);
+    owner = f.id;
+  }
+  return { scope: scopeEl.id, path, links };
 }
 
 /**
@@ -5956,7 +6002,7 @@ function equatedParts(model: Model): NonNullable<ReturnType<typeof EQUATED_PARTS
     if (!satisfier) continue;
     const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
     const chainPath = typeof chain === 'string' ? valuePathOf(chain) : undefined;
-    const found = chainPath !== undefined ? featuresAlongValue(model, rel.ownerId, chainPath) : undefined;
+    const found = satisfierOutward(model, rel) ?? (chainPath !== undefined ? featuresAlongValue(model, rel.ownerId, chainPath) : undefined);
     if ([...(found?.links ?? []), satisfier].some(standsElsewhere) && perInstance(rel.ownerId)) unread.push(rel);
   }
   // So is a requirement usage written there whose subject's value names it

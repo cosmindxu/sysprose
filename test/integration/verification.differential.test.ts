@@ -16398,11 +16398,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'N1::c2': ['?/?/?/?', null],
     }),
     // A `satisfy` written outside the definition whose feature it names, by a path that does not resolve where it is
-    // written (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in the one that declares w; NQ5 without the
-    // subsetting; NQ7 in a part body), recorded W's own p1: a requirement w's 50 breaks held (T, `verify` exit 0). It
-    // abstains for the requirement and for w's p1 now, naming w. NQ3 (the same satisfy in the package that declares
-    // w) files w's F row, which abstained with W's p2's subsetting component until instance3-pass S2 read p1 as
-    // written beside a p2 that is p1 again, and NQ8 (no instance reads p1 otherwise) keeps its T.
+    // written but in the package that declares `w` (NQ1 `NQ1::w.p1` and NQ2 `w.p1` in a package nested in it; NQ5 without
+    // the subsetting; NQ7 in a part body), is read there, as NQ3 (the same satisfy in that package) reads it: it files w's
+    // F row, a requirement w's 50 breaks, on all four surfaces. NQ8 (no instance reads p1 otherwise) keeps its T. A name
+    // that resolves nearer (a `w` of the nested package or of an import) is the one read (PA3-*).
     ...reversed('sat-nested-nq1', `package NQ1 {
         part def T0 { attribute load default = 1.0; }
         requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
@@ -16417,8 +16416,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def T0 { attribute load default = 1.0; }
       }`, {
       'NQ1::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
-      'NQ1::RF::«ConstraintUsage» in NQ1::Inner::«Satisfy»': ['?/-/?/-', 'F'],
-      'NQ1::RF::«ConstraintUsage» in NQ1::W::p1': ['-/?/-/?', 'F'],
+      'NQ1::RF::«ConstraintUsage» in NQ1::Inner::«Satisfy»': ['F/-/F/-', 'F'],
+      'NQ1::RF::«ConstraintUsage» in NQ1::w::p1': ['-/F/-/F', 'F'],
     }),
     ...reversed('sat-nested-nq2', `package NQ2 {
         part def T0 { attribute load default = 1.0; }
@@ -16434,8 +16433,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def T0 { attribute load default = 1.0; }
       }`, {
       'NQ2::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
-      'NQ2::RF::«ConstraintUsage» in NQ2::Inner::«Satisfy»': ['?/-/?/-', 'F'],
-      'NQ2::RF::«ConstraintUsage» in NQ2::W::p1': ['-/?/-/?', 'F'],
+      'NQ2::RF::«ConstraintUsage» in NQ2::Inner::«Satisfy»': ['F/-/F/-', 'F'],
+      'NQ2::RF::«ConstraintUsage» in NQ2::w::p1': ['-/F/-/F', 'F'],
     }),
     'sat-nested-nq3': probe(`package NQ3 {
         part def T0 { attribute load default = 1.0; }
@@ -16456,8 +16455,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         package Inner { satisfy RF by w.p1; }
       }`, {
       'NQ5::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
-      'NQ5::RF::«ConstraintUsage» in NQ5::Inner::«Satisfy»': ['?/-/?/-', 'F'],
-      'NQ5::RF::«ConstraintUsage» in NQ5::W::p1': ['-/?/-/?', 'F'],
+      'NQ5::RF::«ConstraintUsage» in NQ5::Inner::«Satisfy»': ['F/-/F/-', 'F'],
+      'NQ5::RF::«ConstraintUsage» in NQ5::w::p1': ['-/F/-/F', 'F'],
     }),
     'sat-nested-nq7': probe(`package NQ7 {
         part def T0 { attribute load default = 1.0; }
@@ -16467,8 +16466,40 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part sys { satisfy RF by w.p1; }
       }`, {
       'NQ7::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
-      'NQ7::RF::«ConstraintUsage» in NQ7::sys::«Satisfy»': ['?/-/?/-', 'F'],
-      'NQ7::RF::«ConstraintUsage» in NQ7::W::p1': ['-/?/-/?', 'F'],
+      'NQ7::RF::«ConstraintUsage» in NQ7::sys::«Satisfy»': ['F/-/F/-', 'F'],
+      'NQ7::RF::«ConstraintUsage» in NQ7::w::p1': ['-/F/-/F', 'F'],
+    }),
+    'sat-nested-pa3-shadow': probe(`package SA {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        package Inner { part w : W; satisfy RF by w.p1; }
+      }`, {
+      'SA::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+    }),
+    'sat-nested-pa3-import': probe(`package SB {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        package Other { part w : W { part :>> p1 { attribute :>> load = 50.0; } } }
+        package Inner { import Other::*; satisfy RF by w.p1; }
+      }`, {
+      'SB::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SB::RF::«ConstraintUsage» in SB::Inner::«Satisfy»': ['F/-/F/-', 'F'],
+      'SB::RF::«ConstraintUsage» in SB::Other::w::p1': ['-/F/-/F', 'F'],
+    }),
+    'sat-nested-pa3-def': probe(`package SC {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        part def D { satisfy RF by SC::w.p1; }
+        part d : D;
+      }`, {
+      'SC::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'SC::RF::«ConstraintUsage» in SC::D::«Satisfy»': ['F/-/F/-', 'F'],
+      'SC::RF::«ConstraintUsage» in SC::w::p1': ['-/F/-/F', 'F'],
     }),
     'sat-nested-nq8': probe(`package NQ8 {
         part def T0 { attribute load default = 1.0; }

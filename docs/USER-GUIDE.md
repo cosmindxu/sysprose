@@ -1589,11 +1589,16 @@ one that element inherits is that element's own (`satisfy R by p1` in `part sys
 : W` is sys's p1, whose load sys's K gives through W's `bind p1.load = K`), and
 so is one it redefines (beside w's `part :>> p1 { … }`, or the package's
 `satisfy R by w.p1`). A `satisfy` whose path does not resolve where it is
-written (`satisfy R by w.p1;` in a package nested in the one that declares w, or
-in a part's body) is read at the feature the path names in its definition (W's
-p1), never at w's: where an instance reads that feature otherwise (w's `part
-:>> p1 { … }`), its rows and R's rows for the satisfier are *could not be
-evaluated*, naming w, and the requirement is not read through it. One written in a definition, or in a usage another
+written but in a package around it (`satisfy R by w.p1;` in a package nested in
+the one that declares w, or in a part's body, or spelled through the package,
+`satisfy R by Pkg::w.p1;`) is read at w's feature, as if written beside w: the
+name resolves as KerML resolves it, so a nearer `w` (a member of the nested
+scope, or one an import brings) is the one read. One whose path resolves in no
+package, or only inside a definition or an instance, is read at the feature the
+path names in its definition (W's p1), never at w's: where an instance reads that
+feature otherwise (w's `part :>> p1 { … }`), its rows and R's rows for the
+satisfier are *could not be evaluated*, naming w, and the requirement is not
+read through it. One written in a definition, or in a usage another
 specialises, is read once, at that element's own values, never in each of its
 instances: one whose satisfier is a reference with a value or one an instance
 redefines (`ref part r : T0;` under w's `ref part :>> r = p50`), such a part

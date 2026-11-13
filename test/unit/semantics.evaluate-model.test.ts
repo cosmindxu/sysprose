@@ -10432,3 +10432,58 @@ describe('a feature a context states several ways is one feature, and its one va
     expect(decided).toBeGreaterThan(100);
   }, 300_000);
 });
+
+describe('PA3: a satisfy whose path resolves in a package around it reads that package’s instance', () => {
+  // The hand oracle: the load of the feature the path names (the nearest `w` the name resolves to, a `Pkg::` spelling
+  // the package's own) against RF's `<= 5.0`. Every shape in both text orders: a violated row is decided violated, a
+  // held one is never decided violated.
+  const shapes = (['same', 'nested', 'part', 'def'] as const).flatMap((placement) =>
+    (['plain', 'qual'] as const).flatMap((spell) =>
+      ([50, 3, null] as const).flatMap((val) =>
+        ([null, 50, 3] as const).flatMap((shadow) =>
+          ([false, true] as const).flatMap((sub) =>
+            ([false, true] as const).map((rev) => ({ placement, spell, val, shadow, sub, rev })),
+          ),
+        ),
+      ),
+    ),
+  );
+  const build = (c: (typeof shapes)[number], pkg: string): { text: string; load: number } => {
+    const inner = c.shadow === null ? '' : `part w : W { part :>> p1 { attribute :>> load = ${c.shadow}.0; } }`;
+    const sat = `satisfy RF by ${c.spell === 'qual' ? `${pkg}::w.p1` : 'w.p1'};`;
+    const place =
+      c.placement === 'same'
+        ? sat
+        : c.placement === 'nested'
+          ? `package Inner { ${inner} ${sat} }`
+          : c.placement === 'part'
+            ? `part sys { ${inner} ${sat} }`
+            : `part def D { ${inner} ${sat} } part d : D;`;
+    const members = [
+      'part def T0 { attribute load default = 1.0; }',
+      'requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }',
+      `part def W { part p1 : T0; ${c.sub ? 'part p2 :> p1;' : ''} }`,
+      `part w : W${c.val === null ? '' : ` { part :>> p1 { attribute :>> load = ${c.val}.0; } }`};`,
+      place,
+    ];
+    if (c.rev) members.reverse();
+    const shadowed = c.shadow !== null && c.spell === 'plain' && c.placement !== 'same';
+    return { text: `package ${pkg} {\n${members.join('\n')}\n}\n`, load: shadowed ? c.shadow! : (c.val ?? 1) };
+  };
+
+  it('files w’s violated row wherever the satisfy is written, and never a false one', async () => {
+    // A thinned grid keeps the unit run short; the whole grid ({@link shapes}) is the generator's.
+    const picked = shapes.filter((_, i) => i % 3 === 0);
+    expect(picked.length).toBeGreaterThan(60);
+    for (const [i, c] of picked.entries()) {
+      const { text, load } = build(c, `P${i}`);
+      const { model: m } = await loadModelText(text);
+      expect(m, text).toBeDefined();
+      const violated = checkConstraints(m!).some((x) => x.result === 'violated' || (x.instances ?? []).some((i) => i.result === 'violated'));
+      expect(violated, text).toBe(load > 5);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      const fails = report.results.filter((r) => r.verdict === 'fail').length;
+      expect(fails > 0, text).toBe(load > 5);
+    }
+  }, 120_000);
+});
