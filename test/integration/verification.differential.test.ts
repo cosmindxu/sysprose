@@ -16494,12 +16494,57 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
         part def W { part p1 : T0; }
         part w : W { part :>> p1 { attribute :>> load = 50.0; } }
-        part def D { satisfy RF by SC::w.p1; }
+        part def D { satisfy RF by w.p1; }
         part d : D;
       }`, {
       'SC::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
-      'SC::RF::«ConstraintUsage» in SC::D::«Satisfy»': ['F/-/F/-', 'F'],
-      'SC::RF::«ConstraintUsage» in SC::w::p1': ['-/F/-/F', 'F'],
+      'SC::RF::«ConstraintUsage» in SC::D::«Satisfy»': ['?/-/?/-', '?'],
+      'SC::RF::«ConstraintUsage» in SC::W::p1': ['-/?/-/?', '?'],
+    }),
+    'sat-nested-pa3-amb-ab': probe(`package AA {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        package L1 { part w : W { part :>> p1 { attribute :>> load = 3.0; } } }
+        package L2 { part w : W { part :>> p1 { attribute :>> load = 60.0; } } }
+        package In { import L1::*; import L2::*; satisfy RF by w.p1; }
+      }`, {
+      'AA::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'AA::RF::«ConstraintUsage» in AA::In::«Satisfy»': ['?/-/?/-', '?'],
+      'AA::RF::«ConstraintUsage» in AA::W::p1': ['-/?/-/?', '?'],
+    }),
+    'sat-nested-pa3-amb-ba': probe(`package AB {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        package L1 { part w : W { part :>> p1 { attribute :>> load = 3.0; } } }
+        package L2 { part w : W { part :>> p1 { attribute :>> load = 60.0; } } }
+        package In { import L2::*; import L1::*; satisfy RF by w.p1; }
+      }`, {
+      'AB::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'AB::RF::«ConstraintUsage» in AB::In::«Satisfy»': ['?/-/?/-', '?'],
+      'AB::RF::«ConstraintUsage» in AB::W::p1': ['-/?/-/?', '?'],
+    }),
+    'sat-nested-pa3-amb-member': probe(`package AC {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        package L1 { part w : W { part :>> p1 { attribute :>> load = 3.0; } } }
+        package In { import L1::*; part w : W { part :>> p1 { attribute :>> load = 60.0; } } satisfy RF by w.p1; }
+      }`, {
+      'AC::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+    }),
+    'sat-nested-pa3-amb-deep': probe(`package AD {
+        part def T0 { attribute load default = 1.0; }
+        requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+        part def W { part p1 : T0; }
+        part w : W { part :>> p1 { attribute :>> load = 50.0; } }
+        package L1 { part w : W { part :>> p1 { attribute :>> load = 3.0; } } package Deep { part w : W { part :>> p1 { attribute :>> load = 60.0; } } } }
+        package In { import L1::**; satisfy RF by w.p1; }
+      }`, {
+      'AD::RF::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'AD::RF::«ConstraintUsage» in AD::In::«Satisfy»': ['?/-/?/-', '?'],
+      'AD::RF::«ConstraintUsage» in AD::W::p1': ['-/?/-/?', '?'],
     }),
     'sat-nested-nq8': probe(`package NQ8 {
         part def T0 { attribute load default = 1.0; }

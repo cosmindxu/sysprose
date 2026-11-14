@@ -10480,10 +10480,37 @@ describe('PA3: a satisfy whose path resolves in a package around it reads that p
       const { model: m } = await loadModelText(text);
       expect(m, text).toBeDefined();
       const violated = checkConstraints(m!).some((x) => x.result === 'violated' || (x.instances ?? []).some((i) => i.result === 'violated'));
-      expect(violated, text).toBe(load > 5);
+      // A satisfy written in a definition keeps its old reading (abstains); elsewhere a violated row is decided.
+      const held = c.placement === 'def' ? (v: boolean) => !v || load > 5 : (v: boolean) => v === load > 5;
+      expect(held(violated), text).toBe(true);
       const report = await verifyModel(m!, { engine: 'literal' });
       const fails = report.results.filter((r) => r.verdict === 'fail').length;
-      expect(fails > 0, text).toBe(load > 5);
+      expect(held(fails > 0), text).toBe(true);
     }
   }, 120_000);
+});
+
+describe('PA3: a satisfy path whose first name two places expose abstains, in both import orders', () => {
+  const head = `part def T0 { attribute load default = 1.0; }
+    requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }
+    part def W { part p1 : T0; }`;
+  const w = (load: number) => `part w : W { part :>> p1 { attribute :>> load = ${load}.0; } }`;
+  const models: Record<string, string> = {
+    twoImportsAB: `package R { ${head} package L1 { ${w(3)} } package L2 { ${w(60)} } package In { import L1::*; import L2::*; satisfy RF by w.p1; } }`,
+    twoImportsBA: `package R { ${head} package L1 { ${w(3)} } package L2 { ${w(60)} } package In { import L2::*; import L1::*; satisfy RF by w.p1; } }`,
+    membershipImports: `package R { ${head} ${w(50)} package L1 { ${w(3)} } package F1 { ${w(60)} } package In { import L1::w; import F1::w; satisfy RF by w.p1; } }`,
+    membershipImportsRev: `package R { ${head} ${w(50)} package L1 { ${w(3)} } package F1 { ${w(60)} } package In { import F1::w; import L1::w; satisfy RF by w.p1; } }`,
+    recursive: `package R { ${head} ${w(50)} package L1 { ${w(3)} package Deep { ${w(60)} } } package In { import L1::**; satisfy RF by w.p1; } }`,
+    inDefinition: `package Z { ${head} ${w(50)} part def D { satisfy RF by w.p1; } part d : D; }`,
+  };
+  for (const [name, text] of Object.entries(models)) {
+    it(name, async () => {
+      const { model: m } = await loadModelText(text);
+      expect(m, text).toBeDefined();
+      const violated = checkConstraints(m!).some((x) => x.result === 'violated' || (x.instances ?? []).some((i) => i.result === 'violated'));
+      expect(violated, text).toBe(false);
+      const report = await verifyModel(m!, { engine: 'literal' });
+      expect(report.results.some((r) => r.verdict === 'fail'), text).toBe(false);
+    }, 60_000);
+  }
 });

@@ -1553,8 +1553,10 @@ export class DefiningEquations {
       if (end) return end;
     }
     const seen = new Set<ElementId>();
+    // A plain chain whose first name two places expose where it is written is refused there too, never read by the loader's pick.
+    const refused = satisfied && outward === undefined && written !== undefined ? satisfierFirstAmbiguous(this.model, written) : false;
     for (
-      let cur = equated ? equated.from : satisfied ? (outward?.scope ?? written?.ownerId ?? null) : (inContext ?? f.ownerId);
+      let cur = refused ? null : equated ? equated.from : satisfied ? (outward?.scope ?? written?.ownerId ?? null) : (inContext ?? f.ownerId);
       cur != null && !seen.has(cur);
       cur = satisfied || equated || inContext !== undefined ? null : (this.model.get(cur)?.ownerId ?? null)
     ) {
@@ -5649,6 +5651,7 @@ function writtenSatisfier(model: Model, rel: ElementRecord, recorded: ElementRec
   const path = typeof chain === 'string' ? valuePathOf(chain) : effectiveNameOf(model, recorded);
   const outer = satisfierOutward(model, rel);
   if (path === undefined && outer === undefined) return undefined;
+  if (outer === undefined && satisfierFirstAmbiguous(model, rel)) return undefined;
   const found = outer ?? featuresAlongValue(model, rel.ownerId, path!);
   const last = found && (outer !== undefined || found.scope === rel.ownerId) ? found.links[found.links.length - 1] : undefined;
   return last !== undefined && last.id !== recorded.id && redefinedClosure(model, last).some((g) => g.id === recorded.id) ? last : undefined;
@@ -5670,6 +5673,8 @@ function satisfierOutward(model: Model, rel: ElementRecord): { scope: ElementId;
   if (rel.ownerId == null) return undefined;
   const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
   if (typeof chain !== 'string') return undefined;
+  // Written in a definition (or below one): read there as before, once, never outward.
+  for (let o = model.get(rel.ownerId), n = 0; o && n < 64; o = o.ownerId != null ? model.get(o.ownerId) : undefined, n++) if (isDefinition(o.eClass) && !isPackage(o)) return undefined;
   const text = chain.trim();
   const q = QUALIFIED_CHAIN.exec(text);
   let head: ElementRecord | undefined;
@@ -5681,6 +5686,7 @@ function satisfierOutward(model: Model, rel: ElementRecord): { scope: ElementId;
     const plain = valuePathOf(text);
     if (plain === undefined || !plain.includes('.')) return undefined;
     path = plain;
+    if (firstNameAmbiguous(model, rel.ownerId, plain.split('.')[0]!)) return undefined;
     head = resolveFullName(model, plain.split('.')[0]!, rel.ownerId);
   }
   const scopeEl = head?.ownerId != null ? model.get(head.ownerId) : undefined;
@@ -5694,6 +5700,16 @@ function satisfierOutward(model: Model, rel: ElementRecord): { scope: ElementId;
     owner = f.id;
   }
   return { scope: scopeEl.id, path, links };
+}
+
+/** The plain chain's first name, read where the `satisfy` is written, is exposed by more than one place: refused there too. */
+function satisfierFirstAmbiguous(model: Model, rel: ElementRecord): boolean {
+  if (rel.ownerId == null) return false;
+  const chain = rel.attrs.sourceChain ?? rel.attrs.sourceRef;
+  if (typeof chain !== 'string') return false;
+  const plain = valuePathOf(chain);
+  if (plain === undefined || !plain.includes('.')) return false;
+  return firstNameAmbiguous(model, rel.ownerId, plain.split('.')[0]!);
 }
 
 /**
@@ -9141,6 +9157,25 @@ export function bindingEndPath(model: Model, id: ElementId | undefined, ownerId:
     segments.unshift(name);
   }
   return reachedHeadPath(model, id, ownerId);
+}
+
+/** Is `name`, read from `ownerId` outward, exposed by more than one place at the nearest scope that exposes it (two imports, or an import and a member)? Then the loader's pick depends on import order: refused. */
+function firstNameAmbiguous(model: Model, ownerId: ElementId, name: string): boolean {
+  const seen = new Set<ElementId>();
+  for (let cur = model.get(ownerId); cur && !seen.has(cur.id); cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    seen.add(cur.id);
+    const hits = new Set<ElementId>();
+    for (const c of model.children(cur.id)) {
+      if (c.eClass === 'NamespaceImport' || c.eClass === 'MembershipImport') {
+        const t = c.target?.[0] !== undefined ? model.get(c.target[0]) : undefined;
+        if (!t) return true;
+        for (const m of namesExposedBy(model, c, t, name)) hits.add(m.id);
+      } else if (effectiveNameOf(model, c) === name) hits.add(c.id);
+    }
+    if (hits.size > 1) return true;
+    if (hits.size === 1) return false;
+  }
+  return false;
 }
 
 /**
