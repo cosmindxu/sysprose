@@ -1593,7 +1593,11 @@ written but in a package around it (`satisfy R by w.p1;` in a package nested in
 the one that declares w, or in a part's body, or spelled through the package,
 `satisfy R by Pkg::w.p1;`) is read at w's feature, as if written beside w: the
 name resolves as KerML resolves it, so a nearer `w` (a member of the nested
-scope, or one an import brings) is the one read. One whose path resolves in no
+scope, or one an import brings) is the one read. A plain path whose first name
+two places expose (two imports, an import and a member, a recursive import) is
+refused, never read by the loader's import-order pick, and one written in a
+definition keeps its old reading — read there, once, never outward — even
+where its path would resolve in a package around it. One whose path resolves in no
 package, or only inside a definition or an instance, is read at the feature the
 path names in its definition (W's p1), never at w's: where an instance reads that
 feature otherwise (w's `part :>> p1 { … }`), its rows and R's rows for the
