@@ -19,7 +19,6 @@
 html { background: var(--color-bg); color: var(--color-fg); }
 body { margin: 0; padding: var(--cds-pad-lg); }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <style>
   .oi { max-width: 74rem; margin-inline: auto; display: flex; flex-direction: column; gap: var(--cds-gap-lg); font-family: var(--font-anthropic-sans); }
   .oi h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; }
@@ -447,12 +446,23 @@ const dash = {
 })();
 </script>
 <script>
-for (const { name, spec } of calcs) {
-  try { DATASETS[name] = spec.fn(...spec.inputs.map((i) => DATASETS[i])); } catch (e) { console.warn(name, e); }
+function boot() {
+  for (const { name, spec } of calcs) {
+    try { DATASETS[name] = spec.fn(...spec.inputs.map((i) => DATASETS[i])); } catch (e) { console.warn(name, e); }
+  }
+  for (const [name, fn] of draws) {
+    const el = document.querySelector('[data-draw="' + name + '"]');
+    if (el) { try { fn(el); } catch (e) { console.warn(name, e); } }
+  }
 }
-for (const [name, fn] of draws) {
-  const el = document.querySelector('[data-draw="' + name + '"]');
-  if (el) { try { fn(el); } catch (e) { console.warn(name, e); } }
+if (typeof d3 === 'undefined') {
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js';
+  s.onload = boot;
+  s.onerror = () => { console.error('d3 did not load'); };
+  document.head.appendChild(s);
+} else {
+  boot();
 }
 </script>
 </body>

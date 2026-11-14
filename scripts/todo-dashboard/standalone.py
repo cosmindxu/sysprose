@@ -49,12 +49,23 @@ const dash = {
 """
 
 BOOT = """
-for (const { name, spec } of calcs) {
-  try { DATASETS[name] = spec.fn(...spec.inputs.map((i) => DATASETS[i])); } catch (e) { console.warn(name, e); }
+function boot() {
+  for (const { name, spec } of calcs) {
+    try { DATASETS[name] = spec.fn(...spec.inputs.map((i) => DATASETS[i])); } catch (e) { console.warn(name, e); }
+  }
+  for (const [name, fn] of draws) {
+    const el = document.querySelector('[data-draw="' + name + '"]');
+    if (el) { try { fn(el); } catch (e) { console.warn(name, e); } }
+  }
 }
-for (const [name, fn] of draws) {
-  const el = document.querySelector('[data-draw="' + name + '"]');
-  if (el) { try { fn(el); } catch (e) { console.warn(name, e); } }
+if (typeof d3 === 'undefined') {
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js';
+  s.onload = boot;
+  s.onerror = () => { console.error('d3 did not load'); };
+  document.head.appendChild(s);
+} else {
+  boot();
 }
 """
 
@@ -81,7 +92,6 @@ def main() -> None:
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
             "<title>Sysprose open-items dashboard</title>",
             "<style>" + TOKENS + "</style>",
-            '<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>',
             style,
             "</head>",
             "<body>",
