@@ -16546,6 +16546,39 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'AD::RF::«ConstraintUsage» in AD::In::«Satisfy»': ['?/-/?/-', '?'],
       'AD::RF::«ConstraintUsage» in AD::W::p1': ['-/?/-/?', '?'],
     }),
+    'pa1-usage-body': probe(`package PA1 {
+        part a { attribute u : Real = 2.0; part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } constraint kf { b.v == 6.0 } } }
+      }`, {
+      'PA1::a::c::k': ['T/T/T/T', 'T'],
+      'PA1::a::c::kf': ['F/F/F/F', 'F'],
+    }),
+    'pa1-usage-body-inst': probe(`package PA1I {
+        part a1 { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+        part a2 { part b { attribute v : Real = 6.0; } part c { constraint k { b.v == 5.0 } } }
+      }`, {
+      'PA1I::a1::c::k': ['T/T/T/T', 'T'],
+      'PA1I::a2::c::k': ['F/F/F/F', 'F'],
+    }),
+    'pa1-usage-body-amb-ab': probe(`package PA1A {
+        package L1 { part b { attribute v : Real = 5.0; } }
+        package L2 { part b { attribute v : Real = 6.0; } }
+        part a { import L1::*; import L2::*; part c { constraint k { b.v == 5.0 } } }
+      }`, {
+      'PA1A::a::c::k': ['?/?/?/?', '?'],
+    }),
+    'pa1-usage-body-amb-ba': probe(`package PA1B {
+        package L1 { part b { attribute v : Real = 5.0; } }
+        package L2 { part b { attribute v : Real = 6.0; } }
+        part a { import L2::*; import L1::*; part c { constraint k { b.v == 5.0 } } }
+      }`, {
+      'PA1B::a::c::k': ['?/?/?/?', '?'],
+    }),
+    'pa1-usage-body-def': probe(`package PA1D {
+        part def A { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+        part a : A;
+      }`, {
+      'PA1D::A::c::k': ['?/?/?/?', '?'],
+    }),
     'sat-nested-nq8': probe(`package NQ8 {
         part def T0 { attribute load default = 1.0; }
         requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }

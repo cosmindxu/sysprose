@@ -109,6 +109,7 @@ import {
   type DecideOptions,
   type Rational,
 } from './exact';
+import { lexicalPackageOf } from './relations';
 import { resolveQualifiedNameFull } from './resolve-names';
 import {
   AMOUNT_UNIT,
@@ -1599,9 +1600,17 @@ function quantityScopeFor(
   return (name: string) => {
     const id = ids.get(name);
     if (id === undefined) {
-      if (!reads) return undefined;
+      // A dotted path to a package's usage (`b.v` in a body below it) is read in the package, as the scalar scope reads
+      // it ({@link lexicalPackageOf}): one feature, not one per instance of the context, and only where no instance
+      // gives the name another reading ({@link DefiningEquations.lexicalRefusal}).
+      const viaPackage = (): QEval | undefined => {
+        if (!name.includes('.') || definitions.lexicalRefusal(contextId, name) !== undefined) return undefined;
+        const pkg = lexicalPackageOf(model, contextId, name);
+        return pkg !== undefined && pkg !== contextId ? quantityScopeFor(model, pkg, inFlight, memo, reads)(name) : undefined;
+      };
+      if (!reads) return viaPackage();
       const defined = definedQuantity(model, contextId, name, inFlight, memo, reads, inst);
-      return defined ?? (memo.everyPath === true ? standIn(model, contextId, name, memo) : undefined);
+      return defined ?? viaPackage() ?? (memo.everyPath === true ? standIn(model, contextId, name, memo) : undefined);
     }
     // Rebase the instance per name, as the scalar twin does ({@link
     // answerFor}): two names read in the same context at different instances

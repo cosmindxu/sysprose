@@ -10514,3 +10514,130 @@ describe('PA3: a satisfy path whose first name two places expose abstains, in bo
     }, 60_000);
   }
 });
+
+describe('PA1: a constraint in a usage body reads a dotted path to a feature of the usage around it', () => {
+  /** Every check of `text` as its qualified name and result. */
+  const checks = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return new Map(checkConstraints(m!).map((c) => [m!.qualifiedName(c.id), c.result] as const));
+  };
+  /** What the literal engine decides of `text`, by qualified name: satisfied, violated, or unknown. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(
+      report.results.map((r) => [
+        r.clause.qualifiedName,
+        r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown',
+      ] as const),
+    );
+  };
+
+  it('reads b.v written in a usage body, so its two rows decide', async () => {
+    const text = `package G5F {
+part a { attribute u : Real = 2.0; part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } constraint kf { b.v == 6.0 } } }
+}`;
+    expect([...(await checks(text))]).toEqual([
+      ['G5F::a::c::k', 'satisfied'],
+      ['G5F::a::c::kf', 'violated'],
+    ]);
+    expect([...(await literal(text))]).toEqual([
+      ['G5F::a::c::k', 'satisfied'],
+      ['G5F::a::c::kf', 'violated'],
+    ]);
+  });
+
+  it('keeps a nearer member, refuses a path two places expose (in both orders) or one written in a definition, and rebases per instance', async () => {
+    // A nearer member shadows the outer b: `k` reads 5, not 6.
+    expect([...(await checks(`package G5C {
+  part a { part b { attribute v : Real = 6.0; } part c { part b { attribute v : Real = 5.0; } constraint k { b.v == 5.0 } } }
+}`))]).toEqual([['G5C::a::c::k', 'satisfied']]);
+    // Two imports expose `b`: refused, whichever import is written first.
+    for (const imports of ['import L1::*; import L2::*;', 'import L2::*; import L1::*;']) {
+      const text = `package G5A {
+  package L1 { part b { attribute v : Real = 5.0; } }
+  package L2 { part b { attribute v : Real = 6.0; } }
+  part a { ${imports} part c { constraint k { b.v == 5.0 } } }
+}`;
+      expect((await checks(text)).get('G5A::a::c::k'), text).toBe('unknown');
+      expect((await literal(text)).get('G5A::a::c::k'), text).toBe('unknown');
+    }
+    // A definition is read per instance as before: no decision, and no false one.
+    expect((await checks(`package G5D {
+  part def A { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+  part a : A;
+}`)).get('G5D::A::c::k')).toBe('unknown');
+    // Two instances of the enclosing usage each read their own b: a1 holds (5 == 5), a2 is refuted (6 == 5).
+    const two = `package G5F3 {
+  part a1 { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+  part a2 { part b { attribute v : Real = 6.0; } part c { constraint k { b.v == 5.0 } } }
+}`;
+    expect([...(await checks(two))]).toEqual([
+      ['G5F3::a1::c::k', 'satisfied'],
+      ['G5F3::a2::c::k', 'violated'],
+    ]);
+  });
+
+  it('gen-pa1: no decided row is wrong in 150 models (rename, wrap and instance twins; an imported or ambiguous name decides nothing in either order)', async () => {
+    let seed = 24601;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let decided = 0;
+    let refused = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const fam = rnd(3); // 0: the usage tree itself; 1: a package import exposes b; 2: two imports (ambiguous)
+      const depth = rnd(3); // 0: `host { sat }`, 1: `host { part c { sat } }`, 2: `host { part c { part d { sat } } }`
+      const pkg = `P${i}`;
+      const host = i % 2 === 0 ? 'a' : `sys${i % 5}`;
+      const wrap = (sat: string) => (depth === 0 ? sat : depth === 1 ? `part c { ${sat} }` : `part c { part d { ${sat} } }`);
+      const qn = (name: string) => `${pkg}::${name}::${depth === 0 ? '' : depth === 1 ? 'c::' : 'c::d::'}k`;
+      const sat = (kk: number) => `constraint k { b.v == ${kk}.0 }`;
+      const bPart = (load: number) => `part b { attribute v : Real = ${load}.0; }`;
+      if (fam !== 0) {
+        // A name a package import exposes is not read yet (LEX, design-readings 31): refused, and two imports
+        // exposing it are refused in either order. Never a decision, never a false one.
+        const other = (v + 1 + rnd(10)) % 11;
+        const variants =
+          fam === 1
+            ? [`package ${pkg} { package L { ${bPart(v)} } import L::*; part ${host} { ${wrap(sat(k))} } }`]
+            : [
+                `package ${pkg} { package L1 { ${bPart(v)} } package L2 { ${bPart(other)} } part ${host} { import L1::*; import L2::*; ${wrap(sat(k))} } }`,
+                `package ${pkg} { package L1 { ${bPart(v)} } package L2 { ${bPart(other)} } part ${host} { import L2::*; import L1::*; ${wrap(sat(k))} } }`,
+              ];
+        for (const t of variants) {
+          const got = (await checks(t)).get(qn(host)) ?? 'unknown';
+          expect(got, `an imported name decided ${got}\n${t}`).toBe('unknown');
+          refused++;
+        }
+        continue;
+      }
+      const twin = i % 5 === 0;
+      const v2 = (v + 1 + rnd(10)) % 11;
+      const tree = (name: string, load: number, kk: number) => `part ${name} { ${bPart(load)} ${wrap(sat(kk))} }`;
+      const text = `package ${pkg} {\n  ${tree(host, v, k)}\n  ${twin ? tree(`${host}2`, v2, k) : ''}\n}`;
+      const expected: Array<[string, number]> = [[qn(host), v]];
+      if (twin) expected.push([qn(`${host}2`), v2]);
+      const got = await checks(text);
+      const lit = await literal(text);
+      for (const [row, load] of expected) {
+        const r = got.get(row);
+        if (r === 'satisfied' || r === 'violated') {
+          decided++;
+          expect(r, `${row} decided ${r}, the model says ${load} == ${k}\n${text}`).toBe(load === k ? 'satisfied' : 'violated');
+          expect(lit.get(row), `${row} check and literal disagree\n${text}`).toBe(r);
+        } else {
+          // Weaker is acceptable only where the walk refuses the shape; the plain shapes must decide.
+          expect(depth, `${row} abstained on a plain shape\n${text}`).not.toBe(0);
+        }
+      }
+    }
+    // The plain shapes decide; the imported and ambiguous ones never do.
+    expect(decided).toBeGreaterThan(55);
+    expect(refused).toBeGreaterThan(90);
+  }, 300_000);
+});

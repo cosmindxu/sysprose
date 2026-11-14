@@ -28,7 +28,7 @@
  * arguments.
  */
 
-import { type ElementId, type ElementRecord, type Model } from '@core/index';
+import { isUsage, type ElementId, type ElementRecord, type Model } from '@core/index';
 import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf } from './defining-equation';
 import { type ExprNode } from './expr';
 import { generalizationsOf } from './inheritance';
@@ -1163,7 +1163,7 @@ function lexicalPaths(
   for (let o = model.get(outer)?.ownerId ?? undefined; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? undefined) {
     seen.add(o);
     const kind = model.get(o)?.eClass;
-    if (kind === 'Package' || kind === 'LibraryPackage') {
+    if (kind === 'Package' || kind === 'LibraryPackage' || soleInstance(model, definitions, o)) {
       const denoted = definitions.denote(o);
       for (const [head, entries] of dottedOf(definitions, o)) {
         if (!text.includes(head) || near.some((h) => h.has(head))) continue;
@@ -1181,6 +1181,25 @@ function lexicalPaths(
     near.push(headsOf(definitions, o));
   }
   return out;
+}
+
+/**
+ * Is `o` a usage that is ONE instance — so a feature below it is one feature wherever it is read? Every owner from `o`
+ * up to the package is a usage (no definition, whose usages are read in each instance of it) of multiplicity one, and
+ * nothing specialises it or any of those owners (a specialiser may redefine what is below it). An enclosing usage that
+ * is not one is left to the per-instance reading, as before.
+ */
+function soleInstance(model: Model, definitions: Definitions, o: ElementId): boolean {
+  const seen = new Set<ElementId>();
+  for (let x = model.get(o); x && !seen.has(x.id); x = x.ownerId != null ? model.get(x.ownerId) : undefined) {
+    seen.add(x.id);
+    if (x.eClass === 'Package' || x.eClass === 'LibraryPackage') return true;
+    if (!isUsage(x.eClass) || x.attrs.isLibrary === true || x.attrs.isRef === true || x.attrs.implicit === true) return false;
+    const m = x.attrs.multiplicity;
+    if (m !== undefined && m !== null && String(m).trim() !== '' && String(m).trim() !== '1' && String(m).trim() !== '1..1') return false;
+    if (definitions.specialisersOf(x.id).length > 0) return false;
+  }
+  return false;
 }
 
 /**
