@@ -296,7 +296,7 @@ function readableMultiplicities(mults: Multiplicity[] | undefined): string[] {
 }
 
 /** A satisfier written as a feature chain: two or more segments, each a plain name or a single-quoted unrestricted name. */
-const SATISFIER_CHAIN = /^(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*')(?:\.(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*'))+$/;
+const SATISFIER_CHAIN = /^(?:[A-Za-z_]\w*::)*(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*')(?:\.(?:[A-Za-z_]\w*|'(?:\\.|[^'\\])*'))+$/;
 
 /** Verbatim source text of an expression node (trimmed), for free-form fragments. */
 function exprText(expr: Expression | undefined): string {
