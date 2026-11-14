@@ -16546,6 +16546,31 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'AD::RF::«ConstraintUsage» in AD::In::«Satisfy»': ['?/-/?/-', '?'],
       'AD::RF::«ConstraintUsage» in AD::W::p1': ['-/?/-/?', '?'],
     }),
+    'pa2-typed': probe(`package PA2T {
+        part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+        part def H { part p : P; }
+        part h : H;
+        assert constraint px { h.p.x == 3.0 }
+        constraint q { h.p.x == 3.0 }
+        constraint qf { h.p.x == 4.0 }
+      }`, {
+      'PA2T::P::ty': ['?/-/T/-', null],
+      'PA2T::px': ['T/-/T/-', 'T'],
+      'PA2T::q': ['T/T/T/T', 'T'],
+      'PA2T::qf': ['F/F/F/F', 'F'],
+    }),
+    'pa2-inline': probe(`package PA2I {
+        part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+        part h { part p : P; }
+        assert constraint px { h.p.x == 3.0 }
+        constraint q { h.p.x == 3.0 }
+        constraint qf { h.p.x == 4.0 }
+      }`, {
+      'PA2I::P::ty': ['?/-/T/-', null],
+      'PA2I::px': ['T/-/T/-', 'T'],
+      'PA2I::q': ['T/T/T/T', 'T'],
+      'PA2I::qf': ['F/F/F/F', 'F'],
+    }),
     'pa1-usage-body': probe(`package PA1 {
         part a { attribute u : Real = 2.0; part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } constraint kf { b.v == 6.0 } } }
       }`, {

@@ -10641,3 +10641,98 @@ part a { attribute u : Real = 2.0; part b { attribute v : Real = 5.0; } part c {
     expect(refused).toBeGreaterThan(90);
   }, 300_000);
 });
+
+describe('PA2: a typed usage reads its definition’s part per instance, as an inline twin does', () => {
+  /** Every check of `text` as `[qualified name, result]`, sorted. */
+  const checks = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return checkConstraints(m!)
+      .map((c) => [m!.qualifiedName(c.id), c.result] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  /** What the literal engine decides of `text`, by qualified name. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(report.results.map((r) => [r.clause.qualifiedName, r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown'] as const));
+  };
+
+  it('reads h.p.x of `part h : H` as it reads it of the inline twin, cell for cell (g2e = g2f)', async () => {
+    const head = `part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+part def H { part p : P; }
+part h : H;`;
+    const inline = `part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+part h { part p : P; }`;
+    const tail = `assert constraint px { h.p.x == 3.0 }
+constraint q { h.p.x == 3.0 }
+constraint qf { h.p.x == 4.0 }`;
+    const typed = await checks(`package G2E {\n${head}\n${tail}\n}`);
+    const plain = await checks(`package G2F {\n${inline}\n${tail}\n}`);
+    // The rows read alike once each package names its own elements.
+    const named = (pkg: string) => [
+      [`${pkg}::P::ty`, 'unknown'],
+      [`${pkg}::px`, 'satisfied'],
+      [`${pkg}::q`, 'satisfied'],
+      [`${pkg}::qf`, 'violated'],
+    ];
+    expect(typed).toEqual(named('G2E'));
+    expect(plain).toEqual(named('G2F'));
+    expect([...(await literal(`package G2E {\n${head}\n${tail}\n}`))]).toEqual([
+      ['G2E::q', 'satisfied'],
+      ['G2E::qf', 'violated'],
+    ]);
+  });
+
+  it('keeps an equation a binding fixes a check, never a definition (the default stands)', async () => {
+    // h.p.x is L's 4.0 carried by the binding; the assert is checked against it, violated, as before.
+    expect(await checks(`package GB {
+part def P { attribute x : Real; }
+part def H { part p : P; }
+part h : H;
+attribute L : Real default = 4.0;
+bind h.p.x = L;
+assert constraint tie { h.p.x == 3.0 }
+}`)).toEqual([['GB::tie', 'violated']]);
+  });
+
+  it('gen-pa2: 150 typed/inline twins read alike, and the decided rows hold the hand value', async () => {
+    let seed = 90210;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let pairs = 0;
+    let decided = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const other = (v + 1 + rnd(10)) % 11;
+      const host = i % 2 === 0 ? 'h' : `h${i % 3}`;
+      const parts = i % 3 === 0 ? 'part p : P; part r : P;' : 'part p : P;';
+      const pick = i % 3 === 0 ? (i % 2 === 0 ? 'p' : 'r') : 'p';
+      const def = `part def P { attribute x : Real; }`;
+      const typed = `package T${i} {\n  ${def}\n  part def H { ${parts} }\n  part ${host} : H;\n  assert constraint px { ${host}.${pick}.x == ${v}.0 }\n  constraint q { ${host}.${pick}.x == ${v}.0 }\n  constraint qf { ${host}.${pick}.x == ${other}.0 }\n}`;
+      const inline = `package I${i} {\n  ${def}\n  part ${host} { ${parts} }\n  assert constraint px { ${host}.${pick}.x == ${v}.0 }\n  constraint q { ${host}.${pick}.x == ${v}.0 }\n  constraint qf { ${host}.${pick}.x == ${other}.0 }\n}`;
+      const typedRows = await checks(typed);
+      const inlineRows = await checks(inline);
+      const typedNamed = typedRows.map(([n, r]) => [n.replace(`T${i}`, ''), r]);
+      const inlineNamed = inlineRows.map(([n, r]) => [n.replace(`I${i}`, ''), r]);
+      expect(typedNamed, typed).toEqual(inlineNamed);
+      const row = (pkg: string, name: string) => typedRows.find(([n]) => n === `${pkg}::${name}`)?.[1];
+      // The hand oracle: px and q read v, qf reads another value; a violated one only where they differ.
+      if (v !== other) {
+        expect(row(`T${i}`, 'q'), typed).toBe('satisfied');
+        expect(row(`T${i}`, 'qf'), typed).toBe('violated');
+        decided += 2;
+      } else {
+        expect(row(`T${i}`, 'q'), typed).toBe('satisfied');
+        expect(row(`T${i}`, 'qf'), typed).toBe('satisfied');
+      }
+      expect(row(`T${i}`, 'px'), typed).toBe('satisfied');
+      pairs++;
+    }
+    expect(pairs).toBe(150);
+    expect(decided).toBeGreaterThan(200);
+  }, 300_000);
+});

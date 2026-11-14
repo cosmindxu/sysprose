@@ -92,6 +92,7 @@ import {
   standingDefaultSentence,
   replaceableDefaults,
   writesStandingDefault,
+  bindingEndsOf,
   isCall,
   isDerivedValue,
   returnTo,
@@ -4210,7 +4211,30 @@ function equationBindings(
       const spelled =
         link?.spelled === true ||
         (written != null && written !== el.ownerId && pass.definitions.chain([written, el.id], name)?.spelled === true);
-      if (!link || link.via === undefined || leaf === undefined || !pass.definitions.reachingAssert(link.via, leaf, spelled)) continue;
+      if (!link || link.via === undefined || leaf === undefined) continue;
+      if (!pass.definitions.reachingAssert(link.via, leaf, spelled)) {
+        // The chain reads a part a DEFINITION declares (`part def H { part p : P; } part h : H;`), so the
+        // reach-out from that part stops at the definition and never meets an equation written where the
+        // name is read, with its whole path spelled through the usage (`assert { h.p.x == 3.0 }`). One that
+        // reads no name is a fact of the reading context, the same in every instance it stands for: read
+        // there, the spelled path as reachingAssert reads one.
+        const spelledEqs = contexts.flatMap((c) => pass.definitions.of(c, name).map((equation) => ({ c, equation })));
+        // Not a feature a binding or a stated value fixes (reachingAssert's own rule): there the equation is
+        // a check against that value, not a definition of it.
+        const fixedEnds = bindingEndsOf(model);
+        const fixed = (g: ElementRecord): boolean => fixedEnds.has(g.id) || (g.attrs.value !== undefined && g.attrs.value !== null);
+        if (
+          spelledEqs.length > 0 &&
+          ![link.feature, ...redefinedClosure(model, link.feature)].some(fixed) &&
+          spelledEqs.every(({ equation }) => namesReadIn(equation.definition).length === 0)
+        ) {
+          const defined = defineIn(model, spelledEqs[0]!.c, link.feature, name, spelledEqs.map(({ equation }) => equation), pass);
+          if (defined.value !== undefined) {
+            bindings.set(name, { featureId: link.feature.id, value: defined.value, ...(defined.exact !== undefined ? { exact: defined.exact } : {}) });
+          }
+        }
+        continue;
+      }
       const read = readSpecialiser(model, link.feature, name, pass, { contextId: link.via, feature: link.feature });
       if ('bound' in read) bindings.set(name, read.bound);
       else if (!read.valueless) return { reason: read.reason };
