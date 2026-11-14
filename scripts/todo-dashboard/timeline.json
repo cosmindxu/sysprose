@@ -3112,9 +3112,9 @@
   "open_raw": 63,
   "open": 63,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 43,
-   "POLISH": 18,
+   "FALSE": 4,
+   "WEAKER": 41,
+   "POLISH": 16,
    "HELD": 2
   },
   "new": 0,
@@ -3134,5 +3134,197 @@
   },
   "cum_new": 299,
   "cum_closed": 234
+ },
+ {
+  "idx": 98,
+  "sha": "afda9ab",
+  "when": "2026-11-09T23:46:25+01:00",
+  "day": "2026-11-09",
+  "subject": "merge solver-order S5: item 286 closed (TODO), USER-GUIDE no-root sentence",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
+   "FALSE": 4,
+   "WEAKER": 40,
+   "POLISH": 16,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 1,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 299,
+  "cum_closed": 235
+ },
+ {
+  "idx": 99,
+  "sha": "8a5ba8a",
+  "when": "2026-11-10T19:00:32+01:00",
+  "day": "2026-11-10",
+  "subject": "merge slots: TODO 132(3) narrowed to the differing-fixer remainder",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
+   "FALSE": 4,
+   "WEAKER": 40,
+   "POLISH": 16,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 299,
+  "cum_closed": 235
+ },
+ {
+  "idx": 100,
+  "sha": "d0bfc19",
+  "when": "2026-11-11T02:53:33+01:00",
+  "day": "2026-11-11",
+  "subject": "merge behaviour-walk: T-115 rewritten, 2026-11-11 ruling line",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
+   "FALSE": 4,
+   "WEAKER": 39,
+   "POLISH": 17,
+   "HELD": 2
+  },
+  "new": 1,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 1,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 300,
+  "cum_closed": 236
+ },
+ {
+  "idx": 101,
+  "sha": "679b631",
+  "when": "2026-11-12T02:59:26+01:00",
+  "day": "2026-11-12",
+  "subject": "merge a5-lines: rollup 292 items (2), (3), (7) narrowed (LN1, LN2, LN3)",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
+   "FALSE": 4,
+   "WEAKER": 39,
+   "POLISH": 17,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 300,
+  "cum_closed": 236
+ },
+ {
+  "idx": 102,
+  "sha": "3cbf267",
+  "when": "2026-11-12T23:23:38+01:00",
+  "day": "2026-11-12",
+  "subject": "merge a5-heads: numeric2-pass (i) and fence-pkgbind (8) rewritten (HD3)",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
+   "FALSE": 4,
+   "WEAKER": 39,
+   "POLISH": 17,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 300,
+  "cum_closed": 236
+ },
+ {
+  "idx": 103,
+  "sha": "3d91148",
+  "when": "2026-11-14T18:40:10+01:00",
+  "day": "2026-11-14",
+  "subject": "merge a5-paths: fence-rollup item (5) rewritten (PA3), satisfy-context entry notes the definition reading",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 41,
+   "POLISH": 19,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 300,
+  "cum_closed": 236
  }
 ]

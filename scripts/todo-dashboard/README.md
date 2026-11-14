@@ -10,6 +10,8 @@ The dashboard (a claude.ai Artifact, not hosted here) charts how this repo's `TO
 | `datasets.py` | Builds the four `ds_*.json` datasets the page reads (adds `classes.json`, `views.json`, `origin_extra.json`). |
 | `ds_*.json` | The current datasets (timeline, windows, origin, open) as of commit `b700e85`. |
 | `index.html` | The page source. |
+| `standalone.py` | Builds `standalone.html`: the same page, self-contained (datasets embedded, no artifact runtime). |
+| `standalone.html` | The standalone dashboard; open it in any browser or serve it statically. |
 
 Run from this folder: `python3 refresh.py --force`. The repo root is found two levels up, so run it inside a full checkout with `main`'s history.
 
