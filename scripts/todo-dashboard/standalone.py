@@ -50,6 +50,7 @@ const dash = {
 
 BOOT = """
 function boot() {
+  (0, eval)(PAGE_SCRIPTS);
   for (const { name, spec } of calcs) {
     try { DATASETS[name] = spec.fn(...spec.inputs.map((i) => DATASETS[i])); } catch (e) { console.warn(name, e); }
   }
@@ -74,7 +75,7 @@ def main() -> None:
     page = open(PAGE, encoding="utf-8").read()
     style = re.search(r"<style>.*?</style>", page, re.S).group(0)
     body = re.search(r'<div class="oi">.*</div>\s*(?=<script>)', page, re.S).group(0)
-    scripts = re.findall(r"<script>.*?</script>", page, re.S)
+    scripts = re.findall(r"<script>(.*?)</script>", page, re.S)
 
     datasets = {}
     for key, fname in DS_FILES.items():
@@ -82,6 +83,7 @@ def main() -> None:
             datasets[key] = json.load(fh)
 
     shim = DASH_SHIM.replace("__DATASETS__", json.dumps(datasets, separators=(",", ":")))
+    page_scripts = "const PAGE_SCRIPTS = " + json.dumps("\n".join(scripts)) + ";"
 
     head = "\n".join(
         [
@@ -97,8 +99,7 @@ def main() -> None:
             "<body>",
         ]
     )
-    tail = ["<script>" + shim + "</script>"]
-    tail.extend(scripts)
+    tail = ["<script>" + shim + "\n" + page_scripts + "</script>"]
     tail.append("<script>" + BOOT + "</script>")
     tail.append("</body>")
     tail.append("</html>")
