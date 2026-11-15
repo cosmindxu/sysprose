@@ -16546,6 +16546,45 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'AD::RF::«ConstraintUsage» in AD::In::«Satisfy»': ['?/-/?/-', '?'],
       'AD::RF::«ConstraintUsage» in AD::W::p1': ['-/?/-/?', '?'],
     }),
+    'pa4-qualified': probe(`package PA4Q {
+        part def Q { attribute x : Real = 3.0; }
+        part q : Q;
+        constraint k { Q::x == 3.0 }
+      }`, {
+      'PA4Q::k': ['T/T/T/T', 'T'],
+    }),
+    'pa4-qualified-shadow': probe(`package PA4S {
+        part def Q { attribute x : Real = 3.0; }
+        attribute x : Real = 9.0;
+        constraint k { Q::x == 3.0 }
+      }`, {
+      'PA4S::k': ['T/T/T/T', 'T'],
+    }),
+    'pa4-qualified-default': probe(`package PA4D {
+        part def Q { attribute x : Real default = 3.0; }
+        constraint k { Q::x == 3.0 }
+      }`, {
+      'PA4D::k': ['?/?/?/?', '?'],
+    }),
+    'pa4-call': probe(`package PA4C {
+        part def Q { attribute x : Real = 3.0; }
+        constraint k { sum(Q::x) == 3.0 }
+      }`, {
+      'PA4C::k': ['?/?/?/?', '?'],
+    }),
+    'pa4-arrow': probe(`package PA4A {
+        part def Q { attribute xs : Real = 3.0; }
+        constraint k { Q::xs->forAll(x) }
+      }`, {
+      'PA4A::k': ['?/?/?/?', '?'],
+    }),
+    'pa4-enum': probe(`package PA4E {
+        enum def Mode { on, off }
+        part q { attribute m : Mode = Mode::on; }
+        constraint k { q.m == Mode::on }
+      }`, {
+      'PA4E::k': ['?/?/?/?', '?'],
+    }),
     'pa2-typed': probe(`package PA2T {
         part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
         part def H { part p : P; }

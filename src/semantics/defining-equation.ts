@@ -46,7 +46,7 @@ import {
 } from './inheritance';
 import { resolveFullName, unreadScopes, type UnreadScope } from './bind';
 import { evaluateDecided } from './exact';
-import { exprEqual, writtenChains, type ExprNode } from './expr';
+import { exprEqual, exprRefusal, writtenChains, type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
 import { NO_MARKERS, parseRelationBody, substituteLiterals, type MarkerDimensions } from './unit-literals';
@@ -169,6 +169,10 @@ function equationsByName(model: Model, ownerId: ElementId): Map<string, Defining
     if (!isAsserted(c)) continue;
     // Each conjunct of an asserted conjunction, as the assert it would be written alone ({@link assertConjuncts}).
     for (const { node, literals, part } of equationsOf(model, c)) {
+      // An equation over a call, an arrow or a qualified name no literal reads defines nothing this tool
+      // reads (PA4): the body is read as one that does not parse, while the check and verify surfaces name
+      // the construct — the asserted definition of `M == max(L, 20.0)` is no value M has.
+      if (exprRefusal(node) !== undefined) continue;
       const of = part ? { part } : {};
       // A DOTTED defined name (`assert constraint { p.x == 3.0 }`) indexes under
       // the whole path; a single-segment ref is the bare name it always was.

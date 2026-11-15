@@ -30,8 +30,9 @@
 
 import { isUsage, type ElementId, type ElementRecord, type Model } from '@core/index';
 import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf } from './defining-equation';
-import { type ExprNode } from './expr';
-import { generalizationsOf } from './inheritance';
+import { mapExpr, refText, type ExprNode } from './expr';
+import { resolveFullName } from './bind';
+import { generalizationsOf, redefinedClosure } from './inheritance';
 import {
   declaredFacetsOf,
   derivationOf,
@@ -719,6 +720,26 @@ export function operandRefusal(
 const NO_NAMES: ReadonlySet<string> = new Set();
 
 /** Every name an expression reads, in source order (repeats included). */
+/**
+ * A qualified name whose feature states an `=` literal, lowered to that numeral (PA4, decision 10): the one
+ * value a qualified name is read at, the same in every instance, so every lane reads it alike (the check's
+ * scope, the solver's names, the SMT encoder's terms). A `default`, a unit, an expression or an enumeration
+ * literal stays the ref it was — this tool reads it nowhere, and the refusal names it.
+ */
+export function lowerQualifiedLiterals(model: Model, node: ExprNode, contextId?: ElementId): ExprNode {
+  return mapExpr(node, (ref) => {
+    if (ref.qualifier === undefined || ref.path.length !== 1) return ref;
+    // The name as written where the relation is written: `Q::x` in package P is P's Q, by KerML's resolution.
+    const hit = contextId != null ? resolveFullName(model, refText(ref), contextId) : model.resolveQualifiedName(refText(ref));
+    if (!hit || hit.attrs.isLibrary === true || !isUsage(hit.eClass)) return ref;
+    const stated = [hit, ...redefinedClosure(model, hit)].find((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+    if (!stated || stated.attrs.defaultValue === true) return ref;
+    const text = typeof stated.attrs.valueText === 'string' ? stated.attrs.valueText : String(stated.attrs.value);
+    const numerals = /^\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*$/.exec(text);
+    return numerals ? { kind: 'num', value: Number(numerals[1]) } : ref;
+  });
+}
+
 export function namesReadIn(node: ExprNode): string[] {
   switch (node.kind) {
     case 'ref':

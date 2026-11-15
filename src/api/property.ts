@@ -60,7 +60,7 @@ import {
   type RelationReading,
 } from '../semantics/contracts';
 import { featureIdsFor } from '../semantics/evaluate-model';
-import type { ExprNode } from '../semantics/expr';
+import { constructText, refText, type ExprNode } from '../semantics/expr';
 import { parseRelationBody, type LoweredLiteral } from '../semantics/relations';
 import { requirementShortId, requirementStatement } from '../semantics/requirements';
 import { isNonNormativeStatement } from '../semantics/statement-kind';
@@ -790,10 +790,13 @@ export function backTranslate(
       case 'null':
         return 'null';
       case 'ref': {
-        const path = n.path.join('.');
-        const literal = literals.get(path);
+        const path = refText(n);
+        const literal = literals.get(path) ?? literals.get(n.path.join('.'));
         return literal ? `${literal.magnitude} ${literal.unit}` : path;
       }
+      case 'call':
+      case 'arrow':
+        return constructText(n);
       case 'unary':
         return n.op === 'not'
           ? clause(n)

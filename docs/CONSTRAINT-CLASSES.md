@@ -55,21 +55,21 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 
 | Cell | Rows | Models | Encoder tests | Decided golden rows | Agreeing table rows (probes) | Table rows against | Battery cells | Level |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `ground` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `ground` | 1 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 486 | 72 | 2 | 6 | 709 (313) | 0 | none | `differential-tested` |
+| `lra` | 486 | 72 | 2 | 6 | 727 (322) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 6 (4) | 0 | none | `tested` |
-| `units` | 99 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
+| `units` | 100 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
 | `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `stated-value` | 311 | 78 | 1 | 7 | 665 (282) | 0 | none | `differential-tested` |
+| `stated-value` | 311 | 78 | 1 | 7 | 683 (291) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 63 (38) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 233 (139) | 0 | none | `experimental` |
 | `asserted-fact` | 28 | 8 | 1 | 0 | 29 (16) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 401 (236) | 0 | none | `differential-tested` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 414 (247) | 0 | none | `differential-tested` |
 | `per-instance` | 1 | 1 | 1 | 0 | 323 (165) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
@@ -268,8 +268,6 @@ A relation that was not sent to z3, one class per refusal reason. A fence carrie
 - **Level of `fence/unparseable`.** `unpinned` (first unmet: a test that pins the gate layer).
 - **Limits.**
   - The body is not an expression this tool can read; a name holding `|` or `\` is refused at the encoder.
-- **Open defects.**
-  - `D-unparseable-words` (wrong-statement): `sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation” although they are constructs the expression reader does not take; an enum comparison is unparseable (verification/not-evaluable), which no flag forgives.
 - **Tests.**
   - `test/unit/semantics.smt-encode.test.ts`: (encoder layer) “refuses a qualified name no SMT symbol can carry, rather than mangling it”
 

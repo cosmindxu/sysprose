@@ -112,7 +112,8 @@ import {
 } from './defining-equation';
 import { anyHiddenByName, effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
-import { evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { evaluate, exprRef, exprRefusal, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { resolveFullName } from './bind';
 import {
   NO_MARKERS,
   bareLiteralRefusal,
@@ -129,6 +130,7 @@ import {
   typedAssertRefusal,
   valueFaultOf,
   type MarkerDimensions,
+  lowerQualifiedLiterals,
 } from './relations';
 import { DIMENSIONLESS, dimEqual, dimToString, resolveUnit, type Dimension } from './units';
 import {
@@ -3620,7 +3622,7 @@ function judgeBound(
 
   let node;
   try {
-    node = parseExpr(expr);
+    node = lowerQualifiedLiterals(model, parseExpr(expr), el.ownerId ?? el.id);
   } catch (e) {
     // The scalar grammar rejects unit literals (`2000 [kg]`); retry with the
     // unit-aware evaluator before giving up. When the text does carry a
@@ -3774,7 +3776,17 @@ function judgeBound(
     const deep = tooDeep(node, scope, own);
     if (deep) return { result: 'unknown', message: `Could not evaluate: ${deep}`, gap: false };
     const abstain = namedAbstention(own, referencedNames(node));
-    const message = `Could not evaluate: ${abstain?.sentence ?? unknownCause(model, el, referencedNames(node), scope, pass)}`;
+    const construct = exprRefusal(node, (q) => {
+      const hit = el.ownerId != null ? resolveFullName(model, q, el.ownerId) : model.resolveQualifiedName(q);
+      if (hit !== undefined) return hit.eClass;
+      // A user enumeration's literals are no elements this mapper holds: `Mode::on` whose `Mode` is an
+      // enumeration definition is one, and the sentence says so.
+      const cut = q.lastIndexOf('::');
+      if (cut < 0) return undefined;
+      const owner = el.ownerId != null ? resolveFullName(model, q.slice(0, cut), el.ownerId) : undefined;
+      return owner?.eClass === 'EnumerationDefinition' ? 'EnumerationLiteral' : undefined;
+    });
+    const message = `Could not evaluate: ${abstain?.sentence ?? construct?.detail ?? unknownCause(model, el, referencedNames(node), scope, pass)}`;
     return {
       result: 'unknown',
       message,

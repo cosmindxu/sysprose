@@ -10736,3 +10736,103 @@ assert constraint tie { h.p.x == 3.0 }
     expect(decided).toBeGreaterThan(200);
   }, 300_000);
 });
+
+describe('PA4: a qualified name reads its `=` literal; a call, an arrow or an enumeration literal is named, not read', () => {
+  /** Every check of `text` as `[qualified name, result, message]`, sorted. */
+  const rows = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return checkConstraints(m!)
+      .map((c) => [m!.qualifiedName(c.id), c.result, c.message] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  /** What the literal engine claims of `text`, by qualified name. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(report.results.map((r) => [r.clause.qualifiedName, r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown'] as const));
+  };
+
+  it('reads Q::x where x states an `=` literal, never the bare x of the package (d5a)', async () => {
+    // The qualifier is part of the name: a package attribute `x = 9.0` answers not `Q::x` (= 3.0).
+    const text = `package SH {
+part def Q { attribute x : Real = 3.0; }
+attribute x : Real = 9.0;
+constraint k { Q::x == 3.0 }
+constraint kf { Q::x == 9.0 }
+}`;
+    expect((await rows(text)).map(([n, r]) => [n, r])).toEqual([
+      ['SH::k', 'satisfied'],
+      ['SH::kf', 'violated'],
+    ]);
+    expect([...(await literal(text))]).toEqual([
+      ['SH::k', 'satisfied'],
+      ['SH::kf', 'violated'],
+    ]);
+  });
+
+  it('refuses a valueless or `default` qualified name, a call, an arrow and an enumeration literal, naming each', async () => {
+    const sentence = (text: string, name: string) => rows(text).then((r) => r.find(([n]) => n === name)?.[2] ?? '');
+    // Decision 10: a qualified name is read only where the feature states an `=`, never a `default`.
+    expect(await sentence(`package DQ {\npart def Q { attribute x : Real; }\nconstraint k { Q::x == 3.0 }\n}`, 'DQ::k')).toContain(
+      'the body names `Q::x`, which this lane reads only where the feature states an `=` literal',
+    );
+    expect(await sentence(`package DF {\npart def Q { attribute x : Real default = 3.0; }\nconstraint k { Q::x == 3.0 }\n}`, 'DF::k')).toContain(
+      'the body names `Q::x`, which this lane reads only where the feature states an `=` literal',
+    );
+    expect(await sentence(`package DC {\npart def Q { attribute x : Real = 3.0; }\nconstraint k { sum(Q::x) == 3.0 }\n}`, 'DC::k')).toContain(
+      'the body calls `sum(...)`, which this lane does not read',
+    );
+    expect(await sentence(`package DA {\npart def Q { attribute xs : Real = 3.0; }\nconstraint k { Q::xs->forAll(x) }\n}`, 'DA::k')).toContain(
+      'the body reads `Q::xs->forAll(x)`, which this lane does not read',
+    );
+    expect(await sentence(`package DE {\nenum def Mode { on, off }\npart q { attribute m : Mode = Mode::on; }\nconstraint k { q.m == Mode::on }\n}`, 'DE::k')).toContain(
+      'the body names `Mode::on`, an enumeration literal, which this lane does not read',
+    );
+  });
+
+  it('gen-pa4: 150 models read a qualified literal by its value, and decide nothing over a call, an arrow or a valueless name', async () => {
+    let seed = 31415;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let decided = 0;
+    let refused = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const pkg = `P${i}`;
+      const q = i % 3 === 0 ? `Q${i % 4}` : 'Q';
+      const wrapped = i % 4 === 0;
+      // The same model with the constraint in a nested package: the qualifier resolves outward, as Kerlex does.
+      const place = (body: string) => (wrapped ? `package In${i} { ${body} }` : body);
+      const head = `part def ${q} { attribute x : Real = ${v}.0; attribute y : Real; }`;
+      if (i % 5 === 0) {
+        // The instance twin: two usages read the one literal the definition states.
+        const text = `package ${pkg} {\n  ${head}\n  part q1 : ${q};\n  part q2 : ${q};\n  ${place(`constraint k1 { ${q}::x == ${v}.0 } constraint k2 { ${q}::x == ${(v + 1) % 11}.0 }`)}\n}`;
+        const got = await rows(text);
+        const row = (n: string) => got.find(([name]) => name.endsWith(n))?.[1];
+        expect(row('::k1'), text).toBe('satisfied');
+        expect(row('::k2'), text).toBe(v === (v + 1) % 11 ? 'satisfied' : 'violated');
+        decided += 2;
+        continue;
+      }
+      if (i % 5 === 1) {
+        // A call or an arrow over a valid literal: read by no lane.
+        const body = i % 10 === 1 ? `constraint k { sum(${q}::x) == ${v}.0 }` : `constraint k { ${q}::x->forAll(x) }`;
+        const text = `package ${pkg} {\n  ${head}\n  ${place(body)}\n}`;
+        expect((await rows(text)).map(([n, r]) => [n.endsWith('::k'), r])).toEqual([[true, 'unknown']]);
+        refused++;
+        continue;
+      }
+      // A qualified literal: satisfied iff the literal equals the right side, in either text order.
+      const text = `package ${pkg} {\n  ${head}\n  ${place(`constraint k { ${q}::x == ${k}.0 }`)}\n}`;
+      const got = await rows(text);
+      expect(got.map(([n, r]) => [n.endsWith('::k'), r])).toEqual([[true, v === k ? 'satisfied' : 'violated']]);
+      decided++;
+    }
+    expect(decided).toBeGreaterThan(80);
+    expect(refused).toBeGreaterThan(20);
+  }, 300_000);
+});

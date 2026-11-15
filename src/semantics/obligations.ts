@@ -126,7 +126,7 @@ import {
 import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import { ambiguousKeyword, foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
-import { NO_MARKERS, idScopeFor, parseRelationBody, typedAssertRefusal } from './relations';
+import { NO_MARKERS, idScopeFor, lowerQualifiedLiterals, parseRelationBody, typedAssertRefusal } from './relations';
 import { getRequirementAttr } from './requirements';
 import { isNonNormativeStatement } from './statement-kind';
 import { type DerivationMemo } from './units-eval';
@@ -1214,6 +1214,9 @@ function instanceRows(
 ): { rows: Obligation[]; shared: Array<{ context: ElementRecord; vars: ContractVariable[] }> } {
   const body = parseRelationBody(raw);
   if (!body) return { rows: [], shared: [] };
+  // A qualified name whose feature states an `=` literal is this numeral (PA4, decision 10), as the other
+  // lanes read it: one value, the same in every instance.
+  body.node = lowerQualifiedLiterals(model, body.node, el.ownerId ?? el.id);
   const names = namesOf(body.node).filter((n) => !body.literals.has(n));
   const out: Obligation[] = [];
   const sharedOut: Array<{ context: ElementRecord; vars: ContractVariable[] }> = [];
