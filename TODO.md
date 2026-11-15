@@ -892,11 +892,8 @@ true values. What follows is what that branch and the review of it left open; en
       class register (`docs/constraint-class-defects.json`) caps the maturity of the cells these
       touch; each is a sentence or a basis that is wrong or misleading today, pinned by goldens so a
       fix moves them on purpose: (1) `x ^ -1` is refused as "the exponent is not a literal"
-      (`contracts.ts` tests the unary minus as a non-number); (2) `sum(...)`, `->forall(...)` and
-      `Mode::x` print "a defect in the relation" (`expr.ts` has no call, quantifier or `::` node),
-      and an enum comparison is `unparseable` (`verification/not-evaluable`, not forgivable) where
-      docs/04 and the USER-GUIDE call it `unsupported-construct`; (3) `bound.detail` says "decided by z3 5.3.1" on rows the numeric surface decided (`s.a
-      == s.b`, "bus" vs "car"); (4) to probe, not a defect: the
+      (`contracts.ts` tests the unary minus as a non-number); (2) `bound.detail` says "decided by z3 5.3.1" on rows the numeric surface decided (`s.a
+      == s.b`, "bus" vs "car"); (3) to probe, not a defect: the
       engine's `pinnedSymbols` pins a self-referencing equation (`x == x * y` pins x) and pins the
       right-hand defined feature of `assert constraint qa { L == M }` (8 probes h5-pin*), and
       whether either changes a `partialAntecedent` answer is unverified. [classes-2 S4]
@@ -944,15 +941,15 @@ true values. What follows is what that branch and the review of it left open; en
 
 - [ ] **Abstentions left in quoted names in expressions (rollup; sound, only weaker).** A quoted name
       is now a name reference on every lane and in the edit path; a feature whose declared name
-      holds a dot is no longer registered under its dotted key. Left: (a) a quoted name that itself
-      holds `.` or `:` is refused and every surface abstains (probe fix-quoted-scratch/dot.sysml);
+      holds a dot is read by its quoted spelling (since a5 PA5 a quoted name holding `.` or `:` is a
+      name like any other, and `a.b` stays the path a then b; probe dot.sysml reads T/T/T/T). Left:
       (b) `bareTie` (defining-equation.ts ~6861) and `NAME_TOKEN` (src/api/property.ts ~532) read
       plain identifiers only, so a quoted tie `'K x' == 'L x'` counts as a taint source (more
       abstention), and property.ts ~491 drafts a skeleton clause with the unquoted name
       (`max load >= 5`), which does not parse (probe rv/d1.sysml); (c) a check-behaviour atom
       `p=state 'deg A'` is answered INCONCLUSIVE "not read" where `state deg A` works (probe
-      rv/bh/s1.sysml); (d) on the unit-aware path the info message for a refused quoted name starts
-      with "a call, an index or a string literal" and gives the real cause only after a semicolon;
+      rv/bh/s1.sysml); (d) on the unit-aware path an info message for a body it cannot read starts with
+      "a call, an index or a string literal" and gives the real cause only after a semicolon;
       (e) a `//` comment holding an apostrophe inside an expression now reads "Unterminated quoted
       name at N" where it read "Unterminated string literal" (both unknown; probe rv/cm.sysml);
       (f) `bounds --measure` and `--free` take the printed unquoted qualified name but not a
@@ -971,21 +968,23 @@ true values. What follows is what that branch and the review of it left open; en
       numeric `solveFeasible` of brief-targets-by-layer flips from decided feasible to undecided when
       the members are reversed (propagation order; iteration counts move 2 to 3); the one code
       reported for a group with two causes (refinement-sibling-shortfall) follows source order; the
-      per-instance rows are capped at the first 256 in source order. (2) Instance: a package-level
-      `assert constraint px { h.p.x == 3.0 }` that imposes a value through a part-def instance
-      (`part def H { part p : P; } part h : H;`) is not imposed, so `h.p.y == 7.0` reads ? where the
-      same model with `part h { part p : P; }` reads violated; `bind w = hold_p.p.load` through a
-      part-def instance is not followed (r14: w = 50 lost). (3) Label-only differences: group and
+      per-instance rows are capped at the first 256 in source order. (2) Instance: since a5 PA2 a
+      package-level `assert constraint px { h.p.x == 3.0 }` that imposes a value through a part-def
+      instance (`part def H { part p : P; } part h : H;`) is imposed, and `h.p.y == 7.0` reads
+      violated as it does with the inline twin; `bind w = hold_p.p.load` through a part-def instance
+      is still not followed (r14: w = 50 lost). (3) Label-only differences: group and
       instance labels, evidence footprint digests of anonymous binding connectors, the order of two
       names in a reason string. (4) Measures are chosen by NAME: `MOE_NAME_RE = /moe|measure|objective/i`
       in src/semantics/solver.ts, so renaming `totalObjective` drops its analysis-report measure
       row (not a verdict cell; a documented heuristic, to be replaced by an explicit marker).
       Probes: scratchpad genericity/{rename,reorder,wrap-and-instance}/ (harness batch.sh,
       harness.sh, compare.py; repros in the reports). [genericity audit]
-      (5) Names (names-pass): a dotted path through an enclosing usage is unread; check's
-      quantityScope is not routed via lexicalPackageOf, so a unit-bearing lexical path abstains on
-      check; an assert typed by a constraint definition with no body makes the literal and SMT
-      surfaces abstain file-wide; a plain constraint typed by a constraint definition files a ?/?/?/? row since a5 S4 (reading it with the parameters' values is TY1/TY2, by position). [names-pass]
+      (5) Names (names-pass): since a5 PA1 a dotted path through an enclosing one-instance usage is
+      read, and the check's quantityScope goes via lexicalPackageOf, so a unit-bearing lexical path
+      reads (g5f `k` T/T/T/T, `kf` F/F/F/F); an assert typed by a constraint definition with no body
+      still makes the literal and SMT surfaces abstain file-wide, and a plain constraint typed by a
+      constraint definition files a ?/?/?/? row since a5 S4 (reading it with the parameters' values
+      is TY1/TY2, by position). [names-pass; a5 PA1]
       (6) Subsetting (instance3-pass): p2 `[0..1]` or `[0..*]` reads as present in S1's reread rows of
       an assert: `W::a in w` F and SMT X where p2 may be empty; this is the engine's existing stance
       for optional parts, a limit of multiplicity reading. A usage with a multiplicity other than
