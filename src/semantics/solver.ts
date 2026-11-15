@@ -69,7 +69,7 @@ import {
   type ExactScope,
   type Rational,
 } from './exact';
-import { parseExpr, evaluate, exprEqual, exprRefusal, writtenChains, type ExprNode } from './expr';
+import { parseExpr, evaluate, exprEqual, exprRefusal, refText, writtenChains, type ExprNode } from './expr';
 import { isBindingEdge, propagateValues } from './connectors';
 import {
   anchorFor,
@@ -1122,7 +1122,7 @@ function polynomialOf(node: ExprNode): Polynomial | undefined {
       return c && constantPolynomial(c);
     }
     case 'ref':
-      return monomial(node.path.join('.'));
+      return monomial(refText(node));
     case 'unary': {
       if (node.op === 'not') return undefined;
       const p = polynomialOf(node.operand);
@@ -1369,7 +1369,7 @@ function instanceKeysDefinedBy(model: Model, node: ExprNode, eq: Equation): Elem
   const out: ElementId[] = [];
   for (const side of [node.left, node.right]) {
     if (side.kind !== 'ref') continue;
-    const key = eq.nameToId.get(side.path.join('.'));
+    const key = eq.nameToId.get(refText(side));
     if (key === undefined || !key.includes('@') || out.includes(key)) continue;
     const f = model.get(baseIdOf(key));
     // Never one that writes a `default`, even one a binding made give way (decision 14 amended).
@@ -2691,7 +2691,7 @@ function shapeOver(
 ): Shape {
   switch (node.kind) {
     case 'ref':
-      return unknown(nameToId.get(node.path.join('.'))) ? 'affine' : 'const';
+      return unknown(nameToId.get(refText(node))) ? 'affine' : 'const';
     case 'unary': {
       const inner = shapeOver(node.operand, nameToId, unknown, joint);
       return node.op === 'not' && inner !== 'const' ? 'curved' : inner;
@@ -2783,7 +2783,7 @@ function affineForm(
   }
   switch (node.kind) {
     case 'ref': {
-      const id = eq.nameToId.get(node.path.join('.'))!;
+      const id = eq.nameToId.get(refText(node))!;
       const s = eq.scale?.get(id);
       const factor = s ? writtenRational(s.factor) : { num: 1n, den: 1n };
       return factor ? { a: new Map([[id, factor]]), b: s ? s.offset : 0 } : undefined;
@@ -4166,7 +4166,7 @@ function dividesByNearZero(eq: Equation, values: Map<ElementId, number>, gate: n
   const scope = idScope(eq, values);
   const reads = (n: ExprNode): boolean =>
     n.kind === 'ref'
-      ? moved!.has(eq.nameToId.get(n.path.join('.'))!)
+      ? moved!.has(eq.nameToId.get(refText(n))!)
       : n.kind === 'unary'
         ? reads(n.operand)
         : n.kind === 'binary'
@@ -4520,7 +4520,7 @@ function flatAbout(eq: Equation, u: ElementId, val: number, values: Map<ElementI
 
 /** Is `node` a bare reference resolving (via the equation's scope) to `u`? */
 function isRefTo(node: ExprNode, eq: Equation, u: ElementId): boolean {
-  return node.kind === 'ref' && eq.nameToId.get(node.path.join('.')) === u;
+  return node.kind === 'ref' && eq.nameToId.get(refText(node)) === u;
 }
 
 /** 1-D root-find of the equation residual in `u`: Newton then bisection. */
@@ -4857,7 +4857,7 @@ function divisorColumns(
   for (const eq of eqs) {
     const refs = (n: ExprNode): void => {
       if (n.kind === 'ref') {
-        const id = eq.nameToId.get(n.path.join('.'));
+        const id = eq.nameToId.get(refText(n));
         if (id !== undefined) read.add(id);
       } else if (n.kind === 'unary') refs(n.operand);
       else if (n.kind === 'binary') {

@@ -123,7 +123,7 @@ import {
   usageOwnedRefusal,
   type InstanceGroup,
 } from './defining-equation';
-import { DOUBLE_DIGITS, exprRef, significantDigitsOf, type ExprNode } from './expr';
+import { DOUBLE_DIGITS, exprRef, keySegment, refText, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import { ambiguousKeyword, foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
 import { NO_MARKERS, idScopeFor, lowerQualifiedLiterals, parseRelationBody, typedAssertRefusal } from './relations';
@@ -910,8 +910,8 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     for (const v of row.vars) note(row, v);
     const n = row.node!;
     if (n.kind === 'binary' && n.op === '==' && n.left.kind === 'ref' && n.right.kind === 'ref') {
-      const a = symbolOf(row, n.left.path.join('.'));
-      const b = symbolOf(row, n.right.path.join('.'));
+      const a = symbolOf(row, refText(n.left));
+      const b = symbolOf(row, refText(n.right));
       if (a !== undefined && b !== undefined) parent.set(find(a), find(b));
     }
   }
@@ -956,7 +956,7 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     // `x == 5.0`: both bounds at once.
     if (n.kind === 'binary' && n.op === '==' && (n.left.kind === 'ref') !== (n.right.kind === 'ref')) {
       const [r, k] = n.left.kind === 'ref' ? [n.left, n.right] : [n.right, n.left];
-      const sym = r.kind === 'ref' ? symbolOf(row, r.path.join('.')) : undefined;
+      const sym = r.kind === 'ref' ? symbolOf(row, refText(r)) : undefined;
       if (sym !== undefined && k.kind === 'num') {
         const c = componentOf(sym);
         take(c, 'lower', k.value, false, row.expression);
@@ -1948,8 +1948,9 @@ function bindingRows(model: Model, el: ElementRecord, memo: DerivationMemo): Obl
           ? { kind: 'bool', value: raw }
           : { kind: 'num', value: raw, ...(text !== undefined ? { text } : {}) },
     };
-    const nameToId = new Map<string, ElementId>([[name, el.id]]);
-    reading = gateRelation(model, node, nameToId, NO_MARKERS, false, memo, true, `${name} == ${text ?? String(raw)}`);
+    // A name holding a dot or colon is keyed by its quoted spelling, as the expression reads it (PA5).
+    const nameToId = new Map<string, ElementId>([[keySegment(name), el.id]]);
+    reading = gateRelation(model, node, nameToId, NO_MARKERS, false, memo, true, `${keySegment(name)} == ${text ?? String(raw)}`);
     verbatim = true;
   } else if (typeof raw === 'string' && raw.trim() !== '' && !/^".*"$/s.test(raw.trim())) {
     reading = readRelation(model, { ...el, ownerId: context.id }, raw.trim(), memo, name, binding);
@@ -2042,9 +2043,10 @@ function literalEquality(
   literal: string,
   memo: DerivationMemo,
 ): RelationReading {
-  const text = `${exprRef(name)} == ${literal}`;
+  const quoted = keySegment(name);
+  const text = `${quoted} == ${literal}`;
   const body = parseRelationBody(text);
-  const nameToId = new Map<string, ElementId>([[name, featureId]]);
+  const nameToId = new Map<string, ElementId>([[quoted, featureId]]);
   if (!body || (body.hadUnit && !body.resolved)) {
     // Gated over an unparseable side, the reading is refused with the gates' own reason.
     return gateRelation(model, { kind: 'ref', path: [`${name} == ${literal}`] }, nameToId, NO_MARKERS, false, memo, false, text);
@@ -2058,7 +2060,7 @@ function namesOf(node: ExprNode): string[] {
   const walk = (n: ExprNode): void => {
     switch (n.kind) {
       case 'ref':
-        out.add(n.path.join('.'));
+        out.add(refText(n));
         return;
       case 'unary':
         walk(n.operand);
@@ -2116,7 +2118,7 @@ function literalAxiom(
 ): Obligation {
   const value = raw;
   const nameToId = new Map<string, ElementId>(idScopeFor(model, el.id));
-  nameToId.set(name, el.id);
+  nameToId.set(keySegment(name), el.id);
   // The parser's lexeme, where the double does not determine it (`text` on a
   // `num` node of ./expr): `m = 0.30000000000000001 [kg]` is read by the SMT
   // encoder as the double it parsed to, exactly as the same numeral written
@@ -2131,7 +2133,7 @@ function literalAxiom(
         ? { kind: 'bool', value }
         : { kind: 'num', value, ...(text !== undefined ? { text } : {}) },
   };
-  const written = `${name} == ${text ?? String(value)}`;
+  const written = `${keySegment(name)} == ${text ?? String(value)}`;
   const reading = gateRelation(model, node, nameToId, NO_MARKERS, false, memo, true, written);
   return {
     requirement: null,

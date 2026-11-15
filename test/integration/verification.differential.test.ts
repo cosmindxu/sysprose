@@ -16546,6 +16546,28 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'AD::RF::«ConstraintUsage» in AD::In::«Satisfy»': ['?/-/?/-', '?'],
       'AD::RF::«ConstraintUsage» in AD::W::p1': ['-/?/-/?', '?'],
     }),
+    'pa5-quoted-dot': probe(`package PA5Q {
+        part def P { attribute 'a.b' : Real = 3.0; attribute 'x:y' : Real = 5.0; }
+        part p : P;
+        constraint k { p.'a.b' == 3.0 }
+        constraint kf { p.'a.b' == 4.0 }
+        constraint c { p.'x:y' == 5.0 }
+      }`, {
+      'PA5Q::k': ['T/T/T/T', 'T'],
+      'PA5Q::kf': ['F/F/F/F', 'F'],
+      'PA5Q::c': ['T/T/T/T', 'T'],
+    }),
+    'pa5-quoted-vs-path': probe(`package PA5S {
+        part a { attribute b : Real = 9.0; }
+        attribute 'a.b' : Real = 3.0;
+        constraint q { 'a.b' == 3.0 }
+        constraint qp { a.b == 9.0 }
+        constraint wrong { 'a.b' == 9.0 }
+      }`, {
+      'PA5S::q': ['T/T/T/T', 'T'],
+      'PA5S::qp': ['T/T/T/T', 'T'],
+      'PA5S::wrong': ['F/F/F/F', 'F'],
+    }),
     'pa4-qualified': probe(`package PA4Q {
         part def Q { attribute x : Real = 3.0; }
         part q : Q;

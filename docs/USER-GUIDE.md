@@ -203,10 +203,10 @@ name in single quotes, and it is a name wherever a plain one is: a declaration, 
 (`'battery pack'.capacity`), a binding end, a redefinition (`:>> 'max load'`) and an
 expression, where `'max load' <= 10.0 [kg]`, `'ref' == a * b` and `'in' + 'default'` read
 the features of those names, exactly as `maxLoad <= 10.0 [kg]` would. A string is
-double-quoted, so `"max load"` stays text. The one name an expression cannot hold is a
-quoted one that itself contains a `.` or a `:` (`'a.b'`), which a path would cut in two: every
-surface abstains on an expression holding one, and the check and numeric rows say why. A
-feature declared with a dot in its name is read by no path either (`a.b` is not `'a.b'`).
+double-quoted, so `"max load"` stays text. A name holding a `.` or a `:` — `'a.b'`,
+`'x:y'` — is a name like any other since a5 PA5: written in quotes it reads that one feature,
+and written bare `a.b` stays the path `a` then `b`, so the two never answer for each other.
+A feature whose declared name holds a dot is read only by its quoted spelling.
 
 **Ports and connections.** A port is a typed interaction point with a direction;
 a connection wires two of them.

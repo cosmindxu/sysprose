@@ -112,7 +112,7 @@ import {
 } from './defining-equation';
 import { anyHiddenByName, effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
-import { evaluate, exprRef, exprRefusal, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { evaluate, exprRef, exprRefusal, parseExpr, refText, type EvalResult, type ExprNode } from './expr';
 import { resolveFullName } from './bind';
 import {
   NO_MARKERS,
@@ -5954,7 +5954,7 @@ function decidedRefusal(
 function referencedNames(node: ExprNode): string[] {
   switch (node.kind) {
     case 'ref':
-      return [node.path.join('.')];
+      return [refText(node)];
     case 'unary':
       return referencedNames(node.operand);
     case 'binary':

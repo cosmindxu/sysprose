@@ -159,19 +159,26 @@ const SINGLE_OPS = new Set(['+', '-', '*', '/', '%', '^', '<', '>', ',']);
  * (a string is double-quoted). Returns the name unquoted and unescaped, the
  * form `declaredName` holds, and the index after the closing quote.
  *
- * A name holding `.`, `:` or nothing at all is refused (a SyntaxError, so the
- * expression is not read): the evaluators carry a reference as its segments
- * joined by `.`, in which `'a.b'` and `a.b` would be one text.
+ * A name holding `.` or `:` is a name like any other (PA5): its key keeps the
+ * quote marks ({@link refText}), so `'a.b'` names that one feature and never a
+ * path `a.b`. Only an empty name is refused.
  */
 export function readQuotedName(src: string, i: number): { name: string; end: number } {
   let j = i + 1;
   while (j < src.length && src[j] !== "'") j += src[j] === '\\' ? 2 : 1;
   if (j >= src.length) throw new SyntaxError(`Unterminated quoted name at ${i}`);
   const name = unquoteName(src.slice(i, j + 1)) ?? '';
-  if (name === '' || /[.:]/.test(name)) {
-    throw new SyntaxError(`A quoted name holding '.', ':' or nothing is not read in an expression: ${src.slice(i, j + 1)}`);
-  }
+  if (name === '') throw new SyntaxError(`A quoted name holding nothing is not read in an expression: ${src.slice(i, j + 1)}`);
   return { name, end: j + 1 };
+}
+
+/**
+ * A path segment's key: quoted where it holds `.` (the path separator) or `:`
+ * (the qualifier), raw otherwise — the one spelling both a scope registers and
+ * an expression reads (PA5). `a.b` is a path; `'a.b'` is one feature.
+ */
+export function keySegment(seg: string): string {
+  return /[.:]/.test(seg) ? `'${seg.replace(/[\\']/g, '\\$&')}'` : seg;
 }
 
 /**
@@ -545,7 +552,7 @@ export function mapExpr(node: ExprNode, f: (ref: Extract<ExprNode, { kind: 'ref'
 
 /** A ref as an evaluator keys it: `Q::x` for a qualified name, else the dotted path. */
 export function refText(node: Extract<ExprNode, { kind: 'ref' }>): string {
-  const path = node.path.join('.');
+  const path = node.path.map(keySegment).join('.');
   return node.qualifier !== undefined ? `${node.qualifier}::${path}` : path;
 }
 

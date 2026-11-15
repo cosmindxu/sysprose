@@ -850,7 +850,7 @@ function varsOf(node: ExprNode, walk: Walk): string[] {
   const visit = (n: ExprNode): void => {
     switch (n.kind) {
       case 'ref': {
-        const v = walk.vars.get(n.path.join('.'));
+        const v = walk.vars.get(refText(n));
         if (v && !seen.has(v.qualifiedName)) {
           seen.add(v.qualifiedName);
           out.push(v.qualifiedName);

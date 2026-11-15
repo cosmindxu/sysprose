@@ -62,7 +62,7 @@ import {
   shadowedNamesOf,
   shadowedSentence,
 } from './defining-equation';
-import { evaluate, type ExprNode } from './expr';
+import { evaluate, refText, type ExprNode } from './expr';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import {
   parseRelationBody,
@@ -1240,11 +1240,11 @@ export function bareBoundOf(node: ExprNode | null): BareBound | undefined {
   const up = node.op === '<' || node.op === '<=';
   if (node.left.kind === 'ref') {
     const value = number(node.right);
-    return value === undefined ? undefined : { path: node.left.path.join('.'), side: up ? 'upper' : 'lower', strict, value };
+    return value === undefined ? undefined : { path: refText(node.left), side: up ? 'upper' : 'lower', strict, value };
   }
   if (node.right.kind === 'ref') {
     const value = number(node.left);
-    return value === undefined ? undefined : { path: node.right.path.join('.'), side: up ? 'lower' : 'upper', strict, value };
+    return value === undefined ? undefined : { path: refText(node.right), side: up ? 'lower' : 'upper', strict, value };
   }
   return undefined;
 }
@@ -1342,7 +1342,7 @@ function pathsOf(node: ExprNode): string[] {
   const walk = (n: ExprNode): void => {
     switch (n.kind) {
       case 'ref': {
-        const path = n.path.join('.');
+        const path = refText(n);
         if (!seen.has(path)) {
           seen.add(path);
           out.push(path);
@@ -1434,7 +1434,7 @@ function unsupportedOperator(node: ExprNode): Refusal | undefined {
 function readsFree(node: ExprNode, free: ReadonlySet<string>): boolean {
   switch (node.kind) {
     case 'ref':
-      return free.has(node.path.join('.'));
+      return free.has(refText(node));
     case 'unary':
       return readsFree(node.operand, free);
     case 'binary':

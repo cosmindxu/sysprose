@@ -10836,3 +10836,85 @@ constraint kf { Q::x == 9.0 }
     expect(refused).toBeGreaterThan(20);
   }, 300_000);
 });
+
+describe('PA5: a quoted name holding `.` or `:` is a name like any other', () => {
+  /** Every check of `text` as `[qualified name, result]`, sorted. */
+  const rows = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return checkConstraints(m!)
+      .map((c) => [m!.qualifiedName(c.id), c.result] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  /** What the literal engine claims of `text`, by qualified name. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(report.results.map((r) => [r.clause.qualifiedName, r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown'] as const));
+  };
+
+  it('reads a quoted dot name and a quoted colon name, on the check and literal surfaces (dot.sysml)', async () => {
+    const text = `package DOT {
+part def P { attribute 'a.b' : Real = 3.0; attribute 'x:y' : Real = 5.0; }
+part p : P;
+constraint k { p.'a.b' == 3.0 }
+constraint kf { p.'a.b' == 4.0 }
+constraint c { p.'x:y' == 5.0 }
+}`;
+    expect(await rows(text)).toEqual([
+      ['DOT::c', 'satisfied'],
+      ['DOT::k', 'satisfied'],
+      ['DOT::kf', 'violated'],
+    ]);
+    const lit = await literal(text);
+    expect(['DOT::c', 'DOT::k', 'DOT::kf'].map((n) => [n, lit.get(n)])).toEqual([
+      ['DOT::c', 'satisfied'],
+      ['DOT::k', 'satisfied'],
+      ['DOT::kf', 'violated'],
+    ]);
+  });
+
+  it('keeps a quoted dot name and the same text as a path apart: one is a feature, the other two names', async () => {
+    // `'a.b'` is the package's own a.b (3), `a.b` is a's b (9): neither reads the other.
+    const text = `package SH {
+part a { attribute b : Real = 9.0; }
+attribute 'a.b' : Real = 3.0;
+constraint q { 'a.b' == 3.0 }
+constraint qp { a.b == 9.0 }
+constraint wrong { 'a.b' == 9.0 }
+}`;
+    expect(await rows(text)).toEqual([
+      ['SH::q', 'satisfied'],
+      ['SH::qp', 'satisfied'],
+      ['SH::wrong', 'violated'],
+    ]);
+  });
+
+  it('gen-pa5: 150 models read a quoted name by its value, and its path spelling stays another name', async () => {
+    let seed = 27182;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let decided = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const pkg = `P${i}`;
+      const sep = i % 3 === 0 ? ':' : '.';
+      const qname = `a${sep}b.${i % 5 === 0 ? 'c' : 'd'}`;
+      const quoted = `'${qname}'`;
+      const wrapped = i % 4 === 0;
+      const place = (body: string) => (wrapped ? `package In${i} { ${body} }` : body);
+      const head = `part def Q${i % 7} { attribute ${quoted} : Real = ${v}.0; }`;
+      const host = `part q${i} : Q${i % 7};`;
+      const read = `${host.slice(5)}.${quoted}`; // `q3.'a.b.c'`
+      const text = `package ${pkg} {\n  ${head}\n  ${place(`part q${i} : Q${i % 7}; constraint k { q${i}.${quoted} == ${k}.0 }`)}\n}`;
+      const got = await rows(text);
+      expect(got.map(([n, r]) => [n.endsWith('::k'), r]), text).toEqual([[true, v === k ? 'satisfied' : 'violated']]);
+      decided++;
+      void read;
+    }
+    expect(decided).toBe(150);
+  }, 300_000);
+});

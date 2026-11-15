@@ -743,7 +743,7 @@ export function lowerQualifiedLiterals(model: Model, node: ExprNode, contextId?:
 export function namesReadIn(node: ExprNode): string[] {
   switch (node.kind) {
     case 'ref':
-      return [node.path.join('.')];
+      return [refText(node)];
     case 'unary':
       return namesReadIn(node.operand);
     case 'binary':

@@ -90,7 +90,7 @@ import {
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
-import { connective, DOUBLE_DIGITS, readQuotedName, significantDigitsOf, type Tri } from './expr';
+import { connective, DOUBLE_DIGITS, keySegment, readQuotedName, significantDigitsOf, type Tri } from './expr';
 import {
   addRationals,
   compareRationals,
@@ -653,7 +653,8 @@ function lexQ(src: string): QTok[] {
       while (j < n) {
         if (src[j] === "'" && (j === i || src[j - 1] === '.')) {
           const q = readQuotedName(src, j);
-          word += q.name;
+          // A quoted name's key keeps its quotes where it holds `.` or `:` (PA5), as the expression reader keys it.
+          word += keySegment(q.name);
           j = q.end;
           quoted = true;
           closed = true;
