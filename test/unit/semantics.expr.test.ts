@@ -139,10 +139,16 @@ describe('semantics — expression parser + evaluator', () => {
     expect(parseExpr("'it\\'s'")).toEqual({ kind: 'ref', path: ["it's"] });
   });
 
-  it('a quoted name holding `.` or `:`, or nothing, is not read (it would join like a path)', () => {
-    expect(() => parseExpr("'a.b' + 1")).toThrow(/quoted name/);
-    expect(() => parseExpr("'A::b' + 1")).toThrow(/quoted name/);
-    expect(() => parseExpr("'' + 1")).toThrow(/quoted name/);
+  it('a quoted name holding `.` or `:` is one name (keyed with its quotes), and an empty one is not read', () => {
+    // Since a5 PA5 the quote marks are the key: `'a.b'` is one feature, `a.b` the path a then b.
+    expect(parseExpr("'a.b' + 1")).toEqual({
+      kind: 'binary',
+      op: '+',
+      left: { kind: 'ref', path: ['a.b'] },
+      right: { kind: 'num', value: 1 },
+    });
+    expect(parseExpr("'A::b' + 1").kind).toBe('binary');
+    expect(() => parseExpr("'' + 1")).toThrow(/quoted name|quoted name holding nothing/);
     expect(() => parseExpr("'open + 1")).toThrow(/Unterminated/);
   });
 
