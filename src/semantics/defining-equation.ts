@@ -46,7 +46,7 @@ import {
 } from './inheritance';
 import { resolveFullName, unreadScopes, type UnreadScope } from './bind';
 import { evaluateDecided } from './exact';
-import { exprEqual, writtenChains, type ExprNode } from './expr';
+import { exprEqual, exprRefusal, keySegment, refText, writtenChains, type ExprNode } from './expr';
 import { isKindOf } from './metaclasses';
 import { decimalRational, scaleRational, type Rational } from './smt/encode';
 import { NO_MARKERS, parseRelationBody, substituteLiterals, type MarkerDimensions } from './unit-literals';
@@ -169,6 +169,10 @@ function equationsByName(model: Model, ownerId: ElementId): Map<string, Defining
     if (!isAsserted(c)) continue;
     // Each conjunct of an asserted conjunction, as the assert it would be written alone ({@link assertConjuncts}).
     for (const { node, literals, part } of equationsOf(model, c)) {
+      // An equation over a call, an arrow or a qualified name no literal reads defines nothing this tool
+      // reads (PA4): the body is read as one that does not parse, while the check and verify surfaces name
+      // the construct — the asserted definition of `M == max(L, 20.0)` is no value M has.
+      if (exprRefusal(node) !== undefined) continue;
       const of = part ? { part } : {};
       // A DOTTED defined name (`assert constraint { p.x == 3.0 }`) indexes under
       // the whole path; a single-segment ref is the bare name it always was.
@@ -1063,14 +1067,15 @@ export class DefiningEquations {
       const one = this.oneStatement(ownerId);
       for (const feat of this.features(ownerId)) {
         const name = this.nameOf(feat);
-        // A name holding a dot ('a.b') is not offered: the path text `a.b` would read it, where the path `a` then `b` has no
-        // such member (a dot-named declaration answered an unresolved path).
-        if (!name || name.includes('.')) continue;
+        if (!name) continue;
+        // A name holding an unquoted dot or colon is offered under its QUOTED key (`'a.b'`, `'x:y'`): the path text
+        // `a.b` stays the path `a` then `b`, and an expression reads the dot-named feature by quoting it (PA5).
+        const registered = keySegment(name);
         // A value that a binding joins to a scope the page leaves unread is not offered: the saved file may find the other end
         // in a value of its own (a conflict, or this one gives way) or in none (this one stands), and the page cannot say.
         const joined = this.seedJoinedToUnread(feat);
         if (joined !== undefined) {
-          for (const n of [name, ...this.aliasesOf(feat)]) {
+          for (const n of [registered, ...this.aliasesOf(feat).map(keySegment)]) {
             const full = prefix ? `${prefix}.${n}` : n;
             if (!held.has(full)) held.set(full, joined);
             joinedPaths.add(full);
@@ -1089,10 +1094,10 @@ export class DefiningEquations {
         // A directed feature is its owner's parameter: never a nested bare name.
         const own = inBody || isDirected(feat);
         const shared = this.sharedAfterOne(ownerId, one);
-        for (const n of [name, ...this.aliasesOf(feat)]) {
+        for (const n of [registered, ...this.aliasesOf(feat)]) {
           const full = prefix ? `${prefix}.${n}` : n;
           // An alias two features share stays claimed, and answers neither ({@link sharedAliases}).
-          if (!ids.has(full) && (n === name || !shared.has(n))) ids.set(full, denoted);
+          if (!ids.has(full) && (n === registered || !shared.has(n))) ids.set(full, denoted);
           if (prefix === '') direct.add(n);
           else if (!own) {
             const seen = nested.get(n);
@@ -1109,7 +1114,7 @@ export class DefiningEquations {
         const bound = subject !== undefined && into !== feat ? this.boundInstance(ownerId, feat, into, { instance, enclosing }) : undefined;
         visit(
           into.id,
-          prefix ? `${prefix}.${name}` : name,
+          prefix ? `${prefix}.${registered}` : registered,
           own || ownsBody(feat),
           inCall || isCall(this.model, feat),
           bound?.instance ?? (subsetted ? this.instanceBelow(instance, subsetted, this.nameOf(subsetted) ?? name, prefix === '') : this.instanceBelow(instance, feat, name, prefix === '')),
@@ -4859,7 +4864,7 @@ function refsIn(node: ExprNode, literals: MarkerDimensions): string[] {
   const walk = (n: ExprNode): void => {
     switch (n.kind) {
       case 'ref': {
-        const path = n.path.join('.');
+        const path = refText(n);
         if (!literals.has(path)) out.push(path);
         return;
       }
@@ -5118,7 +5123,7 @@ function enclosed(t: string): boolean {
  */
 function definedName(n: ExprNode, literals: MarkerDimensions = NO_MARKERS): string | undefined {
   if (n.kind !== 'ref' || n.path.length === 0) return undefined;
-  return n.path.some((s) => literals.has(s)) ? undefined : n.path.join('.');
+  return n.path.some((s) => literals.has(s)) ? undefined : refText(n);
 }
 
 /** The bare name a side of an equation is, a lowered `[unit]` literal's marker excluded. */

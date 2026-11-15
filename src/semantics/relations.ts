@@ -28,10 +28,11 @@
  * arguments.
  */
 
-import { type ElementId, type ElementRecord, type Model } from '@core/index';
+import { isUsage, type ElementId, type ElementRecord, type Model } from '@core/index';
 import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf } from './defining-equation';
-import { type ExprNode } from './expr';
-import { generalizationsOf } from './inheritance';
+import { mapExpr, refText, type ExprNode } from './expr';
+import { resolveFullName } from './bind';
+import { generalizationsOf, redefinedClosure } from './inheritance';
 import {
   declaredFacetsOf,
   derivationOf,
@@ -719,10 +720,30 @@ export function operandRefusal(
 const NO_NAMES: ReadonlySet<string> = new Set();
 
 /** Every name an expression reads, in source order (repeats included). */
+/**
+ * A qualified name whose feature states an `=` literal, lowered to that numeral (PA4, decision 10): the one
+ * value a qualified name is read at, the same in every instance, so every lane reads it alike (the check's
+ * scope, the solver's names, the SMT encoder's terms). A `default`, a unit, an expression or an enumeration
+ * literal stays the ref it was — this tool reads it nowhere, and the refusal names it.
+ */
+export function lowerQualifiedLiterals(model: Model, node: ExprNode, contextId?: ElementId): ExprNode {
+  return mapExpr(node, (ref) => {
+    if (ref.qualifier === undefined || ref.path.length !== 1) return ref;
+    // The name as written where the relation is written: `Q::x` in package P is P's Q, by KerML's resolution.
+    const hit = contextId != null ? resolveFullName(model, refText(ref), contextId) : model.resolveQualifiedName(refText(ref));
+    if (!hit || hit.attrs.isLibrary === true || !isUsage(hit.eClass)) return ref;
+    const stated = [hit, ...redefinedClosure(model, hit)].find((g) => g.attrs.value !== undefined && g.attrs.value !== null);
+    if (!stated || stated.attrs.defaultValue === true) return ref;
+    const text = typeof stated.attrs.valueText === 'string' ? stated.attrs.valueText : String(stated.attrs.value);
+    const numerals = /^\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*$/.exec(text);
+    return numerals ? { kind: 'num', value: Number(numerals[1]) } : ref;
+  });
+}
+
 export function namesReadIn(node: ExprNode): string[] {
   switch (node.kind) {
     case 'ref':
-      return [node.path.join('.')];
+      return [refText(node)];
     case 'unary':
       return namesReadIn(node.operand);
     case 'binary':
@@ -1163,7 +1184,7 @@ function lexicalPaths(
   for (let o = model.get(outer)?.ownerId ?? undefined; o != null && !seen.has(o); o = model.get(o)?.ownerId ?? undefined) {
     seen.add(o);
     const kind = model.get(o)?.eClass;
-    if (kind === 'Package' || kind === 'LibraryPackage') {
+    if (kind === 'Package' || kind === 'LibraryPackage' || soleInstance(model, definitions, o)) {
       const denoted = definitions.denote(o);
       for (const [head, entries] of dottedOf(definitions, o)) {
         if (!text.includes(head) || near.some((h) => h.has(head))) continue;
@@ -1181,6 +1202,25 @@ function lexicalPaths(
     near.push(headsOf(definitions, o));
   }
   return out;
+}
+
+/**
+ * Is `o` a usage that is ONE instance — so a feature below it is one feature wherever it is read? Every owner from `o`
+ * up to the package is a usage (no definition, whose usages are read in each instance of it) of multiplicity one, and
+ * nothing specialises it or any of those owners (a specialiser may redefine what is below it). An enclosing usage that
+ * is not one is left to the per-instance reading, as before.
+ */
+function soleInstance(model: Model, definitions: Definitions, o: ElementId): boolean {
+  const seen = new Set<ElementId>();
+  for (let x = model.get(o); x && !seen.has(x.id); x = x.ownerId != null ? model.get(x.ownerId) : undefined) {
+    seen.add(x.id);
+    if (x.eClass === 'Package' || x.eClass === 'LibraryPackage') return true;
+    if (!isUsage(x.eClass) || x.attrs.isLibrary === true || x.attrs.isRef === true || x.attrs.implicit === true) return false;
+    const m = x.attrs.multiplicity;
+    if (m !== undefined && m !== null && String(m).trim() !== '' && String(m).trim() !== '1' && String(m).trim() !== '1..1') return false;
+    if (definitions.specialisersOf(x.id).length > 0) return false;
+  }
+  return false;
 }
 
 /**

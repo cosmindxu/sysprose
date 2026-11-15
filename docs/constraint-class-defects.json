@@ -65,7 +65,7 @@
         "text-as-real"
       ],
       "kind": "wrong-statement",
-      "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface)."
+      "note": "bound.detail says \u201cdecided by z3\u201d on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface)."
     },
     {
       "id": "D-x-pow-neg",
@@ -74,16 +74,7 @@
         "fence/unsupported-operator"
       ],
       "kind": "wrong-statement",
-      "note": "`x ^ -1` is refused as “the exponent is not a literal” (contracts.ts tests the unary minus as a non-number)."
-    },
-    {
-      "id": "D-unparseable-words",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "fence/unparseable"
-      ],
-      "kind": "wrong-statement",
-      "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation” although they are constructs the expression reader does not take; an enum comparison is unparseable (verification/not-evaluable), which no flag forgives."
+      "note": "`x ^ -1` is refused as \u201cthe exponent is not a literal\u201d (contracts.ts tests the unary minus as a non-number)."
     }
   ],
   "resolved": [

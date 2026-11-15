@@ -62,7 +62,7 @@ import {
   shadowedNamesOf,
   shadowedSentence,
 } from './defining-equation';
-import { evaluate, type ExprNode } from './expr';
+import { evaluate, refText, type ExprNode } from './expr';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import {
   parseRelationBody,
@@ -76,6 +76,7 @@ import {
   type LoweredLiteral,
   type MarkerDimensions,
   type ScaleMap,
+  lowerQualifiedLiterals,
 } from './relations';
 import { getRequirementAttr, requirementShortId } from './requirements';
 import { keywordsOnRecord } from './keywords';
@@ -890,9 +891,12 @@ function readRelationAsWritten(
     });
   }
 
-  const shadowed = shadowedNamesOf(model, el, pathsOf(body.node).filter((p) => !body.literals.has(p)));
+  // A qualified name whose feature states an `=` literal is this numeral (PA4, decision 10), as the check's
+  // scope reads it: one value, the same in every instance, so every lane reads it alike.
+  const lowered = lowerQualifiedLiterals(model, body.node, el.ownerId ?? el.id);
+  const shadowed = shadowedNamesOf(model, el, pathsOf(lowered).filter((p) => !body.literals.has(p)));
   const nameToId = relationScope(model, el);
-  let node = body.node;
+  let node = lowered;
   // A binding's equality read in a context (`p.load == L` for q, E9) is an
   // identity, as the binding's own row (`bindAxiom` of ./obligations) reads
   // it, so gate (e) is not asked of it (`derivedBareLiteral` of ./relations),
@@ -903,7 +907,7 @@ function readRelationAsWritten(
   let identity = false;
   if (assignTo !== undefined) {
     nameToId.set(assignTo, el.id);
-    node = { kind: 'binary', op: '==', left: { kind: 'ref', path: [assignTo] }, right: body.node };
+    node = { kind: 'binary', op: '==', left: { kind: 'ref', path: [assignTo] }, right: lowered };
     // A value that is a BARE REFERENCE states an identity of two physical
     // values rather than asking one, so it converts across an affine map — the
     // same exemption `assignmentEquation` makes for `attribute t3 = t1;`.
@@ -1236,11 +1240,11 @@ export function bareBoundOf(node: ExprNode | null): BareBound | undefined {
   const up = node.op === '<' || node.op === '<=';
   if (node.left.kind === 'ref') {
     const value = number(node.right);
-    return value === undefined ? undefined : { path: node.left.path.join('.'), side: up ? 'upper' : 'lower', strict, value };
+    return value === undefined ? undefined : { path: refText(node.left), side: up ? 'upper' : 'lower', strict, value };
   }
   if (node.right.kind === 'ref') {
     const value = number(node.left);
-    return value === undefined ? undefined : { path: node.right.path.join('.'), side: up ? 'lower' : 'upper', strict, value };
+    return value === undefined ? undefined : { path: refText(node.right), side: up ? 'lower' : 'upper', strict, value };
   }
   return undefined;
 }
@@ -1338,7 +1342,7 @@ function pathsOf(node: ExprNode): string[] {
   const walk = (n: ExprNode): void => {
     switch (n.kind) {
       case 'ref': {
-        const path = n.path.join('.');
+        const path = refText(n);
         if (!seen.has(path)) {
           seen.add(path);
           out.push(path);
@@ -1430,7 +1434,7 @@ function unsupportedOperator(node: ExprNode): Refusal | undefined {
 function readsFree(node: ExprNode, free: ReadonlySet<string>): boolean {
   switch (node.kind) {
     case 'ref':
-      return free.has(node.path.join('.'));
+      return free.has(refText(node));
     case 'unary':
       return readsFree(node.operand, free);
     case 'binary':

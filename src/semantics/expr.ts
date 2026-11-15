@@ -53,7 +53,16 @@ export type ExprNode =
   | { kind: 'str'; value: string }
   | { kind: 'bool'; value: boolean }
   | { kind: 'null' }
-  | { kind: 'ref'; path: string[] }
+  /**
+   * A name, or a chain of names. A `qualifier` (`Q::x`, `A::B::x`) is read only
+   * where the feature it names states an `=` literal ({@link parseExpr}'s PA4
+   * rule): the value one instance cannot change.
+   */
+  | { kind: 'ref'; path: string[]; qualifier?: string }
+  /** A call (`sum(...)`, `Lib::f(...)`): parsed, and read by no lane of this tool. */
+  | { kind: 'call'; name: string; args: ExprNode[] }
+  /** A feature chain's arrow (`xs->forAll(...)`), kept as its text: no lane reads it. */
+  | { kind: 'arrow'; left: ExprNode; text: string }
   | { kind: 'unary'; op: '-' | '+' | 'not'; operand: ExprNode }
   | { kind: 'binary'; op: BinaryOp; left: ExprNode; right: ExprNode }
   | { kind: 'if'; cond: ExprNode; then: ExprNode; else: ExprNode };
@@ -131,6 +140,8 @@ type Tok =
   | { t: 'op'; v: string }
   | { t: 'lparen' }
   | { t: 'rparen' }
+  /** `->...`: the whole remaining text, verbatim (its body may hold `|`). */
+  | { t: 'arrow'; v: string }
   | { t: 'eof' };
 
 const KEYWORDS = new Set([
@@ -138,8 +149,8 @@ const KEYWORDS = new Set([
 ]);
 
 // Multi-character operators must be tried before their single-char prefixes.
-const MULTI_OPS = ['<=', '>=', '==', '!='];
-const SINGLE_OPS = new Set(['+', '-', '*', '/', '%', '^', '<', '>']);
+const MULTI_OPS = ['<=', '>=', '==', '!=', '::'];
+const SINGLE_OPS = new Set(['+', '-', '*', '/', '%', '^', '<', '>', ',']);
 
 /**
  * Read the single-quoted unrestricted name that opens at `src[i]` (`'max load'`,
@@ -148,19 +159,26 @@ const SINGLE_OPS = new Set(['+', '-', '*', '/', '%', '^', '<', '>']);
  * (a string is double-quoted). Returns the name unquoted and unescaped, the
  * form `declaredName` holds, and the index after the closing quote.
  *
- * A name holding `.`, `:` or nothing at all is refused (a SyntaxError, so the
- * expression is not read): the evaluators carry a reference as its segments
- * joined by `.`, in which `'a.b'` and `a.b` would be one text.
+ * A name holding `.` or `:` is a name like any other (PA5): its key keeps the
+ * quote marks ({@link refText}), so `'a.b'` names that one feature and never a
+ * path `a.b`. Only an empty name is refused.
  */
 export function readQuotedName(src: string, i: number): { name: string; end: number } {
   let j = i + 1;
   while (j < src.length && src[j] !== "'") j += src[j] === '\\' ? 2 : 1;
   if (j >= src.length) throw new SyntaxError(`Unterminated quoted name at ${i}`);
   const name = unquoteName(src.slice(i, j + 1)) ?? '';
-  if (name === '' || /[.:]/.test(name)) {
-    throw new SyntaxError(`A quoted name holding '.', ':' or nothing is not read in an expression: ${src.slice(i, j + 1)}`);
-  }
+  if (name === '') throw new SyntaxError(`A quoted name holding nothing is not read in an expression: ${src.slice(i, j + 1)}`);
   return { name, end: j + 1 };
+}
+
+/**
+ * A path segment's key: quoted where it holds `.` (the path separator) or `:`
+ * (the qualifier), raw otherwise — the one spelling both a scope registers and
+ * an expression reads (PA5). `a.b` is a path; `'a.b'` is one feature.
+ */
+export function keySegment(seg: string): string {
+  return /[.:]/.test(seg) ? `'${seg.replace(/[\\']/g, '\\$&')}'` : seg;
 }
 
 /**
@@ -271,6 +289,13 @@ function tokenize(src: string): Tok[] {
       i = j;
       continue;
     }
+    // An arrow's body is no expression this parser reads (`xs->forAll(x | x > 0)`), and its text is
+    // what the refusal names: swallow the rest of the body as one token (PA4).
+    if (c === '-' && src[i + 1] === '>') {
+      toks.push({ t: 'arrow', v: src.slice(i).trim() });
+      i = n;
+      continue;
+    }
     // Feature-chain separator.
     if (c === '.') {
       toks.push({ t: 'op', v: '.' });
@@ -379,6 +404,13 @@ class Parser {
   private parseBinary(minPrec: number): ExprNode {
     let left = this.parseUnary();
     for (;;) {
+      // An arrow takes the rest of the expression as its text (`xs->forAll(x | x > 0)`): one node, refused
+      // by name. Its body is no expression this parser reads.
+      if (this.peek().t === 'arrow') {
+        const arrow = this.next() as { t: 'arrow'; v: string };
+        left = { kind: 'arrow', left, text: arrow.v };
+        continue;
+      }
       const op = this.binaryOpHere();
       if (op === undefined) break;
       const prec = PRECEDENCE[op];
@@ -417,15 +449,45 @@ class Parser {
         return inner;
       }
       case 'name': {
-        const path = [tk.v];
+        // A qualified name (`Q::x`, `A::B::x`): the segments before the last join the qualifier.
+        const head = [tk.v];
+        while (this.peek().t === 'op' && (this.peek() as { v: string }).v === '::') {
+          this.next();
+          const seg = this.next();
+          if (seg.t !== 'name') throw new SyntaxError('Expected a name after "::"');
+          head.push(seg.v);
+        }
+        const qualifier = head.length > 1 ? head.slice(0, -1).join('::') : undefined;
+        const path = [head[head.length - 1]!];
         while (this.peek().t === 'op' && (this.peek() as { v: string }).v === '.') {
-          // '.' is not emitted as an op by the lexer; kept for completeness.
           this.next();
           const seg = this.next();
           if (seg.t !== 'name') throw new SyntaxError('Expected name after "."');
           path.push(seg.v);
         }
-        return { kind: 'ref', path };
+        // A call: `sum(...)`, `Lib::f(...)` — parsed, with its arguments, and read by no lane.
+        if (this.peek().t === 'lparen') {
+          const name = [...(qualifier ? [qualifier] : []), ...path].join(qualifier ? '::' : '.').replace(/^([^:]+)::([^:]+)::/, '$1::$2::');
+          if (path.length > 1) {
+            // `Lib::f.x(...)` is no call this parser reads: keep it a ref (the `.` walked it).
+            return { kind: 'ref', path, ...(qualifier !== undefined ? { qualifier } : {}) };
+          }
+          this.next(); // '('
+          const args: ExprNode[] = [];
+          if (this.peek().t !== 'rparen') {
+            for (;;) {
+              args.push(this.parseBinary(0));
+              if (this.peek().t === 'op' && (this.peek() as { v: string }).v === ',') {
+                this.next();
+                continue;
+              }
+              break;
+            }
+          }
+          if (this.next().t !== 'rparen') throw new SyntaxError('Expected closing parenthesis of a call');
+          return { kind: 'call', name: qualifier !== undefined ? `${qualifier}::${path[0]!}` : path[0]!, args };
+        }
+        return { kind: 'ref', path, ...(qualifier !== undefined ? { qualifier } : {}) };
       }
       case 'kw':
         if (tk.v === 'true') return { kind: 'bool', value: true };
@@ -467,6 +529,78 @@ export function parseExpr(text: string): ExprNode {
   return new Parser(tokenize(text)).parse();
 }
 
+/** The tree with every ref put through `f` (children first; call arguments and arrow lefts included). */
+export function mapExpr(node: ExprNode, f: (ref: Extract<ExprNode, { kind: 'ref' }>) => ExprNode): ExprNode {
+  switch (node.kind) {
+    case 'ref':
+      return f(node);
+    case 'unary':
+      return { ...node, operand: mapExpr(node.operand, f) };
+    case 'binary':
+      return { ...node, left: mapExpr(node.left, f), right: mapExpr(node.right, f) };
+    case 'if':
+      return { ...node, cond: mapExpr(node.cond, f), then: mapExpr(node.then, f), else: mapExpr(node.else, f) };
+    case 'call':
+      return { ...node, args: node.args.map((a) => mapExpr(a, f)) };
+    case 'arrow':
+      // The arrow is refused whole, and its sentence names it as written: its left is never rewritten.
+      return node;
+    default:
+      return node;
+  }
+}
+
+/** A ref as an evaluator keys it: `Q::x` for a qualified name, else the dotted path. */
+export function refText(node: Extract<ExprNode, { kind: 'ref' }>): string {
+  const path = node.path.map(keySegment).join('.');
+  return node.qualifier !== undefined ? `${node.qualifier}::${path}` : path;
+}
+
+/** A construct's text, for the sentence that refuses it. */
+export function constructText(node: ExprNode): string {
+  switch (node.kind) {
+    case 'call':
+      return `${node.name}(...)`;
+    case 'arrow':
+      return `${node.left.kind === 'ref' ? refText(node.left) : '…'}${node.text}`;
+    default:
+      return '';
+  }
+}
+
+/**
+ * The first construct of `node` this tool does not read, with the sentence that names it (PA4): a call
+ * (`sum(...)`), an arrow (`xs->forAll(...)`), or a qualified name — an enumeration literal, or a feature
+ * that states no `=` literal (decision 10: a qualified name is read only there). `undefined` otherwise.
+ */
+export function exprRefusal(
+  node: ExprNode,
+  resolve?: (qualified: string) => string | undefined,
+): { reason: 'unsupported-operator' | 'unresolved-name'; detail: string } | undefined {
+  switch (node.kind) {
+    case 'call':
+      return { reason: 'unsupported-operator', detail: `the body calls \`${constructText(node)}\`, which this lane does not read` };
+    case 'arrow':
+      return { reason: 'unsupported-operator', detail: `the body reads \`${constructText(node)}\`, which this lane does not read` };
+    case 'ref': {
+      if (node.qualifier === undefined) return undefined;
+      const name = refText(node);
+      const kind = resolve?.(name);
+      return kind === 'EnumerationLiteral'
+        ? { reason: 'unsupported-operator', detail: `the body names \`${name}\`, an enumeration literal, which this lane does not read` }
+        : { reason: 'unresolved-name', detail: `the body names \`${name}\`, which this lane reads only where the feature states an \`=\` literal` };
+    }
+    case 'unary':
+      return exprRefusal(node.operand, resolve);
+    case 'binary':
+      return exprRefusal(node.left, resolve) ?? exprRefusal(node.right, resolve);
+    case 'if':
+      return exprRefusal(node.cond, resolve) ?? exprRefusal(node.then, resolve) ?? exprRefusal(node.else, resolve);
+    default:
+      return undefined;
+  }
+}
+
 /**
  * Two trees the same expression, node for node: the same operators, the same
  * names, and every number the same numeral — its value, the digits written
@@ -490,7 +624,11 @@ export function exprEqual(a: ExprNode, b: ExprNode): boolean {
     case 'null':
       return b.kind === 'null';
     case 'ref':
-      return b.kind === 'ref' && a.path.join('.') === b.path.join('.');
+      return b.kind === 'ref' && (a.qualifier ?? '') === (b.qualifier ?? '') && a.path.join('.') === b.path.join('.');
+    case 'call':
+      return b.kind === 'call' && a.name === b.name && a.args.length === b.args.length && a.args.every((x, i) => exprEqual(x, b.args[i]!));
+    case 'arrow':
+      return b.kind === 'arrow' && a.text === b.text && exprEqual(a.left, b.left);
     case 'unary':
       return b.kind === 'unary' && a.op === b.op && exprEqual(a.operand, b.operand);
     case 'binary':
@@ -546,9 +684,12 @@ export function evaluate(node: ExprNode, scope: (name: string) => unknown): Eval
     case 'null':
       return { value: null };
     case 'ref': {
-      const v = scope(node.path.join('.'));
+      const v = scope(refText(node));
       return v === undefined ? MISSING : { value: v };
     }
+    case 'call':
+    case 'arrow':
+      return MISSING;
     case 'unary':
       return evalUnary(node, scope);
     case 'binary':

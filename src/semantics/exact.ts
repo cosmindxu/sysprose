@@ -42,7 +42,7 @@
  * factors are logarithms) is that double's own rational.
  */
 
-import { connective, type ExprNode, type Tri } from './expr';
+import { connective, refText, type ExprNode, type Tri } from './expr';
 import { decimalRational, numeralRational, scaleRational, type Rational } from './smt/encode';
 import { resolveUnit, type FactorTerm } from './units';
 
@@ -462,12 +462,15 @@ function fold(node: ExprNode, scope: (name: string) => unknown, exact: ExactScop
     case 'null':
       return { value: null };
     case 'ref': {
-      const name = node.path.join('.');
+      const name = refText(node);
       const v = scope(name);
       if (v === undefined) return MISSING;
       const e = typeof v === 'number' ? exact(name) : undefined;
       return e ? { value: v, exact: e } : { value: v };
     }
+    case 'call':
+    case 'arrow':
+      return MISSING;
     case 'unary': {
       const r = fold(node.operand, scope, exact, opts);
       if (!known(r)) return r;

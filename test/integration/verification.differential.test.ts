@@ -16546,6 +16546,125 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'AD::RF::«ConstraintUsage» in AD::In::«Satisfy»': ['?/-/?/-', '?'],
       'AD::RF::«ConstraintUsage» in AD::W::p1': ['-/?/-/?', '?'],
     }),
+    'pa5-quoted-dot': probe(`package PA5Q {
+        part def P { attribute 'a.b' : Real = 3.0; attribute 'x:y' : Real = 5.0; }
+        part p : P;
+        constraint k { p.'a.b' == 3.0 }
+        constraint kf { p.'a.b' == 4.0 }
+        constraint c { p.'x:y' == 5.0 }
+      }`, {
+      'PA5Q::k': ['T/T/T/T', 'T'],
+      'PA5Q::kf': ['F/F/F/F', 'F'],
+      'PA5Q::c': ['T/T/T/T', 'T'],
+    }),
+    'pa5-quoted-vs-path': probe(`package PA5S {
+        part a { attribute b : Real = 9.0; }
+        attribute 'a.b' : Real = 3.0;
+        constraint q { 'a.b' == 3.0 }
+        constraint qp { a.b == 9.0 }
+        constraint wrong { 'a.b' == 9.0 }
+      }`, {
+      'PA5S::q': ['T/T/T/T', 'T'],
+      'PA5S::qp': ['T/T/T/T', 'T'],
+      'PA5S::wrong': ['F/F/F/F', 'F'],
+    }),
+    'pa4-qualified': probe(`package PA4Q {
+        part def Q { attribute x : Real = 3.0; }
+        part q : Q;
+        constraint k { Q::x == 3.0 }
+      }`, {
+      'PA4Q::k': ['T/T/T/T', 'T'],
+    }),
+    'pa4-qualified-shadow': probe(`package PA4S {
+        part def Q { attribute x : Real = 3.0; }
+        attribute x : Real = 9.0;
+        constraint k { Q::x == 3.0 }
+      }`, {
+      'PA4S::k': ['T/T/T/T', 'T'],
+    }),
+    'pa4-qualified-default': probe(`package PA4D {
+        part def Q { attribute x : Real default = 3.0; }
+        constraint k { Q::x == 3.0 }
+      }`, {
+      'PA4D::k': ['?/?/?/?', '?'],
+    }),
+    'pa4-call': probe(`package PA4C {
+        part def Q { attribute x : Real = 3.0; }
+        constraint k { sum(Q::x) == 3.0 }
+      }`, {
+      'PA4C::k': ['?/?/?/?', '?'],
+    }),
+    'pa4-arrow': probe(`package PA4A {
+        part def Q { attribute xs : Real = 3.0; }
+        constraint k { Q::xs->forAll(x) }
+      }`, {
+      'PA4A::k': ['?/?/?/?', '?'],
+    }),
+    'pa4-enum': probe(`package PA4E {
+        enum def Mode { on, off }
+        part q { attribute m : Mode = Mode::on; }
+        constraint k { q.m == Mode::on }
+      }`, {
+      'PA4E::k': ['?/?/?/?', '?'],
+    }),
+    'pa2-typed': probe(`package PA2T {
+        part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+        part def H { part p : P; }
+        part h : H;
+        assert constraint px { h.p.x == 3.0 }
+        constraint q { h.p.x == 3.0 }
+        constraint qf { h.p.x == 4.0 }
+      }`, {
+      'PA2T::P::ty': ['?/-/T/-', null],
+      'PA2T::px': ['T/-/T/-', 'T'],
+      'PA2T::q': ['T/T/T/T', 'T'],
+      'PA2T::qf': ['F/F/F/F', 'F'],
+    }),
+    'pa2-inline': probe(`package PA2I {
+        part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+        part h { part p : P; }
+        assert constraint px { h.p.x == 3.0 }
+        constraint q { h.p.x == 3.0 }
+        constraint qf { h.p.x == 4.0 }
+      }`, {
+      'PA2I::P::ty': ['?/-/T/-', null],
+      'PA2I::px': ['T/-/T/-', 'T'],
+      'PA2I::q': ['T/T/T/T', 'T'],
+      'PA2I::qf': ['F/F/F/F', 'F'],
+    }),
+    'pa1-usage-body': probe(`package PA1 {
+        part a { attribute u : Real = 2.0; part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } constraint kf { b.v == 6.0 } } }
+      }`, {
+      'PA1::a::c::k': ['T/T/T/T', 'T'],
+      'PA1::a::c::kf': ['F/F/F/F', 'F'],
+    }),
+    'pa1-usage-body-inst': probe(`package PA1I {
+        part a1 { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+        part a2 { part b { attribute v : Real = 6.0; } part c { constraint k { b.v == 5.0 } } }
+      }`, {
+      'PA1I::a1::c::k': ['T/T/T/T', 'T'],
+      'PA1I::a2::c::k': ['F/F/F/F', 'F'],
+    }),
+    'pa1-usage-body-amb-ab': probe(`package PA1A {
+        package L1 { part b { attribute v : Real = 5.0; } }
+        package L2 { part b { attribute v : Real = 6.0; } }
+        part a { import L1::*; import L2::*; part c { constraint k { b.v == 5.0 } } }
+      }`, {
+      'PA1A::a::c::k': ['?/?/?/?', '?'],
+    }),
+    'pa1-usage-body-amb-ba': probe(`package PA1B {
+        package L1 { part b { attribute v : Real = 5.0; } }
+        package L2 { part b { attribute v : Real = 6.0; } }
+        part a { import L2::*; import L1::*; part c { constraint k { b.v == 5.0 } } }
+      }`, {
+      'PA1B::a::c::k': ['?/?/?/?', '?'],
+    }),
+    'pa1-usage-body-def': probe(`package PA1D {
+        part def A { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+        part a : A;
+      }`, {
+      'PA1D::A::c::k': ['?/?/?/?', '?'],
+    }),
     'sat-nested-nq8': probe(`package NQ8 {
         part def T0 { attribute load default = 1.0; }
         requirement def RF { subject s : T0; require constraint { s.load <= 5.0 } }

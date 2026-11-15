@@ -69,7 +69,7 @@ import {
   type ExactScope,
   type Rational,
 } from './exact';
-import { parseExpr, evaluate, exprEqual, writtenChains, type ExprNode } from './expr';
+import { parseExpr, evaluate, exprEqual, exprRefusal, refText, writtenChains, type ExprNode } from './expr';
 import { isBindingEdge, propagateValues } from './connectors';
 import {
   anchorFor,
@@ -148,6 +148,7 @@ import {
   type LoweredBody,
   type MarkerDimensions,
   type ScaleMap,
+  lowerQualifiedLiterals,
 } from './relations';
 import {
   definitionDerivation,
@@ -592,6 +593,7 @@ interface GatheredSystem {
 
 /** Record that the asserted relation `by` reads the variable `v` ({@link GatheredSystem.held}). */
 function holdVar(held: Map<ElementId, ElementId[]>, v: ElementId, by: ElementId): void {
+  if ((globalThis as any).PA4DBG) console.log('PA4DBG hold', String(v).slice(-28), 'by', String(by).slice(-12), (new Error().stack ?? '').split('\n')[2]?.trim().slice(0, 90));
   const list = held.get(v);
   if (!list) held.set(v, [by]);
   else if (!list.includes(by)) list.push(by);
@@ -609,7 +611,11 @@ function holdVar(held: Map<ElementId, ElementId[]>, v: ElementId, by: ElementId)
 function relationReads(model: Model, el: ElementRecord, instance?: string): ElementId[] {
   const raw = el.attrs.expression;
   if (typeof raw !== 'string') return [];
-  const node = parseRelationBody(raw)?.node ?? writtenNames(raw);
+  const parsed = parseRelationBody(raw)?.node;
+  const lowered = parsed !== undefined ? lowerQualifiedLiterals(model, parsed, el.ownerId ?? el.id) : undefined;
+  // A body with a call, an arrow or a qualified name no literal reads writes its names as one that does not
+  // parse does (PA4): the same bookkeeping holds them, and the refusal names the same features.
+  const node = lowered !== undefined && exprRefusal(lowered) === undefined ? lowered : writtenNames(raw);
   if (!node) return [];
   const scope = relationScope(model, el);
   const keyed = keyedNames(model, el, node, scope, instance);
@@ -1004,7 +1010,11 @@ function relationEquation(
   // is dropped here (so no wrong number enters the solve) and reported
   // `unknown` by checkConstraintsNumeric rather than silently disappearing.
   if (body.hadUnit && !body.resolved) return undefined;
-  const node = body.node;
+  const node = lowerQualifiedLiterals(model, body.node, el.ownerId ?? el.id);
+  // A call, an arrow or a qualified name no literal reads is no equation to solve (PA4): the body is read as
+  // one that does not parse, as before the construct parsed — the refusal sentence names it on the check and
+  // verify surfaces, and the design-freedom bookkeeping holds the names it writes.
+  if (exprRefusal(node) !== undefined) return undefined;
   // A body that reads a name its own element declares, which the owner's scope
   // answers with another feature, is solved from by nothing (shadowedNamesOf).
   if (shadowedIn(model, el, node, body.literals)) {
@@ -1112,7 +1122,7 @@ function polynomialOf(node: ExprNode): Polynomial | undefined {
       return c && constantPolynomial(c);
     }
     case 'ref':
-      return monomial(node.path.join('.'));
+      return monomial(refText(node));
     case 'unary': {
       if (node.op === 'not') return undefined;
       const p = polynomialOf(node.operand);
@@ -1359,7 +1369,7 @@ function instanceKeysDefinedBy(model: Model, node: ExprNode, eq: Equation): Elem
   const out: ElementId[] = [];
   for (const side of [node.left, node.right]) {
     if (side.kind !== 'ref') continue;
-    const key = eq.nameToId.get(side.path.join('.'));
+    const key = eq.nameToId.get(refText(side));
     if (key === undefined || !key.includes('@') || out.includes(key)) continue;
     const f = model.get(baseIdOf(key));
     // Never one that writes a `default`, even one a binding made give way (decision 14 amended).
@@ -1670,6 +1680,7 @@ function instanceSystem(model: Model, scopeId?: ElementId): InstanceSystem {
 }
 
 function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem {
+  if ((globalThis as any).PA4DBG) console.log('PA4DBG bis entry scope', scopeId);
   const inScope = scopeFilter(model, scopeId);
   const definitions = sharedDefinitions(model);
   const memo: DerivationMemo = new Map();
@@ -1678,8 +1689,10 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
   const seen = new Set<string>();
   const seed = (el: ElementRecord, text: string, skipHeld = false): void => {
     const body = parseRelationBody(text);
+    if ((globalThis as any).PA4DBG) console.log('PA4DBG seed', model.qualifiedName(el.id), JSON.stringify(text), 'parsed', !!body);
     if (!body) return;
     const paths = [...new Set(namesReadIn(body.node))].filter((n) => !body.literals.has(n));
+    if ((globalThis as any).PA4DBG) console.log('PA4DBG seed paths', JSON.stringify(paths), 'readings', [...definitions.instanceReadings(el, paths)].length);
     for (const [, reading] of definitions.instanceReadings(el, paths)) {
       // A `default` that gives way at THIS instance — a held redefinition of it
       // falls through here (`held-redef`) — seeds no literal there.
@@ -1706,6 +1719,7 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
     const text = read ? statedValueOf(model, read.target) : undefined;
     if (read && typeof text === 'string' && el.ownerId != null) seed({ ...read.target, id: el.id, ownerId: el.ownerId }, text);
   }
+  if ((globalThis as any).PA4DBG) console.log('PA4DBG bis pending', pending.map((p) => p.key));
   if (pending.length === 0) return system;
   let budget = MAX_INSTANCE_RELATIONS;
   const enqueue = (rel: Equation | Inequality | undefined): void => {
@@ -2677,7 +2691,7 @@ function shapeOver(
 ): Shape {
   switch (node.kind) {
     case 'ref':
-      return unknown(nameToId.get(node.path.join('.'))) ? 'affine' : 'const';
+      return unknown(nameToId.get(refText(node))) ? 'affine' : 'const';
     case 'unary': {
       const inner = shapeOver(node.operand, nameToId, unknown, joint);
       return node.op === 'not' && inner !== 'const' ? 'curved' : inner;
@@ -2769,7 +2783,7 @@ function affineForm(
   }
   switch (node.kind) {
     case 'ref': {
-      const id = eq.nameToId.get(node.path.join('.'))!;
+      const id = eq.nameToId.get(refText(node))!;
       const s = eq.scale?.get(id);
       const factor = s ? writtenRational(s.factor) : { num: 1n, den: 1n };
       return factor ? { a: new Map([[id, factor]]), b: s ? s.offset : 0 } : undefined;
@@ -4152,7 +4166,7 @@ function dividesByNearZero(eq: Equation, values: Map<ElementId, number>, gate: n
   const scope = idScope(eq, values);
   const reads = (n: ExprNode): boolean =>
     n.kind === 'ref'
-      ? moved!.has(eq.nameToId.get(n.path.join('.'))!)
+      ? moved!.has(eq.nameToId.get(refText(n))!)
       : n.kind === 'unary'
         ? reads(n.operand)
         : n.kind === 'binary'
@@ -4506,7 +4520,7 @@ function flatAbout(eq: Equation, u: ElementId, val: number, values: Map<ElementI
 
 /** Is `node` a bare reference resolving (via the equation's scope) to `u`? */
 function isRefTo(node: ExprNode, eq: Equation, u: ElementId): boolean {
-  return node.kind === 'ref' && eq.nameToId.get(node.path.join('.')) === u;
+  return node.kind === 'ref' && eq.nameToId.get(refText(node)) === u;
 }
 
 /** 1-D root-find of the equation residual in `u`: Newton then bisection. */
@@ -4843,7 +4857,7 @@ function divisorColumns(
   for (const eq of eqs) {
     const refs = (n: ExprNode): void => {
       if (n.kind === 'ref') {
-        const id = eq.nameToId.get(n.path.join('.'));
+        const id = eq.nameToId.get(refText(n));
         if (id !== undefined) read.add(id);
       } else if (n.kind === 'unary') refs(n.operand);
       else if (n.kind === 'binary') {
@@ -7314,6 +7328,7 @@ function relationNameList(model: Model, ids: readonly ElementId[], noun: string)
  * read is not judged ({@link SolveCore.held}) — in the register of {@link freedomSentence}.
  */
 function heldSentence(model: Model, ids: readonly ElementId[], asserts: readonly ElementId[]): string {
+  if ((globalThis as any).PA4DBG) console.log('PA4DBG held', JSON.stringify(ids), 'asserts', JSON.stringify(asserts));
   const one = ids.length === 1;
   // One entry per named assert and the form it takes; the unnamed ones are
   // counted by form, never listed by the qualified name of an unnamed usage.

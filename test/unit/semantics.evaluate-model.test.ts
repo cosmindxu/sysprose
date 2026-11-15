@@ -10514,3 +10514,407 @@ describe('PA3: a satisfy path whose first name two places expose abstains, in bo
     }, 60_000);
   }
 });
+
+describe('PA1: a constraint in a usage body reads a dotted path to a feature of the usage around it', () => {
+  /** Every check of `text` as its qualified name and result. */
+  const checks = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return new Map(checkConstraints(m!).map((c) => [m!.qualifiedName(c.id), c.result] as const));
+  };
+  /** What the literal engine decides of `text`, by qualified name: satisfied, violated, or unknown. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(
+      report.results.map((r) => [
+        r.clause.qualifiedName,
+        r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown',
+      ] as const),
+    );
+  };
+
+  it('reads b.v written in a usage body, so its two rows decide', async () => {
+    const text = `package G5F {
+part a { attribute u : Real = 2.0; part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } constraint kf { b.v == 6.0 } } }
+}`;
+    expect([...(await checks(text))]).toEqual([
+      ['G5F::a::c::k', 'satisfied'],
+      ['G5F::a::c::kf', 'violated'],
+    ]);
+    expect([...(await literal(text))]).toEqual([
+      ['G5F::a::c::k', 'satisfied'],
+      ['G5F::a::c::kf', 'violated'],
+    ]);
+  });
+
+  it('keeps a nearer member, refuses a path two places expose (in both orders) or one written in a definition, and rebases per instance', async () => {
+    // A nearer member shadows the outer b: `k` reads 5, not 6.
+    expect([...(await checks(`package G5C {
+  part a { part b { attribute v : Real = 6.0; } part c { part b { attribute v : Real = 5.0; } constraint k { b.v == 5.0 } } }
+}`))]).toEqual([['G5C::a::c::k', 'satisfied']]);
+    // Two imports expose `b`: refused, whichever import is written first.
+    for (const imports of ['import L1::*; import L2::*;', 'import L2::*; import L1::*;']) {
+      const text = `package G5A {
+  package L1 { part b { attribute v : Real = 5.0; } }
+  package L2 { part b { attribute v : Real = 6.0; } }
+  part a { ${imports} part c { constraint k { b.v == 5.0 } } }
+}`;
+      expect((await checks(text)).get('G5A::a::c::k'), text).toBe('unknown');
+      expect((await literal(text)).get('G5A::a::c::k'), text).toBe('unknown');
+    }
+    // A definition is read per instance as before: no decision, and no false one.
+    expect((await checks(`package G5D {
+  part def A { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+  part a : A;
+}`)).get('G5D::A::c::k')).toBe('unknown');
+    // Two instances of the enclosing usage each read their own b: a1 holds (5 == 5), a2 is refuted (6 == 5).
+    const two = `package G5F3 {
+  part a1 { part b { attribute v : Real = 5.0; } part c { constraint k { b.v == 5.0 } } }
+  part a2 { part b { attribute v : Real = 6.0; } part c { constraint k { b.v == 5.0 } } }
+}`;
+    expect([...(await checks(two))]).toEqual([
+      ['G5F3::a1::c::k', 'satisfied'],
+      ['G5F3::a2::c::k', 'violated'],
+    ]);
+  });
+
+  it('gen-pa1: no decided row is wrong in 150 models (rename, wrap and instance twins; an imported or ambiguous name decides nothing in either order)', async () => {
+    let seed = 24601;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let decided = 0;
+    let refused = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const fam = rnd(3); // 0: the usage tree itself; 1: a package import exposes b; 2: two imports (ambiguous)
+      const depth = rnd(3); // 0: `host { sat }`, 1: `host { part c { sat } }`, 2: `host { part c { part d { sat } } }`
+      const pkg = `P${i}`;
+      const host = i % 2 === 0 ? 'a' : `sys${i % 5}`;
+      const wrap = (sat: string) => (depth === 0 ? sat : depth === 1 ? `part c { ${sat} }` : `part c { part d { ${sat} } }`);
+      const qn = (name: string) => `${pkg}::${name}::${depth === 0 ? '' : depth === 1 ? 'c::' : 'c::d::'}k`;
+      const sat = (kk: number) => `constraint k { b.v == ${kk}.0 }`;
+      const bPart = (load: number) => `part b { attribute v : Real = ${load}.0; }`;
+      if (fam !== 0) {
+        // A name a package import exposes is not read yet (LEX, design-readings 31): refused, and two imports
+        // exposing it are refused in either order. Never a decision, never a false one.
+        const other = (v + 1 + rnd(10)) % 11;
+        const variants =
+          fam === 1
+            ? [`package ${pkg} { package L { ${bPart(v)} } import L::*; part ${host} { ${wrap(sat(k))} } }`]
+            : [
+                `package ${pkg} { package L1 { ${bPart(v)} } package L2 { ${bPart(other)} } part ${host} { import L1::*; import L2::*; ${wrap(sat(k))} } }`,
+                `package ${pkg} { package L1 { ${bPart(v)} } package L2 { ${bPart(other)} } part ${host} { import L2::*; import L1::*; ${wrap(sat(k))} } }`,
+              ];
+        for (const t of variants) {
+          const got = (await checks(t)).get(qn(host)) ?? 'unknown';
+          expect(got, `an imported name decided ${got}\n${t}`).toBe('unknown');
+          refused++;
+        }
+        continue;
+      }
+      const twin = i % 5 === 0;
+      const v2 = (v + 1 + rnd(10)) % 11;
+      const tree = (name: string, load: number, kk: number) => `part ${name} { ${bPart(load)} ${wrap(sat(kk))} }`;
+      const text = `package ${pkg} {\n  ${tree(host, v, k)}\n  ${twin ? tree(`${host}2`, v2, k) : ''}\n}`;
+      const expected: Array<[string, number]> = [[qn(host), v]];
+      if (twin) expected.push([qn(`${host}2`), v2]);
+      const got = await checks(text);
+      const lit = await literal(text);
+      for (const [row, load] of expected) {
+        const r = got.get(row);
+        if (r === 'satisfied' || r === 'violated') {
+          decided++;
+          expect(r, `${row} decided ${r}, the model says ${load} == ${k}\n${text}`).toBe(load === k ? 'satisfied' : 'violated');
+          expect(lit.get(row), `${row} check and literal disagree\n${text}`).toBe(r);
+        } else {
+          // Weaker is acceptable only where the walk refuses the shape; the plain shapes must decide.
+          expect(depth, `${row} abstained on a plain shape\n${text}`).not.toBe(0);
+        }
+      }
+    }
+    // The plain shapes decide; the imported and ambiguous ones never do.
+    expect(decided).toBeGreaterThan(55);
+    expect(refused).toBeGreaterThan(90);
+  }, 300_000);
+});
+
+describe('PA2: a typed usage reads its definition’s part per instance, as an inline twin does', () => {
+  /** Every check of `text` as `[qualified name, result]`, sorted. */
+  const checks = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return checkConstraints(m!)
+      .map((c) => [m!.qualifiedName(c.id), c.result] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  /** What the literal engine decides of `text`, by qualified name. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(report.results.map((r) => [r.clause.qualifiedName, r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown'] as const));
+  };
+
+  it('reads h.p.x of `part h : H` as it reads it of the inline twin, cell for cell (g2e = g2f)', async () => {
+    const head = `part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+part def H { part p : P; }
+part h : H;`;
+    const inline = `part def P { attribute x : Real; attribute y : Real; assert constraint ty { y == x + 4.0 } }
+part h { part p : P; }`;
+    const tail = `assert constraint px { h.p.x == 3.0 }
+constraint q { h.p.x == 3.0 }
+constraint qf { h.p.x == 4.0 }`;
+    const typed = await checks(`package G2E {\n${head}\n${tail}\n}`);
+    const plain = await checks(`package G2F {\n${inline}\n${tail}\n}`);
+    // The rows read alike once each package names its own elements.
+    const named = (pkg: string) => [
+      [`${pkg}::P::ty`, 'unknown'],
+      [`${pkg}::px`, 'satisfied'],
+      [`${pkg}::q`, 'satisfied'],
+      [`${pkg}::qf`, 'violated'],
+    ];
+    expect(typed).toEqual(named('G2E'));
+    expect(plain).toEqual(named('G2F'));
+    expect([...(await literal(`package G2E {\n${head}\n${tail}\n}`))]).toEqual([
+      ['G2E::q', 'satisfied'],
+      ['G2E::qf', 'violated'],
+    ]);
+  });
+
+  it('keeps an equation a binding fixes a check, never a definition (the default stands)', async () => {
+    // h.p.x is L's 4.0 carried by the binding; the assert is checked against it, violated, as before.
+    expect(await checks(`package GB {
+part def P { attribute x : Real; }
+part def H { part p : P; }
+part h : H;
+attribute L : Real default = 4.0;
+bind h.p.x = L;
+assert constraint tie { h.p.x == 3.0 }
+}`)).toEqual([['GB::tie', 'violated']]);
+  });
+
+  it('gen-pa2: 150 typed/inline twins read alike, and the decided rows hold the hand value', async () => {
+    let seed = 90210;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let pairs = 0;
+    let decided = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const other = (v + 1 + rnd(10)) % 11;
+      const host = i % 2 === 0 ? 'h' : `h${i % 3}`;
+      const parts = i % 3 === 0 ? 'part p : P; part r : P;' : 'part p : P;';
+      const pick = i % 3 === 0 ? (i % 2 === 0 ? 'p' : 'r') : 'p';
+      const def = `part def P { attribute x : Real; }`;
+      const typed = `package T${i} {\n  ${def}\n  part def H { ${parts} }\n  part ${host} : H;\n  assert constraint px { ${host}.${pick}.x == ${v}.0 }\n  constraint q { ${host}.${pick}.x == ${v}.0 }\n  constraint qf { ${host}.${pick}.x == ${other}.0 }\n}`;
+      const inline = `package I${i} {\n  ${def}\n  part ${host} { ${parts} }\n  assert constraint px { ${host}.${pick}.x == ${v}.0 }\n  constraint q { ${host}.${pick}.x == ${v}.0 }\n  constraint qf { ${host}.${pick}.x == ${other}.0 }\n}`;
+      const typedRows = await checks(typed);
+      const inlineRows = await checks(inline);
+      const typedNamed = typedRows.map(([n, r]) => [n.replace(`T${i}`, ''), r]);
+      const inlineNamed = inlineRows.map(([n, r]) => [n.replace(`I${i}`, ''), r]);
+      expect(typedNamed, typed).toEqual(inlineNamed);
+      const row = (pkg: string, name: string) => typedRows.find(([n]) => n === `${pkg}::${name}`)?.[1];
+      // The hand oracle: px and q read v, qf reads another value; a violated one only where they differ.
+      if (v !== other) {
+        expect(row(`T${i}`, 'q'), typed).toBe('satisfied');
+        expect(row(`T${i}`, 'qf'), typed).toBe('violated');
+        decided += 2;
+      } else {
+        expect(row(`T${i}`, 'q'), typed).toBe('satisfied');
+        expect(row(`T${i}`, 'qf'), typed).toBe('satisfied');
+      }
+      expect(row(`T${i}`, 'px'), typed).toBe('satisfied');
+      pairs++;
+    }
+    expect(pairs).toBe(150);
+    expect(decided).toBeGreaterThan(200);
+  }, 300_000);
+});
+
+describe('PA4: a qualified name reads its `=` literal; a call, an arrow or an enumeration literal is named, not read', () => {
+  /** Every check of `text` as `[qualified name, result, message]`, sorted. */
+  const rows = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return checkConstraints(m!)
+      .map((c) => [m!.qualifiedName(c.id), c.result, c.message] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  /** What the literal engine claims of `text`, by qualified name. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(report.results.map((r) => [r.clause.qualifiedName, r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown'] as const));
+  };
+
+  it('reads Q::x where x states an `=` literal, never the bare x of the package (d5a)', async () => {
+    // The qualifier is part of the name: a package attribute `x = 9.0` answers not `Q::x` (= 3.0).
+    const text = `package SH {
+part def Q { attribute x : Real = 3.0; }
+attribute x : Real = 9.0;
+constraint k { Q::x == 3.0 }
+constraint kf { Q::x == 9.0 }
+}`;
+    expect((await rows(text)).map(([n, r]) => [n, r])).toEqual([
+      ['SH::k', 'satisfied'],
+      ['SH::kf', 'violated'],
+    ]);
+    expect([...(await literal(text))]).toEqual([
+      ['SH::k', 'satisfied'],
+      ['SH::kf', 'violated'],
+    ]);
+  });
+
+  it('refuses a valueless or `default` qualified name, a call, an arrow and an enumeration literal, naming each', async () => {
+    const sentence = (text: string, name: string) => rows(text).then((r) => r.find(([n]) => n === name)?.[2] ?? '');
+    // Decision 10: a qualified name is read only where the feature states an `=`, never a `default`.
+    expect(await sentence(`package DQ {\npart def Q { attribute x : Real; }\nconstraint k { Q::x == 3.0 }\n}`, 'DQ::k')).toContain(
+      'the body names `Q::x`, which this lane reads only where the feature states an `=` literal',
+    );
+    expect(await sentence(`package DF {\npart def Q { attribute x : Real default = 3.0; }\nconstraint k { Q::x == 3.0 }\n}`, 'DF::k')).toContain(
+      'the body names `Q::x`, which this lane reads only where the feature states an `=` literal',
+    );
+    expect(await sentence(`package DC {\npart def Q { attribute x : Real = 3.0; }\nconstraint k { sum(Q::x) == 3.0 }\n}`, 'DC::k')).toContain(
+      'the body calls `sum(...)`, which this lane does not read',
+    );
+    expect(await sentence(`package DA {\npart def Q { attribute xs : Real = 3.0; }\nconstraint k { Q::xs->forAll(x) }\n}`, 'DA::k')).toContain(
+      'the body reads `Q::xs->forAll(x)`, which this lane does not read',
+    );
+    expect(await sentence(`package DE {\nenum def Mode { on, off }\npart q { attribute m : Mode = Mode::on; }\nconstraint k { q.m == Mode::on }\n}`, 'DE::k')).toContain(
+      'the body names `Mode::on`, an enumeration literal, which this lane does not read',
+    );
+  });
+
+  it('gen-pa4: 150 models read a qualified literal by its value, and decide nothing over a call, an arrow or a valueless name', async () => {
+    let seed = 31415;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let decided = 0;
+    let refused = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const pkg = `P${i}`;
+      const q = i % 3 === 0 ? `Q${i % 4}` : 'Q';
+      const wrapped = i % 4 === 0;
+      // The same model with the constraint in a nested package: the qualifier resolves outward, as Kerlex does.
+      const place = (body: string) => (wrapped ? `package In${i} { ${body} }` : body);
+      const head = `part def ${q} { attribute x : Real = ${v}.0; attribute y : Real; }`;
+      if (i % 5 === 0) {
+        // The instance twin: two usages read the one literal the definition states.
+        const text = `package ${pkg} {\n  ${head}\n  part q1 : ${q};\n  part q2 : ${q};\n  ${place(`constraint k1 { ${q}::x == ${v}.0 } constraint k2 { ${q}::x == ${(v + 1) % 11}.0 }`)}\n}`;
+        const got = await rows(text);
+        const row = (n: string) => got.find(([name]) => name.endsWith(n))?.[1];
+        expect(row('::k1'), text).toBe('satisfied');
+        expect(row('::k2'), text).toBe(v === (v + 1) % 11 ? 'satisfied' : 'violated');
+        decided += 2;
+        continue;
+      }
+      if (i % 5 === 1) {
+        // A call or an arrow over a valid literal: read by no lane.
+        const body = i % 10 === 1 ? `constraint k { sum(${q}::x) == ${v}.0 }` : `constraint k { ${q}::x->forAll(x) }`;
+        const text = `package ${pkg} {\n  ${head}\n  ${place(body)}\n}`;
+        expect((await rows(text)).map(([n, r]) => [n.endsWith('::k'), r])).toEqual([[true, 'unknown']]);
+        refused++;
+        continue;
+      }
+      // A qualified literal: satisfied iff the literal equals the right side, in either text order.
+      const text = `package ${pkg} {\n  ${head}\n  ${place(`constraint k { ${q}::x == ${k}.0 }`)}\n}`;
+      const got = await rows(text);
+      expect(got.map(([n, r]) => [n.endsWith('::k'), r])).toEqual([[true, v === k ? 'satisfied' : 'violated']]);
+      decided++;
+    }
+    expect(decided).toBeGreaterThan(80);
+    expect(refused).toBeGreaterThan(20);
+  }, 300_000);
+});
+
+describe('PA5: a quoted name holding `.` or `:` is a name like any other', () => {
+  /** Every check of `text` as `[qualified name, result]`, sorted. */
+  const rows = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    expect(m, text).toBeDefined();
+    return checkConstraints(m!)
+      .map((c) => [m!.qualifiedName(c.id), c.result] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  /** What the literal engine claims of `text`, by qualified name. */
+  const literal = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    const report = await verifyModel(m!, { engine: 'literal', sourceText: text });
+    return new Map(report.results.map((r) => [r.clause.qualifiedName, r.claim === 'proved' || r.claim === 'holds-at-values' ? 'satisfied' : r.claim === 'refuted' ? 'violated' : 'unknown'] as const));
+  };
+
+  it('reads a quoted dot name and a quoted colon name, on the check and literal surfaces (dot.sysml)', async () => {
+    const text = `package DOT {
+part def P { attribute 'a.b' : Real = 3.0; attribute 'x:y' : Real = 5.0; }
+part p : P;
+constraint k { p.'a.b' == 3.0 }
+constraint kf { p.'a.b' == 4.0 }
+constraint c { p.'x:y' == 5.0 }
+}`;
+    expect(await rows(text)).toEqual([
+      ['DOT::c', 'satisfied'],
+      ['DOT::k', 'satisfied'],
+      ['DOT::kf', 'violated'],
+    ]);
+    const lit = await literal(text);
+    expect(['DOT::c', 'DOT::k', 'DOT::kf'].map((n) => [n, lit.get(n)])).toEqual([
+      ['DOT::c', 'satisfied'],
+      ['DOT::k', 'satisfied'],
+      ['DOT::kf', 'violated'],
+    ]);
+  });
+
+  it('keeps a quoted dot name and the same text as a path apart: one is a feature, the other two names', async () => {
+    // `'a.b'` is the package's own a.b (3), `a.b` is a's b (9): neither reads the other.
+    const text = `package SH {
+part a { attribute b : Real = 9.0; }
+attribute 'a.b' : Real = 3.0;
+constraint q { 'a.b' == 3.0 }
+constraint qp { a.b == 9.0 }
+constraint wrong { 'a.b' == 9.0 }
+}`;
+    expect(await rows(text)).toEqual([
+      ['SH::q', 'satisfied'],
+      ['SH::qp', 'satisfied'],
+      ['SH::wrong', 'violated'],
+    ]);
+  });
+
+  it('gen-pa5: 150 models read a quoted name by its value, and its path spelling stays another name', async () => {
+    let seed = 27182;
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return (seed >> 8) % n;
+    };
+    let decided = 0;
+    for (let i = 0; i < 150; i++) {
+      const v = rnd(11);
+      const k = rnd(11);
+      const pkg = `P${i}`;
+      const sep = i % 3 === 0 ? ':' : '.';
+      const qname = `a${sep}b.${i % 5 === 0 ? 'c' : 'd'}`;
+      const quoted = `'${qname}'`;
+      const wrapped = i % 4 === 0;
+      const place = (body: string) => (wrapped ? `package In${i} { ${body} }` : body);
+      const head = `part def Q${i % 7} { attribute ${quoted} : Real = ${v}.0; }`;
+      const host = `part q${i} : Q${i % 7};`;
+      const read = `${host.slice(5)}.${quoted}`; // `q3.'a.b.c'`
+      const text = `package ${pkg} {\n  ${head}\n  ${place(`part q${i} : Q${i % 7}; constraint k { q${i}.${quoted} == ${k}.0 }`)}\n}`;
+      const got = await rows(text);
+      expect(got.map(([n, r]) => [n.endsWith('::k'), r]), text).toEqual([[true, v === k ? 'satisfied' : 'violated']]);
+      decided++;
+      void read;
+    }
+    expect(decided).toBe(150);
+  }, 300_000);
+});

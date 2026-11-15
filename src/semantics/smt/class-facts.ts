@@ -221,9 +221,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 0,
       "models": 1,
       "rows": 1,
-      "tableAgree": 0,
+      "tableAgree": 2,
       "tableDisagree": 0,
-      "tableProbes": 0
+      "tableProbes": 2
     },
     "inherited-context": {
       "battery": null,
@@ -265,9 +265,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 6,
       "models": 72,
       "rows": 486,
-      "tableAgree": 723,
+      "tableAgree": 728,
       "tableDisagree": 0,
-      "tableProbes": 320
+      "tableProbes": 323
     },
     "nira/free": {
       "battery": null,
@@ -386,9 +386,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 61,
       "rows": 236,
-      "tableAgree": 408,
+      "tableAgree": 415,
       "tableDisagree": 0,
-      "tableProbes": 243
+      "tableProbes": 248
     },
     "stated-value": {
       "battery": null,
@@ -397,9 +397,9 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenDecided": 7,
       "models": 78,
       "rows": 311,
-      "tableAgree": 679,
+      "tableAgree": 684,
       "tableDisagree": 0,
-      "tableProbes": 289
+      "tableProbes": 292
     },
     "text-as-real": {
       "battery": null,
@@ -418,7 +418,7 @@ export const CLASS_FACTS: ClassFacts = {
       "goldenCases": 4,
       "goldenDecided": 5,
       "models": 40,
-      "rows": 99,
+      "rows": 100,
       "tableAgree": 28,
       "tableDisagree": 0,
       "tableProbes": 15
@@ -499,21 +499,12 @@ export const CLASS_FACTS: ClassFacts = {
       "kind": "wrong-statement",
       "note": "`x ^ -1` is refused as “the exponent is not a literal” (contracts.ts tests the unary minus as a non-number).",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
-        "fence/unparseable"
-      ],
-      "id": "D-unparseable-words",
-      "kind": "wrong-statement",
-      "note": "`sum(...)`, `->forall(...)` and `Mode::x` print “a defect in the relation” although they are constructs the expression reader does not take; an enum comparison is unparseable (verification/not-evaluable), which no flag forgives.",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
     }
   ],
   "digests": {
-    "defects": "96cac07e50aca0b917f75bf10924610fc78a41f10828a117b7303306aebb5c60",
+    "defects": "04ab8c063ca8ea4f4c5f9333237a415c25994db9561cecfa8709346c2171e967",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "6bf9c6800e89abe3992bcd216b54df613401d355f04b542a2ea6ff440025eb25"
+    "probes": "c7249d3a27b709bc9d64f4e185d82449c443716fa6e1f5d334e2459ffbf965a5"
   },
   "fences": {
     "fence/collection-valued": {

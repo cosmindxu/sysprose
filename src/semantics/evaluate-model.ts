@@ -92,6 +92,7 @@ import {
   standingDefaultSentence,
   replaceableDefaults,
   writesStandingDefault,
+  bindingEndsOf,
   isCall,
   isDerivedValue,
   returnTo,
@@ -111,7 +112,8 @@ import {
 } from './defining-equation';
 import { anyHiddenByName, effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
 import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
-import { evaluate, exprRef, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { evaluate, exprRef, exprRefusal, parseExpr, refText, type EvalResult, type ExprNode } from './expr';
+import { resolveFullName } from './bind';
 import {
   NO_MARKERS,
   bareLiteralRefusal,
@@ -128,6 +130,7 @@ import {
   typedAssertRefusal,
   valueFaultOf,
   type MarkerDimensions,
+  lowerQualifiedLiterals,
 } from './relations';
 import { DIMENSIONLESS, dimEqual, dimToString, resolveUnit, type Dimension } from './units';
 import {
@@ -3619,7 +3622,7 @@ function judgeBound(
 
   let node;
   try {
-    node = parseExpr(expr);
+    node = lowerQualifiedLiterals(model, parseExpr(expr), el.ownerId ?? el.id);
   } catch (e) {
     // The scalar grammar rejects unit literals (`2000 [kg]`); retry with the
     // unit-aware evaluator before giving up. When the text does carry a
@@ -3773,7 +3776,17 @@ function judgeBound(
     const deep = tooDeep(node, scope, own);
     if (deep) return { result: 'unknown', message: `Could not evaluate: ${deep}`, gap: false };
     const abstain = namedAbstention(own, referencedNames(node));
-    const message = `Could not evaluate: ${abstain?.sentence ?? unknownCause(model, el, referencedNames(node), scope, pass)}`;
+    const construct = exprRefusal(node, (q) => {
+      const hit = el.ownerId != null ? resolveFullName(model, q, el.ownerId) : model.resolveQualifiedName(q);
+      if (hit !== undefined) return hit.eClass;
+      // A user enumeration's literals are no elements this mapper holds: `Mode::on` whose `Mode` is an
+      // enumeration definition is one, and the sentence says so.
+      const cut = q.lastIndexOf('::');
+      if (cut < 0) return undefined;
+      const owner = el.ownerId != null ? resolveFullName(model, q.slice(0, cut), el.ownerId) : undefined;
+      return owner?.eClass === 'EnumerationDefinition' ? 'EnumerationLiteral' : undefined;
+    });
+    const message = `Could not evaluate: ${abstain?.sentence ?? construct?.detail ?? unknownCause(model, el, referencedNames(node), scope, pass)}`;
     return {
       result: 'unknown',
       message,
@@ -4210,7 +4223,30 @@ function equationBindings(
       const spelled =
         link?.spelled === true ||
         (written != null && written !== el.ownerId && pass.definitions.chain([written, el.id], name)?.spelled === true);
-      if (!link || link.via === undefined || leaf === undefined || !pass.definitions.reachingAssert(link.via, leaf, spelled)) continue;
+      if (!link || link.via === undefined || leaf === undefined) continue;
+      if (!pass.definitions.reachingAssert(link.via, leaf, spelled)) {
+        // The chain reads a part a DEFINITION declares (`part def H { part p : P; } part h : H;`), so the
+        // reach-out from that part stops at the definition and never meets an equation written where the
+        // name is read, with its whole path spelled through the usage (`assert { h.p.x == 3.0 }`). One that
+        // reads no name is a fact of the reading context, the same in every instance it stands for: read
+        // there, the spelled path as reachingAssert reads one.
+        const spelledEqs = contexts.flatMap((c) => pass.definitions.of(c, name).map((equation) => ({ c, equation })));
+        // Not a feature a binding or a stated value fixes (reachingAssert's own rule): there the equation is
+        // a check against that value, not a definition of it.
+        const fixedEnds = bindingEndsOf(model);
+        const fixed = (g: ElementRecord): boolean => fixedEnds.has(g.id) || (g.attrs.value !== undefined && g.attrs.value !== null);
+        if (
+          spelledEqs.length > 0 &&
+          ![link.feature, ...redefinedClosure(model, link.feature)].some(fixed) &&
+          spelledEqs.every(({ equation }) => namesReadIn(equation.definition).length === 0)
+        ) {
+          const defined = defineIn(model, spelledEqs[0]!.c, link.feature, name, spelledEqs.map(({ equation }) => equation), pass);
+          if (defined.value !== undefined) {
+            bindings.set(name, { featureId: link.feature.id, value: defined.value, ...(defined.exact !== undefined ? { exact: defined.exact } : {}) });
+          }
+        }
+        continue;
+      }
       const read = readSpecialiser(model, link.feature, name, pass, { contextId: link.via, feature: link.feature });
       if ('bound' in read) bindings.set(name, read.bound);
       else if (!read.valueless) return { reason: read.reason };
@@ -5918,7 +5954,7 @@ function decidedRefusal(
 function referencedNames(node: ExprNode): string[] {
   switch (node.kind) {
     case 'ref':
-      return [node.path.join('.')];
+      return [refText(node)];
     case 'unary':
       return referencedNames(node.operand);
     case 'binary':

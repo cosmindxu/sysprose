@@ -872,7 +872,8 @@ describe('comparison tolerance and offset units', () => {
     expect(quantityRefsIn("'a b'.'c d' + x.'in' * 2.0 [m]")).toEqual(['a b.c d', 'x.in']);
     expect(quantityRefsIn("'in' >= 1.0 [g] and 'not' < 2.0 [g]")).toEqual(['in', 'not']);
     expect(quantityRefsIn('"max load" <= 10.0 [kg]')).toBeUndefined(); // a double-quoted string is no quantity
-    expect(quantityRefsIn("'a.b' <= 10.0 [kg]")).toBeUndefined();
+    // Since a5 PA5 a quoted name holding a dot is a name like any other, keyed by its quoted spelling.
+    expect(quantityRefsIn("'a.b' <= 10.0 [kg]")).toEqual(["'a.b'"]);
     expect(quantityRefsIn("'x'and 'y'")).toEqual(['x', 'y']); // a closing quote ends the name: `and` is a keyword
     expect(quantityRefsIn("'a'b")).toBeUndefined(); // and `b` is not part of it
     // a bracket inside a quoted name is no unit

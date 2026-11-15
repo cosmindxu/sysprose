@@ -203,10 +203,10 @@ name in single quotes, and it is a name wherever a plain one is: a declaration, 
 (`'battery pack'.capacity`), a binding end, a redefinition (`:>> 'max load'`) and an
 expression, where `'max load' <= 10.0 [kg]`, `'ref' == a * b` and `'in' + 'default'` read
 the features of those names, exactly as `maxLoad <= 10.0 [kg]` would. A string is
-double-quoted, so `"max load"` stays text. The one name an expression cannot hold is a
-quoted one that itself contains a `.` or a `:` (`'a.b'`), which a path would cut in two: every
-surface abstains on an expression holding one, and the check and numeric rows say why. A
-feature declared with a dot in its name is read by no path either (`a.b` is not `'a.b'`).
+double-quoted, so `"max load"` stays text. A name holding a `.` or a `:` — `'a.b'`,
+`'x:y'` — is a name like any other since a5 PA5: written in quotes it reads that one feature,
+and written bare `a.b` stays the path `a` then `b`, so the two never answer for each other.
+A feature whose declared name holds a dot is read only by its quoted spelling.
 
 **Ports and connections.** A port is a typed interaction point with a direction;
 a connection wires two of them.
@@ -1894,9 +1894,12 @@ it does not parse) that the check cannot hold true leaves every relation of the 
 undecided on the literal engine (`verification/not-evaluable`, naming the assert), as the
 SMT engine claims no proof beside it. A dotted path to a package's usage written in a usage's
 body (`q2.p.x` in q1's `assert`, q2 q1's sibling in the package) is resolved, as KerML
-resolves it, and read in the package on every surface, unless a feature of the body's own
-context answers its first segment (q1's own `part q2`); a path nothing answers there
-(`q2.p.w`) stays unresolved. The contexts a relation is filed at do not
+resolves it, and read in the package — or in an enclosing usage that is one instance
+(`b.v` in `part a { part b { attribute v = 5.0; } part c { constraint k { b.v == 5.0 } } }`
+is a's own b, and a second usage reads its own) — on every surface, unless a feature of
+the body's own context answers its first segment (q1's own `part q2`). A path whose first
+segment is a feature of an enclosing definition, or of an enclosing usage of more than one
+instance, is not read there; a path nothing answers there (`q2.p.w`) stays unresolved. The contexts a relation is filed at do not
 turn on the order the text is written in: a renamed redefinition (`part p2 :>> p` in
 `q2 : Q`) written before `part def Q` leaves Q's p, and every other instance, filed as
 they are when Q comes first. A binding that gives the instance
@@ -2422,8 +2425,9 @@ that is the only one of that name (A's `part p : P` with P's own `K`). A bare
 name is read as such a nested feature only where KerML resolves it to nothing
 where it is written; one it resolves — to an owner's member, or through an import
 or an alias, read or not — never is. Only an attribute is read through the
-owners, and only by its bare name: a qualified `Lex::K` or a dotted name is
-not. A body is read as it is written, wherever it is read: A's `x = K`, read for
+owners, and only by its bare name: a qualified `Lex::K` is not, and a dotted
+name is read there only where its first segment resolves in the package or in
+an enclosing one-instance usage (above), never through an import. A body is read as it is written, wherever it is read: A's `x = K`, read for
 `part def H { attribute K = 70.0; part a : A; }`'s a, reads no K where A sees
 none, nor where an import or an alias answers the name first (`import
 Consts::*;`, `alias K for Consts::K;` — such a name is not read). Where something

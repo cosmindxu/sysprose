@@ -74,7 +74,7 @@
  * unique in assertion order, so the same input is the same bytes in any process.
  */
 
-import { DOUBLE_DIGITS, significantDigitsOf, type ExprNode } from '../expr';
+import { DOUBLE_DIGITS, constructText, refText, significantDigitsOf, type ExprNode } from '../expr';
 import type { ContractVariable, Fragment, Refusal, VarSort } from '../contracts';
 import type { ScaleMap } from '../relations';
 import { resolveUnit, type FactorTerm } from '../units';
@@ -374,7 +374,11 @@ function term(node: ExprNode, walk: Walk): Encoded {
         'the body reads `null`, which has no encoding in a quantifier-free arithmetic',
       );
     case 'ref':
-      return readOf(node.path.join('.'), walk);
+      return readOf(refText(node), walk);
+    case 'call':
+      return refuse('unsupported-operator', `the body calls \`${constructText(node)}\`, which this lane does not read`);
+    case 'arrow':
+      return refuse('unsupported-operator', `the body reads \`${constructText(node)}\`, which this lane does not read`);
     case 'unary':
       return unary(node, walk);
     case 'binary':
@@ -846,7 +850,7 @@ function varsOf(node: ExprNode, walk: Walk): string[] {
   const visit = (n: ExprNode): void => {
     switch (n.kind) {
       case 'ref': {
-        const v = walk.vars.get(n.path.join('.'));
+        const v = walk.vars.get(refText(n));
         if (v && !seen.has(v.qualifiedName)) {
           seen.add(v.qualifiedName);
           out.push(v.qualifiedName);
