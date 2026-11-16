@@ -4049,10 +4049,11 @@ export class DefiningEquations {
       // definition's reading of the same names has none: the context's reading is the one the binding carries
       // in, and it is no reading of the definition's for the row to stand for (`P::ca in Q::p`, where Q's
       // `bind p.load = L` joins the `load = v` P2 states, beside `P::ca in P2`). Kept apart only where the
-      // definition led the reading: two usages that read alike through one binding are one reading, as
-      // before, whichever listed them. A binding relation's own rows are the pair it states, not readings of
-      // it; and where the relation's owner reads through a binding of its own, the keys above already carry
-      // each context's binding reading.
+      // definition led the reading: two usages that read through one binding are one reading, as before,
+      // whichever listed them — the reading key carries no value, so sibling usages whose bindings carry
+      // different values stay one row, each binding's own row still reporting its pair. A binding relation's
+      // own rows are the pair it states, not readings of it; and where the relation's owner reads through a
+      // binding of its own, the keys above already carry each context's binding reading.
       if (ownBound === undefined && !relationIsBinding && changed && !listed && isUsage(x.eClass) && readings.has(key) && defLed.has(key)) {
         const bound = this.bindingAround(x.id, names);
         if (bound !== undefined) {
