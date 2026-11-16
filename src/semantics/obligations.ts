@@ -3027,9 +3027,10 @@ function readsOf(row: Obligation): Set<string> | undefined {
         // `unparseable`: a qualified name carrying `|` or `\` cannot be quoted
         // as an SMT symbol.
         if (symbol.includes('|') || symbol.includes('\\')) return undefined;
-        // A feature typed `Natural`, `Positive` or `UnlimitedNatural`: the encoder
-        // refuses the read (its floor is an axiom this lane does not carry).
-        if (v.restricted !== undefined) return undefined;
+        // A feature typed `Natural`, `Positive` or `UnlimitedNatural` whose gate found no floor to carry (`= 2.5`,
+        // a free `UnlimitedNatural`): the encoder refuses the read, and so does this twin. A FLOORED one is read
+        // like any `Int` — the `type:` axiom is not a symbol, so it changes nothing here (E1).
+        if (v.restricted !== undefined && v.floor === undefined) return undefined;
         reads.add(symbol);
         const { factor, offset } = scaleOf(v);
         if (sortOf(v) === 'Bool') {

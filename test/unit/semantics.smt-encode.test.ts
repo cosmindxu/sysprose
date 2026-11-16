@@ -66,6 +66,7 @@ import {
   termRational,
 } from '@semantics/exact';
 import { obligationsOf } from '@semantics/obligations';
+import { coreCount } from '@semantics/engines/smt';
 import { BINARY_PREFIXES, SI_PREFIXES, UNIT_REGISTRY, resolveUnit } from '@semantics/units';
 import { loadModelText } from '@text/load';
 import { collect, corpusItems } from '../../scripts/census-constraint-classes';
@@ -289,6 +290,142 @@ describe('an expression becomes a term', () => {
 
   it('negates a goal without re-encoding it', () => {
     expect(notTerm('(>= |P::x| 1.0)')).toBe('(not (>= |P::x| 1.0))');
+  });
+});
+
+/* ────────────────────── E1: a type floor is an axiom ────────────────────── */
+
+describe('E1 — a type floor is an axiom, not a refusal', () => {
+  /** A floor-bearing variable: the floor is what the gate found, and `restricted` alone is what it refuses. */
+  const floored = (path: string, restricted: string, floor: 0 | 1): EncodeVariable =>
+    v(path, { sort: 'Int', restricted, floor });
+
+  it('asserts `Natural` at 0 and `Positive` at 1, after the request’s own assertions', () => {
+    const vars = [floored('n', 'Natural', 0), floored('m', 'Positive', 1), v('x')];
+    const script = encodeScript({
+      variables: vars,
+      assertions: [
+        { kind: 'goal', name: 'R', term: '(<= (to_real |P::n|) (to_real |P::m|))' },
+        { kind: 'axiom', name: 'P::x', term: '(= |P::x| 2.0)' },
+      ],
+      nonlinear: false,
+    });
+    expect(script.typeAxioms).toEqual([
+      { label: 'type:P::m', qualifiedName: 'P::m', type: 'Positive', floor: 1 },
+      { label: 'type:P::n', qualifiedName: 'P::n', type: 'Natural', floor: 0 },
+    ]);
+    expect(script.text).toContain('(assert (! (>= (to_real |P::n|) 0.0) :named |type:P::n|))');
+    expect(script.text).toContain('(assert (! (>= (to_real |P::m|) 1.0) :named |type:P::m|))');
+    // A label appended after the request's assertions is the whole point: a core's owners are read by INDEX.
+    expect(script.labels).toEqual(['goal:R', 'axiom:P::x', 'type:P::m', 'type:P::n']);
+    expect(script.logic).toBe('QF_LIRA');
+  });
+
+  it('asserts nothing over a Real, an Integer or an `UnlimitedNatural` no literal pins', () => {
+    const vars = [v('x'), v('k', { sort: 'Int' }), v('u', { sort: 'Int', restricted: 'UnlimitedNatural' })];
+    const script = encodeScript({
+      variables: vars,
+      assertions: [{ kind: 'goal', name: 'R', term: '(<= |P::x| (to_real |P::k|))' }],
+      nonlinear: false,
+    });
+    expect(script.labels.filter((l) => l.startsWith('type:'))).toEqual([]);
+    expect(script.typeAxioms).toEqual([]);
+    expect(script.text).not.toContain(':named |type:');
+  });
+
+  it('is byte-stable, and orders its floors by qualified name however the variables arrive', () => {
+    const build = (order: 'nm' | 'mn') => {
+      const n = floored('n', 'Natural', 0);
+      const m = floored('m', 'Positive', 1);
+      return encodeScript({
+        variables: [order === 'nm' ? n : m, order === 'nm' ? m : n, v('x')],
+        assertions: [{ kind: 'goal', name: 'R', term: '(<= (to_real |P::n|) (to_real |P::m|))' }],
+        nonlinear: false,
+      });
+    };
+    const a = build('nm');
+    const b = build('mn');
+    expect(build('nm').text, 'one input, one byte string').toBe(a.text);
+    expect(b.text, 'the declaration order of the inputs moved the script').toBe(a.text);
+    expect(a.labels.filter((l) => l.startsWith('type:'))).toEqual(['type:P::m', 'type:P::n']);
+  });
+
+  it('writes the floor through `to_real`, so an Integer branch fixes it and no bare symbol is left', () => {
+    const vars = [floored('n', 'Natural', 0), v('x')];
+    const script = encodeScript({
+      variables: vars,
+      assertions: [{ kind: 'goal', name: 'R', term: '(<= (to_real |P::n|) |P::x|)' }],
+      nonlinear: false,
+      fixedIntegers: new Map([['P::n', 2n]]),
+    });
+    // `fixIntegers` rewrites `(to_real |P::n|)` and nothing else: a bare `|P::n|` floor would keep the symbol
+    // read, the branch would be refused, and the floor would be asserted beside a read of the branch it left.
+    expect(script.fixed).toEqual(['P::n']);
+    expect(script.text).not.toContain('|P::n|');
+    expect(script.text).toContain('(assert (! (>= 2.0 0.0) :named |type:P::n|))');
+  });
+
+  it('still refuses a `Natural` with no floor, and an `UnlimitedNatural` no literal pins, in today’s sentence', () => {
+    for (const restricted of ['Natural', 'UnlimitedNatural']) {
+      const r = encode('n <= x', [v('n', { sort: 'Int', restricted }), v('x')]);
+      expect(r.ok, restricted).toBe(false);
+      if (r.ok) return;
+      expect(r.refusal.reason).toBe('non-numeric-operand');
+      expect(r.refusal.detail).toBe(
+        `\`n\` is typed \`${restricted}\`, a domain below the integers that this lane does not carry as an ` +
+          'axiom (it derives none from a type), so a bound or a witness could lie where the type forbids a value',
+      );
+    }
+  });
+
+  it('is not an `axiom` label: a floor never joins the axiom census (planted bug 23)', () => {
+    const core = ['axiom:P::k', 'type:P::k'];
+    expect(coreCount(core, 'axiom')).toBe(1);
+    expect(coreCount(core, 'type')).toBe(1);
+  });
+
+  it('carries no floor over a symbol this lane does not declare `Int`, or beside a value that is not whole', async () => {
+    // THE GATE SIDE of the same decision: `carriedFloorOf` decides the field, and every fail-closed branch has to
+    // keep today's refusal byte for byte. A floor is only sound over a symbol DECLARED `Int` — a type merely NAMED
+    // `Positive` is a Real, and a Natural whose value is a boolean is a Bool — and the `= 2.5` rule is BY VALUE, so
+    // `= 5.0 / 2.0` is the same fact. Nothing in-tree pinned these before: the encoder tests hand-build the field.
+    const gate = async (decl: string, body: string) => {
+      const model = await load(`package G {\n${decl}\n  constraint c { ${body} }\n}`, 'gate.sysml');
+      const row = obligationsOf(model).find((r) => r.role === 'obligation' && r.node !== null && r.vars.length > 0)!;
+      const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled });
+      return { variable: row.vars[0]!, encoded: encodeRelation(row.node!, vars) };
+    };
+    const refused = async (decl: string, body: string, path: string, restricted: string) => {
+      const { variable, encoded } = await gate(decl, body);
+      expect([path, variable.restricted, variable.floor], 'a floor was carried').toEqual([path, restricted, undefined]);
+      expect(encoded.ok, path).toBe(false);
+      if (encoded.ok) return;
+      expect(encoded.refusal.reason).toBe('non-numeric-operand');
+      expect(encoded.refusal.detail).toBe(
+        `\`${path}\` is typed \`${restricted}\`, a domain below the integers that this lane does not carry as an ` +
+          'axiom (it derives none from a type), so a bound or a witness could lie where the type forbids a value',
+      );
+    };
+
+    // A type of the user's own merely named `Positive` is declared Real: a floor over it would cast a Real.
+    await refused('  attribute def Positive;\n  attribute m : Positive;\n  attribute x : Real = 2.0;', 'm <= x', 'm', 'Positive');
+    // A `Natural` whose stated value is a boolean is declared Bool: a floor over it would be an integer relation on
+    // a Bool. Both shapes used to make z3 refuse the script this tool produced ("a defect in this tool").
+    await refused('  attribute k : Natural = true;\n  attribute x : Real = 2.0;', 'k == true', 'k', 'Natural');
+    // The `= 2.5` rule, by VALUE: `= 5.0 / 2.0` folds to the same non-integer and keeps the same refusal.
+    const x = '  attribute x : Real = 2.0;';
+    await refused(`  attribute k : Natural = 2.5;\n${x}`, 'k <= x', 'k', 'Natural');
+    await refused(`  attribute k : Natural = 5.0 / 2.0;\n${x}`, 'k <= x', 'k', 'Natural');
+    // A free `UnlimitedNatural` has no floor at all: only an integral literal pins one.
+    await refused(`  attribute u : UnlimitedNatural;\n${x}`, 'u <= x', 'u', 'UnlimitedNatural');
+
+    // ...and the two that DO carry one still do: `2 + 1` folds to the whole number 3, so the floor is beside it.
+    const folded = await gate(`  attribute k : Natural = 2 + 1;\n${x}`, 'k <= x');
+    expect([folded.variable.restricted, folded.variable.floor]).toEqual(['Natural', 0]);
+    expect(folded.encoded.ok).toBe(true);
+    const pinned = await gate(`  attribute u : UnlimitedNatural = 3;\n${x}`, 'u <= x');
+    expect([pinned.variable.restricted, pinned.variable.floor]).toEqual(['UnlimitedNatural', 0]);
+    expect(pinned.encoded.ok).toBe(true);
   });
 });
 

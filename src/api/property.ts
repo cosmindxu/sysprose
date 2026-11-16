@@ -1352,8 +1352,11 @@ async function nonTriviality(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   // Gate 4 asserts no axiom and every variable is free. It asserts the clause and the `side:` divisor guard
   // the clause's division carries, as verify, consistency, refine and bounds do: a clause no assignment with
-  // a nonzero divisor satisfies is as useless as any other unsatisfiable one. Every script sent is recorded;
-  // nothing here reads the record back.
+  // a nonzero divisor satisfies is as useless as any other unsatisfiable one. The encoder's `type:` floors are
+  // deliberately NOT asserted (`typeFloors: false`, E1): this gate asks whether the clause is trivial ON ITS
+  // OWN, and a floor is the declared type's assumption, not the clause's — a `Natural` asserted `n > -5` is
+  // accepted here and left to `verify`'s tautology check, as a clause the model's own values settle already is.
+  // Every script sent is recorded; nothing here reads the record back.
   const rollup = new ClassRollup('property-gate-4');
   const sorts = new Map(variables.map((v) => [v.qualifiedName, v.sort] as const));
   // One class for the clause, shared by both scripts (it is the same row).
@@ -1380,6 +1383,7 @@ async function nonTriviality(
       nonlinear: encoded.nonlinear,
       syntacticNonlinear: encoded.syntacticNonlinear,
       cores: false,
+      typeFloors: false,
     });
     rollup.guard((r) => r.add(scriptClassOf(sent.shape, sent.logic, sorts), [clauseClass()]));
     return sent.text;

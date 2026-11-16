@@ -376,7 +376,9 @@ export const CONSTRAINT_CLASSES: Record<ClassId, ClassDef> = (() => {
       ],
     }),
     lira: def('lira', 'shape', {
-      encodes: 'Integer, Natural and UnlimitedNatural features, declared `Int` and read through `to_real`',
+      encodes:
+        'Integer, Natural, Positive and UnlimitedNatural features, declared `Int` and read through `to_real`, ' +
+        'with a `Natural` or `Positive` floor asserted as a `type:` axiom',
       logic: 'QF_LIRA',
       limits: [{ text: 'the sort comes from the declared type name only' }],
       pointers: [{ file: CONTRACTS_TS, find: "names.has('Integer')" }],

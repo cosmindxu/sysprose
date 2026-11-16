@@ -109,8 +109,18 @@ export interface EncodeVariable {
   factorTerms?: ReadonlyArray<FactorTerm>;
   /** Has the caller released this feature's value? */
   free: boolean;
-  /** `Natural`, `Positive` or `UnlimitedNatural`: a domain this lane does not carry, so it does not read the feature. */
+  /**
+   * `Natural`, `Positive` or `UnlimitedNatural`: a domain below the integers this lane declares. A read of one is
+   * refused UNLESS {@link floor} is also here, and the floor becomes a `type:` axiom the script asserts beside
+   * the request's own.
+   */
   restricted?: string;
+  /**
+   * The floor {@link restricted} owes, carried as a `type:`-labelled axiom: 0 for `Natural` (and for an
+   * `UnlimitedNatural` an integral literal pins) and 1 for `Positive`. Absent where the lane still refuses the
+   * read ({@link ContractVariable.floor} of ../contracts says which).
+   */
+  floor?: 0 | 1;
 }
 
 /**
@@ -139,6 +149,7 @@ export function encodeVariables(
     ...(opts.scaled ? declaredTerms(v, v.siFactor) : {}),
     free: free.has(v.path) || free.has(v.qualifiedName),
     ...(v.restricted !== undefined ? { restricted: v.restricted } : {}),
+    ...(v.floor !== undefined ? { floor: v.floor } : {}),
   }));
 }
 
@@ -193,6 +204,7 @@ export function encodeVariablesOf(
       ...(s ? declaredTerms(v, s.factor) : {}),
       free: free.has(v.path) || free.has(v.qualifiedName),
       ...(v.restricted !== undefined ? { restricted: v.restricted } : {}),
+      ...(v.floor !== undefined ? { floor: v.floor } : {}),
     };
   });
 }
@@ -413,10 +425,11 @@ function readOf(path: string, walk: Walk): Encoded {
         '(`|` or `\\`), so the feature cannot be named in a script',
     );
   }
-  // A TYPE'S FLOOR IS AN AXIOM THIS LANE DOES NOT CARRY. `Natural` is `Int` here with no `>= 0`, so a bound or a
-  // witness below the type's floor was published as the model's (`min n = -2` for a Natural asserted `n > -3`; a
-  // set consistent only at a negative Natural). The read is refused and the engines abstain with this sentence.
-  if (v.restricted !== undefined) {
+  // A TYPE'S FLOOR IS AN AXIOM THIS LANE CARRIES, WHERE THE GATE FOUND ONE TO CARRY. `Natural` is `Int` here, so
+  // without the floor a bound or a witness below the type's floor was published as the model's (`min n = -2` for a
+  // Natural asserted `n > -3`; a set consistent only at a negative Natural). A variable whose gate yields no floor
+  // — `= 2.5`, or a free `UnlimitedNatural` — is still refused and the engines abstain with this sentence.
+  if (v.restricted !== undefined && v.floor === undefined) {
     return refuse(
       'non-numeric-operand',
       `\`${v.path}\` is typed \`${v.restricted}\`, a domain below the integers that this lane does not carry ` +
@@ -1091,8 +1104,8 @@ function gcd(a: bigint, b: bigint): bigint {
 
 /* ──────────────────────────────── the script ────────────────────────────── */
 
-/** Which side of a proof an assertion stands on — and its label's prefix. */
-export type AssertionKind = 'axiom' | 'premise' | 'goal' | 'side';
+/** Which side of a proof an assertion stands on — and its label's prefix. A `type` assertion is a feature's type floor. */
+export type AssertionKind = 'axiom' | 'premise' | 'goal' | 'side' | 'type';
 
 /** One labelled assertion of a script. */
 export interface ScriptAssertion {
@@ -1121,6 +1134,11 @@ export interface SmtScript {
   labels: string[];
   /** The Integer symbols {@link ScriptRequest.fixedIntegers} fixed, which are therefore not declared. */
   fixed: string[];
+  /**
+   * The `type:` axioms this script carries — the floor {@link EncodeVariable.floor} owed each declared
+   * qualified name whose first variable has one — with the label z3 hands back for it in a core.
+   */
+  typeAxioms: Array<{ label: string; qualifiedName: string; type: string; floor: 0 | 1 }>;
   /**
    * The shape of the script's bytes ({@link shapeOfTerm}) over every assertion it holds, the guards
    * included. {@link logic} is {@link logicFromShape} of it, so the two cannot disagree. A label:
@@ -1154,6 +1172,18 @@ export interface ScriptRequest {
   syntacticNonlinear?: boolean;
   /** Emit `(set-option :produce-unsat-cores true)`. Default true. */
   cores?: boolean;
+  /**
+   * Assert the type floors of the variables the assertions read, as `type:` axioms ({@link EncodeVariable.floor}).
+   * Default true.
+   *
+   * `property` gate 4 passes `false`: it asks whether the CLAUSE is trivial on its own, so the only assertions
+   * beside it are the `side:` guards its own division carries. A floor is the DECLARED TYPE's assumption, not the
+   * clause's, and asserting it there would refuse as trivial a clause the manual promises gate 4 accepts — one the
+   * model's own values or its types already settle (a `Natural` asserted `n > -5`), which `verify`'s tautology
+   * check and the vacuity report are the surfaces for. The variables keep their flavour, so the clause still
+   * encodes; only the axiom is left out.
+   */
+  typeFloors?: boolean;
   /**
    * Integer symbols fixed at a value, by qualified name: every read of one, `(to_real |…::y|)`, is written as
    * the value (`3.0`) and the symbol is not declared, so the script is the same assertions over that one
@@ -1192,32 +1222,32 @@ const HEADER = [
  * parsing the script.
  */
 export function encodeScript(req: ScriptRequest): SmtScript {
-  const { assertions, fixed } = fixIntegers(req);
-  const read = new Set<string>();
-  // Every quoted symbol the assertions mention, read once per assertion — a
-  // term with a string literal, where a `|` need not delimit a symbol, is
-  // asked of each variable. Asked of every variable for every assertion, a
-  // model with thousands of instance symbols spent seconds here.
-  const quoted = new Set<string>();
-  const literal: string[] = [];
-  for (const a of assertions) {
-    if (a.term.includes('"')) literal.push(a.term);
-    else for (const m of a.term.matchAll(/\|[^|]*\|/g)) quoted.add(m[0]);
-  }
-  for (const v of req.variables) {
+  // THE TYPE FLOORS, decided from the request's OWN assertions and added BEFORE the integer branch fixing.
+  // `fixIntegers` rewrites every `(to_real |sym|)` of a symbol it fixes, so a floor written as a bare `|sym|`
+  // would keep the symbol read and block the fix; through `to_real` it is rewritten with every other read.
+  const floored: EncodeVariable[] = [];
+  const floors: ScriptAssertion[] = [];
+  const ownRead = readNames(req.assertions, req.variables);
+  // ...unless the caller is asking a question about the clause alone, where a floor would be the type's axiom
+  // rather than the clause's ({@link ScriptRequest.typeFloors}).
+  for (const v of req.typeFloors === false ? [] : declaredOf(req.variables, ownRead)) {
+    if (v.restricted === undefined || v.floor === undefined) continue;
     const symbol = symbolOf(v.qualifiedName);
     if (symbol === undefined) continue;
-    if (quoted.has(symbol) || literal.some((term) => mentions(term, symbol))) read.add(v.qualifiedName);
+    floored.push(v);
+    floors.push({ kind: 'type', name: v.qualifiedName, term: `(>= (to_real ${symbol}) ${v.floor}.0)` });
   }
-  const once = new Set<string>();
-  const declared = req.variables
-    .filter((v) => read.has(v.qualifiedName))
-    .filter((v) => {
-      if (once.has(v.qualifiedName)) return false;
-      once.add(v.qualifiedName);
-      return true;
-    })
-    .sort((a, b) => (a.qualifiedName < b.qualifiedName ? -1 : a.qualifiedName > b.qualifiedName ? 1 : 0));
+  const { assertions, fixed } = fixIntegers(
+    // AFTER the request's own assertions, so every label and owners index is unmoved.
+    floors.length === 0 ? req : { ...req, assertions: [...req.assertions, ...floors] },
+  );
+  // `fixIntegers` rewrites EVERY read of a symbol it fixes (all or nothing), and a floor mentions no symbol the
+  // request did not already read, so the terms that survive read exactly the pre-fix names minus the fixed ones.
+  // One scan of the bytes rather than two: this walk is the one that cost seconds on a model with thousands of
+  // instance symbols.
+  const read = new Set(ownRead);
+  for (const name of fixed) read.delete(name);
+  const declared = declaredOf(req.variables, read);
 
   // The logic line is the one claim in this file z3 will CHECK, so it is
   // derived from the bytes (and the encoder's own walk flag) rather than from the
@@ -1264,6 +1294,10 @@ export function encodeScript(req: ScriptRequest): SmtScript {
     lines.push(`(assert (! ${a.term} :named |${label}|))`);
   }
 
+  // The labels the floor assertions were given: the LAST ones, because they are appended after the request's
+  // own assertions. `used` may have mangled one (`|` / `\` in a qualified name), and the mangled spelling is
+  // what a core hands back.
+  const floorLabels = labels.slice(labels.length - floors.length);
   return {
     text: `${lines.join('\n')}\n`,
     logic,
@@ -1271,8 +1305,49 @@ export function encodeScript(req: ScriptRequest): SmtScript {
     symbols,
     labels,
     fixed,
+    typeAxioms: floored.map((v, i) => ({
+      label: floorLabels[i]!,
+      qualifiedName: v.qualifiedName,
+      type: v.restricted!,
+      floor: v.floor!,
+    })),
     shape,
   };
+}
+
+/** The qualified names the given assertion terms mention, read once per term that holds a quoted symbol. */
+function readNames(
+  assertions: readonly ScriptAssertion[],
+  variables: readonly EncodeVariable[],
+): Set<string> {
+  // A term with a string literal, where a `|` need not delimit a symbol, is asked of each variable. Asked of
+  // every variable for every assertion, a model with thousands of instance symbols spent seconds here.
+  const quoted = new Set<string>();
+  const literal: string[] = [];
+  for (const a of assertions) {
+    if (a.term.includes('"')) literal.push(a.term);
+    else for (const m of a.term.matchAll(/\|[^|]*\|/g)) quoted.add(m[0]);
+  }
+  const read = new Set<string>();
+  for (const v of variables) {
+    const symbol = symbolOf(v.qualifiedName);
+    if (symbol === undefined) continue;
+    if (quoted.has(symbol) || literal.some((term) => mentions(term, symbol))) read.add(v.qualifiedName);
+  }
+  return read;
+}
+
+/** The variables a script declares: the ones its terms read, one per qualified name (the first wins), in symbol order. */
+function declaredOf(variables: readonly EncodeVariable[], read: ReadonlySet<string>): EncodeVariable[] {
+  const once = new Set<string>();
+  return variables
+    .filter((v) => read.has(v.qualifiedName))
+    .filter((v) => {
+      if (once.has(v.qualifiedName)) return false;
+      once.add(v.qualifiedName);
+      return true;
+    })
+    .sort((a, b) => (a.qualifiedName < b.qualifiedName ? -1 : a.qualifiedName > b.qualifiedName ? 1 : 0));
 }
 
 /**

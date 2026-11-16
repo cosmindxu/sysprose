@@ -1203,10 +1203,11 @@ describe('proofScopeOf — what a proof stood on, from the model alone', () => {
    * A RETYPE INTO A RESTRICTED DOMAIN MOVES THE SCOPE (A5 F1). `Integer`,
    * `Natural`, `Positive` and `UnlimitedNatural` all encode at sort `Int`, so a
    * scope that digested the sort alone read `mass : Integer` and
-   * `mass : Natural` as the same proof — while the encoder refuses the second
-   * outright. The restricted type enters the digest, and ONLY where a variable
-   * carries one: every other scope digest stays byte-identical, which the two
-   * captured literals pin.
+   * `mass : Natural` as the same proof — while the two are not the same reading
+   * in the encoder (E1: a `Natural` carries a `type:` floor, an `Integer` carries
+   * none, and a free `UnlimitedNatural` is still refused). The restricted type
+   * enters the digest, and ONLY where a variable carries one: every other scope
+   * digest stays byte-identical, which the two captured literals pin.
    */
   it('moves when a feature is retyped Integer ↔ Natural/Positive/UnlimitedNatural, and nowhere else', async () => {
     const typed = (t: string) => SUBJECT.replace('mass : Real = 1500.0', `mass : ${t} = 1500`).replace('2000.0', '2000');

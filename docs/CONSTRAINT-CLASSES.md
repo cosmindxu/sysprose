@@ -58,7 +58,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `ground` | 1 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `lra` | 486 | 72 | 2 | 6 | 736 (327) | 0 | none | `differential-tested` |
-| `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `lira` | 15 | 13 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 6 (4) | 0 | none | `tested` |
@@ -79,7 +79,7 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `fence/offset-arithmetic` | 3 | 3 | 1 | — | — | — | none | `fenced` |
 | `fence/refused-derivation` | 1 | 1 | 1 | — | — | — | none | `fenced` |
 | `fence/unsupported-operator` | 6 | 5 | 2 | — | — | — | none | `fenced-defect` |
-| `fence/non-numeric-operand` | 6 | 6 | 2 | — | — | — | none | `fenced` |
+| `fence/non-numeric-operand` | 4 | 4 | 2 | — | — | — | none | `fenced` |
 
 ## Shapes
 
@@ -117,7 +117,7 @@ What z3 is asked: the `set-logic` the relation’s own bytes need. A relation th
 
 ### `lira`
 
-- **Encodes.** Integer, Natural and UnlimitedNatural features, declared `Int` and read through `to_real`.
+- **Encodes.** Integer, Natural, Positive and UnlimitedNatural features, declared `Int` and read through `to_real`, with a `Natural` or `Positive` floor asserted as a `type:` axiom.
 - **Logic.** `QF_LIRA`.
 - **Level of `lira`.** `tested` (first unmet: 20 four-surface rows agree, have 0).
 - **Limits.**

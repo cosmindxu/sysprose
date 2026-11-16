@@ -224,11 +224,22 @@ export interface ContractVariable {
   /** The origin offset of the stored scale — non-zero only on °C / °F. */
   siOffset: number;
   /**
-   * The ScalarValues type that restricts this feature's domain below what its sort encodes: `Natural`,
-   * `Positive` or `UnlimitedNatural` are `Int` here, with no lower bound ({@link restrictedDomainOf}). Absent
-   * for every other feature. The SMT encoder refuses to read one ({@link ../smt/encode}).
+   * The type NAME that puts this feature's domain below what its sort encodes — `Natural`, `Positive` or
+   * `UnlimitedNatural` ({@link restrictedDomainOf}). Usually that sort is `Int`, but the name alone does not make
+   * it so: a user-defined or shadowing `Positive` is `Real`, and a `Natural` whose stated value is a boolean is
+   * `Bool`. Such a feature carries `restricted` with no {@link floor}, and the encoder refuses it. Absent for
+   * every other feature. Kept even where a floor is carried, because the other readers of it — the proof scope's
+   * digest and K3's bound sentence — are about the TYPE, not about what this lane reads.
    */
   restricted?: string;
+  /**
+   * The floor the SMT lane carries as a `type:` axiom for a {@link restricted} feature: 0 for `Natural` (and
+   * for `UnlimitedNatural`, whose 0 exists only where an integral literal pins it) and 1 for `Positive`
+   * ({@link carriedFloorOf}). Absent where the lane still refuses the read — the symbol is not declared `Int`
+   * here, no type gives it a floor, or the feature states a value that is not a whole number, so the floor and
+   * that value cannot both hold.
+   */
+  floor?: 0 | 1;
   /**
    * The symbol an engine reads this path by, when it is NOT the feature's own
    * nor an instance's ({@link instance}): a name the validation surface reads
@@ -518,14 +529,44 @@ function typeNamesOf(model: Model, id: ElementId): Set<string> {
 /**
  * The type that restricts a feature's domain below what {@link sortOf} encodes, or `undefined`.
  *
- * `Natural` (`n >= 0`), `Positive` (`n >= 1`) and `UnlimitedNatural` are an unbounded `Int` in the SMT lane, which
- * derives no axiom from a type: a bound over them reached below the type's floor (`min n = -2` for a `Natural`
- * asserted `n > -3`), and a set was consistent only at a negative Natural. The lane abstains on such a feature
- * rather than carry the floor as an axiom beside every engine's own cores and censuses.
+ * `Natural`, `Positive` and `UnlimitedNatural` NAME a domain below the integers. Where the sort is `Int` the SMT
+ * lane carries the type's floor beside it ({@link carriedFloorOf}); without a floor a bound over such a feature
+ * reached below the type's own (`min n = -2` for a `Natural` asserted `n > -3`), and a set was consistent only at
+ * a negative Natural.
  */
 function restrictedDomainOf(model: Model, id: ElementId): string | undefined {
   const names = typeNamesOf(model, id);
   return ['Positive', 'Natural', 'UnlimitedNatural'].find((n) => names.has(n));
+}
+
+/**
+ * The floor this lane carries for a {@link restrictedDomainOf} feature, or `undefined` where it carries none and
+ * the encoder refuses the read.
+ *
+ * The floors are `Natural` → 0 and `Positive` → 1. Three refusals are kept byte for byte, because a floor beside
+ * them would publish a different reading rather than a better one:
+ *
+ *  - the variable is not DECLARED `Int` here. {@link restrictedDomainOf} matches a type by its NAME, while
+ *    {@link sortOf} only answers `Int` for `Natural`/`UnlimitedNatural` directly — a library `Positive` reaches
+ *    it through its generalization to `Natural` — so a user-defined, shadowing or unresolved `Positive` is
+ *    declared `Real`, and a `Natural` whose stated value is a boolean is declared `Bool`. A floor emitted for
+ *    either is a cast over a `Real` or an integer relation over a `Bool`, which z3 refuses outright: the
+ *    fail-closed reading is the base refusal, not a script the solver cannot parse;
+ *  - a stated value that is not a whole number (`k : Natural = 2.5`) gets NO floor. The rule is BY VALUE, so
+ *    `= 5.0 / 2.0` and `= 2.5` are one fact: the integer lane cannot state that value, and a floor beside it
+ *    would read the file's own value axiom as a contradiction of the model instead of a value this lane does not
+ *    carry;
+ *  - `UnlimitedNatural` gets 0 ONLY where an integral literal pins it: its type gives no floor of its own, and
+ *    a free one stays refused.
+ */
+function carriedFloorOf(model: Model, id: ElementId, restricted: string): 0 | 1 | undefined {
+  if (sortOf(model, id) !== 'Int') return undefined;
+  const el = model.get(id);
+  const stated = statedNumber(model, el);
+  if (stated !== undefined && !Number.isInteger(stated)) return undefined;
+  if (restricted === 'Positive') return 1;
+  if (restricted === 'Natural') return 0;
+  return hasLiteralValue(model, el) ? 0 : undefined;
 }
 
 /**
@@ -548,6 +589,28 @@ function hasLiteralValue(model: Model, el: ElementRecord | undefined): boolean {
   if (!body) return false;
   const folded = substituteLiterals(body.node, body.literals);
   return 'value' in evaluate(folded, () => undefined);
+}
+
+/**
+ * The number a feature's stated value denotes, folded the way the fragment folds a literal, or `undefined` where
+ * it states no number.
+ *
+ * Asked for the "not a whole number" rule and for `UnlimitedNatural`'s literal pin, so a written expression counts
+ * as the value it folds to: `= 2 + 1` is the 3 whose floor is carried, and `= 5.0 / 2.0` is the 2.5 that keeps the
+ * base refusal.
+ */
+function statedNumber(model: Model, el: ElementRecord | undefined): number | undefined {
+  if (!el) return undefined;
+  const raw = el.attrs.value;
+  if (typeof raw === 'number') return raw;
+  if (typeof raw !== 'string') return undefined;
+  const text = raw.trim();
+  if (text === '') return undefined;
+  const body = parseRelationBody(text);
+  if (!body) return undefined;
+  const folded = substituteLiterals(body.node, body.literals);
+  const read = evaluate(folded, () => undefined);
+  return 'value' in read && typeof read.value === 'number' ? read.value : undefined;
 }
 
 /**
@@ -1321,6 +1384,7 @@ function variablesOf(
     const scale = storageScaleOf(model, id, memo);
     const facets = dimensionalFacets(model, id);
     const restricted = restrictedDomainOf(model, id);
+    const floor = restricted === undefined ? undefined : carriedFloorOf(model, id, restricted);
     out.push({
       path,
       featureId: id,
@@ -1330,6 +1394,7 @@ function variablesOf(
       siFactor: scale?.factor ?? 1,
       siOffset: scale?.offset ?? 0,
       ...(restricted !== undefined ? { restricted } : {}),
+      ...(floor !== undefined ? { floor } : {}),
     });
   }
   return out;
