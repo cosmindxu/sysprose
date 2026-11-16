@@ -15,3 +15,8 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# dashboard intermediate state (the coordinator's dataset working files)
+scripts/todo-dashboard/counts.json
+scripts/todo-dashboard/entries.json
+scripts/todo-dashboard/state.json
