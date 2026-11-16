@@ -10773,8 +10773,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GWM2::Q::qa': ['?/-/?/-', '?'],
       'GWM2::g': ['?/?/?/?', '?'],
     }),
-    // Bounds that meet THROUGH A DERIVED VALUE (`s = load * 2.0`, `M = 2.0 * L`) fix the value as a direct pair does, and no
-    // component compares them: the group holding a bare lower and a bare upper bound is refused whole, on every surface.
+    // Bounds that meet THROUGH A DERIVED VALUE (`s = load * 2.0`, `M = 2.0 * L`) fix the value as a direct pair does. Before
+    // a5 HD2 the group holding a bare lower and a bare upper bound was refused whole, on every surface; the bounds are
+    // carried now, and the SMT engine proves/refutes through the derived relation (g1, g2), while g3 has no refutation
+    // without the check's `violated` (INV-B, H6).
     'stand-gw-ineq-derived': probe(`package GWD {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; assert constraint hs { s <= 4.0 } }
         part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint ql { L >= 2.0 } }
@@ -10786,9 +10788,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GWD::P::hs': ['T/-/T/-', 'T'],
       'GWD::P::hs in GWD::Q::p': ['?/-/?/-', '?'],
       'GWD::Q::ql': ['?/-/?/-', '?'],
-      'GWD::g1': ['?/?/?/?', '?'],
-      'GWD::g2': ['?/?/?/?', '?'],
-      'GWD::g3': ['?/?/?/?', '?'],
+      'GWD::g1': ['?/?/?/T', 'T'],
+      'GWD::g2': ['?/?/?/T', 'T'],
+      'GWD::g3': ['?/?/?/?', 'F'],
     }),
     'stand-gw-ineq-derived2': probe(`package GWE {
         part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint hs { load <= 4.0 } }
@@ -10803,9 +10805,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'GWE::Q::ql': ['?/-/?/-', '?'],
       'GWE::Q::qm': ['?/-/?/-', '?'],
       'GWE::Q::qm in GWE::q': ['?/-/?/-', '?'],
-      'GWE::g1': ['?/?/?/?', '?'],
-      'GWE::g2': ['?/?/?/?', '?'],
-      'GWE::g3': ['?/?/?/?', '?'],
+      'GWE::g1': ['?/?/?/T', 'T'],
+      'GWE::g2': ['?/?/?/T', 'T'],
+      'GWE::g3': ['?/?/?/?', 'F'],
     }),
     // An instance that states L reads it (q2: 4, in [2, 20)); q's L gives way and is bounded by Q's pair, which proves
     // `load >= 1.0` and not `load >= 3.0`.
@@ -19528,6 +19530,227 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       'HD4P::P::ca': ['T/T/T/T', 'T'],
       'HD4P::P::ca in HD4P::P2': ['T/T/T/T', 'T'],
     }),
+    // a5 HD2: the candidate ends of an unread scope, enumerated instead of withheld whole (fn4 (a), seeds (1)).
+    // An `order` scope (Q inherits `a` from P1 and P2: a renamed redefiner `q :>> a` beside the feature it answers
+    // to) whose end is bound to `k = 5.0`: before the step no name of u was read, and the rows over k read
+    // ?/?/?/? although k writes 5.0 and both candidates state a `default`, which gives way to it. The SMT engine
+    // keeps its whole-model abstention over a scope the page leaves unread (the axioms may not be the file's), so
+    // its letter stays `?` and the three surfaces that read the value decide.
+    'a5-hd2-keq': probe(`package N2K {
+  part def P1 { attribute a : ScalarValues::Real; }
+  part def P2 { attribute a : ScalarValues::Real default = 13.0; }
+  part def Q :> P1, P2 { attribute q :>> a default = 16.0; }
+  attribute k : ScalarValues::Real = 5.0;
+  part u : Q;
+  bind u.a = k;
+  constraint cA { k <= 6.0 }
+  constraint cB { k >= 6.0 }
+}`, {
+      'N2K::cA': ['T/T/T/?', 'T'],
+      'N2K::cB': ['F/F/F/?', 'F'],
+    }),
+    'a5-hd2-keq-rev': probe(`package N2K {
+  constraint cB { k >= 6.0 }
+  constraint cA { k <= 6.0 }
+  bind u.a = k;
+  part u : Q;
+  attribute k : ScalarValues::Real = 5.0;
+  part def Q :> P1, P2 { attribute q :>> a default = 16.0; }
+  part def P2 { attribute a : ScalarValues::Real default = 13.0; }
+  part def P1 { attribute a : ScalarValues::Real; }
+}`, {
+      'N2K::cA': ['T/T/T/?', 'T'],
+      'N2K::cB': ['F/F/F/?', 'F'],
+    }),
+    'a5-hd2-lim': probe(`package B1 {
+  part def P1 { attribute a : ScalarValues::Real; }
+  part def P2 { attribute a : ScalarValues::Real default = 13.0; }
+  part def Q :> P1, P2 { attribute q :>> a default = 16.0; }
+  attribute k : ScalarValues::Real = 5.0;
+  part u : Q;
+  bind u.a = k;
+  constraint lim { k <= 6.0 }
+  constraint lim2 { k >= 4.0 }
+}`, {
+      'B1::lim': ['T/T/T/?', 'T'],
+      'B1::lim2': ['T/T/T/?', 'T'],
+    }),
+    'a5-hd2-lim-rev': probe(`package B1 {
+  constraint lim2 { k >= 4.0 }
+  constraint lim { k <= 6.0 }
+  bind u.a = k;
+  part u : Q;
+  attribute k : ScalarValues::Real = 5.0;
+  part def Q :> P1, P2 { attribute q :>> a default = 16.0; }
+  part def P2 { attribute a : ScalarValues::Real default = 13.0; }
+  part def P1 { attribute a : ScalarValues::Real; }
+}`, {
+      'B1::lim': ['T/T/T/?', 'T'],
+      'B1::lim2': ['T/T/T/?', 'T'],
+    }),
+    // reads2 (13), a usage that redefines the `default` itself (`part q : Q { attribute :>> L default = 9.0; }`), did
+    // NOT land in this step: the hand oracle reads q.p.load at q's 9, but the reading needs a `default` an instance writes
+    // on a redefinition of a feature it inherits to decide against the `default` a definition states, and that reading
+    // moves the pinned A-H1 shape (`part q2 : Q { part :>> p { attribute :>> load default = 4.0; } }` beside q2's L's
+    // 1, semantics.evaluate-model.test.ts), which this step's invariant forbids. The rows are pinned at today's `?`,
+    // with the hand letters as the ref, for the coordinator's ruling.
+    'a5-hd2-m45': probe(`package M45 {
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a0 { load >= 0.0 } }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint b0 { L <= 10.0 } }
+  part q : Q { attribute :>> L default = 9.0; }
+  constraint g0 { q.p.load <= 10.0 }
+  constraint g1 { q.p.load >= 9.0 }
+  constraint g2 { q.p.load <= 8.0 }
+}`, {
+      'M45::P::a0': ['T/-/T/-', 'T'],
+      'M45::P::a0 in M45::Q::p': ['?/-/?/-', '?'],
+      'M45::P::a0 in M45::q::p': ['?/-/?/-', '?'],
+      'M45::Q::b0': ['?/-/?/-', '?'],
+      'M45::Q::b0 in M45::q': ['?/-/?/-', '?'],
+      'M45::g0': ['?/?/?/?', 'T'],
+      'M45::g1': ['?/?/?/?', 'T'],
+      'M45::g2': ['?/?/?/?', 'F'],
+    }),
+    'a5-hd2-m45-rev': probe(`package M45 {
+  constraint g2 { q.p.load <= 8.0 }
+  constraint g1 { q.p.load >= 9.0 }
+  constraint g0 { q.p.load <= 10.0 }
+  part q : Q { attribute :>> L default = 9.0; }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint b0 { L <= 10.0 } }
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a0 { load >= 0.0 } }
+}`, {
+      'M45::P::a0': ['T/-/T/-', 'T'],
+      'M45::P::a0 in M45::Q::p': ['?/-/?/-', '?'],
+      'M45::P::a0 in M45::q::p': ['?/-/?/-', '?'],
+      'M45::Q::b0': ['?/-/?/-', '?'],
+      'M45::Q::b0 in M45::q': ['?/-/?/-', '?'],
+      'M45::g0': ['?/?/?/?', 'T'],
+      'M45::g1': ['?/?/?/?', 'T'],
+      'M45::g2': ['?/?/?/?', 'F'],
+    }),
+    'a5-hd2-m46': probe(`package M46 {
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a0 { load >= 1.0 } }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint b0 { L <= 10.0 } }
+  part q : Q { attribute :>> L default = 6.0; }
+  constraint g0 { q.p.load <= 6.0 }
+  constraint g1 { q.p.load >= 6.0 }
+  constraint g2 { q.p.load > 6.0 }
+}`, {
+      'M46::P::a0': ['T/-/T/-', 'T'],
+      'M46::P::a0 in M46::Q::p': ['?/-/?/-', '?'],
+      'M46::P::a0 in M46::q::p': ['?/-/?/-', '?'],
+      'M46::Q::b0': ['?/-/?/-', '?'],
+      'M46::Q::b0 in M46::q': ['?/-/?/-', '?'],
+      'M46::g0': ['?/?/?/?', 'T'],
+      'M46::g1': ['?/?/?/?', 'T'],
+      'M46::g2': ['?/?/?/?', 'F'],
+    }),
+    'a5-hd2-m46-rev': probe(`package M46 {
+  constraint g2 { q.p.load > 6.0 }
+  constraint g1 { q.p.load >= 6.0 }
+  constraint g0 { q.p.load <= 6.0 }
+  part q : Q { attribute :>> L default = 6.0; }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint b0 { L <= 10.0 } }
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a0 { load >= 1.0 } }
+}`, {
+      'M46::P::a0': ['T/-/T/-', 'T'],
+      'M46::P::a0 in M46::Q::p': ['?/-/?/-', '?'],
+      'M46::P::a0 in M46::q::p': ['?/-/?/-', '?'],
+      'M46::Q::b0': ['?/-/?/-', '?'],
+      'M46::Q::b0 in M46::q': ['?/-/?/-', '?'],
+      'M46::g0': ['?/?/?/?', 'T'],
+      'M46::g1': ['?/?/?/?', 'T'],
+      'M46::g2': ['?/?/?/?', 'F'],
+    }),
+    'a5-hd2-m52': probe(`package M52 {
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a0 { load >= 0.0 } }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint b0 { L >= 2.0 } }
+  part q : Q { attribute :>> L default = 4.0; }
+  constraint g0 { q.p.load <= 4.0 }
+  constraint g1 { q.p.load == 4.0 }
+  constraint g2 { q.p.load >= 5.0 }
+}`, {
+      'M52::P::a0': ['T/-/T/-', 'T'],
+      'M52::P::a0 in M52::Q::p': ['?/-/?/-', '?'],
+      'M52::P::a0 in M52::q::p': ['?/-/?/-', '?'],
+      'M52::Q::b0': ['?/-/?/-', '?'],
+      'M52::Q::b0 in M52::q': ['?/-/?/-', '?'],
+      'M52::g0': ['?/?/?/?', 'T'],
+      'M52::g1': ['?/?/?/?', 'T'],
+      'M52::g2': ['?/?/?/?', 'F'],
+    }),
+    'a5-hd2-m52-rev': probe(`package M52 {
+  constraint g2 { q.p.load >= 5.0 }
+  constraint g1 { q.p.load == 4.0 }
+  constraint g0 { q.p.load <= 4.0 }
+  part q : Q { attribute :>> L default = 4.0; }
+  part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint b0 { L >= 2.0 } }
+  part def P { attribute load : ScalarValues::Real default = 1.0; assert constraint a0 { load >= 0.0 } }
+}`, {
+      'M52::P::a0': ['T/-/T/-', 'T'],
+      'M52::P::a0 in M52::Q::p': ['?/-/?/-', '?'],
+      'M52::P::a0 in M52::q::p': ['?/-/?/-', '?'],
+      'M52::Q::b0': ['?/-/?/-', '?'],
+      'M52::Q::b0 in M52::q': ['?/-/?/-', '?'],
+      'M52::g0': ['?/?/?/?', 'T'],
+      'M52::g1': ['?/?/?/?', 'T'],
+      'M52::g2': ['?/?/?/?', 'F'],
+    }),
+    // r16, the genericity-audit context order, YIELDS TO HD2 CONDITIONALLY (2026-11-15): the per-instance satisfy row
+    // cannot be read on all four surfaces, so the satisfy path is untouched and these are the rows it leaves, pinned as
+    // single probes (NOT in STAND_ALIKE: the twins differ by member order, which is exactly what cannot be read).
+    // default twin (`load default = 1.0`), file order: R's row decides in r and abstains on p's; reversed, the deciding
+    // row is filed under «Satisfy» while R in r abstains.
+    'a5-hd2-r16-dflt': probe(`package R16 {
+  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+  part p : P { attribute :>> load = 50.0; }
+  requirement def R { subject s : P; require constraint { s.m2 >= 0.0 } }
+  requirement r : R { subject s = p; }
+  satisfy R by p;
+}`, {
+      'R16::R::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'R16::R::«ConstraintUsage» in R16::p': ['-/?/-/?', '?'],
+      'R16::R::«ConstraintUsage» in R16::r': ['F/F/F/F', 'F'],
+    }),
+    'a5-hd2-r16-dflt-rev': probe(`package R16 {
+  satisfy R by p;
+  requirement r : R { subject s = p; }
+  requirement def R { subject s : P; require constraint { s.m2 >= 0.0 } }
+  part p : P { attribute :>> load = 50.0; }
+  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+}`, {
+      'R16::R::«ConstraintUsage»': ['T/T/T/T', 'T'],
+      'R16::R::«ConstraintUsage» in R16::«Satisfy»': ['F/-/F/-', 'F'],
+      'R16::R::«ConstraintUsage» in R16::p': ['-/F/-/F', 'F'],
+      'R16::R::«ConstraintUsage» in R16::r': ['-/?/-/?', null],
+    }),
+    // no-default twin (`load = 1.0`): its contradiction and SMT X land on the satisfy's row in one order and on r's in
+    // the other, so no ref is pinned on the rows the two orders disagree over.
+    'a5-hd2-r16': probe(`package R16 {
+  part def P { attribute load : ScalarValues::Real = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+  part p : P { attribute :>> load = 50.0; }
+  requirement def R { subject s : P; require constraint { s.m2 >= 0.0 } }
+  requirement r : R { subject s = p; }
+  satisfy R by p;
+}`, {
+      'R16::p::«AttributeUsage»#binding': ['F/-/F/-', null],
+      'R16::R::«ConstraintUsage»': ['T/T/T/X', null],
+      'R16::R::«ConstraintUsage» in R16::p': ['-/?/-/X', null],
+      'R16::R::«ConstraintUsage» in R16::r': ['?/?/?/X', null],
+    }),
+    'a5-hd2-r16-rev': probe(`package R16 {
+  satisfy R by p;
+  requirement r : R { subject s = p; }
+  requirement def R { subject s : P; require constraint { s.m2 >= 0.0 } }
+  part p : P { attribute :>> load = 50.0; }
+  part def P { attribute load : ScalarValues::Real = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+}`, {
+      'R16::p::«AttributeUsage»#binding': ['F/-/F/-', null],
+      'R16::R::«ConstraintUsage»': ['T/T/T/X', null],
+      'R16::R::«ConstraintUsage» in R16::«Satisfy»': ['?/-/?/-', null],
+      'R16::R::«ConstraintUsage» in R16::p': ['-/?/-/X', null],
+      'R16::R::«ConstraintUsage» in R16::r': ['-/?/-/X', null],
+    }),
   };
 
   /**
@@ -19704,6 +19927,18 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       ],
     ]),
     ['n4 | N4::zl', 'an asserted `x * x == -1.0` admits no model; the numeric surface reads z apart from it (out of scope)'],
+    // a5 HD2's r16 twins (the conditional finding): the no-default twin's model contradicts itself — p's `:>> load =
+    // 50.0` against P's `load = 1.0` — which the check reports on p's `#binding` row, so the requirement definition's
+    // own row reads satisfied on the check, the literal engine and the numeric surface while the SMT engine reads the
+    // contradiction its axioms carry (X). The twins' rows are pinned unchanged, so the contradiction stays beside a
+    // decided row in both member orders; the row itself is one of the letters the coordinator rules on at merge.
+    ...['a5-hd2-r16', 'a5-hd2-r16-rev'].map(
+      (name) =>
+        [
+          `${name} | R16::R::«ConstraintUsage»`,
+          'the no-default twin (P’s `load = 1.0` beside p’s `:>> load = 50.0`) contradicts itself, and the check reports it on p’s `#binding` row (F); the requirement definition’s own row reads `satisfied` on the check, the literal engine and the numeric surface, and the SMT engine reads the contradiction its axioms carry (a5 HD2’s conditional r16 finding, pinned unchanged)',
+        ] as const,
+    ),
     // TODO 249: AND-CLASH, as one conjunction or as two asserts.
     ...['order-and-clash', 'order-and-clash-rev', 'order-and-clash-split', 'order-and-clash-split-rev'].flatMap((name) =>
       ['t1', 't50'].map(
@@ -20788,6 +21023,12 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     ['a5-hd4-wqp', 'a5-hd4-wqp-rev'],
     ['a5-hd4-nobind', 'a5-hd4-nobind-rev'],
     ['a5-hd4-pkg', 'a5-hd4-pkg-rev'],
+    // a5 HD2: the candidate ends of an unread scope, in either text order.
+    ['a5-hd2-keq', 'a5-hd2-keq-rev'],
+    ['a5-hd2-lim', 'a5-hd2-lim-rev'],
+    ['a5-hd2-m45', 'a5-hd2-m45-rev'],
+    ['a5-hd2-m46', 'a5-hd2-m46-rev'],
+    ['a5-hd2-m52', 'a5-hd2-m52-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

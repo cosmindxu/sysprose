@@ -2156,9 +2156,10 @@ are read on no surface, the numeric surface included). An
 asserted bound over such a default (`assert constraint { load >= 0.0 }`, a plain number on a unitless Real)
 fixes no value, so the SMT engine carries it and can prove a goal every value the bounds allow satisfies
 (`load <= 11.0` beside `load <= 10.0`) where the other surfaces read none; a pair of bounds on the binding's
-features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equation does), or that meets
-through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lower and an upper bound on features
-an asserted relation links), is not carried, and the row says which. A bound on an Integer is carried alike, and a pair
+features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equation does) is not carried, and
+the row says so; a pair that meets through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lower
+and an upper bound on features an asserted relation links) is carried, and the row is compared through that
+relation. A bound on an Integer is carried alike, and a pair
 on one meets where it leaves a single whole number (`load >= 4.5` with `L <= 5.5`); a conjunction of bounds is read as
 its conjuncts. A bound in a unit, or on a `Natural`, `Positive` or `UnlimitedNatural`, is not carried, and the row says so. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint

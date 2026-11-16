@@ -460,7 +460,11 @@ export class DefiningEquations {
   private readonly withheldIn = new Map<ElementId, Map<string, ElementId>>();
   /** Per context, the paths of {@link withheldIn} that are a feature's own, left unread because a binding joins its value to a scope the page leaves unread ({@link seedJoinedToUnread}). */
   private readonly joinedIn = new Map<ElementId, Set<string>>();
-  private joins?: { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId> };
+  private joins?: { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId>; paired: ReadonlyMap<ElementId, readonly ElementId[]> };
+  /** Whether the value a joined end writes stands, by the end it is joined to ({@link seedJoinedToUnread}), once asked. */
+  private readonly seedStands = new Map<string, boolean>();
+  /** The features a user's binding gives a value, once per revision ({@link candidateStands}). */
+  private valuedEnds?: ReadonlySet<ElementId>;
   /** The types an owner of a binding specialises, for {@link endsInGeneral}. */
   private readonly generalIds = new Map<ElementId, ReadonlySet<ElementId>>();
   private specialised?: Map<ElementId, ElementRecord[]>;
@@ -4849,10 +4853,24 @@ export class DefiningEquations {
    * read), so none reads a value through it. Then to a fixpoint the bindings that join one of their ends: a feature
    * joined to a value nothing follows has none either, through however many bindings.
    */
-  withheldJoins(): { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId> } {
+  withheldJoins(): { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId>; paired: ReadonlyMap<ElementId, readonly ElementId[]> } {
     if (this.joins !== undefined) return this.joins;
     const edges = new Set<ElementId>();
     const ends = new Map<ElementId, ElementId>();
+    /** The other end(s) each end of a withheld binding is joined to ({@link seedJoinedToUnread}). */
+    const paired = new Map<ElementId, ElementId[]>();
+    const join = (id: ElementId, raw: readonly ElementId[], owner: ElementId): void => {
+      edges.add(id);
+      for (const e of raw) if (!ends.has(e)) ends.set(e, owner);
+      for (const e of raw) {
+        for (const o of raw) {
+          if (o === e) continue;
+          const at = paired.get(e) ?? [];
+          if (!at.includes(o)) at.push(o);
+          paired.set(e, at);
+        }
+      }
+    };
     const all: Array<{ id: ElementId; raw: ElementId[] }> = [];
     if (this.partedOwners().size > 0) {
       for (const el of this.model.all()) {
@@ -4863,8 +4881,7 @@ export class DefiningEquations {
     for (const b of all) {
       const owner = b.raw.map((e) => this.unreadOwnerOf(e)).find((o) => o !== undefined);
       if (owner === undefined) continue;
-      edges.add(b.id);
-      for (const e of b.raw) if (!ends.has(e)) ends.set(e, owner);
+      join(b.id, b.raw, owner);
     }
     // A package's binding on a definition's feature that this tool does not resolve (`outsideBindingsOf` lists none: a name
     // two imports expose, a path it cannot follow) joins an instance's value to one nothing follows: no surface reads a
@@ -4878,8 +4895,7 @@ export class DefiningEquations {
         const heads = raw.map((e) => definitionAt(this.model, e)).filter((d) => d !== undefined);
         if (heads.length === 0) continue;
         if (heads.every((d) => outsideBindingsOf(this.model, d!.definition.id).some((x) => x.binding.id === el.id))) continue;
-        edges.add(el.id);
-        for (const e of raw) if (!ends.has(e)) ends.set(e, holder.id);
+        join(el.id, raw, holder.id);
       }
     }
     // An end joined through a feature that redefines one of the ends (the copy a usage makes of it) is joined too.
@@ -4892,12 +4908,11 @@ export class DefiningEquations {
       for (const b of all) {
         const owner = edges.has(b.id) ? undefined : b.raw.map(joinedTo).find((o) => o !== undefined);
         if (owner === undefined) continue;
-        edges.add(b.id);
-        for (const e of b.raw) if (!ends.has(e)) ends.set(e, owner);
+        join(b.id, b.raw, owner);
         grew = true;
       }
     }
-    this.joins = { edges, ends };
+    this.joins = { edges, ends, paired };
     return this.joins;
   }
 
@@ -4907,6 +4922,11 @@ export class DefiningEquations {
    * writes a value. The file reads the other end in a value of its own (the two conflict, or `f` gives way) or in none
    * (`f` stands), and the page cannot say which, so it reads no value of `f` (a valueless end is read as none already).
    * A bound end it could not follow stood for nothing, and `k = 5.0` read 5 against a `= 16.0` it never met.
+   *
+   * The value stands where enumerating the CANDIDATE ENDS decides it (HD2): where the feature that
+   * writes it lies in the scope itself, a value written in the file is its own whichever feature a name finds there;
+   * and where it is joined to an end the scope answers, every candidate that end's name could find gives way to it
+   * ({@link candidateStands}) or states none.
    */
   seedJoinedToUnread(f: ElementRecord): ElementId | undefined {
     const { ends } = this.withheldJoins();
@@ -4914,7 +4934,171 @@ export class DefiningEquations {
     const line = [f, ...redefinedClosure(this.model, f)];
     const owner = line.map((g) => ends.get(g.id)).find((o) => o !== undefined);
     if (owner === undefined) return undefined;
-    return line.some((g) => g.attrs.value !== undefined && g.attrs.value !== null) ? owner : undefined;
+    if (!line.some((g) => g.attrs.value !== undefined && g.attrs.value !== null)) return undefined;
+    // A value written on a feature of the scope itself: the page leaves the scope's NAMES unread, not the values its
+    // own features write (fn4 (a): the valued end keeps its own seed).
+    if (line.some((g) => this.unreadOwnerOf(g.id) === owner)) return undefined;
+    return this.joinedCandidateStands(f, line, owner) ? undefined : owner;
+  }
+
+  /**
+   * Does the value `f` writes stand against every candidate end the withheld scope `ownerId` answers the end it is
+   * joined to with ({@link seedJoinedToUnread})? The candidates are the effective features of that scope that answer
+   * the joined end's name, its own or one it redefines (the pair an `order` scope inherits, the twins one owner holds,
+   * what a `redefinition` may land on); each must state no value of its own, or a `default`, which gives way to the
+   * value written with `=` (defaults (b): a default stands against no binding). A candidate written with `=`, defined
+   * by an asserted equation or holding content of its own decides the pair against `f`, and the seed stays unread. An
+   * end no candidate answers, on a scope this cannot enumerate, stays unread too: an enumeration is not evidence.
+   */
+  private joinedCandidateStands(f: ElementRecord, line: readonly ElementRecord[], ownerId: ElementId): boolean {
+    const { paired } = this.withheldJoins();
+    const ids = new Set(line.map((g) => g.id));
+    let asked = false;
+    for (const g of line) {
+      for (const other of paired.get(g.id) ?? []) {
+        if (ids.has(other)) continue;
+        asked = true;
+        // Per (scope, end, seed line): the candidates are the scope's, so the answer is only its own, and the one its
+        // binding carries the seed's value through is not another (`candidateStatesOther`).
+        const key = `${ownerId} ${other} ${[...ids].join(',')}`;
+        const hit = this.seedStands.get(key);
+        if (hit !== undefined) {
+          if (!hit) return false;
+          continue;
+        }
+        const end = this.model.get(other);
+        const stands = end !== undefined && this.candidateStands(ownerId, end, line);
+        this.seedStands.set(key, stands);
+        if (!stands) return false;
+      }
+    }
+    return asked;
+  }
+
+  /**
+   * Does every candidate the withheld scope `ownerId` answers the end `e`'s name with give way to a written value, or
+   * state none ({@link joinedCandidateStands})? `end` for a name no candidate bears.
+   */
+  private candidateStands(ownerId: ElementId, e: ElementRecord, line: readonly ElementRecord[] = []): boolean {
+    const names = new Set<string>();
+    const own = this.nameOf(e);
+    if (own !== undefined) names.add(own);
+    for (const n of this.aliasesOf(e)) names.add(n);
+    if (names.size === 0) return false;
+    let found = false;
+    for (const c of this.features(ownerId)) {
+      if (c.attrs.isLibrary === true) continue;
+      const cn = this.nameOf(c);
+      if (!(cn !== undefined && names.has(cn)) && !this.aliasesOf(c).some((n) => names.has(n))) continue;
+      found = true;
+      if (c.attrs.value !== undefined && c.attrs.value !== null) {
+        if (c.attrs.defaultValue !== true) return false;
+        // A `default` that gives way to an assertion, or to a binding other than this pair's, states a value that is
+        // not `f`'s; one that gives way to `f`, or to none, gives way to the value written with `=` (defaults (b)).
+        if (this.defaultGivesWayElsewhere(c, line)) return false;
+        continue;
+      }
+      // No value of its own: one that reaches it by a channel the written value does not show still decides the pair
+      // against `f`, and the seed stays unread ({@link candidateStatesOther}).
+      if (this.candidateStatesOther(ownerId, c, line)) return false;
+    }
+    return found;
+  }
+
+  /**
+   * Does a value other than the one `f` writes reach the candidate end `c` by a channel its own `attrs.value` does not
+   * show ({@link candidateStands})?
+   *
+   * - An asserted equation defines it: its own owner's over its name, one of a feature it redefines, or the withheld
+   *   scope's. `part def P2 { assert constraint { a == 7.0 } }` beside `bind u.a = k` states two values for `u.a`, and
+   *   the check read u.a at 7 while the SMT engine read inconsistent axioms (a contradiction read as a decision).
+   * - A binding of the user's joins it to an end that states a value — with `=`, or one an asserted equation defines,
+   *   or one another binding gives (`bind a = m` with `m = 7.0` beside `bind u.a = k`).
+   * - Its `default` gives way to an asserted equation, or to a binding other than the one this pair is read through; a
+   *   `default` that gives way to `f`, or to none, gives way there as {@link candidateStands} reads it.
+   */
+  private candidateStatesOther(ownerId: ElementId, c: ElementRecord, line: readonly ElementRecord[]): boolean {
+    if (this.assertedNameOf(c)) return true;
+    for (const g of [c, ...redefinedClosure(this.model, c)]) {
+      const name = effectiveNameOf(this.model, g);
+      if (name !== undefined && definingEquationsFor(this.model, ownerId, name).length > 0) return true;
+    }
+    if (this.defaultGivesWayElsewhere(c, line)) return true;
+    const valued = this.boundValued();
+    for (const b of bindingEnds(this.model).connectors) {
+      const ends = [...(b.source ?? []), ...(b.target ?? [])];
+      if (!ends.includes(c.id)) continue;
+      // The binding this pair is read through gives it `f`'s value, not another.
+      if (ends.some((e) => e !== c.id && line.some((g) => g.id === e))) continue;
+      if (ends.some((e) => e !== c.id && valued.has(e))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Does the `default` on `c` give way to an asserted equation, or to a binding that is not the one this pair is read
+   * through ({@link candidateStands})? A `default` no assertion or binding takes, or one this pair's binding takes,
+   * gives way to the value written with `=`.
+   */
+  private defaultGivesWayElsewhere(c: ElementRecord, line: readonly ElementRecord[]): boolean {
+    const to = defaultGivesWayTo(this.model, c);
+    if (to === undefined) return false;
+    if (to.to !== 'binding') return true;
+    const at = to.bindingId !== undefined ? this.model.get(to.bindingId) : undefined;
+    return at === undefined || !this.joinsLine(at, line);
+  }
+
+  /** Does one of the binding connector `b`'s ends lie on `line` — the features a seed writes to ({@link candidateStatesOther})? */
+  private joinsLine(b: ElementRecord, line: readonly ElementRecord[]): boolean {
+    const ids = new Set(line.map((g) => g.id));
+    return [...(b.source ?? []), ...(b.target ?? [])].some((e) => ids.has(e));
+  }
+
+  /** Does an asserted equation define the feature `c` or one it redefines, over its own owner's name ({@link candidateStatesOther})? */
+  private assertedNameOf(c: ElementRecord): boolean {
+    for (const g of [c, ...redefinedClosure(this.model, c)]) {
+      const name = effectiveNameOf(this.model, g);
+      if (name === undefined || g.ownerId == null) continue;
+      if (definingEquationsFor(this.model, g.ownerId, name).length > 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The features a binding of the user's gives a value ({@link candidateStatesOther}): each end that writes one with
+   * `=`, or one an asserted equation defines, and each end a binding joins to one of those, through however many
+   * bindings. Built once per revision.
+   */
+  private boundValued(): ReadonlySet<ElementId> {
+    if (this.valuedEnds !== undefined) return this.valuedEnds;
+    const { connectors } = bindingEnds(this.model);
+    const valued = new Set<ElementId>();
+    for (const b of connectors) {
+      for (const id of [...(b.source ?? []), ...(b.target ?? [])]) {
+        const f = this.model.get(id);
+        if (f === undefined) continue;
+        if (f.attrs.isLibrary === true) continue;
+        if ([f, ...redefinedClosure(this.model, f)].some((g) => g.attrs.isLibrary !== true && g.attrs.value !== undefined && g.attrs.value !== null && g.attrs.defaultValue !== true)) {
+          valued.add(id);
+        } else if (this.assertedNameOf(f)) {
+          valued.add(id);
+        }
+      }
+    }
+    for (let grew = valued.size > 0; grew; ) {
+      grew = false;
+      for (const b of connectors) {
+        const ends = [...(b.source ?? []), ...(b.target ?? [])];
+        if (!ends.some((e) => valued.has(e))) continue;
+        for (const e of ends) {
+          if (valued.has(e) || this.model.get(e) === undefined) continue;
+          valued.add(e);
+          grew = true;
+        }
+      }
+    }
+    this.valuedEnds = valued;
+    return valued;
   }
 
   /** Is `name`, read in `contextId`, a feature's own value left unread by {@link seedJoinedToUnread} (and not a name below the scope)? */
@@ -10027,10 +10211,12 @@ export function writesStandingDefault(model: Model, f: ElementRecord): boolean {
  * 0.0`, `x <= 10.0`) on a unitless Real constrains the symbol and fixes no
  * value, unless a pair of bounds on the binding's features meets (`L >= 5.0`
  * with `L <= 5.0` fixes it as `L == 5.0` does) or cannot be compared (a unit,
- * an integer sort), or meets through a derived value (`s = load * 2.0`): the
- * worklist refuses a meeting pair and an incomparable component in words of
- * their own (`refuseMeetingBounds` of ./obligations); a bound the gate cannot
- * read (a unit, an integer sort, a conjunction) is refused in the generic one.
+ * an integer sort): the worklist refuses a meeting pair and an incomparable
+ * component in words of their own (`refuseMeetingBounds` of ./obligations). A
+ * pair that meets through a derived value (`s = load * 2.0`) is carried
+ * instead, and the encoder reads the derived relation (a5 HD2, GWD/GWE). A
+ * bound the gate cannot read (a unit, an integer sort, a conjunction) is
+ * refused in the generic one.
  */
 export function givenWayUnvalued(model: Model, contextId: ElementId, name: string): string | undefined {
   if (!hasUserBindings(model)) return undefined;

@@ -3605,6 +3605,179 @@ describe('checkConstraints — a bound partner is read only where every instance
     });
   });
 
+  describe('HD2: the candidate ends of an unread scope are enumerated, not withheld whole', () => {
+    // A scope the saved file may read otherwise (bind.ts unreadScopes: twins, a redefinition the file does not keep,
+    // an order-dependent inheritance) left EVERY name it holds unread, so a value a binding joins there was withheld
+    // whole. HD2 enumerates the candidates: the value a feature writes stands where it lies in the scope itself, and
+    // where it is joined to an end the scope answers, every candidate the end's name could find must give way to it
+    // (a `default`) or state none.
+    const checkRows = async (text: string): Promise<Map<string, string>> => {
+      const { model: m } = await loadModelText(text);
+      const qn = (id: string) => m!.qualifiedName(id) || id;
+      const rows = new Map<string, string>();
+      for (const c of checkConstraints(m!)) {
+        rows.set(c.conflict ? `${qn(c.id)}#${c.conflict}` : qn(c.id), c.result);
+        for (const i of c.instances ?? []) rows.set(`${qn(c.id)} in ${(i as { instance?: string }).instance ?? qn(i.contextId ?? '')}`, i.result);
+      }
+      return rows;
+    };
+    // An `order` scope: Q inherits `a` from P1 and P2 — a renamed redefiner `q :>> a` beside the feature it answers
+    // to — and the package's binding joins Q's end to k's 5.0.
+    const seed = (pkg: string, second: string, d1: string, d2: string, rev: boolean) => {
+      const chunks = [
+        'part def P1 { attribute a : ScalarValues::Real; }',
+        `part def P2 { attribute a : ScalarValues::Real ${second}${d2}; }`,
+        `part def Q :> P1, P2 { attribute q :>> a ${d1}; }`,
+        'attribute k : ScalarValues::Real = 5.0;',
+        'part u : Q;',
+        'bind u.a = k;',
+        'constraint cA { k <= 6.0 }',
+        'constraint cB { k >= 6.0 }',
+      ];
+      return `package ${pkg} { ${(rev ? [...chunks].reverse() : chunks).join(' ')} }`;
+    };
+    it('reads the value a binding joins to an end under an `order` scope, both candidates a `default`', async () => {
+      // Before the step both rows read unknown with "k is not read: it states a value, and a binding joins it to a
+      // feature of a scope the saved file may read otherwise": the two candidates' defaults give way to the 5.0.
+      for (const rev of [false, true]) {
+        const rows = await checkRows(seed('HD2S', 'default = ', 'default = 16.0', '13.0', rev));
+        expect([rows.get('HD2S::cA'), rows.get('HD2S::cB')], `rev ${rev}`).toEqual(['satisfied', 'violated']);
+      }
+    });
+    it('leaves the value unread where one candidate writes a value with `=`', async () => {
+      // The enumeration is no blanket release: P2's `a = 13.0` is a value a competing candidate states, so the model
+      // states two values for the end the binding joins, and neither is read — as before the step.
+      for (const rev of [false, true]) {
+        const rows = await checkRows(seed('HD2W', '= ', 'default = 16.0', '13.0', rev));
+        expect([rows.get('HD2W::cA'), rows.get('HD2W::cB')], `rev ${rev}`).toEqual(['unknown', 'unknown']);
+      }
+    });
+    // The same abstention where the candidate's value reaches it by a channel its own `attrs.value` does not show: an
+    // asserted equation that defines it, another binding that gives it one, or a `default` another binding takes. Read
+    // as valueless, such a candidate made the enumeration decide the seed while the SMT engine read the model's
+    // axioms as inconsistent (two values stated for the bound end): the check read one of two values the model states.
+    const other = (pkg: string, p2: string, extra: string, rev: boolean) => {
+      const chunks = [
+        'part def P1 { attribute a : ScalarValues::Real; }',
+        `part def P2 { attribute a : ScalarValues::Real; ${p2} }`,
+        'part def Q :> P1, P2 { attribute q :>> a default = 16.0; }',
+        extra,
+        'attribute k : ScalarValues::Real = 5.0;',
+        'part u : Q;',
+        'bind u.a = k;',
+        'constraint cA { k <= 6.0 }',
+        'constraint cB { k >= 6.0 }',
+      ].filter((c) => c !== '');
+      return `package ${pkg} { ${(rev ? [...chunks].reverse() : chunks).join(' ')} }`;
+    };
+    it('leaves the value unread where a candidate is defined by an asserted equation or valued by another binding', async () => {
+      const channels = [
+        ['HD2E', 'assert constraint eq { a == 7.0 }', ''],
+        ['HD2B', 'bind a = m;', 'attribute m : ScalarValues::Real = 7.0;'],
+      ] as const;
+      for (const [pkg, p2, extra] of channels) {
+        for (const rev of [false, true]) {
+          const rows = await checkRows(other(pkg, p2, extra, rev));
+          expect([rows.get(`${pkg}::cA`), rows.get(`${pkg}::cB`)], `${pkg} rev ${rev}`).toEqual(['unknown', 'unknown']);
+        }
+      }
+      // A `default` another binding takes (`bind a = m` over P2's `a default = 13.0`): it gives way to that binding's
+      // 7.0, not to the seed's 5.0, so the pair stays unread too.
+      for (const rev of [false, true]) {
+        const rows = await checkRows(other('HD2G', 'default = 13.0; bind a = m;', 'attribute m : ScalarValues::Real = 7.0;', rev));
+        expect([rows.get('HD2G::cA'), rows.get('HD2G::cB')], `rev ${rev}`).toEqual(['unknown', 'unknown']);
+      }
+    });
+    // reads2 (13)'s shape: the usage redefines the `default` itself, beside a definition's competing `default`.
+    const usage = (pkg: string, redef: boolean) => `package ${pkg} {
+      part def P { attribute load : ScalarValues::Real default = 1.0; }
+      part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint b0 { L <= 10.0 } }
+      part q : Q${redef ? ' { attribute :>> L default = 9.0; }' : ';'}
+      constraint g0 { q.p.load <= 10.0 }
+      constraint g1 { q.p.load >= 9.0 }
+      constraint g2 { q.p.load <= 8.0 }
+    }`;
+    // reads2 (13) did NOT land in this step (see the differential's a5-hd2-m45 comment): the hand oracle reads q.p.load
+    // at the 9 the usage writes, but the reading would need a `default` an instance writes on a redefinition of a
+    // feature it inherits to decide against the `default` a definition states, and that moves the pinned A-H1 shape
+    // (`part q2 : Q { part :>> p { attribute :>> load default = 4.0; } }` against q2's L of 1). The rows stay as they
+    // are, on the sentence that names the two defaults, until the coordinator rules on the pair.
+    it('leaves the `default` a usage writes beside a definition’s competing default unread (the reads2 (13) gap)', async () => {
+      for (const [pkg, redef] of [['HD2U', true], ['HD2N', false]] as const) {
+        const rows = await checkRows(usage(pkg, redef));
+        expect([rows.get(`${pkg}::g0`), rows.get(`${pkg}::g1`), rows.get(`${pkg}::g2`)], pkg).toEqual(['unknown', 'unknown', 'unknown']);
+        expect(rows.get(`${pkg}::Q::b0`), pkg).toBe('unknown');
+      }
+    });
+    it('carries the bounds a derived relation links instead of refusing the group whole (reads2 (14))', async () => {
+      // The check reads no value over a give-way default, so its rows stay `?` (the SMT engine decides them; the
+      // differential pins hold that). What changed is the refusal: no axiom is turned away for meeting another
+      // through a derived value, so the bounds are carried.
+      const text = `package HD2D {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; assert constraint hs { s <= 4.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; assert constraint ql { L >= 2.0 } }
+        part q : Q;
+        constraint g1 { q.p.load <= 2.0 }
+        constraint g2 { q.p.load == 2.0 }
+        constraint g3 { q.p.load >= 2.5 }
+      }`;
+      const { model: m } = await loadModelText(text);
+      const rows = await checkRows(text);
+      expect([rows.get('HD2D::g1'), rows.get('HD2D::g2'), rows.get('HD2D::g3')]).toEqual(['unknown', 'unknown', 'unknown']);
+      const refused = obligationsOf(m!, {}, true).flatMap((o) =>
+        o.encodable !== undefined && o.encodable !== true && String(o.encodable.detail).includes('meet through a derived value') ? [o.expression] : [],
+      );
+      expect(refused).toEqual([]);
+    });
+    // r16 (the genericity-audit context order) yields to HD2 CONDITIONALLY: the per-instance satisfy row cannot be read
+    // on all four surfaces (it moves between the satisfy and the requirement usage with the member order, and the
+    // no-default twin's SMT X lands on different rows in the two orders), so the satisfy path is untouched and these are
+    // the rows it leaves — pinned here so an accidental move shows, and reported for the coordinator's ruling.
+    const R16 = (dflt: boolean, rev: boolean) => {
+      const chunks = [
+        `part def P { attribute load : ScalarValues::Real ${dflt ? 'default ' : ''}= 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }`,
+        'part p : P { attribute :>> load = 50.0; }',
+        'requirement def R { subject s : P; require constraint { s.m2 >= 0.0 } }',
+        'requirement r : R { subject s = p; }',
+        'satisfy R by p;',
+      ];
+      return `package R16 { ${(rev ? [...chunks].reverse() : chunks).join(' ')} }`;
+    };
+    it('leaves the r16 twins as they stand, in both member orders (the conditional finding)', async () => {
+      const fwd = await checkRows(R16(true, false));
+      expect([fwd.get('R16::R::«ConstraintUsage»'), fwd.get('R16::R::«ConstraintUsage» in R16::r')]).toEqual(['satisfied', 'violated']);
+      expect(fwd.has('R16::R::«ConstraintUsage» in R16::p')).toBe(false);
+      const rev = await checkRows(R16(true, true));
+      expect([rev.get('R16::R::«ConstraintUsage»'), rev.get('R16::R::«ConstraintUsage» in R16::«Satisfy»')]).toEqual(['satisfied', 'violated']);
+      expect(rev.has('R16::R::«ConstraintUsage» in R16::r')).toBe(false);
+      const plain = await checkRows(R16(false, false));
+      expect([plain.get('R16::R::«ConstraintUsage»'), plain.get('R16::R::«ConstraintUsage» in R16::r'), plain.get('R16::p::«AttributeUsage»#binding')]).toEqual([
+        'satisfied',
+        'unknown',
+        'violated',
+      ]);
+    });
+    it('reads a nested part’s own redefinition (written with `=`) and a bound end three redefinitions deep', async () => {
+      const nested = await checkRows(`package HD2C {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 7.0; part p : P; bind p.load = L; }
+        part def R { part q : Q { attribute :>> L = 9.0; } attribute L : ScalarValues::Real = 99.0; }
+        part r : R;
+        constraint c1 { r.q.p.load <= 9.0 }
+      }`);
+      expect(nested.get('HD2C::c1')).toBe('satisfied');
+      const deep = await checkRows(`package HD2P {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def P2 :> P { attribute :>> load; }
+        part def P3 :> P2 { attribute :>> load; }
+        part def Q { attribute L : ScalarValues::Real = 5.0; part p : P3; bind p.load = L; }
+        part q : Q;
+        constraint c1 { q.p.load <= 5.0 }
+      }`);
+      expect(deep.get('HD2P::c1')).toBe('satisfied');
+    });
+  });
+
   /** R's `L = 2.0 * K`, bound into its q's p by a binding written in q's body (or in a definition nested in R). */
   const enclosed = (pkg: string, nested: boolean, override: boolean) => `package ${pkg} {
     ${P}
