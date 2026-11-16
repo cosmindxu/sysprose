@@ -19751,6 +19751,184 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       'R16::R::«ConstraintUsage» in R16::p': ['-/?/-/X', null],
       'R16::R::«ConstraintUsage» in R16::r': ['-/?/-/X', null],
     }),
+    // a5 HD5: the typed-inequality hold is scoped to the instance its value is read in. An assert typed by an
+    // inequality-only definition (`x >= 0.0 and x <= 100.0`) holds the feature it constrains as no design freedom for
+    // the numeric surface; before the step the hold was by FEATURE, so an assert written in `part p : P` also held a
+    // sibling `part p2 : P`'s L, and a plain `p2.L == 200.0` there was "not judged" instead of imposed. Now the hold
+    // reaches the instance the assert's value is read in (the usage it sits in, or the instance a dotted value names)
+    // and below it only: `t2` reads `t` (imposed, no decision), `t1` and the assert's own row stay unknown, and the
+    // check, literal and SMT engines are untouched (their abstention is the missing value, not the hold). The
+    // definition placement is the control: every instance reads the definition's L, and both rows stay held.
+    'a5-hd5-hold': probe(`package H5S {
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute L : ScalarValues::Real; }
+  part p : P { assert constraint ca : Cd { in x = L; } }
+  part p2 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+}`, {
+      'H5S::p::ca': ['?/-/?/-', null],
+      'H5S::t1': ['?/?/?/?', null],
+      'H5S::t2': ['?/?/t/?', '?'],
+    }),
+    'a5-hd5-hold-rev': probe(`package H5S {
+  part p2 : P;
+  part p : P { assert constraint ca : Cd { in x = L; } }
+  constraint t2 { p2.L == 200.0 }
+  constraint t1 { p.L == 200.0 }
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute L : ScalarValues::Real; }
+}`, {
+      'H5S::p::ca': ['?/-/?/-', null],
+      'H5S::t1': ['?/?/?/?', null],
+      'H5S::t2': ['?/?/t/?', '?'],
+    }),
+    // A dotted parameter value names the instance it is read in (`in x = p.load` reads it in p): p's load stays held,
+    // the sibling p2's is imposed.
+    'a5-hd5-dot': probe(`package H5D {
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute load : ScalarValues::Real; }
+  part p : P;
+  part p2 : P;
+  assert constraint ca : Cd { in x = p.load; }
+  constraint t1 { p.load == 200.0 }
+  constraint t2 { p2.load == 200.0 }
+}`, {
+      'H5D::ca': ['?/-/?/-', null],
+      'H5D::t1': ['?/?/?/?', null],
+      'H5D::t2': ['?/?/t/?', '?'],
+    }),
+    'a5-hd5-dot-rev': probe(`package H5D {
+  part p2 : P;
+  part p : P;
+  assert constraint ca : Cd { in x = p.load; }
+  constraint t2 { p2.load == 200.0 }
+  constraint t1 { p.load == 200.0 }
+  part def P { attribute load : ScalarValues::Real; }
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+}`, {
+      'H5D::ca': ['?/-/?/-', null],
+      'H5D::t1': ['?/?/?/?', null],
+      'H5D::t2': ['?/?/t/?', '?'],
+    }),
+    // The control: an assert written in the definition reads every instance's L, so the hold stays feature-wide and
+    // nothing moves (both orders).
+    'a5-hd5-def': probe(`package H5F {
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x = L; } }
+  part p : P;
+  part p2 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+}`, {
+      'H5F::P::ca': ['?/-/?/-', null],
+      'H5F::t1': ['?/?/?/?', null],
+      'H5F::t2': ['?/?/?/?', null],
+    }),
+    'a5-hd5-def-rev': probe(`package H5F {
+  part p2 : P;
+  part p : P;
+  constraint t2 { p2.L == 200.0 }
+  constraint t1 { p.L == 200.0 }
+  part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x = L; } }
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+}`, {
+      'H5F::P::ca': ['?/-/?/-', null],
+      'H5F::t1': ['?/?/?/?', null],
+      'H5F::t2': ['?/?/?/?', null],
+    }),
+    // A value written by a constraint usage the assert SPECIALISES is read where that usage writes it, not where the
+    // assert sits: e0's `in x = p.load` names the package's p, and ea's own scope (qq, over Q's `part p : P`) shadows
+    // the name. Read from ea's scope the hold landed on Q's p and freed the load the value names; it stays on the
+    // package's p, so `t1` is no design freedom (the reviewer's h5-spec-pkg3; the base held it too).
+    'a5-hd5-special': probe(`package H5SP3 {
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute load : ScalarValues::Real; }
+  part def Q { part p : P; }
+  part p : P;
+  part q : Q;
+  constraint e0 : Cd { in x = p.load; }
+  part qq : Q { assert constraint ea :> e0; }
+  constraint t1 { p.load == 200.0 }
+}`, {
+      'H5SP3::e0': ['?/?/?/?', null],
+      'H5SP3::qq::ea': ['?/-/?/-', null],
+      'H5SP3::t1': ['?/?/?/?', null],
+    }),
+    'a5-hd5-special-rev': probe(`package H5SP3 {
+  constraint t1 { p.load == 200.0 }
+  part qq : Q { assert constraint ea :> e0; }
+  constraint e0 : Cd { in x = p.load; }
+  part q : Q;
+  part p : P;
+  part def Q { part p : P; }
+  part def P { attribute load : ScalarValues::Real; }
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+}`, {
+      'H5SP3::e0': ['?/?/?/?', null],
+      'H5SP3::qq::ea': ['?/-/?/-', null],
+      'H5SP3::t1': ['?/?/?/?', null],
+    }),
+    // Each NAME a value reads places the hold, not only a whole-path value: `in x = L + 1.0` names L's instance as
+    // `in x = L` does, and the sibling is imposed.
+    'a5-hd5-expr': probe(`package H5E {
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute L : ScalarValues::Real; }
+  part p : P { assert constraint ca : Cd { in x = L + 1.0; } }
+  part p2 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+}`, {
+      'H5E::p::ca': ['?/-/?/-', null],
+      'H5E::t1': ['?/?/?/?', null],
+      'H5E::t2': ['?/?/t/?', '?'],
+    }),
+    'a5-hd5-expr-rev': probe(`package H5E {
+  constraint t2 { p2.L == 200.0 }
+  constraint t1 { p.L == 200.0 }
+  part p2 : P;
+  part p : P { assert constraint ca : Cd { in x = L + 1.0; } }
+  part def P { attribute L : ScalarValues::Real; }
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+}`, {
+      'H5E::p::ca': ['?/-/?/-', null],
+      'H5E::t1': ['?/?/?/?', null],
+      'H5E::t2': ['?/?/t/?', '?'],
+    }),
+    // Two asserts reading one feature in two instances WIDEN to the feature-wide hold (never first-assert-wins): the
+    // sibling p3 stays no design freedom, as it was before the step.
+    'a5-hd5-two': probe(`package H5T2 {
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute L : ScalarValues::Real; }
+  part p : P { assert constraint ca : Cd { in x = L; } }
+  part p2 : P { assert constraint cb : Cd { in x = L; } }
+  part p3 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+  constraint t3 { p3.L == 200.0 }
+}`, {
+      'H5T2::p::ca': ['?/-/?/-', null],
+      'H5T2::p2::cb': ['?/-/?/-', null],
+      'H5T2::t1': ['?/?/?/?', null],
+      'H5T2::t2': ['?/?/?/?', null],
+      'H5T2::t3': ['?/?/?/?', null],
+    }),
+    'a5-hd5-two-rev': probe(`package H5T2 {
+  constraint t3 { p3.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+  constraint t1 { p.L == 200.0 }
+  part p3 : P;
+  part p2 : P { assert constraint cb : Cd { in x = L; } }
+  part p : P { assert constraint ca : Cd { in x = L; } }
+  part def P { attribute L : ScalarValues::Real; }
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+}`, {
+      'H5T2::p::ca': ['?/-/?/-', null],
+      'H5T2::p2::cb': ['?/-/?/-', null],
+      'H5T2::t1': ['?/?/?/?', null],
+      'H5T2::t2': ['?/?/?/?', null],
+      'H5T2::t3': ['?/?/?/?', null],
+    }),
   };
 
   /**
@@ -21029,6 +21207,13 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     ['a5-hd2-m45', 'a5-hd2-m45-rev'],
     ['a5-hd2-m46', 'a5-hd2-m46-rev'],
     ['a5-hd2-m52', 'a5-hd2-m52-rev'],
+    // a5 HD5: the typed-inequality hold scoped to the instance its value is read in, in either text order.
+    ['a5-hd5-hold', 'a5-hd5-hold-rev'],
+    ['a5-hd5-dot', 'a5-hd5-dot-rev'],
+    ['a5-hd5-def', 'a5-hd5-def-rev'],
+    ['a5-hd5-special', 'a5-hd5-special-rev'],
+    ['a5-hd5-expr', 'a5-hd5-expr-rev'],
+    ['a5-hd5-two', 'a5-hd5-two-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

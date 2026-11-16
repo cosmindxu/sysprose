@@ -120,7 +120,7 @@ import {
   respelledIn,
   spelledIn,
   statedValueOf,
-  typedAssertHeldOnly,
+  typedAssertHeldAt,
   typedAssertHolding,
   typedAssertNames,
   typedAssertsHoldOnly,
@@ -836,12 +836,15 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
   // What an assert typed by an INEQUALITY-only definition constrains (`assert constraint ca : Cd { in x = L; }` over `x >=
   // 0.0 and x <= 100.0`, whichever way it gives x: `bind x = L`, a usage it specialises, a name Cd's body reads) is held
   // like an untyped inequality's: the model constrains it in a form this lane does not read ({@link GatheredSystem.held}).
-  // By FEATURE, in every instance that reads it — weaker than the instance's alone, never false.
+  // In the instance the assert's value is read in, and below it, by feature: a sibling instance that reads the same
+  // feature otherwise is a design freedom, as it is with no assert at all ({@link typedAssertHeldAt}).
   if (typedAssertsHoldOnly(model)) {
     const mark = (vars: readonly ElementId[]): void => {
       for (const v of vars) {
         const f = model.get(baseIdOf(v));
-        const a = f && !typedAssertNames(model, f) ? typedAssertHeldOnly(model, f) : undefined;
+        if (!f || typedAssertNames(model, f)) continue;
+        const at = v.indexOf('@');
+        const a = typedAssertHeldAt(model, f, at < 0 ? undefined : v.slice(at + 1));
         if (a) holdVar(held, v, a.id);
       }
     };

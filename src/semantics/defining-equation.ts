@@ -10143,7 +10143,7 @@ function heldInstance(definitions: DefiningEquations, rootId: ElementId, path: s
 
 const ASSERT_HELD = new WeakMap<
   Model,
-  { rev: number; held: ReadonlySet<ElementId>; typedBy: ReadonlyMap<ElementId, ElementRecord>; heldOnly: ReadonlyMap<ElementId, ElementRecord> }
+  { rev: number; held: ReadonlySet<ElementId>; typedBy: ReadonlyMap<ElementId, ElementRecord>; heldOnly: ScopedTaint }
 >();
 
 /** No `default` an assertion may replace ({@link replaceableDefaults}). */
@@ -10471,10 +10471,26 @@ export function typedAssertNames(model: Model, f: ElementRecord): boolean {
  * reads that is no parameter of it): the model constrains `f` in a form no surface reads as a definition of it. It
  * defines nothing — a `default` stands against it, a value written with `=` is read as written — so the numeric
  * surface holds a valueless `f` as no design freedom and no plain check fixes it ({@link typedAssertNames} is the
- * equation's: that one leaves `f` unread).
+ * equation's: that one leaves `f` unread). The hold is scoped to the instance the assert's value is read in
+ * ({@link typedAssertHeldAt}); read with no instance, it reaches every reading ({@link TaintEntry.within}).
  */
 export function typedAssertHeldOnly(model: Model, f: ElementRecord): ElementRecord | undefined {
-  return assertHeldIndex(model).heldOnly.get(f.id);
+  return assertHeldIndex(model).heldOnly.get(f.id)?.source;
+}
+
+/**
+ * The assert {@link typedAssertHeldOnly} names, where it holds the reading made in `instance` (a variable's instance
+ * symbol, or undefined for a generic reading): the same assert where the taint reaches there, `undefined` where it does
+ * not — an assert whose value is read in one usage holds it there and below it, never in a sibling instance that
+ * reads the same feature. The reading is placed through {@link taintReaches}, as every other scoped taint is: a hold
+ * with no instance, or a reading it cannot place, reaches (`within` undefined fails closed).
+ */
+export function typedAssertHeldAt(model: Model, f: ElementRecord, instance: string | undefined): ElementRecord | undefined {
+  const entry = assertHeldIndex(model).heldOnly.get(f.id);
+  if (!entry || instance === undefined) return entry?.source;
+  const frames = sharedDefinitions(model).framesAbove(instance);
+  const contextId = frames !== undefined ? frames[frames.length - 1]?.reader : undefined;
+  return taintReaches(model, entry, contextId !== undefined ? { contextId, path: instance } : undefined) ? entry.source : undefined;
 }
 
 /** Does any assert typed by an inequality-only definition constrain a feature ({@link typedAssertHeldOnly})? */
@@ -10487,13 +10503,70 @@ export function typedAssertsName(model: Model): boolean {
   return assertHeldIndex(model).typedBy.size > 0;
 }
 
+/**
+ * The one instance the inequality-typed assert `a`'s values are read in ({@link typedAssertHeldOnly}'s `within`): the
+ * reader {@link DefiningEquations.instanceReadings} gives each name a value written for a parameter reads
+ * ({@link namesOfValue}: `in x = L + 1.0` places L's instance as `in x = L` does), resolved where the value is WRITTEN —
+ * the assert's own scope, or that of a constraint usage it specialises (`constraint e0 : Cd { in x = p.load; }` under
+ * `assert constraint ea :> e0;` resolves the path from e0's owner, as {@link assertHeldIndex}'s `target` holds the
+ * feature it names from there) — when that reader is a usage; and, for a `bind x = L` (whose end is read where the
+ * binding is, spelled no name the walk reads), the giver's nearest enclosing usage before the first definition or
+ * package. Exactly one instance, or `undefined`: no reading, several, one whose value this cannot place (a feature read
+ * the same in every instance, a name that resolves nowhere, a reader that is no usage), where the hold stays
+ * feature-wide, as it was (fails closed).
+ */
+function heldWithin(model: Model, givers: readonly ElementRecord[], parameter: (e: ElementRecord) => boolean): ElementId | undefined {
+  const definitions = sharedDefinitions(model);
+  const readers = new Set<ElementId>();
+  let unplaced = false;
+  // The reader of `name`, read by `from`, where it is a usage: where the value names an instance of its own.
+  const place = (from: ElementRecord, name: string): void => {
+    const hit = definitions.instanceReadings(from, [name]).get(name);
+    const reader = hit !== undefined ? model.get(hit.reader) : undefined;
+    if (reader === undefined || !isUsage(reader.eClass)) {
+      // The same in every instance (no reading of its own), a name that resolves nowhere, or a reading a definition
+      // makes: no instance is told apart, so the hold stays feature-wide.
+      unplaced = true;
+      return;
+    }
+    readers.add(hit!.reader);
+  };
+  for (const g of givers) {
+    let binds = false;
+    for (const c of model.children(g.id)) {
+      // A parameter bound rather than valued (`bind x = L;`): its end is read where the binding is.
+      if (isBindingConnector(c)) {
+        const ends = [c.source?.[0], c.target?.[0]].map((id) => (id !== undefined ? model.get(id) : undefined));
+        if (ends.some((e) => e !== undefined && parameter(e)) && ends.some((e) => e === undefined || !parameter(e))) binds = true;
+        continue;
+      }
+      if (typeof c.attrs.value !== 'string') continue;
+      for (const name of namesOfValue(c.attrs.value)) place(g, name);
+    }
+    if (!binds) continue;
+    const at = enclosingUsage(model, g);
+    if (at === undefined) unplaced = true;
+    else readers.add(at);
+  }
+  return !unplaced && readers.size === 1 ? [...readers][0] : undefined;
+}
+
+/** The nearest usage `el` is written in, before the first definition or package ({@link heldWithin}'s binding ends). */
+function enclosingUsage(model: Model, el: ElementRecord): ElementId | undefined {
+  for (let o = el.ownerId != null ? model.get(el.ownerId) : undefined; o !== undefined; o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
+    if (isDefinition(o.eClass) || isPackage(o)) return undefined;
+    if (isUsage(o.eClass)) return o.id;
+  }
+  return undefined;
+}
+
 /** {@link assertHeld}, with what the typed asserts may define ({@link typedAssertHolding}), once per revision. */
 function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HELD.get>> {
   const hit = ASSERT_HELD.get(model);
   if (hit && hit.rev === model.rev) return hit;
   const held = new Set<ElementId>();
   const typedBy = new Map<ElementId, ElementRecord>();
-  const heldOnly = new Map<ElementId, ElementRecord>();
+  const heldOnly = new Map<ElementId, TaintEntry>();
   const owners = new Set<ElementId>();
   const defaults: ElementRecord[] = [];
   // The asserts typed by a constraint definition whose body holds an equation
@@ -10549,11 +10622,18 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
   // way, read nowhere — never as the default it overrides (CD1 read L's 1, and
   // `L == 50.0` was refuted on all four surfaces) — and one that states no value
   // is no design freedom ({@link typedAssertNames}). A value written with `=`
-  // gives way to nothing, and is read as written. By FEATURE, in every instance
-  // that reads it: an assert in a usage over its type's default (`part q : Q {
-  // assert constraint e : Eq { in a = L; } }`) holds Q's L in every Q — weaker
-  // than reading q's alone, never false.
+  // gives way to nothing, and is read as written. In the instance its values
+  // are read in, and below it, by feature: an assert in a usage over its type's
+  // default (`part q : Q { assert constraint e : Eq { in a = L; } }`) holds Q's
+  // L in q and below q, where the assert's value gives the parameter its value
+  // — not in a sibling instance that reads Q's L otherwise, and not where the
+  // reading cannot be placed (no instance reading, or several), which holds as
+  // it did ({@link heldWithin}, {@link typedAssertHeldAt}).
   const typedTargets = new Map<ElementId, ElementRecord>();
+  // The features each inequality-typed assert holds, with what places them ({@link heldWithin}): collected while the
+  // index is built and applied once it is answerable — reading a value's carrier asks this index whether the feature's
+  // `default` gives way to an asserted equation, so placing the hold during the build would ask it of itself.
+  const onlyHolds: Array<{ givers: ElementRecord[]; parameter: (e: ElementRecord) => boolean; holds: ElementRecord[] }> = [];
   if (typedAsserts.length > 0) {
     let redefining: Map<ElementId, ElementRecord[]> | undefined;
     const redefinersOf = (id: ElementId): readonly ElementRecord[] => {
@@ -10572,11 +10652,17 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
     };
     const stated = (g: ElementRecord): boolean => g.attrs.value !== undefined && g.attrs.value !== null;
     let only = false;
+    let holds: ElementRecord[] | undefined;
+    const holdOnly = (g: ElementRecord, a: ElementRecord): void => {
+      if (g.attrs.isLibrary === true) return;
+      if (!heldOnly.has(g.id)) heldOnly.set(g.id, { source: a });
+      holds?.push(g);
+    };
     const target = (f: ElementRecord, a: ElementRecord): void => {
       if (only) {
         // An inequality defines nothing: every feature it reaches is held, whatever it states (a value is read as written).
         for (const g of [f, ...redefinedClosure(model, f), ...redefinersOf(f.id)]) {
-          if (g.attrs.isLibrary !== true && !heldOnly.has(g.id)) heldOnly.set(g.id, a);
+          if (g.attrs.isLibrary !== true) holdOnly(g, a);
         }
         return;
       }
@@ -10623,6 +10709,14 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
         }
         return false;
       };
+      // The features an inequality-typed assert holds are placed after the index is built ({@link onlyHolds}): the one
+      // instance their values are read in, or the hold stays feature-wide ({@link heldWithin}).
+      holds = undefined;
+      if (only) {
+        const heldFeatures: ElementRecord[] = [];
+        holds = heldFeatures;
+        onlyHolds.push({ givers, parameter, holds: heldFeatures });
+      }
       // What each parameter is given, by its name: the feature a path value
       // names, or a binding's end outside it — the nearest giver first.
       const given = new Map<string, ElementRecord | null>();
@@ -10731,7 +10825,24 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
     if (f?.attrs.defaultValue === true) held.add(id);
   }
   const fresh = { rev: model.rev, held, typedBy, heldOnly };
+  // Set the index before placing the holds: a value's carrier asks it whether the feature's `default` gives way to an
+  // asserted equation ({@link heldWithin}), and a re-entrant ask must find this index, not build another.
   ASSERT_HELD.set(model, fresh);
+  // Widen, never narrow: two asserts over one feature that read it in different instances reach both readings.
+  const placed = new Set<ElementId>();
+  for (const { givers, parameter, holds: heldFeatures } of onlyHolds) {
+    const within = heldWithin(model, givers, parameter);
+    for (const g of heldFeatures) {
+      const prev = heldOnly.get(g.id);
+      if (prev === undefined) continue;
+      if (!placed.has(g.id)) {
+        placed.add(g.id);
+        if (within !== undefined) heldOnly.set(g.id, { source: prev.source, within });
+      } else if (prev.within !== within) {
+        heldOnly.set(g.id, { source: prev.source });
+      }
+    }
+  }
   return fresh;
 }
 

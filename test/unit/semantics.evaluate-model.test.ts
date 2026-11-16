@@ -3778,6 +3778,197 @@ describe('checkConstraints — a bound partner is read only where every instance
     });
   });
 
+  describe('HD5: the typed-inequality hold is scoped to the instance its value is read in', () => {
+    // An assert typed by an inequality-only constraint definition holds the feature it constrains as no design freedom
+    // for the numeric surface. Before the step the hold was by FEATURE, in every instance that reads the feature: an
+    // assert written in `part p : P` left a sibling `part p2 : P`'s value no design freedom too, and a plain
+    // `p2.L == 200.0` there was "not judged" instead of imposed. It is now the instance the assert's values are read in
+    // (the usage it sits in, or the instance a dotted value names), and below it; a reading no instance places still
+    // holds, as it did.
+    const rowsOf = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      return new Map(checkConstraintsNumeric(m!).map((r) => [m!.qualifiedName(r.id), r]));
+    };
+    const cd = 'constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }';
+    const P = 'part def P { attribute L : ScalarValues::Real; }';
+    it('frees a sibling instance the assert does not read', async () => {
+      for (const text of [
+        `package H5S {
+  ${cd}
+  ${P}
+  part p : P { assert constraint ca : Cd { in x = L; } }
+  part p2 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+}`,
+        `package H5S {
+  part p2 : P;
+  part p : P { assert constraint ca : Cd { in x = L; } }
+  constraint t2 { p2.L == 200.0 }
+  constraint t1 { p.L == 200.0 }
+  ${cd}
+  ${P}
+}`,
+      ]) {
+        const rows = await rowsOf(text);
+        // The sibling reads as it does with no assert at all: its plain equality is a design equation, imposed (no
+        // decision), where the assert's own instance and below it stay no design freedom.
+        expect([rows.get('H5S::t2')!.result, rows.get('H5S::t2')!.imposed]).toEqual(['satisfied', true]);
+        expect(rows.get('H5S::t1')!.result).toBe('unknown');
+        expect(rows.get('H5S::t1')!.reason).toContain('a typed assert');
+        expect(rows.get('H5S::p::ca')!.result).toBe('unknown');
+      }
+    });
+    it('scopes a dotted value to the instance it names', async () => {
+      const rows = await rowsOf(`package H5D {
+  ${cd}
+  part def P { attribute load : ScalarValues::Real; }
+  part p : P;
+  part p2 : P;
+  assert constraint ca : Cd { in x = p.load; }
+  constraint t1 { p.load == 200.0 }
+  constraint t2 { p2.load == 200.0 }
+}`);
+      expect([rows.get('H5D::t2')!.result, rows.get('H5D::t2')!.imposed]).toEqual(['satisfied', true]);
+      expect(rows.get('H5D::t1')!.result).toBe('unknown');
+      expect(rows.get('H5D::t1')!.reason).toContain('a typed assert');
+    });
+    it('keeps the hold where the assert sits in the definition', async () => {
+      for (const text of [
+        `package H5F {
+  ${cd}
+  part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x = L; } }
+  part p : P;
+  part p2 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+}`,
+        `package H5F {
+  part p2 : P;
+  part p : P;
+  constraint t2 { p2.L == 200.0 }
+  constraint t1 { p.L == 200.0 }
+  part def P { attribute L : ScalarValues::Real; assert constraint ca : Cd { in x = L; } }
+  ${cd}
+}`,
+      ]) {
+        const rows = await rowsOf(text);
+        // Every instance reads the definition's L, so neither row is a design freedom: the control that must not move.
+        for (const row of ['H5F::t1', 'H5F::t2']) {
+          expect([row, rows.get(row)!.result]).toEqual([row, 'unknown']);
+          expect(rows.get(row)!.reason).toContain('a typed assert');
+        }
+      }
+    });
+    it('scopes the `bind x = L` spelling too', async () => {
+      const rows = await rowsOf(`package H5B {
+  ${cd}
+  ${P}
+  part p : P { assert constraint ca : Cd { in x; bind x = L; } }
+  part p2 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+}`);
+      expect([rows.get('H5B::t2')!.result, rows.get('H5B::t2')!.imposed]).toEqual(['satisfied', true]);
+      expect(rows.get('H5B::t1')!.result).toBe('unknown');
+    });
+    it('keeps a reading below the usage held', async () => {
+      // The assert is read in p, and p.inner's L is read below p: the taint reaches below the instance it holds in.
+      const rows = await rowsOf(`package H5G {
+  ${cd}
+  ${P}
+  part p : P { part inner : P; assert constraint ca : Cd { in x = L; } }
+  constraint t3 { p.inner.L == 200.0 }
+}`);
+      expect(rows.get('H5G::t3')!.result).toBe('unknown');
+      expect(rows.get('H5G::t3')!.reason).toContain('a typed assert');
+    });
+    it('scopes a value a specialised usage writes where that usage writes it', async () => {
+      // `ea` specialises the package's `e0`, and e0's `in x = p.load` reads the package's `p` — not qq's own p, which
+      // shadows the name where ea sits. The value is read where it is written, so the hold stays on the package's p:
+      // reading it from ea's scope placed the hold on qq's p instead and freed the load the assert's value names.
+      const rows = await rowsOf(`package H5SP3 {
+  ${cd}
+  part def P { attribute load : ScalarValues::Real; }
+  part def Q { part p : P; }
+  part p : P;
+  part q : Q;
+  constraint e0 : Cd { in x = p.load; }
+  part qq : Q { assert constraint ea :> e0; }
+  constraint t1 { p.load == 200.0 }
+}`);
+      expect(rows.get('H5SP3::t1')!.result).toBe('unknown');
+      expect(rows.get('H5SP3::t1')!.reason).toContain('a typed assert');
+    });
+    it('places each name a value reads, not only a whole path', async () => {
+      // `in x = L + 1.0` names L's instance as `in x = L` does, and `in x = p.load + 1.0` names p's: the names
+      // `target` holds the features by (`namesOfValue`), resolved where the value is written.
+      const usage = await rowsOf(`package H5E {
+  ${cd}
+  part def P { attribute L : ScalarValues::Real; }
+  part p : P { assert constraint ca : Cd { in x = L + 1.0; } }
+  part p2 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+}`);
+      expect([usage.get('H5E::t2')!.result, usage.get('H5E::t2')!.imposed]).toEqual(['satisfied', true]);
+      expect(usage.get('H5E::t1')!.result).toBe('unknown');
+      expect(usage.get('H5E::t1')!.reason).toContain('a typed assert');
+      const packageLevel = await rowsOf(`package H5DE {
+  ${cd}
+  part def P { attribute load : ScalarValues::Real; }
+  part p : P;
+  part p2 : P;
+  assert constraint ca : Cd { in x = p.load + 1.0; }
+  constraint t1 { p.load == 200.0 }
+  constraint t2 { p2.load == 200.0 }
+}`);
+      expect([packageLevel.get('H5DE::t2')!.result, packageLevel.get('H5DE::t2')!.imposed]).toEqual(['satisfied', true]);
+      expect(packageLevel.get('H5DE::t1')!.result).toBe('unknown');
+      expect(packageLevel.get('H5DE::t1')!.reason).toContain('a typed assert');
+    });
+    it('places a definition-written dotted value on the instance it names', async () => {
+      // A definition-written assert still holds every reading where its value names no instance (h5-def above); a
+      // dotted value names P's `other` (and, in every instance of P, that instance's `other`), so P's own L — read by
+      // no instance of the definition — is a design freedom again, while the instance the value names stays held.
+      const rows = await rowsOf(`package H5DD {
+  ${cd}
+  part def P { attribute L : ScalarValues::Real; part other : P; assert constraint ca : Cd { in x = other.L; } }
+  part p : P;
+  part p2 : P;
+  constraint t1 { p.other.L == 200.0 }
+  constraint t2 { p2.other.L == 200.0 }
+  constraint t3 { p.L == 200.0 }
+  constraint t4 { p2.L == 200.0 }
+}`);
+      for (const row of ['H5DD::t1', 'H5DD::t2']) {
+        expect([row, rows.get(row)!.result]).toEqual([row, 'unknown']);
+        expect(rows.get(row)!.reason).toContain('a typed assert');
+      }
+      for (const row of ['H5DD::t3', 'H5DD::t4']) {
+        expect([row, rows.get(row)!.result, rows.get(row)!.imposed]).toEqual([row, 'satisfied', true]);
+      }
+    });
+    it('widens to the feature-wide hold where two asserts read the feature in different instances', async () => {
+      // `ca` in p and `cb` in p2 read P's L in two instances: the hold reaches both readings, never only the first, so
+      // a sibling p3 stays no design freedom too (the fail-closed direction a regression to first-assert-wins loses).
+      const rows = await rowsOf(`package H5T2 {
+  ${cd}
+  part def P { attribute L : ScalarValues::Real; }
+  part p : P { assert constraint ca : Cd { in x = L; } }
+  part p2 : P { assert constraint cb : Cd { in x = L; } }
+  part p3 : P;
+  constraint t1 { p.L == 200.0 }
+  constraint t2 { p2.L == 200.0 }
+  constraint t3 { p3.L == 200.0 }
+}`);
+      for (const row of ['H5T2::t1', 'H5T2::t2', 'H5T2::t3']) {
+        expect([row, rows.get(row)!.result]).toEqual([row, 'unknown']);
+        expect(rows.get(row)!.reason).toContain('a typed assert');
+      }
+    });
+  });
+
   /** R's `L = 2.0 * K`, bound into its q's p by a binding written in q's body (or in a definition nested in R). */
   const enclosed = (pkg: string, nested: boolean, override: boolean) => `package ${pkg} {
     ${P}

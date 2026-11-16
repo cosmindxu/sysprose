@@ -2191,7 +2191,14 @@ not imposed over it, and is *unknown* on the numeric surface (*… an assert con
 the numeric solve does not read (ca, a typed assert) …*), where it was "satisfied by construction"
 past the definition's bound. So it is where the assert gives the parameter by `bind x = L`, through a constraint usage it
 specialises (`assert constraint ea :> e0`) or as a name the definition's body reads (`x <= limit`): the feature is held in
-every instance that reads it. An equation that
+the instance the assert's value is read in, and below it — the usage the assert is written in, or the instance the value
+names where it is written (`in x = p.load` reads the value in p, and so does `in x = p.load + 1.0`; a value a usage the
+assert specialises writes is read where that usage writes it) — never in a sibling instance that reads the same feature
+otherwise, where a plain relation over it is read as it is with no assert at all. An assert whose value no instance
+reading places is held in every instance (one written in a definition, whose value is read there for every instance of
+it); one written in a definition whose value names an instance (`assert constraint ca : Cd { in x = other.L; }` over P's
+`other`) is placed on that instance and below it, so the definition's own `L`, which no instance reads through that
+assert, is a design freedom again. An equation that
 names a feature by its path, `assert constraint { p.x == 3.0 }` over `part p :
 P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
 2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
