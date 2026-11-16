@@ -3778,6 +3778,82 @@ describe('checkConstraints — a bound partner is read only where every instance
     });
   });
 
+  describe('HD1: a name-reading side agrees with the value written with `=`, exactly', () => {
+    // The shape TODO (a) records as reconstructed (m218b): Q's asserted side reads a name (`L == K * 2.0`), and
+    // W's binding component states M's 3.0 beside Q's L — exactly 3.0 at K = 1.5, compared as Rationals in SI,
+    // never by a tolerance. Before the step the two read two-values and every deep row abstained.
+    const P = 'part def P { attribute load default = 1.0; constraint c { load >= 2.0 } }';
+    const Q = (k: string, side: string) =>
+      `part def Q { attribute K : ScalarValues::Real = ${k}; attribute L; part p : P; bind p.load = L; assert constraint a { L == ${side} } }`;
+    const W = 'part def W { attribute M = 3.0; part q : Q; bind q.p.load = M; }';
+    const nrs = (k: string, side: string) => `package X6 { ${P} ${Q(k, side)} ${W} part w : W; }`;
+    // The package head's slot an instance states a value at (m218): the binding of a definition's feature, the
+    // package's M reading a name, and p2's own `= 3.0` — 3.0 = 1.5 * 2.0 exactly.
+    const head = (k: string) =>
+      `package HEAD { part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load >= 2.0 } }
+        attribute K : ScalarValues::Real = ${k}; attribute M = K * 2.0; bind P::load = M;
+        part p2 : P { attribute :>> load = 3.0; } }`;
+    const rowsOf = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const qn = (id: string) => m!.qualifiedName(id) || id;
+      const where = (i: { instance?: string; contextId?: string }) => i.instance ?? qn(i.contextId ?? '');
+      return checkConstraints(m!).map((c) => ({
+        id: c.conflict ? `${qn(c.id)}#${c.conflict}` : qn(c.id),
+        result: c.result,
+        instances: (c.instances ?? []).map((i) => [`${qn(c.id)} in ${where(i)}`, i.result, i.message] as const),
+        message: c.message,
+      }));
+    };
+    const instanceOf = (rows: Awaited<ReturnType<typeof rowsOf>>, id: string, at: string) =>
+      rows.find((r) => r.id === id)?.instances.find(([key]) => key === `${id} in ${at}`);
+    it('reads W’s component at its one exact value, so the deep rows hold and P::c alone is violated', async () => {
+      const rows = await rowsOf(nrs('1.5', 'K * 2.0'));
+      expect(rows.find((r) => r.id === 'X6::P::c')?.result).toBe('violated');
+      expect(instanceOf(rows, 'X6::P::c', 'X6::W::q::p')?.[1]).toBe('satisfied');
+      const at = instanceOf(rows, 'X6::P::c', 'X6::w::q::p');
+      expect(at?.[1]).toBe('satisfied');
+      // The value read is the one the model states: 3, from M through Q's binding.
+      expect(at?.[2]).toContain('load = 3 in X6::w::q::p');
+      // The rows the shape already read are unmoved.
+      expect(rows.find((r) => r.id === 'X6::Q::«BindingConnectorAsUsage»#bind')?.result).toBe('violated');
+      expect(rows.find((r) => r.id === 'X6::Q::a')?.result).toBe('unknown');
+    });
+    it('keeps the same rows unknown where the sides differ (K = 2.0: L = 4.0, M = 3.0)', async () => {
+      const rows = await rowsOf(`package X6D { ${P} ${Q('2.0', 'K * 2.0')} ${W} part w : W; }`);
+      for (const at of ['X6D::W::q::p', 'X6D::w::q::p']) {
+        const row = instanceOf(rows, 'X6D::P::c', at);
+        expect([at, row?.[1]], at).toEqual([at, 'unknown']);
+        expect(row?.[2]).toContain('two values the model states');
+      }
+    });
+    it('reads the package head’s slot at the instance’s own value (bind P::load = M, M = K * 2.0)', async () => {
+      const rows = await rowsOf(head('1.5'));
+      const at = instanceOf(rows, 'HEAD::P::c', 'HEAD::p2');
+      expect(at?.[1]).toBe('satisfied');
+      expect(at?.[2]).toBe('p2::load = 3 meets P::c (load >= 2.0)');
+      // The definition's own row is unmoved (the numeric lane still reads no value in scope there).
+      expect(rows.find((r) => r.id === 'HEAD::P::c')?.result).toBe('satisfied');
+    });
+    it('keeps the head’s row unknown where the two values differ (K = 2.0: M = 4.0, p2::load = 3.0)', async () => {
+      const rows = await rowsOf(head('2.0').replace(/HEAD/g, 'HEADD'));
+      const at = instanceOf(rows, 'HEADD::P::c', 'HEADD::p2');
+      expect(at?.[1]).toBe('unknown');
+      expect(at?.[2]).toContain('two values the model states');
+    });
+    it('reads the constant-side twins as the pins have them, with no other row moved', async () => {
+      // The contrast that proves the defect is the name-reading side alone: the same shape with the 3.0 written
+      // out (stand-x6) and the head with M = 3.0 (head-slot-const) file the same rows as they did before.
+      const nrsConst = await rowsOf(`package X6 { ${P} part def Q { attribute L; part p : P; bind p.load = L; assert constraint a { L == 3.0 } } ${W} part w : W; }`);
+      expect(instanceOf(nrsConst, 'X6::P::c', 'X6::W::q::p')?.[1]).toBe('satisfied');
+      expect(instanceOf(nrsConst, 'X6::P::c', 'X6::w::q::p')?.[1]).toBe('satisfied');
+      expect(nrsConst.find((r) => r.id === 'X6::P::c')?.result).toBe('violated');
+      const headConst = await rowsOf(`package HEAD { part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load >= 2.0 } }
+        attribute M = 3.0; bind P::load = M; part p2 : P { attribute :>> load = 3.0; } }`);
+      expect(headConst.find((r) => r.id === 'HEAD::P::c')?.result).toBe('satisfied');
+      expect(instanceOf(headConst, 'HEAD::P::c', 'HEAD::p2')?.[1]).toBe('satisfied');
+    });
+  });
+
   /** R's `L = 2.0 * K`, bound into its q's p by a binding written in q's body (or in a definition nested in R). */
   const enclosed = (pkg: string, nested: boolean, override: boolean) => `package ${pkg} {
     ${P}
