@@ -1991,18 +1991,23 @@ describe('a bare bound over a default a binding makes give way', () => {
   // whole. Before the step the group holding both kinds of bare bound was refused under a sentence naming the meet.
   it('carries bounds linked by a derived value, which meet through it, and still carries a lower bound alone', async () => {
     const derived = `part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; assert constraint hs { s <= 4.0 } }`;
-    const carried = await axioms(`package D { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`);
-    expect(carried['D::Q::ql']).toEqual([true]);
-    expect(carried['D::P::hs in D::Q::p']).toEqual([true]);
-    // No row is refused for meeting another through the derived value, in either text order.
-    for (const name of ['D2', 'D3']) {
-      const rows = obligationsOf(await load(`package ${name} { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`)).filter(
+    const ql = 'assert constraint ql { L >= 2.0 }';
+    // No row is refused for meeting another through the derived value, and the linked bounds are carried the same,
+    // whichever member comes first in the file.
+    for (const [name, text] of [
+      ['D2', `package D2 { ${derived} ${Q(ql)} }`],
+      ['D3', `package D3 { ${Q(ql)} ${derived} }`],
+    ] as const) {
+      const rows = obligationsOf(await load(text)).filter(
         (o) => o.source === 'assert' && o.encodable !== true && String(o.encodable.detail).includes('meet through a derived value'),
       );
       expect(rows, name).toEqual([]);
+      const carried = await axioms(text);
+      expect(carried[`${name}::Q::ql`]).toEqual([true]);
+      expect(carried[`${name}::P::hs in ${name}::Q::p`]).toEqual([true]);
     }
     // A lower bound alone, beside the same derived row, meets nothing.
-    const lone = await axioms(`package D4 { part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; } ${Q('assert constraint ql { L >= 2.0 }')} }`);
+    const lone = await axioms(`package D4 { part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; } ${Q(ql)} }`);
     expect(lone['D4::Q::ql']).toEqual([true]);
   });
 
