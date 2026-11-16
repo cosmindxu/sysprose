@@ -109,8 +109,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 2,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 6,
-      "rows": 6,
+      "models": 4,
+      "rows": 4,
       "tableAgree": 0,
       "tableDisagree": 0,
       "tableProbes": 0
@@ -252,8 +252,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 1,
       "goldenCases": 1,
       "goldenDecided": 1,
-      "models": 11,
-      "rows": 13,
+      "models": 13,
+      "rows": 15,
       "tableAgree": 0,
       "tableDisagree": 0,
       "tableProbes": 0

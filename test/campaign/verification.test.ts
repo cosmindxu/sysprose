@@ -4060,25 +4060,37 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
     ]);
   });
 
-  // A feature typed Natural, Positive or UnlimitedNatural is an unbounded Integer in this lane, which derives no
-  // axiom from a type: `Natural n` asserted `n > -3 and n < 4` gave `min n = -2` beside a type that has no -2.
-  // The relation is refused (nothing is asserted over it), so the bound is not claimed; the Integer twin is.
-  withZ3('a Natural, Positive or UnlimitedNatural feature is not bounded below its type’s floor', async () => {
+  // E1 CARRIES THE TYPE FLOOR AS A `type:` AXIOM. A feature typed `Natural` is `Int` here, and before E1 the lane
+  // derived no axiom from the type: `Natural n` asserted `n > -3 and n < 4` gave `min n = -2` beside a type that
+  // has no -2, so every relation over it was refused and the bound was not claimed. Now `min n = 0` and
+  // `max n = 3` are decided, `Positive` is 1..3, and nothing is refused. `UnlimitedNatural` has no floor of its
+  // own — only an integral literal pins one — so a free one is still refused and its bound is not claimed.
+  withZ3('a Natural or Positive feature is bounded below by its type’s floor, and an unpinned UnlimitedNatural is not', async () => {
     const typed = (type: string): string =>
       partText([`attribute n : ${type};`, 'assert constraint lo { n > -3 }', 'assert constraint hi { n < 4 }']);
-    for (const type of ['Natural', 'Positive', 'UnlimitedNatural']) {
+    for (const [type, floor] of [['Natural', 0], ['Positive', 1]] as const) {
       for (const freeAll of [false, true]) {
         const r = await boundsOf(typed(type), 'p.n', { freeAll });
         for (const b of r.bounds) {
           expect([type, freeAll, b.sense, b.outcome, b.code, b.value]).toEqual([
-            type, freeAll, b.sense, 'inconclusive', 'verification/not-evaluable', null,
+            type, freeAll, b.sense, 'optimum', null, b.sense === 'min' ? floor : 3,
           ]);
-          expect(b.detail).toContain('PARTIAL axiom set');
         }
-        expect(r.refused, 'the two relations over the Natural were asserted').toBe(2);
-        expect(r.bounds[0].detail).toContain('non-numeric-operand');
-        expect(r.exitCode).toBe(2);
+        expect(r.refused, `${type}: the two relations were asserted`).toBe(0);
+        expect(r.exitCode).toBe(0);
       }
+    }
+    for (const freeAll of [false, true]) {
+      const r = await boundsOf(typed('UnlimitedNatural'), 'p.n', { freeAll });
+      for (const b of r.bounds) {
+        expect([freeAll, b.sense, b.outcome, b.code, b.value]).toEqual([
+          freeAll, b.sense, 'inconclusive', 'verification/not-evaluable', null,
+        ]);
+        expect(b.detail).toContain('PARTIAL axiom set');
+      }
+      expect(r.refused, 'the two relations over the UnlimitedNatural were refused').toBe(2);
+      expect(r.bounds[0].detail).toContain('non-numeric-operand');
+      expect(r.exitCode).toBe(2);
     }
     const integer = await boundsOf(typed('Integer'), 'p.n', { freeAll: true });
     expect(integer.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
@@ -4100,9 +4112,13 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
       return consistencyReport(model, { sourceText: source });
     };
     const natural = await run('Natural');
-    expect(natural.groups.map((g) => g.outcome)).toEqual(['inconclusive']);
+    // E1 CARRIES `n >= 0` AS A `type:` AXIOM, so the set that only a negative Natural satisfied no longer holds
+    // together: the conflict is the model's own requirement pair against the floor, and the core names both.
+    expect(natural.groups.map((g) => g.outcome)).toEqual(['inconsistent']);
     expect(natural.consistent).toBe(0);
-    expect(natural.exitCode).toBe(2);
+    expect(natural.exitCode).toBe(1);
+    expect(natural.groups[0].code).toBe('verification/inconsistent-requirements');
+    expect(natural.groups[0].core.map((m) => m.kind).sort()).toEqual(['guarantee', 'type']);
     // The Integer twin is the same set and is consistent, at the point the Natural cannot take.
     const integer = await run('Integer');
     expect(integer.groups.map((g) => g.outcome)).toEqual(['consistent']);
@@ -5348,8 +5364,9 @@ describe('L8 — staleness scoped to what provably cannot affect the proof', () 
         ).toEqual([...encoded].sort());
       }
     }
-    // A feature typed `Natural` is refused by the encoder (its floor is an axiom this lane does not
-    // carry); the twin refuses the same read, so the footprints still agree. No corpus model has one.
+    // E1: a feature typed `Natural` is READ by the encoder (its type floor is a `type:` axiom), so the Natural
+    // twin no longer refuses anything. The goal here reads only `x`, so both twins encode and the footprints
+    // still agree — the census counts rows, and a floor is no row. No corpus model has one.
     for (const type of ['Natural', 'Integer']) {
       const { model } = await loadModelText(
         `package M { part def P { attribute n : ${type} = 3; attribute x : Real = 2.0; }

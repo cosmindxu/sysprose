@@ -278,6 +278,30 @@ describe('propertyCheck — gate 0, then the four judging gates', () => {
     expect(report.limits.join(' ')).toContain('syntactic');
   }, 60_000);
 
+  it('asks about the clause alone on a `Natural`: the type floor is not asserted at gate 4 (E1)', async () => {
+    // A `Natural` feature is READ by the SMT lane since E1 (its floor is a `type:` axiom). Gate 4 asks whether
+    // the CLAUSE is trivial on its own, so the floor must not be asserted here: `p.n > -5` is true of every
+    // Natural, but it is not true of every assignment of the symbol, and accepting it keeps the gate's published
+    // contract ("a clause the model's own values already satisfy passes it") true for the type's values too.
+    // `verify`'s tautology check and the vacuity report are the surfaces that decide the other question.
+    const { model } = await fromText(`package N4 {
+    part def P { attribute n : Natural = 3; }
+    part p : P;
+    requirement def R { subject p : P; require constraint { p.n >= 0.0 } }
+    satisfy R by p; }`);
+    const id = idOf(model, 'R');
+
+    const byType = await propertyCheck(model, id, 'p.n > -5');
+    expect([byType.refusedAt, byType.outcome]).toEqual([null, 'accepted']);
+    expect(byType.gates.find((g) => g.gate === 4)?.status).toBe('passed');
+    expect(byType.gates.find((g) => g.gate === 4)?.detail).toContain('the clause and its negation');
+
+    // The gate still decides a clause that is trivial in the symbols alone, floor or no floor.
+    const itself = await propertyCheck(model, id, 'p.n <= p.n');
+    expect([itself.refusedAt, itself.code]).toEqual([4, 'verification/trivial-property']);
+    expect(itself.detail).toContain('the clause is valid on its own');
+  }, 60_000);
+
   it('states what gate 4 sent to z3 beside the report, not in it: every variable free, no axioms', async () => {
     const { model } = await uav();
     const accepted = await propertyCheck(model, idOf(model, 'MassRequirement'), 'uav.mtow <= 25.0 [kg]');

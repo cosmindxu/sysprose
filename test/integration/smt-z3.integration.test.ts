@@ -331,6 +331,8 @@ describe('every script the ENCODER builds is one z3 accepts', () => {
     ['2.0 * z >= 1.0', [V('z')]],
     ['n <= x', [V('n', { sort: 'Int' }), V('x')]],
     ['(if p then x else y) >= 1.0', [V('p', { sort: 'Bool' }), V('x'), V('y')]],
+    // E1: a floor-bearing `Natural`, whose `type:` assertion z3 must accept beside the goal it came for.
+    ['n + x >= 1.0', [V('n', { sort: 'Int', restricted: 'Natural', floor: 0 }), V('x')]],
   ];
 
   for (const [body, variables] of bodies) {
@@ -352,6 +354,32 @@ describe('every script the ENCODER builds is one z3 accepts', () => {
       expect(['sat', 'unsat', 'unknown']).toContain(out.status);
     });
   }
+});
+
+/**
+ * E1, end to end: the floor is an axiom the engine reads, not a refusal it hands back.
+ *
+ * `Natural` is declared `Int`, so the floor has to come from somewhere — the gate's `type:` assertion. Where the
+ * floor decides a relation the lane used to abstain on, the claim is a proof; where a stated value contradicts
+ * the floor, the axiom set cannot be satisfied and the floor is named in the core.
+ */
+describe('a Natural/Positive type floor is carried as a `type:` axiom (E1)', () => {
+  const load = async (text: string) => (await loadModelText(text, { library: 'full' })).model!;
+  const rowOf = async (text: string, clause: string) =>
+    (await verifyModel(await load(text), { engine: 'smt' })).results.find((r) => r.clause.qualifiedName === clause);
+
+  withZ3('proves a relation the floor decides, and reads a Natural off its floor as a contradiction', async () => {
+    const nat1 = `package NAT1 { attribute k : Natural = 3; attribute x : Real = 5.0; constraint t { x <= k * 2.0 } }`;
+    const neg = `package NATNEG3 { attribute k : Natural = -3; attribute x : Real = 5.0; constraint t { k == -3 } }`;
+    // T/T/T/? before E1: the relation could not be read at all.
+    const proved = await rowOf(nat1, 'NAT1::t');
+    expect([proved?.claim, proved?.code]).toEqual(['proved', null]);
+    // `k : Natural = -3` states a value the type forbids, so the model contradicts itself (decision 1) — and the
+    // core names the floor that contradicts it.
+    const contradicted = await rowOf(neg, 'NATNEG3::t');
+    expect([contradicted?.claim, contradicted?.code]).toEqual(['inconclusive', 'verification/inconsistent-axioms']);
+    expect(contradicted?.detail).toContain('type:NATNEG3::k');
+  });
 });
 
 describe('the backend names itself, and answers the same way twice', () => {

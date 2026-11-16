@@ -2160,7 +2160,7 @@ features that meets (`load >= 5.0` with `L <= 5.0`, which would fix it as an equ
 through a derived value (`s = load * 2.0` with `s <= 4.0` and `L >= 2.0`: a lower and an upper bound on features
 an asserted relation links), is not carried, and the row says which. A bound on an Integer is carried alike, and a pair
 on one meets where it leaves a single whole number (`load >= 4.5` with `L <= 5.5`); a conjunction of bounds is read as
-its conjuncts. A bound in a unit, or on a `Natural`, `Positive` or `UnlimitedNatural`, is not carried, and the row says so. An
+its conjuncts. A bound in a unit, or on an `UnlimitedNatural` that no integral literal pins, is not carried, and the row says so. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
 def Eq { in a; a == 50.0 }`) is read by no surface. Its own row abstains on the check and the numeric surface (`unread-definition`: *`e` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*), and the literal and SMT engines read it as an assertion they cannot read, so every row they judge in that model abstains (*the model asserts …, which this tool cannot read*; *proof not claimed …*): the assertion may contradict a value the model writes with `=`.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
@@ -3418,15 +3418,24 @@ is itself an Integer and has no bound (it is constant in a branch, so no
 branch shows it is *unbounded*). A model whose features are all Real or all
 Integer is decided as before.
 
-**A feature typed `Natural`, `Positive` or `UnlimitedNatural` is not read.** This
-tool derives no domain axiom from a type, and a Natural was an unbounded
-Integer to the solver: `n > -3 and n < 4` gave `min n = -2`, and two requirements
-`n <= -1` and `n >= -5` were *consistent* at `n = -1`. A relation that reads such
-a feature is refused (`verification/unsupported-expression`, reason
-`non-numeric-operand`, with the type named), so `bounds` on it is
-`verification/not-evaluable` (a partial axiom set) and `consistency` is
-inconclusive, at exit **2**; the SMT engine of `verify` and `refine` abstain over it
-too. The same feature typed `Integer` is read as before.
+**A feature typed by the library's `Natural` or `Positive` is read off its type's
+floor.** The lane declares it an Integer and asserts `n >= 0` as a named `type:`
+axiom (`n >= 1` for a `Positive`), so a bound over a free one is decided:
+`n > -3 and n < 4` gives `min n = 0` and `max n = 3`, and a `Positive` starts at
+1 — where the relation was refused and the bound undecided before. A stated
+value the type forbids (`k : Natural = -3`) is the model contradicting itself,
+not a bound, and the SMT engine names the floor in the inconsistent-axioms core
+beside the relation that contradicts it. Two reads are still refused byte for
+byte, with the type named (`verification/not-evaluable`, reason
+`non-numeric-operand`), at exit **2**: a stated value that is not a whole number
+(`k : Natural = 2.5`), which this lane cannot state and carries no floor beside,
+and a free `UnlimitedNatural`, whose floor exists only where an integral literal
+pins it — so `bounds` on such a feature is `verification/not-evaluable` (a
+partial axiom set) and `consistency` is inconclusive, and the SMT engine of
+`verify` and `refine` abstains over it too. A type of your own that is merely
+NAMED `Natural` or `Positive`, or a `Natural` whose stated value is a boolean, is
+not one this lane declares an Integer: no floor is carried over it and the read
+keeps the refusal. The same feature typed `Integer` is read as before.
 
 **A measure a binding this tool does not read may carry is no bound either.**
 The axioms state no equality for a binding or a value that equates two parts

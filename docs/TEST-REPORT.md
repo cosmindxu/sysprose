@@ -619,7 +619,7 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 | `ground` | 1 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `lra` | 486 | 72 | 2 | 6 | 736 (327) | 0 | none | `differential-tested` |
-| `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
+| `lira` | 15 | 13 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 6 (4) | 0 | none | `tested` |
@@ -640,7 +640,7 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 | `fence/offset-arithmetic` | 3 | 3 | 1 | — | — | — | none | `fenced` |
 | `fence/refused-derivation` | 1 | 1 | 1 | — | — | — | none | `fenced` |
 | `fence/unsupported-operator` | 6 | 5 | 2 | — | — | — | none | `fenced-defect` |
-| `fence/non-numeric-operand` | 6 | 6 | 2 | — | — | — | none | `fenced` |
+| `fence/non-numeric-operand` | 4 | 4 | 2 | — | — | — | none | `fenced` |
 <!-- END GENERATED constraint-classes:test-report -->
 
 ---

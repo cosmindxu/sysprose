@@ -24,8 +24,8 @@ import { loadModelText } from '@text/load';
 import { axiomsOf, obligationsOf, type Obligation, type ObligationSource } from '@semantics/obligations';
 import { parseExpr } from '@semantics/expr';
 import type { RefusalReason } from '@semantics/contracts';
-import { judgeBySmt, type SmtOutcome } from '@semantics/engines/smt';
-import { encodeRelation, encodeVariables } from '@semantics/smt/encode';
+import { coreCount, judgeBySmt, type SmtOutcome } from '@semantics/engines/smt';
+import { encodeRelation, encodeScript, encodeVariables } from '@semantics/smt/encode';
 import {
   BASES,
   BASIS_OF,
@@ -415,6 +415,41 @@ describe('a worklist row is sorted into exactly one shape or fence', () => {
       expect(staticCensus(model, [...rows].reverse())).toEqual(c);
       for (const k of Object.keys(c.cells)) expect(CELLS, k).toContain(k);
     }
+  });
+
+  it('counts no type floor in the axiom census: a Natural row and its Integer twin classify alike (E1)', async () => {
+    const text = (type: string): string => `package M {
+  part def P { attribute n : ${type}; attribute x : ScalarValues::Real; }
+  part p : P;
+  requirement def R { subject s : P; require constraint { s.x <= s.n * 2.0 } }
+  satisfy R by p;
+}`;
+    const ofType = async (type: string) => {
+      const model = await load(text(type));
+      const rows = obligationsOf(model);
+      const row = rows.find((r) => r.role === 'obligation' && r.expression.includes('s.n'))!;
+      const { row: classified } = classifiableOf(row, 'clause');
+      const vars = encodeVariables(classified.vars, classified.sortPerVar, { scaled: classified.scaled });
+      const encoded = encodeRelation(classified.node!, vars);
+      if (!encoded.ok) throw new Error(`${type}: ${encoded.refusal.detail}`);
+      const script = encodeScript({
+        variables: vars,
+        assertions: [{ kind: 'goal', name: row.element.qualifiedName, term: encoded.term }],
+        nonlinear: encoded.nonlinear,
+        syntacticNonlinear: encoded.syntacticNonlinear,
+      });
+      return { rows: rows.length, axioms: axiomsOf(rows).length, script };
+    };
+    const natural = await ofType('Natural');
+    const integer = await ofType('Integer');
+    // The floor changes what the LANE reads, never what the CENSUS has to count: the same rows, the same axioms.
+    expect(natural.rows, 'the Natural model has another worklist row').toBe(integer.rows);
+    expect(natural.axioms).toBe(integer.axioms);
+    expect(natural.script.labels).toContain('type:M::P::n');
+    expect(integer.script.labels.filter((l) => l.startsWith('type:'))).toEqual([]);
+    // A floor is not an `axiom:` label: counted as one, the census would grow by a row per Natural (planted bug 23).
+    expect(coreCount(natural.script.labels, 'axiom')).toBe(0);
+    expect(coreCount(natural.script.labels, 'type')).toBe(1);
   });
 
   it('reads a refine row without a symbol of its own, as refinement encodes it', () => {

@@ -94,6 +94,7 @@ import { conforms } from './conformance';
 import {
   contractsOf,
   type Contract,
+  type ContractVariable,
   type Fragment,
   type Refusal,
   type RefusalReason,
@@ -220,9 +221,11 @@ export interface ConsistencyRequirement {
  * `assume` clause is never asserted on its own and can therefore never be a
  * conflicting subset's member by itself — it travels with the guarantee it
  * conditions, in {@link CoreMember.assumptions}, so a reader can see the whole
- * implication that collided rather than half of it.
+ * implication that collided rather than half of it. `type` is a FEATURE'S TYPE FLOOR: `Natural` is declared
+ * `Int` and this lane asserts `n >= 0` beside the request's own relations, so a core over a model that
+ * contradicts it has to name the floor or it would read as a subset nobody can find.
  */
-export type CoreMemberKind = 'guarantee' | 'axiom';
+export type CoreMemberKind = 'guarantee' | 'axiom' | 'type';
 
 /** One member of a conflicting subset, named the two ways the plan requires. */
 export interface CoreMember {
@@ -418,7 +421,8 @@ function encodeRow(row: Obligation, free: ReadonlySet<string>): EncodedRow {
  */
 interface Unit {
   row: EncodedRow;
-  kind: CoreMemberKind;
+  /** A UNIT is a relation: the floor is no relation of the model's and never gets one. */
+  kind: 'guarantee' | 'axiom';
   /** The requirement the row belongs to, for a clause under a tracking literal. */
   contract: Contract | null;
   /**
@@ -532,6 +536,14 @@ function variablesOf(units: readonly Unit[]): EncodeVariable[] {
   return out;
 }
 
+/** A `type:` core member's declaration: the feature whose type floor the assertion carries. */
+interface TypeMember {
+  /** The element the declaration IS — the feature the model types. */
+  id: ElementId;
+  qualifiedName: string;
+  expression: string;
+}
+
 /** One script over a set of units, with the labels it gave each assertion. */
 function scriptOf(units: readonly Unit[]): {
   text: string;
@@ -539,6 +551,8 @@ function scriptOf(units: readonly Unit[]): {
   fragment: Fragment;
   /** label → the unit that produced the assertion carrying it. */
   owners: Map<string, Unit>;
+  /** label → the type floor the last assertions carry. A floor is not a relation, so no Unit owns one. */
+  types: Map<string, TypeMember>;
   symbols: string[];
   /** The script's own constraint class, from its bytes, read when it is recorded (a label: nothing here reads it). */
   scriptClass: () => ScriptClass;
@@ -569,11 +583,34 @@ function scriptOf(units: readonly Unit[]): {
     const owner = from[i];
     if (owner) owners.set(label, owner);
   });
+  // A FLOOR'S DECLARATION is the `ContractVariable` the units read under the name the label carries — the
+  // element id the core member needs, which the encoder's variable no longer holds.
+  const declarations = new Map<string, ContractVariable>();
+  for (const u of units) {
+    for (const encoded of rowsOf(u)) {
+      for (const v of encoded.row.vars) {
+        const key = v.symbol ?? v.qualifiedName;
+        if (!declarations.has(key)) declarations.set(key, v);
+      }
+    }
+  }
+  const types = new Map<string, TypeMember>();
+  for (const t of script.typeAxioms) {
+    const v = declarations.get(t.qualifiedName);
+    if (v === undefined) continue;
+    const name = short(t.qualifiedName);
+    types.set(t.label, {
+      id: v.featureId,
+      qualifiedName: v.qualifiedName,
+      expression: `${name} is typed ${t.type}: ${name} >= ${t.floor}`,
+    });
+  }
   return {
     text: script.text,
     logic: script.logic,
     fragment: script.fragment,
     owners,
+    types,
     symbols: script.symbols,
     scriptClass: () =>
       scriptClassOf(script.shape, script.logic, new Map(variables.map((v) => [v.qualifiedName, v.sort] as const))),
@@ -1039,7 +1076,7 @@ export async function checkConsistency(
     checks += 1;
     axiomsConsistent = axiomOutcome.status === 'sat';
     if (axiomOutcome.status === 'unsat') {
-      axiomCore = coreMembersOf(axiomOutcome.core, script.owners);
+      axiomCore = coreMembersOf(axiomOutcome.core, script.owners, script.types);
     }
   }
 
@@ -1474,7 +1511,7 @@ async function judgeGroupInner(input: JudgeInput): Promise<ConsistencyGroup> {
   }
 
   if (outcome.status === 'unsat') {
-    let core = coreMembersOf(outcome.core, script.owners);
+    let core = coreMembersOf(outcome.core, script.owners, script.types);
     // AN INCONSISTENCY IS ONLY EVER PRINTED WITH A NAMED SUBSET — the charter
     // of this file. A core this tool cannot map back to the relations that
     // produced it names nothing, and `{}` is not a subset a reader can act on,
@@ -1793,14 +1830,32 @@ function short(qualifiedName: string): string {
   return parts[parts.length - 1] || qualifiedName;
 }
 
-/** Map z3's labels back to the relations that produced them. */
+/** Map z3's labels back to the relations that produced them — and a `type:` label to the floor it asserts. */
 function coreMembersOf(
   labels: readonly string[],
   owners: ReadonlyMap<string, Unit>,
+  types: ReadonlyMap<string, TypeMember>,
 ): CoreMember[] {
   const out: CoreMember[] = [];
   const seen = new Set<ElementId>();
   for (const label of labels) {
+    const floor = types.get(label);
+    if (floor !== undefined) {
+      // A TYPE FLOOR IS IN THE CORE OR IT IS NOT; it is never one of several for one feature, and it is not
+      // removable (a floor is not an assertion the model could do without — see `minimizeCore`).
+      if (seen.has(floor.id)) continue;
+      seen.add(floor.id);
+      out.push({
+        label,
+        id: floor.id,
+        qualifiedName: floor.qualifiedName,
+        expression: floor.expression,
+        kind: 'type',
+        assumptions: [],
+        requirement: null,
+      });
+      continue;
+    }
     const unit = owners.get(label);
     if (!unit) continue;
     // One member per RELATION, not per assertion: a relation whose encoding
@@ -1867,6 +1922,10 @@ async function minimizeCore(
   }
   const units: Unit[] = [];
   for (const member of core) {
+    // A FLOOR IS NOT REMOVABLE: it is an axiom of the type, not a relation the model could state differently, so
+    // deleting it to test minimality would change the question rather than shrink the set. It stays (as
+    // `remaining()` keeps every member no unit owns).
+    if (member.kind === 'type') continue;
     const unit = owners.get(member.label);
     // A label with no owner is this tool failing to recognise its own script.
     // The core stands — z3 answered unsat over it — but nothing may be reduced
