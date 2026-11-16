@@ -89,8 +89,8 @@ maintainer says `awaits user decision U<n>` and names the question.
       (sound, readings lost): a reading of p2 itself (sa3's `satisfy RF by p2`, a package's
       `satisfy RF by w.p2` / `v.p2` (O2), a subject's or reference's value `= p2`); TC8's
       T1::sub::tc (a T1 that adds features is not p1 again, and no lane files a row for w's p2's
-      sub); RFN refine and fault-tree still inconclusive (they need the per-instance satisfy read,
-      176's satisfy half); `::>`, nested (SA7N), chained (SA7C), attribute (SA7A) and sibling
+      sub); RFN refine and fault-tree still inconclusive (they need the per-instance satisfy read, RULED
+      PERMANENT 2026-11-16 — see the genericity-audit rollup (1) — so they stay inconclusive); `::>`, nested (SA7N), chained (SA7C), attribute (SA7A) and sibling
       subsetters; a binding end or asserted equation naming p2 (VB, AX, PX, AE3, AE4; the design's
       asserted-step change was not done); a context that reads p1 otherwise without redefining it
       (RQ4's satisfy context, SA3S and RE3's `q :> s`, a binding from above). Brief done-when items
@@ -380,10 +380,10 @@ headings.
       it is described, and no corpus or v9 model is hit. Item (f) also covers the chain shapes.
       Probes: fence-numeric3-scratch/rchain10-2.0.sysml, rchain10-0.002.sysml, rchain20-2.0.sysml,
       rchain30-2.0.sysml, chain100-2.sysml, chain150-0.sysml (no root), review/big-chain-130.sysml.
-       fence-numeric4: (a) a bind end under an unread scope (an `order` scope) withholds that end
-      and everything joined to it by bindings, even where an end has a value elsewhere; only an end
-      with no stated value of its own is made unreadable, and a valued end keeps its own seed
-      (fence-numeric4-scratch/models2/n2-keq-fwd.sysml, F correct). (b) The withheld set joins by
+       fence-numeric4: (a) CLOSED 2026-11-16 by a5-heads2 HD2: a bind end under an unread scope
+      (an `order` scope) now enumerates its candidate ends, so a valued end keeps its own seed and
+      n2-keq `cA`/`cB` decide (T/T/T and F/F/F on check/literal/numeric; the SMT lane stays `?` by
+      withheldCauses, the accepted conservative policy; pins a5-hd2-keq/-rev). (b) The withheld set joins by
       raw end ids, so a binding written at package level through a differently spelled copy of the
       same end is not joined to the component and could keep a decided reading; no probe found one
       (models3 pkg rows are all ?). (c) A feature that states a value with `=` and is bound into an
@@ -486,11 +486,14 @@ headings.
       reads2-pass (an asserted bare bound on a unitless Real over a give-way default is carried on
       the SMT lane; `bounds`, `consistency` and `refine` carry it too): (12) an asserted inequality over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L + N >= K`) under the generic sentence, and a bound with a `[unit]` or on a unit-bearing feature or a restricted-domain sort under a sentence of its own (a5 K3 carries Integer bounds, refusing a pair that leaves one whole number, and files a conjunction read in a context as its conjuncts; probes a5-k3-unit, gen_k3 shape unit); (13) a
       usage that redefines the default itself (`part q : Q { attribute :>> L default = 9.0; }`)
-      beside bounds abstains where the hand oracle could prove (20 cells: reads2-pass-
-      scratch/gen217b/models/m45f.sysml, m46f.sysml, m52f.sysml); (14) bounds linked through a
-      derived relation are refused whole, including a lower and an upper bound in the same component
-      of a linked group (B5, B7: review-scratch/pr/b5.sysml, b7.sysml; pinned stand-gw-ineq-derived,
-      -derived2); (15) a scoped worklist (`obligationsOf` with scopeId, the Checks 'Obligations'
+      beside bounds still abstains where the hand oracle could prove (20 cells: m45f/m46f/m52f
+      `g0`-`g2` read ?/?/?/?, hand T/T/T, T/T/T, T/T/F) — RULED OPEN 2026-11-16: the only rule that
+      decides them moves the pinned A-H1 shape (`H::q2::p` ?->satisfied), PJ and the instanceRollup
+      expectation (the two shapes differ only in which end of `bind p.load = L` the usage
+      redefines), so it needs a dated ruling of its own (evidence: a5-heads2-scratch/hd2/report.md
+      §3); (14) CLOSED 2026-11-16 by a5-heads2 HD2: bounds linked through a derived relation are
+      carried and compared through it (stand-gw-ineq-derived/-derived2: g1, g2 now decide T, g3
+      stays ?); (15) a scoped worklist (`obligationsOf` with scopeId, the Checks 'Obligations'
       listing) may carry a bound the whole model refuses as meeting (review-scratch/scope.mts;
       sound, the partner is no axiom there); (16) a usage that subsets a feature an instance reads
       otherwise, narrowed by instance3-pass S2 to the shapes still fenced (TC8, AE3, SA3, O2, RQ4, SA3S, RE3, RFN, and the `::>`, nested, chained, attribute and sibling subsetters) plus a name an asserted equation spells with a quote and a multiplicity beyond one value (sub-sa7 and sub-def-sa7d now read) (TODO 241, skipped: the per-usage taint `subsettingsOtherwise`, `spreadOtherwise`,
@@ -917,12 +920,11 @@ true values. What follows is what that branch and the review of it left open; en
       'Observed once on a hand-written probe model' until CC-46 lands; the strict census step costs
       about 12 CPU-minutes (31 min wall at load 50), so a cheaper strict (one census process, or the
       recount alone) is a follow-up if the per-commit gate is too slow. [classes-2]
-- [ ] **Abstentions left in seeds against an unread bound end (rollup; sound, only weaker).** (1) A
-      feature that writes a value and is bound to an end under an unread scope reads ? even when
-      every candidate end gives way to it or is valueless (with the end under `order`, k = 5.0 beside
-      `q :>> a default = 16.0` and P2's `a default = 13.0` was right at base and is ? now; 648 + 438
-      such cells in 44 + 30 of 1100 generated models); reading them would mean enumerating the
-      candidate ends of the unread scope. (2) The fence covers every unread-scope kind (`order`,
+- [ ] **Abstentions left in seeds against an unread bound end (rollup; sound, only weaker).** (1)
+      CLOSED 2026-11-16 by a5-heads2 HD2: the candidate ends of an unread scope are enumerated, so a
+      feature that writes a value and is bound to an end under an unread scope reads the seed where
+      every candidate gives way or is valueless (b1 lim/lim2 decide; pins a5-hd2-lim/-rev; the 648 +
+      438 cells of 44 + 30 of the 1100 generated models). (2) The fence covers every unread-scope kind (`order`,
       `twins`, `redefinition`); on the twins model SMT went from `inconsistent-axioms` to
       `not-evaluable`. (3) A usage-level `:>> k = 7.0` over a bound `k = 5.0` keeps its own binding
       F row; `u.k == 5.0` / `== 7.0` now read ? with the unread-end sentence instead of the
@@ -930,12 +932,11 @@ true values. What follows is what that branch and the review of it left open; en
       with `internal error: VerifyOptionError: --measure names nothing in this model: u.k` and a
       stack trace, where the qualified `RS::U::k` reads inconclusive [verification/not-evaluable]:
       map the unread-path error to the not-evaluable row (scripts/sysprose.ts bounds, boundsReport,
-      src/api/verification.ts ~2700; probe fence-seed-scratch/review/b1.sysml). (5) Sweep coverage
-      for the next round: the generator reads the seed only from package-level constraints; add a
-      bare-name constraint inside the definition, the usage body and a subtype, and a nested part
-      with a same-named attribute (probes fence-seed-scratch/review/n1.sysml to n10.sysml).
-      Not generated: a unit on k, a bound end three or more redefinitions deep, a `calc` body read.
-      [fence-seed]
+      src/api/verification.ts ~2700; probe fence-seed-scratch/review/b1.sysml). (5) CLOSED 2026-11-16 by a5-heads2 HD2: the generator covers a bare-name constraint inside the
+      definition, the usage body and a subtype, a nested part with a same-named attribute, the R1
+      channels, a unit on k and a deep binding chain — rebuilt out of tree, 120 models x 2 orders,
+      0 WRONG / 0 decided->different-decided / 0 order mismatches. Still not generated: a bound end
+      three or more redefinitions deep, a `calc` body read. [fence-seed]
 
 - [ ] **Abstentions left in quoted names in expressions (rollup; sound, only weaker).** A quoted name
       is now a name reference on every lane and in the edit path; a feature whose declared name
@@ -960,14 +961,14 @@ true values. What follows is what that branch and the review of it left open; en
 - [ ] **Abstentions left under the genericity audit of 2026-11-02 (rollup; sound, only weaker).**
       Metamorphic audit over the 637-model corpus (rename: 636 transformed; reorder: 634; wrap and
       instance: 637; identity run byte-identical; no decided verdict changed except the quoted-name
-      entry above). (1) Order: which of two contexts of one constraint abstains depends on source
-      order (r16-subject-dflt: `requirement r : R { subject s = p }` beside `satisfy R by p`; both
-      are refuted by the model's meaning, each order decides one and abstains on the other) — the
-      remaining piece, the per-instance satisfy read (the satisfy's row reads the satisfier's
-      instance as R's row reads its subject: the default twin decides R's row F/F/-/F and abstains
-      on the satisfy's row; the no-default twin files its contradiction + SMT X), YIELDS TO HD2
-      (ruled 2026-11-15; the two r16 corpus twins survive in
-      gate-tools/corpus/…-r16-subject-dflt.sysml and …-r16-subject.sysml); the numeric `solveFeasible` of brief-targets-by-layer flips from decided feasible to undecided when
+      entry above). (1) Order: RULED PERMANENT 2026-11-16 (reversible; reverse by re-adding to its entry): the
+      per-instance satisfy read is not within the tool's reach — probed on r16-subject-dflt (the
+      default twin decides R's row F/F/-/F and abstains on the satisfy's row) and r16-subject (the
+      no-default twin files its contradiction + SMT X), whose rows do not move with R's row in
+      either member order and would lose a reading if forced; the four-surface letters of both
+      twins in both orders are pinned (a5-hd2-r16*, not STAND_ALIKE) and the satisfy path stays as
+      it is (a5-heads2 HD2; reports a5-heads2-scratch/hd2/report.md §7); the twin corpus models are
+      gate-tools/corpus/…-r16-subject-dflt.sysml and …-r16-subject.sysml; the numeric `solveFeasible` of brief-targets-by-layer flips from decided feasible to undecided when
       the members are reversed (propagation order; iteration counts move 2 to 3); the one code
       reported for a group with two causes (refinement-sibling-shortfall) follows source order; the
       per-instance rows are capped at the first 256 in source order. (2) Instance: since a5 PA2 a
@@ -1226,9 +1227,13 @@ true values. What follows is what that branch and the review of it left open; en
       'Say why a default stood on the rows `standingDefaultSentence` still does not reach.'). (3) An
       assert-only requirement files no requirement row (policy; see 'File a row, and say so in
       contracts, for a requirement whose only body is an assert.'). [wording-pass]
-- [ ] **Abstentions left (defaults) (rollup; sound, only weaker).** (a) Agreeing valued members are
-      read only as exact constants, so a name-reading side such as `L == K * 2.0` against `M = 3.0`,
-      and a package head (#), still read two-values (probes defaults-pass-scratch/m218b, m218). (b)
+- [ ] **Abstentions left (defaults) (rollup; sound, only weaker).** (a) CLOSED 2026-11-16 by a5-heads2
+      HD1 (step 1cedde4, review c149114): a name-reading side such as `L == K * 2.0` against
+      `M = 3.0`, and the m218 package-head shape (`bind P::load = M` with `:>> load = 3.0`), now
+      decide exactly as the constant twins do (pins a5-hd1-nrs/-head/-va; the lost probes are
+      reconstructed in a5-heads2-scratch/hd1-draft/). NOT closed: the `=`-valued definition-feature
+      head variant (P's `attribute load : Real = 2.0` beside `M = K * 2.0`) still reads ?/?/?/?
+      byte-identically to base (weaker, never false) — filed under the pkgbind/HD3 family. (b)
       A context row `P::c in W::q::p` reads unknown beside the satisfied instance row when load has
       no value, and the differential harness throws two check rows on it, so probes need a default
       on load (defaults-pass-scratch/x6a.sysml, pre-existing). (c) CLOSED 2026-11-16 by a5-heads2
@@ -1238,10 +1243,12 @@ true values. What follows is what that branch and the review of it left open; en
       shape that flips on base is the recorded variation: the specialiser states `load = v` with
       `=` beside a bind in Q, `q1 : Q` and `w : W` (pinned a5-hd4-wqp/-rev; the old probe
       defaults-pass-scratch/m218/G009-eqT.sysml is lost — see a5-heads2-scratch/hd4-report-notes.md);
-      with plain defaults only the filing NAME flips (q-direct, p2-default), also fixed. (d) The typed-inequality hold is by feature,
-      so a `P::L` held by a typed assert in one instance also holds p2's L where the assert sits in
-      a usage only (weaker, never false; test/integration/verification.differential.test.ts
-      'typed-ineq-*' rows, scratch review/m7/T1..T10). A typed assert whose parameter is bound with
+      with plain defaults only the filing NAME flips (q-direct, p2-default), also fixed. (d) CLOSED 2026-11-16 by a5-heads2 HD5 (step 6d4ce65, review f7271b6): the typed-inequality hold
+      is placed by the instance the assert's value is read in (and below it), not by feature, so a
+      sibling instance that reads the feature otherwise is freed (pins a5-hd5-hold/-dot/-bind/
+      -body/-special/-two and their revs); a reading through a part a definition holds (a value
+      whose path runs through a definition-level usage) stays feature-wide — fail closed — and the
+      guide states that exception. A typed assert whose parameter is bound with
       `bind x = L` is NOT an abstention left: it is held (fixed in the review of 'Hold a feature an
       assert typed by an inequality-only constraint definition constrains'). (e) An enclosing assert
       naming a binding-carried feature (A2E q2 p.load >= 0.5 over bind p.load = L;
