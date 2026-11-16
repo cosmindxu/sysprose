@@ -4149,11 +4149,14 @@ export class DefiningEquations {
    * there ({@link boundReads}, {@link joinedTo}), or `undefined`: Q's `bind p.load = L`, written in Q, joins
    * the `load` P2 states in `Q::p`, where P2 reads the same name with no binding around it. No package's: a
    * package's binding holds in every instance alike, and every context reads it the same. Only a binding
-   * written in an element that CONTAINS the context is one the context's own reading is carried by — the
-   * context's owner and the elements around it, never a binding written in the context itself (that is the
-   * context's own member, {@link boundInRedefiner}) — and a binding of an instance above it reaches the
-   * context's instances as a group ({@link instanceGroups}), not its own reading. A throw answers the
-   * context, listed and read as its own row (A.2.9).
+   * written in an element that CONTAINS the context, or in a MEMBER of the context's owner when the owner is
+   * no package (a sibling usage or a nested definition — contained by the owner, though it does not contain
+   * the context) whose ends join a feature the names read there, is one the context's own reading is carried
+   * by: a binding of the owner's member states its pair in the owner's scope, and so joins the name the
+   * relation reads there. Never a binding written in the context itself (that is the context's own member,
+   * {@link boundInRedefiner}), and never a binding of an instance above it — it reaches the context's
+   * instances as a group ({@link instanceGroups}), not its own reading. A throw answers the context, listed
+   * and read as its own row (A.2.9).
    */
   private bindingAround(contextId: ElementId, names: readonly string[]): ElementId | undefined {
     if (!hasUserBindings(this.model)) return undefined;
@@ -4167,17 +4170,30 @@ export class DefiningEquations {
         const joined = new Set<ElementId>();
         for (const f of reads) for (const id of joinedTo(this.model, f)) joined.add(id);
         const self = this.model.get(contextId);
+        const owner = self?.ownerId != null ? this.model.get(self.ownerId) : undefined;
         for (const { holder, ends } of bindingEnds(this.model).written) {
           if (!ends.some((end) => joined.has(end))) continue;
           const h = this.model.get(holder);
           if (h === undefined || h.attrs.isLibrary === true || isPackage(h)) continue;
-          for (let cur: ElementRecord | undefined = self?.ownerId != null ? this.model.get(self.ownerId) : undefined; cur; cur = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined) {
+          for (let cur: ElementRecord | undefined = owner; cur; cur = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined) {
             if (cur.id === holder) {
               found = holder;
               break;
             }
           }
           if (found !== undefined) break;
+          // A member of the context's owner, not on the chain above: a sibling usage or a nested definition
+          // (MY6's `part inner { bind p.load = L; }` in Q, beside `part p : P2`). Its ends are the owner's
+          // features, so the binding states its pair in the owner's scope, and carries the context's reading
+          // as an owner-held binding's does. Not a member of a PACKAGE (a package-level sibling is its own
+          // context, as inPackage sorts it; assert-min's QB and stand-gw-e1-super's W keep their pins), never
+          // the context's own body — a binding written in the context is the context's own member
+          // ({@link boundInRedefiner}), not one around it — and never a member of an instance above it: the
+          // chain walk stays the context's own elements.
+          if (owner !== undefined && !isPackage(owner) && h.ownerId === owner.id && holder !== contextId) {
+            found = holder;
+            break;
+          }
         }
       }
     } catch {
