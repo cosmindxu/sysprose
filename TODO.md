@@ -688,16 +688,6 @@ true values. What follows is what that branch and the review of it left open; en
       the five readers give a valueless end bound to a valued feature that feature's value, with an
       oracle over order swaps, instances, default and = twins, and the #bind row gone. Probes:
       defaults2-pass-scratch/p2/h2f.sysml and p5/. [default-stands S1, G2, defaults2-pass]
-- [ ] **File a definition's context row under one name whatever the declaration order.** Since
-      instance-pass a relation of P read in P2 :> P is filed P::ca in P2 whichever of P2 and its one
-      package-level usage p is written first (sort tie-break in contextsUncached; no verdict moves,
-      only worklist order and the filing name). Left: the same relation read in a usage written
-      inside a definition or a usage (part def Q { part p : P2; }) is still filed under Q::p or P2
-      by text order. Giving the definition priority there loses the instance rows of
-      binding-conflict shapes (P2 states load = v with = and Q binds p.load = L) and only the P2 row
-      survives. File it under P2 only with those rows kept. The M-generator's RENAMED pairs (27) and
-      the H3/H6/S3-spec cells live outside this repo; the in-repo differential table needed no
-      re-pin. [default-stands S2, instance-pass]
 - [ ] **Show `:=` (an initial value, not a binding) and the value's unit in `elements` and the grid;
       the workflow readers then read them (optional).** Sysprose now prints `:=` and the unit (the
       grid value cell is `[default] [:=] value [unit]`: `:= 4`, `default := 3`, `7 [kg]`; `elements

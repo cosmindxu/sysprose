@@ -19403,6 +19403,131 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       'WIT::P::c in WIT::S::p': ['?/?/?/?', 'F'],
       'WIT::P::c in WIT::s::p': ['?/?/?/?', 'F'],
     }),
+    // a5 HD4: a definition's context row is filed under the definition whatever the declaration order.
+    // Before the step the two contexts were one reading, filed under whichever of the definition and the
+    // usage the text put first, and the two orders' sentences differed. The binding-conflict rows (the
+    // "load is not read in Q::p" reading and the #bind pair) are the same reading the binding carries
+    // there, kept beside the definition's row.
+    'a5-hd4-def': probe(`package HD4D {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part def P2 :> P { attribute :>> load = 5.0; }
+  part def Q { attribute L : ScalarValues::Real = 7.0; part p : P2; bind p.load = L; }
+  part q : Q;
+}`, {
+      'HD4D::P::ca': ['T/T/T/X', 'T'],
+      'HD4D::P::ca in HD4D::P2': ['T/X/T/X', null],
+      'HD4D::P::ca in HD4D::Q::p': ['?/?/?/X', '?'],
+      'HD4D::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-hd4-def-rev': probe(`package HD4D {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part def Q { attribute L : ScalarValues::Real = 7.0; part p : P2; bind p.load = L; }
+  part def P2 :> P { attribute :>> load = 5.0; }
+  part q : Q;
+}`, {
+      'HD4D::P::ca': ['T/T/T/X', 'T'],
+      'HD4D::P::ca in HD4D::P2': ['T/X/T/X', null],
+      'HD4D::P::ca in HD4D::Q::p': ['?/?/?/X', '?'],
+      'HD4D::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-hd4-use': probe(`package HD4U {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part def P2 :> P { attribute :>> load = 5.0; }
+  part def Q { attribute L : ScalarValues::Real = 7.0; }
+  part q : Q { part p : P2; bind p.load = L; }
+}`, {
+      'HD4U::P::ca': ['T/T/T/X', 'T'],
+      'HD4U::P::ca in HD4U::P2': ['T/X/T/X', null],
+      'HD4U::P::ca in HD4U::q::p': ['?/?/?/X', '?'],
+      'HD4U::q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-hd4-use-rev': probe(`package HD4U {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part def Q { attribute L : ScalarValues::Real = 7.0; }
+  part def P2 :> P { attribute :>> load = 5.0; }
+  part q : Q { part p : P2; bind p.load = L; }
+}`, {
+      'HD4U::P::ca': ['T/T/T/X', 'T'],
+      'HD4U::P::ca in HD4U::P2': ['T/X/T/X', null],
+      'HD4U::P::ca in HD4U::q::p': ['?/?/?/X', '?'],
+      'HD4U::q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    // The defaults-(c) shape (a default on load, a binding in Q, an instance of Q beside w : W): before the
+    // step the deep rows (Q::p, q1::p, W::q::p and w::q::p) were filed only in the W-first order and only the
+    // P2 row in the other. The shape the TODO records says "with a default on load"; on HEAD the flip shows
+    // with the specialiser's `=` (the "eq" of the lost G009-eqT probe), and with a plain default on the
+    // specialiser only the filing name flips (q-direct, probed out of tree); the fix makes every order read
+    // the same rows either way.
+    'a5-hd4-wqp': probe(`package HD4W {
+  part def W { part q : Q; }
+  part def Q { attribute L : ScalarValues::Real = 5.0; part p : P2; bind p.load = L; }
+  part def P2 :> P { attribute :>> load = 7.0; }
+  part def P { attribute load : ScalarValues::Real default = 2.0; constraint c { load >= 0.0 } }
+  part q1 : Q { attribute :>> L = 5.0; }
+  part w : W;
+}`, {
+      'HD4W::P::c': ['T/T/T/X', 'T'],
+      'HD4W::P::c in HD4W::P2': ['T/X/T/X', null],
+      'HD4W::P::c in HD4W::Q::p': ['?/?/?/X', '?'],
+      'HD4W::P::c in HD4W::W::q::p': ['?/?/?/X', '?'],
+      'HD4W::P::c in HD4W::q1::p': ['?/?/?/X', '?'],
+      'HD4W::P::c in HD4W::w::q::p': ['?/?/?/X', '?'],
+      'HD4W::Q::«BindingConnectorAsUsage» in HD4W::q1#bind': ['F/-/F/-', 'F'],
+      'HD4W::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'a5-hd4-wqp-rev': probe(`package HD4W {
+  part def P { attribute load : ScalarValues::Real default = 2.0; constraint c { load >= 0.0 } }
+  part def P2 :> P { attribute :>> load = 7.0; }
+  part def Q { attribute L : ScalarValues::Real = 5.0; part p : P2; bind p.load = L; }
+  part def W { part q : Q; }
+  part q1 : Q { attribute :>> L = 5.0; }
+  part w : W;
+}`, {
+      'HD4W::P::c': ['T/T/T/X', 'T'],
+      'HD4W::P::c in HD4W::P2': ['T/X/T/X', null],
+      'HD4W::P::c in HD4W::Q::p': ['?/?/?/X', '?'],
+      'HD4W::P::c in HD4W::W::q::p': ['?/?/?/X', '?'],
+      'HD4W::P::c in HD4W::q1::p': ['?/?/?/X', '?'],
+      'HD4W::P::c in HD4W::w::q::p': ['?/?/?/X', '?'],
+      'HD4W::Q::«BindingConnectorAsUsage» in HD4W::q1#bind': ['F/-/F/-', 'F'],
+      'HD4W::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    // The twins: no binding, and a package-level usage, both read as before (their letters unchanged; the
+    // no-binding twin's filing name is the definition's in either order, as the step files it).
+    'a5-hd4-nobind': probe(`package HD4N {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part def P2 :> P { attribute :>> load = 5.0; }
+  part def Q { part p : P2; }
+  part q : Q;
+}`, {
+      'HD4N::P::ca': ['T/T/T/T', 'T'],
+      'HD4N::P::ca in HD4N::P2': ['T/T/T/T', 'T'],
+    }),
+    'a5-hd4-nobind-rev': probe(`package HD4N {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part def Q { part p : P2; }
+  part def P2 :> P { attribute :>> load = 5.0; }
+  part q : Q;
+}`, {
+      'HD4N::P::ca': ['T/T/T/T', 'T'],
+      'HD4N::P::ca in HD4N::P2': ['T/T/T/T', 'T'],
+    }),
+    'a5-hd4-pkg': probe(`package HD4P {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part p : P2;
+  part def P2 :> P { attribute :>> load = 5.0; }
+}`, {
+      'HD4P::P::ca': ['T/T/T/T', 'T'],
+      'HD4P::P::ca in HD4P::P2': ['T/T/T/T', 'T'],
+    }),
+    'a5-hd4-pkg-rev': probe(`package HD4P {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint ca { load >= 0.0 } }
+  part def P2 :> P { attribute :>> load = 5.0; }
+  part p : P2;
+}`, {
+      'HD4P::P::ca': ['T/T/T/T', 'T'],
+      'HD4P::P::ca in HD4P::P2': ['T/T/T/T', 'T'],
+    }),
   };
 
   /**
@@ -20425,6 +20550,22 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
           'one contradiction makes every SMT row of the file `inconsistent-axioms`, this one too, though the contradiction reaches no value it reads (another package’s, a value no axiom ties to it, an instance whose own value meets the assert): the other surfaces, the literal engine included, read it as the model states it',
         ] as const,
     ),
+    // a5 HD4: Q's `bind p.load = L` joins the `load = 5.0` P2 states to L's 7 — the model states two values
+    // for Q::p's load, so the whole file's axiom set is unsatisfiable and every SMT row reads X beside the
+    // check's and the numeric surface's decisions: P's own default meets ca, and P2's 5 meets it there.
+    ...['a5-hd4-def', 'a5-hd4-def-rev', 'a5-hd4-use', 'a5-hd4-use-rev', 'a5-hd4-wqp', 'a5-hd4-wqp-rev'].flatMap(
+      (n) =>
+        [
+          [
+            `${n} | HD4${n.includes('use') ? 'U' : n.includes('wqp') ? 'W' : 'D'}::P::${n.includes('wqp') ? 'c' : 'ca'}`,
+            'the binding joins the value the definition states to another that differs: the model contradicts itself, so the file’s axioms are unsatisfiable, and the SMT engine reads X beside the check’s and the numeric surface’s decision at the definition’s own value',
+          ],
+          [
+            `${n} | HD4${n.includes('use') ? 'U' : n.includes('wqp') ? 'W' : 'D'}::P::${n.includes('wqp') ? 'c' : 'ca'} in HD4${n.includes('use') ? 'U' : n.includes('wqp') ? 'W' : 'D'}::P2`,
+            'the same contradiction reaches the P2 row, whose value (5, or 7) meets the relation on the check and the numeric surface: the literal engine reads X there, as the SMT engine does',
+          ],
+        ] as const,
+    ),
   ]);
 
   const seen = new Map<string, Map<string, SurfaceRow>>();
@@ -20641,6 +20782,12 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     ['a5-typed-row', 'a5-typed-row-rev'],
     // a5 S3: a chain of bindings 40 deep, in either text order.
     ['a5-chain40', 'a5-chain40-rev'],
+    // a5 HD4: a definition's context row, the binding-conflict rows and the defaults-(c) deep rows, in either text order.
+    ['a5-hd4-def', 'a5-hd4-def-rev'],
+    ['a5-hd4-use', 'a5-hd4-use-rev'],
+    ['a5-hd4-wqp', 'a5-hd4-wqp-rev'],
+    ['a5-hd4-nobind', 'a5-hd4-nobind-rev'],
+    ['a5-hd4-pkg', 'a5-hd4-pkg-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

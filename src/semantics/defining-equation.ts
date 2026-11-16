@@ -468,6 +468,8 @@ export class DefiningEquations {
   private readonly clauseContexts = new Map<ElementId, ElementRecord[]>();
   /** {@link changingContexts} per relation and names, with those a feature-only binding reading lists too. */
   private readonly changing = new Map<string, { listed: ElementRecord[]; plain: ReadonlySet<ElementId> }>();
+  /** {@link bindingAround} per context and names (`null`: no binding around it). */
+  private readonly bindingAroundMemo = new Map<string, ElementId | null>();
   /** The user elements by the instance a scope rooted at each reads its features in ({@link framesAbove}). */
   private rootsByInstance?: Map<string, ElementRecord[]>;
   /** {@link framesAbove} per instance spelling (`null`: no chain spells it). */
@@ -3847,7 +3849,9 @@ export class DefiningEquations {
     // `satisfy`), with the same usages around them, the definition first: the row `P::ca` gets in `P2 :> P` with
     // the one usage `p : P2` is filed under P2 whichever is written first, not under whichever the text put
     // first (`P::ca in P2` and `P::ca in p` were one reading, filed under two names). One written in a definition
-    // or a usage keeps the text order: a binding of its owner can read it otherwise.
+    // or a usage would keep the text order: where the two read alike the definition takes the filing over from a
+    // usage that listed the reading first ({@link readingsFirst}, below), and a binding of the usage's owner
+    // that reads the relation otherwise there keeps the usage's own reading beside it ({@link bindingAround}).
     const inPackage = (c: ElementRecord): boolean => {
       const o = c.ownerId != null ? this.model.get(c.ownerId) : undefined;
       return !isDefinition(c.eClass) && o !== undefined && isPackage(o);
@@ -3862,7 +3866,15 @@ export class DefiningEquations {
     const ownBound = reads.size > 0 ? bindingReadingIn(this.model, owner, owner, reads) : undefined;
     const ownPlain = reads.size > 0 ? bindingReadingIn(this.model, owner, owner, reads, false) : undefined;
     const out: ElementRecord[] = [];
+    /** The element each listed reading key was first listed by, for a definition's takeover (below). */
+    const readingsFirst = new Map<string, ElementId>();
+    /** The listed elements by their place in {@link out}, so a takeover can swap them. */
+    const pos = new Map<ElementId, number>();
     const readings = new Set<string>();
+    // The readings a definition context listed first (a key class the sort filed under a definition): a usage
+    // whose own reading a binding of its owner carries is no reading of the definition's, and is kept apart
+    // ({@link bindingAround}).
+    const defLed = new Set<string>();
     const plainReadings = new Set<string>();
     // A name read in the context through a binding, a value or a `satisfy`
     // this tool does not read ({@link equatedPartsRefusal}), where the owner
@@ -4030,6 +4042,61 @@ export class DefiningEquations {
       if (changed && !readings.has(key)) {
         readings.add(key);
         listed = true;
+        readingsFirst.set(key, x.id);
+        if (isDefinition(x.eClass)) defLed.add(key);
+      }
+      // A binding written in the element around the context joins a name the relation reads there, where a
+      // definition's reading of the same names has none: the context's reading is the one the binding carries
+      // in, and it is no reading of the definition's for the row to stand for (`P::ca in Q::p`, where Q's
+      // `bind p.load = L` joins the `load = v` P2 states, beside `P::ca in P2`). Kept apart only where the
+      // definition led the reading: two usages that read through one binding are one reading, as before,
+      // whichever listed them — the reading key carries no value, so sibling usages whose bindings carry
+      // different values stay one row, each binding's own row still reporting its pair. A binding relation's
+      // own rows are the pair it states, not readings of it; and where the relation's owner reads through a
+      // binding of its own, the keys above already carry each context's binding reading.
+      if (ownBound === undefined && !relationIsBinding && changed && !listed && isUsage(x.eClass) && readings.has(key) && defLed.has(key)) {
+        const bound = this.bindingAround(x.id, names);
+        if (bound !== undefined) {
+          reading.push(`bound~${bound}`);
+          const split = reading.join(' ');
+          if (!readings.has(split)) {
+            readings.add(split);
+            plain.add(x.id);
+            listed = true;
+          }
+        }
+      }
+      // A definition whose reading a usage listed first (the text put the usage first) files the row: the
+      // definition takes the usage's place in the filing, and the usage's own reading — one a binding around
+      // it carries — is kept beside it, under its own key. Two definitions that read alike stay one reading,
+      // under the first.
+      if (ownBound === undefined && !relationIsBinding && changed && !listed && isDefinition(x.eClass) && readings.has(key) && !defLed.has(key)) {
+        const firstId = readingsFirst.get(key);
+        const first = firstId !== undefined ? this.model.get(firstId) : undefined;
+        if (first !== undefined && isUsage(first.eClass)) {
+          const p = pos.get(firstId!);
+          if (p !== undefined) {
+            out[p] = x;
+            pos.delete(firstId!);
+            pos.set(x.id, p);
+            plain.add(x.id);
+            listed = true;
+            const bound = this.bindingAround(firstId!, names);
+            if (bound !== undefined) {
+              const split = `${key} bound~${bound}`;
+              if (!readings.has(split)) {
+                readings.add(split);
+                pos.set(firstId!, out.length);
+                out.push(first);
+              } else {
+                plain.delete(firstId!);
+              }
+            } else {
+              plain.delete(firstId!);
+            }
+          }
+        }
+        defLed.add(key);
       }
       // A context in whose instances an asserted equation — its own, of an
       // element above it, or of one nested below it — defines what the relation
@@ -4069,9 +4136,71 @@ export class DefiningEquations {
           listed = true;
         }
       }
-      if (listed || plain.has(x.id)) out.push(x);
+      if ((listed || plain.has(x.id)) && !pos.has(x.id)) {
+        pos.set(x.id, out.length);
+        out.push(x);
+      }
     }
     return { listed: out, plain };
+  }
+
+  /**
+   * The element around the context `contextId` whose binding joins a feature the relation's `names` read
+   * there ({@link boundReads}, {@link joinedTo}), or `undefined`: Q's `bind p.load = L`, written in Q, joins
+   * the `load` P2 states in `Q::p`, where P2 reads the same name with no binding around it. No package's: a
+   * package's binding holds in every instance alike, and every context reads it the same. Only a binding
+   * written in an element that CONTAINS the context, or in a MEMBER of the context's owner when the owner is
+   * no package (a sibling usage or a nested definition — contained by the owner, though it does not contain
+   * the context) whose ends join a feature the names read there, is one the context's own reading is carried
+   * by: a binding of the owner's member states its pair in the owner's scope, and so joins the name the
+   * relation reads there. Never a binding written in the context itself (that is the context's own member,
+   * {@link boundInRedefiner}), and never a binding of an instance above it — it reaches the context's
+   * instances as a group ({@link instanceGroups}), not its own reading. A throw answers the context, listed
+   * and read as its own row (A.2.9).
+   */
+  private bindingAround(contextId: ElementId, names: readonly string[]): ElementId | undefined {
+    if (!hasUserBindings(this.model)) return undefined;
+    const key = `${contextId} ${names.join('\u0000')}`;
+    const hit = this.bindingAroundMemo.get(key);
+    if (hit !== undefined) return hit ?? undefined;
+    let found: ElementId | undefined;
+    try {
+      const reads = this.boundReads(contextId, names);
+      if (reads.size > 0) {
+        const joined = new Set<ElementId>();
+        for (const f of reads) for (const id of joinedTo(this.model, f)) joined.add(id);
+        const self = this.model.get(contextId);
+        const owner = self?.ownerId != null ? this.model.get(self.ownerId) : undefined;
+        for (const { holder, ends } of bindingEnds(this.model).written) {
+          if (!ends.some((end) => joined.has(end))) continue;
+          const h = this.model.get(holder);
+          if (h === undefined || h.attrs.isLibrary === true || isPackage(h)) continue;
+          for (let cur: ElementRecord | undefined = owner; cur; cur = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined) {
+            if (cur.id === holder) {
+              found = holder;
+              break;
+            }
+          }
+          if (found !== undefined) break;
+          // A member of the context's owner, not on the chain above: a sibling usage or a nested definition
+          // (MY6's `part inner { bind p.load = L; }` in Q, beside `part p : P2`). Its ends are the owner's
+          // features, so the binding states its pair in the owner's scope, and carries the context's reading
+          // as an owner-held binding's does. Not a member of a PACKAGE (a package-level sibling is its own
+          // context, as inPackage sorts it; assert-min's QB and stand-gw-e1-super's W keep their pins), never
+          // the context's own body — a binding written in the context is the context's own member
+          // ({@link boundInRedefiner}), not one around it — and never a member of an instance above it: the
+          // chain walk stays the context's own elements.
+          if (owner !== undefined && !isPackage(owner) && h.ownerId === owner.id && holder !== contextId) {
+            found = holder;
+            break;
+          }
+        }
+      }
+    } catch {
+      found = contextId;
+    }
+    this.bindingAroundMemo.set(key, found ?? null);
+    return found;
   }
 
   /**

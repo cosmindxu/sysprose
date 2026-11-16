@@ -3449,6 +3449,162 @@ describe('checkConstraints — a bound partner is read only where every instance
 
   });
 
+  describe('HD4: a definition’s context row is filed under the definition whatever the declaration order', () => {
+    // P2 states `load = 5.0` and Q's `bind p.load = L` joins it to L's 7: the model states two values for
+    // Q::p's load, so the reading there is its own row ("load is not read in Q::p"), beside the definition's
+    // (P2's), whatever the text put first. Before the step the two were ONE reading, filed under whichever of
+    // P2 and Q::p the text put first, and the other order's sentence differed.
+    const P = `part def P {
+    attribute load : ScalarValues::Real default = 1.0;
+    constraint ca { load >= 0.0 }
+  }`;
+    const P2 = `part def P2 :> P { attribute :>> load = 5.0; }`;
+    const Q = `part def Q {
+    attribute L : ScalarValues::Real = 7.0;
+    part p : P2;
+    bind p.load = L;
+  }`;
+    const rowsOf = async (text: string) => {
+      const { model: m } = await loadModelText(text);
+      const qn = (id: string) => m!.qualifiedName(id) || id;
+      const where = (i: { instance?: string; contextId?: string }) => i.instance ?? qn(i.contextId ?? '');
+      return checkConstraints(m!)
+        .map((c) => ({
+          id: c.conflict ? `${qn(c.id)}#${c.conflict}` : qn(c.id),
+          result: c.result,
+          instances: (c.instances ?? []).map((i) => [`${qn(c.id)} in ${where(i)}`, i.result] as const),
+          messages: (c.instances ?? []).map((i) => i.message),
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    };
+    it('files P::ca under P2 with the binding-conflict rows kept, in both declaration orders', async () => {
+      for (const text of [
+        `package HD4D { ${P} ${P2} ${Q} part q : Q; }`,
+        `package HD4D { ${P} ${Q} ${P2} part q : Q; }`,
+      ]) {
+        const rows = await rowsOf(text);
+        expect(rows).toEqual([
+          { id: 'HD4D::P::ca', result: 'satisfied', instances: [['HD4D::P::ca in HD4D::P2', 'satisfied'], ['HD4D::P::ca in HD4D::Q::p', 'unknown']], messages: ['P2::load = 5 meets P::ca (load >= 0.0)', expect.stringContaining('load is not read in HD4D::Q::p')] },
+          { id: 'HD4D::Q::«BindingConnectorAsUsage»#bind', result: 'violated', instances: [], messages: [] },
+        ]);
+      }
+    });
+    it('files the relation under P2 when the usage is written inside a usage, in both declaration orders', async () => {
+      const U = `part def Q { attribute L : ScalarValues::Real = 7.0; }`;
+      const uu = `part q : Q {
+    part p : P2;
+    bind p.load = L;
+  }`;
+      for (const text of [
+        `package HD4U { ${P} ${P2} ${U} ${uu} }`,
+        `package HD4U { ${P} ${U} ${P2} ${uu} }`,
+      ]) {
+        const rows = await rowsOf(text);
+        expect(rows).toEqual([
+          { id: 'HD4U::P::ca', result: 'satisfied', instances: [['HD4U::P::ca in HD4U::P2', 'satisfied'], ['HD4U::P::ca in HD4U::q::p', 'unknown']], messages: ['P2::load = 5 meets P::ca (load >= 0.0)', expect.stringContaining('load is not read in HD4U::q::p')] },
+          { id: 'HD4U::q::«BindingConnectorAsUsage»#bind', result: 'violated', instances: [], messages: [] },
+        ]);
+      }
+    });
+    it('keeps the no-binding twin filed under P2, and the package-level usage under P2, in both orders', async () => {
+      // No binding: P2's reading stands for Q::p's (one value), filed under P2 in either order.
+      const Qn = `part def Q { part p : P2; }`;
+      for (const text of [
+        `package HD4N { ${P} ${P2} ${Qn} part q : Q; }`,
+        `package HD4N { ${P} ${Qn} ${P2} part q : Q; }`,
+      ]) {
+        const rows = await rowsOf(text);
+        expect(rows).toEqual([{ id: 'HD4N::P::ca', result: 'satisfied', instances: [['HD4N::P::ca in HD4N::P2', 'satisfied']], messages: ['P2::load = 5 meets P::ca (load >= 0.0)'] }]);
+      }
+      // A package-level usage keeps the existing rule: the definition files the row whichever is written first.
+      for (const text of [
+        `package HD4P { ${P} part p : P2; ${P2} }`,
+        `package HD4P { ${P} ${P2} part p : P2; }`,
+      ]) {
+        const rows = await rowsOf(text);
+        expect(rows).toEqual([{ id: 'HD4P::P::ca', result: 'satisfied', instances: [['HD4P::P::ca in HD4P::P2', 'satisfied']], messages: ['P2::load = 5 meets P::ca (load >= 0.0)'] }]);
+      }
+    });
+    it('keeps the sibling-usage binding reading beside the definition, in both orders', async () => {
+      // A binding written in a MEMBER of the context's owner — Q's `part inner { bind p.load = L; }`, a sibling
+      // usage that does not contain Q::p — joins the name the relation reads there all the same: the binding holds
+      // in every instance of Q, so the model states two values in Q::p (P2's 5 and the binding's L), and the reading
+      // is its own row, kept beside P2's whatever the text put first (before the finishing review the takeover
+      // dropped the usage's row when the holder was not on the owner chain, and both orders went silent).
+      const Qs = `part def Q {
+    attribute L : ScalarValues::Real = 7.0;
+    part p : P2;
+    part inner { bind p.load = L; }
+  }`;
+      for (const text of [
+        `package HD4S { ${P} ${P2} ${Qs} part q : Q; }`,
+        `package HD4S { ${P} ${Qs} ${P2} part q : Q; }`,
+      ]) {
+        const rows = await rowsOf(text);
+        expect(rows).toEqual([
+          { id: 'HD4S::P::ca', result: 'satisfied', instances: [['HD4S::P::ca in HD4S::P2', 'satisfied'], ['HD4S::P::ca in HD4S::Q::p', 'unknown']], messages: ['P2::load = 5 meets P::ca (load >= 0.0)', expect.stringContaining('load is not read in HD4S::Q::p')] },
+        ]);
+      }
+    });
+    it('keeps a nested-definition binding with its context row beside the definition, in both orders', async () => {
+      // The same shape with the binding in a nested definition (Q's `part def X { bind p.load = L; }`): the usage's
+      // row is kept apart under the holder, and reads what the model states there (P2's 5 — X is never
+      // instantiated), so both orders file P2's row and Q::p's, as the Q-first order filed them on HEAD.
+      const Qx = `part def Q {
+    attribute L : ScalarValues::Real = 7.0;
+    part p : P2;
+    part def X { bind p.load = L; }
+  }`;
+      for (const text of [
+        `package HD4X { ${P} ${P2} ${Qx} part q : Q; }`,
+        `package HD4X { ${P} ${Qx} ${P2} part q : Q; }`,
+      ]) {
+        const rows = await rowsOf(text);
+        expect(rows).toEqual([
+          { id: 'HD4X::P::ca', result: 'satisfied', instances: [['HD4X::P::ca in HD4X::P2', 'satisfied'], ['HD4X::P::ca in HD4X::Q::p', 'satisfied']], messages: ['P2::load = 5 meets P::ca (load >= 0.0)', 'P2::load = 5 meets P::ca (load >= 0.0)'] },
+        ]);
+      }
+    });
+    it('reads the W::q::p rows of the defaults-(c) shape alike in every declaration order', async () => {
+      // The shape the defaults-(c) clause records (a default on load, a binding in Q, an instance of Q beside
+      // w : W): before the step the deep rows (Q::p, q1::p, W::q::p) were filed only in the W-first order, and
+      // only the P2 row in the other.
+      const Pw = `part def P {
+    attribute load : ScalarValues::Real default = 2.0;
+    constraint c { load >= 0.0 }
+  }`;
+      const P2w = `part def P2 :> P { attribute :>> load = 7.0; }`;
+      const Qw = `part def Q {
+    attribute L : ScalarValues::Real = 5.0;
+    part p : P2;
+    bind p.load = L;
+  }`;
+      const Ww = `part def W { part q : Q; }`;
+      const inst = `part q1 : Q { attribute :>> L = 5.0; }
+  part w : W;`;
+      const read = async (order: readonly string[]) => {
+        const [a, b, c, d] = order;
+        const { model: m } = await loadModelText(`package HD4W { ${a} ${b} ${c} ${d} ${inst} }`);
+        const qn = (id: string) => m!.qualifiedName(id) || id;
+        return checkConstraints(m!)
+          .find((ch) => qn(ch.id) === 'HD4W::P::c')!
+          .instances!.map((i) => [((i as { instance?: string }).instance ?? qn(i.contextId)), i.result] as const);
+      };
+      const expected = new Map([
+        ['HD4W::P2', 'satisfied'],
+        ['HD4W::Q::p', 'unknown'],
+        ['HD4W::W::q::p', 'unknown'],
+        ['HD4W::q1::p', 'unknown'],
+        ['HD4W::w::q::p', 'unknown'],
+      ]);
+      const wf = await read([Ww, Qw, P2w, Pw]);
+      const pf = await read([Pw, P2w, Qw, Ww]);
+      // One order's rows are the other's, row for row, in the same filing order.
+      expect(wf).toEqual(pf);
+      expect(new Map(wf.map(([k, v]) => [k, v] as const))).toEqual(expected);
+    });
+  });
+
   /** R's `L = 2.0 * K`, bound into its q's p by a binding written in q's body (or in a definition nested in R). */
   const enclosed = (pkg: string, nested: boolean, override: boolean) => `package ${pkg} {
     ${P}
