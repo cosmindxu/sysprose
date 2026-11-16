@@ -867,16 +867,13 @@ true values. What follows is what that branch and the review of it left open; en
       measure unbounded only through an unbounded Integer, e.g. `x - 2.0 * y > 0.0` min x, and an
       Integer measure with no bound) or the encoder cannot fix an integer symbol (read other than
       through `to_real`, or a script with a string literal); probe
-      solver2-pass-scratch/s6/gen/u.cases.json. (2) A relation that reads a feature typed Natural,
-      Positive or UnlimitedNatural is refused in the z3 lane, so bounds, consistency, verify and
-      refine abstain on it even where a literal pins the feature (`k : Natural = 3` with `x <= k *
-      2.0` used to give max 6); probe fence-bounds-scratch/gen/f5.cases.json; the full reading
-      carries n >= 0 / n >= 1 as an axiom in encodeScript, without disturbing consistency's
-      owners/core mapping and the `axiom` census. (3) `verify` on a freed Natural says 'relation
-      cannot be read (non-numeric-operand)' where it said verification/free-variable-unbounded
-      (abstention to abstention). (4) The `bounds` exit-code sentence (scripts/lib/sysprose-spec.ts
-      BOUNDS_EXIT_CODES) does not list the two new not-decided kinds. [sweep 2026-10-31;
-      fence-bounds]
+      solver2-pass-scratch/s6/gen/u.cases.json. (2) The `bounds` exit-code sentence
+      (scripts/lib/sysprose-spec.ts BOUNDS_EXIT_CODES) does not list the two new not-decided kinds.
+      Since a5-encode E1 the type floors of Natural and Positive are carried as `type:`-labelled
+      axioms in encodeScript (a pinned Natural/Positive now decides where the floor is Int-sound;
+      consistency maps the label to its declaration and the `axiom` census does not count it); a
+      free UnlimitedNatural and a stated non-integer value still refuse byte-identically, so the
+      former (2)/(3) are closed. [sweep 2026-10-31; fence-bounds; a5-encode E1]
 - [ ] **Abstentions left in the collaboration room (rollup; sound, only weaker).** (a) A library
       element dragged within the library is now that page's own view and is not shared; nothing is
       lost, since the library is read-only for the user (test/unit/collab.binding.test.ts 'the
