@@ -19610,6 +19610,26 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       'HEADD::P::c': ['T/T/?/X', 'T'],
       'HEADD::P::c in HEADD::p2': ['?/?/?/X', '?'],
     }),
+    // a5 HD1, the valueAt path (review fix): a written `=` value reads a name with an instance redefinition of
+    // that name — Q's written `L = 2.0 * K`, read at q2's `:>> K = 25.0`, is q2's 50, which meets the binding's
+    // own `load = 50.0` there (one value, read); the general Q (K's default 0.5, L = 1) states two values for load
+    // and abstains. On base a8000eb the deep row read ?/?/?/? — the written value's name was not read at the
+    // instance — so this pin is what holds the exactMember/valueAt reader to its reading (and the differ twin's
+    // fail-closed `?` is held by d1plain-expr/d1plain-own, M7Y).
+    'a5-hd1-va': probe(`package VA1 {
+  part def Q {
+    attribute K : ScalarValues::Real default = 0.5;
+    attribute L : ScalarValues::Real = 2.0 * K;
+    attribute load : ScalarValues::Real = 50.0;
+    bind load = L;
+    constraint c { load <= 60.0 }
+  }
+  part q2 : Q { attribute :>> K = 25.0; }
+}`, {
+      'VA1::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'VA1::Q::c': ['?/?/?/X', '?'],
+      'VA1::Q::c in VA1::q2': ['T/X/T/X', 'T'],
+    }),
   };
 
   /**
@@ -20667,6 +20687,10 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     [
       'a5-hd1-head-differ | HEADD::P::c',
       'the package’s binding joins P::load’s `default = 1.0` to M = 4.0 beside p2’s own `:>> load = 3.0`: the model states two values for the slot in p2 (decision 1, the pair the check and the numeric surface report at p2’s row), so the SMT engine’s axioms are inconsistent; P’s own row reads M’s 4 (true there), as head-slot-const’s does at 3.0',
+    ],
+    [
+      'a5-hd1-va | VA1::Q::c in VA1::q2',
+      'Q’s `bind load = L` joins `load = 50.0` to `L = 2.0 * K`, which at Q’s own K (default 0.5) is 1 — two values in the general, so the model contradicts itself and the SMT engine reports inconsistent-axioms; q2’s `:>> K = 25.0` makes L 50 there, the one value the check and the numeric surface read on the deep row (the valueAt path, HD1)',
     ],
   ]);
 

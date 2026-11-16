@@ -13492,7 +13492,11 @@ function agreedValued(model: Model, root: ElementId, component: string, valued: 
   for (const path of valued) {
     if (path.startsWith('#')) {
       // A package head's member (`bind P::load = M`): the `#id` slot names the definition's feature, whose own
-      // stated value is what the component carries there (HD1). Not one of this component's heads: read as before.
+      // stated value is what the component carries there (HD1). UNREACHABLE, and it fails closed: no measured
+      // shape reaches this branch — a `#`-spelled end and a DefinitionHead are mutually exclusive, and the head
+      // row this step closes is read by statedAgainstBoundIn's instance-path fallback, not here — so it returns
+      // `undefined` exactly as the base `#` bail did. It is kept only for THE CHANGE item 3, should a reachable
+      // shape ever put a `#` member in a valued component.
       const head = (bindingEnds(model).heads.get(root) ?? []).find((h) => h.component === component && `#${h.feature}` === path);
       const feature = head ? model.get(head.feature) : undefined;
       const name = feature ? definitions.nameOf(feature) : undefined;
