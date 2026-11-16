@@ -922,9 +922,6 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
     /** A member takes integer values only, and so does every member equal to it. */
     integral?: boolean;
     pinned?: string;
-    /** A bare bound (not a `== number`) sits on this side of the component. */
-    bareLower?: boolean;
-    bareUpper?: boolean;
   }
   const components = new Map<string, Component>();
   const componentOf = (sym: string): Component => {
@@ -948,8 +945,6 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
       if (sym !== undefined) {
         const c = componentOf(sym);
         take(c, b.side, b.value, b.strict, row.expression);
-        if (b.side === 'lower') c.bareLower = true;
-        else c.bareUpper = true;
       }
       continue;
     }
@@ -964,35 +959,10 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
       }
     }
   }
-  // Components a derived row links (`s = load * 2.0` reads two roots without merging them): a lower bound on one and
-  // an upper bound on another can meet through the row, and nothing compares them, so such a group holding both
-  // kinds of bare bound is refused whole. Only the bare bounds count: a `== number` row would pull a whole tree in.
-  const link = new Map<string, string>();
-  const lfind = (a: string): string => {
-    let r = a;
-    while (link.has(r) && link.get(r) !== r) r = link.get(r)!;
-    return r;
-  };
-  const linkedRoots = new Set<string>();
-  for (const row of axioms) {
-    const roots = [...new Set(row.vars.map((v) => find(v.symbol ?? v.qualifiedName)))];
-    for (let i = 1; i < roots.length; i++) link.set(lfind(roots[0]!), lfind(roots[i]!));
-    if (roots.length > 1) for (const r of roots) linkedRoots.add(r);
-  }
-  const linked = new Map<string, { lower: boolean; upper: boolean }>();
-  for (const [root, c] of components) {
-    if (!linkedRoots.has(root)) continue;
-    const g = lfind(root);
-    const e = linked.get(g) ?? { lower: false, upper: false };
-    e.lower ||= c.bareLower === true;
-    e.upper ||= c.bareUpper === true;
-    linked.set(g, e);
-  }
-  const meetsThroughDerived = (sym: string): boolean => {
-    const root = find(sym);
-    const e = linkedRoots.has(root) ? linked.get(lfind(root)) : undefined;
-    return e !== undefined && e.lower && e.upper;
-  };
+  // A derived row (`s = load * 2.0`) reads two roots without merging them, so a lower bound on one and an upper bound
+  // on another can meet through the row where this pass cannot compare them. Such a group holding both kinds of bare
+  // bound was refused whole for it (reads2 (14)); HD2 carries the bounds and leaves the comparison to the encoder,
+  // which reads the derived relation (GWD/GWE).
   // Over the integers, the bounds meet where the whole numbers they allow are one or none: `> 4` is `>= 5`, `< 6` is
   // `<= 5`.
   const meets = (c: Component): boolean => {
@@ -1015,9 +985,7 @@ function refuseMeetingBounds(out: Obligation[], facts: readonly Obligation[]): v
           ? c.integral && c.lower!.value < c.upper!.value
             ? `its asserted bounds (\`${c.lower!.at}\` and \`${c.upper!.at}\`) leave an integer one whole number or none, which would give it a value`
             : `its asserted bounds meet (\`${c.lower!.at}\` and \`${c.upper!.at}\`), which would give it a value`
-          : sym !== undefined && meetsThroughDerived(sym)
-            ? 'its bounds meet through a derived value (a lower bound on one feature and an upper bound on another, linked by an asserted relation), which could give it a value'
-            : undefined;
+          : undefined;
     if (reason === undefined) continue;
     row.encodable = {
       reason: 'unread-definition',

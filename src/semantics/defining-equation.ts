@@ -460,7 +460,11 @@ export class DefiningEquations {
   private readonly withheldIn = new Map<ElementId, Map<string, ElementId>>();
   /** Per context, the paths of {@link withheldIn} that are a feature's own, left unread because a binding joins its value to a scope the page leaves unread ({@link seedJoinedToUnread}). */
   private readonly joinedIn = new Map<ElementId, Set<string>>();
-  private joins?: { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId> };
+  private joins?: { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId>; paired: ReadonlyMap<ElementId, readonly ElementId[]> };
+  /** Whether the value a joined end writes stands, by the end it is joined to ({@link seedJoinedToUnread}), once asked. */
+  private readonly seedStands = new Map<string, boolean>();
+  /** The features a user's binding gives a value, once per revision ({@link candidateStands}). */
+  private valuedEnds?: ReadonlySet<ElementId>;
   /** The types an owner of a binding specialises, for {@link endsInGeneral}. */
   private readonly generalIds = new Map<ElementId, ReadonlySet<ElementId>>();
   private specialised?: Map<ElementId, ElementRecord[]>;
@@ -3711,7 +3715,7 @@ export class DefiningEquations {
       if (!x) return 'unread';
       const valued = classified(this.model, contextId, x.component).valued;
       // Members that state one and the same value, exactly, are one value ({@link agreedValued}).
-      if (valued.length > 1 && agreedValued(this.model, contextId, valued) === undefined) return 'two-values';
+      if (valued.length > 1 && agreedValued(this.model, contextId, x.component, valued) === undefined) return 'two-values';
     }
     return undefined;
   }
@@ -4849,10 +4853,24 @@ export class DefiningEquations {
    * read), so none reads a value through it. Then to a fixpoint the bindings that join one of their ends: a feature
    * joined to a value nothing follows has none either, through however many bindings.
    */
-  withheldJoins(): { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId> } {
+  withheldJoins(): { edges: ReadonlySet<ElementId>; ends: ReadonlyMap<ElementId, ElementId>; paired: ReadonlyMap<ElementId, readonly ElementId[]> } {
     if (this.joins !== undefined) return this.joins;
     const edges = new Set<ElementId>();
     const ends = new Map<ElementId, ElementId>();
+    /** The other end(s) each end of a withheld binding is joined to ({@link seedJoinedToUnread}). */
+    const paired = new Map<ElementId, ElementId[]>();
+    const join = (id: ElementId, raw: readonly ElementId[], owner: ElementId): void => {
+      edges.add(id);
+      for (const e of raw) if (!ends.has(e)) ends.set(e, owner);
+      for (const e of raw) {
+        for (const o of raw) {
+          if (o === e) continue;
+          const at = paired.get(e) ?? [];
+          if (!at.includes(o)) at.push(o);
+          paired.set(e, at);
+        }
+      }
+    };
     const all: Array<{ id: ElementId; raw: ElementId[] }> = [];
     if (this.partedOwners().size > 0) {
       for (const el of this.model.all()) {
@@ -4863,8 +4881,7 @@ export class DefiningEquations {
     for (const b of all) {
       const owner = b.raw.map((e) => this.unreadOwnerOf(e)).find((o) => o !== undefined);
       if (owner === undefined) continue;
-      edges.add(b.id);
-      for (const e of b.raw) if (!ends.has(e)) ends.set(e, owner);
+      join(b.id, b.raw, owner);
     }
     // A package's binding on a definition's feature that this tool does not resolve (`outsideBindingsOf` lists none: a name
     // two imports expose, a path it cannot follow) joins an instance's value to one nothing follows: no surface reads a
@@ -4878,8 +4895,7 @@ export class DefiningEquations {
         const heads = raw.map((e) => definitionAt(this.model, e)).filter((d) => d !== undefined);
         if (heads.length === 0) continue;
         if (heads.every((d) => outsideBindingsOf(this.model, d!.definition.id).some((x) => x.binding.id === el.id))) continue;
-        edges.add(el.id);
-        for (const e of raw) if (!ends.has(e)) ends.set(e, holder.id);
+        join(el.id, raw, holder.id);
       }
     }
     // An end joined through a feature that redefines one of the ends (the copy a usage makes of it) is joined too.
@@ -4892,12 +4908,11 @@ export class DefiningEquations {
       for (const b of all) {
         const owner = edges.has(b.id) ? undefined : b.raw.map(joinedTo).find((o) => o !== undefined);
         if (owner === undefined) continue;
-        edges.add(b.id);
-        for (const e of b.raw) if (!ends.has(e)) ends.set(e, owner);
+        join(b.id, b.raw, owner);
         grew = true;
       }
     }
-    this.joins = { edges, ends };
+    this.joins = { edges, ends, paired };
     return this.joins;
   }
 
@@ -4907,6 +4922,11 @@ export class DefiningEquations {
    * writes a value. The file reads the other end in a value of its own (the two conflict, or `f` gives way) or in none
    * (`f` stands), and the page cannot say which, so it reads no value of `f` (a valueless end is read as none already).
    * A bound end it could not follow stood for nothing, and `k = 5.0` read 5 against a `= 16.0` it never met.
+   *
+   * The value stands where enumerating the CANDIDATE ENDS decides it (HD2): where the feature that
+   * writes it lies in the scope itself, a value written in the file is its own whichever feature a name finds there;
+   * and where it is joined to an end the scope answers, every candidate that end's name could find gives way to it
+   * ({@link candidateStands}) or states none.
    */
   seedJoinedToUnread(f: ElementRecord): ElementId | undefined {
     const { ends } = this.withheldJoins();
@@ -4914,7 +4934,171 @@ export class DefiningEquations {
     const line = [f, ...redefinedClosure(this.model, f)];
     const owner = line.map((g) => ends.get(g.id)).find((o) => o !== undefined);
     if (owner === undefined) return undefined;
-    return line.some((g) => g.attrs.value !== undefined && g.attrs.value !== null) ? owner : undefined;
+    if (!line.some((g) => g.attrs.value !== undefined && g.attrs.value !== null)) return undefined;
+    // A value written on a feature of the scope itself: the page leaves the scope's NAMES unread, not the values its
+    // own features write (fn4 (a): the valued end keeps its own seed).
+    if (line.some((g) => this.unreadOwnerOf(g.id) === owner)) return undefined;
+    return this.joinedCandidateStands(f, line, owner) ? undefined : owner;
+  }
+
+  /**
+   * Does the value `f` writes stand against every candidate end the withheld scope `ownerId` answers the end it is
+   * joined to with ({@link seedJoinedToUnread})? The candidates are the effective features of that scope that answer
+   * the joined end's name, its own or one it redefines (the pair an `order` scope inherits, the twins one owner holds,
+   * what a `redefinition` may land on); each must state no value of its own, or a `default`, which gives way to the
+   * value written with `=` (defaults (b): a default stands against no binding). A candidate written with `=`, defined
+   * by an asserted equation or holding content of its own decides the pair against `f`, and the seed stays unread. An
+   * end no candidate answers, on a scope this cannot enumerate, stays unread too: an enumeration is not evidence.
+   */
+  private joinedCandidateStands(f: ElementRecord, line: readonly ElementRecord[], ownerId: ElementId): boolean {
+    const { paired } = this.withheldJoins();
+    const ids = new Set(line.map((g) => g.id));
+    let asked = false;
+    for (const g of line) {
+      for (const other of paired.get(g.id) ?? []) {
+        if (ids.has(other)) continue;
+        asked = true;
+        // Per (scope, end, seed line): the candidates are the scope's, so the answer is only its own, and the one its
+        // binding carries the seed's value through is not another (`candidateStatesOther`).
+        const key = `${ownerId} ${other} ${[...ids].join(',')}`;
+        const hit = this.seedStands.get(key);
+        if (hit !== undefined) {
+          if (!hit) return false;
+          continue;
+        }
+        const end = this.model.get(other);
+        const stands = end !== undefined && this.candidateStands(ownerId, end, line);
+        this.seedStands.set(key, stands);
+        if (!stands) return false;
+      }
+    }
+    return asked;
+  }
+
+  /**
+   * Does every candidate the withheld scope `ownerId` answers the end `e`'s name with give way to a written value, or
+   * state none ({@link joinedCandidateStands})? `end` for a name no candidate bears.
+   */
+  private candidateStands(ownerId: ElementId, e: ElementRecord, line: readonly ElementRecord[] = []): boolean {
+    const names = new Set<string>();
+    const own = this.nameOf(e);
+    if (own !== undefined) names.add(own);
+    for (const n of this.aliasesOf(e)) names.add(n);
+    if (names.size === 0) return false;
+    let found = false;
+    for (const c of this.features(ownerId)) {
+      if (c.attrs.isLibrary === true) continue;
+      const cn = this.nameOf(c);
+      if (!(cn !== undefined && names.has(cn)) && !this.aliasesOf(c).some((n) => names.has(n))) continue;
+      found = true;
+      if (c.attrs.value !== undefined && c.attrs.value !== null) {
+        if (c.attrs.defaultValue !== true) return false;
+        // A `default` that gives way to an assertion, or to a binding other than this pair's, states a value that is
+        // not `f`'s; one that gives way to `f`, or to none, gives way to the value written with `=` (defaults (b)).
+        if (this.defaultGivesWayElsewhere(c, line)) return false;
+        continue;
+      }
+      // No value of its own: one that reaches it by a channel the written value does not show still decides the pair
+      // against `f`, and the seed stays unread ({@link candidateStatesOther}).
+      if (this.candidateStatesOther(ownerId, c, line)) return false;
+    }
+    return found;
+  }
+
+  /**
+   * Does a value other than the one `f` writes reach the candidate end `c` by a channel its own `attrs.value` does not
+   * show ({@link candidateStands})?
+   *
+   * - An asserted equation defines it: its own owner's over its name, one of a feature it redefines, or the withheld
+   *   scope's. `part def P2 { assert constraint { a == 7.0 } }` beside `bind u.a = k` states two values for `u.a`, and
+   *   the check read u.a at 7 while the SMT engine read inconsistent axioms (a contradiction read as a decision).
+   * - A binding of the user's joins it to an end that states a value — with `=`, or one an asserted equation defines,
+   *   or one another binding gives (`bind a = m` with `m = 7.0` beside `bind u.a = k`).
+   * - Its `default` gives way to an asserted equation, or to a binding other than the one this pair is read through; a
+   *   `default` that gives way to `f`, or to none, gives way there as {@link candidateStands} reads it.
+   */
+  private candidateStatesOther(ownerId: ElementId, c: ElementRecord, line: readonly ElementRecord[]): boolean {
+    if (this.assertedNameOf(c)) return true;
+    for (const g of [c, ...redefinedClosure(this.model, c)]) {
+      const name = effectiveNameOf(this.model, g);
+      if (name !== undefined && definingEquationsFor(this.model, ownerId, name).length > 0) return true;
+    }
+    if (this.defaultGivesWayElsewhere(c, line)) return true;
+    const valued = this.boundValued();
+    for (const b of bindingEnds(this.model).connectors) {
+      const ends = [...(b.source ?? []), ...(b.target ?? [])];
+      if (!ends.includes(c.id)) continue;
+      // The binding this pair is read through gives it `f`'s value, not another.
+      if (ends.some((e) => e !== c.id && line.some((g) => g.id === e))) continue;
+      if (ends.some((e) => e !== c.id && valued.has(e))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Does the `default` on `c` give way to an asserted equation, or to a binding that is not the one this pair is read
+   * through ({@link candidateStands})? A `default` no assertion or binding takes, or one this pair's binding takes,
+   * gives way to the value written with `=`.
+   */
+  private defaultGivesWayElsewhere(c: ElementRecord, line: readonly ElementRecord[]): boolean {
+    const to = defaultGivesWayTo(this.model, c);
+    if (to === undefined) return false;
+    if (to.to !== 'binding') return true;
+    const at = to.bindingId !== undefined ? this.model.get(to.bindingId) : undefined;
+    return at === undefined || !this.joinsLine(at, line);
+  }
+
+  /** Does one of the binding connector `b`'s ends lie on `line` — the features a seed writes to ({@link candidateStatesOther})? */
+  private joinsLine(b: ElementRecord, line: readonly ElementRecord[]): boolean {
+    const ids = new Set(line.map((g) => g.id));
+    return [...(b.source ?? []), ...(b.target ?? [])].some((e) => ids.has(e));
+  }
+
+  /** Does an asserted equation define the feature `c` or one it redefines, over its own owner's name ({@link candidateStatesOther})? */
+  private assertedNameOf(c: ElementRecord): boolean {
+    for (const g of [c, ...redefinedClosure(this.model, c)]) {
+      const name = effectiveNameOf(this.model, g);
+      if (name === undefined || g.ownerId == null) continue;
+      if (definingEquationsFor(this.model, g.ownerId, name).length > 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The features a binding of the user's gives a value ({@link candidateStatesOther}): each end that writes one with
+   * `=`, or one an asserted equation defines, and each end a binding joins to one of those, through however many
+   * bindings. Built once per revision.
+   */
+  private boundValued(): ReadonlySet<ElementId> {
+    if (this.valuedEnds !== undefined) return this.valuedEnds;
+    const { connectors } = bindingEnds(this.model);
+    const valued = new Set<ElementId>();
+    for (const b of connectors) {
+      for (const id of [...(b.source ?? []), ...(b.target ?? [])]) {
+        const f = this.model.get(id);
+        if (f === undefined) continue;
+        if (f.attrs.isLibrary === true) continue;
+        if ([f, ...redefinedClosure(this.model, f)].some((g) => g.attrs.isLibrary !== true && g.attrs.value !== undefined && g.attrs.value !== null && g.attrs.defaultValue !== true)) {
+          valued.add(id);
+        } else if (this.assertedNameOf(f)) {
+          valued.add(id);
+        }
+      }
+    }
+    for (let grew = valued.size > 0; grew; ) {
+      grew = false;
+      for (const b of connectors) {
+        const ends = [...(b.source ?? []), ...(b.target ?? [])];
+        if (!ends.some((e) => valued.has(e))) continue;
+        for (const e of ends) {
+          if (valued.has(e) || this.model.get(e) === undefined) continue;
+          valued.add(e);
+          grew = true;
+        }
+      }
+    }
+    this.valuedEnds = valued;
+    return valued;
   }
 
   /** Is `name`, read in `contextId`, a feature's own value left unread by {@link seedJoinedToUnread} (and not a name below the scope)? */
@@ -7837,9 +8021,74 @@ export function contradictedDefinitions(model: Model): ContradictedDefinitions {
   return fresh;
 }
 
-/** {@link contradictedDefinitions}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. */
-function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions {
-  const empty: ContradictedDefinitions = { rev: model.rev, sets: [], bySource: new Map() };
+/**
+ * One asserted equation a name read in an element may get its value from, with the element around the equation whose
+ * names its defining side reads are read in (`at`), the name it defines there, and the feature that name denotes
+ * there ({@link ExactReadings.gather}).
+ */
+type Gathered = { eq: DefiningEquation; named: ElementRecord; at: ElementId; name: string; readAs: ElementRecord };
+
+/**
+ * An exact reading of a defining side, or why there is none: `free`, it gives no value — it reads a name with none
+ * that nothing gives one, or one whose every definition reads back a feature in flight (the one it defines among
+ * them), which every evaluator passes over, or one nested past the depth every evaluator refuses a derivation at;
+ * `opaque`, it may give one this tool does not read exactly — a name bound, read around the element, defined where
+ * it is not read, or past the work this reading is allowed. A name with a value written reads that value; one
+ * without reads what its asserted equations give where it is read, when every one that may give it one is among them
+ * and those that give one agree.
+ */
+type Exact = { k: Constant } | { bool: boolean } | 'free' | 'opaque';
+
+/** A defining side read as an exact value, a truth value, or not read exactly ({@link ExactReadings.sideOf}). */
+type ExactSide = { kind: 'constant'; k: Constant } | { kind: 'bool'; value: boolean } | { kind: 'other'; why: 'names' | 'form' };
+
+/** No feature is in flight: the flight set a member's own value is read with ({@link ExactReadings.exactMember}). */
+const NO_FLIGHT: ReadonlySet<ElementId> = new Set();
+
+/**
+ * The exact reading of a defining side, one per revision, shared by every reader that needs one (HD1): each owner
+ * of an asserted equation with its equations by the name each defines, the features each equation may define, and
+ * the walk over a defining side that {@link contradictedDefinitions} reads its sets' sides with — so
+ * {@link agreedValued} reads a name-reading side by the same rules, never a tolerance and never binary64.
+ */
+interface ExactReadings {
+  /** The asserted equations the index holds. */
+  readonly count: number;
+  /** Each owner of an asserted equation, with its equations by the name each defines ({@link equationsByName}). */
+  readonly byOwner: ReadonlyMap<ElementId, Map<string, DefiningEquation[]>>;
+  /** Each equation whose name its owner does not answer under an element around it that declares it, by that name. */
+  readonly lexical: ReadonlyMap<ElementId, Map<string, Array<{ eq: DefiningEquation; named: ElementRecord }>>>;
+  /** The feature `name` denotes read in `at`, or `undefined`. */
+  named(at: ElementId, name: string): ElementRecord | undefined;
+  /** The asserted equations that define `path` read in `x`, each with the element its names are read in. */
+  gather(x: ElementRecord, path: string, feature: ElementRecord): Gathered[];
+  /** The features one feature stands for: itself and every feature it overrides. */
+  slotOf(f: ElementRecord): ReadonlySet<ElementId>;
+  /** Every asserted equation that may define `g` (or a feature it overrides). */
+  definersOf(g: ElementRecord): ReadonlySet<ElementId>;
+  sameExact(a: Exact, b: Exact): boolean;
+  /** `eq`'s defining side read at `at`, with `flight` the features in flight: the side, or `undefined` where it is free. */
+  sideOf(eq: DefiningEquation, at: ElementId, flight: ReadonlySet<ElementId>): ExactSide | undefined;
+  /** The side `node` (`literals` beside it) read at `at`, with `flight` the features in flight. */
+  exactSide(node: ExprNode, literals: MarkerDimensions, at: ElementId, flight: ReadonlySet<ElementId>): Exact;
+  /** The value the member `n` read at `at` states of ITSELF — a binding it is joined to is no reason not to read it. */
+  exactMember(at: ElementId, n: string): Exact;
+}
+
+/** {@link ExactReadings} by model revision. */
+const EXACT_READINGS = new WeakMap<Model, { rev: number; readings: ExactReadings }>();
+
+/** {@link ExactReadings} for `model`, worked out once per revision and shared. */
+function exactReadings(model: Model): ExactReadings {
+  const hit = EXACT_READINGS.get(model);
+  if (hit && hit.rev === model.rev) return hit.readings;
+  const readings = buildExactReadings(model);
+  EXACT_READINGS.set(model, { rev: model.rev, readings });
+  return readings;
+}
+
+/** {@link exactReadings}, worked out. */
+function buildExactReadings(model: Model): ExactReadings {
   // Each owner of an asserted equation, with its equations by the name each defines: the index every evaluator
   // reads (`equationsByName`), so a name whose feature writes a `default` is none of them.
   const byOwner = new Map<ElementId, Map<string, DefiningEquation[]>>();
@@ -7850,7 +8099,6 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     byOwner.set(c.ownerId, index);
     for (const list of index.values()) count += list.length;
   }
-  if (count < 2) return empty;
   const namedMemo = new Map<string, ElementRecord | undefined>();
   const named = (at: ElementId, name: string): ElementRecord | undefined => {
     const key = `${at} ${name}`;
@@ -7863,31 +8111,51 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     if (!hit) generalMemo.set(id, (hit = generalizationsOf(model, id)));
     return hit;
   };
-  // Each equation whose name its owner does not answer but an element around it declares, under that element by
-  // the name as it reads there, with the feature it names: as KerML resolves it, unless an import or an alias
-  // answers it first.
   const lexical = new Map<ElementId, Map<string, Array<{ eq: DefiningEquation; named: ElementRecord }>>>();
-  for (const [ownerId, index] of byOwner) {
-    for (const [name, list] of index) {
-      if (named(ownerId, name)) continue;
-      const head = name.split('.')[0]!;
-      const seen = new Set<ElementId>([ownerId]);
-      for (let id = model.get(ownerId)?.ownerId ?? null; id != null && !seen.has(id); id = model.get(id)?.ownerId ?? null) {
-        seen.add(id);
-        if (model.get(id)?.attrs.isLibrary === true) break;
-        const declared = named(id, head);
-        if (!declared) continue;
-        const f = named(id, name);
-        const resolved = resolveFullName(model, head, ownerId);
-        if (f && (!resolved || resolved.id === declared.id)) {
-          const into = lexical.get(id) ?? new Map<string, Array<{ eq: DefiningEquation; named: ElementRecord }>>();
-          lexical.set(id, into);
-          into.set(name, [...(into.get(name) ?? []), ...list.map((eq) => ({ eq, named: f }))]);
+  // Every asserted equation by each feature it may define (the one its name names where it is written, and every
+  // one that feature overrides): what may give a name read beside it a value.
+  const definers = new Map<ElementId, Set<ElementId>>();
+  const defines = (f: ElementRecord, c: ElementRecord): void => {
+    for (const id of slotOf(f)) definers.set(id, (definers.get(id) ?? new Set<ElementId>()).add(c.id));
+  };
+  // The lexical half and the features each equation may define, built on the first ask: a reader that only counts
+  // the equations, or reads written constants, pays for neither.
+  let prepared = false;
+  const prepare = (): void => {
+    if (prepared) return;
+    prepared = true;
+    // Each equation whose name its owner does not answer but an element around it declares, under that element by
+    // the name as it reads there, with the feature it names: as KerML resolves it, unless an import or an alias
+    // answers it first.
+    for (const [ownerId, index] of byOwner) {
+      for (const [name, list] of index) {
+        if (named(ownerId, name)) continue;
+        const head = name.split('.')[0]!;
+        const seen = new Set<ElementId>([ownerId]);
+        for (let id = model.get(ownerId)?.ownerId ?? null; id != null && !seen.has(id); id = model.get(id)?.ownerId ?? null) {
+          seen.add(id);
+          if (model.get(id)?.attrs.isLibrary === true) break;
+          const declared = named(id, head);
+          if (!declared) continue;
+          const f = named(id, name);
+          const resolved = resolveFullName(model, head, ownerId);
+          if (f && (!resolved || resolved.id === declared.id)) {
+            const into = lexical.get(id) ?? new Map<string, Array<{ eq: DefiningEquation; named: ElementRecord }>>();
+            lexical.set(id, into);
+            into.set(name, [...(into.get(name) ?? []), ...list.map((eq) => ({ eq, named: f }))]);
+          }
+          break;
         }
-        break;
       }
     }
-  }
+    for (const [ownerId, index] of byOwner) {
+      for (const [name, list] of index) {
+        const f = named(ownerId, name);
+        if (f) for (const eq of list) defines(f, eq.constraint);
+      }
+    }
+    for (const into of lexical.values()) for (const list of into.values()) for (const l of list) defines(l.named, l.eq.constraint);
+  };
   const statesValue = (f: ElementRecord): boolean => statesOwnValue(model, f);
   const slots = new Map<ElementId, ReadonlySet<ElementId>>();
   const slotOf = (f: ElementRecord): ReadonlySet<ElementId> => {
@@ -7895,26 +8163,9 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     if (!hit) slots.set(f.id, (hit = new Set([f.id, ...overriddenBy(model, f).map((g) => g.id)])));
     return hit;
   };
-  // A feature declared anew without `:>>` (G8C: {@link hiddenByName}) masks what it hides by name only, which KerML does
-  // not allow: a set that pairs a general's equation over the hidden feature with one over it is `hidden`.
-  const pairSlots = new Map<ElementId, ReadonlySet<ElementId>>();
-  const pairSlotOf = (f: ElementRecord): ReadonlySet<ElementId> => {
-    let hit = pairSlots.get(f.id);
-    if (!hit) {
-      const name = f.ownerId != null ? effectiveNameOf(model, f) : undefined;
-      const entry = name !== undefined ? hiddenByName(model, f.ownerId!).get(name) : undefined;
-      const hidden = new Set(entry?.own === f.id ? entry.hidden : []);
-      pairSlots.set(f.id, (hit = hidden.size === 0 ? slotOf(f) : new Set([...slotOf(f)].filter((id) => !hidden.has(id)))));
-    }
-    return hit;
-  };
   const sameSlot = (f: ElementRecord, g: ElementRecord): boolean => {
     const mine = slotOf(f);
     return [...slotOf(g)].some((id) => mine.has(id));
-  };
-  const samePair = (f: ElementRecord, g: ElementRecord): boolean => {
-    const mine = pairSlotOf(f);
-    return [...pairSlotOf(g)].some((id) => mine.has(id));
   };
   /**
    * The features `path` denotes read in `u`, a segment at a time (`undefined` where one resolves to nothing), and
@@ -7955,8 +8206,8 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
    * element nested in one of them whose name resolves to the feature there, read where it is written. Each must
    * name `feature`, or a feature that shares with it one they override ({@link overriddenBy}).
    */
-  type Gathered = { eq: DefiningEquation; named: ElementRecord; at: ElementId; name: string; readAs: ElementRecord };
   const gather = (x: ElementRecord, path: string, feature: ElementRecord): Gathered[] => {
+    prepare();
     const out: Gathered[] = [];
     const push = (eq: DefiningEquation, f: ElementRecord | undefined, at: ElementId, name: string): void => {
       if (out.some((c) => sameEquation(c.eq, eq))) return;
@@ -7988,25 +8239,144 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     }
     return out;
   };
-  // Every asserted equation by each feature it may define (the one its name names where it is written, and every
-  // one that feature overrides): what may give a name read beside it a value.
-  const definers = new Map<ElementId, Set<ElementId>>();
-  const defines = (f: ElementRecord, c: ElementRecord): void => {
-    for (const id of slotOf(f)) definers.set(id, (definers.get(id) ?? new Set<ElementId>()).add(c.id));
-  };
-  for (const [ownerId, index] of byOwner) {
-    for (const [name, list] of index) {
-      const f = named(ownerId, name);
-      if (f) for (const eq of list) defines(f, eq.constraint);
-    }
-  }
-  for (const into of lexical.values()) for (const list of into.values()) for (const l of list) defines(l.named, l.eq.constraint);
   const definersOf = (g: ElementRecord): ReadonlySet<ElementId> => {
+    prepare();
     const out = new Set<ElementId>();
     for (const id of slotOf(g)) for (const c of definers.get(id) ?? []) out.add(c);
     return out;
   };
   const bound = (g: ElementRecord): boolean => [g, ...redefinedClosure(model, g)].some((h) => joinedTo(model, h.id).size > 1);
+  // The work one read may spend: reset at its top, so whose read ran before never changes the answer.
+  let budget = 0;
+  const sameExact = (a: Exact, b: Exact): boolean =>
+    typeof a === 'object' && typeof b === 'object'
+      ? 'k' in a && 'k' in b
+        ? compareConstants(a.k, b.k) === 'same'
+        : 'bool' in a && 'bool' in b && a.bool === b.bool
+      : false;
+  const exactAt = (at: ElementId, n: string, flight: ReadonlySet<ElementId>, skipBound: boolean, depth: number, valueAt?: ElementId): Exact => {
+    // Past the depth every evaluator refuses a derivation at, a side gives no value on any surface.
+    if (depth > MAX_DERIVATION_DEPTH) return 'free';
+    if (--budget < 0) return 'opaque';
+    const g = named(at, n);
+    if (!g) return 'opaque';
+    if (flight.has(g.id)) return 'free';
+    if (!skipBound && bound(g)) return 'opaque';
+    const inner = new Set(flight);
+    for (const id of slotOf(g)) inner.add(id);
+    if (statesValue(g)) {
+      const v = statedValueOf(model, g);
+      if (typeof v === 'boolean') return { bool: v };
+      if (typeof v === 'number') {
+        const k = constantOf(g);
+        return k ? { k } : 'opaque';
+      }
+      if (typeof v !== 'string' || isQuoted(v.trim()) || g.ownerId == null) return 'opaque';
+      const body = parseRelationBody(v.trim());
+      if (!body || (body.hadUnit && !body.resolved)) return 'opaque';
+      // A name read beside a value WRITTEN in a general is read where the value is read: q2's `:>> K = 25.0`
+      // makes Q's written `L = 2.0 * K` q2's 50, and that is the value the member states there (HD1).
+      return exactSideInner(body.node, body.literals, valueAt ?? g.ownerId, inner, depth + 1);
+    }
+    const sides = gather(model.get(at)!, n, g);
+    const considered = new Set(sides.map((s) => s.eq.constraint.id));
+    if ([...definersOf(g)].some((id) => !considered.has(id))) return 'opaque';
+    let out: Exact = 'free';
+    for (const s of sides) {
+      const r = exactSideInner(s.eq.definition, s.eq.literals, s.at, inner, depth + 1);
+      if (r === 'free') continue;
+      if (r === 'opaque') return 'opaque';
+      if (out === 'free') out = r;
+      else if (!sameExact(out, r)) return 'opaque';
+    }
+    return out;
+  };
+  /** Does `n`, read in `at`, name a feature with no value, no binding, and no asserted equation that defines it? */
+  const plainlyFree = (at: ElementId, n: string): boolean => {
+    const g = named(at, n);
+    return g !== undefined && !statesValue(g) && !bound(g) && definersOf(g).size === 0;
+  };
+  const exactSideInner = (node: ExprNode, literals: MarkerDimensions, at: ElementId, flight: ReadonlySet<ElementId>, depth: number): Exact => {
+    const names = [...new Set(refsIn(node, literals))];
+    if (names.length === 0) {
+      const k = exactConstant(node, literals);
+      return k ? { k } : node.kind === 'bool' ? { bool: node.value } : 'opaque';
+    }
+    // A name nothing gives a value first: such a side gives none, whatever its other names give.
+    if (names.some((n) => plainlyFree(at, n))) return 'free';
+    const read = names.map((n) => [n, exactAt(at, n, flight, false, depth)] as const);
+    if (read.some(([, r]) => r === 'free')) return 'free';
+    if (read.some(([, r]) => r === 'opaque')) return 'opaque';
+    if (node.kind === 'ref' && read.length === 1) return read[0]![1];
+    const env = new Map<string, Constant>();
+    for (const [n, r] of read) {
+      if (typeof r !== 'object' || !('k' in r)) return 'opaque';
+      env.set(n, r.k);
+    }
+    const k = exactConstant(node, literals, env);
+    return k ? { k } : 'opaque';
+  };
+  /** {@link ExactReadings.exactSide}, with the work budget reset: every read starts with the same allowance. */
+  const exactSide = (node: ExprNode, literals: MarkerDimensions, at: ElementId, flight: ReadonlySet<ElementId>): Exact => {
+    budget = 4096;
+    return exactSideInner(node, literals, at, flight, 0);
+  };
+  /** {@link ExactReadings.exactMember}: a member's own stated value, which a binding it is joined to does not change. */
+  const exactMember = (at: ElementId, n: string): Exact => {
+    budget = 4096;
+    return exactAt(at, n, NO_FLIGHT, true, 0, at);
+  };
+  /** {@link ExactReadings.sideOf}. */
+  const sideOf = (eq: DefiningEquation, at: ElementId, flight: ReadonlySet<ElementId>): ExactSide | undefined => {
+    const r = exactSide(eq.definition, eq.literals, at, flight);
+    if (r === 'free') return undefined;
+    if (r === 'opaque') return { kind: 'other', why: refsIn(eq.definition, eq.literals).length > 0 ? 'names' : 'form' };
+    return 'k' in r ? { kind: 'constant', k: r.k } : { kind: 'bool', value: r.bool };
+  };
+  return {
+    count,
+    byOwner,
+    get lexical() {
+      prepare();
+      return lexical;
+    },
+    named,
+    gather,
+    slotOf,
+    definersOf,
+    sameExact,
+    sideOf,
+    exactSide,
+    exactMember,
+  };
+}
+
+/** {@link contradictedDefinitions}, worked out — uncontained, and reached only through {@link instanceIndexSeam}. */
+function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions {
+  const empty: ContradictedDefinitions = { rev: model.rev, sets: [], bySource: new Map() };
+  // The exact reading every reader shares (HD1): two asserted equations are what may give one name two values, and
+  // the walk below reads each side where it is read.
+  const exact = exactReadings(model);
+  if (exact.count < 2) return empty;
+  const { byOwner, lexical, named, gather, slotOf, sideOf } = exact;
+  const statesValue = (f: ElementRecord): boolean => statesOwnValue(model, f);
+  // A feature declared anew without `:>>` (G8C: {@link hiddenByName}) masks what it hides by name only, which KerML does
+  // not allow: a set that pairs a general's equation over the hidden feature with one over it is `hidden`.
+  const pairSlots = new Map<ElementId, ReadonlySet<ElementId>>();
+  const pairSlotOf = (f: ElementRecord): ReadonlySet<ElementId> => {
+    let hit = pairSlots.get(f.id);
+    if (!hit) {
+      const name = f.ownerId != null ? effectiveNameOf(model, f) : undefined;
+      const entry = name !== undefined ? hiddenByName(model, f.ownerId!).get(name) : undefined;
+      const hidden = new Set(entry?.own === f.id ? entry.hidden : []);
+      pairSlots.set(f.id, (hit = hidden.size === 0 ? slotOf(f) : new Set([...slotOf(f)].filter((id) => !hidden.has(id)))));
+    }
+    return hit;
+  };
+  const samePair = (f: ElementRecord, g: ElementRecord): boolean => {
+    const mine = pairSlotOf(f);
+    return [...pairSlotOf(g)].some((id) => mine.has(id));
+  };
   // The user's bindings by the element each holds in, with its ends as that element spells them: `bind L = K` in P
   // says L and K are one value in every P, so the equations of either define both.
   const joins = new Map<ElementId, Array<{ left: string; right: string; text: string }>>();
@@ -8054,99 +8424,14 @@ function contradictedDefinitionsUncached(model: Model): ContradictedDefinitions 
     }
     return out;
   };
-  /**
-   * An exact reading of a defining side, or why there is none: `free`, it gives no value — it reads a name with
-   * none that nothing gives one, or one whose every definition reads back a feature in flight (the one it defines
-   * among them), which every evaluator passes over, or one nested past the depth every evaluator refuses a
-   * derivation at; `opaque`, it may give one this tool does not read exactly — a name bound, read around the
-   * element, defined where it is not read, or past the work this reading is allowed. A name with a value written
-   * reads that value; one without reads what its asserted equations give where it is read, when every one that
-   * may give it one is among them and those that give one agree.
-   */
-  type Exact = { k: Constant } | { bool: boolean } | 'free' | 'opaque';
-  let budget = 0;
-  const sameExact = (a: Exact, b: Exact): boolean =>
-    typeof a === 'object' && typeof b === 'object'
-      ? 'k' in a && 'k' in b
-        ? compareConstants(a.k, b.k) === 'same'
-        : 'bool' in a && 'bool' in b && a.bool === b.bool
-      : false;
-  const exactName = (at: ElementId, n: string, flight: ReadonlySet<ElementId>, depth: number): Exact => {
-    // Past the depth every evaluator refuses a derivation at, a side gives no value on any surface.
-    if (depth > MAX_DERIVATION_DEPTH) return 'free';
-    if (--budget < 0) return 'opaque';
-    const g = named(at, n);
-    if (!g) return 'opaque';
-    if (flight.has(g.id)) return 'free';
-    if (bound(g)) return 'opaque';
-    const inner = new Set(flight);
-    for (const id of slotOf(g)) inner.add(id);
-    if (statesValue(g)) {
-      const v = statedValueOf(model, g);
-      if (typeof v === 'boolean') return { bool: v };
-      if (typeof v === 'number') {
-        const k = constantOf(g);
-        return k ? { k } : 'opaque';
-      }
-      if (typeof v !== 'string' || isQuoted(v.trim()) || g.ownerId == null) return 'opaque';
-      const body = parseRelationBody(v.trim());
-      if (!body || (body.hadUnit && !body.resolved)) return 'opaque';
-      return exactSide(body.node, body.literals, g.ownerId, inner, depth + 1);
-    }
-    const sides = gather(model.get(at)!, n, g);
-    const considered = new Set(sides.map((s) => s.eq.constraint.id));
-    if ([...definersOf(g)].some((id) => !considered.has(id))) return 'opaque';
-    let out: Exact = 'free';
-    for (const s of sides) {
-      const r = exactSide(s.eq.definition, s.eq.literals, s.at, inner, depth + 1);
-      if (r === 'free') continue;
-      if (r === 'opaque') return 'opaque';
-      if (out === 'free') out = r;
-      else if (!sameExact(out, r)) return 'opaque';
-    }
-    return out;
-  };
-  /** Does `n`, read in `at`, name a feature with no value, no binding, and no asserted equation that defines it? */
-  const plainlyFree = (at: ElementId, n: string): boolean => {
-    const g = named(at, n);
-    return g !== undefined && !statesValue(g) && !bound(g) && definersOf(g).size === 0;
-  };
-  const exactSide = (node: ExprNode, literals: MarkerDimensions, at: ElementId, flight: ReadonlySet<ElementId>, depth: number): Exact => {
-    const names = [...new Set(refsIn(node, literals))];
-    if (names.length === 0) {
-      const k = exactConstant(node, literals);
-      return k ? { k } : node.kind === 'bool' ? { bool: node.value } : 'opaque';
-    }
-    // A name nothing gives a value first: such a side gives none, whatever its other names give.
-    if (names.some((n) => plainlyFree(at, n))) return 'free';
-    const read = names.map((n) => [n, exactName(at, n, flight, depth)] as const);
-    if (read.some(([, r]) => r === 'free')) return 'free';
-    if (read.some(([, r]) => r === 'opaque')) return 'opaque';
-    if (node.kind === 'ref' && read.length === 1) return read[0]![1];
-    const env = new Map<string, Constant>();
-    for (const [n, r] of read) {
-      if (typeof r !== 'object' || !('k' in r)) return 'opaque';
-      env.set(n, r.k);
-    }
-    const k = exactConstant(node, literals, env);
-    return k ? { k } : 'opaque';
-  };
-  type Side = { kind: 'constant'; k: Constant } | { kind: 'bool'; value: boolean } | { kind: 'other'; why: 'names' | 'form' };
-  const sideOf = (eq: DefiningEquation, at: ElementId, flight: ReadonlySet<ElementId>): Side | undefined => {
-    budget = 4096;
-    const r = exactSide(eq.definition, eq.literals, at, flight, 0);
-    if (r === 'free') return undefined;
-    if (r === 'opaque') return { kind: 'other', why: refsIn(eq.definition, eq.literals).length > 0 ? 'names' : 'form' };
-    return 'k' in r ? { kind: 'constant', k: r.k } : { kind: 'bool', value: r.bool };
-  };
   /** A side that is a number with no unit and reads no name (`50.0`, `25.0 * 2.0`): read in the feature's kind. */
-  const bare = (x: { eq: DefiningEquation; side: Side }): Constant | undefined =>
+  const bare = (x: { eq: DefiningEquation; side: ExactSide }): Constant | undefined =>
     x.side.kind === 'constant' && x.side.k.dimension === undefined && refsIn(x.eq.definition, x.eq.literals).length === 0
       ? x.side.k
       : undefined;
   const compare = (
-    a: { eq: DefiningEquation; side: Side },
-    b: { eq: DefiningEquation; side: Side },
+    a: { eq: DefiningEquation; side: ExactSide },
+    b: { eq: DefiningEquation; side: ExactSide },
     kind: Dimension | undefined,
   ): { v: WrittenComparison; why?: ContradictedDefinition['why'] } => {
     if (a.side.kind === 'constant' && b.side.kind === 'constant') {
@@ -10027,10 +10312,12 @@ export function writesStandingDefault(model: Model, f: ElementRecord): boolean {
  * 0.0`, `x <= 10.0`) on a unitless Real constrains the symbol and fixes no
  * value, unless a pair of bounds on the binding's features meets (`L >= 5.0`
  * with `L <= 5.0` fixes it as `L == 5.0` does) or cannot be compared (a unit,
- * an integer sort), or meets through a derived value (`s = load * 2.0`): the
- * worklist refuses a meeting pair and an incomparable component in words of
- * their own (`refuseMeetingBounds` of ./obligations); a bound the gate cannot
- * read (a unit, an integer sort, a conjunction) is refused in the generic one.
+ * an integer sort): the worklist refuses a meeting pair and an incomparable
+ * component in words of their own (`refuseMeetingBounds` of ./obligations). A
+ * pair that meets through a derived value (`s = load * 2.0`) is carried
+ * instead, and the encoder reads the derived relation (a5 HD2, GWD/GWE). A
+ * bound the gate cannot read (a unit, an integer sort, a conjunction) is
+ * refused in the generic one.
  */
 export function givenWayUnvalued(model: Model, contextId: ElementId, name: string): string | undefined {
   if (!hasUserBindings(model)) return undefined;
@@ -13272,9 +13559,9 @@ function boundSourceOf(model: Model, symbol: string): BoundSource | undefined {
   });
   if (cls.valued.length > 1) {
     // Valued members that state one and the same value, exactly (X6's W `M = 3.0` beside Q's asserted `L ==
-    // 3.0`), are the one value: it is read from the first, as from a lone valued member. Any member whose value
-    // is no exact constant leaves them two ({@link agreedValued}).
-    const agreed = agreedValued(model, best.root, cls.valued);
+    // 3.0`, or `L == K * 2.0` where the reader gives it 3.0 too, HD1), are the one value: it is read from the first,
+    // as from a lone valued member. Any member whose value is no exact constant leaves them two ({@link agreedValued}).
+    const agreed = agreedValued(model, best.root, best.component, cls.valued);
     if (agreed === undefined) {
       return { abstain: 'two-values', sentence: abstentionSentence(model, symbol, best.root, best.component, 'two-values') };
     }
@@ -13367,25 +13654,49 @@ export function unfixedDefaultsDifferAt(model: Model, contextId: ElementId, name
  * The path among `valued` (the valued members of a binding component read in `root`, {@link classified}) to read
  * their one value from, or `undefined` where they do not state exactly one: a member is a value written with `=`
  * (or a `default` that stands) or an asserted equation of its owner, of a feature it redefines or of the
- * context, and each is an exact constant ({@link constantOf}, {@link exactConstant}); the constants must all be
- * the same, unit and dimension included ({@link compareConstants}). A package's head (`#…`), an equation that
- * reads a name, an assertion that is no equation, or one equation the others disagree with is no agreement.
- * The first member written with `=` is the source, else the first.
+ * context, and each is an exact constant ({@link constantOf}, {@link exactConstant}) — or, where the side reads a
+ * NAME (`L == K * 2.0`), the value the shared exact reader gives it where it is read
+ * ({@link ExactReadings.exactMember}, HD1); the constants must all be the same, unit and dimension included
+ * ({@link compareConstants}). A package's head's member (`#…`) states its own value, the definition's feature's
+ * ({@link ExactReadings.exactMember}); an assertion that is no equation, or one equation the others disagree
+ * with, is no agreement. The first member written with `=` is the source, else the first.
  */
-function agreedValued(model: Model, root: ElementId, valued: readonly string[]): string | undefined {
+function agreedValued(model: Model, root: ElementId, component: string, valued: readonly string[]): string | undefined {
   const rootEl = model.get(root);
   const reading = bindingEnds(model).readings.get(root);
   if (!rootEl || !reading) return undefined;
   const definitions = sharedDefinitions(model);
   const constants: Array<{ path: string; c: Constant; written: boolean }> = [];
+  // The one exact side reader (HD1), built on the first side that needs it: a component of constants is read without
+  // building its index. It reads a name-reading side by the rules contradictedDefinitions reads its sets by — exact
+  // Rationals in SI, `undefined` where the side is not read exactly (never a tolerance, never binary64).
+  let exact: ExactReadings | undefined;
+  const exactValue = (at: ElementId, n: string): Constant | undefined => {
+    const x = (exact ??= exactReadings(model)).exactMember(at, n);
+    return typeof x === 'object' && 'k' in x ? x.k : undefined;
+  };
   for (const path of valued) {
-    if (path.startsWith('#')) return undefined;
+    if (path.startsWith('#')) {
+      // A package head's member (`bind P::load = M`): the `#id` slot names the definition's feature, whose own
+      // stated value is what the component carries there (HD1). UNREACHABLE, and it fails closed: no measured
+      // shape reaches this branch — a `#`-spelled end and a DefinitionHead are mutually exclusive, and the head
+      // row this step closes is read by statedAgainstBoundIn's instance-path fallback, not here — so it returns
+      // `undefined` exactly as the base `#` bail did. It is kept only for THE CHANGE item 3, should a reachable
+      // shape ever put a `#` member in a valued component.
+      const head = (bindingEnds(model).heads.get(root) ?? []).find((h) => h.component === component && `#${h.feature}` === path);
+      const feature = head ? model.get(head.feature) : undefined;
+      const name = feature ? definitions.nameOf(feature) : undefined;
+      const c = name !== undefined && feature?.ownerId != null ? exactValue(feature.ownerId, name) : undefined;
+      if (!c) return undefined;
+      constants.push({ path, c, written: valueSourceOf(model, feature!) !== undefined });
+      continue;
+    }
     const r = reading.get(path);
     const g = r ? model.get(r.feature) : undefined;
     if (!g) return undefined;
     const written = valueSourceOf(model, g);
     if (written) {
-      const c = constantOf(written);
+      const c = constantOf(written) ?? exactValue(root, path);
       if (!c) return undefined;
       constants.push({ path, c, written: true });
       continue;
@@ -13408,11 +13719,15 @@ function agreedValued(model: Model, root: ElementId, valued: readonly string[]):
     }
     const equations = sites.flatMap(([site, n]) => definitions.of(site, n));
     if (equations.length === 0 || !assertDefinesEnd(model, g, rootEl, path)) return undefined;
-    for (const eq of equations) {
-      const c = exactConstant(eq.definition, eq.literals);
-      if (!c) return undefined;
-      constants.push({ path, c, written: false });
+    const each = equations.map((eq) => exactConstant(eq.definition, eq.literals));
+    if (each.every((c) => c !== undefined)) {
+      for (const c of each) constants.push({ path, c: c!, written: false });
+      continue;
     }
+    // A side that reads a name (`L == K * 2.0`) is read exactly where it is read: one constant for the member.
+    const c = exactValue(root, path);
+    if (!c) return undefined;
+    constants.push({ path, c, written: false });
   }
   const first = constants[0];
   if (!first) return undefined;
@@ -13513,7 +13828,10 @@ export function statedAgainstBoundIn(model: Model, f: ElementRecord, inst: strin
     if (written === undefined || written === f || written.attrs.defaultValue === true) continue;
     let compared = compareWrittenValues(f, written);
     if (compared === 'undecided') {
-      const mine = ownPathOf(model, best.root, best.component, symbol);
+      // The member the symbol names, or — a package's binding on a definition's feature (`bind P::load = M`, HD1) —
+      // the path below the package that states this instance's value (`p2.load` for p2's `:>> load = 3.0`): the
+      // `#id` slot names a slot, not a readable path, and the pair reader reads both values where they are stated.
+      const mine = ownPathOf(model, best.root, best.component, symbol) ?? (best.head !== undefined ? instancePathBelow(model, f.id, best.root) : undefined);
       if (mine !== undefined && !path.startsWith('#')) compared = decide(boundPair(model, best.root, mine, path, symbol));
     }
     if (compared === 'differs') differs = true;
@@ -14447,7 +14765,7 @@ function fixerConstantOf(model: Model, f: NonNullable<DefinitionHead['fixers']>[
   if (!f.binding) return undefined;
   const cls = classified(model, f.binding.root, f.binding.component);
   if (cls.valued.length === 0) return undefined;
-  const agreed = agreedValued(model, f.binding.root, cls.valued);
+  const agreed = agreedValued(model, f.binding.root, f.binding.component, cls.valued);
   const r = agreed === undefined ? undefined : bindingEnds(model).readings.get(f.binding.root)?.get(agreed);
   const g = r ? model.get(r.feature) : undefined;
   const written = g ? valueSourceOf(model, g) : undefined;

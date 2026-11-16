@@ -1986,19 +1986,29 @@ describe('a bare bound over a default a binding makes give way', () => {
     }
   });
 
-  it('refuses bounds linked by a derived value, which meet through it, and still carries a lower bound alone', async () => {
+  // reads2 (14), a5 HD2: a component a derived row links (`s = load * 2.0`) is carried like any other — the encoder
+  // reads the derived relation, so a lower bound on one feature and an upper bound on another do not need refusing
+  // whole. Before the step the group holding both kinds of bare bound was refused under a sentence naming the meet.
+  it('carries bounds linked by a derived value, which meet through it, and still carries a lower bound alone', async () => {
     const derived = `part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; assert constraint hs { s <= 4.0 } }`;
-    const refused = await axioms(`package D { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`);
-    const inQ = Object.entries(refused).filter(([k]) => k === 'D::Q::ql');
-    expect(inQ.length).toBeGreaterThan(0);
-    for (const [, v] of inQ) expect(v).toEqual(['unread-definition']);
-    const rows = obligationsOf(await load(`package D2 { ${derived} ${Q('assert constraint ql { L >= 2.0 }')} }`)).filter(
-      (o) => o.source === 'assert' && o.encodable !== true && o.element.qualifiedName === 'D2::Q::ql',
-    );
-    expect(rows.map((o) => o.encodable !== true && o.encodable.detail).join()).toMatch(/its bounds meet through a derived value/);
+    const ql = 'assert constraint ql { L >= 2.0 }';
+    // No row is refused for meeting another through the derived value, and the linked bounds are carried the same,
+    // whichever member comes first in the file.
+    for (const [name, text] of [
+      ['D2', `package D2 { ${derived} ${Q(ql)} }`],
+      ['D3', `package D3 { ${Q(ql)} ${derived} }`],
+    ] as const) {
+      const rows = obligationsOf(await load(text)).filter(
+        (o) => o.source === 'assert' && o.encodable !== true && String(o.encodable.detail).includes('meet through a derived value'),
+      );
+      expect(rows, name).toEqual([]);
+      const carried = await axioms(text);
+      expect(carried[`${name}::Q::ql`]).toEqual([true]);
+      expect(carried[`${name}::P::hs in ${name}::Q::p`]).toEqual([true]);
+    }
     // A lower bound alone, beside the same derived row, meets nothing.
-    const lone = await axioms(`package D3 { part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; } ${Q('assert constraint ql { L >= 2.0 }')} }`);
-    expect(lone['D3::Q::ql']).toEqual([true]);
+    const lone = await axioms(`package D4 { part def P { attribute load : ScalarValues::Real default = 1.0; attribute s : ScalarValues::Real = load * 2.0; } ${Q(ql)} }`);
+    expect(lone['D4::Q::ql']).toEqual([true]);
   });
 
   it('refuses an equation and a sum, which are no bare bound', async () => {
