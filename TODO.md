@@ -688,6 +688,17 @@ true values. What follows is what that branch and the review of it left open; en
       the five readers give a valueless end bound to a valued feature that feature's value, with an
       oracle over order swaps, instances, default and = twins, and the #bind row gone. Probes:
       defaults2-pass-scratch/p2/h2f.sysml and p5/. [default-stands S1, G2, defaults2-pass]
+- [ ] **Noted 2026-11-16 (the right half of the deleted 'File a definition's context row under one
+      name' entry): the M-generator's RENAMED pairs (27) and the H3/H6/S3-spec cells live outside
+      this repo — when HD6/H3 re-pin the differential table, only the in-repo cells re-pin; the
+      out-of-repo pairs stay as recorded.**
+- [ ] **Split the reading key by the value a sibling binding carries (SIB2, noted 2026-11-16 by the
+      a5-heads2 HD4 branch review).** Sibling usages that read through one holder merge
+      value-insensitively: `in Q::p1` ?/?/?/X files, no `in Q::p2` row, each binding's own #bind
+      pair row still reporting its pair (not a regression: HEAD swallowed both relation rows in the
+      P-first order; the HD4 branch keeps p1's row and both #bind pairs). A later probe-first step:
+      each distinct sibling reading files its own row when its binding carries a different value.
+      Probes: a5-heads2-scratch SIB2/SIB2S, review-probes. [a5-heads2 HD4 review]
 - [ ] **Show `:=` (an initial value, not a binding) and the value's unit in `elements` and the grid;
       the workflow readers then read them (optional).** Sysprose now prints `:=` and the unit (the
       grid value cell is `[default] [:=] value [unit]`: `:= 4`, `default := 3`, `7 [kg]`; `elements
@@ -954,8 +965,12 @@ true values. What follows is what that branch and the review of it left open; en
       instance: 637; identity run byte-identical; no decided verdict changed except the quoted-name
       entry above). (1) Order: which of two contexts of one constraint abstains depends on source
       order (r16-subject-dflt: `requirement r : R { subject s = p }` beside `satisfy R by p`; both
-      are refuted by the model's meaning, each order decides one and abstains on the other); the
-      numeric `solveFeasible` of brief-targets-by-layer flips from decided feasible to undecided when
+      are refuted by the model's meaning, each order decides one and abstains on the other) — the
+      remaining piece, the per-instance satisfy read (the satisfy's row reads the satisfier's
+      instance as R's row reads its subject: the default twin decides R's row F/F/-/F and abstains
+      on the satisfy's row; the no-default twin files its contradiction + SMT X), YIELDS TO HD2
+      (ruled 2026-11-15; the two r16 corpus twins survive in
+      gate-tools/corpus/…-r16-subject-dflt.sysml and …-r16-subject.sysml); the numeric `solveFeasible` of brief-targets-by-layer flips from decided feasible to undecided when
       the members are reversed (propagation order; iteration counts move 2 to 3); the one code
       reported for a group with two causes (refinement-sibling-shortfall) follows source order; the
       per-instance rows are capped at the first 256 in source order. (2) Instance: since a5 PA2 a
@@ -1219,10 +1234,14 @@ true values. What follows is what that branch and the review of it left open; en
       and a package head (#), still read two-values (probes defaults-pass-scratch/m218b, m218). (b)
       A context row `P::c in W::q::p` reads unknown beside the satisfied instance row when load has
       no value, and the differential harness throws two check rows on it, so probes need a default
-      on load (defaults-pass-scratch/x6a.sysml, pre-existing). (c) Rows `P::c in W::q::p` are absent
-      when the definitions are written W, Q, P with a default on load
-      (defaults-pass-scratch/m218/G009-eqT.sysml; same on base, probably the existing 'File a
-      definition's context row under one name' entry). (d) The typed-inequality hold is by feature,
+      on load (defaults-pass-scratch/x6a.sysml, pre-existing). (c) CLOSED 2026-11-16 by a5-heads2
+      HD4 (branch commits 81885e3/8dc71f2, merged): a definition's context row is filed under the
+      definition whatever the declaration order, and a binding-carried reading (`P::ca in Q::p` —
+      'load is not read in Q::p' + the #bind pair) is kept beside it on all four surfaces. The
+      shape that flips on base is the recorded variation: the specialiser states `load = v` with
+      `=` beside a bind in Q, `q1 : Q` and `w : W` (pinned a5-hd4-wqp/-rev; the old probe
+      defaults-pass-scratch/m218/G009-eqT.sysml is lost — see a5-heads2-scratch/hd4-report-notes.md);
+      with plain defaults only the filing NAME flips (q-direct, p2-default), also fixed. (d) The typed-inequality hold is by feature,
       so a `P::L` held by a typed assert in one instance also holds p2's L where the assert sits in
       a usage only (weaker, never false; test/integration/verification.differential.test.ts
       'typed-ineq-*' rows, scratch review/m7/T1..T10). A typed assert whose parameter is bound with
@@ -1232,7 +1251,14 @@ true values. What follows is what that branch and the review of it left open; en
       defaults2-pass-scratch/p6/se-none.sysml, differential A2E-enclosing-assert and
       stand-enc-bound), an enclosing assert on a valueless feature, and = plus a redefinition of
       that = under an enclosing assert (stays unknown through the existing #bind contradiction;
-      gen211 models G60, G72, G96) still abstain. (f) Literal X on generic rows of a file whose
+      gen211 models G60, G72, G96) still abstain. Ruled permanent 2026-11-15 (reversible; reverse
+      by re-adding to its entry): the enclosing-assert abstention over a binding-carried value
+      stands — the exemption fix worked (A2E q2 F/F/F/F, stand-enc-bound T/T/T/T) but broke three
+      pinned decisions that state the rule deliberately ('…and abstains on a bound one (211)',
+      'reads a binding into the instance over its type's assert… (RB, BND)', 'abstains under an
+      enclosing assert, and files every instance once'); do not re-attempt without changing those
+      tests' intent. The valueless-feature and = plus a redefinition halves stay with the ruling
+      (stop rule → P). (f) Literal X on generic rows of a file whose
       instance contradicts a default under an enclosing assert
       (defaults2-pass-scratch/review/m2/with/MM10.sysml, MM88.sysml; 9 cells in 2 of 240 probe
       models; sound). [defaults-pass, defaults2-pass]
