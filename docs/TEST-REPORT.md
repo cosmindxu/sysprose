@@ -38,15 +38,15 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
 | **Date** | 2026-10-15 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **5606 passed / 0 failed / 0 skipped** across **159 files** |
-| &nbsp;&nbsp;— unit | 4489 passed across 120 files |
+| **Vitest checks** | **5612 passed / 0 failed / 0 skipped** across **159 files** |
+| &nbsp;&nbsp;— unit | 4495 passed across 120 files |
 | &nbsp;&nbsp;— integration | 478 passed across 22 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 10 passed across 1 file |
 | &nbsp;&nbsp;— campaign (L6–L8) | 507 passed across 5 files |
 | **E2E scenarios** | **238 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
-| **Grand total** | **5844 automated checks passed / 0 failed** |
+| **Grand total** | **5850 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -618,7 +618,7 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 486 | 72 | 2 | 6 | 728 (323) | 0 | none | `differential-tested` |
+| `lra` | 486 | 72 | 2 | 6 | 736 (327) | 0 | none | `differential-tested` |
 | `lira` | 13 | 11 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
@@ -626,11 +626,11 @@ Fact counts, not test-title counts: each row below is counted with no solver fro
 | `units` | 100 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
 | `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `stated-value` | 311 | 78 | 1 | 7 | 684 (292) | 0 | none | `differential-tested` |
+| `stated-value` | 311 | 78 | 1 | 7 | 692 (296) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 63 (38) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 233 (139) | 0 | none | `experimental` |
 | `asserted-fact` | 28 | 8 | 1 | 0 | 29 (16) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 415 (248) | 0 | none | `differential-tested` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 419 (252) | 0 | none | `differential-tested` |
 | `per-instance` | 1 | 1 | 1 | 0 | 323 (165) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
@@ -1008,8 +1008,8 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **5844 green automated
-checks** (**5606** unit/integration/conformance/server/interop/campaign across **159 files**,
+SysML v2 standard family — all six read **Covered** — with **5850 green automated
+checks** (**5612** unit/integration/conformance/server/interop/campaign across **159 files**,
 **0 skips**, + **238 E2E** across **84 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
@@ -1028,7 +1028,7 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (5606 passed /
+*End of report. Counts and verdicts derived from a live `vitest run` (5612 passed /
 0 skipped across 159 files) and Playwright (231/231 across 84 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
