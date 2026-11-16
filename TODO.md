@@ -688,17 +688,17 @@ true values. What follows is what that branch and the review of it left open; en
       the five readers give a valueless end bound to a valued feature that feature's value, with an
       oracle over order swaps, instances, default and = twins, and the #bind row gone. Probes:
       defaults2-pass-scratch/p2/h2f.sysml and p5/. [default-stands S1, G2, defaults2-pass]
-- [ ] **Noted 2026-11-16 (the right half of the deleted 'File a definition's context row under one
-      name' entry): the M-generator's RENAMED pairs (27) and the H3/H6/S3-spec cells live outside
-      this repo — when HD6/H3 re-pin the differential table, only the in-repo cells re-pin; the
-      out-of-repo pairs stay as recorded.**
 - [ ] **Split the reading key by the value a sibling binding carries (SIB2, noted 2026-11-16 by the
       a5-heads2 HD4 branch review).** Sibling usages that read through one holder merge
       value-insensitively: `in Q::p1` ?/?/?/X files, no `in Q::p2` row, each binding's own #bind
       pair row still reporting its pair (not a regression: HEAD swallowed both relation rows in the
       P-first order; the HD4 branch keeps p1's row and both #bind pairs). A later probe-first step:
       each distinct sibling reading files its own row when its binding carries a different value.
-      Probes: a5-heads2-scratch SIB2/SIB2S, review-probes. [a5-heads2 HD4 review]
+      Probes: a5-heads2-scratch SIB2/SIB2S, review-probes. Also re-filed here (2026-11-16, the right
+      half of the deleted 'File a definition's context row under one name' entry): the M-generator's
+      RENAMED pairs (27) and the H3/H6/S3-spec cells live outside this repo — when HD6/H3 re-pin the
+      differential table, only the in-repo cells re-pin; the out-of-repo pairs stay as recorded.
+      [a5-heads2 HD4 review]
 - [ ] **Show `:=` (an initial value, not a binding) and the value's unit in `elements` and the grid;
       the workflow readers then read them (optional).** Sysprose now prints `:=` and the unit (the
       grid value cell is `[default] [:=] value [unit]`: `:= 4`, `default := 3`, `7 [kg]`; `elements
