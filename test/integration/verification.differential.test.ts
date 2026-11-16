@@ -19528,6 +19528,88 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       'HD4P::P::ca': ['T/T/T/T', 'T'],
       'HD4P::P::ca in HD4P::P2': ['T/T/T/T', 'T'],
     }),
+    // a5 HD1 (defaults (a), m218b reconstructed): Q's asserted side reads a name, `L == K * 2.0`, and W's binding
+    // component states M's 3.0 beside Q's L — exactly 3.0 at K = 1.5, compared as Rationals in SI: the deep rows
+    // read the one value, as stand-x6's constant twin does, and `P::c` alone is violated. The rev twin writes the
+    // assert first inside Q (the member order the reading does not depend on); the differ twin's K = 2.0 gives L
+    // 4.0 beside M's 3.0, two values, and the deep rows stay `?`.
+    'a5-hd1-nrs': probe(`package X6 {
+  part def P { attribute load default = 1.0; constraint c { load >= 2.0 } }
+  part def Q { attribute K : ScalarValues::Real = 1.5; attribute L; part p : P; bind p.load = L; assert constraint a { L == K * 2.0 } }
+  part def W { attribute M = 3.0; part q : Q; bind q.p.load = M; }
+  part w : W;
+}`, {
+      'X6::P::c': ['F/X/F/X', null],
+      'X6::P::c in X6::Q::p': ['F/X/F/X', null],
+      'X6::P::c in X6::W::q::p': ['T/X/T/X', 'T'],
+      'X6::P::c in X6::w::q::p': ['T/X/T/X', 'T'],
+      'X6::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'X6::Q::a': ['?/-/?/-', 'F'],
+      'X6::Q::a in X6::W::q': ['T/-/T/-', 'T'],
+    }),
+    'a5-hd1-nrs-rev': probe(`package X6 {
+  part def P { attribute load default = 1.0; constraint c { load >= 2.0 } }
+  part def Q { assert constraint a { L == K * 2.0 } attribute K : ScalarValues::Real = 1.5; attribute L; part p : P; bind p.load = L; }
+  part def W { attribute M = 3.0; part q : Q; bind q.p.load = M; }
+  part w : W;
+}`, {
+      'X6::P::c': ['F/X/F/X', null],
+      'X6::P::c in X6::Q::p': ['F/X/F/X', null],
+      'X6::P::c in X6::W::q::p': ['T/X/T/X', 'T'],
+      'X6::P::c in X6::w::q::p': ['T/X/T/X', 'T'],
+      'X6::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'X6::Q::a': ['?/-/?/-', 'F'],
+      'X6::Q::a in X6::W::q': ['T/-/T/-', 'T'],
+    }),
+    'a5-hd1-nrs-differ': probe(`package X6D {
+  part def P { attribute load default = 1.0; constraint c { load >= 2.0 } }
+  part def Q { attribute K : ScalarValues::Real = 2.0; attribute L; part p : P; bind p.load = L; assert constraint a { L == K * 2.0 } }
+  part def W { attribute M = 3.0; part q : Q; bind q.p.load = M; }
+  part w : W;
+}`, {
+      'X6D::P::c': ['F/X/F/X', null],
+      'X6D::P::c in X6D::Q::p': ['F/X/F/X', null],
+      'X6D::P::c in X6D::W::q::p': ['?/?/?/X', '?'],
+      'X6D::P::c in X6D::w::q::p': ['?/?/?/X', '?'],
+      'X6D::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'X6D::Q::«BindingConnectorAsUsage» in X6D::W::q#bind': ['F/-/F/-', 'F'],
+      'X6D::Q::a': ['?/-/?/-', 'F'],
+      'X6D::Q::a in X6D::W::q': ['?/-/?/-', '?'],
+    }),
+    // a5 HD1, the package head (m218 reconstructed): `bind P::load = M` joins the definition's feature to the
+    // package's M = K * 2.0, and p2 states `:>> load = 3.0` — 3.0 = 1.5 * 2.0 exactly, so the binding's pair is one
+    // value and the instance's row is read (as head-slot-const, with M = 3.0, has always read). The rev twin is
+    // the member-order twin; the differ twin's K = 2.0 gives M 4.0 beside p2's 3.0, two values: the row stays `?`.
+    'a5-hd1-head': probe(`package HEAD {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load >= 2.0 } }
+  attribute K : ScalarValues::Real = 1.5;
+  attribute M = K * 2.0;
+  bind P::load = M;
+  part p2 : P { attribute :>> load = 3.0; }
+}`, {
+      'HEAD::P::c': ['T/T/?/T', 'T'],
+      'HEAD::P::c in HEAD::p2': ['T/T/T/T', 'T'],
+    }),
+    'a5-hd1-head-rev': probe(`package HEAD {
+  part p2 : P { attribute :>> load = 3.0; }
+  bind P::load = M;
+  attribute M = K * 2.0;
+  attribute K : ScalarValues::Real = 1.5;
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load >= 2.0 } }
+}`, {
+      'HEAD::P::c': ['T/T/?/T', 'T'],
+      'HEAD::P::c in HEAD::p2': ['T/T/T/T', 'T'],
+    }),
+    'a5-hd1-head-differ': probe(`package HEADD {
+  part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load >= 2.0 } }
+  attribute K : ScalarValues::Real = 2.0;
+  attribute M = K * 2.0;
+  bind P::load = M;
+  part p2 : P { attribute :>> load = 3.0; }
+}`, {
+      'HEADD::P::c': ['T/T/?/X', 'T'],
+      'HEADD::P::c in HEADD::p2': ['?/?/?/X', '?'],
+    }),
   };
 
   /**
@@ -20566,6 +20648,26 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
           ],
         ] as const,
     ),
+    // a5 HD1: the one contradiction stand-x6 records — Q’s asserted L joined by a binding to p’s load, a P
+    // `default = 1.0` that a second binding also joins to M = 3.0 — makes every SMT row of each file inconsistent
+    // beside the check’s and the numeric surface’s decision: the deep rows read the one exact value (3 in X6, `?`
+    // at the differ twin’s 4.0 against 3.0, whose own pair is the verdict, decision 1).
+    ...[
+      'a5-hd1-nrs | X6::P::c',
+      'a5-hd1-nrs | X6::P::c in X6::Q::p',
+      'a5-hd1-nrs | X6::P::c in X6::W::q::p',
+      'a5-hd1-nrs | X6::P::c in X6::w::q::p',
+      'a5-hd1-nrs-rev | X6::P::c',
+      'a5-hd1-nrs-rev | X6::P::c in X6::Q::p',
+      'a5-hd1-nrs-rev | X6::P::c in X6::W::q::p',
+      'a5-hd1-nrs-rev | X6::P::c in X6::w::q::p',
+      'a5-hd1-nrs-differ | X6D::P::c',
+      'a5-hd1-nrs-differ | X6D::P::c in X6D::Q::p',
+    ].map((key) => [key, 'the binding joins Q’s asserted `L == K * 2.0` (4.0 at the differ twin) to P’s `default = 1.0`, which no assertion replaces (decision 14 amended 2026-10-22): a self-contradictory model (ref null), which the SMT engine reports — one contradiction makes every SMT row of the file `inconsistent-axioms` — beside the check’s and the numeric surface’s reading of the one exact value the deep rows state'] as const),
+    [
+      'a5-hd1-head-differ | HEADD::P::c',
+      'the package’s binding joins P::load’s `default = 1.0` to M = 4.0 beside p2’s own `:>> load = 3.0`: the model states two values for the slot in p2 (decision 1, the pair the check and the numeric surface report at p2’s row), so the SMT engine’s axioms are inconsistent; P’s own row reads M’s 4 (true there), as head-slot-const’s does at 3.0',
+    ],
   ]);
 
   const seen = new Map<string, Map<string, SurfaceRow>>();
@@ -20741,6 +20843,10 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     ['stand-eqmd', 'stand-eqmd-rev'],
     ['stand-eqmd', 'stand-eqmd-alleq'],
     ['stand-hlx', 'stand-hlx-eqx'],
+    // a5 HD1: a name-reading side agrees with the value written with `=`, and the package head's slot with the
+    // instance's own value, in either member order (the assert first in Q; the head's parts written first).
+    ['a5-hd1-nrs', 'a5-hd1-nrs-rev'],
+    ['a5-hd1-head', 'a5-hd1-head-rev'],
     // a5 F0: the package-head default family in either text order.
     ['a5-e2c', 'a5-e2cr'],
     ['a5-e1qp', 'a5-e1qpr'],
