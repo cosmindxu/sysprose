@@ -1,0 +1,2015 @@
+[
+ {
+  "idx": 0,
+  "sha": "91cc4a5",
+  "when": "2026-09-16T13:50:09+02:00",
+  "subject": "docs: the three action files, TODO, ROADMAP and RESEARCH",
+  "open": 4,
+  "new": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 1,
+  "sha": "2486d72",
+  "when": "2026-09-17T22:17:16+02:00",
+  "subject": "feat(ui): a palette on every view \u2014 what to draw, what to change, what to check",
+  "open": 9,
+  "new": [
+   5,
+   6,
+   7,
+   8,
+   9
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 2,
+  "sha": "214b3c5",
+  "when": "2026-09-30T18:36:32+02:00",
+  "subject": "feat(diagram): diagrams you can read \u2014 left to right, nothing overlapping",
+  "open": 12,
+  "new": [
+   10,
+   11,
+   12
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 3,
+  "sha": "24773a5",
+  "when": "2026-10-08T07:38:58+02:00",
+  "subject": "Google Drive (optional): open and save .sysml files in the user's own Drive",
+  "open": 17,
+  "new": [
+   13,
+   14,
+   15,
+   16,
+   17
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 4,
+  "sha": "8cd1bfa",
+  "when": "2026-10-09T12:57:49+02:00",
+  "subject": "Unsaved work is never dropped silently; Export writes only your model",
+  "open": 16,
+  "new": [
+   18,
+   19,
+   20,
+   21
+  ],
+  "closed": [
+   13,
+   14,
+   15,
+   16,
+   17
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 5,
+  "sha": "0ac35a4",
+  "when": "2026-10-09T20:28:35+02:00",
+  "subject": "CI checks its own test summary; the toolbar and solver tests stop depending on luck",
+  "open": 14,
+  "new": [
+   22
+  ],
+  "closed": [
+   8,
+   1,
+   2
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 6,
+  "sha": "e033721",
+  "when": "2026-10-10T14:05:43+02:00",
+  "subject": "Data-safety fixes: Export keeps typed text, Ctrl/\u2318+S always saves, boxes persist",
+  "open": 17,
+  "new": [
+   23,
+   24,
+   25,
+   26,
+   27,
+   28,
+   29,
+   30
+  ],
+  "closed": [
+   11,
+   18,
+   19,
+   20,
+   21
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 7,
+  "sha": "d595138",
+  "when": "2026-10-12T07:28:45+02:00",
+  "subject": "Merge ux: selection-scoped checks, slow checks off-thread, palette label, layer columns, hub crossings",
+  "open": 30,
+  "new": [
+   31,
+   32,
+   33,
+   34,
+   35,
+   36,
+   37,
+   38,
+   39
+  ],
+  "closed": [
+   7,
+   9,
+   10,
+   12
+  ],
+  "rewritten": [
+   6
+  ],
+  "reopened": [
+   8,
+   1,
+   2,
+   11,
+   18,
+   19,
+   20,
+   21
+  ]
+ },
+ {
+  "idx": 8,
+  "sha": "3ab826a",
+  "when": "2026-10-12T07:59:18+02:00",
+  "subject": "Merge behaviour: the app's behaviour verification (reach + check-behaviour lanes, marks, witness stepper)",
+  "open": 39,
+  "new": [
+   40,
+   41,
+   42,
+   43,
+   44,
+   45
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": [
+   6,
+   7,
+   9
+  ]
+ },
+ {
+  "idx": 9,
+  "sha": "0817541",
+  "when": "2026-10-12T08:00:56+02:00",
+  "subject": "Merge per-instance: check and literal engine read a value per instance (F3-F9)",
+  "open": 49,
+  "new": [
+   46,
+   47,
+   48,
+   49,
+   50,
+   51,
+   52,
+   53,
+   54,
+   55
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 10,
+  "sha": "0c9d2bd",
+  "when": "2026-10-12T12:02:46+02:00",
+  "subject": "H1: the behaviour walk and the check-behaviour search obey run-to-completion",
+  "open": 48,
+  "new": [],
+  "closed": [
+   40
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 11,
+  "sha": "05e45a4",
+  "when": "2026-10-12T20:18:33+02:00",
+  "subject": "sysprose-evidence/2: record a per-instance evidence facet",
+  "open": 47,
+  "new": [],
+  "closed": [
+   50
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 12,
+  "sha": "5c257a1",
+  "when": "2026-10-14T16:19:12+02:00",
+  "subject": "Merge docs-hygiene: TODO pruned and extended with the 2026-10-14 review findings; roadmaps, README and parity corrected",
+  "open": 76,
+  "new": [
+   56,
+   57,
+   58,
+   59,
+   60,
+   61,
+   62,
+   63,
+   64,
+   65,
+   66,
+   67,
+   68,
+   69,
+   70,
+   71,
+   72,
+   73,
+   74,
+   75,
+   76,
+   77,
+   78,
+   79,
+   80,
+   81,
+   82,
+   83,
+   84,
+   85,
+   86,
+   87,
+   88,
+   89,
+   90,
+   91,
+   92,
+   93,
+   94,
+   95,
+   96,
+   97,
+   98,
+   99,
+   100,
+   101,
+   102,
+   103,
+   104,
+   105,
+   106,
+   107,
+   108,
+   109
+  ],
+  "closed": [
+   6,
+   7,
+   41,
+   42,
+   43,
+   44,
+   45,
+   9,
+   31,
+   8,
+   1,
+   2,
+   11,
+   18,
+   19,
+   20,
+   21,
+   46,
+   48,
+   49,
+   51,
+   52,
+   53,
+   54,
+   55
+  ],
+  "rewritten": [
+   47
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 13,
+  "sha": "2d194a3",
+  "when": "2026-10-15T04:30:37+02:00",
+  "subject": "Merge load-health: the load is checked in the worker, containment order kept, no page stall",
+  "open": 75,
+  "new": [
+   110,
+   111,
+   112
+  ],
+  "closed": [
+   88,
+   89,
+   90,
+   91
+  ],
+  "rewritten": [
+   97
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 14,
+  "sha": "676d804",
+  "when": "2026-10-15T08:23:16+02:00",
+  "subject": "Merge app-small: re-pinned citations, the checks runner's last gaps, small fixes (N2)",
+  "open": 69,
+  "new": [],
+  "closed": [
+   97,
+   98,
+   99,
+   100,
+   104,
+   105
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 15,
+  "sha": "e04dc8e",
+  "when": "2026-10-15T11:24:52+02:00",
+  "subject": "TODO: behaviour-sound's merge closes four entries; what O1 left open",
+  "open": 71,
+  "new": [
+   113,
+   114,
+   115,
+   116,
+   117,
+   118
+  ],
+  "closed": [
+   92,
+   93,
+   94,
+   95
+  ],
+  "rewritten": [
+   96
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 16,
+  "sha": "f1025e1",
+  "when": "2026-10-15T18:19:38+02:00",
+  "subject": "TODO: per-instance-sound's merge closes the soundness entries; what O2 left open",
+  "open": 73,
+  "new": [
+   119,
+   120,
+   121,
+   122,
+   123,
+   124,
+   125,
+   126
+  ],
+  "closed": [
+   68,
+   69,
+   70,
+   71,
+   72,
+   73
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 17,
+  "sha": "f0755be",
+  "when": "2026-10-15T18:19:48+02:00",
+  "subject": "TODO: PI-1 is closed by per-instance-sound; the anchor entry notes the single-instance finding",
+  "open": 72,
+  "new": [],
+  "closed": [
+   77
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 18,
+  "sha": "bac8ef7",
+  "when": "2026-10-15T18:19:58+02:00",
+  "subject": "TODO: rewrap the PI-2 entry",
+  "open": 72,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 19,
+  "sha": "37b3707",
+  "when": "2026-10-16T02:24:49+02:00",
+  "subject": "TODO: evidence-and-routing's merge closes five entries; what O4 left open",
+  "open": 71,
+  "new": [
+   127,
+   128,
+   129
+  ],
+  "closed": [
+   78,
+   79,
+   84,
+   85
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 20,
+  "sha": "3224ea6",
+  "when": "2026-10-16T02:25:17+02:00",
+  "subject": "TODO: rewrap an O4 entry",
+  "open": 71,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 21,
+  "sha": "136317b",
+  "when": "2026-10-16T11:02:45+02:00",
+  "subject": "TODO: h5's merge closes the H5, w4, part-valued and enclosing-assert entries; what O5 left open",
+  "open": 70,
+  "new": [
+   130,
+   131,
+   132
+  ],
+  "closed": [
+   59,
+   47,
+   119,
+   120
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 22,
+  "sha": "5bd7bda",
+  "when": "2026-10-16T22:50:20+02:00",
+  "subject": "TODO: table-rows' merge closes E5 and E7, narrows E3, E6 and E9; what O6 left open",
+  "open": 67,
+  "new": [
+   133,
+   134
+  ],
+  "closed": [
+   60,
+   62,
+   63,
+   64,
+   65
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 23,
+  "sha": "d7b602d",
+  "when": "2026-10-17T09:59:56+02:00",
+  "subject": "TODO: engine-small's merge closes M2, A-M1, A-L2, C-F3 and C-F4; what N1 left open",
+  "open": 62,
+  "new": [
+   135
+  ],
+  "closed": [
+   74,
+   75,
+   76,
+   96,
+   101,
+   102
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 24,
+  "sha": "b88a62b",
+  "when": "2026-10-17T21:09:14+02:00",
+  "subject": "TODO: reporting-small's merge closes the roll-up, causes, verify fold, H6b and evidence entries; the residuals",
+  "open": 54,
+  "new": [
+   136
+  ],
+  "closed": [
+   121,
+   80,
+   81,
+   82,
+   83,
+   86,
+   87,
+   128,
+   129
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 25,
+  "sha": "6b13533",
+  "when": "2026-10-20T23:49:32+02:00",
+  "subject": "TODO: complex-backlog's merge closes T80 and T182; the exit-to-LCA false verdict and the save-over-typed-text note",
+  "open": 54,
+  "new": [
+   137,
+   138
+  ],
+  "closed": [
+   34,
+   30
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 26,
+  "sha": "4fca4ae",
+  "when": "2026-10-21T02:49:34+02:00",
+  "subject": "TODO: ui-backlog's merge closes N4's entries; the tab-close prompt and the Escape focus remain",
+  "open": 37,
+  "new": [
+   139
+  ],
+  "closed": [
+   56,
+   6,
+   32,
+   33,
+   35,
+   36,
+   3,
+   4,
+   23,
+   24,
+   25,
+   26,
+   27,
+   29,
+   58,
+   39,
+   61,
+   67
+  ],
+  "rewritten": [
+   28
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 27,
+  "sha": "9202964",
+  "when": "2026-10-21T11:12:08+02:00",
+  "subject": "TODO: behaviour-lca's merge closes three entries; six residuals added",
+  "open": 40,
+  "new": [
+   140,
+   141,
+   142,
+   143,
+   144,
+   145
+  ],
+  "closed": [
+   137,
+   113,
+   116
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 28,
+  "sha": "87e8c0f",
+  "when": "2026-10-21T13:51:48+02:00",
+  "subject": "docs: ui-perf-backlog's merge closes T223 and narrows T6, T188 and U19; the local servers run the solver checks",
+  "open": 41,
+  "new": [
+   146,
+   147,
+   148
+  ],
+  "closed": [
+   37,
+   38
+  ],
+  "rewritten": [
+   5,
+   57
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 29,
+  "sha": "3c54ae0",
+  "when": "2026-10-21T19:24:51+02:00",
+  "subject": "docs: bindings-residual's merge closes three entries and files the O9 residuals",
+  "open": 52,
+  "new": [
+   149,
+   150,
+   151,
+   152,
+   153,
+   154,
+   155,
+   156,
+   157,
+   158,
+   159,
+   160,
+   161
+  ],
+  "closed": [
+   131,
+   124
+  ],
+  "rewritten": [
+   130
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 30,
+  "sha": "1c13276",
+  "when": "2026-10-21T19:37:48+02:00",
+  "subject": "docs: behaviour-rest's merge closes six entries and files six residuals",
+  "open": 52,
+  "new": [
+   162,
+   163,
+   164,
+   165,
+   166
+  ],
+  "closed": [
+   114,
+   140,
+   141,
+   142,
+   143
+  ],
+  "rewritten": [
+   145
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 31,
+  "sha": "4bcc83d",
+  "when": "2026-10-22T00:59:17+02:00",
+  "subject": "docs: collab-order's merge closes two entries and files five residuals",
+  "open": 55,
+  "new": [
+   167,
+   168,
+   169,
+   170,
+   171
+  ],
+  "closed": [
+   111,
+   112
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 32,
+  "sha": "247a65a",
+  "when": "2026-10-22T06:17:45+02:00",
+  "subject": "docs: ui-small's merge closes five entries and files six residuals",
+  "open": 56,
+  "new": [
+   172,
+   173,
+   174,
+   175
+  ],
+  "closed": [
+   22,
+   139,
+   138
+  ],
+  "rewritten": [
+   28,
+   110
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 33,
+  "sha": "0207607",
+  "when": "2026-10-22T16:01:43+02:00",
+  "subject": "docs: per-instance-rest's merge closes three entries and files the residuals",
+  "open": 58,
+  "new": [
+   176,
+   177,
+   178,
+   179,
+   180,
+   181,
+   182,
+   183,
+   184
+  ],
+  "closed": [
+   153,
+   155,
+   156,
+   133,
+   134,
+   123,
+   126
+  ],
+  "rewritten": [
+   132
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 34,
+  "sha": "aa16c65",
+  "when": "2026-10-22T21:19:05+02:00",
+  "subject": "docs: the soft/hard defaults analysis files six entries and answers the conjunction question",
+  "open": 63,
+  "new": [
+   185,
+   186,
+   187,
+   188,
+   189,
+   190
+  ],
+  "closed": [
+   184
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 35,
+  "sha": "e1d81b5",
+  "when": "2026-10-23T00:08:05+02:00",
+  "subject": "docs: cold-check's merge replaces the cold-check entry and closes the READINGS entry",
+  "open": 63,
+  "new": [
+   191
+  ],
+  "closed": [
+   122
+  ],
+  "rewritten": [
+   103
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 36,
+  "sha": "f8301ac",
+  "when": "2026-10-23T02:01:20+02:00",
+  "subject": "docs: reporting-residuals' merge closes five entries and files the residuals",
+  "open": 61,
+  "new": [
+   192,
+   193,
+   194,
+   195
+  ],
+  "closed": [
+   157,
+   158,
+   125,
+   127,
+   117,
+   118
+  ],
+  "rewritten": [
+   135,
+   136
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 37,
+  "sha": "4092f4c",
+  "when": "2026-10-23T09:06:19+02:00",
+  "subject": "docs: small-defaults' merge closes two entries, narrows one and files the residuals",
+  "open": 68,
+  "new": [
+   196,
+   197,
+   198,
+   199,
+   200,
+   201,
+   202,
+   203,
+   204,
+   205
+  ],
+  "closed": [
+   187,
+   188,
+   189
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 38,
+  "sha": "5158ee6",
+  "when": "2026-10-23T14:18:42+02:00",
+  "subject": "docs: default-stands' merge closes four entries, rewrites two and files the residuals",
+  "open": 78,
+  "new": [
+   206,
+   207,
+   208,
+   209,
+   210,
+   211,
+   212,
+   213,
+   214,
+   215,
+   216,
+   217,
+   218,
+   219,
+   220,
+   221,
+   222
+  ],
+  "closed": [
+   130,
+   149,
+   150,
+   151,
+   152,
+   154,
+   185
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 39,
+  "sha": "aa18800",
+  "when": "2026-10-23T18:23:53+02:00",
+  "subject": "docs: P1 accepted, U14 parked after Drive, U15 decided (and 5.3.1 exists)",
+  "open": 77,
+  "new": [],
+  "closed": [
+   57
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 40,
+  "sha": "c85b72a",
+  "when": "2026-10-24T00:12:43+02:00",
+  "subject": "docs: z3-bump's merge closes the finalizer-race entry and files three residuals",
+  "open": 79,
+  "new": [
+   223,
+   224,
+   225
+  ],
+  "closed": [
+   108
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 41,
+  "sha": "e988aff",
+  "when": "2026-10-24T17:33:46+02:00",
+  "subject": "docs: contradicted-value's merge closes the contradicted-value entry and files the residuals",
+  "open": 89,
+  "new": [
+   226,
+   227,
+   228,
+   229,
+   230,
+   231,
+   232,
+   233,
+   234,
+   235,
+   236
+  ],
+  "closed": [
+   186
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 42,
+  "sha": "0c21cff",
+  "when": "2026-10-24T21:47:52+02:00",
+  "subject": "docs: check and numeric keep deciding rows beside a violated assertion (ruling 2026-10-24)",
+  "open": 88,
+  "new": [],
+  "closed": [
+   230
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 43,
+  "sha": "0124430",
+  "when": "2026-10-24T21:49:14+02:00",
+  "subject": "docs: close the workflow-readers entry (done in mbse-workflow eebcf13)",
+  "open": 87,
+  "new": [],
+  "closed": [
+   197
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 44,
+  "sha": "9485c81",
+  "when": "2026-10-24T21:51:39+02:00",
+  "subject": "docs: TODO housekeeping before the next wave",
+  "open": 85,
+  "new": [],
+  "closed": [
+   160,
+   106
+  ],
+  "rewritten": [
+   227,
+   228,
+   234
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 45,
+  "sha": "2218b84",
+  "when": "2026-10-24T21:54:13+02:00",
+  "subject": "docs: D1, D2 and D3 decided for wave 3",
+  "open": 84,
+  "new": [],
+  "closed": [
+   224
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 46,
+  "sha": "827d956",
+  "when": "2026-10-26T03:36:41+01:00",
+  "subject": "docs: small-wording's merge closes three entries and files the residuals",
+  "open": 85,
+  "new": [
+   237,
+   238,
+   239,
+   240
+  ],
+  "closed": [
+   213,
+   222,
+   203
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 47,
+  "sha": "9cf6c66",
+  "when": "2026-10-27T21:11:57+01:00",
+  "subject": "docs: subsetting-pass's merge closes the subsetting entry and files the residuals",
+  "open": 91,
+  "new": [
+   241,
+   242,
+   243,
+   244,
+   245,
+   246
+  ],
+  "closed": [],
+  "rewritten": [
+   177
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 48,
+  "sha": "fe86047",
+  "when": "2026-10-28T10:10:23+01:00",
+  "subject": "docs: text-order's merge closes two entries and files the residuals; the order claims name what is still open",
+  "open": 102,
+  "new": [
+   247,
+   248,
+   249,
+   250,
+   251,
+   252,
+   253,
+   254,
+   255,
+   256,
+   257,
+   258,
+   259
+  ],
+  "closed": [
+   232,
+   220
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 49,
+  "sha": "b435449",
+  "when": "2026-10-28T21:48:41+01:00",
+  "subject": "docs: contradictory-models' merge closes seven entries and files the residuals; KNOWN_FALSE holds two NO STEP rows again",
+  "open": 104,
+  "new": [
+   260,
+   261,
+   262,
+   263,
+   264,
+   265
+  ],
+  "closed": [
+   226,
+   227,
+   215,
+   216
+  ],
+  "rewritten": [
+   231,
+   234,
+   209
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 50,
+  "sha": "bf3a5b5",
+  "when": "2026-10-29T00:15:09+01:00",
+  "subject": "docs: redefinition-target's merge closes the unnamed-redefinition entry and files eleven residuals",
+  "open": 114,
+  "new": [
+   266,
+   267,
+   268,
+   269,
+   270,
+   271,
+   272,
+   273,
+   274,
+   275,
+   276
+  ],
+  "closed": [
+   178
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 51,
+  "sha": "b850f8d",
+  "when": "2026-10-29T05:29:22+01:00",
+  "subject": "docs: save-and-wording's merge closes three entries, turns three into residuals and files one",
+  "open": 112,
+  "new": [
+   277,
+   278,
+   279
+  ],
+  "closed": [
+   223,
+   236,
+   192,
+   208,
+   171
+  ],
+  "rewritten": [
+   210
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 52,
+  "sha": "2d365d0",
+  "when": "2026-10-29T08:41:16+01:00",
+  "subject": "docs: behaviour-small's merge closes four entries, narrows two and files one",
+  "open": 109,
+  "new": [
+   280
+  ],
+  "closed": [
+   144,
+   145,
+   165,
+   166
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 53,
+  "sha": "88a6edf",
+  "when": "2026-10-29T11:05:25+01:00",
+  "subject": "docs: parse-and-show's merge closes the about-forms entry, narrows the metadata body one and files one",
+  "open": 109,
+  "new": [
+   281
+  ],
+  "closed": [
+   196
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 54,
+  "sha": "06459c7",
+  "when": "2026-10-29T14:56:29+01:00",
+  "subject": "docs: collab-ui's merge closes four entries and files two residuals",
+  "open": 107,
+  "new": [
+   282,
+   283
+  ],
+  "closed": [
+   28,
+   175,
+   168,
+   169
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 55,
+  "sha": "7f4d75c",
+  "when": "2026-10-29T17:45:44+01:00",
+  "subject": "docs: numeric-curved's merge closes four entries, rewrites one and files three",
+  "open": 107,
+  "new": [
+   284,
+   285,
+   286,
+   287
+  ],
+  "closed": [
+   256,
+   257,
+   258,
+   259
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 56,
+  "sha": "a51ed61",
+  "when": "2026-10-30T02:21:44+01:00",
+  "subject": "docs: fence-numeric's merge closes two entries and extends the numeric rollup",
+  "open": 105,
+  "new": [],
+  "closed": [
+   254,
+   260
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 57,
+  "sha": "648578d",
+  "when": "2026-10-30T05:01:24+01:00",
+  "subject": "docs: fence-readings' merge closes nine entries, rewrites one and files five",
+  "open": 101,
+  "new": [
+   288,
+   289,
+   290,
+   291,
+   292
+  ],
+  "closed": [
+   237,
+   177,
+   243,
+   247,
+   248,
+   252,
+   234,
+   261,
+   266
+  ],
+  "rewritten": [
+   231
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 58,
+  "sha": "b0871f5",
+  "when": "2026-10-30T06:08:22+01:00",
+  "subject": "docs: fence-editor's merge closes three entries, narrows two and files two",
+  "open": 100,
+  "new": [
+   293,
+   294,
+   295
+  ],
+  "closed": [
+   269,
+   270,
+   271,
+   273
+  ],
+  "rewritten": [
+   272
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 59,
+  "sha": "53970b9",
+  "when": "2026-10-30T23:43:38+01:00",
+  "subject": "chore(todo): fence run 2 closes the library OOM, the parted binding and the silent Save overwrites; narrows the numeric no-root, negated ass",
+  "open": 98,
+  "new": [
+   296,
+   297
+  ],
+  "closed": [
+   288,
+   294,
+   174,
+   278
+  ],
+  "rewritten": [
+   285
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 60,
+  "sha": "d91ab6e",
+  "when": "2026-10-31T09:02:06+01:00",
+  "subject": "chore(todo): fence run 3 closes the twins/retargeted-redefinition entry; narrows the collab, Save-an-end and self-redefinition entries; adds",
+  "open": 100,
+  "new": [
+   298,
+   299,
+   300
+  ],
+  "closed": [
+   272
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 61,
+  "sha": "a6e7da6",
+  "when": "2026-11-01T07:25:15+01:00",
+  "subject": "docs(todo): round-1 fence entries (bounds, roomlib)",
+  "open": 102,
+  "new": [
+   301,
+   302,
+   303
+  ],
+  "closed": [
+   282
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 62,
+  "sha": "70820ca",
+  "when": "2026-11-01T07:29:23+01:00",
+  "subject": "docs(todo): round-2 fence entries, closes and rollups",
+  "open": 107,
+  "new": [
+   304,
+   305,
+   306,
+   307,
+   308,
+   309,
+   310,
+   311,
+   312
+  ],
+  "closed": [
+   285,
+   283,
+   298,
+   299
+  ],
+  "rewritten": [
+   300
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 63,
+  "sha": "1000cd0",
+  "when": "2026-11-01T17:59:07+01:00",
+  "subject": "docs(todo): round-3 fence entries, closes and rollups",
+  "open": 105,
+  "new": [
+   313
+  ],
+  "closed": [
+   307,
+   308,
+   309
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 64,
+  "sha": "83edcb6",
+  "when": "2026-11-01T17:59:29+01:00",
+  "subject": "docs(todo): file the valued-end and text-order observations as possible wrong answers",
+  "open": 107,
+  "new": [
+   314,
+   315
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 65,
+  "sha": "9650542",
+  "when": "2026-11-01T19:25:38+01:00",
+  "subject": "docs(todo): triage the two sweep observations (valued end narrowed to a confirmed wrong answer; text-order case is not one)",
+  "open": 106,
+  "new": [
+   316
+  ],
+  "closed": [
+   314,
+   315
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 66,
+  "sha": "b46580f",
+  "when": "2026-11-01T22:12:37+01:00",
+  "subject": "docs(todo): close the seed-against-unresolved-end entry; rollup of what the fence withdraws",
+  "open": 106,
+  "new": [
+   317
+  ],
+  "closed": [
+   316
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 67,
+  "sha": "b618f31",
+  "when": "2026-11-02T01:00:29+01:00",
+  "subject": "docs(todo): file the genericity audit (quoted names in expressions; order and instance abstentions)",
+  "open": 108,
+  "new": [
+   318,
+   319
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 68,
+  "sha": "0443623",
+  "when": "2026-11-02T05:55:06+01:00",
+  "subject": "docs(todo): close the quoted-name entry; rollup of what the fix leaves",
+  "open": 108,
+  "new": [
+   320
+  ],
+  "closed": [
+   318
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 69,
+  "sha": "add25f6",
+  "when": "2026-11-02T07:14:25+01:00",
+  "subject": "docs(todo): retitle the two entries that no longer describe a wrong answer (rechecked on a683620)",
+  "open": 108,
+  "new": [],
+  "closed": [],
+  "rewritten": [
+   297,
+   301
+  ],
+  "reopened": []
+ },
+ {
+  "idx": 70,
+  "sha": "0afd70f",
+  "when": "2026-11-02T16:53:33+01:00",
+  "subject": "docs(todo): close 19 entries, narrow 8, add four rollups (round 4); depth-33 note follows the raised cap",
+  "open": 94,
+  "new": [
+   321,
+   322,
+   323,
+   324
+  ],
+  "closed": [
+   235,
+   239,
+   240,
+   246,
+   172,
+   66,
+   250,
+   253,
+   284,
+   267,
+   274,
+   210,
+   218,
+   281,
+   279,
+   306,
+   163,
+   103
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 71,
+  "sha": "227e73b",
+  "when": "2026-11-02T22:26:58+01:00",
+  "subject": "docs(todo): close 164, 162, 195 and 280; rollup of the parallel-machine abstentions",
+  "open": 92,
+  "new": [
+   325
+  ],
+  "closed": [
+   162,
+   164,
+   195
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 72,
+  "sha": "8eaf9e5",
+  "when": "2026-11-02T22:27:07+01:00",
+  "subject": "docs(todo): close 280 (documented decision)",
+  "open": 91,
+  "new": [],
+  "closed": [
+   280
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 73,
+  "sha": "f048137",
+  "when": "2026-11-03T00:41:56+01:00",
+  "subject": "docs(todo): narrow 161, 193 and 194, annotate 182, rollup item (naming-pass)",
+  "open": 91,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 74,
+  "sha": "17ff565",
+  "when": "2026-11-03T02:07:58+01:00",
+  "subject": "docs(todo): close the subsetting-walk cost entry; narrow the listing-order entry (core-pass)",
+  "open": 90,
+  "new": [],
+  "closed": [
+   291
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 75,
+  "sha": "439891e",
+  "when": "2026-11-03T07:09:07+01:00",
+  "subject": "docs(todo): close 251, 173, 245, 170 and 191 (delegated decisions and measurements)",
+  "open": 85,
+  "new": [],
+  "closed": [
+   245,
+   173,
+   251,
+   191,
+   170
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 76,
+  "sha": "2a48b39",
+  "when": "2026-11-03T15:39:58+01:00",
+  "subject": "docs(todo): close 179, 206, 209 and 289; narrow 207, 211 and 214; rollup items (round 7)",
+  "open": 81,
+  "new": [],
+  "closed": [
+   206,
+   179,
+   209,
+   289
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 77,
+  "sha": "db575fe",
+  "when": "2026-11-03T17:34:51+01:00",
+  "subject": "docs(todo): rollup item for the nested-package bind fence (fence-pkgbind)",
+  "open": 81,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 78,
+  "sha": "dc411d4",
+  "when": "2026-11-04T09:07:55+01:00",
+  "subject": "close 217, 264, 183 and 219; narrow 262, 263, 275 and 276; rollup items (round 8)",
+  "open": 77,
+  "new": [],
+  "closed": [
+   264,
+   183,
+   217,
+   219
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 79,
+  "sha": "5603e3d",
+  "when": "2026-11-04T10:41:33+01:00",
+  "subject": "close 238 and 277 by decision (round 9)",
+  "open": 75,
+  "new": [],
+  "closed": [
+   238,
+   277
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 80,
+  "sha": "f0b6305",
+  "when": "2026-11-04T12:39:30+01:00",
+  "subject": "close 263 by decision: UB6 ruled permanent (round 9)",
+  "open": 74,
+  "new": [],
+  "closed": [
+   263
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 81,
+  "sha": "db8b122",
+  "when": "2026-11-05T04:39:36+01:00",
+  "subject": "merge instance2-pass: per-instance reads (round 10); 231 closed, 233 and 228 narrowed",
+  "open": 74,
+  "new": [
+   326
+  ],
+  "closed": [
+   231
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 82,
+  "sha": "a166940",
+  "when": "2026-11-05T07:45:01+01:00",
+  "subject": "merge solver2-pass: TODO rollup, docs re-measured (round 10)",
+  "open": 72,
+  "new": [],
+  "closed": [
+   249,
+   301
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 83,
+  "sha": "3049a9f",
+  "when": "2026-11-05T09:47:12+01:00",
+  "subject": "decisions 2026-11-05: permanent rulings, held entries, 207 and 229 rulings recorded",
+  "open": 67,
+  "new": [],
+  "closed": [
+   5,
+   255,
+   262,
+   199,
+   190
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 84,
+  "sha": "a3ac895",
+  "when": "2026-11-05T18:13:56+01:00",
+  "subject": "TODO after text-pass (round 13)",
+  "open": 64,
+  "new": [
+   327
+  ],
+  "closed": [
+   275,
+   200,
+   202,
+   205
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 85,
+  "sha": "5ddc1e2",
+  "when": "2026-11-05T19:48:06+01:00",
+  "subject": "merge text-pass and ui-pass: TODO rollup, docs re-measured (round 13)",
+  "open": 63,
+  "new": [],
+  "closed": [
+   225
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 86,
+  "sha": "21523ec",
+  "when": "2026-11-06T07:08:49+01:00",
+  "subject": "merge names-pass: TODO rollup, docs re-measured (round 14)",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 87,
+  "sha": "21439bc",
+  "when": "2026-11-06T12:08:18+01:00",
+  "subject": "merge small2-pass: TODO rollup, docs re-measured (round 15)",
+  "open": 63,
+  "new": [
+   328
+  ],
+  "closed": [
+   327
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 88,
+  "sha": "6adc01c",
+  "when": "2026-11-06T15:44:07+01:00",
+  "subject": "merge instance3-pass: TODO rollup, docs re-measured (round 16)",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 89,
+  "sha": "ed7f818",
+  "when": "2026-11-06T23:45:17+01:00",
+  "subject": "findings-pass: TODO rewrites, validation.rules count 88",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 90,
+  "sha": "b522b9e",
+  "when": "2026-11-06T23:45:17+01:00",
+  "subject": "Merge branch 'main' into merge-c17",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 91,
+  "sha": "cd77eeb",
+  "when": "2026-11-07T01:59:38+01:00",
+  "subject": "merge g8-fence: obligations read/readable rename, TODO rollup, classes re-measured",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 92,
+  "sha": "8a90ea2",
+  "when": "2026-11-07T03:35:42+01:00",
+  "subject": "merge a5-fences: TODO rollup, classes re-measured",
+  "open": 65,
+  "new": [
+   329,
+   330
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 93,
+  "sha": "8b2478f",
+  "when": "2026-11-07T20:56:06+01:00",
+  "subject": "merge a5-fences2: TODO rollup, classes re-measured",
+  "open": 64,
+  "new": [
+   331
+  ],
+  "closed": [
+   329,
+   330
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 94,
+  "sha": "25a685d",
+  "when": "2026-11-08T02:23:03+01:00",
+  "subject": "merge a5-fences3: HDF closed, TODO rollup, classes re-measured",
+  "open": 63,
+  "new": [],
+  "closed": [
+   331
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 95,
+  "sha": "92f0250",
+  "when": "2026-11-08T18:36:43+01:00",
+  "subject": "merge a5-conj: TODO rollup (K1-K3), USER-GUIDE UnlimitedNatural",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 96,
+  "sha": "287eb05",
+  "when": "2026-11-08T22:32:00+01:00",
+  "subject": "merge a5-std: TODO rollup (S1-S4)",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 97,
+  "sha": "0b53adb",
+  "when": "2026-11-09T06:42:05+01:00",
+  "subject": "merge renamed: TODO item 132 and rollup (RN-0, RN-F, RN-1, RN-2)",
+  "open": 63,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 98,
+  "sha": "afda9ab",
+  "when": "2026-11-09T23:46:25+01:00",
+  "subject": "merge solver-order S5: item 286 closed (TODO), USER-GUIDE no-root sentence",
+  "open": 62,
+  "new": [],
+  "closed": [
+   286
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 99,
+  "sha": "8a5ba8a",
+  "when": "2026-11-10T19:00:32+01:00",
+  "subject": "merge slots: TODO 132(3) narrowed to the differing-fixer remainder",
+  "open": 62,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 100,
+  "sha": "d0bfc19",
+  "when": "2026-11-11T02:53:33+01:00",
+  "subject": "merge behaviour-walk: T-115 rewritten, 2026-11-11 ruling line",
+  "open": 62,
+  "new": [
+   332
+  ],
+  "closed": [
+   115
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 101,
+  "sha": "679b631",
+  "when": "2026-11-12T02:59:26+01:00",
+  "subject": "merge a5-lines: rollup 292 items (2), (3), (7) narrowed (LN1, LN2, LN3)",
+  "open": 62,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 102,
+  "sha": "3cbf267",
+  "when": "2026-11-12T23:23:38+01:00",
+  "subject": "merge a5-heads: numeric2-pass (i) and fence-pkgbind (8) rewritten (HD3)",
+  "open": 62,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 103,
+  "sha": "3d91148",
+  "when": "2026-11-14T18:40:10+01:00",
+  "subject": "merge a5-paths: fence-rollup item (5) rewritten (PA3), satisfy-context entry notes the definition reading",
+  "open": 62,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 104,
+  "sha": "a925ddc",
+  "when": "2026-11-15T14:29:55+01:00",
+  "subject": "merge a5-paths: rollups rewritten (PA1 g5f read, PA2 the part-def-instance assert imposed, PA4's unparseable-words defect deleted, PA5's quo",
+  "open": 62,
+  "new": [],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 105,
+  "sha": "2080e11",
+  "when": "2026-11-16T03:54:30+01:00",
+  "subject": "merge a5-heads2: HD4 \u2014 a definition's context row is filed under the definition whatever the declaration order, and a binding-carried readin",
+  "open": 61,
+  "new": [],
+  "closed": [
+   221
+  ],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 106,
+  "sha": "2c4379a",
+  "when": "2026-11-16T03:55:37+01:00",
+  "subject": "a5-heads2 merge: TODO rewrite \u2014 defaults (c) closed by HD4, (e) ruled permanent 2026-11-15, r16 yields to HD2, the SIB2 split and the M-gene",
+  "open": 63,
+  "new": [
+   333,
+   334
+  ],
+  "closed": [],
+  "rewritten": [],
+  "reopened": []
+ },
+ {
+  "idx": 107,
+  "sha": "d2b9ce2",
+  "when": "2026-11-16T04:39:24+01:00",
+  "subject": "a5-heads2 merge: fold the M-generator right-half note into the SIB2 entry (one open item, no bookkeeping bullet)",
+  "open": 62,
+  "new": [],
+  "closed": [
+   333
+  ],
+  "rewritten": [],
+  "reopened": []
+ }
+]

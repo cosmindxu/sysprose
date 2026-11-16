@@ -3336,9 +3336,9 @@
   "open_raw": 62,
   "open": 62,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 41,
-   "POLISH": 19,
+   "FALSE": 4,
+   "WEAKER": 39,
+   "POLISH": 17,
    "HELD": 2
   },
   "new": 0,
@@ -3358,5 +3358,101 @@
   },
   "cum_new": 300,
   "cum_closed": 236
+ },
+ {
+  "idx": 105,
+  "sha": "2080e11",
+  "when": "2026-11-16T03:54:30+01:00",
+  "day": "2026-11-16",
+  "subject": "merge a5-heads2: HD4 \u2014 a definition's context row is filed under the definition whatever the declaration order, and a binding-carried readin",
+  "open_raw": 61,
+  "open": 61,
+  "open_by": {
+   "FALSE": 4,
+   "WEAKER": 39,
+   "POLISH": 16,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 300,
+  "cum_closed": 237
+ },
+ {
+  "idx": 106,
+  "sha": "2c4379a",
+  "when": "2026-11-16T03:55:37+01:00",
+  "day": "2026-11-16",
+  "subject": "a5-heads2 merge: TODO rewrite \u2014 defaults (c) closed by HD4, (e) ruled permanent 2026-11-15, r16 yields to HD2, the SIB2 split and the M-gene",
+  "open_raw": 63,
+  "open": 63,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 16,
+   "HELD": 2
+  },
+  "new": 2,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 1,
+   "WEAKER": 1,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 302,
+  "cum_closed": 237
+ },
+ {
+  "idx": 107,
+  "sha": "d2b9ce2",
+  "when": "2026-11-16T04:39:24+01:00",
+  "day": "2026-11-16",
+  "subject": "a5-heads2 merge: fold the M-generator right-half note into the SIB2 entry (one open item, no bookkeeping bullet)",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 18,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 1,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 302,
+  "cum_closed": 238
  }
 ]
