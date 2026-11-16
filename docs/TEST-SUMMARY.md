@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5612 total — 5612 passed, 0 failed, 0 skipped
+- **Tests:** 5623 total — 5623 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -36,7 +36,7 @@
 | test/integration/pipeline.validate.test.ts | 6 | 0 | 0 |
 | test/integration/semantics-exec.integration.test.ts | 9 | 0 | 0 |
 | test/integration/semantics.pipeline.test.ts | 9 | 0 | 0 |
-| test/integration/smt-z3.integration.test.ts | 47 | 0 | 0 |
+| test/integration/smt-z3.integration.test.ts | 49 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
 | test/integration/verification.differential.test.ts | 231 | 0 | 0 |
@@ -100,7 +100,7 @@
 | test/unit/paste.test.ts | 7 | 0 | 0 |
 | test/unit/persistence.io.test.ts | 32 | 0 | 0 |
 | test/unit/planning.test.ts | 25 | 0 | 0 |
-| test/unit/property.test.ts | 28 | 0 | 0 |
+| test/unit/property.test.ts | 29 | 0 | 0 |
 | test/unit/readme.test.ts | 15 | 0 | 0 |
 | test/unit/reconnect.test.ts | 9 | 0 | 0 |
 | test/unit/regroup-apply.test.ts | 28 | 0 | 0 |
@@ -111,7 +111,7 @@
 | test/unit/semantics.bind.test.ts | 34 | 0 | 0 |
 | test/unit/semantics.conformance.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
-| test/unit/semantics.constraint-class.test.ts | 83 | 0 | 0 |
+| test/unit/semantics.constraint-class.test.ts | 84 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
 | test/unit/semantics.evaluate-model.test.ts | 337 | 0 | 0 |
@@ -136,7 +136,7 @@
 | test/unit/semantics.relations.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
-| test/unit/semantics.smt-encode.test.ts | 120 | 0 | 0 |
+| test/unit/semantics.smt-encode.test.ts | 127 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 25 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 134 | 0 | 0 |
 | test/unit/semantics.solver.test.ts | 99 | 0 | 0 |
