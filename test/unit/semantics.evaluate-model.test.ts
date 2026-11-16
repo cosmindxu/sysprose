@@ -48,6 +48,7 @@ import {
   replayLookups,
   shadowedNamesOf,
   sharedDefinitions,
+  typedAssertHeldAt,
 } from '../../src/semantics/defining-equation';
 import { obligationsOf } from '../../src/semantics/obligations';
 import * as obligationsModule from '../../src/semantics/obligations';
@@ -3966,6 +3967,69 @@ describe('checkConstraints — a bound partner is read only where every instance
         expect([row, rows.get(row)!.result]).toEqual([row, 'unknown']);
         expect(rows.get(row)!.reason).toContain('a typed assert');
       }
+    });
+    it('keeps a name only the definition’s body reads held in every instance', async () => {
+      // Cd's body reads `other.cap`, which no value the assert writes names and no parameter gives it: the definition
+      // reads it for every instance of the assert, so no instance tells the readings apart and the hold stays
+      // feature-wide, as it was (fails closed). Placing it at the one instance the value `L` is read in freed a value
+      // the assert constrains (`other.cap == 200.0` was imposed and `other.cap <= 100.0` refuted by that).
+      const rows = await rowsOf(`package H5BO {
+  ${cd}
+  part def Cd2 { in x : ScalarValues::Real; x <= other.cap }
+  part def PC { attribute cap : ScalarValues::Real; }
+  part other : PC;
+  ${P}
+  part q : P { assert constraint ca : Cd2 { in x = L; } }
+  part q2 : P;
+  constraint t1 { other.cap == 200.0 }
+  constraint t2 { other.cap <= 100.0 }
+  constraint t3 { q2.L >= 200.0 }
+}`);
+      for (const row of ['H5BO::t1', 'H5BO::t2']) {
+        expect([row, rows.get(row)!.result]).toEqual([row, 'unknown']);
+        expect(rows.get(row)!.reason).toContain('a typed assert');
+      }
+      // q2's L is a sibling the value `L` is read away from: it is not held (its row abstains for its own reason).
+      expect(rows.get('H5BO::t3')!.result).toBe('unknown');
+      expect(rows.get('H5BO::t3')!.reason ?? '').not.toContain('a typed assert');
+    });
+    it('places a value read through a part a definition holds in every instance of that part', async () => {
+      // The value names p's q's L, whose reading runs through W's `part q : Q`: a usage a definition holds stands for
+      // every instance of it, so no instance tells p's q from p2's and both are held (the qualified USER-GUIDE
+      // sentence). Only a usage outside a definition places the hold; where none does, it stays feature-wide.
+      const rows = await rowsOf(`package H5WI {
+  ${cd}
+  part def Q { attribute L : ScalarValues::Real; }
+  part def W { part q : Q; }
+  part p : W;
+  part p2 : W;
+  assert constraint ca : Cd { in x = p.q.L; }
+  constraint t1 { p.q.L == 200.0 }
+  constraint t2 { p2.q.L == 200.0 }
+}`);
+      for (const row of ['H5WI::t1', 'H5WI::t2']) {
+        expect([row, rows.get(row)!.result]).toEqual([row, 'unknown']);
+        expect(rows.get(row)!.reason).toContain('a typed assert');
+      }
+    });
+    it('places a binding’s dotted end where the end is read, not where the assert is written', async () => {
+      // `bind x = p.L` in q names p's L: the end is a usage owned by p, read in p, so the hold reaches p's L and no
+      // sibling's. (The row over the end still abstains with the solve's own sentence, as it does with no hold: the
+      // binding gave the variable a point value. The placement is what this pins.)
+      const text = `package H5BE {
+  ${cd}
+  part def P { attribute L : ScalarValues::Real; }
+  part p : P;
+  part p2 : P;
+  part q : P { assert constraint ca : Cd { in x; bind x = p.L; } }
+  constraint t1 { p.L >= 200.0 }
+  constraint t2 { p2.L >= 200.0 }
+}`;
+      const { model } = await loadModelText(text);
+      const end = named(model!, 'H5BE::p::L');
+      expect(typedAssertHeldAt(model!, end, 'H5BE::p::L')).toBeDefined();
+      expect(typedAssertHeldAt(model!, end, 'H5BE::p2::L')).toBeUndefined();
+      expect(typedAssertHeldAt(model!, named(model!, 'H5BE::P::L'), 'H5BE::p2::L')).toBeUndefined();
     });
   });
 

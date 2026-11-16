@@ -19929,6 +19929,71 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       'H5T2::t2': ['?/?/?/?', null],
       'H5T2::t3': ['?/?/?/?', null],
     }),
+    // A name only the assert's definition BODY reads, that no value gives it (`x <= other.cap`), is read in the
+    // definition for every instance of the assert: no instance tells the readings apart, so its hold stays
+    // feature-wide, as it was (the branch review's c1). Placing it at the one instance the value `L` is read in freed
+    // `other.cap` and imposed `other.cap == 200.0` where the check abstains.
+    'a5-hd5-body': probe(`package H5BO {
+  constraint def Cd { in x : ScalarValues::Real; x <= other.cap }
+  part def PC { attribute cap : ScalarValues::Real; }
+  part other : PC;
+  part def P { attribute L : ScalarValues::Real; }
+  part q : P { assert constraint ca : Cd { in x = L; } }
+  part q2 : P;
+  constraint t1 { other.cap == 200.0 }
+  constraint t2 { other.cap <= 100.0 }
+  constraint t3 { q2.L >= 200.0 }
+}`, {
+      'H5BO::q::ca': ['?/-/?/-', null],
+      'H5BO::t1': ['?/?/?/?', null],
+      'H5BO::t2': ['?/?/?/?', null],
+      'H5BO::t3': ['?/?/?/?', null],
+    }),
+    'a5-hd5-body-rev': probe(`package H5BO {
+  constraint t3 { q2.L >= 200.0 }
+  constraint t2 { other.cap <= 100.0 }
+  constraint t1 { other.cap == 200.0 }
+  part q2 : P;
+  part q : P { assert constraint ca : Cd { in x = L; } }
+  part def P { attribute L : ScalarValues::Real; }
+  part other : PC;
+  part def PC { attribute cap : ScalarValues::Real; }
+  constraint def Cd { in x : ScalarValues::Real; x <= other.cap }
+}`, {
+      'H5BO::q::ca': ['?/-/?/-', null],
+      'H5BO::t1': ['?/?/?/?', null],
+      'H5BO::t2': ['?/?/?/?', null],
+      'H5BO::t3': ['?/?/?/?', null],
+    }),
+    // A binding's dotted end is the implicit `p.L`, read in p: the hold is placed on p's L, not on the instance the
+    // assert sits in (the branch review's b7). The row over the end abstains with the solve's own sentence, as it does
+    // with no hold; the placement itself is pinned by the unit test that reads `typedAssertHeldAt`.
+    'a5-hd5-bind-dot': probe(`package H5BE {
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+  part def P { attribute L : ScalarValues::Real; }
+  part p : P;
+  part p2 : P;
+  part q : P { assert constraint ca : Cd { in x; bind x = p.L; } }
+  constraint t1 { p.L >= 200.0 }
+  constraint t2 { p2.L >= 200.0 }
+}`, {
+      'H5BE::q::ca': ['?/-/?/-', null],
+      'H5BE::t1': ['?/?/?/?', null],
+      'H5BE::t2': ['?/?/?/?', null],
+    }),
+    'a5-hd5-bind-dot-rev': probe(`package H5BE {
+  constraint t2 { p2.L >= 200.0 }
+  constraint t1 { p.L >= 200.0 }
+  part q : P { assert constraint ca : Cd { in x; bind x = p.L; } }
+  part p2 : P;
+  part p : P;
+  part def P { attribute L : ScalarValues::Real; }
+  constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
+}`, {
+      'H5BE::q::ca': ['?/-/?/-', null],
+      'H5BE::t1': ['?/?/?/?', null],
+      'H5BE::t2': ['?/?/?/?', null],
+    }),
   };
 
   /**
@@ -21214,6 +21279,9 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     ['a5-hd5-special', 'a5-hd5-special-rev'],
     ['a5-hd5-expr', 'a5-hd5-expr-rev'],
     ['a5-hd5-two', 'a5-hd5-two-rev'],
+    // a5 HD5 review: a body-only name held feature-wide, and a binding's dotted end, in either text order.
+    ['a5-hd5-body', 'a5-hd5-body-rev'],
+    ['a5-hd5-bind-dot', 'a5-hd5-bind-dot-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

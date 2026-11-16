@@ -10471,8 +10471,10 @@ export function typedAssertNames(model: Model, f: ElementRecord): boolean {
  * reads that is no parameter of it): the model constrains `f` in a form no surface reads as a definition of it. It
  * defines nothing — a `default` stands against it, a value written with `=` is read as written — so the numeric
  * surface holds a valueless `f` as no design freedom and no plain check fixes it ({@link typedAssertNames} is the
- * equation's: that one leaves `f` unread). The hold is scoped to the instance the assert's value is read in
- * ({@link typedAssertHeldAt}); read with no instance, it reaches every reading ({@link TaintEntry.within}).
+ * equation's: that one leaves `f` unread). The hold is scoped to the instance the reading that reached `f` is made in
+ * ({@link HoldPlace}, {@link typedAssertHeldAt}) — a value's or a binding's end's — and a name only the assert's
+ * definition's body reads holds everywhere; read with no instance, the hold reaches every reading
+ * ({@link TaintEntry.within}).
  */
 export function typedAssertHeldOnly(model: Model, f: ElementRecord): ElementRecord | undefined {
   return assertHeldIndex(model).heldOnly.get(f.id)?.source;
@@ -10504,54 +10506,38 @@ export function typedAssertsName(model: Model): boolean {
 }
 
 /**
- * The one instance the inequality-typed assert `a`'s values are read in ({@link typedAssertHeldOnly}'s `within`): the
- * reader {@link DefiningEquations.instanceReadings} gives each name a value written for a parameter reads
- * ({@link namesOfValue}: `in x = L + 1.0` places L's instance as `in x = L` does), resolved where the value is WRITTEN —
- * the assert's own scope, or that of a constraint usage it specialises (`constraint e0 : Cd { in x = p.load; }` under
- * `assert constraint ea :> e0;` resolves the path from e0's owner, as {@link assertHeldIndex}'s `target` holds the
- * feature it names from there) — when that reader is a usage; and, for a `bind x = L` (whose end is read where the
- * binding is, spelled no name the walk reads), the giver's nearest enclosing usage before the first definition or
- * package. Exactly one instance, or `undefined`: no reading, several, one whose value this cannot place (a feature read
- * the same in every instance, a name that resolves nowhere, a reader that is no usage), where the hold stays
- * feature-wide, as it was (fails closed).
+ * Where an inequality-typed assert's hold on one feature is placed ({@link typedAssertHeldOnly}'s `within`): the
+ * reading that reached the feature, so the hold holds where that reading is read and below it. A name a value written
+ * for a parameter reads (`in x = L`, `in x = L + 1.0`; {@link namesOfValue}) names it, resolved where the value is
+ * WRITTEN — the assert's own scope, or that of a constraint usage it specialises (`constraint e0 : Cd { in x =
+ * p.load; }` under `assert constraint ea :> e0;` resolves the path from e0's owner, as {@link assertHeldIndex}'s
+ * `target` holds the feature it names from there). A binding's end (`bind x = p.L`) is read where the binding is: at
+ * its own nearest enclosing usage, so a dotted end places p's L, not the assert's `q` — the end's value, not where it
+ * is written, is the feature that states no value. A name only the definition's BODY reads is read there for every
+ * instance of it: no instance is told apart, so its hold stays feature-wide (`kind: 'body'`), as it was (fails
+ * closed).
  */
-function heldWithin(model: Model, givers: readonly ElementRecord[], parameter: (e: ElementRecord) => boolean): ElementId | undefined {
-  const definitions = sharedDefinitions(model);
-  const readers = new Set<ElementId>();
-  let unplaced = false;
-  // The reader of `name`, read by `from`, where it is a usage: where the value names an instance of its own.
-  const place = (from: ElementRecord, name: string): void => {
-    const hit = definitions.instanceReadings(from, [name]).get(name);
-    const reader = hit !== undefined ? model.get(hit.reader) : undefined;
-    if (reader === undefined || !isUsage(reader.eClass)) {
-      // The same in every instance (no reading of its own), a name that resolves nowhere, or a reading a definition
-      // makes: no instance is told apart, so the hold stays feature-wide.
-      unplaced = true;
-      return;
-    }
-    readers.add(hit!.reader);
-  };
-  for (const g of givers) {
-    let binds = false;
-    for (const c of model.children(g.id)) {
-      // A parameter bound rather than valued (`bind x = L;`): its end is read where the binding is.
-      if (isBindingConnector(c)) {
-        const ends = [c.source?.[0], c.target?.[0]].map((id) => (id !== undefined ? model.get(id) : undefined));
-        if (ends.some((e) => e !== undefined && parameter(e)) && ends.some((e) => e === undefined || !parameter(e))) binds = true;
-        continue;
-      }
-      if (typeof c.attrs.value !== 'string') continue;
-      for (const name of namesOfValue(c.attrs.value)) place(g, name);
-    }
-    if (!binds) continue;
-    const at = enclosingUsage(model, g);
-    if (at === undefined) unplaced = true;
-    else readers.add(at);
+type HoldPlace = { kind: 'value'; from: ElementId; name: string } | { kind: 'end'; end: ElementId } | { kind: 'body' };
+
+/**
+ * The one instance {@link HoldPlace} names, where it is a usage ({@link DefiningEquations.instanceReadings}); `undefined`
+ * where the reading is generic (a definition reads it for every instance), a name that resolves nowhere, or a reader
+ * that is no usage — the fail-closed feature-wide hold.
+ */
+function holdInstanceAt(model: Model, place: HoldPlace): ElementId | undefined {
+  if (place.kind === 'body') return undefined;
+  if (place.kind === 'end') {
+    const end = model.get(place.end);
+    return end !== undefined ? enclosingUsage(model, end) : undefined;
   }
-  return !unplaced && readers.size === 1 ? [...readers][0] : undefined;
+  const from = model.get(place.from);
+  if (from === undefined) return undefined;
+  const hit = sharedDefinitions(model).instanceReadings(from, [place.name]).get(place.name);
+  const reader = hit !== undefined ? model.get(hit.reader) : undefined;
+  return reader !== undefined && isUsage(reader.eClass) ? reader.id : undefined;
 }
 
-/** The nearest usage `el` is written in, before the first definition or package ({@link heldWithin}'s binding ends). */
+/** The nearest usage `el` is written in, before the first definition or package ({@link HoldPlace}'s binding ends). */
 function enclosingUsage(model: Model, el: ElementRecord): ElementId | undefined {
   for (let o = el.ownerId != null ? model.get(el.ownerId) : undefined; o !== undefined; o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
     if (isDefinition(o.eClass) || isPackage(o)) return undefined;
@@ -10628,12 +10614,13 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
   // L in q and below q, where the assert's value gives the parameter its value
   // — not in a sibling instance that reads Q's L otherwise, and not where the
   // reading cannot be placed (no instance reading, or several), which holds as
-  // it did ({@link heldWithin}, {@link typedAssertHeldAt}).
+  // it did. Each name is placed by the reading that reached it ({@link HoldPlace}): a value's, a
+  // binding's end, or the definition's body alone (the last holds everywhere, as it always did).
   const typedTargets = new Map<ElementId, ElementRecord>();
-  // The features each inequality-typed assert holds, with what places them ({@link heldWithin}): collected while the
-  // index is built and applied once it is answerable — reading a value's carrier asks this index whether the feature's
-  // `default` gives way to an asserted equation, so placing the hold during the build would ask it of itself.
-  const onlyHolds: Array<{ givers: ElementRecord[]; parameter: (e: ElementRecord) => boolean; holds: ElementRecord[] }> = [];
+  // The features each inequality-typed assert holds, with the reading that places each ({@link HoldPlace}): collected
+  // while the index is built and applied once it is answerable — reading a value's carrier asks this index whether the
+  // feature's `default` gives way to an asserted equation, so placing the hold during the build would ask it of itself.
+  const onlyHolds: Array<{ holds: Array<{ g: ElementRecord; place: HoldPlace }> }> = [];
   if (typedAsserts.length > 0) {
     let redefining: Map<ElementId, ElementRecord[]> | undefined;
     const redefinersOf = (id: ElementId): readonly ElementRecord[] => {
@@ -10652,17 +10639,17 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
     };
     const stated = (g: ElementRecord): boolean => g.attrs.value !== undefined && g.attrs.value !== null;
     let only = false;
-    let holds: ElementRecord[] | undefined;
-    const holdOnly = (g: ElementRecord, a: ElementRecord): void => {
+    let holds: Array<{ g: ElementRecord; place: HoldPlace }> | undefined;
+    const holdOnly = (g: ElementRecord, a: ElementRecord, place: HoldPlace): void => {
       if (g.attrs.isLibrary === true) return;
       if (!heldOnly.has(g.id)) heldOnly.set(g.id, { source: a });
-      holds?.push(g);
+      holds?.push({ g, place });
     };
-    const target = (f: ElementRecord, a: ElementRecord): void => {
+    const target = (f: ElementRecord, a: ElementRecord, place: HoldPlace): void => {
       if (only) {
         // An inequality defines nothing: every feature it reaches is held, whatever it states (a value is read as written).
         for (const g of [f, ...redefinedClosure(model, f), ...redefinersOf(f.id)]) {
-          if (g.attrs.isLibrary !== true) holdOnly(g, a);
+          if (g.attrs.isLibrary !== true) holdOnly(g, a, place);
         }
         return;
       }
@@ -10691,7 +10678,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
       if (seen.has(f.id) || seen.size > 4096) return;
       seen.add(f.id);
       for (const g of featuresOf(f.id).values()) {
-        target(g, a);
+        target(g, a, { kind: 'body' });
         targetBelow(g, a, seen);
       }
     };
@@ -10709,13 +10696,13 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
         }
         return false;
       };
-      // The features an inequality-typed assert holds are placed after the index is built ({@link onlyHolds}): the one
-      // instance their values are read in, or the hold stays feature-wide ({@link heldWithin}).
+      // The features an inequality-typed assert holds are placed after the index is built ({@link onlyHolds}): the
+      // reading that reached each ({@link HoldPlace}), or the hold stays feature-wide.
       holds = undefined;
       if (only) {
-        const heldFeatures: ElementRecord[] = [];
+        const heldFeatures: Array<{ g: ElementRecord; place: HoldPlace }> = [];
         holds = heldFeatures;
-        onlyHolds.push({ givers, parameter, holds: heldFeatures });
+        onlyHolds.push({ holds: heldFeatures });
       }
       // What each parameter is given, by its name: the feature a path value
       // names, or a binding's end outside it — the nearest giver first.
@@ -10731,7 +10718,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
             for (let i = 0; i < 2; i++) {
               const e = ends[i];
               if (!e || parameter(e)) continue;
-              target(e, a);
+              target(e, a, { kind: 'end', end: e.id });
               const p = ends[1 - i];
               if (p && parameter(p)) give(effectiveNameOf(model, p), e);
             }
@@ -10740,7 +10727,7 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
           if (typeof c.attrs.value !== 'string') continue;
           for (const n of namesOfValue(c.attrs.value)) {
             const f = resolve(g.ownerId!, n);
-            if (f) target(f, a);
+            if (f) target(f, a, { kind: 'value', from: g.id, name: n });
           }
           const path = valuePathOf(c.attrs.value);
           give(effectiveNameOf(model, c), path !== undefined ? resolve(g.ownerId!, path) : undefined);
@@ -10764,12 +10751,12 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
             if (!p) continue;
             let f: ElementRecord | undefined = p;
             for (const segment of rest) f = f && featuresOf(f.id).get(segment);
-            if (f) target(f, a);
+            if (f) target(f, a, { kind: 'body' });
             else targetBelow(p, a);
             continue;
           }
           const f = resolve(t.id, n);
-          if (f) target(f, a);
+          if (f) target(f, a, { kind: 'body' });
         }
       }
     }
@@ -10826,19 +10813,20 @@ function assertHeldIndex(model: Model): NonNullable<ReturnType<typeof ASSERT_HEL
   }
   const fresh = { rev: model.rev, held, typedBy, heldOnly };
   // Set the index before placing the holds: a value's carrier asks it whether the feature's `default` gives way to an
-  // asserted equation ({@link heldWithin}), and a re-entrant ask must find this index, not build another.
+  // asserted equation ({@link holdInstanceAt}), and a re-entrant ask must find this index, not build another.
   ASSERT_HELD.set(model, fresh);
-  // Widen, never narrow: two asserts over one feature that read it in different instances reach both readings.
+  // Widen, never narrow: two asserts over one feature that read it in different instances reach both readings, and a
+  // reading no instance places (a body-only name) holds everywhere.
   const placed = new Set<ElementId>();
-  for (const { givers, parameter, holds: heldFeatures } of onlyHolds) {
-    const within = heldWithin(model, givers, parameter);
-    for (const g of heldFeatures) {
+  for (const { holds: heldFeatures } of onlyHolds) {
+    for (const { g, place } of heldFeatures) {
       const prev = heldOnly.get(g.id);
       if (prev === undefined) continue;
+      const at = holdInstanceAt(model, place);
       if (!placed.has(g.id)) {
         placed.add(g.id);
-        if (within !== undefined) heldOnly.set(g.id, { source: prev.source, within });
-      } else if (prev.within !== within) {
+        if (at !== undefined) heldOnly.set(g.id, { source: prev.source, within: at });
+      } else if (prev.within !== at) {
         heldOnly.set(g.id, { source: prev.source });
       }
     }
