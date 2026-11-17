@@ -30,7 +30,7 @@
       "witnessSymbols": [
         "RefusedAxiomIrrelevant::Bus::mass"
       ],
-      "detail": "refuted with every feature at its model value: `bus.mass <= 2000.0 [kg]` is false here (3000 vs 2000 in M, coherent SI), confirmed by re-evaluation on the numeric surface",
+      "detail": "refuted with every feature at its model value: `bus.mass <= 2000.0 [kg]` is false here (3000 vs 2000 in M, coherent SI), confirmed by re-evaluation on the check",
       "premises": []
     }
   ]

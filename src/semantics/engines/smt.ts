@@ -917,7 +917,7 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
         ...refusedPoint,
         outcome: 'not-evaluable',
         detail:
-          `the numeric surface reads \`${elsewhere.path}\` as ${elsewhere.check} where this relation names ` +
+          `the check reads \`${elsewhere.path}\` as ${elsewhere.check} where this relation names ` +
           `${elsewhere.encoder}, so its \`violated\` is a reading of a different feature — and a gate refuses the ` +
           `relation for the solver lane (${refusal.reason}: ${refusal.detail}), so nothing reads it as written. ` +
           '`--allow-inconclusive` does not forgive it',
@@ -933,7 +933,7 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
         outcome: 'refuted',
         detail:
           `refuted with every feature at its model value: \`${row.row.expression}\` is false on the ` +
-          'numeric surface' +
+          'check' +
           (si.lhsSI !== undefined && si.rhsSI !== undefined
             ? ` (${si.lhsSI} vs ${si.rhsSI}${si.dimension ? ` in ${si.dimension}` : ''}, coherent SI)`
             : '') +
@@ -942,7 +942,7 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
           'the model states is a violation whichever engine reads it and no flag forgives one',
         boundKind: 'model-values',
         boundDetail:
-          'every feature at the value the model binds it to, read on the numeric surface — nothing ' +
+          'every feature at the value the model binds it to, read on the check — nothing ' +
           `was encoded, so this is a point evaluation and not a proof${siSentence(si)}`,
       };
     }
@@ -1386,9 +1386,9 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
           `proof not confirmed: A ∧ P ∧ ¬G is unsat in exact arithmetic, but ` +
           (freed
             ? `the model's own values — where every assumption holds — are a point the proof covers over its ` +
-              `${countFree(variables)} freed feature(s), and the numeric surface reads this relation as ` +
+              `${countFree(variables)} freed feature(s), and the check reads this relation as ` +
               `\`violated\` there (${pointCheck.message}). `
-            : `with nothing freed the numeric surface reads this relation as \`violated\` at the model's values ` +
+            : `with nothing freed the check reads this relation as \`violated\` at the model's values ` +
               `(${pointCheck.message}). `) +
           'A pass the tool’s own evaluator contradicts is not a pass',
         ...bound('none', 'the proof and the point evaluation disagree, so nothing is claimed'),
@@ -1484,7 +1484,7 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
         witness,
         detail:
           `refutation not claimed: a counterexample was found with nothing freed, but the assumption ` +
-          `\`${open.expression}\` reads \`${open.holds}\` on the numeric surface at the model's values ` +
+          `\`${open.expression}\` reads \`${open.holds}\` on the check at the model's values ` +
           `(${open.detail}) — so the witness met it by a value the model does not state, and whether the ` +
           'requirement applies at the model, and so whether it is violated there, is undecided. ' +
           '`--allow-inconclusive` does not forgive it',
@@ -1567,7 +1567,7 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
       (si.lhsSI !== undefined && si.rhsSI !== undefined
         ? ` (${si.lhsSI} vs ${si.rhsSI}${si.dimension ? ` in ${si.dimension}` : ''}, coherent SI)`
         : '') +
-      ', confirmed by re-evaluation on the numeric surface',
+      ', confirmed by re-evaluation on the check',
     ...bound(
       'model-values',
       `every feature at the value the model binds it to; ${variables.length} symbol(s), 0 free` +
@@ -2135,7 +2135,7 @@ function confirm(
       return {
         ok: false,
         why:
-          'with nothing freed the witness must be the model’s own values, and the numeric surface ' +
+          'with nothing freed the witness must be the model’s own values, and the check ' +
           `reads this relation as \`${check?.result ?? 'not gathered'}\` there` +
           (check?.message ? ` (${check.message})` : ''),
       };
@@ -2150,7 +2150,7 @@ function confirm(
       return {
         ok: false,
         why:
-          `the numeric surface reads \`${other.path}\` as ${other.check} where this relation names ` +
+          `the check reads \`${other.path}\` as ${other.check} where this relation names ` +
           `${other.encoder}, so its \`violated\` is a reading of a different feature`,
       };
     }

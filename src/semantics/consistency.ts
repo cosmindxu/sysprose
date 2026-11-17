@@ -1307,7 +1307,7 @@ function violatedOwn(input: JudgeInput, own: readonly RefusedRelation[]): Refuse
 function violatedSentence(violated: readonly RefusedRelation[]): string {
   return (
     `${violated.map((r) => `\`${r.expression}\` (${r.qualifiedName})`).join(', ')} ` +
-    `${violated.length === 1 ? 'is' : 'are'} false at the values this file states, on the numeric surface — a ` +
+    `${violated.length === 1 ? 'is' : 'are'} false at the values this file states, on the check — a ` +
     'violation `verify` refutes, and no flag forgives one. '
   );
 }
@@ -1544,7 +1544,7 @@ async function judgeGroupInner(input: JudgeInput): Promise<ConsistencyGroup> {
         code: 'verification/not-evaluable',
         detail:
           `the solver finds no point at the model's own values satisfying all ${requirements.length} ` +
-          `requirement(s) (core {${coreSentence(core)}}), but the numeric surface reads every requirement in that ` +
+          `requirement(s) (core {${coreSentence(core)}}), but the check reads every requirement in that ` +
           'core as holding at those very values — the two readings disagree, so neither is published. ' +
           refusedSentence(refused),
       };
