@@ -1,0 +1,2047 @@
+{
+ "rollups": [
+  {
+   "id": 287,
+   "tier": "weaker",
+   "title": "Abstentions left in the numeric solver (rollup; sound, only weaker).",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "1",
+     "text": "designReadings withholds the whole component a curved equation links, where only what its root reaches need be withheld (`z` of `dz { z == 5000000.0 * q }`, `s == 4.0` over a stated `s = x * x`, every feature of a loop o",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "A lone curved equation is still published at the root found (`x * x == 4.0` alone: the FMI start, a measure of effectiveness).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "A relation over a multi-root component that holds, or fails, at every root reads unknown (E4, n5-damped, y4); `solveFeasible` reads undecided where it was infeasible and the analysis report's `feasible` should then read ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "The freedom analysis's row order among the model's own equations (G33x067, CV10).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "An odd power is read as curved (`x ^ 3.0 == 8.0` beside `x >= 0.0` and `x <= 1.0` reads ?/?, b635385 read T and F).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "A root in the same gap as its pole between two of 0 and +-2^k is not found unless Newton reaches it from one of the fixed starts it is run again from (`1.0 / (x - 5.0) == 2.0`; `3.0 / (x + 1.5) == 10.0` is reached from -",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "`solveFeasible` starts its descent at one root of a curved equation: `x * x == 4.0` beside `x <= 0.0` reads undecided in every order though x = -2 is feasible (CV1, F11x005).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "9",
+     "text": "A curved plain constraint beside another left unused is withheld where the other equations do not fix the point alone (`x / y == 3.0` beside `y == 2.0` and `x == 6.0`).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "10",
+     "text": "Cost: `fixedByOthers` is rebuilt per curved equation, quadratic per component (about 1.2x b635385 on a chain of 400 with a curved leaf per member), and `optimize()` re-solves without a cache.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "11",
+     "text": "V2/V4/V5 (a valued L through a package head, fixedHead): entailed; the check and literal half to design-readings SLOT1 (probes fence-numeric-scratch/rev/v2.sysml, v4, v5). E1Q is fenced by a5 F3 (pin stand-gw-e1-slot ?/?",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "12",
+     "text": "An FMI parameter or input whose stated value the tool cannot evaluate (`Bb = A + 1.0` over a valueless A, `1.0 / 0.0`) is held free (NaN) with the note 'the model states none this tool reads' (probe fence-numeric-scratch",
+     "status": "held",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "a",
+     "text": "double roots read ? where base read t (`x * x == 0.0`, `(x - 3.0) ^ 2.0 == 0.0`);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "b",
+     "text": "CLOSED 2026-11-17 by a5-numeric N2: a tautology's row now reads T where the divisor or base is an exactly nonzero stated or asserted value (pins a5-n2-q-lit/-stated/-fixed and the solved-for and remainder literal shapes;",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-numeric N2"
+    },
+    {
+     "key": "c",
+     "text": "two stated values further apart than 1e-8 of their size but closer than the 1e-6 gate read ? on both rows (`x == 1.0000001` beside `x == 1.0`);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "a guarded divisor refuses the witness even when the branch is not taken (the `if ... ? ... else ...` spelling now parses on all four surfaces (a5-std S2), so the fd probe can be written in either form; N3 reads it);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "e",
+     "text": "dividesByNearZero is absolute in SI, so a free divisor below 1e-6 loses its witness (`x / y == 3.0`, y in [1e-7, 2e-7]);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "f",
+     "text": "a lone no-root equation reads ? and solveFeasible undecided (was decided-infeasible through a false premise; 168 generator models). Probes: fence-numeric2-scratch/review/. [fence-numeric2] fence-numeric3:",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "g",
+     "text": "a legitimate root reached through a quotient or power that the solve resolves only to about 3e-8 relative or worse reads unknown where base read imposed (the joint correction exceeds 1e-8 of the size), e.g. `v0 == 1.0 / ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "f#2",
+     "text": "also covers the chain shapes. Probes: fence-numeric3-scratch/rchain10-2.0.sysml, rchain10-0.002.sysml, rchain20-2.0.sysml, rchain30-2.0.sysml, chain100-2.sysml, chain150-0.sysml (no root), review/big-chain-130.sysml. fen",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "a#2",
+     "text": "CLOSED 2026-11-16 by a5-heads2 HD2: a bind end under an unread scope (an `order` scope) now enumerates its candidate ends, so a valued end keeps its own seed and n2-keq `cA`/`cB` decide (T/T/T and F/F/F on check/literal/",
+     "status": "closed",
+     "closed_day": "2026-11-16",
+     "closed_by": "a5-heads2 HD2"
+    },
+    {
+     "key": "b#2",
+     "text": "The withheld set joins by raw end ids, so a binding written at package level through a differently spelled copy of the same end is not joined to the component and could keep a decided reading; no probe found one (models3",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c#2",
+     "text": "A feature that states a value with `=` and is bound into an unread scope keeps its own seed and reads the same on the check, literal and numeric lanes; a binding to a valued feature joined to another end still reads a de",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "h",
+     "text": "a package head's pair whose side is an expression or a `default` (`L = 2.0 * K`), whose end is deeper than one segment below the definition, or whose instance sits in a definition that redefines the head (not a usage), f",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "i",
+     "text": "a package head whose binding sits in a third package that spells neither end (Defs/Vals/Bind; `package Bind { import Defs::*; import Vals::*; bind P::load = L; }`, probe numeric2-review-scratch/nb/h.sysml) files its viol",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "j",
+     "text": "the literal engine answers X on any relation over a value a reported package-head conflict joins, as it does for every other violated binding (probe t5/hc1.sysml). solver2-pass:",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "k",
+     "text": "a tautology's own row over a feature nothing fixes reads numeric `?` (`assert constraint t0 { x - x == 0.0 }` alone; solver2-pass-scratch gen G1x004);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "l",
+     "text": "a curved equation that does not read its unknown at the model's values (`x * x * w0 == 0.0` at a stated w0 of 0) abstains, in one text order only in a contradictory model (gen G2x085, G2x089, G2x012);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "m",
+     "text": "an identity whose side divides by a feature, takes a remainder or raises to a non-literal power (`y / z == y / z`) is still gathered and abstains (probes solver2-pass-scratch/f3.sysml, f14.sysml, h1-h5.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "n",
+     "text": "a sum like `2.0 [m] == 2000.0 [mm]` or a numeral past 15 digits is not taken as the same polynomial;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "o",
+     "text": "a quotient set to 0 beside another over the same divisor (`b / u == 0.0`, `w / q == 0.0` beside `w / q == y`) reads imposed or T in one text order and `?` in the other (solver2-pass-scratch/s3/Q1x113f.sysml, Q1x113r.sysm",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "p",
+     "text": "a plain quotient over an asserted zero divisor (`A z == 0.0` beside `r / z == q`) reads `?` in one order and T in the other (s3/Q2x156f.sysml, Q2x156r.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "q",
+     "text": "an affine core past 32 features or with a coefficient that is a feature's value (`k * x`) is read as before;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "r",
+     "text": "a definition's own row reads `t` where an instance's facts refute it (adv/genpin: `P::ck` ?/?/F/? before P-pin, ?/?/t/? after; definition rows only): the F side is liftable by reading an instance's refuting F onto its de",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 30,
+    "closed": 2,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 1
+   }
+  },
+  {
+   "id": 292,
+   "tier": "weaker",
+   "title": "Abstentions left in the readings (rollup; sound, only weaker).",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "1",
+     "text": "The subsetting component fence is per usage, not per instance: the usage an instance redefines itself (w.p1 beside `p2 :> p1`), every instance of what the component's usages are features of, and a package subsetter's sub",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "A bridge, chain-target or package fence fires on any member that states a value, at any depth, or whose type states one, even where the values agree; since a5 LN2 agreeing statements of one feature (the same number in th",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "Since a5 LN1 and LN2 an attribute that a context states several ways (`X :>> M, N`, a redefinition of the line or of one target, `Y :>> X`, a twice-stated `:>> x`) is read as one feature with the one value its most speci",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "The ends of every type of a connection that connects features abstain, whatever the connected feature states (pin conn-end-redefined).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "Since a5 PA3 a satisfy written outside its definition resolves through the owning namespaces, and NQ1, NQ2, NQ5, NQ7 file w's F row as NQ3 does \u2014 a path spelled plain or `Pkg::w.p1` (the mapper's sourceChain takes `::` p",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "A subsetted feature is CLOSED 2026-11-17 by a5-heads2 HD6: the union `p1 = q` is read as q only where both effective multiplicities are exactly [1..1] (SysML 7.6.3, decision 13) \u2014 rv1 decides, rvq0 and the [0..*]/[2] gri",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-heads2 HD6"
+    },
+    {
+     "key": "7",
+     "text": "mu sM1, sN1, sN2 stay ?/?/?/X by design; a #clash F row files the two-values contradiction; a firm value beside a more specific default on the line's other name reads none (LN3) (review-2026-10-14/wave3-probes/fence-read",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "An own-sibling redefinition is not read as one hard validation error (review-2026-10-14/wave3-probes/fence-readings/s2/os-a.sysml); models that contain one still decide cells, the model being invalid and flagged.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "9",
+     "text": "Bindings: Q's own generic row (P::a2 in Q::p, no value anywhere) and an instance nothing gives a value (q3) stay ?/-/?/-; a derived chain deeper than four values, or whose names the context does not denote, is not listed",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "10",
+     "text": "Rows read through a subsetter whose subsetted usage an instance reads otherwise abstain together with the subsetted usage's rows (review-2026-10-14/wave3-probes/fence-readings/p/v1.sysml, v2.sysml); the component fence i",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "11",
+     "text": "Order only, sound either way: the SMT lane's `?` versus `X` letters on contradictory merged lines and `T` versus `?` on generic requirement rows; the row key of a constraint read in a specialisation context flips with me",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "12",
+     "text": "an asserted inequality over such a default that is not a bare bound stays refused: a sum or multi-name inequality (`L + N >= K`) under the generic sentence, and a bound with a `[unit]` or on a unit-bearing feature or a r",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "13",
+     "text": "a usage that redefines the default itself (`part q : Q { attribute :>> L default = 9.0; }`) beside bounds still abstains where the hand oracle could prove (20 cells: m45f/m46f/m52f `g0`-`g2` read ?/?/?/?, hand T/T/T, T/T",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "14",
+     "text": "CLOSED 2026-11-16 by a5-heads2 HD2: bounds linked through a derived relation are carried and compared through it (stand-gw-ineq-derived/-derived2: g1, g2 now decide T, g3 stays ?);",
+     "status": "closed",
+     "closed_day": "2026-11-16",
+     "closed_by": "a5-heads2 HD2"
+    },
+    {
+     "key": "15",
+     "text": "a scoped worklist (`obligationsOf` with scopeId, the Checks 'Obligations' listing) may carry a bound the whole model refuses as meeting (review-scratch/scope.mts; sound, the partner is no axiom there);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "16",
+     "text": "a usage that subsets a feature an instance reads otherwise, narrowed by instance3-pass S2 to the shapes still fenced (TC8, AE3, SA3, O2, RQ4, SA3S, RE3, RFN, and the `::>`, nested, chained, attribute and sibling subsette",
+     "status": "narrowed",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "17",
+     "text": "solver2-pass S2: since a5 K1 the check reads a conjunction as false where a conjunct is false before a gate-refused one (probe solver2-pass-scratch/s2/x25c.sysml, split twin x25s.sysml; the K1 line",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "18",
+     "text": "below lists what stays weaker); `refused and false` stays a refusal while `false and refused` is false (KerML control order; a5 F6: an unknown is absorbed only where it is a value the model does not give); a conjunction ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "18#2",
+     "text": "a5 K1 (sound but weaker): a conjunction a gate refuses still abstains where",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "a",
+     "text": "a refused or ill-typed conjunct comes before the first false one (`refused and false`, P under F6),",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "b",
+     "text": "the body is right-nested (`a and (b and c)`: conjunctsOf does not cut it), or",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c",
+     "text": "the surface is numeric (S1 `p.L <= 5.0 [kg] and p.E >= 1.0`, shortCircuit andBare F/F/?/F: the solver refuses the whole relation by gate (e)); K2/K3 or solver-order may lift (c). Exit move: a file whose conjunction is fa",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "19",
+     "text": "a5 K2 (sound but weaker): K2 reads as its split twin only an asserted conjunction filed at the model level or through instanceRelationRows, and is never stronger than the twin. It stays weaker where",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "a#2",
+     "text": "a clause whose relation instanceRows reads per context, or that has shared rows, is filed whole;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "b#2",
+     "text": "a body writes a [unit] literal beside a bare number (mixesUnitRegimes, by design);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c#2",
+     "text": "feasibility leaves a conjunct inequality over stated or caller-fixed values to its clause's whole row unless the check reads that clause held (`x <= 3.0 and y >= 1.0 and mode != \"manual\"` with x valueless, k153);",
+     "status": "held",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "the literal engine reads a refused conjunct as held only where the check holds its whole clause (k287 pkg g3: T/?/T/T against the twin's T/T/T/T);",
+     "status": "held",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "e",
+     "text": "instance conjunctions are not counted as covered in solveFeasible;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "f",
+     "text": "v2-refused-axiom-inst-ok reads inconclusive/inconsistent-axioms because the def-level row of `a` is violated at P's default while the instance row holds under p's override (narrowing the sentence to the instance reading,",
+     "status": "narrowed",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "20",
+     "text": "a5 K3 (sound but weaker): an asserted bound written in a `[unit]`, or on a feature with a unit or a scale, over a give-way default is still not carried; it gives its own sentence ('it is a bound in a unit, which is not c",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "21",
+     "text": "a5 S1 (sound but weaker): `true == 1.0` is F on the check, literal and SMT surfaces (a Boolean is never a number) but stays not-quantity unknown on the numeric surface; v9 Solve reads 19 numeric rows over 12 usages (12 w",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "22",
+     "text": "a5 S2 (sound but weaker): Langium cuts a constraint body at the first syntax-error token, so `x > 2.0 ? 1.0 else 2.0` (no `if`) is read as `x > 2.0` and decided, with the load degraded and reported as 'none is a verdict'",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "23",
+     "text": "a5 S4 (sound but weaker): a `require` or `assume` clause typed by a constraint definition (`requirement def R { require constraint rq : K; }`) files no row yet and the requirement still reads 'carries prose and no constr",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 27,
+    "closed": 2,
+    "narrowed": 2,
+    "ruled": 0,
+    "held": 2
+   }
+  },
+  {
+   "id": 325,
+   "tier": "weaker",
+   "title": "Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "162, 195 and 280 were closed by a documented decision (docs/06 section 8.16 and the USER-GUIDE), not by code: the completion refusal for a count past the budget is permanent, the livelock pass cost (about 20%, 240 to 290",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "251, 173, 245, 170 and 191 were closed on 2026-11-03 under the standing instruction to continue, three by a delegated decision and two by measurement, and can be reversed by re-adding the entry with its original title: 2",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "Rulings of the 2026-11 merge of misc-pass, numeric2-pass and reads2-pass, closed by a documented decision and reversible by re-adding the entry with its original title; to confirm: 'Contain a throw in a relation's own co",
+     "status": "narrowed",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "Rulings of the 2026-11-04 round 9 (small-pass found nothing closable by code), closed by a documented decision and reversible by re-adding the entry with its original title; to confirm: 'Give the own-sibling finding its ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "Closed by decision 2026-11-05 (maintainer: \"all of them\"; all reversible), the shapes below ruled permanent (abstention kept by decision; reverse one by re-adding it to its entry):",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "a",
+     "text": "228 'Narrow the literal engine's contradiction reach...': the SMT surface reading `inconsistent-axioms` file-wide in a model that contradicts itself (decision 1); the other residual shapes stay open.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "b",
+     "text": "176 'Read a satisfaction, a subject or a reference a definition writes in each instance of it.': a call as a part's value (h5-ppcall, h5-r8expr; 219 item 2), the T side of a definition's own row (only F can be lifted; a ",
+     "status": "narrowed",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c",
+     "text": "219 'Read what two steps of standing-for, a call, or a second subject would decide.': a call as a part's value; the rest stays open.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "233 'Narrow the abstention over two disagreeing asserted equations (optional).': a pair made to agree by a usage's `:>>` (the pair that meets in the owner), and the breadth of FMI `start` (readsContradictedDefinition sta",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "e",
+     "text": "255 'Solve the plain equations of a design component jointly over all roots (optional).': the general all-roots solve; entry closed.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "f",
+     "text": "262 'Read `assert not constraint c { ... }` as the negation.': the refused shapes (a bodiless clause, a specialising one, `assert not requirement`, and a members body holding a nested clause, part, calc or `default` memb",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "g",
+     "text": "'Move the first Apply's parse off the page (P3, the rest).': moving the parse into a worker (the gain is 4-9 ms warm against five new ways for the page to differ from its text) and the parser build itself; the entry stay",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "h",
+     "text": "'Divide the text step and the edit's own task on the drone-swarm v9 model.': incremental validation, a worker serializer, the cold first edit (238 ms); the entry stays for the step-wise serializer, the idle-time undo sna",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "i",
+     "text": "'Stop an in-page solver check from stalling or tearing the page.': Cancel cannot stop z3 until a safe interrupt is proven, and an in-page evidence record; the entry stays for the revision-check fix.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "j",
+     "text": "190 'Hold: an opt-in tag that lets an assertion adjust a written number (for example `#provisional`).': the tag will not ship; entry closed (reversible; a model that needs a soft value reopens it).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "k",
+     "text": "199 'Parse a declaration whose user-defined keyword stands without a reserved keyword.': the grammar keeps rejecting these forms with its current error; entry closed (reversible; reopen if a tag ever ships; the text-pass",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "l",
+     "text": "5 'Run the palette's solver checks in the page on the hosted site too (optional).': the hosted site keeps `not here` with the copyable command and in-page z3 stays on the dev and preview servers; entry closed (reversible",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 15,
+    "closed": 0,
+    "narrowed": 2,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 295,
+   "tier": "weaker",
+   "title": "Abstentions left in the editor (rollup; sound, only weaker).",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "2",
+     "text": "A stale copy still resolves as a name on the page, so a constraint naming it (`r0.L` after `Q::L` is renamed away) is read by the numeric lane as imposed",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "t",
+     "text": "where the file reads the name as unresolved (?); a definition-level `bind p.load = L` after `Q::L` is deleted reads ? on the numeric lane where the file decides (F), a binding with a stale end being set aside (both pinne",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "Two bindings in one usage that reach one copy by different names (`bind Zb = M; bind Zc = N2;` in the D4/D3 diamond) are saved under the first-created name for both: page equals file, the second spelling is not kept.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "A head the edit made land elsewhere is dropped and the copy goes by its own name; a name cannot be cleared from the Properties Name or Short name box, which put the name back (the clear belongs to an SDK setter in the st",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "A stale copy raises no Problems entry on the page until the file is reopened (the file reports 2 x ref/unresolved-reference and error:connector-endpoints).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "Latent, not reproduced: a command that calls pushUndo and exits with no change leaves editOpen true; a raw model call made after is queued in editEvents, and the next beginEdit drops it unsettled (src/ui/store.ts watchMo",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "a parsed `part p : A { bind A::x = y; }` is a parted holder, so `--engine literal` no longer decides on the CLI (mark the end where the editor moves it, not by structure; probe rev/m/m5.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "after a retype or rename the page abstains on every name of the binding's owner where the file decides some (402 cells of the 216-model generator);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "9",
+     "text": "rows over a withheld scope are inconclusive without the check lane's own sentence;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "10",
+     "text": "a requirement pair (satisfy, verify, refine, trace, derive) or a redefinition-family statement with an anonymous end is skipped silently on Save, and Apply of the Text view's text after a `// Not saved:` statement drops ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "11",
+     "text": "the generator had no units. Residual page-F/file-X pairs (seeds 70041, 70338, 70349, 70478, 70555) are identical at the base. [fence-editor2] fence-redefs:",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "12",
+     "text": "the page abstains over an owner of two features under one name, and over an owner of a redefinition edge the file does not keep (not inherited, another kind, a cycle), where the reopened file decides: 12.7% of the steps ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "13",
+     "text": "on a hand-edited page a row that reads a withheld name still gets the SMT sentence 'unresolved-name ...' where the check lane gives the true cause;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "14",
+     "text": "`bind.ts` `redefinitionIsKept` re-implements the serializer's spelling (`effectiveNameOf`, `effectiveQualifiedName`): re-run the edge property (scratchpad/rev-redefs/zzedge.test.ts) when the serializer changes; 51 of 522",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 14,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 319,
+   "tier": "weaker",
+   "title": "Abstentions left under the genericity audit of 2026-11-02 (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "Order: RULED PERMANENT 2026-11-16 (reversible; reverse by re-adding to its entry): the per-instance satisfy read is not within the tool's reach \u2014 probed on r16-subject-dflt (the default twin decides R's row F/F/-/F and a",
+     "status": "ruled",
+     "closed_day": "2026-11-16",
+     "closed_by": "ruling"
+    },
+    {
+     "key": "2",
+     "text": "Instance: since a5 PA2 a package-level `assert constraint px { h.p.x == 3.0 }` that imposes a value through a part-def instance (`part def H { part p : P; } part h : H;`) is imposed, and `h.p.y == 7.0` reads violated as ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "Label-only differences: group and instance labels, evidence footprint digests of anonymous binding connectors, the order of two names in a reason string.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "Measures are chosen by NAME: `MOE_NAME_RE = /moe|measure|objective/i` in src/semantics/solver.ts, so renaming `totalObjective` drops its analysis-report measure row (not a verdict cell; a documented heuristic, to be repl",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "Names (names-pass): since a5 PA1 a dotted path through an enclosing one-instance usage is read, and the check's quantityScope goes via lexicalPackageOf, so a unit-bearing lexical path reads (g5f `k` T/T/T/T, `kf` F/F/F/F",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "Subsetting (instance3-pass): p2 `[0..1]` or `[0..*]` reads as present in S1's reread rows of an assert: `W::a in w` F and SMT X where p2 may be empty; this is the engine's existing stance for optional parts, a limit of m",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "Name-declared-anew rows (pin-265): the numeric surface does not carry a general's binding onto a redefinition's own symbol (the reason for the `redefinesBoundOwner` fence), so self-contradictory models of the RBL4/SRS sh",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "g8-fence: the check and numeric fence covers the whole context, so the context's own relations over the hidden name abstain too (measured on gen-mask: 56 cells on the check and 150 on the numeric surface where both readi",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "9",
+     "text": "a5-fences: `headStandsAgainstAt` reads only asserted relations the package owns directly: an assert inside P, or inside an instance, that contradicts a standing slot value is not walked and is read as before; a non-const",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "10",
+     "text": "a5-fences2: HDF per-instance rows (F3): the per-instance F0 fence also leaves instance rows unknown where M is written with `=` and the assert is a violated check (GH110 `cP in p1`, F to ?); the `defaults-differ` sentenc",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "a",
+     "text": "an `assume` fixes the divisor at 0 and the goal's guard contradicts it (gen pf0, 140 rows);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "b",
+     "text": "z3 returns a non-minimal core holding an unrelated premise label (gen a0p, 28 of 140 rows); a remedy is one more check of the axioms plus the goal's guards alone, which would change the plan's decision 9 / F.1 rule. F5: ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4#2",
+     "text": "of the wording rollup needs another example for W1; CC-42b's String refutation has basis point-evaluation. FP2: a5-imp3's row 'IMP3::RQ::<<ConstraintUsage>> in IMP3::h' reads -/X/-/X (inconsistent-axioms: the asserted ax",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "11",
+     "text": "Head fixers compared only as `=` constants (a5-fences3 GH2). A package head whose slot two things fix outside the component (an instance's `:>> m = 7.0`, another definition's binding at an instance slot, an asserted equa",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 13,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 1,
+    "held": 0
+   }
+  },
+  {
+   "id": 310,
+   "tier": "weaker",
+   "title": "Abstentions left in the editor's copies (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "A part usage that has its own `:>> N = 20.0` beside a `bind` in its body reads ? where the base decided correctly (fence-copy-review/p/k11-usage-override.sysml: c15 F and c20 T at base); the fence cannot tell it from the",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "mapper-me9 `part def S :> Q2, Q3 { bind p.load = L; }` where both lines write the same 50.0 with `=` is a fenced scope; its two instance rows (P::c in S::p, P::c in s::p) are listed and read ?/?/?/? in the scope's senten",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "The whole-model SMT lane abstains on a model that holds a withheld scope, so one fenced bind loses every SMT proof, not only the rows that name the scope; a per-scope SMT withholding would be a separate change in src/sem",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "a stale copy beside a live feature of the same name in a type the copy's owner specialises (D1's `N` stale after `Subclassification D1 -> Q0` is deleted, with D3 `:> D1, Q0` and `K2 :>> N`) now parts the usage's copy and",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "The numeric lane still reads `t` (imposed) through a stale name the file leaves unresolved (the rename-away shape; never T or F), generator 2 case def-n-f-s0.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "A rename asks the owners of a feature's redefiners only when they are not already specialisers of its owner, so the cost for the ordinary case is unchanged.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "A live-aware endCopyFeature (a lookup that skips stale copies in resolveInherited and findTypeFeature) would let the page decide where it now abstains; it needs a bind.ts change to childNamed, which the page's other read",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "9",
+     "text": "a rename of the feature an implicit end copy redefines, and back (N to M and N), leaves its binding parted, so the page abstains where the saved file decides 15 (test/unit/store.reducers.test.ts, 'a copy lands on the nea",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "10",
+     "text": "A diamond (`D3 :> D1, D2`) and a clash (`D3 :> D2, D2b`) of overrides under an end copy stay fenced on every surface (pins copy-nearest-diamond, copy-nearest-clash).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "11",
+     "text": "'A stale copy two types up hides the feature the file binds': the page now decides F on three lanes and abstains on the SMT lane where the file decides F/F/F/F (test/unit/store.reducers.test.ts). ends-fence:",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "12",
+     "text": "S4's pins leave page-? / file-decides cells in seed 4318 (c1, c2), 32180 (c4, c6), 42267 (c1-c3, c5-c7) and 1618's parted copy, owned by S9/S8; the stale-copy order fence also withholds a stale copy's specialisers where ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "13",
+     "text": "Held (unread) instances: `evaluate-model.ts` tags a boundAbove abstention 'past-cap', so a multi-instance roll-up names 'more instances than the tool reads' for such a generic row (t7); in the diamond cause, usage and ne",
+     "status": "held",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 11,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 1
+   }
+  },
+  {
+   "id": 323,
+   "tier": "weaker",
+   "title": "Abstentions left (per-instance binding chains and context walks) (rollup; sound, only",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "A binding chain deeper than 48 usages (chain49/chainPkg49 and the cap rows at depth 49): the check and literal engines abstain; on chainPkg49 posF the SMT surface also abstains ('?/?/F/?'), and numeric reads it (probe in",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "(closed by a5-std S3: MAX_NESTED_BINDING_DEPTH is 48; a usage-body chain is decided up to 49 usages and refused at 50 with the 'more than 48 bindings below the first' sentence; the nested walk is bounded at 2,048 instanc",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "A failed asserts listing stays failed for the revision; ruled permanent in misc-pass (it abstains; a retry inside a revision would mix caches built while the listing failed with a later complete one; reopen only if a thr",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "A relation whose own context walk throws gets no per-instance rows at all; one internal row stands for its other contexts (test semantics.evaluate-model.test.ts, 'own context walk'; probes instance-pass-scratch/gen221).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "The 193 anchor abstains and the finding stays at the instance's own usage: when a derived value reads a redefinition outside the instance's own elements beside the instance's own input (m7j), or when the instance states ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "A reference valued with another reference inside a nested usage with a binding into the last one (`ref r = q`, `ref q = x`, bind sub.x.load = K) still abstains (reads-pass-scratch/g179b shape twoRefs; already the 'two st",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "A package-level end's redefinedClosure still differs by text order when several definitions each own a chain bind and the end is below the 48 cap: closure differs below the cap, no verdict moves. The cappedDefs fence cov",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "instance2-pass (per-instance reads): a pair met in two usages widens to every instance; a dotted name or a non-local relation that reaches the pair widens to every instance; a P nested inside the contradicted instance; a",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 8,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 324,
+   "tier": "weaker",
+   "title": "Abstentions left (keywords and metadata annotations) (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "A library-typed USAGE keeps its body `:>>` textual with ref/unresolved-specialization (`part y : ISQ::MassValue { attribute :>> num = 1; }`); only an annotation typed by a library metadata definition is bound by the libr",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "A definition a user-defined keyword alone leads (`#situation def Failure;`) is refused (mapper/extended-definition) rather than read as a plain Definition.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "A semantic metadata baseType is not read for a tag on a keyword-less usage, as for a keyword-led one.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "A keyword-less enum literal still cannot carry a statement kind (canCarryStatementKind refuses it) although `#prose low = 0.25;` now parses back and round-trips.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "fault-tree --json carries ambiguous and uncounted `#failureMode` tag counts only in the sentence string, not as structured fields.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "The prefix-order shapes `abstract #k def X` and `ref #k x` stay parse errors.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "The keyword inventory prints \"third-party spelling: #precondition read as an assume clause\" on a non-constraint element although obligations --from-keywords files constraints only. Decided in text-pass, reversible: a bar",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 7,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 311,
+   "tier": "weaker",
+   "title": "Abstentions left in renames and name clashes (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "names unrelated to the clash inside a flagged scope are withheld along with it (e.g. `w.p.x`, or an unrelated `a = 15.0` beside a clash on `b`), because the fence is the whole owner scope, as for twins; a per-name NameCl",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "The SMT lane proves and refutes nothing anywhere on a model that holds an `order` scope.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "Equal-name pairs where one feature carries content of its own and neither stands for another name are not fenced (existing clash and diamond handling covers them, DM2, DN2), nor is the pair where one states a value and t",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "DefiningEquations.clashesOf skips a pair when the other's value source lies in the kept one's redefinedClosure, so a valueless same-name redefiner beside a valued one clashes in one order and not the other (gen2/h005.sys",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "Four battery models show label differences only, #binding or #clash (m31_001, m31_086, m77_028, m77_082).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "Cost: unreadScopes on the 160-level lattice is 3.3 s under load against 17 ms at f39e88a; children() calls per unreadScopes grow quadratically with depth on a chain (1678 at depth 30, 6043 at 60, pre-existing); no guard ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 6,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 214,
+   "tier": "weaker",
+   "title": "Read `bind L = L0` over a valueless L as `L = L0` is read, so H2f decides as H2.",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "the binding component classification (endValue, heldDefaults' defined branch, classified, agreedValued);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "the check's valueDefinedByEquation and definedAgainstHere;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "the #bind conflict row in bindingConflicts;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "the numeric solver's design equation for the assert;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "the literal engine's contradictedDefinitions. Changing",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "1#2",
+     "text": "alone read L as 50 and gave a false verdict (ca T, t50 T, t1 F), so it was reverted. Done when the five readers give a valueless end bound to a valued feature that feature's value, with an oracle over order swaps, instan",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 6,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 181,
+   "tier": "weaker",
+   "title": "Read the name-scope shapes S3 left abstaining.",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "1",
+     "text": "DY1: a context that declares a name a body of its general reads through the general's owners (q's `part :>> p { attribute L = 50.0; }` beside Q's p `:>> load = L`) reads the name nowhere, its own bodies included. Read ea",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "R38: a renamed redefinition of a bound end (`attribute ld :>> load`) is read through no binding, so `c in q2` abstains, in a sentence naming the renaming, where it is F.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "MI2 (and MI4): one `=` and one `default` under one name from two general types (Q2's `L = 50.0`, Q3's `L default = 60.0`, on the usage itself or through a general) are read nowhere, though L is 50; read the `=` value. Si",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "An assert typed by a constraint definition is read by no surface. Its own row is filed nowhere, so a contradiction it makes with a value written with `=`, or with an untyped asserted equation over the same default (which",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "A name reached through an import or an alias, a qualified `Lex::K` and a non-attribute lexical feature are still left unread.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "Wording only (every row abstains): - EB4's r2 row, read through the package, says \"a binding\" and does not point at the `#bind` finding (`componentConnectors` finds no enclosed binding from that root). - EB4's `c in R::q",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W7"
+    },
+    {
+     "key": "7",
+     "text": "A value W writes that names a part by the name an instance's renamed redefinition replaces (RB10: W's `m = pp.load` over `ref part pp : T0 = top.a`, w's `part top2 redefines top { attribute :>> L = 50.0; }`). `top.a` res",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 6,
+    "closed": 1,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 320,
+   "tier": "weaker",
+   "title": "Abstentions left in quoted names in expressions (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "b",
+     "text": "`bareTie` (defining-equation.ts ~6861) and `NAME_TOKEN` (src/api/property.ts ~532) read plain identifiers only, so a quoted tie `'K x' == 'L x'` counts as a taint source (more abstention), and property.ts ~491 drafts a s",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c",
+     "text": "a check-behaviour atom `p=state 'deg A'` is answered INCONCLUSIVE \"not read\" where `state deg A` works (probe rv/bh/s1.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "on the unit-aware path an info message for a body it cannot read starts with \"a call, an index or a string literal\" and gives the real cause only after a semicolon;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "e",
+     "text": "a `//` comment holding an apostrophe inside an expression now reads \"Unterminated quoted name at N\" where it read \"Unterminated string literal\" (both unknown; probe rv/cm.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "f",
+     "text": "CLOSED 2026-11-17 by a5-words W2: `bounds --measure` and `--free` take a quoted spelling (`QS::P::'K x'`, `QD::P::'a.b'`) as their unquoted forms do, and `quoteName` is exported for the property draft (probe fix-quoted-s",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W2"
+    },
+    {
+     "key": "h",
+     "text": "the default `bounds` measure and the instance labels follow name order, so a bare and a quoted-renamed model differ there (7 corpus models); about 407 of the 637 corpus models were not run through the quoted-rename harne",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 5,
+    "closed": 1,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 180,
+   "tier": "weaker",
+   "title": "Finish what `table-rows` left of E3 and E9, and the numeric surface's reading of an",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "1",
+     "text": "E3 `h2p0` (`P::c in Q::p`) and `h2c0` (`Q::c`) read ?/?/?/? beside ref T; the check and the literal engine give a sentence of their own, but h2c0's numeric surface says only 'the solve did not converge'. They need a per-",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "E6 is closed on the check and the literal engine by per-instance-rest S2: a pair of `=` values only an evaluation compares is evaluated exactly where the binding's valued members are read (one value where they meet, two ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "E9 `Fx4` `c` and `c2` (`%` over a constant divisor) stay T/T/T/?: encoding `%` in QF_LIRA means a new standard-refused construct across about twelve differential tests, `smt-encode`, the campaign, five fixtures, the unsu",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "Where a bare number meets a quantity a binding carries into a feature that declares no unit or kind, the check and the literal engine abstain since S2, but the numeric surface and the SMT engine still read SI (UB4 `cX` ?",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "e",
+     "text": "on all four surfaces is the remaining step (optional). [O6, per-instance-rest S2]",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 5,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 159,
+   "tier": "weaker",
+   "title": "Read what two steps of standing-for, a call, or a second subject would decide.",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "1",
+     "text": "a shared-usage (group) row read through two steps of standing-for (a reference to a reference, or to an equated part, written in the usage's definition) abstains with \"this tool cannot tell what its ... stands for there\"",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "a part, or an attribute of a structured type, valued with an expression that is not a path (a call: `part pp : T0 = Same(top.a)`, `attribute q : V = Same(top.pos)`) abstains on every row that may read through it (h5-ppca",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "a `satisfy R by p1` beside `requirement r1 : R { subject s = p1; }`, where both subjects stand for one instance: r1's literal and SMT rows abstain with \"the numeric surface never gathered this relation\" (SAT2). [O9 S1] R",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "1#2",
+     "text": "and",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3#2",
+     "text": "stay open.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 5,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 132,
+   "tier": "weaker",
+   "title": "Close the F section 2.8 rows still open, and the other end of an asserted equation's",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "3",
+     "text": "Under a fixed slot (a package's `bind P::load = M` over a slot instances fix), where two fixers state different literals (S2V: p2's 5 against the other's) the check and the literal engine still abstain and the two differ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "The numeric surface and SMT abstain on an enclosing assert read through a renamed redefinition (RNV `q.pp.x`: top and topF now read T/T/T/T and F/F/F/F since closing-readings RN-1/RN-2, so this clause is closed but for `",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "Where a binding joins an element's asserted equation to a value written with `=` that it does not give, the equation's end is not read on the check and the literal engine since per-instance-rest S2, but the other end sti",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "The numeric surface reads one of the two for `q.p.x` itself: the binding's 4 where p's own assert writes 3 (RBL2 `top`, RBL4 `t1` ?/?/F/X), P's 3 where P writes it (RBB `top`, RBC `qc`/`dc`/`top` ?/?/T/X), all pinned in ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 4,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 135,
+   "tier": "polish",
+   "title": "Name the breaking value in a unit-bearing violated instance.",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "a",
+     "text": "no single read mends the relation (both needed, or already violated in its own context; permanent),",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "b",
+     "text": "the 5-per-group or 20-per-context cap is passed (permanent),",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c",
+     "text": "the verdict came from the scalar path with a unit on a read, so there is no re-quote (open), or",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "the row's reading was shared by `readAlike`, whose rebuilt judgement carries no re-quote (open). [findings-pass S1]",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 4,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 293,
+   "tier": "weaker",
+   "title": "Settle an implicit end copy through its whole life: a rename onto a taken name, the mapper's",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "c",
+     "text": "a rename that gives the copy a name another feature of its owner bears parts the copy (stale) and the page abstains where the reopened file decides (D1: page ?/?/?/?, file F and T; review-2026-10-14/wave3-probes/fence-ed",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "the mapper lands a definition-level or usage-level end copy on the feature the name finds when the mapper reaches it, so the copy stood on another copy (D1's `bind` copy) past an override that redefines the same base (D2",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "e",
+     "text": "a peer's edit in a room is not settled by the receiver (the sender's settle arrives as edits; not exercised with two live clients). Done when each reads as the reopened file does. [fence-editor] fence-editor2: item",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c#2",
+     "text": "now withholds every name of the binding's owner on all four surfaces (a rename onto a taken name), and the SMT lane proves and refutes nothing on a model that holds a withheld scope; the page still cannot decide rows the",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 4,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 322,
+   "tier": "weaker",
+   "title": "Abstentions left (defaults) (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "b",
+     "text": "A context row `P::c in W::q::p` reads unknown beside the satisfied instance row when load has no value, and the differential harness throws two check rows on it, so probes need a default on load (defaults-pass-scratch/x6",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c",
+     "text": "CLOSED 2026-11-16 by a5-heads2 HD4 (branch commits 81885e3/8dc71f2, merged): a definition's context row is filed under the definition whatever the declaration order, and a binding-carried reading (`P::ca in Q::p` \u2014 'load",
+     "status": "closed",
+     "closed_day": "2026-11-16",
+     "closed_by": "a5-heads2 HD4 (branch commits 81885e3/8dc71f2, merged"
+    },
+    {
+     "key": "d",
+     "text": "CLOSED 2026-11-16 by a5-heads2 HD5 (step 6d4ce65, review f7271b6): the typed-inequality hold is placed by the instance the assert's value is read in (and below it), not by feature, so a sibling instance that reads the fe",
+     "status": "closed",
+     "closed_day": "2026-11-16",
+     "closed_by": "a5-heads2 HD5 (step 6d4ce65, review f7271b6"
+    },
+    {
+     "key": "e",
+     "text": "An enclosing assert naming a binding-carried feature (A2E q2 p.load >= 0.5 over bind p.load = L; defaults2-pass-scratch/p6/se-none.sysml, differential A2E-enclosing-assert and stand-enc-bound), an enclosing assert on a v",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "f",
+     "text": "Literal X on generic rows of a file whose instance contradicts a default under an enclosing assert (defaults2-pass-scratch/review/m2/with/MM10.sysml, MM88.sysml; 9 cells in 2 of 240 probe models; sound). [defaults-pass, ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 3,
+    "closed": 2,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 317,
+   "tier": "weaker",
+   "title": "Abstentions left in seeds against an unread bound end (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "The fence covers every unread-scope kind (`order`, `twins`, `redefinition`); on the twins model SMT went from `inconsistent-axioms` to `not-evaluable`.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "A usage-level `:>> k = 7.0` over a bound `k = 5.0` keeps its own binding F row; `u.k == 5.0` / `== 7.0` now read ? with the unread-end sentence instead of the",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "CLOSED 2026-11-17 by a5-words W2: `bounds --measure u.k` (a dotted path of a fenced feature) now gives the not-evaluable row instead of the \"names nothing\" refusal with a stack trace; `--measure`/`--free` resolve a dotte",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W2"
+    },
+    {
+     "key": "f",
+     "text": "below). definition, the usage body and a subtype, a nested part with a same-named attribute, the R1 channels, a unit on k and a deep binding chain \u2014 rebuilt out of tree, 120 models x 2 orders, 0 WRONG / 0 decided->differ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 3,
+    "closed": 1,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 303,
+   "tier": "weaker",
+   "title": "Abstentions left in the collaboration room (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "b",
+     "text": "A room document an earlier build wrote still holds its library until a reset clears it, so a returning peer's first message from such a room stays about 10 MB.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c",
+     "text": "A page that joins a room before its own library has merged takes the room's non-stdlib library-flagged elements and then skips the bundled library for good (src/library/full-library.ts:207-212; the joiner holds 1 library",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "The SDK doc comment on `delete` (src/api/sdk.ts) does not mention that `cascade:false` now moves the kept children. [fence-roomlib; fence-coremodel]",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 3,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 321,
+   "tier": "weaker",
+   "title": "Abstentions left (wording and refusals) (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "A violated group row (F7) where a default stood and a violated specialiser-context row have no 'why' sentence (no reachable shape found; wording only; see 'Say why a default stood on the rows `standingDefaultSentence` st",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "An assert-only requirement files no requirement row (policy; see 'File a row, and say so in contracts, for a requirement whose only body is an assert.'). [wording-pass]",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 296,
+   "tier": "weaker",
+   "title": "Abstentions left in the negated assert (rollup; sound, only weaker).",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
+   "subs": [
+    {
+     "key": "c",
+     "text": "members declared inside a refused body (the shapes of (a)) are not mapped (kept verbatim in the save); and `assert not x > 1.0;` no longer swallows `x` as the clause's name (CLOSED 2026-11-17 by a5-words W4: no `validati",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W4"
+    },
+    {
+     "key": "e",
+     "text": "CLOSED 2026-11-17 by a5-words W4: a degraded `contracts` / `obligations` report says the requirement's only clause was refused (the skipped expression-less clause is carried and named), not that it has no formal clause.",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W4"
+    },
+    {
+     "key": "f",
+     "text": "in a negated clause, an attribute member with `:=`, a prefix (e.g. `in`), a subsetting or redefinition, a multiplicity or a body of its own are refused; a `rep language` member and annotations are mapped since 2026-11-17",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "h",
+     "text": "`negatedSatisfyOf` pairs a bare `assert not` with the next `Satisfy` sibling, comments allowed between, without checking that the two are adjacent in the text: a broken `assert not` followed by a comment and an unrelated",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 2,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 167,
+   "tier": "weaker",
+   "title": "List what a load binds later in the order a terminal binds it, on the page and on every peer",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "Model.typesOf, which the readings walk, still lists in the order the model lists the relationships, so a typing made in the app beside a subsetting or redefinition reads in another order than in a terminal. The order sco",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "The walks of ofKind Redefinition/Subsetting/FeatureTyping/Subclassification are shown not to depend on the walk order (bind.ts 264 was order dependent and is fixed; units-eval reads only within-family text order; the def",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 326,
+   "tier": "weaker",
+   "title": "Resolve a dotted path to a package-level usage from inside a usage body.",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "a path through an enclosing USAGE rather than a package;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "a package path whose value an instance on it changes (the solver's instanceReadings does not key lexical paths; reading it gave a false numeric F in R17 c2, so it is fenced and pinned 'lexical-instance'). [instance2-pass",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 107,
+   "tier": "held",
+   "title": "Revisit `validation/constraint-by-instance` after one workflow run on a model with instance",
+   "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "An instance that rebinds a reference whose value a binding of the referenced part carries (V8X, RB9: 50 from t50's L through T1's `bind a.load = L`), and the same read through a binding or past 16 values (RBB1, RBB2, RBD",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "A `satisfy` context whose satisfier's value a binding of the definition carries from the instance's own member (NC4: sys's K through W's `bind p1.load = K`; pre-existing for NC4P at 3c54ae0). The NC4 unit test no longer ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 297,
+   "tier": "weaker",
+   "title": "Save the unnamed end by a name, instead of leaving it out (a loud note today; sound, only",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "a",
+     "text": "and",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "b",
+     "text": "by fence-text; by fence-order, the earlier-member case for requirement relationship ends (satisfy, verify, refine, trace, derive) and for inline specialization targets (typing, `:>`, `::>`, a redefinition spelled by a pa",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 304,
+   "tier": "weaker",
+   "title": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "`x ^ -1` is refused as \"the exponent is not a literal\" (`contracts.ts` tests the unary minus as a non-number);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "CLOSED 2026-11-17 by a5-words W1: `bound.detail` appends the z3 sentence only where a z3 call decided the outcome (proved and design-admitted), so a refuted row the numeric re-read published no longer claims it; the D-bo",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W1"
+    },
+    {
+     "key": "3",
+     "text": "to probe, not a defect: the engine's `pinnedSymbols` pins a self-referencing equation (`x == x * y` pins x) and pins the right-hand defined feature of `assert constraint qa { L == M }` (8 probes h5-pin*), and whether eit",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 1,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 313,
+   "tier": "weaker",
+   "title": "Abstentions left in the order of listings (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "`typesOf` order decides a name between a redefined feature and its typing (the Q2/P2 model, test/unit/semantics.evaluate-model.test.ts around line 6856); the pinned abstention stays until the user decides it; core-pass a",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 1,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 313,
+   "tier": "weaker",
+   "title": "Abstentions left in the order of listings (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "8",
+     "text": "A bind written in a package other than the one that declares the instance (nested, sibling, outer, `Lib::top.L`), on a package-level feature joined by that package's own binding, or on a definition head (`bind T1::L = XX",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 1,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 136,
+   "tier": "weaker",
+   "title": "Finish the evidence and scope residuals of `reporting-small`.",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "`satisfy LoadReq by Sys::p` (a path through a shared usage, naming a feature of Sys from outside it) reads as a `not-evaluable` row, and its v2 record names `S::LoadReq in S::Sys::p`, not the instances `q1::p` and `q2::p",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 1,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 241,
+   "tier": "weaker",
+   "title": "Read a usage that subsets a feature an instance reads otherwise in that instance.",
+   "section": "",
+   "subs": [
+    {
+     "key": "1",
+     "text": "\u2014 so they stay inconclusive); `::>`, nested (SA7N), chained (SA7C), attribute (SA7A) and sibling subsetters; a binding end or asserted equation naming p2 (VB, AX, PX, AE3, AE4; the design's asserted-step change was not d",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 1,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 334,
+   "tier": "weaker",
+   "title": "Split the reading key by the value a sibling binding carries (SIB2, noted 2026-11-16 by the",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "27",
+     "text": "and the H3/H6/S3-spec cells live outside this repo \u2014 when HD6/H3 re-pin the differential table, only the in-repo cells re-pin; the out-of-repo pairs stay as recorded. [a5-heads2 HD4 review]",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 1,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 302,
+   "tier": "weaker",
+   "title": "Abstentions left in bounds and consistency (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "CLOSED 2026-11-17 by a5-words W1: the `bounds` exit-code sentence (scripts/lib/sysprose-spec.ts BOUNDS_EXIT_CODES) now names both kinds it withheld \u2014 the integer-branch cap reached over mixed Integer and Real, and a feat",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W1"
+    }
+   ],
+   "counts": {
+    "open": 0,
+    "closed": 1,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  }
+ ],
+ "totals": {
+  "open": 198,
+  "closed": 13,
+  "narrowed": 4,
+  "ruled": 1,
+  "held": 4,
+  "subs": 220
+ }
+}
