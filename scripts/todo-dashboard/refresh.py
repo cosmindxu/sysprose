@@ -11,7 +11,7 @@ import json, os, subprocess, sys, hashlib
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 ST = 'state.json'
 state = json.load(open(ST)) if os.path.exists(ST) else {}
-FILES = {'timeline': 'ds_timeline.json', 'windows': 'ds_windows.json', 'origin': 'ds_origin.json', 'open': 'ds_open.json', 'rollups': 'ds_rollups.json'}
+FILES = {'timeline': 'ds_timeline.json', 'windows': 'ds_windows.json', 'origin': 'ds_origin.json', 'open': 'ds_open.json', 'rollups': 'ds_rollups.json', 'coverage': 'coverage-universe.json'}
 sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
 if len(sys.argv) > 1 and sys.argv[1] == '--commit':
     for kv in sys.argv[2:]:
@@ -27,7 +27,7 @@ def run(*a):
     r = subprocess.run(['python3', *a], capture_output=True, text=True)
     if r.returncode: print(r.stdout[-1500:], r.stderr[-1500:]); sys.exit('failed: ' + ' '.join(a))
     return r.stdout
-run('entries.py'); out = run('series2.py'); run('datasets.py'); run('subitems.py')
+run('entries.py'); out = run('series2.py'); run('datasets.py'); run('subitems.py'); run('coverage.py')
 changed = [k for k, f in FILES.items() if sha(f) != state.get('hashes', {}).get(k)]
 F = json.load(open('entries_final.json')); T = json.load(open('timeline.json'))
 unl = [e['id'] for e in F if e.get('provisional')]
