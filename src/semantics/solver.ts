@@ -2199,6 +2199,13 @@ interface SolveCore {
    */
   unsettled: Set<ElementId>;
   /**
+   * The features of a component of more than {@link JOINT_EQUATIONS} linked
+   * equations, which the solve withholds rather than judges together
+   * ({@link jointMissed}): a row over one reads that cap, not a point that
+   * misses an equation ({@link cappedSentence}).
+   */
+  jointCapped: Set<ElementId>;
+  /**
    * The features the solve took as GIVEN: what the model states or the caller
    * fixes, what a binding carries from either, what nothing here can read, and
    * what definitions — and stated value expressions — alone determine over
@@ -2672,7 +2679,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     else break;
   }
 
-  const { residual, determined, withinTol } = residualSummary(eqs, values, tol);
+  const { residual, determined, withinTol, capped } = residualSummary(eqs, values, tol);
   const converged = determined && withinTol;
   // What the definitions alone determine over what the model states is given
   // as well — but it stays a column of the freedom analysis, its definitions
@@ -2763,6 +2770,7 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     point: values,
     free,
     unsettled,
+    jointCapped: capped,
     given,
     relations,
     imposed,
@@ -4015,10 +4023,11 @@ function residualSummary(
   eqs: Equation[],
   values: Map<ElementId, number>,
   tol: number,
-): { residual: number; determined: boolean; withinTol: boolean } {
+): { residual: number; determined: boolean; withinTol: boolean; capped: Set<ElementId> } {
   let residual = 0;
   let determined = true;
   let withinTol = true;
+  const capped = new Set<ElementId>();
   // Absolute gate (unchanged for normal-scale equations) PLUS a per-equation
   // relative term at the floating-point noise floor for large-magnitude
   // equations. The relative term only exceeds the absolute floor once
@@ -4042,9 +4051,11 @@ function residualSummary(
     residual = Math.max(residual, Math.abs(r));
     if (Math.abs(r) > convergenceGate(eq, values, tol) || !nearRoot(eq, values, r)) withinTol = false;
   }
-  // Each within its gate alone is not a root of them together ({@link jointMissed}).
-  if (withinTol && jointMissed(eqs, values).length > 0) withinTol = false;
-  return { residual, determined, withinTol };
+  // Each within its gate alone is not a root of them together ({@link jointMissed}). The same call names the features
+  // of a component withheld because it holds more than {@link JOINT_EQUATIONS} equations, so the sentence a row reads
+  // and `converged` cannot disagree.
+  if (withinTol && jointMissed(eqs, values, undefined, capped).length > 0) withinTol = false;
+  return { residual, determined, withinTol, capped };
 }
 
 /** An equation between a String literal and another literal or a feature: no number to bring to zero. */
@@ -4167,7 +4178,12 @@ const JOINT_EQUATIONS = 120;
  * it); an equation with a value that is not a finite number is left out of the components, and a component whose power has underflowed
  * to 0 is read as having no root near the point.
  */
-function jointMissed(eqs: readonly Equation[], values: Map<ElementId, number>, reach?: ReadonlySet<ElementId>): Equation[][] {
+function jointMissed(
+  eqs: readonly Equation[],
+  values: Map<ElementId, number>,
+  reach?: ReadonlySet<ElementId>,
+  capped?: Set<ElementId>,
+): Equation[][] {
   if (!eqs.some(quotientOrPower)) return [];
   // An equation that reads a feature with no value (or no finite one) is left out, as residualSummary leaves it: it cannot join a
   // chain it does not constrain at this point, and a valueless feature must not switch the judgement off for the rest of the component.
@@ -4197,8 +4213,13 @@ function jointMissed(eqs: readonly Equation[], values: Map<ElementId, number>, r
   for (const group of groups.values()) {
     if (!group.some(quotientOrPower)) continue;
     if (reach !== undefined && !group.some((eq) => eq.vars.some((v) => reach.has(v)))) continue;
-    // Too many to judge together: read as no root near (a verdict withheld, never one a runaway variable excuses).
-    if (group.length > JOINT_EQUATIONS || !jointNearRoot(group, values)) out.push(group);
+    // Too many to judge together: read as no root near (a verdict withheld, never one a runaway variable excuses). The
+    // size branch alone fills `capped`: the group is withheld for its SIZE, not because a point misses an equation,
+    // and a row over one reads that ({@link cappedSentence}), never {@link unsettledSentence}'s point.
+    if (group.length > JOINT_EQUATIONS) {
+      if (capped !== undefined) for (const eq of group) for (const v of eq.vars) capped.add(v);
+      out.push(group);
+    } else if (!jointNearRoot(group, values)) out.push(group);
   }
   return out;
 }
@@ -6260,6 +6281,7 @@ function feasibleFrom(
     point: values,
     free: new Set(),
     unsettled: new Set(),
+    jointCapped: new Set(),
     given: new Set(values.keys()),
     relations: new Set(),
     imposed: new Set(),
@@ -7121,6 +7143,12 @@ function numericRows(
       body !== undefined && core.unsettled.size > 0
         ? (iq?.vars ?? eq?.vars ?? relationVarsOf(body.node, keys)).filter((id) => core.unsettled.has(id))
         : [];
+    // Of those, the features of a component withheld for holding more than {@link JOINT_EQUATIONS} linked equations
+    // ({@link SolveCore.jointCapped}): a row over such a feature alone reads the cap, not a missed point.
+    const readsCapped =
+      readsUnsettled.length > 0 && core.jointCapped.size > 0
+        ? readsUnsettled.filter((id) => core.jointCapped.has(id))
+        : [];
     // Those an assert holds in a form the solve does not read, and those plain
     // constraints that disagree gave a value ({@link SolveCore.held}, {@link SolveCore.contested}).
     const readsHeld =
@@ -7205,7 +7233,12 @@ function numericRows(
       row.slack = null;
       row.amount = 0;
       delete row.slackUnit;
-      row.reason = unsettledSentence(model, readsUnsettled);
+      // Every feature it reads is in a capped component: the point is no missed root, and the cap is the reason. One
+      // unsettled for another cause keeps the point's sentence (fail closed).
+      row.reason =
+        readsCapped.length === readsUnsettled.length
+          ? cappedSentence(model, readsUnsettled)
+          : unsettledSentence(model, readsUnsettled);
     } else if ((readsHeld.length > 0 || readsContested.length > 0) && !read && !isRefusalReason(detailed.reason)) {
       withhold();
     } else if (contract && 'value' in contract && typeof contract.value === 'boolean') {
@@ -7508,6 +7541,20 @@ function unsettledSentence(model: Model, ids: readonly ElementId[]): string {
     `${UNSETTLED_HEAD}${pair} ${nameList(model, ids)} ${one ? 'is' : 'are'} where it stopped, at a point ` +
     'that misses an equation of the model it solved, so that point is no solution and this relation is not ' +
     'judged at it'
+  );
+}
+
+/**
+ * Why a relation over a value the solve WITHHELD for the size of its component
+ * is not judged ({@link SolveCore.jointCapped}): no point misses an equation, as
+ * {@link unsettledSentence} says, and the group is not judged together at all.
+ * {@link JOINT_EQUATIONS} is the cap the {@link jointMissed} doc names.
+ */
+function cappedSentence(model: Model, ids: readonly ElementId[]): string {
+  const one = ids.length === 1;
+  return (
+    `${UNSETTLED_HEAD} a group of more than ${JOINT_EQUATIONS} equations linked through their features is not ` +
+    `judged together, and ${nameList(model, ids)} ${one ? 'is' : 'are'} in it, so this relation is not judged at it`
   );
 }
 

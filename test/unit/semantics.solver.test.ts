@@ -2234,3 +2234,62 @@ describe('N2 — an identity row is no design equation under a divisor or base e
     }
   });
 });
+
+/*
+ * W5: `jointMissed` withholds a component of more than JOINT_EQUATIONS (120) linked equations rather than judging it,
+ * and the rows over its features said the solve stopped at a point that "misses an equation of the model it solved" —
+ * false, nothing misses: the group is withheld for its SIZE. The rows a cap withholds name the cap; a row beside them
+ * that reads only stated values keeps its imposed sentence, and a group withheld for another cause keeps its own.
+ */
+describe('W5 — a group of more than 120 linked equations names the cap', () => {
+  const CAP = 'the solve did not converge: a group of more than 120 equations linked through their features is not judged together, and ';
+  /** `links` links `v0 == 1.0 / x`, `v{i} == v{i-1} + 1.0` and `v{links} == 2.0`: `links + 2` equations. */
+  const chain = (links: number, extra = ''): string => {
+    const members = ['attribute x;', 'attribute v0;', 'constraint c0 { v0 == 1.0 / x }'];
+    for (let i = 1; i <= links; i++) members.push(`attribute v${i};`, `constraint c${i} { v${i} == v${i - 1} + 1.0 }`);
+    members.push(`constraint k { v${links} == 2.0 }`);
+    return `package ADD { ${members.join(' ')} ${extra} }`;
+  };
+  const read = async (text: string) => {
+    const { model } = await loadModelText(text, { fileName: 'p.sysml', strict: true });
+    return { model: model!, rows: new Map(checkConstraintsNumeric(model!).map((row) => [row.name, row])) };
+  };
+
+  it('withholds a component of 121 equations, and the rows over it name the cap with their own names', async () => {
+    const { model, rows } = await read(chain(119));
+    expect(solve(model).converged).toBe(false);
+    expect(solveFeasible(model).feasible).toBe(false);
+    expect(rows.size).toBe(121);
+    for (const row of rows.values()) expect([row.name, row.result]).toEqual([row.name, 'unknown']);
+    expect(rows.get('c0')!.reason).toBe(`${CAP}v0 and x are in it, so this relation is not judged at it`);
+    expect(rows.get('k')!.reason).toBe(`${CAP}v119 is in it, so this relation is not judged at it`);
+  });
+
+  it('keeps a row that reads only stated values imposed beside the cap', async () => {
+    const { rows } = await read(chain(119, 'attribute a; constraint m { a == 2.0 }'));
+    expect(rows.get('c0')!.reason).toBe(`${CAP}v0 and x are in it, so this relation is not judged at it`);
+    expect([rows.get('m')!.result, rows.get('m')!.imposed]).toEqual(['satisfied', true]);
+    expect(rows.get('m')!.reason).toBe(
+      'imposed by the solve: no value the model states fixes a, so the solve took this constraint as a design equation and made it hold — satisfied by construction, not a check the design passes',
+    );
+  });
+
+  it('converges on 120 equations, every row satisfied and imposed, with no cap clause', async () => {
+    const { model, rows } = await read(chain(118));
+    expect(solve(model).converged).toBe(true);
+    expect(rows.size).toBe(120);
+    for (const row of rows.values()) expect([row.name, row.result, row.imposed]).toEqual([row.name, 'satisfied', true]);
+    for (const row of rows.values()) expect(row.reason ?? '').not.toContain('not judged together');
+  });
+
+  it('keeps today’s missed-point sentence for a group withheld for another cause', async () => {
+    const { model, rows } = await read(
+      `package NC { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real; attribute z : ScalarValues::Real;
+        constraint c0 { y == 6.0 / (x + 1.0) } constraint c1 { z == y * 2.0 } constraint c2 { z == 0.0 } }`,
+    );
+    expect(solve(model).converged).toBe(false);
+    expect(rows.get('c0')!.reason).toBe(
+      'the solve did not converge: y and x are where it stopped, at a point that misses an equation of the model it solved, so that point is no solution and this relation is not judged at it',
+    );
+  });
+});

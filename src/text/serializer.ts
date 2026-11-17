@@ -1368,10 +1368,17 @@ type RefResolver = (simple: string, scopeOwnerId: ElementId | null) => ElementRe
 function specResolver(model: Model, relClass: string, sourceId: ElementId): RefResolver {
   // A simple name the rule answers by the ORDER of the owner's generals is no spelling of the feature it answers with:
   // the file it is saved in may order them otherwise (`redefinitionNameIsOrderDependent`), so it is spelled by its path.
-  return relClass === 'Redefinition'
-    ? (simple, scope) =>
-        redefinitionNameIsOrderDependent(model, simple, sourceId, scope) ? undefined : resolveRedefinedFeature(model, simple, sourceId, scope)
-    : (simple, scope) => resolveFullName(model, simple, scope, { exclude: sourceId });
+  if (relClass === 'Redefinition') {
+    return (simple, scope) =>
+      redefinitionNameIsOrderDependent(model, simple, sourceId, scope) ? undefined : resolveRedefinedFeature(model, simple, sourceId, scope);
+  }
+  // `:>` does NOT exclude the declaring element (see `Mapper.resolveSpecTarget`): a feature or definition that
+  // writes its own name after `:>` denotes ITSELF, shadowing an outer name. So a bare name is a spelling of the
+  // target only when the re-parse reads it back as the target — which `refTo` checks; where it now reads as the
+  // source, the target is spelled by its dotted or qualified path. `:`/`::>` keep the exclusion the mapper applies.
+  const op = operatorFor(relClass);
+  const exclude = op === ':' || op === '::>' ? { exclude: sourceId } : {};
+  return (simple, scope) => resolveFullName(model, simple, scope, exclude);
 }
 
 /**
